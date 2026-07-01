@@ -9,6 +9,7 @@ import type {
   ConsultaEntityKind,
   ConsultaSearchResponse,
 } from "@/types/consulta/consulta-result";
+import type { DiscoverySummaryResponse } from "@/types/discovery/discovery.types";
 import type { OperationsDiagnostics } from "@/types/operations/operations-diagnostics";
 
 /** JSON-safe entity page (Lucide icons are rehydrated on the client). */
@@ -185,6 +186,14 @@ export async function fetchConsulta(
     cache: "no-store",
   });
   return parseJson<ConsultaSearchResponse>(response);
+}
+
+export async function fetchDiscoverySummary(): Promise<DiscoverySummaryResponse> {
+  const response = await fetch("/api/v1/discovery/summary", {
+    method: "GET",
+    cache: "no-store",
+  });
+  return parseJson<DiscoverySummaryResponse>(response);
 }
 
 function entityFetchPath(kind: EntityPageModel["kind"], entityId: string) {

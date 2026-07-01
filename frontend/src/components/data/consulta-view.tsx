@@ -6,6 +6,7 @@ import { EntityCard } from "@/components/cards/entity-card";
 import { Alert } from "@/components/ui/alert";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FormField } from "@/components/forms/form-field";
+import { DataDiscoveryPanel } from "@/components/data/data-discovery-panel";
 import {
   fetchConsulta,
   OperationsApiError,
@@ -157,11 +158,13 @@ export function ConsultaView() {
       <SourceBanner response={response} dataMode={dataMode} />
 
       {dataMode === "real" && (
-        <Alert variant="info" title="Fuera de alcance E7.2">
-          Lotes y Pedidos están pendientes de integración (E7.3). Esta consulta
-          cubre solo OEs de ELABORACION.
+        <Alert variant="info" title="E7.2 — Data Discovery">
+          Lotes y Pedidos no se muestran en búsqueda hasta confirmar schemas. Usá el
+          diagnóstico abajo para validar mappers antes de conectar Workspaces.
         </Alert>
       )}
+
+      <DataDiscoveryPanel />
 
       {loading && (
         <div

@@ -30,6 +30,20 @@ export class SheetsReader {
   }
 
   async readFirstTab(spreadsheetId: string): Promise<string[][]> {
+    const tabs = await this.listTabs(spreadsheetId);
+    const firstTitle = tabs[0];
+    if (!firstTitle) {
+      return [];
+    }
+
+    return this.readTab(spreadsheetId, firstTitle);
+  }
+
+  async listTabs(spreadsheetId: string): Promise<string[]> {
+    const cacheKey = `sheet:${spreadsheetId}:tabs`;
+    const cached = serverCache.get<string[]>(cacheKey);
+    if (cached) return cached;
+
     const auth = createGoogleAuth();
     const sheets = google.sheets({ version: "v4", auth });
 
@@ -38,12 +52,13 @@ export class SheetsReader {
       fields: "sheets.properties.title",
     });
 
-    const firstTitle = meta.data.sheets?.[0]?.properties?.title;
-    if (!firstTitle) {
-      return [];
-    }
+    const titles =
+      meta.data.sheets
+        ?.map((sheet) => sheet.properties?.title)
+        .filter((title): title is string => Boolean(title)) ?? [];
 
-    return this.readTab(spreadsheetId, firstTitle);
+    serverCache.set(cacheKey, titles);
+    return titles;
   }
 }
 
