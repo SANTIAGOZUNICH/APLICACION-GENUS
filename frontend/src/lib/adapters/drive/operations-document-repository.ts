@@ -20,9 +20,11 @@ import {
 import { serverCache } from "@/lib/adapters/drive/cache/server-cache";
 import { googleDriveGateway } from "@/lib/adapters/drive/google-drive-gateway";
 import {
-  normalizeOeId,
-  parseOeIdFromFileName,
-} from "@/lib/adapters/drive/parse-oe-id";
+  fileNameToSlug,
+  looksLikeDriveFileId,
+  normalizeLookupKey,
+  stripSheetExtension,
+} from "@/lib/adapters/drive/oe-document-locator";
 import type {
   DocumentRef,
   DriveHealthResult,
@@ -40,7 +42,9 @@ const CACHE_PREFIX = {
   documents: "docrepo:documents:",
   critical: "docrepo:critical:",
   oeIndex: "docrepo:oe-index",
-  oeById: "docrepo:oe:",
+  oeByFileId: "docrepo:oe:file:",
+  oeBySlug: "docrepo:oe:slug:",
+  oeByBusinessId: "docrepo:oe:biz:",
   resolvedFolder: "docrepo:resolved-folder:",
 } as const;
 
@@ -174,20 +178,59 @@ export class OperationsDocumentRepository {
     return serverCache.get<OeIndexEntry[]>(CACHE_PREFIX.oeIndex) ?? [];
   }
 
-  async resolveOeById(oeId: string): Promise<OeIndexEntry | null> {
+  async resolveOeDocument(lookupKey: string): Promise<OeIndexEntry | null> {
     await this.ensureIndex();
-    const normalized = normalizeOeId(oeId);
-    const cached = serverCache.get<OeIndexEntry>(
-      `${CACHE_PREFIX.oeById}${normalized}`
+    const key = normalizeLookupKey(lookupKey);
+
+    const cachedByFile = serverCache.get<OeIndexEntry>(
+      `${CACHE_PREFIX.oeByFileId}${key}`
     );
-    if (cached) return cached;
+    if (cachedByFile) return cachedByFile;
 
     const index = await this.getOeIndex();
-    const entry = index.find((item) => item.oeId === normalized) ?? null;
-    if (entry) {
-      serverCache.set(`${CACHE_PREFIX.oeById}${normalized}`, entry);
+
+    if (looksLikeDriveFileId(key)) {
+      const byId = index.find((item) => item.fileId === key) ?? null;
+      if (byId) return byId;
     }
-    return entry;
+
+    const bySlug = serverCache.get<OeIndexEntry>(`${CACHE_PREFIX.oeBySlug}${key.toLowerCase()}`);
+    if (bySlug) return bySlug;
+
+    const slug = fileNameToSlug(key);
+    if (slug) {
+      const slugMatch = index.find((item) => item.fileSlug === slug) ?? null;
+      if (slugMatch) return slugMatch;
+    }
+
+    const byExactName =
+      index.find(
+        (item) =>
+          stripSheetExtension(item.fileName).toLowerCase() ===
+          stripSheetExtension(key).toLowerCase()
+      ) ?? null;
+    if (byExactName) return byExactName;
+
+    const businessFileId = serverCache.get<string>(
+      `${CACHE_PREFIX.oeByBusinessId}${key.toUpperCase()}`
+    );
+    if (businessFileId) {
+      return index.find((item) => item.fileId === businessFileId) ?? null;
+    }
+
+    return null;
+  }
+
+  /** Cache business OE_ID → fileId after reading sheet content. */
+  registerOeBusinessId(oeId: string, fileId: string): void {
+    const normalized = oeId.trim().toUpperCase();
+    if (!normalized) return;
+    serverCache.set(`${CACHE_PREFIX.oeByBusinessId}${normalized}`, fileId);
+  }
+
+  /** @deprecated Use resolveOeDocument */
+  async resolveOeById(lookupKey: string): Promise<OeIndexEntry | null> {
+    return this.resolveOeDocument(lookupKey);
   }
 
   resolveFolderId(alias: FolderAlias): string | null {
@@ -283,7 +326,9 @@ export class OperationsDocumentRepository {
     const aliasesToIndex = this.resolveAliasesForScope(scope);
 
     if (scope === "all" || scope === "elaboracion") {
-      serverCache.deleteByPrefix(CACHE_PREFIX.oeById);
+      serverCache.deleteByPrefix(CACHE_PREFIX.oeByFileId);
+      serverCache.deleteByPrefix(CACHE_PREFIX.oeBySlug);
+      serverCache.deleteByPrefix(CACHE_PREFIX.oeByBusinessId);
       serverCache.delete(CACHE_PREFIX.oeIndex);
     }
 
@@ -431,22 +476,25 @@ export class OperationsDocumentRepository {
     const seen = new Set<string>();
 
     for (const file of files) {
-      const oeId = parseOeIdFromFileName(file.name);
-      if (!oeId || seen.has(oeId)) continue;
-      seen.add(oeId);
+      if (seen.has(file.fileId)) continue;
+      seen.add(file.fileId);
 
+      const fileSlug = fileNameToSlug(file.name);
       const entry: OeIndexEntry = {
-        oeId,
         fileId: file.fileId,
         fileName: file.name,
+        fileSlug,
         modifiedTime: file.modifiedTime,
         folderPath: file.folderPath,
       };
       index.push(entry);
-      serverCache.set(`${CACHE_PREFIX.oeById}${oeId}`, entry);
+      serverCache.set(`${CACHE_PREFIX.oeByFileId}${file.fileId}`, entry);
+      if (fileSlug) {
+        serverCache.set(`${CACHE_PREFIX.oeBySlug}${fileSlug}`, entry);
+      }
     }
 
-    index.sort((a, b) => a.oeId.localeCompare(b.oeId));
+    index.sort((a, b) => a.fileName.localeCompare(b.fileName, "es"));
     serverCache.set(CACHE_PREFIX.oeIndex, index);
   }
 }

@@ -1,8 +1,9 @@
 import "server-only";
 
 import {
-  buildOeEntityPageFromSheet,
+  buildOeEntityPageFromFields,
   buildOeListItem,
+  extractOeFieldsFromSheet,
 } from "@/lib/adapters/drive/mappers/oe-sheet.mapper";
 import { operationsDocumentRepository } from "@/lib/adapters/drive/operations-document-repository";
 import type { OeListItem } from "@/lib/adapters/drive/types/document.types";
@@ -15,15 +16,31 @@ export class OeResolver {
     return index.map(buildOeListItem);
   }
 
-  async getOeEntityPage(oeId: string): Promise<OeSheetBundle | null> {
-    const entry = await operationsDocumentRepository.resolveOeById(oeId);
+  /**
+   * Resolve an OE by fileId, file slug, file name, or business OE_ID (from sheet).
+   * Opens the Sheet and extracts business fields from content.
+   */
+  async getOeEntityPage(lookupKey: string): Promise<OeSheetBundle | null> {
+    const entry = await operationsDocumentRepository.resolveOeDocument(lookupKey);
     if (!entry) return null;
 
     const rows = await sheetsReader.readFirstTab(entry.fileId);
-    const entityPage = buildOeEntityPageFromSheet(entry, rows);
+    const fields = extractOeFieldsFromSheet(rows);
+
+    if (fields.oeId) {
+      operationsDocumentRepository.registerOeBusinessId(
+        fields.oeId,
+        entry.fileId
+      );
+    }
+
+    const entityPage = buildOeEntityPageFromFields(entry, fields);
 
     return {
-      oeId: entry.oeId,
+      fileId: entry.fileId,
+      fileName: entry.fileName,
+      oeId: fields.oeId || undefined,
+      fields,
       entityPage,
     };
   }

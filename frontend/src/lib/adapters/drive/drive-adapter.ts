@@ -34,8 +34,8 @@ export class DriveAdapter implements OperationsAdapter {
     return oeResolver.listOeIndex();
   }
 
-  getOeEntityPage(oeId: string): Promise<OeSheetBundle | null> {
-    return oeResolver.getOeEntityPage(oeId);
+  getOeEntityPage(lookupKey: string): Promise<OeSheetBundle | null> {
+    return oeResolver.getOeEntityPage(lookupKey);
   }
 }
 

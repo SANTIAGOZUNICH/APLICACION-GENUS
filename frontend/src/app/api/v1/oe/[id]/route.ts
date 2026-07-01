@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerAdapter, driveAdapter } from "@/lib/adapters/adapter-factory";
 import { stripEntityPageIcon } from "@/lib/adapters/rehydrate-entity-page";
-import { normalizeOeId } from "@/lib/adapters/drive/parse-oe-id";
+import { normalizeLookupKey } from "@/lib/adapters/drive/oe-document-locator";
 import {
   canUseDriveAdapter,
   shouldUseDemoFallback,
@@ -14,15 +14,16 @@ interface RouteContext {
 
 export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params;
-  const oeId = normalizeOeId(id);
+  const lookupKey = normalizeLookupKey(id);
 
   if (getServerDataMode() !== "real" || !canUseDriveAdapter()) {
     const mockPage =
-      createServerAdapter().getInitialState().entityPages[`oe:${oeId}`];
+      createServerAdapter().getInitialState().entityPages[`oe:${lookupKey}`];
 
     if (mockPage && mockPage.kind === "oe") {
       return NextResponse.json({
-        oeId,
+        lookupKey,
+        oeId: lookupKey,
         entityPage: stripEntityPageIcon(mockPage),
         source: "demo",
       });
@@ -30,7 +31,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
     if (shouldUseDemoFallback()) {
       return NextResponse.json(
-        { error: `OE ${oeId} no encontrada en demo.`, code: "NOT_FOUND" },
+        { error: `OE ${lookupKey} no encontrada en demo.`, code: "NOT_FOUND" },
         { status: 404 }
       );
     }
@@ -42,11 +43,11 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   try {
-    const bundle = await driveAdapter.getOeEntityPage!(oeId);
+    const bundle = await driveAdapter.getOeEntityPage!(lookupKey);
     if (!bundle) {
       return NextResponse.json(
         {
-          error: `OE ${oeId} no encontrada en el índice. Ejecutá /api/v1/drive/refresh.`,
+          error: `Documento OE no encontrado para "${lookupKey}". Probá con fileId o fileSlug del índice.`,
           code: "NOT_FOUND",
         },
         { status: 404 }
@@ -54,12 +55,15 @@ export async function GET(_request: Request, context: RouteContext) {
     }
 
     return NextResponse.json({
+      fileId: bundle.fileId,
+      fileName: bundle.fileName,
       oeId: bundle.oeId,
+      fields: bundle.fields,
       entityPage: stripEntityPageIcon(bundle.entityPage),
       source: "drive",
     });
   } catch (error) {
-    console.error(`[Genus] GET /api/v1/oe/${oeId} failed:`, error);
+    console.error(`[Genus] GET /api/v1/oe/${lookupKey} failed:`, error);
     return NextResponse.json(
       {
         error:
