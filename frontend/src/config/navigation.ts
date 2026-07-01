@@ -33,7 +33,7 @@ export interface NavItem {
 
 /**
  * Workspaces — /docs/08-workspaces.md
- * Entrega 1: solo bandeja y design-system habilitados.
+ * Entrega 4: workspaces operativos habilitados.
  */
 export const navigationItems: NavItem[] = [
   {
@@ -49,7 +49,7 @@ export const navigationItems: NavItem[] = [
     label: "Producción",
     href: "/produccion",
     icon: Factory,
-    enabled: false,
+    enabled: true,
     section: "primary",
   },
   {
@@ -57,7 +57,7 @@ export const navigationItems: NavItem[] = [
     label: "Calidad",
     href: "/calidad",
     icon: ShieldCheck,
-    enabled: false,
+    enabled: true,
     section: "primary",
   },
   {
@@ -65,7 +65,7 @@ export const navigationItems: NavItem[] = [
     label: "Depósito",
     href: "/deposito",
     icon: Warehouse,
-    enabled: false,
+    enabled: true,
     section: "primary",
   },
   {
@@ -73,7 +73,7 @@ export const navigationItems: NavItem[] = [
     label: "Comercial",
     href: "/comercial",
     icon: Package,
-    enabled: false,
+    enabled: true,
     section: "primary",
   },
   {
@@ -81,7 +81,7 @@ export const navigationItems: NavItem[] = [
     label: "Dirección",
     href: "/direccion",
     icon: LayoutDashboard,
-    enabled: false,
+    enabled: true,
     section: "primary",
   },
   {
@@ -89,7 +89,7 @@ export const navigationItems: NavItem[] = [
     label: "Dir. Técnica",
     href: "/dt",
     icon: Stamp,
-    enabled: false,
+    enabled: true,
     section: "primary",
   },
   {

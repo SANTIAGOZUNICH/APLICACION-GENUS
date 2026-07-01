@@ -16,11 +16,17 @@ npm run dev
 
 Abrir [http://localhost:3000](http://localhost:3000) — redirige a `/bandeja`.
 
-## Rutas (Sprint 1 · Entrega 1)
+## Rutas (Sprint 1)
 
 | Ruta | Descripción |
 |---|---|
-| `/bandeja` | Mi Trabajo — pantalla principal |
+| `/bandeja` | Mi Trabajo — Bandeja Inteligente |
+| `/produccion` | Workspace Producción |
+| `/calidad` | Workspace Calidad |
+| `/deposito` | Workspace Depósito |
+| `/comercial` | Workspace Comercial |
+| `/direccion` | Workspace Dirección |
+| `/dt` | Workspace Dirección Técnica |
 | `/design-system` | Referencia visual de tokens |
 
 ## Documentación
