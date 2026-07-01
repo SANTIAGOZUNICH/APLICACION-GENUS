@@ -5,11 +5,11 @@ import {
   oePageHref,
   oaPageHref,
 } from "@/config/entity-pages";
+import { ActionIds } from "@/types/actions";
 import {
   labPeople,
   labProducts,
   labSectors,
-  noop,
 } from "@/mocks/workspace/lab-context";
 import { CROSS_LINK } from "@/mocks/entity-pages/cross-link";
 import { EntityPageKinds, type EntityPageModel } from "@/types/entity-page";
@@ -24,7 +24,7 @@ const LOTE_0842: EntityPageModel = {
   identityIcon: ScanBarcode,
   statusFlow: LOTE_FLOW,
   currentStageId: "cuarentena",
-  primaryAction: { label: "Cargar análisis", onClick: noop },
+  primaryAction: { label: "Cargar análisis", actionId: ActionIds.LOTE_CARGAR_ANALISIS },
   secondaryActions: [
     { label: "Ver OE origen", variant: "secondary", href: oePageHref(CROSS_LINK.oeId) },
   ],

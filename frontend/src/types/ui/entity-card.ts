@@ -18,6 +18,8 @@ export interface EntityMetadataItem {
 
 export interface EntityCardAction {
   label: string;
+  /** E6 — dispatches through the action pipeline when set. */
+  actionId?: import("@/types/actions").ActionId;
   onClick?: () => void;
   href?: string;
   variant?: "primary" | "secondary" | "tertiary";

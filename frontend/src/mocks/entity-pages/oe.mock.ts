@@ -5,11 +5,11 @@ import {
   pedidoPageHref,
   PRODUCTION_ORDER_FLOW,
 } from "@/config/entity-pages";
+import { ActionIds } from "@/types/actions";
 import {
   labPeople,
   labProducts,
   labSectors,
-  noop,
 } from "@/mocks/workspace/lab-context";
 import { CROSS_LINK } from "@/mocks/entity-pages/cross-link";
 import { EntityPageKinds, type EntityPageModel } from "@/types/entity-page";
@@ -24,8 +24,8 @@ const OE_0142: EntityPageModel = {
   identityIcon: Factory,
   statusFlow: PRODUCTION_ORDER_FLOW,
   currentStageId: "en-curso",
-  primaryAction: { label: "Continuar elaboración", onClick: noop },
-  secondaryActions: [{ label: "Registrar consumo", variant: "secondary", onClick: noop }],
+  primaryAction: { label: "Continuar elaboración", actionId: ActionIds.OE_REGISTRAR_CONTROL },
+  secondaryActions: [{ label: "Registrar consumo", variant: "secondary", actionId: ActionIds.OE_REGISTRAR_CONSUMO }],
   sections: [
     {
       id: "datos",

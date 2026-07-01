@@ -10,6 +10,7 @@ import {
   type BandejaTask,
 } from "@/types/bandeja/bandeja-task";
 import { Status } from "@/types/ui/status";
+import { ActionIds } from "@/types/actions";
 import { entityMockHrefs } from "@/mocks/entity-pages/hrefs";
 
 const noop = () => undefined;
@@ -70,7 +71,7 @@ export const supervisorBandejaTasks: BandejaTask[] = [
         compromiso: "05/07/2026",
         avanceDespacho: "3/5 renglones",
         compromisoPorVencer: true,
-        primaryAction: { label: "Seguir despacho", onClick: noop },
+        primaryAction: { label: "Seguir despacho", actionId: ActionIds.PEDIDO_DESPACHAR },
         href: entityMockHrefs.pedido,
       },
     },
@@ -91,7 +92,7 @@ export const supervisorBandejaTasks: BandejaTask[] = [
         batchSize: "500 kg",
         responsable: "María G.",
         progressPercent: 78,
-        primaryAction: { label: "Continuar producción", onClick: noop },
+        primaryAction: { label: "Continuar producción", actionId: ActionIds.OE_REGISTRAR_CONTROL },
         href: entityMockHrefs.oe,
       },
     },
@@ -110,7 +111,7 @@ export const supervisorBandejaTasks: BandejaTask[] = [
         unidades: "12.000 u",
         responsable: "Carlos R.",
         progressPercent: 52,
-        primaryAction: { label: "Registrar avance", onClick: noop },
+        primaryAction: { label: "Registrar avance", actionId: ActionIds.OA_REGISTRAR_CONSUMO },
         href: entityMockHrefs.oa,
       },
     },

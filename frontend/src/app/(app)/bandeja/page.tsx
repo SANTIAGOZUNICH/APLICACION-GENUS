@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/layouts/page-header";
-import { BandejaView } from "@/components/patterns/bandeja";
+import { ActionableBandejaView } from "@/components/patterns/actions/actionable-bandeja-view";
+import { MockRoleSwitcher } from "@/components/patterns/actions/mock-role-switcher";
 import { mockUser } from "@/mocks/user.mock";
 import { siteConfig } from "@/config/site";
 
@@ -15,7 +16,8 @@ export default function BandejaPage() {
         title="Mi Trabajo"
         description={`${siteConfig.tagline} · ${mockUser.role}`}
       />
-      <BandejaView />
+      <MockRoleSwitcher />
+      <ActionableBandejaView />
     </>
   );
 }
