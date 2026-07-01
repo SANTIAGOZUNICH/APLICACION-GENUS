@@ -17,7 +17,7 @@ export async function GET() {
       ok: false,
       mode: "real",
       message:
-        "Modo real activo pero faltan credenciales o folder IDs. Configurá .env.local y compartí carpetas con la service account.",
+        "Modo real activo pero falta GOOGLE_DRIVE_GENUS_FOLDER_ID o credenciales. Compartí GENUS con la service account.",
     });
   }
 

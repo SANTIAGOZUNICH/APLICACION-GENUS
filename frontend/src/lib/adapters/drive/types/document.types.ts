@@ -1,24 +1,38 @@
-/** Folder keys mapped in drive-folder-config — not tied to Google Drive in callers. */
-export type OperationsFolderKey =
+/** Logical folder alias — resolved via index or optional env override. */
+export type FolderAlias =
   | "genus"
   | "produccion_2026"
   | "elaboracion"
   | "pcp"
   | "lotes"
   | "productos"
-  | "desarrollo";
+  | "desarrollo"
+  | "calidad";
+
+/** @deprecated Use FolderAlias — kept for gradual migration. */
+export type OperationsFolderKey = FolderAlias;
 
 export type CriticalSheetKey =
   | "asignacion_lotes_2026"
   | "pedidos_2026"
   | "semanas_2026";
 
+export interface FolderIndexEntry {
+  folderId: string;
+  name: string;
+  parentId: string | null;
+  /** Path relative to GENUS root, e.g. PRODUCCION 2026/ELABORACION/ENERO */
+  relativePath: string;
+  depth: number;
+}
+
 export interface DocumentRef {
   fileId: string;
   name: string;
   mimeType: string;
   modifiedTime?: string;
-  folderKey: OperationsFolderKey;
+  folderAlias: FolderAlias;
+  folderPath?: string;
 }
 
 export interface OeIndexEntry {
@@ -26,6 +40,7 @@ export interface OeIndexEntry {
   fileId: string;
   fileName: string;
   modifiedTime?: string;
+  folderPath?: string;
 }
 
 export type RefreshScope =
@@ -39,8 +54,9 @@ export interface DriveHealthResult {
   ok: boolean;
   mode: "demo" | "real";
   credentialsConfigured: boolean;
-  foldersConfigured: boolean;
+  genusFolderConfigured: boolean;
   genusFolderAccessible?: boolean;
+  folderIndexCount?: number;
   cache: { entries: number; ttlSeconds: number };
   message?: string;
 }
@@ -48,9 +64,15 @@ export interface DriveHealthResult {
 export interface RefreshResult {
   refreshedAt: string;
   scope: RefreshScope;
-  folders: Partial<Record<OperationsFolderKey, number>>;
+  foldersScanned: number;
+  folderIndexCount: number;
+  documentsIndexed: number;
   oeIndexCount: number;
+  maxDepthUsed: number;
+  missingExpectedPaths: string[];
+  durationMs: number;
   criticalSheets: Partial<Record<CriticalSheetKey, string>>;
+  documentsByAlias: Partial<Record<FolderAlias, number>>;
 }
 
 export interface PedidoSummary {

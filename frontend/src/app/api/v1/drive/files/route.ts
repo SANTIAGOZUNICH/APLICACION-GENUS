@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { operationsDocumentRepository } from "@/lib/adapters/drive/operations-document-repository";
-import { resolveFolderKey } from "@/lib/adapters/drive/drive-folder-config";
+import {
+  FOLDER_ALIAS_PATHS,
+  resolveFolderAlias,
+} from "@/lib/adapters/drive/drive-folder-config";
 import {
   canUseDriveAdapter,
   shouldUseDemoFallback,
@@ -21,10 +24,13 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const folderKey = resolveFolderKey(folderParam);
-  if (!folderKey) {
+  const folderAlias = resolveFolderAlias(folderParam);
+  if (!folderAlias) {
     return NextResponse.json(
-      { error: `Carpeta desconocida: ${folderParam}`, code: "INVALID_FOLDER" },
+      {
+        error: `Carpeta desconocida: ${folderParam}. Usá alias (elaboracion, pcp, lotes) o path relativo.`,
+        code: "INVALID_FOLDER",
+      },
       { status: 400 }
     );
   }
@@ -40,10 +46,15 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const files = await operationsDocumentRepository.listDocuments(folderKey);
+    const files = await operationsDocumentRepository.listDocuments(folderAlias);
+    const folderId = operationsDocumentRepository.resolveFolderId(folderAlias);
+
     return NextResponse.json({
-      folder: folderKey,
+      folder: folderAlias,
+      folderPath: FOLDER_ALIAS_PATHS[folderAlias],
+      folderId,
       files,
+      count: files.length,
       source: "drive",
     });
   } catch (error) {
