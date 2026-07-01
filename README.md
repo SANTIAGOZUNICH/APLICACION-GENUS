@@ -7,8 +7,23 @@ Sistema digital de operaciones de Laboratorio Genus — fabricante cosmético GM
 La documentación técnica completa del proyecto está en [`/docs`](./docs/README.md).
 
 **Para empezar:**
+
 - Visión general: [`docs/00-vision-general.md`](./docs/00-vision-general.md)
 - Guía para Cursor AI: [`docs/20-recomendaciones-cursor.md`](./docs/20-recomendaciones-cursor.md)
+
+## Frontend — Genus OS
+
+Interfaz web en [`/frontend`](./frontend/README.md).
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+Abrir [http://localhost:3000](http://localhost:3000)
+
+### Deploy en Vercel
+
+Configurar **Root Directory = `frontend`** en el proyecto de Vercel. Ver [`frontend/README.md`](./frontend/README.md#deploy-en-vercel).
 
 ## Estado del proyecto
 
