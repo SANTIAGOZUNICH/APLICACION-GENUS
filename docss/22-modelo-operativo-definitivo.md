@@ -1,8 +1,8 @@
 # 22 — Modelo operativo definitivo de Genus OS (F8.0)
 
-> **Estado:** Constitución funcional — **pendiente de aprobación**.  
+> **Estado:** **APROBADO** — Constitución funcional vigente (F8.0 + enmiendas F8.1).  
 > **Reemplaza:** cualquier interpretación anterior, incluido `21-modelo-operativo-genus.md`.  
-> **Alcance F8.0:** Solo congelar el modelo. **No incluye código, UI, Login, RBAC ni escritura en Sheets.**
+> **Implementación:** F8.1 en curso — motor operativo (WorkItems, Discovery SEMANAS). UI definitiva después.
 
 ---
 
@@ -77,31 +77,33 @@ Este capítulo recorre el ciclo de punta a punta: desde que existe demanda comer
 ## 2.1 Diagrama macro
 
 ```text
-Pedido creado
+Cliente
     ↓
-PEDIDOS 2026
+Desarrollo (cuando aplica — muestras, formulación, ajustes)
     ↓
-Planificación semanal (SEMANAS 2026)
+Pedido aprobado
     ↓
-Elaboración (sector ELABORACION)
+Planificación (SEMANAS 2026 + PEDIDOS 2026)
     ↓
-Orden de Elaboración (archivo en ELABORACION/)
+Elaboración
     ↓
-Lote de granel (ASIGNACION DE LOTES 2026 + registro GMP)
+Orden de Elaboración (ELABORACION/)
     ↓
-Acondicionamiento (ENVASADO MASIVO o PREMIUM)
+Lote (ASIGNACION DE LOTES 2026)
     ↓
-Orden de Acondicionamiento (documento OA)
+Acondicionamiento
     ↓
-Codificado (sector CODIFICADO)
+Orden de Acondicionamiento
     ↓
-Calidad (ASIGNACION DE LOTES 2026)
+Codificado
     ↓
-Liberación (Calidad prepara → DT firma)
+Calidad
     ↓
-Depósito (movimiento / despacho)
+Liberación
     ↓
-Entrega al cliente
+Depósito
+    ↓
+Entrega
 ```
 
 ## 2.2 Paso a paso
@@ -308,7 +310,10 @@ Todo lo visible en **Mi Trabajo**, **Plan Semanal** y la búsqueda operativa de 
 | `line` | string? | Línea física / lógica |
 | `deliveryDate` | date? | Compromiso |
 | `status` | WorkItemStatus | pendiente \| en_curso \| bloqueado \| completo \| revision \| cancelado |
-| `priority` | enum? | alta \| media \| baja — **solo si existe en fuente** |
+| `priority` | enum? | `URGENTE` \| `HOY` \| `ESTA_SEMANA` \| `NORMAL` \| `BAJA` — **solo si existe en fuente** |
+| `dependsOn` | string[]? | IDs de WorkItems que **deben completarse antes** |
+| `blockedBy` | string[]? | IDs de WorkItems que **impiden avanzar** |
+| `unblocks` | string[]? | IDs de WorkItems que **este trabajo habilita al completarse** |
 | `pedidoRef` | string? | |
 | `oeRef` | string? | |
 | `oaRef` | string? | |
@@ -344,15 +349,56 @@ Planilla real
 
 **Prohibido:** `fila de planilla → Card` sin WorkItem intermedio.
 
-## 4.5 Mappers (contrato F8.2+)
+## 4.5 Prioridades operativas
 
-| Archivo | Fuente |
-|---------|--------|
-| `semanas-elaboracion-to-work-items.ts` | SEMANAS · Elaboración |
-| `semanas-acondicionamiento-to-work-items.ts` | SEMANAS · Acondicionamiento (filtro línea) |
-| `semanas-entregas-to-work-items.ts` | SEMANAS · Entregas |
-| `pedidos-to-work-items.ts` | PEDIDOS 2026 |
-| `lotes-to-work-items.ts` | ASIGNACION DE LOTES 2026 |
+Valores canónicos (`WorkItemPriority`):
+
+| Valor | Significado |
+|-------|-------------|
+| `URGENTE` | Atención inmediata; puede interrumpir plan |
+| `HOY` | Debe ejecutarse en el día operativo |
+| `ESTA_SEMANA` | Compromiso dentro de la semana en curso |
+| `NORMAL` | Prioridad estándar del plan |
+| `BAJA` | Puede reprogramarse sin impacto crítico |
+
+**Regla:** si la planilla no trae prioridad explícita, el campo es `null`. No inferir desde fechas ni colores hasta confirmar columnas en Discovery.
+
+## 4.6 Dependencias entre sectores
+
+La cadena operativa principal es:
+
+```text
+Elaboración
+    ↓ habilita
+Envasado (Masivo / Premium)
+    ↓ habilita
+Codificado
+    ↓ habilita
+Calidad
+    ↓ habilita
+Depósito
+```
+
+Estas relaciones se materializan en el WorkItem mediante tres campos:
+
+| Campo | Semántica |
+|-------|-----------|
+| `dependsOn` | WorkItems previos que deben estar completos para **iniciar** este trabajo |
+| `blockedBy` | WorkItems activos que **impiden** avanzar (cuarentena, falta MP, lote no liberado, etc.) |
+| `unblocks` | WorkItems que **este trabajo habilitará** al completarse |
+
+**F8.1:** los mappers desde SEMANAS dejan `dependsOn`, `blockedBy` y `unblocks` en `null` hasta que Discovery confirme vínculos explícitos o F12 implemente postas automáticas. **No inferir** dependencias solo por la cadena sectorial.
+
+## 4.7 Mappers
+
+| Archivo | Fuente | Estado |
+|---------|--------|--------|
+| `semanas-to-work-items.ts` | SEMANAS 2026 (todos los bloques) | **F8.1** |
+| `semanas-elaboracion-to-work-items.ts` | SEMANAS · Elaboración | F8.2+ (split opcional) |
+| `semanas-acondicionamiento-to-work-items.ts` | SEMANAS · Acondicionamiento | F8.2+ |
+| `semanas-entregas-to-work-items.ts` | SEMANAS · Entregas | F8.2+ |
+| `pedidos-to-work-items.ts` | PEDIDOS 2026 | F8.2+ |
+| `lotes-to-work-items.ts` | ASIGNACION DE LOTES 2026 | F8.2+ |
 
 ---
 
@@ -531,6 +577,47 @@ Identificadores canónicos (`SectorId`):
 | **Eventos que genera** | — (consumidor principal) |
 
 **Email futuro:** `direccion@laboratoriogenus.com.ar`
+
+---
+
+# 5A. Producción como orquestador
+
+**Producción deja de ser un sector común.** Es el **orquestador operativo** del laboratorio: coordina el plan, los sectores, las prioridades y las excepciones. No ejecuta elaboración ni envasado; **dirige** quién hace qué y cuándo.
+
+## 5A.1 Capacidades del orquestador
+
+| Capacidad | Descripción |
+|-----------|-------------|
+| **Replanificar** | Modificar SEMANAS 2026 (fechas, volúmenes, asignaciones) |
+| **Mover trabajos** | Reasignar WorkItems entre días, líneas o sectores |
+| **Cambiar prioridades** | URGENTE / HOY / ESTA_SEMANA / NORMAL / BAJA |
+| **Crear OE** | Alta excepcional de Orden de Elaboración |
+| **Crear OA** | Alta excepcional de Orden de Acondicionamiento |
+| **Reasignar líneas** | Masivo ↔ Premium solo con reglas de aislamiento |
+| **Visualizar carga** | Vista transversal de capacidad vs. carga por sector |
+| **Aprobar cambios** | Validar excepciones que afectan compromisos comerciales |
+
+## 5A.2 Modelo `ProductionOverview` (F8.1)
+
+Agregación para la consola de Producción (UI en fase posterior):
+
+| Campo | Contenido |
+|-------|-----------|
+| `capacity` | Capacidad planificada por sector |
+| `load` | Carga actual (WorkItems activos) |
+| `blockers` | Trabajos bloqueados con motivo |
+| `sectors` | Sectores con actividad |
+| `priorities` | Distribución por prioridad |
+| `dependencies` | Grafo `dependsOn` / `blockedBy` / `unblocks` |
+
+**F8.1:** modelo tipado en código; sin pantalla dedicada todavía.
+
+## 5A.3 Relación con otros sectores
+
+- **Lee** todas las fuentes operativas (SEMANAS, PEDIDOS, LOTES, índices OE/OA).
+- **Escribe** SEMANAS y creación excepcional de OE/OA (F11).
+- **No firma** liberaciones legales (rol DT).
+- **Mi Trabajo** de Producción muestra panorama global, no filas de envasado individuales.
 
 ---
 
@@ -817,6 +904,43 @@ Los eventos son hechos auditables que conectan sectores. En fases futuras materi
 
 **Regla:** un evento nunca se inventa en UI. Debe corresponder a un cambio real en fuente oficial o a una acción explícita del usuario con permiso.
 
+## 8.1 Eventos automáticos entre sectores (F12 — solo documentar)
+
+Estos flujos **no se implementan en F8.1**. Definen el contrato de postas automáticas para F12:
+
+```text
+OE cerrada
+    ↓
+crear WorkItem
+Envasado (Acondicionamiento)
+```
+
+```text
+OA completada
+    ↓
+crear WorkItem
+Codificado
+```
+
+```text
+Codificado OK
+    ↓
+crear WorkItem
+Calidad
+```
+
+```text
+Lote liberado
+    ↓
+habilitar despacho (Depósito)
+```
+
+Cada posta debe:
+
+1. Crear WorkItem(s) con `createdFrom` trazable al evento origen.
+2. Poblar `dependsOn` / `unblocks` según §4.6.
+3. Respetar segregación GMP (quien cierra OE no crea OA en nombre de Envasado sin permiso).
+
 ---
 
 # 9. Navegación definitiva
@@ -888,6 +1012,23 @@ pantallas visibles
 
 - **Un email → un sector operativo** (excepción: Producción/Dirección con scope amplio).
 - El sector determina **pantallas**, no solo filtros.
+
+## 10.2.1 Selector temporal `CurrentSector` (F8.1 — pre-login)
+
+Hasta F9, la identidad de sector se simula con configuración en cliente:
+
+| Valor | Sector |
+|-------|--------|
+| `ELABORACION` | Elaboración |
+| `ENVASADO_MASIVO` | Envasado Masivo |
+| `ENVASADO_PREMIUM` | Envasado Premium |
+| `CODIFICADO` | Codificado |
+| `MATERIA_PRIMA` | Materia Prima |
+| `CALIDAD` | Calidad |
+| `PRODUCCION` | Producción (orquestador) |
+| `DIRECCION` | Dirección |
+
+Persistencia: `localStorage` (`genus-current-sector`). **No es UI definitiva** — sustituida por email → sector en F10.
 
 ## 10.3 Matriz email → sector → pantallas
 
@@ -977,22 +1118,24 @@ Este capítulo es **obligatorio** para todo desarrollador y agente de código.
 - **No mezclar** Envasado Masivo y Premium en una vista.
 - **No mostrar** “estás al día” cuando faltan fuentes o mappers.
 
-## 11.3 Implementación (F8.0)
+## 11.3 Implementación (F8.1)
 
-- **No escribir** código F8.1+ hasta aprobación de este documento.
+- **Sí implementar** infraestructura operativa: Discovery SEMANAS, mappers → WorkItem, `/mi-trabajo`, selector temporal de sector, modelo `ProductionOverview`.
 - **No implementar** Login, OAuth, RBAC enforcement, escritura Sheets.
-- **No modificar** UI, componentes ni Workspaces en F8.0.
+- **No eliminar** pantallas E1–E7 ni romper modo Demo.
+- **No optimizar** UI legacy (Workspaces entity-centric); conviven hasta F8.3+.
+- **No volver** al modelo centrado en entidades como home del sistema.
 
 ---
 
 # 12. Roadmap post-aprobación
 
-Una vez **aprobado** este documento como Constitución:
+Constitución **aprobada**. Orden de implementación:
 
 ```text
-F8.1   Discovery completo de SEMANAS 2026
+F8.1   Discovery SEMANAS + WorkItems + /mi-trabajo  ← en curso
            ↓
-F8.2   Mappers → WorkItem (todos los orígenes)
+F8.2   Mappers → WorkItem (PEDIDOS, LOTES, splits SEMANAS)
            ↓
 F8.3   Mi Trabajo (Home por sector)
            ↓
@@ -1030,22 +1173,20 @@ F13    Notificaciones (Slack / in-app)
 
 ---
 
-# Anexo B — Criterios de aprobación de F8.0
+# Anexo B — Criterios de aceptación F8.1
 
-Este documento se aprueba cuando el equipo confirma:
-
-1. La filosofía Persona → Sector → Trabajo → Acción → Documento es correcta.
-2. El viaje del pedido (§2) refleja la operación real del laboratorio.
-3. La tabla de fuentes de verdad (§3) está completa y no tiene ambigüedades críticas.
-4. El modelo WorkItem (§4) es suficiente para diseñar mappers.
-5. Cada sector (§5–§6) tiene misión, dashboard y límites claros.
-6. Acciones (§7) y eventos (§8) respetan segregación GMP.
-7. La navegación (§9) reemplaza Workspaces como centro.
-8. RBAC futuro (§10) es aceptable.
-9. El roadmap (§12) es el orden de implementación acordado.
-
-**Hasta entonces: cero código F8.**
+| Criterio | Referencia |
+|----------|------------|
+| Documento 22 con Desarrollo, Producción orquestador, deps, prioridades, eventos auto | §2, §4.5–§4.6, §5A, §8.1 |
+| `GET /api/v1/discovery/semanas` operativo | E7.2 + F8.1 |
+| Mapper `semanas-to-work-items.ts` → `WorkItem[]` sin Cards | §4.7 |
+| Campos ausentes = `null` (no inventar) | §11.1 |
+| `/mi-trabajo` consume solo WorkItems reales | §6, §9 |
+| Selector temporal `CurrentSector` | §10 (pre-login) |
+| Modelo `ProductionOverview` tipado | §5A.2 |
+| E1–E7, Demo, Drive, Discovery intactos | §11.3 |
+| `npm run lint` y `npm run build` OK | — |
 
 ---
 
-*Constitución operativa de Genus OS — F8.0 — Pendiente de aprobación.*
+*Constitución operativa de Genus OS — F8.0 aprobada — F8.1 motor operativo.*

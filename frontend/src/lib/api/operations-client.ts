@@ -10,6 +10,8 @@ import type {
   ConsultaSearchResponse,
 } from "@/types/consulta/consulta-result";
 import type { DiscoverySummaryResponse } from "@/types/discovery/discovery.types";
+import type { WorkItemsResponse } from "@/types/operational/work-item";
+import type { SectorId } from "@/types/operational/sector";
 import type { OperationsDiagnostics } from "@/types/operations/operations-diagnostics";
 
 /** JSON-safe entity page (Lucide icons are rehydrated on the client). */
@@ -194,6 +196,15 @@ export async function fetchDiscoverySummary(): Promise<DiscoverySummaryResponse>
     cache: "no-store",
   });
   return parseJson<DiscoverySummaryResponse>(response);
+}
+
+export async function fetchWorkItems(sector: SectorId): Promise<WorkItemsResponse> {
+  const params = new URLSearchParams({ sector });
+  const response = await fetch(`/api/v1/work-items?${params.toString()}`, {
+    method: "GET",
+    cache: "no-store",
+  });
+  return parseJson<WorkItemsResponse>(response);
 }
 
 function entityFetchPath(kind: EntityPageModel["kind"], entityId: string) {

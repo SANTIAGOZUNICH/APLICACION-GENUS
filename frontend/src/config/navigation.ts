@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  Briefcase,
   Factory,
   Inbox,
   LayoutDashboard,
@@ -13,6 +14,7 @@ import {
 
 export type WorkspaceId =
   | "bandeja"
+  | "mi-trabajo"
   | "produccion"
   | "calidad"
   | "deposito"
@@ -38,7 +40,7 @@ export interface NavItem {
 export const navigationItems: NavItem[] = [
   {
     id: "bandeja",
-    label: "Mi Trabajo",
+    label: "Bandeja (legacy)",
     href: "/bandeja",
     icon: Inbox,
     enabled: true,
@@ -46,9 +48,17 @@ export const navigationItems: NavItem[] = [
   },
   {
     id: "produccion",
-    label: "Producción",
+    label: "Producción (legacy)",
     href: "/produccion",
     icon: Factory,
+    enabled: true,
+    section: "primary",
+  },
+  {
+    id: "mi-trabajo",
+    label: "Mi Trabajo",
+    href: "/mi-trabajo",
+    icon: Briefcase,
     enabled: true,
     section: "primary",
   },
