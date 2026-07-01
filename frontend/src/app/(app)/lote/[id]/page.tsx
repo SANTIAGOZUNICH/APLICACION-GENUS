@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { EntityPageClient } from "@/components/patterns/actions/entity-page-client";
-import { EntityPageKinds } from "@/types/entity-page";
+import { LotePageLoader } from "@/components/data/lote-page-loader";
 
 interface LotePageProps {
   params: Promise<{ id: string }>;
@@ -13,5 +12,5 @@ export async function generateMetadata({ params }: LotePageProps): Promise<Metad
 
 export default async function LotePage({ params }: LotePageProps) {
   const { id } = await params;
-  return <EntityPageClient kind={EntityPageKinds.LOTE} entityId={id} />;
+  return <LotePageLoader entityId={id} />;
 }
