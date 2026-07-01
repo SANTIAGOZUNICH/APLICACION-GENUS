@@ -15,3 +15,7 @@ cd frontend && npm install && npm run dev
 ```
 
 Abrir [http://localhost:3000](http://localhost:3000)
+
+### Deploy en Vercel
+
+Configurar **Root Directory = `frontend`** en el proyecto de Vercel. Ver [`frontend/README.md`](./frontend/README.md#deploy-en-vercel).
