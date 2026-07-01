@@ -12,10 +12,10 @@ import {
 } from "@/lib/bandeja/prioritize";
 import { useOperationsStore } from "@/lib/operations/operations-store";
 import { RealDataSourceBanner } from "@/components/data/real-data-source-banner";
+import { BandejaPendingBanner } from "@/components/data/integration-pending-banner";
 import { cn } from "@/lib/utils/cn";
 import type { BandejaSectionGroup } from "@/lib/bandeja/group-by-section";
 import type { BandejaTask } from "@/types/bandeja/bandeja-task";
-import type { OperationsDiagnostics } from "@/types/operations/operations-diagnostics";
 import { Target, CheckCircle2, ChevronDown } from "lucide-react";
 import { useState } from "react";
 
@@ -41,27 +41,7 @@ function ActionableBandejaFoco({ task }: { task: BandejaTask }) {
   );
 }
 
-function getEmptyState(
-  section: BandejaSectionGroup,
-  dataMode: "demo" | "real",
-  diagnostics: OperationsDiagnostics | null,
-  totalTaskCount: number
-) {
-  if (
-    dataMode === "real" &&
-    totalTaskCount === 0 &&
-    (diagnostics?.counts?.oe ?? 0) > 0 &&
-    section.tasks.length === 0
-  ) {
-    return {
-      icon: CheckCircle2,
-      title: "Datos reales pendientes de mapeo",
-      description:
-        "Hay OEs indexadas en ELABORACION. La bandeja se construirá con esos datos al hidratar.",
-      tone: "neutral" as const,
-    };
-  }
-
+function getEmptyState(section: BandejaSectionGroup) {
   if (section.id === "finalizados") {
     return {
       icon: CheckCircle2,
@@ -86,21 +66,11 @@ function getEmptyState(
   };
 }
 
-function ActionableBandejaSection({
-  section,
-  dataMode,
-  diagnostics,
-  totalTaskCount,
-}: {
-  section: BandejaSectionGroup;
-  dataMode: "demo" | "real";
-  diagnostics: OperationsDiagnostics | null;
-  totalTaskCount: number;
-}) {
+function ActionableBandejaSection({ section }: { section: BandejaSectionGroup }) {
   const [collapsed, setCollapsed] = useState(section.defaultCollapsed);
   const isCollapsible = !section.alwaysExpanded;
   const isOpen = section.alwaysExpanded || !collapsed;
-  const empty = getEmptyState(section, dataMode, diagnostics, totalTaskCount);
+  const empty = getEmptyState(section);
 
   return (
     <section
@@ -170,10 +140,28 @@ function ActionableBandejaSection({
   );
 }
 
-/** E6 bandeja shell — live OperationsStore + actionable tasks. Does not modify E3. */
+/** E6 bandeja — demo tasks; E7.2 real mode shows honest pending banner only. */
 export function ActionableBandejaView() {
   const { state, dataMode, dataSource, diagnostics, loading, hydrated } =
     useOperationsStore();
+
+  if (dataMode === "real") {
+    return (
+      <div className="flex flex-col gap-6">
+        <RealDataSourceBanner
+          dataMode={dataMode}
+          dataSource={dataSource}
+          diagnostics={diagnostics}
+          loading={loading && !hydrated}
+        />
+        <BandejaPendingBanner
+          dataMode={dataMode}
+          oeCount={diagnostics?.counts?.oe}
+        />
+      </div>
+    );
+  }
+
   const tasks = state.bandejaTasks;
   const focoTask = getFocoTask(tasks);
   const problemTasks = getProblemTasks(tasks);
@@ -198,13 +186,7 @@ export function ActionableBandejaView() {
       <BandejaProblemsBanner problems={problemTasks} />
       <div className="flex flex-col gap-4">
         {sections.map((section) => (
-          <ActionableBandejaSection
-            key={section.id}
-            section={section}
-            dataMode={dataMode}
-            diagnostics={diagnostics}
-            totalTaskCount={tasks.length}
-          />
+          <ActionableBandejaSection key={section.id} section={section} />
         ))}
       </div>
     </div>

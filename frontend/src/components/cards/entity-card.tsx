@@ -46,6 +46,7 @@ export function EntityCard({
   entityId,
   title,
   status,
+  statusLabel,
   identityIcon: IdentityIcon,
   subtitle,
   metadata = [],
@@ -103,7 +104,11 @@ export function EntityCard({
             )}
           </div>
         </div>
-        <StatusBadge status={status} size={variant === "compact" ? "sm" : "md"} />
+        <StatusBadge
+          status={status}
+          label={statusLabel}
+          size={variant === "compact" ? "sm" : "md"}
+        />
       </div>
 
       {/* Metadata row */}

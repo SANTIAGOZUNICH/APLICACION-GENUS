@@ -15,6 +15,8 @@ const MONTH_NAMES = [
   "diciembre",
 ] as const;
 
+const RECENT_DAYS = 21;
+
 function daysSince(isoDate?: string): number | null {
   if (!isoDate) return null;
   const date = new Date(isoDate);
@@ -22,27 +24,22 @@ function daysSince(isoDate?: string): number | null {
   return (Date.now() - date.getTime()) / 86_400_000;
 }
 
-/** Maps ELABORACION index metadata to existing produccion section ids. */
+function folderContainsMonth(folderPath: string, month: string): boolean {
+  return folderPath.toLowerCase().includes(month);
+}
+
+/** E7.2 produccion sections: recientes | julio | junio | meses-anteriores */
 export function resolveProduccionSectionId(entry: OeListItem): string {
-  const folderPath = entry.folderPath?.trim();
-  const path = folderPath?.toLowerCase() ?? "";
   const recentDays = daysSince(entry.modifiedTime);
-
-  if (recentDays !== null && recentDays <= 45) {
-    return "en-curso";
+  if (recentDays !== null && recentDays <= RECENT_DAYS) {
+    return "recientes";
   }
 
-  if (!folderPath) {
-    return "en-curso";
-  }
+  const path = entry.folderPath?.toLowerCase() ?? "";
+  if (path && folderContainsMonth(path, "julio")) return "julio";
+  if (path && folderContainsMonth(path, "junio")) return "junio";
 
-  const monthInPath = MONTH_NAMES.find((month) => path.includes(month));
-  if (!monthInPath) {
-    return "en-curso";
-  }
-
-  const currentMonth = MONTH_NAMES[new Date().getMonth()];
-  return path.includes(currentMonth) ? "en-curso" : "esperando-otros";
+  return "meses-anteriores";
 }
 
 export function sortOesByRecency<T extends { modifiedTime?: string }>(
@@ -54,3 +51,5 @@ export function sortOesByRecency<T extends { modifiedTime?: string }>(
     return rightTime - leftTime;
   });
 }
+
+export { MONTH_NAMES };

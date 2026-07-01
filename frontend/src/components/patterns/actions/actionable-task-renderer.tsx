@@ -85,6 +85,8 @@ function wrapPayload(
   if (!meta) return payload;
 
   switch (payload.entityType) {
+    case BandejaEntityType.OE_INDEX:
+      return payload;
     case BandejaEntityType.OE:
       return {
         ...payload,

@@ -3,6 +3,11 @@ import { PRODUCTION_ORDER_FLOW } from "@/config/entity-pages";
 import { stripSheetExtension } from "@/lib/adapters/drive/oe-document-locator";
 import type { OeIndexEntry, OeSheetFields } from "@/lib/adapters/drive/types/document.types";
 import { rowsToRecords } from "@/lib/adapters/sheets/parse-sheet-rows";
+import {
+  buildOeIndexCardData,
+  formatOeModifiedTime,
+} from "@/lib/mappers/oe-index-display";
+import { parseOeFileNameMetadata } from "@/lib/mappers/oe-file-name";
 import { EntityPageKinds, type EntityPageModel } from "@/types/entity-page";
 import { Status } from "@/types/ui/status";
 import {
@@ -13,6 +18,7 @@ import {
 } from "@/lib/mappers/sheet-field-resolver";
 
 export type { OeSheetFields };
+export { parseOeFileNameMetadata } from "@/lib/mappers/oe-file-name";
 
 export function extractOeFieldsFromSheet(rows: string[][]): OeSheetFields {
   const labelPairs = extractLabelValuePairs(rows);
@@ -87,69 +93,79 @@ function inferStageId(status: Status): string {
   }
 }
 
-function titleFromFileAndFields(
-  indexEntry: OeIndexEntry,
-  fields: OeSheetFields
-): string {
-  if (fields.producto && fields.cliente) {
-    return `${fields.producto} · ${fields.cliente}`;
-  }
-  if (fields.producto) return fields.producto;
-  return stripSheetExtension(indexEntry.fileName);
+function displayField(value?: string): string {
+  return value?.trim() ? value.trim() : "No detectado";
+}
+
+function driveFileUrl(fileId: string): string {
+  return `https://drive.google.com/file/d/${fileId}/view`;
 }
 
 export function buildOeEntityPageFromFields(
   indexEntry: OeIndexEntry,
   fields: OeSheetFields
 ): EntityPageModel {
-  const status = inferOeStatus(fields.estado || "En curso");
-  const entityId = fields.oeId || indexEntry.fileSlug || indexEntry.fileId;
-  const title = titleFromFileAndFields(indexEntry, fields);
+  const parsed = parseOeFileNameMetadata(indexEntry.fileName);
+  const producto = displayField(fields.producto || parsed.producto);
+  const cliente = fields.cliente?.trim()
+    ? fields.cliente.trim()
+    : parsed.cliente ?? "No detectado";
+  const entityId = fields.oeId?.trim() || indexEntry.fileSlug || indexEntry.fileId;
+  const title =
+    producto !== "No detectado" && cliente !== "No detectado"
+      ? `${producto} · ${cliente}`
+      : producto !== "No detectado"
+        ? producto
+        : stripSheetExtension(indexEntry.fileName);
+
+  const estadoSheet = displayField(fields.estado);
+  const status = fields.estado?.trim()
+    ? inferOeStatus(fields.estado)
+    : Status.PENDIENTE;
 
   const keyValueItems = [
-    ...(fields.oeId
-      ? [{ id: "oe-id", label: "OE ID", value: fields.oeId }]
-      : []),
     { id: "archivo", label: "Archivo", value: indexEntry.fileName },
-    ...(fields.producto
-      ? [{ id: "producto", label: "Producto", value: fields.producto }]
-      : []),
-    ...(fields.cliente
-      ? [{ id: "cliente", label: "Cliente", value: fields.cliente }]
-      : []),
-    ...(fields.lote
-      ? [{ id: "lote", label: "Lote granel", value: fields.lote }]
-      : []),
-    ...(fields.estado
-      ? [{ id: "estado", label: "Estado", value: fields.estado }]
-      : []),
-    ...(fields.batch
-      ? [{ id: "batch", label: "Batch", value: fields.batch }]
-      : []),
-    ...(fields.responsable
-      ? [{ id: "responsable", label: "Responsable", value: fields.responsable }]
-      : []),
-    ...(fields.fecha
-      ? [{ id: "fecha", label: "Fecha", value: fields.fecha }]
-      : []),
+    { id: "producto", label: "Producto", value: producto },
+    { id: "cliente", label: "Cliente", value: cliente },
+    {
+      id: "carpeta",
+      label: "Carpeta",
+      value: indexEntry.folderPath?.trim() || "No detectado",
+    },
+    {
+      id: "modificacion",
+      label: "Última modificación",
+      value: formatOeModifiedTime(indexEntry.modifiedTime),
+    },
+    {
+      id: "drive",
+      label: "Origen Drive",
+      value: driveFileUrl(indexEntry.fileId),
+    },
+    { id: "oe-id", label: "OE ID (Sheet)", value: displayField(fields.oeId) },
+    { id: "lote", label: "Lote granel", value: displayField(fields.lote) },
+    { id: "estado-sheet", label: "Estado (Sheet)", value: estadoSheet },
+    { id: "batch", label: "Batch", value: displayField(fields.batch) },
+    { id: "responsable", label: "Responsable", value: displayField(fields.responsable) },
+    { id: "fecha", label: "Fecha", value: displayField(fields.fecha) },
   ];
 
   return {
     kind: EntityPageKinds.OE,
     entityId,
     title,
-    subtitle: fields.cliente
-      ? `Cliente · ${fields.cliente}`
-      : `Elaboración · ${stripSheetExtension(indexEntry.fileName)}`,
+    subtitle: indexEntry.folderPath
+      ? `ELABORACION · ${indexEntry.folderPath}`
+      : "ELABORACION · Google Drive",
     status,
     identityIcon: Factory,
     statusFlow: PRODUCTION_ORDER_FLOW,
-    currentStageId: inferStageId(status),
+    currentStageId: fields.estado?.trim() ? inferStageId(status) : "indexada",
     sections: [
       {
         id: "datos",
         title: "Datos de la orden",
-        description: `Contenido leído desde ${indexEntry.fileName}`,
+        description: `Lectura desde ${indexEntry.fileName}. Campos ausentes se muestran como «No detectado».`,
         content: {
           type: "key-values",
           items: keyValueItems,
@@ -162,9 +178,9 @@ export function buildOeEntityPageFromFields(
         timestamp: new Date().toISOString(),
         user: "Sistema",
         action: "Lectura desde Drive",
-        description: fields.oeId
-          ? `OE ${fields.oeId} resuelta desde el contenido del Sheet.`
-          : `Documento ${indexEntry.fileName} abierto; OE ID no encontrado en el Sheet.`,
+        description: fields.oeId?.trim()
+          ? `Sheet abierto — OE ID ${fields.oeId} detectado.`
+          : `Sheet abierto — OE ID no detectado en el contenido.`,
       },
     ],
     relatedObjects: [],
@@ -188,39 +204,7 @@ export function buildOeListItem(entry: OeIndexEntry) {
   };
 }
 
-/** Parse producto/cliente from real OE file names like "CREMA NIACINAMIDA - ICONO". */
-export function parseOeFileNameMetadata(fileName: string): {
-  producto: string;
-  cliente?: string;
-} {
-  const base = stripSheetExtension(fileName);
-  const parts = base
-    .split(/\s[-–|]\s/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (parts.length >= 2) {
-    return {
-      producto: parts[0],
-      cliente: parts.slice(1).join(" · "),
-    };
-  }
-
-  return { producto: base };
-}
-
-function formatModifiedLabel(modifiedTime?: string): string {
-  if (!modifiedTime) return "Sin fecha de modificación";
-  const date = new Date(modifiedTime);
-  if (Number.isNaN(date.getTime())) return modifiedTime;
-  return date.toLocaleDateString("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
-}
-
-/** Lightweight summary from index metadata — no sheet read, no fictional fields. */
+/** @deprecated E7.2 — use buildOeIndexCardData for index-only views. */
 export function buildOeSummaryFromIndex(entry: OeIndexEntry): {
   lookupKey: string;
   oeId: string;
@@ -235,24 +219,19 @@ export function buildOeSummaryFromIndex(entry: OeIndexEntry): {
   responsable: string;
   progressPercent: number;
 } {
-  const parsed = parseOeFileNameMetadata(entry.fileName);
-  const productName = parsed.cliente
-    ? `${parsed.producto} · ${parsed.cliente}`
-    : parsed.producto;
-  const status: Status = Status.EN_CURSO;
-
+  const card = buildOeIndexCardData(entry);
   return {
-    lookupKey: entry.fileSlug || entry.fileId,
-    oeId: entry.fileSlug || entry.fileId,
-    fileName: entry.fileName,
-    productName,
-    cliente: parsed.cliente,
-    folderPath: entry.folderPath,
-    modifiedTime: entry.modifiedTime,
-    status,
-    loteGranel: "Sin dato en índice",
-    batchSize: formatModifiedLabel(entry.modifiedTime),
-    responsable: entry.folderPath?.split("/").pop() || "Sin carpeta",
-    progressPercent: 50,
+    lookupKey: card.lookupKey,
+    oeId: card.oeId,
+    fileName: card.fileName,
+    productName: card.title,
+    cliente: card.cliente,
+    folderPath: card.folderPath,
+    modifiedTime: card.modifiedTime,
+    status: card.status,
+    loteGranel: "No detectado",
+    batchSize: "No detectado",
+    responsable: "No detectado",
+    progressPercent: 0,
   };
 }

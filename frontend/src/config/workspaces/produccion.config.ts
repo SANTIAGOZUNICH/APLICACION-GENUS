@@ -50,3 +50,37 @@ export const produccionWorkspace: WorkspaceDefinition = {
     },
   ],
 };
+
+/** E7.2 real data — OEs from ELABORACION index, grouped by recency/month. */
+export const produccionRealWorkspace: WorkspaceDefinition = {
+  id: "produccion",
+  title: "Producción",
+  mission: "Órdenes de elaboración indexadas en Google Drive.",
+  focoSectionId: "__none__",
+  sections: [
+    {
+      id: "recientes",
+      label: "Recientes",
+      description: "OEs modificadas en las últimas semanas",
+      defaultCollapsed: false,
+    },
+    {
+      id: "julio",
+      label: "Julio",
+      description: "Órdenes en carpeta Julio",
+      defaultCollapsed: false,
+    },
+    {
+      id: "junio",
+      label: "Junio",
+      description: "Órdenes en carpeta Junio",
+      defaultCollapsed: false,
+    },
+    {
+      id: "meses-anteriores",
+      label: "Meses anteriores",
+      description: "OEs de meses previos en ELABORACION",
+      defaultCollapsed: true,
+    },
+  ],
+};

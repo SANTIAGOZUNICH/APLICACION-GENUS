@@ -54,13 +54,8 @@ export function RealDataSourceBanner({
   }
 
   const counts = diagnostics?.counts;
-  const realSources = diagnostics?.realSources;
-  const hasRealData = Boolean(
-    (counts?.oe ?? 0) > 0 ||
-      (counts?.lotes ?? 0) > 0 ||
-      (counts?.pedidos ?? 0) > 0 ||
-      (realSources?.elaboracionIndexCount ?? 0) > 0
-  );
+  const oeCount = counts?.oe ?? 0;
+  const hasRealData = oeCount > 0 || (diagnostics?.realSources?.elaboracionIndexCount ?? 0) > 0;
 
   const driveLike =
     dataSource === "drive" ||
@@ -68,38 +63,13 @@ export function RealDataSourceBanner({
     diagnostics?.source === "drive-partial";
 
   if (driveLike && hasRealData) {
-    const isPartial =
-      diagnostics?.source === "drive-partial" ||
-      (diagnostics?.mapperWarnings?.length ?? 0) > 0;
-
     return (
-      <Alert variant={isPartial ? "attention" : "ok"} title={isPartial ? "Datos reales parciales" : "Datos reales — Google Drive / Sheets"}>
+      <Alert variant="ok" title="Datos reales — ELABORACION (E7.2)">
         {diagnostics?.message ??
-          (isPartial
-            ? "Algunas fuentes reales están conectadas; otras requieren mapeo adicional."
-            : "Información desde índices cacheados de Drive.")}
-        {counts && (
-          <p className="mt-2 text-xs">
-            Disponibles: {counts.oe} OE · {counts.lotes} lotes · {counts.pedidos}{" "}
-            pedidos · {counts.oa} OA · {counts.liberaciones} liberaciones
-          </p>
-        )}
-        {realSources && (
-          <p className="mt-1 text-xs">
-            Índice ELABORACION: {realSources.elaboracionIndexCount} · Lotes{" "}
-            {realSources.lotesRowsMapped}/{realSources.lotesRowsRead} · Pedidos{" "}
-            {realSources.pedidosRowsMapped}/{realSources.pedidosRowsRead}
-            {realSources.pedidosReaderUsed
-              ? ` · Lector pedidos: ${realSources.pedidosReaderUsed}`
-              : ""}
-            {realSources.pedidosFileMimeType
-              ? ` · MIME: ${realSources.pedidosFileMimeType}`
-              : ""}
-          </p>
-        )}
-        {realSources?.pedidosWarning && (
-          <p className="mt-2 text-xs">{realSources.pedidosWarning}</p>
-        )}
+          "OEs indexadas desde Google Drive. Consulta, Producción y fichas /oe/[id] conectadas."}
+        <p className="mt-2 text-xs">
+          {oeCount} OE(s) indexada(s) en ELABORACION
+        </p>
       </Alert>
     );
   }

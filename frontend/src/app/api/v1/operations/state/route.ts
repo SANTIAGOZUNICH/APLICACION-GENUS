@@ -68,11 +68,6 @@ export async function GET() {
   try {
     const hydration = await driveAdapter.buildOperationsHydration!();
     const responseSource = hydration.source ?? "drive";
-    const hasPartialWarnings = hydration.mapperWarnings.length > 0;
-    const message =
-      responseSource === "drive-partial" || hasPartialWarnings
-        ? `Datos reales parciales — ${hydration.counts.oe} OE indexadas, ${hydration.counts.lotes} lotes, ${hydration.counts.pedidos} pedidos mapeados.`
-        : "Datos operativos construidos desde índices Drive/Sheets.";
 
     return NextResponse.json({
       bandejaTasks: hydration.bandejaTasks,
@@ -86,8 +81,7 @@ export async function GET() {
         counts: hydration.counts,
         fallbackUsed: createEmptyFallbackUsed(),
         realSources: hydration.realSources,
-        mapperWarnings: hydration.mapperWarnings,
-        message,
+        message: `E7.2 — ${hydration.counts.oe} OEs indexadas en ELABORACION.`,
       },
     });
   } catch (error) {

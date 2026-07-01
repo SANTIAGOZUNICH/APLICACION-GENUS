@@ -27,6 +27,8 @@ const statusBadgeVariants = cva(
 export interface StatusBadgeProps extends VariantProps<typeof statusBadgeVariants> {
   /** Canonical status — resolved via status-map.ts */
   status: Status;
+  /** Optional override for index/partial states (e.g. "Indexada") */
+  label?: string;
   /** Hide icon (e.g. dense tables) */
   hideIcon?: boolean;
   className?: string;
@@ -34,23 +36,24 @@ export interface StatusBadgeProps extends VariantProps<typeof statusBadgeVariant
 
 export function StatusBadge({
   status,
+  label,
   size,
   hideIcon = false,
   className,
 }: StatusBadgeProps) {
   const { bg, text } = getStatusBadgeClasses(status);
-  const label = getStatusLabel(status);
+  const displayLabel = label ?? getStatusLabel(status);
 
   return (
     <span
       className={cn(statusBadgeVariants({ size, className }))}
       style={{ backgroundColor: bg, color: text }}
       role="status"
-      aria-label={label}
+      aria-label={displayLabel}
     >
       {!hideIcon &&
         createElement(getStatusIcon(status), { "aria-hidden": true })}
-      {label}
+      {displayLabel}
     </span>
   );
 }

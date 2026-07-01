@@ -15,7 +15,6 @@ import { runActionPipeline } from "@/lib/actions/run-action-pipeline";
 import { rehydrateEntityPage } from "@/lib/adapters/rehydrate-entity-page";
 import {
   fetchEntityByKind,
-  fetchLoteList,
   fetchOperationsState,
   OperationsApiError,
   type ApiDataSource,
@@ -177,25 +176,10 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
     setError(null);
 
     try {
-      const [loteResponse, operationsResponse] = await Promise.all([
-        fetchLoteList(),
-        fetchOperationsState(),
-      ]);
+      const operationsResponse = await fetchOperationsState();
 
       const serverMode = operationsResponse.diagnostics?.dataMode ?? clientDataMode;
       setDataMode(serverMode);
-
-      const entityPages: OperationsState["entityPages"] = {};
-      const sources: Record<string, ApiDataSource> = {};
-
-      if (serverMode === "real") {
-        for (const bundle of loteResponse.lotes) {
-          const model = rehydrateEntityPage(bundle.entityPage);
-          const key = entityPageKey(model.kind, model.entityId);
-          entityPages[key] = model;
-          sources[key] = bundle.source;
-        }
-      }
 
       dispatch({
         type: "HYDRATE_OPERATIONS",
@@ -203,16 +187,14 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
         workspaceTasks: operationsResponse.workspaceTasks,
         dayPulse: operationsResponse.dayPulse,
         workspacePanorama: operationsResponse.workspacePanorama,
-        entityPages: serverMode === "real" ? entityPages : undefined,
       });
 
-      setEntitySources(sources);
+      setEntitySources({});
       setDiagnostics(operationsResponse.diagnostics ?? null);
 
       const isDrive =
         operationsResponse.source === "drive" ||
-        operationsResponse.source === "drive-partial" ||
-        loteResponse.source === "drive";
+        operationsResponse.source === "drive-partial";
       setDataSource(isDrive ? "drive" : "demo");
       setHydrated(true);
     } catch (err) {

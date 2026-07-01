@@ -33,6 +33,8 @@ export interface EntityCardProps {
   title: string;
   /** Canonical status — never a free-form string */
   status: Status;
+  /** Optional label override (e.g. "Indexada" for Drive index cards) */
+  statusLabel?: string;
   /** Optional identity icon (domain-specific) */
   identityIcon?: LucideIcon;
   /** Secondary line under title */

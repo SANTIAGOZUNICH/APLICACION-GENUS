@@ -1,6 +1,7 @@
 import type { LiberacionCardProps } from "@/components/cards/liberacion-card";
 import type { LoteCardProps } from "@/components/cards/lote-card";
 import type { OACardProps } from "@/components/cards/oa-card";
+import type { OeIndexCardProps } from "@/components/cards/oe-index-card";
 import type { OECardProps } from "@/components/cards/oe-card";
 import type { PedidoCardProps } from "@/components/cards/pedido-card";
 import type { TaskCardProps } from "@/types/ui/task-card";
@@ -8,6 +9,7 @@ import type { BandejaSectionId } from "@/types/bandeja/bandeja-section";
 
 export const BandejaEntityType = {
   OE: "oe",
+  OE_INDEX: "oe_index",
   OA: "oa",
   LOTE: "lote",
   LIBERACION: "liberacion",
@@ -20,6 +22,7 @@ export type BandejaEntityType =
 
 export type BandejaTaskPayload =
   | { entityType: typeof BandejaEntityType.OE; data: OECardProps }
+  | { entityType: typeof BandejaEntityType.OE_INDEX; data: OeIndexCardProps }
   | { entityType: typeof BandejaEntityType.OA; data: OACardProps }
   | { entityType: typeof BandejaEntityType.LOTE; data: LoteCardProps }
   | {

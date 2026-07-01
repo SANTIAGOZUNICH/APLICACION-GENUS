@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { mockAdapter } from "@/lib/adapters/mock-adapter";
-import {
-  consultaResolver,
-  matchesConsultaQuery,
-} from "@/lib/adapters/drive/resolvers/consulta.resolver";
+import { consultaResolver } from "@/lib/adapters/drive/resolvers/consulta.resolver";
+import { matchesConsultaQuery } from "@/lib/adapters/drive/resolvers/consulta-search";
 import {
   canUseDriveAdapter,
   shouldUseDemoFallback,
@@ -19,20 +17,6 @@ import type {
   ConsultaResultItem,
   ConsultaSearchResponse,
 } from "@/types/consulta/consulta-result";
-
-function parseScopes(value: string | null): ConsultaEntityKind[] {
-  if (!value) return ["oe", "lote", "pedido"];
-
-  const allowed = new Set<ConsultaEntityKind>(["oe", "lote", "pedido"]);
-  const scopes = value
-    .split(",")
-    .map((item) => item.trim().toLowerCase())
-    .filter((item): item is ConsultaEntityKind =>
-      allowed.has(item as ConsultaEntityKind)
-    );
-
-  return scopes.length > 0 ? scopes : ["oe", "lote", "pedido"];
-}
 
 function searchDemoEntities(query: string): ConsultaSearchResponse {
   const state = mockAdapter.getInitialState();
@@ -91,50 +75,6 @@ function searchDemoEntities(query: string): ConsultaSearchResponse {
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const query = url.searchParams.get("q")?.trim() ?? "";
-  const scopes = parseScopes(url.searchParams.get("types"));
-
-  if (!query) {
-    const empty: ConsultaSearchResponse = {
-      query: "",
-      results: [],
-      counts: { oe: 0, lote: 0, pedido: 0 },
-      source: getServerDataMode() === "real" ? "drive" : "demo",
-      indexSummary: { oes: 0, lotes: 0, pedidos: 0 },
-    };
-
-    if (getServerDataMode() !== "real" || !canUseDriveAdapter()) {
-      if (getServerDataMode() === "real") {
-        return NextResponse.json({
-          ...empty,
-          source: "demo",
-          indexSummary: { oes: 0, lotes: 0, pedidos: 0 },
-          message:
-            "Modo real sin Drive configurado — sin resultados ficticios. Configurá credenciales e indexá.",
-        });
-      }
-
-      const demo = searchDemoEntities("");
-      return NextResponse.json({
-        ...empty,
-        source: "demo",
-        indexSummary: demo.indexSummary,
-        message: "Ingresá un término para buscar en demo.",
-      });
-    }
-
-    try {
-      const index = await consultaResolver.search("", scopes);
-      return NextResponse.json({
-        ...index,
-        message: "Ingresá un término para buscar OEs, lotes o pedidos indexados.",
-      });
-    } catch {
-      return NextResponse.json({
-        ...empty,
-        message: "Ingresá un término para buscar.",
-      });
-    }
-  }
 
   if (getServerDataMode() !== "real" || !canUseDriveAdapter()) {
     if (getServerDataMode() === "real") {
@@ -149,13 +89,25 @@ export async function GET(request: Request) {
       });
     }
 
+    if (!query) {
+      const demo = searchDemoEntities("");
+      return NextResponse.json({
+        query: "",
+        results: [],
+        counts: { oe: 0, lote: 0, pedido: 0 },
+        source: "demo",
+        indexSummary: demo.indexSummary,
+        message: "Ingresá un término para buscar en demo.",
+      });
+    }
+
     return NextResponse.json(searchDemoEntities(query));
   }
 
   try {
-    const response = await consultaResolver.search(query, scopes);
+    const response = await consultaResolver.search(query);
 
-    if (response.results.length === 0 && shouldUseDemoFallback()) {
+    if (response.results.length === 0 && query && shouldUseDemoFallback()) {
       const demo = searchDemoEntities(query);
       if (demo.results.length > 0) {
         return NextResponse.json({
@@ -167,13 +119,7 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({
-      ...response,
-      message:
-        response.results.length > 0
-          ? `${response.results.length} resultado(s) desde índice Drive (sin lectura masiva de Sheets).`
-          : undefined,
-    });
+    return NextResponse.json(response);
   } catch (error) {
     console.error("[Genus] GET /api/v1/consulta failed:", error);
 
