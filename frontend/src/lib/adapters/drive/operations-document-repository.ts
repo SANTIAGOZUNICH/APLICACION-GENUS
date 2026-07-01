@@ -3,10 +3,20 @@ import "server-only";
 import {
   CRITICAL_SHEET_FOLDER,
   CRITICAL_SHEET_NAMES,
+  EXPECTED_FOLDER_PATHS,
+  FOLDER_ALIAS_PATHS,
   getCriticalSheetFastPathId,
-  getFolderId,
-  hasAnyFolderConfigured,
+  getFolderOverrideId,
+  getGenusFolderId,
+  getMaxIndexDepth,
+  type CriticalSheetKey,
 } from "@/lib/adapters/drive/drive-folder-config";
+import {
+  findFolderByRelativePath,
+  findFoldersUnderPath,
+  getMaxDepthInIndex,
+  getMissingExpectedPaths,
+} from "@/lib/adapters/drive/folder-index-utils";
 import { serverCache } from "@/lib/adapters/drive/cache/server-cache";
 import { googleDriveGateway } from "@/lib/adapters/drive/google-drive-gateway";
 import {
@@ -14,11 +24,11 @@ import {
   parseOeIdFromFileName,
 } from "@/lib/adapters/drive/parse-oe-id";
 import type {
-  CriticalSheetKey,
   DocumentRef,
   DriveHealthResult,
+  FolderAlias,
+  FolderIndexEntry,
   OeIndexEntry,
-  OperationsFolderKey,
   RefreshResult,
   RefreshScope,
 } from "@/lib/adapters/drive/types/document.types";
@@ -26,16 +36,26 @@ import { hasGoogleCredentials } from "@/lib/adapters/google/google-auth";
 import { getServerDataMode } from "@/lib/config/data-mode";
 
 const CACHE_PREFIX = {
-  folder: "docrepo:folder:",
+  folderIndex: "docrepo:folder-index",
+  documents: "docrepo:documents:",
   critical: "docrepo:critical:",
   oeIndex: "docrepo:oe-index",
   oeById: "docrepo:oe:",
+  resolvedFolder: "docrepo:resolved-folder:",
 } as const;
+
+/** Aliases indexed for documents during refresh (E7.1 slice + elaboracion recursive). */
+const DOCUMENT_INDEX_ALIASES: FolderAlias[] = [
+  "elaboracion",
+  "pcp",
+  "lotes",
+];
+
+const RECURSIVE_DOCUMENT_ALIASES = new Set<FolderAlias>(["elaboracion"]);
 
 /**
  * OperationsDocumentRepository — document index abstraction.
- * Internally uses Google Drive today; swappable for API/S3/DB later.
- * Drive is an index/repository, NOT a database — metadata only, no mass reads.
+ * Discovers folder structure from GENUS root; Drive is index only, not a database.
  */
 export class OperationsDocumentRepository {
   private indexReady = false;
@@ -44,15 +64,18 @@ export class OperationsDocumentRepository {
   async health(): Promise<DriveHealthResult> {
     const mode = getServerDataMode();
     const credentialsConfigured = hasGoogleCredentials();
-    const foldersConfigured = hasAnyFolderConfigured();
+    const genusFolderConfigured = Boolean(getGenusFolderId());
     const cache = serverCache.stats();
+    const folderIndexCount =
+      serverCache.get<FolderIndexEntry[]>(CACHE_PREFIX.folderIndex)?.length ?? 0;
 
     if (mode !== "real") {
       return {
         ok: true,
         mode: "demo",
         credentialsConfigured,
-        foldersConfigured,
+        genusFolderConfigured,
+        folderIndexCount,
         cache,
         message: "Modo demo activo.",
       };
@@ -63,41 +86,41 @@ export class OperationsDocumentRepository {
         ok: false,
         mode: "real",
         credentialsConfigured: false,
-        foldersConfigured,
+        genusFolderConfigured,
+        folderIndexCount,
         cache,
         message: "Credenciales Google no configuradas.",
       };
     }
 
-    if (!foldersConfigured) {
+    if (!genusFolderConfigured) {
       return {
         ok: false,
         mode: "real",
         credentialsConfigured: true,
-        foldersConfigured: false,
+        genusFolderConfigured: false,
+        folderIndexCount,
         cache,
         message:
-          "Folder IDs no configurados. Configurá GOOGLE_DRIVE_* o IDs fijos de Sheets críticos.",
+          "Configurá GOOGLE_DRIVE_GENUS_FOLDER_ID (única variable obligatoria).",
       };
     }
 
-    const genusFolderId = getFolderId("genus");
-    let genusFolderAccessible: boolean | undefined;
-    if (genusFolderId) {
-      genusFolderAccessible =
-        await googleDriveGateway.canAccessFolder(genusFolderId);
-    }
+    const genusFolderId = getGenusFolderId()!;
+    const genusFolderAccessible =
+      await googleDriveGateway.canAccessFolder(genusFolderId);
 
     return {
-      ok: Boolean(genusFolderAccessible ?? foldersConfigured),
+      ok: genusFolderAccessible,
       mode: "real",
       credentialsConfigured: true,
-      foldersConfigured: true,
+      genusFolderConfigured: true,
       genusFolderAccessible,
+      folderIndexCount,
       cache,
       message: genusFolderAccessible
-        ? "Drive accesible."
-        : "Drive configurado; verificar permisos de carpeta GENUS.",
+        ? "GENUS accesible. Ejecutá /api/v1/drive/refresh para indexar."
+        : "GENUS configurado pero inaccesible — verificar permisos de la service account.",
     };
   }
 
@@ -113,11 +136,13 @@ export class OperationsDocumentRepository {
     return this.refreshInFlight;
   }
 
-  async listDocuments(folderKey: OperationsFolderKey): Promise<DocumentRef[]> {
+  getFolderIndex(): FolderIndexEntry[] {
+    return serverCache.get<FolderIndexEntry[]>(CACHE_PREFIX.folderIndex) ?? [];
+  }
+
+  async listDocuments(alias: FolderAlias): Promise<DocumentRef[]> {
     await this.ensureIndex();
-    return (
-      serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.folder}${folderKey}`) ?? []
-    );
+    return serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}${alias}`) ?? [];
   }
 
   async getCriticalSheetRef(sheetKey: CriticalSheetKey): Promise<DocumentRef> {
@@ -132,7 +157,7 @@ export class OperationsDocumentRepository {
       if (metadata) {
         const ref: DocumentRef = {
           ...metadata,
-          folderKey: CRITICAL_SHEET_FOLDER[sheetKey],
+          folderAlias: CRITICAL_SHEET_FOLDER[sheetKey],
         };
         serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, ref);
         return ref;
@@ -165,14 +190,43 @@ export class OperationsDocumentRepository {
     return entry;
   }
 
+  resolveFolderId(alias: FolderAlias): string | null {
+    const cached = serverCache.get<string>(`${CACHE_PREFIX.resolvedFolder}${alias}`);
+    if (cached) return cached;
+
+    const override = getFolderOverrideId(alias);
+    if (override && alias !== "genus") {
+      return override;
+    }
+
+    if (alias === "genus") {
+      return getGenusFolderId();
+    }
+
+    const folderIndex = this.getFolderIndex();
+    const targetPath = FOLDER_ALIAS_PATHS[alias];
+    const entry = findFolderByRelativePath(folderIndex, targetPath);
+    return entry?.folderId ?? null;
+  }
+
   private async ensureIndex(): Promise<void> {
-    if (this.indexReady && serverCache.get<OeIndexEntry[]>(CACHE_PREFIX.oeIndex)) {
+    if (this.indexReady && this.getFolderIndex().length > 0) {
+      return;
+    }
+
+    const hasDocuments = DOCUMENT_INDEX_ALIASES.some(
+      (alias) =>
+        (serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}${alias}`)?.length ??
+          0) > 0
+    );
+
+    if (hasDocuments && this.getFolderIndex().length > 0) {
+      this.indexReady = true;
       return;
     }
 
     if (getCriticalSheetFastPathId("asignacion_lotes_2026") &&
-        getCriticalSheetFastPathId("pedidos_2026") &&
-        serverCache.get<OeIndexEntry[]>(CACHE_PREFIX.oeIndex)) {
+        getCriticalSheetFastPathId("pedidos_2026")) {
       this.indexReady = true;
       return;
     }
@@ -181,64 +235,160 @@ export class OperationsDocumentRepository {
   }
 
   private async performRefresh(scope: RefreshScope): Promise<RefreshResult> {
-    const folders: Partial<Record<OperationsFolderKey, number>> = {};
+    const started = Date.now();
+    const genusFolderId = getGenusFolderId();
+
+    if (!genusFolderId) {
+      throw new Error("GOOGLE_DRIVE_GENUS_FOLDER_ID no configurado.");
+    }
+
+    let foldersScanned = 0;
+    let maxDepthUsed = 0;
+    let folderIndex: FolderIndexEntry[] = [];
+    const documentsByAlias: Partial<Record<FolderAlias, number>> = {};
     const criticalSheets: Partial<Record<CriticalSheetKey, string>> = {};
+    let documentsIndexed = 0;
+
+    const shouldRebuildFolders =
+      scope === "all" ||
+      scope === "elaboracion" ||
+      scope === "pcp" ||
+      scope === "lotes";
+
+    if (shouldRebuildFolders) {
+      serverCache.delete(CACHE_PREFIX.folderIndex);
+      serverCache.deleteByPrefix(CACHE_PREFIX.resolvedFolder);
+
+      const crawl = await googleDriveGateway.buildFolderIndex(
+        genusFolderId,
+        getMaxIndexDepth()
+      );
+      folderIndex = crawl.entries;
+      foldersScanned = crawl.foldersScanned;
+      maxDepthUsed = crawl.maxDepthUsed;
+      serverCache.set(CACHE_PREFIX.folderIndex, folderIndex);
+
+      for (const alias of Object.keys(FOLDER_ALIAS_PATHS) as FolderAlias[]) {
+        const folderId = this.resolveFolderId(alias);
+        if (folderId) {
+          serverCache.set(`${CACHE_PREFIX.resolvedFolder}${alias}`, folderId);
+        }
+      }
+    } else {
+      folderIndex = this.getFolderIndex();
+      foldersScanned = folderIndex.length;
+      maxDepthUsed = getMaxDepthInIndex(folderIndex);
+    }
+
+    const aliasesToIndex = this.resolveAliasesForScope(scope);
 
     if (scope === "all" || scope === "elaboracion") {
       serverCache.deleteByPrefix(CACHE_PREFIX.oeById);
       serverCache.delete(CACHE_PREFIX.oeIndex);
-      folders.elaboracion = await this.refreshFolderIndex("elaboracion");
+    }
+
+    for (const alias of aliasesToIndex) {
+      serverCache.delete(`${CACHE_PREFIX.documents}${alias}`);
+      const docs = await this.indexDocumentsForAlias(alias, folderIndex);
+      serverCache.set(`${CACHE_PREFIX.documents}${alias}`, docs);
+      documentsByAlias[alias] = docs.length;
+      documentsIndexed += docs.length;
+    }
+
+    if (scope === "all" || scope === "critical_sheets" || scope === "pcp" || scope === "lotes") {
+      await this.indexCriticalSheet("pedidos_2026", criticalSheets, folderIndex);
+      await this.indexCriticalSheet("semanas_2026", criticalSheets, folderIndex);
+      await this.indexCriticalSheet("asignacion_lotes_2026", criticalSheets, folderIndex);
+    }
+
+    if (scope === "all" || scope === "elaboracion") {
       await this.rebuildOeIndex();
     }
 
-    if (scope === "all" || scope === "pcp" || scope === "critical_sheets") {
-      folders.pcp = await this.refreshFolderIndex("pcp");
-      await this.indexCriticalSheet("pedidos_2026", criticalSheets);
-      await this.indexCriticalSheet("semanas_2026", criticalSheets);
-    }
-
-    if (scope === "all" || scope === "lotes" || scope === "critical_sheets") {
-      folders.lotes = await this.refreshFolderIndex("lotes");
-      await this.indexCriticalSheet("asignacion_lotes_2026", criticalSheets);
-    }
-
-    if (scope === "all") {
-      for (const key of ["genus", "produccion_2026", "productos", "desarrollo"] as const) {
-        const count = await this.refreshFolderIndex(key);
-        if (count > 0) folders[key] = count;
-      }
-    }
-
     this.indexReady = true;
+    const missingExpectedPaths = getMissingExpectedPaths(
+      folderIndex,
+      EXPECTED_FOLDER_PATHS
+    );
 
     return {
       refreshedAt: new Date().toISOString(),
       scope,
-      folders,
-      oeIndexCount: serverCache.get<OeIndexEntry[]>(CACHE_PREFIX.oeIndex)?.length ?? 0,
+      foldersScanned,
+      folderIndexCount: folderIndex.length,
+      documentsIndexed,
+      oeIndexCount:
+        serverCache.get<OeIndexEntry[]>(CACHE_PREFIX.oeIndex)?.length ?? 0,
+      maxDepthUsed,
+      missingExpectedPaths,
+      durationMs: Date.now() - started,
       criticalSheets,
+      documentsByAlias,
     };
   }
 
-  private async refreshFolderIndex(
-    folderKey: OperationsFolderKey
-  ): Promise<number> {
-    const folderId = getFolderId(folderKey);
-    if (!folderId) return 0;
+  private resolveAliasesForScope(scope: RefreshScope): FolderAlias[] {
+    switch (scope) {
+      case "elaboracion":
+        return ["elaboracion"];
+      case "pcp":
+        return ["pcp"];
+      case "lotes":
+        return ["lotes"];
+      case "critical_sheets":
+        return ["pcp", "lotes"];
+      default:
+        return DOCUMENT_INDEX_ALIASES;
+    }
+  }
 
-    serverCache.delete(`${CACHE_PREFIX.folder}${folderKey}`);
+  private async indexDocumentsForAlias(
+    alias: FolderAlias,
+    folderIndex: FolderIndexEntry[]
+  ): Promise<DocumentRef[]> {
+    const folderId = this.resolveFolderId(alias);
+    if (!folderId) return [];
 
-    const files = await googleDriveGateway.listSpreadsheetsInFolder(
-      folderId,
-      folderKey
-    );
-    serverCache.set(`${CACHE_PREFIX.folder}${folderKey}`, files);
-    return files.length;
+    const rootPath = FOLDER_ALIAS_PATHS[alias];
+    const recursive = RECURSIVE_DOCUMENT_ALIASES.has(alias);
+
+    if (!recursive) {
+      return googleDriveGateway.listSpreadsheetsInFolder(folderId, {
+        alias,
+        folderPath: rootPath,
+      });
+    }
+
+    const foldersUnder = findFoldersUnderPath(folderIndex, rootPath);
+    const folderIds = new Set<string>([folderId, ...foldersUnder.map((f) => f.folderId)]);
+
+    const documents: DocumentRef[] = [];
+    const seen = new Set<string>();
+
+    for (const id of folderIds) {
+      const folderEntry =
+        foldersUnder.find((entry) => entry.folderId === id) ??
+        findFolderByRelativePath(folderIndex, rootPath);
+
+      const batch = await googleDriveGateway.listSpreadsheetsInFolder(id, {
+        alias,
+        folderPath: folderEntry?.relativePath ?? rootPath,
+      });
+
+      for (const doc of batch) {
+        if (seen.has(doc.fileId)) continue;
+        seen.add(doc.fileId);
+        documents.push(doc);
+      }
+    }
+
+    return documents;
   }
 
   private async indexCriticalSheet(
     sheetKey: CriticalSheetKey,
-    result: Partial<Record<CriticalSheetKey, string>>
+    result: Partial<Record<CriticalSheetKey, string>>,
+    folderIndex: FolderIndexEntry[]
   ): Promise<void> {
     serverCache.delete(`${CACHE_PREFIX.critical}${sheetKey}`);
 
@@ -248,7 +398,7 @@ export class OperationsDocumentRepository {
       if (metadata) {
         const ref: DocumentRef = {
           ...metadata,
-          folderKey: CRITICAL_SHEET_FOLDER[sheetKey],
+          folderAlias: CRITICAL_SHEET_FOLDER[sheetKey],
         };
         serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, ref);
         result[sheetKey] = ref.fileId;
@@ -256,19 +406,13 @@ export class OperationsDocumentRepository {
       }
     }
 
-    const folderKey = CRITICAL_SHEET_FOLDER[sheetKey];
-    const folderFiles =
-      serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.folder}${folderKey}`) ??
-      (await (async () => {
-        await this.refreshFolderIndex(folderKey);
-        return (
-          serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.folder}${folderKey}`) ??
-          []
-        );
-      })());
+    const alias = CRITICAL_SHEET_FOLDER[sheetKey];
+    const docs =
+      serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}${alias}`) ??
+      (await this.indexDocumentsForAlias(alias, folderIndex));
 
     const targetName = CRITICAL_SHEET_NAMES[sheetKey].toLowerCase();
-    const match = folderFiles.find(
+    const match = docs.find(
       (file) => file.name.trim().toLowerCase() === targetName
     );
 
@@ -280,7 +424,8 @@ export class OperationsDocumentRepository {
 
   private async rebuildOeIndex(): Promise<void> {
     const files =
-      serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.folder}elaboracion`) ?? [];
+      serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}elaboracion`) ??
+      [];
 
     const index: OeIndexEntry[] = [];
     const seen = new Set<string>();
@@ -295,6 +440,7 @@ export class OperationsDocumentRepository {
         fileId: file.fileId,
         fileName: file.name,
         modifiedTime: file.modifiedTime,
+        folderPath: file.folderPath,
       };
       index.push(entry);
       serverCache.set(`${CACHE_PREFIX.oeById}${oeId}`, entry);
