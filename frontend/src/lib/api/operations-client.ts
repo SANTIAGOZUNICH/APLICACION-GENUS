@@ -5,6 +5,10 @@ import type {
   WorkspacePanoramaMetric,
   WorkspaceTask,
 } from "@/types/workspace/workspace-task";
+import type {
+  ConsultaEntityKind,
+  ConsultaSearchResponse,
+} from "@/types/consulta/consulta-result";
 
 /** JSON-safe entity page (Lucide icons are rehydrated on the client). */
 export type EntityPageModelDTO = Omit<EntityPageModel, "identityIcon">;
@@ -158,6 +162,25 @@ export async function fetchOperationsState(): Promise<OperationsStateResponse> {
     cache: "no-store",
   });
   return parseJson<OperationsStateResponse>(response);
+}
+
+export async function fetchConsulta(
+  query: string,
+  types?: ConsultaEntityKind[]
+): Promise<ConsultaSearchResponse> {
+  const params = new URLSearchParams();
+  if (query.trim()) {
+    params.set("q", query.trim());
+  }
+  if (types && types.length > 0) {
+    params.set("types", types.join(","));
+  }
+
+  const response = await fetch(`/api/v1/consulta?${params.toString()}`, {
+    method: "GET",
+    cache: "no-store",
+  });
+  return parseJson<ConsultaSearchResponse>(response);
 }
 
 function entityFetchPath(kind: EntityPageModel["kind"], entityId: string) {

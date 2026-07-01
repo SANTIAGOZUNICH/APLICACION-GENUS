@@ -97,7 +97,7 @@ export const navigationItems: NavItem[] = [
     label: "Consulta",
     href: "/consulta",
     icon: Search,
-    enabled: false,
+    enabled: true,
     section: "secondary",
   },
   {
