@@ -10,6 +10,7 @@ import {
   type BandejaTask,
 } from "@/types/bandeja/bandeja-task";
 import { Status } from "@/types/ui/status";
+import { entityMockHrefs } from "@/mocks/entity-pages/hrefs";
 
 const noop = () => undefined;
 
@@ -70,6 +71,7 @@ export const supervisorBandejaTasks: BandejaTask[] = [
         avanceDespacho: "3/5 renglones",
         compromisoPorVencer: true,
         primaryAction: { label: "Seguir despacho", onClick: noop },
+        href: entityMockHrefs.pedido,
       },
     },
   },
@@ -85,11 +87,12 @@ export const supervisorBandejaTasks: BandejaTask[] = [
         oeId: "OE-2026-0142",
         productName: "Crema Hidratante Granel",
         status: Status.EN_CURSO,
-        loteGranel: "LG-2026-8842",
+        loteGranel: "LG-2026-0842",
         batchSize: "500 kg",
         responsable: "María G.",
         progressPercent: 78,
         primaryAction: { label: "Continuar producción", onClick: noop },
+        href: entityMockHrefs.oe,
       },
     },
   },
@@ -108,6 +111,7 @@ export const supervisorBandejaTasks: BandejaTask[] = [
         responsable: "Carlos R.",
         progressPercent: 52,
         primaryAction: { label: "Registrar avance", onClick: noop },
+        href: entityMockHrefs.oa,
       },
     },
   },

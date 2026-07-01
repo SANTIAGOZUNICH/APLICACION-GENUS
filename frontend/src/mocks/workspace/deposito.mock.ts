@@ -6,6 +6,7 @@ import {
   labSectors,
   noop,
 } from "@/mocks/workspace/lab-context";
+import { entityMockHrefs } from "@/mocks/entity-pages/hrefs";
 import type { WorkspaceTask } from "@/types/workspace/workspace-task";
 import { Status } from "@/types/ui/status";
 
@@ -24,6 +25,7 @@ export const depositoTasks: WorkspaceTask[] = [
         avanceDespacho: "4/6 renglones",
         compromisoPorVencer: true,
         primaryAction: { label: "Despachar", onClick: noop },
+        href: entityMockHrefs.pedido,
       },
     },
   },

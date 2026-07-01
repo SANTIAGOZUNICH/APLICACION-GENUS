@@ -5,6 +5,7 @@ import {
   labSectors,
   noop,
 } from "@/mocks/workspace/lab-context";
+import { entityMockHrefs } from "@/mocks/entity-pages/hrefs";
 import type { WorkspaceTask } from "@/types/workspace/workspace-task";
 import { Status } from "@/types/ui/status";
 
@@ -23,6 +24,7 @@ export const calidadTasks: WorkspaceTask[] = [
         saldo: "480 kg",
         vencimiento: "14/08/2027",
         primaryAction: { label: "Cargar análisis", onClick: noop },
+        href: entityMockHrefs.lote,
       },
     },
   },
