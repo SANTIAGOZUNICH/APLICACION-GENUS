@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import {
   createServerAdapter,
-  sheetsAdapter,
+  driveAdapter,
 } from "@/lib/adapters/adapter-factory";
 import { stripEntityPageIcon } from "@/lib/adapters/rehydrate-entity-page";
 import {
-  getServerDataMode,
-  shouldFallbackToDemo,
-} from "@/lib/config/data-mode";
+  canUseDriveAdapter,
+  demoFallbackResponse,
+  shouldUseDemoFallback,
+} from "@/lib/api/bff-helpers";
 import type { LoteBundleResponse } from "@/lib/api/operations-client";
+import { getServerDataMode } from "@/lib/config/data-mode";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -17,13 +19,19 @@ interface RouteContext {
 export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params;
 
-  if (getServerDataMode() !== "real") {
+  if (getServerDataMode() !== "real" || !canUseDriveAdapter()) {
     const mockPage =
       createServerAdapter().getInitialState().entityPages[`lote:${id}`];
 
     if (!mockPage || mockPage.kind !== "lote") {
+      if (shouldUseDemoFallback()) {
+        return NextResponse.json(
+          { error: `Lote ${id} no encontrado en modo demo.`, code: "NOT_FOUND" },
+          { status: 404 }
+        );
+      }
       return NextResponse.json(
-        { error: `Lote ${id} no encontrado en modo demo.`, code: "NOT_FOUND" },
+        { error: `Lote ${id} no encontrado.`, code: "NOT_FOUND" },
         { status: 404 }
       );
     }
@@ -36,7 +44,7 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   try {
-    const bundle = await sheetsAdapter.getLoteEntityPage!(id);
+    const bundle = await driveAdapter.getLoteEntityPage!(id);
     if (!bundle) {
       return NextResponse.json(
         { error: `Lote ${id} no encontrado.`, code: "NOT_FOUND" },
@@ -47,44 +55,30 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({
       loteId: bundle.loteId,
       entityPage: stripEntityPageIcon(bundle.entityPage),
-      source: "sheets",
+      source: "drive",
     } satisfies LoteBundleResponse);
   } catch (error) {
     console.error(`[Genus] GET /api/v1/lotes/${id} failed:`, error);
 
-    if (!shouldFallbackToDemo()) {
-      return NextResponse.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : "No se pudo leer el lote.",
-          code: "SHEETS_READ_FAILED",
-        },
-        { status: 502 }
-      );
-    }
-
     const mockPage =
       createServerAdapter().getInitialState().entityPages[`lote:${id}`];
 
-    if (!mockPage || mockPage.kind !== "lote") {
-      return NextResponse.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : `Lote ${id} no encontrado.`,
-          code: "SHEETS_READ_FAILED",
-        },
-        { status: 502 }
-      );
-    }
+    const fallback = demoFallbackResponse(
+      () => {
+        if (!mockPage || mockPage.kind !== "lote") {
+          throw error;
+        }
+        return {
+          loteId: id,
+          entityPage: stripEntityPageIcon(mockPage),
+          source: "demo" as const,
+        };
+      },
+      error
+    );
 
-    return NextResponse.json({
-      loteId: id,
-      entityPage: stripEntityPageIcon(mockPage),
-      source: "demo",
-    } satisfies LoteBundleResponse);
+    if (!fallback.ok) return fallback.response;
+
+    return NextResponse.json(fallback.data satisfies LoteBundleResponse);
   }
 }

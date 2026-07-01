@@ -6,12 +6,12 @@ export type EntityPageModelDTO = Omit<EntityPageModel, "identityIcon">;
 export interface LoteBundleResponse {
   loteId: string;
   entityPage: EntityPageModelDTO;
-  source: "sheets" | "demo";
+  source: "drive" | "demo" | "sheets";
 }
 
 export interface LoteListResponse {
   lotes: LoteBundleResponse[];
-  source: "sheets" | "demo";
+  source: "drive" | "demo" | "sheets";
 }
 
 export interface ApiErrorBody {

@@ -48,7 +48,7 @@ export function LotePageLoader({ entityId }: LotePageLoaderProps) {
         </p>
         <p className="mt-1 text-xs text-[var(--muted-foreground)]">
           {dataMode === "real"
-            ? "Consultando Google Sheets vía BFF"
+            ? "Consultando Google Drive vía BFF"
             : "Preparando datos demo"}
         </p>
       </div>
@@ -85,9 +85,9 @@ export function LotePageLoader({ entityId }: LotePageLoaderProps) {
           className="mb-4 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface)] px-3 py-2 text-xs text-[var(--muted-foreground)]"
           aria-live="polite"
         >
-          {dataSource === "sheets"
-            ? "Datos del lote desde Google Sheets (LOTES · SALDOS · MOVIMIENTOS)."
-            : "Modo real con fallback demo activo — no se pudo leer Sheets."}
+          {dataSource === "drive" || dataSource === "sheets"
+            ? "Datos del lote desde Google Drive (ASIGNACION DE LOTES 2026)."
+            : "Modo real con fallback demo activo — no se pudo leer Drive."}
         </div>
       )}
       <EntityPageClient kind={EntityPageKinds.LOTE} entityId={entityId} />
