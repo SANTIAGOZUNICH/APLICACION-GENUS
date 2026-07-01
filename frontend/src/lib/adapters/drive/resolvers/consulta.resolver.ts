@@ -3,7 +3,7 @@ import "server-only";
 import { stripSheetExtension } from "@/lib/adapters/drive/oe-document-locator";
 import { oeResolver } from "@/lib/adapters/drive/resolvers/oe.resolver";
 import { loteResolver } from "@/lib/adapters/drive/resolvers/lote.resolver";
-import { pedidoResolver } from "@/lib/adapters/drive/resolvers/pedido.resolver";
+import { pedidoResolver, type PedidoReadMeta } from "@/lib/adapters/drive/resolvers/pedido.resolver";
 import {
   lotePageHref,
   oePageHref,
@@ -144,11 +144,13 @@ export class ConsultaResolver {
     const trimmed = query.trim();
     const scopeSet = new Set(scopes);
 
+    const emptyPedidoRead: PedidoReadMeta = { rows: [], tabsAttempted: [] };
+
     const [oeIndex, pedidoRead, loteRead] = await Promise.all([
       scopeSet.has("oe") ? oeResolver.listOeIndex() : Promise.resolve([]),
       scopeSet.has("pedido")
         ? pedidoResolver.readPedidosWithMeta()
-        : Promise.resolve({ rows: [], tabsAttempted: [] }),
+        : Promise.resolve(emptyPedidoRead),
       scopeSet.has("lote")
         ? loteResolver.readAsignacionWithMeta()
         : Promise.resolve({ rows: [], tabsAttempted: [] }),
@@ -180,14 +182,18 @@ export class ConsultaResolver {
       pedidos: {
         rowsRead: pedidosParsed.diagnostic.rowsRead,
         rowsMapped: pedidosParsed.diagnostic.rowsMapped,
+        fileMimeType: pedidoRead.mimeType,
+        readerUsed: pedidoRead.readerUsed,
         reason:
-          pedidosParsed.diagnostic.rowsRead > 0 &&
-          pedidosParsed.diagnostic.rowsMapped === 0
-            ? pedidosParsed.diagnostic.discardReasons[0] ??
-              "Mapper no reconoce columnas de PEDIDOS 2026."
-            : pedidosParsed.diagnostic.rowsRead === 0
-              ? "Sheet sin filas de datos o tab no encontrada."
-              : undefined,
+          pedidoRead.warning
+            ? pedidoRead.warning
+            : pedidosParsed.diagnostic.rowsRead > 0 &&
+                pedidosParsed.diagnostic.rowsMapped === 0
+              ? pedidosParsed.diagnostic.discardReasons[0] ??
+                "Mapper no reconoce columnas de PEDIDOS 2026."
+              : pedidosParsed.diagnostic.rowsRead === 0
+                ? "Archivo sin filas de datos o hoja no encontrada."
+                : undefined,
         sampleHeaders: pedidosParsed.diagnostic.headersDetected.slice(0, 12),
       },
     };

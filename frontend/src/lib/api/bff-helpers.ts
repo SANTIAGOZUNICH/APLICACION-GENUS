@@ -8,7 +8,7 @@ import {
   shouldFallbackToDemo,
 } from "@/lib/config/data-mode";
 
-export type ApiDataSource = "drive" | "demo";
+export type ApiDataSource = "drive" | "drive-partial" | "demo";
 
 export function getApiDataSource(): ApiDataSource {
   return getServerDataMode() === "real" ? "drive" : "demo";

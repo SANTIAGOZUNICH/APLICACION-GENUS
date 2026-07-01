@@ -155,6 +155,18 @@ export class OperationsDocumentRepository {
   }
 
   async getCriticalSheetRef(sheetKey: CriticalSheetKey): Promise<DocumentRef> {
+    const ref = await this.tryGetCriticalSheetRef(sheetKey);
+    if (!ref) {
+      throw new Error(
+        `Sheet crítico "${CRITICAL_SHEET_NAMES[sheetKey]}" no indexado. Ejecutá GET /api/v1/drive/refresh.`
+      );
+    }
+    return ref;
+  }
+
+  async tryGetCriticalSheetRef(
+    sheetKey: CriticalSheetKey
+  ): Promise<DocumentRef | null> {
     await this.ensureIndex();
 
     const cached = serverCache.get<DocumentRef>(`${CACHE_PREFIX.critical}${sheetKey}`);
@@ -173,9 +185,22 @@ export class OperationsDocumentRepository {
       }
     }
 
-    throw new Error(
-      `Sheet crítico "${CRITICAL_SHEET_NAMES[sheetKey]}" no indexado. Ejecutá GET /api/v1/drive/refresh.`
+    const alias = CRITICAL_SHEET_FOLDER[sheetKey];
+    const docs =
+      serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}${alias}`) ??
+      (await this.indexDocumentsForAlias(alias, this.getFolderIndex()));
+
+    const targetName = CRITICAL_SHEET_NAMES[sheetKey].toLowerCase();
+    const match = docs.find(
+      (file) => stripSheetExtension(file.name).trim().toLowerCase() === targetName
     );
+
+    if (match) {
+      serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, match);
+      return match;
+    }
+
+    return null;
   }
 
   async getOeIndex(): Promise<OeIndexEntry[]> {
@@ -470,7 +495,7 @@ export class OperationsDocumentRepository {
     const recursive = RECURSIVE_DOCUMENT_ALIASES.has(alias);
 
     if (!recursive) {
-      return googleDriveGateway.listSpreadsheetsInFolder(folderId, {
+      return googleDriveGateway.listTabularFilesInFolder(folderId, {
         alias,
         folderPath: rootPath,
       });
@@ -487,7 +512,7 @@ export class OperationsDocumentRepository {
         foldersUnder.find((entry) => entry.folderId === id) ??
         findFolderByRelativePath(folderIndex, rootPath);
 
-      const batch = await googleDriveGateway.listSpreadsheetsInFolder(id, {
+      const batch = await googleDriveGateway.listTabularFilesInFolder(id, {
         alias,
         folderPath: folderEntry?.relativePath ?? rootPath,
       });
@@ -530,7 +555,7 @@ export class OperationsDocumentRepository {
 
     const targetName = CRITICAL_SHEET_NAMES[sheetKey].toLowerCase();
     const match = docs.find(
-      (file) => file.name.trim().toLowerCase() === targetName
+      (file) => stripSheetExtension(file.name).trim().toLowerCase() === targetName
     );
 
     if (match) {

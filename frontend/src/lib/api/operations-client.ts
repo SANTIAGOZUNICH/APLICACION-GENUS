@@ -14,7 +14,7 @@ import type { OperationsDiagnostics } from "@/types/operations/operations-diagno
 /** JSON-safe entity page (Lucide icons are rehydrated on the client). */
 export type EntityPageModelDTO = Omit<EntityPageModel, "identityIcon">;
 
-export type ApiDataSource = "drive" | "demo" | "sheets";
+export type ApiDataSource = "drive" | "drive-partial" | "demo" | "sheets";
 
 export interface LoteBundleResponse {
   loteId: string;

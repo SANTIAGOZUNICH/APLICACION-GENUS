@@ -96,8 +96,14 @@ function SourceBanner({
             (response.diagnostics.pedidos.rowsMapped === 0 ||
               response.diagnostics.pedidos.rowsRead === 0) && (
               <p>
-                Pedidos: endpoint {response.diagnostics.pedidos.rowsRead} filas leídas,{" "}
+                Pedidos: {response.diagnostics.pedidos.rowsRead} filas leídas,{" "}
                 {response.diagnostics.pedidos.rowsMapped} mapeadas.
+                {response.diagnostics.pedidos.readerUsed
+                  ? ` Lector: ${response.diagnostics.pedidos.readerUsed}.`
+                  : ""}
+                {response.diagnostics.pedidos.fileMimeType
+                  ? ` MIME: ${response.diagnostics.pedidos.fileMimeType}.`
+                  : ""}
                 {response.diagnostics.pedidos.reason
                   ? ` ${response.diagnostics.pedidos.reason}`
                   : ""}

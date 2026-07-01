@@ -11,6 +11,10 @@ interface RealDataSourceBannerProps {
   loading?: boolean;
 }
 
+function isDriveLikeSource(source: OperationsDiagnostics["source"] | undefined): boolean {
+  return source === "drive" || source === "drive-partial";
+}
+
 export function RealDataSourceBanner({
   dataMode,
   dataSource,
@@ -49,34 +53,70 @@ export function RealDataSourceBanner({
     );
   }
 
-  if (dataSource === "drive" || diagnostics?.source === "drive") {
-    const counts = diagnostics?.counts;
+  const counts = diagnostics?.counts;
+  const realSources = diagnostics?.realSources;
+  const hasRealData = Boolean(
+    (counts?.oe ?? 0) > 0 ||
+      (counts?.lotes ?? 0) > 0 ||
+      (counts?.pedidos ?? 0) > 0 ||
+      (realSources?.elaboracionIndexCount ?? 0) > 0
+  );
+
+  const driveLike =
+    dataSource === "drive" ||
+    isDriveLikeSource(diagnostics?.source) ||
+    diagnostics?.source === "drive-partial";
+
+  if (driveLike && hasRealData) {
+    const isPartial =
+      diagnostics?.source === "drive-partial" ||
+      (diagnostics?.mapperWarnings?.length ?? 0) > 0;
+
     return (
-      <Alert variant="ok" title="Datos reales — Google Drive / Sheets">
-        {diagnostics?.message ?? "Información desde índices cacheados de Drive."}
+      <Alert variant={isPartial ? "attention" : "ok"} title={isPartial ? "Datos reales parciales" : "Datos reales — Google Drive / Sheets"}>
+        {diagnostics?.message ??
+          (isPartial
+            ? "Algunas fuentes reales están conectadas; otras requieren mapeo adicional."
+            : "Información desde índices cacheados de Drive.")}
         {counts && (
           <p className="mt-2 text-xs">
             Disponibles: {counts.oe} OE · {counts.lotes} lotes · {counts.pedidos}{" "}
             pedidos · {counts.oa} OA · {counts.liberaciones} liberaciones
           </p>
         )}
-        {diagnostics?.realSources && (
+        {realSources && (
           <p className="mt-1 text-xs">
-            Índice ELABORACION: {diagnostics.realSources.elaboracionIndexCount} ·
-            Lotes leídos/mapeados: {diagnostics.realSources.lotesRowsRead}/
-            {diagnostics.realSources.lotesRowsMapped} · Pedidos leídos/mapeados:{" "}
-            {diagnostics.realSources.pedidosRowsRead}/
-            {diagnostics.realSources.pedidosRowsMapped}
+            Índice ELABORACION: {realSources.elaboracionIndexCount} · Lotes{" "}
+            {realSources.lotesRowsMapped}/{realSources.lotesRowsRead} · Pedidos{" "}
+            {realSources.pedidosRowsMapped}/{realSources.pedidosRowsRead}
+            {realSources.pedidosReaderUsed
+              ? ` · Lector pedidos: ${realSources.pedidosReaderUsed}`
+              : ""}
+            {realSources.pedidosFileMimeType
+              ? ` · MIME: ${realSources.pedidosFileMimeType}`
+              : ""}
           </p>
+        )}
+        {realSources?.pedidosWarning && (
+          <p className="mt-2 text-xs">{realSources.pedidosWarning}</p>
         )}
       </Alert>
     );
   }
 
+  if (driveLike && !hasRealData) {
+    return (
+      <Alert variant="attention" title="Drive conectado — sin datos indexados">
+        {diagnostics?.message ??
+          "Modo real activo pero el índice está vacío. Ejecutá /api/v1/drive/refresh."}
+      </Alert>
+    );
+  }
+
   return (
-    <Alert variant="attention" title="Sin datos reales disponibles todavía">
+    <Alert variant="attention" title="Error de conexión">
       {diagnostics?.message ??
-        "Modo real activo pero no hay índice Drive cargado. Ejecutá /api/v1/drive/refresh o revisá credenciales."}
+        "No se pudo confirmar el origen de datos. Revisá credenciales e índice Drive."}
     </Alert>
   );
 }

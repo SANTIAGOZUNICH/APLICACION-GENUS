@@ -25,4 +25,7 @@ export interface RealSourcesDiagnostic {
   lotesRowsMapped: number;
   pedidosRowsRead: number;
   pedidosRowsMapped: number;
+  pedidosFileMimeType?: string;
+  pedidosReaderUsed?: "sheets" | "excel";
+  pedidosWarning?: string;
 }

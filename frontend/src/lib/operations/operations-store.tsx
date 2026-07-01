@@ -210,7 +210,9 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
       setDiagnostics(operationsResponse.diagnostics ?? null);
 
       const isDrive =
-        operationsResponse.source === "drive" || loteResponse.source === "drive";
+        operationsResponse.source === "drive" ||
+        operationsResponse.source === "drive-partial" ||
+        loteResponse.source === "drive";
       setDataSource(isDrive ? "drive" : "demo");
       setHydrated(true);
     } catch (err) {

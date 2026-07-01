@@ -9,6 +9,7 @@ import type {
 } from "@/lib/adapters/drive/types/document.types";
 import { getMaxIndexDepth } from "@/lib/adapters/drive/drive-folder-config";
 import { SPREADSHEET_MIME } from "@/lib/adapters/sheets/sheets-reader";
+import { buildTabularMimeQuery } from "@/lib/adapters/excel/excel-mime";
 
 export const FOLDER_MIME = "application/vnd.google-apps.folder";
 
@@ -92,6 +93,14 @@ export class GoogleDriveGateway {
     folderId: string,
     context: { alias: FolderAlias; folderPath?: string }
   ): Promise<DocumentRef[]> {
+    return this.listTabularFilesInFolder(folderId, context);
+  }
+
+  /** Lists Google Sheets and Excel (.xlsx/.xls) files in a folder. */
+  async listTabularFilesInFolder(
+    folderId: string,
+    context: { alias: FolderAlias; folderPath?: string }
+  ): Promise<DocumentRef[]> {
     const auth = createGoogleAuth();
     const drive = google.drive({ version: "v3", auth });
     const files: DocumentRef[] = [];
@@ -99,7 +108,7 @@ export class GoogleDriveGateway {
 
     do {
       const response = await drive.files.list({
-        q: `'${folderId}' in parents and mimeType='${SPREADSHEET_MIME}' and trashed=false`,
+        q: `'${folderId}' in parents and (${buildTabularMimeQuery()}) and trashed=false`,
         fields: "nextPageToken, files(id,name,mimeType,modifiedTime)",
         pageSize: 200,
         pageToken,

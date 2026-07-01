@@ -67,20 +67,27 @@ export async function GET() {
 
   try {
     const hydration = await driveAdapter.buildOperationsHydration!();
+    const responseSource = hydration.source ?? "drive";
+    const hasPartialWarnings = hydration.mapperWarnings.length > 0;
+    const message =
+      responseSource === "drive-partial" || hasPartialWarnings
+        ? `Datos reales parciales — ${hydration.counts.oe} OE indexadas, ${hydration.counts.lotes} lotes, ${hydration.counts.pedidos} pedidos mapeados.`
+        : "Datos operativos construidos desde índices Drive/Sheets.";
+
     return NextResponse.json({
       bandejaTasks: hydration.bandejaTasks,
       workspaceTasks: hydration.workspaceTasks,
       dayPulse: hydration.dayPulse,
       workspacePanorama: hydration.workspacePanorama,
-      source: "drive",
+      source: responseSource,
       diagnostics: {
         dataMode,
-        source: "drive",
+        source: responseSource,
         counts: hydration.counts,
         fallbackUsed: createEmptyFallbackUsed(),
         realSources: hydration.realSources,
         mapperWarnings: hydration.mapperWarnings,
-        message: "Datos operativos construidos desde índices Drive/Sheets.",
+        message,
       },
     });
   } catch (error) {
@@ -109,10 +116,10 @@ export async function GET() {
     return NextResponse.json(
       {
         ...empty,
-        source: "demo",
+        source: "drive-partial",
         diagnostics: {
           dataMode,
-          source: "demo",
+          source: "drive-partial",
           counts: createEmptyCounts(),
           fallbackUsed: createEmptyFallbackUsed(),
           message:

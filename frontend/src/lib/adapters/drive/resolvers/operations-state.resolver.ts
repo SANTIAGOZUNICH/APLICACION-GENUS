@@ -10,11 +10,13 @@ import { parseAsignacionLoteRowsWithDiagnostics } from "@/lib/mappers/diagnose-a
 import { parsePedidosWithDiagnostics } from "@/lib/mappers/diagnose-pedidos";
 import { buildLiberacionSummariesFromLotes } from "@/lib/mappers/sheet-liberacion-to-entity";
 import { operationsDocumentRepository } from "@/lib/adapters/drive/operations-document-repository";
-import { loteResolver } from "@/lib/adapters/drive/resolvers/lote.resolver";
+import { loteResolver, type SheetReadMeta } from "@/lib/adapters/drive/resolvers/lote.resolver";
 import { oeResolver } from "@/lib/adapters/drive/resolvers/oe.resolver";
 import { oaResolver } from "@/lib/adapters/drive/resolvers/oa.resolver";
 import { pedidoResolver } from "@/lib/adapters/drive/resolvers/pedido.resolver";
+import type { DocumentRef } from "@/lib/adapters/drive/types/document.types";
 import type {
+  MapperSheetDiagnostic,
   MapperWarning,
   RealSourcesDiagnostic,
 } from "@/lib/mappers/mapper-diagnostics.types";
@@ -26,6 +28,8 @@ import type {
   WorkspaceTask,
 } from "@/types/workspace/workspace-task";
 
+export type OperationsHydrationSource = "drive" | "drive-partial";
+
 export interface OperationsHydration {
   bandejaTasks: BandejaTask[];
   workspaceTasks: Record<WorkspaceId, WorkspaceTask[]>;
@@ -34,6 +38,19 @@ export interface OperationsHydration {
   counts: OperationsEntityCounts;
   realSources: RealSourcesDiagnostic;
   mapperWarnings: MapperWarning[];
+  source: OperationsHydrationSource;
+}
+
+function emptyLoteDiagnostic(): MapperSheetDiagnostic {
+  return {
+    entity: "lote",
+    tabsAttempted: [],
+    headersDetected: [],
+    rowsRead: 0,
+    rowsMapped: 0,
+    rowsDiscarded: 0,
+    discardReasons: [],
+  };
 }
 
 function buildMapperWarnings(input: {
@@ -42,15 +59,24 @@ function buildMapperWarnings(input: {
   lotesHeaders: string[];
   lotesSampleRow?: Record<string, string>;
   lotesDiscardReasons: string[];
+  lotesWarning?: string;
   pedidosRowsRead: number;
   pedidosRowsMapped: number;
   pedidosHeaders: string[];
   pedidosSampleRow?: Record<string, string>;
   pedidosDiscardReasons: string[];
+  pedidosWarning?: string;
 }): MapperWarning[] {
   const warnings: MapperWarning[] = [];
 
-  if (input.lotesRowsRead > 0 && input.lotesRowsMapped === 0) {
+  if (input.lotesWarning) {
+    warnings.push({
+      entity: "lote",
+      reason: input.lotesWarning,
+      sampleHeaders: input.lotesHeaders.slice(0, 12),
+      sampleRow: input.lotesSampleRow,
+    });
+  } else if (input.lotesRowsRead > 0 && input.lotesRowsMapped === 0) {
     warnings.push({
       entity: "lote",
       reason:
@@ -61,7 +87,14 @@ function buildMapperWarnings(input: {
     });
   }
 
-  if (input.pedidosRowsRead > 0 && input.pedidosRowsMapped === 0) {
+  if (input.pedidosWarning) {
+    warnings.push({
+      entity: "pedido",
+      reason: input.pedidosWarning,
+      sampleHeaders: input.pedidosHeaders.slice(0, 12),
+      sampleRow: input.pedidosSampleRow,
+    });
+  } else if (input.pedidosRowsRead > 0 && input.pedidosRowsMapped === 0) {
     warnings.push({
       entity: "pedido",
       reason:
@@ -75,29 +108,63 @@ function buildMapperWarnings(input: {
   return warnings;
 }
 
+function resolveHydrationSource(input: {
+  oeCount: number;
+  lotesMapped: number;
+  pedidosMapped: number;
+  warnings: MapperWarning[];
+}): OperationsHydrationSource {
+  const hasRealCore = input.oeCount > 0 || input.lotesMapped > 0 || input.pedidosMapped > 0;
+  if (!hasRealCore && input.warnings.length > 0) {
+    return "drive-partial";
+  }
+  if (input.warnings.length > 0) {
+    return "drive-partial";
+  }
+  return "drive";
+}
+
 /** Builds bandeja/workspace from cached indexes and critical sheets — no mass OE/OA reads. */
 export class OperationsStateResolver {
   async buildHydration(): Promise<OperationsHydration> {
-    const [oes, oas, loteRead, pedidoRead, lotesDocRef, pedidosDocRef] =
-      await Promise.all([
-        oeResolver.listOeIndex(),
-        oaResolver.listOaIndex(),
+    const [oes, oas] = await Promise.all([
+      oeResolver.listOeIndex(),
+      oaResolver.listOaIndex(),
+    ]);
+
+    let lotesWarning: string | undefined;
+    let lotesDocRef: DocumentRef | null = null;
+    let loteRead: SheetReadMeta = { rows: [], tabsAttempted: [] };
+    let lotesParsed = {
+      lotes: [] as ReturnType<typeof parseAsignacionLoteRowsWithDiagnostics>["lotes"],
+      diagnostic: emptyLoteDiagnostic(),
+    };
+
+    try {
+      const [loteResult, loteDoc] = await Promise.all([
         loteResolver.readAsignacionWithMeta(),
-        pedidoResolver.readPedidosWithMeta(),
-        operationsDocumentRepository.getCriticalSheetRef("asignacion_lotes_2026"),
-        operationsDocumentRepository.getCriticalSheetRef("pedidos_2026"),
+        operationsDocumentRepository.tryGetCriticalSheetRef("asignacion_lotes_2026"),
       ]);
+      loteRead = loteResult;
+      lotesDocRef = loteDoc;
+      lotesParsed = parseAsignacionLoteRowsWithDiagnostics(loteRead.rows);
+      if (lotesDocRef) {
+        lotesParsed.diagnostic.sheetId = lotesDocRef.fileId;
+        lotesParsed.diagnostic.sheetName = lotesDocRef.name;
+      }
+      lotesParsed.diagnostic.tabUsed = loteRead.tabUsed;
+      lotesParsed.diagnostic.tabsAttempted = loteRead.tabsAttempted;
+    } catch (error) {
+      lotesWarning =
+        error instanceof Error
+          ? error.message
+          : "No se pudo leer ASIGNACION DE LOTES 2026.";
+    }
 
-    const lotesParsed = parseAsignacionLoteRowsWithDiagnostics(loteRead.rows);
+    const pedidoRead = await pedidoResolver.readPedidosWithMeta();
     const pedidosParsed = parsePedidosWithDiagnostics(pedidoRead.rows);
-
-    lotesParsed.diagnostic.sheetId = lotesDocRef.fileId;
-    lotesParsed.diagnostic.sheetName = lotesDocRef.name;
-    lotesParsed.diagnostic.tabUsed = loteRead.tabUsed;
-    lotesParsed.diagnostic.tabsAttempted = loteRead.tabsAttempted;
-
-    pedidosParsed.diagnostic.sheetId = pedidosDocRef.fileId;
-    pedidosParsed.diagnostic.sheetName = pedidosDocRef.name;
+    pedidosParsed.diagnostic.sheetId = pedidoRead.fileId;
+    pedidosParsed.diagnostic.sheetName = pedidoRead.fileName;
     pedidosParsed.diagnostic.tabUsed = pedidoRead.tabUsed;
     pedidosParsed.diagnostic.tabsAttempted = pedidoRead.tabsAttempted;
 
@@ -133,12 +200,21 @@ export class OperationsStateResolver {
       liberaciones: liberaciones.length,
     };
 
+    const pedidosWarning =
+      pedidoRead.warning ??
+      (pedidosParsed.diagnostic.rowsRead > 0 && pedidosParsed.diagnostic.rowsMapped === 0
+        ? pedidosParsed.diagnostic.discardReasons[0]
+        : undefined);
+
     const realSources: RealSourcesDiagnostic = {
       elaboracionIndexCount: oes.length,
       lotesRowsRead: lotesParsed.diagnostic.rowsRead,
       lotesRowsMapped: lotesParsed.diagnostic.rowsMapped,
       pedidosRowsRead: pedidosParsed.diagnostic.rowsRead,
       pedidosRowsMapped: pedidosParsed.diagnostic.rowsMapped,
+      pedidosFileMimeType: pedidoRead.mimeType,
+      pedidosReaderUsed: pedidoRead.readerUsed,
+      pedidosWarning,
     };
 
     const mapperWarnings = buildMapperWarnings({
@@ -147,11 +223,20 @@ export class OperationsStateResolver {
       lotesHeaders: lotesParsed.diagnostic.headersDetected,
       lotesSampleRow: lotesParsed.diagnostic.sampleRow,
       lotesDiscardReasons: lotesParsed.diagnostic.discardReasons,
+      lotesWarning: lotesWarning,
       pedidosRowsRead: pedidosParsed.diagnostic.rowsRead,
       pedidosRowsMapped: pedidosParsed.diagnostic.rowsMapped,
       pedidosHeaders: pedidosParsed.diagnostic.headersDetected,
       pedidosSampleRow: pedidosParsed.diagnostic.sampleRow,
       pedidosDiscardReasons: pedidosParsed.diagnostic.discardReasons,
+      pedidosWarning,
+    });
+
+    const source = resolveHydrationSource({
+      oeCount: oes.length,
+      lotesMapped: lotes.length,
+      pedidosMapped: pedidos.length,
+      warnings: mapperWarnings,
     });
 
     const bandejaTasks = buildBandejaTasks(buildInput);
@@ -172,6 +257,7 @@ export class OperationsStateResolver {
       counts,
       realSources,
       mapperWarnings,
+      source,
     };
   }
 }
@@ -206,6 +292,7 @@ export function buildEmptyRealHydration(): OperationsHydration {
       pedidosRowsMapped: 0,
     },
     mapperWarnings: [],
+    source: "drive-partial",
   };
 }
 

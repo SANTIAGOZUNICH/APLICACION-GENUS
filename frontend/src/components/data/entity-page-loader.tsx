@@ -122,9 +122,9 @@ export function EntityPageLoader({ kind, entityId }: EntityPageLoaderProps) {
         />
         <EmptyState
           icon={FileQuestion}
-          title="Sin datos reales disponibles todavía"
-          description={`No encontramos ${ENTITY_LABELS[kind]} ${entityId} en Drive/Sheets.`}
-          tone="positive"
+          title="No encontrado en Drive"
+          description={`No encontramos ${ENTITY_LABELS[kind]} ${entityId} en el índice conectado.`}
+          tone="neutral"
         />
       </div>
     );

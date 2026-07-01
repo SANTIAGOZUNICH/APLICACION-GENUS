@@ -35,6 +35,8 @@ export interface ConsultaSearchResponse {
       rowsMapped: number;
       reason?: string;
       sampleHeaders?: string[];
+      fileMimeType?: string;
+      readerUsed?: "sheets" | "excel";
     };
   };
 }
