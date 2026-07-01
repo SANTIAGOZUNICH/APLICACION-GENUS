@@ -9,7 +9,8 @@ import {
   oePageHref,
   pedidoPageHref,
 } from "@/config/entity-pages";
-import { parseAsignacionLoteRows } from "@/lib/mappers/sheet-lote-to-entity";
+import { parseAsignacionLoteRowsWithDiagnostics } from "@/lib/mappers/diagnose-asignacion-lotes";
+import { parsePedidosWithDiagnostics } from "@/lib/mappers/diagnose-pedidos";
 import type { ConsultaEntityKind, ConsultaResultItem, ConsultaSearchResponse } from "@/types/consulta/consulta-result";
 
 export type ConsultaSearchScope = ConsultaEntityKind;
@@ -74,7 +75,7 @@ async function searchOes(query: string): Promise<ConsultaResultItem[]> {
 
 async function searchLotes(query: string): Promise<ConsultaResultItem[]> {
   const rows = await loteResolver.readAsignacionRows();
-  const lotes = parseAsignacionLoteRows(rows);
+  const lotes = parseAsignacionLoteRowsWithDiagnostics(rows).lotes;
 
   return lotes
     .filter((lote) => {
@@ -143,18 +144,52 @@ export class ConsultaResolver {
     const trimmed = query.trim();
     const scopeSet = new Set(scopes);
 
-    const [oeIndex, pedidos, loteRows] = await Promise.all([
+    const [oeIndex, pedidoRead, loteRead] = await Promise.all([
       scopeSet.has("oe") ? oeResolver.listOeIndex() : Promise.resolve([]),
-      scopeSet.has("pedido") ? pedidoResolver.listPedidos() : Promise.resolve([]),
+      scopeSet.has("pedido")
+        ? pedidoResolver.readPedidosWithMeta()
+        : Promise.resolve({ rows: [], tabsAttempted: [] }),
       scopeSet.has("lote")
-        ? loteResolver.readAsignacionRows()
-        : Promise.resolve([]),
+        ? loteResolver.readAsignacionWithMeta()
+        : Promise.resolve({ rows: [], tabsAttempted: [] }),
     ]);
+
+    const lotesParsed = parseAsignacionLoteRowsWithDiagnostics(loteRead.rows);
+    const pedidosParsed = parsePedidosWithDiagnostics(pedidoRead.rows);
 
     const indexSummary = {
       oes: oeIndex.length,
-      lotes: parseAsignacionLoteRows(loteRows).length,
-      pedidos: pedidos.length,
+      lotes: lotesParsed.lotes.length,
+      pedidos: pedidosParsed.pedidos.length,
+    };
+
+    const diagnostics = {
+      lotes: {
+        rowsRead: lotesParsed.diagnostic.rowsRead,
+        rowsMapped: lotesParsed.diagnostic.rowsMapped,
+        reason:
+          lotesParsed.diagnostic.rowsRead > 0 &&
+          lotesParsed.diagnostic.rowsMapped === 0
+            ? lotesParsed.diagnostic.discardReasons[0] ??
+              "Mapper no reconoce columnas de ASIGNACION DE LOTES 2026."
+            : lotesParsed.diagnostic.rowsRead === 0
+              ? "Sheet sin filas de datos o tab no encontrada."
+              : undefined,
+        sampleHeaders: lotesParsed.diagnostic.headersDetected.slice(0, 12),
+      },
+      pedidos: {
+        rowsRead: pedidosParsed.diagnostic.rowsRead,
+        rowsMapped: pedidosParsed.diagnostic.rowsMapped,
+        reason:
+          pedidosParsed.diagnostic.rowsRead > 0 &&
+          pedidosParsed.diagnostic.rowsMapped === 0
+            ? pedidosParsed.diagnostic.discardReasons[0] ??
+              "Mapper no reconoce columnas de PEDIDOS 2026."
+            : pedidosParsed.diagnostic.rowsRead === 0
+              ? "Sheet sin filas de datos o tab no encontrada."
+              : undefined,
+        sampleHeaders: pedidosParsed.diagnostic.headersDetected.slice(0, 12),
+      },
     };
 
     if (!trimmed) {
@@ -164,6 +199,7 @@ export class ConsultaResolver {
         counts: { oe: 0, lote: 0, pedido: 0 },
         source: "drive",
         indexSummary,
+        diagnostics,
       };
     }
 
@@ -192,6 +228,7 @@ export class ConsultaResolver {
       counts,
       source: "drive",
       indexSummary,
+      diagnostics,
     };
   }
 }

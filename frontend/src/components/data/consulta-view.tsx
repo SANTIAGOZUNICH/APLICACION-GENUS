@@ -76,6 +76,38 @@ function SourceBanner({
           pedidos
         </p>
       )}
+      {response.diagnostics && dataMode === "real" && (
+        <div className="mt-3 space-y-2 text-xs">
+          {response.diagnostics.lotes &&
+            (response.diagnostics.lotes.rowsMapped === 0 ||
+              response.diagnostics.lotes.rowsRead === 0) && (
+              <p>
+                Lotes: endpoint {response.diagnostics.lotes.rowsRead} filas leídas,{" "}
+                {response.diagnostics.lotes.rowsMapped} mapeadas.
+                {response.diagnostics.lotes.reason
+                  ? ` ${response.diagnostics.lotes.reason}`
+                  : ""}
+                {response.diagnostics.lotes.sampleHeaders?.length
+                  ? ` Headers: ${response.diagnostics.lotes.sampleHeaders.join(" · ")}`
+                  : ""}
+              </p>
+            )}
+          {response.diagnostics.pedidos &&
+            (response.diagnostics.pedidos.rowsMapped === 0 ||
+              response.diagnostics.pedidos.rowsRead === 0) && (
+              <p>
+                Pedidos: endpoint {response.diagnostics.pedidos.rowsRead} filas leídas,{" "}
+                {response.diagnostics.pedidos.rowsMapped} mapeadas.
+                {response.diagnostics.pedidos.reason
+                  ? ` ${response.diagnostics.pedidos.reason}`
+                  : ""}
+                {response.diagnostics.pedidos.sampleHeaders?.length
+                  ? ` Headers: ${response.diagnostics.pedidos.sampleHeaders.join(" · ")}`
+                  : ""}
+              </p>
+            )}
+        </div>
+      )}
     </Alert>
   );
 }
@@ -240,6 +272,31 @@ export function ConsultaView() {
       {error && !loading && (
         <Alert variant="problem" title="Error de conexión">
           {error}
+        </Alert>
+      )}
+
+      {!loading && !error && !hasQuery && response?.diagnostics && dataMode === "real" && (
+        <Alert variant="info" title="Diagnóstico de fuentes reales">
+          {response.indexSummary && (
+            <p className="text-sm">
+              Índice: {response.indexSummary.oes} OE · {response.indexSummary.lotes}{" "}
+              lotes · {response.indexSummary.pedidos} pedidos
+            </p>
+          )}
+          {response.diagnostics.lotes &&
+            response.diagnostics.lotes.rowsMapped === 0 && (
+              <p className="mt-2 text-xs">
+                Lotes: {response.diagnostics.lotes.rowsRead} filas leídas, 0 mapeadas.{" "}
+                {response.diagnostics.lotes.reason}
+              </p>
+            )}
+          {response.diagnostics.pedidos &&
+            response.diagnostics.pedidos.rowsMapped === 0 && (
+              <p className="mt-2 text-xs">
+                Pedidos: {response.diagnostics.pedidos.rowsRead} filas leídas, 0 mapeadas.{" "}
+                {response.diagnostics.pedidos.reason}
+              </p>
+            )}
         </Alert>
       )}
 

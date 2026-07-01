@@ -15,6 +15,7 @@ import { RealDataSourceBanner } from "@/components/data/real-data-source-banner"
 import { cn } from "@/lib/utils/cn";
 import type { BandejaSectionGroup } from "@/lib/bandeja/group-by-section";
 import type { BandejaTask } from "@/types/bandeja/bandeja-task";
+import type { OperationsDiagnostics } from "@/types/operations/operations-diagnostics";
 import { Target, CheckCircle2, ChevronDown } from "lucide-react";
 import { useState } from "react";
 
@@ -40,7 +41,27 @@ function ActionableBandejaFoco({ task }: { task: BandejaTask }) {
   );
 }
 
-function getEmptyState(section: BandejaSectionGroup) {
+function getEmptyState(
+  section: BandejaSectionGroup,
+  dataMode: "demo" | "real",
+  diagnostics: OperationsDiagnostics | null,
+  totalTaskCount: number
+) {
+  if (
+    dataMode === "real" &&
+    totalTaskCount === 0 &&
+    (diagnostics?.counts?.oe ?? 0) > 0 &&
+    section.tasks.length === 0
+  ) {
+    return {
+      icon: CheckCircle2,
+      title: "Datos reales pendientes de mapeo",
+      description:
+        "Hay OEs indexadas en ELABORACION. La bandeja se construirá con esos datos al hidratar.",
+      tone: "neutral" as const,
+    };
+  }
+
   if (section.id === "finalizados") {
     return {
       icon: CheckCircle2,
@@ -65,11 +86,21 @@ function getEmptyState(section: BandejaSectionGroup) {
   };
 }
 
-function ActionableBandejaSection({ section }: { section: BandejaSectionGroup }) {
+function ActionableBandejaSection({
+  section,
+  dataMode,
+  diagnostics,
+  totalTaskCount,
+}: {
+  section: BandejaSectionGroup;
+  dataMode: "demo" | "real";
+  diagnostics: OperationsDiagnostics | null;
+  totalTaskCount: number;
+}) {
   const [collapsed, setCollapsed] = useState(section.defaultCollapsed);
   const isCollapsible = !section.alwaysExpanded;
   const isOpen = section.alwaysExpanded || !collapsed;
-  const empty = getEmptyState(section);
+  const empty = getEmptyState(section, dataMode, diagnostics, totalTaskCount);
 
   return (
     <section
@@ -167,7 +198,13 @@ export function ActionableBandejaView() {
       <BandejaProblemsBanner problems={problemTasks} />
       <div className="flex flex-col gap-4">
         {sections.map((section) => (
-          <ActionableBandejaSection key={section.id} section={section} />
+          <ActionableBandejaSection
+            key={section.id}
+            section={section}
+            dataMode={dataMode}
+            diagnostics={diagnostics}
+            totalTaskCount={tasks.length}
+          />
         ))}
       </div>
     </div>

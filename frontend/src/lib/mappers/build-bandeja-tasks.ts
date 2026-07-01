@@ -11,6 +11,7 @@ import { buildOeSummaryFromIndex } from "@/lib/mappers/sheet-oe-to-entity";
 import { buildOaSummaryFromIndex } from "@/lib/mappers/sheet-oa-to-entity";
 import { buildPedidoSummaryCardData } from "@/lib/mappers/sheet-pedido-to-entity";
 import { buildLoteSummaryFromRow } from "@/lib/mappers/sheet-lote-to-entity";
+import { sortOesByRecency } from "@/lib/mappers/oe-section-utils";
 import type { LiberacionSummary } from "@/lib/mappers/sheet-liberacion-to-entity";
 import type { LoteRow } from "@/lib/adapters/sheets/types/sheets-row.types";
 import { ActionIds } from "@/types/actions";
@@ -88,7 +89,7 @@ export function buildBandejaTasks(input: BandejaBuildInput): BandejaTask[] {
   const tasks: BandejaTask[] = [];
   let counter = 0;
 
-  for (const entry of input.oes.slice(0, 12)) {
+  for (const entry of sortOesByRecency(input.oes).slice(0, 50)) {
     const summary = buildOeSummaryFromIndex(entry);
     const sectionId = sectionForOeStatus(summary.status);
     tasks.push({
@@ -106,8 +107,7 @@ export function buildBandejaTasks(input: BandejaBuildInput): BandejaTask[] {
           responsable: summary.responsable,
           progressPercent: summary.progressPercent,
           primaryAction: {
-            label: "Continuar producción",
-            actionId: ActionIds.OE_REGISTRAR_CONTROL,
+            label: "Abrir ficha",
           },
           href: oePageHref(summary.lookupKey),
         },
@@ -115,7 +115,7 @@ export function buildBandejaTasks(input: BandejaBuildInput): BandejaTask[] {
     });
   }
 
-  for (const entry of input.oas.slice(0, 10)) {
+  for (const entry of input.oas.slice(0, 20)) {
     const summary = buildOaSummaryFromIndex(entry);
     const sectionId = sectionForOaStatus(summary.status);
     tasks.push({
@@ -142,7 +142,7 @@ export function buildBandejaTasks(input: BandejaBuildInput): BandejaTask[] {
     });
   }
 
-  for (const pedido of input.pedidos.slice(0, 10)) {
+  for (const pedido of input.pedidos.slice(0, 30)) {
     const card = buildPedidoSummaryCardData(pedido);
     const sectionId = sectionForPedidoStatus(card.status);
     tasks.push({
@@ -163,7 +163,7 @@ export function buildBandejaTasks(input: BandejaBuildInput): BandejaTask[] {
     });
   }
 
-  for (const lote of input.lotes.slice(0, 8)) {
+  for (const lote of input.lotes.slice(0, 30)) {
     const summary = buildLoteSummaryFromRow(lote);
     const sectionId = sectionForLoteStatus(summary.status);
     tasks.push({
@@ -181,7 +181,7 @@ export function buildBandejaTasks(input: BandejaBuildInput): BandejaTask[] {
     });
   }
 
-  for (const lib of input.liberaciones.slice(0, 8)) {
+  for (const lib of input.liberaciones.slice(0, 20)) {
     const sectionId = sectionForLiberacionStatus(lib.status);
     tasks.push({
       id: `lib-${lib.liberacionId}`,

@@ -83,7 +83,7 @@ interface OperationsStoreContextValue {
       flowData: ActionFlowData;
     }
   ) => Promise<import("@/types/actions").ActionResult>;
-  dataMode: ReturnType<typeof getClientDataMode>;
+  dataMode: "demo" | "real";
   dataSource: OperationsDataSource;
   diagnostics: OperationsDiagnostics | null;
   entitySources: Record<string, ApiDataSource>;
@@ -126,7 +126,7 @@ function operationsReducer(
     case "HYDRATE_OPERATIONS":
       return {
         ...state,
-        entityPages: action.entityPages ?? {},
+        entityPages: action.entityPages ?? state.entityPages,
         bandejaTasks: action.bandejaTasks,
         workspaceTasks: action.workspaceTasks,
         dayPulse: action.dayPulse,
@@ -149,18 +149,19 @@ function operationsReducer(
 }
 
 export function OperationsStoreProvider({ children }: { children: ReactNode }) {
-  const dataMode = getClientDataMode();
+  const clientDataMode = getClientDataMode();
   const [state, dispatch] = useReducer(
     operationsReducer,
     undefined,
     createInitialOperationsState
   );
   const [roleId, setRoleId] = useState<RoleId>(mockUser.roleId);
-  const [loading, setLoading] = useState(dataMode === "real");
-  const [hydrated, setHydrated] = useState(dataMode === "demo");
+  const [loading, setLoading] = useState(true);
+  const [hydrated, setHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dataSource, setDataSource] =
     useState<OperationsDataSource>("initial");
+  const [dataMode, setDataMode] = useState<"demo" | "real">(clientDataMode);
   const [diagnostics, setDiagnostics] = useState<OperationsDiagnostics | null>(
     null
   );
@@ -172,31 +173,6 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
   const driveLoadedRef = useRef<Set<string>>(new Set());
 
   const hydrateOperations = useCallback(async () => {
-    if (dataMode !== "real") {
-      setLoading(false);
-      setDataSource("demo");
-      setHydrated(true);
-      setDiagnostics({
-        dataMode: "demo",
-        source: "demo",
-        counts: {
-          oe: 0,
-          lotes: 0,
-          pedidos: 0,
-          oa: 0,
-          liberaciones: 0,
-        },
-        fallbackUsed: {
-          bandeja: false,
-          workspaces: false,
-          entityPages: false,
-          panorama: false,
-        },
-        message: "Modo demo activo.",
-      });
-      return;
-    }
-
     setLoading(true);
     setError(null);
 
@@ -206,14 +182,19 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
         fetchOperationsState(),
       ]);
 
+      const serverMode = operationsResponse.diagnostics?.dataMode ?? clientDataMode;
+      setDataMode(serverMode);
+
       const entityPages: OperationsState["entityPages"] = {};
       const sources: Record<string, ApiDataSource> = {};
 
-      for (const bundle of loteResponse.lotes) {
-        const model = rehydrateEntityPage(bundle.entityPage);
-        const key = entityPageKey(model.kind, model.entityId);
-        entityPages[key] = model;
-        sources[key] = bundle.source;
+      if (serverMode === "real") {
+        for (const bundle of loteResponse.lotes) {
+          const model = rehydrateEntityPage(bundle.entityPage);
+          const key = entityPageKey(model.kind, model.entityId);
+          entityPages[key] = model;
+          sources[key] = bundle.source;
+        }
       }
 
       dispatch({
@@ -222,7 +203,7 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
         workspaceTasks: operationsResponse.workspaceTasks,
         dayPulse: operationsResponse.dayPulse,
         workspacePanorama: operationsResponse.workspacePanorama,
-        entityPages,
+        entityPages: serverMode === "real" ? entityPages : undefined,
       });
 
       setEntitySources(sources);
@@ -237,39 +218,65 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
         err instanceof OperationsApiError
           ? err.message
           : "No se pudieron cargar los datos operativos.";
+
       setError(message);
       setDataSource("demo");
-      dispatch({
-        type: "HYDRATE_OPERATIONS",
-        bandejaTasks: [],
-        workspaceTasks: createEmptyRealOperationsState().workspaceTasks,
-        dayPulse: { completed: 0, pending: 0 },
-        workspacePanorama: {},
-        entityPages: {},
-      });
-      setDiagnostics({
-        dataMode: "real",
-        source: "demo",
-        counts: {
-          oe: 0,
-          lotes: 0,
-          pedidos: 0,
-          oa: 0,
-          liberaciones: 0,
-        },
-        fallbackUsed: {
-          bandeja: false,
-          workspaces: false,
-          entityPages: false,
-          panorama: false,
-        },
-        message,
-      });
+
+      if (clientDataMode === "real") {
+        dispatch({
+          type: "HYDRATE_OPERATIONS",
+          bandejaTasks: [],
+          workspaceTasks: createEmptyRealOperationsState().workspaceTasks,
+          dayPulse: { completed: 0, pending: 0 },
+          workspacePanorama: {},
+          entityPages: {},
+        });
+        setDataMode("real");
+        setDiagnostics({
+          dataMode: "real",
+          source: "demo",
+          counts: {
+            oe: 0,
+            lotes: 0,
+            pedidos: 0,
+            oa: 0,
+            liberaciones: 0,
+          },
+          fallbackUsed: {
+            bandeja: false,
+            workspaces: false,
+            entityPages: false,
+            panorama: false,
+          },
+          message,
+        });
+      } else {
+        setDataMode("demo");
+        setDiagnostics({
+          dataMode: "demo",
+          source: "demo",
+          counts: {
+            oe: 0,
+            lotes: 0,
+            pedidos: 0,
+            oa: 0,
+            liberaciones: 0,
+          },
+          fallbackUsed: {
+            bandeja: false,
+            workspaces: false,
+            entityPages: false,
+            panorama: false,
+          },
+          message,
+        });
+      }
+
       setHydrated(true);
     } finally {
       setLoading(false);
     }
-  }, [dataMode]);
+  }, [clientDataMode]);
 
   const ensureEntityLoaded = useCallback(
     async (kind: EntityPageKind, entityId: string): Promise<boolean> => {
@@ -343,13 +350,13 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    if (dataMode !== "real" || hydratedRef.current) {
+    if (hydratedRef.current) {
       return;
     }
 
     hydratedRef.current = true;
     void hydrateOperations();
-  }, [dataMode, hydrateOperations]);
+  }, [hydrateOperations]);
 
   const executeAction = useCallback(
     async (

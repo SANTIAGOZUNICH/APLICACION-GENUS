@@ -14,11 +14,14 @@ import {
 } from "@/lib/workspace/get-foco-task";
 import { useOperationsStore } from "@/lib/operations/operations-store";
 import { RealDataSourceBanner } from "@/components/data/real-data-source-banner";
+import { MapperPendingBanner } from "@/components/data/mapper-pending-banner";
+import { getSectionEmptyState } from "@/lib/mappers/real-data-empty-state";
 import type { WorkspaceId } from "@/types/actions";
 import { getWorkspacePanorama } from "@/mocks/workspace";
 import { cn } from "@/lib/utils/cn";
 import { CheckCircle2, ChevronDown, Target } from "lucide-react";
 import { useState } from "react";
+import type { OperationsDiagnostics } from "@/types/operations/operations-diagnostics";
 
 interface ActionableWorkspaceViewProps {
   config: WorkspaceDefinition;
@@ -26,11 +29,27 @@ interface ActionableWorkspaceViewProps {
 
 function ActionableWorkspaceSection({
   section,
+  dataMode,
+  diagnostics,
+  workspaceId,
+  totalTaskCount,
 }: {
   section: ReturnType<typeof groupWorkspaceTasksBySection>[number];
+  dataMode: "demo" | "real";
+  diagnostics: OperationsDiagnostics | null;
+  workspaceId: WorkspaceId;
+  totalTaskCount: number;
 }) {
   const [collapsed, setCollapsed] = useState(section.defaultCollapsed ?? false);
   const isOpen = !collapsed;
+  const empty = getSectionEmptyState({
+    dataMode,
+    diagnostics,
+    workspaceId,
+    sectionId: section.id,
+    sectionTaskCount: section.tasks.length,
+    totalTaskCount,
+  });
 
   return (
     <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
@@ -64,8 +83,9 @@ function ActionableWorkspaceSection({
           {section.tasks.length === 0 ? (
             <EmptyState
               icon={CheckCircle2}
-              title="Sección al día"
-              tone="positive"
+              title={empty.title}
+              description={empty.description}
+              tone={empty.tone}
               className="py-6"
             />
           ) : (
@@ -124,6 +144,11 @@ export function ActionableWorkspaceView({ config }: ActionableWorkspaceViewProps
         diagnostics={diagnostics}
         loading={loading && !hydrated}
       />
+      <MapperPendingBanner
+        workspaceId={wsId}
+        diagnostics={diagnostics}
+        dataMode={dataMode}
+      />
       <WorkspaceMissionHeader title={config.title} mission={config.mission} />
       {focoTask && (
         <section aria-label="Foco del workspace">
@@ -146,7 +171,14 @@ export function ActionableWorkspaceView({ config }: ActionableWorkspaceViewProps
       )}
       <div className="flex flex-col gap-4">
         {sections.map((section) => (
-          <ActionableWorkspaceSection key={section.id} section={section} />
+          <ActionableWorkspaceSection
+            key={section.id}
+            section={section}
+            dataMode={dataMode}
+            diagnostics={diagnostics}
+            workspaceId={wsId}
+            totalTaskCount={workspaceTasks.length}
+          />
         ))}
       </div>
     </div>

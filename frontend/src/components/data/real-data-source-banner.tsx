@@ -60,6 +60,15 @@ export function RealDataSourceBanner({
             pedidos · {counts.oa} OA · {counts.liberaciones} liberaciones
           </p>
         )}
+        {diagnostics?.realSources && (
+          <p className="mt-1 text-xs">
+            Índice ELABORACION: {diagnostics.realSources.elaboracionIndexCount} ·
+            Lotes leídos/mapeados: {diagnostics.realSources.lotesRowsRead}/
+            {diagnostics.realSources.lotesRowsMapped} · Pedidos leídos/mapeados:{" "}
+            {diagnostics.realSources.pedidosRowsRead}/
+            {diagnostics.realSources.pedidosRowsMapped}
+          </p>
+        )}
       </Alert>
     );
   }

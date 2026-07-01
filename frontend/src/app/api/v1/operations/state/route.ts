@@ -78,6 +78,8 @@ export async function GET() {
         source: "drive",
         counts: hydration.counts,
         fallbackUsed: createEmptyFallbackUsed(),
+        realSources: hydration.realSources,
+        mapperWarnings: hydration.mapperWarnings,
         message: "Datos operativos construidos desde índices Drive/Sheets.",
       },
     });

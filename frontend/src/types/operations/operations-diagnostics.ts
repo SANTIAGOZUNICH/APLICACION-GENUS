@@ -1,4 +1,8 @@
 import type { ApiDataSource } from "@/lib/api/operations-client";
+import type {
+  MapperWarning,
+  RealSourcesDiagnostic,
+} from "@/lib/mappers/mapper-diagnostics.types";
 
 export interface OperationsEntityCounts {
   oe: number;
@@ -21,6 +25,8 @@ export interface OperationsDiagnostics {
   counts: OperationsEntityCounts;
   fallbackUsed: OperationsFallbackUsed;
   message?: string;
+  realSources?: RealSourcesDiagnostic;
+  mapperWarnings?: MapperWarning[];
 }
 
 export function createEmptyCounts(): OperationsEntityCounts {

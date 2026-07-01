@@ -23,4 +23,18 @@ export interface ConsultaSearchResponse {
     pedidos: number;
   };
   message?: string;
+  diagnostics?: {
+    lotes?: {
+      rowsRead: number;
+      rowsMapped: number;
+      reason?: string;
+      sampleHeaders?: string[];
+    };
+    pedidos?: {
+      rowsRead: number;
+      rowsMapped: number;
+      reason?: string;
+      sampleHeaders?: string[];
+    };
+  };
 }

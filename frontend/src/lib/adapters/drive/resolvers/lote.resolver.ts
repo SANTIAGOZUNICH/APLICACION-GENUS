@@ -15,8 +15,15 @@ const TAB_CANDIDATES = [
   "Hoja 1",
 ].filter(Boolean) as string[];
 
+export interface SheetReadMeta {
+  rows: string[][];
+  tabUsed?: string;
+  tabsAttempted: string[];
+}
+
 export class LoteResolver {
   private sheetRowsCache: string[][] | null = null;
+  private sheetReadMetaCache: SheetReadMeta | null = null;
 
   async listLoteEntityPages(): Promise<LoteSheetBundle[]> {
     const rows = await this.readAsignacionRows();
@@ -34,11 +41,11 @@ export class LoteResolver {
   }
 
   async readAsignacionRows(): Promise<string[][]> {
-    return this.readAsignacionRowsInternal();
+    return this.readAsignacionWithMeta().then((result) => result.rows);
   }
 
-  private async readAsignacionRowsInternal(): Promise<string[][]> {
-    if (this.sheetRowsCache) return this.sheetRowsCache;
+  async readAsignacionWithMeta(): Promise<SheetReadMeta> {
+    if (this.sheetReadMetaCache) return this.sheetReadMetaCache;
 
     const docRef =
       await operationsDocumentRepository.getCriticalSheetRef(
@@ -49,8 +56,14 @@ export class LoteResolver {
       try {
         const rows = await sheetsReader.readTab(docRef.fileId, tabName);
         if (rows.length > 1) {
+          const meta = {
+            rows,
+            tabUsed: tabName,
+            tabsAttempted: [...TAB_CANDIDATES],
+          };
           this.sheetRowsCache = rows;
-          return rows;
+          this.sheetReadMetaCache = meta;
+          return meta;
         }
       } catch {
         continue;
@@ -58,8 +71,14 @@ export class LoteResolver {
     }
 
     const rows = await sheetsReader.readFirstTab(docRef.fileId);
+    const meta = {
+      rows,
+      tabUsed: rows.length > 1 ? "first-tab" : undefined,
+      tabsAttempted: [...TAB_CANDIDATES, "first-tab"],
+    };
     this.sheetRowsCache = rows;
-    return rows;
+    this.sheetReadMetaCache = meta;
+    return meta;
   }
 }
 

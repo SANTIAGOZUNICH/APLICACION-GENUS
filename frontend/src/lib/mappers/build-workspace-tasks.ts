@@ -10,6 +10,10 @@ import { buildOeSummaryFromIndex } from "@/lib/mappers/sheet-oe-to-entity";
 import { buildOaSummaryFromIndex } from "@/lib/mappers/sheet-oa-to-entity";
 import { buildPedidoSummaryCardData } from "@/lib/mappers/sheet-pedido-to-entity";
 import { buildLoteSummaryFromRow } from "@/lib/mappers/sheet-lote-to-entity";
+import {
+  resolveProduccionSectionId,
+  sortOesByRecency,
+} from "@/lib/mappers/oe-section-utils";
 import type { LiberacionSummary } from "@/lib/mappers/sheet-liberacion-to-entity";
 import type { LoteRow } from "@/lib/adapters/sheets/types/sheets-row.types";
 import { ActionIds } from "@/types/actions";
@@ -26,6 +30,10 @@ export interface WorkspaceBuildInput {
   liberaciones: LiberacionSummary[];
 }
 
+const MAX_PRODUCCION_OES = 100;
+const MAX_LOTES = 50;
+const MAX_PEDIDOS = 50;
+
 function pushTask(
   tasks: WorkspaceTask[],
   task: WorkspaceTask,
@@ -34,6 +42,43 @@ function pushTask(
   if (tasks.length < limit) {
     tasks.push(task);
   }
+}
+
+function sectionForCalidadLote(status: Status): string {
+  if (status === Status.LIBERADO) return "finalizados";
+  if (status === Status.POR_VENCER || status === Status.BLOQUEADO || status === Status.FUERA_DE_TOLERANCIA) {
+    return "problemas";
+  }
+  return "para-analizar";
+}
+
+function sectionForCalidadLiberacion(status: Status): string {
+  if (status === Status.LIBERADO) return "finalizados";
+  if (status === Status.BORRADOR_EN_REVISION) return "esperando-firma";
+  if (status === Status.BLOQUEADO || status === Status.RECHAZADO) return "problemas";
+  return "para-analizar";
+}
+
+function sectionForComercialPedido(status: Status): string {
+  if (status === Status.COMPLETO) return "cerrados";
+  if (status === Status.CRITICO || status === Status.PARCIAL) return "problemas";
+  if (status === Status.PENDIENTE) return "necesita-seguimiento";
+  return "en-produccion";
+}
+
+function sectionForDepositoPedido(status: Status): string {
+  if (status === Status.COMPLETO) return "finalizados";
+  if (status === Status.CRITICO || status === Status.POR_VENCER || status === Status.BLOQUEADO) {
+    return "problemas";
+  }
+  return "para-mover";
+}
+
+function sectionForDepositoLote(status: Status): string {
+  if (status === Status.LIBERADO) return "finalizados";
+  if (status === Status.POR_VENCER || status === Status.BLOQUEADO) return "problemas";
+  if (status === Status.CUARENTENA) return "esperando-otros";
+  return "para-mover";
 }
 
 export function buildWorkspaceTasks(
@@ -46,21 +91,14 @@ export function buildWorkspaceTasks(
   const direccion: WorkspaceTask[] = [];
   const dt: WorkspaceTask[] = [];
 
-  input.oes.slice(0, 8).forEach((entry, index) => {
+  sortOesByRecency(input.oes).forEach((entry, index) => {
     const summary = buildOeSummaryFromIndex(entry);
-    const sectionId =
-      summary.status === Status.BLOQUEADO
-        ? "problemas"
-        : summary.status === Status.PLANIFICADA
-          ? "en-cola"
-          : summary.status === Status.CERRADA
-            ? "finalizados"
-            : "en-curso";
+    const sectionId = resolveProduccionSectionId(entry);
 
     pushTask(produccion, {
       id: `prod-oe-${entry.fileId}`,
       sectionId,
-      urgencyScore: 900 - index * 10,
+      urgencyScore: 900 - index,
       payload: {
         entityType: BandejaEntityType.OE,
         data: {
@@ -72,20 +110,19 @@ export function buildWorkspaceTasks(
           responsable: summary.responsable,
           progressPercent: summary.progressPercent,
           primaryAction: {
-            label: "Continuar producción",
-            actionId: ActionIds.OE_REGISTRAR_CONTROL,
+            label: "Abrir ficha",
           },
           href: oePageHref(summary.lookupKey),
         },
       },
-    }, 12);
+    }, MAX_PRODUCCION_OES);
   });
 
-  input.oas.slice(0, 8).forEach((entry, index) => {
+  input.oas.slice(0, 20).forEach((entry, index) => {
     const summary = buildOaSummaryFromIndex(entry);
     pushTask(produccion, {
       id: `prod-oa-${entry.fileId}`,
-      sectionId: summary.status === Status.PLANIFICADA ? "en-cola" : "en-curso",
+      sectionId: summary.status === Status.PLANIFICADA ? "esperando-otros" : "en-curso",
       urgencyScore: 850 - index * 10,
       payload: {
         entityType: BandejaEntityType.OA,
@@ -104,18 +141,15 @@ export function buildWorkspaceTasks(
           href: oaPageHref(summary.lookupKey),
         },
       },
-    }, 12);
+    }, MAX_PRODUCCION_OES);
   });
 
-  input.liberaciones.slice(0, 10).forEach((lib, index) => {
+  input.liberaciones.slice(0, 20).forEach((lib, index) => {
+    const sectionId = sectionForCalidadLiberacion(lib.status);
+
     pushTask(calidad, {
       id: `cal-lib-${lib.liberacionId}`,
-      sectionId:
-        lib.status === Status.BORRADOR_EN_REVISION
-          ? "esperando-decision"
-          : lib.status === Status.LIBERADO
-            ? "finalizados"
-            : "en-revision",
+      sectionId,
       urgencyScore: 880 - index * 8,
       payload: {
         entityType: BandejaEntityType.LIBERACION,
@@ -132,7 +166,7 @@ export function buildWorkspaceTasks(
           href: liberacionPageHref(lib.liberacionId),
         },
       },
-    }, 10);
+    }, MAX_LOTES);
 
     if (lib.status === Status.BORRADOR_EN_REVISION) {
       pushTask(dt, {
@@ -154,18 +188,18 @@ export function buildWorkspaceTasks(
             href: liberacionPageHref(lib.liberacionId),
           },
         },
-      }, 9);
+      }, 20);
     }
   });
 
-  input.lotes.slice(0, 10).forEach((lote, index) => {
+  input.lotes.slice(0, MAX_LOTES).forEach((lote, index) => {
     const summary = buildLoteSummaryFromRow(lote);
+    const calidadSection = sectionForCalidadLote(summary.status);
+    const depositoSection = sectionForDepositoLote(summary.status);
+
     pushTask(calidad, {
       id: `cal-lote-${summary.loteId}`,
-      sectionId:
-        summary.status === Status.POR_VENCER || summary.status === Status.BLOQUEADO
-          ? "problemas"
-          : "en-revision",
+      sectionId: calidadSection,
       urgencyScore: 820 - index * 8,
       payload: {
         entityType: BandejaEntityType.LOTE,
@@ -175,11 +209,11 @@ export function buildWorkspaceTasks(
           href: lotePageHref(summary.loteId),
         },
       },
-    }, 10);
+    }, MAX_LOTES);
 
     pushTask(deposito, {
       id: `dep-lote-${summary.loteId}`,
-      sectionId: "stock",
+      sectionId: depositoSection,
       urgencyScore: 700 - index * 8,
       payload: {
         entityType: BandejaEntityType.LOTE,
@@ -189,19 +223,17 @@ export function buildWorkspaceTasks(
           href: lotePageHref(summary.loteId),
         },
       },
-    }, 12);
+    }, MAX_LOTES);
   });
 
-  input.pedidos.slice(0, 10).forEach((pedido, index) => {
+  input.pedidos.slice(0, MAX_PEDIDOS).forEach((pedido, index) => {
     const card = buildPedidoSummaryCardData(pedido);
+    const comercialSection = sectionForComercialPedido(card.status);
+    const depositoSection = sectionForDepositoPedido(card.status);
+
     pushTask(comercial, {
       id: `com-ped-${pedido.pedidoId}`,
-      sectionId:
-        card.status === Status.COMPLETO
-          ? "finalizados"
-          : card.status === Status.CRITICO || card.status === Status.PARCIAL
-            ? "compromisos"
-            : "en-curso",
+      sectionId: comercialSection,
       urgencyScore: 780 - index * 8,
       payload: {
         entityType: BandejaEntityType.PEDIDO,
@@ -214,11 +246,11 @@ export function buildWorkspaceTasks(
           href: pedidoPageHref(pedido.pedidoId),
         },
       },
-    }, 7);
+    }, MAX_PEDIDOS);
 
     pushTask(deposito, {
       id: `dep-ped-${pedido.pedidoId}`,
-      sectionId: "despacho",
+      sectionId: depositoSection,
       urgencyScore: 760 - index * 8,
       payload: {
         entityType: BandejaEntityType.PEDIDO,
@@ -231,7 +263,7 @@ export function buildWorkspaceTasks(
           href: pedidoPageHref(pedido.pedidoId),
         },
       },
-    }, 12);
+    }, MAX_PEDIDOS);
 
     if (card.status === Status.PARCIAL || card.status === Status.CRITICO) {
       pushTask(direccion, {
@@ -246,7 +278,7 @@ export function buildWorkspaceTasks(
             href: pedidoPageHref(pedido.pedidoId),
           },
         },
-      }, 12);
+      }, MAX_PEDIDOS);
     }
   });
 

@@ -8,23 +8,32 @@ import type { LoteRow } from "@/lib/adapters/sheets/types/sheets-row.types";
 import type { EntityPageModel } from "@/types/entity-page";
 import { Status } from "@/types/ui/status";
 
-function mapAsignacionRecord(record: Record<string, string>): LoteRow {
-  const base = mapRecordsToLoteRow(record);
-  const nroLote = pickField(
+export function extractLoteIdFromRecord(record: Record<string, string>): string {
+  return pickField(
     record,
+    "loteId",
+    "LOTE_ID",
+    "id_lote",
+    "codigo",
+    "codigo_lote",
     "nroLote",
     "nro_lote",
-    "lote",
     "numero_lote",
-    "asignacion"
+    "lote",
+    "asignacion",
+    "asignacion_lote",
+    "nro",
+    "id"
   );
+}
+
+export function mapAsignacionRecord(record: Record<string, string>): LoteRow {
+  const base = mapRecordsToLoteRow(record);
+  const nroLote = extractLoteIdFromRecord(record);
 
   return {
     ...base,
-    loteId:
-      base.loteId ||
-      pickField(record, "loteId", "LOTE_ID", "id_lote", "codigo") ||
-      nroLote,
+    loteId: base.loteId || nroLote,
     nroLote: base.nroLote || nroLote,
     tipoItem: base.tipoItem || pickField(record, "tipo", "tipo_item", "tipoItem"),
     itemId:
