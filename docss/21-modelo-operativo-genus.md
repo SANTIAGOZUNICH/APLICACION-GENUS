@@ -1,5 +1,7 @@
 # 21 — Modelo operativo de Genus OS (F8)
 
+> **⚠️ Supersedido por `22-modelo-operativo-definitivo.md`.** Conservar solo como historial de iteración F8.
+
 > **Estado:** Especificación funcional para revisión y aprobación.  
 > **Alcance F8:** Rediseño operativo del producto. **No incluye login ni autenticación.**  
 > **Prerequisito técnico:** Data Discovery (E7.2) debe confirmar schemas reales antes de implementar mappers.
