@@ -35,10 +35,11 @@ export interface DocumentRef {
   folderPath?: string;
 }
 
+/** OE document index entry — file name locates the doc; business OE_ID lives in the Sheet. */
 export interface OeIndexEntry {
-  oeId: string;
   fileId: string;
   fileName: string;
+  fileSlug: string;
   modifiedTime?: string;
   folderPath?: string;
 }
@@ -85,9 +86,22 @@ export interface PedidoSummary {
   raw: Record<string, string>;
 }
 
-export interface OeListItem {
+export interface OeSheetFields {
   oeId: string;
+  lote: string;
+  cliente: string;
+  producto: string;
+  estado: string;
+  responsable: string;
+  batch: string;
+  fecha: string;
+  raw: Record<string, string>;
+}
+
+export interface OeListItem {
   fileId: string;
   fileName: string;
+  fileSlug: string;
   modifiedTime?: string;
+  folderPath?: string;
 }

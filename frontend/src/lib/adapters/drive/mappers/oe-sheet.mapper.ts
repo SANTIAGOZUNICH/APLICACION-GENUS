@@ -2,8 +2,149 @@ import { Factory } from "lucide-react";
 import { PRODUCTION_ORDER_FLOW } from "@/config/entity-pages";
 import { EntityPageKinds, type EntityPageModel } from "@/types/entity-page";
 import { Status } from "@/types/ui/status";
-import { rowsToRecords, pickField } from "@/lib/adapters/sheets/parse-sheet-rows";
-import type { OeIndexEntry } from "@/lib/adapters/drive/types/document.types";
+import {
+  pickField,
+  rowsToRecords,
+} from "@/lib/adapters/sheets/parse-sheet-rows";
+import type { OeIndexEntry, OeSheetFields } from "@/lib/adapters/drive/types/document.types";
+import { stripSheetExtension } from "@/lib/adapters/drive/oe-document-locator";
+
+/** Business fields extracted from inside an OE spreadsheet. */
+export type { OeSheetFields } from "@/lib/adapters/drive/types/document.types";
+
+function normalizeLabel(label: string): string {
+  return label
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_]/g, "");
+}
+
+/** Scan label/value pairs (column A = label, column B = value). */
+function extractLabelValuePairs(rows: string[][]): Record<string, string> {
+  const pairs: Record<string, string> = {};
+
+  for (const row of rows.slice(0, 80)) {
+    if (row.length < 2) continue;
+    const label = row[0]?.trim();
+    const value = row[1]?.trim();
+    if (!label || !value) continue;
+    pairs[normalizeLabel(label)] = value;
+  }
+
+  return pairs;
+}
+
+function mergeFieldSources(
+  ...sources: Record<string, string>[]
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  for (const source of sources) {
+    for (const [key, value] of Object.entries(source)) {
+      if (value.trim()) {
+        merged[key] = value.trim();
+      }
+    }
+  }
+  return merged;
+}
+
+export function extractOeFieldsFromSheet(rows: string[][]): OeSheetFields {
+  const labelPairs = extractLabelValuePairs(rows);
+  const records = rowsToRecords(rows);
+  const firstRecord = records[0] ?? {};
+  const raw = mergeFieldSources(labelPairs, firstRecord);
+
+  const oeId = pickField(
+    raw,
+    "oe_id",
+    "oeid",
+    "id_oe",
+    "nro_oe",
+    "numero_oe",
+    "orden_elaboracion",
+    "orden",
+    "oe"
+  );
+
+  const producto = pickField(
+    raw,
+    "producto",
+    "descripcion",
+    "descripcion_producto",
+    "granel",
+    "nombre_producto",
+    "nombre"
+  );
+
+  const cliente = pickField(
+    raw,
+    "cliente",
+    "cliente_nombre",
+    "marca",
+    "cliente_id",
+    "nombre_cliente"
+  );
+
+  const lote = pickField(
+    raw,
+    "lote_id",
+    "lote",
+    "lote_granel",
+    "nro_lote",
+    "numero_lote",
+    "lote_granel_id"
+  );
+
+  const estado = pickField(
+    raw,
+    "estado",
+    "estado_oe",
+    "status",
+    "estado_orden"
+  );
+
+  const responsable = pickField(
+    raw,
+    "responsable",
+    "operario",
+    "usuario",
+    "elaborador"
+  );
+
+  const batch = pickField(
+    raw,
+    "batch",
+    "tamano_batch",
+    "cantidad",
+    "kg",
+    "tamano_de_batch",
+    "volumen"
+  );
+
+  const fecha = pickField(
+    raw,
+    "fecha",
+    "fecha_inicio",
+    "fecha_oe",
+    "inicio",
+    "fecha_elaboracion"
+  );
+
+  return {
+    oeId,
+    lote,
+    cliente,
+    producto,
+    estado,
+    responsable,
+    batch,
+    fecha,
+    raw,
+  };
+}
 
 function inferStatus(value: string): Status {
   const normalized = value.trim().toLowerCase();
@@ -27,42 +168,61 @@ function inferStageId(status: Status): string {
   }
 }
 
-/** Minimal OE entity page from a single OE spreadsheet (v1 heuristic). */
-export function buildOeEntityPageFromSheet(
+function titleFromFileAndFields(
   indexEntry: OeIndexEntry,
-  rows: string[][]
+  fields: OeSheetFields
+): string {
+  if (fields.producto && fields.cliente) {
+    return `${fields.producto} · ${fields.cliente}`;
+  }
+  if (fields.producto) return fields.producto;
+  return stripSheetExtension(indexEntry.fileName);
+}
+
+/** Build entity page using sheet content as source of truth for business fields. */
+export function buildOeEntityPageFromFields(
+  indexEntry: OeIndexEntry,
+  fields: OeSheetFields
 ): EntityPageModel {
-  const records = rowsToRecords(rows);
-  const firstRecord = records[0] ?? {};
+  const status = inferStatus(fields.estado || "En curso");
+  const entityId = fields.oeId || indexEntry.fileId;
+  const title = titleFromFileAndFields(indexEntry, fields);
 
-  const producto = pickField(
-    firstRecord,
-    "producto",
-    "PRODUCTO",
-    "descripcion",
-    "granel",
-    "nombre"
-  );
-  const estadoRaw = pickField(firstRecord, "estado", "status", "estado_oe");
-  const status = inferStatus(estadoRaw || "En curso");
-  const batch = pickField(firstRecord, "batch", "cantidad", "kg", "tamano_batch");
-  const responsable = pickField(firstRecord, "responsable", "operario", "usuario");
-  const lote = pickField(firstRecord, "lote", "lote_granel", "LOTE_ID");
-
-  const keyValueItems = Object.entries(firstRecord)
-    .filter(([, value]) => value.trim())
-    .slice(0, 12)
-    .map(([key, value]) => ({
-      id: key,
-      label: key.replace(/_/g, " "),
-      value,
-    }));
+  const keyValueItems = [
+    ...(fields.oeId
+      ? [{ id: "oe-id", label: "OE ID", value: fields.oeId }]
+      : []),
+    { id: "archivo", label: "Archivo", value: indexEntry.fileName },
+    ...(fields.producto
+      ? [{ id: "producto", label: "Producto", value: fields.producto }]
+      : []),
+    ...(fields.cliente
+      ? [{ id: "cliente", label: "Cliente", value: fields.cliente }]
+      : []),
+    ...(fields.lote
+      ? [{ id: "lote", label: "Lote granel", value: fields.lote }]
+      : []),
+    ...(fields.estado
+      ? [{ id: "estado", label: "Estado", value: fields.estado }]
+      : []),
+    ...(fields.batch
+      ? [{ id: "batch", label: "Batch", value: fields.batch }]
+      : []),
+    ...(fields.responsable
+      ? [{ id: "responsable", label: "Responsable", value: fields.responsable }]
+      : []),
+    ...(fields.fecha
+      ? [{ id: "fecha", label: "Fecha", value: fields.fecha }]
+      : []),
+  ];
 
   return {
     kind: EntityPageKinds.OE,
-    entityId: indexEntry.oeId,
-    title: producto || indexEntry.fileName,
-    subtitle: `Elaboración · ${indexEntry.fileName}`,
+    entityId,
+    title,
+    subtitle: fields.cliente
+      ? `Cliente · ${fields.cliente}`
+      : `Elaboración · ${stripSheetExtension(indexEntry.fileName)}`,
     status,
     identityIcon: Factory,
     statusFlow: PRODUCTION_ORDER_FLOW,
@@ -71,25 +231,10 @@ export function buildOeEntityPageFromSheet(
       {
         id: "datos",
         title: "Datos de la orden",
-        description: `Leído desde Drive · ${indexEntry.fileName}`,
+        description: `Contenido leído desde ${indexEntry.fileName}`,
         content: {
           type: "key-values",
-          items:
-            keyValueItems.length > 0
-              ? keyValueItems
-              : [
-                  { id: "archivo", label: "Archivo", value: indexEntry.fileName },
-                  { id: "oe", label: "OE", value: indexEntry.oeId },
-                  ...(batch
-                    ? [{ id: "batch", label: "Batch", value: batch }]
-                    : []),
-                  ...(lote
-                    ? [{ id: "lote", label: "Lote granel", value: lote }]
-                    : []),
-                  ...(responsable
-                    ? [{ id: "resp", label: "Responsable", value: responsable }]
-                    : []),
-                ],
+          items: keyValueItems,
         },
       },
     ],
@@ -99,18 +244,28 @@ export function buildOeEntityPageFromSheet(
         timestamp: new Date().toISOString(),
         user: "Sistema",
         action: "Lectura desde Drive",
-        description: `Sheet ${indexEntry.fileId} indexado como ${indexEntry.oeId}.`,
+        description: fields.oeId
+          ? `OE ${fields.oeId} resuelta desde el contenido del Sheet.`
+          : `Documento ${indexEntry.fileName} abierto; OE ID no encontrado en el Sheet.`,
       },
     ],
     relatedObjects: [],
   };
 }
 
+export function buildOeEntityPageFromSheet(
+  indexEntry: OeIndexEntry,
+  rows: string[][]
+): EntityPageModel {
+  return buildOeEntityPageFromFields(indexEntry, extractOeFieldsFromSheet(rows));
+}
+
 export function buildOeListItem(entry: OeIndexEntry) {
   return {
-    oeId: entry.oeId,
     fileId: entry.fileId,
     fileName: entry.fileName,
+    fileSlug: entry.fileSlug,
+    folderPath: entry.folderPath,
     modifiedTime: entry.modifiedTime,
   };
 }

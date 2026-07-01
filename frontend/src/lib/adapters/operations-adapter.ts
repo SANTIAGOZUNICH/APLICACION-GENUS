@@ -2,6 +2,7 @@ import type { OperationsState } from "@/types/actions";
 import type { EntityPageModel } from "@/types/entity-page";
 import type {
   OeListItem,
+  OeSheetFields,
   PedidoSummary,
 } from "@/lib/adapters/drive/types/document.types";
 
@@ -12,7 +13,11 @@ export interface LoteSheetBundle {
 }
 
 export interface OeSheetBundle {
-  oeId: string;
+  fileId: string;
+  fileName: string;
+  /** Business OE_ID extracted from sheet content, if present. */
+  oeId?: string;
+  fields: OeSheetFields;
   entityPage: EntityPageModel;
 }
 
@@ -33,7 +38,7 @@ export interface OperationsAdapter {
   /** PEDIDOS 2026 summaries. */
   listPedidos?(): Promise<PedidoSummary[]>;
 
-  /** OE index (metadata only) and single OE resolution via index. */
+  /** OE index (file metadata) and resolution by fileId/name/business OE_ID. */
   listOeIndex?(): Promise<OeListItem[]>;
-  getOeEntityPage?(oeId: string): Promise<OeSheetBundle | null>;
+  getOeEntityPage?(lookupKey: string): Promise<OeSheetBundle | null>;
 }
