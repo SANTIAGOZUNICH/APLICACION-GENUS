@@ -1,0 +1,103 @@
+/**
+ * Genus OS Design Tokens
+ * Source of truth: /docs/07-design-system.md
+ */
+
+:root {
+  /* Semantic colors */
+  --color-ok: #1e8e5a;
+  --color-attention: #c8881a;
+  --color-problem: #c0392b;
+  --color-action: #2d6cdf;
+  --color-neutral: #6b7280;
+  --color-accent: #1fa39a;
+
+  /* Surfaces — light */
+  --background: #f9fafb;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --border: #e5e7eb;
+  --border-subtle: #f3f4f6;
+  --foreground: #111827;
+  --muted-foreground: #6b7280;
+
+  /* Sidebar */
+  --sidebar-width: 15rem;
+  --sidebar-width-collapsed: 4rem;
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #e5e7eb;
+  --sidebar-item-hover: #f3f4f6;
+  --sidebar-item-active-bg: rgb(45 108 223 / 0.08);
+  --sidebar-item-active-border: #2d6cdf;
+
+  /* Topbar */
+  --topbar-height: 3.5rem;
+
+  /* Badge tints */
+  --badge-ok-bg: #e8f5ee;
+  --badge-ok-text: #1e8e5a;
+  --badge-attention-bg: #fdf6e8;
+  --badge-attention-text: #c8881a;
+  --badge-problem-bg: #fceaea;
+  --badge-problem-text: #c0392b;
+  --badge-neutral-bg: #f3f4f6;
+  --badge-neutral-text: #6b7280;
+
+  /* Typography scale */
+  --text-screen-title: 1.375rem;
+  --text-section: 1rem;
+  --text-card-title: 0.9375rem;
+  --text-body: 0.875rem;
+  --text-meta: 0.8125rem;
+  --text-caption: 0.75rem;
+
+  /* Spacing base 8 */
+  --space-page: 1.5rem;
+  --space-section: 1.5rem;
+  --space-card: 1rem;
+
+  /* Radius */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px rgb(0 0 0 / 0.07);
+
+  /* Focus ring */
+  --ring: #2d6cdf;
+}
+
+.dark {
+  --background: #111827;
+  --surface: #1f2937;
+  --surface-elevated: #374151;
+  --border: #374151;
+  --border-subtle: #1f2937;
+  --foreground: #f9fafb;
+  --muted-foreground: #9ca3af;
+
+  --sidebar-bg: #1f2937;
+  --sidebar-border: #374151;
+  --sidebar-item-hover: #374151;
+  --sidebar-item-active-bg: rgb(96 165 250 / 0.12);
+  --sidebar-item-active-border: #60a5fa;
+
+  --color-ok: #34d399;
+  --color-attention: #fbbf24;
+  --color-problem: #f87171;
+  --color-action: #60a5fa;
+  --color-neutral: #9ca3af;
+  --color-accent: #2dd4bf;
+
+  --badge-ok-bg: rgb(52 211 153 / 0.15);
+  --badge-ok-text: #34d399;
+  --badge-attention-bg: rgb(251 191 36 / 0.15);
+  --badge-attention-text: #fbbf24;
+  --badge-problem-bg: rgb(248 113 113 / 0.15);
+  --badge-problem-text: #f87171;
+  --badge-neutral-bg: rgb(156 163 175 / 0.15);
+  --badge-neutral-text: #9ca3af;
+}
