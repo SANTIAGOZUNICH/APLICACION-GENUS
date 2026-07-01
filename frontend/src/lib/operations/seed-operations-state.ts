@@ -22,7 +22,7 @@ function cloneMockData<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-/** Seeds OperationsState from static mocks — internal adapter, swappable later. */
+/** Seeds OperationsState from static mocks — used by MockAdapter. */
 export function seedOperationsState(): OperationsState {
   const entityPages: OperationsState["entityPages"] = {};
 
