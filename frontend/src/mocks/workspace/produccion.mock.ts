@@ -5,6 +5,7 @@ import {
   labSectors,
   noop,
 } from "@/mocks/workspace/lab-context";
+import { ActionIds } from "@/types/actions";
 import { entityMockHrefs } from "@/mocks/entity-pages/hrefs";
 import type { WorkspaceTask } from "@/types/workspace/workspace-task";
 import { Status } from "@/types/ui/status";
@@ -24,7 +25,7 @@ export const produccionTasks: WorkspaceTask[] = [
         batchSize: "480 kg",
         responsable: labPeople.cristian,
         progressPercent: 100,
-        primaryAction: { label: "Cerrar OE", onClick: noop },
+        primaryAction: { label: "Cerrar OE", actionId: ActionIds.OE_CERRAR },
         href: entityMockHrefs.oe,
       },
     },
@@ -43,7 +44,7 @@ export const produccionTasks: WorkspaceTask[] = [
         unidades: "14.400 u",
         responsable: labPeople.joaquin,
         progressPercent: 100,
-        primaryAction: { label: "Cerrar OA", onClick: noop },
+        primaryAction: { label: "Cerrar OA", actionId: ActionIds.OA_CERRAR },
         href: entityMockHrefs.oa,
       },
     },

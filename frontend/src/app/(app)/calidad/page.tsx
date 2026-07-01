@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { WorkspaceView } from "@/components/patterns/workspace";
+import { ActionableWorkspaceView } from "@/components/patterns/actions/actionable-workspace-view";
+import { MockRoleSwitcher } from "@/components/patterns/actions/mock-role-switcher";
 import { calidadWorkspace } from "@/config/workspaces";
 
 export const metadata: Metadata = {
@@ -7,5 +8,10 @@ export const metadata: Metadata = {
 };
 
 export default function CalidadPage() {
-  return <WorkspaceView config={calidadWorkspace} />;
+  return (
+    <>
+      <MockRoleSwitcher />
+      <ActionableWorkspaceView config={calidadWorkspace} />
+    </>
+  );
 }

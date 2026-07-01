@@ -4,11 +4,11 @@ import {
   oePageHref,
   PRODUCTION_ORDER_FLOW,
 } from "@/config/entity-pages";
+import { ActionIds } from "@/types/actions";
 import {
   labPeople,
   labProducts,
   labSectors,
-  noop,
 } from "@/mocks/workspace/lab-context";
 import { CROSS_LINK } from "@/mocks/entity-pages/cross-link";
 import { EntityPageKinds, type EntityPageModel } from "@/types/entity-page";
@@ -23,7 +23,7 @@ const OA_0089: EntityPageModel = {
   identityIcon: Package,
   statusFlow: PRODUCTION_ORDER_FLOW,
   currentStageId: "en-curso",
-  primaryAction: { label: "Registrar avance", onClick: noop },
+  primaryAction: { label: "Registrar avance", actionId: ActionIds.OA_REGISTRAR_CONSUMO },
   sections: [
     {
       id: "datos",

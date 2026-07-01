@@ -3,11 +3,11 @@ import {
   oaPageHref,
   PEDIDO_FLOW,
 } from "@/config/entity-pages";
+import { ActionIds } from "@/types/actions";
 import {
   labClients,
   labPeople,
   labProducts,
-  noop,
 } from "@/mocks/workspace/lab-context";
 import { CROSS_LINK } from "@/mocks/entity-pages/cross-link";
 import { EntityPageKinds, type EntityPageModel } from "@/types/entity-page";
@@ -22,7 +22,7 @@ const PEDIDO_1205: EntityPageModel = {
   identityIcon: Truck,
   statusFlow: PEDIDO_FLOW,
   currentStageId: "parcial",
-  primaryAction: { label: "Seguir despacho", onClick: noop },
+  primaryAction: { label: "Seguir despacho", actionId: ActionIds.PEDIDO_DESPACHAR },
   sections: [
     {
       id: "datos",

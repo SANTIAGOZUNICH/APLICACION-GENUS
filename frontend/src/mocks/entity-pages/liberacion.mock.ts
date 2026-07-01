@@ -4,10 +4,10 @@ import {
   lotePageHref,
   oePageHref,
 } from "@/config/entity-pages";
+import { ActionIds } from "@/types/actions";
 import {
   labPeople,
   labProducts,
-  noop,
 } from "@/mocks/workspace/lab-context";
 import { CROSS_LINK } from "@/mocks/entity-pages/cross-link";
 import { EntityPageKinds, type EntityPageModel } from "@/types/entity-page";
@@ -22,7 +22,7 @@ const LIB_0042: EntityPageModel = {
   identityIcon: ShieldCheck,
   statusFlow: LIBERACION_FLOW,
   currentStageId: "borrador",
-  primaryAction: { label: "Revisar disposición", onClick: noop },
+  primaryAction: { label: "Revisar disposición", actionId: ActionIds.LIBERACION_PREPARAR_DISPOSICION },
   sections: [
     {
       id: "datos",

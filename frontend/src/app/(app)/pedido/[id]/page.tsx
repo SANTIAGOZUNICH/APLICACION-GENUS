@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
-import { EntityPageNotFound } from "@/components/patterns/entity-page/entity-page-not-found";
-import { EntityPageView } from "@/components/patterns/entity-page/entity-page-view";
-import { resolveEntityPage } from "@/lib/entity-pages";
+import { EntityPageClient } from "@/components/patterns/actions/entity-page-client";
 import { EntityPageKinds } from "@/types/entity-page";
 
 interface PedidoPageProps {
@@ -12,19 +10,10 @@ export async function generateMetadata({
   params,
 }: PedidoPageProps): Promise<Metadata> {
   const { id } = await params;
-  const model = resolveEntityPage(EntityPageKinds.PEDIDO, id);
-  return {
-    title: model ? `${model.entityId} · ${model.title}` : `Pedido ${id}`,
-  };
+  return { title: `Pedido ${id}` };
 }
 
 export default async function PedidoPage({ params }: PedidoPageProps) {
   const { id } = await params;
-  const model = resolveEntityPage(EntityPageKinds.PEDIDO, id);
-
-  if (!model) {
-    return <EntityPageNotFound entityLabel="Pedido" entityId={id} />;
-  }
-
-  return <EntityPageView model={model} />;
+  return <EntityPageClient kind={EntityPageKinds.PEDIDO} entityId={id} />;
 }
