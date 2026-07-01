@@ -18,9 +18,14 @@ import {
   fetchLoteList,
   fetchOperationsState,
   OperationsApiError,
+  type ApiDataSource,
 } from "@/lib/api/operations-client";
 import { getClientDataMode } from "@/lib/config/data-mode";
-import { getEntityPageFromState, seedOperationsState } from "@/lib/operations/seed-operations-state";
+import {
+  createEmptyRealOperationsState,
+  getEntityPageFromState,
+  seedOperationsState,
+} from "@/lib/operations/seed-operations-state";
 import { mockUser } from "@/mocks/user.mock";
 import type {
   ActionContext,
@@ -31,14 +36,22 @@ import type {
 } from "@/types/actions";
 import { entityPageKey } from "@/types/actions";
 import type { EntityPageKind } from "@/types/entity-page";
+import type { OperationsDiagnostics } from "@/types/operations/operations-diagnostics";
 
 export type OperationsDataSource = "initial" | "drive" | "demo" | "sheets";
+
+function createInitialOperationsState(): OperationsState {
+  return getClientDataMode() === "real"
+    ? createEmptyRealOperationsState()
+    : seedOperationsState();
+}
 
 type OperationsAction =
   | { type: "SET_STATE"; state: OperationsState }
   | {
       type: "MERGE_ENTITY_PAGES";
       pages: OperationsState["entityPages"];
+      sources?: Record<string, ApiDataSource>;
     }
   | {
       type: "HYDRATE_OPERATIONS";
@@ -46,6 +59,7 @@ type OperationsAction =
       workspaceTasks: OperationsState["workspaceTasks"];
       dayPulse: OperationsState["dayPulse"];
       workspacePanorama?: OperationsState["workspacePanorama"];
+      entityPages?: OperationsState["entityPages"];
     }
   | {
       type: "EXECUTE_PIPELINE";
@@ -71,13 +85,15 @@ interface OperationsStoreContextValue {
   ) => Promise<import("@/types/actions").ActionResult>;
   dataMode: ReturnType<typeof getClientDataMode>;
   dataSource: OperationsDataSource;
+  diagnostics: OperationsDiagnostics | null;
+  entitySources: Record<string, ApiDataSource>;
+  hydrated: boolean;
   loading: boolean;
   error: string | null;
   hydrateOperations: () => Promise<void>;
   ensureEntityLoaded: (kind: EntityPageKind, entityId: string) => Promise<boolean>;
-  /** @deprecated Use ensureEntityLoaded("lote", id) */
+  getEntitySource: (kind: EntityPageKind, entityId: string) => ApiDataSource | null;
   hydrateLotes: () => Promise<void>;
-  /** @deprecated Use ensureEntityLoaded("lote", id) */
   ensureLoteLoaded: (loteId: string) => Promise<boolean>;
 }
 
@@ -110,10 +126,11 @@ function operationsReducer(
     case "HYDRATE_OPERATIONS":
       return {
         ...state,
+        entityPages: action.entityPages ?? {},
         bandejaTasks: action.bandejaTasks,
         workspaceTasks: action.workspaceTasks,
         dayPulse: action.dayPulse,
-        workspacePanorama: action.workspacePanorama ?? state.workspacePanorama,
+        workspacePanorama: action.workspacePanorama ?? {},
       };
     case "EXECUTE_PIPELINE": {
       const output = runActionPipeline(
@@ -136,37 +153,47 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(
     operationsReducer,
     undefined,
-    seedOperationsState
+    createInitialOperationsState
   );
   const [roleId, setRoleId] = useState<RoleId>(mockUser.roleId);
   const [loading, setLoading] = useState(dataMode === "real");
+  const [hydrated, setHydrated] = useState(dataMode === "demo");
   const [error, setError] = useState<string | null>(null);
   const [dataSource, setDataSource] =
     useState<OperationsDataSource>("initial");
+  const [diagnostics, setDiagnostics] = useState<OperationsDiagnostics | null>(
+    null
+  );
+  const [entitySources, setEntitySources] = useState<
+    Record<string, ApiDataSource>
+  >({});
   const hydratedRef = useRef(false);
   const inflightEntitiesRef = useRef<Map<string, Promise<boolean>>>(new Map());
   const driveLoadedRef = useRef<Set<string>>(new Set());
-
-  const mergeEntityPageBundles = useCallback(
-    (
-      bundles: Array<{
-        entityPage: Parameters<typeof rehydrateEntityPage>[0];
-      }>
-    ) => {
-      const pages: OperationsState["entityPages"] = {};
-      for (const bundle of bundles) {
-        const model = rehydrateEntityPage(bundle.entityPage);
-        pages[entityPageKey(model.kind, model.entityId)] = model;
-      }
-      dispatch({ type: "MERGE_ENTITY_PAGES", pages });
-    },
-    []
-  );
 
   const hydrateOperations = useCallback(async () => {
     if (dataMode !== "real") {
       setLoading(false);
       setDataSource("demo");
+      setHydrated(true);
+      setDiagnostics({
+        dataMode: "demo",
+        source: "demo",
+        counts: {
+          oe: 0,
+          lotes: 0,
+          pedidos: 0,
+          oa: 0,
+          liberaciones: 0,
+        },
+        fallbackUsed: {
+          bandeja: false,
+          workspaces: false,
+          entityPages: false,
+          panorama: false,
+        },
+        message: "Modo demo activo.",
+      });
       return;
     }
 
@@ -179,20 +206,32 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
         fetchOperationsState(),
       ]);
 
-      mergeEntityPageBundles(loteResponse.lotes);
+      const entityPages: OperationsState["entityPages"] = {};
+      const sources: Record<string, ApiDataSource> = {};
+
+      for (const bundle of loteResponse.lotes) {
+        const model = rehydrateEntityPage(bundle.entityPage);
+        const key = entityPageKey(model.kind, model.entityId);
+        entityPages[key] = model;
+        sources[key] = bundle.source;
+      }
+
       dispatch({
         type: "HYDRATE_OPERATIONS",
         bandejaTasks: operationsResponse.bandejaTasks,
         workspaceTasks: operationsResponse.workspaceTasks,
         dayPulse: operationsResponse.dayPulse,
         workspacePanorama: operationsResponse.workspacePanorama,
+        entityPages,
       });
 
-      setDataSource(
-        loteResponse.source === "drive" || operationsResponse.source === "drive"
-          ? "drive"
-          : loteResponse.source
-      );
+      setEntitySources(sources);
+      setDiagnostics(operationsResponse.diagnostics ?? null);
+
+      const isDrive =
+        operationsResponse.source === "drive" || loteResponse.source === "drive";
+      setDataSource(isDrive ? "drive" : "demo");
+      setHydrated(true);
     } catch (err) {
       const message =
         err instanceof OperationsApiError
@@ -200,10 +239,37 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
           : "No se pudieron cargar los datos operativos.";
       setError(message);
       setDataSource("demo");
+      dispatch({
+        type: "HYDRATE_OPERATIONS",
+        bandejaTasks: [],
+        workspaceTasks: createEmptyRealOperationsState().workspaceTasks,
+        dayPulse: { completed: 0, pending: 0 },
+        workspacePanorama: {},
+        entityPages: {},
+      });
+      setDiagnostics({
+        dataMode: "real",
+        source: "demo",
+        counts: {
+          oe: 0,
+          lotes: 0,
+          pedidos: 0,
+          oa: 0,
+          liberaciones: 0,
+        },
+        fallbackUsed: {
+          bandeja: false,
+          workspaces: false,
+          entityPages: false,
+          panorama: false,
+        },
+        message,
+      });
+      setHydrated(true);
     } finally {
       setLoading(false);
     }
-  }, [dataMode, mergeEntityPageBundles]);
+  }, [dataMode]);
 
   const ensureEntityLoaded = useCallback(
     async (kind: EntityPageKind, entityId: string): Promise<boolean> => {
@@ -227,21 +293,22 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
           setError(null);
           const response = await fetchEntityByKind(kind, entityId);
           const model = rehydrateEntityPage(response.entityPage);
+          const key = entityPageKey(model.kind, model.entityId);
+
           dispatch({
             type: "MERGE_ENTITY_PAGES",
-            pages: {
-              [entityPageKey(model.kind, model.entityId)]: model,
-            },
+            pages: { [key]: model },
           });
+
+          setEntitySources((current) => ({
+            ...current,
+            [key]: response.source,
+          }));
+
           driveLoadedRef.current.add(inflightKey);
-          setDataSource(response.source);
+          setDataSource(response.source === "drive" ? "drive" : "demo");
           return true;
         } catch (err) {
-          const seeded = seedOperationsState();
-          if (getEntityPageFromState(seeded, kind, entityId)) {
-            return true;
-          }
-
           const message =
             err instanceof OperationsApiError
               ? err.message
@@ -260,6 +327,12 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
       }
     },
     [dataMode, state]
+  );
+
+  const getEntitySource = useCallback(
+    (kind: EntityPageKind, entityId: string) =>
+      entitySources[entityPageKey(kind, entityId)] ?? null,
+    [entitySources]
   );
 
   const hydrateLotes = hydrateOperations;
@@ -324,10 +397,14 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
       executeAction,
       dataMode,
       dataSource,
+      diagnostics,
+      entitySources,
+      hydrated,
       loading,
       error,
       hydrateOperations,
       ensureEntityLoaded,
+      getEntitySource,
       hydrateLotes,
       ensureLoteLoaded,
     }),
@@ -338,10 +415,14 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
       executeAction,
       dataMode,
       dataSource,
+      diagnostics,
+      entitySources,
+      hydrated,
       loading,
       error,
       hydrateOperations,
       ensureEntityLoaded,
+      getEntitySource,
       hydrateLotes,
       ensureLoteLoaded,
     ]

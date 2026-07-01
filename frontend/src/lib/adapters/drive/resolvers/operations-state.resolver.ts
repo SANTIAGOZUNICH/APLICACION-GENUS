@@ -15,6 +15,10 @@ import { pedidoResolver } from "@/lib/adapters/drive/resolvers/pedido.resolver";
 import type { WorkspaceId } from "@/types/actions";
 import type { BandejaDayPulse, BandejaTask } from "@/types/bandeja/bandeja-task";
 import type {
+  OperationsEntityCounts,
+  OperationsFallbackUsed,
+} from "@/types/operations/operations-diagnostics";
+import type {
   WorkspacePanoramaMetric,
   WorkspaceTask,
 } from "@/types/workspace/workspace-task";
@@ -24,6 +28,7 @@ export interface OperationsHydration {
   workspaceTasks: Record<WorkspaceId, WorkspaceTask[]>;
   dayPulse: BandejaDayPulse;
   workspacePanorama: Partial<Record<WorkspaceId, WorkspacePanoramaMetric[]>>;
+  counts: OperationsEntityCounts;
 }
 
 /** Builds bandeja/workspace from cached indexes and critical sheets — no mass OE/OA reads. */
@@ -59,6 +64,14 @@ export class OperationsStateResolver {
       liberaciones,
     };
 
+    const counts: OperationsEntityCounts = {
+      oe: oes.length,
+      oa: oas.length,
+      pedidos: pedidos.length,
+      lotes: lotes.length,
+      liberaciones: liberaciones.length,
+    };
+
     const bandejaTasks = buildBandejaTasks(buildInput);
     const workspaceTasks = buildWorkspaceTasks(buildInput);
     const dayPulse = buildDayPulse(bandejaTasks);
@@ -74,8 +87,41 @@ export class OperationsStateResolver {
       workspaceTasks,
       dayPulse,
       workspacePanorama,
+      counts,
     };
   }
 }
 
 export const operationsStateResolver = new OperationsStateResolver();
+
+export function buildEmptyRealHydration(): OperationsHydration {
+  return {
+    bandejaTasks: [],
+    workspaceTasks: {
+      produccion: [],
+      calidad: [],
+      comercial: [],
+      deposito: [],
+      direccion: [],
+      dt: [],
+    },
+    dayPulse: { completed: 0, pending: 0 },
+    workspacePanorama: {},
+    counts: {
+      oe: 0,
+      lotes: 0,
+      pedidos: 0,
+      oa: 0,
+      liberaciones: 0,
+    },
+  };
+}
+
+export function allFallbackUsed(value = true): OperationsFallbackUsed {
+  return {
+    bandeja: value,
+    workspaces: value,
+    entityPages: value,
+    panorama: value,
+  };
+}

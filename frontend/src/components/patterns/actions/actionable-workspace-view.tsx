@@ -13,6 +13,7 @@ import {
   getWorkspaceProblemTasks,
 } from "@/lib/workspace/get-foco-task";
 import { useOperationsStore } from "@/lib/operations/operations-store";
+import { RealDataSourceBanner } from "@/components/data/real-data-source-banner";
 import type { WorkspaceId } from "@/types/actions";
 import { getWorkspacePanorama } from "@/mocks/workspace";
 import { cn } from "@/lib/utils/cn";
@@ -84,7 +85,8 @@ function ActionableWorkspaceSection({
 
 /** E6 workspace shell — live OperationsStore + actionable tasks. Does not modify E4. */
 export function ActionableWorkspaceView({ config }: ActionableWorkspaceViewProps) {
-  const { state, dataMode } = useOperationsStore();
+  const { state, dataMode, dataSource, diagnostics, loading, hydrated } =
+    useOperationsStore();
   const wsId = config.id as WorkspaceId;
   const workspaceTasks = state.workspaceTasks[wsId] ?? [];
   const focoTask = getWorkspaceFocoTask(workspaceTasks, config.focoSectionId);
@@ -116,6 +118,12 @@ export function ActionableWorkspaceView({ config }: ActionableWorkspaceViewProps
 
   return (
     <div className="flex flex-col gap-6">
+      <RealDataSourceBanner
+        dataMode={dataMode}
+        dataSource={dataSource}
+        diagnostics={diagnostics}
+        loading={loading && !hydrated}
+      />
       <WorkspaceMissionHeader title={config.title} mission={config.mission} />
       {focoTask && (
         <section aria-label="Foco del workspace">

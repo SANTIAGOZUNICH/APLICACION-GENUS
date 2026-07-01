@@ -103,12 +103,22 @@ export async function GET(request: Request) {
     };
 
     if (getServerDataMode() !== "real" || !canUseDriveAdapter()) {
+      if (getServerDataMode() === "real") {
+        return NextResponse.json({
+          ...empty,
+          source: "demo",
+          indexSummary: { oes: 0, lotes: 0, pedidos: 0 },
+          message:
+            "Modo real sin Drive configurado — sin resultados ficticios. Configurá credenciales e indexá.",
+        });
+      }
+
       const demo = searchDemoEntities("");
       return NextResponse.json({
         ...empty,
         source: "demo",
         indexSummary: demo.indexSummary,
-        message: "Ingresá un término para buscar en demo o Drive.",
+        message: "Ingresá un término para buscar en demo.",
       });
     }
 
@@ -127,6 +137,18 @@ export async function GET(request: Request) {
   }
 
   if (getServerDataMode() !== "real" || !canUseDriveAdapter()) {
+    if (getServerDataMode() === "real") {
+      return NextResponse.json({
+        query,
+        results: [],
+        counts: { oe: 0, lote: 0, pedido: 0 },
+        source: "demo",
+        indexSummary: { oes: 0, lotes: 0, pedidos: 0 },
+        message:
+          "Modo real sin Drive configurado — sin resultados ficticios.",
+      });
+    }
+
     return NextResponse.json(searchDemoEntities(query));
   }
 
@@ -138,8 +160,9 @@ export async function GET(request: Request) {
       if (demo.results.length > 0) {
         return NextResponse.json({
           ...demo,
+          source: "demo",
           message:
-            "Sin coincidencias en Drive — mostrando fallback demo coincidente.",
+            "Demo / fallback — sin coincidencias en Drive. Resultados ficticios etiquetados.",
         });
       }
     }
@@ -158,8 +181,9 @@ export async function GET(request: Request) {
       const demo = searchDemoEntities(query);
       return NextResponse.json({
         ...demo,
+        source: "demo",
         message:
-          "Error al consultar Drive — fallback demo activo para validación local.",
+          "Demo / fallback — error al consultar Drive. Resultados ficticios etiquetados.",
       });
     }
 

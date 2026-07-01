@@ -9,6 +9,7 @@ import type {
   ConsultaEntityKind,
   ConsultaSearchResponse,
 } from "@/types/consulta/consulta-result";
+import type { OperationsDiagnostics } from "@/types/operations/operations-diagnostics";
 
 /** JSON-safe entity page (Lucide icons are rehydrated on the client). */
 export type EntityPageModelDTO = Omit<EntityPageModel, "identityIcon">;
@@ -64,6 +65,9 @@ export interface OperationsStateResponse {
   dayPulse: BandejaDayPulse;
   workspacePanorama: Partial<Record<WorkspaceId, WorkspacePanoramaMetric[]>>;
   source: ApiDataSource;
+  diagnostics?: OperationsDiagnostics;
+  error?: string;
+  code?: string;
 }
 
 export interface ApiErrorBody {

@@ -14,6 +14,7 @@ import { dtTasks } from "@/mocks/workspace/dt.mock";
 import {
   entityPageKey,
   type OperationsState,
+  type WorkspaceId,
 } from "@/types/actions";
 import type { EntityPageKind } from "@/types/entity-page";
 
@@ -22,7 +23,32 @@ function cloneMockData<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-/** Seeds OperationsState from static mocks — used by MockAdapter. */
+export function createEmptyWorkspaceTasks(): Record<
+  WorkspaceId,
+  OperationsState["workspaceTasks"][WorkspaceId]
+> {
+  return {
+    produccion: [],
+    calidad: [],
+    comercial: [],
+    deposito: [],
+    direccion: [],
+    dt: [],
+  };
+}
+
+/** Empty operational shell for real mode — no fictional demo data. */
+export function createEmptyRealOperationsState(): OperationsState {
+  return {
+    entityPages: {},
+    bandejaTasks: [],
+    workspaceTasks: createEmptyWorkspaceTasks(),
+    dayPulse: { completed: 0, pending: 0 },
+    workspacePanorama: {},
+  };
+}
+
+/** Seeds OperationsState from static mocks — used by MockAdapter / demo mode only. */
 export function seedOperationsState(): OperationsState {
   const entityPages: OperationsState["entityPages"] = {};
 

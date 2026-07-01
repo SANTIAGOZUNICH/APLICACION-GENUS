@@ -188,29 +188,71 @@ export function buildOeListItem(entry: OeIndexEntry) {
   };
 }
 
-/** Lightweight summary from index metadata — no sheet read. */
+/** Parse producto/cliente from real OE file names like "CREMA NIACINAMIDA - ICONO". */
+export function parseOeFileNameMetadata(fileName: string): {
+  producto: string;
+  cliente?: string;
+} {
+  const base = stripSheetExtension(fileName);
+  const parts = base
+    .split(/\s[-–|]\s/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 2) {
+    return {
+      producto: parts[0],
+      cliente: parts.slice(1).join(" · "),
+    };
+  }
+
+  return { producto: base };
+}
+
+function formatModifiedLabel(modifiedTime?: string): string {
+  if (!modifiedTime) return "Sin fecha de modificación";
+  const date = new Date(modifiedTime);
+  if (Number.isNaN(date.getTime())) return modifiedTime;
+  return date.toLocaleDateString("es-AR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+/** Lightweight summary from index metadata — no sheet read, no fictional fields. */
 export function buildOeSummaryFromIndex(entry: OeIndexEntry): {
   lookupKey: string;
   oeId: string;
   fileName: string;
   productName: string;
+  cliente?: string;
+  folderPath?: string;
+  modifiedTime?: string;
   status: Status;
   loteGranel: string;
   batchSize: string;
   responsable: string;
   progressPercent: number;
 } {
-  const productName = stripSheetExtension(entry.fileName);
+  const parsed = parseOeFileNameMetadata(entry.fileName);
+  const productName = parsed.cliente
+    ? `${parsed.producto} · ${parsed.cliente}`
+    : parsed.producto;
   const status: Status = Status.EN_CURSO;
+
   return {
     lookupKey: entry.fileSlug || entry.fileId,
-    oeId: entry.fileSlug,
+    oeId: entry.fileSlug || entry.fileId,
     fileName: entry.fileName,
     productName,
+    cliente: parsed.cliente,
+    folderPath: entry.folderPath,
+    modifiedTime: entry.modifiedTime,
     status,
-    loteGranel: "—",
-    batchSize: "—",
-    responsable: "—",
+    loteGranel: "Sin dato en índice",
+    batchSize: formatModifiedLabel(entry.modifiedTime),
+    responsable: entry.folderPath?.split("/").pop() || "Sin carpeta",
     progressPercent: 50,
   };
 }

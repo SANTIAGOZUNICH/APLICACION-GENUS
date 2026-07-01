@@ -153,14 +153,15 @@ export function buildOaSummaryFromIndex(entry: OaIndexEntry): {
   progressPercent: number;
 } {
   const status: Status = Status.EN_CURSO;
+  const skuName = stripSheetExtension(entry.fileName);
   return {
     lookupKey: entry.fileSlug || entry.fileId,
-    oaId: entry.fileSlug,
-    skuName: stripSheetExtension(entry.fileName),
+    oaId: entry.fileSlug || entry.fileId,
+    skuName,
     status,
-    lotePt: "—",
-    unidades: "—",
-    responsable: "—",
+    lotePt: "Sin dato en índice",
+    unidades: "Sin dato en índice",
+    responsable: entry.folderPath?.split("/").pop() || "Sin carpeta",
     progressPercent: 50,
   };
 }
