@@ -33,7 +33,11 @@ export class LoteResolver {
     return { loteId: entityPage.entityId, entityPage };
   }
 
-  private async readAsignacionRows(): Promise<string[][]> {
+  async readAsignacionRows(): Promise<string[][]> {
+    return this.readAsignacionRowsInternal();
+  }
+
+  private async readAsignacionRowsInternal(): Promise<string[][]> {
     if (this.sheetRowsCache) return this.sheetRowsCache;
 
     const docRef =

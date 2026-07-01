@@ -11,7 +11,7 @@ import {
   mockEntityNotFoundResponse,
   withEntityFallback,
 } from "@/lib/api/entity-route-helpers";
-import type { OeBundleResponse } from "@/lib/api/operations-client";
+import type { OaBundleResponse } from "@/lib/api/operations-client";
 import { getServerDataMode } from "@/lib/config/data-mode";
 import { EntityPageKinds } from "@/types/entity-page";
 
@@ -24,19 +24,18 @@ export async function GET(_request: Request, context: RouteContext) {
   const lookupKey = normalizeLookupKey(id);
 
   if (getServerDataMode() !== "real" || !canUseDriveAdapter()) {
-    const mockPage = getMockEntityPage(EntityPageKinds.OE, lookupKey);
-
+    const mockPage = getMockEntityPage(EntityPageKinds.OA, lookupKey);
     if (mockPage) {
       return NextResponse.json({
         lookupKey,
-        oeId: lookupKey,
+        oaId: lookupKey,
         entityPage: mockPage,
         source: "demo",
-      } satisfies OeBundleResponse);
+      } satisfies OaBundleResponse);
     }
 
     if (shouldUseDemoFallback()) {
-      return mockEntityNotFoundResponse(EntityPageKinds.OE, lookupKey);
+      return mockEntityNotFoundResponse(EntityPageKinds.OA, lookupKey);
     }
 
     return NextResponse.json(
@@ -46,21 +45,21 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   try {
-    const bundle = await driveAdapter.getOE!(lookupKey);
+    const bundle = await driveAdapter.getOA!(lookupKey);
     if (!bundle) {
-      const mockPage = getMockEntityPage(EntityPageKinds.OE, lookupKey);
+      const mockPage = getMockEntityPage(EntityPageKinds.OA, lookupKey);
       if (mockPage && shouldUseDemoFallback()) {
         return NextResponse.json({
           lookupKey,
-          oeId: lookupKey,
+          oaId: lookupKey,
           entityPage: mockPage,
           source: "demo",
-        } satisfies OeBundleResponse);
+        } satisfies OaBundleResponse);
       }
 
       return NextResponse.json(
         {
-          error: `Documento OE no encontrado para "${lookupKey}". Probá con fileId o fileSlug del índice.`,
+          error: `Documento OA no encontrado para "${lookupKey}".`,
           code: "NOT_FOUND",
         },
         { status: 404 }
@@ -70,20 +69,19 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({
       fileId: bundle.fileId,
       fileName: bundle.fileName,
-      oeId: bundle.oeId,
-      fields: bundle.fields,
+      oaId: bundle.oaId,
       entityPage: stripEntityPageIcon(bundle.entityPage),
       source: "drive",
-    } satisfies OeBundleResponse);
+    } satisfies OaBundleResponse);
   } catch (error) {
-    console.error(`[Genus] GET /api/v1/oe/${lookupKey} failed:`, error);
+    console.error(`[Genus] GET /api/v1/oa/${lookupKey} failed:`, error);
     return withEntityFallback(
-      EntityPageKinds.OE,
+      EntityPageKinds.OA,
       lookupKey,
       async () => null,
       (entityPage) => ({
         lookupKey,
-        oeId: lookupKey,
+        oaId: lookupKey,
         entityPage,
         source: "demo" as const,
       }),

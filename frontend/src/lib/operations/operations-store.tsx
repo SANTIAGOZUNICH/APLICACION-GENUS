@@ -14,12 +14,13 @@ import {
 import { runActionPipeline } from "@/lib/actions/run-action-pipeline";
 import { rehydrateEntityPage } from "@/lib/adapters/rehydrate-entity-page";
 import {
-  fetchLoteById,
+  fetchEntityByKind,
   fetchLoteList,
+  fetchOperationsState,
   OperationsApiError,
 } from "@/lib/api/operations-client";
 import { getClientDataMode } from "@/lib/config/data-mode";
-import { seedOperationsState } from "@/lib/operations/seed-operations-state";
+import { getEntityPageFromState, seedOperationsState } from "@/lib/operations/seed-operations-state";
 import { mockUser } from "@/mocks/user.mock";
 import type {
   ActionContext,
@@ -30,15 +31,21 @@ import type {
 } from "@/types/actions";
 import { entityPageKey } from "@/types/actions";
 import type { EntityPageKind } from "@/types/entity-page";
-import type { Status } from "@/types/ui/status";
 
 export type OperationsDataSource = "initial" | "drive" | "demo" | "sheets";
 
 type OperationsAction =
   | { type: "SET_STATE"; state: OperationsState }
   | {
-      type: "MERGE_LOTE_PAGES";
+      type: "MERGE_ENTITY_PAGES";
       pages: OperationsState["entityPages"];
+    }
+  | {
+      type: "HYDRATE_OPERATIONS";
+      bandejaTasks: OperationsState["bandejaTasks"];
+      workspaceTasks: OperationsState["workspaceTasks"];
+      dayPulse: OperationsState["dayPulse"];
+      workspacePanorama?: OperationsState["workspacePanorama"];
     }
   | {
       type: "EXECUTE_PIPELINE";
@@ -57,7 +64,7 @@ interface OperationsStoreContextValue {
     params: {
       entityKind: EntityPageKind;
       entityId: string;
-      status: Status;
+      status: import("@/types/ui/status").Status;
       surface: ActionContext["surface"];
       flowData: ActionFlowData;
     }
@@ -66,7 +73,11 @@ interface OperationsStoreContextValue {
   dataSource: OperationsDataSource;
   loading: boolean;
   error: string | null;
+  hydrateOperations: () => Promise<void>;
+  ensureEntityLoaded: (kind: EntityPageKind, entityId: string) => Promise<boolean>;
+  /** @deprecated Use ensureEntityLoaded("lote", id) */
   hydrateLotes: () => Promise<void>;
+  /** @deprecated Use ensureEntityLoaded("lote", id) */
   ensureLoteLoaded: (loteId: string) => Promise<boolean>;
 }
 
@@ -94,8 +105,16 @@ function operationsReducer(
   switch (action.type) {
     case "SET_STATE":
       return action.state;
-    case "MERGE_LOTE_PAGES":
+    case "MERGE_ENTITY_PAGES":
       return mergeEntityPages(state, action.pages);
+    case "HYDRATE_OPERATIONS":
+      return {
+        ...state,
+        bandejaTasks: action.bandejaTasks,
+        workspaceTasks: action.workspaceTasks,
+        dayPulse: action.dayPulse,
+        workspacePanorama: action.workspacePanorama ?? state.workspacePanorama,
+      };
     case "EXECUTE_PIPELINE": {
       const output = runActionPipeline(
         state,
@@ -125,21 +144,26 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
   const [dataSource, setDataSource] =
     useState<OperationsDataSource>("initial");
   const hydratedRef = useRef(false);
-  const inflightLotesRef = useRef<Map<string, Promise<boolean>>>(new Map());
+  const inflightEntitiesRef = useRef<Map<string, Promise<boolean>>>(new Map());
+  const driveLoadedRef = useRef<Set<string>>(new Set());
 
-  const mergeLotePages = useCallback(
-    (bundles: Awaited<ReturnType<typeof fetchLoteList>>["lotes"]) => {
+  const mergeEntityPageBundles = useCallback(
+    (
+      bundles: Array<{
+        entityPage: Parameters<typeof rehydrateEntityPage>[0];
+      }>
+    ) => {
       const pages: OperationsState["entityPages"] = {};
       for (const bundle of bundles) {
         const model = rehydrateEntityPage(bundle.entityPage);
         pages[entityPageKey(model.kind, model.entityId)] = model;
       }
-      dispatch({ type: "MERGE_LOTE_PAGES", pages });
+      dispatch({ type: "MERGE_ENTITY_PAGES", pages });
     },
     []
   );
 
-  const hydrateLotes = useCallback(async () => {
+  const hydrateOperations = useCallback(async () => {
     if (dataMode !== "real") {
       setLoading(false);
       setDataSource("demo");
@@ -150,34 +174,50 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
     setError(null);
 
     try {
-      const response = await fetchLoteList();
-      mergeLotePages(response.lotes);
-      setDataSource(response.source);
+      const [loteResponse, operationsResponse] = await Promise.all([
+        fetchLoteList(),
+        fetchOperationsState(),
+      ]);
+
+      mergeEntityPageBundles(loteResponse.lotes);
+      dispatch({
+        type: "HYDRATE_OPERATIONS",
+        bandejaTasks: operationsResponse.bandejaTasks,
+        workspaceTasks: operationsResponse.workspaceTasks,
+        dayPulse: operationsResponse.dayPulse,
+        workspacePanorama: operationsResponse.workspacePanorama,
+      });
+
+      setDataSource(
+        loteResponse.source === "drive" || operationsResponse.source === "drive"
+          ? "drive"
+          : loteResponse.source
+      );
     } catch (err) {
       const message =
         err instanceof OperationsApiError
           ? err.message
-          : "No se pudieron cargar los lotes.";
+          : "No se pudieron cargar los datos operativos.";
       setError(message);
       setDataSource("demo");
     } finally {
       setLoading(false);
     }
-  }, [dataMode, mergeLotePages]);
+  }, [dataMode, mergeEntityPageBundles]);
 
-  const ensureLoteLoaded = useCallback(
-    async (loteId: string): Promise<boolean> => {
-      const key = entityPageKey("lote", loteId);
-
-      if (state.entityPages[key]) {
-        return true;
-      }
-
+  const ensureEntityLoaded = useCallback(
+    async (kind: EntityPageKind, entityId: string): Promise<boolean> => {
       if (dataMode === "demo") {
-        return false;
+        return Boolean(getEntityPageFromState(state, kind, entityId));
       }
 
-      const inflight = inflightLotesRef.current.get(loteId);
+      const inflightKey = `${kind}:${entityId}`;
+
+      if (driveLoadedRef.current.has(inflightKey)) {
+        return Boolean(getEntityPageFromState(state, kind, entityId));
+      }
+
+      const inflight = inflightEntitiesRef.current.get(inflightKey);
       if (inflight) {
         return inflight;
       }
@@ -185,35 +225,48 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
       const task = (async () => {
         try {
           setError(null);
-          const response = await fetchLoteById(loteId);
+          const response = await fetchEntityByKind(kind, entityId);
           const model = rehydrateEntityPage(response.entityPage);
           dispatch({
-            type: "MERGE_LOTE_PAGES",
+            type: "MERGE_ENTITY_PAGES",
             pages: {
               [entityPageKey(model.kind, model.entityId)]: model,
             },
           });
+          driveLoadedRef.current.add(inflightKey);
           setDataSource(response.source);
           return true;
         } catch (err) {
+          const seeded = seedOperationsState();
+          if (getEntityPageFromState(seeded, kind, entityId)) {
+            return true;
+          }
+
           const message =
             err instanceof OperationsApiError
               ? err.message
-              : "No se pudo cargar el lote.";
+              : `No se pudo cargar ${kind}.`;
           setError(message);
           return false;
         }
       })();
 
-      inflightLotesRef.current.set(loteId, task);
+      inflightEntitiesRef.current.set(inflightKey, task);
 
       try {
         return await task;
       } finally {
-        inflightLotesRef.current.delete(loteId);
+        inflightEntitiesRef.current.delete(inflightKey);
       }
     },
-    [dataMode, state.entityPages]
+    [dataMode, state]
+  );
+
+  const hydrateLotes = hydrateOperations;
+
+  const ensureLoteLoaded = useCallback(
+    (loteId: string) => ensureEntityLoaded("lote", loteId),
+    [ensureEntityLoaded]
   );
 
   useEffect(() => {
@@ -222,8 +275,8 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
     }
 
     hydratedRef.current = true;
-    void hydrateLotes();
-  }, [dataMode, hydrateLotes]);
+    void hydrateOperations();
+  }, [dataMode, hydrateOperations]);
 
   const executeAction = useCallback(
     async (
@@ -231,7 +284,7 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
       params: {
         entityKind: EntityPageKind;
         entityId: string;
-        status: Status;
+        status: import("@/types/ui/status").Status;
         surface: ActionContext["surface"];
         flowData: ActionFlowData;
       }
@@ -273,6 +326,8 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
       dataSource,
       loading,
       error,
+      hydrateOperations,
+      ensureEntityLoaded,
       hydrateLotes,
       ensureLoteLoaded,
     }),
@@ -285,6 +340,8 @@ export function OperationsStoreProvider({ children }: { children: ReactNode }) {
       dataSource,
       loading,
       error,
+      hydrateOperations,
+      ensureEntityLoaded,
       hydrateLotes,
       ensureLoteLoaded,
     ]

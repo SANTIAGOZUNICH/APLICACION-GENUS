@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { driveAdapter } from "@/lib/adapters/adapter-factory";
 import { stripEntityPageIcon } from "@/lib/adapters/rehydrate-entity-page";
-import { normalizeLookupKey } from "@/lib/adapters/drive/oe-document-locator";
 import {
   canUseDriveAdapter,
   shouldUseDemoFallback,
@@ -11,7 +10,7 @@ import {
   mockEntityNotFoundResponse,
   withEntityFallback,
 } from "@/lib/api/entity-route-helpers";
-import type { OeBundleResponse } from "@/lib/api/operations-client";
+import type { PedidoBundleResponse } from "@/lib/api/operations-client";
 import { getServerDataMode } from "@/lib/config/data-mode";
 import { EntityPageKinds } from "@/types/entity-page";
 
@@ -21,22 +20,19 @@ interface RouteContext {
 
 export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params;
-  const lookupKey = normalizeLookupKey(id);
 
   if (getServerDataMode() !== "real" || !canUseDriveAdapter()) {
-    const mockPage = getMockEntityPage(EntityPageKinds.OE, lookupKey);
-
+    const mockPage = getMockEntityPage(EntityPageKinds.PEDIDO, id);
     if (mockPage) {
       return NextResponse.json({
-        lookupKey,
-        oeId: lookupKey,
+        pedidoId: id,
         entityPage: mockPage,
         source: "demo",
-      } satisfies OeBundleResponse);
+      } satisfies PedidoBundleResponse);
     }
 
     if (shouldUseDemoFallback()) {
-      return mockEntityNotFoundResponse(EntityPageKinds.OE, lookupKey);
+      return mockEntityNotFoundResponse(EntityPageKinds.PEDIDO, id);
     }
 
     return NextResponse.json(
@@ -46,44 +42,36 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   try {
-    const bundle = await driveAdapter.getOE!(lookupKey);
+    const bundle = await driveAdapter.getPedido!(id);
     if (!bundle) {
-      const mockPage = getMockEntityPage(EntityPageKinds.OE, lookupKey);
+      const mockPage = getMockEntityPage(EntityPageKinds.PEDIDO, id);
       if (mockPage && shouldUseDemoFallback()) {
         return NextResponse.json({
-          lookupKey,
-          oeId: lookupKey,
+          pedidoId: id,
           entityPage: mockPage,
           source: "demo",
-        } satisfies OeBundleResponse);
+        } satisfies PedidoBundleResponse);
       }
 
       return NextResponse.json(
-        {
-          error: `Documento OE no encontrado para "${lookupKey}". Probá con fileId o fileSlug del índice.`,
-          code: "NOT_FOUND",
-        },
+        { error: `Pedido ${id} no encontrado.`, code: "NOT_FOUND" },
         { status: 404 }
       );
     }
 
     return NextResponse.json({
-      fileId: bundle.fileId,
-      fileName: bundle.fileName,
-      oeId: bundle.oeId,
-      fields: bundle.fields,
+      pedidoId: bundle.pedidoId,
       entityPage: stripEntityPageIcon(bundle.entityPage),
       source: "drive",
-    } satisfies OeBundleResponse);
+    } satisfies PedidoBundleResponse);
   } catch (error) {
-    console.error(`[Genus] GET /api/v1/oe/${lookupKey} failed:`, error);
+    console.error(`[Genus] GET /api/v1/pedidos/${id} failed:`, error);
     return withEntityFallback(
-      EntityPageKinds.OE,
-      lookupKey,
+      EntityPageKinds.PEDIDO,
+      id,
       async () => null,
       (entityPage) => ({
-        lookupKey,
-        oeId: lookupKey,
+        pedidoId: id,
         entityPage,
         source: "demo" as const,
       }),

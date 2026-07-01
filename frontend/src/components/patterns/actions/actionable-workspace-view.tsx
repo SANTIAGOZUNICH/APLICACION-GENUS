@@ -84,7 +84,7 @@ function ActionableWorkspaceSection({
 
 /** E6 workspace shell — live OperationsStore + actionable tasks. Does not modify E4. */
 export function ActionableWorkspaceView({ config }: ActionableWorkspaceViewProps) {
-  const { state } = useOperationsStore();
+  const { state, dataMode } = useOperationsStore();
   const wsId = config.id as WorkspaceId;
   const workspaceTasks = state.workspaceTasks[wsId] ?? [];
   const focoTask = getWorkspaceFocoTask(workspaceTasks, config.focoSectionId);
@@ -103,12 +103,16 @@ export function ActionableWorkspaceView({ config }: ActionableWorkspaceViewProps
       : section.tasks,
   }));
 
-  const panorama = getWorkspacePanorama(
-    config.id as Exclude<
-      typeof config.id,
-      "bandeja" | "consulta" | "design-system"
-    >
-  );
+  const panoramaFromStore =
+    dataMode === "real" ? state.workspacePanorama?.[wsId] : undefined;
+  const panorama =
+    panoramaFromStore ??
+    getWorkspacePanorama(
+      config.id as Exclude<
+        typeof config.id,
+        "bandeja" | "consulta" | "design-system"
+      >
+    );
 
   return (
     <div className="flex flex-col gap-6">
