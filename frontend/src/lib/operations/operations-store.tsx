@@ -32,7 +32,7 @@ import { entityPageKey } from "@/types/actions";
 import type { EntityPageKind } from "@/types/entity-page";
 import type { Status } from "@/types/ui/status";
 
-export type OperationsDataSource = "initial" | "sheets" | "demo";
+export type OperationsDataSource = "initial" | "drive" | "demo" | "sheets";
 
 type OperationsAction =
   | { type: "SET_STATE"; state: OperationsState }

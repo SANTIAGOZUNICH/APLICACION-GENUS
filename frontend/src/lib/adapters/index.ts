@@ -1,7 +1,8 @@
-export type { OperationsAdapter, LoteSheetBundle } from "./operations-adapter";
+export type { OperationsAdapter, LoteSheetBundle, OeSheetBundle } from "./operations-adapter";
 export { MockAdapter, mockAdapter } from "./mock-adapter";
 export {
   createServerAdapter,
   mockAdapter as serverMockAdapter,
-  sheetsAdapter,
+  driveAdapter,
 } from "./adapter-factory";
+export { operationsDocumentRepository } from "./drive/operations-document-repository";

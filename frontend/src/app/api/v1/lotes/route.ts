@@ -1,17 +1,32 @@
 import { NextResponse } from "next/server";
 import {
   createServerAdapter,
-  sheetsAdapter,
+  driveAdapter,
 } from "@/lib/adapters/adapter-factory";
 import { stripEntityPageIcon } from "@/lib/adapters/rehydrate-entity-page";
 import {
-  getServerDataMode,
-  shouldFallbackToDemo,
-} from "@/lib/config/data-mode";
+  canUseDriveAdapter,
+  demoFallbackResponse,
+  getMockLoteBundles,
+  shouldUseDemoFallback,
+} from "@/lib/api/bff-helpers";
 import type { LoteListResponse } from "@/lib/api/operations-client";
+import { getServerDataMode } from "@/lib/config/data-mode";
 
 export async function GET() {
-  if (getServerDataMode() !== "real") {
+  if (getServerDataMode() !== "real" || !canUseDriveAdapter()) {
+    if (shouldUseDemoFallback()) {
+      const mockLotes = getMockLoteBundles();
+      return NextResponse.json({
+        lotes: mockLotes.map((bundle) => ({
+          loteId: bundle.loteId,
+          entityPage: stripEntityPageIcon(bundle.entityPage),
+          source: "demo",
+        })),
+        source: "demo",
+      } satisfies LoteListResponse);
+    }
+
     return NextResponse.json({
       lotes: [],
       source: "demo",
@@ -19,44 +34,35 @@ export async function GET() {
   }
 
   try {
-    const bundles = await sheetsAdapter.listLoteEntityPages!();
+    const bundles = await driveAdapter.listLoteEntityPages!();
     return NextResponse.json({
       lotes: bundles.map((bundle) => ({
         loteId: bundle.loteId,
         entityPage: stripEntityPageIcon(bundle.entityPage),
-        source: "sheets",
+        source: "drive",
       })),
-      source: "sheets",
+      source: "drive",
     } satisfies LoteListResponse);
   } catch (error) {
     console.error("[Genus] GET /api/v1/lotes failed:", error);
 
-    if (!shouldFallbackToDemo()) {
-      return NextResponse.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : "No se pudieron leer los lotes.",
-          code: "SHEETS_READ_FAILED",
-        },
-        { status: 502 }
-      );
-    }
+    const fallback = demoFallbackResponse(
+      () =>
+        getMockLoteBundles().map((bundle) => ({
+          loteId: bundle.loteId,
+          entityPage: stripEntityPageIcon(bundle.entityPage),
+          source: "demo" as const,
+        })),
+      error
+    );
 
-    const mockLotes = Object.values(
-      createServerAdapter().getInitialState().entityPages
-    )
-      .filter((page) => page.kind === "lote")
-      .map((page) => ({
-        loteId: page.entityId,
-        entityPage: stripEntityPageIcon(page),
-        source: "demo" as const,
-      }));
+    if (!fallback.ok) return fallback.response;
 
     return NextResponse.json({
-      lotes: mockLotes,
-      source: "demo",
+      lotes: fallback.data,
+      source: fallback.source,
     } satisfies LoteListResponse);
   }
 }
+
+void createServerAdapter;
