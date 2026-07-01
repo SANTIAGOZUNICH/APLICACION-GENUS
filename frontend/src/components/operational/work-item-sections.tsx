@@ -4,7 +4,7 @@ import type { WorkItem } from "@/types/operational/work-item";
 import { Chip } from "@/components/ui/chip";
 import Link from "next/link";
 
-function WorkItemRow({ item }: { item: WorkItem }) {
+function WorkItemRow({ item, showPreviewMeta }: { item: WorkItem; showPreviewMeta?: boolean }) {
   const title = item.product ?? item.client ?? item.createdFrom;
 
   return (
@@ -18,6 +18,15 @@ function WorkItemRow({ item }: { item: WorkItem }) {
               .join(" · ")}
           </p>
           <p className="mt-1 text-xs text-[var(--muted-foreground)]">{item.createdFrom}</p>
+          {showPreviewMeta && (
+            <p className="mt-2 text-xs text-[var(--muted-foreground)]">
+              origen: {item.source} · stage: {item.originStage}
+              {item.pedidoRef ? ` · pedido: ${item.pedidoRef}` : ""}
+              {item.oeRef ? ` · oe: ${item.oeRef}` : ""}
+              {item.oaRef ? ` · oa: ${item.oaRef}` : ""}
+              {item.loteRef ? ` · lote: ${item.loteRef}` : ""}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {item.priority && (
@@ -51,10 +60,12 @@ function WorkItemSection({
   title,
   items,
   emptyLabel,
+  showPreviewMeta,
 }: {
   title: string;
   items: WorkItem[];
   emptyLabel: string;
+  showPreviewMeta?: boolean;
 }) {
   return (
     <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)]">
@@ -68,7 +79,9 @@ function WorkItemSection({
         {items.length === 0 ? (
           <p className="py-4 text-center text-sm text-[var(--muted-foreground)]">{emptyLabel}</p>
         ) : (
-          items.map((item) => <WorkItemRow key={item.id} item={item} />)
+          items.map((item) => (
+            <WorkItemRow key={item.id} item={item} showPreviewMeta={showPreviewMeta} />
+          ))
         )}
       </div>
     </section>
@@ -80,18 +93,20 @@ export function MiTrabajoSections({
   semana,
   pendientes,
   bloqueados,
+  showPreviewMeta,
 }: {
   hoy: WorkItem[];
   semana: WorkItem[];
   pendientes: WorkItem[];
   bloqueados: WorkItem[];
+  showPreviewMeta?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <WorkItemSection title="Para hacer hoy" items={hoy} emptyLabel="Sin trabajos para hoy." />
-      <WorkItemSection title="Esta semana" items={semana} emptyLabel="Sin trabajos esta semana." />
-      <WorkItemSection title="Pendientes" items={pendientes} emptyLabel="Sin pendientes." />
-      <WorkItemSection title="Bloqueados" items={bloqueados} emptyLabel="Sin bloqueos." />
+      <WorkItemSection title="Para hacer hoy" items={hoy} emptyLabel="Sin trabajos para hoy." showPreviewMeta={showPreviewMeta} />
+      <WorkItemSection title="Esta semana" items={semana} emptyLabel="Sin trabajos esta semana." showPreviewMeta={showPreviewMeta} />
+      <WorkItemSection title="Pendientes" items={pendientes} emptyLabel="Sin pendientes." showPreviewMeta={showPreviewMeta} />
+      <WorkItemSection title="Bloqueados" items={bloqueados} emptyLabel="Sin bloqueos." showPreviewMeta={showPreviewMeta} />
     </div>
   );
 }

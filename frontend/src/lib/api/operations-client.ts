@@ -207,6 +207,27 @@ export async function fetchWorkItems(sector: SectorId): Promise<WorkItemsRespons
   return parseJson<WorkItemsResponse>(response);
 }
 
+export async function fetchWorkItemsPreview(
+  sector: SectorId
+): Promise<import("@/types/operational/work-items-preview.types").WorkItemsPreviewResponse> {
+  const params = new URLSearchParams({ sector });
+  const response = await fetch(`/api/v1/work-items/preview?${params.toString()}`, {
+    method: "GET",
+    cache: "no-store",
+  });
+  return parseJson(response);
+}
+
+export async function fetchWorkItemsDebug(): Promise<
+  import("@/types/operational/work-items-preview.types").WorkItemsDebugResponse
+> {
+  const response = await fetch("/api/v1/work-items/debug", {
+    method: "GET",
+    cache: "no-store",
+  });
+  return parseJson(response);
+}
+
 function entityFetchPath(kind: EntityPageModel["kind"], entityId: string) {
   switch (kind) {
     case "oe":
