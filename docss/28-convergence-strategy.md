@@ -147,9 +147,13 @@ frontend/src/features/
 
 Migrados imports work-domain en `features/work/` → `@/features/work/*`. Merge #30.
 
-#### PR 3.2 — OS imports (shell, feedback, session) ✅ en curso
+#### PR 3.2 — OS imports ✅
 
-Migrados `features/os/shell`, `feedback`, `session` y consumidores work views → `@/features/os/*` + `@/features/work/*` cross-refs. Diferido a 3.3: `sector-emails`, `sector-login`, wireframes sectors en `twin-app`.
+Merge #31.
+
+#### PR 3.3 — Sectors imports ✅ en curso
+
+Migrados `features/sectors/*` y imports OS→sectors/work. Diferido a 3.4: `entities/views`, `twin-app` detail/stub views.
 
 #### Criterios de cierre Fase 3
 

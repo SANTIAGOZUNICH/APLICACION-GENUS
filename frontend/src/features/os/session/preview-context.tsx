@@ -12,7 +12,7 @@ import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 import { resolveSectorHome } from "@/lib/role-engine";
 import type { SidebarItemId } from "@/lib/role-engine/types";
-import { SECTOR_EMAILS } from "@/design-preview/lib/sector-emails";
+import { SECTOR_EMAILS } from "@/features/sectors/config/sector-emails";
 import {
   isDetailView,
   SIDEBAR_TO_TWIN_VIEW,

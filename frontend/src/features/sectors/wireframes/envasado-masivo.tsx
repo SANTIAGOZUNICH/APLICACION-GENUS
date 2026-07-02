@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ContextPanel } from "@/design-preview/components/context-panel";
-import { DateNavigator } from "@/design-preview/components/date-navigator";
-import { EmptyState } from "@/design-preview/components/empty-state";
-import { LineWorkCard } from "@/design-preview/components/line-work-card";
-import { TwinShell } from "@/design-preview/components/twin-shell";
-import { SummaryStrip } from "@/design-preview/components/summary-strip";
-import { WeekPlanStrip } from "@/design-preview/components/week-plan-strip";
-import { useSectorWorkItems } from "@/design-preview/hooks/use-sector-work-items";
+import { ContextPanel } from "@/features/os/feedback/context-panel";
+import { DateNavigator } from "@/features/work/components/date-navigator";
+import { EmptyState } from "@/features/work/components/empty-state";
+import { LineWorkCard } from "@/features/work/components/line-work-card";
+import { TwinShell } from "@/features/os/shell/twin-shell";
+import { SummaryStrip } from "@/features/work/components/summary-strip";
+import { WeekPlanStrip } from "@/features/work/components/week-plan-strip";
+import { useSectorWorkItems } from "@/features/work/hooks/use-sector-work-items";
 import {
   addDays,
   formatLongDate,
@@ -16,17 +16,17 @@ import {
   getWorkWeekDays,
   isSameDay,
   startOfDay,
-} from "@/design-preview/lib/calendar";
-import { usePreviewContext } from "@/design-preview/lib/preview-context";
+} from "@/features/work/lib/calendar";
+import { usePreviewContext } from "@/features/os/session/preview-context";
 import { resolveSectorHome, sectorHasPanel } from "@/lib/role-engine";
-import { buildCopilotContext } from "@/design-preview/lib/creamy-copilot";
+import { buildCopilotContext } from "@/features/work/lib/creamy-copilot";
 import {
   buildDayScheduleView,
   buildWeekPlanSummary,
   extractProblems,
   extractUpcomingDeliveries,
   summarizeWorkItems,
-} from "@/design-preview/lib/work-items-day-view";
+} from "@/features/work/lib/work-items-day-view";
 
 const SECTOR_ID = "ENVASADO_MASIVO" as const;
 

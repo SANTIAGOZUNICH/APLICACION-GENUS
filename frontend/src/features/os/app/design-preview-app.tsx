@@ -1,7 +1,7 @@
 "use client";
 
 import { PreviewProvider, usePreviewContext } from "@/features/os/session/preview-context";
-import { SectorLogin } from "@/design-preview/components/sector-login";
+import { SectorLogin } from "@/features/sectors/components/sector-login";
 import { TwinRouter } from "./twin-app";
 
 function TwinAppInner() {

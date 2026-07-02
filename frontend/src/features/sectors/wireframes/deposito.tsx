@@ -1,7 +1,7 @@
 "use client";
 
-import { TwinShell } from "@/design-preview/components/twin-shell";
-import { SectionLabel } from "@/design-preview/components/section-label";
+import { TwinShell } from "@/features/os/shell/twin-shell";
+import { SectionLabel } from "@/features/work/components/section-label";
 import { DEPOSITO_ORDERS } from "../mock-data/mock-data";
 
 /** Checklist de preparación — layout único Depósito. */
