@@ -68,7 +68,7 @@ interface PreviewContextValue {
 
 const PreviewContext = createContext<PreviewContextValue | null>(null);
 
-const INITIAL_NAV: TwinNavEntry = { view: "mi-trabajo" };
+const DEFAULT_INITIAL_NAV: TwinNavEntry = { view: "mi-trabajo" };
 
 function nextUnblocksMessage(workItem: WorkItem): string {
   if (workItem.sector === "ENVASADO_MASIVO" || workItem.sector === "ENVASADO_PREMIUM") {
@@ -83,16 +83,22 @@ function nextUnblocksMessage(workItem: WorkItem): string {
   return "Trabajo marcado como terminado. El flujo sigue en el siguiente sector.";
 }
 
-export function PreviewProvider({ children }: { children: ReactNode }) {
+export function PreviewProvider({
+  children,
+  initialNav = DEFAULT_INITIAL_NAV,
+}: {
+  children: ReactNode;
+  initialNav?: TwinNavEntry;
+}) {
   const [session, setSession] = useState<PreviewSession | null>(null);
-  const [navStack, setNavStack] = useState<TwinNavEntry[]>([INITIAL_NAV]);
+  const [navStack, setNavStack] = useState<TwinNavEntry[]>([initialNav]);
   const [simulatedStatuses, setSimulatedStatuses] = useState<Record<string, WorkItemStatus>>({});
   const [creamyOpen, setCreamyOpen] = useState(false);
   const [creamyTeaser, setCreamyTeaserState] = useState<CreamyTeaser | null>(null);
   const [toast, setToast] = useState<ActionToast | null>(null);
   const [completingIds, setCompletingIds] = useState<Set<string>>(new Set());
 
-  const currentNav = navStack[navStack.length - 1] ?? INITIAL_NAV;
+  const currentNav = navStack[navStack.length - 1] ?? initialNav;
 
   const activeSidebarId = useMemo(() => {
     if (isDetailView(currentNav.view)) {
@@ -108,25 +114,25 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
         email: options?.email ?? SECTOR_EMAILS[sectorId],
         ownerPerson: options?.ownerPerson ?? null,
       });
-      setNavStack([INITIAL_NAV]);
+      setNavStack([initialNav]);
       setSimulatedStatuses({});
       setCreamyOpen(false);
       setCreamyTeaserState(null);
       setToast(null);
       setCompletingIds(new Set());
     },
-    []
+    [initialNav]
   );
 
   const logout = useCallback(() => {
     setSession(null);
-    setNavStack([INITIAL_NAV]);
+    setNavStack([initialNav]);
     setSimulatedStatuses({});
     setCreamyOpen(false);
     setCreamyTeaserState(null);
     setToast(null);
     setCompletingIds(new Set());
-  }, []);
+  }, [initialNav]);
 
   const navigateTo = useCallback((entry: TwinNavEntry) => {
     setNavStack((stack) => {
