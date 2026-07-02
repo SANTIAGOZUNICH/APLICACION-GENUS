@@ -1,4 +1,5 @@
 import type { WorkItem } from "@/types/operational/work-item";
+import type { CreamyContextDefinition } from "@/lib/role-engine";
 
 export interface CopilotContext {
   headline: string;
@@ -6,13 +7,17 @@ export interface CopilotContext {
   suggestions: string[];
 }
 
-/** Creamy AI como copiloto contextual — no chatbot genérico. */
-export function buildCopilotContext(items: WorkItem[], sectorLabel: string): CopilotContext {
+/** Creamy AI como copiloto contextual — configuración del sector + estado del día. */
+export function buildCopilotContext(
+  items: WorkItem[],
+  sectorTitle: string,
+  creamy: CreamyContextDefinition
+): CopilotContext {
   if (items.length === 0) {
     return {
       headline: "Sin trabajo asignado",
-      hint: "No hay trabajos para este día en SEMANAS 2026. Puedo ayudarte a revisar el plan semanal o consultar un pedido.",
-      suggestions: ["Ver plan semanal", "Consultar pedido", "Revisar bloqueos"],
+      hint: creamy.defaultHint,
+      suggestions: creamy.baseSuggestions,
     };
   }
 
@@ -26,7 +31,7 @@ export function buildCopilotContext(items: WorkItem[], sectorLabel: string): Cop
     return {
       headline: `${blocked.length} bloqueo(s) activo(s)`,
       hint: "Hay trabajos detenidos. Puedo señalar dependencias o faltantes antes de que frenen la línea.",
-      suggestions: ["Ver bloqueos", "Reportar faltante", "Consultar insumos"],
+      suggestions: mergeSuggestions(creamy.baseSuggestions, ["Ver bloqueos", "Reportar faltante"]),
     };
   }
 
@@ -34,8 +39,8 @@ export function buildCopilotContext(items: WorkItem[], sectorLabel: string): Cop
     const label = urgent.client ?? urgent.product ?? "trabajo prioritario";
     return {
       headline: `Prioridad: ${label}`,
-      hint: `${urgent.line ?? sectorLabel} — ${label}. Te guío con la OA y los pasos para cerrar el día.`,
-      suggestions: ["Abrir OA", "Ver insumos", "Marcar avance"],
+      hint: `${urgent.line ?? sectorTitle} — ${label}. Te guío con los pasos para cerrar el día.`,
+      suggestions: mergeSuggestions(creamy.baseSuggestions, ["Abrir OA", "Ver insumos"]),
     };
   }
 
@@ -43,13 +48,17 @@ export function buildCopilotContext(items: WorkItem[], sectorLabel: string): Cop
     return {
       headline: `${inProgress.length} en proceso`,
       hint: "Hay trabajos abiertos. Puedo ayudarte a cerrar unidades o marcar terminado sin salir del puesto.",
-      suggestions: ["Marcar terminado", "Ver entregas", "Registrar observación"],
+      suggestions: mergeSuggestions(creamy.baseSuggestions, ["Marcar terminado", "Ver entregas"]),
     };
   }
 
   return {
     headline: `${items.length} pendiente(s)`,
-    hint: "Trabajos listos para arrancar. ¿Ordenamos por entrega o por línea?",
-    suggestions: ["Ordenar por entrega", "Ver por línea", "Crear OA"],
+    hint: "Trabajos listos para arrancar. ¿Por cuál empezamos?",
+    suggestions: creamy.baseSuggestions,
   };
+}
+
+function mergeSuggestions(base: string[], dynamic: string[]): string[] {
+  return [...new Set([...dynamic, ...base])].slice(0, 5);
 }

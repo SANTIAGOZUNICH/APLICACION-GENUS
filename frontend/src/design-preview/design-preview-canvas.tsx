@@ -1,31 +1,22 @@
 "use client";
 
-import type { ComponentType } from "react";
 import type { PreviewScreenId } from "@/design-preview/config";
 import { PREVIEW_SCREENS } from "@/design-preview/config";
+import {
+  isRoleEngineScreen,
+  SECTOR_VIEW_REGISTRY,
+  sectorIdForPreviewScreen,
+} from "@/design-preview/sector-view-registry";
 import { WireframeArchitecture } from "@/design-preview/wireframes/architecture";
-import { WireframeCalidad } from "@/design-preview/wireframes/calidad";
 import { WireframeConsulta } from "@/design-preview/wireframes/consulta";
-import { WireframeDeposito } from "@/design-preview/wireframes/deposito";
-import { WireframeDireccion } from "@/design-preview/wireframes/direccion";
-import { WireframeElaboracion } from "@/design-preview/wireframes/elaboracion";
-import { WireframeEnvasadoMasivo } from "@/design-preview/wireframes/envasado-masivo";
-import { WireframeEnvasadoPremium } from "@/design-preview/wireframes/envasado-premium";
 import { WireframePlanSemanal } from "@/design-preview/wireframes/plan-semanal";
-import { WireframeProduccion } from "@/design-preview/wireframes/produccion";
+import { renderSectorHome } from "@/lib/role-engine";
 
-const WIREFRAMES: Record<PreviewScreenId, ComponentType> = {
+const UTILITY_WIREFRAMES = {
   architecture: WireframeArchitecture,
-  "envasado-masivo": WireframeEnvasadoMasivo,
-  "envasado-premium": WireframeEnvasadoPremium,
-  elaboracion: WireframeElaboracion,
-  calidad: WireframeCalidad,
-  deposito: WireframeDeposito,
-  produccion: WireframeProduccion,
-  direccion: WireframeDireccion,
   "plan-semanal": WireframePlanSemanal,
   consulta: WireframeConsulta,
-};
+} as const;
 
 interface DesignPreviewCanvasProps {
   screenId: PreviewScreenId;
@@ -33,15 +24,22 @@ interface DesignPreviewCanvasProps {
 
 export function DesignPreviewCanvas({ screenId }: DesignPreviewCanvasProps) {
   const meta = PREVIEW_SCREENS.find((s) => s.id === screenId);
-  const Wireframe = WIREFRAMES[screenId];
 
-  if (!meta || !Wireframe) return null;
+  if (!meta) return null;
 
-  if (screenId === "architecture") {
-    return <WireframeArchitecture />;
+  if (screenId in UTILITY_WIREFRAMES) {
+    const Utility = UTILITY_WIREFRAMES[screenId as keyof typeof UTILITY_WIREFRAMES];
+    return <Utility />;
   }
 
-  return <Wireframe />;
+  if (isRoleEngineScreen(screenId)) {
+    const sectorId = sectorIdForPreviewScreen(screenId);
+    if (sectorId) {
+      return renderSectorHome(sectorId, SECTOR_VIEW_REGISTRY);
+    }
+  }
+
+  return null;
 }
 
 export { PREVIEW_SCREENS };
