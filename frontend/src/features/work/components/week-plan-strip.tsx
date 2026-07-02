@@ -1,7 +1,7 @@
 "use client";
 
-import { formatShortDay, isSameDay, isToday } from "@/design-preview/lib/calendar";
-import type { WeekDaySummary } from "@/design-preview/lib/work-items-day-view";
+import { formatShortDay, isSameDay, isToday } from "@/features/work/lib/calendar";
+import type { WeekDaySummary } from "@/features/work/lib/work-items-day-view";
 
 interface WeekPlanStripProps {
   weekDays: WeekDaySummary[];

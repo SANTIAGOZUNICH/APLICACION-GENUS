@@ -2,9 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { TwinShell } from "@/design-preview/components/twin-shell";
-import { EmptyState } from "@/design-preview/components/empty-state";
+import { EmptyState } from "@/features/work/components/empty-state";
 import { usePreviewContext, usePreviewSession } from "@/design-preview/lib/preview-context";
-import { useSectorWorkItems } from "@/design-preview/hooks/use-sector-work-items";
+import { useSectorWorkItems } from "@/features/work/hooks/use-sector-work-items";
 import {
   addDays,
   formatShortDay,
@@ -12,9 +12,9 @@ import {
   isSameDay,
   startOfDay,
   toIsoDate,
-} from "@/design-preview/lib/calendar";
-import { filterWorkItemsForDate } from "@/design-preview/lib/work-items-day-view";
-import { formatWorkItemPresentation } from "@/design-preview/lib/work-items-day-view";
+} from "@/features/work/lib/calendar";
+import { filterWorkItemsForDate } from "@/features/work/lib/work-items-day-view";
+import { formatWorkItemPresentation } from "@/features/work/lib/work-items-day-view";
 
 /** Plan semanal L–V con WorkItems reales del sector activo. */
 export function WireframePlanSemanal() {

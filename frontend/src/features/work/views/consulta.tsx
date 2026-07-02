@@ -3,14 +3,14 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { TwinShell } from "@/design-preview/components/twin-shell";
-import { EmptyState } from "@/design-preview/components/empty-state";
+import { EmptyState } from "@/features/work/components/empty-state";
 import { usePreviewContext } from "@/design-preview/lib/preview-context";
-import { useMultiSectorWorkItems } from "@/design-preview/hooks/use-multi-sector-work-items";
+import { useMultiSectorWorkItems } from "@/features/work/hooks/use-multi-sector-work-items";
 import {
   defaultSearchSuggestions,
   searchWorkItems,
   type SearchResult,
-} from "@/design-preview/lib/search-work-items";
+} from "@/features/work/lib/search-work-items";
 
 interface WireframeConsultaProps {
   initialQuery?: string;
