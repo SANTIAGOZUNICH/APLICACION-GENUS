@@ -8,12 +8,12 @@ import {
   OaDetailView,
   OeDetailView,
   WorkDetailView,
-} from "@/design-preview/views/detail-views";
+} from "@/features/entities/views/detail-views";
 import {
   TwinCalidadNavView,
   TwinConfigView,
   TwinInsumosView,
-} from "@/design-preview/views/stub-views";
+} from "@/features/entities/views/stub-views";
 import { WireframePlanSemanal } from "@/features/work/views/plan-semanal";
 import { WireframeConsulta } from "@/features/work/views/consulta";
 import { WireframeProduccion } from "@/features/sectors/wireframes/produccion";
