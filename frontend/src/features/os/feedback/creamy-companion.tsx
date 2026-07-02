@@ -7,14 +7,14 @@ import {
   usePreviewSession,
   useResolvedHome,
 } from "../session/preview-context";
-import { useSectorWorkItems } from "@/design-preview/hooks/use-sector-work-items";
-import { buildCopilotContext } from "@/design-preview/lib/creamy-copilot";
+import { useSectorWorkItems } from "@/features/work/hooks/use-sector-work-items";
+import { buildCopilotContext } from "@/features/work/lib/creamy-copilot";
 import {
   extractProblems,
   extractUpcomingDeliveries,
   filterWorkItemsForDate,
-} from "@/design-preview/lib/work-items-day-view";
-import { startOfDay } from "@/design-preview/lib/calendar";
+} from "@/features/work/lib/work-items-day-view";
+import { startOfDay } from "@/features/work/lib/calendar";
 import { useMemo } from "react";
 
 /** Creamy como compañera — bubble flotante + drawer contextual. */

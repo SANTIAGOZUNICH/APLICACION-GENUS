@@ -2,9 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
-import { TwinShell } from "@/design-preview/components/twin-shell";
+import { TwinShell } from "@/features/os/shell/twin-shell";
 import { EmptyState } from "@/features/work/components/empty-state";
-import { usePreviewContext } from "@/design-preview/lib/preview-context";
+import { usePreviewContext } from "@/features/os/session/preview-context";
 import { useMultiSectorWorkItems } from "@/features/work/hooks/use-multi-sector-work-items";
 import {
   defaultSearchSuggestions,

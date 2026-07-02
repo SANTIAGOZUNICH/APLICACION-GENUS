@@ -1,5 +1,5 @@
 import { AlertCircle, CalendarClock, Sparkles } from "lucide-react";
-import type { CopilotContext } from "@/design-preview/lib/creamy-copilot";
+import type { CopilotContext } from "@/features/work/lib/creamy-copilot";
 
 interface DeliveryItem {
   client: string;

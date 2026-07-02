@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { TwinShell } from "@/design-preview/components/twin-shell";
+import { TwinShell } from "@/features/os/shell/twin-shell";
 import { EmptyState } from "@/features/work/components/empty-state";
-import { usePreviewContext, usePreviewSession } from "@/design-preview/lib/preview-context";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { useSectorWorkItems } from "@/features/work/hooks/use-sector-work-items";
 import {
   addDays,

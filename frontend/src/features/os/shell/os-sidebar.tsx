@@ -13,7 +13,7 @@ import {
   Shield,
 } from "lucide-react";
 import type { SidebarItemId } from "@/lib/role-engine/types";
-import type { CreamyTeaser } from "@/design-preview/lib/preview-context";
+import type { CreamyTeaser } from "@/features/os/session/preview-context";
 
 const ICONS = {
   mi_trabajo: Briefcase,

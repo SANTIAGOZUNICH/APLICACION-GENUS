@@ -4,13 +4,13 @@ import type { ReactNode } from "react";
 import { OsHeader, OsStatusBar } from "./os-header";
 import { OsSidebar } from "./os-sidebar";
 import { ActionToast } from "./action-toast";
-import { CreamyCompanion } from "@/design-preview/components/creamy-companion";
+import { CreamyCompanion } from "@/features/os/feedback/creamy-companion";
 import {
   usePreviewContext,
   usePreviewSession,
   useResolvedHome,
-} from "@/design-preview/lib/preview-context";
-import { viewTitle } from "@/design-preview/lib/twin-nav";
+} from "@/features/os/session/preview-context";
+import { viewTitle } from "@/features/os/navigation/twin-nav";
 
 interface TwinShellProps {
   title?: string;

@@ -1,6 +1,6 @@
 "use client";
 
-import { usePreviewContext, usePreviewSession } from "@/design-preview/lib/preview-context";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { SECTOR_VIEW_REGISTRY } from "@/design-preview/sector-view-registry";
 import { renderSectorHome } from "@/lib/role-engine";
 import {

@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { CheckCircle2, X } from "lucide-react";
-import { usePreviewContext } from "@/design-preview/lib/preview-context";
+import { usePreviewContext } from "@/features/os/session/preview-context";
 
 /** Feedback visual por acción simulada — toast suave. */
 export function ActionToast() {

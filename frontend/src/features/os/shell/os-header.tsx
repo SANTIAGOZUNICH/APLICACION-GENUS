@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowLeft, Bell } from "lucide-react";
-import { formatTime } from "@/design-preview/lib/calendar";
+import { formatTime } from "@/features/work/lib/calendar";
 
 interface OsHeaderProps {
   title: string;
