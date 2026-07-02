@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { EntityPageClient } from "@/components/patterns/actions/entity-page-client";
+import { EntityPageLoader } from "@/components/data/entity-page-loader";
 import { EntityPageKinds } from "@/types/entity-page";
 
 interface OaPageProps {
@@ -13,5 +13,5 @@ export async function generateMetadata({ params }: OaPageProps): Promise<Metadat
 
 export default async function OaPage({ params }: OaPageProps) {
   const { id } = await params;
-  return <EntityPageClient kind={EntityPageKinds.OA} entityId={id} />;
+  return <EntityPageLoader kind={EntityPageKinds.OA} entityId={id} />;
 }

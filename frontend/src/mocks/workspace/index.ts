@@ -23,7 +23,7 @@ import { produccionTasks } from "./produccion.mock";
 import type { WorkspacePanoramaMetric, WorkspaceTask } from "@/types/workspace/workspace-task";
 
 export function getWorkspaceTasks(
-  id: Exclude<WorkspaceId, "bandeja" | "consulta" | "design-system">
+  id: Exclude<WorkspaceId, "bandeja" | "consulta" | "design-system" | "mi-trabajo">
 ): WorkspaceTask[] {
   switch (id) {
     case "produccion":
@@ -38,6 +38,8 @@ export function getWorkspaceTasks(
       return direccionTasks;
     case "dt":
       return dtTasks;
+    default:
+      return [];
   }
 }
 

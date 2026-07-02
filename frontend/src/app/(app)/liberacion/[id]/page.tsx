@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { EntityPageClient } from "@/components/patterns/actions/entity-page-client";
+import { EntityPageLoader } from "@/components/data/entity-page-loader";
 import { EntityPageKinds } from "@/types/entity-page";
 
 interface LiberacionPageProps {
@@ -15,5 +15,5 @@ export async function generateMetadata({
 
 export default async function LiberacionPage({ params }: LiberacionPageProps) {
   const { id } = await params;
-  return <EntityPageClient kind={EntityPageKinds.LIBERACION} entityId={id} />;
+  return <EntityPageLoader kind={EntityPageKinds.LIBERACION} entityId={id} />;
 }

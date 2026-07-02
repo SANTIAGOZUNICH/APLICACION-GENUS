@@ -16,7 +16,7 @@ import { produccionWorkspace } from "./produccion.config";
 import type { WorkspaceDefinition } from "./produccion.config";
 
 export const workspaceRegistry: Record<
-  Exclude<WorkspaceId, "bandeja" | "consulta" | "design-system">,
+  Exclude<WorkspaceId, "bandeja" | "consulta" | "design-system" | "mi-trabajo">,
   WorkspaceDefinition
 > = {
   produccion: produccionWorkspace,
@@ -28,7 +28,7 @@ export const workspaceRegistry: Record<
 };
 
 export function getWorkspaceDefinition(
-  id: Exclude<WorkspaceId, "bandeja" | "consulta" | "design-system">
+  id: Exclude<WorkspaceId, "bandeja" | "consulta" | "design-system" | "mi-trabajo">
 ): WorkspaceDefinition {
   return workspaceRegistry[id];
 }

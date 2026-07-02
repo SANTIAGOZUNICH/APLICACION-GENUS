@@ -77,6 +77,8 @@ La carpeta `/docs` contiene 22 documentos numerados. Cada uno es autocontenido p
 | `18-convenciones.md` | Lenguaje, naming, estados, terminología |
 | `19-pendientes.md` | Todo lo pendiente |
 | `20-recomendaciones-cursor.md` | Guía para el asistente de código (leer primero) |
+| `21-modelo-operativo-genus.md` | F8 borrador — **supersedido por `22`** |
+| `22-modelo-operativo-definitivo.md` | **F8.0 Constitución** — Modelo operativo definitivo (WorkItem, sectores, fuentes) |
 
 ---
 

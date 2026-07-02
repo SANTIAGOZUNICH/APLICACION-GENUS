@@ -6,6 +6,7 @@ import {
   PedidoCard,
   TaskCard,
 } from "@/components/cards";
+import { OeIndexCard } from "@/components/cards/oe-index-card";
 import { BandejaEntityType, type BandejaTaskPayload } from "@/types/bandeja/bandeja-task";
 import type { EntityCardVariant } from "@/types/ui/entity-card";
 
@@ -21,6 +22,8 @@ export function BandejaTaskRenderer({
   switch (payload.entityType) {
     case BandejaEntityType.OE:
       return <OECard {...payload.data} variant={variant} />;
+    case BandejaEntityType.OE_INDEX:
+      return <OeIndexCard {...payload.data} variant={variant} />;
     case BandejaEntityType.OA:
       return <OACard {...payload.data} variant={variant} />;
     case BandejaEntityType.LOTE:

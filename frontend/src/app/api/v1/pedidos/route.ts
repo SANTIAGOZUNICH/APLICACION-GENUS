@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { driveAdapter } from "@/lib/adapters/adapter-factory";
+import { pedidoResolver } from "@/lib/adapters/drive/resolvers/pedido.resolver";
+import { parsePedidosWithDiagnostics } from "@/lib/mappers/diagnose-pedidos";
 import {
   canUseDriveAdapter,
   demoFallbackResponse,
@@ -16,10 +17,33 @@ export async function GET() {
   }
 
   try {
-    const pedidos = await driveAdapter.listPedidos!();
+    const readMeta = await pedidoResolver.readPedidosWithMeta();
+    const parsed = parsePedidosWithDiagnostics(readMeta.rows);
+    const hasPartialIssue =
+      Boolean(readMeta.warning) ||
+      (parsed.diagnostic.rowsRead > 0 && parsed.diagnostic.rowsMapped === 0) ||
+      parsed.diagnostic.rowsRead === 0;
+
     return NextResponse.json({
-      pedidos,
-      source: "drive",
+      pedidos: parsed.pedidos,
+      source: hasPartialIssue ? "drive-partial" : "drive",
+      diagnostics: {
+        rowsRead: parsed.diagnostic.rowsRead,
+        rowsMapped: parsed.diagnostic.rowsMapped,
+        fileMimeType: readMeta.mimeType,
+        readerUsed: readMeta.readerUsed,
+        tabUsed: readMeta.tabUsed,
+        tabsAttempted: readMeta.tabsAttempted,
+        sampleHeaders: parsed.diagnostic.headersDetected.slice(0, 12),
+        warning:
+          readMeta.warning ??
+          (parsed.diagnostic.rowsRead > 0 && parsed.diagnostic.rowsMapped === 0
+            ? parsed.diagnostic.discardReasons[0] ??
+              "PEDIDOS 2026 conectado, pero falta mapear columnas."
+            : parsed.diagnostic.rowsRead === 0
+              ? "PEDIDOS 2026 sin filas de datos detectadas."
+              : undefined),
+      },
     });
   } catch (error) {
     console.error("[Genus] GET /api/v1/pedidos failed:", error);
@@ -30,6 +54,16 @@ export async function GET() {
 
     const fallback = demoFallbackResponse(() => [], error);
     if (!fallback.ok) return fallback.response;
-    return NextResponse.json({ pedidos: [], source: "demo" });
+
+    return NextResponse.json({
+      pedidos: [],
+      source: "drive-partial",
+      diagnostics: {
+        rowsRead: 0,
+        rowsMapped: 0,
+        warning:
+          error instanceof Error ? error.message : "No se pudo leer PEDIDOS 2026.",
+      },
+    });
   }
 }

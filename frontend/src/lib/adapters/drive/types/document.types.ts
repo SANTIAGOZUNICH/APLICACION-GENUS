@@ -105,3 +105,42 @@ export interface OeListItem {
   modifiedTime?: string;
   folderPath?: string;
 }
+
+/** OA document index entry — file name locates the doc; business OA_ID lives in the Sheet. */
+export interface OaIndexEntry {
+  fileId: string;
+  fileName: string;
+  fileSlug: string;
+  modifiedTime?: string;
+  folderPath?: string;
+}
+
+export interface OaListItem {
+  fileId: string;
+  fileName: string;
+  fileSlug: string;
+  modifiedTime?: string;
+  folderPath?: string;
+}
+
+export interface OaSheetFields {
+  oaId: string;
+  sku: string;
+  lotePt: string;
+  loteGranel: string;
+  oeRef: string;
+  unidades: string;
+  estado: string;
+  responsable: string;
+  avance: string;
+  raw: Record<string, string>;
+}
+
+export interface LiberacionListItem {
+  liberacionId: string;
+  loteId: string;
+  loteNumber: string;
+  producto: string;
+  estado: string;
+  status: string;
+}
