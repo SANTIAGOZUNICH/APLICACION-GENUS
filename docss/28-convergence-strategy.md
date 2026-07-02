@@ -177,7 +177,11 @@ Rutas productivas con `OsAppRoot initialNav` por vista. `PreviewProvider` acepta
 
 #### PR 3.9 — `/design-preview` alias de `OsAppRoot` ✅
 
-`app/design-preview/page.tsx` importa `OsAppRoot` directamente. `DesignPreviewApp` stub conservado.
+`app/design-preview/page.tsx` importa `OsAppRoot` directamente. Merge #38.
+
+#### PR 3.10 — Banners legacy + flags opt-in ✅
+
+`OsLegacyConvergenceBanner` en AppShell (flag `NEXT_PUBLIC_GENUS_OS_LEGACY_BANNER`). Flags de redirect definidos; middleware en 3.11.
 
 #### Criterios de cierre Fase 3
 
