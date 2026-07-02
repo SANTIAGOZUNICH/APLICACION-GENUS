@@ -1,0 +1,33 @@
+/**
+ * F9.1 Design Preview tokens — scoped to /design-preview only.
+ */
+
+.design-preview-root {
+  --os-sidebar-bg: #0f172a;
+  --os-sidebar-text: #e2e8f0;
+  --os-sidebar-muted: #94a3b8;
+  --os-sidebar-hover: #1e293b;
+  --os-sidebar-active: #1fa39a;
+  --os-sidebar-width: 15.5rem;
+
+  --os-bg: #f8fafc;
+  --os-surface: #ffffff;
+  --os-border: #e2e8f0;
+  --os-border-subtle: #f1f5f9;
+  --os-text: #0f172a;
+  --os-text-muted: #64748b;
+
+  --os-teal: #1fa39a;
+  --os-teal-soft: #e6f7f6;
+  --os-teal-muted: rgb(31 163 154 / 0.12);
+
+  --os-header-height: 3.5rem;
+  --os-status-height: 1.75rem;
+
+  --os-radius: 1rem;
+  --os-radius-sm: 0.625rem;
+  --os-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+
+  --os-space-section: 3rem;
+  --os-space-block: 1.5rem;
+}
