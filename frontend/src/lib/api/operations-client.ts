@@ -1,4 +1,10 @@
 import type { EntityPageModel } from "@/types/entity-page";
+import type { WorkItemsResponse } from "@/types/operational/work-item";
+import type { SectorId } from "@/types/operational/sector";
+import type {
+  WorkItemsDebugResponse,
+  WorkItemsPreviewResponse,
+} from "@/types/operational/work-items-preview.types";
 
 /** JSON-safe entity page (Lucide icons are rehydrated on the client). */
 export type EntityPageModelDTO = Omit<EntityPageModel, "identityIcon">;
@@ -60,4 +66,38 @@ export async function fetchLoteById(loteId: string): Promise<LoteBundleResponse>
     }
   );
   return parseJson<LoteBundleResponse>(response);
+}
+
+export async function fetchWorkItems(
+  sector: SectorId,
+  options?: { ownerPerson?: string | null }
+): Promise<WorkItemsResponse> {
+  const params = new URLSearchParams({ sector });
+  if (options?.ownerPerson?.trim()) {
+    params.set("ownerPerson", options.ownerPerson.trim());
+  }
+  const response = await fetch(`/api/v1/work-items?${params.toString()}`, {
+    method: "GET",
+    cache: "no-store",
+  });
+  return parseJson<WorkItemsResponse>(response);
+}
+
+export async function fetchWorkItemsPreview(
+  sector: SectorId
+): Promise<WorkItemsPreviewResponse> {
+  const params = new URLSearchParams({ sector });
+  const response = await fetch(`/api/v1/work-items/preview?${params.toString()}`, {
+    method: "GET",
+    cache: "no-store",
+  });
+  return parseJson<WorkItemsPreviewResponse>(response);
+}
+
+export async function fetchWorkItemsDebug(): Promise<WorkItemsDebugResponse> {
+  const response = await fetch("/api/v1/work-items/debug", {
+    method: "GET",
+    cache: "no-store",
+  });
+  return parseJson<WorkItemsDebugResponse>(response);
 }
