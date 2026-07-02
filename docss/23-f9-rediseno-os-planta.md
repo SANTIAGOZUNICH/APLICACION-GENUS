@@ -315,18 +315,17 @@ Un email → un sector → una Sector View completa.
 
 Implementados en **`/design-preview`**.
 
-| Pantalla | Fuente de datos (F9.2) |
+| Pantalla | Fuente de datos (F10.1) |
 |----------|------------------------|
-| Hub + arquitectura | Estático |
 | Mi Trabajo · Masivo | **WorkItems reales** · `GET /api/v1/work-items?sector=ENVASADO_MASIVO` |
-| Mi Trabajo · Premium | Mock legacy → migrar a WorkItems |
-| Elaboración | Mock legacy → migrar a WorkItems |
-| Calidad | Mock legacy |
-| Depósito | Mock legacy |
-| Producción | Mock legacy |
-| Dirección | Mock legacy |
-| Plan semanal | Mock legacy → migrar a WorkItems |
-| Consulta | Mock legacy |
+| Mi Trabajo · Premium | **WorkItems reales** · `sector=ENVASADO_PREMIUM` |
+| Elaboración | **WorkItems reales** · `sector=ELABORACION&ownerPerson=` |
+| Plan semanal | **WorkItems reales** del sector activo |
+| Consulta | Búsqueda sobre WorkItems agregados |
+| Producción | WorkItems multi-sector (parcial) |
+| Calidad | Mock — migración Fase 5 |
+| Depósito | Mock — migración Fase 5 |
+| Dirección | Mock — migración Fase 5 |
 
 ---
 
@@ -415,7 +414,7 @@ SEMANAS 2026 → Discovery → Mapper → WorkItems → Design Preview
 - [x] Sin `buildMasivoWeekSchedule()` ni schedule mock
 - [x] Fecha resuelta automáticamente según día actual
 - [x] Creamy modelada como copiloto contextual
-- [ ] Premium / Elaboración / Plan semanal migrados a WorkItems
+- [x] Premium / Elaboración / Plan semanal migrados a WorkItems (F10.1)
 - [x] Mensaje claro cuando no hay Drive o SEMANAS no indexado
 
 ---
