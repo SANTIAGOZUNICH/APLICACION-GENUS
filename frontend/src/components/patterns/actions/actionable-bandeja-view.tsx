@@ -11,6 +11,8 @@ import {
   getProblemTasks,
 } from "@/lib/bandeja/prioritize";
 import { useOperationsStore } from "@/lib/operations/operations-store";
+import { RealDataSourceBanner } from "@/components/data/real-data-source-banner";
+import { BandejaPendingBanner } from "@/components/data/integration-pending-banner";
 import { cn } from "@/lib/utils/cn";
 import type { BandejaSectionGroup } from "@/lib/bandeja/group-by-section";
 import type { BandejaTask } from "@/types/bandeja/bandeja-task";
@@ -138,9 +140,28 @@ function ActionableBandejaSection({ section }: { section: BandejaSectionGroup })
   );
 }
 
-/** E6 bandeja shell — live OperationsStore + actionable tasks. Does not modify E3. */
+/** E6 bandeja — demo tasks; E7.2 real mode shows honest pending banner only. */
 export function ActionableBandejaView() {
-  const { state } = useOperationsStore();
+  const { state, dataMode, dataSource, diagnostics, loading, hydrated } =
+    useOperationsStore();
+
+  if (dataMode === "real") {
+    return (
+      <div className="flex flex-col gap-6">
+        <RealDataSourceBanner
+          dataMode={dataMode}
+          dataSource={dataSource}
+          diagnostics={diagnostics}
+          loading={loading && !hydrated}
+        />
+        <BandejaPendingBanner
+          dataMode={dataMode}
+          oeCount={diagnostics?.counts?.oe}
+        />
+      </div>
+    );
+  }
+
   const tasks = state.bandejaTasks;
   const focoTask = getFocoTask(tasks);
   const problemTasks = getProblemTasks(tasks);
@@ -154,6 +175,12 @@ export function ActionableBandejaView() {
 
   return (
     <div className="flex flex-col gap-6">
+      <RealDataSourceBanner
+        dataMode={dataMode}
+        dataSource={dataSource}
+        diagnostics={diagnostics}
+        loading={loading && !hydrated}
+      />
       <BandejaDayPulse pulse={state.dayPulse} />
       {focoTask && <ActionableBandejaFoco task={focoTask} />}
       <BandejaProblemsBanner problems={problemTasks} />

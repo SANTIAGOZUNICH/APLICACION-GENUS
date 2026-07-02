@@ -28,7 +28,7 @@ export function WorkspaceView({ config, tasks }: WorkspaceViewProps) {
     getWorkspaceTasks(
       config.id as Exclude<
         typeof config.id,
-        "bandeja" | "consulta" | "design-system"
+        "bandeja" | "consulta" | "design-system" | "mi-trabajo"
       >
     );
 

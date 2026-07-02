@@ -31,6 +31,7 @@ import type {
   FolderAlias,
   FolderIndexEntry,
   OeIndexEntry,
+  OaIndexEntry,
   RefreshResult,
   RefreshScope,
 } from "@/lib/adapters/drive/types/document.types";
@@ -45,6 +46,10 @@ const CACHE_PREFIX = {
   oeByFileId: "docrepo:oe:file:",
   oeBySlug: "docrepo:oe:slug:",
   oeByBusinessId: "docrepo:oe:biz:",
+  oaIndex: "docrepo:oa-index",
+  oaByFileId: "docrepo:oa:file:",
+  oaBySlug: "docrepo:oa:slug:",
+  oaByBusinessId: "docrepo:oa:biz:",
   resolvedFolder: "docrepo:resolved-folder:",
 } as const;
 
@@ -150,6 +155,18 @@ export class OperationsDocumentRepository {
   }
 
   async getCriticalSheetRef(sheetKey: CriticalSheetKey): Promise<DocumentRef> {
+    const ref = await this.tryGetCriticalSheetRef(sheetKey);
+    if (!ref) {
+      throw new Error(
+        `Sheet crítico "${CRITICAL_SHEET_NAMES[sheetKey]}" no indexado. Ejecutá GET /api/v1/drive/refresh.`
+      );
+    }
+    return ref;
+  }
+
+  async tryGetCriticalSheetRef(
+    sheetKey: CriticalSheetKey
+  ): Promise<DocumentRef | null> {
     await this.ensureIndex();
 
     const cached = serverCache.get<DocumentRef>(`${CACHE_PREFIX.critical}${sheetKey}`);
@@ -168,14 +185,32 @@ export class OperationsDocumentRepository {
       }
     }
 
-    throw new Error(
-      `Sheet crítico "${CRITICAL_SHEET_NAMES[sheetKey]}" no indexado. Ejecutá GET /api/v1/drive/refresh.`
+    const alias = CRITICAL_SHEET_FOLDER[sheetKey];
+    const docs =
+      serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}${alias}`) ??
+      (await this.indexDocumentsForAlias(alias, this.getFolderIndex()));
+
+    const targetName = CRITICAL_SHEET_NAMES[sheetKey].toLowerCase();
+    const match = docs.find(
+      (file) => stripSheetExtension(file.name).trim().toLowerCase() === targetName
     );
+
+    if (match) {
+      serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, match);
+      return match;
+    }
+
+    return null;
   }
 
   async getOeIndex(): Promise<OeIndexEntry[]> {
     await this.ensureIndex();
     return serverCache.get<OeIndexEntry[]>(CACHE_PREFIX.oeIndex) ?? [];
+  }
+
+  async getOaIndex(): Promise<OaIndexEntry[]> {
+    await this.ensureIndex();
+    return serverCache.get<OaIndexEntry[]>(CACHE_PREFIX.oaIndex) ?? [];
   }
 
   async resolveOeDocument(lookupKey: string): Promise<OeIndexEntry | null> {
@@ -226,6 +261,57 @@ export class OperationsDocumentRepository {
     const normalized = oeId.trim().toUpperCase();
     if (!normalized) return;
     serverCache.set(`${CACHE_PREFIX.oeByBusinessId}${normalized}`, fileId);
+  }
+
+  async resolveOaDocument(lookupKey: string): Promise<OaIndexEntry | null> {
+    await this.ensureIndex();
+    const key = normalizeLookupKey(lookupKey);
+
+    const cachedByFile = serverCache.get<OaIndexEntry>(
+      `${CACHE_PREFIX.oaByFileId}${key}`
+    );
+    if (cachedByFile) return cachedByFile;
+
+    const index = await this.getOaIndex();
+
+    if (looksLikeDriveFileId(key)) {
+      const byId = index.find((item) => item.fileId === key) ?? null;
+      if (byId) return byId;
+    }
+
+    const bySlug = serverCache.get<OaIndexEntry>(
+      `${CACHE_PREFIX.oaBySlug}${key.toLowerCase()}`
+    );
+    if (bySlug) return bySlug;
+
+    const slug = fileNameToSlug(key);
+    if (slug) {
+      const slugMatch = index.find((item) => item.fileSlug === slug) ?? null;
+      if (slugMatch) return slugMatch;
+    }
+
+    const byExactName =
+      index.find(
+        (item) =>
+          stripSheetExtension(item.fileName).toLowerCase() ===
+          stripSheetExtension(key).toLowerCase()
+      ) ?? null;
+    if (byExactName) return byExactName;
+
+    const businessFileId = serverCache.get<string>(
+      `${CACHE_PREFIX.oaByBusinessId}${key.toUpperCase()}`
+    );
+    if (businessFileId) {
+      return index.find((item) => item.fileId === businessFileId) ?? null;
+    }
+
+    return null;
+  }
+
+  registerOaBusinessId(oaId: string, fileId: string): void {
+    const normalized = oaId.trim().toUpperCase();
+    if (!normalized) return;
+    serverCache.set(`${CACHE_PREFIX.oaByBusinessId}${normalized}`, fileId);
   }
 
   /** @deprecated Use resolveOeDocument */
@@ -332,6 +418,13 @@ export class OperationsDocumentRepository {
       serverCache.delete(CACHE_PREFIX.oeIndex);
     }
 
+    if (scope === "all" || scope === "pcp") {
+      serverCache.deleteByPrefix(CACHE_PREFIX.oaByFileId);
+      serverCache.deleteByPrefix(CACHE_PREFIX.oaBySlug);
+      serverCache.deleteByPrefix(CACHE_PREFIX.oaByBusinessId);
+      serverCache.delete(CACHE_PREFIX.oaIndex);
+    }
+
     for (const alias of aliasesToIndex) {
       serverCache.delete(`${CACHE_PREFIX.documents}${alias}`);
       const docs = await this.indexDocumentsForAlias(alias, folderIndex);
@@ -348,6 +441,10 @@ export class OperationsDocumentRepository {
 
     if (scope === "all" || scope === "elaboracion") {
       await this.rebuildOeIndex();
+    }
+
+    if (scope === "all" || scope === "pcp") {
+      await this.rebuildOaIndex();
     }
 
     this.indexReady = true;
@@ -398,7 +495,7 @@ export class OperationsDocumentRepository {
     const recursive = RECURSIVE_DOCUMENT_ALIASES.has(alias);
 
     if (!recursive) {
-      return googleDriveGateway.listSpreadsheetsInFolder(folderId, {
+      return googleDriveGateway.listTabularFilesInFolder(folderId, {
         alias,
         folderPath: rootPath,
       });
@@ -415,7 +512,7 @@ export class OperationsDocumentRepository {
         foldersUnder.find((entry) => entry.folderId === id) ??
         findFolderByRelativePath(folderIndex, rootPath);
 
-      const batch = await googleDriveGateway.listSpreadsheetsInFolder(id, {
+      const batch = await googleDriveGateway.listTabularFilesInFolder(id, {
         alias,
         folderPath: folderEntry?.relativePath ?? rootPath,
       });
@@ -458,7 +555,7 @@ export class OperationsDocumentRepository {
 
     const targetName = CRITICAL_SHEET_NAMES[sheetKey].toLowerCase();
     const match = docs.find(
-      (file) => file.name.trim().toLowerCase() === targetName
+      (file) => stripSheetExtension(file.name).trim().toLowerCase() === targetName
     );
 
     if (match) {
@@ -496,6 +593,36 @@ export class OperationsDocumentRepository {
 
     index.sort((a, b) => a.fileName.localeCompare(b.fileName, "es"));
     serverCache.set(CACHE_PREFIX.oeIndex, index);
+  }
+
+  private async rebuildOaIndex(): Promise<void> {
+    const files =
+      serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}pcp`) ?? [];
+
+    const index: OaIndexEntry[] = [];
+    const seen = new Set<string>();
+
+    for (const file of files) {
+      if (seen.has(file.fileId)) continue;
+      seen.add(file.fileId);
+
+      const fileSlug = fileNameToSlug(file.name);
+      const entry: OaIndexEntry = {
+        fileId: file.fileId,
+        fileName: file.name,
+        fileSlug,
+        modifiedTime: file.modifiedTime,
+        folderPath: file.folderPath,
+      };
+      index.push(entry);
+      serverCache.set(`${CACHE_PREFIX.oaByFileId}${file.fileId}`, entry);
+      if (fileSlug) {
+        serverCache.set(`${CACHE_PREFIX.oaBySlug}${fileSlug}`, entry);
+      }
+    }
+
+    index.sort((a, b) => a.fileName.localeCompare(b.fileName, "es"));
+    serverCache.set(CACHE_PREFIX.oaIndex, index);
   }
 }
 
