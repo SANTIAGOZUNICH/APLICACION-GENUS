@@ -1,9 +1,9 @@
 # 28 — Estrategia de convergencia Genus OS v1.0
 
-> **Estado:** Fase 2 completada — Fase 3 planificada  
+> **Estado:** Fase 3 completada ✅ — convergencia arquitectónica cerrada  
 > **Patrón:** Strangler Fig (convivencia controlada, sin big bang)  
 > **Principio:** Continuidad operativa — cada PR compila, despliega y funciona  
-> **Rama integración Fase 2:** `cursor/f2-1-work-lib-relocate-3d8a` (PRs #22–#28 mergeados)
+> **Rama integración:** `cursor/f2-1-work-lib-relocate-3d8a` (PRs #22–#40 mergeados)
 
 ---
 
@@ -84,7 +84,7 @@ frontend/src/features/
 │   ├── navigation/    twin-nav
 │   ├── feedback/      context-panel, creamy-companion
 │   ├── shell/         twin-shell, os-header, os-sidebar, action-toast
-│   └── app/           design-preview-app, twin-app (TwinRouter)
+│   └── app/           os-app-root, design-preview-app, twin-app (TwinRouter)
 ├── sectors/
 │   ├── registry/      sector-view-registry
 │   ├── config/        config, lab-personas, sector-emails
@@ -95,19 +95,22 @@ frontend/src/features/
     └── views/         detail-views, stub-views
 ```
 
-#### Qué quedó en `design-preview/`
+#### Qué quedó en `design-preview/` (post-Fase 3)
 
-| Tipo | Contenido |
-|------|-----------|
-| **Archivo real** | `tokens.css` únicamente |
-| **Stubs re-export** | ~39 archivos en `lib/`, `hooks/`, `components/`, `wireframes/`, `views/` y raíz |
-| **Entry route** | `app/design-preview/page.tsx` — sin cambios; importa stubs + tokens |
+| Tipo | Cantidad | Contenido |
+|------|----------|-----------|
+| **Stubs re-export TS/TSX** | 41 | `export * from "@/features/..."` |
+| **Stub CSS** | 1 | `tokens.css` → `@import` canónico |
+| **Archivos reales** | **0** | Todo el código vive en `features/` |
 
-#### Deuda técnica intencional (Fase 2)
+Canónico tokens: `design-system/os-preview-tokens.css`.
 
-- **~86 imports** en 24 archivos bajo `features/` siguen usando `@/design-preview/*` vía stubs.
-- Nombres semánticos sin renombrar: `PreviewProvider`, `TwinRouter`, `TwinShell`, etc.
+#### Deuda técnica post-Fase 3
+
+- **0 imports `@/design-preview/*`** en todo el codebase activo (stubs sin consumidores internos).
+- Nombres semánticos sin renombrar: `PreviewProvider`, `TwinRouter`, `TwinShell`, `SectorLogin`.
 - `Role Engine` / `Workflow Engine` / mappers: sin cambios estructurales.
+- Track A legacy (`AppShell`, workspaces) intacto con banner/redirect opt-in.
 
 #### Verificación Fase 2
 
@@ -117,26 +120,26 @@ frontend/src/features/
 
 ---
 
-### Fase 3 — Rutas OS en producción (planificada)
+### Fase 3 — Rutas OS en producción ✅
 
 **Objetivo:** exponer el Digital Twin como rutas productivas manteniendo `/design-preview` como alias de compatibilidad, sin eliminar Track A.
 
-**Granularidad:** 12 PRs agrupados (reversibles, sin big bang).
+**Granularidad:** 12 PRs (#30–#40 + doc #41).
 
-| PR | Alcance |
-|----|---------|
-| **3.1** | Work imports — `features/work/*` → `@/features/work/*` |
-| **3.2** | OS imports — shell, feedback, session, app → `@/features/os/*` |
-| **3.3** | Sectors imports — `features/sectors/*` → `@/features/sectors/*` + cross-refs OS/work |
-| **3.4** | Entities imports + auditoría 0 `@/design-preview/` en `features/` |
-| **3.5** | Tokens move + stub + imports `app/design-preview` |
-| **3.6** | `OsAppRoot` compartido |
-| **3.7** | Ruta `/mi-trabajo` |
-| **3.8** | Rutas `/plan-semanal` y `/consulta` |
-| **3.9** | `/design-preview` como alias de `OsAppRoot` |
-| **3.10** | Banners legacy + flag redirects opt-in |
-| **3.11** | Redirects opt-in (middleware 302 con flag) |
-| **3.12** | Documentación cierre Fase 3 |
+| PR | Alcance | Estado |
+|----|---------|--------|
+| **3.1** | Work imports — `features/work/*` → `@/features/work/*` | ✅ #30 |
+| **3.2** | OS imports — shell, feedback, session, app → `@/features/os/*` | ✅ #31 |
+| **3.3** | Sectors imports | ✅ #32 |
+| **3.4** | Entities imports + auditoría 0 `@/design-preview/` en `features/` | ✅ #33 |
+| **3.5** | Tokens move + stub + imports `app/design-preview` | ✅ #34 |
+| **3.6** | `OsAppRoot` compartido | ✅ #35 |
+| **3.7** | Ruta `/mi-trabajo` | ✅ #36 |
+| **3.8** | Rutas `/plan-semanal` y `/consulta` | ✅ #37 |
+| **3.9** | `/design-preview` como alias de `OsAppRoot` | ✅ #38 |
+| **3.10** | Banners legacy + flag redirects opt-in | ✅ #39 |
+| **3.11** | Redirects opt-in (middleware 302 con flag) | ✅ #40 |
+| **3.12** | Documentación cierre Fase 3 + auditoría | ✅ #41 |
 
 **Reglas permanentes Fase 3:**
 - Cada PR: `npm run test`, `npm run lint`, `npm run build`, smoke `/design-preview`
@@ -185,23 +188,121 @@ Rutas productivas con `OsAppRoot initialNav` por vista. `PreviewProvider` acepta
 
 #### PR 3.11 — Redirects opt-in (middleware) ✅
 
-`middleware.ts`: `/bandeja` → `/mi-trabajo` cuando `GENUS_OS_LEGACY_REDIRECTS=true`. Default off.
+`middleware.ts`: `/bandeja` → `/mi-trabajo` cuando `GENUS_OS_LEGACY_REDIRECTS=true`. Merge #40.
+
+#### PR 3.12 — Cierre Fase 3 + auditoría ✅
+
+Documentación actualizada. Auditoría §7.
+
+#### Rutas OS productivas (estado final)
+
+| Ruta | Entry | Vista inicial |
+|------|-------|---------------|
+| `/design-preview` | `OsAppRoot` | mi-trabajo (login sectorial) |
+| `/mi-trabajo` | `OsAppRoot` | mi-trabajo |
+| `/plan-semanal` | `OsAppRoot initialNav` | plan-semanal |
+| `/consulta` | `OsAppRoot initialNav` | consulta |
+
+#### Flags convergencia (opt-in)
+
+| Variable | Default | Efecto |
+|----------|---------|--------|
+| `NEXT_PUBLIC_GENUS_OS_LEGACY_BANNER` | off | Banner Track A → rutas OS |
+| `GENUS_OS_LEGACY_REDIRECTS` | off | 302 `/bandeja` → `/mi-trabajo` |
 
 #### Criterios de cierre Fase 3
 
-- [x] `@/design-preview/*` solo usado desde `app/` y stubs (no desde `features/`)
+- [x] `@/design-preview/*` — 0 imports activos; stubs conservados
 - [x] `tokens.css` en path canónico con stub de compatibilidad
 - [x] `/mi-trabajo`, `/plan-semanal`, `/consulta` operativos
-- [x] `/design-preview` sigue operativo como alias de `OsAppRoot`
+- [x] `/design-preview` operativo como alias de `OsAppRoot`
 - [x] Track A intacto; banner soft opt-in; hard redirects detrás de flag
-- [ ] Validación operaria en planta (manual)
-
-<!-- Detalle histórico sub-fases 3A–3D (21 PRs) reemplazado por plan 12 PRs arriba -->
+- [ ] Validación operaria en planta (manual — pre-requisito Fase 4+)
 
 ---
 
-### Fase 4 — Fusión object pages
+## 7. Auditoría post-Fase 3
 
+### 7.1 ¿Archivos reales en `design-preview/`?
+
+**No.** 42 archivos, todos stubs:
+- 41 re-export TS/TSX → `@/features/*`
+- 1 stub CSS (`tokens.css` → `design-system/os-preview-tokens.css`)
+
+### 7.2 ¿Cuántos stubs?
+
+**42** en `frontend/src/design-preview/`.
+
+### 7.3 ¿Qué sigue siendo legacy (Track A)?
+
+| Componente | Ubicación | Estado |
+|------------|-----------|--------|
+| `AppShell` + workspaces | `app/(app)/*`, `components/layouts/` | Activo, sin delete |
+| `BandejaTask` / mocks E3–E6 | `components/patterns/`, `mocks/` | Activo |
+| Entity pages legacy | `/oe/[id]`, `/oa/[id]`, `/lote/[id]`, etc. | Activo |
+| Tokens doc 07 | `styles/tokens.css` | Activo en Track A |
+| `MockRoleSwitcher` | bandeja | Activo |
+| Login sectorial F10.1 | `SectorLogin` en `/design-preview` | Activo (alias) |
+
+### 7.4 Deuda técnica pendiente
+
+| Ítem | Prioridad | Fase sugerida |
+|------|-----------|---------------|
+| Renombrar semántica Twin/Preview → OS | Baja | Post-auth |
+| Eliminar stubs `design-preview/` | Media | Fase 6 |
+| Login enterprise (email/password) | Alta | **Fase 4 — Identidad y Acceso** |
+| RBAC enforcement server-side | Alta | Fase 4–5 |
+| Object pages dentro de TwinShell | Media | Fase 4 (original) o 5 |
+| Workflow write-back | Alta producto | Fase 5 |
+| Validación operaria planta | Alta | Manual pre-Fase 4 |
+
+### 7.5 ¿Qué puede eliminarse en Fase 6?
+
+Precondición: 30 días sin tráfico legacy + validación operaria.
+
+- Carpeta `design-preview/` completa (42 stubs)
+- Workspaces Track A (`/bandeja`, `/produccion`, …)
+- `AppShell`, sidebar legacy, `styles/tokens.css` doc 07
+- Mocks E3–E6 (`BandejaTask`, OperationsStore)
+- `DesignPreviewApp` alias, `SectorLogin` picker (si login enterprise validado)
+- Flags convergencia (banner/redirect) — reemplazados por auth/routing definitivo
+
+### 7.6 Estimación de completitud
+
+| Dimensión | % | Notas |
+|-----------|---|-------|
+| **Arquitectura** | ~85% | `features/` consolidado; dual-track convive |
+| **Frontend** | ~70% | OS shell + rutas OK; entity fusion pendiente |
+| **UX** | ~65% | Wireframes sectoriales; login enterprise pendiente |
+| **Producto** | ~45% | Lectura real SEMANAS; write-back y RBAC prod pendientes |
+| **Infraestructura** | ~55% | Drive adapter; auth/API/session prod pendientes |
+| **Integración** | ~50% | Mappers F10.1; Sheet prod RBAC pendiente (doc 19 P0) |
+
+### 7.7 ¿Listo para desarrollo funcional definitivo?
+
+**Arquitectónicamente sí; productivamente con condiciones.**
+
+Listo:
+- Estructura `features/os|sectors|work|entities`
+- Rutas OS productivas + alias `/design-preview`
+- Role Engine + Workflow Engine + mappers intactos y testeados
+- Strangler Fig operativo (flags opt-in)
+
+Pendiente antes de producto definitivo:
+- **Fase 4 — Identidad y Acceso** (login enterprise, sesión, OAuth-ready)
+- Validación operaria en planta
+- RBAC en Sheet de producción (doc 19 P0)
+- Write-back acciones (Fase 5)
+
+**Recomendación:** iniciar Fase 4 (Identidad y Acceso) antes de Fase 5 write-back o delete Track A.
+
+---
+
+### Fase 4 — Identidad y Acceso *(repriorizada — ver plan propuesto)*
+
+> Originalmente “Fusión object pages”. Repriorizada por stakeholder: login enterprise, sesión, identidad completa del MOS. Plan detallado pendiente de revisión conjunta.
+
+Subfases originales (postergadas):
 - Detalle trabajo/OE/OA dentro del shell OS
 - Entity pages con datos reales (Drive)
 
@@ -241,4 +342,4 @@ Ver auditoría arquitectónica §10 — estructura `features/os|sectors|work|ent
 - `docss/24-role-engine.md` · `docss/25-workflow-engine.md`
 - `docss/26-genus-design-system.md`
 - `/playbook` — proceso de ejecución
-- PRs Fase 2: #22–#28 sobre `cursor/f2-1-work-lib-relocate-3d8a`
+- PRs Fase 2–3: #22–#40 sobre `cursor/f2-1-work-lib-relocate-3d8a`
