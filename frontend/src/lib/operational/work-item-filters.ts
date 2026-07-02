@@ -1,10 +1,27 @@
 import type { WorkItem } from "@/types/operational/work-item";
+import { personNamesMatch } from "@/lib/operational/display-fields";
 
 export function filterWorkItemsForSector(
   items: WorkItem[],
   sector: WorkItem["sector"]
 ): WorkItem[] {
   return items.filter((item) => item.sector === sector || item.ownerSector === sector);
+}
+
+export function filterWorkItemsForOwnerPerson(
+  items: WorkItem[],
+  ownerPerson: string | null | undefined
+): WorkItem[] {
+  if (!ownerPerson?.trim()) return items;
+  return items.filter((item) => personNamesMatch(item.ownerPerson, ownerPerson));
+}
+
+export function filterWorkItemsForSectorAndPerson(
+  items: WorkItem[],
+  sector: WorkItem["sector"],
+  ownerPerson?: string | null
+): WorkItem[] {
+  return filterWorkItemsForOwnerPerson(filterWorkItemsForSector(items, sector), ownerPerson);
 }
 
 export function partitionMiTrabajoSections(items: WorkItem[]): {

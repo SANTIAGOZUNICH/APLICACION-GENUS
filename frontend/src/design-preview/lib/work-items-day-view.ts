@@ -11,7 +11,7 @@ export const MASIVO_LINE_IDS = ["LÍNEA 1", "LÍNEA 2", "LÍNEA 3"] as const;
 export type MasivoLineId = (typeof MASIVO_LINE_IDS)[number];
 
 export interface MasivoLineSlot {
-  lineId: MasivoLineId;
+  lineId: string;
   work: WorkItem | null;
 }
 
@@ -153,11 +153,28 @@ export function buildDayScheduleView(
   date: Date,
   today: Date
 ): DayScheduleView {
+  return buildLineScheduleView(items, date, today, [...MASIVO_LINE_IDS]);
+}
+
+export function buildLineScheduleView(
+  items: WorkItem[],
+  date: Date,
+  today: Date,
+  lineIds: readonly string[]
+): DayScheduleView {
   const dayItems = filterWorkItemsForDate(items, date, today);
-  const lines: MasivoLineSlot[] = MASIVO_LINE_IDS.map((lineId) => {
+
+  const normalizeLineForSlot = (line: string | null): string | null => {
+    if (!line) return null;
+    const masivo = normalizeMasivoLine(line);
+    if (masivo) return masivo;
+    return line.trim().toUpperCase();
+  };
+
+  const lines: MasivoLineSlot[] = lineIds.map((lineId) => {
     const match =
-      dayItems.find((item) => normalizeMasivoLine(item.line) === lineId) ??
-      dayItems.find((item) => !normalizeMasivoLine(item.line) && lineId === "LÍNEA 1") ??
+      dayItems.find((item) => normalizeLineForSlot(item.line) === lineId) ??
+      dayItems.find((item) => normalizeText(item.line ?? "") === normalizeText(lineId)) ??
       null;
     return { lineId, work: match };
   });
@@ -191,6 +208,19 @@ export function buildDayScheduleView(
     totalUnits,
     statusLabel,
   };
+}
+
+export function discoverPackagingLines(items: WorkItem[]): string[] {
+  const discovered = new Set<string>();
+  for (const item of items) {
+    if (item.line?.trim()) {
+      discovered.add(item.line.trim());
+    }
+  }
+  if (discovered.size > 0) {
+    return [...discovered].sort((a, b) => a.localeCompare(b, "es"));
+  }
+  return ["PREMIUM A", "PREMIUM B"];
 }
 
 export function buildWeekPlanSummary(

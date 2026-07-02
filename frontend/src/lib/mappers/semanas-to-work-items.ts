@@ -1,18 +1,23 @@
-import "server-only";
-
 import { pickField } from "@/lib/adapters/sheets/parse-sheet-rows";
 import type { DocumentRef } from "@/lib/adapters/drive/types/document.types";
 import { sheetsReader } from "@/lib/adapters/sheets/sheets-reader";
 import {
+  createVisualContext,
+  detectElaboradorLabel,
+  detectLineLabel,
+  detectPackagingTier,
   detectSemanasBlocks,
   extractBlockHeaders,
   inferLineFromRecord,
   inferPriorityFromRecord,
   isMeaningfulSemanasRow,
   mapPriorityLabel,
+  normalizeLineLabel,
   recordFromSemanasRow,
+  type SemanasVisualContext,
 } from "@/lib/mappers/semanas-block-parser";
 import { detectHeaderRows, extractSampleDataRows } from "@/lib/discovery/schema-analyzer";
+import { normalizePersonName } from "@/lib/operational/display-fields";
 import type { OriginStage, WorkItem, WorkItemConfidence } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 import type {
@@ -54,33 +59,6 @@ function stageForBlock(kind: SemanasBlockKind): OriginStage {
   }
 }
 
-function sectorForBlock(
-  kind: SemanasBlockKind,
-  record: Record<string, string>,
-  line: string | null
-): { sector: SectorId | null; confidence: WorkItemConfidence } {
-  const lineText = normalizeLine(line ?? inferLineFromRecord(record));
-
-  switch (kind) {
-    case "ELABORACION":
-      return { sector: "ELABORACION", confidence: "high" };
-    case "ACONDICIONAMIENTO":
-      if (lineText.includes("premium")) {
-        return { sector: "ENVASADO_PREMIUM", confidence: "high" };
-      }
-      if (lineText.includes("masivo") || lineText.includes("consumo")) {
-        return { sector: "ENVASADO_MASIVO", confidence: "high" };
-      }
-      return { sector: null, confidence: "low" };
-    case "ENTREGAS":
-      return { sector: "DEPOSITO", confidence: "medium" };
-    case "DESARROLLO":
-      return { sector: "PRODUCCION", confidence: "medium" };
-    default:
-      return { sector: null, confidence: "low" };
-  }
-}
-
 function normalizeLine(value: string | null): string {
   if (!value) return "";
   return value
@@ -90,13 +68,54 @@ function normalizeLine(value: string | null): string {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+function sectorForVisualBlock(
+  kind: SemanasBlockKind,
+  ctx: SemanasVisualContext,
+  record: Record<string, string>,
+  line: string | null
+): { sector: SectorId | null; confidence: WorkItemConfidence } {
+  const lineText = normalizeLine(line ?? inferLineFromRecord(record));
+
+  switch (kind) {
+    case "ELABORACION":
+      return { sector: "ELABORACION", confidence: ctx.elaborador ? "high" : "medium" };
+    case "ACONDICIONAMIENTO": {
+      if (ctx.packagingTier === "premium" || lineText.includes("premium")) {
+        return { sector: "ENVASADO_PREMIUM", confidence: "high" };
+      }
+      if (
+        ctx.packagingTier === "masivo" ||
+        lineText.includes("masivo") ||
+        lineText.includes("consumo")
+      ) {
+        return { sector: "ENVASADO_MASIVO", confidence: "high" };
+      }
+      if (ctx.lineLabel?.toLowerCase().includes("premium")) {
+        return { sector: "ENVASADO_PREMIUM", confidence: "high" };
+      }
+      if (ctx.lineLabel?.toLowerCase().includes("línea") || ctx.lineLabel?.toLowerCase().includes("linea")) {
+        return { sector: "ENVASADO_MASIVO", confidence: "medium" };
+      }
+      return { sector: null, confidence: "low" };
+    }
+    case "ENTREGAS":
+      return { sector: "DEPOSITO", confidence: "medium" };
+    case "DESARROLLO":
+      return { sector: "PRODUCCION", confidence: "medium" };
+    default:
+      return { sector: null, confidence: "low" };
+  }
+}
+
 function buildWorkItemId(
   fileId: string,
   tab: string,
   rowNumber: number,
-  product: string | null
+  product: string | null,
+  ctx: SemanasVisualContext
 ): string {
-  return `semanas:${fileId}:${slugify(tab)}:row-${rowNumber}:${slugify(product ?? "item")}`;
+  const scope = slugify(ctx.elaborador ?? ctx.lineLabel ?? "row");
+  return `semanas:${fileId}:${slugify(tab)}:${scope}:${rowNumber}:${slugify(product ?? "item")}`;
 }
 
 function fieldConfidence(hasValue: boolean, total: number, mapped: number): WorkItemConfidence {
@@ -107,12 +126,53 @@ function fieldConfidence(hasValue: boolean, total: number, mapped: number): Work
   return "low";
 }
 
+function resolveOwnerPerson(
+  ctx: SemanasVisualContext,
+  record: Record<string, string>
+): string | null {
+  const fromColumn =
+    pickField(record, "elaborador", "responsable", "operario", "asignado", "elaborador_nombre") ||
+    null;
+  if (fromColumn) return normalizePersonName(fromColumn);
+  return ctx.elaborador;
+}
+
+function resolveLine(ctx: SemanasVisualContext, record: Record<string, string>): string | null {
+  const fromRecord = inferLineFromRecord(record);
+  const fromContext = ctx.lineLabel;
+  return normalizeLineLabel(fromRecord ?? fromContext);
+}
+
+function updateVisualContext(
+  blockKind: SemanasBlockKind,
+  row: string[],
+  ctx: SemanasVisualContext,
+  isHeader: boolean
+): SemanasVisualContext {
+  const next = { ...ctx };
+
+  const tier = detectPackagingTier(row);
+  if (tier) next.packagingTier = tier;
+
+  const line = detectLineLabel(row);
+  if (line) next.lineLabel = line;
+
+  if (blockKind === "ELABORACION" && !isHeader) {
+    const elaborador = detectElaboradorLabel(row);
+    if (elaborador) {
+      next.elaborador = elaborador;
+    }
+  }
+
+  return next;
+}
+
 export interface SemanasMapperResult {
   workItems: WorkItem[];
   warnings: string[];
 }
 
-/** F8.1 — SEMANAS 2026 → WorkItem[] (no Cards, no invented fields). */
+/** F10.1 — SEMANAS 2026 → WorkItem[] interpretando bloques visuales (no filas planas). */
 export function semanasRowsToWorkItems(input: {
   fileId: string;
   tab: string;
@@ -123,38 +183,61 @@ export function semanasRowsToWorkItems(input: {
   const warnings: string[] = [];
 
   for (const block of input.blocks) {
-    const headerRow = block.headerRow;
-    if (!headerRow) {
-      warnings.push(
-        `${input.tab}: bloque ${block.kind} sin fila header detectada (fila ${block.startRow}).`
-      );
-      continue;
-    }
-
-    const headers = extractBlockHeaders(input.rows, headerRow);
-    if (headers.filter(Boolean).length < 2) {
-      warnings.push(`${input.tab}: headers insuficientes en bloque ${block.kind}.`);
-      continue;
-    }
-
+    let ctx = createVisualContext();
+    let headers: string[] = block.headerRow
+      ? extractBlockHeaders(input.rows, block.headerRow)
+      : [];
     const originStage = stageForBlock(block.kind);
 
-    for (let rowIndex = headerRow; rowIndex < block.endRow; rowIndex++) {
+    for (let rowIndex = block.startRow - 1; rowIndex < block.endRow; rowIndex++) {
       const row = input.rows[rowIndex] ?? [];
       if (!row.some((cell) => cell.trim())) continue;
 
-      const record = recordFromSemanasRow(headers, row);
-      if (!isMeaningfulSemanasRow(record)) continue;
+      const rowNumber = rowIndex + 1;
+      const isHeader = block.headerRow === rowNumber;
+
+      ctx = updateVisualContext(block.kind, row, ctx, isHeader);
+
+      if (isHeader) {
+        headers = extractBlockHeaders(input.rows, rowNumber);
+        continue;
+      }
+
+      const elaboradorOnly = detectElaboradorLabel(row);
+      if (elaboradorOnly && block.kind === "ELABORACION") {
+        ctx.elaborador = elaboradorOnly;
+        continue;
+      }
+
+      const lineOnly = detectLineLabel(row);
+      if (lineOnly && block.kind === "ACONDICIONAMIENTO" && row.filter((c) => c.trim()).length <= 2) {
+        ctx.lineLabel = lineOnly;
+        continue;
+      }
+
+      const tierOnly = detectPackagingTier(row);
+      if (tierOnly && row.filter((c) => c.trim()).length <= 2) {
+        ctx.packagingTier = tierOnly;
+        continue;
+      }
+
+      const record =
+        headers.filter(Boolean).length >= 2
+          ? recordFromSemanasRow(headers, row)
+          : buildPositionalRecord(row);
+
+      if (!isMeaningfulSemanasRow(record) && !record.producto && !record.cliente) {
+        continue;
+      }
 
       const client =
         pickField(record, "cliente", "cliente_nombre", "marca", "nombre_cliente") || null;
       const product =
         pickField(record, "producto", "descripcion", "granel", "sku", "pt", "nombre") || null;
       const quantity =
-        pickField(record, "cantidad", "kg", "kilos", "unidades", "qty", "tamano_batch") ||
-        null;
+        pickField(record, "cantidad", "kg", "kilos", "unidades", "qty", "tamano_batch") || null;
       const unit = pickField(record, "unidad", "unit", "uom") || null;
-      const line = inferLineFromRecord(record);
+      const line = resolveLine(ctx, record);
       const dayLabel = pickField(record, "dia", "día", "day") || null;
       const date = pickField(record, "fecha", "fecha_plan", "inicio") || null;
       const weekLabel = pickField(record, "semana", "week") || null;
@@ -165,22 +248,36 @@ export function semanasRowsToWorkItems(input: {
       const oaRef = pickField(record, "oa", "oa_id", "orden_acondicionamiento") || null;
       const loteRef = pickField(record, "lote", "lote_id", "nro_lote") || null;
       const notes = pickField(record, "observaciones", "obs", "notas", "comentarios") || null;
+      const ownerPerson = resolveOwnerPerson(ctx, record);
 
-      const { sector, confidence: sectorConfidence } = sectorForBlock(
+      const { sector, confidence: sectorConfidence } = sectorForVisualBlock(
         block.kind,
+        ctx,
         record,
         line
       );
 
       if (!sector) {
         warnings.push(
-          `${input.tab} fila ${rowIndex + 1}: sector no determinado en bloque ${block.kind}.`
+          `${input.tab} fila ${rowNumber}: sector no determinado en bloque ${block.kind} (línea: ${line ?? "—"}).`
         );
         continue;
       }
 
-      const mappedCount = [client, product, quantity, date, line].filter(Boolean).length;
-      const confidence = fieldConfidence(Boolean(product || client), 5, mappedCount);
+      if (block.kind === "ELABORACION" && !ownerPerson) {
+        warnings.push(
+          `${input.tab} fila ${rowNumber}: elaboración sin elaborador detectado — revisar bloque visual.`
+        );
+      }
+
+      if (block.kind === "ACONDICIONAMIENTO" && !line) {
+        warnings.push(
+          `${input.tab} fila ${rowNumber}: acondicionamiento sin línea detectada — revisar bloque LÍNEA 1/2/3.`
+        );
+      }
+
+      const mappedCount = [client, product, quantity, date, line, ownerPerson].filter(Boolean).length;
+      const confidence = fieldConfidence(Boolean(product || client), 6, mappedCount);
       const finalConfidence =
         confidence === "high" && sectorConfidence === "high"
           ? "high"
@@ -189,12 +286,13 @@ export function semanasRowsToWorkItems(input: {
             : "medium";
 
       const priority = mapPriorityLabel(inferPriorityFromRecord(record));
-      const rowNumber = rowIndex + 1;
 
+      const contextLabel = ownerPerson ?? line ?? block.kind;
       workItems.push({
-        id: buildWorkItemId(input.fileId, input.tab, rowNumber, product),
+        id: buildWorkItemId(input.fileId, input.tab, rowNumber, product, ctx),
         sector,
         ownerSector: sector,
+        ownerPerson,
         source: "semanas_2026",
         sourceFileId: input.fileId,
         sourceSheet: input.tab,
@@ -219,7 +317,7 @@ export function semanasRowsToWorkItems(input: {
         actionLabel: originStage === "ELABORACION" ? "Abrir OE" : "Abrir trabajo",
         href: oeRef ? `/oe/${encodeURIComponent(oeRef)}` : null,
         confidence: finalConfidence,
-        createdFrom: `SEMANAS 2026 · ${input.tab} · ${block.kind} · fila ${rowNumber}`,
+        createdFrom: `SEMANAS 2026 · ${input.tab} · ${block.kind} · ${contextLabel} · fila ${rowNumber}`,
         generatedEntities: [],
         dependsOn: null,
         blockedBy: null,
@@ -229,6 +327,18 @@ export function semanasRowsToWorkItems(input: {
   }
 
   return { workItems, warnings };
+}
+
+/** Fallback cuando no hay fila header — primeras celdas como producto/cliente/cantidad. */
+function buildPositionalRecord(row: string[]): Record<string, string> {
+  const cells = row.map((c) => c.trim()).filter(Boolean);
+  const record: Record<string, string> = {};
+  if (cells[0]) record.cliente = cells[0];
+  if (cells[1]) record.producto = cells[1];
+  if (cells[2]) record.cantidad = cells[2];
+  if (cells[3]) record.unidad = cells[3];
+  if (cells[4]) record.entrega = cells[4];
+  return record;
 }
 
 export async function discoverSemanasFile(
@@ -354,8 +464,8 @@ export async function discoverSemanasFile(
     warnings,
     message:
       totalMappable > 0
-        ? `${totalMappable} filas mapeables en SEMANAS 2026.`
-        : "SEMANAS 2026 leído — sin filas mapeables con el contrato actual.",
+        ? `${totalMappable} bloques de trabajo mapeables en SEMANAS 2026.`
+        : "SEMANAS 2026 leído — sin bloques mapeables con el contrato F10.1.",
   };
 }
 

@@ -40,6 +40,8 @@ export interface WorkItem {
   id: string;
   sector: SectorId;
   ownerSector: SectorId;
+  /** Elaborador / responsable del bloque visual en SEMANAS — F10.1. */
+  ownerPerson: string | null;
   source: WorkItemSource;
   sourceFileId: string;
   sourceSheet: string | null;
@@ -73,6 +75,7 @@ export interface WorkItem {
 
 export interface WorkItemsResponse {
   sector: SectorId;
+  ownerPerson?: string | null;
   source: "drive" | "demo";
   scannedAt: string;
   workItems: WorkItem[];

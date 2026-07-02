@@ -1,7 +1,6 @@
 "use client";
 
 import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
-import type { MasivoLineId } from "@/design-preview/lib/work-items-day-view";
 import {
   formatWorkItemDelivery,
   formatWorkItemPresentation,
@@ -17,7 +16,7 @@ const STATUS_LABEL: Record<WorkItemStatus, { dot: string; label: string }> = {
 };
 
 interface LineWorkCardProps {
-  lineId: MasivoLineId;
+  lineId: string;
   work: WorkItem | null;
   today: Date;
   status?: WorkItemStatus;

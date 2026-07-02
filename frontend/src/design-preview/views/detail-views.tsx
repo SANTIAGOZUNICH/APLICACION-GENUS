@@ -159,8 +159,8 @@ function WorkDetailContent({ work }: { work: WorkItem }) {
 
 export function WorkDetailView() {
   const { currentNav, goBack, applyEffectiveStatus } = usePreviewContext();
-  const { sectorId } = usePreviewSession();
-  const { data, loading } = useSectorWorkItems(sectorId);
+  const { sectorId, ownerPerson } = usePreviewSession();
+  const { data, loading } = useSectorWorkItems(sectorId, { ownerPerson });
   const workItemId = currentNav.workItemId;
 
   const work = useMemo(() => {
@@ -184,8 +184,8 @@ export function WorkDetailView() {
 export function OaDetailView() {
   const { currentNav, goBack, applyEffectiveStatus, openWorkItem, markWorkDone, getEffectiveStatus } =
     usePreviewContext();
-  const { sectorId } = usePreviewSession();
-  const { data } = useSectorWorkItems(sectorId);
+  const { sectorId, ownerPerson } = usePreviewSession();
+  const { data } = useSectorWorkItems(sectorId, { ownerPerson });
   const oaRef = currentNav.oaRef ?? "—";
 
   const work = useMemo(() => {
@@ -249,8 +249,8 @@ export function OaDetailView() {
 
 export function OeDetailView() {
   const { currentNav, goBack, applyEffectiveStatus, openWorkItem } = usePreviewContext();
-  const { sectorId } = usePreviewSession();
-  const { data } = useSectorWorkItems(sectorId);
+  const { sectorId, ownerPerson } = usePreviewSession();
+  const { data } = useSectorWorkItems(sectorId, { ownerPerson });
   const oeRef = currentNav.oeRef ?? "—";
 
   const work = useMemo(() => {
@@ -301,8 +301,8 @@ export function OeDetailView() {
 
 export function ClientDetailView() {
   const { currentNav, goBack, applyEffectiveStatus, openWorkItem } = usePreviewContext();
-  const { sectorId } = usePreviewSession();
-  const { data } = useSectorWorkItems(sectorId);
+  const { sectorId, ownerPerson } = usePreviewSession();
+  const { data } = useSectorWorkItems(sectorId, { ownerPerson });
   const clientName = currentNav.clientName ?? "";
 
   const clientWorks = useMemo(() => {

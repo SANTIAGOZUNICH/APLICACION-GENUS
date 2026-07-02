@@ -68,8 +68,14 @@ export async function fetchLoteById(loteId: string): Promise<LoteBundleResponse>
   return parseJson<LoteBundleResponse>(response);
 }
 
-export async function fetchWorkItems(sector: SectorId): Promise<WorkItemsResponse> {
+export async function fetchWorkItems(
+  sector: SectorId,
+  options?: { ownerPerson?: string | null }
+): Promise<WorkItemsResponse> {
   const params = new URLSearchParams({ sector });
+  if (options?.ownerPerson?.trim()) {
+    params.set("ownerPerson", options.ownerPerson.trim());
+  }
   const response = await fetch(`/api/v1/work-items?${params.toString()}`, {
     method: "GET",
     cache: "no-store",

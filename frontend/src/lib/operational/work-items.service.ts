@@ -15,6 +15,7 @@ import { buildProductionOverview } from "@/lib/operational/build-production-over
 import {
   countMiTrabajoSections,
   filterWorkItemsForSector,
+  filterWorkItemsForSectorAndPerson,
   partitionMiTrabajoSections,
 } from "@/lib/operational/work-item-filters";
 import { SECTOR_PREVIEW_PROFILES } from "@/config/sector-preview";
@@ -64,12 +65,13 @@ export class WorkItemsService {
     return { workItems, warnings, sourcesIndexed };
   }
 
-  async listForSector(sector: SectorId): Promise<WorkItemsResponse> {
+  async listForSector(sector: SectorId, ownerPerson?: string | null): Promise<WorkItemsResponse> {
     const { workItems, warnings, sourcesIndexed } = await this.loadAllWorkItems();
 
     if (!sourcesIndexed.semanas_2026) {
       return {
         sector,
+        ownerPerson: ownerPerson ?? null,
         source: "drive",
         scannedAt: new Date().toISOString(),
         workItems: [],
@@ -79,10 +81,11 @@ export class WorkItemsService {
       };
     }
 
-    const filtered = filterWorkItemsForSector(workItems, sector);
+    const filtered = filterWorkItemsForSectorAndPerson(workItems, sector, ownerPerson);
 
     return {
       sector,
+      ownerPerson: ownerPerson ?? null,
       source: "drive",
       scannedAt: new Date().toISOString(),
       workItems: filtered,
@@ -90,8 +93,12 @@ export class WorkItemsService {
       warnings: warnings.slice(0, 10),
       message:
         filtered.length > 0
-          ? `${filtered.length} WorkItem(s) para ${sector} desde SEMANAS 2026.`
-          : "No hay trabajos asignados para este sector en SEMANAS 2026.",
+          ? ownerPerson
+            ? `${filtered.length} WorkItem(s) para ${ownerPerson} en ${sector} desde SEMANAS 2026.`
+            : `${filtered.length} WorkItem(s) para ${sector} desde SEMANAS 2026.`
+          : ownerPerson
+            ? `No hay trabajos asignados a ${ownerPerson} en SEMANAS 2026.`
+            : "No hay trabajos asignados para este sector en SEMANAS 2026.",
     };
   }
 

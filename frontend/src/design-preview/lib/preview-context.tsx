@@ -23,6 +23,7 @@ import {
 export interface PreviewSession {
   sectorId: SectorId;
   email: string;
+  ownerPerson?: string | null;
 }
 
 export interface CreamyTeaser {
@@ -46,7 +47,7 @@ interface PreviewContextValue {
   creamyTeaser: CreamyTeaser | null;
   toast: ActionToast | null;
   completingIds: Set<string>;
-  login: (sectorId: SectorId) => void;
+  login: (sectorId: SectorId, options?: { email?: string; ownerPerson?: string | null }) => void;
   logout: () => void;
   navigateSidebar: (itemId: SidebarItemId) => void;
   navigateTo: (entry: TwinNavEntry) => void;
@@ -100,15 +101,22 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
     return twinViewToSidebarId(currentNav.view) ?? "mi_trabajo";
   }, [currentNav.view, navStack]);
 
-  const login = useCallback((sectorId: SectorId) => {
-    setSession({ sectorId, email: SECTOR_EMAILS[sectorId] });
-    setNavStack([INITIAL_NAV]);
-    setSimulatedStatuses({});
-    setCreamyOpen(false);
-    setCreamyTeaserState(null);
-    setToast(null);
-    setCompletingIds(new Set());
-  }, []);
+  const login = useCallback(
+    (sectorId: SectorId, options?: { email?: string; ownerPerson?: string | null }) => {
+      setSession({
+        sectorId,
+        email: options?.email ?? SECTOR_EMAILS[sectorId],
+        ownerPerson: options?.ownerPerson ?? null,
+      });
+      setNavStack([INITIAL_NAV]);
+      setSimulatedStatuses({});
+      setCreamyOpen(false);
+      setCreamyTeaserState(null);
+      setToast(null);
+      setCompletingIds(new Set());
+    },
+    []
+  );
 
   const logout = useCallback(() => {
     setSession(null);

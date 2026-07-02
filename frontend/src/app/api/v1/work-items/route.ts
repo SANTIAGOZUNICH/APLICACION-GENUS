@@ -17,6 +17,7 @@ function parseSector(value: string | null): SectorId | null {
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const sector = parseSector(url.searchParams.get("sector"));
+  const ownerPerson = url.searchParams.get("ownerPerson")?.trim() || null;
 
   if (!sector) {
     return NextResponse.json(
@@ -32,6 +33,7 @@ export async function GET(request: Request) {
   if (getServerDataMode() !== "real" || !canUseDriveAdapter()) {
     return NextResponse.json({
       sector,
+      ownerPerson,
       source: "demo" as const,
       scannedAt: new Date().toISOString(),
       workItems: [],
@@ -44,7 +46,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const response = await workItemsService.listForSector(sector);
+    const response = await workItemsService.listForSector(sector, ownerPerson);
     return NextResponse.json(response);
   } catch (error) {
     return NextResponse.json(

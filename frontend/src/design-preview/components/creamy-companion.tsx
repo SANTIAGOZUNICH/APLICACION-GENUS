@@ -21,9 +21,9 @@ import { useMemo } from "react";
 export function CreamyCompanion() {
   const { creamyOpen, closeCreamy, openCreamy, creamyTeaser, applyEffectiveStatus } =
     usePreviewContext();
-  const { sectorId } = usePreviewSession();
+  const { sectorId, ownerPerson } = usePreviewSession();
   const home = useResolvedHome();
-  const { data } = useSectorWorkItems(sectorId);
+  const { data } = useSectorWorkItems(sectorId, { ownerPerson });
 
   const today = useMemo(() => startOfDay(new Date()), []);
   const dayItems = useMemo(() => {

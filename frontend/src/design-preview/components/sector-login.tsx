@@ -1,7 +1,7 @@
 "use client";
 
-import { FlaskConical } from "lucide-react";
-import { LOGIN_SECTOR_ORDER } from "@/design-preview/lib/sector-emails";
+import { FlaskConical, User } from "lucide-react";
+import { LAB_PERSONAS, LAB_SECTOR_PREVIEW_ORDER } from "@/design-preview/lib/lab-personas";
 import { usePreviewContext } from "@/design-preview/lib/preview-context";
 import { resolveSectorHome } from "@/lib/role-engine";
 import type { SectorId } from "@/types/operational/sector";
@@ -37,7 +37,7 @@ function SectorCard({
   );
 }
 
-/** Login simulado F9.6 — elige sector, sin autenticación. */
+/** Login simulado F10.1 — personas de Elaboración + sectores con datos reales SEMANAS. */
 export function SectorLogin() {
   const { login } = usePreviewContext();
 
@@ -48,10 +48,10 @@ export function SectorLogin() {
           <FlaskConical className="size-7 text-[var(--os-teal)]" aria-hidden="true" />
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-[var(--os-teal)]">
-              F9.6 · Digital Twin
+              F10.1 · SEMANAS 2026
             </p>
             <h1 className="text-2xl font-semibold tracking-tight text-[var(--os-text)]">
-              Genus OS — Laboratorio Genus
+              Genus OS — Validación con datos reales
             </h1>
           </div>
         </div>
@@ -60,28 +60,64 @@ export function SectorLogin() {
       <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-12 lg:px-12">
         <div className="mb-10 max-w-xl">
           <h2 className="text-3xl font-semibold tracking-tight text-[var(--os-text)]">
-            Elegí tu sector
+            Elegí quién sos
           </h2>
           <p className="mt-3 text-base leading-relaxed text-[var(--os-text-muted)]">
-            Prototipo navegable del laboratorio. Sin autenticación real — simula el puesto de
-            trabajo de cada sector.
+            Bloques visuales de SEMANAS 2026 — sin mocks. Si un dato no está en la planilla, verás
+            &quot;Dato no disponible&quot;.
           </p>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {LOGIN_SECTOR_ORDER.map((sectorId, index) => (
-            <div
-              key={sectorId}
-              className="os-fade-in"
-              style={{ animationDelay: `${index * 40}ms` }}
-            >
-              <SectorCard sectorId={sectorId} onSelect={login} />
-            </div>
-          ))}
-        </div>
+        <section className="mb-12">
+          <h3 className="mb-4 text-sm font-semibold uppercase tracking-widest text-[var(--os-text-muted)]">
+            Elaboración · por persona
+          </h3>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {LAB_PERSONAS.map((persona, index) => (
+              <button
+                key={persona.id}
+                type="button"
+                onClick={() =>
+                  login(persona.sectorId, {
+                    email: persona.email,
+                    ownerPerson: persona.semanasLabel,
+                  })
+                }
+                className="group os-fade-in flex items-start gap-4 rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-6 text-left shadow-[var(--os-shadow-card)] transition-all hover:border-[var(--os-teal)]/40 hover:shadow-[var(--os-shadow-card-hover)]"
+                style={{ animationDelay: `${index * 40}ms` }}
+              >
+                <div className="flex size-10 items-center justify-center rounded-full bg-[var(--os-teal-soft)]">
+                  <User className="size-5 text-[var(--os-teal)]" />
+                </div>
+                <div>
+                  <p className="text-xl font-semibold">{persona.name}</p>
+                  <p className="mt-1 text-sm text-[var(--os-text-muted)]">{persona.email}</p>
+                  <p className="mt-3 text-xs text-[var(--os-teal)]">Bloque SEMANAS · {persona.semanasLabel}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section>
+          <h3 className="mb-4 text-sm font-semibold uppercase tracking-widest text-[var(--os-text-muted)]">
+            Sectores · planilla real
+          </h3>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {LAB_SECTOR_PREVIEW_ORDER.map((sectorId, index) => (
+              <div
+                key={sectorId}
+                className="os-fade-in"
+                style={{ animationDelay: `${(index + 2) * 40}ms` }}
+              >
+                <SectorCard sectorId={sectorId} onSelect={(id) => login(id)} />
+              </div>
+            ))}
+          </div>
+        </section>
 
         <p className="mt-12 text-center text-xs text-[var(--os-text-muted)]">
-          Digital Twin · F9.6 · Acciones simuladas · Datos reales cuando Drive está configurado
+          Fuentes: SEMANAS 2026 · PEDIDOS 2026 · ASIGNACIÓN DE LOTES · GENUS_DATA_MODE=real
         </p>
       </main>
     </div>
