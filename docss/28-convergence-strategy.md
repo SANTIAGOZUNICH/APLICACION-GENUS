@@ -165,7 +165,11 @@ Migrados `features/entities/views/*` y los 2 imports restantes de `twin-app` →
 
 #### PR 3.6 — OsAppRoot compartido ✅
 
-Extraído `OsAppRoot` en `features/os/app/os-app-root.tsx`. `DesignPreviewApp` delega sin cambiar `/design-preview`.
+Extraído `OsAppRoot` en `features/os/app/os-app-root.tsx`. `DesignPreviewApp` delega sin cambiar `/design-preview`. Merge #35.
+
+#### PR 3.7 — Ruta `/mi-trabajo` ✅
+
+Nueva ruta productiva `app/mi-trabajo/` importa `OsAppRoot` directamente. `/design-preview` sin cambios.
 
 #### Criterios de cierre Fase 3
 
