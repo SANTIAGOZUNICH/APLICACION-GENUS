@@ -181,7 +181,11 @@ Rutas productivas con `OsAppRoot initialNav` por vista. `PreviewProvider` acepta
 
 #### PR 3.10 — Banners legacy + flags opt-in ✅
 
-`OsLegacyConvergenceBanner` en AppShell (flag `NEXT_PUBLIC_GENUS_OS_LEGACY_BANNER`). Flags de redirect definidos; middleware en 3.11.
+`OsLegacyConvergenceBanner` en AppShell (flag `NEXT_PUBLIC_GENUS_OS_LEGACY_BANNER`). Merge #39.
+
+#### PR 3.11 — Redirects opt-in (middleware) ✅
+
+`middleware.ts`: `/bandeja` → `/mi-trabajo` cuando `GENUS_OS_LEGACY_REDIRECTS=true`. Default off.
 
 #### Criterios de cierre Fase 3
 
@@ -189,7 +193,7 @@ Rutas productivas con `OsAppRoot initialNav` por vista. `PreviewProvider` acepta
 - [x] `tokens.css` en path canónico con stub de compatibilidad
 - [x] `/mi-trabajo`, `/plan-semanal`, `/consulta` operativos
 - [x] `/design-preview` sigue operativo como alias de `OsAppRoot`
-- [ ] Track A intacto; redirects soft activos; hard redirects detrás de flag
+- [x] Track A intacto; banner soft opt-in; hard redirects detrás de flag
 - [ ] Validación operaria en planta (manual)
 
 <!-- Detalle histórico sub-fases 3A–3D (21 PRs) reemplazado por plan 12 PRs arriba -->
