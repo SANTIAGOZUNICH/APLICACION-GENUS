@@ -3,30 +3,44 @@
 import type { ReactNode } from "react";
 import { OsHeader, OsStatusBar } from "@/design-preview/components/os-header";
 import { OsSidebar } from "@/design-preview/components/os-sidebar";
+import type { SidebarItemId } from "@/lib/role-engine/types";
 
 interface OsShellProps {
   sectorLabel: string;
   sectorEmail: string;
   title?: string;
-  activeNav?: string;
+  activeNav?: SidebarItemId;
+  sidebarItems?: SidebarItemId[];
   showRestricted?: boolean;
   children: ReactNode;
-  /** Wider content area for sector-specific layouts */
   contentClassName?: string;
-  /** Optional sync timestamp for status bar */
   syncTime?: Date;
 }
 
+const DEFAULT_SIDEBAR: SidebarItemId[] = [
+  "mi_trabajo",
+  "plan_semanal",
+  "consulta",
+  "insumos",
+  "calidad",
+  "configuracion",
+];
+
+/** Shell legacy — preferir TwinShell en Digital Twin F9.6. */
 export function OsShell({
   sectorLabel,
   sectorEmail,
   title = "Mi trabajo",
-  activeNav,
+  activeNav = "mi_trabajo",
+  sidebarItems = DEFAULT_SIDEBAR,
   showRestricted,
   children,
   contentClassName,
   syncTime,
 }: OsShellProps) {
+  const items = showRestricted
+    ? ([...sidebarItems, "produccion", "direccion"] as SidebarItemId[])
+    : sidebarItems;
   const initials = sectorEmail.slice(0, 2).toUpperCase();
 
   return (
@@ -35,7 +49,7 @@ export function OsShell({
         sectorLabel={sectorLabel}
         sectorEmail={sectorEmail}
         activeNav={activeNav}
-        showRestricted={showRestricted}
+        sidebarItems={items}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <OsHeader title={title} userInitials={initials} />

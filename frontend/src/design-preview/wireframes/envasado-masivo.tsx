@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ContextPanel } from "@/design-preview/components/context-panel";
 import { DateNavigator } from "@/design-preview/components/date-navigator";
+import { EmptyState } from "@/design-preview/components/empty-state";
 import { LineWorkCard } from "@/design-preview/components/line-work-card";
-import { OsShell } from "@/design-preview/components/os-shell";
+import { TwinShell } from "@/design-preview/components/twin-shell";
 import { SummaryStrip } from "@/design-preview/components/summary-strip";
 import { WeekPlanStrip } from "@/design-preview/components/week-plan-strip";
 import { useSectorWorkItems } from "@/design-preview/hooks/use-sector-work-items";
@@ -16,6 +17,7 @@ import {
   isSameDay,
   startOfDay,
 } from "@/design-preview/lib/calendar";
+import { usePreviewContext } from "@/design-preview/lib/preview-context";
 import { resolveSectorHome, sectorHasPanel } from "@/lib/role-engine";
 import { buildCopilotContext } from "@/design-preview/lib/creamy-copilot";
 import {
@@ -28,14 +30,27 @@ import {
 
 const SECTOR_ID = "ENVASADO_MASIVO" as const;
 
-/** Envasado Masivo — Home resuelta por Role Engine + WorkItems reales. */
+/** Envasado Masivo — Home del Digital Twin con navegación y feedback. */
 export function WireframeEnvasadoMasivo() {
   const home = useMemo(() => resolveSectorHome(SECTOR_ID), []);
+  const {
+    openWorkItem,
+    openOa,
+    markWorkDone,
+    applyEffectiveStatus,
+    getEffectiveStatus,
+    completingIds,
+    setCreamyTeaser,
+    openCreamy,
+  } = usePreviewContext();
   const [today] = useState(() => startOfDay(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
   const { data, loading, error } = useSectorWorkItems(SECTOR_ID);
 
-  const workItems = useMemo(() => data?.workItems ?? [], [data?.workItems]);
+  const workItems = useMemo(
+    () => applyEffectiveStatus(data?.workItems ?? []),
+    [data?.workItems, applyEffectiveStatus]
+  );
   const scannedAt = data?.scannedAt ? new Date(data.scannedAt) : null;
 
   const weekDays = useMemo(() => getWorkWeekDays(today), [today]);
@@ -58,6 +73,10 @@ export function WireframeEnvasadoMasivo() {
     [daySchedule.items, home.creamyContext, home.definition.title]
   );
 
+  useEffect(() => {
+    setCreamyTeaser({ headline: copilot.headline, hint: copilot.hint });
+  }, [copilot.headline, copilot.hint, setCreamyTeaser]);
+
   const upcomingDeliveries = useMemo(
     () => extractUpcomingDeliveries(workItems, today),
     [workItems, today]
@@ -79,12 +98,7 @@ export function WireframeEnvasadoMasivo() {
     : undefined;
 
   return (
-    <OsShell
-      sectorLabel={home.definition.title}
-      sectorEmail="emasivo@laboratoriogenus.com.ar"
-      syncTime={scannedAt ?? undefined}
-      contentClassName="!px-6 !py-6 lg:!px-8"
-    >
+    <TwinShell syncTime={scannedAt ?? undefined} contentClassName="!px-6 !py-6 lg:!px-8">
       <div className="mx-auto flex max-w-6xl flex-col gap-8 xl:max-w-none xl:flex-row xl:items-start xl:gap-10">
         <div className="min-w-0 flex-1 space-y-8">
           {sectorHasPanel(SECTOR_ID, "header_greeting") && (
@@ -118,8 +132,9 @@ export function WireframeEnvasadoMasivo() {
           )}
 
           {loading && (
-            <div className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] px-6 py-8 text-sm text-[var(--os-text-muted)]">
-              Cargando WorkItems desde SEMANAS 2026…
+            <div className="space-y-4">
+              <div className="os-skeleton h-24 rounded-[var(--os-radius)]" />
+              <div className="os-skeleton h-48 rounded-[var(--os-radius)]" />
             </div>
           )}
 
@@ -130,17 +145,19 @@ export function WireframeEnvasadoMasivo() {
           )}
 
           {!loading && data?.message && workItems.length === 0 && (
-            <div className="rounded-[var(--os-radius)] border border-amber-200 bg-amber-50 px-6 py-8 text-sm text-amber-950">
-              {data.message}
-              {data.warnings?.[0] && (
-                <p className="mt-2 text-xs opacity-80">{data.warnings[0]}</p>
-              )}
-            </div>
+            <EmptyState title={home.emptyState.title} message={data.message} />
+          )}
+
+          {!loading && !error && workItems.length > 0 && daySchedule.jobCount === 0 && (
+            <EmptyState
+              title="Sin trabajos este día"
+              message={`No tenés trabajos asignados para ${formatLongDate(selectedDate)}.`}
+            />
           )}
 
           {!loading && !error && (
             <>
-              {sectorHasPanel(SECTOR_ID, "summary_strip") && (
+              {sectorHasPanel(SECTOR_ID, "summary_strip") && daySchedule.jobCount > 0 && (
                 <SummaryStrip
                   paraHacer={summary.paraHacer}
                   enProgreso={summary.enProgreso}
@@ -166,6 +183,11 @@ export function WireframeEnvasadoMasivo() {
                         lineId={slot.lineId}
                         work={slot.work}
                         today={today}
+                        status={slot.work ? getEffectiveStatus(slot.work) : undefined}
+                        isCompleting={slot.work ? completingIds.has(slot.work.id) : false}
+                        onOpenWork={openWorkItem}
+                        onOpenOa={openOa}
+                        onMarkDone={markWorkDone}
                       />
                     ))}
                   </div>
@@ -193,15 +215,16 @@ export function WireframeEnvasadoMasivo() {
         </div>
 
         {!loading && !error && sectorHasPanel(SECTOR_ID, "context_panel") && (
-          <div className="w-full shrink-0 xl:w-80">
+          <div className="hidden w-full shrink-0 xl:block xl:w-80">
             <ContextPanel
               upcomingDeliveries={upcomingDeliveries}
               problems={problems}
               copilot={copilot}
+              onSuggestionClick={() => openCreamy()}
             />
           </div>
         )}
       </div>
-    </OsShell>
+    </TwinShell>
   );
 }

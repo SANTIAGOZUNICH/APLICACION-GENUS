@@ -1,21 +1,18 @@
 "use client";
 
 import type { ResolvedSectorHome } from "@/lib/role-engine";
-import { OsShell } from "@/design-preview/components/os-shell";
+import { TwinShell } from "@/design-preview/components/twin-shell";
 
 interface SectorHomePlaceholderProps {
   home: ResolvedSectorHome;
 }
 
-/** Home placeholder — sectores registrados pendientes de migración visual. */
+/** Home placeholder — sectores registrados con shell del Digital Twin. */
 export function SectorHomePlaceholder({ home }: SectorHomePlaceholderProps) {
   const { definition, panels, quickActions, creamyContext } = home;
 
   return (
-    <OsShell
-      sectorLabel={definition.title}
-      sectorEmail={`${definition.id.toLowerCase()}@laboratoriogenus.com.ar`}
-    >
+    <TwinShell>
       <div className="mx-auto max-w-3xl space-y-8">
         <header>
           <h2 className="text-3xl font-semibold tracking-tight text-[var(--os-text)]">
@@ -68,6 +65,6 @@ export function SectorHomePlaceholder({ home }: SectorHomePlaceholderProps) {
           </div>
         </section>
       </div>
-    </OsShell>
+    </TwinShell>
   );
 }

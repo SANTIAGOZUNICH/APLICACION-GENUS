@@ -11,6 +11,7 @@ interface ContextPanelProps {
   upcomingDeliveries: DeliveryItem[];
   problems: string[];
   copilot: CopilotContext;
+  onSuggestionClick?: (suggestion: string) => void;
 }
 
 /** Panel lateral — entregas, problemas y Creamy copiloto contextual. */
@@ -18,6 +19,7 @@ export function ContextPanel({
   upcomingDeliveries,
   problems,
   copilot,
+  onSuggestionClick,
 }: ContextPanelProps) {
   return (
     <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
@@ -79,6 +81,7 @@ export function ContextPanel({
             <button
               key={suggestion}
               type="button"
+              onClick={() => onSuggestionClick?.(suggestion)}
               className="rounded-full border border-[var(--os-teal-muted)] bg-white/80 px-3 py-1.5 text-xs font-medium text-[var(--os-text)] transition-colors hover:border-[var(--os-teal)] hover:text-[var(--os-teal)]"
             >
               {suggestion}

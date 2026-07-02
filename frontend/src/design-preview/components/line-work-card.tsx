@@ -1,8 +1,13 @@
-import type { WorkItem } from "@/types/operational/work-item";
-import type { MasivoLineId } from "@/design-preview/lib/work-items-day-view";
-import { formatWorkItemDelivery, formatWorkItemPresentation } from "@/design-preview/lib/work-items-day-view";
+"use client";
 
-const STATUS_LABEL: Record<WorkItem["status"], { dot: string; label: string }> = {
+import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
+import type { MasivoLineId } from "@/design-preview/lib/work-items-day-view";
+import {
+  formatWorkItemDelivery,
+  formatWorkItemPresentation,
+} from "@/design-preview/lib/work-items-day-view";
+
+const STATUS_LABEL: Record<WorkItemStatus, { dot: string; label: string }> = {
   pendiente: { dot: "bg-amber-400", label: "Pendiente" },
   en_curso: { dot: "bg-blue-500", label: "En proceso" },
   completo: { dot: "bg-emerald-500", label: "Terminado" },
@@ -15,10 +20,24 @@ interface LineWorkCardProps {
   lineId: MasivoLineId;
   work: WorkItem | null;
   today: Date;
+  status?: WorkItemStatus;
+  isCompleting?: boolean;
+  onOpenWork?: (workItemId: string) => void;
+  onOpenOa?: (oaRef: string, workItemId: string) => void;
+  onMarkDone?: (work: WorkItem) => void;
 }
 
-/** Card por línea — WorkItem real o estado vacío claro. */
-export function LineWorkCard({ lineId, work, today }: LineWorkCardProps) {
+/** Card por línea — interactiva en Digital Twin F9.6. */
+export function LineWorkCard({
+  lineId,
+  work,
+  today,
+  status: statusOverride,
+  isCompleting = false,
+  onOpenWork,
+  onOpenOa,
+  onMarkDone,
+}: LineWorkCardProps) {
   if (!work) {
     return (
       <article className="flex min-h-[12rem] flex-col justify-center rounded-[var(--os-radius)] border border-dashed border-[var(--os-border)] bg-[var(--os-surface-muted)] px-8 py-10">
@@ -32,19 +51,33 @@ export function LineWorkCard({ lineId, work, today }: LineWorkCardProps) {
     );
   }
 
-  const status = STATUS_LABEL[work.status];
+  const statusKey = statusOverride ?? work.status;
+  const status = STATUS_LABEL[statusKey];
   const delivery = formatWorkItemDelivery(work, today);
   const deliveryHighlight = delivery === "Hoy" || delivery === "Urgente";
 
   return (
-    <article className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] px-8 py-8 shadow-[var(--os-shadow-card)] transition-shadow hover:shadow-[var(--os-shadow-card-hover)]">
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpenWork?.(work.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpenWork?.(work.id);
+        }
+      }}
+      className={`rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] px-8 py-8 shadow-[var(--os-shadow-card)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--os-shadow-card-hover)] ${
+        isCompleting ? "os-pulse-success border-emerald-300" : ""
+      }`}
+    >
       <div className="flex items-start justify-between gap-4">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--os-teal)]">
           {lineId}
         </p>
         <span className="inline-flex items-center gap-2 text-xs font-medium text-[var(--os-text-muted)]">
-          <span className={`size-2 rounded-full ${status.dot}`} aria-hidden="true" />
-          {status.label}
+          <span className={`size-2 rounded-full ${status.dot} transition-transform ${isCompleting ? "scale-125" : ""}`} aria-hidden="true" />
+          {isCompleting ? "Guardando…" : status.label}
         </span>
       </div>
 
@@ -76,19 +109,29 @@ export function LineWorkCard({ lineId, work, today }: LineWorkCardProps) {
         )}
       </div>
 
-      <div className="mt-8 flex flex-wrap items-center gap-3 border-t border-[var(--os-border-subtle)] pt-6">
+      <div
+        className="mt-8 flex flex-wrap items-center gap-3 border-t border-[var(--os-border-subtle)] pt-6"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
         <button
           type="button"
+          onClick={() =>
+            work.oaRef
+              ? onOpenOa?.(work.oaRef, work.id)
+              : onOpenOa?.("OA-NUEVA", work.id)
+          }
           className="rounded-[var(--os-radius-sm)] bg-[var(--os-teal)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90"
         >
           {work.oaRef ? "Abrir OA" : "Crear OA"}
         </button>
-        {work.status !== "completo" && work.status !== "bloqueado" && (
+        {statusKey !== "completo" && statusKey !== "bloqueado" && (
           <label className="flex cursor-pointer items-center gap-2.5 text-sm text-[var(--os-text)]">
             <input
               type="checkbox"
+              checked={isCompleting}
+              onChange={() => onMarkDone?.(work)}
               className="size-4 rounded border-[var(--os-border)] accent-[var(--os-teal)]"
-              readOnly
             />
             Trabajo terminado
           </label>

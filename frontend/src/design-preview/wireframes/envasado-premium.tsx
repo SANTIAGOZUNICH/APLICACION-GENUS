@@ -1,6 +1,6 @@
 "use client";
 
-import { OsShell } from "@/design-preview/components/os-shell";
+import { TwinShell } from "@/design-preview/components/twin-shell";
 import { SectionLabel, WorkOrderDivider } from "@/design-preview/components/section-label";
 import { WorkOrderBlock } from "@/design-preview/components/work-order-block";
 import { ENVASADO_PREMIUM_BLOCKS } from "@/design-preview/mock-data";
@@ -10,10 +10,7 @@ export function WireframeEnvasadoPremium() {
   const semana = ENVASADO_PREMIUM_BLOCKS.filter((b) => b.delivery !== "Hoy");
 
   return (
-    <OsShell
-      sectorLabel="Envasado Premium"
-      sectorEmail="epremium@laboratoriogenus.com.ar"
-    >
+    <TwinShell>
       <p className="mb-[var(--os-space-section)] text-3xl font-semibold tracking-tight">
         Hola Envasado Premium
       </p>
@@ -33,6 +30,6 @@ export function WireframeEnvasadoPremium() {
           <WorkOrderBlock key={block.id} block={block} />
         ))}
       </div>
-    </OsShell>
+    </TwinShell>
   );
 }

@@ -1,19 +1,13 @@
 "use client";
 
-import { OsShell } from "@/design-preview/components/os-shell";
+import { TwinShell } from "@/design-preview/components/twin-shell";
 import { SectionLabel } from "@/design-preview/components/section-label";
 import { DEPOSITO_ORDERS } from "@/design-preview/mock-data";
 
 /** Checklist de preparación — layout único Depósito. */
 export function WireframeDeposito() {
   return (
-    <OsShell
-      sectorLabel="Depósito"
-      sectorEmail="deposito@laboratoriogenus.com.ar"
-      title="Preparación"
-      activeNav="insumos"
-      contentClassName="max-w-2xl"
-    >
+    <TwinShell title="Preparación" contentClassName="max-w-2xl">
       <p className="mb-[var(--os-space-section)] text-3xl font-semibold tracking-tight">
         Hola Depósito
       </p>
@@ -68,6 +62,6 @@ export function WireframeDeposito() {
           </article>
         ))}
       </div>
-    </OsShell>
+    </TwinShell>
   );
 }

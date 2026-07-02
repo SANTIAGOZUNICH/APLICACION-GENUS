@@ -12,32 +12,53 @@ import {
   Settings,
   Shield,
 } from "lucide-react";
-import { OS_NAV_ITEMS, OS_NAV_RESTRICTED } from "@/design-preview/config";
+import type { SidebarItemId } from "@/lib/role-engine/types";
+import type { CreamyTeaser } from "@/design-preview/lib/preview-context";
 
 const ICONS = {
-  briefcase: Briefcase,
-  calendar: Calendar,
-  search: Search,
-  package: Package,
-  shield: Shield,
-  settings: Settings,
-  factory: Factory,
-  layout: LayoutDashboard,
+  mi_trabajo: Briefcase,
+  plan_semanal: Calendar,
+  consulta: Search,
+  insumos: Package,
+  calidad: Shield,
+  configuracion: Settings,
+  produccion: Factory,
+  direccion: LayoutDashboard,
 } as const;
+
+const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
+  mi_trabajo: "Mi trabajo",
+  plan_semanal: "Plan semanal",
+  consulta: "Consulta",
+  insumos: "Insumos",
+  calidad: "Calidad",
+  configuracion: "Configuración",
+  produccion: "Producción",
+  direccion: "Dirección",
+};
 
 interface OsSidebarProps {
   sectorLabel: string;
   sectorEmail: string;
-  activeNav?: string;
+  activeNav?: SidebarItemId;
+  sidebarItems: SidebarItemId[];
   showRestricted?: boolean;
+  creamyTeaser?: CreamyTeaser | null;
+  onNav?: (itemId: SidebarItemId) => void;
+  onLogout?: () => void;
+  onOpenCreamy?: () => void;
 }
 
-/** F9.1 — Sidebar mínima. Creamy AI abajo, compañera del sistema. */
+/** Sidebar operativa — navegación real del Digital Twin. */
 export function OsSidebar({
   sectorLabel,
   sectorEmail,
-  activeNav = "mi-trabajo",
-  showRestricted = false,
+  activeNav = "mi_trabajo",
+  sidebarItems,
+  creamyTeaser,
+  onNav,
+  onLogout,
+  onOpenCreamy,
 }: OsSidebarProps) {
   return (
     <aside
@@ -59,36 +80,25 @@ export function OsSidebar({
       </div>
 
       <nav className="mt-5 flex-1 space-y-0.5 px-3" aria-label="Menú">
-        {OS_NAV_ITEMS.map((item) => {
-          const Icon = ICONS[item.icon];
-          const active = activeNav === item.id;
+        {sidebarItems.map((itemId) => {
+          const Icon = ICONS[itemId];
+          const active = activeNav === itemId;
           return (
-            <div
-              key={item.id}
-              className={`flex items-center gap-3 rounded-[var(--os-radius-sm)] px-3 py-2.5 text-sm ${
+            <button
+              key={itemId}
+              type="button"
+              onClick={() => onNav?.(itemId)}
+              className={`flex w-full items-center gap-3 rounded-[var(--os-radius-sm)] px-3 py-2.5 text-left text-sm transition-colors ${
                 active
                   ? "bg-[var(--os-teal-muted)] font-medium text-white"
-                  : "text-[var(--os-sidebar-muted)]"
+                  : "text-[var(--os-sidebar-muted)] hover:bg-[var(--os-sidebar-hover)] hover:text-white"
               }`}
             >
               <Icon className="size-4 shrink-0" aria-hidden="true" />
-              {item.label}
-            </div>
+              {SIDEBAR_LABELS[itemId]}
+            </button>
           );
         })}
-        {showRestricted &&
-          OS_NAV_RESTRICTED.map((item) => {
-            const Icon = ICONS[item.icon];
-            return (
-              <div
-                key={item.id}
-                className="flex items-center gap-3 rounded-[var(--os-radius-sm)] px-3 py-2.5 text-sm text-[var(--os-sidebar-muted)]"
-              >
-                <Icon className="size-4 shrink-0" aria-hidden="true" />
-                {item.label}
-              </div>
-            );
-          })}
       </nav>
 
       <div className="mt-auto border-t border-white/10 px-4 py-4">
@@ -99,22 +109,22 @@ export function OsSidebar({
           <p className="truncate text-xs text-[var(--os-sidebar-muted)]">{sectorEmail}</p>
         </div>
 
-        <div className="mt-4 rounded-[var(--os-radius-sm)] border border-white/10 bg-white/5 p-3">
+        <button
+          type="button"
+          onClick={onOpenCreamy}
+          className="mt-4 w-full rounded-[var(--os-radius-sm)] border border-white/10 bg-white/5 p-3 text-left transition-colors hover:border-[var(--os-teal)]/40 hover:bg-white/10"
+        >
           <p className="text-sm font-medium">Creamy · Copiloto</p>
-          <p className="mt-1 text-xs leading-relaxed text-[var(--os-sidebar-muted)]">
-            Contexto del trabajo activo — no chat genérico.
+          <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-[var(--os-sidebar-muted)]">
+            {creamyTeaser?.headline ?? "Siempre presente — contexto de tu trabajo."}
           </p>
-          <button
-            type="button"
-            className="mt-3 w-full rounded-[var(--os-radius-sm)] border border-white/20 py-2 text-xs text-[var(--os-sidebar-text)]"
-          >
-            Abrir copiloto
-          </button>
-        </div>
+          <span className="mt-2 inline-block text-xs text-[var(--os-teal)]">Abrir panel →</span>
+        </button>
 
         <button
           type="button"
-          className="mt-3 flex w-full items-center gap-2 px-1 py-2 text-xs text-[var(--os-sidebar-muted)]"
+          onClick={onLogout}
+          className="mt-3 flex w-full items-center gap-2 px-1 py-2 text-xs text-[var(--os-sidebar-muted)] transition-colors hover:text-white"
         >
           <LogOut className="size-3.5" aria-hidden="true" />
           Cerrar sesión

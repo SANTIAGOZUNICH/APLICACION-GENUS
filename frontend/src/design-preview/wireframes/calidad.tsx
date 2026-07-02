@@ -1,6 +1,6 @@
 "use client";
 
-import { OsShell } from "@/design-preview/components/os-shell";
+import { TwinShell } from "@/design-preview/components/twin-shell";
 import { SectionLabel } from "@/design-preview/components/section-label";
 import { CALIDAD_ROWS } from "@/design-preview/mock-data";
 
@@ -64,12 +64,7 @@ function LabSampleCard({
 /** Mesa de laboratorio — cards amplias, no grid ERP. */
 export function WireframeCalidad() {
   return (
-    <OsShell
-      sectorLabel="Calidad"
-      sectorEmail="calidad@laboratoriogenus.com.ar"
-      title="Calidad"
-      activeNav="calidad"
-    >
+    <TwinShell title="Calidad">
       <p className="mb-[var(--os-space-section)] text-3xl font-semibold tracking-tight">
         Hola Calidad
       </p>
@@ -88,6 +83,6 @@ export function WireframeCalidad() {
           </section>
         );
       })}
-    </OsShell>
+    </TwinShell>
   );
 }

@@ -35,3 +35,81 @@
   --os-space-section: 2.5rem;
   --os-space-block: 1.25rem;
 }
+
+/* F9.6 — microinteracciones del Digital Twin */
+@keyframes os-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes os-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes os-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes os-pulse-success {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(16 185 129 / 0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgb(16 185 129 / 0.15);
+  }
+}
+
+@keyframes os-skeleton {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.design-preview-root .os-fade-in {
+  animation: os-fade-in 0.35s ease-out both;
+}
+
+.design-preview-root .os-slide-up {
+  animation: os-slide-up 0.4s ease-out both;
+}
+
+.design-preview-root .os-drawer {
+  animation: os-drawer-in 0.28s ease-out both;
+}
+
+.design-preview-root .os-pulse-success {
+  animation: os-pulse-success 0.6s ease-out;
+}
+
+.design-preview-root .os-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--os-surface-muted) 25%,
+    var(--os-border-subtle) 50%,
+    var(--os-surface-muted) 75%
+  );
+  background-size: 200% 100%;
+  animation: os-skeleton 1.4s ease-in-out infinite;
+}

@@ -1,6 +1,6 @@
 # 23 — F9 Rediseño UX/UI: Genus OS como Sistema Operativo de Planta
 
-> **Estado:** F9.2 — Envasado Masivo con WorkItems reales en `/design-preview`  
+> **Estado:** F9.6 — Digital Twin navegable en `/design-preview`  
 > **Alcance:** 100% UX/UI. Backend F8 **congelado**.  
 > **Referencia funcional:** SEMANAS 2026 (lógica: línea · día · cliente · producto · cantidad)  
 > **Referencia visual:** mock Envasado Masivo (sidebar navy, aire, turquesa)
@@ -417,3 +417,101 @@ SEMANAS 2026 → Discovery → Mapper → WorkItems → Design Preview
 - [x] Creamy modelada como copiloto contextual
 - [ ] Premium / Elaboración / Plan semanal migrados a WorkItems
 - [x] Mensaje claro cuando no hay Drive o SEMANAS no indexado
+
+---
+
+## 16. F9.6 — Digital Twin navegable
+
+> **Estado:** `/design-preview` es un prototipo completo del laboratorio — no un hub de wireframes.
+
+### Objetivo
+
+Que cualquier empleado pueda recorrer su jornada diaria sin abrir Google Sheets:
+
+```text
+Login simulado → Sector → Home → Trabajo → OE/OA → Marcar terminado
+→ Creamy → Volver → Cambiar día → Plan semanal → Consulta → Volver
+```
+
+### Arquitectura del Twin
+
+```text
+PreviewProvider (estado global)
+├── session (sector + email simulado)
+├── navStack (mi-trabajo · detalle · utilidades)
+├── simulatedStatuses (feedback “trabajo terminado”)
+└── creamyOpen + creamyTeaser
+
+SectorLogin → TwinRouter → TwinShell + wireframes
+```
+
+| Archivo | Rol |
+|---------|-----|
+| `lib/preview-context.tsx` | Sesión, navegación, estados simulados |
+| `lib/twin-nav.ts` | Vistas y mapeo sidebar |
+| `twin-app.tsx` | Router del Digital Twin |
+| `components/twin-shell.tsx` | Shell con nav real + Creamy |
+| `components/sector-login.tsx` | Login simulado (10 sectores) |
+| `components/creamy-companion.tsx` | Bubble + drawer copiloto |
+| `views/detail-views.tsx` | Trabajo · OA · OE · Cliente |
+| `lib/search-work-items.ts` | Consulta tipo Spotlight |
+
+### Login simulado
+
+- Sin autenticación real
+- 10 sectores: Elaboración, Envasado Masivo/Premium, Codificado, Calidad, Depósito, Materia Prima, Comercial, Producción, Dirección
+- Flujo: `CurrentSector → Role Engine → Home correspondiente`
+
+### Navegación
+
+- Sidebar **funcional** — ítems desde `resolveSectorHome().sidebarItems`
+- Stack de navegación para detalle (trabajo, OA, OE, cliente) con **Volver**
+- Plan semanal y Consulta accesibles desde cualquier sector
+
+### Creamy copiloto
+
+- Bubble flotante siempre visible con headline contextual
+- Click abre **drawer** lateral — no chatbot
+- Tras “Trabajo terminado”: toast + mensaje Creamy (*“Perfecto. Ahora Codificado ya puede continuar.”*)
+
+### Feedback y motion
+
+| Acción | Respuesta |
+|--------|-----------|
+| Marcar terminado | Pulse en card → badge actualizado → toast → Creamy |
+| Hover cards | Elevación suave |
+| Drawer Creamy | Slide desde derecha |
+| Carga | Skeleton shimmer |
+| Empty | Ilustración + mensaje claro |
+
+Tokens de motion en `design-preview/tokens.css` (`.os-fade-in`, `.os-slide-up`, `.os-drawer`).
+
+### Plan semanal
+
+- WorkItems **reales** del sector activo
+- Navegación: Ayer · Hoy · Mañana · columnas L–V
+- Click en día o trabajo abre detalle
+
+### Consulta (Spotlight)
+
+- Búsqueda sobre WorkItems agregados (Elaboración, Masivo, Premium, Depósito, Producción)
+- Tipos: Producto, Cliente, OE, OA, Pedido, Lote, Trabajo
+- Enter / click navega al detalle correspondiente
+
+### Producción — centro de control
+
+- Distinto a dashboard ERP: barras de carga por sector, bloqueos, prioridades
+- Datos derivados de WorkItems reales (multi-sector)
+- Sin tablas operativas
+
+### Restricciones respetadas
+
+- ❌ Backend, Drive, Discovery, Mappers, WorkItems, Workflow Engine, Role Engine, Design System
+- ❌ `/mi-trabajo` sin cambios
+- ✅ Acciones simuladas (sin escritura Sheets)
+- ✅ `npm run lint` · `npm run build`
+
+### Criterio F10
+
+Sentar a un operario frente al Twin durante varios minutos. Si entiende qué hacer, encuentra información sin ayuda y completa su flujo sin Sheets → diseño listo para migrar a app real.
+
