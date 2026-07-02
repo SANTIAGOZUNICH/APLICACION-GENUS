@@ -100,15 +100,15 @@ export function OsSidebar({
         </div>
 
         <div className="mt-4 rounded-[var(--os-radius-sm)] border border-white/10 bg-white/5 p-3">
-          <p className="text-sm font-medium">Creamy AI</p>
+          <p className="text-sm font-medium">Creamy · Copiloto</p>
           <p className="mt-1 text-xs leading-relaxed text-[var(--os-sidebar-muted)]">
-            ¿Necesitás ayuda con este trabajo?
+            Contexto del trabajo activo — no chat genérico.
           </p>
           <button
             type="button"
             className="mt-3 w-full rounded-[var(--os-radius-sm)] border border-white/20 py-2 text-xs text-[var(--os-sidebar-text)]"
           >
-            Abrir
+            Abrir copiloto
           </button>
         </div>
 

@@ -1,25 +1,18 @@
 "use client";
 
-import {
-  formatShortDay,
-  isSameDay,
-  isToday,
-  toIsoDate,
-} from "@/design-preview/lib/calendar-mock";
-import type { MasivoDaySchedule } from "@/design-preview/mock-data/envasado-masivo-schedule";
+import { formatShortDay, isSameDay, isToday } from "@/design-preview/lib/calendar";
+import type { WeekDaySummary } from "@/design-preview/lib/work-items-day-view";
 
 interface WeekPlanStripProps {
-  weekDays: Date[];
-  schedule: Map<string, MasivoDaySchedule>;
+  weekDays: WeekDaySummary[];
   selectedDate: Date;
   today: Date;
   onSelectDate: (date: Date) => void;
 }
 
-/** Plan semanal L–V — click cambia la vista principal. */
+/** Plan semanal L–V desde WorkItems reales — click cambia la vista principal. */
 export function WeekPlanStrip({
   weekDays,
-  schedule,
   selectedDate,
   today,
   onSelectDate,
@@ -27,16 +20,14 @@ export function WeekPlanStrip({
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
       {weekDays.map((day) => {
-        const iso = toIsoDate(day);
-        const daySchedule = schedule.get(iso);
-        const selected = isSameDay(day, selectedDate);
-        const isTodayDay = isToday(day, today);
+        const selected = isSameDay(day.date, selectedDate);
+        const isTodayDay = isToday(day.date, today);
 
         return (
           <button
-            key={iso}
+            key={day.isoDate}
             type="button"
-            onClick={() => onSelectDate(day)}
+            onClick={() => onSelectDate(day.date)}
             className={`group flex flex-col rounded-[var(--os-radius)] border px-4 py-4 text-left transition-all ${
               selected
                 ? "border-[var(--os-teal)] bg-[var(--os-teal-soft)] shadow-[var(--os-shadow-sm)] ring-1 ring-[var(--os-teal-muted)]"
@@ -45,7 +36,7 @@ export function WeekPlanStrip({
           >
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold text-[var(--os-text)]">
-                {formatShortDay(day)} {day.getDate()}
+                {formatShortDay(day.date)} {day.date.getDate()}
               </p>
               {isTodayDay && (
                 <span className="rounded-full bg-[var(--os-teal)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
@@ -55,16 +46,16 @@ export function WeekPlanStrip({
             </div>
 
             <p className="mt-3 text-2xl font-semibold tabular-nums text-[var(--os-text)]">
-              {daySchedule?.jobCount ?? 0}
+              {day.jobCount}
               <span className="ml-1 text-sm font-normal text-[var(--os-text-muted)]">
-                {daySchedule?.jobCount === 1 ? "trabajo" : "trabajos"}
+                {day.jobCount === 1 ? "trabajo" : "trabajos"}
               </span>
             </p>
             <p className="mt-1 text-xs text-[var(--os-text-muted)]">
-              {(daySchedule?.totalUnits ?? 0).toLocaleString("es-AR")} u totales
+              {day.totalUnits.toLocaleString("es-AR")} u totales
             </p>
             <p className="mt-3 text-xs font-medium text-[var(--os-text-muted)] group-hover:text-[var(--os-teal)]">
-              {daySchedule?.statusLabel ?? "Sin datos"}
+              {day.statusLabel}
             </p>
           </button>
         );

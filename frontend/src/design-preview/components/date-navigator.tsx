@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { formatLongDate, isSameDay } from "@/design-preview/lib/calendar-mock";
+import { formatLongDate, isSameDay } from "@/design-preview/lib/calendar";
 
 interface DateNavigatorProps {
   selectedDate: Date;
@@ -9,15 +9,17 @@ interface DateNavigatorProps {
   onPrevious: () => void;
   onNext: () => void;
   onToday: () => void;
+  sourceLabel?: string;
 }
 
-/** Selector de día — preview mock; en producción lee bloque SEMANAS 2026. */
+/** Selector de día — resuelve bloque SEMANAS 2026 del día seleccionado. */
 export function DateNavigator({
   selectedDate,
   today,
   onPrevious,
   onNext,
   onToday,
+  sourceLabel,
 }: DateNavigatorProps) {
   const isTodaySelected = isSameDay(selectedDate, today);
 
@@ -54,9 +56,9 @@ export function DateNavigator({
         Hoy
       </button>
 
-      <span className="text-xs text-[var(--os-text-muted)]">
-        Mock · SEMANAS 2026 por día seleccionado
-      </span>
+      {sourceLabel && (
+        <span className="text-xs text-[var(--os-text-muted)]">{sourceLabel}</span>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-/** F9.1 — calendario mock para preview (sin backend). */
+/** Utilidades de calendario — sin datos mock. */
 
 export function toIsoDate(date: Date): string {
   const y = date.getFullYear();
@@ -22,7 +22,15 @@ export function getMonday(date: Date): Date {
   return d;
 }
 
-const DAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+const DAY_NAMES = [
+  "Domingo",
+  "Lunes",
+  "Martes",
+  "Miércoles",
+  "Jueves",
+  "Viernes",
+  "Sábado",
+];
 
 const MONTH_NAMES = [
   "enero",
@@ -70,14 +78,4 @@ export function isSameDay(a: Date, b: Date): boolean {
 
 export function isToday(date: Date, today: Date): boolean {
   return isSameDay(date, today);
-}
-
-export function isTomorrow(date: Date, today: Date): boolean {
-  return isSameDay(date, addDays(today, 1));
-}
-
-export function deliveryLabelFor(workDate: Date, deliveryDate: Date, today: Date): string {
-  if (isSameDay(deliveryDate, today)) return "Hoy";
-  if (isSameDay(deliveryDate, addDays(today, 1))) return "Mañana";
-  return formatShortDay(deliveryDate);
 }

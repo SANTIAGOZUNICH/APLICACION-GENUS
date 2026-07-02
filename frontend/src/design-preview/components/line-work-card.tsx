@@ -1,20 +1,24 @@
-import type { WorkBlockMock } from "@/design-preview/mock-data";
-import type { MasivoLineId } from "@/design-preview/mock-data/envasado-masivo-schedule";
+import type { WorkItem } from "@/types/operational/work-item";
+import type { MasivoLineId } from "@/design-preview/lib/work-items-day-view";
+import { formatWorkItemDelivery, formatWorkItemPresentation } from "@/design-preview/lib/work-items-day-view";
 
-const STATUS_LABEL: Record<WorkBlockMock["status"], { dot: string; label: string }> = {
+const STATUS_LABEL: Record<WorkItem["status"], { dot: string; label: string }> = {
   pendiente: { dot: "bg-amber-400", label: "Pendiente" },
   en_curso: { dot: "bg-blue-500", label: "En proceso" },
   completo: { dot: "bg-emerald-500", label: "Terminado" },
   bloqueado: { dot: "bg-rose-500", label: "Bloqueado" },
+  revision: { dot: "bg-violet-400", label: "En revisión" },
+  cancelado: { dot: "bg-slate-400", label: "Cancelado" },
 };
 
 interface LineWorkCardProps {
   lineId: MasivoLineId;
-  work: WorkBlockMock | null;
+  work: WorkItem | null;
+  today: Date;
 }
 
-/** Card por línea — trabajo real o estado vacío claro. */
-export function LineWorkCard({ lineId, work }: LineWorkCardProps) {
+/** Card por línea — WorkItem real o estado vacío claro. */
+export function LineWorkCard({ lineId, work, today }: LineWorkCardProps) {
   if (!work) {
     return (
       <article className="flex min-h-[12rem] flex-col justify-center rounded-[var(--os-radius)] border border-dashed border-[var(--os-border)] bg-[var(--os-surface-muted)] px-8 py-10">
@@ -29,7 +33,8 @@ export function LineWorkCard({ lineId, work }: LineWorkCardProps) {
   }
 
   const status = STATUS_LABEL[work.status];
-  const deliveryHighlight = work.delivery === "Hoy";
+  const delivery = formatWorkItemDelivery(work, today);
+  const deliveryHighlight = delivery === "Hoy" || delivery === "Urgente";
 
   return (
     <article className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] px-8 py-8 shadow-[var(--os-shadow-card)] transition-shadow hover:shadow-[var(--os-shadow-card-hover)]">
@@ -44,11 +49,11 @@ export function LineWorkCard({ lineId, work }: LineWorkCardProps) {
       </div>
 
       <h3 className="mt-5 text-2xl font-semibold tracking-tight text-[var(--os-text)]">
-        {work.client}
+        {work.client ?? "—"}
       </h3>
-      <p className="mt-1.5 text-lg font-medium text-[var(--os-text)]">{work.product}</p>
+      <p className="mt-1.5 text-lg font-medium text-[var(--os-text)]">{work.product ?? "—"}</p>
       <p className="mt-4 text-2xl font-light tabular-nums tracking-tight text-[var(--os-text)]">
-        {work.presentation}
+        {formatWorkItemPresentation(work)}
       </p>
 
       <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
@@ -57,7 +62,7 @@ export function LineWorkCard({ lineId, work }: LineWorkCardProps) {
           <span
             className={`font-semibold ${deliveryHighlight ? "text-amber-700" : "text-[var(--os-text)]"}`}
           >
-            {work.delivery}
+            {delivery}
           </span>
         </div>
         {work.oaRef && (
@@ -66,11 +71,8 @@ export function LineWorkCard({ lineId, work }: LineWorkCardProps) {
             <span className="font-mono font-medium text-[var(--os-teal)]">{work.oaRef}</span>
           </div>
         )}
-        {work.progress > 0 && work.status === "en_curso" && (
-          <div>
-            <span className="text-[var(--os-text-muted)]">Avance · </span>
-            <span className="font-medium">{work.progress}%</span>
-          </div>
+        {work.confidence === "low" && (
+          <div className="text-xs text-amber-700">Confianza baja — verificar en SEMANAS</div>
         )}
       </div>
 

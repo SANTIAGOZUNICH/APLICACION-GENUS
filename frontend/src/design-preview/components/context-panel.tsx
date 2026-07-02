@@ -1,4 +1,5 @@
 import { AlertCircle, CalendarClock, Sparkles } from "lucide-react";
+import type { CopilotContext } from "@/design-preview/lib/creamy-copilot";
 
 interface DeliveryItem {
   client: string;
@@ -9,14 +10,14 @@ interface DeliveryItem {
 interface ContextPanelProps {
   upcomingDeliveries: DeliveryItem[];
   problems: string[];
-  creamyHint?: string;
+  copilot: CopilotContext;
 }
 
-/** Panel lateral — entregas, problemas y Creamy contextual. */
+/** Panel lateral — entregas, problemas y Creamy copiloto contextual. */
 export function ContextPanel({
   upcomingDeliveries,
   problems,
-  creamyHint = "¿Necesitás ayuda con el trabajo de hoy?",
+  copilot,
 }: ContextPanelProps) {
   return (
     <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
@@ -31,7 +32,7 @@ export function ContextPanel({
           <ul className="mt-4 space-y-3">
             {upcomingDeliveries.map((item) => (
               <li
-                key={`${item.client}-${item.product}`}
+                key={`${item.client}-${item.product}-${item.when}`}
                 className="rounded-[var(--os-radius-sm)] bg-[var(--os-bg)] px-3 py-3"
               >
                 <p className="text-sm font-medium text-[var(--os-text)]">{item.client}</p>
@@ -67,15 +68,23 @@ export function ContextPanel({
       <section className="rounded-[var(--os-radius)] border border-[var(--os-teal-muted)] bg-gradient-to-br from-[var(--os-teal-soft)] to-[var(--os-surface)] p-5 shadow-[var(--os-shadow-sm)]">
         <div className="flex items-center gap-2">
           <Sparkles className="size-4 text-[var(--os-teal)]" aria-hidden="true" />
-          <h2 className="text-sm font-semibold text-[var(--os-text)]">Creamy AI</h2>
+          <h2 className="text-sm font-semibold text-[var(--os-text)]">Creamy · Copiloto</h2>
         </div>
-        <p className="mt-3 text-sm leading-relaxed text-[var(--os-text-muted)]">{creamyHint}</p>
-        <button
-          type="button"
-          className="mt-4 w-full rounded-[var(--os-radius-sm)] bg-[var(--os-teal)] px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
-        >
-          Abrir asistente
-        </button>
+        <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-[var(--os-teal)]">
+          {copilot.headline}
+        </p>
+        <p className="mt-2 text-sm leading-relaxed text-[var(--os-text-muted)]">{copilot.hint}</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {copilot.suggestions.map((suggestion) => (
+            <button
+              key={suggestion}
+              type="button"
+              className="rounded-full border border-[var(--os-teal-muted)] bg-white/80 px-3 py-1.5 text-xs font-medium text-[var(--os-text)] transition-colors hover:border-[var(--os-teal)] hover:text-[var(--os-teal)]"
+            >
+              {suggestion}
+            </button>
+          ))}
+        </div>
       </section>
     </aside>
   );

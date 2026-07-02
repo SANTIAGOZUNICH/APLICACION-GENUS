@@ -1,6 +1,6 @@
 # 23 — F9 Rediseño UX/UI: Genus OS como Sistema Operativo de Planta
 
-> **Estado:** F9.1 refinamiento en `/design-preview` — **pendiente de aprobación**  
+> **Estado:** F9.2 — Envasado Masivo con WorkItems reales en `/design-preview`  
 > **Alcance:** 100% UX/UI. Backend F8 **congelado**.  
 > **Referencia funcional:** SEMANAS 2026 (lógica: línea · día · cliente · producto · cantidad)  
 > **Referencia visual:** mock Envasado Masivo (sidebar navy, aire, turquesa)
@@ -274,17 +274,24 @@ Producción · Pedidos · Entregas · KPIs · Alertas. **Nada operativo.**
 
 ---
 
-## 8. Creamy AI
+## 8. Creamy AI — Copiloto contextual (F9.2)
 
-Integrada en **sidebar inferior** (no flotante):
+Creamy deja de modelarse como chatbot genérico. Es un **copiloto** integrado al trabajo activo:
 
 ```text
-Creamy AI
-¿Necesitás ayuda con este trabajo?
-[ Abrir ]
+Creamy · Copiloto
+Prioridad: THELMA Y LOUISE
+Te guío con la OA y los pasos para cerrar el día.
+[ Abrir OA ] [ Ver insumos ] [ Marcar avance ]
 ```
 
-Sin botón flotante. Personaje en fase posterior.
+| Antes (F9.1 mock) | F9.2 copiloto |
+|-------------------|---------------|
+| "¿Necesitás ayuda?" | Headline según estado real del día |
+| Botón Abrir genérico | Sugerencias contextuales (chips) |
+| Sin datos | Lee WorkItems del sector + día seleccionado |
+
+Sin botón flotante. Personaje visual en fase posterior.
 
 ---
 
@@ -304,22 +311,22 @@ Un email → un sector → una Sector View completa.
 
 ---
 
-## 10. Wireframes
+## 10. Wireframes / Preview operativo
 
-Implementados en **`/design-preview`** (aislado de la app real).
+Implementados en **`/design-preview`**.
 
-| Pantalla | Archivo preview |
-|----------|-----------------|
-| Hub + arquitectura | `/design-preview` |
-| Mi Trabajo · Masivo | wireframe `envasado-masivo` + mock `envasado-masivo-schedule` |
-| Mi Trabajo · Premium | wireframe `envasado-premium` |
-| Elaboración | wireframe `elaboracion` |
-| Calidad | wireframe `calidad` |
-| Depósito | wireframe `deposito` |
-| Producción | wireframe `produccion` |
-| Dirección | wireframe `direccion` |
-| Plan semanal | wireframe `plan-semanal` |
-| Consulta | wireframe `consulta` |
+| Pantalla | Fuente de datos (F9.2) |
+|----------|------------------------|
+| Hub + arquitectura | Estático |
+| Mi Trabajo · Masivo | **WorkItems reales** · `GET /api/v1/work-items?sector=ENVASADO_MASIVO` |
+| Mi Trabajo · Premium | Mock legacy → migrar a WorkItems |
+| Elaboración | Mock legacy → migrar a WorkItems |
+| Calidad | Mock legacy |
+| Depósito | Mock legacy |
+| Producción | Mock legacy |
+| Dirección | Mock legacy |
+| Plan semanal | Mock legacy → migrar a WorkItems |
+| Consulta | Mock legacy |
 
 ---
 
@@ -339,22 +346,74 @@ El operario abre Genus OS, mira **5 segundos** y sabe:
 
 ## 12. Próximo paso
 
-1. Usuario aprueba wireframes en `/design-preview`
-2. **Recién entonces** implementar shell + vistas en la app real
-3. Conectar WorkItems existentes (F8) a los nuevos bloques — sin tocar mappers
+1. Validar Envasado Masivo con **datos reales** en `/design-preview` (F9.2)
+2. Migrar sectores restantes del preview a WorkItems (Premium, Elaboración, Plan semanal)
+3. Usuario aprueba la experiencia operativa
+4. Promover `/design-preview` → app principal (`/mi-trabajo`) sin cambiar mappers
 
-**Hasta aprobación: cero cambios en `/mi-trabajo`, sidebar, navigation.ts de producción.**
+**F9.2:** el preview ya consume el pipeline real. **No** inventar datos cuando Drive está configurado.
 
 ---
 
-## 13. F9.1 — Envasado Masivo: criterios de aceptación
+## 13. F9.2 — Datos reales en design-preview
 
-- [ ] Estética moderna (Linear / Apple / Vercel) — aire, cards suaves, turquesa Genus
-- [ ] Fecha **no** hardcodeada; selector ◀ ▶ Hoy con default = hoy
-- [ ] Día actual destacado en plan semanal L–V
-- [ ] Trabajos por línea con cliente · producto · cantidad · entrega
-- [ ] Línea vacía → mensaje claro
-- [ ] Resumen: Para hacer / En progreso / Terminadas / Bloqueadas
-- [ ] Panel lateral: entregas · problemas · Creamy contextual
-- [ ] Acciones visuales por trabajo (sin escritura Sheets)
-- [ ] Operario entiende qué hacer en **5 segundos**
+### Pipeline
+
+```text
+SEMANAS 2026 → Discovery → Mapper → WorkItems → Design Preview
+```
+
+| Capa | Archivo / endpoint |
+|------|-------------------|
+| Mapper | `lib/mappers/semanas-to-work-items.ts` |
+| Servicio | `lib/operational/work-items.service.ts` |
+| API | `GET /api/v1/work-items?sector=ENVASADO_MASIVO` |
+| Preview hook | `design-preview/hooks/use-sector-work-items.ts` |
+| Vista día | `design-preview/lib/work-items-day-view.ts` |
+
+### Reglas
+
+| Regla | Comportamiento |
+|-------|----------------|
+| Fecha default | Hoy real — `startOfDay(new Date())` |
+| Resolución por día | Filtra WorkItems por `date`, `dayLabel` o `deliveryDate` del mapper |
+| Sin metadata de fecha | Si SEMANAS no trae día, muestra todos los items **solo para hoy** |
+| Línea vacía | *"Sin trabajo asignado para hoy"* — no caja vacía |
+| Sin datos inventados | Si `GENUS_DATA_MODE≠real` o Drive no configurado → lista vacía + mensaje |
+| Acciones | Visuales only — sin escritura Sheets (igual que F9.1) |
+
+### Eliminado en F9.2 (Envasado Masivo)
+
+- `buildMasivoWeekSchedule()` — reemplazado por WorkItems
+- `calendar-mock.ts` — reemplazado por `calendar.ts` (solo utilidades de fecha)
+- `mock-data/envasado-masivo-schedule.ts` — eliminado
+
+### Pendiente migración mock → real
+
+- `mock-data.ts` — aún usado por Premium, Elaboración, Calidad, etc.
+- `PLAN_SEMANAL_DAYS` — hardcodeado en plan-semanal wireframe
+
+---
+
+## 14. F9.1 — Envasado Masivo: criterios de aceptación
+
+- [x] Estética moderna (Linear / Apple / Vercel) — aire, cards suaves, turquesa Genus
+- [x] Fecha **no** hardcodeada; selector ◀ ▶ Hoy con default = hoy
+- [x] Día actual destacado en plan semanal L–V
+- [x] Trabajos por línea con cliente · producto · cantidad · entrega
+- [x] Línea vacía → mensaje claro
+- [x] Resumen: Para hacer / En progreso / Terminadas / Bloqueadas
+- [x] Panel lateral: entregas · problemas · Creamy contextual
+- [x] Acciones visuales por trabajo (sin escritura Sheets)
+- [x] Operario entiende qué hacer en **5 segundos**
+
+---
+
+## 15. F9.2 — Criterios de aceptación
+
+- [x] Envasado Masivo consume WorkItems vía API real
+- [x] Sin `buildMasivoWeekSchedule()` ni schedule mock
+- [x] Fecha resuelta automáticamente según día actual
+- [x] Creamy modelada como copiloto contextual
+- [ ] Premium / Elaboración / Plan semanal migrados a WorkItems
+- [x] Mensaje claro cuando no hay Drive o SEMANAS no indexado

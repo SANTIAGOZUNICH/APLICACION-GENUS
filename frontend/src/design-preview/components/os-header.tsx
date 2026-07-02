@@ -1,7 +1,7 @@
 "use client";
 
 import { Bell } from "lucide-react";
-import { formatTime } from "@/design-preview/lib/calendar-mock";
+import { formatTime } from "@/design-preview/lib/calendar";
 
 interface OsHeaderProps {
   title: string;
@@ -47,7 +47,7 @@ export function OsStatusBar({ syncTime }: OsStatusBarProps) {
       className="flex shrink-0 items-center justify-between border-t border-[var(--os-border-subtle)] bg-[var(--os-bg)] px-8 text-[11px] text-[var(--os-text-muted)]"
       style={{ height: "var(--os-status-height)" }}
     >
-      <span>SEMANAS 2026 · preview mock</span>
+      <span>SEMANAS 2026 · WorkItems</span>
       <span>Última sync · {formatTime(time)}</span>
     </footer>
   );

@@ -7,6 +7,7 @@ import { LineWorkCard } from "@/design-preview/components/line-work-card";
 import { OsShell } from "@/design-preview/components/os-shell";
 import { SummaryStrip } from "@/design-preview/components/summary-strip";
 import { WeekPlanStrip } from "@/design-preview/components/week-plan-strip";
+import { useSectorWorkItems } from "@/design-preview/hooks/use-sector-work-items";
 import {
   addDays,
   formatLongDate,
@@ -14,48 +15,65 @@ import {
   getWorkWeekDays,
   isSameDay,
   startOfDay,
-} from "@/design-preview/lib/calendar-mock";
+} from "@/design-preview/lib/calendar";
+import { buildCopilotContext } from "@/design-preview/lib/creamy-copilot";
 import {
-  buildMasivoWeekSchedule,
-  getMasivoScheduleForDate,
-  summarizeDay,
-} from "@/design-preview/mock-data/envasado-masivo-schedule";
+  buildDayScheduleView,
+  buildWeekPlanSummary,
+  extractProblems,
+  extractUpcomingDeliveries,
+  summarizeWorkItems,
+} from "@/design-preview/lib/work-items-day-view";
 
-/** Envasado Masivo — puesto de trabajo digital con fecha dinámica (mock SEMANAS 2026). */
+/** Envasado Masivo — puesto de trabajo con WorkItems reales (SEMANAS 2026). */
 export function WireframeEnvasadoMasivo() {
   const [today] = useState(() => startOfDay(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
-  const [syncTime] = useState(() => new Date());
+  const { data, loading, error } = useSectorWorkItems("ENVASADO_MASIVO");
+
+  const workItems = useMemo(() => data?.workItems ?? [], [data?.workItems]);
+  const scannedAt = data?.scannedAt ? new Date(data.scannedAt) : null;
 
   const weekDays = useMemo(() => getWorkWeekDays(today), [today]);
-  const schedule = useMemo(() => buildMasivoWeekSchedule(today), [today]);
   const daySchedule = useMemo(
-    () => getMasivoScheduleForDate(schedule, selectedDate),
-    [schedule, selectedDate]
+    () => buildDayScheduleView(workItems, selectedDate, today),
+    [workItems, selectedDate, today]
   );
-  const summary = useMemo(() => summarizeDay(daySchedule), [daySchedule]);
+  const weekPlan = useMemo(
+    () => buildWeekPlanSummary(workItems, weekDays, today),
+    [workItems, weekDays, today]
+  );
+  const summary = useMemo(() => summarizeWorkItems(daySchedule.items), [daySchedule.items]);
+  const copilot = useMemo(
+    () => buildCopilotContext(daySchedule.items, "Envasado Masivo"),
+    [daySchedule.items]
+  );
 
-  const creamyHint = useMemo(() => {
-    const works = daySchedule.lines.map((l) => l.work).filter(Boolean);
-    if (works.length === 0) return "No hay trabajos asignados. ¿Consulto el plan de la semana?";
-    const urgent = works.find((w) => w?.priority === "HOY" || w?.priority === "URGENTE");
-    if (urgent) {
-      return `Prioridad ${urgent.client} — ${urgent.product}. ¿Te ayudo con la OA?`;
-    }
-    return "¿Necesitás ayuda con el trabajo de este día?";
-  }, [daySchedule]);
+  const upcomingDeliveries = useMemo(
+    () => extractUpcomingDeliveries(workItems, today),
+    [workItems, today]
+  );
+  const problems = useMemo(
+    () => extractProblems(daySchedule.items),
+    [daySchedule.items]
+  );
 
   const goPrevious = () => setSelectedDate((d) => addDays(d, -1));
   const goNext = () => setSelectedDate((d) => addDays(d, 1));
   const goToday = () => setSelectedDate(today);
-
   const viewingToday = isSameDay(selectedDate, today);
+
+  const sourceLabel = data
+    ? data.source === "drive"
+      ? "SEMANAS 2026 · datos reales"
+      : "Sin datos reales — configurar GENUS_DATA_MODE=real y Drive"
+    : undefined;
 
   return (
     <OsShell
       sectorLabel="Envasado Masivo"
       sectorEmail="emasivo@laboratoriogenus.com.ar"
-      syncTime={syncTime}
+      syncTime={scannedAt ?? undefined}
       contentClassName="!px-6 !py-6 lg:!px-8"
     >
       <div className="mx-auto flex max-w-6xl flex-col gap-8 xl:max-w-none xl:flex-row xl:items-start xl:gap-10">
@@ -72,7 +90,8 @@ export function WireframeEnvasadoMasivo() {
                 </span>
               </p>
               <p className="mt-1 text-xs text-[var(--os-text-muted)]">
-                Última sincronización: {formatTime(syncTime)}
+                Última sincronización:{" "}
+                {scannedAt ? formatTime(scannedAt) : "—"}
               </p>
             </div>
 
@@ -82,54 +101,88 @@ export function WireframeEnvasadoMasivo() {
               onPrevious={goPrevious}
               onNext={goNext}
               onToday={goToday}
+              sourceLabel={sourceLabel}
             />
           </header>
 
-          <SummaryStrip
-            paraHacer={summary.paraHacer}
-            enProgreso={summary.enProgreso}
-            terminadas={summary.terminadas}
-            bloqueadas={summary.bloqueadas}
-          />
+          {loading && (
+            <div className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] px-6 py-8 text-sm text-[var(--os-text-muted)]">
+              Cargando WorkItems desde SEMANAS 2026…
+            </div>
+          )}
 
-          <section className="space-y-4">
-            <div>
-              <h3 className="text-lg font-semibold text-[var(--os-text)]">Trabajo del día</h3>
-              <p className="mt-1 text-sm text-[var(--os-text-muted)]">
-                Una card por línea — lo que hay que envasar ahora
-              </p>
+          {error && (
+            <div className="rounded-[var(--os-radius)] border border-rose-200 bg-rose-50 px-6 py-8 text-sm text-rose-900">
+              {error}
             </div>
-            <div className="flex flex-col gap-5">
-              {daySchedule.lines.map((slot) => (
-                <LineWorkCard key={slot.lineId} lineId={slot.lineId} work={slot.work} />
-              ))}
-            </div>
-          </section>
+          )}
 
-          <section className="space-y-4">
-            <div>
-              <h3 className="text-lg font-semibold text-[var(--os-text)]">Plan semanal</h3>
-              <p className="mt-1 text-sm text-[var(--os-text-muted)]">
-                Lunes a viernes · click en un día para cambiar la vista
-              </p>
+          {!loading && data?.message && workItems.length === 0 && (
+            <div className="rounded-[var(--os-radius)] border border-amber-200 bg-amber-50 px-6 py-8 text-sm text-amber-950">
+              {data.message}
+              {data.warnings?.[0] && (
+                <p className="mt-2 text-xs opacity-80">{data.warnings[0]}</p>
+              )}
             </div>
-            <WeekPlanStrip
-              weekDays={weekDays}
-              schedule={schedule}
-              selectedDate={selectedDate}
-              today={today}
-              onSelectDate={setSelectedDate}
+          )}
+
+          {!loading && !error && (
+            <>
+              <SummaryStrip
+                paraHacer={summary.paraHacer}
+                enProgreso={summary.enProgreso}
+                terminadas={summary.terminadas}
+                bloqueadas={summary.bloqueadas}
+              />
+
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-[var(--os-text)]">Trabajo del día</h3>
+                  <p className="mt-1 text-sm text-[var(--os-text-muted)]">
+                    {daySchedule.jobCount > 0
+                      ? `${daySchedule.jobCount} trabajo(s) · ${daySchedule.totalUnits.toLocaleString("es-AR")} u`
+                      : "Sin trabajos asignados para este día en SEMANAS 2026"}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-5">
+                  {daySchedule.lines.map((slot) => (
+                    <LineWorkCard
+                      key={slot.lineId}
+                      lineId={slot.lineId}
+                      work={slot.work}
+                      today={today}
+                    />
+                  ))}
+                </div>
+              </section>
+
+              <section className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-[var(--os-text)]">Plan semanal</h3>
+                  <p className="mt-1 text-sm text-[var(--os-text-muted)]">
+                    Lunes a viernes · click en un día para cambiar la vista
+                  </p>
+                </div>
+                <WeekPlanStrip
+                  weekDays={weekPlan}
+                  selectedDate={selectedDate}
+                  today={today}
+                  onSelectDate={setSelectedDate}
+                />
+              </section>
+            </>
+          )}
+        </div>
+
+        {!loading && !error && (
+          <div className="w-full shrink-0 xl:w-80">
+            <ContextPanel
+              upcomingDeliveries={upcomingDeliveries}
+              problems={problems}
+              copilot={copilot}
             />
-          </section>
-        </div>
-
-        <div className="w-full shrink-0 xl:w-80">
-          <ContextPanel
-            upcomingDeliveries={daySchedule.upcomingDeliveries}
-            problems={daySchedule.problems}
-            creamyHint={creamyHint}
-          />
-        </div>
+          </div>
+        )}
       </div>
     </OsShell>
   );
