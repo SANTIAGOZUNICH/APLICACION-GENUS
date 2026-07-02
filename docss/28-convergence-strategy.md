@@ -45,11 +45,15 @@ Genus OS v1.0 converge hacia **un solo producto**:
 | 0.3 | Eliminar 6 módulos huérfanos (reemplazo validado) | ✅ |
 | 0.4 | Docs + `/playbook` + doc 23 sincronizado | En curso |
 
-### Fase 1 — Unificación de primitivos
+### Fase 1 — Unificación de primitivos (actual)
 
-- Alias `--os-*` → `--genus-*`
-- Unificar `EmptyState`, status labels
-- Sin mover rutas
+| PR | Alcance | Estado |
+|----|---------|--------|
+| 1.1 | Alias `--os-*` → `--genus-*` + status labels + EmptyState | En curso |
+
+**Trade-off Fase 1.1:** se mantienen nombres `--os-*` en wireframes como alias reversibles hacia `--genus-*` (`genus-os-bridge.css`). Evita renombrar decenas de referencias; la fuente canónica ya es Genus DS.
+
+---
 
 ### Fase 2 — Relocate (`design-preview/` → `features/`)
 

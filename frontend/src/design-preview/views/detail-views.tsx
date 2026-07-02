@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import type { WorkItemStatus } from "@/types/operational/work-item";
 import type { WorkItem } from "@/types/operational/work-item";
 import {
   formatWorkItemDelivery,
@@ -12,15 +11,7 @@ import { usePreviewContext, usePreviewSession } from "@/design-preview/lib/previ
 import { useSectorWorkItems } from "@/design-preview/hooks/use-sector-work-items";
 import { startOfDay } from "@/design-preview/lib/calendar";
 
-const STATUS_LABEL: Record<WorkItemStatus, { dot: string; label: string }> = {
-  pendiente: { dot: "bg-amber-400", label: "Pendiente" },
-  en_curso: { dot: "bg-blue-500", label: "En proceso" },
-  completo: { dot: "bg-emerald-500", label: "Terminado" },
-  bloqueado: { dot: "bg-rose-500", label: "Bloqueado" },
-  revision: { dot: "bg-violet-400", label: "En revisión" },
-  cancelado: { dot: "bg-slate-400", label: "Cancelado" },
-};
-
+import { resolveWorkItemStatusDisplay } from "@/design-system/work-item-status";
 function DetailField({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div>
@@ -37,14 +28,14 @@ function WorkDetailContent({ work }: { work: WorkItem }) {
     usePreviewContext();
   const today = useMemo(() => startOfDay(new Date()), []);
   const status = getEffectiveStatus(work);
-  const statusMeta = STATUS_LABEL[status];
+  const statusMeta = resolveWorkItemStatusDisplay(status);
   const isCompleting = completingIds.has(work.id);
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <header className="space-y-4">
         <div className="flex items-center gap-2">
-          <span className={`size-2.5 rounded-full ${statusMeta.dot}`} />
+          <span className={`size-2.5 rounded-full ${statusMeta.dotClassName}`} />
           <span className="text-sm font-medium text-[var(--os-text-muted)]">{statusMeta.label}</span>
         </div>
         <h2 className="text-3xl font-semibold tracking-tight text-[var(--os-text)]">
@@ -216,7 +207,7 @@ export function OaDetailView() {
         </header>
 
         <div className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-8 space-y-4">
-          <DetailField label="Estado" value={STATUS_LABEL[status].label} />
+          <DetailField label="Estado" value={resolveWorkItemStatusDisplay(status).label} />
           <DetailField label="Cantidad" value={work ? formatWorkItemPresentation(work) : "—"} />
           <DetailField label="Línea" value={work?.line} />
           <DetailField label="Pedido" value={work?.pedidoRef} />

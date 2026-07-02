@@ -3,7 +3,8 @@
  * Scope: .genus-ds-root (página /design-system y futura app F10+).
  */
 
-.genus-ds-root {
+.genus-ds-root,
+.design-preview-root {
   /* Brand */
   --genus-brand-primary: #1fa39a;
   --genus-brand-primary-soft: #e6f7f6;

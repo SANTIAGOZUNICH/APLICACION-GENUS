@@ -1,19 +1,11 @@
 "use client";
 
 import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
+import { resolveWorkItemStatusDisplay } from "@/design-system/work-item-status";
 import {
   formatWorkItemDelivery,
   formatWorkItemPresentation,
 } from "@/design-preview/lib/work-items-day-view";
-
-const STATUS_LABEL: Record<WorkItemStatus, { dot: string; label: string }> = {
-  pendiente: { dot: "bg-amber-400", label: "Pendiente" },
-  en_curso: { dot: "bg-blue-500", label: "En proceso" },
-  completo: { dot: "bg-emerald-500", label: "Terminado" },
-  bloqueado: { dot: "bg-rose-500", label: "Bloqueado" },
-  revision: { dot: "bg-violet-400", label: "En revisión" },
-  cancelado: { dot: "bg-slate-400", label: "Cancelado" },
-};
 
 interface LineWorkCardProps {
   lineId: string;
@@ -51,7 +43,7 @@ export function LineWorkCard({
   }
 
   const statusKey = statusOverride ?? work.status;
-  const status = STATUS_LABEL[statusKey];
+  const status = resolveWorkItemStatusDisplay(statusKey);
   const delivery = formatWorkItemDelivery(work, today);
   const deliveryHighlight = delivery === "Hoy" || delivery === "Urgente";
 
@@ -75,7 +67,7 @@ export function LineWorkCard({
           {lineId}
         </p>
         <span className="inline-flex items-center gap-2 text-xs font-medium text-[var(--os-text-muted)]">
-          <span className={`size-2 rounded-full ${status.dot} transition-transform ${isCompleting ? "scale-125" : ""}`} aria-hidden="true" />
+          <span className={`size-2 rounded-full ${status.dotClassName} transition-transform ${isCompleting ? "scale-125" : ""}`} aria-hidden="true" />
           {isCompleting ? "Guardando…" : status.label}
         </span>
       </div>

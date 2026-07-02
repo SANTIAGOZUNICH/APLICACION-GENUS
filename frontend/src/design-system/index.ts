@@ -8,6 +8,11 @@ export { genusIconSizes, genusIconRules, genusIconMap } from "@/design-system/ic
 export type { GenusIconName } from "@/design-system/icons";
 export { genusStatusDefinitions, genusStatusList } from "@/design-system/status";
 export type { GenusOperationalStatus, GenusStatusDefinition } from "@/design-system/status";
+export {
+  resolveWorkItemStatusDisplay,
+  workItemStatusDisplay,
+} from "@/design-system/work-item-status";
+export type { WorkItemStatusDisplay } from "@/design-system/work-item-status";
 export { genusCardDefinitions, genusCardList } from "@/design-system/cards";
 export type { GenusCardType, GenusCardDefinition } from "@/design-system/cards";
 export { genusPanelDefinitions, genusPanelList } from "@/design-system/panels";
