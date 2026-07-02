@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { formatLongDate, isSameDay } from "@/design-preview/lib/calendar";
+import { formatLongDate, isSameDay } from "@/features/work/lib/calendar";
 
 interface DateNavigatorProps {
   selectedDate: Date;

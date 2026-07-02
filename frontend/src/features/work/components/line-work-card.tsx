@@ -5,7 +5,7 @@ import { resolveWorkItemStatusDisplay } from "@/design-system/work-item-status";
 import {
   formatWorkItemDelivery,
   formatWorkItemPresentation,
-} from "@/design-preview/lib/work-items-day-view";
+} from "@/features/work/lib/work-items-day-view";
 
 interface LineWorkCardProps {
   lineId: string;

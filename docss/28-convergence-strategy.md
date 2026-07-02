@@ -121,70 +121,31 @@ frontend/src/features/
 
 **Objetivo:** exponer el Digital Twin como rutas productivas manteniendo `/design-preview` como alias de compatibilidad, sin eliminar Track A.
 
-**Precondición:** merge de rama Fase 2 en rama principal de trabajo (`f10-1` o equivalente).
+**Granularidad:** 12 PRs agrupados (reversibles, sin big bang).
 
-#### Sub-fase 3A — Migración de imports internos
+| PR | Alcance |
+|----|---------|
+| **3.1** | Work imports — `features/work/*` → `@/features/work/*` |
+| **3.2** | OS imports — shell, feedback, session, app → `@/features/os/*` |
+| **3.3** | Sectors imports — `features/sectors/*` → `@/features/sectors/*` + cross-refs OS/work |
+| **3.4** | Entities imports + auditoría 0 `@/design-preview/` en `features/` |
+| **3.5** | Tokens move + stub + imports `app/design-preview` |
+| **3.6** | `OsAppRoot` compartido |
+| **3.7** | Ruta `/mi-trabajo` |
+| **3.8** | Rutas `/plan-semanal` y `/consulta` |
+| **3.9** | `/design-preview` como alias de `OsAppRoot` |
+| **3.10** | Banners legacy + flag redirects opt-in |
+| **3.11** | Redirects opt-in (middleware 302 con flag) |
+| **3.12** | Documentación cierre Fase 3 |
 
-Reemplazar `@/design-preview/*` → `@/features/*` **solo dentro de `features/`**. Los stubs permanecen para `app/` y cualquier consumidor externo hasta validación.
+**Reglas permanentes Fase 3:**
+- Cada PR: `npm run test`, `npm run lint`, `npm run build`, smoke `/design-preview`
+- Stubs en `design-preview/` intactos hasta cierre Fase 3
+- No eliminar Track A · no renombrar Twin/OS · rollback = revert PR
 
-| PR | Alcance | Archivos aprox. | Rollback |
-|----|---------|-----------------|----------|
-| **3.1** | `features/work/components` + `features/work/views` → imports directos work | 5 archivos, ~18 imports | revert PR |
-| **3.2** | `features/work/` restante (cross-refs ya resueltos en 3.1) | verificación grep | revert PR |
-| **3.3** | `features/os/shell` + `features/os/feedback` | 6 archivos, ~10 imports | revert PR |
-| **3.4** | `features/os/session` + `features/os/app` | 4 archivos, ~9 imports | revert PR |
-| **3.5** | `features/sectors/components` + wireframes livianos (calidad, deposito, direccion) | 5 archivos | revert PR |
-| **3.6** | `features/sectors/wireframes` operativos (elaboracion, envasado-*) | 3 archivos, ~36 imports | revert PR |
-| **3.7** | `features/entities/views` | 2 archivos, ~8 imports | revert PR |
-| **3.8** | Auditoría: grep `@/design-preview/` en `features/` = 0; stubs intactos | solo verificación + doc | N/A |
+#### PR 3.1 — Work imports ✅ en curso
 
-**Reglas 3A:**
-- No eliminar stubs en estos PRs.
-- No tocar `app/design-preview/*`.
-- Cada PR: `npm run test`, `npm run lint`, `npm run build`, smoke `/design-preview`.
-
-#### Sub-fase 3B — Resolución de `tokens.css`
-
-| PR | Alcance | Rollback |
-|----|---------|----------|
-| **3.9** | Mover `design-preview/tokens.css` → `design-system/os-preview-tokens.css` (git mv) | revert PR |
-| **3.10** | Stub `@import` o re-export en path original `design-preview/tokens.css` | revert PR |
-| **3.11** | Actualizar imports en `app/design-preview/layout.tsx` y `page.tsx` al path canónico (stubs siguen funcionando) | revert PR |
-
-**Reglas 3B:**
-- No renombrar variables `--os-*`.
-- No cambiar `genus-os-bridge.css`.
-- Verificar tokens en `/design-preview` y `/design-system`.
-
-#### Sub-fase 3C — Rutas productivas OS
-
-| PR | Alcance | Rollback |
-|----|---------|----------|
-| **3.12** | Extraer `OsAppRoot` compartido desde `design-preview-app` (wrapper: tokens + PreviewProvider + root div). `design-preview-app` delega sin cambio visual. | revert PR |
-| **3.13** | Prop opcional `initialNav` en app root para deep-link de vista (plan-semanal, consulta). Sin rename Twin/OS. | revert PR |
-| **3.14** | Ruta `/mi-trabajo` — renderiza `OsAppRoot` + `TwinRouter`, metadata productiva | revert PR |
-| **3.15** | Ruta `/plan-semanal` — `initialNav: plan-semanal` | revert PR |
-| **3.16** | Ruta `/consulta` — `initialNav: consulta` | revert PR |
-| **3.17** | `/design-preview` refactorizado para usar `OsAppRoot` (alias funcional, metadata preview) | revert PR |
-
-**Reglas 3C:**
-- Rutas nuevas fuera de `(app)/` legacy — route group `(os)/` sin AppShell.
-- Misma lógica operativa que `/design-preview`; cero cambio visual.
-- Smoke obligatorio: login, Mi Trabajo, Plan semanal, Consulta, detalle + Volver en **ambas** rutas.
-
-#### Sub-fase 3D — Redirects y convivencia Track A
-
-| PR | Alcance | Rollback |
-|----|---------|----------|
-| **3.18** | Banner informativo en `/bandeja` → enlace a `/mi-trabajo` (sin redirect automático) | revert PR |
-| **3.19** | Mapa de redirects documentado en doc 28 + feature flag `NEXT_PUBLIC_OS_ROUTES_ENABLED` | doc only |
-| **3.20** | Middleware opt-in: redirect 302 `/bandeja` → `/mi-trabajo` solo con flag activo | revert PR + flag off |
-| **3.21** | Banners informativos en workspaces legacy (`/produccion`, `/calidad`, `/deposito`, `/direccion`) | revert PR |
-
-**Reglas 3D:**
-- **No eliminar** páginas legacy.
-- Redirects hard solo con flag explícito.
-- Default: convivencia — Track A sigue accesible.
+Migrar imports work-domain en `features/work/` (`lib`, `hooks`, `components`, `views`). Imports OS (`twin-shell`, `preview-context`) → PR 3.2.
 
 #### Criterios de cierre Fase 3
 
@@ -194,6 +155,8 @@ Reemplazar `@/design-preview/*` → `@/features/*` **solo dentro de `features/`*
 - [ ] `/design-preview` sigue operativo como alias
 - [ ] Track A intacto; redirects soft activos; hard redirects detrás de flag
 - [ ] Validación operaria en planta (manual)
+
+<!-- Detalle histórico sub-fases 3A–3D (21 PRs) reemplazado por plan 12 PRs arriba -->
 
 ---
 
