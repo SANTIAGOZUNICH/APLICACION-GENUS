@@ -1,22 +1,6 @@
-"use client";
+import { OsAppRoot } from "./os-app-root";
 
-import { PreviewProvider, usePreviewContext } from "@/features/os/session/preview-context";
-import { SectorLogin } from "@/features/sectors/components/sector-login";
-import { TwinRouter } from "./twin-app";
-
-function TwinAppInner() {
-  const { session } = usePreviewContext();
-  if (!session) return <SectorLogin />;
-  return <TwinRouter />;
-}
-
-/** Digital Twin F9.6 — prototipo navegable completo del laboratorio. */
+/** Digital Twin F9.6 — alias de compatibilidad para /design-preview. */
 export function DesignPreviewApp() {
-  return (
-    <PreviewProvider>
-      <div className="design-preview-root min-h-dvh bg-[var(--os-bg)]">
-        <TwinAppInner />
-      </div>
-    </PreviewProvider>
-  );
+  return <OsAppRoot />;
 }

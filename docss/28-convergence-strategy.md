@@ -161,7 +161,11 @@ Migrados `features/entities/views/*` y los 2 imports restantes de `twin-app` →
 
 #### PR 3.5 — Tokens move + stub ✅
 
-`design-preview/tokens.css` → `design-system/os-preview-tokens.css` (canónico). Stub `@import` en path original. `app/design-preview` importa path canónico.
+`design-preview/tokens.css` → `design-system/os-preview-tokens.css` (canónico). Stub `@import` en path original. `app/design-preview` importa path canónico. Merge #34.
+
+#### PR 3.6 — OsAppRoot compartido ✅
+
+Extraído `OsAppRoot` en `features/os/app/os-app-root.tsx`. `DesignPreviewApp` delega sin cambiar `/design-preview`.
 
 #### Criterios de cierre Fase 3
 
