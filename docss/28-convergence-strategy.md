@@ -173,14 +173,18 @@ Nueva ruta productiva `app/mi-trabajo/` importa `OsAppRoot` directamente. `/desi
 
 #### PR 3.8 — Rutas `/plan-semanal` y `/consulta` ✅
 
-Rutas productivas con `OsAppRoot initialNav` por vista. `PreviewProvider` acepta `initialNav` (default `mi-trabajo`).
+Rutas productivas con `OsAppRoot initialNav` por vista. `PreviewProvider` acepta `initialNav` (default `mi-trabajo`). Merge #37.
+
+#### PR 3.9 — `/design-preview` alias de `OsAppRoot` ✅
+
+`app/design-preview/page.tsx` importa `OsAppRoot` directamente. `DesignPreviewApp` stub conservado.
 
 #### Criterios de cierre Fase 3
 
 - [x] `@/design-preview/*` solo usado desde `app/` y stubs (no desde `features/`)
 - [x] `tokens.css` en path canónico con stub de compatibilidad
 - [x] `/mi-trabajo`, `/plan-semanal`, `/consulta` operativos
-- [ ] `/design-preview` sigue operativo como alias
+- [x] `/design-preview` sigue operativo como alias de `OsAppRoot`
 - [ ] Track A intacto; redirects soft activos; hard redirects detrás de flag
 - [ ] Validación operaria en planta (manual)
 
