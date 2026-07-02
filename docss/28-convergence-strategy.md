@@ -143,9 +143,13 @@ frontend/src/features/
 - Stubs en `design-preview/` intactos hasta cierre Fase 3
 - No eliminar Track A · no renombrar Twin/OS · rollback = revert PR
 
-#### PR 3.1 — Work imports ✅ en curso
+#### PR 3.1 — Work imports ✅
 
-Migrar imports work-domain en `features/work/` (`lib`, `hooks`, `components`, `views`). Imports OS (`twin-shell`, `preview-context`) → PR 3.2.
+Migrados imports work-domain en `features/work/` → `@/features/work/*`. Merge #30.
+
+#### PR 3.2 — OS imports (shell, feedback, session) ✅ en curso
+
+Migrados `features/os/shell`, `feedback`, `session` y consumidores work views → `@/features/os/*` + `@/features/work/*` cross-refs. Diferido a 3.3: `sector-emails`, `sector-login`, wireframes sectors en `twin-app`.
 
 #### Criterios de cierre Fase 3
 
