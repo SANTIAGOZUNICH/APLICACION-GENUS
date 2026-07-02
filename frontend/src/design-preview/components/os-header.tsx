@@ -1,19 +1,15 @@
 "use client";
 
-import { Bell, ChevronLeft, ChevronRight } from "lucide-react";
+import { Bell } from "lucide-react";
+import { formatTime } from "@/design-preview/lib/calendar-mock";
 
 interface OsHeaderProps {
   title: string;
   userInitials: string;
-  dateLabel?: string;
 }
 
-/** F9.1 — Header mínimo: título, fecha, notificaciones, perfil. Sin KPIs. */
-export function OsHeader({
-  title,
-  userInitials,
-  dateLabel = "Martes 23 · Jun 2026",
-}: OsHeaderProps) {
+/** F9.1 — Header mínimo: título, notificaciones, perfil. Sin KPIs ni fecha fija. */
+export function OsHeader({ title, userInitials }: OsHeaderProps) {
   return (
     <header
       className="flex shrink-0 items-center justify-between border-b border-[var(--os-border)] bg-[var(--os-surface)] px-8"
@@ -22,19 +18,11 @@ export function OsHeader({
       <h1 className="text-base font-semibold text-[var(--os-text)]">{title}</h1>
 
       <div className="flex items-center gap-3">
-        <div className="hidden items-center gap-1 sm:flex">
-          <button type="button" className="rounded p-1.5 text-[var(--os-text-muted)]" aria-label="Anterior">
-            <ChevronLeft className="size-4" />
-          </button>
-          <span className="min-w-[8rem] text-center text-sm text-[var(--os-text-muted)]">
-            {dateLabel}
-          </span>
-          <button type="button" className="rounded p-1.5 text-[var(--os-text-muted)]" aria-label="Siguiente">
-            <ChevronRight className="size-4" />
-          </button>
-        </div>
-
-        <button type="button" className="relative rounded-full p-2 text-[var(--os-text-muted)]" aria-label="Notificaciones">
+        <button
+          type="button"
+          className="relative rounded-full p-2 text-[var(--os-text-muted)] transition-colors hover:bg-[var(--os-bg)] hover:text-[var(--os-text)]"
+          aria-label="Notificaciones"
+        >
           <Bell className="size-5" />
           <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-[var(--os-teal)]" />
         </button>
@@ -47,14 +35,20 @@ export function OsHeader({
   );
 }
 
-export function OsStatusBar() {
+interface OsStatusBarProps {
+  syncTime?: Date;
+}
+
+export function OsStatusBar({ syncTime }: OsStatusBarProps) {
+  const time = syncTime ?? new Date();
+
   return (
     <footer
-      className="flex shrink-0 items-center justify-between border-t border-[var(--os-border-subtle)] bg-[var(--os-bg)] px-8 text-[10px] text-[var(--os-text-muted)]"
+      className="flex shrink-0 items-center justify-between border-t border-[var(--os-border-subtle)] bg-[var(--os-bg)] px-8 text-[11px] text-[var(--os-text-muted)]"
       style={{ height: "var(--os-status-height)" }}
     >
-      <span>SEMANAS 2026</span>
-      <span>09:32</span>
+      <span>SEMANAS 2026 · preview mock</span>
+      <span>Última sync · {formatTime(time)}</span>
     </footer>
   );
 }

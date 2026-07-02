@@ -161,11 +161,12 @@ Contenido **únicamente**:
 Contenido **únicamente**:
 
 1. Título mínimo ("Mi trabajo")
-2. Fecha (◀ ▶)
-3. Notificaciones
-4. Perfil
+2. Notificaciones
+3. Perfil
 
-**Sin** subtítulos explicativos. **Sin** KPIs.
+**Sin** subtítulos explicativos. **Sin** KPIs. **Sin** fecha fija hardcodeada.
+
+> La navegación por día vive en la **Sector View** (ej. Envasado Masivo), no en el header global.
 
 ---
 
@@ -173,7 +174,58 @@ Contenido **únicamente**:
 
 ### 6.1 Envasado Masivo / Premium
 
-**Secciones:** Para hacer hoy · Esta semana · Mis OA · Bloqueados  
+**Envasado Masivo (F9.1 refinado)** — puesto de trabajo digital, no wireframe:
+
+| Zona | Contenido |
+|------|-----------|
+| Encabezado | Hola, Envasado Masivo · día seleccionado · última sync |
+| Selector | ◀ ▶ · fecha larga · botón **Hoy** (default = hoy real) |
+| Resumen | Para hacer · En progreso · Terminadas · Bloqueadas |
+| Trabajo del día | **Una card por línea** (L1, L2, L3) con cliente, producto, cantidad, entrega |
+| Plan semanal | L–V clickeable; día actual destacado; cambia vista principal |
+| Panel lateral | Próximas entregas · Problemas/faltantes · Creamy AI contextual |
+
+**Card por línea (ejemplo):**
+
+```text
+LÍNEA 1
+THELMA Y LOUISE
+Exfoliante Arroz
+3.300 × 160 g
+Entrega · Hoy
+[ Abrir OA ]   ☐ Trabajo terminado   Reportar problema
+```
+
+**Línea sin trabajo:** texto claro — *"Sin trabajo asignado para hoy"* (no caja vacía).
+
+**Acciones visuales (preview only — sin escritura Sheets):**
+
+- Abrir OA (si existe)
+- Crear OA (si no existe)
+- Marcar terminado (checkbox)
+- Reportar problema
+
+**Premium:** layout similar; **nunca** ve Masivo.
+
+#### Regla de fecha dinámica (SEMANAS 2026)
+
+| Regla | Comportamiento |
+|-------|----------------|
+| Default | Fecha seleccionada = **hoy** (fecha real del sistema) |
+| Selector | Anterior / Siguiente / **Hoy** cambian el día visible |
+| Fuente futura | Bloque del día en **SEMANAS 2026** correspondiente al día seleccionado |
+| Ejemplo | Si hoy es miércoles 2 de julio → mostrar trabajos del miércoles 2, no del 23 de junio |
+| Preview mock | `buildMasivoWeekSchedule(today)` genera datos relativos a la semana laboral actual |
+| Fallback | Si no hay bloque para el día → líneas vacías + *"Sin trabajo asignado para hoy"* |
+
+**Prohibido en preview:**
+
+- Fechas viejas hardcodeadas (ej. "23 de junio" fijo)
+- Datos mock sin indicar que son mock
+- Cajas vacías como contenido principal cuando hay trabajo
+- Copiar visualmente la planilla SEMANAS
+
+**Secciones legacy (otros sectores):** Para hacer hoy · Esta semana · Mis OA · Bloqueados  
 **Acciones:** Crear OA · Abrir OA · Completar · Terminado · Observaciones  
 **Regla:** Premium **nunca** ve Masivo.
 
@@ -259,7 +311,7 @@ Implementados en **`/design-preview`** (aislado de la app real).
 | Pantalla | Archivo preview |
 |----------|-----------------|
 | Hub + arquitectura | `/design-preview` |
-| Mi Trabajo · Masivo | wireframe `envasado-masivo` |
+| Mi Trabajo · Masivo | wireframe `envasado-masivo` + mock `envasado-masivo-schedule` |
 | Mi Trabajo · Premium | wireframe `envasado-premium` |
 | Elaboración | wireframe `elaboracion` |
 | Calidad | wireframe `calidad` |
@@ -292,3 +344,17 @@ El operario abre Genus OS, mira **5 segundos** y sabe:
 3. Conectar WorkItems existentes (F8) a los nuevos bloques — sin tocar mappers
 
 **Hasta aprobación: cero cambios en `/mi-trabajo`, sidebar, navigation.ts de producción.**
+
+---
+
+## 13. F9.1 — Envasado Masivo: criterios de aceptación
+
+- [ ] Estética moderna (Linear / Apple / Vercel) — aire, cards suaves, turquesa Genus
+- [ ] Fecha **no** hardcodeada; selector ◀ ▶ Hoy con default = hoy
+- [ ] Día actual destacado en plan semanal L–V
+- [ ] Trabajos por línea con cliente · producto · cantidad · entrega
+- [ ] Línea vacía → mensaje claro
+- [ ] Resumen: Para hacer / En progreso / Terminadas / Bloqueadas
+- [ ] Panel lateral: entregas · problemas · Creamy contextual
+- [ ] Acciones visuales por trabajo (sin escritura Sheets)
+- [ ] Operario entiende qué hacer en **5 segundos**

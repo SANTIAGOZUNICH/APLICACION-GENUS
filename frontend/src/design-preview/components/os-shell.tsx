@@ -13,6 +13,8 @@ interface OsShellProps {
   children: ReactNode;
   /** Wider content area for sector-specific layouts */
   contentClassName?: string;
+  /** Optional sync timestamp for status bar */
+  syncTime?: Date;
 }
 
 export function OsShell({
@@ -23,6 +25,7 @@ export function OsShell({
   showRestricted,
   children,
   contentClassName,
+  syncTime,
 }: OsShellProps) {
   const initials = sectorEmail.slice(0, 2).toUpperCase();
 
@@ -36,10 +39,10 @@ export function OsShell({
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <OsHeader title={title} userInitials={initials} />
-        <main className={`flex-1 overflow-y-auto px-8 py-10 ${contentClassName ?? ""}`}>
+        <main className={`flex-1 overflow-y-auto px-8 py-8 ${contentClassName ?? ""}`}>
           {children}
         </main>
-        <OsStatusBar />
+        <OsStatusBar syncTime={syncTime} />
       </div>
     </div>
   );
