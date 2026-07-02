@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { getNavItemByHref } from "@/config/navigation";
 import { siteConfig } from "@/config/site";
+import { OsLegacyConvergenceBanner } from "@/components/patterns/os-legacy-convergence-banner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { MainContent } from "./main-content";
 import { Sidebar } from "./sidebar/sidebar";
@@ -52,6 +53,7 @@ export function AppShell({ children }: AppShellProps) {
             showMenuButton
             onMenuClick={() => setMobileOpen((open) => !open)}
           />
+          <OsLegacyConvergenceBanner />
           <MainContent>{children}</MainContent>
         </div>
       </div>
