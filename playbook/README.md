@@ -1,5 +1,19 @@
 # Genus OS — Playbook y Conocimiento Fundacional
 
+# Desarrollo
+
+Antes de contribuir al proyecto o implementar cualquier funcionalidad, es obligatorio leer la carpeta `/playbook`.
+
+El orden de lectura es:
+
+1. playbook/README.md
+2. 01_GENUS_OS_FOUNDATIONAL_KNOWLEDGE_PART_I.md
+3. 02_GENUS_OS_FOUNDATIONAL_KNOWLEDGE_PART_II.md
+4. 03_GENUS_OS_CURSOR_PLAYBOOK.md
+5. 04_GENUS_OS_EXECUTION_MANUAL.md
+
+Estos documentos definen la filosofía, arquitectura, metodología y forma oficial de desarrollar Genus OS.
+
 Esta carpeta contiene la referencia oficial de producto y arquitectura de **Genus OS**, el sistema digital de operaciones de Laboratorio Genus. Es la capa de conocimiento **sobre** `docss/` (que sigue siendo la fuente de verdad técnica detallada) y **sobre** el código real del repositorio: sintetiza, audita y transmite el criterio con el que hay que pensar, diseñar y desarrollar el producto.
 
 No reemplaza `docss/`. No la contradice. La consolida, la audita contra la realidad del código y de la operación del laboratorio, y la convierte en criterio accionable para cualquier desarrollador o IA (Cursor incluido) que trabaje en el proyecto de acá en adelante.
