@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import "@/design-preview/tokens.css";
+import "@/design-system/os-preview-tokens.css";
 
 export const metadata: Metadata = {
   title: "F9 Design Preview — Genus OS",
