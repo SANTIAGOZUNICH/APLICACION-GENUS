@@ -1,8 +1,8 @@
 "use client";
 
-import { EmptyState } from "@/design-preview/components/empty-state";
-import { TwinShell } from "@/design-preview/components/twin-shell";
-import { usePreviewContext } from "@/design-preview/lib/preview-context";
+import { EmptyState } from "@/features/work/components/empty-state";
+import { TwinShell } from "@/features/os/shell/twin-shell";
+import { usePreviewContext } from "@/features/os/session/preview-context";
 
 /** Vistas auxiliares del sidebar — simuladas en F9.6. */
 export function TwinStubView({ title, message }: { title: string; message: string }) {

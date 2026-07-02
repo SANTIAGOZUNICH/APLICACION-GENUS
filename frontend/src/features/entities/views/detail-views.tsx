@@ -5,11 +5,11 @@ import type { WorkItem } from "@/types/operational/work-item";
 import {
   formatWorkItemDelivery,
   formatWorkItemPresentation,
-} from "@/design-preview/lib/work-items-day-view";
-import { TwinShell } from "@/design-preview/components/twin-shell";
-import { usePreviewContext, usePreviewSession } from "@/design-preview/lib/preview-context";
-import { useSectorWorkItems } from "@/design-preview/hooks/use-sector-work-items";
-import { startOfDay } from "@/design-preview/lib/calendar";
+} from "@/features/work/lib/work-items-day-view";
+import { TwinShell } from "@/features/os/shell/twin-shell";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
+import { useSectorWorkItems } from "@/features/work/hooks/use-sector-work-items";
+import { startOfDay } from "@/features/work/lib/calendar";
 
 import { resolveWorkItemStatusDisplay } from "@/design-system/work-item-status";
 function DetailField({ label, value }: { label: string; value: string | null | undefined }) {

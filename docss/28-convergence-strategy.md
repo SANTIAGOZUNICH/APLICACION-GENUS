@@ -151,13 +151,17 @@ Migrados imports work-domain en `features/work/` → `@/features/work/*`. Merge 
 
 Merge #31.
 
-#### PR 3.3 — Sectors imports ✅ en curso
+#### PR 3.3 — Sectors imports ✅
 
-Migrados `features/sectors/*` y imports OS→sectors/work. Diferido a 3.4: `entities/views`, `twin-app` detail/stub views.
+Migrados `features/sectors/*` y imports OS→sectors/work. Merge #32.
+
+#### PR 3.4 — Entities imports + auditoría ✅
+
+Migrados `features/entities/views/*` y los 2 imports restantes de `twin-app` → `@/features/*`. **0 imports `@/design-preview/*` en `features/`.** Pendiente PR 3.5: tokens.
 
 #### Criterios de cierre Fase 3
 
-- [ ] `@/design-preview/*` solo usado desde `app/` y stubs (no desde `features/`)
+- [x] `@/design-preview/*` solo usado desde `app/` y stubs (no desde `features/`)
 - [ ] `tokens.css` en path canónico con stub de compatibilidad
 - [ ] `/mi-trabajo`, `/plan-semanal`, `/consulta` operativos
 - [ ] `/design-preview` sigue operativo como alias
