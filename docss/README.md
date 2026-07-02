@@ -50,7 +50,7 @@ La carpeta `/docs` contiene 22 documentos numerados. Cada uno es autocontenido p
 - **Para desarrollar backend / modelo:** `02-arquitectura.md` → `03-modelo-de-datos.md` → `04-rbac.md` → `18-convenciones.md`.
 - **Para desarrollar el front-end nuevo:** `15-frontend.md` → `07-design-system.md` → `08-workspaces.md` → `09-bandeja-inteligente.md` → `17-api.md` → `16-backend.md`.
 - **Para continuar con un asistente de código (Cursor AI):** **empezá por `20-recomendaciones-cursor.md`** y volvé al resto desde ahí.
-- **Para planificar:** `14-roadmap.md` → `19-pendientes.md`.
+- **Para planificar:** `14-roadmap.md` → `19-pendientes.md` → `28-convergence-strategy.md`.
 
 **Índice:**
 
@@ -77,6 +77,7 @@ La carpeta `/docs` contiene 22 documentos numerados. Cada uno es autocontenido p
 | `18-convenciones.md` | Lenguaje, naming, estados, terminología |
 | `19-pendientes.md` | Todo lo pendiente |
 | `20-recomendaciones-cursor.md` | Guía para el asistente de código (leer primero) |
+| `28-convergence-strategy.md` | Estrategia de convergencia Strangler Fig → Genus OS v1.0 |
 
 ---
 
