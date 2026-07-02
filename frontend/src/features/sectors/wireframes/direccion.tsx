@@ -1,6 +1,6 @@
 "use client";
 
-import { TwinShell } from "@/design-preview/components/twin-shell";
+import { TwinShell } from "@/features/os/shell/twin-shell";
 import { DIRECCION_SIGNALS } from "../mock-data/mock-data";
 
 /** Panorama ejecutivo — señales, no operación. */

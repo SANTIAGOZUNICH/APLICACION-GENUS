@@ -1,13 +1,13 @@
 "use client";
 
 import { useMemo } from "react";
-import { TwinShell } from "@/design-preview/components/twin-shell";
-import { SectionLabel } from "@/design-preview/components/section-label";
-import { usePreviewContext } from "@/design-preview/lib/preview-context";
-import { useMultiSectorWorkItems, TWIN_DATA_SECTORS } from "@/design-preview/hooks/use-multi-sector-work-items";
+import { TwinShell } from "@/features/os/shell/twin-shell";
+import { SectionLabel } from "@/features/work/components/section-label";
+import { usePreviewContext } from "@/features/os/session/preview-context";
+import { useMultiSectorWorkItems, TWIN_DATA_SECTORS } from "@/features/work/hooks/use-multi-sector-work-items";
 import { SECTOR_LABELS, type SectorId } from "@/types/operational/sector";
-import { startOfDay } from "@/design-preview/lib/calendar";
-import { filterWorkItemsForDate } from "@/design-preview/lib/work-items-day-view";
+import { startOfDay } from "@/features/work/lib/calendar";
+import { filterWorkItemsForDate } from "@/features/work/lib/work-items-day-view";
 
 const DISPLAY_SECTORS: SectorId[] = [
   "ELABORACION",

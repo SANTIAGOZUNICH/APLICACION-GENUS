@@ -1,7 +1,7 @@
 "use client";
 
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
-import { SECTOR_VIEW_REGISTRY } from "@/design-preview/sector-view-registry";
+import { SECTOR_VIEW_REGISTRY } from "@/features/sectors/registry/sector-view-registry";
 import { renderSectorHome } from "@/lib/role-engine";
 import {
   ClientDetailView,
@@ -16,8 +16,8 @@ import {
 } from "@/design-preview/views/stub-views";
 import { WireframePlanSemanal } from "@/features/work/views/plan-semanal";
 import { WireframeConsulta } from "@/features/work/views/consulta";
-import { WireframeProduccion } from "@/design-preview/wireframes/produccion";
-import { WireframeDireccion } from "@/design-preview/wireframes/direccion";
+import { WireframeProduccion } from "@/features/sectors/wireframes/produccion";
+import { WireframeDireccion } from "@/features/sectors/wireframes/direccion";
 
 /** Router del Digital Twin — navegación entre Home, utilidades y detalle. */
 export function TwinRouter() {

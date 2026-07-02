@@ -1,9 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { EmptyState } from "@/design-preview/components/empty-state";
-import { TwinShell } from "@/design-preview/components/twin-shell";
-import { useSectorWorkItems } from "@/design-preview/hooks/use-sector-work-items";
+import { EmptyState } from "@/features/work/components/empty-state";
+import { TwinShell } from "@/features/os/shell/twin-shell";
+import { useSectorWorkItems } from "@/features/work/hooks/use-sector-work-items";
 import {
   addDays,
   formatLongDate,
@@ -11,10 +11,10 @@ import {
   getWorkWeekDays,
   isSameDay,
   startOfDay,
-} from "@/design-preview/lib/calendar";
-import { usePreviewContext, usePreviewSession } from "@/design-preview/lib/preview-context";
+} from "@/features/work/lib/calendar";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { displayField } from "@/lib/operational/display-fields";
-import { filterWorkItemsForDate } from "@/design-preview/lib/work-items-day-view";
+import { filterWorkItemsForDate } from "@/features/work/lib/work-items-day-view";
 
 /** Elaboración por persona — bloques visuales SEMANAS, sin agrupar en React. */
 export function WireframeElaboracion() {

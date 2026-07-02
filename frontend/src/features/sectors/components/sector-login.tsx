@@ -2,7 +2,7 @@
 
 import { FlaskConical, User } from "lucide-react";
 import { LAB_PERSONAS, LAB_SECTOR_PREVIEW_ORDER } from "../config/lab-personas";
-import { usePreviewContext } from "@/design-preview/lib/preview-context";
+import { usePreviewContext } from "@/features/os/session/preview-context";
 import { resolveSectorHome } from "@/lib/role-engine";
 import type { SectorId } from "@/types/operational/sector";
 

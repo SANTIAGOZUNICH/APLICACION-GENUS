@@ -1,7 +1,7 @@
 "use client";
 
 import type { ResolvedSectorHome } from "@/lib/role-engine";
-import { TwinShell } from "@/design-preview/components/twin-shell";
+import { TwinShell } from "@/features/os/shell/twin-shell";
 
 interface SectorHomePlaceholderProps {
   home: ResolvedSectorHome;
