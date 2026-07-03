@@ -2,6 +2,7 @@
 
 import { PreviewProvider, usePreviewContext } from "@/features/os/session/preview-context";
 import { SectorLogin } from "@/features/sectors/components/sector-login";
+import { WorkspaceProvider } from "@/features/os/workspace/workspace-provider";
 import type { TwinNavEntry } from "@/features/os/navigation/twin-nav";
 import { TwinRouter } from "./twin-app";
 
@@ -19,9 +20,11 @@ export interface OsAppRootProps {
 export function OsAppRoot({ initialNav }: OsAppRootProps = {}) {
   return (
     <PreviewProvider initialNav={initialNav}>
-      <div className="design-preview-root min-h-dvh bg-[var(--os-bg)]">
-        <TwinAppInner />
-      </div>
+      <WorkspaceProvider>
+        <div className="design-preview-root min-h-dvh bg-[var(--os-bg)]">
+          <TwinAppInner />
+        </div>
+      </WorkspaceProvider>
     </PreviewProvider>
   );
 }

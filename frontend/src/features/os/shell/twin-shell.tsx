@@ -19,6 +19,7 @@ interface TwinShellProps {
   syncTime?: Date;
   showBack?: boolean;
   onBack?: () => void;
+  userInitials?: string;
 }
 
 /** Shell del Digital Twin — navegación real + Creamy siempre presente. */
@@ -29,6 +30,7 @@ export function TwinShell({
   syncTime,
   showBack,
   onBack,
+  userInitials,
 }: TwinShellProps) {
   const { activeSidebarId, navigateSidebar, logout, openCreamy, creamyTeaser, currentNav } =
     usePreviewContext();
@@ -40,6 +42,8 @@ export function TwinShell({
 
   const resolvedTitle =
     title ?? (showBack ? viewTitle(currentNav.view) : viewTitle(currentNav.view));
+
+  const resolvedInitials = userInitials ?? email.slice(0, 2).toUpperCase();
 
   return (
     <div className="flex h-dvh min-h-[680px] overflow-hidden bg-[var(--os-bg)]">
@@ -57,7 +61,7 @@ export function TwinShell({
       <div className="flex min-w-0 flex-1 flex-col">
         <OsHeader
           title={resolvedTitle}
-          userInitials={email.slice(0, 2).toUpperCase()}
+          userInitials={resolvedInitials}
           showBack={showBack}
           onBack={onBack}
         />
