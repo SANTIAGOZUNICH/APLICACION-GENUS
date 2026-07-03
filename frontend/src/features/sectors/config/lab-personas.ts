@@ -1,4 +1,5 @@
 import type { SectorId } from "@/types/operational/sector";
+import { SECTOR_PERSONNEL } from "@/features/os/operational/lib/sector-personnel";
 
 /** Personas del laboratorio para login simulado F10.1 — mapeadas a bloques SEMANAS. */
 export interface LabPersona {
@@ -10,20 +11,22 @@ export interface LabPersona {
   semanasLabel: string;
 }
 
+export const ELABORACION_ENCARGADO = SECTOR_PERSONNEL.ELABORACION_ENCARGADO;
+
 export const LAB_PERSONAS: LabPersona[] = [
   {
     id: "cristian",
-    name: "Cristian",
+    name: SECTOR_PERSONNEL.ELABORACION_RAMA_CRISTIAN,
     email: "cristian@laboratoriogenus.com.ar",
     sectorId: "ELABORACION",
-    semanasLabel: "Cristian",
+    semanasLabel: SECTOR_PERSONNEL.ELABORACION_RAMA_CRISTIAN,
   },
   {
     id: "nicolas",
-    name: "Nicolás",
+    name: SECTOR_PERSONNEL.ELABORACION_RAMA_NICOLAS,
     email: "nicolas@laboratoriogenus.com.ar",
     sectorId: "ELABORACION",
-    semanasLabel: "Nicolás",
+    semanasLabel: SECTOR_PERSONNEL.ELABORACION_RAMA_NICOLAS,
   },
 ];
 

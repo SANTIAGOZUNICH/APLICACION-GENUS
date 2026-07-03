@@ -8,6 +8,7 @@ import { usePreviewContext, usePreviewSession } from "@/features/os/session/prev
 import { WorkItemProgressTable } from "../components/work-item-progress-table";
 import { SyncStatusBar } from "../components/operational-ui";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
+import { ELABORACION_RAMAS, SECTOR_PERSONNEL } from "../lib/sector-personnel";
 import { useOperationalStore } from "../store/operational-store-context";
 
 interface EnvasadoOperationalViewProps {
@@ -65,13 +66,18 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   return (
     <TwinShell title={workspace.sectorLabel}>
       <header className="mb-6 space-y-2">
-        <h2 className="text-2xl font-semibold tracking-tight">{workspace.sectorLabel}</h2>
-        <p className="text-sm text-[var(--os-text-muted)]">{workspace.subtitle}</p>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          Hola, {workspace.context.displayName}
+        </h2>
+        <p className="text-sm text-[var(--os-text-muted)]">
+          {workspace.sectorLabel} · {workspace.context.jobTitle}
+        </p>
         <SyncStatusBar
           source={data?.source ?? "demo"}
           lastRefreshAt={lastRefreshAt}
           loading={loading}
           onRefresh={refresh}
+          detailMessage={data?.message}
         />
       </header>
 
@@ -100,7 +106,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   );
 }
 
-/** Elaboración filtrada por persona — Cristian / Nicolás. */
+/** Elaboración — encargado Santino + ramas Cristian / Nicolás. */
 export function ElaboracionOperationalView() {
   const workspace = useRequiredWorkspace();
   const { ownerPerson } = usePreviewSession();
@@ -116,12 +122,22 @@ export function ElaboracionOperationalView() {
     ownerPerson,
   });
 
-  const greetingName = ownerPerson ?? workspace.context.firstName;
+  const isEncargado = !ownerPerson?.trim();
+  const ramaLabel = ownerPerson ?? null;
+  const greetingName = ramaLabel ?? workspace.context.displayName;
 
   const workItems = useMemo(() => {
     const base = applyEffectiveStatus(data?.workItems ?? []);
     return applyProgressToWorkItems(base);
   }, [data?.workItems, applyEffectiveStatus, applyProgressToWorkItems]);
+
+  const ramas = useMemo(() => {
+    if (!isEncargado) return null;
+    return ELABORACION_RAMAS.map((rama) => ({
+      rama,
+      items: workItems.filter((item) => item.ownerPerson === rama),
+    }));
+  }, [isEncargado, workItems]);
 
   const handleSave = useCallback(
     (itemId: string, payload: { finishedQty: string; observation: string }) => {
@@ -145,18 +161,44 @@ export function ElaboracionOperationalView() {
     [markWorkFinished, refresh, greetingName]
   );
 
+  const emptyMessage =
+    data?.message ??
+    (ramaLabel
+      ? `Sin elaboraciones asignadas a la rama ${ramaLabel} en SEMANAS 2026.`
+      : "Sin elaboraciones en SEMANAS 2026.");
+
   return (
     <TwinShell title="Elaboración">
       <header className="mb-6 space-y-2">
         <h2 className="text-2xl font-semibold tracking-tight">Hola, {greetingName}</h2>
-        <p className="text-sm text-[var(--os-text-muted)]">
-          Elaboraciones asignadas · bloque {greetingName} en SEMANAS
-        </p>
+        <div className="space-y-1 text-sm text-[var(--os-text-muted)]">
+          <p>
+            Encargado:{" "}
+            <span className="font-medium text-[var(--os-text)]">
+              {SECTOR_PERSONNEL.ELABORACION_ENCARGADO}
+            </span>
+          </p>
+          {ramaLabel ? (
+            <p>
+              Rama{" "}
+              <span className="font-medium text-[var(--os-teal)]">{ramaLabel}</span> · solo tu
+              asignación
+            </p>
+          ) : (
+            <p>
+              Vista de encargado · ramas{" "}
+              <span className="font-medium text-[var(--os-teal)]">
+                {ELABORACION_RAMAS.join(" · ")}
+              </span>
+            </p>
+          )}
+        </div>
         <SyncStatusBar
           source={data?.source ?? "demo"}
           lastRefreshAt={lastRefreshAt}
           loading={loading}
           onRefresh={refresh}
+          detailMessage={data?.message}
         />
       </header>
 
@@ -168,7 +210,28 @@ export function ElaboracionOperationalView() {
 
       {loading && !data && <div className="os-skeleton h-40 rounded-[var(--os-radius)]" />}
 
-      {!loading && (
+      {!loading && isEncargado && ramas && (
+        <div className="space-y-8">
+          {ramas.map(({ rama, items }) => (
+            <section key={rama}>
+              <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
+                Rama {rama}
+              </h3>
+              <WorkItemProgressTable
+                items={items}
+                variant="elaboracion"
+                getFinishedQty={getFinishedQty}
+                getObservation={getObservation}
+                onSaveProgress={handleSave}
+                onMarkFinished={handleFinish}
+                emptyMessage={`Sin elaboraciones para la rama ${rama}.`}
+              />
+            </section>
+          ))}
+        </div>
+      )}
+
+      {!loading && !isEncargado && (
         <WorkItemProgressTable
           items={workItems}
           variant="elaboracion"
@@ -176,7 +239,7 @@ export function ElaboracionOperationalView() {
           getObservation={getObservation}
           onSaveProgress={handleSave}
           onMarkFinished={handleFinish}
-          emptyMessage={`Sin elaboraciones para ${greetingName}.`}
+          emptyMessage={emptyMessage}
         />
       )}
     </TwinShell>

@@ -92,9 +92,9 @@ describe("WorkspaceResolver", () => {
       email: "produccion@laboratoriogenus.com.ar",
     });
 
-    expect(resolved.title).toBe(buildWorkspaceGreeting(extractFirstName("María Producción")));
+    expect(resolved.title).toBe(buildWorkspaceGreeting(extractFirstName("Agustina Zunich")));
     expect(resolved.subtitle).toBe("Tenés 8 órdenes para trabajar hoy.");
-    expect(resolved.context.displayName).toBe("María Producción");
+    expect(resolved.context.displayName).toBe("Agustina Zunich");
     expect(resolved.navigation).toContain("mi_trabajo");
     expect(resolved.navigation).toContain("plan_semanal");
   });

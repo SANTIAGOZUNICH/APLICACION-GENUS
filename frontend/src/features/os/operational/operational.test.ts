@@ -13,6 +13,7 @@ import {
   filterWorkItemsPendingElaboracion,
   filterWorkItemsPendingEnvasado,
 } from "./lib/operational-filters";
+import { loadOperationalPlan } from "./adapters/operational-sheets-adapter";
 import { mockQualityItems, mockWorkItemsForSector } from "./mock/mock-operational-plan";
 import {
   clearOperationalStore,
@@ -196,14 +197,57 @@ describe("operational-progress", () => {
   });
 });
 
+describe("operational-sheets-adapter", () => {
+  const storage = new Map<string, string>();
+
+  beforeEach(() => {
+    storage.clear();
+    const localStorageMock = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    };
+    vi.stubGlobal("localStorage", localStorageMock);
+    vi.stubGlobal("window", { localStorage: localStorageMock });
+    clearOperationalStore();
+  });
+
+  it("no usa mock cuando la API responde vacío en modo demo", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          sector: "ENVASADO_MASIVO",
+          source: "demo",
+          scannedAt: new Date().toISOString(),
+          workItems: [],
+          counts: { total: 0, hoy: 0, semana: 0, pendientes: 0, bloqueados: 0 },
+          message: "Modo demo — WorkItems reales requieren GENUS_DATA_MODE=real.",
+        }),
+      })
+    );
+
+    const snapshot = await loadOperationalPlan("ENVASADO_MASIVO");
+    expect(snapshot.workItems).toHaveLength(0);
+    expect(snapshot.source).toBe("demo");
+    expect(snapshot.message).toContain("GENUS_DATA_MODE=real");
+  });
+});
+
 describe("mock users elaboración", () => {
-  it("expone usuarios Cristian y Nicolás", async () => {
+  it("expone usuarios con nombres reales del laboratorio", async () => {
     const { MOCK_PREVIEW_USERS } = await import("@/features/os/auth/lib/mock-preview-users");
+    const { SECTOR_PERSONNEL } = await import("./lib/sector-personnel");
+
     const cristian = MOCK_PREVIEW_USERS.find((u) => u.email.includes("cristian"));
     const nicolas = MOCK_PREVIEW_USERS.find((u) => u.email.includes("nicolas"));
+    const masivo = MOCK_PREVIEW_USERS.find((u) => u.email.includes("masivo"));
+    const calidad = MOCK_PREVIEW_USERS.find((u) => u.email.includes("calidad"));
 
-    expect(cristian?.ownerPerson).toBe("Cristian");
-    expect(nicolas?.ownerPerson).toBe("Nicolás");
-    expect(cristian?.sector).toBe("ELABORACION");
+    expect(cristian?.displayName).toBe(SECTOR_PERSONNEL.ELABORACION_RAMA_CRISTIAN);
+    expect(nicolas?.displayName).toBe(SECTOR_PERSONNEL.ELABORACION_RAMA_NICOLAS);
+    expect(masivo?.displayName).toBe(SECTOR_PERSONNEL.ENVASADO_MASIVO);
+    expect(calidad?.displayName).toBe(SECTOR_PERSONNEL.CALIDAD);
   });
 });

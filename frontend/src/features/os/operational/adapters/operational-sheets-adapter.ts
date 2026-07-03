@@ -2,7 +2,7 @@ import { fetchWorkItems, OperationsApiError } from "@/lib/api/operations-client"
 import type { SectorId } from "@/types/operational/sector";
 import { mergeQualityItemsWithCompletions } from "../lib/completion-events";
 import { readCompletionEvents } from "../store/operational-store";
-import { buildMockOperationalSnapshot, mockQualityItems } from "../mock/mock-operational-plan";
+import { mockQualityItems } from "../mock/mock-operational-plan";
 import type { OperationalPlanSnapshot, QualityItem } from "../types";
 
 export interface LoadOperationalPlanOptions {
@@ -21,7 +21,11 @@ function mergeCompletionsIntoSnapshot(
   };
 }
 
-/** Carga plan operativo — API real con fallback demo; incluye terminados cross-sector. */
+function qualitySeedForSource(source: OperationalPlanSnapshot["source"]): QualityItem[] {
+  return source === "drive" ? [] : mockQualityItems();
+}
+
+/** Carga plan operativo — respeta API real; no inventa mock si el servidor respondió. */
 export async function loadOperationalPlan(
   sector: SectorId,
   options?: LoadOperationalPlanOptions
@@ -30,24 +34,43 @@ export async function loadOperationalPlan(
 
   try {
     const response = await fetchWorkItems(sector, { ownerPerson });
-    if (response.workItems.length > 0) {
-      return mergeCompletionsIntoSnapshot({
-        sector,
-        ownerPerson,
-        source: response.source,
-        scannedAt: response.scannedAt,
-        workItems: response.workItems,
-        qualityItems: mergeQualityItemsWithCompletions(mockQualityItems(), readCompletionEvents()),
-        message: response.message,
-      });
-    }
-  } catch (err) {
-    if (!(err instanceof OperationsApiError)) {
-      // Network or parse errors — fall through to demo data.
-    }
-  }
 
-  return mergeCompletionsIntoSnapshot(buildMockOperationalSnapshot(sector, ownerPerson));
+    return mergeCompletionsIntoSnapshot({
+      sector,
+      ownerPerson,
+      source: response.source,
+      scannedAt: response.scannedAt,
+      workItems: response.workItems,
+      qualityItems: mergeQualityItemsWithCompletions(
+        qualitySeedForSource(response.source),
+        readCompletionEvents()
+      ),
+      message:
+        response.message ??
+        (response.source === "demo"
+          ? "Servidor en modo demo — configurá GENUS_DATA_MODE=real y credenciales Google en Vercel."
+          : response.workItems.length === 0
+            ? "Sin trabajos en SEMANAS 2026 para este sector."
+            : undefined),
+    });
+  } catch (err) {
+    const message =
+      err instanceof OperationsApiError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : "Error al cargar plan operativo.";
+
+    return mergeCompletionsIntoSnapshot({
+      sector,
+      ownerPerson,
+      source: "demo",
+      scannedAt: new Date().toISOString(),
+      workItems: [],
+      qualityItems: mergeQualityItemsWithCompletions([], readCompletionEvents()),
+      message,
+    });
+  }
 }
 
 export function applyQualityDecisionsToItems(

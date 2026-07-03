@@ -116,6 +116,8 @@ interface SyncStatusBarProps {
   lastRefreshAt: Date | null;
   loading?: boolean;
   onRefresh?: () => void;
+  /** Mensaje diagnóstico de la API (modo demo, permisos, índice Drive). */
+  detailMessage?: string | null;
 }
 
 function buildLabel(): string {
@@ -125,7 +127,13 @@ function buildLabel(): string {
   return sha ? `build ${sha}` : "build local";
 }
 
-export function SyncStatusBar({ source, lastRefreshAt, loading, onRefresh }: SyncStatusBarProps) {
+export function SyncStatusBar({
+  source,
+  lastRefreshAt,
+  loading,
+  onRefresh,
+  detailMessage,
+}: SyncStatusBarProps) {
   const timeLabel = lastRefreshAt
     ? lastRefreshAt.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
     : "—";
@@ -133,33 +141,42 @@ export function SyncStatusBar({ source, lastRefreshAt, loading, onRefresh }: Syn
   const isReal = source === "drive";
 
   return (
-    <div className="flex flex-wrap items-center gap-3 text-xs">
-      <span
-        className={`inline-flex items-center rounded-full px-2.5 py-0.5 font-medium ${
-          isReal
-            ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
-            : "bg-amber-50 text-amber-900 ring-1 ring-amber-200"
-        }`}
-      >
-        {isReal ? "Datos reales" : "Demo"}
-      </span>
-      <span className="text-[var(--os-text-muted)]">
-        {isReal ? "SEMANAS 2026 · Google Sheets" : "Planificación demo · fallback automático"}
-      </span>
-      <span className="font-mono text-[10px] text-[var(--os-text-muted)]">{buildLabel()}</span>
-      <span className="text-[var(--os-text-muted)]">·</span>
-      <span className="text-[var(--os-text-muted)]">Última sync: {timeLabel}</span>
-      <span className="text-[var(--os-text-muted)]">·</span>
-      <span className="text-[var(--os-text-muted)]">Auto-refresh 30s</span>
-      {loading && <span className="text-[var(--os-teal)]">Actualizando…</span>}
-      {onRefresh && (
-        <button
-          type="button"
-          onClick={onRefresh}
-          className="rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-1 font-medium text-[var(--os-text)] hover:border-[var(--os-teal)] hover:text-[var(--os-teal)]"
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-3 text-xs">
+        <span
+          className={`inline-flex items-center rounded-full px-2.5 py-0.5 font-medium ${
+            isReal
+              ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
+              : "bg-amber-50 text-amber-900 ring-1 ring-amber-200"
+          }`}
         >
-          Refrescar
-        </button>
+          {isReal ? "Datos reales" : "Demo / sin conexión"}
+        </span>
+        <span className="text-[var(--os-text-muted)]">
+          {isReal
+            ? "SEMANAS 2026 · Google Sheets"
+            : "Sin datos de Sheets — revisar GENUS_DATA_MODE y Drive"}
+        </span>
+        <span className="font-mono text-[10px] text-[var(--os-text-muted)]">{buildLabel()}</span>
+        <span className="text-[var(--os-text-muted)]">·</span>
+        <span className="text-[var(--os-text-muted)]">Última sync: {timeLabel}</span>
+        <span className="text-[var(--os-text-muted)]">·</span>
+        <span className="text-[var(--os-text-muted)]">Auto-refresh 30s</span>
+        {loading && <span className="text-[var(--os-teal)]">Actualizando…</span>}
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-1 font-medium text-[var(--os-text)] hover:border-[var(--os-teal)] hover:text-[var(--os-teal)]"
+          >
+            Refrescar
+          </button>
+        )}
+      </div>
+      {detailMessage && (
+        <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+          {detailMessage}
+        </p>
       )}
     </div>
   );
