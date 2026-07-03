@@ -13,6 +13,8 @@ export interface MockPreviewUser {
   sectorLabel: string;
   jobTitle: string;
   redirectTo: string;
+  /** Elaborador en SEMANAS — filtra mi-trabajo por persona. */
+  ownerPerson?: string | null;
 }
 
 export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
@@ -59,6 +61,52 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
     sectorLabel: "Dirección",
     jobTitle: "Director General",
     redirectTo: "/mi-trabajo",
+  },
+  {
+    email: "masivo@laboratoriogenus.com.ar",
+    password: "masivo123",
+    sector: "ENVASADO_MASIVO",
+    displayName: "Operario Masivo",
+    role: "ROL-OP",
+    roleLabel: "Operario",
+    sectorLabel: "Envasado Masivo",
+    jobTitle: "Operario de Línea Masivo",
+    redirectTo: "/mi-trabajo",
+  },
+  {
+    email: "premium@laboratoriogenus.com.ar",
+    password: "premium123",
+    sector: "ENVASADO_PREMIUM",
+    displayName: "Operario Premium",
+    role: "ROL-OP",
+    roleLabel: "Operario",
+    sectorLabel: "Envasado Premium",
+    jobTitle: "Operario de Línea Premium",
+    redirectTo: "/mi-trabajo",
+  },
+  {
+    email: "cristian@laboratoriogenus.com.ar",
+    password: "cristian123",
+    sector: "ELABORACION",
+    displayName: "Cristian",
+    role: "ROL-EL",
+    roleLabel: "Elaborador",
+    sectorLabel: "Elaboración",
+    jobTitle: "Elaborador",
+    redirectTo: "/mi-trabajo",
+    ownerPerson: "Cristian",
+  },
+  {
+    email: "nicolas@laboratoriogenus.com.ar",
+    password: "nicolas123",
+    sector: "ELABORACION",
+    displayName: "Nicolás",
+    role: "ROL-EL",
+    roleLabel: "Elaborador",
+    sectorLabel: "Elaboración",
+    jobTitle: "Elaborador",
+    redirectTo: "/mi-trabajo",
+    ownerPerson: "Nicolás",
   },
 ];
 

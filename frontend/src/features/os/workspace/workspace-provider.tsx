@@ -7,6 +7,7 @@ import {
   useMemo,
   type ReactNode,
 } from "react";
+import { findMockUserByEmail } from "@/features/os/auth/lib/mock-preview-users";
 import { getCurrentAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { ensureWorkspaceRegistry } from "./bootstrap-workspaces";
@@ -35,8 +36,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const authSession = getCurrentAuthSession();
     if (!authSession) return;
 
+    const mockUser = findMockUserByEmail(authSession.user.email);
     login(authSession.sector.id, {
       email: authSession.user.email,
+      ownerPerson: mockUser?.ownerPerson ?? null,
     });
   }, [previewSession, login]);
 

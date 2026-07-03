@@ -85,7 +85,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       message: "No hay trabajos premium asignados para este día.",
     },
     homeViewKey: "envasado-premium-home",
-    dataMode: "mock",
+    dataMode: "work_items",
   }),
 
   defineSector({
@@ -116,7 +116,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       message: "No hay elaboraciones planificadas para hoy.",
     },
     homeViewKey: "elaboracion-home",
-    dataMode: "mock",
+    dataMode: "work_items",
   }),
 
   defineSector({

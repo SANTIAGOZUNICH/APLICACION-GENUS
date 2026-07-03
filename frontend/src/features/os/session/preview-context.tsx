@@ -12,6 +12,7 @@ import {
 import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 import { clearAuthSession, getCurrentAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
+import { findMockUserByEmail } from "@/features/os/auth/lib/mock-preview-users";
 import { resolveSectorHome } from "@/lib/role-engine";
 import type { SidebarItemId } from "@/lib/role-engine/types";
 import { SECTOR_EMAILS } from "@/features/sectors/config/sector-emails";
@@ -76,9 +77,11 @@ function readAuthPreviewSession(): PreviewSession | null {
   if (typeof window === "undefined") return null;
   const authSession = getCurrentAuthSession();
   if (!authSession) return null;
+  const mockUser = findMockUserByEmail(authSession.user.email);
   return {
     sectorId: authSession.sector.id,
     email: authSession.user.email,
+    ownerPerson: mockUser?.ownerPerson ?? null,
   };
 }
 
