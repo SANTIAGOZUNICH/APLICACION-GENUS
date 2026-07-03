@@ -256,7 +256,12 @@ export async function buildRuntimeEnvSnapshot(): Promise<RuntimeEnvSnapshot> {
       : {
           ok: false,
           errorCode: "skipped" as const,
-          message: "Probe omitido — modo demo o credenciales/folder ausentes.",
+          message:
+            getServerDataMode() !== "real"
+              ? "Probe omitido — servidor en modo demo."
+              : !hasGoogleCredentials()
+                ? "Probe omitido — credenciales Google ausentes."
+                : "Probe omitido — GOOGLE_DRIVE_GENUS_FOLDER_ID ausente.",
         };
 
   return {
