@@ -298,9 +298,14 @@ Pendiente antes de producto definitivo:
 
 ---
 
-### Fase 4 — Identidad y Acceso *(repriorizada — ver plan propuesto)*
+### Fase 4 — Identidad y Acceso *(en curso — ver `docss/29-identity-access.md`)*
 
-> Originalmente “Fusión object pages”. Repriorizada por stakeholder: login enterprise, sesión, identidad completa del MOS. Plan detallado pendiente de revisión conjunta.
+> Repriorizada: login enterprise, sesión, identidad completa del MOS.
+
+| PR | Alcance | Estado |
+|----|---------|--------|
+| 4.1 | UI `OsSignInScreen` + `/login` aislada | en curso |
+| 4.2–4.7 | Contratos, mock auth, integración OsAppRoot | pendiente |
 
 Subfases originales (postergadas):
 - Detalle trabajo/OE/OA dentro del shell OS
