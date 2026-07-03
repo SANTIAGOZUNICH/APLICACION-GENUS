@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
-import "@/design-preview/tokens.css";
-import { DesignPreviewApp } from "@/design-preview/design-preview-app";
+import { OsAppRoot } from "@/features/os/app/os-app-root";
 
 export const metadata: Metadata = {
   title: "F9 Design Preview — Genus OS",
-  description: "Wireframes del rediseño UX/UI. Pendiente de aprobación.",
+  description: "Alias de compatibilidad — mismo OS que /mi-trabajo vía OsAppRoot.",
 };
 
-/** F9 — isolated design preview. Does NOT use AppShell or touch backend. */
+/** Alias Strangler — /design-preview renderiza OsAppRoot (login sectorial F10.1). */
 export default function DesignPreviewPage() {
-  return <DesignPreviewApp />;
+  return <OsAppRoot />;
 }
