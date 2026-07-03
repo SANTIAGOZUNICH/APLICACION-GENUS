@@ -3,9 +3,9 @@ export function OsAuthMockBanner() {
   return (
     <div
       role="status"
-      className="border-b border-amber-300/60 bg-amber-50 px-4 py-2 text-center text-xs font-medium tracking-wide text-amber-950"
+      className="border-b border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] px-4 py-2 text-center text-[0.6875rem] font-medium tracking-wide text-[var(--genus-warning)]"
     >
-      AUTH MOCK · Fase 4 — autenticación simulada. No usar credenciales reales de producción.
+      Modo demostración · autenticación simulada (Fase 4). No ingreses credenciales productivas.
     </div>
   );
 }

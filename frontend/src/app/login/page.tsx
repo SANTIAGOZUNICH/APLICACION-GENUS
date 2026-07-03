@@ -6,11 +6,11 @@ export const metadata: Metadata = {
   description: "Inicio de sesión corporativo del Manufacturing Operating System.",
 };
 
-/** Fase 4.1 — preview UI aislada. Auth wiring en PRs 4.4–4.6. */
+/** Fase 4.1 — preview UI aislada. Bootstrap simulado; auth wiring en PRs 4.4–4.6. */
 export default function LoginPage() {
   return (
     <div className="design-preview-root">
-      <OsSignInScreen />
+      <OsSignInScreen simulateBootstrapOnSubmit />
     </div>
   );
 }
