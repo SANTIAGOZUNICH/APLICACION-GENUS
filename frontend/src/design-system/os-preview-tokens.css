@@ -66,6 +66,19 @@
   }
 }
 
+@keyframes os-workspace-highlight {
+  0% {
+    background-color: rgb(45 212 191 / 0.12);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.design-preview-root .os-workspace-highlight {
+  animation: os-workspace-highlight 2.5s ease-out both;
+}
+
 .design-preview-root .os-fade-in {
   animation: os-fade-in 0.35s ease-out both;
 }

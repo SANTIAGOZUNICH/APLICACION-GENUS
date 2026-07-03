@@ -41,3 +41,5 @@ export { WorkspaceProvider, useRequiredWorkspace, useWorkspace, useWorkspaceUser
 export { PremiumWorkspaceHome, DynamicWorkspaceHome } from "./components/dynamic-workspace-home";
 export { getWorkspaceExperience, listExperienceSectors } from "./experience/mock-workspace-experience";
 export type { WorkspaceExperienceView, WorkCardData, AttentionItemData } from "./experience/types";
+export { getWorkspaceExperienceV2, listExperienceV2Sectors } from "./experience/mock-workspace-v2";
+export type { WorkspaceExperienceV2, FocusBlockData, QueueCardData } from "./experience/v2-types";
