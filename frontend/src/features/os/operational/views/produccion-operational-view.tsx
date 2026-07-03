@@ -241,13 +241,18 @@ export function ProduccionOperationalView() {
   return (
     <TwinShell title="Producción">
       <header className="mb-6 space-y-2">
-        <h2 className="text-2xl font-semibold tracking-tight">Supervisión de planta</h2>
-        <p className="text-sm text-[var(--os-text-muted)]">{workspace.subtitle}</p>
+        <h2 className="text-2xl font-semibold tracking-tight">
+          Hola, {workspace.context.displayName}
+        </h2>
+        <p className="text-sm text-[var(--os-text-muted)]">
+          Supervisión de planta · {workspace.context.jobTitle}
+        </p>
         <SyncStatusBar
           source={data?.source ?? "demo"}
           lastRefreshAt={lastRefreshAt}
           loading={loading}
           onRefresh={refresh}
+          detailMessage={data?.message}
         />
       </header>
 

@@ -69,7 +69,7 @@ describe("Auth contracts — MockAuthAdapter", () => {
     expect(session).not.toBeNull();
     expect(session?.status).toBe("preview");
     expect(session?.mode).toBe("preview");
-    expect(session?.user.displayName).toBe("María Producción");
+    expect(session?.user.displayName).toBe("Agustina Zunich");
     expect(session?.sector.id).toBe("PRODUCCION");
     expect(session?.role.id).toBe("ROL-SU");
     expect(session?.redirectTo).toBe("/mi-trabajo");
