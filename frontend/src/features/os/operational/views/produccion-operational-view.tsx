@@ -40,14 +40,15 @@ type ProduccionTabId = (typeof PRODUCCION_TABS)[number]["id"];
 export function ProduccionOperationalView() {
   const workspace = useRequiredWorkspace();
   const { applyEffectiveStatus } = usePreviewContext();
-  const { getQualityStatus } = useOperationalStore();
+  const { getQualityStatus, getQualityObservation, applyProgressToWorkItems } =
+    useOperationalStore();
   const { data, loading, error, lastRefreshAt, refresh } = useOperationalPlan("PRODUCCION");
   const [activeTab, setActiveTab] = useState<ProduccionTabId>("elaboracion");
 
-  const workItems = useMemo(
-    () => applyEffectiveStatus(data?.workItems ?? []),
-    [data?.workItems, applyEffectiveStatus]
-  );
+  const workItems = useMemo(() => {
+    const base = applyEffectiveStatus(data?.workItems ?? []);
+    return applyProgressToWorkItems(base);
+  }, [data?.workItems, applyEffectiveStatus, applyProgressToWorkItems]);
 
   const qualityItems = useMemo(() => {
     const seed = data?.qualityItems ?? [];
@@ -75,6 +76,15 @@ export function ProduccionOperationalView() {
     [workItems, data?.source]
   );
 
+  const completados = useMemo(
+    () => workItems.filter((item) => item.status === "completo").length,
+    [workItems]
+  );
+  const enCurso = useMemo(
+    () => workItems.filter((item) => item.status === "en_curso").length,
+    [workItems]
+  );
+
   const qualityColumns: OperationalTableColumn<QualityItem>[] = useMemo(
     () => [
       {
@@ -98,8 +108,17 @@ export function ProduccionOperationalView() {
         header: "Estado",
         render: (row) => <StatusChip status={row.status} />,
       },
+      {
+        key: "observation",
+        header: "Observación",
+        render: (row) => (
+          <span className="text-sm text-[var(--os-text-muted)]">
+            {displayField(getQualityObservation(row.id))}
+          </span>
+        ),
+      },
     ],
-    []
+    [getQualityObservation]
   );
 
   const workColumns: OperationalTableColumn<WorkItem>[] = useMemo(
@@ -214,25 +233,33 @@ export function ProduccionOperationalView() {
           />
         )}
         {activeTab === "kpis" && (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <KpiCard label="Total WorkItems" value={workItems.length} />
-            <KpiCard label="Bloqueos" value={overview.blockers.length} />
-            <KpiCard
-              label="Sectores activos"
-              value={overview.sectors?.length ?? 0}
-            />
-            {overview.priorities &&
-              Object.entries(overview.priorities).map(([priority, count]) => (
-                <KpiCard key={priority} label={`Prioridad ${priority}`} value={count} />
-              ))}
-            {overview.load &&
-              Object.entries(overview.load).map(([sector, count]) => (
-                <KpiCard
-                  key={sector}
-                  label={`Carga ${SECTOR_LABELS[sector as keyof typeof SECTOR_LABELS] ?? sector}`}
-                  value={count}
-                />
-              ))}
+          <div className="space-y-4">
+            <div className="rounded-[var(--os-radius-sm)] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+              <strong>KPIs provisorios</strong> — calculados desde datos disponibles (SEMANAS +
+              acciones locales). Pendiente conexión a pestaña <strong>DASHBOARD</strong> real en
+              PEDIDOS 2026.
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <KpiCard label="Total trabajos en plan" value={workItems.length} />
+              <KpiCard label="Completados" value={completados} />
+              <KpiCard label="En curso" value={enCurso} />
+              <KpiCard label="Aprobados calidad" value={aprobados.length} />
+              <KpiCard label="Rechazados calidad" value={rechazados.length} />
+              <KpiCard label="Bloqueos" value={overview.blockers.length} />
+              <KpiCard label="Sectores activos" value={overview.sectors?.length ?? 0} />
+              {overview.priorities &&
+                Object.entries(overview.priorities).map(([priority, count]) => (
+                  <KpiCard key={priority} label={`Prioridad ${priority}`} value={count} />
+                ))}
+              {overview.load &&
+                Object.entries(overview.load).map(([sector, count]) => (
+                  <KpiCard
+                    key={sector}
+                    label={`Carga ${SECTOR_LABELS[sector as keyof typeof SECTOR_LABELS] ?? sector}`}
+                    value={count}
+                  />
+                ))}
+            </div>
           </div>
         )}
       </div>

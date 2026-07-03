@@ -1,77 +1,35 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
-import { displayField } from "@/lib/operational/display-fields";
-import {
-  OperationalTable,
-  StatusChip,
-  SyncStatusBar,
-  type OperationalTableColumn,
-} from "../components/operational-ui";
+import { WorkItemProgressTable } from "../components/work-item-progress-table";
+import { SyncStatusBar } from "../components/operational-ui";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
-import { formatQuantity } from "../lib/operational-filters";
-import type { WorkItem } from "@/types/operational/work-item";
+import { useOperationalStore } from "../store/operational-store-context";
 
 interface EnvasadoOperationalViewProps {
   sectorId: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM";
 }
 
-/** Vista operativa envasado — tabla por líneas, estilo plan semanal. */
+/** Vista operativa envasado — avance por línea con guardar y marcar terminado. */
 export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewProps) {
   const workspace = useRequiredWorkspace();
   const { applyEffectiveStatus } = usePreviewContext();
+  const {
+    applyProgressToWorkItems,
+    saveWorkProgress,
+    markWorkFinished,
+    getFinishedQty,
+    getObservation,
+  } = useOperationalStore();
   const { data, loading, error, lastRefreshAt, refresh } = useOperationalPlan(sectorId);
 
-  const workItems = useMemo(
-    () => applyEffectiveStatus(data?.workItems ?? []),
-    [data?.workItems, applyEffectiveStatus]
-  );
-
-  const columns: OperationalTableColumn<WorkItem>[] = useMemo(
-    () => [
-      {
-        key: "line",
-        header: "Línea",
-        render: (row) => <span className="font-medium">{displayField(row.line)}</span>,
-      },
-      {
-        key: "client",
-        header: "Cliente",
-        render: (row) => displayField(row.client),
-      },
-      {
-        key: "product",
-        header: "Producto",
-        render: (row) => displayField(row.product),
-      },
-      {
-        key: "quantity",
-        header: "Cantidad",
-        render: (row) => formatQuantity(row),
-      },
-      {
-        key: "day",
-        header: "Plazo",
-        render: (row) => displayField(row.dayLabel ?? row.deliveryDate),
-      },
-      {
-        key: "oa",
-        header: "OA",
-        render: (row) => (
-          <span className="font-mono text-xs">{displayField(row.oaRef)}</span>
-        ),
-      },
-      {
-        key: "status",
-        header: "Estado",
-        render: (row) => <StatusChip status={row.status} />,
-      },
-    ],
-    []
-  );
+  const workItems = useMemo(() => {
+    const base = applyEffectiveStatus(data?.workItems ?? []);
+    return applyProgressToWorkItems(base);
+  }, [data?.workItems, applyEffectiveStatus, applyProgressToWorkItems]);
 
   const sortedItems = useMemo(
     () =>
@@ -79,6 +37,28 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         (a.line ?? "").localeCompare(b.line ?? "", "es", { sensitivity: "base" })
       ),
     [workItems]
+  );
+
+  const handleSave = useCallback(
+    (itemId: string, payload: { finishedQty: string; observation: string }) => {
+      saveWorkProgress(itemId, {
+        ...payload,
+        updatedBy: workspace.context.displayName,
+      });
+      refresh();
+    },
+    [saveWorkProgress, refresh, workspace.context.displayName]
+  );
+
+  const handleFinish = useCallback(
+    (itemId: string, payload: { finishedQty: string; observation: string }) => {
+      markWorkFinished(itemId, {
+        ...payload,
+        updatedBy: workspace.context.displayName,
+      });
+      refresh();
+    },
+    [markWorkFinished, refresh, workspace.context.displayName]
   );
 
   return (
@@ -102,18 +82,17 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
 
       {loading && !data && <div className="os-skeleton h-48 rounded-[var(--os-radius)]" />}
 
-      {!loading && sortedItems.length === 0 && (
-        <p className="text-sm text-[var(--os-text-muted)]">
-          {data?.message ?? "Sin líneas de acondicionamiento para este sector."}
-        </p>
-      )}
-
-      {sortedItems.length > 0 && (
-        <OperationalTable
-          columns={columns}
-          rows={sortedItems}
-          rowKey={(row) => row.id}
-          emptyMessage="Sin trabajos en planificación."
+      {!loading && (
+        <WorkItemProgressTable
+          items={sortedItems}
+          variant="envasado"
+          getFinishedQty={getFinishedQty}
+          getObservation={getObservation}
+          onSaveProgress={handleSave}
+          onMarkFinished={handleFinish}
+          emptyMessage={
+            data?.message ?? "Sin líneas de acondicionamiento para este sector."
+          }
         />
       )}
     </TwinShell>
@@ -125,53 +104,44 @@ export function ElaboracionOperationalView() {
   const workspace = useRequiredWorkspace();
   const { ownerPerson } = usePreviewSession();
   const { applyEffectiveStatus } = usePreviewContext();
+  const {
+    applyProgressToWorkItems,
+    saveWorkProgress,
+    markWorkFinished,
+    getFinishedQty,
+    getObservation,
+  } = useOperationalStore();
   const { data, loading, error, lastRefreshAt, refresh } = useOperationalPlan("ELABORACION", {
     ownerPerson,
   });
 
   const greetingName = ownerPerson ?? workspace.context.firstName;
 
-  const workItems = useMemo(
-    () => applyEffectiveStatus(data?.workItems ?? []),
-    [data?.workItems, applyEffectiveStatus]
+  const workItems = useMemo(() => {
+    const base = applyEffectiveStatus(data?.workItems ?? []);
+    return applyProgressToWorkItems(base);
+  }, [data?.workItems, applyEffectiveStatus, applyProgressToWorkItems]);
+
+  const handleSave = useCallback(
+    (itemId: string, payload: { finishedQty: string; observation: string }) => {
+      saveWorkProgress(itemId, {
+        ...payload,
+        updatedBy: greetingName,
+      });
+      refresh();
+    },
+    [saveWorkProgress, refresh, greetingName]
   );
 
-  const columns: OperationalTableColumn<WorkItem>[] = useMemo(
-    () => [
-      {
-        key: "client",
-        header: "Cliente",
-        render: (row) => displayField(row.client),
-      },
-      {
-        key: "product",
-        header: "Producto",
-        render: (row) => <span className="font-medium">{displayField(row.product)}</span>,
-      },
-      {
-        key: "quantity",
-        header: "Kg",
-        render: (row) => formatQuantity(row),
-      },
-      {
-        key: "day",
-        header: "Plazo",
-        render: (row) => displayField(row.dayLabel ?? row.deliveryDate),
-      },
-      {
-        key: "oe",
-        header: "OE",
-        render: (row) => (
-          <span className="font-mono text-xs">{displayField(row.oeRef)}</span>
-        ),
-      },
-      {
-        key: "status",
-        header: "Estado",
-        render: (row) => <StatusChip status={row.status} />,
-      },
-    ],
-    []
+  const handleFinish = useCallback(
+    (itemId: string, payload: { finishedQty: string; observation: string }) => {
+      markWorkFinished(itemId, {
+        ...payload,
+        updatedBy: greetingName,
+      });
+      refresh();
+    },
+    [markWorkFinished, refresh, greetingName]
   );
 
   return (
@@ -197,12 +167,17 @@ export function ElaboracionOperationalView() {
 
       {loading && !data && <div className="os-skeleton h-40 rounded-[var(--os-radius)]" />}
 
-      <OperationalTable
-        columns={columns}
-        rows={workItems}
-        rowKey={(row) => row.id}
-        emptyMessage={`Sin elaboraciones para ${greetingName}.`}
-      />
+      {!loading && (
+        <WorkItemProgressTable
+          items={workItems}
+          variant="elaboracion"
+          getFinishedQty={getFinishedQty}
+          getObservation={getObservation}
+          onSaveProgress={handleSave}
+          onMarkFinished={handleFinish}
+          emptyMessage={`Sin elaboraciones para ${greetingName}.`}
+        />
+      )}
     </TwinShell>
   );
 }

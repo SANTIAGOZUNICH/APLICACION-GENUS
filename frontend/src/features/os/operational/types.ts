@@ -35,6 +35,7 @@ export interface QualityDecisionRecord {
   status: QualityDecisionStatus;
   decidedAt: string;
   decidedBy?: string;
+  observation?: string;
 }
 
 export const OPERATIONAL_POLL_INTERVAL_MS = 30_000;

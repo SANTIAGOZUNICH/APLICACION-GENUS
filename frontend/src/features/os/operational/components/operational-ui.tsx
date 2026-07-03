@@ -122,19 +122,32 @@ export function SyncStatusBar({ source, lastRefreshAt, loading, onRefresh }: Syn
     ? lastRefreshAt.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
     : "—";
 
+  const isReal = source === "drive";
+
   return (
-    <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--os-text-muted)]">
-      <span>
-        Fuente: {source === "drive" ? "SEMANAS 2026 · Drive" : "Demo · planificación semanal"}
+    <div className="flex flex-wrap items-center gap-3 text-xs">
+      <span
+        className={`inline-flex items-center rounded-full px-2.5 py-0.5 font-medium ${
+          isReal
+            ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
+            : "bg-amber-50 text-amber-900 ring-1 ring-amber-200"
+        }`}
+      >
+        {isReal ? "Datos reales" : "Demo"}
       </span>
-      <span>·</span>
-      <span>Última sync: {timeLabel}</span>
+      <span className="text-[var(--os-text-muted)]">
+        {isReal ? "SEMANAS 2026 · Google Sheets" : "Planificación demo · fallback automático"}
+      </span>
+      <span className="text-[var(--os-text-muted)]">·</span>
+      <span className="text-[var(--os-text-muted)]">Última sync: {timeLabel}</span>
+      <span className="text-[var(--os-text-muted)]">·</span>
+      <span className="text-[var(--os-text-muted)]">Auto-refresh 30s</span>
       {loading && <span className="text-[var(--os-teal)]">Actualizando…</span>}
       {onRefresh && (
         <button
           type="button"
           onClick={onRefresh}
-          className="rounded border border-[var(--os-border)] px-2 py-0.5 hover:border-[var(--os-teal)] hover:text-[var(--os-teal)]"
+          className="rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-1 font-medium text-[var(--os-text)] hover:border-[var(--os-teal)] hover:text-[var(--os-teal)]"
         >
           Refrescar
         </button>

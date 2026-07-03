@@ -8,10 +8,18 @@ import {
 } from "./lib/operational-filters";
 import { mockQualityItems, mockWorkItemsForSector } from "./mock/mock-operational-plan";
 import {
-  clearOperationalDecisions,
+  clearOperationalStore,
   getEffectiveQualityStatus,
+  getEffectiveWorkStatus,
+  getWorkFinishedQty,
   recordQualityDecision,
+  recordWorkProgress,
 } from "./store/operational-store";
+import {
+  formatOperationalDifference,
+  parseOperationalQuantity,
+  plannedQuantityLabel,
+} from "./lib/operational-progress";
 
 describe("operational-filters", () => {
   it("filtra elaboración por persona en mock", () => {
@@ -64,15 +72,44 @@ describe("operational-store", () => {
     };
     vi.stubGlobal("localStorage", localStorageMock);
     vi.stubGlobal("window", { localStorage: localStorageMock });
-    clearOperationalDecisions();
+    clearOperationalStore();
   });
 
-  it("persiste aprobación y rechazo", () => {
-    recordQualityDecision("q-granel-1", "aprobado", "Lucía");
+  it("persiste aprobación y rechazo con observación", () => {
+    recordQualityDecision("q-granel-1", "aprobado", {
+      decidedBy: "Lucía",
+      observation: "Conforme",
+    });
     expect(getEffectiveQualityStatus("q-granel-1", "pendiente")).toBe("aprobado");
 
-    recordQualityDecision("q-salida-1", "rechazado", "Lucía");
+    recordQualityDecision("q-salida-1", "rechazado", { decidedBy: "Lucía" });
     expect(getEffectiveQualityStatus("q-salida-1", "pendiente")).toBe("rechazado");
+  });
+
+  it("persiste avance y marca terminado", () => {
+    recordWorkProgress("wi-1", {
+      finishedQty: "100",
+      observation: "OK",
+      status: "en_curso",
+    });
+    expect(getEffectiveWorkStatus("wi-1", "pendiente")).toBe("en_curso");
+    expect(getWorkFinishedQty("wi-1")).toBe("100");
+
+    recordWorkProgress("wi-1", {
+      finishedQty: "120",
+      observation: "Cierre",
+      status: "completo",
+    });
+    expect(getEffectiveWorkStatus("wi-1", "pendiente")).toBe("completo");
+  });
+});
+
+describe("operational-progress", () => {
+  it("calcula diferencia planificada vs terminada", () => {
+    expect(formatOperationalDifference("3300", "3200")).toBe("-100");
+    expect(formatOperationalDifference("120 kg", "120")).toBe("0");
+    expect(plannedQuantityLabel("90", "kg")).toBe("90 kg");
+    expect(parseOperationalQuantity("1.200 u")).toBe(1200);
   });
 });
 
