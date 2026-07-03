@@ -38,4 +38,6 @@ export {
 } from "./definitions/sector-workspaces";
 
 export { WorkspaceProvider, useRequiredWorkspace, useWorkspace, useWorkspaceUserInitials } from "./workspace-provider";
-export { DynamicWorkspaceHome } from "./components/dynamic-workspace-home";
+export { PremiumWorkspaceHome, DynamicWorkspaceHome } from "./components/dynamic-workspace-home";
+export { getWorkspaceExperience, listExperienceSectors } from "./experience/mock-workspace-experience";
+export type { WorkspaceExperienceView, WorkCardData, AttentionItemData } from "./experience/types";
