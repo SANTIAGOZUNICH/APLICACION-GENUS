@@ -18,7 +18,9 @@ Sistema digital de operaciones de Laboratorio Genus — fabricante cosmético GM
 
 ## Documentación
 
-Documentación técnica completa en [`/docs`](./docs/README.md).
+Documentación técnica completa en [`/docss`](./docss/README.md).
+
+Playbook de ejecución en [`/playbook`](./playbook/README.md).
 
 ## Frontend — Genus OS
 

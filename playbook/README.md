@@ -49,6 +49,16 @@ Ejecución       →  04_EXECUTION_MANUAL.md
 
 `docss/` (22 documentos, `docss/00` a `docss/20`) sigue siendo la **fuente de verdad técnica**: modelo de datos completo, RBAC detallado, flujos operativos, design system, convenciones. Estos cuatro documentos de `/playbook` no repiten ese contenido — lo sintetizan, lo auditan contra la realidad del código y de la operación real del laboratorio, y enseñan el criterio con el que se usa. Ante cualquier duda de detalle técnico exacto (un campo, una tabla, una regla puntual), `docss/` es la referencia; ante cualquier duda de criterio, filosofía o procedimiento de trabajo, esta carpeta lo es.
 
+| — | [`docss/28-convergence-strategy.md`](../docss/28-convergence-strategy.md) | Estrategia Strangler Fig aprobada — convergencia hacia Genus OS v1.0 (Fase 0+). |
+
+## Convergencia (Fase 0+)
+
+La migración hacia un único producto sigue la estrategia documentada en [`docss/28-convergence-strategy.md`](../docss/28-convergence-strategy.md). Principio inviolable:
+
+```text
+Trabajo → Estado → Acción → Datos
+```
+
 ## Origen de estos documentos
 
 Este conjunto de documentos fue producido a partir de un análisis exhaustivo del repositorio `APLICACION-GENUS-main`: los 22 documentos de `docss/`, el código completo del frontend (`frontend/src/`), y los documentos operativos reales del laboratorio (planillas de asignación de lotes, pedidos, semanas de producción, y una orden de acondicionamiento real). Fue validado por Agustina Zunich, quien define la visión de producto de Genus OS.

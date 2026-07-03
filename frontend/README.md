@@ -27,11 +27,14 @@ Abrir [http://localhost:3000](http://localhost:3000) — redirige a `/bandeja`.
 | `/comercial` | Workspace Comercial |
 | `/direccion` | Workspace Dirección |
 | `/dt` | Workspace Dirección Técnica |
-| `/design-system` | Referencia visual de tokens |
+| `/design-preview` | Digital Twin F9.6 — OS de planta (validación) |
+| `/design-system` | Referencia visual Genus Design System F9.5 |
 
 ## Documentación
 
-La fuente de verdad del producto está en `/docs` del repositorio raíz.
+La fuente de verdad del producto está en [`/docss`](../docss/README.md) del repositorio raíz.
+
+Estrategia de convergencia: [`/docss/28-convergence-strategy.md`](../docss/28-convergence-strategy.md).
 
 ## Scripts
 
@@ -40,6 +43,7 @@ npm run dev      # servidor de desarrollo
 npm run build    # build de producción
 npm run start    # servir build
 npm run lint     # ESLint
+npm run test     # Vitest — motores + mapper SEMANAS
 ```
 
 ## Deploy en Vercel

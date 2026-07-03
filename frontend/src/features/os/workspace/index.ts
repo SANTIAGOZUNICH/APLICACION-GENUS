@@ -1,0 +1,45 @@
+export type {
+  ResolvedWorkspace,
+  WorkspaceAction,
+  WorkspaceContext,
+  WorkspaceDefinition,
+  WorkspaceNavItem,
+  WorkspaceResolveInput,
+  WorkspaceWidget,
+} from "./types";
+
+export {
+  clearWorkspaceRegistry,
+  getWorkspaceDefinition,
+  getWorkspaceRegistrySize,
+  hasWorkspaceDefinition,
+  listRegisteredWorkspaces,
+  registerWorkspace,
+  registerWorkspaces,
+} from "./workspace-registry";
+
+export {
+  buildWorkspaceContext,
+  buildWorkspaceGreeting,
+  extractFirstName,
+  resolveWorkspace,
+  resolveWorkspaceFromAuthSession,
+  resolveWorkspaceOrDefault,
+} from "./workspace-resolver";
+
+export { ensureWorkspaceRegistry, resetWorkspaceBootstrap } from "./bootstrap-workspaces";
+export { createDefaultWorkspaceDefinition } from "./definitions/default-workspace";
+export {
+  CALIDAD_WORKSPACE,
+  DEPOSITO_WORKSPACE,
+  DIRECCION_WORKSPACE,
+  PRODUCCION_WORKSPACE,
+  SECTOR_WORKSPACE_DEFINITIONS,
+} from "./definitions/sector-workspaces";
+
+export { WorkspaceProvider, useRequiredWorkspace, useWorkspace, useWorkspaceUserInitials } from "./workspace-provider";
+export { PremiumWorkspaceHome, DynamicWorkspaceHome } from "./components/dynamic-workspace-home";
+export { getWorkspaceExperience, listExperienceSectors } from "./experience/mock-workspace-experience";
+export type { WorkspaceExperienceView, WorkCardData, AttentionItemData } from "./experience/types";
+export { getWorkspaceExperienceV2, listExperienceV2Sectors } from "./experience/mock-workspace-v2";
+export type { WorkspaceExperienceV2, FocusBlockData, QueueCardData } from "./experience/v2-types";

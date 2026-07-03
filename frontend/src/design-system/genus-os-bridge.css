@@ -1,0 +1,38 @@
+/**
+ * Fase 1 — Puente de tokens: --os-* (preview) → --genus-* (Design System oficial).
+ * Reversible: eliminar este archivo y restaurar valores literales en tokens.css del preview.
+ *
+ * Trade-off: los alias mantienen compatibilidad con clases existentes del Digital Twin
+ * sin renombrar ~40 referencias var(--os-*) en wireframes. La fuente canónica pasa a ser --genus-*.
+ */
+
+.design-preview-root {
+  /* Sidebar */
+  --os-sidebar-bg: var(--genus-surface-sidebar);
+  --os-sidebar-text: var(--genus-text-inverse);
+  --os-sidebar-muted: var(--genus-neutral-400);
+  --os-sidebar-hover: var(--genus-neutral-800);
+  --os-sidebar-active: var(--genus-brand-primary);
+
+  /* Surfaces & text */
+  --os-bg: var(--genus-surface-bg);
+  --os-surface: var(--genus-surface-card);
+  --os-surface-muted: var(--genus-surface-muted);
+  --os-border: var(--genus-neutral-200);
+  --os-border-subtle: var(--genus-neutral-100);
+  --os-text: var(--genus-text-primary);
+  --os-text-muted: var(--genus-text-secondary);
+
+  /* Brand accent */
+  --os-teal: var(--genus-brand-primary);
+  --os-teal-soft: var(--genus-brand-primary-soft);
+  --os-teal-muted: var(--genus-brand-primary-muted);
+
+  /* Radius & shadows */
+  --os-radius: var(--genus-radius-xl);
+  --os-radius-sm: var(--genus-radius-md);
+  --os-shadow-sm: var(--genus-shadow-xs);
+  --os-shadow: var(--genus-shadow-sm);
+  --os-shadow-card: var(--genus-shadow-md);
+  --os-shadow-card-hover: var(--genus-shadow-lg);
+}
