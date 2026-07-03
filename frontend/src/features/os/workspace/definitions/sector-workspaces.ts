@@ -101,7 +101,7 @@ export const ENVASADO_MASIVO_WORKSPACE: WorkspaceDefinition = {
   primaryNav: BASE_NAV,
   primaryActions: [
     { id: "open-oa", label: "Abrir OA", description: "Ver orden de acondicionamiento" },
-    { id: "mark-done", label: "Marcar terminado", description: "Cerrar trabajo en línea" },
+    { id: "mark-done", label: "Entregar a Calidad", description: "Transferir trabajo a revisión" },
     { id: "report", label: "Reportar problema", description: "Bloqueo o desvío" },
   ],
   widgets: [
@@ -117,7 +117,7 @@ export const ENVASADO_PREMIUM_WORKSPACE: WorkspaceDefinition = {
   primaryNav: BASE_NAV,
   primaryActions: [
     { id: "open-oa", label: "Abrir OA", description: "Orden premium activa" },
-    { id: "mark-done", label: "Marcar terminado", description: "Cerrar lote premium" },
+    { id: "mark-done", label: "Entregar a Calidad", description: "Transferir lote a revisión" },
     { id: "report", label: "Reportar problema", description: "Incidencia en línea" },
   ],
   widgets: [

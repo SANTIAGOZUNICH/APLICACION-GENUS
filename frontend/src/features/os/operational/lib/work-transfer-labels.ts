@@ -1,8 +1,10 @@
 /** Copy operativo — transferencia de trabajo entre sectores (no mensajería). */
 
 export const WORK_TRANSFER = {
-  /** Acción del operario al cerrar su parte. */
-  markFinishedAction: "Marcar terminado",
+  /** Acción del operario al cerrar su parte y transferir a Calidad. */
+  markFinishedAction: "Entregar a Calidad",
+  /** Avance parcial — el operario sigue trabajando. */
+  saveProgressAction: "Guardar avance",
   /** Estado visible en la fila/card del operario tras entregar. */
   deliveredToQuality: "Entregado a Calidad",
   nextResponsibleQuality: "Próximo responsable: Calidad",

@@ -216,7 +216,7 @@ export function WorkItemProgressTable({
                   ) : (
                     <div className="flex flex-wrap gap-2">
                       <ActionButton
-                        label="Guardar avance"
+                        label={WORK_TRANSFER.saveProgressAction}
                         variant="neutral"
                         onClick={() =>
                           onSaveProgress(item.id, {
