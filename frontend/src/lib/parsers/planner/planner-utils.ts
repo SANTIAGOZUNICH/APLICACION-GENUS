@@ -1,0 +1,113 @@
+import { normalizePersonName } from "@/lib/operational/display-fields";
+
+const WEEK_DAYS = ["lunes", "martes", "miercoles", "jueves", "viernes"] as const;
+
+export function normalizeCellText(value: string): string {
+  return value.trim();
+}
+
+export function rowText(row: string[]): string {
+  return row.map((c) => c.trim()).filter(Boolean).join(" ").toLowerCase();
+}
+
+export function normalizeKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+export function isWeekAnchorRow(row: string[]): boolean {
+  const text = normalizeKey(rowText(row));
+  return WEEK_DAYS.every((day) => text.includes(day));
+}
+
+export function extractDayColumns(row: string[]): Map<number, string> {
+  const map = new Map<number, string>();
+  row.forEach((cell, index) => {
+    const key = normalizeKey(cell);
+    if (key === "lunes") map.set(index, "Lunes");
+    else if (key === "martes") map.set(index, "Martes");
+    else if (key === "miercoles" || key === "miércoles") map.set(index, "Miércoles");
+    else if (key === "jueves") map.set(index, "Jueves");
+    else if (key === "viernes") map.set(index, "Viernes");
+  });
+  return map;
+}
+
+export function isQuantityCell(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/^\d+([.,]\d+)?$/.test(t)) return true;
+  if (/\d+\s*(kg|g|ml|u\b|unidades?)/i.test(t)) return true;
+  if (/\d+\s*x\s*\d+/i.test(t)) return true;
+  if (/^\d+\s*c\/u/i.test(t)) return true;
+  return false;
+}
+
+export function isOperationalNote(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/!!/.test(t)) return true;
+  if (/videos?/i.test(t)) return true;
+  if (/hacer\s+/i.test(t)) return true;
+  return false;
+}
+
+export function detectPackagingSectorHeader(row: string[]): "ENVASADO_MASIVO" | "ENVASADO_PREMIUM" | null {
+  const text = normalizeKey(rowText(row));
+  if (text.includes("envasado consumo masivo") || text.includes("consumo masivo")) {
+    return "ENVASADO_MASIVO";
+  }
+  if (text.includes("envasado productos premiun") || text.includes("productos premiun") || text.includes("premium")) {
+    return "ENVASADO_PREMIUM";
+  }
+  return null;
+}
+
+export function detectLineHeader(row: string[]): string | null {
+  const cells = row.map((c) => c.trim()).filter(Boolean);
+  if (cells.length === 0 || cells.length > 2) return null;
+
+  for (const cell of cells) {
+    const normalized = normalizeKey(cell);
+    const lineMatch = normalized.match(/^linea\s*(\d+)$/);
+    if (lineMatch) return `Línea ${lineMatch[1]}`;
+
+    const premiumMatch = normalized.match(/^premium\s*([ab])$/);
+    if (premiumMatch) return `Premium ${premiumMatch[1].toUpperCase()}`;
+  }
+
+  return null;
+}
+
+export function detectBranchOwnerRow(row: string[], tabSector: "ELABORACION" | "ACONDICIONAMIENTO"): string | null {
+  if (tabSector !== "ELABORACION") return null;
+
+  const nonEmpty = row
+    .map((c, i) => ({ c: c.trim(), i }))
+    .filter(({ c }) => c.length > 0);
+
+  if (nonEmpty.length !== 1) return null;
+
+  const label = nonEmpty[0].c;
+  const key = normalizeKey(label);
+  if (key === "cristian") return normalizePersonName("Cristian");
+  if (key === "nicolas") return normalizePersonName("Nicolás");
+  return null;
+}
+
+export function slugify(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 48);
+}
+
+export function inferOriginStage(sector: string): "ELABORACION" | "ACONDICIONAMIENTO" {
+  return sector === "ELABORACION" ? "ELABORACION" : "ACONDICIONAMIENTO";
+}

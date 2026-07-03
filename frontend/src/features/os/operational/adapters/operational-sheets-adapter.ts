@@ -42,7 +42,9 @@ export async function loadOperationalPlan(
       scannedAt: response.scannedAt,
       workItems: response.workItems,
       qualityItems: mergeQualityItemsWithCompletions(
-        qualitySeedForSource(response.source),
+        response.qualityItems?.length
+          ? response.qualityItems
+          : qualitySeedForSource(response.source),
         readCompletionEvents()
       ),
       message:

@@ -1,7 +1,12 @@
 import "server-only";
 
-import { operationsDocumentRepository } from "@/lib/adapters/drive/operations-document-repository";
-import { loadSemanasWorkItems } from "@/lib/mappers/semanas-to-work-items";
+import { loadOperationalPipeline } from "@/lib/parsers/load-operational-pipeline";
+import {
+  countMiTrabajoSections,
+  filterWorkItemsForSectorAndPerson,
+  filterWorkItemsForSector,
+  partitionMiTrabajoSections,
+} from "@/lib/operational/work-item-filters";
 import {
   analyzeWorkItemGaps,
   countWorkItemsByOriginStage,
@@ -12,12 +17,6 @@ import {
   summarizeDependencies,
 } from "@/lib/operational/analyze-work-items";
 import { buildProductionOverview } from "@/lib/operational/build-production-overview";
-import {
-  countMiTrabajoSections,
-  filterWorkItemsForSector,
-  filterWorkItemsForSectorAndPerson,
-  partitionMiTrabajoSections,
-} from "@/lib/operational/work-item-filters";
 import { SECTOR_PREVIEW_PROFILES } from "@/config/sector-preview";
 import { SECTOR_GREETING, type SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
@@ -26,9 +25,11 @@ import type {
   WorkItemsDebugResponse,
   WorkItemsPreviewResponse,
 } from "@/types/operational/work-items-preview.types";
+import type { QualityItem } from "@/features/os/operational/types";
 
-interface LoadedWorkItems {
+interface LoadedOperationalData {
   workItems: WorkItem[];
+  qualityItems: QualityItem[];
   warnings: string[];
   sourcesIndexed: {
     semanas_2026: boolean;
@@ -38,45 +39,40 @@ interface LoadedWorkItems {
 }
 
 export class WorkItemsService {
-  private async loadAllWorkItems(): Promise<LoadedWorkItems> {
-    await operationsDocumentRepository.refresh("pcp");
+  private cache: LoadedOperationalData | null = null;
+  private cacheAt = 0;
+  private readonly cacheTtlMs = 45_000;
 
-    const [semanasRef, pedidosRef, lotesRef] = await Promise.all([
-      operationsDocumentRepository.tryGetCriticalSheetRef("semanas_2026"),
-      operationsDocumentRepository.tryGetCriticalSheetRef("pedidos_2026"),
-      operationsDocumentRepository.tryGetCriticalSheetRef("asignacion_lotes_2026"),
-    ]);
-
-    const sourcesIndexed = {
-      semanas_2026: Boolean(semanasRef),
-      pedidos_2026: Boolean(pedidosRef),
-      asignacion_lotes_2026: Boolean(lotesRef),
-    };
-
-    if (!semanasRef) {
-      return {
-        workItems: [],
-        warnings: ["SEMANAS 2026 no indexado. Ejecutá GET /api/v1/drive/refresh."],
-        sourcesIndexed,
-      };
+  private async loadAll(): Promise<LoadedOperationalData> {
+    if (this.cache && Date.now() - this.cacheAt < this.cacheTtlMs) {
+      return this.cache;
     }
 
-    const { workItems, warnings } = await loadSemanasWorkItems(semanasRef);
-    return { workItems, warnings, sourcesIndexed };
+    const pipeline = await loadOperationalPipeline();
+    this.cache = {
+      workItems: pipeline.workItems,
+      qualityItems: pipeline.qualityItems,
+      warnings: pipeline.warnings,
+      sourcesIndexed: pipeline.sourcesIndexed,
+    };
+    this.cacheAt = Date.now();
+    return this.cache;
   }
 
   async listForSector(sector: SectorId, ownerPerson?: string | null): Promise<WorkItemsResponse> {
-    const { workItems, warnings, sourcesIndexed } = await this.loadAllWorkItems();
+    const { workItems, qualityItems, warnings, sourcesIndexed } = await this.loadAll();
 
-    if (!sourcesIndexed.semanas_2026) {
+    const hasAnySource = Object.values(sourcesIndexed).some(Boolean);
+    if (!hasAnySource) {
       return {
         sector,
         ownerPerson: ownerPerson ?? null,
         source: "drive",
         scannedAt: new Date().toISOString(),
         workItems: [],
+        qualityItems: [],
         counts: { total: 0, hoy: 0, semana: 0, pendientes: 0, bloqueados: 0 },
-        message: "SEMANAS 2026 no indexado — sin WorkItems reales.",
+        message: "Sin fuentes indexadas — ejecutá GET /api/v1/drive/refresh.",
         warnings,
       };
     }
@@ -89,21 +85,18 @@ export class WorkItemsService {
       source: "drive",
       scannedAt: new Date().toISOString(),
       workItems: filtered,
+      qualityItems: sector === "CALIDAD" ? qualityItems : [],
       counts: countMiTrabajoSections(filtered),
       warnings: warnings.slice(0, 10),
       message:
         filtered.length > 0
-          ? ownerPerson
-            ? `${filtered.length} WorkItem(s) para ${ownerPerson} en ${sector} desde SEMANAS 2026.`
-            : `${filtered.length} WorkItem(s) para ${sector} desde SEMANAS 2026.`
-          : ownerPerson
-            ? `No hay trabajos asignados a ${ownerPerson} en SEMANAS 2026.`
-            : "No hay trabajos asignados para este sector en SEMANAS 2026.",
+          ? `${filtered.length} WorkItem(s) para ${sector}${ownerPerson ? ` · ${ownerPerson}` : ""}.`
+          : `Sin trabajos para ${sector}${ownerPerson ? ` · ${ownerPerson}` : ""} en Sheets indexados.`,
     };
   }
 
   async getPreviewForSector(sector: SectorId): Promise<WorkItemsPreviewResponse> {
-    const { workItems, warnings, sourcesIndexed } = await this.loadAllWorkItems();
+    const { workItems, warnings, sourcesIndexed } = await this.loadAll();
     const profileConfig = SECTOR_PREVIEW_PROFILES[sector];
     const filtered = filterWorkItemsForSector(workItems, sector);
     const sections = partitionMiTrabajoSections(filtered);
@@ -112,26 +105,19 @@ export class WorkItemsService {
 
     const sourceBreakdown = {
       semanas_2026: bySource.semanas_2026 ?? 0,
-      pedidos_2026: 0,
-      asignacion_lotes_2026: 0,
+      pedidos_2026: bySource.pedidos_2026 ?? 0,
+      asignacion_lotes_2026: bySource.asignacion_lotes_2026 ?? 0,
     };
 
     const expectedSources =
       profileConfig?.expectedSources.map((src) => ({
         ...src,
         indexed: sourcesIndexed[src.key],
-        workItemCount:
-          src.key === "semanas_2026"
-            ? sourceBreakdown.semanas_2026
-            : src.key === "pedidos_2026"
-              ? 0
-              : 0,
+        workItemCount: sourceBreakdown[src.key] ?? 0,
       })) ?? [];
 
     const productionOverview =
-      sector === "PRODUCCION"
-        ? buildProductionOverview(workItems)
-        : undefined;
+      sector === "PRODUCCION" ? buildProductionOverview(workItems) : undefined;
 
     if (productionOverview) {
       productionOverview.warnings = warnings.slice(0, 10);
@@ -158,9 +144,7 @@ export class WorkItemsService {
       message:
         filtered.length > 0
           ? `${filtered.length} WorkItem(s) visibles para ${sector}.`
-          : sector === "CALIDAD"
-            ? "Calidad no recibe WorkItems desde SEMANAS en F8.1 — fuente principal: ASIGNACION DE LOTES (mapper F8.2)."
-            : "No hay trabajos asignados para este sector en SEMANAS 2026.",
+          : `No hay trabajos asignados para ${sector}.`,
       productionOverview,
       globalStats: {
         totalAllSectors: workItems.length,
@@ -171,7 +155,7 @@ export class WorkItemsService {
   }
 
   async getDebugSnapshot(): Promise<WorkItemsDebugResponse> {
-    const { workItems, warnings, sourcesIndexed } = await this.loadAllWorkItems();
+    const { workItems, warnings, sourcesIndexed } = await this.loadAll();
     const bySource = countWorkItemsBySource(workItems);
     const overview = buildProductionOverview(workItems);
     overview.warnings = warnings.slice(0, 20);
@@ -196,21 +180,17 @@ export class WorkItemsService {
       mapperWarnings: warnings,
       productionOverview: overview,
       sourcesIndexed,
-      sourcesMapped: {
-        semanas_2026: bySource.semanas_2026 ?? 0,
-        pedidos_2026: 0,
-        asignacion_lotes_2026: 0,
-      },
+      sourcesMapped: sourceBreakdownFrom(bySource),
       gaps: analyzeWorkItemGaps(workItems),
       message:
         workItems.length > 0
-          ? `${workItems.length} WorkItems desde SEMANAS 2026. PEDIDOS y LOTES pendientes F8.2.`
+          ? `${workItems.length} WorkItems desde pipeline operativo (SEMANAS + PEDIDOS + LOTES).`
           : "Sin WorkItems — verificar Drive y /api/v1/drive/refresh.",
     };
   }
 
   async getProductionOverview() {
-    const { workItems, warnings } = await this.loadAllWorkItems();
+    const { workItems, warnings } = await this.loadAll();
     if (workItems.length === 0) {
       return {
         scannedAt: new Date().toISOString(),
@@ -228,6 +208,14 @@ export class WorkItemsService {
     overview.warnings = warnings.slice(0, 10);
     return overview;
   }
+}
+
+function sourceBreakdownFrom(bySource: Record<string, number>) {
+  return {
+    semanas_2026: bySource.semanas_2026 ?? 0,
+    pedidos_2026: bySource.pedidos_2026 ?? 0,
+    asignacion_lotes_2026: bySource.asignacion_lotes_2026 ?? 0,
+  };
 }
 
 export const workItemsService = new WorkItemsService();

@@ -7,6 +7,7 @@ export function parsePedidoSummaries(rows: string[][]): PedidoSummary[] {
   for (const record of rowsToRecords(rows)) {
     const pedidoId = pickField(
       record,
+      "op",
       "pedidoId",
       "PEDIDO_ID",
       "pedido",

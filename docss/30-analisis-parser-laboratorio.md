@@ -1,7 +1,7 @@
 # 30 — Especificación del parser del laboratorio Genus
 
-> **Estado:** Especificación oficial — **sin implementación de código**  
-> **Versión:** 2.0 (correcciones conceptuales aprobadas)  
+> **Estado:** Especificación definitiva — **análisis cerrado; implementación en curso**  
+> **Versión:** 3.0 (decisiones finales aprobadas)  
 > **Fecha:** 2026-07-03  
 > **Contexto:** Los Excel compartidos son **referencia estructural únicamente**. La fuente de verdad operativa es **siempre Google Sheets en vivo** vía Drive.
 
@@ -11,9 +11,9 @@
 
 Genus OS no debe interpretar Google Sheets como tablas de base de datos. Debe interpretar **cómo opera el laboratorio**.
 
-El error de diseño actual fue tratar SEMANAS como tabla (`fila = trabajo`) y construir WorkItems al final mezclando fuentes. La arquitectura correcta invierte esa lógica:
+**Principio del sistema:** el WorkItem es la entidad central de Genus OS. No representa una fila de un Sheet — representa una **unidad real de trabajo del laboratorio**. Todo lo que ocurre en Genus OS ocurre sobre un WorkItem. Los parsers solo enriquecen esa entidad.
 
-**El WorkItem es la entidad principal.** Representa el trabajo operativo real del laboratorio. Cada parser especializado **enriquece** WorkItems existentes con la información de su dominio.
+El WorkItem **no depende de Google Sheets**. Es una entidad propia del dominio. Los Sheets enriquecen atributos según la fuente oficial de cada campo — **no hay prioridad global entre archivos**.
 
 ```text
 WorkItem (entidad central)
@@ -178,24 +178,40 @@ El PlannerParser debe detectar encabezados de línea (`LÍNEA 1`, `LINEA 2`, `L�
 
 ---
 
-## 2. Claves de unión
+## 2. Fuente oficial por atributo
 
-La resolución entre parsers sigue **estrictamente** este orden. No invertir.
+**No hay prioridad global entre Sheets** (prohibido: `PEDIDOS > LOTES > SEMANAS`). Cuando dos fuentes contienen el mismo dato, la decisión es **por atributo**.
 
-| Prioridad | Clave | Uso | Confianza |
-|-----------|-------|-----|-----------|
-| **1** | **OP** | Identificador comercial único del pedido | Alta |
-| **2** | **Lote** (`N° LOTE` / `N°LOTE`) | Une PEDIDOS ↔ LOTES ↔ planner cuando aparece | Alta |
-| **3** | **ID interno** (`internalId`) | Generado por Genus al crear el WorkItem; continuidad entre enriquecimientos | Alta |
-| **4** | **Cliente + Producto** | **Solo fallback** cuando OP, lote e internalId no resuelven | Baja |
+| Campo | Fuente oficial |
+|-------|----------------|
+| OP | PEDIDOS 2026 |
+| Cliente | PEDIDOS 2026 |
+| Producto | PEDIDOS 2026 |
+| Cantidad | PEDIDOS 2026 |
+| Estado comercial | PEDIDOS 2026 |
+| Responsable administrativo | PEDIDOS 2026 |
+| Día | SEMANAS 2026 |
+| Semana | SEMANAS 2026 |
+| Sector operativo | SEMANAS 2026 |
+| Línea | SEMANAS 2026 |
+| BranchOwner (rama) | SEMANAS 2026 |
+| SectorLead (encargado) | SEMANAS 2026 |
+| Planificación (cliente/producto/cantidad del planner) | SEMANAS 2026 |
+| Lote (identidad calidad) | ASIGNACIÓN DE LOTES 2026 |
+| OE | ASIGNACIÓN DE LOTES 2026 |
+| OA | ASIGNACIÓN DE LOTES 2026 |
+| RL | ASIGNACIÓN DE LOTES 2026 |
+| Estado calidad | ASIGNACIÓN DE LOTES 2026 |
+| KPIs | Dashboard PEDIDOS 2026 |
 
-### Reglas de matching
+### Claves de matching (solo para vincular WorkItems entre parsers)
 
-1. **Nunca** usar Cliente + Producto como criterio principal.
-2. Si PlannerParser crea un WorkItem y PedidosParser encuentra OP vía lote en la misma fila administrativa → match por lote, luego asignar OP.
-3. Si un WorkItem tiene OP, todas las actualizaciones posteriores deben preferir OP sobre cualquier heurística difusa.
-4. Cliente + Producto requiere normalización (acentos, aliases) y marca `confidence: low`.
-5. Un slot del planner **sin match** sigue siendo WorkItem válido (trabajo planificado sin OP aún) — no descartar.
+| Prioridad | Clave | Uso |
+|-----------|-------|-----|
+| 1 | OP | Identificador comercial |
+| 2 | Lote | Une pedido ↔ calidad ↔ planner |
+| 3 | ID interno (`internalId`) | Continuidad Genus entre enriquecimientos |
+| 4 | Cliente + Producto | **Solo fallback** — nunca criterio principal |
 
 ---
 
@@ -554,8 +570,9 @@ El objetivo es **representar la operación real del laboratorio** utilizando Goo
 
 | Tema | Decisión |
 |------|----------|
-| WorkItem | Entidad central enriquecida por parsers — no join al final |
-| Claves de unión | OP → Lote → internalId → Cliente+Producto (solo fallback) |
+| WorkItem | Entidad de dominio central — no fila de Sheet; no depende de Google Sheets |
+| Fuentes | Por atributo — no prioridad global entre archivos |
+| Matching | OP → Lote → internalId → Cliente+Producto (solo fallback) |
 | Parsers | PlannerParser, PedidosParser, LotesParser, DashboardParser — especializados |
 | SEMANAS | Planner visual — bloques, no tabla |
 | Envasado | Sector → Línea → Trabajo; líneas existen (L1–L3/L4 masivo, L1–L2 premium) |
@@ -576,11 +593,32 @@ El objetivo es **representar la operación real del laboratorio** utilizando Goo
 
 ---
 
+## 12. Regla de desarrollo (v3)
+
+**Hasta que `/mi-trabajo` funcione con datos reales**, no se aceptan PR que agreguen:
+
+- nuevas pantallas
+- nuevos módulos
+- nuevas vistas
+- mejoras visuales importantes
+
+**Prioridad absoluta:**
+
+1. Leer correctamente los Google Sheets vivos (SEMANAS, PEDIDOS, ASIGNACIÓN DE LOTES 2026).
+2. Construir correctamente los WorkItems de dominio.
+3. Mostrarlos en `/mi-trabajo` para cada usuario operativo.
+
+Usuarios objetivo: Francisco, Belén, Santino, Cristian, Nicolás, Santiago, Agustina, Alberto.
+
+Genus OS debe dejar de sentirse como demo y comportarse como el **sistema operativo real** del laboratorio.
+
+---
+
 ## Siguiente paso
 
-**Documento listo como especificación oficial.** Cuando el equipo confirme que no faltan ajustes:
+**Etapa de análisis cerrada.** Implementación en curso sobre Google Sheets reales:
 
-1. Implementar `WorkItemRegistry` + pipeline de enriquecimiento
-2. Implementar los cuatro parsers sobre Google Sheets reales
-3. Reemplazar pipeline actual (`semanas-to-work-items` como única fuente)
-4. Validar con usuarios reales por sector
+1. `WorkItemRegistry` + pipeline de enriquecimiento por atributo
+2. PlannerParser, PedidosParser, LotesParser, DashboardParser
+3. Reemplazar mocks y pipeline `semanas-to-work-items`-only
+4. Validar `/mi-trabajo` por sector y persona

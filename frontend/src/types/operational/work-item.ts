@@ -1,6 +1,10 @@
 import type { SectorId } from "@/types/operational/sector";
 
-export const WORK_ITEM_SOURCES = ["semanas_2026"] as const;
+export const WORK_ITEM_SOURCES = [
+  "semanas_2026",
+  "pedidos_2026",
+  "asignacion_lotes_2026",
+] as const;
 export type WorkItemSource = (typeof WORK_ITEM_SOURCES)[number];
 
 export const ORIGIN_STAGES = [
@@ -88,4 +92,5 @@ export interface WorkItemsResponse {
   };
   message?: string;
   warnings?: string[];
+  qualityItems?: import("@/features/os/operational/types").QualityItem[];
 }
