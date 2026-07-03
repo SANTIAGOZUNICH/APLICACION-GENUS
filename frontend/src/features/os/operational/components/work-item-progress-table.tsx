@@ -7,6 +7,7 @@ import {
   formatOperationalDifference,
   plannedQuantityLabel,
 } from "../lib/operational-progress";
+import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { ActionButton, StatusChip } from "./operational-ui";
 
 interface WorkItemProgressTableProps {
@@ -126,12 +127,16 @@ export function WorkItemProgressTable({
             const planned = plannedQuantityLabel(item.quantity, item.unit);
             const diff = formatOperationalDifference(item.quantity, draft.finishedQty);
             const ref = variant === "envasado" ? item.oaRef : item.oeRef;
-            const isDone = item.status === "completo";
+            const isTransferred = isWorkTransferredStatus(item.status);
 
             return (
               <tr
                 key={item.id}
-                className="border-b border-[var(--os-border-subtle)] last:border-b-0 hover:bg-[var(--os-bg)]/60"
+                className={`border-b border-[var(--os-border-subtle)] last:border-b-0 ${
+                  isTransferred
+                    ? "border-l-4 border-l-[var(--os-teal)] bg-[var(--os-teal-soft)]/40"
+                    : "hover:bg-[var(--os-bg)]/60"
+                }`}
               >
                 {variant === "envasado" && (
                   <td className="px-3 py-2.5 align-top font-medium">
@@ -150,7 +155,7 @@ export function WorkItemProgressTable({
                     value={draft.finishedQty}
                     onChange={(e) => updateDraft(item.id, { finishedQty: e.target.value })}
                     placeholder="0"
-                    disabled={isDone}
+                    disabled={isTransferred}
                     className="w-24 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm tabular-nums disabled:opacity-50"
                   />
                 </td>
@@ -174,21 +179,40 @@ export function WorkItemProgressTable({
                   {displayField(ref)}
                 </td>
                 <td className="px-3 py-2.5 align-top">
-                  <StatusChip status={item.status} />
+                  {isTransferred ? (
+                    <div className="space-y-1">
+                      <StatusChip status={item.status} />
+                      <p className="text-xs font-medium text-[var(--os-teal)]">
+                        {WORK_TRANSFER.deliveredToQuality}
+                      </p>
+                      <p className="text-xs text-[var(--os-text-muted)]">
+                        {WORK_TRANSFER.nextResponsibleQuality}
+                      </p>
+                    </div>
+                  ) : (
+                    <StatusChip status={item.status} />
+                  )}
                 </td>
                 <td className="px-3 py-2.5 align-top">
-                  <input
-                    type="text"
-                    value={draft.observation}
-                    onChange={(e) => updateDraft(item.id, { observation: e.target.value })}
-                    placeholder="Observación…"
-                    disabled={isDone}
-                    className="min-w-[140px] rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm disabled:opacity-50"
-                  />
+                  {isTransferred ? (
+                    <span className="text-xs text-[var(--os-text-muted)]">
+                      {getObservation(item.id) || "—"}
+                    </span>
+                  ) : (
+                    <input
+                      type="text"
+                      value={draft.observation}
+                      onChange={(e) => updateDraft(item.id, { observation: e.target.value })}
+                      placeholder="Observación…"
+                      className="min-w-[140px] rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm"
+                    />
+                  )}
                 </td>
                 <td className="px-3 py-2.5 align-top">
-                  {isDone ? (
-                    <span className="text-xs text-[var(--os-text-muted)]">Notificado a Calidad</span>
+                  {isTransferred ? (
+                    <span className="text-xs font-medium text-[var(--os-teal)]">
+                      {WORK_TRANSFER.deliveredToQuality}
+                    </span>
                   ) : (
                     <div className="flex flex-wrap gap-2">
                       <ActionButton
@@ -202,7 +226,7 @@ export function WorkItemProgressTable({
                         }
                       />
                       <ActionButton
-                        label="Marcar terminado"
+                        label={WORK_TRANSFER.markFinishedAction}
                         variant="approve"
                         onClick={() =>
                           onMarkFinished(item, {

@@ -124,7 +124,9 @@ export function recordWorkProgress(
     updatedAt: new Date().toISOString(),
     updatedBy: payload.updatedBy,
     completedAt:
-      payload.status === "completo" ? new Date().toISOString() : existing?.completedAt,
+      payload.status === "completo" || payload.status === "revision"
+        ? new Date().toISOString()
+        : existing?.completedAt,
   };
 
   const map = readProgressMap();
@@ -133,7 +135,7 @@ export function recordWorkProgress(
   return record;
 }
 
-/** Marca terminado + emite evento para Calidad / Producción. */
+/** Marca terminado y transfiere responsabilidad a Calidad. */
 export function recordWorkCompletion(
   item: WorkItem,
   payload: { finishedQty: string; observation: string; completedBy: string }
@@ -141,7 +143,7 @@ export function recordWorkCompletion(
   const completedAt = new Date().toISOString();
   const progress = recordWorkProgress(item.id, {
     ...payload,
-    status: "completo",
+    status: "revision",
     updatedBy: payload.completedBy,
   });
   progress.completedAt = completedAt;

@@ -1,5 +1,6 @@
 import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
 import type { QualityItem } from "../types";
+import { isWorkTransferredStatus, WORK_TRANSFER } from "./work-transfer-labels";
 
 export function filterWorkItemsByLine(items: WorkItem[], line: string): WorkItem[] {
   const normalized = line.trim().toLowerCase();
@@ -48,19 +49,25 @@ export function filterWorkItemsPendingEnvasado(items: WorkItem[]): WorkItem[] {
   );
 }
 
-export function filterWorkItemsCompletedElaboracion(items: WorkItem[]): WorkItem[] {
+export function filterWorkItemsTransferredElaboracion(items: WorkItem[]): WorkItem[] {
   return items.filter(
-    (item) => item.sector === "ELABORACION" && item.status === "completo"
+    (item) => item.sector === "ELABORACION" && isWorkTransferredStatus(item.status)
   );
 }
 
-export function filterWorkItemsCompletedEnvasado(items: WorkItem[]): WorkItem[] {
+export function filterWorkItemsTransferredEnvasado(items: WorkItem[]): WorkItem[] {
   return items.filter(
     (item) =>
       (item.sector === "ENVASADO_MASIVO" || item.sector === "ENVASADO_PREMIUM") &&
-      item.status === "completo"
+      isWorkTransferredStatus(item.status)
   );
 }
+
+/** @deprecated Usar filterWorkItemsTransferredElaboracion */
+export const filterWorkItemsCompletedElaboracion = filterWorkItemsTransferredElaboracion;
+
+/** @deprecated Usar filterWorkItemsTransferredEnvasado */
+export const filterWorkItemsCompletedEnvasado = filterWorkItemsTransferredEnvasado;
 
 export function filterQualityReceivedPending(items: QualityItem[]): QualityItem[] {
   return items.filter(
@@ -69,7 +76,7 @@ export function filterQualityReceivedPending(items: QualityItem[]): QualityItem[
 }
 
 export function workItemStatusLabel(status: WorkItemStatus): string {
-  if (status === "completo") return "Terminado";
+  if (isWorkTransferredStatus(status)) return WORK_TRANSFER.pendingReview;
   return status.replace(/_/g, " ");
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 
 export interface OperationalTab {
   id: string;
@@ -191,14 +192,29 @@ export function ActionButton({ label, variant, onClick, disabled }: ActionButton
   );
 }
 
-export function StatusChip({ status }: { status: string }) {
+export function StatusChip({
+  status,
+  transferredInbox,
+}: {
+  status: string;
+  /** Ítem en bandeja Calidad recibido por transferencia. */
+  transferredInbox?: boolean;
+}) {
   const normalized = status.toLowerCase();
   let cls = "bg-[var(--os-bg)] text-[var(--os-text-muted)]";
   let label = status.replace(/_/g, " ");
 
-  if (normalized === "aprobado" || normalized === "completo") {
+  if (transferredInbox && normalized === "pendiente") {
+    cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
+    label = WORK_TRANSFER.awaitingApproval;
+  } else if (normalized === "aprobado") {
     cls = "bg-emerald-50 text-emerald-800";
-    if (normalized === "completo") label = "Terminado";
+  } else if (isWorkTransferredStatus(normalized) || normalized === "revision") {
+    cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
+    label = WORK_TRANSFER.pendingReview;
+  } else if (normalized === "completo") {
+    cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
+    label = WORK_TRANSFER.pendingReview;
   } else if (normalized === "rechazado" || normalized === "bloqueado") {
     cls = "bg-rose-50 text-rose-800";
   } else if (normalized === "pendiente" || normalized === "en_curso") {

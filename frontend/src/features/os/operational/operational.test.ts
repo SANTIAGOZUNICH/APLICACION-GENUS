@@ -9,7 +9,7 @@ import {
   filterQualityByKind,
   filterQualityByStatus,
   filterQualityToday,
-  filterWorkItemsCompletedElaboracion,
+  filterWorkItemsTransferredElaboracion,
   filterWorkItemsPendingElaboracion,
   filterWorkItemsPendingEnvasado,
 } from "./lib/operational-filters";
@@ -95,7 +95,7 @@ describe("operational-store", () => {
     expect(getEffectiveQualityStatus("q-salida-1", "pendiente")).toBe("rechazado");
   });
 
-  it("persiste avance y marca terminado", () => {
+  it("persiste avance y transfiere a Calidad", () => {
     recordWorkProgress("wi-1", {
       finishedQty: "100",
       observation: "OK",
@@ -107,12 +107,12 @@ describe("operational-store", () => {
     recordWorkProgress("wi-1", {
       finishedQty: "120",
       observation: "Cierre",
-      status: "completo",
+      status: "revision",
     });
-    expect(getEffectiveWorkStatus("wi-1", "pendiente")).toBe("completo");
+    expect(getEffectiveWorkStatus("wi-1", "pendiente")).toBe("revision");
   });
 
-  it("recordWorkCompletion emite evento cross-sector", () => {
+  it("recordWorkCompletion transfiere trabajo a Calidad", () => {
     const item = mockWorkItemsForSector("ENVASADO_MASIVO")[0]!;
     const { event } = recordWorkCompletion(item, {
       finishedQty: "3300",
@@ -120,7 +120,7 @@ describe("operational-store", () => {
       completedBy: "Operario Masivo",
     });
 
-    expect(getEffectiveWorkStatus(item.id, item.status)).toBe("completo");
+    expect(getEffectiveWorkStatus(item.id, item.status)).toBe("revision");
     expect(readCompletionEvents()).toHaveLength(1);
     expect(event.workItemId).toBe(item.id);
     expect(event.sourceSector).toBe("ENVASADO_MASIVO");
@@ -129,7 +129,7 @@ describe("operational-store", () => {
 });
 
 describe("completion-events", () => {
-  it("convierte terminado en ítem Calidad pendiente", () => {
+  it("convierte transferencia en ítem Calidad en bandeja", () => {
     const item = mockWorkItemsForSector("ELABORACION", "Cristian")[0]!;
     const event = workItemToCompletionEvent(item, {
       finishedQty: "120",
@@ -148,7 +148,7 @@ describe("completion-events", () => {
     expect(received?.completedBy).toBe("Cristian");
   });
 
-  it("arma feed de actividad con terminados y decisiones", () => {
+  it("arma flujo de planta con transferencias y decisiones", () => {
     const item = mockWorkItemsForSector("ENVASADO_PREMIUM")[0]!;
     const event = workItemToCompletionEvent(item, {
       finishedQty: "500",
@@ -172,16 +172,16 @@ describe("completion-events", () => {
 
     expect(feed).toHaveLength(2);
     expect(feed[0]?.type).toBe("quality_approve");
-    expect(feed[1]?.type).toBe("completion");
+    expect(feed[1]?.type).toBe("transfer");
   });
 
-  it("filtra elaboraciones terminadas para Producción", () => {
+  it("filtra elaboraciones transferidas para Producción", () => {
     const items = mockWorkItemsForSector("PRODUCCION").map((item, index) =>
-      index === 0 ? { ...item, status: "completo" as const } : item
+      index === 0 ? { ...item, status: "revision" as const } : item
     );
-    const completed = filterWorkItemsCompletedElaboracion(items);
-    expect(completed.some((i) => i.status === "completo")).toBe(true);
-    expect(filterWorkItemsPendingElaboracion(items).every((i) => i.status !== "completo")).toBe(
+    const transferred = filterWorkItemsTransferredElaboracion(items);
+    expect(transferred.some((i) => i.status === "revision")).toBe(true);
+    expect(filterWorkItemsPendingElaboracion(items).every((i) => i.status !== "revision")).toBe(
       true
     );
   });

@@ -2,6 +2,7 @@ import type { SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
 import type { CompletionEvent, OperationalActivityEntry, QualityItem } from "../types";
 import { formatQuantity } from "./operational-filters";
+import { WORK_TRANSFER } from "./work-transfer-labels";
 
 /** ID estable Calidad ↔ WorkItem — preparado para escritura Sheets. */
 export function qualityItemIdForWorkItem(workItemId: string): string {
@@ -105,8 +106,8 @@ export function buildOperationalActivityFeed(input: {
       id: event.id,
       at: event.completedAt,
       actor: event.completedBy,
-      type: "completion",
-      message: `${sectorLabel} terminó ${event.product}${event.client ? ` (${event.client})` : ""}`,
+      type: "transfer",
+      message: `${sectorLabel} entregó ${event.product}${event.client ? ` (${event.client})` : ""} · ${WORK_TRANSFER.nextResponsibleQuality}`,
     });
   }
 

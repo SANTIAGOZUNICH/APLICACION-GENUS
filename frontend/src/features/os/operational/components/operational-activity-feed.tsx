@@ -1,21 +1,22 @@
 "use client";
 
 import type { OperationalActivityEntry } from "../types";
+import { WORK_TRANSFER } from "../lib/work-transfer-labels";
 
 interface OperationalActivityFeedProps {
   entries: OperationalActivityEntry[];
   title?: string;
 }
 
-/** Actividad reciente — sin popups; lista compacta cross-sector. */
+/** Flujo de planta — transferencias entre sectores, sin popups. */
 export function OperationalActivityFeed({
   entries,
-  title = "Actividad reciente",
+  title = WORK_TRANSFER.recentFlowTitle,
 }: OperationalActivityFeedProps) {
   if (entries.length === 0) {
     return (
       <p className="rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-border)] px-4 py-3 text-sm text-[var(--os-text-muted)]">
-        Sin actividad registrada aún.
+        Sin transferencias registradas aún.
       </p>
     );
   }
@@ -44,7 +45,7 @@ export function OperationalActivityFeed({
 
 function ActivityDot({ type }: { type: OperationalActivityEntry["type"] }) {
   const cls =
-    type === "completion"
+    type === "transfer"
       ? "bg-[var(--os-teal)]"
       : type === "quality_approve"
         ? "bg-emerald-500"

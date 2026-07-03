@@ -20,12 +20,13 @@ import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { buildOperationalActivityFeed } from "../lib/completion-events";
 import {
   filterQualityByStatus,
-  filterWorkItemsCompletedElaboracion,
-  filterWorkItemsCompletedEnvasado,
   filterWorkItemsPendingElaboracion,
   filterWorkItemsPendingEnvasado,
+  filterWorkItemsTransferredElaboracion,
+  filterWorkItemsTransferredEnvasado,
   formatQuantity,
 } from "../lib/operational-filters";
+import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { useOperationalStore } from "../store/operational-store-context";
 import type { QualityItem } from "../types";
 import type { WorkItem } from "@/types/operational/work-item";
@@ -40,11 +41,11 @@ const PRODUCCION_TABS = [
 
 type ProduccionTabId = (typeof PRODUCCION_TABS)[number]["id"];
 
-function sortWorkItemsCompletedFirst(items: WorkItem[]): WorkItem[] {
+function sortWorkItemsTransferredFirst(items: WorkItem[]): WorkItem[] {
   return [...items].sort((a, b) => {
-    const aDone = a.status === "completo" ? 1 : 0;
-    const bDone = b.status === "completo" ? 1 : 0;
-    if (bDone !== aDone) return bDone - aDone;
+    const aTransferred = isWorkTransferredStatus(a.status) ? 1 : 0;
+    const bTransferred = isWorkTransferredStatus(b.status) ? 1 : 0;
+    if (bTransferred !== aTransferred) return bTransferred - aTransferred;
     return (a.product ?? "").localeCompare(b.product ?? "", "es", { sensitivity: "base" });
   });
 }
@@ -109,33 +110,33 @@ export function ProduccionOperationalView() {
     () => filterWorkItemsPendingElaboracion(workItems),
     [workItems]
   );
-  const terminadoElaboracion = useMemo(
-    () => filterWorkItemsCompletedElaboracion(workItems),
+  const transferidoElaboracion = useMemo(
+    () => filterWorkItemsTransferredElaboracion(workItems),
     [workItems]
   );
   const elaboracionRows = useMemo(
-    () => sortWorkItemsCompletedFirst([...pendienteElaboracion, ...terminadoElaboracion]),
-    [pendienteElaboracion, terminadoElaboracion]
+    () => sortWorkItemsTransferredFirst([...pendienteElaboracion, ...transferidoElaboracion]),
+    [pendienteElaboracion, transferidoElaboracion]
   );
   const pendienteEnvasado = useMemo(
     () => filterWorkItemsPendingEnvasado(workItems),
     [workItems]
   );
-  const terminadoEnvasado = useMemo(
-    () => filterWorkItemsCompletedEnvasado(workItems),
+  const transferidoEnvasado = useMemo(
+    () => filterWorkItemsTransferredEnvasado(workItems),
     [workItems]
   );
   const envasadoRows = useMemo(
-    () => sortWorkItemsCompletedFirst([...pendienteEnvasado, ...terminadoEnvasado]),
-    [pendienteEnvasado, terminadoEnvasado]
+    () => sortWorkItemsTransferredFirst([...pendienteEnvasado, ...transferidoEnvasado]),
+    [pendienteEnvasado, transferidoEnvasado]
   );
   const overview = useMemo(
     () => buildProductionOverview(workItems, data?.source === "drive" ? "semanas_2026" : "semanas_2026"),
     [workItems, data?.source]
   );
 
-  const completados = useMemo(
-    () => workItems.filter((item) => item.status === "completo").length,
+  const entregadosCalidad = useMemo(
+    () => workItems.filter((item) => isWorkTransferredStatus(item.status)).length,
     [workItems]
   );
   const enCurso = useMemo(
@@ -205,7 +206,12 @@ export function ProduccionOperationalView() {
       {
         key: "status",
         header: "Estado",
-        render: (row) => <StatusChip status={row.status} />,
+        render: (row) => (
+          <StatusChip
+            status={row.status}
+            transferredInbox={isWorkTransferredStatus(row.status)}
+          />
+        ),
       },
     ],
     []
@@ -282,11 +288,11 @@ export function ProduccionOperationalView() {
         )}
         {activeTab === "elaboracion" && (
           <>
-            {terminadoElaboracion.length > 0 && (
+            {transferidoElaboracion.length > 0 && (
               <p className="mb-3 text-sm text-[var(--os-text-muted)]">
-                {terminadoElaboracion.length} elaboración
-                {terminadoElaboracion.length === 1 ? "" : "es"} terminada
-                {terminadoElaboracion.length === 1 ? "" : "s"} — pendiente revisión Calidad.
+                {transferidoElaboracion.length} elaboración
+                {transferidoElaboracion.length === 1 ? "" : "es"} {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
+                {WORK_TRANSFER.pendingReview.toLowerCase()}.
               </p>
             )}
             <OperationalTable
@@ -299,11 +305,11 @@ export function ProduccionOperationalView() {
         )}
         {activeTab === "envasados" && (
           <>
-            {terminadoEnvasado.length > 0 && (
+            {transferidoEnvasado.length > 0 && (
               <p className="mb-3 text-sm text-[var(--os-text-muted)]">
-                {terminadoEnvasado.length} envasado
-                {terminadoEnvasado.length === 1 ? "" : "s"} terminado
-                {terminadoEnvasado.length === 1 ? "" : "s"} — pendiente revisión Calidad.
+                {transferidoEnvasado.length} envasado
+                {transferidoEnvasado.length === 1 ? "" : "s"} {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
+                {WORK_TRANSFER.pendingReview.toLowerCase()}.
               </p>
             )}
             <OperationalTable
@@ -323,9 +329,9 @@ export function ProduccionOperationalView() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <KpiCard label="Total trabajos en plan" value={workItems.length} />
-              <KpiCard label="Completados" value={completados} />
+              <KpiCard label={WORK_TRANSFER.kpiDeliveredToQuality} value={entregadosCalidad} />
               <KpiCard label="En curso" value={enCurso} />
-              <KpiCard label="Terminados notificados" value={completionEvents.length} />
+              <KpiCard label="Transferencias en bandeja Calidad" value={completionEvents.length} />
               <KpiCard label="Aprobados calidad" value={aprobados.length} />
               <KpiCard label="Rechazados calidad" value={rechazados.length} />
               <KpiCard label="Bloqueos" value={overview.blockers.length} />

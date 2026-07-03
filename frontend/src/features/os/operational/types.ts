@@ -18,14 +18,14 @@ export interface QualityItem {
   dayLabel: string;
   status: QualityDecisionStatus;
   relatedWorkItemId: string | null;
-  /** Sector que marcó terminado — evento cross-sector. */
+  /** Sector que entregó el trabajo — transferencia cross-sector. */
   receivedFrom?: SectorId | null;
   completedAt?: string | null;
   completedBy?: string | null;
   observation?: string | null;
 }
 
-/** Evento de terminado — demo localStorage; futuro POST Sheets. */
+/** Registro de transferencia de trabajo — demo localStorage; futuro POST Sheets. */
 export interface CompletionEvent {
   id: string;
   workItemId: string;
@@ -52,7 +52,7 @@ export interface OperationalActivityEntry {
   at: string;
   actor: string;
   message: string;
-  type: "completion" | "quality_approve" | "quality_reject";
+  type: "transfer" | "quality_approve" | "quality_reject";
 }
 
 export interface OperationalPlanSnapshot {

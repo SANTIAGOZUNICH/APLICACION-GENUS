@@ -16,6 +16,7 @@ import {
 } from "../components/operational-ui";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { filterQualityByKind, filterQualityByStatus } from "../lib/operational-filters";
+import { WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { useOperationalStore } from "../store/operational-store-context";
 import type { QualityItem } from "../types";
 
@@ -37,7 +38,7 @@ function sortReceivedFirst(items: QualityItem[]): QualityItem[] {
   });
 }
 
-/** Calidad — pendientes recibidos de sectores + aprobar/rechazar. */
+/** Calidad — bandeja de trabajos transferidos + aprobar/rechazar. */
 export function CalidadOperationalView() {
   const workspace = useRequiredWorkspace();
   const {
@@ -72,7 +73,7 @@ export function CalidadOperationalView() {
     [qualityItems]
   );
 
-  const recibidosCount = useMemo(
+  const transferidosCount = useMemo(
     () =>
       filterQualityByStatus(qualityItems, "pendiente").filter((item) => item.receivedFrom).length,
     [qualityItems]
@@ -130,7 +131,7 @@ export function CalidadOperationalView() {
           ? [
               {
                 key: "received",
-                header: "Recibido de",
+                header: "Entregado por",
                 render: (row) =>
                   row.receivedFrom ? (
                     <span className="text-xs font-medium text-[var(--os-teal)]">
@@ -164,7 +165,7 @@ export function CalidadOperationalView() {
           : [
               {
                 key: "received",
-                header: "Recibido de",
+                header: "Entregado por",
                 render: (row) =>
                   row.receivedFrom ? (
                     <span className="text-xs font-medium text-[var(--os-teal)]">
@@ -193,7 +194,9 @@ export function CalidadOperationalView() {
         {
           key: "status",
           header: "Estado",
-          render: (row) => <StatusChip status={row.status} />,
+          render: (row) => (
+            <StatusChip status={row.status} transferredInbox={Boolean(row.receivedFrom)} />
+          ),
         },
         {
           key: "observation",
@@ -254,10 +257,11 @@ export function CalidadOperationalView() {
         />
       </header>
 
-      {recibidosCount > 0 && (
+      {transferidosCount > 0 && (
         <div className="mb-4 rounded-[var(--os-radius-sm)] border border-[var(--os-teal)]/30 bg-[var(--os-teal-soft)] px-4 py-3 text-sm text-[var(--os-text)]">
-          <strong>Pendientes recibidos:</strong> {recibidosCount} terminado
-          {recibidosCount === 1 ? "" : "s"} de planta esperando revisión de Calidad.
+          <strong>{WORK_TRANSFER.inboxBannerTitle}:</strong> {transferidosCount} trabajo
+          {transferidosCount === 1 ? "" : "s"} entregado
+          {transferidosCount === 1 ? "" : "s"} desde planta — {WORK_TRANSFER.awaitingApproval.toLowerCase()}.
         </div>
       )}
 
