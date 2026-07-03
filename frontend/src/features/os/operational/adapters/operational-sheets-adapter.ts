@@ -1,5 +1,7 @@
 import { fetchWorkItems, OperationsApiError } from "@/lib/api/operations-client";
 import type { SectorId } from "@/types/operational/sector";
+import { mergeQualityItemsWithCompletions } from "../lib/completion-events";
+import { readCompletionEvents } from "../store/operational-store";
 import { buildMockOperationalSnapshot, mockQualityItems } from "../mock/mock-operational-plan";
 import type { OperationalPlanSnapshot, QualityItem } from "../types";
 
@@ -7,7 +9,19 @@ export interface LoadOperationalPlanOptions {
   ownerPerson?: string | null;
 }
 
-/** Carga plan operativo — API real con fallback demo tipo SEMANAS. */
+function mergeCompletionsIntoSnapshot(
+  snapshot: OperationalPlanSnapshot
+): OperationalPlanSnapshot {
+  const events = readCompletionEvents();
+  if (events.length === 0) return snapshot;
+
+  return {
+    ...snapshot,
+    qualityItems: mergeQualityItemsWithCompletions(snapshot.qualityItems, events),
+  };
+}
+
+/** Carga plan operativo — API real con fallback demo; incluye terminados cross-sector. */
 export async function loadOperationalPlan(
   sector: SectorId,
   options?: LoadOperationalPlanOptions
@@ -17,15 +31,15 @@ export async function loadOperationalPlan(
   try {
     const response = await fetchWorkItems(sector, { ownerPerson });
     if (response.workItems.length > 0) {
-      return {
+      return mergeCompletionsIntoSnapshot({
         sector,
         ownerPerson,
         source: response.source,
         scannedAt: response.scannedAt,
         workItems: response.workItems,
-        qualityItems: mockQualityItems(),
+        qualityItems: mergeQualityItemsWithCompletions(mockQualityItems(), readCompletionEvents()),
         message: response.message,
-      };
+      });
     }
   } catch (err) {
     if (!(err instanceof OperationsApiError)) {
@@ -33,7 +47,7 @@ export async function loadOperationalPlan(
     }
   }
 
-  return buildMockOperationalSnapshot(sector, ownerPerson);
+  return mergeCompletionsIntoSnapshot(buildMockOperationalSnapshot(sector, ownerPerson));
 }
 
 export function applyQualityDecisionsToItems(

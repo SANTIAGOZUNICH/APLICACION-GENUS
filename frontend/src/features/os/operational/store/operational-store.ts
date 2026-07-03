@@ -1,8 +1,10 @@
-import type { WorkItemStatus } from "@/types/operational/work-item";
-import type { QualityDecisionRecord, QualityDecisionStatus } from "../types";
+import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
+import { workItemToCompletionEvent } from "../lib/completion-events";
+import type { CompletionEvent, QualityDecisionRecord, QualityDecisionStatus } from "../types";
 
 const DECISIONS_KEY = "genus_os_operational_decisions";
 const PROGRESS_KEY = "genus_os_work_progress";
+const COMPLETIONS_KEY = "genus_os_completion_events";
 
 export type DecisionMap = Record<string, QualityDecisionRecord>;
 
@@ -13,6 +15,7 @@ export interface WorkProgressRecord {
   status?: WorkItemStatus;
   updatedAt: string;
   updatedBy?: string;
+  completedAt?: string;
 }
 
 export type ProgressMap = Record<string, WorkProgressRecord>;
@@ -28,9 +31,25 @@ function readJsonMap<T>(key: string): Record<string, T> {
   }
 }
 
+function readJsonArray<T>(key: string): T[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [];
+    return JSON.parse(raw) as T[];
+  } catch {
+    return [];
+  }
+}
+
 function writeJsonMap<T>(key: string, map: Record<string, T>): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(key, JSON.stringify(map));
+}
+
+function writeJsonArray<T>(key: string, items: T[]): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(key, JSON.stringify(items));
 }
 
 export function readDecisionMap(): DecisionMap {
@@ -47,6 +66,14 @@ export function readProgressMap(): ProgressMap {
 
 export function writeProgressMap(map: ProgressMap): void {
   writeJsonMap(PROGRESS_KEY, map);
+}
+
+export function readCompletionEvents(): CompletionEvent[] {
+  return readJsonArray<CompletionEvent>(COMPLETIONS_KEY);
+}
+
+export function writeCompletionEvents(events: CompletionEvent[]): void {
+  writeJsonArray(COMPLETIONS_KEY, events);
 }
 
 export function recordQualityDecision(
@@ -88,6 +115,7 @@ export function recordWorkProgress(
     updatedBy?: string;
   }
 ): WorkProgressRecord {
+  const existing = readProgressMap()[itemId];
   const record: WorkProgressRecord = {
     itemId,
     finishedQty: payload.finishedQty.trim(),
@@ -95,12 +123,44 @@ export function recordWorkProgress(
     status: payload.status,
     updatedAt: new Date().toISOString(),
     updatedBy: payload.updatedBy,
+    completedAt:
+      payload.status === "completo" || payload.status === "revision"
+        ? new Date().toISOString()
+        : existing?.completedAt,
   };
 
   const map = readProgressMap();
   map[itemId] = record;
   writeProgressMap(map);
   return record;
+}
+
+/** Marca terminado y transfiere responsabilidad a Calidad. */
+export function recordWorkCompletion(
+  item: WorkItem,
+  payload: { finishedQty: string; observation: string; completedBy: string }
+): { progress: WorkProgressRecord; event: CompletionEvent } {
+  const completedAt = new Date().toISOString();
+  const progress = recordWorkProgress(item.id, {
+    ...payload,
+    status: "revision",
+    updatedBy: payload.completedBy,
+  });
+  progress.completedAt = completedAt;
+  const map = readProgressMap();
+  map[item.id] = progress;
+  writeProgressMap(map);
+
+  const event = workItemToCompletionEvent(item, {
+    ...payload,
+    completedAt,
+  });
+
+  const events = readCompletionEvents().filter((e) => e.workItemId !== item.id);
+  events.push(event);
+  writeCompletionEvents(events);
+
+  return { progress, event };
 }
 
 export function getWorkProgress(itemId: string): WorkProgressRecord | null {
@@ -143,7 +203,13 @@ export function clearWorkProgress(): void {
   window.localStorage.removeItem(PROGRESS_KEY);
 }
 
+export function clearCompletionEvents(): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(COMPLETIONS_KEY);
+}
+
 export function clearOperationalStore(): void {
   clearOperationalDecisions();
   clearWorkProgress();
+  clearCompletionEvents();
 }

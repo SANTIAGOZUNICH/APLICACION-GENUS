@@ -31,7 +31,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     allowedActions: [
       "Crear OA",
       "Abrir OA",
-      "Marcar terminado",
+      "Entregar a Calidad",
       "Reportar problema",
       "Registrar avance",
     ],
@@ -70,7 +70,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     allowedActions: [
       "Crear OA",
       "Abrir OA",
-      "Marcar terminado",
+      "Entregar a Calidad",
       "Reportar problema",
     ],
     sidebarItems: [...BASE_SIDEBAR],

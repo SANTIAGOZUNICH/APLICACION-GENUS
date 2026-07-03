@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
+import type { WorkItem } from "@/types/operational/work-item";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
@@ -51,8 +52,8 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   );
 
   const handleFinish = useCallback(
-    (itemId: string, payload: { finishedQty: string; observation: string }) => {
-      markWorkFinished(itemId, {
+    (item: WorkItem, payload: { finishedQty: string; observation: string }) => {
+      markWorkFinished(item, {
         ...payload,
         updatedBy: workspace.context.displayName,
       });
@@ -134,8 +135,8 @@ export function ElaboracionOperationalView() {
   );
 
   const handleFinish = useCallback(
-    (itemId: string, payload: { finishedQty: string; observation: string }) => {
-      markWorkFinished(itemId, {
+    (item: WorkItem, payload: { finishedQty: string; observation: string }) => {
+      markWorkFinished(item, {
         ...payload,
         updatedBy: greetingName,
       });

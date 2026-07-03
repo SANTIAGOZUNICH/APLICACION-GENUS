@@ -8,6 +8,7 @@ import { buildProductionOverview } from "@/lib/operational/build-production-over
 import { displayField } from "@/lib/operational/display-fields";
 import { SECTOR_LABELS } from "@/types/operational/sector";
 import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-adapter";
+import { OperationalActivityFeed } from "../components/operational-activity-feed";
 import {
   OperationalTabs,
   OperationalTable,
@@ -16,12 +17,16 @@ import {
   type OperationalTableColumn,
 } from "../components/operational-ui";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
+import { buildOperationalActivityFeed } from "../lib/completion-events";
 import {
   filterQualityByStatus,
   filterWorkItemsPendingElaboracion,
   filterWorkItemsPendingEnvasado,
+  filterWorkItemsTransferredElaboracion,
+  filterWorkItemsTransferredEnvasado,
   formatQuantity,
 } from "../lib/operational-filters";
+import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { useOperationalStore } from "../store/operational-store-context";
 import type { QualityItem } from "../types";
 import type { WorkItem } from "@/types/operational/work-item";
@@ -36,12 +41,26 @@ const PRODUCCION_TABS = [
 
 type ProduccionTabId = (typeof PRODUCCION_TABS)[number]["id"];
 
-/** Producción / Supervisión — visión general con 5 pestañas operativas. */
+function sortWorkItemsTransferredFirst(items: WorkItem[]): WorkItem[] {
+  return [...items].sort((a, b) => {
+    const aTransferred = isWorkTransferredStatus(a.status) ? 1 : 0;
+    const bTransferred = isWorkTransferredStatus(b.status) ? 1 : 0;
+    if (bTransferred !== aTransferred) return bTransferred - aTransferred;
+    return (a.product ?? "").localeCompare(b.product ?? "", "es", { sensitivity: "base" });
+  });
+}
+
+/** Producción / Supervisión — visión general con actividad cross-sector. */
 export function ProduccionOperationalView() {
   const workspace = useRequiredWorkspace();
   const { applyEffectiveStatus } = usePreviewContext();
-  const { getQualityStatus, getQualityObservation, applyProgressToWorkItems } =
-    useOperationalStore();
+  const {
+    getQualityStatus,
+    getQualityObservation,
+    applyProgressToWorkItems,
+    completionEvents,
+    decisionMap,
+  } = useOperationalStore();
   const { data, loading, error, lastRefreshAt, refresh } = useOperationalPlan("PRODUCCION");
   const [activeTab, setActiveTab] = useState<ProduccionTabId>("elaboracion");
 
@@ -55,6 +74,30 @@ export function ProduccionOperationalView() {
     return applyQualityDecisionsToItems(seed, getQualityStatus);
   }, [data?.qualityItems, getQualityStatus]);
 
+  const qualityLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of qualityItems) {
+      map.set(item.id, item.product);
+    }
+    return map;
+  }, [qualityItems]);
+
+  const activityFeed = useMemo(
+    () =>
+      buildOperationalActivityFeed({
+        completions: completionEvents,
+        decisions: Object.values(decisionMap).map((d) => ({
+          itemId: d.itemId,
+          status: d.status,
+          decidedAt: d.decidedAt,
+          decidedBy: d.decidedBy,
+          observation: d.observation,
+          label: qualityLabelById.get(d.itemId) ?? d.itemId,
+        })),
+      }),
+    [completionEvents, decisionMap, qualityLabelById]
+  );
+
   const rechazados = useMemo(
     () => filterQualityByStatus(qualityItems, "rechazado"),
     [qualityItems]
@@ -67,17 +110,33 @@ export function ProduccionOperationalView() {
     () => filterWorkItemsPendingElaboracion(workItems),
     [workItems]
   );
+  const transferidoElaboracion = useMemo(
+    () => filterWorkItemsTransferredElaboracion(workItems),
+    [workItems]
+  );
+  const elaboracionRows = useMemo(
+    () => sortWorkItemsTransferredFirst([...pendienteElaboracion, ...transferidoElaboracion]),
+    [pendienteElaboracion, transferidoElaboracion]
+  );
   const pendienteEnvasado = useMemo(
     () => filterWorkItemsPendingEnvasado(workItems),
     [workItems]
+  );
+  const transferidoEnvasado = useMemo(
+    () => filterWorkItemsTransferredEnvasado(workItems),
+    [workItems]
+  );
+  const envasadoRows = useMemo(
+    () => sortWorkItemsTransferredFirst([...pendienteEnvasado, ...transferidoEnvasado]),
+    [pendienteEnvasado, transferidoEnvasado]
   );
   const overview = useMemo(
     () => buildProductionOverview(workItems, data?.source === "drive" ? "semanas_2026" : "semanas_2026"),
     [workItems, data?.source]
   );
 
-  const completados = useMemo(
-    () => workItems.filter((item) => item.status === "completo").length,
+  const entregadosCalidad = useMemo(
+    () => workItems.filter((item) => isWorkTransferredStatus(item.status)).length,
     [workItems]
   );
   const enCurso = useMemo(
@@ -147,7 +206,12 @@ export function ProduccionOperationalView() {
       {
         key: "status",
         header: "Estado",
-        render: (row) => <StatusChip status={row.status} />,
+        render: (row) => (
+          <StatusChip
+            status={row.status}
+            transferredInbox={isWorkTransferredStatus(row.status)}
+          />
+        ),
       },
     ],
     []
@@ -163,10 +227,10 @@ export function ProduccionOperationalView() {
         count = aprobados.length;
         break;
       case "elaboracion":
-        count = pendienteElaboracion.length;
+        count = elaboracionRows.length;
         break;
       case "envasados":
-        count = pendienteEnvasado.length;
+        count = envasadoRows.length;
         break;
       default:
         count = undefined;
@@ -186,6 +250,12 @@ export function ProduccionOperationalView() {
           onRefresh={refresh}
         />
       </header>
+
+      {completionEvents.length > 0 && (
+        <div className="mb-4">
+          <OperationalActivityFeed entries={activityFeed} />
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
@@ -217,20 +287,38 @@ export function ProduccionOperationalView() {
           />
         )}
         {activeTab === "elaboracion" && (
-          <OperationalTable
-            columns={workColumns}
-            rows={pendienteElaboracion}
-            rowKey={(row) => row.id}
-            emptyMessage="Sin elaboraciones pendientes."
-          />
+          <>
+            {transferidoElaboracion.length > 0 && (
+              <p className="mb-3 text-sm text-[var(--os-text-muted)]">
+                {transferidoElaboracion.length} elaboración
+                {transferidoElaboracion.length === 1 ? "" : "es"} {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
+                {WORK_TRANSFER.pendingReview.toLowerCase()}.
+              </p>
+            )}
+            <OperationalTable
+              columns={workColumns}
+              rows={elaboracionRows}
+              rowKey={(row) => row.id}
+              emptyMessage="Sin elaboraciones en plan."
+            />
+          </>
         )}
         {activeTab === "envasados" && (
-          <OperationalTable
-            columns={workColumns}
-            rows={pendienteEnvasado}
-            rowKey={(row) => row.id}
-            emptyMessage="Sin envasados pendientes."
-          />
+          <>
+            {transferidoEnvasado.length > 0 && (
+              <p className="mb-3 text-sm text-[var(--os-text-muted)]">
+                {transferidoEnvasado.length} envasado
+                {transferidoEnvasado.length === 1 ? "" : "s"} {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
+                {WORK_TRANSFER.pendingReview.toLowerCase()}.
+              </p>
+            )}
+            <OperationalTable
+              columns={workColumns}
+              rows={envasadoRows}
+              rowKey={(row) => row.id}
+              emptyMessage="Sin envasados en plan."
+            />
+          </>
         )}
         {activeTab === "kpis" && (
           <div className="space-y-4">
@@ -241,8 +329,9 @@ export function ProduccionOperationalView() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <KpiCard label="Total trabajos en plan" value={workItems.length} />
-              <KpiCard label="Completados" value={completados} />
+              <KpiCard label={WORK_TRANSFER.kpiDeliveredToQuality} value={entregadosCalidad} />
               <KpiCard label="En curso" value={enCurso} />
+              <KpiCard label="Transferencias en bandeja Calidad" value={completionEvents.length} />
               <KpiCard label="Aprobados calidad" value={aprobados.length} />
               <KpiCard label="Rechazados calidad" value={rechazados.length} />
               <KpiCard label="Bloqueos" value={overview.blockers.length} />

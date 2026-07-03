@@ -7,6 +7,7 @@ import {
   formatOperationalDifference,
   plannedQuantityLabel,
 } from "../lib/operational-progress";
+import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { ActionButton, StatusChip } from "./operational-ui";
 
 interface WorkItemProgressTableProps {
@@ -19,7 +20,7 @@ interface WorkItemProgressTableProps {
     payload: { finishedQty: string; observation: string }
   ) => void;
   onMarkFinished: (
-    itemId: string,
+    item: WorkItem,
     payload: { finishedQty: string; observation: string }
   ) => void;
   emptyMessage?: string;
@@ -126,11 +127,16 @@ export function WorkItemProgressTable({
             const planned = plannedQuantityLabel(item.quantity, item.unit);
             const diff = formatOperationalDifference(item.quantity, draft.finishedQty);
             const ref = variant === "envasado" ? item.oaRef : item.oeRef;
+            const isTransferred = isWorkTransferredStatus(item.status);
 
             return (
               <tr
                 key={item.id}
-                className="border-b border-[var(--os-border-subtle)] last:border-b-0 hover:bg-[var(--os-bg)]/60"
+                className={`border-b border-[var(--os-border-subtle)] last:border-b-0 ${
+                  isTransferred
+                    ? "border-l-4 border-l-[var(--os-teal)] bg-[var(--os-teal-soft)]/40"
+                    : "hover:bg-[var(--os-bg)]/60"
+                }`}
               >
                 {variant === "envasado" && (
                   <td className="px-3 py-2.5 align-top font-medium">
@@ -149,7 +155,8 @@ export function WorkItemProgressTable({
                     value={draft.finishedQty}
                     onChange={(e) => updateDraft(item.id, { finishedQty: e.target.value })}
                     placeholder="0"
-                    className="w-24 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm tabular-nums"
+                    disabled={isTransferred}
+                    className="w-24 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm tabular-nums disabled:opacity-50"
                   />
                 </td>
                 {variant === "envasado" && (
@@ -172,40 +179,64 @@ export function WorkItemProgressTable({
                   {displayField(ref)}
                 </td>
                 <td className="px-3 py-2.5 align-top">
-                  <StatusChip status={item.status} />
+                  {isTransferred ? (
+                    <div className="space-y-1">
+                      <StatusChip status={item.status} />
+                      <p className="text-xs font-medium text-[var(--os-teal)]">
+                        {WORK_TRANSFER.deliveredToQuality}
+                      </p>
+                      <p className="text-xs text-[var(--os-text-muted)]">
+                        {WORK_TRANSFER.nextResponsibleQuality}
+                      </p>
+                    </div>
+                  ) : (
+                    <StatusChip status={item.status} />
+                  )}
                 </td>
                 <td className="px-3 py-2.5 align-top">
-                  <input
-                    type="text"
-                    value={draft.observation}
-                    onChange={(e) => updateDraft(item.id, { observation: e.target.value })}
-                    placeholder="Observación…"
-                    className="min-w-[140px] rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm"
-                  />
+                  {isTransferred ? (
+                    <span className="text-xs text-[var(--os-text-muted)]">
+                      {getObservation(item.id) || "—"}
+                    </span>
+                  ) : (
+                    <input
+                      type="text"
+                      value={draft.observation}
+                      onChange={(e) => updateDraft(item.id, { observation: e.target.value })}
+                      placeholder="Observación…"
+                      className="min-w-[140px] rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm"
+                    />
+                  )}
                 </td>
                 <td className="px-3 py-2.5 align-top">
-                  <div className="flex flex-wrap gap-2">
-                    <ActionButton
-                      label="Guardar avance"
-                      variant="neutral"
-                      onClick={() =>
-                        onSaveProgress(item.id, {
-                          finishedQty: draft.finishedQty,
-                          observation: draft.observation,
-                        })
-                      }
-                    />
-                    <ActionButton
-                      label="Marcar terminado"
-                      variant="approve"
-                      onClick={() =>
-                        onMarkFinished(item.id, {
-                          finishedQty: draft.finishedQty || item.quantity || "",
-                          observation: draft.observation,
-                        })
-                      }
-                    />
-                  </div>
+                  {isTransferred ? (
+                    <span className="text-xs font-medium text-[var(--os-teal)]">
+                      {WORK_TRANSFER.deliveredToQuality}
+                    </span>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      <ActionButton
+                        label={WORK_TRANSFER.saveProgressAction}
+                        variant="neutral"
+                        onClick={() =>
+                          onSaveProgress(item.id, {
+                            finishedQty: draft.finishedQty,
+                            observation: draft.observation,
+                          })
+                        }
+                      />
+                      <ActionButton
+                        label={WORK_TRANSFER.markFinishedAction}
+                        variant="approve"
+                        onClick={() =>
+                          onMarkFinished(item, {
+                            finishedQty: draft.finishedQty || item.quantity || "",
+                            observation: draft.observation,
+                          })
+                        }
+                      />
+                    </div>
+                  )}
                 </td>
               </tr>
             );
