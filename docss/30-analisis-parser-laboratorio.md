@@ -1,626 +1,586 @@
-# 30 — Análisis del parser del laboratorio (pre-implementación)
+# 30 — Especificación del parser del laboratorio Genus
 
-> **Estado:** Propuesta para aprobación — **sin código implementado**  
+> **Estado:** Especificación oficial — **sin implementación de código**  
+> **Versión:** 2.0 (correcciones conceptuales aprobadas)  
 > **Fecha:** 2026-07-03  
-> **Contexto:** Los Excel compartidos son **referencia estructural únicamente**. La fuente de verdad operativa sigue siendo **Google Sheets en vivo** vía Drive.
+> **Contexto:** Los Excel compartidos son **referencia estructural únicamente**. La fuente de verdad operativa es **siempre Google Sheets en vivo** vía Drive.
 
 ---
 
 ## Resumen ejecutivo
 
-Genus OS hoy interpreta SEMANAS 2026 como si fuera una tabla con filas de datos y headers. Eso contradice cómo el laboratorio realmente usa la planilla: es un **planner operativo visual** con bloques por persona, sector y semana, organizado en **columnas = días**.
+Genus OS no debe interpretar Google Sheets como tablas de base de datos. Debe interpretar **cómo opera el laboratorio**.
 
-La arquitectura correcta no es `SEMANAS → WorkItem`. Es:
+El error de diseño actual fue tratar SEMANAS como tabla (`fila = trabajo`) y construir WorkItems al final mezclando fuentes. La arquitectura correcta invierte esa lógica:
+
+**El WorkItem es la entidad principal.** Representa el trabajo operativo real del laboratorio. Cada parser especializado **enriquece** WorkItems existentes con la información de su dominio.
 
 ```text
-PEDIDOS 2026          →  Entidad Pedido (+ Dashboard KPIs)
-SEMANAS 2026          →  Planner Operativo (slots de trabajo)
-ASIGNACIÓN DE LOTES   →  Estado de Calidad por lote
-                              ↓
-                         WorkItem unificado (join + resolución)
+WorkItem (entidad central)
+    ↑ enriquece
+PlannerParser      → cuándo, dónde, bloque, línea, rama
+    ↑ enriquece
+PedidosParser      → OP, cliente, producto, estado, responsable, cantidades
+    ↑ enriquece
+LotesParser        → lote, OE, OA, análisis, RL, estado calidad
+    ↑ contexto
+DashboardParser    → KPIs oficiales (consumo, no recálculo)
 ```
 
-Este documento describe cómo interpretar cada archivo, qué entidades extraer, cómo relacionarlas, qué fallaba el parser actual y qué estrategia implementar **después** de aprobación.
+**Objetivo final:** representar la operación real del Laboratorio Genus utilizando Google Sheets como fuente de verdad — no leer Excel, no simular tablas.
 
 ---
 
-## 1. Cómo interpretar cada archivo
+## 0. Principios invariantes
 
-### 1.1 SEMANAS 2026 — Planner operativo (NO tabla)
+1. **Google Sheets = única fuente de datos en runtime.**
+2. **Excel de referencia = solo para aprender geometría** (tests/fixtures estructurales opcionales; nunca producción).
+3. **No hardcodear filas, clientes, productos ni estados.**
+4. **No parser genérico.** Un parser por geometría, sin mezclar responsabilidades.
+5. **No recalcular KPIs en Next.js.** Consumir Dashboard de PEDIDOS.
+6. **No reinventar datos administrativos desde SEMANAS** cuando PEDIDOS ya los tiene.
+7. **No duplicar lógica de calidad** fuera de ASIGNACIÓN DE LOTES.
+8. **WorkItem ≠ fila de sheet.** Es la proyección operativa enriquecida.
 
-**Pestañas observadas:** `ELABORACION`, `ACONDICIONAMIENTO`, `ENTREGAS`, `QACONDDIA`, `DB`
+---
 
-Cada pestaña cumple un rol distinto. Solo las tres primeras alimentan planificación operativa diaria; `QACONDDIA` y `DB` son seguimiento/KPIs embebidos dentro del mismo archivo.
+## 1. WorkItem — entidad central de Genus OS
 
-#### Modelo mental correcto
+### 1.1 Qué es
 
-| Concepto | Descripción |
+El **WorkItem** es la unidad de trabajo operativo del laboratorio. Todo lo que una persona ve en `/mi-trabajo` — elaboración, envasado, calidad, producción — son WorkItems enriquecidos.
+
+No es el resultado final de un join entre sheets. **Existe desde el primer contacto con una fuente** y se va completando a medida que los parsers aportan información.
+
+### 1.2 Modelo conceptual
+
+```typescript
+// Especificación conceptual — no implementado aún
+WorkItem {
+  // Identidad
+  internalId: string           // ID interno Genus — generado al crear el WorkItem
+  op: string | null            // PedidosParser
+  loteRef: string | null       // PedidosParser + LotesParser
+
+  // Operación (PlannerParser)
+  sector: SectorId             // ELABORACION | ENVASADO_MASIVO | ENVASADO_PREMIUM | CALIDAD | ...
+  linea: string | null         // "Línea 1", "Línea 2", … — solo envasado; null en elaboración
+  branchOwner: string | null   // "Cristian" | "Nicolás" — solo elaboración
+  sectorLead: string | null    // "Santino Gianfilippo" — encargado elaboración
+
+  // Planificación (PlannerParser)
+  weekLabel: string | null
+  dayOfWeek: string | null
+  plannedDate: string | null
+  cliente: string | null       // texto planner; PedidosParser puede normalizar
+  producto: string | null
+  cantidadPlanificada: string | null
+  notas: string | null
+
+  // Administrativo (PedidosParser — fuente primaria)
+  clienteOficial: string | null
+  productoOficial: string | null
+  estado: string | null
+  responsable: string | null
+  cantidadPedida: number | null
+  sectorComercial: "M" | "P" | null
+
+  // Calidad (LotesParser — fuente primaria)
+  oeRef: string | null
+  oaRef: string | null
+  fechaAnalisis: string | null
+  numeroAnalisis: string | null
+  rl: string | null
+  estadoCalidad: string | null
+  observacionCalidad: string | null
+
+  // Trazabilidad
+  enrichmentSources: string[]  // qué parsers ya contribuyeron
+  confidence: "high" | "medium" | "low"
+  sourceRanges: Record<string, string>  // sheet → rango origen
+}
+```
+
+### 1.3 Pipeline de enriquecimiento (no construcción al final)
+
+```text
+1. WorkItemRegistry vacío
+
+2. PlannerParser
+   → detecta bloques operativos en SEMANAS
+   → crea WorkItems con internalId + datos de planificación
+   → registra sector, línea, rama, día, cliente/producto/cantidad del planner
+
+3. PedidosParser
+   → lee PEDIDOS 2026 (OP, cliente, producto, estado, responsable, cantidades)
+   → busca WorkItems existentes por OP / lote / internalId
+   → enriquece campos administrativos; crea WorkItem si solo existe en PEDIDOS
+
+4. LotesParser
+   → lee ASIGNACIÓN DE LOTES (lote, OE, OA, análisis, RL)
+   → busca WorkItems por lote / OP / internalId
+   → enriquece estado calidad; crea WorkItem si el lote no tenía planificación
+
+5. DashboardParser
+   → lee KPIs oficiales del Dashboard de PEDIDOS
+   → NO recalcula; expone snapshot para Producción / gestión
+   → no muta campos individuales de WorkItem salvo contexto agregado
+
+6. WorkItemRegistry.listForSector(persona)
+   → filtros operativos por sector, línea, rama, persona
+```
+
+**Regla:** ningún parser reconstruye WorkItems desde cero al final. Cada uno **aporte** a la entidad central.
+
+### 1.4 Jerarquías operativas por sector
+
+#### Elaboración — sin líneas
+
+```text
+Encargado: Santino Gianfilippo
+    ├── Rama: Cristian
+    │       └── Trabajos (WorkItems)
+    └── Rama: Nicolás
+            └── Trabajos (WorkItems)
+```
+
+| Usuario | Vista |
+|---------|-------|
+| `santino@` | Ambas ramas (Cristian + Nicolás) |
+| `cristian@` | Solo rama Cristian |
+| `nicolas@` | Solo rama Nicolás |
+
+El parser detecta bloques `CRISTIAN` / `NICOLAS` como delimitadores de rama. Santino no es una fila del sheet; es `sectorLead` aplicado a todo el sector Elaboración.
+
+#### Envasado — sector → línea → trabajo
+
+```text
+Sector: Envasado Masivo
+    ├── Línea 1 → Trabajos
+    ├── Línea 2 → Trabajos
+    ├── Línea 3 → Trabajos
+    └── Línea 4 (ocasional) → Trabajos
+
+Sector: Envasado Premium
+    ├── Línea 1 → Trabajos
+    └── Línea 2 (ocasional) → Trabajos
+```
+
+**Las líneas NO son sectores.** No crear `ENVASADO_MASIVO_LINEA_2` como sector separado. Un solo sector (`ENVASADO_MASIVO` o `ENVASADO_PREMIUM`) con campo `linea`.
+
+Ejemplo operativo:
+
+```text
+Envasado Masivo → Línea 2 → Body Splash Coco
+```
+
+El PlannerParser debe detectar encabezados de línea (`LÍNEA 1`, `LINEA 2`, `Línea 3`, variantes) dentro del bloque de sector (`ENVASADO CONSUMO MASIVO` / `ENVASADO PRODUCTOS PREMIUN`).
+
+---
+
+## 2. Claves de unión
+
+La resolución entre parsers sigue **estrictamente** este orden. No invertir.
+
+| Prioridad | Clave | Uso | Confianza |
+|-----------|-------|-----|-----------|
+| **1** | **OP** | Identificador comercial único del pedido | Alta |
+| **2** | **Lote** (`N° LOTE` / `N°LOTE`) | Une PEDIDOS ↔ LOTES ↔ planner cuando aparece | Alta |
+| **3** | **ID interno** (`internalId`) | Generado por Genus al crear el WorkItem; continuidad entre enriquecimientos | Alta |
+| **4** | **Cliente + Producto** | **Solo fallback** cuando OP, lote e internalId no resuelven | Baja |
+
+### Reglas de matching
+
+1. **Nunca** usar Cliente + Producto como criterio principal.
+2. Si PlannerParser crea un WorkItem y PedidosParser encuentra OP vía lote en la misma fila administrativa → match por lote, luego asignar OP.
+3. Si un WorkItem tiene OP, todas las actualizaciones posteriores deben preferir OP sobre cualquier heurística difusa.
+4. Cliente + Producto requiere normalización (acentos, aliases) y marca `confidence: low`.
+5. Un slot del planner **sin match** sigue siendo WorkItem válido (trabajo planificado sin OP aún) — no descartar.
+
+---
+
+## 3. Parsers especializados
+
+**No existe un parser genérico.** Cuatro parsers, cuatro geometrías, cuatro responsabilidades.
+
+| Parser | Fuente Google Sheet | Responsabilidad exclusiva |
+|--------|---------------------|---------------------------|
+| **PlannerParser** | SEMANAS 2026 | Bloques visuales: semanas, días, personas, sectores, líneas, trabajos, observaciones |
+| **PedidosParser** | PEDIDOS 2026 | OP, cliente, producto, estado, responsable, cantidades, info administrativa |
+| **LotesParser** | ASIGNACIÓN DE LOTES 2026 | Lote, OE, OA, análisis, RL, estado calidad |
+| **DashboardParser** | PEDIDOS 2026 / Dashboard | KPIs oficiales — lectura y consumo, sin recálculo |
+
+Cada parser:
+- Conoce **únicamente** la estructura de su fuente.
+- Emite parches de enriquecimiento hacia `WorkItemRegistry`.
+- No implementa lógica de otra fuente.
+- No asume layout tabular donde no lo hay.
+
+---
+
+## 4. SEMANAS 2026 — PlannerParser
+
+### 4.1 Naturaleza del archivo
+
+**SEMANAS NO es una tabla.** Es un **planner operativo visual**.
+
+No existe `una fila = un trabajo`. Existen **bloques operativos** dentro de una grilla temporal.
+
+El PlannerParser debe aprender a detectar:
+
+| Elemento | Descripción |
 |----------|-------------|
-| **Unidad de lectura** | Bloque visual, no fila |
-| **Eje temporal** | Columnas pares (2, 4, 6, 8, 10) = Lunes → Viernes |
-| **Repetición** | El bloque semanal se repite verticalmente (semana 1, semana 2, …) |
-| **Separadores** | Filas vacías, títulos de mes, encabezados de día, nombres de persona/sector |
-| **Contenido** | Pilas verticales dentro de cada columna-día: Cliente → Producto → Cantidad |
+| **Semanas** | Bloques delimitados por encabezado Lunes…Viernes + números + mes |
+| **Días** | Columnas pares (2, 4, 6, 8, 10) = Lunes → Viernes |
+| **Bloques** | Rangos verticales con contexto compartido (persona, sector, línea) |
+| **Encabezados** | Días, mes, nombres de persona, sector envasado, línea |
+| **Separadores** | Filas vacías, saltos entre semanas |
+| **Personas** | CRISTIAN, NICOLAS (elaboración) |
+| **Sectores** | ENVASADO CONSUMO MASIVO, ENVASADO PRODUCTOS PREMIUN |
+| **Líneas** | LÍNEA 1, LÍNEA 2, LÍNEA 3, LÍNEA 4 (masivo); LÍNEA 1, LÍNEA 2 (premium) |
+| **Observaciones** | Notas libres (`VIDEOS!!`, anotaciones operativas) |
 
-#### ELABORACION
+**Prohibido:** interpretar el archivo como planilla tradicional con headers de columnas Cliente | Producto | Cantidad.
 
-Estructura por **semana**:
+### 4.2 Pestañas y roles
+
+| Pestaña | Rol del PlannerParser |
+|---------|----------------------|
+| `ELABORACION` | Bloques por rama (Cristian / Nicolás) + grilla semanal |
+| `ACONDICIONAMIENTO` | Bloques por sector envasado → línea → trabajo |
+| `ENTREGAS` | Tabla de entregas programadas (geometría tabular permitida aquí) |
+| `QACONDDIA` | Fase 2 — registro calidad diaria en acondicionamiento |
+| `DB` | Dashboard local de productividad envasado — **no** KPIs oficiales |
+
+### 4.3 Geometría — grilla columnar por día
 
 ```text
 Fila A:  Lunes | Martes | Miércoles | Jueves | Viernes     ← encabezado días
 Fila B:  16    | 17     | 18        | 19     | 20          ← número de día
 Fila C:  Febrero (repetido por columna)                      ← mes
-Fila D:  CRISTIAN                                            ← inicio bloque persona
-         ... trabajo apilado por columna-día ...
-Fila N:  NICOLAS                                             ← inicio bloque persona
-         ... trabajo apilado por columna-día ...
-[filas vacías]
-[repite bloque semanal]
+Fila D:  CRISTIAN                                            ← bloque persona (elaboración)
+         ... trabajo apilado verticalmente por columna-día ...
+Fila N:  NICOLAS
+         ...
 ```
 
-**Encargado organizacional:** Santino Gianfilippo es el responsable del sector Elaboración. En la planilla no aparece como fila de bloque; las ramas operativas visibles son **CRISTIAN** y **NICOLÁS**. El parser debe modelar:
-
-- `sectorLead`: Santino (metadata de sector, no fila del sheet)
-- `branchOwner`: Cristian / Nicolás (detectado por fila-título de bloque)
-
-**Dentro de cada columna-día**, una tarea típica ocupa 2–4 filas consecutivas en la misma columna:
+Dentro de cada **columna-día**, el trabajo se apila verticalmente:
 
 ```text
 Col 6 (Miércoles):
   R5: LAB ONCE          ← cliente / marca
-  R6: SERUM AH+NIA      ← producto / descripción
+  R6: SERUM AH+NIA      ← producto
   R7: 55KG              ← cantidad
 ```
 
-A veces el cliente aparece en una fila y el producto en la siguiente **sin repetir cliente** (continuación del mismo slot). También hay filas con solo cantidad o solo producto secundario (ej. “MIXOLOGI DESVITAL” debajo de otro producto en la misma columna).
+### 4.4 Geometría — envasado con líneas
 
-#### ACONDICIONAMIENTO (Envasado)
+```text
+[Semana: Lunes…Viernes + fechas + mes]
+ENVASADO CONSUMO MASIVO                    ← bloque sector
+  LÍNEA 1                                  ← bloque línea (opcional si implícito)
+    [trabajos apilados por columna-día]
+  LÍNEA 2
+    [trabajos apilados por columna-día]
+  LÍNEA 3
+    ...
+ENVASADO PRODUCTOS PREMIUN                 ← cambio de sector
+  LÍNEA 1
+    ...
+  LÍNEA 2 (ocasional)
+    ...
+[Separador / siguiente semana]
+```
 
-Misma grilla semanal por columnas-día, pero con **sub-sectores** explícitos:
+El PlannerParser mantiene contexto acumulado: `{ semana, sector, linea, dayColumn }` mientras recorre el bloque.
 
-| Bloque visual | Significado operativo |
-|---------------|----------------------|
-| `ENVASADO CONSUMO MASIVO` | Sector Envasado Masivo |
-| `ENVASADO PRODUCTOS PREMIUN` | Sector Envasado Premium (typo real en planilla) |
+### 4.5 Salida del PlannerParser
 
-Estos títulos aparecen en celdas sueltas (a menudo columna Martes) y delimitan **todo el trabajo posterior** hasta el siguiente bloque o la siguiente semana.
+Por cada slot de trabajo detectado, crea o actualiza un WorkItem con:
 
-**Importante:** No existen filas `LÍNEA 1`, `LÍNEA 2`, `PREMIUM A` en la planilla real. El trabajo se organiza por **cliente + producto + cantidad apilados por día**, no por línea física numerada. La “línea” operativa es implícita: el operario del sector (Francisco/Belén en la app) ve su cola por día, no por “Línea 3”.
+- `internalId` (nuevo si no existe)
+- `sector`, `linea`, `branchOwner`, `sectorLead`
+- `weekLabel`, `dayOfWeek`, `plannedDate`
+- `cliente`, `producto`, `cantidadPlanificada`, `notas` (texto del planner)
+- `sourceRanges.semanas_2026`
+- `enrichmentSources += ["planner"]`
 
-Hay anotaciones operativas mezcladas (`VIDEOS NATCEUTCALS!!`, `YOUTHFUL VIDEOS!!`, `HACER VIDEOS DE YOUTHFUL!!`) que son **notas**, no entidades.
-
-#### ENTREGAS
-
-**Sí es tabular** dentro del mismo archivo:
-
-| Columna | Campo |
-|---------|-------|
-| FECHA | Fecha de entrega |
-| CLIENTE | Cliente |
-| PRODUCTO | Producto |
-| CANTIDAD | Cantidad (puede ser `PARCIAL`) |
-
-Algunas filas omiten fecha (heredan contexto del día anterior). Es un calendario de despachos, no el planner de producción.
-
-#### QACONDDIA
-
-Registro diario de calidad en acondicionamiento. Bloques por mes (`FEBRERO 2026`) con header repetido:
-
-| FECHA | PRODUCTO | CANTIDAD | RESPONSABLE |
-
-Las filas sin fecha pertenecen al mismo día que la fila anterior con fecha. Producto suele incluir cliente embebido (`CAV SHAMPOO`, `ALL BEAUTY CREMA HIDRATANTE`).
-
-#### DB
-
-Dashboard embebido de productividad de envasado (totales masivo/premium, rankings por operario). **No es fuente de WorkItems**; es KPI visual del archivo SEMANAS, distinto del Dashboard de PEDIDOS.
+**No asigna OP, estado ni lote** — eso lo aportan otros parsers.
 
 ---
 
-### 1.2 PEDIDOS 2026 — Fuente administrativa y comercial
+## 5. PEDIDOS 2026 — PedidosParser
 
-**Pestañas observadas:** `PEDIDOS`, `ELABORACION`, `EXPEDICION`, `INGRESOS`, `KPI`, `Dashboard`, `CALCULOS_CLIENTES`
+### 5.1 Rol
 
-Este archivo **sí** está mucho más cerca de un modelo relacional. Es la **fuente de verdad** para identidad comercial, estado administrativo y KPIs oficiales.
+**Fuente principal** para datos administrativos y comerciales. No reinventar desde SEMANAS.
 
-#### Pestaña PEDIDOS (tabla principal)
+| Dato | Fuente primaria |
+|------|-----------------|
+| OP | PEDIDOS / columna OP |
+| Cliente | PEDIDOS |
+| Producto | PEDIDOS |
+| Estado | PEDIDOS |
+| Responsable | PEDIDOS / ELABORACION |
+| Cantidades | PEDIDOS |
+| Lote (cuando asignado) | PEDIDOS / N° LOTE |
+| Info administrativa | PEDIDOS, ELABORACION, EXPEDICION |
 
-| Columna | Rol |
-|---------|-----|
-| OP | Identificador único de pedido (ej. 25293) |
-| Fecha | Fecha de ingreso |
-| N° OC | Orden de compra del cliente |
-| CLIENTE | Cliente |
-| PRODUCTO | Producto |
-| S | Sector (`P` = Premium, `M` = Masivo) |
-| Q | Cantidad pedida |
-| Ml | Volumen unitario |
-| ESTADO | Estado comercial (`entregado`, en proceso, etc.) |
-| N° LOTE | Lote asignado (cuando existe) |
+### 5.2 Pestañas
 
-Un OP puede tener **múltiples filas** (ej. OP 25300 → varios aceites MERMER con lotes E26087–E26092).
+| Pestaña | Geometría | Enriquecimiento |
+|---------|-----------|-----------------|
+| `PEDIDOS` | Tabular | OP, cliente, producto, estado, cantidad, sector M/P, lote |
+| `ELABORACION` | Tabular | Responsable granel, kg, N°LOTE, observaciones |
+| `EXPEDICION` | Tabular | Q envasada, remito, fecha entrega, nivel servicio |
+| `KPI` | Tabular | Lead time / nivel servicio por pedido — insumo del Dashboard |
+| `INGRESOS` | Tabular | Fase posterior |
+| `CALCULOS_CLIENTES` | Tabular | Fase posterior |
 
-#### Pestaña ELABORACION (seguimiento de granel)
+### 5.3 Salida del PedidosParser
 
-Tabla con responsable de elaboración y lote:
+Para cada fila con OP (o lote):
 
-| Fecha | N° OC | CLIENTE | PRODUCTO | KG | ESTADO | Graneles | RESPONSABLE | FECHA | N°LOTE | OBSERVACIONES |
+1. Buscar WorkItem existente: **OP → lote → internalId → (fallback) cliente+producto**
+2. Si existe → enriquecer campos administrativos
+3. Si no existe → crear WorkItem mínimo con OP/lote + datos PEDIDOS
+4. Marcar `enrichmentSources += ["pedidos"]`
 
-Aquí vive la asignación **Cristian / Nicolás / Santino** a nivel de pedido-lote, no en SEMANAS.
-
-#### Pestaña EXPEDICION
-
-Seguimiento logístico: cantidad pedida vs envasada, nivel de servicio por línea, remito, estado de entrega.
-
-#### Pestaña KPI
-
-Lead time y nivel de servicio **por pedido-lote** — insumo del Dashboard, no para recalcular en frontend.
-
-#### Pestaña Dashboard
-
-**KPIs oficiales del laboratorio.** Ejemplos observados:
-
-| KPI | Valor ejemplo | Objetivo |
-|-----|---------------|----------|
-| Nivel de Servicio | 98.27% | ≥ 97% |
-| Pedidos sin Reclamos | 100% | > 95% |
-| Lead Time Promedio | 26.25 días | ≤ 25 días |
-| Pedidos Activos | 83 | — |
-| Entregados (año) | 329 | — |
-| En Despacho | 8 | — |
-| Consumo Masivo (unidades) | 450,533 | — |
-| Productos Premium (unidades) | 159,203 | — |
-
-Genus OS debe **leer estos valores del sheet**, no recomputarlos en Next.js.
+**Corrección requerida al implementar:** el mapper actual busca `pedidoId` pero la columna real es **`OP`**.
 
 ---
 
-### 1.3 ASIGNACIÓN DE LOTE 2025 — Referencia histórica
+## 6. ASIGNACIÓN DE LOTES 2026 — LotesParser
 
-**Pestañas:** una por mes (ENERO–DICIEMBRE, con gaps posibles).
+### 6.1 Rol
 
-Estructura estable desde 2025:
+**Fuente oficial** para calidad. No duplicar esta lógica en otros parsers.
 
-| Columna | Descripción |
-|---------|-------------|
-| N° LOTE | Identificador (prefijo + año + secuencia) |
-| FECHA | Fecha de asignación |
-| PRODUCTO | Producto |
-| CODIGO | Variante / código |
-| MARCA | Marca / cliente |
-| CANTIDADES | Cantidad |
-| VTO | Vencimiento |
-| FECHA ANALISIS | Fecha de análisis |
-| N° ANALISIS | Número de análisis |
-| OE | Orden de elaboración |
-| OA | Orden de acondicionamiento |
-| REG LIB | Registro libreta sanitaria |
-| MUESTRAS MUSEO | Muestras museo |
+| Dato | Fuente primaria |
+|------|-----------------|
+| N° Lote | ASIGNACIÓN DE LOTES |
+| OE | ASIGNACIÓN DE LOTES |
+| OA | ASIGNACIÓN DE LOTES |
+| Fecha / N° análisis | ASIGNACIÓN DE LOTES |
+| RL | ASIGNACIÓN DE LOTES |
+| Estado de calidad | ASIGNACIÓN DE LOTES (derivado de OE/OA/RL/análisis) |
+| Observaciones | ASIGNACIÓN DE LOTES |
 
-Fila especial recurrente: `AGUA DEL SECTOR DE ELABORACION` (control de agua, no lote productivo).
+### 6.2 Geometría
 
-**Uso:** aprender convenciones de columnas y relaciones históricas. **No** usar como fuente de datos en producción.
+- Pestañas mensuales: `ENERO`, `FEBRERO`, …
+- Header en fila 2: `N° LOTE`, `FECHA`, `PRODUCTO`, `CODIGO`, `MARCA`, `CANTIDAD`, `VTO`, `MM`, `FECHA ANALISIS`, `N° ANALISIS`, `OE`, `OA`, `RL`, `OBSERVACION`
+- Fila especial: `AGUA DEL SECTOR DE ELABORACION` — tratamiento aparte
 
----
+### 6.3 ASIGNACIÓN DE LOTE 2025
 
-### 1.4 ASIGNACIÓN DE LOTES 2026 — Fuente de Calidad (estructura actual)
+Solo referencia histórica para aprender evolución de columnas (`CANTIDADES` → `CANTIDAD`, `REG LIB` → `RL`). **No usar como fuente en runtime.**
 
-**Pestañas:** ENERO–JUNIO (crece mes a mes).
+### 6.4 Salida del LotesParser
 
-Evolución respecto a 2025:
+Por cada lote:
 
-| 2025 | 2026 | Notas |
-|------|------|-------|
-| CANTIDADES | CANTIDAD | Renombre |
-| REG LIB | RL | Abreviado |
-| MUESTRAS MUSEO | — | Ya no en header principal |
-| — | MM | Módulo / ubicación (ej. “CAJA 2 Y 10”) |
-| — | OBSERVACION | Notas de calidad |
-
-Prefijos de lote observados (primera letra = tipo):
-
-| Prefijo | Interpretación operativa (inferida) |
-|---------|-------------------------------------|
-| E | Elaboración |
-| F | Formula / producto terminado fluido |
-| M | Masivo |
-| A, Y, J | Otros tipos presentes en datos |
-
-El lote es la **clave de unión** entre PEDIDOS (`N° LOTE`), PEDIDOS/ELABORACION (`N°LOTE`) y ASIGNACIÓN DE LOTES (`N° LOTE`).
+1. Buscar WorkItem: **lote → OP (vía PEDIDOS) → internalId → (fallback) cliente+producto**
+2. Enriquecer campos de calidad
+3. Si no hay WorkItem previo → crear WorkItem con `sector: CALIDAD`
+4. Marcar `enrichmentSources += ["lotes"]`
 
 ---
 
-## 2. Bloques detectables por archivo
+## 7. Dashboard — DashboardParser
 
-### SEMANAS 2026
+### 7.1 Rol
 
-| Tipo de bloque | Señales de detección | Contenido |
-|----------------|---------------------|-----------|
-| **Semana** | Fila `Lunes…Viernes` + fila numérica + fila mes | Delimita rango vertical |
-| **Día** | Columna bajo encabezado de día | Slot temporal concreto |
-| **Persona (Elaboración)** | Fila con 1 celda de texto en col 2: `CRISTIAN`, `NICOLAS` | Todo hasta la siguiente persona o semana |
-| **Sector Envasado** | `ENVASADO CONSUMO MASIVO` / `ENVASADO PRODUCTOS PREMIUN` | Todo hasta siguiente sector o semana |
-| **Slot de trabajo** | Pilas Cliente→Producto→Cantidad en una columna-día | Unidad mínima planificable |
-| **Nota operativa** | Texto con `!!`, MAYÚSCULAS exclamativas, “VIDEOS” | Metadata, no entidad |
-| **Separador** | Fila completamente vacía | Ignorar |
-| **Tabla ENTREGAS** | Header `FECHA\|CLIENTE\|PRODUCTO\|CANTIDAD` | Filas tabulares |
-| **Bloque QACONDDIA** | Título mes + header repetido | Entradas diarias calidad |
+Los **KPIs oficiales** provienen **exclusivamente** del tab `Dashboard` de PEDIDOS 2026.
 
-### PEDIDOS 2026
+| KPI observado | Ejemplo |
+|---------------|---------|
+| Nivel de Servicio | 98.27% (obj. ≥ 97%) |
+| Pedidos sin Reclamos | 100% (obj. > 95%) |
+| Lead Time Promedio | 26.25 días (obj. ≤ 25 días) |
+| Pedidos Activos | 83 |
+| Entregados (año) | 329 |
+| En Despacho | 8 |
+| Consumo Masivo / Premium | unidades y % |
 
-| Bloque | Detección | Contenido |
-|--------|-----------|-----------|
-| **Tabla PEDIDOS** | Header fila 1 con `OP` | Entidades Pedido |
-| **Tabla ELABORACION** | Header con `RESPONSABLE`, `N°LOTE` | Seguimiento granel |
-| **Tabla EXPEDICION** | Header con `Q envasada`, `N° REMITO` | Logística |
-| **Dashboard KPI** | Texto `DASHBOARD OPERATIVO`, celdas con objetivos | KPIs oficiales |
-| **KPI por pedido** | Tab KPI | Lead time / nivel servicio |
+### 7.2 Reglas
 
-### ASIGNACIÓN DE LOTES
+1. **Leer** celdas del Dashboard por anclas de texto + offset relativo.
+2. **Consumir** en UI de Producción / gestión.
+3. **Prohibido** recalcular lead time, nivel de servicio u otros KPIs en Next.js.
+4. SEMANAS / tab `DB` es dashboard de productividad de envasado — **complementario**, no reemplaza al oficial.
 
-| Bloque | Detección | Contenido |
-|--------|-----------|-----------|
-| **Mes** | Pestaña ENERO, FEBRERO… | Scope temporal |
-| **Header** | Fila 2 con `N° LOTE` | Schema de columnas |
-| **Lote productivo** | Celda col B matching `/^[A-Z]\d{5,}/` | Entidad Lote |
-| **Control agua** | Texto `AGUA DEL SECTOR DE ELABORACION` | Registro especial (excluir de cola calidad productiva o tratar aparte) |
-
----
-
-## 3. Entidades obtenidas
-
-### Desde PEDIDOS → `Pedido`
+### 7.3 Salida del DashboardParser
 
 ```typescript
-// Conceptual — no implementado aún
-Pedido {
-  op: string              // "25293"
-  fechaIngreso: Date
-  oc: string | null
-  cliente: string
-  producto: string
-  sector: "M" | "P" | null
-  cantidadPedida: number
-  volumenMl: number | null
-  estado: string          // "entregado", etc.
-  lote: string | null     // "F26021"
+DashboardSnapshot {
+  scannedAt: string
+  kpis: Record<string, { value: number | string; objective?: string; status?: string }>
+  sourceRange: string
 }
 ```
 
-Extensiones por pestaña:
-
-- `PedidoElaboracion` — responsable, kg, fecha elaboración, observaciones
-- `PedidoExpedicion` — qEnvasada, nivelServicio, remito, fecha entrega
-- `DashboardKPI` — snapshot de celdas del Dashboard (no derivado)
-
-### Desde SEMANAS → `PlannerSlot`
-
-```typescript
-PlannerSlot {
-  id: string                    // derivado: semana + día + columna + índice
-  sector: "ELABORACION" | "ENVASADO_MASIVO" | "ENVASADO_PREMIUM"
-  weekStart: Date | null        // inferido del bloque semanal
-  dayOfWeek: "lunes" | ... | "viernes"
-  dayDate: Date | null          // número + mes del bloque
-  branchOwner: string | null    // Cristian, Nicolás (elaboración)
-  packagingTier: "masivo" | "premium" | null
-  cliente: string | null
-  producto: string | null
-  cantidad: string | null       // "55KG", "900 x100ml", "6400"
-  notas: string | null
-  sourceRange: string           // referencia al sheet
-}
-```
-
-**No** es un WorkItem todavía. Es planificación visual sin OP ni estado administrativo.
-
-### Desde ASIGNACIÓN DE LOTES → `LoteCalidad`
-
-```typescript
-LoteCalidad {
-  numeroLote: string            // "E26001"
-  fecha: Date
-  producto: string
-  codigo: string | null
-  marca: string | null
-  cantidad: number | null
-  vencimiento: Date | null
-  modulo: string | null         // MM
-  fechaAnalisis: Date | null
-  numeroAnalisis: string | null
-  oe: string | null
-  oa: string | null
-  rl: string | null
-  observacion: string | null
-  mes: string                   // pestaña origen
-}
-```
-
-### Entrega derivada (SEMANAS/ENTREGAS o PEDIDOS/EXPEDICION)
-
-`EntregaProgramada` — fecha, cliente, producto, cantidad — útil para Depósito pero secundaria al join principal.
+No enriquece WorkItems individuales. Alimenta vistas agregadas.
 
 ---
 
-## 4. Relaciones entre archivos
+## 8. Relaciones entre fuentes
 
 ```mermaid
-flowchart LR
-  subgraph PEDIDOS["PEDIDOS 2026"]
-    OP["Pedido (OP)"]
-    LOTP["N° LOTE"]
-    RESP["RESPONSABLE"]
-    EST["ESTADO"]
-  end
+flowchart TB
+  WI["WorkItem (entidad central)"]
 
-  subgraph SEMANAS["SEMANAS 2026"]
-    SLOT["PlannerSlot"]
-    CLI["Cliente"]
-    PROD["Producto"]
-  end
+  PP["PlannerParser\nSEMANAS 2026"]
+  PedP["PedidosParser\nPEDIDOS 2026"]
+  LP["LotesParser\nASIGNACIÓN LOTES"]
+  DP["DashboardParser\nPEDIDOS / Dashboard"]
 
-  subgraph LOTES["ASIGNACIÓN DE LOTES"]
-    LOTE["LoteCalidad"]
-    OE["OE / OA"]
-  end
+  PP -->|"crea + planifica\n(sector, línea, rama, día)"| WI
+  PedP -->|"enriquece\n(OP, estado, responsable)"| WI
+  LP -->|"enriquece\n(OE, OA, RL, calidad)"| WI
+  DP -->|"KPIs oficiales\n(vista agregada)"| PROD["Producción / Gestión"]
 
-  OP -->|"N° LOTE"| LOTE
-  LOTP --> LOTE
-  LOTE --> OE
-
-  SLOT -.->|"match difuso: cliente + producto"| OP
-  SLOT -.->|"match difuso: producto + fecha"| LOTE
-  RESP -->|"asigna ownerPerson"| SLOT
-
-  OP --> EST
-  LOTE -->|"estado calidad"| WI["WorkItem"]
-  SLOT -->|"planificación"| WI
-  OP -->|"identidad"| WI
+  PedP -.->|"OP"| LP
+  LP -.->|"Lote"| PedP
 ```
 
-### Claves de unión (prioridad)
+### Reglas de negocio
 
-| Prioridad | Clave | Confianza |
-|-----------|-------|-----------|
-| 1 | `N° LOTE` exacto entre PEDIDOS ↔ LOTES | Alta |
-| 2 | OP + producto (PEDIDOS multi-fila) | Alta |
-| 3 | Cliente + producto normalizado (SEMANAS ↔ PEDIDOS) | Media |
-| 4 | Producto + ventana de fechas (SEMANAS slot ↔ PEDIDOS/ELABORACION) | Media-baja |
-| 5 | OE/OA en LOTES ↔ refs en otros sheets | Media (cuando existen) |
-
-### Reglas de negocio observadas
-
-1. **SEMANAS planifica; PEDIDOS autoriza.** Un slot en SEMANAS sin OP match es trabajo planificado aún no vinculado comercialmente.
-2. **PEDIDOS/ELABORACION define responsable** de granel; SEMANAS refuerza la vista semanal por persona.
-3. **LOTES es downstream:** un WorkItem entra a Calidad cuando existe lote en ASIGNACIÓN, no cuando aparece en SEMANAS.
-4. **Dashboard KPIs solo desde PEDIDOS/Dashboard** — SEMANAS/DB es otro dashboard (productividad envasado), no reemplaza al oficial.
+1. **SEMANAS planifica; PEDIDOS autoriza.** Planner aporta cuándo/dónde; Pedidos aporta identidad comercial.
+2. **LOTES certifica.** Calidad trabaja sobre lotes reales de ASIGNACIÓN, no sobre filas sueltas de SEMANAS.
+3. **Conflictos de datos:** PEDIDOS gana sobre SEMANAS en cliente/producto/estado; LOTES gana sobre ambos en OE/OA/RL.
+4. **Dashboard es lectura pura** de KPIs pre-calculados en el sheet.
 
 ---
 
-## 5. Construcción del WorkItem unificado
+## 9. Errores del parser actual (referencia)
 
-### Pipeline propuesto
+| Área | Error |
+|------|-------|
+| Arquitectura | WorkItem construido solo desde SEMANAS al final — sin enriquecimiento |
+| Arquitectura | PEDIDOS y LOTES indexados pero no integrados |
+| SEMANAS | Trata filas horizontales como registros; ignora grilla columnar |
+| SEMANAS | Busca tab `SEMANAS`; archivo real usa tabs por sector |
+| SEMANAS | No detecta bloques de semana / persona / sector / línea correctamente |
+| Envasado | No modela jerarquía Sector → Línea → Trabajo |
+| Elaboración | No distingue encargado (Santino) vs ramas (Cristian/Nicolás) |
+| PEDIDOS | Mapper busca `pedidoId`; columna real es `OP` |
+| Matching | Sin prioridad OP → lote → internalId; dependería de cliente+producto |
+| KPIs | No consume Dashboard; posible recálculo o ausencia |
+| Calidad | Sin LotesParser — sector Calidad sin fuente real |
+
+---
+
+## 10. Estrategia de implementación (post-aprobación del documento)
+
+### Fase 1 — Infraestructura WorkItem
+
+- `WorkItemRegistry`: crear, buscar, enriquecer, listar
+- Resolución de claves: OP → lote → internalId → fallback cliente+producto
+- Tipos actualizados con `linea`, `branchOwner`, `sectorLead`, `enrichmentSources`
+
+### Fase 2 — Parsers especializados
+
+| Orden | Parser | Entregable |
+|-------|--------|------------|
+| 1 | **PlannerParser** | Bloques SEMANAS → WorkItems planificados |
+| 2 | **PedidosParser** | Enriquecimiento administrativo vía OP/lote |
+| 3 | **LotesParser** | Enriquecimiento calidad |
+| 4 | **DashboardParser** | Snapshot KPIs oficiales |
+
+### Fase 3 — Integración operativa
+
+Reemplazar `loadSemanasWorkItems`-only en `WorkItemsService`:
 
 ```text
-1. ParsePedidos()        → Pedido[]
-2. ParsePlanner()        → PlannerSlot[]
-3. ParseLotes()          → LoteCalidad[]
-4. ResolveMatches()      → MatchGraph
-5. BuildWorkItems()      → WorkItem[]
+refresh() → PlannerParser → PedidosParser → LotesParser
+         → WorkItemRegistry.listForSector(sector, persona)
+DashboardParser → cache independiente para Producción
 ```
 
-### WorkItem resultante
+### Fase 4 — Validación con datos reales
 
-El WorkItem es la **vista operativa unificada** para `/mi-trabajo`, no una fila cruda de ningún sheet.
-
-| Campo WorkItem | Fuente primaria | Fuente secundaria |
-|----------------|-----------------|-------------------|
-| `id` | Derivado estable: `op:lote:slot` o hash de match | — |
-| `pedidoRef` (OP) | PEDIDOS | — |
-| `client`, `product` | PEDIDOS | SEMANAS (si no hay OP) |
-| `quantity`, `unit` | PEDIDOS | SEMANAS slot |
-| `status` | PEDIDOS.estado + estado app | LOTES (calidad) |
-| `ownerPerson` | PEDIDOS/ELABORACION.responsable | SEMANAS.branchOwner |
-| `sector` | PEDIDOS.S (M/P) + reglas | SEMANAS.sector |
-| `loteRef` | PEDIDOS / LOTES | — |
-| `oeRef`, `oaRef` | LOTES | PEDIDOS |
-| `date`, `dayLabel` | SEMANAS PlannerSlot | PEDIDOS fechas |
-| `deliveryDate` | PEDIDOS/EXPEDICION | SEMANAS/ENTREGAS |
-| `originStage` | Inferido del sector + lote | — |
-| `confidence` | Según calidad del match | — |
-| `source` | `pedidos_2026` \| `semanas_2026` \| `asignacion_lotes_2026` | — |
-
-### Casos por sector
-
-| Sector | WorkItems principales | Fuentes |
-|--------|----------------------|---------|
-| Elaboración (Cristian/Nicolás) | Slots de la semana + OP vinculado | SEMANAS + PEDIDOS/ELABORACION |
-| Envasado Masivo/Premium | Slots por día + OP | SEMANAS + PEDIDOS |
-| Calidad | Lotes pendientes de análisis | LOTES (+ join PEDIDOS) |
-| Depósito | Entregas programadas | SEMANAS/ENTREGAS o EXPEDICION |
-| Producción | Agregación cross-sector | Todos (vista, no re-parse) |
-
-### Estados Calidad desde LOTES
-
-Campos `FECHA ANALISIS`, `N° ANALISIS`, `OE`, `OA`, `RL`, `OBSERVACION` permiten inferir:
-
-- `pendiente_analisis` — sin fecha análisis / N/A
-- `en_analisis` — fecha análisis reciente sin RL
-- `aprobado` / `observado` — según OE/OA/RL/OBSERVACION (requiere validar con el lab reglas exactas)
+| Actor | Criterio de éxito |
+|-------|-------------------|
+| **Envasado Masivo** (`masivo@`) | WorkItems reales filtrados por sector + línea |
+| **Envasado Premium** (`premium@`) | WorkItems reales filtrados por sector + línea |
+| **Cristian** (`cristian@`) | Solo rama Cristian, datos reales |
+| **Nicolás** (`nicolas@`) | Solo rama Nicolás, datos reales |
+| **Santino** (`santino@`) | Ambas ramas visibles |
+| **Calidad** (`calidad@`) | WorkItems desde LOTES reales |
+| **Producción** (`produccion@`) | Consolidación cross-sector + KPIs Dashboard |
+| **Dashboard** | Números idénticos al sheet PEDIDOS/Dashboard |
 
 ---
 
-## 6. Errores del parser actual
+## 11. Objetivo final
 
-Basado en `semanas-block-parser.ts`, `semanas-to-work-items.ts` y `work-items.service.ts`:
+Genus OS debe **entender cómo funciona el Laboratorio Genus**, no cómo están dispuestas las columnas de un Excel.
 
-### 6.1 Arquitectura
+Después de implementar los parsers sobre Google Sheets reales:
 
-| Error | Impacto |
-|-------|---------|
-| **Solo SEMANAS alimenta WorkItems** | OP, estado, lote y responsable administrativo se pierden o se inventan |
-| **PEDIDOS indexado pero no mapeado** | `work-items.service` admite `pedidos_2026: true` pero count = 0 |
-| **LOTES no integrado** | Calidad sin fuente real |
-| **KPIs recalculados o ausentes** | Dashboard de PEDIDOS ignorado |
+- Envasado Masivo muestra **datos reales** organizados por línea.
+- Envasado Premium muestra **datos reales** organizados por línea.
+- Elaboración Cristian y Nicolás muestran **sus ramas reales**.
+- Santino visualiza **ambas ramas**.
+- Calidad trabaja sobre **LOTES reales**.
+- Producción consolida **toda la operación**.
+- KPIs vienen del **Dashboard real** — consumidos, no recalculados.
 
-### 6.2 SEMANAS — modelo de datos
-
-| Error | Detalle |
-|-------|---------|
-| **Asume filas horizontales** | Usa `recordFromSemanasRow(headers, row)` — cliente col 0, producto col 1 |
-| **Ignora grilla columnar** | El trabajo vive en columnas 2/4/6/8/10, apilado verticalmente |
-| **Busca tab `SEMANAS`** | El archivo real tiene tabs por sector: `ELABORACION`, `ACONDICIONAMIENTO`, … |
-| **Solo escanea 1 tab** | `discoverSemanasFile` usa un solo tab, no todas las pestañas operativas |
-| **Detecta bloques por keyword en fila** | `detectSemanasBlocks` busca “elaboración/envasado” en filas — no existen esos títulos dentro de tabs ya nombradas |
-| **Espera headers de tabla** | `looksLikeHeaderRow` busca cliente/producto/cantidad en una fila — no existen en planner |
-| **Líneas LÍNEA 1/2/3** | F10.1 documenta líneas que **no están en la planilla real** |
-| **Posicional fallback incorrecto** | `buildPositionalRecord`: cells[0]=cliente, [1]=producto — inválido para layout por columnas |
-
-### 6.3 PEDIDOS — mapper roto
-
-`pedido.mapper.ts` busca campo `pedidoId` pero la columna real es **`OP`**. Resultado: `listPedidos()` devuelve array vacío aunque el sheet esté conectado.
-
-### 6.4 Matching
-
-| Error | Detalle |
-|-------|---------|
-| **Sin join SEMANAS↔PEDIDOS** | Cada WorkItem es huérfano de OP |
-| **status hardcodeado** | Siempre `"pendiente"` en mapper SEMANAS |
-| **pedidoRef desde columnas inexistentes** | pickField `op`, `pedido` en filas que no tienen OP |
-
-### 6.5 Discovery / UX
-
-- Mensajes dicen “desde SEMANAS 2026” aunque el sector necesite PEDIDOS o LOTES
-- Calidad explícitamente excluida: *“Calidad no recibe WorkItems desde SEMANAS en F8.1”*
-- Production overview construido solo desde SEMANAS → datos incompletos
+El objetivo no es leer Excel.  
+El objetivo es **representar la operación real del laboratorio** utilizando Google Sheets como fuente de verdad.
 
 ---
 
-## 7. Estrategia de parsing a implementar (post-aprobación)
+## Apéndice A — Mapa de pestañas
 
-### Fase A — Parsers especializados (sin mezclar responsabilidades)
-
-| Módulo | Input | Output |
-|--------|-------|--------|
-| `pedidos-parser` | Tab PEDIDOS + ELABORACION + EXPEDICION | `Pedido[]`, `PedidoElaboracion[]` |
-| `pedidos-dashboard-parser` | Tab Dashboard + KPI | `DashboardSnapshot` (celdas fijas por layout, no SQL) |
-| `planner-parser` | Tabs ELABORACION + ACONDICIONAMIENTO | `PlannerSlot[]` |
-| `planner-entregas-parser` | Tab ENTREGAS | `EntregaProgramada[]` |
-| `lotes-parser` | Tabs mensuales | `LoteCalidad[]` |
-
-Cada parser conoce **su** geometría. No comparten lógica de “fila = registro” excepto donde realmente hay tabla.
-
-### Fase B — Planner parser (corazón del cambio)
-
-Algoritmo propuesto para ELABORACION / ACONDICIONAMIENTO:
-
-```text
-1. Escanear filas buscando ancla de semana: regex /Lunes.*Viernes/
-2. Leer mapa columnas-día desde fila ancla (col → día semana)
-3. Leer fila numérica + fila mes → construir fecha parcial
-4. Dentro del rango [ancla .. próxima ancla):
-   a. Si fila = PERSONA (1 celda texto col 2, uppercase nombre) → ctx.branchOwner
-   b. Si fila = SECTOR ENVASADO → ctx.packagingTier
-   c. Si fila = nota operativa → adjuntar a ctx.lastSlot.notes
-   d. Para cada celda no vacía en columnas-día:
-      - Clasificar celda: CLIENTe | PRODUCTO | CANTIDAD | NOTA
-      - Usar heurísticas: cantidad = /\d+\s*(KG|kg|ml|x\d+|^\d+$)/ 
-      - Apilar en slot abierto de esa columna-día
-5. Cerrar slots al cambiar semana/persona/sector
-```
-
-**No depender de merges** inicialmente, pero leer `mergesByTab` del meta de Sheets para confirmar bloques visuales cuando Google los exponga.
-
-### Fase C — Resolución / join
-
-```text
-1. Index pedidosByLote: Map<lote, Pedido[]>
-2. Index pedidosByClienteProducto: Map<normalizedKey, Pedido[]>
-3. Para cada PlannerSlot:
-   - Intentar match por lote si cantidad/notas mencionan lote
-   - Else match cliente+producto normalizado (fuzzy)
-   - Else dejar slot huérfano con confidence=low
-4. Para cada LoteCalidad:
-   - Buscar Pedido por lote
-   - Emitir WorkItem sector=CALIDAD
-5. Deduplicar: un OP + lote + día → un WorkItem
-```
-
-Normalización de texto: quitar acentos, uppercase, aliases conocidos (`TMCO` → `THE MINIMAL CO`, `TYL` → `THELMA Y LOUISE`).
-
-### Fase D — Integración en WorkItemsService
-
-```text
-loadAllWorkItems():
-  pedidos = parsePedidos()
-  slots = parsePlanner()
-  lotes = parseLotes()
-  return buildUnifiedWorkItems(pedidos, slots, lotes)
-```
-
-Prioridad de fuentes en conflictos: **PEDIDOS > LOTES > SEMANAS**.
-
-### Fase E — KPIs
-
-- Endpoint `/api/v1/dashboard` lee tab Dashboard de PEDIDOS
-- Celdas identificadas por **anclas de texto** (`NIVEL DE SERVICIO`, `LEAD TIME PROMEDIO`) + offset relativo
-- Cache con TTL; invalidar en `/drive/refresh`
-- **Prohibido** recalcular lead time o nivel de servicio en Next.js para la vista oficial
-
-### Fase F — Validación
-
-| Prueba | Criterio |
-|--------|----------|
-| Cristian@ | Ve slots de su bloque CRISTIAN con OP cuando match existe |
-| masivo@ / premium@ | Ve slots filtrados por tier, no por “LÍNEA 1” |
-| calidad@ | Ve lotes desde ASIGNACIÓN, no desde SEMANAS |
-| Dashboard | Muestra mismos números que celda Dashboard en PEDIDOS |
-| Debug | `sourcesMapped.pedidos_2026 > 0` |
-
-### Principios invariantes
-
-1. **Google Sheets = única fuente de datos en runtime**
-2. **Excel de referencia = solo tests/fixtures estructurales** (opcional, no producción)
-3. **No hardcodear filas, clientes ni productos**
-4. **Parsers tolerantes a filas vacías, typos (`PREMIUN`) y notas libres**
-5. **WorkItem = proyección**, nunca copia literal de una fila
+| Archivo | Pestaña | Parser | Rol |
+|---------|---------|--------|-----|
+| SEMANAS | ELABORACION | PlannerParser | Planner elaboración |
+| SEMANAS | ACONDICIONAMIENTO | PlannerParser | Planner envasado |
+| SEMANAS | ENTREGAS | PlannerParser | Entregas programadas |
+| SEMANAS | QACONDDIA | PlannerParser (fase 2) | Calidad diaria acondicionamiento |
+| SEMANAS | DB | — | KPI envasado local (no oficial) |
+| PEDIDOS | PEDIDOS | PedidosParser | Entidad comercial |
+| PEDIDOS | ELABORACION | PedidosParser | Responsable granel |
+| PEDIDOS | EXPEDICION | PedidosParser | Logística |
+| PEDIDOS | Dashboard | DashboardParser | **KPIs oficiales** |
+| PEDIDOS | KPI | DashboardParser | Detalle por pedido |
+| LOTES | ENERO… | LotesParser | Calidad por lote |
 
 ---
 
-## Apéndice A — Mapa de pestañas vs. rol en Genus OS
+## Apéndice B — Decisiones cerradas
 
-| Archivo | Pestaña | Rol en Genus OS |
-|---------|---------|-----------------|
-| SEMANAS | ELABORACION | PlannerSlot elaboración |
-| SEMANAS | ACONDICIONAMIENTO | PlannerSlot envasado |
-| SEMANAS | ENTREGAS | EntregaProgramada |
-| SEMANAS | QACONDDIA | Referencia calidad diaria (fase 2) |
-| SEMANAS | DB | KPI envasado local (no reemplaza Dashboard PEDIDOS) |
-| PEDIDOS | PEDIDOS | Entidad Pedido |
-| PEDIDOS | ELABORACION | Responsable + lote granel |
-| PEDIDOS | EXPEDICION | Logística |
-| PEDIDOS | Dashboard | **KPIs oficiales** |
-| PEDIDOS | KPI | Detalle por pedido |
-| LOTES | ENERO… | LoteCalidad |
+| Tema | Decisión |
+|------|----------|
+| WorkItem | Entidad central enriquecida por parsers — no join al final |
+| Claves de unión | OP → Lote → internalId → Cliente+Producto (solo fallback) |
+| Parsers | PlannerParser, PedidosParser, LotesParser, DashboardParser — especializados |
+| SEMANAS | Planner visual — bloques, no tabla |
+| Envasado | Sector → Línea → Trabajo; líneas existen (L1–L3/L4 masivo, L1–L2 premium) |
+| Elaboración | Santino = encargado; Cristian/Nicolás = ramas; Santino ve ambas |
+| PEDIDOS | Fuente primaria administrativa |
+| LOTES | Fuente primaria calidad |
+| Dashboard | KPIs oficiales — solo consumo |
+| Fuente runtime | Google Sheets — Excel solo referencia estructural |
 
 ---
 
-## Apéndice B — Preguntas abiertas para validar con el lab
+## Apéndice C — Preguntas abiertas (menores)
 
-Antes de implementar, confirmar:
-
-1. ¿Santino debe aparecer como `ownerPerson` en slots de Cristian/Nicolás o solo como metadata de sector?
-2. ¿Reglas exactas de estado calidad según OE/OA/RL?
-3. ¿Aliases oficiales cliente (`TMCO`, `TYL`, etc.) — hay tabla de abreviaturas?
-4. ¿Un slot SEMANAS sin OP match debe mostrarse igual (trabajo interno/muestras)?
-5. ¿QACONDDIA entra en Fase 1 o es fase posterior?
+1. ¿Reglas exactas de `estadoCalidad` según combinación OE/OA/RL?
+2. ¿Tabla oficial de aliases de cliente (`TMCO`, `TYL`, …) o inferir del sheet?
+3. ¿QACONDDIA entra en fase 1 o fase 2?
+4. ¿WorkItems del planner sin OP deben mostrarse con badge “sin pedido vinculado”?
 
 ---
 
 ## Siguiente paso
 
-**Esperar aprobación de este documento.** Una vez aprobado:
+**Documento listo como especificación oficial.** Cuando el equipo confirme que no faltan ajustes:
 
-1. Implementar parsers especializados sobre Google Sheets reales
-2. Reemplazar pipeline `loadSemanasWorkItems`-only
-3. Corregir `pedido.mapper` (columna OP)
-4. Agregar tests con fixtures estructurales derivados de estos Excel (sin leer uploads en runtime)
+1. Implementar `WorkItemRegistry` + pipeline de enriquecimiento
+2. Implementar los cuatro parsers sobre Google Sheets reales
+3. Reemplazar pipeline actual (`semanas-to-work-items` como única fuente)
+4. Validar con usuarios reales por sector
