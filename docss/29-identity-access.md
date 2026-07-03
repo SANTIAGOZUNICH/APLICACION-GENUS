@@ -24,6 +24,7 @@
 | **4.1b** | UX premium — layout, contexto planta, bootstrap UI | ✅ |
 | **4.1c** | UX polish + Access Preview mock por sector | ✅ en curso |
 | **4.2** | `OsAuthSession` + `AuthAdapter` + contratos | ✅ |
+| **5.1** | Dynamic Workspace Shell — resolver + provider | ✅ en curso |
 | **4.3** | Mapeo email → persona → sector → rol (mock TEMP) | Pendiente |
 | **4.4** | Validación mock contraseña (server route) | Pendiente |
 | **4.5** | Session bootstrap + remember me | Pendiente |

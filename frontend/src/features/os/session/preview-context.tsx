@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
+import { clearAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
 import { resolveSectorHome } from "@/lib/role-engine";
 import type { SidebarItemId } from "@/lib/role-engine/types";
 import { SECTOR_EMAILS } from "@/features/sectors/config/sector-emails";
@@ -125,6 +126,7 @@ export function PreviewProvider({
   );
 
   const logout = useCallback(() => {
+    clearAuthSession();
     setSession(null);
     setNavStack([initialNav]);
     setSimulatedStatuses({});
