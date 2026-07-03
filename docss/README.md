@@ -78,6 +78,7 @@ La carpeta `/docs` contiene 22 documentos numerados. Cada uno es autocontenido p
 | `19-pendientes.md` | Todo lo pendiente |
 | `20-recomendaciones-cursor.md` | Guía para el asistente de código (leer primero) |
 | `28-convergence-strategy.md` | Estrategia de convergencia Strangler Fig → Genus OS v1.0 |
+| `29-sheets-integration-strategy.md` | **Integración Sheets → Genus OS (24 meses)** — lectura, escritura, KPIs DASHBOARD |
 
 ---
 

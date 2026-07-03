@@ -32,9 +32,10 @@ Si una tarea implica romper alguno de estos, **se detiene y se pregunta** — no
 ## 3. El estado real del proyecto, hoy (no asumas)
 
 - El adapter de datos activo puede ser `mock` o `drive` (`GENUS_DATA_MODE`). El modo `real` hoy es un **slice experimental de solo lectura** sobre 3 hojas críticas (`ASIGNACION DE LOTES 2026`, `PEDIDOS 2026`, `SEMANAS 2026`) — no producción completa.
+- **Arquitectura de integración web (24 meses):** Sheets → Next.js API/adapters → Genus OS. Apps Script solo opcional para escrituras puntuales. Ver [`docss/29-sheets-integration-strategy.md`](../docss/29-sheets-integration-strategy.md).
 - `MOVIMIENTOS`, `SALDOS`, `ANALISIS_CALIDAD` y `LIBERACIONES` **no están conectados** todavía al adapter real.
 - El RBAC de gobierno (`ROLES`/`MODULOS`/`PERMISOS`) puede seguir en sandbox, no en el Sheet de producción — tratarlo como pendiente salvo evidencia clara en el código.
-- No existe todavía una capa de API propia (`docss/17`) — el frontend habla directo con los adapters.
+- No existe todavía una capa de API propia separada del frontend (`docss/17` es visión largo plazo) — las **Next.js API routes** en `/api/v1` son el BFF; ver `docss/29`.
 - El Design System y los Workspaces (F7.1) están construidos y maduros en el código. La conexión de datos reales está bastante más atrasada que la experiencia visual.
 
 Detalle completo (tabla de fidelidad entidad por entidad): [`03_GENUS_OS_CURSOR_PLAYBOOK.md` — Sección 5](./03_GENUS_OS_CURSOR_PLAYBOOK.md#5-auditoría-de-fidelidad--la-parte-nueva-de-este-playbook).
