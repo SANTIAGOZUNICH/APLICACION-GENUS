@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { displayField } from "@/lib/operational/display-fields";
+import { SECTOR_LABELS } from "@/types/operational/sector";
 import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-adapter";
 import {
   ActionButton,
@@ -14,10 +15,7 @@ import {
   type OperationalTableColumn,
 } from "../components/operational-ui";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
-import {
-  filterQualityByKind,
-  filterQualityToday,
-} from "../lib/operational-filters";
+import { filterQualityByKind, filterQualityByStatus } from "../lib/operational-filters";
 import { useOperationalStore } from "../store/operational-store-context";
 import type { QualityItem } from "../types";
 
@@ -28,7 +26,18 @@ const CALIDAD_TABS = [
 
 type CalidadTabId = (typeof CALIDAD_TABS)[number]["id"];
 
-/** Calidad — graneles del día y salidas pendientes con aprobar/rechazar + observación. */
+function sortReceivedFirst(items: QualityItem[]): QualityItem[] {
+  return [...items].sort((a, b) => {
+    const aScore = a.receivedFrom ? 1 : 0;
+    const bScore = b.receivedFrom ? 1 : 0;
+    if (bScore !== aScore) return bScore - aScore;
+    const aTime = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+    const bTime = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+    return bTime - aTime;
+  });
+}
+
+/** Calidad — pendientes recibidos de sectores + aprobar/rechazar. */
 export function CalidadOperationalView() {
   const workspace = useRequiredWorkspace();
   const {
@@ -47,20 +56,34 @@ export function CalidadOperationalView() {
     return applyQualityDecisionsToItems(seed, getQualityStatus);
   }, [data?.qualityItems, getQualityStatus]);
 
-  const granelesHoy = useMemo(() => {
-    const graneles = filterQualityByKind(qualityItems, "granel");
-    const today = filterQualityToday(graneles);
-    return today.filter((item) => item.status === "pendiente");
-  }, [qualityItems]);
+  const granelesPendientes = useMemo(
+    () =>
+      sortReceivedFirst(
+        filterQualityByKind(qualityItems, "granel").filter((item) => item.status === "pendiente")
+      ),
+    [qualityItems]
+  );
 
-  const salidasPendientes = useMemo(() => {
-    const salidas = filterQualityByKind(qualityItems, "salida");
-    return salidas.filter((item) => item.status === "pendiente");
-  }, [qualityItems]);
+  const salidasPendientes = useMemo(
+    () =>
+      sortReceivedFirst(
+        filterQualityByKind(qualityItems, "salida").filter((item) => item.status === "pendiente")
+      ),
+    [qualityItems]
+  );
+
+  const recibidosCount = useMemo(
+    () =>
+      filterQualityByStatus(qualityItems, "pendiente").filter((item) => item.receivedFrom).length,
+    [qualityItems]
+  );
 
   const getObservationForRow = useCallback(
     (item: QualityItem) =>
-      observationDrafts[item.id] ?? getQualityObservation(item.id) ?? "",
+      observationDrafts[item.id] ??
+      getQualityObservation(item.id) ??
+      item.observation ??
+      "",
     [observationDrafts, getQualityObservation]
   );
 
@@ -106,6 +129,19 @@ export function CalidadOperationalView() {
         kind === "granel"
           ? [
               {
+                key: "received",
+                header: "Recibido de",
+                render: (row) =>
+                  row.receivedFrom ? (
+                    <span className="text-xs font-medium text-[var(--os-teal)]">
+                      {SECTOR_LABELS[row.receivedFrom]}
+                      {row.completedBy ? ` · ${row.completedBy}` : ""}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-[var(--os-text-muted)]">Planilla</span>
+                  ),
+              },
+              {
                 key: "lote",
                 header: "Lote / Granel",
                 render: (row) => (
@@ -126,6 +162,19 @@ export function CalidadOperationalView() {
               },
             ]
           : [
+              {
+                key: "received",
+                header: "Recibido de",
+                render: (row) =>
+                  row.receivedFrom ? (
+                    <span className="text-xs font-medium text-[var(--os-teal)]">
+                      {SECTOR_LABELS[row.receivedFrom]}
+                      {row.line ? ` · ${row.line}` : ""}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-[var(--os-text-muted)]">Planilla</span>
+                  ),
+              },
               { key: "line", header: "Línea", render: (row) => displayField(row.line) },
               { key: "product", header: "Producto", render: (row) => displayField(row.product) },
               { key: "client", header: "Cliente", render: (row) => displayField(row.client) },
@@ -157,7 +206,7 @@ export function CalidadOperationalView() {
                 onChange={(e) =>
                   setObservationDrafts((prev) => ({ ...prev, [row.id]: e.target.value }))
                 }
-                placeholder="Observación…"
+                placeholder={row.observation ?? "Observación…"}
                 className="min-w-[140px] rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm"
               />
             ) : (
@@ -189,7 +238,7 @@ export function CalidadOperationalView() {
 
   const tabs = CALIDAD_TABS.map((tab) => ({
     ...tab,
-    count: tab.id === "elaboracion" ? granelesHoy.length : salidasPendientes.length,
+    count: tab.id === "elaboracion" ? granelesPendientes.length : salidasPendientes.length,
   }));
 
   return (
@@ -205,6 +254,13 @@ export function CalidadOperationalView() {
         />
       </header>
 
+      {recibidosCount > 0 && (
+        <div className="mb-4 rounded-[var(--os-radius-sm)] border border-[var(--os-teal)]/30 bg-[var(--os-teal-soft)] px-4 py-3 text-sm text-[var(--os-text)]">
+          <strong>Pendientes recibidos:</strong> {recibidosCount} terminado
+          {recibidosCount === 1 ? "" : "s"} de planta esperando revisión de Calidad.
+        </div>
+      )}
+
       {error && (
         <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
           {error}
@@ -217,9 +273,9 @@ export function CalidadOperationalView() {
         {activeTab === "elaboracion" && (
           <OperationalTable
             columns={granelColumns}
-            rows={granelesHoy}
+            rows={granelesPendientes}
             rowKey={(row) => row.id}
-            emptyMessage="Sin graneles pendientes para hoy."
+            emptyMessage="Sin graneles pendientes de revisión."
           />
         )}
         {activeTab === "acondicionamiento" && (

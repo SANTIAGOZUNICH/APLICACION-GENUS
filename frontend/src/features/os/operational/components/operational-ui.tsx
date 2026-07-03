@@ -194,9 +194,11 @@ export function ActionButton({ label, variant, onClick, disabled }: ActionButton
 export function StatusChip({ status }: { status: string }) {
   const normalized = status.toLowerCase();
   let cls = "bg-[var(--os-bg)] text-[var(--os-text-muted)]";
+  let label = status.replace(/_/g, " ");
 
   if (normalized === "aprobado" || normalized === "completo") {
     cls = "bg-emerald-50 text-emerald-800";
+    if (normalized === "completo") label = "Terminado";
   } else if (normalized === "rechazado" || normalized === "bloqueado") {
     cls = "bg-rose-50 text-rose-800";
   } else if (normalized === "pendiente" || normalized === "en_curso") {
@@ -205,7 +207,7 @@ export function StatusChip({ status }: { status: string }) {
 
   return (
     <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium capitalize ${cls}`}>
-      {status.replace(/_/g, " ")}
+      {label}
     </span>
   );
 }

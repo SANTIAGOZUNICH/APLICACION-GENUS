@@ -19,7 +19,7 @@ interface WorkItemProgressTableProps {
     payload: { finishedQty: string; observation: string }
   ) => void;
   onMarkFinished: (
-    itemId: string,
+    item: WorkItem,
     payload: { finishedQty: string; observation: string }
   ) => void;
   emptyMessage?: string;
@@ -126,6 +126,7 @@ export function WorkItemProgressTable({
             const planned = plannedQuantityLabel(item.quantity, item.unit);
             const diff = formatOperationalDifference(item.quantity, draft.finishedQty);
             const ref = variant === "envasado" ? item.oaRef : item.oeRef;
+            const isDone = item.status === "completo";
 
             return (
               <tr
@@ -149,7 +150,8 @@ export function WorkItemProgressTable({
                     value={draft.finishedQty}
                     onChange={(e) => updateDraft(item.id, { finishedQty: e.target.value })}
                     placeholder="0"
-                    className="w-24 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm tabular-nums"
+                    disabled={isDone}
+                    className="w-24 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm tabular-nums disabled:opacity-50"
                   />
                 </td>
                 {variant === "envasado" && (
@@ -180,32 +182,37 @@ export function WorkItemProgressTable({
                     value={draft.observation}
                     onChange={(e) => updateDraft(item.id, { observation: e.target.value })}
                     placeholder="Observación…"
-                    className="min-w-[140px] rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm"
+                    disabled={isDone}
+                    className="min-w-[140px] rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm disabled:opacity-50"
                   />
                 </td>
                 <td className="px-3 py-2.5 align-top">
-                  <div className="flex flex-wrap gap-2">
-                    <ActionButton
-                      label="Guardar avance"
-                      variant="neutral"
-                      onClick={() =>
-                        onSaveProgress(item.id, {
-                          finishedQty: draft.finishedQty,
-                          observation: draft.observation,
-                        })
-                      }
-                    />
-                    <ActionButton
-                      label="Marcar terminado"
-                      variant="approve"
-                      onClick={() =>
-                        onMarkFinished(item.id, {
-                          finishedQty: draft.finishedQty || item.quantity || "",
-                          observation: draft.observation,
-                        })
-                      }
-                    />
-                  </div>
+                  {isDone ? (
+                    <span className="text-xs text-[var(--os-text-muted)]">Notificado a Calidad</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      <ActionButton
+                        label="Guardar avance"
+                        variant="neutral"
+                        onClick={() =>
+                          onSaveProgress(item.id, {
+                            finishedQty: draft.finishedQty,
+                            observation: draft.observation,
+                          })
+                        }
+                      />
+                      <ActionButton
+                        label="Marcar terminado"
+                        variant="approve"
+                        onClick={() =>
+                          onMarkFinished(item, {
+                            finishedQty: draft.finishedQty || item.quantity || "",
+                            observation: draft.observation,
+                          })
+                        }
+                      />
+                    </div>
+                  )}
                 </td>
               </tr>
             );

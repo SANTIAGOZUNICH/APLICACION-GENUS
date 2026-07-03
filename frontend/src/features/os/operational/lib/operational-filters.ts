@@ -48,7 +48,28 @@ export function filterWorkItemsPendingEnvasado(items: WorkItem[]): WorkItem[] {
   );
 }
 
+export function filterWorkItemsCompletedElaboracion(items: WorkItem[]): WorkItem[] {
+  return items.filter(
+    (item) => item.sector === "ELABORACION" && item.status === "completo"
+  );
+}
+
+export function filterWorkItemsCompletedEnvasado(items: WorkItem[]): WorkItem[] {
+  return items.filter(
+    (item) =>
+      (item.sector === "ENVASADO_MASIVO" || item.sector === "ENVASADO_PREMIUM") &&
+      item.status === "completo"
+  );
+}
+
+export function filterQualityReceivedPending(items: QualityItem[]): QualityItem[] {
+  return items.filter(
+    (item) => item.status === "pendiente" && Boolean(item.receivedFrom && item.completedAt)
+  );
+}
+
 export function workItemStatusLabel(status: WorkItemStatus): string {
+  if (status === "completo") return "Terminado";
   return status.replace(/_/g, " ");
 }
 

@@ -1,8 +1,15 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import {
+  buildOperationalActivityFeed,
+  mergeQualityItemsWithCompletions,
+  qualityItemIdForWorkItem,
+  workItemToCompletionEvent,
+} from "./lib/completion-events";
+import {
   filterQualityByKind,
   filterQualityByStatus,
   filterQualityToday,
+  filterWorkItemsCompletedElaboracion,
   filterWorkItemsPendingElaboracion,
   filterWorkItemsPendingEnvasado,
 } from "./lib/operational-filters";
@@ -12,7 +19,9 @@ import {
   getEffectiveQualityStatus,
   getEffectiveWorkStatus,
   getWorkFinishedQty,
+  readCompletionEvents,
   recordQualityDecision,
+  recordWorkCompletion,
   recordWorkProgress,
 } from "./store/operational-store";
 import {
@@ -101,6 +110,80 @@ describe("operational-store", () => {
       status: "completo",
     });
     expect(getEffectiveWorkStatus("wi-1", "pendiente")).toBe("completo");
+  });
+
+  it("recordWorkCompletion emite evento cross-sector", () => {
+    const item = mockWorkItemsForSector("ENVASADO_MASIVO")[0]!;
+    const { event } = recordWorkCompletion(item, {
+      finishedQty: "3300",
+      observation: "Lote cerrado",
+      completedBy: "Operario Masivo",
+    });
+
+    expect(getEffectiveWorkStatus(item.id, item.status)).toBe("completo");
+    expect(readCompletionEvents()).toHaveLength(1);
+    expect(event.workItemId).toBe(item.id);
+    expect(event.sourceSector).toBe("ENVASADO_MASIVO");
+    expect(event.completedBy).toBe("Operario Masivo");
+  });
+});
+
+describe("completion-events", () => {
+  it("convierte terminado en ítem Calidad pendiente", () => {
+    const item = mockWorkItemsForSector("ELABORACION", "Cristian")[0]!;
+    const event = workItemToCompletionEvent(item, {
+      finishedQty: "120",
+      observation: "Listo",
+      completedBy: "Cristian",
+      completedAt: "2026-07-01T12:00:00.000Z",
+    });
+
+    const merged = mergeQualityItemsWithCompletions(mockQualityItems(), [event]);
+    const received = merged.find((q) => q.id === qualityItemIdForWorkItem(item.id));
+
+    expect(received).toBeDefined();
+    expect(received?.kind).toBe("granel");
+    expect(received?.status).toBe("pendiente");
+    expect(received?.receivedFrom).toBe("ELABORACION");
+    expect(received?.completedBy).toBe("Cristian");
+  });
+
+  it("arma feed de actividad con terminados y decisiones", () => {
+    const item = mockWorkItemsForSector("ENVASADO_PREMIUM")[0]!;
+    const event = workItemToCompletionEvent(item, {
+      finishedQty: "500",
+      observation: "",
+      completedBy: "Premium",
+      completedAt: "2026-07-01T14:00:00.000Z",
+    });
+
+    const feed = buildOperationalActivityFeed({
+      completions: [event],
+      decisions: [
+        {
+          itemId: "q-granel-1",
+          status: "aprobado",
+          decidedAt: "2026-07-01T15:00:00.000Z",
+          decidedBy: "Lucía",
+          label: "Serum Niacinamida",
+        },
+      ],
+    });
+
+    expect(feed).toHaveLength(2);
+    expect(feed[0]?.type).toBe("quality_approve");
+    expect(feed[1]?.type).toBe("completion");
+  });
+
+  it("filtra elaboraciones terminadas para Producción", () => {
+    const items = mockWorkItemsForSector("PRODUCCION").map((item, index) =>
+      index === 0 ? { ...item, status: "completo" as const } : item
+    );
+    const completed = filterWorkItemsCompletedElaboracion(items);
+    expect(completed.some((i) => i.status === "completo")).toBe(true);
+    expect(filterWorkItemsPendingElaboracion(items).every((i) => i.status !== "completo")).toBe(
+      true
+    );
   });
 });
 

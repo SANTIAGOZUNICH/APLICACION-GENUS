@@ -9,8 +9,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { WorkItemStatus } from "@/types/operational/work-item";
-import type { QualityDecisionStatus } from "../types";
+import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
+import type { CompletionEvent, QualityDecisionStatus } from "../types";
 import {
   applyWorkProgressToItems,
   getEffectiveQualityStatus,
@@ -18,9 +18,11 @@ import {
   getQualityObservation,
   getWorkFinishedQty,
   getWorkObservation,
+  readCompletionEvents,
   readDecisionMap,
   readProgressMap,
   recordQualityDecision,
+  recordWorkCompletion,
   recordWorkProgress,
   type DecisionMap,
   type ProgressMap,
@@ -29,6 +31,7 @@ import {
 interface OperationalStoreValue {
   decisionMap: DecisionMap;
   progressMap: ProgressMap;
+  completionEvents: CompletionEvent[];
   revision: number;
   getQualityStatus: (itemId: string, seedStatus: QualityDecisionStatus) => QualityDecisionStatus;
   getQualityObservation: (itemId: string) => string;
@@ -42,7 +45,7 @@ interface OperationalStoreValue {
     payload: { finishedQty: string; observation: string; updatedBy?: string }
   ) => void;
   markWorkFinished: (
-    itemId: string,
+    item: WorkItem,
     payload: { finishedQty: string; observation: string; updatedBy?: string }
   ) => void;
   applyProgressToWorkItems: <T extends { id: string; status: WorkItemStatus }>(items: T[]) => T[];
@@ -51,14 +54,22 @@ interface OperationalStoreValue {
 
 const OperationalStoreContext = createContext<OperationalStoreValue | null>(null);
 
+const STORAGE_KEYS = [
+  "genus_os_operational_decisions",
+  "genus_os_work_progress",
+  "genus_os_completion_events",
+] as const;
+
 export function OperationalStoreProvider({ children }: { children: ReactNode }) {
   const [decisionMap, setDecisionMap] = useState<DecisionMap>({});
   const [progressMap, setProgressMap] = useState<ProgressMap>({});
+  const [completionEvents, setCompletionEvents] = useState<CompletionEvent[]>([]);
   const [revision, setRevision] = useState(0);
 
   const syncFromStorage = useCallback(() => {
     setDecisionMap(readDecisionMap());
     setProgressMap(readProgressMap());
+    setCompletionEvents(readCompletionEvents());
     setRevision((v) => v + 1);
   }, []);
 
@@ -66,11 +77,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     syncFromStorage();
 
     const onStorage = (event: StorageEvent) => {
-      if (
-        event.key === null ||
-        event.key === "genus_os_operational_decisions" ||
-        event.key === "genus_os_work_progress"
-      ) {
+      if (event.key === null || STORAGE_KEYS.includes(event.key as (typeof STORAGE_KEYS)[number])) {
         syncFromStorage();
       }
     };
@@ -146,12 +153,13 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
 
   const markWorkFinished = useCallback(
     (
-      itemId: string,
+      item: WorkItem,
       payload: { finishedQty: string; observation: string; updatedBy?: string }
     ) => {
-      recordWorkProgress(itemId, {
-        ...payload,
-        status: "completo",
+      recordWorkCompletion(item, {
+        finishedQty: payload.finishedQty,
+        observation: payload.observation,
+        completedBy: payload.updatedBy ?? "Operario",
       });
       syncFromStorage();
     },
@@ -168,6 +176,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     () => ({
       decisionMap,
       progressMap,
+      completionEvents,
       revision,
       getQualityStatus,
       getQualityObservation: getQualityObs,
@@ -184,6 +193,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     [
       decisionMap,
       progressMap,
+      completionEvents,
       revision,
       getQualityStatus,
       getQualityObs,

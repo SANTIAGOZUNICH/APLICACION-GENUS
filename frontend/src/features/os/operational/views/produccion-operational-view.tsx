@@ -8,6 +8,7 @@ import { buildProductionOverview } from "@/lib/operational/build-production-over
 import { displayField } from "@/lib/operational/display-fields";
 import { SECTOR_LABELS } from "@/types/operational/sector";
 import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-adapter";
+import { OperationalActivityFeed } from "../components/operational-activity-feed";
 import {
   OperationalTabs,
   OperationalTable,
@@ -16,8 +17,11 @@ import {
   type OperationalTableColumn,
 } from "../components/operational-ui";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
+import { buildOperationalActivityFeed } from "../lib/completion-events";
 import {
   filterQualityByStatus,
+  filterWorkItemsCompletedElaboracion,
+  filterWorkItemsCompletedEnvasado,
   filterWorkItemsPendingElaboracion,
   filterWorkItemsPendingEnvasado,
   formatQuantity,
@@ -36,12 +40,26 @@ const PRODUCCION_TABS = [
 
 type ProduccionTabId = (typeof PRODUCCION_TABS)[number]["id"];
 
-/** Producción / Supervisión — visión general con 5 pestañas operativas. */
+function sortWorkItemsCompletedFirst(items: WorkItem[]): WorkItem[] {
+  return [...items].sort((a, b) => {
+    const aDone = a.status === "completo" ? 1 : 0;
+    const bDone = b.status === "completo" ? 1 : 0;
+    if (bDone !== aDone) return bDone - aDone;
+    return (a.product ?? "").localeCompare(b.product ?? "", "es", { sensitivity: "base" });
+  });
+}
+
+/** Producción / Supervisión — visión general con actividad cross-sector. */
 export function ProduccionOperationalView() {
   const workspace = useRequiredWorkspace();
   const { applyEffectiveStatus } = usePreviewContext();
-  const { getQualityStatus, getQualityObservation, applyProgressToWorkItems } =
-    useOperationalStore();
+  const {
+    getQualityStatus,
+    getQualityObservation,
+    applyProgressToWorkItems,
+    completionEvents,
+    decisionMap,
+  } = useOperationalStore();
   const { data, loading, error, lastRefreshAt, refresh } = useOperationalPlan("PRODUCCION");
   const [activeTab, setActiveTab] = useState<ProduccionTabId>("elaboracion");
 
@@ -55,6 +73,30 @@ export function ProduccionOperationalView() {
     return applyQualityDecisionsToItems(seed, getQualityStatus);
   }, [data?.qualityItems, getQualityStatus]);
 
+  const qualityLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of qualityItems) {
+      map.set(item.id, item.product);
+    }
+    return map;
+  }, [qualityItems]);
+
+  const activityFeed = useMemo(
+    () =>
+      buildOperationalActivityFeed({
+        completions: completionEvents,
+        decisions: Object.values(decisionMap).map((d) => ({
+          itemId: d.itemId,
+          status: d.status,
+          decidedAt: d.decidedAt,
+          decidedBy: d.decidedBy,
+          observation: d.observation,
+          label: qualityLabelById.get(d.itemId) ?? d.itemId,
+        })),
+      }),
+    [completionEvents, decisionMap, qualityLabelById]
+  );
+
   const rechazados = useMemo(
     () => filterQualityByStatus(qualityItems, "rechazado"),
     [qualityItems]
@@ -67,9 +109,25 @@ export function ProduccionOperationalView() {
     () => filterWorkItemsPendingElaboracion(workItems),
     [workItems]
   );
+  const terminadoElaboracion = useMemo(
+    () => filterWorkItemsCompletedElaboracion(workItems),
+    [workItems]
+  );
+  const elaboracionRows = useMemo(
+    () => sortWorkItemsCompletedFirst([...pendienteElaboracion, ...terminadoElaboracion]),
+    [pendienteElaboracion, terminadoElaboracion]
+  );
   const pendienteEnvasado = useMemo(
     () => filterWorkItemsPendingEnvasado(workItems),
     [workItems]
+  );
+  const terminadoEnvasado = useMemo(
+    () => filterWorkItemsCompletedEnvasado(workItems),
+    [workItems]
+  );
+  const envasadoRows = useMemo(
+    () => sortWorkItemsCompletedFirst([...pendienteEnvasado, ...terminadoEnvasado]),
+    [pendienteEnvasado, terminadoEnvasado]
   );
   const overview = useMemo(
     () => buildProductionOverview(workItems, data?.source === "drive" ? "semanas_2026" : "semanas_2026"),
@@ -163,10 +221,10 @@ export function ProduccionOperationalView() {
         count = aprobados.length;
         break;
       case "elaboracion":
-        count = pendienteElaboracion.length;
+        count = elaboracionRows.length;
         break;
       case "envasados":
-        count = pendienteEnvasado.length;
+        count = envasadoRows.length;
         break;
       default:
         count = undefined;
@@ -186,6 +244,12 @@ export function ProduccionOperationalView() {
           onRefresh={refresh}
         />
       </header>
+
+      {completionEvents.length > 0 && (
+        <div className="mb-4">
+          <OperationalActivityFeed entries={activityFeed} />
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
@@ -217,20 +281,38 @@ export function ProduccionOperationalView() {
           />
         )}
         {activeTab === "elaboracion" && (
-          <OperationalTable
-            columns={workColumns}
-            rows={pendienteElaboracion}
-            rowKey={(row) => row.id}
-            emptyMessage="Sin elaboraciones pendientes."
-          />
+          <>
+            {terminadoElaboracion.length > 0 && (
+              <p className="mb-3 text-sm text-[var(--os-text-muted)]">
+                {terminadoElaboracion.length} elaboración
+                {terminadoElaboracion.length === 1 ? "" : "es"} terminada
+                {terminadoElaboracion.length === 1 ? "" : "s"} — pendiente revisión Calidad.
+              </p>
+            )}
+            <OperationalTable
+              columns={workColumns}
+              rows={elaboracionRows}
+              rowKey={(row) => row.id}
+              emptyMessage="Sin elaboraciones en plan."
+            />
+          </>
         )}
         {activeTab === "envasados" && (
-          <OperationalTable
-            columns={workColumns}
-            rows={pendienteEnvasado}
-            rowKey={(row) => row.id}
-            emptyMessage="Sin envasados pendientes."
-          />
+          <>
+            {terminadoEnvasado.length > 0 && (
+              <p className="mb-3 text-sm text-[var(--os-text-muted)]">
+                {terminadoEnvasado.length} envasado
+                {terminadoEnvasado.length === 1 ? "" : "s"} terminado
+                {terminadoEnvasado.length === 1 ? "" : "s"} — pendiente revisión Calidad.
+              </p>
+            )}
+            <OperationalTable
+              columns={workColumns}
+              rows={envasadoRows}
+              rowKey={(row) => row.id}
+              emptyMessage="Sin envasados en plan."
+            />
+          </>
         )}
         {activeTab === "kpis" && (
           <div className="space-y-4">
@@ -243,6 +325,7 @@ export function ProduccionOperationalView() {
               <KpiCard label="Total trabajos en plan" value={workItems.length} />
               <KpiCard label="Completados" value={completados} />
               <KpiCard label="En curso" value={enCurso} />
+              <KpiCard label="Terminados notificados" value={completionEvents.length} />
               <KpiCard label="Aprobados calidad" value={aprobados.length} />
               <KpiCard label="Rechazados calidad" value={rechazados.length} />
               <KpiCard label="Bloqueos" value={overview.blockers.length} />
