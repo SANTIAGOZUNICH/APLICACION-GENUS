@@ -117,6 +117,13 @@ interface SyncStatusBarProps {
   onRefresh?: () => void;
 }
 
+function buildLabel(): string {
+  const sha =
+    process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ??
+    process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7);
+  return sha ? `build ${sha}` : "build local";
+}
+
 export function SyncStatusBar({ source, lastRefreshAt, loading, onRefresh }: SyncStatusBarProps) {
   const timeLabel = lastRefreshAt
     ? lastRefreshAt.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
@@ -138,6 +145,7 @@ export function SyncStatusBar({ source, lastRefreshAt, loading, onRefresh }: Syn
       <span className="text-[var(--os-text-muted)]">
         {isReal ? "SEMANAS 2026 · Google Sheets" : "Planificación demo · fallback automático"}
       </span>
+      <span className="font-mono text-[10px] text-[var(--os-text-muted)]">{buildLabel()}</span>
       <span className="text-[var(--os-text-muted)]">·</span>
       <span className="text-[var(--os-text-muted)]">Última sync: {timeLabel}</span>
       <span className="text-[var(--os-text-muted)]">·</span>

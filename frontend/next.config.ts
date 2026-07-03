@@ -1,12 +1,15 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA: process.env.VERCEL_GIT_COMMIT_SHA ?? "",
+  },
   async redirects() {
     return [
       {
         source: "/",
-        destination: "/bandeja",
-        permanent: true,
+        destination: "/login",
+        permanent: false,
       },
     ];
   },
