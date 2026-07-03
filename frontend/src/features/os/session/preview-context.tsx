@@ -4,13 +4,14 @@ import {
   createContext,
   useCallback,
   useContext,
+  useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
 import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
-import { clearAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
+import { clearAuthSession, getCurrentAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
 import { resolveSectorHome } from "@/lib/role-engine";
 import type { SidebarItemId } from "@/lib/role-engine/types";
 import { SECTOR_EMAILS } from "@/features/sectors/config/sector-emails";
@@ -71,6 +72,16 @@ const PreviewContext = createContext<PreviewContextValue | null>(null);
 
 const DEFAULT_INITIAL_NAV: TwinNavEntry = { view: "mi-trabajo" };
 
+function readAuthPreviewSession(): PreviewSession | null {
+  if (typeof window === "undefined") return null;
+  const authSession = getCurrentAuthSession();
+  if (!authSession) return null;
+  return {
+    sectorId: authSession.sector.id,
+    email: authSession.user.email,
+  };
+}
+
 function nextUnblocksMessage(workItem: WorkItem): string {
   if (workItem.sector === "ENVASADO_MASIVO" || workItem.sector === "ENVASADO_PREMIUM") {
     return "Perfecto. Ahora Codificado ya puede continuar.";
@@ -98,6 +109,12 @@ export function PreviewProvider({
   const [creamyTeaser, setCreamyTeaserState] = useState<CreamyTeaser | null>(null);
   const [toast, setToast] = useState<ActionToast | null>(null);
   const [completingIds, setCompletingIds] = useState<Set<string>>(new Set());
+
+  useLayoutEffect(() => {
+    if (session) return;
+    const authSession = readAuthPreviewSession();
+    if (authSession) setSession(authSession);
+  }, [session]);
 
   const currentNav = navStack[navStack.length - 1] ?? initialNav;
 
