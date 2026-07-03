@@ -510,9 +510,19 @@ Reemplazar `loadSemanasWorkItems`-only en `WorkItemsService`:
 
 ```text
 refresh() → PlannerParser → PedidosParser → LotesParser
-         → WorkItemRegistry.listForSector(sector, persona)
+         → WorkItemAssembler + WorkItemResolver → WorkItemRegistry
+         → WorkItemRegistry.list() → proyección API
 DashboardParser → cache independiente para Producción
 ```
+
+### Separación de responsabilidades (v3.1 — implementado)
+
+| Componente | Puede | No puede |
+|------------|-------|----------|
+| **WorkItemRegistry** | Almacenar, indexar, `upsert`/`update` | Parsear, matchear, resolver conflictos, interpretar Sheets |
+| **WorkItemResolver** | Matching OP → lote → internalId → cliente+producto | Parsear Sheets, aplicar fuente oficial |
+| **WorkItemAssembler** | Enriquecer con fuente oficial por atributo | Parsear geometría de Sheets |
+| **Parsers** | Geometría de su Sheet | Lógica de dominio cruzada |
 
 ### Fase 4 — Validación con datos reales
 
