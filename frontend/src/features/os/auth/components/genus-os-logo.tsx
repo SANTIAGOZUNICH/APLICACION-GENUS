@@ -1,13 +1,20 @@
 /** Marca Genus OS — logotipo vectorial para pantalla de ingreso. */
-export function GenusOsLogo({ className }: { className?: string }) {
+export function GenusOsLogo({
+  className,
+  decorative = false,
+}: {
+  className?: string;
+  decorative?: boolean;
+}) {
   return (
     <svg
       viewBox="0 0 48 48"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       className={className}
-      role="img"
-      aria-label="Genus OS"
+      role={decorative ? "presentation" : "img"}
+      aria-hidden={decorative ? true : undefined}
+      aria-label={decorative ? undefined : "Genus OS"}
     >
       <rect x="2" y="2" width="44" height="44" rx="12" fill="currentColor" fillOpacity="0.12" />
       <path

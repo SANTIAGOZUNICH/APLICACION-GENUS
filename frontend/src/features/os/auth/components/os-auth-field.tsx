@@ -1,7 +1,7 @@
 import type { InputHTMLAttributes } from "react";
 
 const baseInputClassName =
-  "h-12 w-full rounded-[var(--os-radius-sm)] border bg-[var(--os-surface)] px-4 text-[15px] text-[var(--os-text)] transition-[border-color,box-shadow] duration-200 placeholder:text-[var(--os-text-muted)] focus-visible:border-[var(--os-teal)] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--os-teal)]/20 disabled:cursor-not-allowed disabled:opacity-60";
+  "h-12 w-full rounded-[12px] border bg-[var(--os-surface)] px-4 text-[15px] text-[var(--os-text)] transition-[border-color,box-shadow] duration-200 placeholder:text-[var(--os-text-muted)]/55 focus-visible:border-[var(--os-teal)] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--os-teal)]/18 disabled:cursor-not-allowed disabled:opacity-60";
 
 interface OsAuthFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
@@ -11,7 +11,7 @@ interface OsAuthFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   leadingIcon?: React.ReactNode;
 }
 
-/** Campo de formulario auth — labels visibles, tokens oficiales. */
+/** Campo de formulario auth — 48px, radius 12px, labels visibles. */
 export function OsAuthField({
   label,
   htmlFor,
@@ -25,10 +25,10 @@ export function OsAuthField({
   const hintId = hint ? `${htmlFor}-hint` : undefined;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       <label
         htmlFor={htmlFor}
-        className="block text-[0.8125rem] font-semibold tracking-tight text-[var(--os-text)]"
+        className="block text-[0.8125rem] font-medium tracking-tight text-[var(--os-text)]"
       >
         {label}
         {inputProps.required && (
@@ -44,7 +44,7 @@ export function OsAuthField({
       )}
       <div className="relative">
         {leadingIcon && (
-          <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-[var(--os-text-muted)]">
+          <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-[var(--os-text-muted)]/70">
             {leadingIcon}
           </div>
         )}
@@ -53,7 +53,9 @@ export function OsAuthField({
           aria-describedby={[hintId, errorId].filter(Boolean).join(" ") || undefined}
           aria-invalid={error ? true : undefined}
           className={`${baseInputClassName} ${leadingIcon ? "pl-11" : ""} ${
-            error ? "border-[var(--genus-error)] focus-visible:border-[var(--genus-error)] focus-visible:ring-[var(--genus-error)]/15" : "border-[var(--os-border)]"
+            error
+              ? "border-[var(--genus-error)] focus-visible:border-[var(--genus-error)] focus-visible:ring-[var(--genus-error)]/12"
+              : "border-[var(--os-border)]"
           } ${className}`}
           {...inputProps}
         />

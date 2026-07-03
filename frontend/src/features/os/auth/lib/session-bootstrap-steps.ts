@@ -1,4 +1,4 @@
-/** Pasos visuales del bootstrap de sesión — simulación UI (PR 4.5 wiring real). */
+/** Pasos de inicialización premium — simulación UI Access Preview. */
 
 export interface SessionBootstrapStep {
   id: string;
@@ -7,11 +7,13 @@ export interface SessionBootstrapStep {
 }
 
 export const SESSION_BOOTSTRAP_STEPS: SessionBootstrapStep[] = [
-  { id: "verify", label: "Verificando usuario…", durationMs: 900 },
-  { id: "context", label: "Resolviendo contexto…", durationMs: 850 },
-  { id: "sector", label: "Identificando sector…", durationMs: 900 },
-  { id: "workspace", label: "Preparando espacio de trabajo…", durationMs: 950 },
-  { id: "enter", label: "Ingresando a Genus OS…", durationMs: 800 },
+  { id: "init", label: "Inicializando Genus OS…", durationMs: 720 },
+  { id: "env", label: "Verificando entorno…", durationMs: 680 },
+  { id: "workspaces", label: "Cargando Workspaces…", durationMs: 760 },
+  { id: "config", label: "Sincronizando configuración…", durationMs: 700 },
+  { id: "engine", label: "Preparando Manufacturing Engine…", durationMs: 780 },
+  { id: "services", label: "Conectando servicios…", durationMs: 720 },
+  { id: "ready", label: "Sistema listo.", durationMs: 640 },
 ];
 
 export const SESSION_BOOTSTRAP_TOTAL_MS = SESSION_BOOTSTRAP_STEPS.reduce(

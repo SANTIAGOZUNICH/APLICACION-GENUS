@@ -21,7 +21,8 @@
 | PR | Alcance | Estado |
 |----|---------|--------|
 | **4.1** | UI `OsSignInScreen` + ruta `/login` aislada | ✅ |
-| **4.1b** | UX premium — layout, contexto planta, bootstrap UI | ✅ en curso |
+| **4.1b** | UX premium — layout, contexto planta, bootstrap UI | ✅ |
+| **4.1c** | UX polish + Access Preview mock por sector | ✅ en curso |
 | **4.2** | `OsAuthSession` + `AuthAdapter` + contratos | Pendiente |
 | **4.3** | Mapeo email → persona → sector → rol (mock TEMP) | Pendiente |
 | **4.4** | Validación mock contraseña (server route) | Pendiente |
@@ -84,7 +85,29 @@
 
 ---
 
-## 5. Referencias
+## 5. PR 4.1c — UX polish + Access Preview
+
+### Credenciales mock (solo preview)
+
+| Email | Password | Sector |
+|-------|----------|--------|
+| produccion@laboratoriogenus.com.ar | produccion123 | Producción |
+| calidad@laboratoriogenus.com.ar | calidad123 | Calidad |
+| deposito@laboratoriogenus.com.ar | deposito123 | Depósito |
+| direccion@laboratoriogenus.com.ar | direccion123 | Dirección |
+
+Flujo: validar → bootstrap simulado → redirect `/mi-trabajo` · storage `genus_os_preview_user`.
+
+### UX polish
+
+- Panel izquierdo reducido: branding + credencial + estado + horario
+- Bootstrap premium con barra de progreso
+- Transición fade login → bootstrap → redirect
+- Footer minimal · idioma ES
+
+---
+
+## 6. Referencias
 
 - `docss/28-convergence-strategy.md` §7 — auditoría post-Fase 3
 - `docss/17-api.md` §5 — autenticación target

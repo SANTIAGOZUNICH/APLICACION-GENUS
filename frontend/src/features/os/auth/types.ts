@@ -15,7 +15,9 @@ export interface OsSignInCredentials {
 
 export interface OsSignInScreenProps {
   onSubmit?: (credentials: OsSignInCredentials) => void | Promise<void>;
-  /** Simula secuencia bootstrap al enviar (solo UI preview en /login). */
+  /** Access Preview: validación mock + bootstrap + redirect por sector. */
+  accessPreview?: boolean;
+  /** @deprecated Usar accessPreview — bootstrap simulado sin validación. */
   simulateBootstrapOnSubmit?: boolean;
   isSubmitting?: boolean;
   formError?: string | null;

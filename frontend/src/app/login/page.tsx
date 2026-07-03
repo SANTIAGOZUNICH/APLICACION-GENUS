@@ -3,14 +3,14 @@ import { OsSignInScreen } from "@/features/os/auth/components";
 
 export const metadata: Metadata = {
   title: "Ingresar — Genus OS",
-  description: "Inicio de sesión corporativo del Manufacturing Operating System.",
+  description: "Vista previa de acceso al Manufacturing Operating System.",
 };
 
-/** Fase 4.1 — preview UI aislada. Bootstrap simulado; auth wiring en PRs 4.4–4.6. */
+/** Access Preview — credenciales mock internas; sin auth real. */
 export default function LoginPage() {
   return (
     <div className="design-preview-root">
-      <OsSignInScreen simulateBootstrapOnSubmit />
+      <OsSignInScreen accessPreview />
     </div>
   );
 }
