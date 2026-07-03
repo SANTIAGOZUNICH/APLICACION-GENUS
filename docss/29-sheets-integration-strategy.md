@@ -248,9 +248,10 @@ Si Script expone URL: Genus OS la llama desde **una** route Next.js; el front nu
 
 ## 10. Próximo paso concreto
 
-1. Conectar Vercel + env vars P1  
-2. Smoke: `health` → `refresh` → `work-items?sector=ENVASADO_MASIVO`  
-3. Abrir PR **solo discovery DASHBOARD**: export/fixture + propuesta columnas KPI  
-4. No implementar P2 escritura hasta tener fixture ASIGNACION LOTES o contrato de columnas Calidad  
+1. **Aprobar** `30-sheets-contract.md` (Contrato de Sheets) — referencia oficial hoja/columna/vista  
+2. Conectar Vercel + env vars P1  
+3. Smoke: `health` → `refresh` → `work-items?sector=ENVASADO_MASIVO`  
+4. Tras contrato aprobado → PR **solo discovery DASHBOARD**: export/fixture + propuesta columnas KPI  
+5. No implementar P2 escritura hasta contrato v0.2 de rangos Calidad  
 
 **Definition of success (12 meses):** operarios usan `/mi-trabajo` diario con SEMANAS real, KPIs desde DASHBOARD, y al menos una acción de Calidad persistida en Sheets.

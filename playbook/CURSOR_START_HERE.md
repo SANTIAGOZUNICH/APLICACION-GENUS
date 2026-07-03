@@ -33,6 +33,7 @@ Si una tarea implica romper alguno de estos, **se detiene y se pregunta** — no
 
 - El adapter de datos activo puede ser `mock` o `drive` (`GENUS_DATA_MODE`). El modo `real` hoy es un **slice experimental de solo lectura** sobre 3 hojas críticas (`ASIGNACION DE LOTES 2026`, `PEDIDOS 2026`, `SEMANAS 2026`) — no producción completa.
 - **Arquitectura de integración web (24 meses):** Sheets → Next.js API/adapters → Genus OS. Apps Script solo opcional para escrituras puntuales. Ver [`docss/29-sheets-integration-strategy.md`](../docss/29-sheets-integration-strategy.md).
+- **Contrato de Sheets (oficial):** hojas, columnas, lectura/escritura, KPIs — aprobar antes del discovery DASHBOARD. Ver [`docss/30-sheets-contract.md`](../docss/30-sheets-contract.md).
 - `MOVIMIENTOS`, `SALDOS`, `ANALISIS_CALIDAD` y `LIBERACIONES` **no están conectados** todavía al adapter real.
 - El RBAC de gobierno (`ROLES`/`MODULOS`/`PERMISOS`) puede seguir en sandbox, no en el Sheet de producción — tratarlo como pendiente salvo evidencia clara en el código.
 - No existe todavía una capa de API propia separada del frontend (`docss/17` es visión largo plazo) — las **Next.js API routes** en `/api/v1` son el BFF; ver `docss/29`.
