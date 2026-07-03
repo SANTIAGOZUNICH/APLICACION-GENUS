@@ -15,8 +15,6 @@ export interface MockPreviewUser {
   redirectTo: string;
 }
 
-export const GENUS_OS_PREVIEW_USER_KEY = "genus_os_preview_user";
-
 export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
   {
     email: "produccion@laboratoriogenus.com.ar",
@@ -76,38 +74,6 @@ export function validateMockPreviewCredentials(
   const user = findMockUserByEmail(email);
   if (!user || user.password !== password) return null;
   return user;
-}
-
-export interface StoredPreviewUser {
-  email: string;
-  sector: string;
-  displayName: string;
-  role: string;
-  roleLabel: string;
-  sectorLabel: string;
-  jobTitle: string;
-  redirectTo: string;
-  storedAt: string;
-}
-
-export function persistPreviewUser(
-  user: MockPreviewUser,
-  rememberMe: boolean
-): void {
-  if (typeof window === "undefined") return;
-  const payload: StoredPreviewUser = {
-    email: user.email,
-    sector: user.sector,
-    displayName: user.displayName,
-    role: user.role,
-    roleLabel: user.roleLabel,
-    sectorLabel: user.sectorLabel,
-    jobTitle: user.jobTitle,
-    redirectTo: user.redirectTo,
-    storedAt: new Date().toISOString(),
-  };
-  const storage = rememberMe ? window.localStorage : window.sessionStorage;
-  storage.setItem(GENUS_OS_PREVIEW_USER_KEY, JSON.stringify(payload));
 }
 
 export const PREVIEW_AUTH_ERROR =

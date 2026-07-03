@@ -6,11 +6,10 @@ import { ArrowRight, Lock, Mail } from "lucide-react";
 import { GENUS_COMPANY_NAME } from "../constants";
 import {
   findMockUserByEmail,
-  persistPreviewUser,
   PREVIEW_AUTH_ERROR,
-  validateMockPreviewCredentials,
   type MockPreviewUser,
 } from "../lib/mock-preview-users";
+import { mockAuthAdapter } from "../lib/auth-session-helpers";
 import { OsAuthField } from "./os-auth-field";
 import { OsAuthMockBanner } from "./os-auth-mock-banner";
 import { GenusOsLogo } from "./genus-os-logo";
@@ -92,7 +91,7 @@ export function OsSignInScreen({
     window.setTimeout(() => setPhase("bootstrap"), FADE_MS);
   }, []);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setAuthError(null);
     if (!validate()) return;
@@ -105,13 +104,12 @@ export function OsSignInScreen({
     }
 
     if (accessPreview) {
-      const user = validateMockPreviewCredentials(email, password);
-      if (!user) {
+      const session = await mockAuthAdapter.signIn(credentials);
+      if (!session) {
         setAuthError(PREVIEW_AUTH_ERROR);
         return;
       }
-      persistPreviewUser(user, rememberMe);
-      startBootstrap(user.redirectTo);
+      startBootstrap(session.redirectTo);
       return;
     }
 

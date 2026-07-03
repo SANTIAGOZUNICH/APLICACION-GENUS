@@ -23,7 +23,7 @@
 | **4.1** | UI `OsSignInScreen` + ruta `/login` aislada | ✅ |
 | **4.1b** | UX premium — layout, contexto planta, bootstrap UI | ✅ |
 | **4.1c** | UX polish + Access Preview mock por sector | ✅ en curso |
-| **4.2** | `OsAuthSession` + `AuthAdapter` + contratos | Pendiente |
+| **4.2** | `OsAuthSession` + `AuthAdapter` + contratos | ✅ |
 | **4.3** | Mapeo email → persona → sector → rol (mock TEMP) | Pendiente |
 | **4.4** | Validación mock contraseña (server route) | Pendiente |
 | **4.5** | Session bootstrap + remember me | Pendiente |
@@ -96,7 +96,7 @@
 | deposito@laboratoriogenus.com.ar | deposito123 | Depósito |
 | direccion@laboratoriogenus.com.ar | direccion123 | Dirección |
 
-Flujo: validar → bootstrap simulado → redirect `/mi-trabajo` · storage `genus_os_preview_user`.
+Flujo: validar → bootstrap simulado → redirect `/mi-trabajo` · storage `genus_os_auth_session` (migra legacy `genus_os_preview_user`).
 
 ### UX polish
 
@@ -107,7 +107,37 @@ Flujo: validar → bootstrap simulado → redirect `/mi-trabajo` · storage `gen
 
 ---
 
-## 6. Referencias
+## 7. PR 4.2 — Auth contracts
+
+### Tipos
+
+- `OsAuthSession`, `AuthUser`, `AuthSector`, `AuthRole`, `AuthSessionStatus`
+
+### Contrato e implementación
+
+- `AuthAdapter` — interfaz contractual
+- `MockAuthAdapter` — preview sin auth real
+- Persistencia: `sessionStorage` por defecto · `localStorage` con remember me
+
+### Helpers
+
+- `getCurrentAuthSession`, `clearAuthSession`, `isAuthenticatedPreview`, `getAuthSector`
+
+### Archivos
+
+- `features/os/auth/contracts/`
+- `features/os/auth/adapters/mock-auth-adapter.ts`
+- `features/os/auth/lib/auth-session-storage.ts`
+- `features/os/auth/lib/auth-session-helpers.ts`
+- `features/os/auth/lib/auth-contracts.test.ts`
+
+### Sin tocar
+
+- OsAppRoot · rutas · engines · mappers · UX visual `/login`
+
+---
+
+## 8. Referencias
 
 - `docss/28-convergence-strategy.md` §7 — auditoría post-Fase 3
 - `docss/17-api.md` §5 — autenticación target
