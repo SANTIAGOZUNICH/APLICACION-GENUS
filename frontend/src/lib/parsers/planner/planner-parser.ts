@@ -1,4 +1,5 @@
 import { SECTOR_PERSONNEL } from "@/features/os/operational/lib/sector-personnel";
+import type { WorkItemAssembler } from "@/lib/domain/work-item/work-item-assembler";
 import type { WorkItemRegistry } from "@/lib/domain/work-item/work-item-registry";
 import type { SectorId } from "@/types/operational/sector";
 import {
@@ -19,6 +20,7 @@ export interface PlannerParserInput {
   tab: string;
   rows: string[][];
   registry: WorkItemRegistry;
+  assembler: WorkItemAssembler;
 }
 
 export interface PlannerParserResult {
@@ -82,6 +84,7 @@ function defaultContext(tab: string): PlannerContext {
 
 function flushColumnDrafts(
   registry: WorkItemRegistry,
+  assembler: WorkItemAssembler,
   ctx: PlannerContext,
   colIndex: number,
   draft: ColumnSlotDraft,
@@ -99,7 +102,8 @@ function flushColumnDrafts(
 
   const internalId = `planner:${fileId}:${slugify(tab)}:${slugify(ctx.sector)}:${slugify(ctx.line ?? "sin-linea")}:${slugify(ctx.branchOwner ?? "sin-rama")}:${colIndex}:${rowNumber}:${slugify(draft.product ?? draft.client ?? "slot")}`;
 
-  registry.enrich(
+  assembler.apply(
+    registry,
     { internalId, client: draft.client, product: draft.product },
     {
       internalId,
@@ -172,6 +176,7 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
       if (draft.client || draft.product || draft.quantity) {
         itemsCreated += flushColumnDrafts(
           input.registry,
+          input.assembler,
           ctx,
           col,
           draft,
@@ -251,6 +256,7 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
       if (draft.quantity && (draft.client || draft.product)) {
         itemsCreated += flushColumnDrafts(
           input.registry,
+          input.assembler,
           ctx,
           colIndex,
           draft,

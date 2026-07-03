@@ -1,4 +1,5 @@
 import { pickField } from "@/lib/adapters/sheets/parse-sheet-rows";
+import type { WorkItemAssembler } from "@/lib/domain/work-item/work-item-assembler";
 import type { WorkItemRegistry } from "@/lib/domain/work-item/work-item-registry";
 
 export interface LotesParserInput {
@@ -6,6 +7,7 @@ export interface LotesParserInput {
   tab: string;
   rows: string[][];
   registry: WorkItemRegistry;
+  assembler: WorkItemAssembler;
 }
 
 export interface LotesParserResult {
@@ -56,7 +58,8 @@ function parseLoteRecord(record: Record<string, string>, input: LotesParserInput
   const cliente = pickField(record, "marca", "cliente") || null;
   const producto = pickField(record, "producto", "descripcion") || null;
 
-  input.registry.enrich(
+  input.assembler.apply(
+    input.registry,
     { loteRef, client: cliente, product: producto },
     {
       loteRef,

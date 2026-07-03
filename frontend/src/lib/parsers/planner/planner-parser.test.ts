@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createWorkItemRegistry } from "@/lib/domain/work-item/work-item-registry";
+import { workItemAssembler } from "@/lib/domain/work-item/work-item-assembler";
 import { projectDomainWorkItems } from "@/lib/domain/work-item/work-item-projector";
 import {
   SEMANAS_COLUMNAR_ELABORACION,
@@ -10,11 +11,13 @@ import { parsePlannerTab } from "@/lib/parsers/planner/planner-parser";
 describe("PlannerParser columnar", () => {
   it("detecta ramas Cristian y Nicolás en elaboración", () => {
     const registry = createWorkItemRegistry();
+    const assembler = workItemAssembler;
     const parsed = parsePlannerTab({
       fileId: "test-semanas",
       tab: "ELABORACION",
       rows: SEMANAS_COLUMNAR_ELABORACION,
       registry,
+      assembler,
     });
 
     expect(parsed.itemsCreated).toBeGreaterThan(0);
@@ -36,6 +39,7 @@ describe("PlannerParser columnar", () => {
       tab: "ACONDICIONAMIENTO",
       rows: SEMANAS_COLUMNAR_ENVASADO,
       registry,
+      assembler: workItemAssembler,
     });
 
     const items = projectDomainWorkItems(registry.list());

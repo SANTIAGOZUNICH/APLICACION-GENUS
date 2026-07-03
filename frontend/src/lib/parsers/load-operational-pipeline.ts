@@ -3,6 +3,7 @@ import "server-only";
 import { operationsDocumentRepository } from "@/lib/adapters/drive/operations-document-repository";
 import { sheetsReader } from "@/lib/adapters/sheets/sheets-reader";
 import { createWorkItemRegistry } from "@/lib/domain/work-item/work-item-registry";
+import { workItemAssembler } from "@/lib/domain/work-item/work-item-assembler";
 import {
   projectDomainWorkItems,
   projectQualityItemsFromDomain,
@@ -62,6 +63,7 @@ export async function loadOperationalPipeline(): Promise<OperationalPipelineResu
   await operationsDocumentRepository.refresh("pcp");
 
   const registry = createWorkItemRegistry();
+  const assembler = workItemAssembler;
   const warnings: string[] = [];
 
   const [semanasRef, pedidosRef, lotesRef] = await Promise.all([
@@ -89,6 +91,7 @@ export async function loadOperationalPipeline(): Promise<OperationalPipelineResu
           tab,
           rows,
           registry,
+          assembler,
         });
         warnings.push(...result.warnings);
       } catch (err) {
@@ -109,6 +112,7 @@ export async function loadOperationalPipeline(): Promise<OperationalPipelineResu
           tab: read.tab,
           rows: read.rows,
           registry,
+          assembler,
         });
         warnings.push(...result.warnings.slice(0, 2));
       } catch (err) {
@@ -147,6 +151,7 @@ export async function loadOperationalPipeline(): Promise<OperationalPipelineResu
           tab,
           rows,
           registry,
+          assembler,
         });
         warnings.push(...result.warnings.slice(0, 1));
       } catch (err) {

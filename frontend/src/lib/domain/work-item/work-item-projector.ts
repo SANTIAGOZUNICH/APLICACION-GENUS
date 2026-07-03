@@ -30,7 +30,14 @@ function resolveOwnerPerson(item: DomainWorkItem): string | null {
 
 /** Proyecta entidad de dominio → WorkItem API (sin acoplar a Sheets). */
 export function projectDomainWorkItem(item: DomainWorkItem): WorkItem | null {
-  const sector = item.sector ?? item.ownerSector;
+  let sector = item.sector ?? item.ownerSector;
+  if (
+    !sector &&
+    item.enrichmentSources.includes("asignacion_lotes_2026") &&
+    item.loteRef
+  ) {
+    sector = "CALIDAD";
+  }
   if (!sector) return null;
 
   const client = item.client ?? item.plannedClient;

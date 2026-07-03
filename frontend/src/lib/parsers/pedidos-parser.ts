@@ -1,4 +1,5 @@
 import { rowsToRecords, pickField } from "@/lib/adapters/sheets/parse-sheet-rows";
+import type { WorkItemAssembler } from "@/lib/domain/work-item/work-item-assembler";
 import type { WorkItemRegistry } from "@/lib/domain/work-item/work-item-registry";
 
 export interface PedidosParserInput {
@@ -6,6 +7,7 @@ export interface PedidosParserInput {
   tab: string;
   rows: string[][];
   registry: WorkItemRegistry;
+  assembler: WorkItemAssembler;
 }
 
 export interface PedidosParserResult {
@@ -35,7 +37,8 @@ function parsePedidoRecord(
 
   if (!op && !lote && !cliente) return false;
 
-  input.registry.enrich(
+  input.assembler.apply(
+    input.registry,
     { op: op || null, loteRef: lote ? normalizeLote(lote) : null, client: cliente, product: producto },
     {
       op: op || null,
