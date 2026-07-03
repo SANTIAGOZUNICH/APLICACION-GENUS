@@ -164,7 +164,7 @@ export function OsSignInScreen({
               }}
             />
             <GenusOsLogo
-              className="pointer-events-none absolute -bottom-8 -right-6 size-[min(28rem,55vw)] text-[var(--os-sidebar-text)] opacity-[0.04]"
+              className="pointer-events-none absolute -bottom-8 -right-6 size-[min(28rem,55vw)] text-[var(--os-sidebar-text)] opacity-[0.055]"
               decorative
             />
 
@@ -178,12 +178,12 @@ export function OsSignInScreen({
           {/* Formulario */}
           <main
             id="os-sign-in-form"
-            className="flex flex-1 items-center justify-center px-6 py-12 sm:px-10 lg:px-14 lg:py-16"
+            className="flex flex-1 items-center justify-center px-6 py-10 sm:px-10 lg:px-14 lg:py-12"
           >
-            <div className="w-full max-w-[26.5rem]">
-              <div className="mb-10 lg:mb-12">
+            <div className="w-full max-w-[26.5rem] -translate-y-2">
+              <div className="mb-8 lg:mb-10">
                 <p className="text-[0.6875rem] font-medium uppercase tracking-[0.16em] text-[var(--os-text-muted)]">
-                  Access Preview
+                  Vista previa de acceso
                 </p>
                 <h2 className="mt-3 text-[1.75rem] font-semibold tracking-tight text-[var(--os-text)]">
                   Ingresá al sistema

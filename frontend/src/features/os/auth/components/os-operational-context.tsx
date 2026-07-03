@@ -1,8 +1,7 @@
 "use client";
 
-import { buildPlantContextSnapshot } from "../lib/plant-context";
-
 const OPERATIONAL_HOURS = "08:00 — 17:00 hs";
+const SYSTEM_STATUS = "Disponible";
 
 function StatusLine({ label, value }: { label: string; value: string }) {
   return (
@@ -17,11 +16,9 @@ function StatusLine({ label, value }: { label: string; value: string }) {
 
 /** Contexto operativo mínimo — sin sensación de dashboard. */
 export function OsOperationalContext() {
-  const { plantStatus } = buildPlantContextSnapshot();
-
   return (
-    <div className="mt-auto pt-12" aria-label="Estado operativo">
-      <StatusLine label="Estado operativo" value={plantStatus} />
+    <div className="mt-auto pt-12" aria-label="Sistema operativo">
+      <StatusLine label="Sistema operativo" value={SYSTEM_STATUS} />
       <StatusLine label="Horario operativo" value={OPERATIONAL_HOURS} />
     </div>
   );

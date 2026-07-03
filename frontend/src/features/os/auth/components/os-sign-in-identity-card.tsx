@@ -23,9 +23,13 @@ export function OsSignInIdentityCard({ preview, emailEntered }: OsSignInIdentity
       aria-label="Identidad del usuario"
       className="border border-[var(--os-border-subtle)] bg-[var(--os-surface-muted)]/40 px-5 py-4"
     >
-      <p className="text-[0.6875rem] font-medium uppercase tracking-[0.12em] text-[var(--os-text-muted)]">
-        Identidad reconocida
-      </p>
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-[var(--os-text)]">{GENUS_COMPANY_NAME}</p>
+        <p className="text-[0.6875rem] font-medium uppercase tracking-[0.12em] text-[var(--os-text-muted)]">
+          Entidad operativa
+        </p>
+        <p className="text-[0.6875rem] text-[var(--os-text-muted)]">Ambiente de preview</p>
+      </div>
 
       <div className="mt-4 flex gap-4">
         <div
@@ -49,11 +53,6 @@ export function OsSignInIdentityCard({ preview, emailEntered }: OsSignInIdentity
           <IdentityField label="Cargo" value={preview?.jobTitle} />
           <IdentityField label="Sector" value={preview?.sectorLabel} />
           <IdentityField label="Rol" value={preview?.roleLabel} />
-          <IdentityField
-            label="Empresa"
-            value={preview?.company ?? GENUS_COMPANY_NAME}
-            className="sm:col-span-2"
-          />
         </div>
       </div>
     </section>
