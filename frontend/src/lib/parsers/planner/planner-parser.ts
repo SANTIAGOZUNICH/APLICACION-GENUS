@@ -227,7 +227,7 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
     if (packagingSector) {
       flushAllDrafts(rowNumber);
       ctx.sector = packagingSector;
-      ctx.line = null;
+      ctx.line = detectLineHeader(row);
       continue;
     }
 

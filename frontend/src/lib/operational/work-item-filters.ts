@@ -1,10 +1,27 @@
 import type { WorkItem } from "@/types/operational/work-item";
+import type { SectorId } from "@/types/operational/sector";
 import { personNamesMatch } from "@/lib/operational/display-fields";
+
+/** Sectores que alimentan la vista agregada de Producción (cross-sector). */
+export const PRODUCTION_AGGREGATE_SECTOR_IDS = [
+  "ENVASADO_MASIVO",
+  "ENVASADO_PREMIUM",
+  "ELABORACION",
+  "CALIDAD",
+] as const satisfies readonly SectorId[];
+
+export function filterWorkItemsForProductionView(items: WorkItem[]): WorkItem[] {
+  const aggregate = new Set<string>(PRODUCTION_AGGREGATE_SECTOR_IDS);
+  return items.filter((item) => aggregate.has(item.sector));
+}
 
 export function filterWorkItemsForSector(
   items: WorkItem[],
   sector: WorkItem["sector"]
 ): WorkItem[] {
+  if (sector === "PRODUCCION") {
+    return filterWorkItemsForProductionView(items);
+  }
   return items.filter((item) => item.sector === sector || item.ownerSector === sector);
 }
 

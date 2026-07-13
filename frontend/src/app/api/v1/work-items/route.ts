@@ -5,6 +5,7 @@ import { workItemsService } from "@/lib/operational/work-items.service";
 import { CURRENT_SECTOR_OPTIONS, type CurrentSectorId } from "@/types/operational/sector";
 import type { SectorId } from "@/types/operational/sector";
 
+/** Sectores válidos en API /work-items. DEPOSITO pendiente de modelado — PR posterior. */
 function parseSector(value: string | null): SectorId | null {
   if (!value) return null;
   const normalized = value.trim().toUpperCase();

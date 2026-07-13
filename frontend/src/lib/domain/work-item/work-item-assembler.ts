@@ -21,6 +21,11 @@ export interface EnrichmentMeta {
   range?: string;
 }
 
+export interface ApplyOptions {
+  /** Si false, no crea WorkItem nuevo cuando no hay match (solo enriquece existentes). */
+  createIfMissing?: boolean;
+}
+
 /**
  * Ensambla enriquecimientos sobre el registry aplicando fuente oficial por atributo.
  * No parsea Sheets — solo orquesta resolver + registry.
@@ -33,14 +38,19 @@ export class WorkItemAssembler {
     criteria: WorkItemMatchCriteria,
     patch: DomainWorkItemPatch,
     source: AttributeSource,
-    meta?: EnrichmentMeta
-  ): DomainWorkItem {
+    meta?: EnrichmentMeta,
+    options?: ApplyOptions
+  ): DomainWorkItem | null {
     const existing = this.resolver.resolve(registry, criteria);
 
     if (existing) {
       const updated = this.mergePatch(existing, patch, source, meta);
       registry.upsert(updated);
       return updated;
+    }
+
+    if (options?.createIfMissing === false) {
+      return null;
     }
 
     const internalId =

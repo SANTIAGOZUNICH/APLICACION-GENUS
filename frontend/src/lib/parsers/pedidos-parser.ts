@@ -37,7 +37,7 @@ function parsePedidoRecord(
 
   if (!op && !lote && !cliente) return false;
 
-  input.assembler.apply(
+  const applied = input.assembler.apply(
     input.registry,
     { op: op || null, loteRef: lote ? normalizeLote(lote) : null, client: cliente, product: producto },
     {
@@ -54,10 +54,11 @@ function parsePedidoRecord(
         pickField(record, "fecha_entrega", "fecha", "fecha_compromiso", "fecha_pedido") || null,
     },
     "pedidos_2026",
-    { fileId: input.fileId, range: `${input.tab}!${op || lote || cliente}` }
+    { fileId: input.fileId, range: `${input.tab}!${op || lote || cliente}` },
+    { createIfMissing: false }
   );
 
-  return true;
+  return applied !== null;
 }
 
 /** PedidosParser — tablas PEDIDOS / ELABORACION / EXPEDICION. */

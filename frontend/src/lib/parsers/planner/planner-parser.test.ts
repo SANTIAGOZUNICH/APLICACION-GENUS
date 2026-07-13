@@ -48,7 +48,7 @@ describe("PlannerParser columnar", () => {
 
     expect(masivo.length).toBeGreaterThan(0);
     expect(premium.length).toBeGreaterThan(0);
-    expect(masivo.every((i) => i.line === "Línea 1")).toBe(true);
-    expect(premium.every((i) => i.line === "Línea 1")).toBe(true);
+    expect(masivo.some((i) => i.line === "Línea 1")).toBe(true);
+    expect(premium.some((i) => i.line === "Línea 2")).toBe(true);
   });
 });

@@ -66,17 +66,36 @@ export function detectPackagingSectorHeader(row: string[]): "ENVASADO_MASIVO" | 
   return null;
 }
 
+function parseLineFromCell(cell: string): string | null {
+  const normalized = normalizeKey(cell);
+  const lineMatch = normalized.match(/^linea\s*(\d+)\b/);
+  if (lineMatch) return `Línea ${lineMatch[1]}`;
+
+  const shortMatch = normalized.match(/^l(\d+)$/);
+  if (shortMatch) return `Línea ${shortMatch[1]}`;
+
+  const premiumMatch = normalized.match(/^premium\s*([ab])$/);
+  if (premiumMatch) return `Premium ${premiumMatch[1].toUpperCase()}`;
+
+  return null;
+}
+
+/** Detecta encabezado de línea en cualquier celda — Sector → Línea → Trabajo. */
 export function detectLineHeader(row: string[]): string | null {
+  for (const cell of row) {
+    const trimmed = cell.trim();
+    if (!trimmed) continue;
+    const fromCell = parseLineFromCell(trimmed);
+    if (fromCell) return fromCell;
+  }
+
   const cells = row.map((c) => c.trim()).filter(Boolean);
-  if (cells.length === 0 || cells.length > 2) return null;
+  if (cells.length === 0 || cells.length > 4) return null;
 
-  for (const cell of cells) {
-    const normalized = normalizeKey(cell);
-    const lineMatch = normalized.match(/^linea\s*(\d+)$/);
-    if (lineMatch) return `Línea ${lineMatch[1]}`;
-
-    const premiumMatch = normalized.match(/^premium\s*([ab])$/);
-    if (premiumMatch) return `Premium ${premiumMatch[1].toUpperCase()}`;
+  const joined = normalizeKey(cells.join(" "));
+  const embedded = joined.match(/\blinea\s*(\d+)\b/);
+  if (embedded && cells.length <= 2) {
+    return `Línea ${embedded[1]}`;
   }
 
   return null;

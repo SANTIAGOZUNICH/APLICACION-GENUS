@@ -90,8 +90,12 @@ export class WorkItemsService {
       warnings: warnings.slice(0, 10),
       message:
         filtered.length > 0
-          ? `${filtered.length} WorkItem(s) para ${sector}${ownerPerson ? ` · ${ownerPerson}` : ""}.`
-          : `Sin trabajos para ${sector}${ownerPerson ? ` · ${ownerPerson}` : ""} en Sheets indexados.`,
+          ? sector === "PRODUCCION"
+            ? `${filtered.length} WorkItem(s) agregados (Masivo + Premium + Elaboración + Calidad).`
+            : `${filtered.length} WorkItem(s) para ${sector}${ownerPerson ? ` · ${ownerPerson}` : ""}.`
+          : sector === "PRODUCCION"
+            ? "Sin operación agregada — verificar SEMANAS y LOTES indexados."
+            : `Sin trabajos para ${sector}${ownerPerson ? ` · ${ownerPerson}` : ""} en Sheets indexados.`,
     };
   }
 

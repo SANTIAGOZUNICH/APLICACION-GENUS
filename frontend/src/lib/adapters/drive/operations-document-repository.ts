@@ -55,7 +55,7 @@ const DOCUMENT_INDEX_ALIASES: FolderAlias[] = [
   "lotes",
 ];
 
-const RECURSIVE_DOCUMENT_ALIASES = new Set<FolderAlias>(["elaboracion"]);
+const RECURSIVE_DOCUMENT_ALIASES = new Set<FolderAlias>(["elaboracion", "pcp", "lotes"]);
 
 /**
  * OperationsDocumentRepository — document index abstraction.
@@ -185,14 +185,18 @@ export class OperationsDocumentRepository {
       serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}${alias}`) ??
       (await this.indexDocumentsForAlias(alias, this.getFolderIndex()));
 
-    const targetName = CRITICAL_SHEET_NAMES[sheetKey].toLowerCase();
-    const match = docs.find(
-      (file) => stripSheetExtension(file.name).trim().toLowerCase() === targetName
-    );
+    const match = docs.find((file) => matchesCriticalSheetName(file.name, sheetKey));
 
     if (match) {
       serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, match);
       return match;
+    }
+
+    if (sheetKey === "pedidos_2026") {
+      const produccionDocs =
+        serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}produccion_2026`) ??
+        (await this.indexDocumentsForAlias("produccion_2026", this.getFolderIndex()));
+      return produccionDocs.find((file) => matchesCriticalSheetName(file.name, sheetKey)) ?? null;
     }
 
     return null;
@@ -481,14 +485,25 @@ export class OperationsDocumentRepository {
       serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}${alias}`) ??
       (await this.indexDocumentsForAlias(alias, folderIndex));
 
-    const targetName = CRITICAL_SHEET_NAMES[sheetKey].toLowerCase();
-    const match = docs.find(
-      (file) => file.name.trim().toLowerCase() === targetName
-    );
+    const match = docs.find((file) => matchesCriticalSheetName(file.name, sheetKey));
 
     if (match) {
       serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, match);
       result[sheetKey] = match.fileId;
+      return;
+    }
+
+    if (sheetKey === "pedidos_2026") {
+      const produccionDocs =
+        serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}produccion_2026`) ??
+        (await this.indexDocumentsForAlias("produccion_2026", folderIndex));
+      const fallback = produccionDocs.find((file) =>
+        matchesCriticalSheetName(file.name, sheetKey)
+      );
+      if (fallback) {
+        serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, fallback);
+        result[sheetKey] = fallback.fileId;
+      }
     }
   }
 
@@ -522,6 +537,24 @@ export class OperationsDocumentRepository {
     index.sort((a, b) => a.fileName.localeCompare(b.fileName, "es"));
     serverCache.set(CACHE_PREFIX.oeIndex, index);
   }
+}
+
+function matchesCriticalSheetName(fileName: string, sheetKey: CriticalSheetKey): boolean {
+  const stripped = stripSheetExtension(fileName).trim().toLowerCase();
+  const target = CRITICAL_SHEET_NAMES[sheetKey].toLowerCase();
+  if (stripped === target) return true;
+
+  if (sheetKey === "pedidos_2026") {
+    return stripped.includes("pedidos") && stripped.includes("2026");
+  }
+  if (sheetKey === "semanas_2026") {
+    return stripped.includes("semanas") && stripped.includes("2026");
+  }
+  if (sheetKey === "asignacion_lotes_2026") {
+    return stripped.includes("lotes") && stripped.includes("2026");
+  }
+
+  return false;
 }
 
 export const operationsDocumentRepository = new OperationsDocumentRepository();

@@ -9,6 +9,20 @@ export const ATTRIBUTE_SOURCES = [
 
 export type AttributeSource = (typeof ATTRIBUTE_SOURCES)[number];
 
+/**
+ * Regla operativa diaria (Elaboración, Envasado Masivo, Envasado Premium):
+ * - SEMANAS 2026 es la fuente principal: define qué WorkItems existen en /mi-trabajo.
+ * - PEDIDOS 2026 solo enriquece (OP, estado comercial, lote si matchea).
+ * - Si SEMANAS planifica un trabajo, aparece aunque PEDIDOS no matchee.
+ * - Si PEDIDOS tiene fila pero SEMANAS no lo planifica, NO es trabajo operativo diario.
+ */
+export const OPERATIONAL_PRIMARY_SOURCE = "semanas_2026" as const;
+
+export const OPERATIONAL_ENRICHMENT_SOURCES = [
+  "pedidos_2026",
+  "asignacion_lotes_2026",
+] as const satisfies readonly AttributeSource[];
+
 /** Campo de dominio → fuente oficial que lo define. */
 export const OFFICIAL_ATTRIBUTE_SOURCE: Record<string, AttributeSource> = {
   op: "pedidos_2026",

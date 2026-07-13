@@ -58,7 +58,7 @@ async function readTabIfExists(fileId: string, tabs: string[], candidates: reado
   return null;
 }
 
-/** Pipeline completo: parsers especializados → WorkItem de dominio → proyección API. */
+/** Pipeline operativo diario: SEMANAS define qué trabajos existen; PEDIDOS/LOTES enriquecen. */
 export async function loadOperationalPipeline(): Promise<OperationalPipelineResult> {
   await operationsDocumentRepository.refresh("pcp");
 
@@ -99,9 +99,10 @@ export async function loadOperationalPipeline(): Promise<OperationalPipelineResu
       }
     }
   } else {
-    warnings.push("SEMANAS 2026 no indexado.");
+    warnings.push("SEMANAS 2026 no indexado — sin trabajo operativo diario.");
   }
 
+  // PEDIDOS solo enriquece (OP, estado comercial, lote si matchea). No crea trabajos nuevos.
   if (pedidosRef) {
     for (const tab of PEDIDOS_TABS) {
       try {
@@ -136,7 +137,7 @@ export async function loadOperationalPipeline(): Promise<OperationalPipelineResu
       }
     }
   } else {
-    warnings.push("PEDIDOS 2026 no indexado.");
+    warnings.push("PEDIDOS 2026 no indexado — OP/estado comercial no disponibles (no bloquea vistas operativas).");
   }
 
   if (lotesRef) {
