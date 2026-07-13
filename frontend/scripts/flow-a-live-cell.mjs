@@ -119,10 +119,21 @@ function rankCandidate(item) {
   const loc = parseSourceRange(item.sourceRange);
   const row = loc?.row ?? 0;
   let score = 0;
-  if (row >= MIN_ROW) score += 1000 + row;
-  if (item.product && item.quantity) score += 500;
-  if (OWNERS.includes(item.ownerPerson ?? "")) score += 100;
+
+  if (row >= MIN_ROW) score += row;
+  else score -= 5000;
+
   if (loc?.ambiguous) score -= 10000;
+
+  if (item.product && item.quantity && isQuantityLike(item.quantity) && !isQuantityLike(item.product)) {
+    score += 3000;
+  }
+
+  if (item.product && isQuantityLike(item.product)) score -= 4000;
+  if (item.quantity && !isQuantityLike(item.quantity)) score -= 2000;
+
+  if (OWNERS.includes(item.ownerPerson ?? "")) score += 100;
+
   return score;
 }
 
