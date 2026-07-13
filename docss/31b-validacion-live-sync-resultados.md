@@ -1,9 +1,9 @@
 # 31b — Resultados validación Live Sync (PR #53)
 
-> **Fecha:** 2026-07-13 13:05 UTC  
+> **Fecha:** 2026-07-13 14:35 UTC  
 > **Preview:** https://aplicacion-genus-git-cursor-l-9f5595-santizunich-2879s-projects.vercel.app  
-> **Commit:** `1af6d7605963d0545e8f4b38cdec0d657edb7cd8`  
-> **Deploy Vercel:** SUCCESS (12:55 UTC)
+> **Branch:** `cursor/live-sync-engine-3d8a`  
+> **Commit:** pendiente push (fix `primarySource` + auditoría script)
 
 ---
 
@@ -11,111 +11,174 @@
 
 | Criterio | Resultado |
 |----------|-----------|
-| 1. Sheets → Genus OS sin F5 | **NO EVALUADO** — acceso bloqueado |
-| 2. Genus OS → otros sectores sin F5 | **NO EVALUADO** — acceso bloqueado |
+| 1. Sheets → Genus OS sin F5 | **NO EVALUADO** — bypass vacío |
+| 2. Genus OS → otros sectores sin F5 | **NO EVALUADO** — bypass vacío |
 | 3. Datos reales visibles | **NO EVALUADO** |
 | 4. Sin duplicados ni retrocesos | **NO EVALUADO** |
 | 5. Experiencia suficientemente rápida | **NO EVALUADO** |
 
-### Gate PR #53: **FAIL** (bloqueo de acceso, no fallo funcional confirmado)
+### Gate PR #53: **FAIL** (bloqueo de acceso al preview)
 
-**Causa:** Preview protegido con **Vercel Deployment Protection (SSO)**. El agente cloud no dispone de `VERCEL_AUTOMATION_BYPASS_SECRET`.
+**Causa confirmada:** `VERCEL_AUTOMATION_BYPASS_SECRET` está **presente pero vacío** (`len=0`) en el entorno del Cloud Agent.  
+`GET /api/v1/env-check` → **HTTP 401** sin header de bypass.
+
+**Acción requerida:** Re-guardar el secret en Cursor Cloud Agent Secrets y **reiniciar el agente** (los secrets no se inyectan en caliente si la variable ya existía vacía).
 
 **No se implementó Redis/KV/webhooks** — conforme instrucción.
 
 ---
 
-## Tabla final de validación
-
-| Flujo | Usuario | Dato modificado | Origen del cambio | Destino | Hora inicio | Hora aparición | Latencia | PASS/FAIL | Observaciones |
-|-------|---------|-----------------|-------------------|---------|-------------|----------------|----------|-----------|---------------|
-| ACCESO | — | env-check | Preview URL | API | 2026-07-13T13:05:06Z | — | 111ms | **FAIL** | Vercel SSO redirect — sin bypass |
-| A | Francisco | SEMANAS (producto/cantidad) | Google Sheets | Genus OS | — | — | — | **SKIP** | Requiere bypass + edición manual |
-| A | Francisco | Envasado Masivo | SEMANAS | API Masivo | — | — | — | **SKIP** | Idem |
-| A | Belén / Premium | Envasado Premium | SEMANAS | API Premium | — | — | — | **SKIP** | Idem |
-| A | Cristian/Nicolás | Elaboración | SEMANAS | API Elaboración | — | — | — | **SKIP** | Idem |
-| B1 | Francisco | Terminadas=300 | Genus OS | Francisco | — | — | — | **SKIP** | API inaccesible |
-| B1 | Agustina | Terminadas=300 | Francisco | Producción | — | — | — | **SKIP** | Idem |
-| B1 | Dirección | Terminadas=300 | Francisco | Dirección | — | — | — | **SKIP** | Idem |
-| B2 | Francisco | Entregar Calidad | Genus OS | revision | — | — | — | **SKIP** | Idem |
-| B2 | Santiago | Entrega | Francisco | Calidad | — | — | — | **SKIP** | Idem |
-| B2 | Agustina | Entrega | Francisco | Producción | — | — | — | **SKIP** | Idem |
-| B2 | Dirección | Entrega | Francisco | Dirección | — | — | — | **SKIP** | Idem |
-| B3 | Santiago | Aprobar/Rechazar | Calidad | Producción+Dirección | — | — | — | **SKIP** | Idem |
-| CARGA | Francisco | cold/warm | /mi-trabajo | ENVASADO_MASIVO | — | — | — | **SKIP** | Objetivo warm <500ms no medido |
-| CARGA | Agustina | cold/warm | /mi-trabajo | PRODUCCION | — | — | — | **SKIP** | Idem |
-| SSE | todos | EventSource | live-sync/stream | 4 usuarios | — | — | — | **SKIP** | SSE no probado sin bypass |
-
----
-
-## Errores detectados en esta ejecución
-
-| Tipo | Detalle |
-|------|---------|
-| SSO | `GET /api/v1/env-check` → redirect Vercel SSO |
-| SSE | No evaluado |
-| Reconexiones | No evaluado |
-| WorkItems duplicados | No evaluado |
-| Multi-instancia Vercel | No evaluado (requiere 2 browsers + bypass) |
-
----
-
-## Cómo completar la validación (Laboratorio Genus)
-
-### 1. Obtener bypass de Vercel
-
-En Vercel → Project → Settings → Deployment Protection → **Automation Bypass Secret**.
-
-### 2. Flujo B + Carga + SSE (automático)
-
-```bash
-export BASE_URL="https://aplicacion-genus-git-cursor-l-9f5595-santizunich-2879s-projects.vercel.app"
-export VERCEL_AUTOMATION_BYPASS_SECRET="***"
-
-node frontend/scripts/validate-live-sync-operativa.mjs
-```
-
-### 3. Flujo A (Sheets → Genus OS)
-
-Terminal 1 — iniciar watcher **antes** de editar SEMANAS:
-
-```bash
-export VALIDATION_MARKER="GENUS-TEST-$(date +%H%M)"
-node frontend/scripts/validate-live-sync-operativa.mjs --flow-a
-```
-
-Terminal 2 — editar celda identificable en **SEMANAS 2026** (producto, cantidad, línea u observación con el marker).
-
-Repetir para: Envasado Masivo, Premium, Elaboración Cristian/Nicolás.
-
-### 4. Flujo B manual (4 browsers, sin F5)
-
-Abrir simultáneamente con logins del doc `31-validacion-live-sync-operativa.md`:
-
-- `masivo@` (Francisco)
-- `produccion@` (Agustina)
-- `calidad@` (Santiago)
-- `direccion@` (Dirección)
-
-Ejecutar casos 1–3 del protocolo y anotar latencias visuales.
-
----
-
-## Lo que sí pasó en CI
+## Lo que sí pasó en esta ejecución
 
 | Check | Resultado |
 |-------|-----------|
-| Vercel deploy PR #53 | SUCCESS |
-| Tests unitarios | 88 passing |
-| Build Next.js | OK |
-
-**Tests/build no aprueban el gate operativo** — solo validación en preview con datos reales.
+| Tests unitarios | **89 passing** (+1 test projector) |
+| Build | OK (previo) |
+| Preview acceso | **FAIL** HTTP 401 |
+| Fix código | `primarySource` lotes-only → `asignacion_lotes_2026` |
+| Script auditoría | Ampliado en `validate-live-sync-operativa.mjs` |
 
 ---
 
-## Próximo paso recomendado
+## Bug funcional corregido (sin preview)
 
-1. Compartir `VERCEL_AUTOMATION_BYPASS_SECRET` al agente **o** ejecutar el script localmente desde una máquina con acceso al preview.
-2. Completar tabla con PASS/FAIL reales.
-3. Solo aprobar PR #53 si los 5 criterios del gate pasan.
-4. Si falla por multi-instancia Vercel, **documentar evidencia** antes de evaluar KV — no implementar automáticamente.
+| Problema | Fix |
+|----------|-----|
+| WorkItems creados solo desde ASIGNACIÓN DE LOTES se etiquetaban `source=semanas_2026` | `work-item-projector.ts` — `primarySource()` ahora retorna `asignacion_lotes_2026` cuando corresponde |
+
+Esto afectaba la auditoría SEMANAS-first y la trazabilidad en Calidad.
+
+---
+
+## Flujo A — instrucciones manuales (estructura SEMANAS 2026)
+
+Cuando el bypass funcione, el script imprimirá celdas exactas desde `sourceRange` de WorkItems reales.  
+Mientras tanto, usar esta geometría (parser columnar):
+
+### Envasado Masivo (Francisco)
+
+| Campo | Valor |
+|-------|-------|
+| **Archivo** | `SEMANAS 2026` (Google Drive — carpeta operativa Genus) |
+| **Pestaña** | `ACONDICIONAMIENTO` |
+| **Bloque** | Fila con texto `ENVASADO CONSUMO MASIVO` + `LÍNEA 1` (o Línea 2/3/4) |
+| **Celda a editar** | Columna del día (Lunes–Viernes), **fila de cantidad** debajo del producto |
+| **Ejemplo fixture** | Miércoles, producto CAV SHAMPOO → cantidad `6400` → cambiar a `6401` o agregar marker `GENUS-TEST-HHMM` |
+
+### Envasado Premium (Belén / Francisco Premium)
+
+| Campo | Valor |
+|-------|-------|
+| **Archivo** | `SEMANAS 2026` |
+| **Pestaña** | `ACONDICIONAMIENTO` |
+| **Bloque** | Fila `ENVASADO PRODUCTOS PREMIUN` + `LÍNEA 2` |
+| **Celda** | Cantidad planificada del producto visible en Genus OS (ej. MILKY TONER `900 x100ml`) |
+
+### Elaboración (Cristian / Nicolás)
+
+| Campo | Valor |
+|-------|-------|
+| **Archivo** | `SEMANAS 2026` |
+| **Pestaña** | `ELABORACION` |
+| **Bloque** | Fila con solo `CRISTIAN` o `NICOLAS` |
+| **Celda** | Columna del día, cantidad KG (ej. `55KG` → `56KG`) |
+
+### Protocolo de medición Flujo A
+
+1. Terminal: `export VALIDATION_MARKER="GENUS-TEST-$(date +%H%M)" && node frontend/scripts/validate-live-sync-operativa.mjs --flow-a`
+2. Anotar hora exacta al guardar celda en Sheets
+3. El script poll cada 500 ms hasta 30 s
+4. Verificar en paralelo (sin F5): Francisco, Agustina Producción, Dirección
+
+**Objetivo latencia:** 2–5 s (poll `modifiedTime` cada 4 s + SSE `snapshot.updated`)
+
+---
+
+## Flujo B — protocolo (cuando bypass OK)
+
+```bash
+export BASE_URL="https://aplicacion-genus-git-cursor-l-9f5595-santizunich-2879s-projects.vercel.app"
+# VERCEL_AUTOMATION_BYPASS_SECRET inyectado por Cloud Agent — no exportar manualmente
+node frontend/scripts/validate-live-sync-operativa.mjs
+```
+
+Casos automatizados:
+1. Francisco `Terminadas=300` → Agustina + Dirección (< 1 s)
+2. Francisco `Entregar a Calidad` → Santiago + Producción + Dirección
+3. Santiago `Aprobar` → Producción + Dirección
+
+Validación visual manual: 4 browsers en `/mi-trabajo` con logins del doc `31-validacion-live-sync-operativa.md`.
+
+---
+
+## Auditoría funcional (script — pendiente datos reales)
+
+El script verifica automáticamente:
+
+| Check | Qué detecta |
+|-------|-------------|
+| SEMANAS-first | Masivo/Premium/Elaboración sin `semanas_2026` en `createdFrom` |
+| duplicados | IDs de WorkItem repetidos |
+| líneas envasado | Órdenes Masivo/Premium sin `line` |
+| responsables elaboración | Items ELABORACION sin `ownerPerson` |
+| index sheets | SEMANAS / PEDIDOS / LOTES indexados en Drive |
+| conteos sector | Masivo, Premium, Elab, Producción agregada, Calidad |
+
+---
+
+## Tabla final de validación (ejecución 2026-07-13 14:30 UTC)
+
+| Flujo | Usuario | Dato | Origen | Destino | Latencia | PASS/FAIL | Observaciones |
+|-------|---------|------|--------|---------|----------|-----------|---------------|
+| ACCESO | — | env-check | Preview | API | 74ms | **FAIL** | HTTP 401 — bypass len=0 |
+| AUDIT | — | todos | — | — | — | **SKIP** | Requiere bypass |
+| A | todos | SEMANAS | Sheets | Genus OS | — | **SKIP** | `--flow-a` + bypass |
+| B1–B3 | Francisco→Santiago | operaciones | Genus OS | sectores | — | **SKIP** | API inaccesible |
+| CARGA | 4 usuarios | cold/warm | API | sectores | — | **SKIP** | Idem |
+| SSE | 4 usuarios | stream | live-sync | clientes | — | **SKIP** | Idem |
+
+---
+
+## Qué funciona (código + CI)
+
+1. Live Sync Engine: snapshot caliente, poll 4 s, SSE, overlay operativo server-side
+2. PEDIDOS: `createIfMissing: false` — no crea trabajos operativos
+3. SEMANAS: parser columnar con líneas, ramas Cristian/Nicolás, sectores Masivo/Premium
+4. Propagación cross-sector: `operationalOverlay` + `mergeFromServer` + columna Terminadas
+5. 89 tests unitarios passing
+
+## Qué no funciona (confirmado)
+
+1. **Acceso al preview desde Cloud Agent** — secret vacío → HTTP 401
+2. **Validación end-to-end con datos reales** — bloqueada por (1)
+
+## Qué falta corregir
+
+1. **Inyección del bypass secret** en Cloud Agent (bloqueante para gate)
+2. Validar multi-instancia Vercel (2 browsers distintos) — documentar si falla propagación cross-lambda
+3. Ejecutar auditoría con datos reales post-bypass
+
+## Problemas reales de arquitectura (conocidos, no bloqueantes aún)
+
+| Riesgo | Detalle |
+|--------|---------|
+| Estado in-memory | `ServerOperationalState` por instancia lambda — propagación cross-usuario puede fallar si SSE y POST caen en instancias distintas |
+| Poll Sheets | 4 s mínimo — no instantáneo como webhook |
+| Dependencias sectoriales | No inferidas aún (doc 22 §4.6) — `dependsOn` null |
+
+## Qué hacer mañana (UX, con motor sólido)
+
+1. Completar gate PR #53 con bypass OK
+2. Pulir indicador **Actualizado hace Xs** / **En vivo** (sin botón Refrescar)
+3. Feedback visual en Guardar avance / Entregar / Aprobar (< 1 s percibido)
+4. Empty states por sector cuando SEMANAS no tiene bloque del día
+5. NO agregar Redis/KV hasta evidencia de fallo multi-instancia
+
+---
+
+## Comando único post-bypass
+
+```bash
+node frontend/scripts/validate-live-sync-operativa.mjs        # B + carga + SSE + auditoría
+node frontend/scripts/validate-live-sync-operativa.mjs --flow-a  # mientras editás SEMANAS
+```

@@ -84,7 +84,7 @@ function printTable() {
 async function checkAccess() {
   const t0 = isoNow();
   const env = await fetchJson("/api/v1/env-check");
-  if (env.status === 302 || env.body?._raw?.includes("sso-api") || env.body?._raw?.includes("Redirecting")) {
+  if (env.status === 401 || env.status === 403) {
     record({
       flujo: "ACCESO",
       usuario: "—",
@@ -95,7 +95,9 @@ async function checkAccess() {
       aparicion: "—",
       latencia: `${env.elapsed}ms HTTP ${env.status}`,
       pass: "FAIL",
-      obs: "Preview bloqueado por Vercel SSO — configurar VERCEL_AUTOMATION_BYPASS_SECRET",
+      obs: BYPASS
+        ? "HTTP 401/403 — bypass inválido o expirado"
+        : "VERCEL_AUTOMATION_BYPASS_SECRET vacío o ausente en el agente",
     });
     return false;
   }
@@ -208,6 +210,189 @@ function findItem(items, predicate) {
 
 function progressOf(body, itemId) {
   return body?.operationalOverlay?.progress?.[itemId]?.finishedQty ?? null;
+}
+
+const OPERATIONAL_SECTORS = ["ENVASADO_MASIVO", "ENVASADO_PREMIUM", "ELABORACION"];
+
+function parseSourceRange(range) {
+  if (!range) return null;
+  const [sheet, cell] = range.split("!");
+  if (!sheet || !cell) return null;
+  const match = cell.match(/^(\d+):(\d+)$/);
+  if (match) {
+    const col = Number(match[2]);
+    const colLetter = String.fromCharCode(64 + col);
+    return { sheet, cell: `${colLetter}${match[1]}`, row: Number(match[1]), col };
+  }
+  return { sheet, cell, row: null, col: null };
+}
+
+function auditWorkItems(allItems, sourcesIndexed) {
+  const findings = [];
+  const byId = new Map();
+
+  for (const item of allItems) {
+    byId.set(item.id, (byId.get(item.id) ?? 0) + 1);
+  }
+
+  const duplicateIds = [...byId.entries()].filter(([, n]) => n > 1).map(([id]) => id);
+  if (duplicateIds.length > 0) {
+    findings.push({
+      check: "duplicados",
+      pass: "FAIL",
+      obs: `${duplicateIds.length} id(s) duplicados: ${duplicateIds.slice(0, 3).join(", ")}`,
+    });
+  } else {
+    findings.push({ check: "duplicados", pass: "PASS", obs: "sin ids duplicados" });
+  }
+
+  const pedidosOnlyOperational = allItems.filter(
+    (item) =>
+      OPERATIONAL_SECTORS.includes(item.sector) &&
+      item.createdFrom &&
+      !item.createdFrom.includes("semanas_2026")
+  );
+  findings.push({
+    check: "SEMANAS-first",
+    pass: pedidosOnlyOperational.length === 0 ? "PASS" : "FAIL",
+    obs:
+      pedidosOnlyOperational.length === 0
+        ? "Masivo/Premium/Elaboración vienen de SEMANAS"
+        : `${pedidosOnlyOperational.length} ítem(s) operativos sin SEMANAS — ${pedidosOnlyOperational
+            .slice(0, 2)
+            .map((i) => i.product ?? i.id)
+            .join("; ")}`,
+  });
+
+  const missingLine = allItems.filter(
+    (item) =>
+      (item.sector === "ENVASADO_MASIVO" || item.sector === "ENVASADO_PREMIUM") && !item.line
+  );
+  findings.push({
+    check: "líneas envasado",
+    pass: missingLine.length === 0 ? "PASS" : missingLine.length < 10 ? "WARN" : "FAIL",
+    obs:
+      missingLine.length === 0
+        ? "todas las órdenes de envasado tienen línea"
+        : `${missingLine.length} órdenes sin línea (Línea 1–4)`,
+  });
+
+  const missingOwner = allItems.filter((item) => item.sector === "ELABORACION" && !item.ownerPerson);
+  findings.push({
+    check: "responsables elaboración",
+    pass: missingOwner.length === 0 ? "PASS" : "WARN",
+    obs:
+      missingOwner.length === 0
+        ? "Elaboración con Cristian/Nicolás asignados"
+        : `${missingOwner.length} ítem(s) sin ownerPerson`,
+  });
+
+  for (const key of ["semanas_2026", "pedidos_2026", "asignacion_lotes_2026"]) {
+    findings.push({
+      check: `index ${key}`,
+      pass: sourcesIndexed?.[key] ? "PASS" : "FAIL",
+      obs: sourcesIndexed?.[key] ? "indexado en Drive" : "NO indexado",
+    });
+  }
+
+  const counts = OPERATIONAL_SECTORS.reduce((acc, sector) => {
+    acc[sector] = allItems.filter((i) => i.sector === sector).length;
+    return acc;
+  }, {});
+  counts.PRODUCCION = allItems.filter((i) =>
+    ["ENVASADO_MASIVO", "ENVASADO_PREMIUM", "ELABORACION", "CALIDAD"].includes(i.sector)
+  ).length;
+  counts.CALIDAD = allItems.filter((i) => i.sector === "CALIDAD").length;
+
+  findings.push({
+    check: "conteos sector",
+    pass: counts.ENVASADO_MASIVO > 0 && counts.PRODUCCION > 0 ? "PASS" : "FAIL",
+    obs: `Masivo=${counts.ENVASADO_MASIVO} Premium=${counts.ENVASADO_PREMIUM} Elab=${counts.ELABORACION} Prod=${counts.PRODUCCION} Calidad=${counts.CALIDAD}`,
+  });
+
+  return { findings, counts, pedidosOnlyOperational, duplicateIds };
+}
+
+function printFlowAInstructions(samples) {
+  console.log("\n## Flujo A — celdas SEMANAS para editar manualmente\n");
+  console.log("| Sector | Archivo | Pestaña | Celda sugerida | Producto visible | Cantidad actual |");
+  console.log("|--------|---------|---------|----------------|------------------|-----------------|");
+  for (const s of samples) {
+    const loc = parseSourceRange(s.sourceRange);
+    console.log(
+      `| ${s.sector} | SEMANAS 2026 | ${loc?.sheet ?? s.sourceSheet ?? "?"} | ${loc?.cell ?? "?"} | ${s.product ?? "—"} | ${s.quantity ?? "—"} |`
+    );
+  }
+  console.log(
+    "\nEditá la celda de **cantidad planificada** (fila debajo del producto, columna del día).\n" +
+      "Usá un marker único en observación o cantidad, ej: `GENUS-TEST-1430`.\n" +
+      "El poll Live Sync detecta cambios en 2–5 s (modifiedTime cada 4 s).\n"
+  );
+}
+
+async function runFunctionalAudit(refreshBody) {
+  const criticalSheets = refreshBody?.criticalSheets ?? {};
+  const sourcesIndexed = {
+    semanas_2026: Boolean(criticalSheets.semanas_2026),
+    pedidos_2026: Boolean(criticalSheets.pedidos_2026),
+    asignacion_lotes_2026: Boolean(criticalSheets.asignacion_lotes_2026),
+  };
+
+  const sectors = [
+    { label: "Masivo", query: "sector=ENVASADO_MASIVO" },
+    { label: "Premium", query: "sector=ENVASADO_PREMIUM" },
+    { label: "Elaboración Cristian", query: "sector=ELABORACION&ownerPerson=Cristian" },
+    { label: "Elaboración Nicolás", query: "sector=ELABORACION&ownerPerson=Nicolás" },
+    { label: "Producción", query: "sector=PRODUCCION" },
+    { label: "Calidad", query: "sector=CALIDAD" },
+  ];
+
+  const allItems = [];
+  const flowASamples = [];
+
+  for (const s of sectors) {
+    const res = await fetchJson(`/api/v1/work-items?${s.query}`);
+    const items = res.body?.workItems ?? [];
+    allItems.push(...items);
+
+    if (items[0] && flowASamples.length < 3) {
+      flowASamples.push({ sector: s.label, ...items[0] });
+    }
+  }
+
+  const unique = [];
+  const seen = new Set();
+  for (const item of allItems) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    unique.push(item);
+  }
+
+  const audit = auditWorkItems(unique, sourcesIndexed);
+  console.log("\n## Auditoría funcional\n");
+  console.log("| Check | PASS/FAIL | Observaciones |");
+  console.log("|-------|-----------|---------------|");
+  for (const f of audit.findings) {
+    console.log(`| ${f.check} | ${f.pass} | ${f.obs} |`);
+    record({
+      flujo: "AUDIT",
+      usuario: "—",
+      dato: f.check,
+      origen: "API work-items",
+      destino: "—",
+      inicio: isoNow(),
+      aparicion: isoNow(),
+      latencia: "—",
+      pass: f.pass,
+      obs: f.obs,
+    });
+  }
+
+  if (flowASamples.length > 0) {
+    printFlowAInstructions(flowASamples);
+  }
+
+  return audit;
 }
 
 async function flowB() {
@@ -425,7 +610,8 @@ async function main() {
     process.exit(1);
   }
 
-  await fetchJson("/api/v1/drive/refresh?scope=critical_sheets");
+  const refresh = await fetchJson("/api/v1/drive/refresh?scope=critical_sheets");
+  await runFunctionalAudit(refresh.body);
 
   for (const u of USERS) {
     await measureLoad(u.sector, u.persona);

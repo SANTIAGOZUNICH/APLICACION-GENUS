@@ -18,6 +18,9 @@ function mapEstadoToStatus(estado: string | null): WorkItem["status"] {
 function primarySource(item: DomainWorkItem): WorkItemSource {
   if (item.enrichmentSources.includes("semanas_2026")) return "semanas_2026";
   if (item.enrichmentSources.includes("pedidos_2026")) return "pedidos_2026";
+  if (item.enrichmentSources.includes("asignacion_lotes_2026")) {
+    return "asignacion_lotes_2026";
+  }
   return "semanas_2026";
 }
 
