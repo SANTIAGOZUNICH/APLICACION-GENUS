@@ -84,6 +84,7 @@ export function projectDomainWorkItem(item: DomainWorkItem): WorkItem | null {
     quantity,
     unit: item.unit,
     line: item.line,
+    lineExpectedInSheet: item.lineExpectedInSheet,
     deliveryDate: item.deliveryDate,
     status: mapEstadoToStatus(item.estado ?? item.estadoCalidad),
     priority: item.priority,

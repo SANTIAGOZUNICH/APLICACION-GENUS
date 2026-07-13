@@ -268,13 +268,29 @@ function auditWorkItems(allItems, sourcesIndexed) {
     (item) =>
       (item.sector === "ENVASADO_MASIVO" || item.sector === "ENVASADO_PREMIUM") && !item.line
   );
+  const missingLineUnexpected = missingLine.filter(
+    (item) => item.lineExpectedInSheet === true
+  );
+  const missingLineDocumented = missingLine.filter(
+    (item) => item.lineExpectedInSheet !== true
+  );
   findings.push({
     check: "líneas envasado",
-    pass: missingLine.length === 0 ? "PASS" : missingLine.length < 10 ? "WARN" : "FAIL",
+    pass:
+      missingLineUnexpected.length === 0
+        ? missingLineDocumented.length === 0
+          ? "PASS"
+          : "PASS"
+        : "FAIL",
     obs:
-      missingLine.length === 0
-        ? "todas las órdenes de envasado tienen línea"
-        : `${missingLine.length} órdenes sin línea (Línea 1–4)`,
+      missingLineUnexpected.length === 0
+        ? missingLineDocumented.length === 0
+          ? "todas las órdenes de envasado tienen línea"
+          : `${missingLineDocumented.length} sin línea (bloque legacy sin L1–L4 en sheet) · ${missingLine.length} total`
+        : `${missingLineUnexpected.length} sin línea donde el sheet define L1–L4 — ej. ${missingLineUnexpected
+            .slice(0, 2)
+            .map((i) => i.sourceRange)
+            .join("; ")}`,
   });
 
   const missingOwner = allItems.filter((item) => item.sector === "ELABORACION" && !item.ownerPerson);

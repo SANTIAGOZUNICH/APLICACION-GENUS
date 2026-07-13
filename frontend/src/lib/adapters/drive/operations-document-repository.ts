@@ -51,11 +51,17 @@ const CACHE_PREFIX = {
 /** Aliases indexed for documents during refresh (E7.1 slice + elaboracion recursive). */
 const DOCUMENT_INDEX_ALIASES: FolderAlias[] = [
   "elaboracion",
+  "produccion_2026",
   "pcp",
   "lotes",
 ];
 
-const RECURSIVE_DOCUMENT_ALIASES = new Set<FolderAlias>(["elaboracion", "pcp", "lotes"]);
+const RECURSIVE_DOCUMENT_ALIASES = new Set<FolderAlias>([
+  "elaboracion",
+  "produccion_2026",
+  "pcp",
+  "lotes",
+]);
 
 /**
  * OperationsDocumentRepository — document index abstraction.
@@ -196,7 +202,43 @@ export class OperationsDocumentRepository {
       const produccionDocs =
         serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}produccion_2026`) ??
         (await this.indexDocumentsForAlias("produccion_2026", this.getFolderIndex()));
-      return produccionDocs.find((file) => matchesCriticalSheetName(file.name, sheetKey)) ?? null;
+      const fallback = produccionDocs.find((file) =>
+        matchesCriticalSheetName(file.name, sheetKey)
+      );
+      if (fallback) {
+        serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, fallback);
+        return fallback;
+      }
+
+      const genusMatch = await this.searchCriticalSheetGlobally(sheetKey);
+      if (genusMatch) {
+        serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, genusMatch);
+        return genusMatch;
+      }
+    }
+
+    return null;
+  }
+
+  /** Búsqueda amplia de sheets críticos en todos los alias indexados + raíz GENUS. */
+  private async searchCriticalSheetGlobally(
+    sheetKey: CriticalSheetKey
+  ): Promise<DocumentRef | null> {
+    const folderIndex = this.getFolderIndex();
+    const searchAliases: FolderAlias[] = [
+      "genus",
+      "produccion_2026",
+      "pcp",
+      "lotes",
+      "elaboracion",
+    ];
+
+    for (const alias of searchAliases) {
+      const docs =
+        serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}${alias}`) ??
+        (await this.indexDocumentsForAlias(alias, folderIndex));
+      const match = docs.find((file) => matchesCriticalSheetName(file.name, sheetKey));
+      if (match) return match;
     }
 
     return null;
@@ -411,11 +453,11 @@ export class OperationsDocumentRepository {
       case "elaboracion":
         return ["elaboracion"];
       case "pcp":
-        return ["pcp"];
+        return ["pcp", "produccion_2026"];
       case "lotes":
         return ["lotes"];
       case "critical_sheets":
-        return ["pcp", "lotes"];
+        return ["pcp", "lotes", "produccion_2026"];
       default:
         return DOCUMENT_INDEX_ALIASES;
     }
@@ -508,7 +550,15 @@ export class OperationsDocumentRepository {
       if (fallback) {
         serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, fallback);
         result[sheetKey] = fallback.fileId;
+        return;
       }
+
+      const global = await this.searchCriticalSheetGlobally(sheetKey);
+      if (global) {
+        serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, global);
+        result[sheetKey] = global.fileId;
+      }
+      return;
     }
   }
 
@@ -550,7 +600,11 @@ function matchesCriticalSheetName(fileName: string, sheetKey: CriticalSheetKey):
   if (stripped === target) return true;
 
   if (sheetKey === "pedidos_2026") {
-    return stripped.includes("pedidos") && stripped.includes("2026");
+    return (
+      (stripped.includes("pedidos") && stripped.includes("2026")) ||
+      stripped === "pedidos 2026 (1)" ||
+      /^pedidos\s*2026\s*(\(\d+\))?$/.test(stripped)
+    );
   }
   if (sheetKey === "semanas_2026") {
     return stripped.includes("semanas") && stripped.includes("2026");

@@ -17,6 +17,8 @@ export interface DomainWorkItem {
   sector: SectorId | null;
   ownerSector: SectorId | null;
   line: string | null;
+  /** True si el bloque del sheet define L1–L4 entre sector y la fila del slot. */
+  lineExpectedInSheet: boolean | null;
   branchOwner: string | null;
   sectorLead: string | null;
 
@@ -64,6 +66,7 @@ export function createEmptyDomainWorkItem(internalId: string): DomainWorkItem {
     sector: null,
     ownerSector: null,
     line: null,
+    lineExpectedInSheet: null,
     branchOwner: null,
     sectorLead: null,
     dayLabel: null,

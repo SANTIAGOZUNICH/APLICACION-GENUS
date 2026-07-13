@@ -66,9 +66,9 @@ export function detectPackagingSectorHeader(row: string[]): "ENVASADO_MASIVO" | 
   return null;
 }
 
-function parseLineFromCell(cell: string): string | null {
+export function parseLineFromCell(cell: string): string | null {
   const normalized = normalizeKey(cell);
-  const lineMatch = normalized.match(/^linea\s*(\d+)\b/);
+  const lineMatch = normalized.match(/^linea\s*(?:n[°º]?\s*)?(\d+)\b/);
   if (lineMatch) return `Línea ${lineMatch[1]}`;
 
   const shortMatch = normalized.match(/^l(\d+)$/);
@@ -77,6 +77,86 @@ function parseLineFromCell(cell: string): string | null {
   const premiumMatch = normalized.match(/^premium\s*([ab])$/);
   if (premiumMatch) return `Premium ${premiumMatch[1].toUpperCase()}`;
 
+  return null;
+}
+
+const DAY_LABELS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"] as const;
+
+/** Fila con fechas ISO o dd/mm en varias columnas (geometría columnar nueva). */
+export function isDateHeaderRow(row: string[]): boolean {
+  let dateCount = 0;
+  for (const cell of row) {
+    const t = cell.trim();
+    if (!t) continue;
+    if (/^\d{4}-\d{2}-\d{2}/.test(t)) dateCount += 1;
+    else if (/^\d{1,2}\/\d{1,2}/.test(t)) dateCount += 1;
+  }
+  return dateCount >= 3;
+}
+
+/** Mapea columnas con fechas a días de la semana (Lunes→Viernes). */
+export function extractDayColumnsFromDateRow(row: string[]): Map<number, string> {
+  const map = new Map<number, string>();
+  const cols: number[] = [];
+  row.forEach((cell, index) => {
+    const t = cell.trim();
+    if (!t) return;
+    if (/^\d{4}-\d{2}-\d{2}/.test(t) || /^\d{1,2}\/\d{1,2}/.test(t)) {
+      cols.push(index);
+    }
+  });
+  cols.slice(0, 5).forEach((col, idx) => {
+    map.set(col, DAY_LABELS[idx] ?? `Día ${idx + 1}`);
+  });
+  return map;
+}
+
+/**
+ * En fila L1/L2/L3, infiere columnas de día desde celdas de cliente/producto
+ * (geometría C/E/G/I/K cuando el encabezado clásico B/D/F/H/J no aplica).
+ */
+export function inferDayColumnsFromLineRow(row: string[]): Map<number, string> {
+  const map = new Map<number, string>();
+  const lineCol = row.findIndex((cell) => parseLineFromCell(cell.trim()));
+  const productCols: number[] = [];
+
+  row.forEach((cell, index) => {
+    const text = normalizeCellText(cell);
+    if (!text) return;
+    if (parseLineFromCell(text)) return;
+    if (index <= lineCol) return;
+    if (isOperationalNote(text)) return;
+    if (/^📅/.test(text) || /^resumen/i.test(text)) return;
+    productCols.push(index);
+  });
+
+  productCols.slice(0, 5).forEach((col, idx) => {
+    map.set(col, DAY_LABELS[idx] ?? `Día ${idx + 1}`);
+  });
+  return map;
+}
+
+/** ¿El bloque del sheet define líneas explícitas (L1/L2/L3) entre sector y la fila del ítem? */
+export function blockExpectsExplicitLine(
+  rows: string[][],
+  sectorRowIndex: number,
+  itemRowIndex: number
+): boolean {
+  const banner = normalizeKey(rowText(rows[sectorRowIndex] ?? []));
+  if (/\d+\s*lineas?\s*de\s*producci/.test(banner)) return true;
+
+  for (let i = sectorRowIndex; i < itemRowIndex; i++) {
+    if (detectLineHeader(rows[i] ?? [])) return true;
+  }
+  return false;
+}
+
+/** Encuentra la fila del encabezado de sector más cercana hacia arriba. */
+export function findPackagingSectorRow(rows: string[][], itemRowIndex: number): number | null {
+  for (let i = itemRowIndex - 1; i >= 0; i--) {
+    if (detectPackagingSectorHeader(rows[i] ?? [])) return i;
+    if (isWeekAnchorRow(rows[i] ?? [])) break;
+  }
   return null;
 }
 

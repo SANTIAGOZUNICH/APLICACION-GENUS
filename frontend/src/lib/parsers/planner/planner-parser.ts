@@ -3,11 +3,16 @@ import type { WorkItemAssembler } from "@/lib/domain/work-item/work-item-assembl
 import type { WorkItemRegistry } from "@/lib/domain/work-item/work-item-registry";
 import type { SectorId } from "@/types/operational/sector";
 import {
+  blockExpectsExplicitLine,
   detectBranchOwnerRow,
   detectLineHeader,
   detectPackagingSectorHeader,
   extractDayColumns,
+  extractDayColumnsFromDateRow,
+  findPackagingSectorRow,
+  inferDayColumnsFromLineRow,
   inferOriginStage,
+  isDateHeaderRow,
   isOperationalNote,
   isQuantityCell,
   isWeekAnchorRow,
@@ -90,7 +95,8 @@ function flushColumnDrafts(
   draft: ColumnSlotDraft,
   fileId: string,
   tab: string,
-  rowNumber: number
+  rowNumber: number,
+  rows: string[][]
 ): number {
   if (!ctx.sector) return 0;
   if (!draft.client && !draft.product && !draft.quantity) return 0;
@@ -99,6 +105,10 @@ function flushColumnDrafts(
   const dayNum = ctx.dayNumbers.get(colIndex);
   const plannedDate =
     dayNum && ctx.monthLabel ? `${dayNum} ${ctx.monthLabel}` : dayNum ?? null;
+
+  const sectorRow = findPackagingSectorRow(rows, rowNumber);
+  const lineExpectedInSheet =
+    sectorRow !== null ? blockExpectsExplicitLine(rows, sectorRow, rowNumber) : null;
 
   const internalId = `planner:${fileId}:${slugify(tab)}:${slugify(ctx.sector)}:${slugify(ctx.line ?? "sin-linea")}:${slugify(ctx.branchOwner ?? "sin-rama")}:${colIndex}:${rowNumber}:${slugify(draft.product ?? draft.client ?? "slot")}`;
 
@@ -110,6 +120,7 @@ function flushColumnDrafts(
       sector: ctx.sector,
       ownerSector: ctx.sector,
       line: ctx.line,
+      lineExpectedInSheet,
       branchOwner: ctx.branchOwner,
       sectorLead:
         ctx.sector === "ELABORACION" ? SECTOR_PERSONNEL.ELABORACION_ENCARGADO : null,
@@ -182,7 +193,8 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
           draft,
           input.fileId,
           input.tab,
-          rowNumber
+          rowNumber,
+          input.rows
         );
       }
     }
@@ -204,6 +216,15 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
       ctx.weekLabel = `Semana ${rowNumber}`;
       ctx.dayNumbers.clear();
       ctx.monthLabel = null;
+      ctx.line = null;
+      continue;
+    }
+
+    if (isDateHeaderRow(row) && ctx.tabSector === "ACONDICIONAMIENTO") {
+      const dateCols = extractDayColumnsFromDateRow(row);
+      if (dateCols.size > 0) {
+        ctx.dayColumns = dateCols;
+      }
       continue;
     }
 
@@ -227,7 +248,8 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
     if (packagingSector) {
       flushAllDrafts(rowNumber);
       ctx.sector = packagingSector;
-      ctx.line = detectLineHeader(row);
+      const lineOnSectorRow = detectLineHeader(row);
+      ctx.line = lineOnSectorRow;
       continue;
     }
 
@@ -235,6 +257,10 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
     if (lineHeader && ctx.tabSector === "ACONDICIONAMIENTO") {
       flushAllDrafts(rowNumber);
       ctx.line = lineHeader;
+      const inferredCols = inferDayColumnsFromLineRow(row);
+      if (inferredCols.size > 0) {
+        ctx.dayColumns = inferredCols;
+      }
       continue;
     }
 
@@ -262,7 +288,8 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
           draft,
           input.fileId,
           input.tab,
-          rowNumber
+          rowNumber,
+          input.rows
         );
         columnDrafts.set(colIndex, { client: null, product: null, quantity: null, notes: [] });
       }

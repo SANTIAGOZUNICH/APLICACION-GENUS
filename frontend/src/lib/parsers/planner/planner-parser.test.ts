@@ -5,6 +5,7 @@ import { projectDomainWorkItems } from "@/lib/domain/work-item/work-item-project
 import {
   SEMANAS_COLUMNAR_ELABORACION,
   SEMANAS_COLUMNAR_ENVASADO,
+  SEMANAS_COLUMNAR_ENVASADO_L_GRID,
 } from "@/lib/parsers/__fixtures__/planner-columnar.fixture";
 import { parsePlannerTab } from "@/lib/parsers/planner/planner-parser";
 
@@ -50,5 +51,24 @@ describe("PlannerParser columnar", () => {
     expect(premium.length).toBeGreaterThan(0);
     expect(masivo.some((i) => i.line === "Línea 1")).toBe(true);
     expect(premium.some((i) => i.line === "Línea 2")).toBe(true);
+  });
+
+  it("detecta L1/L2/L3 con geometría columnar C/E/G/I/K", () => {
+    const registry = createWorkItemRegistry();
+    parsePlannerTab({
+      fileId: "test-semanas",
+      tab: "ACONDICIONAMIENTO",
+      rows: SEMANAS_COLUMNAR_ENVASADO_L_GRID,
+      registry,
+      assembler: workItemAssembler,
+    });
+
+    const items = projectDomainWorkItems(registry.list());
+    const masivo = items.filter((i) => i.sector === "ENVASADO_MASIVO");
+
+    expect(masivo.length).toBeGreaterThan(0);
+    expect(masivo.every((i) => i.line === "Línea 1" || i.line === "Línea 2")).toBe(true);
+    expect(masivo.some((i) => i.line === "Línea 1")).toBe(true);
+    expect(masivo.some((i) => i.line === "Línea 2")).toBe(true);
   });
 });

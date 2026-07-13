@@ -59,6 +59,8 @@ export interface WorkItem {
   quantity: string | null;
   unit: string | null;
   line: string | null;
+  /** Auditoría: el bloque SEMANAS define líneas explícitas (L1–L4). */
+  lineExpectedInSheet?: boolean | null;
   deliveryDate: string | null;
   status: WorkItemStatus;
   priority: WorkItemPriority | null;
