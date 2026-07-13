@@ -164,20 +164,20 @@ export class LiveSyncEngine {
 
   /** Lectura caliente — nunca bloquea en Drive crawl completo. */
   async getSnapshot(): Promise<LiveSyncSnapshot | null> {
-    await operationsDocumentRepository.ensureReady();
-
     const cached = liveSyncStore.getSnapshot();
     if (cached) {
+      void operationsDocumentRepository.ensureOperationalReady();
       void syncIfNeeded(false);
       return applyOperationalOverlay(cached);
     }
 
+    await operationsDocumentRepository.ensureOperationalReady();
     void rebuildSnapshot("cold-start");
     return null;
   }
 
   async warmSnapshot(): Promise<LiveSyncSnapshot | null> {
-    await operationsDocumentRepository.ensureReady();
+    await operationsDocumentRepository.ensureOperationalReady();
     const cached = liveSyncStore.getSnapshot();
     if (cached) return applyOperationalOverlay(cached);
     return rebuildSnapshot("warm");
@@ -215,6 +215,9 @@ export class LiveSyncEngine {
     const calidadItems = sector === "CALIDAD" ? snapshot.qualityItems : [];
     const overlay = serverOperationalState.snapshot();
     const workItemsWithOverlay = serverOperationalState.applyToWorkItems(filtered);
+    const backgroundSyncing = operationsDocumentRepository.isBackgroundIndexInFlight();
+    const snapshotAgeMs = Date.now() - new Date(snapshot.updatedAt).getTime();
+    const snapshotStale = snapshotAgeMs > SNAPSHOT_MAX_AGE_MS;
 
     return {
       sector,
@@ -232,13 +235,15 @@ export class LiveSyncEngine {
         completions: overlay.completions,
       },
       message:
-        filtered.length > 0
-          ? sector === "PRODUCCION"
-            ? `${filtered.length} WorkItem(s) agregados (Live Sync).`
-            : `${filtered.length} WorkItem(s) para ${sector}${ownerPerson ? ` · ${ownerPerson}` : ""}.`
-          : sector === "PRODUCCION"
-            ? "Sin operación agregada — verificar SEMANAS indexado."
-            : `Sin trabajos para ${sector}${ownerPerson ? ` · ${ownerPerson}` : ""}.`,
+        backgroundSyncing || snapshotStale
+          ? "Sincronizando — mostrando último snapshot disponible."
+          : filtered.length > 0
+            ? sector === "PRODUCCION"
+              ? `${filtered.length} WorkItem(s) agregados (Live Sync).`
+              : `${filtered.length} WorkItem(s) para ${sector}${ownerPerson ? ` · ${ownerPerson}` : ""}.`
+            : sector === "PRODUCCION"
+              ? "Sin operación agregada — verificar SEMANAS indexado."
+              : `Sin trabajos para ${sector}${ownerPerson ? ` · ${ownerPerson}` : ""}.`,
     };
   }
 
@@ -251,6 +256,7 @@ export class LiveSyncEngine {
       subscribers: operationalEventBus.subscriberCount,
       snapshotReady: liveSyncStore.isReady(),
       workItemCount: snapshot?.workItems.length ?? 0,
+      backgroundSyncing: operationsDocumentRepository.isBackgroundIndexInFlight(),
     };
   }
 

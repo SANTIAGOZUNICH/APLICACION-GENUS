@@ -98,4 +98,5 @@ export interface LiveSyncStatus {
   subscribers: number;
   snapshotReady: boolean;
   workItemCount: number;
+  backgroundSyncing?: boolean;
 }
