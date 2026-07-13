@@ -12,6 +12,8 @@ export function createTestWorkItem(
     sourceFileId: "test-file",
     sourceSheet: "SEMANAS",
     sourceRange: "1:1",
+    productSourceRange: null,
+    quantitySourceRange: null,
     originStage: "ELABORACION",
     date: null,
     dayLabel: null,

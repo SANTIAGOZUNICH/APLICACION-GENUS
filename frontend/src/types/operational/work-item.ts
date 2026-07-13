@@ -49,7 +49,10 @@ export interface WorkItem {
   source: WorkItemSource;
   sourceFileId: string;
   sourceSheet: string | null;
+  /** Fila de cierre del slot columnar en SEMANAS (flush boundary). */
   sourceRange: string | null;
+  productSourceRange: string | null;
+  quantitySourceRange: string | null;
   originStage: OriginStage;
   date: string | null;
   dayLabel: string | null;

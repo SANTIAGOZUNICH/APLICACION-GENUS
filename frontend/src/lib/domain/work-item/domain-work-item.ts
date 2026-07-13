@@ -55,7 +55,10 @@ export interface DomainWorkItem {
   confidence: WorkItemConfidence;
   enrichmentSources: AttributeSource[];
   sourceFileIds: Partial<Record<AttributeSource, string>>;
+  /** Fila de cierre del slot columnar (no asumir = cantidad). */
   sourceRanges: Partial<Record<AttributeSource, string>>;
+  sourceProductRanges: Partial<Record<AttributeSource, string>>;
+  sourceQuantityRanges: Partial<Record<AttributeSource, string>>;
 }
 
 export function createEmptyDomainWorkItem(internalId: string): DomainWorkItem {
@@ -98,5 +101,7 @@ export function createEmptyDomainWorkItem(internalId: string): DomainWorkItem {
     enrichmentSources: [],
     sourceFileIds: {},
     sourceRanges: {},
+    sourceProductRanges: {},
+    sourceQuantityRanges: {},
   };
 }

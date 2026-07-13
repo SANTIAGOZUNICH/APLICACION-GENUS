@@ -75,6 +75,8 @@ export function projectDomainWorkItem(item: DomainWorkItem): WorkItem | null {
     sourceFileId: fileId,
     sourceSheet: item.sourceRanges[source]?.split("!")[0] ?? null,
     sourceRange: item.sourceRanges[source] ?? null,
+    productSourceRange: item.sourceProductRanges[source] ?? null,
+    quantitySourceRange: item.sourceQuantityRanges[source] ?? null,
     originStage,
     date: item.date,
     dayLabel: item.dayLabel,

@@ -18,7 +18,10 @@ export type DomainWorkItemPatch = Partial<Omit<DomainWorkItem, "internalId" | "e
 
 export interface EnrichmentMeta {
   fileId?: string;
+  /** Fila de cierre del slot (flush boundary). */
   range?: string;
+  productRange?: string;
+  quantityRange?: string;
 }
 
 export interface ApplyOptions {
@@ -104,6 +107,12 @@ export class WorkItemAssembler {
     }
     if (meta?.range) {
       next.sourceRanges = { ...next.sourceRanges, [source]: meta.range };
+    }
+    if (meta?.productRange) {
+      next.sourceProductRanges = { ...next.sourceProductRanges, [source]: meta.productRange };
+    }
+    if (meta?.quantityRange) {
+      next.sourceQuantityRanges = { ...next.sourceQuantityRanges, [source]: meta.quantityRange };
     }
 
     next.confidence = this.inferConfidence(next);

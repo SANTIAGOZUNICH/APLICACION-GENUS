@@ -49,6 +49,21 @@ interface ColumnSlotDraft {
   product: string | null;
   quantity: string | null;
   notes: string[];
+  clientRow: number | null;
+  productRow: number | null;
+  quantityRow: number | null;
+}
+
+function emptyColumnDraft(): ColumnSlotDraft {
+  return {
+    client: null,
+    product: null,
+    quantity: null,
+    notes: [],
+    clientRow: null,
+    productRow: null,
+    quantityRow: null,
+  };
 }
 
 function isDayNumbersRow(row: string[], dayColumns: Map<number, string>): boolean {
@@ -112,6 +127,13 @@ function flushColumnDrafts(
 
   const internalId = `planner:${fileId}:${slugify(tab)}:${slugify(ctx.sector)}:${slugify(ctx.line ?? "sin-linea")}:${slugify(ctx.branchOwner ?? "sin-rama")}:${colIndex}:${rowNumber}:${slugify(draft.product ?? draft.client ?? "slot")}`;
 
+  const col = colIndex + 1;
+  const slotRange = `${tab}!${rowNumber}:${col}`;
+  const productRange =
+    draft.productRow !== null ? `${tab}!${draft.productRow}:${col}` : undefined;
+  const quantityRange =
+    draft.quantityRow !== null ? `${tab}!${draft.quantityRow}:${col}` : undefined;
+
   assembler.apply(
     registry,
     { internalId, client: draft.client, product: draft.product },
@@ -135,7 +157,7 @@ function flushColumnDrafts(
       priority: dayLabel === "Lunes" || dayLabel === "Martes" ? "ESTA_SEMANA" : null,
     },
     "semanas_2026",
-    { fileId, range: `${tab}!${rowNumber}:${colIndex + 1}` }
+    { fileId, range: slotRange, productRange, quantityRange }
   );
 
   return 1;
@@ -143,7 +165,8 @@ function flushColumnDrafts(
 
 function classifyAndStack(
   text: string,
-  draft: ColumnSlotDraft
+  draft: ColumnSlotDraft,
+  rowNumber: number
 ): void {
   if (isOperationalNote(text)) {
     draft.notes.push(text);
@@ -152,16 +175,19 @@ function classifyAndStack(
 
   if (isQuantityCell(text)) {
     draft.quantity = text;
+    draft.quantityRow = rowNumber;
     return;
   }
 
   if (!draft.client) {
     draft.client = text;
+    draft.clientRow = rowNumber;
     return;
   }
 
   if (!draft.product) {
     draft.product = text;
+    draft.productRow = rowNumber;
     return;
   }
 
@@ -177,7 +203,7 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
   const columnDrafts = new Map<number, ColumnSlotDraft>();
   const getDraft = (col: number): ColumnSlotDraft => {
     if (!columnDrafts.has(col)) {
-      columnDrafts.set(col, { client: null, product: null, quantity: null, notes: [] });
+      columnDrafts.set(col, emptyColumnDraft());
     }
     return columnDrafts.get(col)!;
   };
@@ -291,17 +317,16 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
           rowNumber,
           input.rows
         );
-        columnDrafts.set(colIndex, { client: null, product: null, quantity: null, notes: [] });
+        columnDrafts.set(colIndex, emptyColumnDraft());
       }
 
-      classifyAndStack(cell, getDraft(colIndex));
+      classifyAndStack(cell, getDraft(colIndex), rowNumber);
     }
 
     if (!touchedColumn && ctx.tabSector === "ELABORACION") {
       const leftCell = normalizeCellText(row[1] ?? row[0] ?? "");
       if (leftCell && !isWeekAnchorRow(row)) {
-        const draft = getDraft(1);
-        classifyAndStack(leftCell, draft);
+        classifyAndStack(leftCell, getDraft(1), rowNumber);
       }
     }
   }

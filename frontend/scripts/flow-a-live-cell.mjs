@@ -2,12 +2,12 @@
 /**
  * Flujo A — celda viva desde WorkItem API + verificación Google Sheet.
  *
- * Uso:
- *   # Paso 1: descubrir celda (esperar confirmación humana)
- *   node frontend/scripts/flow-a-live-cell.mjs --discover
+ * No asume que sourceRange = celda de cantidad.
+ * Usa quantitySourceRange / productSourceRange del parser.
  *
- *   # Paso 2: ejecutar prueba tras confirmación
- *   node frontend/scripts/flow-a-live-cell.mjs --run --item-id <id>
+ * Uso:
+ *   node frontend/scripts/flow-a-live-cell.mjs --discover
+ *   node frontend/scripts/flow-a-live-cell.mjs --run --item-id=<id>
  */
 
 import { performance } from "node:perf_hooks";
@@ -16,13 +16,17 @@ const BASE = (process.env.BASE_URL ?? "http://localhost:3000").replace(/\/$/, ""
 const BYPASS = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim() ?? "";
 const DISCOVER = process.argv.includes("--discover");
 const RUN = process.argv.includes("--run");
-const ITEM_ID_ARG = process.argv.find((a) => a.startsWith("--item-id="))?.split("=")[1] ?? null;
+const ITEM_ID_ARG =
+  process.argv.find((a) => a.startsWith("--item-id="))?.split("=")[1] ??
+  process.argv[process.argv.indexOf("--item-id") + 1] ??
+  null;
 
 const OWNERS = ["Cristian", "Nicolás"];
 const MIN_ROW = 500;
 const POLL_MS = 250;
 const TIMEOUT_MS = 120_000;
 const GATE_MAX_MS = 5000;
+const PREFERRED_PRODUCT = process.env.FLOW_A_PRODUCT?.trim() || "PROBIOTONIC BALANCE";
 
 function headers(extra = {}) {
   const h = { Accept: "application/json", ...extra };
@@ -31,12 +35,10 @@ function headers(extra = {}) {
 }
 
 async function fetchJson(path, options = {}) {
-  const t0 = performance.now();
   const res = await fetch(`${BASE}${path}`, {
     ...options,
     headers: headers(options.headers),
   });
-  const elapsed = Math.round(performance.now() - t0);
   const text = await res.text();
   let body = null;
   try {
@@ -44,7 +46,7 @@ async function fetchJson(path, options = {}) {
   } catch {
     body = { _raw: text.slice(0, 300) };
   }
-  return { ok: res.ok, status: res.status, body, elapsed };
+  return { ok: res.ok, status: res.status, body };
 }
 
 function colLetter(col1Based) {
@@ -69,6 +71,7 @@ function parseSourceRange(range) {
     row,
     col,
     cell: `${colLetter(col)}${row}`,
+    a1: `${m[1]}!${colLetter(col)}${row}`,
     ambiguous: false,
   };
 }
@@ -97,8 +100,7 @@ function suggestTestValue(current) {
   return `${t}-TEST`;
 }
 
-async function readLiveCell(sheet, cell) {
-  const a1 = `${sheet}!${cell}`;
+async function readLiveCell(a1) {
   return fetchJson(`/api/v1/sheets/cell?key=semanas_2026&a1=${encodeURIComponent(a1)}`);
 }
 
@@ -116,21 +118,22 @@ async function fetchElaboracionItems() {
 }
 
 function rankCandidate(item) {
-  const loc = parseSourceRange(item.sourceRange);
-  const row = loc?.row ?? 0;
+  const slot = parseSourceRange(item.sourceRange);
+  const qty = parseSourceRange(item.quantitySourceRange);
+  const row = qty?.row ?? slot?.row ?? 0;
   let score = 0;
 
   if (row >= MIN_ROW) score += row;
   else score -= 5000;
 
-  if (loc?.ambiguous) score -= 10000;
+  if (!item.quantitySourceRange) score -= 8000;
+  if (slot?.ambiguous || qty?.ambiguous) score -= 10000;
 
   if (item.product && item.quantity && isQuantityLike(item.quantity) && !isQuantityLike(item.product)) {
     score += 3000;
   }
 
-  if (item.product && isQuantityLike(item.product)) score -= 4000;
-  if (item.quantity && !isQuantityLike(item.quantity)) score -= 2000;
+  if (item.product === PREFERRED_PRODUCT) score += 5000;
 
   if (OWNERS.includes(item.ownerPerson ?? "")) score += 100;
 
@@ -138,92 +141,112 @@ function rankCandidate(item) {
 }
 
 async function resolveCells(item) {
-  const loc = parseSourceRange(item.sourceRange);
-  if (!loc || loc.ambiguous) {
+  const slotLoc = parseSourceRange(item.sourceRange);
+  const qtyLoc = parseSourceRange(item.quantitySourceRange);
+  const prodLoc = parseSourceRange(item.productSourceRange);
+
+  if (!qtyLoc || qtyLoc.ambiguous) {
     return {
       ok: false,
-      reason: `sourceRange no parseable: ${item.sourceRange ?? "null"}`,
+      reason:
+        "quantitySourceRange ausente o ambiguo — el parser debe exponer la fila de cantidad explícitamente.",
+      sourceRange: item.sourceRange,
+      quantitySourceRange: item.quantitySourceRange ?? null,
+      productSourceRange: item.productSourceRange ?? null,
     };
   }
 
-  const tabRes = await readLiveCell(loc.sheet, "A1");
-  if (tabRes.status === 404 && tabRes.body?.code === "TAB_NOT_FOUND") {
-    return { ok: false, reason: `pestaña "${loc.sheet}" no existe en Sheet vivo`, tabs: tabRes.body?.tabs };
-  }
-
-  const anchorRes = await readLiveCell(loc.sheet, loc.cell);
-  if (!anchorRes.ok) {
-    return { ok: false, reason: `no se pudo leer ${loc.sheet}!${loc.cell}`, detail: anchorRes.body };
-  }
-
-  const anchorValue = anchorRes.body?.value ?? "";
-  const qtyNorm = normalizeQty(item.quantity);
-  const anchorNorm = normalizeQty(anchorValue);
-
-  let quantityCell = loc.cell;
-  let quantityValue = anchorValue;
-  let productCell = null;
-  let productValue = null;
-
-  if (anchorNorm === qtyNorm || isQuantityLike(anchorValue)) {
-    quantityCell = loc.cell;
-    quantityValue = anchorValue;
-  } else {
-    let found = null;
-    for (let r = loc.row; r >= Math.max(1, loc.row - 8); r--) {
-      const cell = `${colLetter(loc.col)}${r}`;
-      const res = await readLiveCell(loc.sheet, cell);
-      const val = res.body?.value ?? "";
-      if (normalizeQty(val) === qtyNorm || (isQuantityLike(val) && qtyNorm.includes(normalizeQty(val)))) {
-        found = { cell, value: val };
-        break;
-      }
-    }
-    if (!found) {
-      return {
-        ok: false,
-        reason: `cantidad "${item.quantity}" no encontrada en columna ${colLetter(loc.col)} cerca de fila ${loc.row}`,
-        anchor: { cell: loc.cell, value: anchorValue },
-      };
-    }
-    quantityCell = found.cell;
-    quantityValue = found.value;
-  }
-
-  if (item.product) {
-    const prodNorm = normalizeQty(item.product);
-    for (let r = loc.row; r >= Math.max(1, loc.row - 8); r--) {
-      const cell = `${colLetter(loc.col)}${r}`;
-      if (cell === quantityCell) continue;
-      const res = await readLiveCell(loc.sheet, cell);
-      const val = res.body?.value ?? "";
-      if (normalizeQty(val) === prodNorm || normalizeQty(val).includes(prodNorm) || prodNorm.includes(normalizeQty(val))) {
-        productCell = cell;
-        productValue = val;
-        break;
-      }
-    }
-  }
-
-  if (normalizeQty(quantityValue) !== qtyNorm && !qtyNorm.includes(normalizeQty(quantityValue))) {
+  const sheet = qtyLoc.sheet;
+  const tabProbe = await readLiveCell(`${sheet}!A1`);
+  if (tabProbe.status === 404 && tabProbe.body?.code === "TAB_NOT_FOUND") {
     return {
       ok: false,
-      reason: `valor vivo "${quantityValue}" no coincide con WorkItem quantity "${item.quantity}"`,
-      quantityCell,
+      reason: `pestaña "${sheet}" no existe en Sheet vivo`,
+      tabs: tabProbe.body?.tabs,
+    };
+  }
+  if (tabProbe.status === 404 && String(tabProbe.body?._raw ?? "").includes("<!DOCTYPE")) {
+    return {
+      ok: false,
+      reason:
+        "endpoint /api/v1/sheets/cell no disponible en preview — esperar deploy con lectura viva",
+    };
+  }
+
+  const qtyLive = await readLiveCell(qtyLoc.a1);
+  if (!qtyLive.ok || qtyLive.body?.code === "SHEET_READ_FAILED") {
+    return {
+      ok: false,
+      reason: `no se pudo leer celda viva ${qtyLoc.a1}`,
+      detail: qtyLive.body,
+    };
+  }
+
+  const quantityValue = qtyLive.body?.value ?? "";
+  const qtyNorm = normalizeQty(item.quantity);
+  const liveNorm = normalizeQty(quantityValue);
+
+  if (liveNorm !== qtyNorm && !qtyNorm.includes(liveNorm) && !liveNorm.includes(qtyNorm)) {
+    return {
+      ok: false,
+      reason: `Sheet vivo ${qtyLoc.a1}="${quantityValue}" ≠ WorkItem quantity="${item.quantity}"`,
+      quantityCell: qtyLoc.cell,
       quantityValue,
     };
   }
 
+  let productCell = prodLoc?.cell ?? null;
+  let productValue = null;
+
+  if (prodLoc) {
+    const prodLive = await readLiveCell(prodLoc.a1);
+    productValue = prodLive.body?.value ?? null;
+    if (item.product && productValue) {
+      const pNorm = normalizeQty(item.product);
+      const pvNorm = normalizeQty(productValue);
+      if (pNorm !== pvNorm && !pNorm.includes(pvNorm) && !pvNorm.includes(pNorm)) {
+        return {
+          ok: false,
+          reason: `producto vivo ${prodLoc.a1}="${productValue}" ≠ WorkItem product="${item.product}"`,
+          productCell,
+          quantityCell: qtyLoc.cell,
+        };
+      }
+    }
+  }
+
   return {
     ok: true,
-    loc,
-    quantityCell,
-    quantityValue,
+    sheet,
+    slotCell: slotLoc?.cell ?? null,
     productCell,
     productValue,
+    quantityCell: qtyLoc.cell,
+    quantityA1: qtyLoc.a1,
+    quantityValue,
     testValue: suggestTestValue(quantityValue),
     restoreValue: quantityValue,
+    sourceRange: item.sourceRange,
+    quantitySourceRange: item.quantitySourceRange,
+    productSourceRange: item.productSourceRange ?? null,
   };
+}
+
+function printCandidate(candidate, resolved) {
+  console.log("## Candidato Flujo A (verificado contra Sheet vivo)\n");
+  console.log(`| Campo | Valor |`);
+  console.log(`|-------|-------|`);
+  console.log(`| WorkItem | \`${candidate.id}\` |`);
+  console.log(`| Producto | ${candidate.product ?? "—"} |`);
+  console.log(`| Responsable | ${candidate.ownerPerson} |`);
+  console.log(`| sourceRange (slot) | ${resolved.sourceRange ?? "—"} |`);
+  console.log(`| quantitySourceRange | ${resolved.quantitySourceRange ?? "—"} |`);
+  console.log(`| productSourceRange | ${resolved.productSourceRange ?? "—"} |`);
+  console.log(`| productCell | ${resolved.productCell ? `${resolved.sheet}!${resolved.productCell}` : "—"} |`);
+  console.log(`| quantityCell | ${resolved.sheet}!${resolved.quantityCell} |`);
+  console.log(`| Valor vivo (cantidad) | ${resolved.quantityValue} |`);
+  console.log(`| Valor temporal propuesto | ${resolved.testValue} |`);
+  console.log(`| Valor original (restaurar) | ${resolved.restoreValue} |`);
 }
 
 async function discover() {
@@ -235,50 +258,43 @@ async function discover() {
   );
 
   if (items.length === 0) {
-    console.error("FAIL: sin WorkItems de Elaboración con sourceRange y quantity.");
+    console.error("FAIL: sin WorkItems de Elaboración.");
     process.exit(1);
   }
 
   const ranked = [...items].sort((a, b) => rankCandidate(b) - rankCandidate(a));
   const candidate = ITEM_ID_ARG
     ? items.find((i) => i.id === ITEM_ID_ARG)
-    : ranked.find((i) => (parseSourceRange(i.sourceRange)?.row ?? 0) >= MIN_ROW) ?? ranked[0];
+    : items.find((i) => i.product === PREFERRED_PRODUCT) ?? ranked[0];
 
   if (!candidate) {
-    console.error("FAIL: no hay candidato.");
+    console.error("FAIL: candidato no encontrado.");
     process.exit(1);
   }
 
   const resolved = await resolveCells(candidate);
   if (!resolved.ok) {
-    console.error("\n## Diagnóstico — celda no resuelta\n");
+    console.error("\n## Diagnóstico — no se puede ejecutar Flujo A\n");
     console.error(`WorkItem: ${candidate.id}`);
     console.error(`sourceRange: ${candidate.sourceRange}`);
+    console.error(`quantitySourceRange: ${candidate.quantitySourceRange ?? "—"}`);
     console.error(`Motivo: ${resolved.reason}`);
-    if (resolved.anchor) console.error(`Ancla: ${JSON.stringify(resolved.anchor)}`);
-    if (resolved.tabs) console.error(`Pestañas disponibles: ${resolved.tabs.join(", ")}`);
+    if (resolved.tabs) console.error(`Pestañas: ${resolved.tabs.join(", ")}`);
     process.exit(1);
   }
 
-  console.log("## Candidato para Flujo A\n");
-  console.log(`| Campo | Valor |`);
-  console.log(`|-------|-------|`);
-  console.log(`| WorkItem id | \`${candidate.id}\` |`);
-  console.log(`| Producto | ${candidate.product ?? "—"} |`);
-  console.log(`| Responsable | ${candidate.ownerPerson} |`);
-  console.log(`| quantity (API) | ${candidate.quantity} |`);
-  console.log(`| sourceSheet | ${candidate.sourceSheet} |`);
-  console.log(`| sourceRange | ${candidate.sourceRange} |`);
-  console.log(`| Celda cantidad | ${resolved.loc.sheet}!${resolved.quantityCell} |`);
-  console.log(`| Valor vivo (cantidad) | ${resolved.quantityValue} |`);
-  if (resolved.productCell) {
-    console.log(`| Celda producto | ${resolved.loc.sheet}!${resolved.productCell} = ${resolved.productValue} |`);
-  }
-  console.log(`| Valor temporal sugerido | ${resolved.testValue} |`);
-  console.log(`| Restaurar a | ${resolved.restoreValue} |`);
-  console.log("\nConfirmá visualmente en Google Sheets antes de ejecutar con `--run --item-id=...`.\n");
+  printCandidate(candidate, resolved);
 
-  return { candidate, resolved };
+  if (RUN) {
+    return { candidate, resolved, liveVerified: true };
+  }
+
+  console.log(
+    "\nVerificación vivo: OK — listo para `--run` cuando confirmes.\n" +
+      "No se imprime EDITAR AHORA hasta ejecutar con --run.\n"
+  );
+
+  return { candidate, resolved, liveVerified: true };
 }
 
 function sseUrl(sector) {
@@ -313,12 +329,11 @@ function connectSse(sector, onSnapshot) {
 async function runTest() {
   const { candidate, resolved } = await discover();
 
-  console.log("Monitoreo activo (SSE + API).");
   console.log("\n══════════════════════════════════════");
   console.log("              EDITAR AHORA");
   console.log("══════════════════════════════════════\n");
   console.log(`Archivo: SEMANAS 2026`);
-  console.log(`Pestaña: ${resolved.loc.sheet}`);
+  console.log(`Pestaña: ${resolved.sheet}`);
   console.log(`Celda: ${resolved.quantityCell}`);
   console.log(`Producto: ${candidate.product ?? "—"}`);
   console.log(`Responsable: ${candidate.ownerPerson}`);
@@ -327,7 +342,6 @@ async function runTest() {
   console.log(`Valor para restaurar: ${resolved.restoreValue}\n`);
 
   const owner = candidate.ownerPerson;
-  const baselineQty = candidate.quantity;
   const testNorm = normalizeQty(resolved.testValue);
   const baselineRevision = (await fetchJson("/api/v1/live-sync/status")).body?.revision ?? 0;
 
@@ -367,10 +381,8 @@ async function runTest() {
     const ownerItem = (ownerRes.body?.workItems ?? []).find((i) => i.id === candidate.id);
     const prodItem = (prodRes.body?.workItems ?? []).find((i) => i.id === candidate.id);
 
-    const ownerChanged =
-      ownerItem && normalizeQty(ownerItem.quantity) === testNorm;
-    const prodChanged =
-      prodItem && normalizeQty(prodItem.quantity) === testNorm;
+    const ownerChanged = ownerItem && normalizeQty(ownerItem.quantity) === testNorm;
+    const prodChanged = prodItem && normalizeQty(prodItem.quantity) === testNorm;
 
     if ((ownerChanged || prodChanged) && waiting) {
       waiting = false;
@@ -397,20 +409,22 @@ async function runTest() {
   stopProd();
 
   const total = metrics.produccionAt ?? metrics.ownerViewAt ?? metrics.editDetectedAt;
-  const pass = Boolean(metrics.ownerViewAt && metrics.produccionAt && total !== null && total <= GATE_MAX_MS);
+  const pass = Boolean(
+    metrics.ownerViewAt && metrics.produccionAt && total !== null && total <= GATE_MAX_MS
+  );
 
   console.log("\n## Métricas Flujo A\n");
-  console.log(`| Etapa | ms desde edición |`);
-  console.log(`|-------|------------------|`);
-  console.log(`| Detección cambio | ${metrics.editDetectedAt ?? "—"} |`);
-  console.log(`| Rebuild snapshot (revision) | ${metrics.statusRevisionAt ?? "—"} |`);
+  console.log(`| Etapa | ms |`);
+  console.log(`|-------|-----|`);
+  console.log(`| Detección | ${metrics.editDetectedAt ?? "—"} |`);
+  console.log(`| Snapshot revision | ${metrics.statusRevisionAt ?? "—"} |`);
   console.log(`| SSE Elaboración | ${metrics.sseElaboracionAt ?? "—"} |`);
   console.log(`| SSE Producción | ${metrics.sseProduccionAt ?? "—"} |`);
-  console.log(`| ${owner} (Elaboración) | ${metrics.ownerViewAt ?? "—"} |`);
+  console.log(`| ${owner} | ${metrics.ownerViewAt ?? "—"} |`);
   console.log(`| Producción | ${metrics.produccionAt ?? "—"} |`);
   console.log(`| **Total** | **${total ?? "TIMEOUT"}** |`);
   console.log(`\nResultado: ${pass ? "PASS" : "FAIL"}`);
-  console.log(`\nRestaurar ${resolved.loc.sheet}!${resolved.quantityCell} → ${resolved.restoreValue}`);
+  console.log(`\nRestaurar ${resolved.quantityA1} → ${resolved.restoreValue}`);
 
   process.exit(pass ? 0 : 1);
 }
@@ -421,14 +435,12 @@ async function main() {
     process.exit(1);
   }
 
-  if (DISCOVER && !RUN) {
-    await discover();
+  if (RUN) {
+    await runTest();
     return;
   }
 
-  if (RUN) {
-    await runTest();
-  }
+  await discover();
 }
 
 main().catch((err) => {

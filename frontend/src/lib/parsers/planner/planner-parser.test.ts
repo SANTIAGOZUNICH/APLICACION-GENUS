@@ -33,6 +33,39 @@ describe("PlannerParser columnar", () => {
     expect(cristian.some((i) => i.product?.includes("SERUM"))).toBe(true);
   });
 
+  it("distingue sourceRange (slot) de quantitySourceRange y productSourceRange", () => {
+    const rows: string[][] = [
+      ["", "Lunes", "", "Martes"],
+      ["", "16", "", "17"],
+      ["", "Febrero", "", "Febrero"],
+      ["", "NICOLAS"],
+      ["", "NIZA", "", ""],
+      ["", "PROBIOTONIC BALANCE", "", ""],
+      ["", "160KG", "", ""],
+      [],
+      ["", "SIGUIENTE RAMA"],
+    ];
+
+    const registry = createWorkItemRegistry();
+    parsePlannerTab({
+      fileId: "test-semanas",
+      tab: "ELABORACION",
+      rows,
+      registry,
+      assembler: workItemAssembler,
+    });
+
+    const item = projectDomainWorkItems(registry.list()).find(
+      (i) => i.product === "PROBIOTONIC BALANCE"
+    );
+
+    expect(item).toBeDefined();
+    expect(item?.sourceRange).toBe("ELABORACION!8:2");
+    expect(item?.quantitySourceRange).toBe("ELABORACION!7:2");
+    expect(item?.productSourceRange).toBe("ELABORACION!6:2");
+    expect(item?.quantity).toBe("160KG");
+  });
+
   it("detecta sector, línea y trabajos en acondicionamiento", () => {
     const registry = createWorkItemRegistry();
     parsePlannerTab({
