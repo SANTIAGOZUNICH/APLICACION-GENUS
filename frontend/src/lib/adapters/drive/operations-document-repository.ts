@@ -385,7 +385,12 @@ export class OperationsDocumentRepository {
       return;
     }
 
-    this.scheduleBackgroundIndex("critical_sheets");
+    // Sin fast-path: indexar solo sheets críticos (~1s). Nunca await refresh("all").
+    await this.refresh("critical_sheets");
+    this.operationalReady = Boolean(
+      serverCache.get<DocumentRef>(`${CACHE_PREFIX.critical}semanas_2026`)
+    );
+    this.scheduleBackgroundIndex("all");
   }
 
   isBackgroundIndexInFlight(): boolean {

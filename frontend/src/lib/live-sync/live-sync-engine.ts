@@ -60,6 +60,14 @@ async function rebuildSnapshot(reason: string): Promise<LiveSyncSnapshot | null>
   const promise = (async () => {
     try {
       const pipeline = await loadOperationalPipeline();
+
+      if (
+        pipeline.workItems.length === 0 &&
+        !pipeline.sourcesIndexed.semanas_2026
+      ) {
+        return liveSyncStore.getSnapshot();
+      }
+
       const snapshot: LiveSyncSnapshot = {
         revision: (liveSyncStore.getSnapshot()?.revision ?? 0) + 1,
         updatedAt: new Date().toISOString(),
