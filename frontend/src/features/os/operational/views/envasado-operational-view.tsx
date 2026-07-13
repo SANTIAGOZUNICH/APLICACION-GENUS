@@ -26,7 +26,8 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     getFinishedQty,
     getObservation,
   } = useOperationalStore();
-  const { data, loading, error, lastRefreshAt, refresh } = useOperationalPlan(sectorId);
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
+    useOperationalPlan(sectorId);
 
   const workItems = useMemo(() => {
     const base = applyEffectiveStatus(data?.workItems ?? []);
@@ -75,6 +76,8 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         <SyncStatusBar
           source={data?.source ?? "demo"}
           lastRefreshAt={lastRefreshAt}
+          updatedAgoLabel={updatedAgoLabel}
+          liveConnected={liveConnected}
           loading={loading}
           onRefresh={refresh}
           detailMessage={data?.message}
@@ -118,7 +121,8 @@ export function ElaboracionOperationalView() {
     getFinishedQty,
     getObservation,
   } = useOperationalStore();
-  const { data, loading, error, lastRefreshAt, refresh } = useOperationalPlan("ELABORACION", {
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
+    useOperationalPlan("ELABORACION", {
     ownerPerson,
   });
 
@@ -196,6 +200,8 @@ export function ElaboracionOperationalView() {
         <SyncStatusBar
           source={data?.source ?? "demo"}
           lastRefreshAt={lastRefreshAt}
+          updatedAgoLabel={updatedAgoLabel}
+          liveConnected={liveConnected}
           loading={loading}
           onRefresh={refresh}
           detailMessage={data?.message}

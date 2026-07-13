@@ -10,6 +10,12 @@ import {
   type ReactNode,
 } from "react";
 import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
+import type { SectorId } from "@/types/operational/sector";
+import {
+  postCompleteWork,
+  postQualityDecision,
+  postSaveProgress,
+} from "@/lib/api/live-sync-client";
 import type { CompletionEvent, QualityDecisionStatus } from "../types";
 import {
   applyWorkProgressToItems,
@@ -42,7 +48,7 @@ interface OperationalStoreValue {
   getObservation: (itemId: string) => string;
   saveWorkProgress: (
     itemId: string,
-    payload: { finishedQty: string; observation: string; updatedBy?: string }
+    payload: { finishedQty: string; observation: string; updatedBy?: string; sector?: SectorId }
   ) => void;
   markWorkFinished: (
     item: WorkItem,
@@ -105,6 +111,14 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     ) => {
       recordQualityDecision(itemId, status, options);
       syncFromStorage();
+      if (status === "aprobado" || status === "rechazado") {
+        void postQualityDecision({
+          itemId,
+          status,
+          decidedBy: options?.decidedBy,
+          observation: options?.observation,
+        }).catch(() => {});
+      }
     },
     [syncFromStorage]
   );
@@ -140,13 +154,20 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
   const saveWorkProgress = useCallback(
     (
       itemId: string,
-      payload: { finishedQty: string; observation: string; updatedBy?: string }
+      payload: { finishedQty: string; observation: string; updatedBy?: string; sector?: SectorId }
     ) => {
       recordWorkProgress(itemId, {
         ...payload,
         status: "en_curso",
       });
       syncFromStorage();
+      void postSaveProgress({
+        itemId,
+        sector: payload.sector,
+        finishedQty: payload.finishedQty,
+        observation: payload.observation,
+        updatedBy: payload.updatedBy,
+      }).catch(() => {});
     },
     [syncFromStorage]
   );
@@ -162,6 +183,12 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         completedBy: payload.updatedBy ?? "Operario",
       });
       syncFromStorage();
+      void postCompleteWork({
+        item,
+        finishedQty: payload.finishedQty,
+        observation: payload.observation,
+        completedBy: payload.updatedBy,
+      }).catch(() => {});
     },
     [syncFromStorage]
   );

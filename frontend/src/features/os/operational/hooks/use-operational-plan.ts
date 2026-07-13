@@ -5,11 +5,10 @@ import type { SectorId } from "@/types/operational/sector";
 import { loadOperationalPlan } from "../adapters/operational-sheets-adapter";
 import { useOperationalStore } from "../store/operational-store-context";
 import type { OperationalPlanSnapshot } from "../types";
-import { OPERATIONAL_POLL_INTERVAL_MS } from "../types";
+import { useLiveSync } from "./use-live-sync";
 
 interface UseOperationalPlanOptions {
   ownerPerson?: string | null;
-  pollIntervalMs?: number;
   enabled?: boolean;
 }
 
@@ -18,16 +17,17 @@ interface UseOperationalPlanResult {
   loading: boolean;
   error: string | null;
   lastRefreshAt: Date | null;
+  updatedAgoLabel: string;
+  liveConnected: boolean;
   refresh: () => void;
 }
 
-/** Plan operativo con polling — preparado para refresco automático. */
+/** Plan operativo con Live Sync — SSE en lugar de polling cada 30s. */
 export function useOperationalPlan(
   sector: SectorId,
   options?: UseOperationalPlanOptions
 ): UseOperationalPlanResult {
   const ownerPerson = options?.ownerPerson ?? null;
-  const pollIntervalMs = options?.pollIntervalMs ?? OPERATIONAL_POLL_INTERVAL_MS;
   const enabled = options?.enabled ?? true;
   const { revision } = useOperationalStore();
 
@@ -41,6 +41,12 @@ export function useOperationalPlan(
   const refresh = useCallback(() => {
     setTick((v) => v + 1);
   }, []);
+
+  const { connected, updatedAgoLabel, revision: syncRevision } = useLiveSync({
+    sector,
+    enabled,
+    onUpdate: refresh,
+  });
 
   useEffect(() => {
     mountedRef.current = true;
@@ -62,7 +68,7 @@ export function useOperationalPlan(
         if (!cancelled && mountedRef.current) {
           setData(snapshot);
           setError(null);
-          setLastRefreshAt(new Date());
+          setLastRefreshAt(new Date(snapshot.scannedAt));
         }
       } catch (err) {
         if (!cancelled && mountedRef.current) {
@@ -76,17 +82,15 @@ export function useOperationalPlan(
     return () => {
       cancelled = true;
     };
-  }, [sector, ownerPerson, tick, enabled, revision]);
+  }, [sector, ownerPerson, tick, enabled, revision, syncRevision]);
 
-  useEffect(() => {
-    if (!enabled || pollIntervalMs <= 0) return;
-
-    const id = window.setInterval(() => {
-      setTick((v) => v + 1);
-    }, pollIntervalMs);
-
-    return () => window.clearInterval(id);
-  }, [enabled, pollIntervalMs, sector, ownerPerson]);
-
-  return { data, loading, error, lastRefreshAt, refresh };
+  return {
+    data,
+    loading,
+    error,
+    lastRefreshAt,
+    updatedAgoLabel,
+    liveConnected: connected,
+    refresh,
+  };
 }

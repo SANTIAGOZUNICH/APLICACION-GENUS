@@ -281,6 +281,11 @@ export class OperationsDocumentRepository {
     return entry?.folderId ?? null;
   }
 
+  /** Asegura índice Drive cacheado — no re-crawlea en cada lectura. */
+  async ensureReady(): Promise<void> {
+    return this.ensureIndex();
+  }
+
   private async ensureIndex(): Promise<void> {
     if (this.indexReady && this.getFolderIndex().length > 0) {
       return;

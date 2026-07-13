@@ -48,7 +48,13 @@ export async function GET(request: Request) {
 
   try {
     const response = await workItemsService.listForSector(sector, ownerPerson);
-    return NextResponse.json(response);
+    const syncStatus = workItemsService.getSyncStatus();
+    return NextResponse.json(response, {
+      headers: {
+        "X-Live-Sync-Revision": String(syncStatus.revision),
+        "X-Live-Sync-Updated-At": syncStatus.updatedAt,
+      },
+    });
   } catch (error) {
     return NextResponse.json(
       {

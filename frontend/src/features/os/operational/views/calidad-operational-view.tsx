@@ -48,7 +48,8 @@ export function CalidadOperationalView() {
     rejectQualityItem,
     refreshDecisions,
   } = useOperationalStore();
-  const { data, loading, error, lastRefreshAt, refresh } = useOperationalPlan("CALIDAD");
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
+    useOperationalPlan("CALIDAD");
   const [activeTab, setActiveTab] = useState<CalidadTabId>("elaboracion");
   const [observationDrafts, setObservationDrafts] = useState<Record<string, string>>({});
 
@@ -256,6 +257,8 @@ export function CalidadOperationalView() {
         <SyncStatusBar
           source={data?.source ?? "demo"}
           lastRefreshAt={lastRefreshAt}
+          updatedAgoLabel={updatedAgoLabel}
+          liveConnected={liveConnected}
           loading={loading}
           onRefresh={refresh}
           detailMessage={data?.message}

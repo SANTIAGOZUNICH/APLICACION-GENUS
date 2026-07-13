@@ -73,4 +73,6 @@ export interface QualityDecisionRecord {
   observation?: string;
 }
 
-export const OPERATIONAL_POLL_INTERVAL_MS = 30_000;
+export const OPERATIONAL_POLL_INTERVAL_MS = 0;
+/** @deprecated Reemplazado por Live Sync SSE — mantener 0. */
+export const OPERATIONAL_POLL_LEGACY_MS = 30_000;

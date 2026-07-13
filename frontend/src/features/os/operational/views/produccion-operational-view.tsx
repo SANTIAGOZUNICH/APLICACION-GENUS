@@ -61,7 +61,8 @@ export function ProduccionOperationalView() {
     completionEvents,
     decisionMap,
   } = useOperationalStore();
-  const { data, loading, error, lastRefreshAt, refresh } = useOperationalPlan("PRODUCCION");
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
+    useOperationalPlan("PRODUCCION");
   const [activeTab, setActiveTab] = useState<ProduccionTabId>("elaboracion");
 
   const workItems = useMemo(() => {
@@ -250,6 +251,8 @@ export function ProduccionOperationalView() {
         <SyncStatusBar
           source={data?.source ?? "demo"}
           lastRefreshAt={lastRefreshAt}
+          updatedAgoLabel={updatedAgoLabel}
+          liveConnected={liveConnected}
           loading={loading}
           onRefresh={refresh}
           detailMessage={data?.message}
