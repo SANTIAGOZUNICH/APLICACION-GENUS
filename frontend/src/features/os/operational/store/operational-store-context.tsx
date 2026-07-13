@@ -16,7 +16,7 @@ import {
   postQualityDecision,
   postSaveProgress,
 } from "@/lib/api/live-sync-client";
-import type { CompletionEvent, QualityDecisionStatus } from "../types";
+import type { CompletionEvent, QualityDecisionStatus, OperationalOverlay } from "../types";
 import {
   applyWorkProgressToItems,
   getEffectiveQualityStatus,
@@ -30,8 +30,12 @@ import {
   recordQualityDecision,
   recordWorkCompletion,
   recordWorkProgress,
+  writeCompletionEvents,
+  writeDecisionMap,
+  writeProgressMap,
   type DecisionMap,
   type ProgressMap,
+  type WorkProgressRecord,
 } from "./operational-store";
 
 interface OperationalStoreValue {
@@ -56,6 +60,7 @@ interface OperationalStoreValue {
   ) => void;
   applyProgressToWorkItems: <T extends { id: string; status: WorkItemStatus }>(items: T[]) => T[];
   refreshDecisions: () => void;
+  mergeFromServer: (overlay: OperationalOverlay) => void;
 }
 
 const OperationalStoreContext = createContext<OperationalStoreValue | null>(null);
@@ -199,6 +204,35 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     [progressMap]
   );
 
+  const mergeFromServer = useCallback((overlay: OperationalOverlay) => {
+    const progressRecords: ProgressMap = { ...readProgressMap() };
+    for (const record of Object.values(overlay.progress)) {
+      progressRecords[record.itemId] = {
+        itemId: record.itemId,
+        finishedQty: record.finishedQty,
+        observation: record.observation,
+        status: record.status as WorkItemStatus | undefined,
+        updatedAt: record.updatedAt,
+        updatedBy: record.updatedBy,
+        completedAt: record.completedAt,
+      };
+    }
+    writeProgressMap(progressRecords);
+
+    const decisions: DecisionMap = { ...readDecisionMap(), ...overlay.decisions };
+    writeDecisionMap(decisions);
+
+    if (overlay.completions.length > 0) {
+      const byWorkItem = new Map(readCompletionEvents().map((e) => [e.workItemId, e]));
+      for (const event of overlay.completions) {
+        byWorkItem.set(event.workItemId, event);
+      }
+      writeCompletionEvents([...byWorkItem.values()]);
+    }
+
+    syncFromStorage();
+  }, [syncFromStorage]);
+
   const value = useMemo<OperationalStoreValue>(
     () => ({
       decisionMap,
@@ -216,6 +250,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       markWorkFinished,
       applyProgressToWorkItems,
       refreshDecisions: syncFromStorage,
+      mergeFromServer,
     }),
     [
       decisionMap,
@@ -233,6 +268,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       markWorkFinished,
       applyProgressToWorkItems,
       syncFromStorage,
+      mergeFromServer,
     ]
   );
 

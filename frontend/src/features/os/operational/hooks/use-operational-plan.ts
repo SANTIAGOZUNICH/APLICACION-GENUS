@@ -29,7 +29,7 @@ export function useOperationalPlan(
 ): UseOperationalPlanResult {
   const ownerPerson = options?.ownerPerson ?? null;
   const enabled = options?.enabled ?? true;
-  const { revision } = useOperationalStore();
+  const { revision, mergeFromServer } = useOperationalStore();
 
   const [data, setData] = useState<OperationalPlanSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -67,6 +67,9 @@ export function useOperationalPlan(
         const snapshot = await loadOperationalPlan(sector, { ownerPerson });
         if (!cancelled && mountedRef.current) {
           setData(snapshot);
+          if (snapshot.operationalOverlay) {
+            mergeFromServer(snapshot.operationalOverlay);
+          }
           setError(null);
           setLastRefreshAt(new Date(snapshot.scannedAt));
         }
@@ -82,7 +85,7 @@ export function useOperationalPlan(
     return () => {
       cancelled = true;
     };
-  }, [sector, ownerPerson, tick, enabled, revision, syncRevision]);
+  }, [sector, ownerPerson, tick, enabled, revision, syncRevision, mergeFromServer]);
 
   return {
     data,

@@ -47,6 +47,7 @@ export async function loadOperationalPlan(
           : qualitySeedForSource(response.source),
         readCompletionEvents()
       ),
+      operationalOverlay: response.operationalOverlay,
       message:
         response.message ??
         (response.source === "demo"

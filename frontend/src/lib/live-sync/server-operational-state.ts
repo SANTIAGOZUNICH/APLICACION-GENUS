@@ -167,11 +167,16 @@ class ServerOperationalState {
     return record;
   }
 
-  applyToWorkItems<T extends { id: string; status: WorkItemStatus }>(items: T[]): T[] {
+  applyToWorkItems<T extends WorkItem>(items: T[]): T[] {
     return items.map((item) => {
       const saved = this.progress.get(item.id);
-      if (!saved?.status) return item;
-      return { ...item, status: saved.status as WorkItemStatus };
+      if (!saved) return item;
+      return {
+        ...item,
+        status: (saved.status as WorkItemStatus) ?? item.status,
+        finishedQty: saved.finishedQty || item.finishedQty,
+        operationalObservation: saved.observation || item.operationalObservation,
+      };
     });
   }
 

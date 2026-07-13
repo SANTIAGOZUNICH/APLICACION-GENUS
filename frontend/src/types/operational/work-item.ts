@@ -75,6 +75,9 @@ export interface WorkItem {
   dependsOn: string[] | null;
   blockedBy: string[] | null;
   unblocks: string[] | null;
+  /** Avance operativo en vivo (Genus OS — no Sheets). */
+  finishedQty?: string | null;
+  operationalObservation?: string | null;
 }
 
 export interface WorkItemsResponse {
@@ -93,4 +96,6 @@ export interface WorkItemsResponse {
   message?: string;
   warnings?: string[];
   qualityItems?: import("@/features/os/operational/types").QualityItem[];
+  /** Estado operativo server-side — propagación cross-usuario vía Live Sync. */
+  operationalOverlay?: import("@/features/os/operational/types").OperationalOverlay;
 }

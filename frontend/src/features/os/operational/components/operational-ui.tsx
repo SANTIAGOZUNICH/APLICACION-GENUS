@@ -117,7 +117,6 @@ interface SyncStatusBarProps {
   updatedAgoLabel?: string;
   liveConnected?: boolean;
   loading?: boolean;
-  onRefresh?: () => void;
   /** Mensaje diagnóstico de la API (modo demo, permisos, índice Drive). */
   detailMessage?: string | null;
 }
@@ -135,7 +134,6 @@ export function SyncStatusBar({
   updatedAgoLabel,
   liveConnected,
   loading,
-  onRefresh,
   detailMessage,
 }: SyncStatusBarProps) {
   const timeLabel = updatedAgoLabel ?? (lastRefreshAt
@@ -184,15 +182,6 @@ export function SyncStatusBar({
           </>
         )}
         {loading && <span className="text-[var(--os-teal)]">Actualizando…</span>}
-        {onRefresh && (
-          <button
-            type="button"
-            onClick={onRefresh}
-            className="rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-1 font-medium text-[var(--os-text)] hover:border-[var(--os-teal)] hover:text-[var(--os-teal)]"
-          >
-            Refrescar
-          </button>
-        )}
       </div>
       {detailMessage && (
         <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">

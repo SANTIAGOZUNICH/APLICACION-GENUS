@@ -25,7 +25,7 @@ const CRITICAL_SHEETS: CriticalSheetKey[] = [
   "asignacion_lotes_2026",
 ];
 
-const SHEETS_POLL_MS = Number(process.env.GENUS_LIVE_SYNC_POLL_MS ?? "15000");
+const SHEETS_POLL_MS = Number(process.env.GENUS_LIVE_SYNC_POLL_MS ?? "4000");
 const SNAPSHOT_MAX_AGE_MS = Number(process.env.GENUS_SNAPSHOT_MAX_AGE_MS ?? "120000");
 
 let backgroundTimer: ReturnType<typeof setInterval> | null = null;
@@ -213,16 +213,24 @@ export class LiveSyncEngine {
       ownerPerson
     );
     const calidadItems = sector === "CALIDAD" ? snapshot.qualityItems : [];
+    const overlay = serverOperationalState.snapshot();
+    const workItemsWithOverlay = serverOperationalState.applyToWorkItems(filtered);
 
     return {
       sector,
       ownerPerson: ownerPerson ?? null,
       source: "drive",
       scannedAt: snapshot.sheetsSyncedAt ?? snapshot.updatedAt,
-      workItems: filtered,
+      workItems: workItemsWithOverlay,
       qualityItems: calidadItems,
-      counts: countMiTrabajoSections(filtered),
+      counts: countMiTrabajoSections(workItemsWithOverlay),
       warnings: snapshot.warnings.slice(0, 10),
+      operationalOverlay: {
+        revision: overlay.revision,
+        progress: overlay.progress,
+        decisions: overlay.decisions,
+        completions: overlay.completions,
+      },
       message:
         filtered.length > 0
           ? sector === "PRODUCCION"

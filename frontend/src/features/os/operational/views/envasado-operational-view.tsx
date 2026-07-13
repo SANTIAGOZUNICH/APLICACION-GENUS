@@ -26,7 +26,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     getFinishedQty,
     getObservation,
   } = useOperationalStore();
-  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
     useOperationalPlan(sectorId);
 
   const workItems = useMemo(() => {
@@ -47,10 +47,10 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       saveWorkProgress(itemId, {
         ...payload,
         updatedBy: workspace.context.displayName,
+        sector: sectorId,
       });
-      refresh();
     },
-    [saveWorkProgress, refresh, workspace.context.displayName]
+    [saveWorkProgress, workspace.context.displayName, sectorId]
   );
 
   const handleFinish = useCallback(
@@ -59,9 +59,8 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         ...payload,
         updatedBy: workspace.context.displayName,
       });
-      refresh();
     },
-    [markWorkFinished, refresh, workspace.context.displayName]
+    [markWorkFinished, workspace.context.displayName]
   );
 
   return (
@@ -79,7 +78,6 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           updatedAgoLabel={updatedAgoLabel}
           liveConnected={liveConnected}
           loading={loading}
-          onRefresh={refresh}
           detailMessage={data?.message}
         />
       </header>
@@ -121,7 +119,7 @@ export function ElaboracionOperationalView() {
     getFinishedQty,
     getObservation,
   } = useOperationalStore();
-  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
     useOperationalPlan("ELABORACION", {
     ownerPerson,
   });
@@ -148,10 +146,10 @@ export function ElaboracionOperationalView() {
       saveWorkProgress(itemId, {
         ...payload,
         updatedBy: greetingName,
+        sector: "ELABORACION",
       });
-      refresh();
     },
-    [saveWorkProgress, refresh, greetingName]
+    [saveWorkProgress, greetingName]
   );
 
   const handleFinish = useCallback(
@@ -160,9 +158,8 @@ export function ElaboracionOperationalView() {
         ...payload,
         updatedBy: greetingName,
       });
-      refresh();
     },
-    [markWorkFinished, refresh, greetingName]
+    [markWorkFinished, greetingName]
   );
 
   const emptyMessage =
@@ -203,7 +200,6 @@ export function ElaboracionOperationalView() {
           updatedAgoLabel={updatedAgoLabel}
           liveConnected={liveConnected}
           loading={loading}
-          onRefresh={refresh}
           detailMessage={data?.message}
         />
       </header>
