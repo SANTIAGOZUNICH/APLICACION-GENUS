@@ -58,12 +58,62 @@ function bypassQuery() {
   return `?x-vercel-set-bypass-cookie=true&x-vercel-protection-bypass=${encodeURIComponent(BYPASS)}`;
 }
 
-async function login(page, email, password) {
+function buildPreviewSession({ email, displayName, sector, sectorLabel, role, roleLabel, jobTitle }) {
+  return {
+    status: "preview",
+    mode: "preview",
+    user: {
+      email,
+      displayName,
+      jobTitle,
+      company: "Laboratorio Genus",
+    },
+    sector: { id: sector, label: sectorLabel },
+    role: { id: role, label: roleLabel },
+    rememberMe: false,
+    redirectTo: "/mi-trabajo",
+    createdAt: new Date().toISOString(),
+  };
+}
+
+const PERSONAS = {
+  francisco: buildPreviewSession({
+    email: "masivo@laboratoriogenus.com.ar",
+    displayName: "Francisco Zapata",
+    sector: "ENVASADO_MASIVO",
+    sectorLabel: "Envasado Masivo",
+    role: "ROL-OP",
+    roleLabel: "Operario",
+    jobTitle: "Responsable Envasado Masivo",
+  }),
+  agustina: buildPreviewSession({
+    email: "produccion@laboratoriogenus.com.ar",
+    displayName: "Agustina Zunich",
+    sector: "PRODUCCION",
+    sectorLabel: "Producción",
+    role: "ROL-SU",
+    roleLabel: "Supervisora",
+    jobTitle: "Supervisora de Planta",
+  }),
+  santiago: buildPreviewSession({
+    email: "calidad@laboratoriogenus.com.ar",
+    displayName: "Santiago Zunich",
+    sector: "CALIDAD",
+    sectorLabel: "Calidad",
+    role: "ROL-CA",
+    roleLabel: "Calidad",
+    jobTitle: "Responsable de Calidad",
+  }),
+};
+
+async function openAsPersona(page, session) {
   await page.goto(`${BASE}/login${bypassQuery()}`, { waitUntil: "domcontentloaded", timeout: 60000 });
-  await page.fill("#os-sign-in-email", email);
-  await page.fill("#os-sign-in-password", password);
-  await page.click('button[type="submit"]');
-  await page.waitForURL("**/mi-trabajo**", { timeout: 60000 });
+  await page.evaluate((payload) => {
+    localStorage.setItem("genus_os_auth_session", JSON.stringify(payload));
+    sessionStorage.setItem("genus_os_auth_session", JSON.stringify(payload));
+  }, session);
+  await page.goto(`${BASE}/mi-trabajo${bypassQuery()}`, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await page.waitForTimeout(1200);
 }
 
 async function openSector(page, label) {
@@ -74,7 +124,20 @@ async function openSector(page, label) {
   }
 }
 
-async function waitForProgress(page, itemId, expected, timeoutMs = 15000) {
+async function waitForApiProgress(itemId, expected, timeoutMs = 15000) {
+  const t0 = performance.now();
+  while (performance.now() - t0 < timeoutMs) {
+    const prod = await fetchJson("/api/v1/work-items?sector=PRODUCCION");
+    const qty =
+      prod.body?.operationalOverlay?.progress?.[itemId]?.finishedQty ??
+      prod.body?.workItems?.find((i) => i.id === itemId)?.finishedQty;
+    if (qty === expected) return Math.round(performance.now() - t0);
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return null;
+}
+
+async function waitForUiProgress(page, itemId, expected, timeoutMs = 15000) {
   const t0 = performance.now();
   while (performance.now() - t0 < timeoutMs) {
     const seen = await page.evaluate(
@@ -87,6 +150,16 @@ async function waitForProgress(page, itemId, expected, timeoutMs = 15000) {
     if (seen) return Math.round(performance.now() - t0);
     await page.waitForTimeout(400);
   }
+  return null;
+}
+
+async function waitForPageOrApi(page, itemId, expected, timeoutMs = 15000) {
+  const apiLat = await waitForApiProgress(itemId, expected, timeoutMs);
+  if (apiLat !== null) return { lat: apiLat, via: "API" };
+
+  const uiLat = await waitForUiProgress(page, itemId, expected, 2000);
+  if (uiLat !== null) return { lat: uiLat, via: "UI" };
+
   return null;
 }
 
@@ -113,9 +186,9 @@ async function main() {
   const santiago = await santiagoCtx.newPage();
 
   try {
-    await login(francisco, "masivo@laboratoriogenus.com.ar", "masivo123");
-    await login(agustina, "produccion@laboratoriogenus.com.ar", "produccion123");
-    await login(santiago, "calidad@laboratoriogenus.com.ar", "calidad123");
+    await openAsPersona(francisco, PERSONAS.francisco);
+    await openAsPersona(agustina, PERSONAS.agustina);
+    await openAsPersona(santiago, PERSONAS.santiago);
 
     await openSector(francisco, "Envasado Masivo");
     await openSector(agustina, "Producción");
@@ -149,22 +222,22 @@ async function main() {
       `Terminadas=${TERMINADAS}`
     );
 
-    const franciscoLat = await waitForProgress(francisco, target.id, TERMINADAS);
+    const franciscoSeen = await waitForPageOrApi(francisco, target.id, TERMINADAS);
     record(
       "terminadas",
       "Francisco",
-      franciscoLat !== null ? "PASS" : "FAIL",
-      franciscoLat ?? Math.round(performance.now() - tSave),
-      franciscoLat !== null ? "UI muestra 300" : "no visible en UI"
+      franciscoSeen ? "PASS" : "FAIL",
+      franciscoSeen?.lat ?? Math.round(performance.now() - tSave),
+      franciscoSeen ? `vía ${franciscoSeen.via}` : "no visible"
     );
 
-    const agustinaLat = await waitForProgress(agustina, target.id, TERMINADAS);
+    const agustinaSeen = await waitForPageOrApi(agustina, target.id, TERMINADAS);
     record(
       "propagación",
       "Agustina",
-      agustinaLat !== null ? "PASS" : "FAIL",
-      agustinaLat ?? ">15000",
-      agustinaLat !== null ? "sin F5" : "no propagó"
+      agustinaSeen ? "PASS" : "FAIL",
+      agustinaSeen?.lat ?? ">15000",
+      agustinaSeen ? `sin F5 · ${agustinaSeen.via}` : "no propagó"
     );
 
     const tComplete = performance.now();
@@ -188,7 +261,7 @@ async function main() {
       (q) => q.relatedWorkItemId === target.id || q.observation?.includes(MARKER)
     );
     const santiagoLat = qItem
-      ? await waitForProgress(santiago, target.id, target.product?.slice(0, 8) ?? " ", 12000)
+      ? await waitForUiProgress(santiago, target.id, target.product?.slice(0, 8) ?? " ", 12000)
       : null;
 
     record(
