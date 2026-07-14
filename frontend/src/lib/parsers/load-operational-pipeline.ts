@@ -60,7 +60,7 @@ async function readTabIfExists(fileId: string, tabs: string[], candidates: reado
 
 /** Pipeline operativo diario: SEMANAS define qué trabajos existen; PEDIDOS/LOTES enriquecen. */
 export async function loadOperationalPipeline(): Promise<OperationalPipelineResult> {
-  await operationsDocumentRepository.refresh("pcp");
+  await operationsDocumentRepository.ensureOperationalReady();
 
   const registry = createWorkItemRegistry();
   const assembler = workItemAssembler;

@@ -1,10 +1,10 @@
 import "server-only";
 
-import { loadOperationalPipeline } from "@/lib/parsers/load-operational-pipeline";
+import { liveSyncEngine } from "@/lib/live-sync/live-sync-engine";
 import {
   countMiTrabajoSections,
-  filterWorkItemsForSectorAndPerson,
   filterWorkItemsForSector,
+  filterWorkItemsForSectorAndPerson,
   partitionMiTrabajoSections,
 } from "@/lib/operational/work-item-filters";
 import {
@@ -16,7 +16,8 @@ import {
   countWorkItemsByPriority,
   summarizeDependencies,
 } from "@/lib/operational/analyze-work-items";
-import { buildProductionOverview } from "@/lib/operational/build-production-overview";
+import { getProductionOverviewFromSnapshot } from "@/lib/live-sync/live-sync-engine";
+import { liveSyncStore } from "@/lib/live-sync/live-sync-store";
 import { SECTOR_PREVIEW_PROFILES } from "@/config/sector-preview";
 import { SECTOR_GREETING, type SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
@@ -27,80 +28,29 @@ import type {
 } from "@/types/operational/work-items-preview.types";
 import type { QualityItem } from "@/features/os/operational/types";
 
-interface LoadedOperationalData {
-  workItems: WorkItem[];
-  qualityItems: QualityItem[];
-  warnings: string[];
-  sourcesIndexed: {
-    semanas_2026: boolean;
-    pedidos_2026: boolean;
-    asignacion_lotes_2026: boolean;
-  };
-}
-
+/** WorkItems vía Live Sync Engine — snapshot caliente, sync incremental en background. */
 export class WorkItemsService {
-  private cache: LoadedOperationalData | null = null;
-  private cacheAt = 0;
-  private readonly cacheTtlMs = 45_000;
-
-  private async loadAll(): Promise<LoadedOperationalData> {
-    if (this.cache && Date.now() - this.cacheAt < this.cacheTtlMs) {
-      return this.cache;
+  async listForSector(
+    sector: SectorId,
+    ownerPersonOrOptions?: string | null | {
+      ownerPerson?: string | null;
+      date?: string | null;
+      weekStart?: string | null;
     }
-
-    const pipeline = await loadOperationalPipeline();
-    this.cache = {
-      workItems: pipeline.workItems,
-      qualityItems: pipeline.qualityItems,
-      warnings: pipeline.warnings,
-      sourcesIndexed: pipeline.sourcesIndexed,
-    };
-    this.cacheAt = Date.now();
-    return this.cache;
-  }
-
-  async listForSector(sector: SectorId, ownerPerson?: string | null): Promise<WorkItemsResponse> {
-    const { workItems, qualityItems, warnings, sourcesIndexed } = await this.loadAll();
-
-    const hasAnySource = Object.values(sourcesIndexed).some(Boolean);
-    if (!hasAnySource) {
-      return {
-        sector,
-        ownerPerson: ownerPerson ?? null,
-        source: "drive",
-        scannedAt: new Date().toISOString(),
-        workItems: [],
-        qualityItems: [],
-        counts: { total: 0, hoy: 0, semana: 0, pendientes: 0, bloqueados: 0 },
-        message: "Sin fuentes indexadas — ejecutá GET /api/v1/drive/refresh.",
-        warnings,
-      };
-    }
-
-    const filtered = filterWorkItemsForSectorAndPerson(workItems, sector, ownerPerson);
-
-    return {
-      sector,
-      ownerPerson: ownerPerson ?? null,
-      source: "drive",
-      scannedAt: new Date().toISOString(),
-      workItems: filtered,
-      qualityItems: sector === "CALIDAD" ? qualityItems : [],
-      counts: countMiTrabajoSections(filtered),
-      warnings: warnings.slice(0, 10),
-      message:
-        filtered.length > 0
-          ? sector === "PRODUCCION"
-            ? `${filtered.length} WorkItem(s) agregados (Masivo + Premium + Elaboración + Calidad).`
-            : `${filtered.length} WorkItem(s) para ${sector}${ownerPerson ? ` · ${ownerPerson}` : ""}.`
-          : sector === "PRODUCCION"
-            ? "Sin operación agregada — verificar SEMANAS y LOTES indexados."
-            : `Sin trabajos para ${sector}${ownerPerson ? ` · ${ownerPerson}` : ""} en Sheets indexados.`,
-    };
+  ): Promise<WorkItemsResponse> {
+    return liveSyncEngine.listForSector(sector, ownerPersonOrOptions);
   }
 
   async getPreviewForSector(sector: SectorId): Promise<WorkItemsPreviewResponse> {
-    const { workItems, warnings, sourcesIndexed } = await this.loadAll();
+    const snapshot = await liveSyncEngine.getSnapshot();
+    const workItems = snapshot?.workItems ?? [];
+    const warnings = snapshot?.warnings ?? [];
+    const sourcesIndexed = snapshot?.sourcesIndexed ?? {
+      semanas_2026: false,
+      pedidos_2026: false,
+      asignacion_lotes_2026: false,
+    };
+
     const profileConfig = SECTOR_PREVIEW_PROFILES[sector];
     const filtered = filterWorkItemsForSector(workItems, sector);
     const sections = partitionMiTrabajoSections(filtered);
@@ -121,7 +71,7 @@ export class WorkItemsService {
       })) ?? [];
 
     const productionOverview =
-      sector === "PRODUCCION" ? buildProductionOverview(workItems) : undefined;
+      sector === "PRODUCCION" ? getProductionOverviewFromSnapshot() ?? undefined : undefined;
 
     if (productionOverview) {
       productionOverview.warnings = warnings.slice(0, 10);
@@ -129,7 +79,7 @@ export class WorkItemsService {
 
     return {
       sector,
-      scannedAt: new Date().toISOString(),
+      scannedAt: snapshot?.sheetsSyncedAt ?? new Date().toISOString(),
       source: "drive",
       profile: {
         greeting: SECTOR_GREETING[sector as keyof typeof SECTOR_GREETING] ?? sector,
@@ -159,15 +109,22 @@ export class WorkItemsService {
   }
 
   async getDebugSnapshot(): Promise<WorkItemsDebugResponse> {
-    const { workItems, warnings, sourcesIndexed } = await this.loadAll();
+    const snapshot = await liveSyncEngine.warmSnapshot();
+    const workItems = snapshot?.workItems ?? [];
+    const warnings = snapshot?.warnings ?? [];
+    const sourcesIndexed = snapshot?.sourcesIndexed ?? {
+      semanas_2026: false,
+      pedidos_2026: false,
+      asignacion_lotes_2026: false,
+    };
     const bySource = countWorkItemsBySource(workItems);
-    const overview = buildProductionOverview(workItems);
-    overview.warnings = warnings.slice(0, 20);
+    const overview = getProductionOverviewFromSnapshot();
+    if (overview) overview.warnings = warnings.slice(0, 20);
 
     const deps = summarizeDependencies(workItems);
 
     return {
-      scannedAt: new Date().toISOString(),
+      scannedAt: snapshot?.updatedAt ?? new Date().toISOString(),
       source: "drive",
       totalCount: workItems.length,
       bySector: countWorkItemsBySector(workItems),
@@ -182,20 +139,30 @@ export class WorkItemsService {
       },
       workItems,
       mapperWarnings: warnings,
-      productionOverview: overview,
+      productionOverview: overview ?? {
+        scannedAt: new Date().toISOString(),
+        source: "semanas_2026",
+        capacity: null,
+        load: null,
+        blockers: [],
+        sectors: [],
+        priorities: null,
+        dependencies: [],
+        warnings,
+      },
       sourcesIndexed,
       sourcesMapped: sourceBreakdownFrom(bySource),
       gaps: analyzeWorkItemGaps(workItems),
       message:
         workItems.length > 0
-          ? `${workItems.length} WorkItems desde pipeline operativo (SEMANAS + PEDIDOS + LOTES).`
+          ? `${workItems.length} WorkItems — Live Sync Engine.`
           : "Sin WorkItems — verificar Drive y /api/v1/drive/refresh.",
     };
   }
 
   async getProductionOverview() {
-    const { workItems, warnings } = await this.loadAll();
-    if (workItems.length === 0) {
+    const overview = getProductionOverviewFromSnapshot();
+    if (!overview) {
       return {
         scannedAt: new Date().toISOString(),
         source: "semanas_2026" as const,
@@ -205,12 +172,18 @@ export class WorkItemsService {
         sectors: [],
         priorities: null,
         dependencies: [],
-        warnings,
+        warnings: liveSyncStore.getSnapshot()?.warnings ?? [],
       };
     }
-    const overview = buildProductionOverview(workItems);
-    overview.warnings = warnings.slice(0, 10);
     return overview;
+  }
+
+  getSyncStatus() {
+    return liveSyncEngine.getStatus();
+  }
+
+  forceRefresh() {
+    return liveSyncEngine.forceRefresh();
   }
 }
 

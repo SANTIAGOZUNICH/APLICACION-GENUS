@@ -18,6 +18,9 @@ function mapEstadoToStatus(estado: string | null): WorkItem["status"] {
 function primarySource(item: DomainWorkItem): WorkItemSource {
   if (item.enrichmentSources.includes("semanas_2026")) return "semanas_2026";
   if (item.enrichmentSources.includes("pedidos_2026")) return "pedidos_2026";
+  if (item.enrichmentSources.includes("asignacion_lotes_2026")) {
+    return "asignacion_lotes_2026";
+  }
   return "semanas_2026";
 }
 
@@ -72,15 +75,22 @@ export function projectDomainWorkItem(item: DomainWorkItem): WorkItem | null {
     sourceFileId: fileId,
     sourceSheet: item.sourceRanges[source]?.split("!")[0] ?? null,
     sourceRange: item.sourceRanges[source] ?? null,
+    productSourceRange: item.sourceProductRanges[source] ?? null,
+    quantitySourceRange: item.sourceQuantityRanges[source] ?? null,
     originStage,
     date: item.date,
+    plannedDate: item.plannedDate,
     dayLabel: item.dayLabel,
+    dayOfWeek: item.dayOfWeek ?? item.dayLabel,
     weekLabel: item.weekLabel,
+    weekStart: item.weekStart,
+    weekId: item.weekId,
     client,
     product,
     quantity,
     unit: item.unit,
     line: item.line,
+    lineExpectedInSheet: item.lineExpectedInSheet,
     deliveryDate: item.deliveryDate,
     status: mapEstadoToStatus(item.estado ?? item.estadoCalidad),
     priority: item.priority,

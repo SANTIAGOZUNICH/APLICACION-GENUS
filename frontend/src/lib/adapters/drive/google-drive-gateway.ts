@@ -10,6 +10,12 @@ import type {
 import { getMaxIndexDepth } from "@/lib/adapters/drive/drive-folder-config";
 import { SPREADSHEET_MIME } from "@/lib/adapters/sheets/sheets-reader";
 
+export const OFFICE_SHEET_MIMES = [
+  SPREADSHEET_MIME,
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+] as const;
+
 export const FOLDER_MIME = "application/vnd.google-apps.folder";
 
 interface DriveChildFolder {
@@ -96,10 +102,11 @@ export class GoogleDriveGateway {
     const drive = google.drive({ version: "v3", auth });
     const files: DocumentRef[] = [];
     let pageToken: string | undefined;
+    const mimeQuery = OFFICE_SHEET_MIMES.map((m) => `mimeType='${m}'`).join(" or ");
 
     do {
       const response = await drive.files.list({
-        q: `'${folderId}' in parents and mimeType='${SPREADSHEET_MIME}' and trashed=false`,
+        q: `'${folderId}' in parents and (${mimeQuery}) and trashed=false`,
         fields: "nextPageToken, files(id,name,mimeType,modifiedTime)",
         pageSize: 200,
         pageToken,

@@ -70,11 +70,20 @@ export async function fetchLoteById(loteId: string): Promise<LoteBundleResponse>
 
 export async function fetchWorkItems(
   sector: SectorId,
-  options?: { ownerPerson?: string | null }
+  options?: {
+    ownerPerson?: string | null;
+    date?: string | null;
+    weekStart?: string | null;
+  }
 ): Promise<WorkItemsResponse> {
   const params = new URLSearchParams({ sector });
   if (options?.ownerPerson?.trim()) {
     params.set("ownerPerson", options.ownerPerson.trim());
+  }
+  if (options?.date?.trim()) {
+    params.set("date", options.date.trim());
+  } else if (options?.weekStart?.trim()) {
+    params.set("weekStart", options.weekStart.trim());
   }
   const response = await fetch(`/api/v1/work-items?${params.toString()}`, {
     method: "GET",

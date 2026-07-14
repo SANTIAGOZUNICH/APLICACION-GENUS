@@ -114,8 +114,9 @@ export function OperationalTable<T>({
 interface SyncStatusBarProps {
   source: "drive" | "demo";
   lastRefreshAt: Date | null;
+  updatedAgoLabel?: string;
+  liveConnected?: boolean;
   loading?: boolean;
-  onRefresh?: () => void;
   /** Mensaje diagnóstico de la API (modo demo, permisos, índice Drive). */
   detailMessage?: string | null;
 }
@@ -130,13 +131,14 @@ function buildLabel(): string {
 export function SyncStatusBar({
   source,
   lastRefreshAt,
+  updatedAgoLabel,
+  liveConnected,
   loading,
-  onRefresh,
   detailMessage,
 }: SyncStatusBarProps) {
-  const timeLabel = lastRefreshAt
+  const timeLabel = updatedAgoLabel ?? (lastRefreshAt
     ? lastRefreshAt.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
-    : "—";
+    : "—");
 
   const isReal = source === "drive";
 
@@ -159,19 +161,27 @@ export function SyncStatusBar({
         </span>
         <span className="font-mono text-[10px] text-[var(--os-text-muted)]">{buildLabel()}</span>
         <span className="text-[var(--os-text-muted)]">·</span>
-        <span className="text-[var(--os-text-muted)]">Última sync: {timeLabel}</span>
-        <span className="text-[var(--os-text-muted)]">·</span>
-        <span className="text-[var(--os-text-muted)]">Auto-refresh 30s</span>
-        {loading && <span className="text-[var(--os-teal)]">Actualizando…</span>}
-        {onRefresh && (
-          <button
-            type="button"
-            onClick={onRefresh}
-            className="rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-1 font-medium text-[var(--os-text)] hover:border-[var(--os-teal)] hover:text-[var(--os-teal)]"
-          >
-            Refrescar
-          </button>
+        <span className="text-[var(--os-text-muted)]">
+          Actualizado {timeLabel}
+        </span>
+        {isReal && (
+          <>
+            <span className="text-[var(--os-text-muted)]">·</span>
+            <span
+              className={`inline-flex items-center gap-1 ${
+                liveConnected ? "text-emerald-700" : "text-[var(--os-text-muted)]"
+              }`}
+            >
+              <span
+                className={`inline-block h-1.5 w-1.5 rounded-full ${
+                  liveConnected ? "bg-emerald-500" : "bg-gray-300"
+                }`}
+              />
+              {liveConnected ? "En vivo" : "Reconectando…"}
+            </span>
+          </>
         )}
+        {loading && <span className="text-[var(--os-teal)]">Actualizando…</span>}
       </div>
       {detailMessage && (
         <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">

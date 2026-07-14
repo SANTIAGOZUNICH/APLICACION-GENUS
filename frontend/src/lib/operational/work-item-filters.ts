@@ -41,6 +41,22 @@ export function filterWorkItemsForSectorAndPerson(
   return filterWorkItemsForOwnerPerson(filterWorkItemsForSector(items, sector), ownerPerson);
 }
 
+/** Filtra por fecha planificada ISO (YYYY-MM-DD). */
+export function filterWorkItemsByDate(items: WorkItem[], date: string): WorkItem[] {
+  const target = date.trim();
+  if (!target) return items;
+  return items.filter((item) => item.plannedDate === target);
+}
+
+/** Filtra por lunes de semana operativa (weekStart / weekId). */
+export function filterWorkItemsByWeekStart(items: WorkItem[], weekStart: string): WorkItem[] {
+  const target = weekStart.trim();
+  if (!target) return items;
+  return items.filter(
+    (item) => item.weekStart === target || item.weekId === target
+  );
+}
+
 export function partitionMiTrabajoSections(items: WorkItem[]): {
   hoy: WorkItem[];
   semana: WorkItem[];

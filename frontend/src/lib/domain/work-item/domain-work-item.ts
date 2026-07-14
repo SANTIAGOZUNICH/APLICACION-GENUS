@@ -17,12 +17,18 @@ export interface DomainWorkItem {
   sector: SectorId | null;
   ownerSector: SectorId | null;
   line: string | null;
+  /** True si el bloque del sheet define L1–L4 entre sector y la fila del slot. */
+  lineExpectedInSheet: boolean | null;
   branchOwner: string | null;
   sectorLead: string | null;
 
   dayLabel: string | null;
+  dayOfWeek: string | null;
   weekLabel: string | null;
+  weekStart: string | null;
+  weekId: string | null;
   date: string | null;
+  plannedDate: string | null;
 
   plannedClient: string | null;
   plannedProduct: string | null;
@@ -53,7 +59,10 @@ export interface DomainWorkItem {
   confidence: WorkItemConfidence;
   enrichmentSources: AttributeSource[];
   sourceFileIds: Partial<Record<AttributeSource, string>>;
+  /** Fila de cierre del slot columnar (no asumir = cantidad). */
   sourceRanges: Partial<Record<AttributeSource, string>>;
+  sourceProductRanges: Partial<Record<AttributeSource, string>>;
+  sourceQuantityRanges: Partial<Record<AttributeSource, string>>;
 }
 
 export function createEmptyDomainWorkItem(internalId: string): DomainWorkItem {
@@ -64,11 +73,16 @@ export function createEmptyDomainWorkItem(internalId: string): DomainWorkItem {
     sector: null,
     ownerSector: null,
     line: null,
+    lineExpectedInSheet: null,
     branchOwner: null,
     sectorLead: null,
     dayLabel: null,
+    dayOfWeek: null,
     weekLabel: null,
+    weekStart: null,
+    weekId: null,
     date: null,
+    plannedDate: null,
     plannedClient: null,
     plannedProduct: null,
     plannedQuantity: null,
@@ -95,5 +109,7 @@ export function createEmptyDomainWorkItem(internalId: string): DomainWorkItem {
     enrichmentSources: [],
     sourceFileIds: {},
     sourceRanges: {},
+    sourceProductRanges: {},
+    sourceQuantityRanges: {},
   };
 }

@@ -11,7 +11,7 @@ import { PremiumWorkspaceHome } from "@/features/os/workspace/components/premium
 
 /**
  * Home operativa de /mi-trabajo — tablas tipo Sheets, filtrada por sector/persona.
- * Sectores sin vista operativa aún usan fallback premium (Depósito, Dirección).
+ * Sectores sin vista operativa aún usan fallback premium (Depósito).
  */
 export function OperationalWorkspaceHome() {
   const { sectorId } = usePreviewSession();
@@ -26,6 +26,8 @@ export function OperationalWorkspaceHome() {
     case "CALIDAD":
       return <CalidadOperationalView />;
     case "PRODUCCION":
+      return <ProduccionOperationalView />;
+    case "DIRECCION":
       return <ProduccionOperationalView />;
     default:
       return <PremiumWorkspaceHome />;

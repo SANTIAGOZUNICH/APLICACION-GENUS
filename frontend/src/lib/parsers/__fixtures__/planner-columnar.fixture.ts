@@ -26,3 +26,18 @@ export const SEMANAS_COLUMNAR_ENVASADO: string[][] = [
   ["", "", "", "", "", "MILKY TONER", "", "SERUM AH 1000x30ml", "", "SERUM AH + NIA"],
   ["", "", "", "", "", "900 x100ml", "", "", "", "1653 x30ml"],
 ];
+
+/** Geometría real post-semana 15: columnas C/E/G/I/K + filas L1/L2/L3. */
+export const SEMANAS_COLUMNAR_ENVASADO_L_GRID: string[][] = [
+  ["", "Lunes", "", "Martes", "", "Miércoles", "", "Jueves", "", "Viernes"],
+  ["", "25", "", "26", "", "27", "", "28", "", "29"],
+  ["", "Mayo", "", "Mayo", "", "Mayo", "", "Mayo", "", "Mayo"],
+  ["", "2026-06-01", "", "2026-06-02", "", "2026-06-03", "", "2026-06-04", "", "2026-06-05", "", "RESUMEN"],
+  ["", "🍶  ENVASADO CONSUMO MASIVO  |  3 LÍNEAS DE PRODUCCIÓN"],
+  ["", "L1", "", "CAV", "", "CAV", "", "IHC - CAPILARES", "", "TYL"],
+  ["", "", "", "SH BIONIC 400x400ml", "", "MASCARA VIT SHOCK", "", "SH ANTISEBO 1000x200g", "", "ACEITE CORPORAL"],
+  ["", "", "", "6400", "", "700 x300ml", "", "1000x200g", "", "3300 x160ml"],
+  ["", "L2", "", "TYL", "", "UNICA", "", "ORIGINAL BLACK", "", "BIOESENCIA"],
+  ["", "", "", "ALCOHOL EN GEL NEUTRO", "", "AGUA MICELAR 500x150", "", "POMADA MATE", "", "GEL VEGAN 1000x200ml"],
+  ["", "", "", "2000x30g", "", "", "", "1600 x50ml", "", ""],
+];

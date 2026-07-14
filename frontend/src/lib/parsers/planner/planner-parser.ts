@@ -3,17 +3,27 @@ import type { WorkItemAssembler } from "@/lib/domain/work-item/work-item-assembl
 import type { WorkItemRegistry } from "@/lib/domain/work-item/work-item-registry";
 import type { SectorId } from "@/types/operational/sector";
 import {
+  blockExpectsExplicitLine,
   detectBranchOwnerRow,
   detectLineHeader,
   detectPackagingSectorHeader,
   extractDayColumns,
+  extractDayColumnsFromDateRow,
+  findPackagingSectorRow,
+  inferDayColumnsFromLineRow,
   inferOriginStage,
+  isDateHeaderRow,
   isOperationalNote,
   isQuantityCell,
   isWeekAnchorRow,
   normalizeCellText,
   slugify,
 } from "@/lib/parsers/planner/planner-utils";
+import {
+  resolvePlannedDateIso,
+  resolveWeekId,
+  weekStartMonday,
+} from "@/lib/operational/operational-calendar";
 
 export interface PlannerParserInput {
   fileId: string;
@@ -44,6 +54,21 @@ interface ColumnSlotDraft {
   product: string | null;
   quantity: string | null;
   notes: string[];
+  clientRow: number | null;
+  productRow: number | null;
+  quantityRow: number | null;
+}
+
+function emptyColumnDraft(): ColumnSlotDraft {
+  return {
+    client: null,
+    product: null,
+    quantity: null,
+    notes: [],
+    clientRow: null,
+    productRow: null,
+    quantityRow: null,
+  };
 }
 
 function isDayNumbersRow(row: string[], dayColumns: Map<number, string>): boolean {
@@ -90,17 +115,32 @@ function flushColumnDrafts(
   draft: ColumnSlotDraft,
   fileId: string,
   tab: string,
-  rowNumber: number
+  rowNumber: number,
+  rows: string[][]
 ): number {
   if (!ctx.sector) return 0;
   if (!draft.client && !draft.product && !draft.quantity) return 0;
 
   const dayLabel = ctx.dayColumns.get(colIndex) ?? null;
   const dayNum = ctx.dayNumbers.get(colIndex);
-  const plannedDate =
+  const dateLabel =
     dayNum && ctx.monthLabel ? `${dayNum} ${ctx.monthLabel}` : dayNum ?? null;
+  const plannedDateIso = resolvePlannedDateIso(dayNum, ctx.monthLabel, 2026);
+  const weekStart = plannedDateIso ? weekStartMonday(plannedDateIso) : null;
+  const weekId = resolveWeekId(plannedDateIso);
+
+  const sectorRow = findPackagingSectorRow(rows, rowNumber);
+  const lineExpectedInSheet =
+    sectorRow !== null ? blockExpectsExplicitLine(rows, sectorRow, rowNumber) : null;
 
   const internalId = `planner:${fileId}:${slugify(tab)}:${slugify(ctx.sector)}:${slugify(ctx.line ?? "sin-linea")}:${slugify(ctx.branchOwner ?? "sin-rama")}:${colIndex}:${rowNumber}:${slugify(draft.product ?? draft.client ?? "slot")}`;
+
+  const col = colIndex + 1;
+  const slotRange = `${tab}!${rowNumber}:${col}`;
+  const productRange =
+    draft.productRow !== null ? `${tab}!${draft.productRow}:${col}` : undefined;
+  const quantityRange =
+    draft.quantityRow !== null ? `${tab}!${draft.quantityRow}:${col}` : undefined;
 
   assembler.apply(
     registry,
@@ -110,21 +150,29 @@ function flushColumnDrafts(
       sector: ctx.sector,
       ownerSector: ctx.sector,
       line: ctx.line,
+      lineExpectedInSheet,
       branchOwner: ctx.branchOwner,
       sectorLead:
         ctx.sector === "ELABORACION" ? SECTOR_PERSONNEL.ELABORACION_ENCARGADO : null,
       weekLabel: ctx.weekLabel,
+      weekStart,
+      weekId,
       dayLabel,
-      date: plannedDate,
+      dayOfWeek: dayLabel,
+      date: dateLabel,
+      plannedDate: plannedDateIso,
       plannedClient: draft.client,
       plannedProduct: draft.product,
       plannedQuantity: draft.quantity,
       notes: draft.notes.length > 0 ? draft.notes.join(" · ") : null,
       originStage: inferOriginStage(ctx.sector),
-      priority: dayLabel === "Lunes" || dayLabel === "Martes" ? "ESTA_SEMANA" : null,
+      priority:
+        plannedDateIso == null && (dayLabel === "Lunes" || dayLabel === "Martes")
+          ? "ESTA_SEMANA"
+          : null,
     },
     "semanas_2026",
-    { fileId, range: `${tab}!${rowNumber}:${colIndex + 1}` }
+    { fileId, range: slotRange, productRange, quantityRange }
   );
 
   return 1;
@@ -132,7 +180,8 @@ function flushColumnDrafts(
 
 function classifyAndStack(
   text: string,
-  draft: ColumnSlotDraft
+  draft: ColumnSlotDraft,
+  rowNumber: number
 ): void {
   if (isOperationalNote(text)) {
     draft.notes.push(text);
@@ -141,16 +190,19 @@ function classifyAndStack(
 
   if (isQuantityCell(text)) {
     draft.quantity = text;
+    draft.quantityRow = rowNumber;
     return;
   }
 
   if (!draft.client) {
     draft.client = text;
+    draft.clientRow = rowNumber;
     return;
   }
 
   if (!draft.product) {
     draft.product = text;
+    draft.productRow = rowNumber;
     return;
   }
 
@@ -166,7 +218,7 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
   const columnDrafts = new Map<number, ColumnSlotDraft>();
   const getDraft = (col: number): ColumnSlotDraft => {
     if (!columnDrafts.has(col)) {
-      columnDrafts.set(col, { client: null, product: null, quantity: null, notes: [] });
+      columnDrafts.set(col, emptyColumnDraft());
     }
     return columnDrafts.get(col)!;
   };
@@ -182,7 +234,8 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
           draft,
           input.fileId,
           input.tab,
-          rowNumber
+          rowNumber,
+          input.rows
         );
       }
     }
@@ -204,6 +257,15 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
       ctx.weekLabel = `Semana ${rowNumber}`;
       ctx.dayNumbers.clear();
       ctx.monthLabel = null;
+      ctx.line = null;
+      continue;
+    }
+
+    if (isDateHeaderRow(row) && ctx.tabSector === "ACONDICIONAMIENTO") {
+      const dateCols = extractDayColumnsFromDateRow(row);
+      if (dateCols.size > 0) {
+        ctx.dayColumns = dateCols;
+      }
       continue;
     }
 
@@ -227,7 +289,8 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
     if (packagingSector) {
       flushAllDrafts(rowNumber);
       ctx.sector = packagingSector;
-      ctx.line = detectLineHeader(row);
+      const lineOnSectorRow = detectLineHeader(row);
+      ctx.line = lineOnSectorRow;
       continue;
     }
 
@@ -235,6 +298,10 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
     if (lineHeader && ctx.tabSector === "ACONDICIONAMIENTO") {
       flushAllDrafts(rowNumber);
       ctx.line = lineHeader;
+      const inferredCols = inferDayColumnsFromLineRow(row);
+      if (inferredCols.size > 0) {
+        ctx.dayColumns = inferredCols;
+      }
       continue;
     }
 
@@ -262,19 +329,19 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
           draft,
           input.fileId,
           input.tab,
-          rowNumber
+          rowNumber,
+          input.rows
         );
-        columnDrafts.set(colIndex, { client: null, product: null, quantity: null, notes: [] });
+        columnDrafts.set(colIndex, emptyColumnDraft());
       }
 
-      classifyAndStack(cell, getDraft(colIndex));
+      classifyAndStack(cell, getDraft(colIndex), rowNumber);
     }
 
     if (!touchedColumn && ctx.tabSector === "ELABORACION") {
       const leftCell = normalizeCellText(row[1] ?? row[0] ?? "");
       if (leftCell && !isWeekAnchorRow(row)) {
-        const draft = getDraft(1);
-        classifyAndStack(leftCell, draft);
+        classifyAndStack(leftCell, getDraft(1), rowNumber);
       }
     }
   }
