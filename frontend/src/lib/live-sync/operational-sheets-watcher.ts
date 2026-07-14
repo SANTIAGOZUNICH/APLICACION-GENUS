@@ -12,11 +12,8 @@ import { PLANNER_TABS } from "@/lib/parsers/planner/planner-parser";
  * Drive solo descubre IDs; no usa modifiedTime para sync operativa.
  */
 
-const WATCHED_KEYS: CriticalSheetKey[] = [
-  "semanas_2026",
-  "pedidos_2026",
-  "asignacion_lotes_2026",
-];
+/** Sync caliente diaria: SEMANAS manda. PEDIDOS/LOTES se revalidan en rebuild. */
+const WATCHED_KEYS: CriticalSheetKey[] = ["semanas_2026"];
 
 const SEMANAS_TABS = [...PLANNER_TABS];
 
@@ -139,29 +136,38 @@ export async function detectChangedSheetsByContent(): Promise<{
   changed: CriticalSheetKey[];
   digests: SheetContentDigest[];
 }> {
-  await operationsDocumentRepository.ensureOperationalReady();
+  if (detectInFlight) return detectInFlight;
 
-  const changed: CriticalSheetKey[] = [];
-  const digests: SheetContentDigest[] = [];
+  detectInFlight = (async () => {
+    await operationsDocumentRepository.ensureOperationalReady();
 
-  for (const key of WATCHED_KEYS) {
-    const digest = await computeSheetDigest(key);
-    if (!digest) continue;
-    digests.push(digest);
+    const changed: CriticalSheetKey[] = [];
+    const digests: SheetContentDigest[] = [];
 
-    const previous = lastHashes.get(key);
-    if (previous === undefined) {
-      lastHashes.set(key, digest.hash);
-      continue;
+    // SEMANAS manda el día a día — priorizar; PEDIDOS/LOTES enriquecen.
+    for (const key of WATCHED_KEYS) {
+      const digest = await computeSheetDigest(key);
+      if (!digest) continue;
+      digests.push(digest);
+
+      const previous = lastHashes.get(key);
+      if (previous === undefined) {
+        lastHashes.set(key, digest.hash);
+        continue;
+      }
+
+      if (previous !== digest.hash) {
+        changed.push(key);
+        lastHashes.set(key, digest.hash);
+      }
     }
 
-    if (previous !== digest.hash) {
-      changed.push(key);
-      lastHashes.set(key, digest.hash);
-    }
-  }
+    return { changed, digests };
+  })().finally(() => {
+    detectInFlight = null;
+  });
 
-  return { changed, digests };
+  return detectInFlight;
 }
 
 export function rememberSheetHash(key: CriticalSheetKey, hash: string): void {
@@ -175,4 +181,5 @@ export function getRememberedSheetHash(key: CriticalSheetKey): string | undefine
 /** Solo tests. */
 export function resetOperationalSheetsWatcherForTests(): void {
   lastHashes.clear();
+  detectInFlight = null;
 }
