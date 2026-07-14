@@ -19,6 +19,11 @@ import {
   normalizeCellText,
   slugify,
 } from "@/lib/parsers/planner/planner-utils";
+import {
+  resolvePlannedDateIso,
+  resolveWeekId,
+  weekStartMonday,
+} from "@/lib/operational/operational-calendar";
 
 export interface PlannerParserInput {
   fileId: string;
@@ -118,8 +123,11 @@ function flushColumnDrafts(
 
   const dayLabel = ctx.dayColumns.get(colIndex) ?? null;
   const dayNum = ctx.dayNumbers.get(colIndex);
-  const plannedDate =
+  const dateLabel =
     dayNum && ctx.monthLabel ? `${dayNum} ${ctx.monthLabel}` : dayNum ?? null;
+  const plannedDateIso = resolvePlannedDateIso(dayNum, ctx.monthLabel, 2026);
+  const weekStart = plannedDateIso ? weekStartMonday(plannedDateIso) : null;
+  const weekId = resolveWeekId(plannedDateIso);
 
   const sectorRow = findPackagingSectorRow(rows, rowNumber);
   const lineExpectedInSheet =
@@ -147,14 +155,21 @@ function flushColumnDrafts(
       sectorLead:
         ctx.sector === "ELABORACION" ? SECTOR_PERSONNEL.ELABORACION_ENCARGADO : null,
       weekLabel: ctx.weekLabel,
+      weekStart,
+      weekId,
       dayLabel,
-      date: plannedDate,
+      dayOfWeek: dayLabel,
+      date: dateLabel,
+      plannedDate: plannedDateIso,
       plannedClient: draft.client,
       plannedProduct: draft.product,
       plannedQuantity: draft.quantity,
       notes: draft.notes.length > 0 ? draft.notes.join(" · ") : null,
       originStage: inferOriginStage(ctx.sector),
-      priority: dayLabel === "Lunes" || dayLabel === "Martes" ? "ESTA_SEMANA" : null,
+      priority:
+        plannedDateIso == null && (dayLabel === "Lunes" || dayLabel === "Martes")
+          ? "ESTA_SEMANA"
+          : null,
     },
     "semanas_2026",
     { fileId, range: slotRange, productRange, quantityRange }

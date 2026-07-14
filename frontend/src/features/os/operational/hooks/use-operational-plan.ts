@@ -10,6 +10,8 @@ import { useLiveSync } from "./use-live-sync";
 interface UseOperationalPlanOptions {
   ownerPerson?: string | null;
   enabled?: boolean;
+  date?: string | null;
+  weekStart?: string | null;
 }
 
 interface UseOperationalPlanResult {
@@ -28,6 +30,8 @@ export function useOperationalPlan(
   options?: UseOperationalPlanOptions
 ): UseOperationalPlanResult {
   const ownerPerson = options?.ownerPerson ?? null;
+  const date = options?.date ?? null;
+  const weekStart = options?.weekStart ?? null;
   const enabled = options?.enabled ?? true;
   const { revision, mergeFromServer } = useOperationalStore();
 
@@ -64,7 +68,11 @@ export function useOperationalPlan(
       if (tick === 0) setLoading(true);
 
       try {
-        const snapshot = await loadOperationalPlan(sector, { ownerPerson });
+        const snapshot = await loadOperationalPlan(sector, {
+          ownerPerson,
+          date,
+          weekStart,
+        });
         if (!cancelled && mountedRef.current) {
           setData(snapshot);
           if (snapshot.operationalOverlay) {
@@ -85,7 +93,17 @@ export function useOperationalPlan(
     return () => {
       cancelled = true;
     };
-  }, [sector, ownerPerson, tick, enabled, revision, syncRevision, mergeFromServer]);
+  }, [
+    sector,
+    ownerPerson,
+    date,
+    weekStart,
+    tick,
+    enabled,
+    revision,
+    syncRevision,
+    mergeFromServer,
+  ]);
 
   return {
     data,

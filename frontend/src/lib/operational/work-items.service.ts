@@ -30,8 +30,15 @@ import type { QualityItem } from "@/features/os/operational/types";
 
 /** WorkItems vía Live Sync Engine — snapshot caliente, sync incremental en background. */
 export class WorkItemsService {
-  async listForSector(sector: SectorId, ownerPerson?: string | null): Promise<WorkItemsResponse> {
-    return liveSyncEngine.listForSector(sector, ownerPerson);
+  async listForSector(
+    sector: SectorId,
+    ownerPersonOrOptions?: string | null | {
+      ownerPerson?: string | null;
+      date?: string | null;
+      weekStart?: string | null;
+    }
+  ): Promise<WorkItemsResponse> {
+    return liveSyncEngine.listForSector(sector, ownerPersonOrOptions);
   }
 
   async getPreviewForSector(sector: SectorId): Promise<WorkItemsPreviewResponse> {

@@ -66,6 +66,35 @@ describe("PlannerParser columnar", () => {
     expect(item?.quantity).toBe("160KG");
   });
 
+  it("resuelve plannedDate ISO desde encabezado mes/día", () => {
+    const rows: string[][] = [
+      ["", "Lunes", "", "Martes", "", "Miércoles", "", "Jueves", "", "Viernes"],
+      ["", "14", "", "15", "", "16", "", "17", "", "18"],
+      ["", "Julio", "", "Julio", "", "Julio", "", "Julio", "", "Julio"],
+      ["", "NICOLAS"],
+      ["", "NIZA", "", "", "", "", "", "", "", ""],
+      ["", "PROBIOTONIC BALANCE", "", "", "", "", "", "", "", ""],
+      ["", "160KG", "", "", "", "", "", "", "", ""],
+    ];
+
+    const registry = createWorkItemRegistry();
+    parsePlannerTab({
+      fileId: "test-semanas",
+      tab: "ELABORACION",
+      rows,
+      registry,
+      assembler: workItemAssembler,
+    });
+
+    const item = projectDomainWorkItems(registry.list()).find(
+      (i) => i.product === "PROBIOTONIC BALANCE"
+    );
+
+    expect(item?.plannedDate).toBe("2026-07-14");
+    expect(item?.weekStart).toBe("2026-07-13");
+    expect(item?.dayOfWeek).toBe("Lunes");
+  });
+
   it("detecta sector, línea y trabajos en acondicionamiento", () => {
     const registry = createWorkItemRegistry();
     parsePlannerTab({

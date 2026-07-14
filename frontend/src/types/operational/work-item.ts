@@ -54,9 +54,16 @@ export interface WorkItem {
   productSourceRange: string | null;
   quantitySourceRange: string | null;
   originStage: OriginStage;
+  /** Fecha textual legacy del planner (ej. "14 julio"). */
   date: string | null;
+  /** Fecha planificada ISO YYYY-MM-DD (zona BA). */
+  plannedDate: string | null;
   dayLabel: string | null;
+  dayOfWeek: string | null;
   weekLabel: string | null;
+  /** Lunes de la semana operativa (YYYY-MM-DD). */
+  weekStart: string | null;
+  weekId: string | null;
   client: string | null;
   product: string | null;
   quantity: string | null;

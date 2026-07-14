@@ -35,8 +35,12 @@ export const OFFICIAL_ATTRIBUTE_SOURCE: Record<string, AttributeSource> = {
   sectorComercial: "pedidos_2026",
 
   dayLabel: "semanas_2026",
+  dayOfWeek: "semanas_2026",
   weekLabel: "semanas_2026",
+  weekStart: "semanas_2026",
+  weekId: "semanas_2026",
   date: "semanas_2026",
+  plannedDate: "semanas_2026",
   sector: "semanas_2026",
   ownerSector: "semanas_2026",
   line: "semanas_2026",

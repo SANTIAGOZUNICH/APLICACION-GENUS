@@ -7,6 +7,8 @@ import type { OperationalPlanSnapshot, QualityItem } from "../types";
 
 export interface LoadOperationalPlanOptions {
   ownerPerson?: string | null;
+  date?: string | null;
+  weekStart?: string | null;
 }
 
 function mergeCompletionsIntoSnapshot(
@@ -31,9 +33,11 @@ export async function loadOperationalPlan(
   options?: LoadOperationalPlanOptions
 ): Promise<OperationalPlanSnapshot> {
   const ownerPerson = options?.ownerPerson ?? null;
+  const date = options?.date ?? null;
+  const weekStart = options?.weekStart ?? null;
 
   try {
-    const response = await fetchWorkItems(sector, { ownerPerson });
+    const response = await fetchWorkItems(sector, { ownerPerson, date, weekStart });
 
     return mergeCompletionsIntoSnapshot({
       sector,

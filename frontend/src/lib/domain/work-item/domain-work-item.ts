@@ -23,8 +23,12 @@ export interface DomainWorkItem {
   sectorLead: string | null;
 
   dayLabel: string | null;
+  dayOfWeek: string | null;
   weekLabel: string | null;
+  weekStart: string | null;
+  weekId: string | null;
   date: string | null;
+  plannedDate: string | null;
 
   plannedClient: string | null;
   plannedProduct: string | null;
@@ -73,8 +77,12 @@ export function createEmptyDomainWorkItem(internalId: string): DomainWorkItem {
     branchOwner: null,
     sectorLead: null,
     dayLabel: null,
+    dayOfWeek: null,
     weekLabel: null,
+    weekStart: null,
+    weekId: null,
     date: null,
+    plannedDate: null,
     plannedClient: null,
     plannedProduct: null,
     plannedQuantity: null,
