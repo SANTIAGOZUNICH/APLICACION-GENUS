@@ -44,7 +44,7 @@ function demoDebug(): WorkItemsDebugResponse {
   };
 }
 
-/** F8.1 — dev-only WorkItems diagnostic snapshot. */
+/** F8.1 — dev-only WorkItems diagnostic snapshot (404 en preview/producción). */
 export async function GET() {
   if (!isDevEnvironment()) {
     return NextResponse.json({ error: "Not found", code: "NOT_FOUND" }, { status: 404 });

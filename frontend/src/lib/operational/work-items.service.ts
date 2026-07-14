@@ -1,7 +1,12 @@
 import "server-only";
 
-import { operationsDocumentRepository } from "@/lib/adapters/drive/operations-document-repository";
-import { loadSemanasWorkItems } from "@/lib/mappers/semanas-to-work-items";
+import { liveSyncEngine } from "@/lib/live-sync/live-sync-engine";
+import {
+  countMiTrabajoSections,
+  filterWorkItemsForSector,
+  filterWorkItemsForSectorAndPerson,
+  partitionMiTrabajoSections,
+} from "@/lib/operational/work-item-filters";
 import {
   analyzeWorkItemGaps,
   countWorkItemsByOriginStage,
@@ -11,13 +16,8 @@ import {
   countWorkItemsByPriority,
   summarizeDependencies,
 } from "@/lib/operational/analyze-work-items";
-import { buildProductionOverview } from "@/lib/operational/build-production-overview";
-import {
-  countMiTrabajoSections,
-  filterWorkItemsForSector,
-  filterWorkItemsForSectorAndPerson,
-  partitionMiTrabajoSections,
-} from "@/lib/operational/work-item-filters";
+import { getProductionOverviewFromSnapshot } from "@/lib/live-sync/live-sync-engine";
+import { liveSyncStore } from "@/lib/live-sync/live-sync-store";
 import { SECTOR_PREVIEW_PROFILES } from "@/config/sector-preview";
 import { SECTOR_GREETING, type SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
@@ -26,84 +26,31 @@ import type {
   WorkItemsDebugResponse,
   WorkItemsPreviewResponse,
 } from "@/types/operational/work-items-preview.types";
+import type { QualityItem } from "@/features/os/operational/types";
 
-interface LoadedWorkItems {
-  workItems: WorkItem[];
-  warnings: string[];
-  sourcesIndexed: {
-    semanas_2026: boolean;
-    pedidos_2026: boolean;
-    asignacion_lotes_2026: boolean;
-  };
-}
-
+/** WorkItems vía Live Sync Engine — snapshot caliente, sync incremental en background. */
 export class WorkItemsService {
-  private async loadAllWorkItems(): Promise<LoadedWorkItems> {
-    await operationsDocumentRepository.refresh("pcp");
-
-    const [semanasRef, pedidosRef, lotesRef] = await Promise.all([
-      operationsDocumentRepository.tryGetCriticalSheetRef("semanas_2026"),
-      operationsDocumentRepository.tryGetCriticalSheetRef("pedidos_2026"),
-      operationsDocumentRepository.tryGetCriticalSheetRef("asignacion_lotes_2026"),
-    ]);
-
-    const sourcesIndexed = {
-      semanas_2026: Boolean(semanasRef),
-      pedidos_2026: Boolean(pedidosRef),
-      asignacion_lotes_2026: Boolean(lotesRef),
-    };
-
-    if (!semanasRef) {
-      return {
-        workItems: [],
-        warnings: ["SEMANAS 2026 no indexado. Ejecutá GET /api/v1/drive/refresh."],
-        sourcesIndexed,
-      };
+  async listForSector(
+    sector: SectorId,
+    ownerPersonOrOptions?: string | null | {
+      ownerPerson?: string | null;
+      date?: string | null;
+      weekStart?: string | null;
     }
-
-    const { workItems, warnings } = await loadSemanasWorkItems(semanasRef);
-    return { workItems, warnings, sourcesIndexed };
-  }
-
-  async listForSector(sector: SectorId, ownerPerson?: string | null): Promise<WorkItemsResponse> {
-    const { workItems, warnings, sourcesIndexed } = await this.loadAllWorkItems();
-
-    if (!sourcesIndexed.semanas_2026) {
-      return {
-        sector,
-        ownerPerson: ownerPerson ?? null,
-        source: "drive",
-        scannedAt: new Date().toISOString(),
-        workItems: [],
-        counts: { total: 0, hoy: 0, semana: 0, pendientes: 0, bloqueados: 0 },
-        message: "SEMANAS 2026 no indexado — sin WorkItems reales.",
-        warnings,
-      };
-    }
-
-    const filtered = filterWorkItemsForSectorAndPerson(workItems, sector, ownerPerson);
-
-    return {
-      sector,
-      ownerPerson: ownerPerson ?? null,
-      source: "drive",
-      scannedAt: new Date().toISOString(),
-      workItems: filtered,
-      counts: countMiTrabajoSections(filtered),
-      warnings: warnings.slice(0, 10),
-      message:
-        filtered.length > 0
-          ? ownerPerson
-            ? `${filtered.length} WorkItem(s) para ${ownerPerson} en ${sector} desde SEMANAS 2026.`
-            : `${filtered.length} WorkItem(s) para ${sector} desde SEMANAS 2026.`
-          : ownerPerson
-            ? `No hay trabajos asignados a ${ownerPerson} en SEMANAS 2026.`
-            : "No hay trabajos asignados para este sector en SEMANAS 2026.",
-    };
+  ): Promise<WorkItemsResponse> {
+    return liveSyncEngine.listForSector(sector, ownerPersonOrOptions);
   }
 
   async getPreviewForSector(sector: SectorId): Promise<WorkItemsPreviewResponse> {
-    const { workItems, warnings, sourcesIndexed } = await this.loadAllWorkItems();
+    const snapshot = await liveSyncEngine.getSnapshot();
+    const workItems = snapshot?.workItems ?? [];
+    const warnings = snapshot?.warnings ?? [];
+    const sourcesIndexed = snapshot?.sourcesIndexed ?? {
+      semanas_2026: false,
+      pedidos_2026: false,
+      asignacion_lotes_2026: false,
+    };
+
     const profileConfig = SECTOR_PREVIEW_PROFILES[sector];
     const filtered = filterWorkItemsForSector(workItems, sector);
     const sections = partitionMiTrabajoSections(filtered);
@@ -112,26 +59,19 @@ export class WorkItemsService {
 
     const sourceBreakdown = {
       semanas_2026: bySource.semanas_2026 ?? 0,
-      pedidos_2026: 0,
-      asignacion_lotes_2026: 0,
+      pedidos_2026: bySource.pedidos_2026 ?? 0,
+      asignacion_lotes_2026: bySource.asignacion_lotes_2026 ?? 0,
     };
 
     const expectedSources =
       profileConfig?.expectedSources.map((src) => ({
         ...src,
         indexed: sourcesIndexed[src.key],
-        workItemCount:
-          src.key === "semanas_2026"
-            ? sourceBreakdown.semanas_2026
-            : src.key === "pedidos_2026"
-              ? 0
-              : 0,
+        workItemCount: sourceBreakdown[src.key] ?? 0,
       })) ?? [];
 
     const productionOverview =
-      sector === "PRODUCCION"
-        ? buildProductionOverview(workItems)
-        : undefined;
+      sector === "PRODUCCION" ? getProductionOverviewFromSnapshot() ?? undefined : undefined;
 
     if (productionOverview) {
       productionOverview.warnings = warnings.slice(0, 10);
@@ -139,7 +79,7 @@ export class WorkItemsService {
 
     return {
       sector,
-      scannedAt: new Date().toISOString(),
+      scannedAt: snapshot?.sheetsSyncedAt ?? new Date().toISOString(),
       source: "drive",
       profile: {
         greeting: SECTOR_GREETING[sector as keyof typeof SECTOR_GREETING] ?? sector,
@@ -158,9 +98,7 @@ export class WorkItemsService {
       message:
         filtered.length > 0
           ? `${filtered.length} WorkItem(s) visibles para ${sector}.`
-          : sector === "CALIDAD"
-            ? "Calidad no recibe WorkItems desde SEMANAS en F8.1 — fuente principal: ASIGNACION DE LOTES (mapper F8.2)."
-            : "No hay trabajos asignados para este sector en SEMANAS 2026.",
+          : `No hay trabajos asignados para ${sector}.`,
       productionOverview,
       globalStats: {
         totalAllSectors: workItems.length,
@@ -171,15 +109,22 @@ export class WorkItemsService {
   }
 
   async getDebugSnapshot(): Promise<WorkItemsDebugResponse> {
-    const { workItems, warnings, sourcesIndexed } = await this.loadAllWorkItems();
+    const snapshot = await liveSyncEngine.warmSnapshot();
+    const workItems = snapshot?.workItems ?? [];
+    const warnings = snapshot?.warnings ?? [];
+    const sourcesIndexed = snapshot?.sourcesIndexed ?? {
+      semanas_2026: false,
+      pedidos_2026: false,
+      asignacion_lotes_2026: false,
+    };
     const bySource = countWorkItemsBySource(workItems);
-    const overview = buildProductionOverview(workItems);
-    overview.warnings = warnings.slice(0, 20);
+    const overview = getProductionOverviewFromSnapshot();
+    if (overview) overview.warnings = warnings.slice(0, 20);
 
     const deps = summarizeDependencies(workItems);
 
     return {
-      scannedAt: new Date().toISOString(),
+      scannedAt: snapshot?.updatedAt ?? new Date().toISOString(),
       source: "drive",
       totalCount: workItems.length,
       bySector: countWorkItemsBySector(workItems),
@@ -194,24 +139,30 @@ export class WorkItemsService {
       },
       workItems,
       mapperWarnings: warnings,
-      productionOverview: overview,
-      sourcesIndexed,
-      sourcesMapped: {
-        semanas_2026: bySource.semanas_2026 ?? 0,
-        pedidos_2026: 0,
-        asignacion_lotes_2026: 0,
+      productionOverview: overview ?? {
+        scannedAt: new Date().toISOString(),
+        source: "semanas_2026",
+        capacity: null,
+        load: null,
+        blockers: [],
+        sectors: [],
+        priorities: null,
+        dependencies: [],
+        warnings,
       },
+      sourcesIndexed,
+      sourcesMapped: sourceBreakdownFrom(bySource),
       gaps: analyzeWorkItemGaps(workItems),
       message:
         workItems.length > 0
-          ? `${workItems.length} WorkItems desde SEMANAS 2026. PEDIDOS y LOTES pendientes F8.2.`
+          ? `${workItems.length} WorkItems — Live Sync Engine.`
           : "Sin WorkItems — verificar Drive y /api/v1/drive/refresh.",
     };
   }
 
   async getProductionOverview() {
-    const { workItems, warnings } = await this.loadAllWorkItems();
-    if (workItems.length === 0) {
+    const overview = getProductionOverviewFromSnapshot();
+    if (!overview) {
       return {
         scannedAt: new Date().toISOString(),
         source: "semanas_2026" as const,
@@ -221,13 +172,27 @@ export class WorkItemsService {
         sectors: [],
         priorities: null,
         dependencies: [],
-        warnings,
+        warnings: liveSyncStore.getSnapshot()?.warnings ?? [],
       };
     }
-    const overview = buildProductionOverview(workItems);
-    overview.warnings = warnings.slice(0, 10);
     return overview;
   }
+
+  getSyncStatus() {
+    return liveSyncEngine.getStatus();
+  }
+
+  forceRefresh() {
+    return liveSyncEngine.forceRefresh();
+  }
+}
+
+function sourceBreakdownFrom(bySource: Record<string, number>) {
+  return {
+    semanas_2026: bySource.semanas_2026 ?? 0,
+    pedidos_2026: bySource.pedidos_2026 ?? 0,
+    asignacion_lotes_2026: bySource.asignacion_lotes_2026 ?? 0,
+  };
 }
 
 export const workItemsService = new WorkItemsService();

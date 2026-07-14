@@ -9,6 +9,7 @@ import {
   getFolderOverrideId,
   getGenusFolderId,
   getMaxIndexDepth,
+  hasAnyCriticalSheetFastPath,
   type CriticalSheetKey,
 } from "@/lib/adapters/drive/drive-folder-config";
 import {
@@ -51,11 +52,17 @@ const CACHE_PREFIX = {
 /** Aliases indexed for documents during refresh (E7.1 slice + elaboracion recursive). */
 const DOCUMENT_INDEX_ALIASES: FolderAlias[] = [
   "elaboracion",
+  "produccion_2026",
   "pcp",
   "lotes",
 ];
 
-const RECURSIVE_DOCUMENT_ALIASES = new Set<FolderAlias>(["elaboracion"]);
+const RECURSIVE_DOCUMENT_ALIASES = new Set<FolderAlias>([
+  "elaboracion",
+  "produccion_2026",
+  "pcp",
+  "lotes",
+]);
 
 /**
  * OperationsDocumentRepository — document index abstraction.
@@ -63,6 +70,8 @@ const RECURSIVE_DOCUMENT_ALIASES = new Set<FolderAlias>(["elaboracion"]);
  */
 export class OperationsDocumentRepository {
   private indexReady = false;
+  private operationalReady = false;
+  private backgroundIndexScheduled = false;
   private refreshInFlight: Promise<RefreshResult> | null = null;
 
   async health(): Promise<DriveHealthResult> {
@@ -162,7 +171,7 @@ export class OperationsDocumentRepository {
   async tryGetCriticalSheetRef(
     sheetKey: CriticalSheetKey
   ): Promise<DocumentRef | null> {
-    await this.ensureIndex();
+    await this.ensureOperationalReady();
 
     const cached = serverCache.get<DocumentRef>(`${CACHE_PREFIX.critical}${sheetKey}`);
     if (cached) return cached;
@@ -181,18 +190,63 @@ export class OperationsDocumentRepository {
     }
 
     const alias = CRITICAL_SHEET_FOLDER[sheetKey];
+    const folderIndex = this.getFolderIndex();
     const docs =
       serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}${alias}`) ??
-      (await this.indexDocumentsForAlias(alias, this.getFolderIndex()));
+      (folderIndex.length > 0
+        ? await this.indexDocumentsForAlias(alias, folderIndex)
+        : []);
 
-    const targetName = CRITICAL_SHEET_NAMES[sheetKey].toLowerCase();
-    const match = docs.find(
-      (file) => stripSheetExtension(file.name).trim().toLowerCase() === targetName
-    );
+    const match = docs.find((file) => matchesCriticalSheetName(file.name, sheetKey));
 
     if (match) {
       serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, match);
       return match;
+    }
+
+    if (sheetKey === "pedidos_2026") {
+      const produccionDocs =
+        serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}produccion_2026`) ??
+        (folderIndex.length > 0
+          ? await this.indexDocumentsForAlias("produccion_2026", folderIndex)
+          : []);
+      const fallback = produccionDocs.find((file) =>
+        matchesCriticalSheetName(file.name, sheetKey)
+      );
+      if (fallback) {
+        serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, fallback);
+        return fallback;
+      }
+
+      const genusMatch = await this.searchCriticalSheetGlobally(sheetKey);
+      if (genusMatch) {
+        serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, genusMatch);
+        return genusMatch;
+      }
+    }
+
+    return null;
+  }
+
+  /** Búsqueda amplia de sheets críticos en todos los alias indexados + raíz GENUS. */
+  private async searchCriticalSheetGlobally(
+    sheetKey: CriticalSheetKey
+  ): Promise<DocumentRef | null> {
+    const folderIndex = this.getFolderIndex();
+    const searchAliases: FolderAlias[] = [
+      "genus",
+      "produccion_2026",
+      "pcp",
+      "lotes",
+      "elaboracion",
+    ];
+
+    for (const alias of searchAliases) {
+      const docs =
+        serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}${alias}`) ??
+        (await this.indexDocumentsForAlias(alias, folderIndex));
+      const match = docs.find((file) => matchesCriticalSheetName(file.name, sheetKey));
+      if (match) return match;
     }
 
     return null;
@@ -277,6 +331,111 @@ export class OperationsDocumentRepository {
     return entry?.folderId ?? null;
   }
 
+  /** Asegura índice Drive cacheado — no re-crawlea en cada lectura. */
+  async ensureReady(): Promise<void> {
+    return this.ensureOperationalReady();
+  }
+
+  /** Lectura operativa (/mi-trabajo) — nunca bloquea en refresh completo de Drive. */
+  async ensureOperationalReady(): Promise<void> {
+    if (this.operationalReady) {
+      return;
+    }
+
+    const hasCachedSemanas = Boolean(
+      serverCache.get<DocumentRef>(`${CACHE_PREFIX.critical}semanas_2026`)
+    );
+    const semanasFastPath = getCriticalSheetFastPathId("semanas_2026");
+
+    if (semanasFastPath) {
+      await this.primeCriticalSheetFromFastPath("semanas_2026", semanasFastPath);
+      this.operationalReady = true;
+      this.scheduleBackgroundIndex("all");
+      return;
+    }
+
+    if (hasCachedSemanas) {
+      this.operationalReady = true;
+      return;
+    }
+
+    const hasDocuments = DOCUMENT_INDEX_ALIASES.some(
+      (alias) =>
+        (serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}${alias}`)?.length ??
+          0) > 0
+    );
+
+    if (hasDocuments && this.getFolderIndex().length > 0) {
+      this.indexReady = true;
+      this.operationalReady = true;
+      return;
+    }
+
+    if (hasAnyCriticalSheetFastPath()) {
+      await Promise.all(
+        (Object.keys(CRITICAL_SHEET_NAMES) as CriticalSheetKey[]).map(async (key) => {
+          const fastPathId = getCriticalSheetFastPathId(key);
+          if (fastPathId) {
+            await this.primeCriticalSheetFromFastPath(key, fastPathId);
+          }
+        })
+      );
+      this.operationalReady = true;
+      this.scheduleBackgroundIndex("all");
+      return;
+    }
+
+    // Sin fast-path: indexar solo sheets críticos (~1s). Nunca await refresh("all").
+    await this.refresh("critical_sheets");
+    this.operationalReady = Boolean(
+      serverCache.get<DocumentRef>(`${CACHE_PREFIX.critical}semanas_2026`)
+    );
+    this.scheduleBackgroundIndex("all");
+  }
+
+  isBackgroundIndexInFlight(): boolean {
+    return Boolean(this.refreshInFlight) || this.backgroundIndexScheduled;
+  }
+
+  private scheduleBackgroundIndex(scope: RefreshScope): void {
+    if (this.backgroundIndexScheduled || this.refreshInFlight) {
+      return;
+    }
+
+    this.backgroundIndexScheduled = true;
+    void this.refresh(scope).finally(() => {
+      this.backgroundIndexScheduled = false;
+      this.indexReady = true;
+      if (
+        serverCache.get<DocumentRef>(`${CACHE_PREFIX.critical}semanas_2026`) ||
+        getCriticalSheetFastPathId("semanas_2026")
+      ) {
+        this.operationalReady = true;
+      }
+    });
+  }
+
+  private async primeCriticalSheetFromFastPath(
+    sheetKey: CriticalSheetKey,
+    fileId: string
+  ): Promise<void> {
+    const cached = serverCache.get<DocumentRef>(`${CACHE_PREFIX.critical}${sheetKey}`);
+    if (cached?.fileId === fileId) {
+      return;
+    }
+
+    const metadata = await googleDriveGateway.getFileMetadata(fileId);
+    if (!metadata) {
+      return;
+    }
+
+    const ref: DocumentRef = {
+      ...metadata,
+      folderAlias: CRITICAL_SHEET_FOLDER[sheetKey],
+    };
+    serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, ref);
+  }
+
   private async ensureIndex(): Promise<void> {
     if (this.indexReady && this.getFolderIndex().length > 0) {
       return;
@@ -293,13 +452,13 @@ export class OperationsDocumentRepository {
       return;
     }
 
-    if (getCriticalSheetFastPathId("asignacion_lotes_2026") &&
-        getCriticalSheetFastPathId("pedidos_2026")) {
-      this.indexReady = true;
+    if (getCriticalSheetFastPathId("semanas_2026")) {
+      this.operationalReady = true;
+      this.scheduleBackgroundIndex("all");
       return;
     }
 
-    await this.refresh("all");
+    this.scheduleBackgroundIndex("all");
   }
 
   private async performRefresh(scope: RefreshScope): Promise<RefreshResult> {
@@ -402,11 +561,11 @@ export class OperationsDocumentRepository {
       case "elaboracion":
         return ["elaboracion"];
       case "pcp":
-        return ["pcp"];
+        return ["pcp", "produccion_2026"];
       case "lotes":
         return ["lotes"];
       case "critical_sheets":
-        return ["pcp", "lotes"];
+        return ["pcp", "lotes", "produccion_2026"];
       default:
         return DOCUMENT_INDEX_ALIASES;
     }
@@ -481,14 +640,33 @@ export class OperationsDocumentRepository {
       serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}${alias}`) ??
       (await this.indexDocumentsForAlias(alias, folderIndex));
 
-    const targetName = CRITICAL_SHEET_NAMES[sheetKey].toLowerCase();
-    const match = docs.find(
-      (file) => file.name.trim().toLowerCase() === targetName
-    );
+    const match = docs.find((file) => matchesCriticalSheetName(file.name, sheetKey));
 
     if (match) {
       serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, match);
       result[sheetKey] = match.fileId;
+      return;
+    }
+
+    if (sheetKey === "pedidos_2026") {
+      const produccionDocs =
+        serverCache.get<DocumentRef[]>(`${CACHE_PREFIX.documents}produccion_2026`) ??
+        (await this.indexDocumentsForAlias("produccion_2026", folderIndex));
+      const fallback = produccionDocs.find((file) =>
+        matchesCriticalSheetName(file.name, sheetKey)
+      );
+      if (fallback) {
+        serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, fallback);
+        result[sheetKey] = fallback.fileId;
+        return;
+      }
+
+      const global = await this.searchCriticalSheetGlobally(sheetKey);
+      if (global) {
+        serverCache.set(`${CACHE_PREFIX.critical}${sheetKey}`, global);
+        result[sheetKey] = global.fileId;
+      }
+      return;
     }
   }
 
@@ -522,6 +700,28 @@ export class OperationsDocumentRepository {
     index.sort((a, b) => a.fileName.localeCompare(b.fileName, "es"));
     serverCache.set(CACHE_PREFIX.oeIndex, index);
   }
+}
+
+function matchesCriticalSheetName(fileName: string, sheetKey: CriticalSheetKey): boolean {
+  const stripped = stripSheetExtension(fileName).trim().toLowerCase();
+  const target = CRITICAL_SHEET_NAMES[sheetKey].toLowerCase();
+  if (stripped === target) return true;
+
+  if (sheetKey === "pedidos_2026") {
+    return (
+      (stripped.includes("pedidos") && stripped.includes("2026")) ||
+      stripped === "pedidos 2026 (1)" ||
+      /^pedidos\s*2026\s*(\(\d+\))?$/.test(stripped)
+    );
+  }
+  if (sheetKey === "semanas_2026") {
+    return stripped.includes("semanas") && stripped.includes("2026");
+  }
+  if (sheetKey === "asignacion_lotes_2026") {
+    return stripped.includes("lotes") && stripped.includes("2026");
+  }
+
+  return false;
 }
 
 export const operationsDocumentRepository = new OperationsDocumentRepository();

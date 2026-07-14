@@ -5,6 +5,7 @@ import { workItemsService } from "@/lib/operational/work-items.service";
 import { CURRENT_SECTOR_OPTIONS, type CurrentSectorId } from "@/types/operational/sector";
 import type { SectorId } from "@/types/operational/sector";
 
+/** Sectores válidos en API /work-items. DEPOSITO pendiente de modelado — PR posterior. */
 function parseSector(value: string | null): SectorId | null {
   if (!value) return null;
   const normalized = value.trim().toUpperCase();
@@ -14,10 +15,18 @@ function parseSector(value: string | null): SectorId | null {
   return null;
 }
 
+function parseIsoDateParam(value: string | null): string | null {
+  if (!value?.trim()) return null;
+  const v = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const sector = parseSector(url.searchParams.get("sector"));
   const ownerPerson = url.searchParams.get("ownerPerson")?.trim() || null;
+  const date = parseIsoDateParam(url.searchParams.get("date"));
+  const weekStart = parseIsoDateParam(url.searchParams.get("weekStart"));
 
   if (!sector) {
     return NextResponse.json(
@@ -46,8 +55,18 @@ export async function GET(request: Request) {
   }
 
   try {
-    const response = await workItemsService.listForSector(sector, ownerPerson);
-    return NextResponse.json(response);
+    const response = await workItemsService.listForSector(sector, {
+      ownerPerson,
+      date,
+      weekStart: date ? null : weekStart,
+    });
+    const syncStatus = workItemsService.getSyncStatus();
+    return NextResponse.json(response, {
+      headers: {
+        "X-Live-Sync-Revision": String(syncStatus.revision),
+        "X-Live-Sync-Updated-At": syncStatus.updatedAt,
+      },
+    });
   } catch (error) {
     return NextResponse.json(
       {

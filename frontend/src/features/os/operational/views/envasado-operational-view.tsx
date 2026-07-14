@@ -7,7 +7,10 @@ import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { WorkItemProgressTable } from "../components/work-item-progress-table";
 import { SyncStatusBar } from "../components/operational-ui";
+import { OperationalDayNav } from "../components/operational-day-nav";
+import { OperationalWeekBoard } from "../components/operational-week-board";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
+import { useOperationalCalendar } from "../hooks/use-operational-calendar";
 import { ELABORACION_RAMAS, SECTOR_PERSONNEL } from "../lib/sector-personnel";
 import { useOperationalStore } from "../store/operational-store-context";
 
@@ -15,10 +18,11 @@ interface EnvasadoOperationalViewProps {
   sectorId: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM";
 }
 
-/** Vista operativa envasado — avance por línea con guardar y marcar terminado. */
+/** Vista operativa envasado — avance por línea, filtrado por día (Hoy). */
 export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewProps) {
   const workspace = useRequiredWorkspace();
   const { applyEffectiveStatus } = usePreviewContext();
+  const calendar = useOperationalCalendar();
   const {
     applyProgressToWorkItems,
     saveWorkProgress,
@@ -26,7 +30,14 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     getFinishedQty,
     getObservation,
   } = useOperationalStore();
-  const { data, loading, error, lastRefreshAt, refresh } = useOperationalPlan(sectorId);
+
+  const planOptions =
+    calendar.viewMode === "week"
+      ? { weekStart: calendar.weekStart }
+      : { date: calendar.selectedDate };
+
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
+    useOperationalPlan(sectorId, planOptions);
 
   const workItems = useMemo(() => {
     const base = applyEffectiveStatus(data?.workItems ?? []);
@@ -46,10 +57,10 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       saveWorkProgress(itemId, {
         ...payload,
         updatedBy: workspace.context.displayName,
+        sector: sectorId,
       });
-      refresh();
     },
-    [saveWorkProgress, refresh, workspace.context.displayName]
+    [saveWorkProgress, workspace.context.displayName, sectorId]
   );
 
   const handleFinish = useCallback(
@@ -58,28 +69,39 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         ...payload,
         updatedBy: workspace.context.displayName,
       });
-      refresh();
     },
-    [markWorkFinished, refresh, workspace.context.displayName]
+    [markWorkFinished, workspace.context.displayName]
   );
 
   return (
     <TwinShell title={workspace.sectorLabel}>
-      <header className="mb-6 space-y-2">
+      <header className="mb-4 space-y-2">
         <h2 className="text-2xl font-semibold tracking-tight">
           Hola, {workspace.context.displayName}
         </h2>
+        <p className="text-base font-medium text-[var(--os-text)]">{calendar.heading}</p>
         <p className="text-sm text-[var(--os-text-muted)]">
           {workspace.sectorLabel} · {workspace.context.jobTitle}
         </p>
         <SyncStatusBar
           source={data?.source ?? "demo"}
           lastRefreshAt={lastRefreshAt}
+          updatedAgoLabel={updatedAgoLabel}
+          liveConnected={liveConnected}
           loading={loading}
-          onRefresh={refresh}
           detailMessage={data?.message}
         />
       </header>
+
+      <OperationalDayNav
+        selectedDate={calendar.selectedDate}
+        today={calendar.today}
+        viewMode={calendar.viewMode}
+        onPrev={calendar.goPrevDay}
+        onNext={calendar.goNextDay}
+        onToday={calendar.goToday}
+        onViewMode={calendar.setViewMode}
+      />
 
       {error && (
         <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
@@ -89,7 +111,17 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
 
       {loading && !data && <div className="os-skeleton h-48 rounded-[var(--os-radius)]" />}
 
-      {!loading && (
+      {!loading && calendar.viewMode === "week" && (
+        <OperationalWeekBoard
+          weekDays={calendar.weekDays}
+          today={calendar.today}
+          selectedDate={calendar.selectedDate}
+          items={sortedItems}
+          onSelectDay={calendar.selectDay}
+        />
+      )}
+
+      {!loading && calendar.viewMode === "day" && (
         <WorkItemProgressTable
           items={sortedItems}
           variant="envasado"
@@ -98,7 +130,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           onSaveProgress={handleSave}
           onMarkFinished={handleFinish}
           emptyMessage={
-            data?.message ?? "Sin líneas de acondicionamiento para este sector."
+            data?.message ?? "No hay trabajos planificados para este día."
           }
         />
       )}
@@ -111,6 +143,7 @@ export function ElaboracionOperationalView() {
   const workspace = useRequiredWorkspace();
   const { ownerPerson } = usePreviewSession();
   const { applyEffectiveStatus } = usePreviewContext();
+  const calendar = useOperationalCalendar();
   const {
     applyProgressToWorkItems,
     saveWorkProgress,
@@ -118,9 +151,14 @@ export function ElaboracionOperationalView() {
     getFinishedQty,
     getObservation,
   } = useOperationalStore();
-  const { data, loading, error, lastRefreshAt, refresh } = useOperationalPlan("ELABORACION", {
-    ownerPerson,
-  });
+
+  const planOptions =
+    calendar.viewMode === "week"
+      ? { ownerPerson, weekStart: calendar.weekStart }
+      : { ownerPerson, date: calendar.selectedDate };
+
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
+    useOperationalPlan("ELABORACION", planOptions);
 
   const isEncargado = !ownerPerson?.trim();
   const ramaLabel = ownerPerson ?? null;
@@ -144,10 +182,10 @@ export function ElaboracionOperationalView() {
       saveWorkProgress(itemId, {
         ...payload,
         updatedBy: greetingName,
+        sector: "ELABORACION",
       });
-      refresh();
     },
-    [saveWorkProgress, refresh, greetingName]
+    [saveWorkProgress, greetingName]
   );
 
   const handleFinish = useCallback(
@@ -156,21 +194,21 @@ export function ElaboracionOperationalView() {
         ...payload,
         updatedBy: greetingName,
       });
-      refresh();
     },
-    [markWorkFinished, refresh, greetingName]
+    [markWorkFinished, greetingName]
   );
 
   const emptyMessage =
     data?.message ??
     (ramaLabel
-      ? `Sin elaboraciones asignadas a la rama ${ramaLabel} en SEMANAS 2026.`
-      : "Sin elaboraciones en SEMANAS 2026.");
+      ? `No hay trabajos planificados para ${ramaLabel} en este día.`
+      : "No hay trabajos planificados para este día.");
 
   return (
     <TwinShell title="Elaboración">
-      <header className="mb-6 space-y-2">
+      <header className="mb-4 space-y-2">
         <h2 className="text-2xl font-semibold tracking-tight">Hola, {greetingName}</h2>
+        <p className="text-base font-medium text-[var(--os-text)]">{calendar.heading}</p>
         <div className="space-y-1 text-sm text-[var(--os-text-muted)]">
           <p>
             Encargado:{" "}
@@ -196,11 +234,22 @@ export function ElaboracionOperationalView() {
         <SyncStatusBar
           source={data?.source ?? "demo"}
           lastRefreshAt={lastRefreshAt}
+          updatedAgoLabel={updatedAgoLabel}
+          liveConnected={liveConnected}
           loading={loading}
-          onRefresh={refresh}
           detailMessage={data?.message}
         />
       </header>
+
+      <OperationalDayNav
+        selectedDate={calendar.selectedDate}
+        today={calendar.today}
+        viewMode={calendar.viewMode}
+        onPrev={calendar.goPrevDay}
+        onNext={calendar.goNextDay}
+        onToday={calendar.goToday}
+        onViewMode={calendar.setViewMode}
+      />
 
       {error && (
         <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
@@ -210,7 +259,17 @@ export function ElaboracionOperationalView() {
 
       {loading && !data && <div className="os-skeleton h-40 rounded-[var(--os-radius)]" />}
 
-      {!loading && isEncargado && ramas && (
+      {!loading && calendar.viewMode === "week" && (
+        <OperationalWeekBoard
+          weekDays={calendar.weekDays}
+          today={calendar.today}
+          selectedDate={calendar.selectedDate}
+          items={workItems}
+          onSelectDay={calendar.selectDay}
+        />
+      )}
+
+      {!loading && calendar.viewMode === "day" && isEncargado && ramas && (
         <div className="space-y-8">
           {ramas.map(({ rama, items }) => (
             <section key={rama}>
@@ -224,14 +283,14 @@ export function ElaboracionOperationalView() {
                 getObservation={getObservation}
                 onSaveProgress={handleSave}
                 onMarkFinished={handleFinish}
-                emptyMessage={`Sin elaboraciones para la rama ${rama}.`}
+                emptyMessage={`No hay trabajos para la rama ${rama} en este día.`}
               />
             </section>
           ))}
         </div>
       )}
 
-      {!loading && !isEncargado && (
+      {!loading && calendar.viewMode === "day" && !isEncargado && (
         <WorkItemProgressTable
           items={workItems}
           variant="elaboracion"

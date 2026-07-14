@@ -63,6 +63,29 @@ export interface OperationalPlanSnapshot {
   workItems: WorkItem[];
   qualityItems: QualityItem[];
   message?: string;
+  operationalOverlay?: OperationalOverlay;
+  /** Version SEMANAS / revision Live Sync — anti-stale. */
+  semanasVersion?: string | null;
+  revision?: number;
+}
+
+/** Overlay operativo autoritativo del servidor (Live Sync). */
+export interface OperationalOverlay {
+  revision: number;
+  progress: Record<string, WorkProgressOverlay>;
+  decisions: Record<string, QualityDecisionRecord>;
+  completions: CompletionEvent[];
+}
+
+export interface WorkProgressOverlay {
+  itemId: string;
+  finishedQty: string;
+  observation: string;
+  status?: string;
+  updatedAt: string;
+  updatedBy?: string;
+  completedAt?: string;
+  sector?: SectorId;
 }
 
 export interface QualityDecisionRecord {
@@ -73,4 +96,6 @@ export interface QualityDecisionRecord {
   observation?: string;
 }
 
-export const OPERATIONAL_POLL_INTERVAL_MS = 30_000;
+export const OPERATIONAL_POLL_INTERVAL_MS = 0;
+/** @deprecated Reemplazado por Live Sync SSE — mantener 0. */
+export const OPERATIONAL_POLL_LEGACY_MS = 30_000;

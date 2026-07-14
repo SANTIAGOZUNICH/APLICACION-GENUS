@@ -60,8 +60,10 @@ export function ProduccionOperationalView() {
     applyProgressToWorkItems,
     completionEvents,
     decisionMap,
+    getFinishedQty,
   } = useOperationalStore();
-  const { data, loading, error, lastRefreshAt, refresh } = useOperationalPlan("PRODUCCION");
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
+    useOperationalPlan("PRODUCCION");
   const [activeTab, setActiveTab] = useState<ProduccionTabId>("elaboracion");
 
   const workItems = useMemo(() => {
@@ -200,8 +202,13 @@ export function ProduccionOperationalView() {
       },
       {
         key: "quantity",
-        header: "Cant.",
+        header: "Planif.",
         render: (row) => formatQuantity(row),
+      },
+      {
+        key: "finished",
+        header: "Terminadas",
+        render: (row) => displayField(getFinishedQty(row.id) || row.finishedQty),
       },
       {
         key: "status",
@@ -214,7 +221,7 @@ export function ProduccionOperationalView() {
         ),
       },
     ],
-    []
+    [getFinishedQty]
   );
 
   const tabs = PRODUCCION_TABS.map((tab) => {
@@ -250,8 +257,9 @@ export function ProduccionOperationalView() {
         <SyncStatusBar
           source={data?.source ?? "demo"}
           lastRefreshAt={lastRefreshAt}
+          updatedAgoLabel={updatedAgoLabel}
+          liveConnected={liveConnected}
           loading={loading}
-          onRefresh={refresh}
           detailMessage={data?.message}
         />
       </header>
