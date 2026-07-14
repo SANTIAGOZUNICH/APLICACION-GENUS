@@ -80,6 +80,8 @@ export function projectDomainWorkItem(item: DomainWorkItem): WorkItem | null {
     originStage,
     date: item.date,
     plannedDate: item.plannedDate,
+    dateHeaderSourceRange: item.dateHeaderSourceRange,
+    dateResolutionMethod: item.dateResolutionMethod,
     dayLabel: item.dayLabel,
     dayOfWeek: item.dayOfWeek ?? item.dayLabel,
     weekLabel: item.weekLabel,

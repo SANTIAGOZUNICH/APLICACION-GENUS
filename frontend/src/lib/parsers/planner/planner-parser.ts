@@ -8,7 +8,6 @@ import {
   detectLineHeader,
   detectPackagingSectorHeader,
   extractDayColumns,
-  extractDayColumnsFromDateRow,
   findPackagingSectorRow,
   inferDayColumnsFromLineRow,
   inferOriginStage,
@@ -19,6 +18,15 @@ import {
   normalizeCellText,
   slugify,
 } from "@/lib/parsers/planner/planner-utils";
+import {
+  columnIndexToLetter,
+  extractColumnDatesFromHeaderRow,
+  isMonthName,
+  markInherited,
+  resolveSplitColumnDate,
+  SEMANAS_OPERATIONAL_YEAR,
+  type ResolvedColumnDate,
+} from "@/lib/parsers/planner/date-header-resolver";
 import {
   resolvePlannedDateIso,
   resolveWeekId,
@@ -46,7 +54,10 @@ interface PlannerContext {
   weekLabel: string | null;
   dayColumns: Map<number, string>;
   monthLabel: string | null;
+  monthByColumn: Map<number, string>;
   dayNumbers: Map<number, string>;
+  columnDates: Map<number, ResolvedColumnDate>;
+  dateHeaderRow: number | null;
 }
 
 interface ColumnSlotDraft {
@@ -82,10 +93,41 @@ function isDayNumbersRow(row: string[], dayColumns: Map<number, string>): boolea
   return hasNumeric;
 }
 
-function isMonthRow(row: string[]): boolean {
-  const monthCells = row.filter((c) => c.trim()).map((c) => normalizeCellText(c));
-  if (monthCells.length < 2) return false;
-  return monthCells.every((c) => c.toLowerCase() === monthCells[0].toLowerCase() && /^[a-záéíóúñ]+$/i.test(c));
+/** Fila de mes(es) — admite cambio de mes dentro de la misma semana. */
+function isMonthRow(row: string[], dayColumns: Map<number, string>): boolean {
+  if (dayColumns.size === 0) return false;
+  let monthHits = 0;
+  for (const colIndex of dayColumns.keys()) {
+    const cell = normalizeCellText(row[colIndex] ?? "");
+    if (!cell) continue;
+    if (!isMonthName(cell)) return false;
+    monthHits += 1;
+  }
+  return monthHits >= 2;
+}
+
+function rebuildSplitColumnDates(ctx: PlannerContext, warnings: string[]): void {
+  if (ctx.dayNumbers.size === 0) return;
+
+  const next = new Map<number, ResolvedColumnDate>();
+  for (const colIndex of ctx.dayColumns.keys()) {
+    const dayNum = ctx.dayNumbers.get(colIndex);
+    const month =
+      ctx.monthByColumn.get(colIndex) ?? ctx.monthLabel ?? null;
+    const expectedWeekday = ctx.dayColumns.get(colIndex) ?? null;
+    const resolved = resolveSplitColumnDate(
+      dayNum,
+      month,
+      SEMANAS_OPERATIONAL_YEAR,
+      expectedWeekday
+    );
+    if (!resolved) continue;
+    if (resolved.warning) warnings.push(resolved.warning);
+    next.set(colIndex, resolved);
+  }
+  if (next.size > 0) {
+    ctx.columnDates = next;
+  }
 }
 
 function defaultContext(tab: string): PlannerContext {
@@ -103,7 +145,10 @@ function defaultContext(tab: string): PlannerContext {
     weekLabel: null,
     dayColumns: new Map(),
     monthLabel: null,
+    monthByColumn: new Map(),
     dayNumbers: new Map(),
+    columnDates: new Map(),
+    dateHeaderRow: null,
   };
 }
 
@@ -116,16 +161,48 @@ function flushColumnDrafts(
   fileId: string,
   tab: string,
   rowNumber: number,
-  rows: string[][]
+  rows: string[][],
+  warnings: string[]
 ): number {
   if (!ctx.sector) return 0;
   if (!draft.client && !draft.product && !draft.quantity) return 0;
 
   const dayLabel = ctx.dayColumns.get(colIndex) ?? null;
   const dayNum = ctx.dayNumbers.get(colIndex);
+  const monthForCol =
+    ctx.monthByColumn.get(colIndex) ?? ctx.monthLabel ?? null;
   const dateLabel =
-    dayNum && ctx.monthLabel ? `${dayNum} ${ctx.monthLabel}` : dayNum ?? null;
-  const plannedDateIso = resolvePlannedDateIso(dayNum, ctx.monthLabel, 2026);
+    dayNum && monthForCol ? `${dayNum} ${monthForCol}` : dayNum ?? null;
+
+  let resolved = ctx.columnDates.get(colIndex) ?? null;
+  let dateResolutionMethod = resolved?.method ?? null;
+  let dateHeaderSourceRange: string | null = null;
+
+  if (resolved) {
+    if (ctx.dateHeaderRow != null) {
+      dateHeaderSourceRange = `${tab}!${columnIndexToLetter(colIndex)}${ctx.dateHeaderRow}`;
+    }
+    // Tras el encabezado, los slots siguientes heredan el contexto de semana.
+    if (resolved.method !== "inherited_week_context" && rowNumber > (ctx.dateHeaderRow ?? 0) + 1) {
+      resolved = markInherited(resolved);
+      dateResolutionMethod = "inherited_week_context";
+    }
+  } else {
+    const plannedDateIso = resolvePlannedDateIso(dayNum, monthForCol, SEMANAS_OPERATIONAL_YEAR);
+    if (plannedDateIso) {
+      const split = resolveSplitColumnDate(
+        dayNum,
+        monthForCol,
+        SEMANAS_OPERATIONAL_YEAR,
+        dayLabel
+      );
+      resolved = split;
+      dateResolutionMethod = split?.method ?? "split_header";
+      if (split?.warning) warnings.push(split.warning);
+    }
+  }
+
+  const plannedDateIso = resolved?.plannedDate ?? null;
   const weekStart = plannedDateIso ? weekStartMonday(plannedDateIso) : null;
   const weekId = resolveWeekId(plannedDateIso);
 
@@ -157,10 +234,12 @@ function flushColumnDrafts(
       weekLabel: ctx.weekLabel,
       weekStart,
       weekId,
-      dayLabel,
-      dayOfWeek: dayLabel,
-      date: dateLabel,
+      dayLabel: resolved?.dayLabel ?? dayLabel,
+      dayOfWeek: resolved?.dayOfWeek ?? dayLabel,
+      date: resolved?.headerText ?? dateLabel,
       plannedDate: plannedDateIso,
+      dateHeaderSourceRange,
+      dateResolutionMethod,
       plannedClient: draft.client,
       plannedProduct: draft.product,
       plannedQuantity: draft.quantity,
@@ -235,7 +314,8 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
           input.fileId,
           input.tab,
           rowNumber,
-          input.rows
+          input.rows,
+          warnings
         );
       }
     }
@@ -251,21 +331,34 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
       continue;
     }
 
+    // Antes del ancla Lunes/Martes: filas humanas ("martes 14 julio") también
+    // contienen esos nombres y no deben tratarse como ancla de solo día.
+    if (isDateHeaderRow(row)) {
+      flushAllDrafts(rowNumber);
+      const extracted = extractColumnDatesFromHeaderRow(row, SEMANAS_OPERATIONAL_YEAR);
+      if (extracted.dayColumns.size > 0) {
+        ctx.dayColumns = extracted.dayColumns;
+        ctx.columnDates = extracted.columnDates;
+        ctx.dateHeaderRow = rowNumber;
+        ctx.weekLabel = `Semana ${rowNumber}`;
+        ctx.dayNumbers.clear();
+        ctx.monthLabel = null;
+        ctx.monthByColumn.clear();
+        for (const w of extracted.warnings) warnings.push(`${input.tab}:${w}`);
+      }
+      continue;
+    }
+
     if (isWeekAnchorRow(row)) {
       flushAllDrafts(rowNumber);
       ctx.dayColumns = extractDayColumns(row);
       ctx.weekLabel = `Semana ${rowNumber}`;
       ctx.dayNumbers.clear();
       ctx.monthLabel = null;
+      ctx.monthByColumn.clear();
+      ctx.columnDates.clear();
+      ctx.dateHeaderRow = null;
       ctx.line = null;
-      continue;
-    }
-
-    if (isDateHeaderRow(row) && ctx.tabSector === "ACONDICIONAMIENTO") {
-      const dateCols = extractDayColumnsFromDateRow(row);
-      if (dateCols.size > 0) {
-        ctx.dayColumns = dateCols;
-      }
       continue;
     }
 
@@ -276,12 +369,27 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
           ctx.dayNumbers.set(colIndex, t.replace(/\.0$/, ""));
         }
       }
+      rebuildSplitColumnDates(ctx, warnings);
+      if (ctx.columnDates.size > 0) {
+        ctx.dateHeaderRow = rowNumber;
+      }
       continue;
     }
 
-    if (isMonthRow(row)) {
-      const monthCells = row.filter((c) => c.trim()).map((c) => normalizeCellText(c));
-      ctx.monthLabel = monthCells[0];
+    if (isMonthRow(row, ctx.dayColumns)) {
+      ctx.monthByColumn.clear();
+      for (const colIndex of ctx.dayColumns.keys()) {
+        const cell = normalizeCellText(row[colIndex] ?? "");
+        if (cell && isMonthName(cell)) {
+          ctx.monthByColumn.set(colIndex, cell);
+        }
+      }
+      const months = [...ctx.monthByColumn.values()];
+      ctx.monthLabel = months[0] ?? null;
+      rebuildSplitColumnDates(ctx, warnings);
+      if (ctx.columnDates.size > 0 && ctx.dateHeaderRow == null) {
+        ctx.dateHeaderRow = rowNumber;
+      }
       continue;
     }
 
@@ -299,7 +407,7 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
       flushAllDrafts(rowNumber);
       ctx.line = lineHeader;
       const inferredCols = inferDayColumnsFromLineRow(row);
-      if (inferredCols.size > 0) {
+      if (inferredCols.size > 0 && ctx.columnDates.size === 0) {
         ctx.dayColumns = inferredCols;
       }
       continue;
@@ -330,7 +438,8 @@ export function parsePlannerTab(input: PlannerParserInput): PlannerParserResult 
           input.fileId,
           input.tab,
           rowNumber,
-          input.rows
+          input.rows,
+          warnings
         );
         columnDrafts.set(colIndex, emptyColumnDraft());
       }

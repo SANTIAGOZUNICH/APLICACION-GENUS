@@ -41,6 +41,8 @@ export const OFFICIAL_ATTRIBUTE_SOURCE: Record<string, AttributeSource> = {
   weekId: "semanas_2026",
   date: "semanas_2026",
   plannedDate: "semanas_2026",
+  dateHeaderSourceRange: "semanas_2026",
+  dateResolutionMethod: "semanas_2026",
   sector: "semanas_2026",
   ownerSector: "semanas_2026",
   line: "semanas_2026",
