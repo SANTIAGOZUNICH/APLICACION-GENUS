@@ -46,6 +46,13 @@ class LiveSyncStore {
     };
     return this.snapshot.revision;
   }
+
+  /** Solo tests. */
+  resetForTests(): void {
+    this.snapshot = null;
+    this.sheetModifiedTimes.clear();
+    this.syncInFlight = null;
+  }
 }
 
 export const liveSyncStore = new LiveSyncStore();

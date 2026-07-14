@@ -52,6 +52,8 @@ export async function loadOperationalPlan(
         readCompletionEvents()
       ),
       operationalOverlay: response.operationalOverlay,
+      revision: response.revision,
+      semanasVersion: response.semanasVersion,
       message:
         response.message ??
         (response.source === "demo"
