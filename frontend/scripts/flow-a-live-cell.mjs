@@ -100,6 +100,18 @@ function suggestTestValue(current) {
   return `${t}-TEST`;
 }
 
+async function warmPreview() {
+  await fetchJson("/api/v1/drive/refresh?scope=critical_sheets");
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const probe = await readLiveCell("ELABORACION!B536");
+    if (probe.ok && probe.body?.value) {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  throw new Error("No se pudo calentar índice SEMANAS — reintentar en unos segundos.");
+}
+
 async function readLiveCell(a1) {
   return fetchJson(`/api/v1/sheets/cell?key=semanas_2026&a1=${encodeURIComponent(a1)}`);
 }
@@ -142,14 +154,55 @@ function rankCandidate(item) {
 
 async function resolveCells(item) {
   const slotLoc = parseSourceRange(item.sourceRange);
-  const qtyLoc = parseSourceRange(item.quantitySourceRange);
-  const prodLoc = parseSourceRange(item.productSourceRange);
+  let qtyLoc = parseSourceRange(item.quantitySourceRange);
+  let prodLoc = parseSourceRange(item.productSourceRange);
+
+  if ((!qtyLoc || qtyLoc.ambiguous) && slotLoc && !slotLoc.ambiguous) {
+    const derivedQtyRow = slotLoc.row - 1;
+    const derivedProdRow = slotLoc.row - 2;
+    if (derivedQtyRow >= 1) {
+      const derivedQtyA1 = `${slotLoc.sheet}!${colLetter(slotLoc.col)}${derivedQtyRow}`;
+      const derivedProdA1 = `${slotLoc.sheet}!${colLetter(slotLoc.col)}${derivedProdRow}`;
+      const [qtyLive, prodLive] = await Promise.all([
+        readLiveCell(derivedQtyA1),
+        readLiveCell(derivedProdA1),
+      ]);
+      const qtyVal = qtyLive.body?.value ?? "";
+      const prodVal = prodLive.body?.value ?? "";
+      const qtyMatches = normalizeQty(qtyVal) === normalizeQty(item.quantity);
+      const prodMatches =
+        !item.product ||
+        normalizeQty(prodVal) === normalizeQty(item.product) ||
+        normalizeQty(prodVal).includes(normalizeQty(item.product));
+
+      if (qtyMatches && prodMatches) {
+        qtyLoc = {
+          sheet: slotLoc.sheet,
+          row: derivedQtyRow,
+          col: slotLoc.col,
+          cell: `${colLetter(slotLoc.col)}${derivedQtyRow}`,
+          a1: derivedQtyA1,
+          ambiguous: false,
+          derived: true,
+        };
+        prodLoc = {
+          sheet: slotLoc.sheet,
+          row: derivedProdRow,
+          col: slotLoc.col,
+          cell: `${colLetter(slotLoc.col)}${derivedProdRow}`,
+          a1: derivedProdA1,
+          ambiguous: false,
+          derived: true,
+        };
+      }
+    }
+  }
 
   if (!qtyLoc || qtyLoc.ambiguous) {
     return {
       ok: false,
       reason:
-        "quantitySourceRange ausente o ambiguo — el parser debe exponer la fila de cantidad explícitamente.",
+        "quantitySourceRange ausente y no se pudo verificar celda viva (slot−1 / producto slot−2).",
       sourceRange: item.sourceRange,
       quantitySourceRange: item.quantitySourceRange ?? null,
       productSourceRange: item.productSourceRange ?? null,
@@ -227,8 +280,13 @@ async function resolveCells(item) {
     testValue: suggestTestValue(quantityValue),
     restoreValue: quantityValue,
     sourceRange: item.sourceRange,
-    quantitySourceRange: item.quantitySourceRange,
-    productSourceRange: item.productSourceRange ?? null,
+    quantitySourceRange:
+      item.quantitySourceRange ??
+      (qtyLoc.derived ? `${qtyLoc.sheet}!${qtyLoc.row}:${qtyLoc.col}` : null),
+    productSourceRange:
+      item.productSourceRange ??
+      (prodLoc?.derived ? `${prodLoc.sheet}!${prodLoc.row}:${prodLoc.col}` : prodLoc?.a1 ?? null),
+    quantityDerived: Boolean(qtyLoc.derived),
   };
 }
 
@@ -252,7 +310,7 @@ function printCandidate(candidate, resolved) {
 async function discover() {
   console.log(`\n=== Flujo A — descubrimiento de celda viva ===\nBASE=${BASE}\n`);
 
-  await fetchJson("/api/v1/work-items?sector=ELABORACION&ownerPerson=Cristian");
+  await warmPreview();
   const items = (await fetchElaboracionItems()).filter(
     (i) => i.sourceRange && i.quantity && i.ownerPerson
   );
