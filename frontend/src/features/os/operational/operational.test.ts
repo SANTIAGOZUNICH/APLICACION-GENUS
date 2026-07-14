@@ -236,17 +236,22 @@ describe("operational-sheets-adapter", () => {
 });
 
 describe("mock users elaboración", () => {
-  it("expone usuarios con nombres reales del laboratorio", async () => {
+  it("expone un único acceso de sector Elaboración (sin emails por persona)", async () => {
     const { MOCK_PREVIEW_USERS } = await import("@/features/os/auth/lib/mock-preview-users");
     const { SECTOR_PERSONNEL } = await import("./lib/sector-personnel");
 
-    const cristian = MOCK_PREVIEW_USERS.find((u) => u.email.includes("cristian"));
-    const nicolas = MOCK_PREVIEW_USERS.find((u) => u.email.includes("nicolas"));
+    const elaboracion = MOCK_PREVIEW_USERS.find((u) => u.email.startsWith("elaboracion@"));
+    const byPerson = MOCK_PREVIEW_USERS.filter((u) =>
+      /cristian@|nicolas@|santino@/.test(u.email)
+    );
     const masivo = MOCK_PREVIEW_USERS.find((u) => u.email.includes("masivo"));
     const calidad = MOCK_PREVIEW_USERS.find((u) => u.email.includes("calidad"));
 
-    expect(cristian?.displayName).toBe(SECTOR_PERSONNEL.ELABORACION_RAMA_CRISTIAN);
-    expect(nicolas?.displayName).toBe(SECTOR_PERSONNEL.ELABORACION_RAMA_NICOLAS);
+    expect(elaboracion?.displayName).toBe("Elaboración");
+    expect(elaboracion?.password).toBe("elaboracion123");
+    expect(elaboracion?.ownerPerson).toBeNull();
+    expect(elaboracion?.jobTitle).toContain(SECTOR_PERSONNEL.ELABORACION_ENCARGADO);
+    expect(byPerson).toHaveLength(0);
     expect(masivo?.displayName).toBe(SECTOR_PERSONNEL.ENVASADO_MASIVO);
     expect(calidad?.displayName).toBe(SECTOR_PERSONNEL.CALIDAD);
   });

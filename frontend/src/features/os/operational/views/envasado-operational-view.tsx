@@ -4,7 +4,8 @@ import { useCallback, useMemo } from "react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
-import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
+import { usePreviewContext } from "@/features/os/session/preview-context";
+import { personNamesMatch } from "@/lib/operational/display-fields";
 import { WorkItemProgressTable } from "../components/work-item-progress-table";
 import { SyncStatusBar } from "../components/operational-ui";
 import { OperationalDayNav } from "../components/operational-day-nav";
@@ -138,10 +139,8 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   );
 }
 
-/** Elaboración — encargado Santino + ramas Cristian / Nicolás. */
+/** Elaboración — sector único con ramas Cristian / Nicolás separadas. */
 export function ElaboracionOperationalView() {
-  const workspace = useRequiredWorkspace();
-  const { ownerPerson } = usePreviewSession();
   const { applyEffectiveStatus } = usePreviewContext();
   const calendar = useOperationalCalendar();
   const {
@@ -154,83 +153,63 @@ export function ElaboracionOperationalView() {
 
   const planOptions =
     calendar.viewMode === "week"
-      ? { ownerPerson, weekStart: calendar.weekStart }
-      : { ownerPerson, date: calendar.selectedDate };
+      ? { weekStart: calendar.weekStart }
+      : { date: calendar.selectedDate };
 
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
     useOperationalPlan("ELABORACION", planOptions);
-
-  const isEncargado = !ownerPerson?.trim();
-  const ramaLabel = ownerPerson ?? null;
-  const greetingName = ramaLabel ?? workspace.context.displayName;
 
   const workItems = useMemo(() => {
     const base = applyEffectiveStatus(data?.workItems ?? []);
     return applyProgressToWorkItems(base);
   }, [data?.workItems, applyEffectiveStatus, applyProgressToWorkItems]);
 
-  const ramas = useMemo(() => {
-    if (!isEncargado) return null;
-    return ELABORACION_RAMAS.map((rama) => ({
-      rama,
-      items: workItems.filter((item) => item.ownerPerson === rama),
-    }));
-  }, [isEncargado, workItems]);
+  const ramas = useMemo(
+    () =>
+      ELABORACION_RAMAS.map((rama) => ({
+        rama,
+        items: workItems.filter((item) =>
+          personNamesMatch(item.ownerPerson, rama)
+        ),
+      })),
+    [workItems]
+  );
 
   const handleSave = useCallback(
     (itemId: string, payload: { finishedQty: string; observation: string }) => {
+      const item = workItems.find((w) => w.id === itemId);
+      const rama = item?.ownerPerson?.trim() || "Elaboración";
       saveWorkProgress(itemId, {
         ...payload,
-        updatedBy: greetingName,
+        updatedBy: rama,
         sector: "ELABORACION",
       });
     },
-    [saveWorkProgress, greetingName]
+    [saveWorkProgress, workItems]
   );
 
   const handleFinish = useCallback(
     (item: WorkItem, payload: { finishedQty: string; observation: string }) => {
+      const rama = item.ownerPerson?.trim() || "Elaboración";
       markWorkFinished(item, {
         ...payload,
-        updatedBy: greetingName,
+        updatedBy: rama,
       });
     },
-    [markWorkFinished, greetingName]
+    [markWorkFinished]
   );
-
-  const emptyMessage =
-    data?.message ??
-    (ramaLabel
-      ? `No hay trabajos planificados para ${ramaLabel} en este día.`
-      : "No hay trabajos planificados para este día.");
 
   return (
     <TwinShell title="Elaboración">
       <header className="mb-4 space-y-2">
-        <h2 className="text-2xl font-semibold tracking-tight">Hola, {greetingName}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">Elaboración</h2>
+        <p className="text-sm text-[var(--os-text-muted)]">
+          Encargado:{" "}
+          <span className="font-medium text-[var(--os-text)]">
+            {SECTOR_PERSONNEL.ELABORACION_ENCARGADO}
+          </span>
+        </p>
         <p className="text-base font-medium text-[var(--os-text)]">{calendar.heading}</p>
-        <div className="space-y-1 text-sm text-[var(--os-text-muted)]">
-          <p>
-            Encargado:{" "}
-            <span className="font-medium text-[var(--os-text)]">
-              {SECTOR_PERSONNEL.ELABORACION_ENCARGADO}
-            </span>
-          </p>
-          {ramaLabel ? (
-            <p>
-              Rama{" "}
-              <span className="font-medium text-[var(--os-teal)]">{ramaLabel}</span> · solo tu
-              asignación
-            </p>
-          ) : (
-            <p>
-              Vista de encargado · ramas{" "}
-              <span className="font-medium text-[var(--os-teal)]">
-                {ELABORACION_RAMAS.join(" · ")}
-              </span>
-            </p>
-          )}
-        </div>
         <SyncStatusBar
           source={data?.source ?? "demo"}
           lastRefreshAt={lastRefreshAt}
@@ -269,12 +248,12 @@ export function ElaboracionOperationalView() {
         />
       )}
 
-      {!loading && calendar.viewMode === "day" && isEncargado && ramas && (
-        <div className="space-y-8">
+      {!loading && calendar.viewMode === "day" && (
+        <div className="space-y-10">
           {ramas.map(({ rama, items }) => (
             <section key={rama}>
               <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-                Rama {rama}
+                {rama}
               </h3>
               <WorkItemProgressTable
                 items={items}
@@ -283,23 +262,11 @@ export function ElaboracionOperationalView() {
                 getObservation={getObservation}
                 onSaveProgress={handleSave}
                 onMarkFinished={handleFinish}
-                emptyMessage={`No hay trabajos para la rama ${rama} en este día.`}
+                emptyMessage={`No hay trabajos para ${rama} en este día.`}
               />
             </section>
           ))}
         </div>
-      )}
-
-      {!loading && calendar.viewMode === "day" && !isEncargado && (
-        <WorkItemProgressTable
-          items={workItems}
-          variant="elaboracion"
-          getFinishedQty={getFinishedQty}
-          getObservation={getObservation}
-          onSaveProgress={handleSave}
-          onMarkFinished={handleFinish}
-          emptyMessage={emptyMessage}
-        />
       )}
     </TwinShell>
   );

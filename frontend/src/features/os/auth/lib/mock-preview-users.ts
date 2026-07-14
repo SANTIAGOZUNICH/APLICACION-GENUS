@@ -1,6 +1,6 @@
 /**
- * @mock-temp Fase 4 Access Preview — usuarios de demostración internos.
- * Reemplazar por USUARIOS/API en auth real. Sin hashing — solo preview UI.
+ * @mock-temp Beta Operativa — accesos demo por sector (sin auth real).
+ * Un usuario = un sector. Elaboración agrupa ramas Cristian / Nicolás en la vista.
  */
 
 import { SECTOR_PERSONNEL } from "@/features/os/operational/lib/sector-personnel";
@@ -15,54 +15,22 @@ export interface MockPreviewUser {
   sectorLabel: string;
   jobTitle: string;
   redirectTo: string;
-  /** Elaborador en SEMANAS — filtra mi-trabajo por persona. */
+  /** Solo si se filtra por persona; null = vista de sector completo. */
   ownerPerson?: string | null;
 }
 
 export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
   {
-    email: "produccion@laboratoriogenus.com.ar",
-    password: "produccion123",
-    sector: "PRODUCCION",
-    displayName: SECTOR_PERSONNEL.PRODUCCION,
-    role: "ROL-SU",
-    roleLabel: "Supervisora",
-    sectorLabel: "Producción",
-    jobTitle: "Supervisora de Planta",
+    email: "elaboracion@laboratoriogenus.com.ar",
+    password: "elaboracion123",
+    sector: "ELABORACION",
+    displayName: "Elaboración",
+    role: "ROL-EL",
+    roleLabel: "Sector",
+    sectorLabel: "Elaboración",
+    jobTitle: `Encargado: ${SECTOR_PERSONNEL.ELABORACION_ENCARGADO}`,
     redirectTo: "/mi-trabajo",
-  },
-  {
-    email: "calidad@laboratoriogenus.com.ar",
-    password: "calidad123",
-    sector: "CALIDAD",
-    displayName: SECTOR_PERSONNEL.CALIDAD,
-    role: "ROL-CA",
-    roleLabel: "Calidad",
-    sectorLabel: "Calidad",
-    jobTitle: "Responsable de Calidad",
-    redirectTo: "/mi-trabajo",
-  },
-  {
-    email: "deposito@laboratoriogenus.com.ar",
-    password: "deposito123",
-    sector: "DEPOSITO",
-    displayName: SECTOR_PERSONNEL.DEPOSITO,
-    role: "ROL-OP",
-    roleLabel: "Operario",
-    sectorLabel: "Depósito",
-    jobTitle: "Responsable de Depósito",
-    redirectTo: "/mi-trabajo",
-  },
-  {
-    email: "direccion@laboratoriogenus.com.ar",
-    password: "direccion123",
-    sector: "DIRECCION",
-    displayName: "Santiago Zunich",
-    role: "ROL-DI",
-    roleLabel: "Dirección",
-    sectorLabel: "Dirección",
-    jobTitle: "Director General",
-    redirectTo: "/mi-trabajo",
+    ownerPerson: null,
   },
   {
     email: "masivo@laboratoriogenus.com.ar",
@@ -87,40 +55,48 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
     redirectTo: "/mi-trabajo",
   },
   {
-    email: "santino@laboratoriogenus.com.ar",
-    password: "santino123",
-    sector: "ELABORACION",
-    displayName: SECTOR_PERSONNEL.ELABORACION_ENCARGADO,
-    role: "ROL-EL",
-    roleLabel: "Encargado",
-    sectorLabel: "Elaboración",
-    jobTitle: "Encargado de Elaboración",
+    email: "calidad@laboratoriogenus.com.ar",
+    password: "calidad123",
+    sector: "CALIDAD",
+    displayName: SECTOR_PERSONNEL.CALIDAD,
+    role: "ROL-CA",
+    roleLabel: "Calidad",
+    sectorLabel: "Calidad",
+    jobTitle: "Responsable de Calidad",
     redirectTo: "/mi-trabajo",
-    ownerPerson: null,
   },
   {
-    email: "cristian@laboratoriogenus.com.ar",
-    password: "cristian123",
-    sector: "ELABORACION",
-    displayName: SECTOR_PERSONNEL.ELABORACION_RAMA_CRISTIAN,
-    role: "ROL-EL",
-    roleLabel: "Elaborador",
-    sectorLabel: "Elaboración",
-    jobTitle: `Elaborador · Rama ${SECTOR_PERSONNEL.ELABORACION_RAMA_CRISTIAN}`,
+    email: "produccion@laboratoriogenus.com.ar",
+    password: "produccion123",
+    sector: "PRODUCCION",
+    displayName: SECTOR_PERSONNEL.PRODUCCION,
+    role: "ROL-SU",
+    roleLabel: "Supervisora",
+    sectorLabel: "Producción",
+    jobTitle: "Supervisora de Planta",
     redirectTo: "/mi-trabajo",
-    ownerPerson: SECTOR_PERSONNEL.ELABORACION_RAMA_CRISTIAN,
   },
   {
-    email: "nicolas@laboratoriogenus.com.ar",
-    password: "nicolas123",
-    sector: "ELABORACION",
-    displayName: SECTOR_PERSONNEL.ELABORACION_RAMA_NICOLAS,
-    role: "ROL-EL",
-    roleLabel: "Elaborador",
-    sectorLabel: "Elaboración",
-    jobTitle: `Elaborador · Rama ${SECTOR_PERSONNEL.ELABORACION_RAMA_NICOLAS}`,
+    email: "deposito@laboratoriogenus.com.ar",
+    password: "deposito123",
+    sector: "DEPOSITO",
+    displayName: SECTOR_PERSONNEL.DEPOSITO,
+    role: "ROL-OP",
+    roleLabel: "Operario",
+    sectorLabel: "Depósito",
+    jobTitle: "Responsable de Depósito",
     redirectTo: "/mi-trabajo",
-    ownerPerson: SECTOR_PERSONNEL.ELABORACION_RAMA_NICOLAS,
+  },
+  {
+    email: "direccion@laboratoriogenus.com.ar",
+    password: "direccion123",
+    sector: "DIRECCION",
+    displayName: "Santiago Zunich",
+    role: "ROL-DI",
+    roleLabel: "Dirección",
+    sectorLabel: "Dirección",
+    jobTitle: "Director General",
+    redirectTo: "/mi-trabajo",
   },
 ];
 
