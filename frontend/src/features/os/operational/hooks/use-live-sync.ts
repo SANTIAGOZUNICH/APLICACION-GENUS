@@ -14,6 +14,7 @@ import {
 import { createLiveSyncPollController } from "@/lib/live-sync/live-sync-poll-controller";
 import { shouldAcceptLiveSyncUpdate } from "@/lib/live-sync/live-sync-version";
 import type { LiveSyncEvent } from "@/lib/live-sync/types";
+import { getClientPlanningSource } from "@/lib/planning/planning-source";
 
 export interface LiveSyncSheetUpdate {
   version: string;
@@ -90,6 +91,9 @@ export function useLiveSync(options: UseLiveSyncOptions): UseLiveSyncResult {
   useEffect(() => {
     if (!enabled) return;
 
+    // Planificación nativa: no mezclar con Sheets /live-sync/check.
+    const nativePlanning = getClientPlanningSource() === "native";
+
     void fetchLiveSyncStatus()
       .then((status) => {
         setUpdatedAt(status.updatedAt);
@@ -114,6 +118,13 @@ export function useLiveSync(options: UseLiveSyncOptions): UseLiveSyncResult {
       },
       () => setConnected(false)
     );
+
+    if (nativePlanning) {
+      setConnected(true);
+      return () => {
+        disconnect();
+      };
+    }
 
     const poll = createLiveSyncPollController({
       isVisible: () =>

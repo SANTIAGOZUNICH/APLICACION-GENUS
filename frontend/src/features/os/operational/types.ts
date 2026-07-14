@@ -58,7 +58,7 @@ export interface OperationalActivityEntry {
 export interface OperationalPlanSnapshot {
   sector: SectorId;
   ownerPerson?: string | null;
-  source: "drive" | "demo";
+  source: "drive" | "demo" | "native";
   scannedAt: string;
   workItems: WorkItem[];
   qualityItems: QualityItem[];

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SectorId } from "@/types/operational/sector";
 import { shouldAcceptLiveSyncUpdate } from "@/lib/live-sync/live-sync-version";
+import { getClientPlanningSource } from "@/lib/planning/planning-source";
 import { loadOperationalPlan } from "../adapters/operational-sheets-adapter";
 import { useOperationalStore } from "../store/operational-store-context";
 import type { OperationalPlanSnapshot } from "../types";
@@ -91,6 +92,16 @@ export function useOperationalPlan(
       mountedRef.current = false;
     };
   }, []);
+
+  // Native: convergencia por polling corto a /work-items (sin Sheets).
+  useEffect(() => {
+    if (!enabled) return;
+    if (getClientPlanningSource() !== "native") return;
+    const id = window.setInterval(() => {
+      setTick((v) => v + 1);
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) return;

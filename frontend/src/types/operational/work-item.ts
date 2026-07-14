@@ -104,7 +104,7 @@ export interface WorkItem {
 export interface WorkItemsResponse {
   sector: SectorId;
   ownerPerson?: string | null;
-  source: "drive" | "demo";
+  source: "drive" | "demo" | "native";
   scannedAt: string;
   workItems: WorkItem[];
   counts: {

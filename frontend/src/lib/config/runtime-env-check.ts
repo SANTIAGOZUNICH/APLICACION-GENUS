@@ -13,6 +13,8 @@ import {
   getServerDataMode,
   shouldFallbackToDemo,
 } from "@/lib/config/data-mode";
+import { isDatabaseConfigured } from "@/lib/db/client";
+import { getPlanningSource } from "@/lib/planning/planning-source";
 
 export type PrivateKeyFormat =
   | "missing"
@@ -69,6 +71,12 @@ export interface RuntimeEnvSnapshot {
   driveAdapterBlockers: string[];
   privateKey: PrivateKeyDiagnostic;
   driveFolder: DriveFolderDiagnostic;
+  /** sheets | native — booleano de presencia DB sin valores. */
+  planningSource: "sheets" | "native";
+  hasDatabaseUrl: boolean;
+  hasDatabaseUrlUnpooled: boolean;
+  hasPostgresUrl: boolean;
+  databaseConfigured: boolean;
   checkedAt: string;
 }
 
@@ -286,6 +294,11 @@ export async function buildRuntimeEnvSnapshot(): Promise<RuntimeEnvSnapshot> {
     driveAdapterBlockers: buildDriveAdapterBlockers(),
     privateKey,
     driveFolder,
+    planningSource: getPlanningSource(),
+    hasDatabaseUrl: Boolean(process.env.DATABASE_URL?.trim()),
+    hasDatabaseUrlUnpooled: Boolean(process.env.DATABASE_URL_UNPOOLED?.trim()),
+    hasPostgresUrl: Boolean(process.env.POSTGRES_URL?.trim()),
+    databaseConfigured: isDatabaseConfigured(),
     checkedAt: new Date().toISOString(),
   };
 }

@@ -112,7 +112,7 @@ export function OperationalTable<T>({
 }
 
 interface SyncStatusBarProps {
-  source: "drive" | "demo";
+  source: "drive" | "demo" | "native";
   lastRefreshAt: Date | null;
   updatedAgoLabel?: string;
   liveConnected?: boolean;
