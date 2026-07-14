@@ -29,6 +29,15 @@ export interface DomainWorkItem {
   weekId: string | null;
   date: string | null;
   plannedDate: string | null;
+  /** Rango A1 del encabezado de fecha (ej. ELABORACION!D585). */
+  dateHeaderSourceRange: string | null;
+  /** Cómo se resolvió plannedDate desde el planner. */
+  dateResolutionMethod:
+    | "native_date"
+    | "full_human_header"
+    | "split_header"
+    | "inherited_week_context"
+    | null;
 
   plannedClient: string | null;
   plannedProduct: string | null;
@@ -83,6 +92,8 @@ export function createEmptyDomainWorkItem(internalId: string): DomainWorkItem {
     weekId: null,
     date: null,
     plannedDate: null,
+    dateHeaderSourceRange: null,
+    dateResolutionMethod: null,
     plannedClient: null,
     plannedProduct: null,
     plannedQuantity: null,

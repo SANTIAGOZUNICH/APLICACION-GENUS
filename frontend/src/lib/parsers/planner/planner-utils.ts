@@ -1,4 +1,9 @@
 import { normalizePersonName } from "@/lib/operational/display-fields";
+import {
+  countResolvableDateCells,
+  extractColumnDatesFromHeaderRow,
+  SEMANAS_OPERATIONAL_YEAR,
+} from "@/lib/parsers/planner/date-header-resolver";
 
 const WEEK_DAYS = ["lunes", "martes", "miercoles", "jueves", "viernes"] as const;
 
@@ -82,20 +87,20 @@ export function parseLineFromCell(cell: string): string | null {
 
 const DAY_LABELS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"] as const;
 
-/** Fila con fechas ISO o dd/mm en varias columnas (geometría columnar nueva). */
+/**
+ * Fila con fechas nativas (ISO/dd/mm) o humanas del planner
+ * ("martes 14 julio", "Martes 14 de julio", …).
+ */
 export function isDateHeaderRow(row: string[]): boolean {
-  let dateCount = 0;
-  for (const cell of row) {
-    const t = cell.trim();
-    if (!t) continue;
-    if (/^\d{4}-\d{2}-\d{2}/.test(t)) dateCount += 1;
-    else if (/^\d{1,2}\/\d{1,2}/.test(t)) dateCount += 1;
-  }
-  return dateCount >= 3;
+  return countResolvableDateCells(row, SEMANAS_OPERATIONAL_YEAR) >= 3;
 }
 
 /** Mapea columnas con fechas a días de la semana (Lunes→Viernes). */
 export function extractDayColumnsFromDateRow(row: string[]): Map<number, string> {
+  const extracted = extractColumnDatesFromHeaderRow(row, SEMANAS_OPERATIONAL_YEAR);
+  if (extracted.dayColumns.size > 0) return extracted.dayColumns;
+
+  // Fallback posicional legacy si no hubo parseo humano.
   const map = new Map<number, string>();
   const cols: number[] = [];
   row.forEach((cell, index) => {

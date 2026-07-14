@@ -31,4 +31,27 @@ describe("work-item date filters", () => {
     ];
     expect(filterWorkItemsByWeekStart(items, "2026-07-13")).toHaveLength(1);
   });
+
+  it("Hoy en Buenos Aires agrupa solo plannedDate del día", () => {
+    const today = "2026-07-14";
+    const items = [
+      createSectorWorkItem("ELABORACION", "a", {
+        plannedDate: today,
+        weekStart: "2026-07-13",
+        product: "HOY-A",
+      }),
+      createSectorWorkItem("ELABORACION", "b", {
+        plannedDate: "2026-07-13",
+        weekStart: "2026-07-13",
+        product: "AYER",
+      }),
+      createSectorWorkItem("ENVASADO_MASIVO", "c", {
+        plannedDate: today,
+        weekStart: "2026-07-13",
+        product: "HOY-M",
+      }),
+    ];
+    const hoy = filterWorkItemsByDate(items, today);
+    expect(hoy.map((i) => i.product).sort()).toEqual(["HOY-A", "HOY-M"]);
+  });
 });

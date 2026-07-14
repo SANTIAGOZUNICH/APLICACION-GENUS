@@ -58,6 +58,15 @@ export interface WorkItem {
   date: string | null;
   /** Fecha planificada ISO YYYY-MM-DD (zona BA). */
   plannedDate: string | null;
+  /** Celda del encabezado de fecha en SEMANAS (auditoría). */
+  dateHeaderSourceRange?: string | null;
+  /** Método de resolución temporal del planner. */
+  dateResolutionMethod?:
+    | "native_date"
+    | "full_human_header"
+    | "split_header"
+    | "inherited_week_context"
+    | null;
   dayLabel: string | null;
   dayOfWeek: string | null;
   weekLabel: string | null;
