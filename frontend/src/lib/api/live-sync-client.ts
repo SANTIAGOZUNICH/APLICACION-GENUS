@@ -16,18 +16,29 @@ export interface LiveSyncCheckResponse {
   revision?: number;
   checkedAt: string;
   mode?: string;
+  workItems?: WorkItem[];
+  counts?: {
+    total: number;
+    hoy: number;
+    semana: number;
+    pendientes: number;
+    bloqueados: number;
+  };
+  metrics?: Record<string, unknown>;
 }
 
-/** Poll liviano Sheet→app. No descarga WorkItems. */
+/** Poll liviano Sheet→app. Si changed, trae WorkItems en la misma respuesta. */
 export async function fetchLiveSyncCheck(params: {
   sector: SectorId;
   knownVersion?: string | null;
+  ownerPerson?: string | null;
   date?: string | null;
   weekStart?: string | null;
   signal?: AbortSignal;
 }): Promise<LiveSyncCheckResponse> {
   const search = new URLSearchParams({ sector: params.sector });
   if (params.knownVersion) search.set("knownVersion", params.knownVersion);
+  if (params.ownerPerson) search.set("ownerPerson", params.ownerPerson);
   if (params.date) search.set("date", params.date);
   if (params.weekStart) search.set("weekStart", params.weekStart);
 

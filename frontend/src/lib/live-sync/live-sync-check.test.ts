@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const rebuildCalls: string[] = [];
+import { createHash } from "node:crypto";
 
 vi.mock("@/lib/adapters/drive/operations-document-repository", () => ({
   operationsDocumentRepository: {
@@ -13,6 +12,16 @@ vi.mock("@/lib/adapters/drive/operations-document-repository", () => ({
   },
 }));
 
+vi.mock("@/lib/adapters/drive/drive-folder-config", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/adapters/drive/drive-folder-config")
+  >("@/lib/adapters/drive/drive-folder-config");
+  return {
+    ...actual,
+    getCriticalSheetFastPathId: vi.fn(() => "semanas-test-id"),
+  };
+});
+
 vi.mock("@/lib/adapters/drive/cache/server-cache", () => ({
   serverCache: {
     deleteByPrefix: vi.fn(),
@@ -22,61 +31,16 @@ vi.mock("@/lib/adapters/drive/cache/server-cache", () => ({
 }));
 
 vi.mock("@/lib/parsers/load-operational-pipeline", () => ({
-  loadOperationalPipeline: vi.fn(async () => {
-    rebuildCalls.push("rebuild");
-    return {
-      workItems: [
-        {
-          id: "wi-probiotic",
-          sector: "ELABORACION",
-          ownerSector: "ELABORACION",
-          ownerPerson: "Nicolás",
-          source: "semanas_2026",
-          sourceFileId: "semanas-test-id",
-          sourceSheet: "ELABORACION",
-          sourceRange: "ELABORACION!537:2",
-          productSourceRange: "ELABORACION!535:2",
-          quantitySourceRange: "ELABORACION!536:2",
-          originStage: "ELABORACION",
-          date: null,
-          plannedDate: "2026-07-14",
-          dayLabel: null,
-          dayOfWeek: null,
-          weekLabel: null,
-          weekStart: null,
-          weekId: null,
-          client: "Cliente",
-          product: "PROBIOTONIC BALANCE",
-          quantity: "161KG",
-          unit: null,
-          line: null,
-          deliveryDate: null,
-          status: "pendiente",
-          priority: "NORMAL",
-          pedidoRef: null,
-          oeRef: null,
-          oaRef: null,
-          loteRef: null,
-          notes: null,
-          actionLabel: "Abrir OE",
-          href: null,
-          confidence: "high",
-          createdFrom: "test",
-          generatedEntities: [],
-          dependsOn: null,
-          blockedBy: null,
-          unblocks: null,
-        },
-      ],
-      qualityItems: [],
-      warnings: [],
-      sourcesIndexed: {
-        semanas_2026: true,
-        pedidos_2026: false,
-        asignacion_lotes_2026: false,
-      },
-    };
-  }),
+  loadOperationalPipeline: vi.fn(async () => ({
+    workItems: [],
+    qualityItems: [],
+    warnings: [],
+    sourcesIndexed: {
+      semanas_2026: true,
+      pedidos_2026: false,
+      asignacion_lotes_2026: false,
+    },
+  })),
 }));
 
 vi.mock("@/lib/config/data-mode", () => ({
@@ -96,106 +60,222 @@ import {
   resetLiveSyncEngineCheckStateForTests,
 } from "@/lib/live-sync/live-sync-engine";
 import {
-  rememberSheetHash,
   resetOperationalSheetsWatcherForTests,
   setSemanasDigestReaderForTests,
 } from "@/lib/live-sync/operational-sheets-watcher";
-import { operationalEventBus } from "@/lib/live-sync/operational-event-bus";
+import { shouldAcceptLiveSyncUpdate } from "@/lib/live-sync/live-sync-version";
+import type { WorkItem } from "@/types/operational/work-item";
 
-describe("live-sync check orchestration", () => {
+/** Geometría Flujo A: B536 quantity bajo Rama Nicolás. */
+function probioticRows(qty: string): string[][] {
+  return [
+    ["", "Lunes", "", "Martes", "", "Miércoles", "", "Jueves", "", "Viernes"],
+    ["", "14", "", "15", "", "16", "", "17", "", "18"],
+    ["", "Julio", "", "Julio", "", "Julio", "", "Julio", "", "Julio"],
+    ["", "NICOLAS"],
+    ["", "NIZA", "", "", "", "", "", "", "", ""],
+    ["", "PROBIOTONIC BALANCE", "", "", "", "", "", "", "", ""],
+    ["", qty, "", "", "", "", "", "", "", ""],
+  ];
+}
+
+function hashTabs(tabs: { tab: string; rows: string[][] }[]): string {
+  const parts = tabs.map(
+    (t) =>
+      `${t.tab}::${t.rows.map((r) => r.map((c) => String(c ?? "")).join("\t")).join("\n")}`
+  );
+  return createHash("sha256").update(parts.join("\n")).digest("hex");
+}
+
+function tabsWithQty(qty: string) {
+  return [
+    { tab: "ELABORACION", rows: probioticRows(qty) },
+    { tab: "ACONDICIONAMIENTO", rows: [] as string[][] },
+  ];
+}
+
+describe("live-sync check hot path (bug 160→161)", () => {
   beforeEach(() => {
-    rebuildCalls.length = 0;
     resetOperationalSheetsWatcherForTests();
     resetLiveSyncEngineCheckStateForTests();
     liveSyncStore.resetForTests();
-    vi.mocked(operationalEventBus.publish).mockClear();
   });
 
-  it("hash igual → no rebuild", async () => {
+  it("hash distinto → changed + WorkItem PROBIOTONIC 161KG sin pipeline completo", async () => {
+    const tabs160 = tabsWithQty("160KG");
+    const tabs161 = tabsWithQty("161KG");
+    const v160 = hashTabs(tabs160);
+    const v161 = hashTabs(tabs161);
+
     setSemanasDigestReaderForTests(async () => ({
-      hash: "v-stable",
-      readDurationMs: 10,
+      hash: v160,
+      readDurationMs: 5,
+      hashDurationMs: 1,
+      tabs: tabs160,
     }));
 
-    liveSyncStore.setSnapshot({
-      revision: 3,
-      updatedAt: new Date().toISOString(),
-      sheetsSyncedAt: new Date().toISOString(),
-      workItems: [],
-      qualityItems: [],
-      warnings: [],
-      sourcesIndexed: {
-        semanas_2026: true,
-        pedidos_2026: false,
-        asignacion_lotes_2026: false,
-      },
+    const baseline = await liveSyncEngine.check({
+      sector: "ELABORACION",
+      ownerPerson: "Nicolás",
+      knownVersion: null,
     });
-    rememberSheetHash("semanas_2026", "v-stable");
-
-    const result = await liveSyncEngine.check("v-stable");
-    expect(result.changed).toBe(false);
-    expect(result.version).toBe("v-stable");
-    expect(rebuildCalls.length).toBe(0);
-  });
-
-  it("hash distinto → rebuild + SSE snapshot.updated", async () => {
-    setSemanasDigestReaderForTests(async () => ({
-      hash: "v1",
-      readDurationMs: 15,
-    }));
-    await liveSyncEngine.check(null);
+    expect(baseline.version).toBe(v160);
 
     resetOperationalSheetsWatcherForTests();
     resetLiveSyncEngineCheckStateForTests();
     setSemanasDigestReaderForTests(async () => ({
-      hash: "v2",
-      readDurationMs: 15,
+      hash: v161,
+      readDurationMs: 5,
+      hashDurationMs: 1,
+      tabs: tabs161,
     }));
 
-    const result = await liveSyncEngine.check("v1");
+    const result = await liveSyncEngine.check({
+      sector: "ELABORACION",
+      ownerPerson: "Nicolás",
+      knownVersion: v160,
+    });
+
     expect(result.changed).toBe(true);
-    expect(result.version).toBe("v2");
-    expect(rebuildCalls.length).toBeGreaterThanOrEqual(1);
-    expect(operationalEventBus.publish).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "snapshot.updated" })
+    expect(result.version).toBe(v161);
+    expect(result.workItems).toBeDefined();
+
+    const probiotic = result.workItems!.find((i) =>
+      String(i.product ?? "").toUpperCase().includes("PROBIOTONIC")
     );
+    expect(probiotic?.quantity).toBe("161KG");
+    expect(result.metrics.parseDurationMs).toBeLessThan(2000);
   });
 
-  it("checks simultáneos comparten una sola orquestación/rebuild", async () => {
+  it("cliente aplica 161KG sin /work-items y rechaza stale 160KG", async () => {
+    const tabs161 = tabsWithQty("161KG");
+    const v161 = hashTabs(tabs161);
+
+    setSemanasDigestReaderForTests(async () => ({
+      hash: v161,
+      readDurationMs: 4,
+      hashDurationMs: 1,
+      tabs: tabs161,
+    }));
+
+    const result = await liveSyncEngine.check({
+      sector: "ELABORACION",
+      ownerPerson: "Nicolás",
+      knownVersion: "hash-160-old",
+    });
+
+    expect(result.changed).toBe(true);
+    let applied: WorkItem[] = [];
+    let appliedRevision = 0;
+    let appliedVersion = "";
+
+    if (
+      result.changed &&
+      result.workItems &&
+      shouldAcceptLiveSyncUpdate({
+        appliedRevision: null,
+        appliedVersion: null,
+        incomingRevision: result.revision,
+        incomingVersion: result.version,
+      })
+    ) {
+      applied = result.workItems;
+      appliedRevision = result.revision;
+      appliedVersion = result.version;
+    }
+
+    expect(
+      applied.find((i) => String(i.product ?? "").toUpperCase().includes("PROBIOTONIC"))
+        ?.quantity
+    ).toBe("161KG");
+
+    const staleAccept = shouldAcceptLiveSyncUpdate({
+      appliedRevision,
+      appliedVersion,
+      incomingRevision: appliedRevision - 1,
+      incomingVersion: "hash-160-old",
+    });
+    expect(staleAccept).toBe(false);
+    expect(appliedVersion).toBe(v161);
+  });
+
+  it("Producción recibe proyección 161KG en la misma request", async () => {
+    const tabs161 = tabsWithQty("161KG");
+    const v161 = hashTabs(tabs161);
+
+    setSemanasDigestReaderForTests(async () => ({
+      hash: v161,
+      readDurationMs: 4,
+      hashDurationMs: 1,
+      tabs: tabs161,
+    }));
+
+    const result = await liveSyncEngine.check({
+      sector: "PRODUCCION",
+      knownVersion: "prev",
+    });
+
+    expect(result.changed).toBe(true);
+    const probiotic = result.workItems!.find(
+      (i) =>
+        String(i.product ?? "").toUpperCase().includes("PROBIOTONIC") &&
+        String(i.ownerPerson ?? "").includes("Nicol")
+    );
+    expect(probiotic?.quantity).toBe("161KG");
+  });
+
+  it("hash igual → no parse / sin workItems de cambio", async () => {
+    const tabs = tabsWithQty("160KG");
+    const version = hashTabs(tabs);
+
+    setSemanasDigestReaderForTests(async () => ({
+      hash: version,
+      readDurationMs: 3,
+      hashDurationMs: 1,
+      tabs,
+    }));
+
+    await liveSyncEngine.check({
+      sector: "ELABORACION",
+      ownerPerson: "Nicolás",
+      knownVersion: null,
+    });
+
+    const unchanged = await liveSyncEngine.check({
+      sector: "ELABORACION",
+      ownerPerson: "Nicolás",
+      knownVersion: version,
+    });
+
+    expect(unchanged.changed).toBe(false);
+    expect(unchanged.workItems).toBeUndefined();
+    expect(unchanged.metrics.parseDurationMs).toBe(0);
+  });
+
+  it("múltiples checks simultáneos comparten una lectura/parse", async () => {
     let reads = 0;
+    const tabs = tabsWithQty("161KG");
+    const version = hashTabs(tabs);
+
     setSemanasDigestReaderForTests(async () => {
       reads += 1;
-      await new Promise((r) => setTimeout(r, 40));
-      return { hash: "v-parallel", readDurationMs: 40 };
+      await new Promise((r) => setTimeout(r, 30));
+      return {
+        hash: version,
+        readDurationMs: 30,
+        hashDurationMs: 1,
+        tabs,
+      };
     });
 
     const results = await Promise.all([
-      liveSyncEngine.check("old"),
-      liveSyncEngine.check("old"),
-      liveSyncEngine.check("old"),
+      liveSyncEngine.check({ sector: "ELABORACION", ownerPerson: "Nicolás", knownVersion: "old" }),
+      liveSyncEngine.check({ sector: "ELABORACION", ownerPerson: "Nicolás", knownVersion: "old" }),
+      liveSyncEngine.check({ sector: "PRODUCCION", knownVersion: "old" }),
     ]);
 
     expect(reads).toBe(1);
-    expect(results.every((r) => r.changed && r.version === "v-parallel")).toBe(true);
-    expect(rebuildCalls.length).toBe(1);
-  });
-
-  it("WorkItem filtrable por sector/persona tras cambio", async () => {
-    setSemanasDigestReaderForTests(async () => ({
-      hash: "v-item",
-      readDurationMs: 8,
-    }));
-
-    const check = await liveSyncEngine.check("prev");
-    expect(check.changed).toBe(true);
-
-    const listed = await liveSyncEngine.listForSector("ELABORACION", {
-      ownerPerson: "Nicolás",
-      date: "2026-07-14",
-    });
-
-    expect(listed.workItems).toHaveLength(1);
-    expect(listed.workItems[0]?.quantity).toBe("161KG");
-    expect(listed.ownerPerson).toBe("Nicolás");
+    expect(results.every((r) => r.changed && r.version === version)).toBe(true);
+    expect(results[0]!.workItems!.some((i) => i.quantity === "161KG")).toBe(true);
   });
 });

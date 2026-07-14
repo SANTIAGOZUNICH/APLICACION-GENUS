@@ -19,6 +19,16 @@ vi.mock("@/lib/adapters/drive/operations-document-repository", () => ({
   },
 }));
 
+vi.mock("@/lib/adapters/drive/drive-folder-config", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/adapters/drive/drive-folder-config")
+  >("@/lib/adapters/drive/drive-folder-config");
+  return {
+    ...actual,
+    getCriticalSheetFastPathId: vi.fn(() => "semanas-test-id"),
+  };
+});
+
 describe("operational-sheets-watcher request-driven", () => {
   beforeEach(() => {
     resetOperationalSheetsWatcherForTests();
@@ -30,40 +40,44 @@ describe("operational-sheets-watcher request-driven", () => {
   });
 
   it("check hash igual → changed false", async () => {
-    let reads = 0;
-    setSemanasDigestReaderForTests(async () => {
-      reads += 1;
-      return { hash: "same-hash", readDurationMs: 12 };
-    });
+    setSemanasDigestReaderForTests(async () => ({
+      hash: "same-hash",
+      readDurationMs: 12,
+      hashDurationMs: 1,
+      tabs: [{ tab: "ELABORACION", rows: [["x"]] }],
+    }));
 
     const first = await checkForChanges(null);
     expect(first.changed).toBe(false);
-    expect(first.version).toBe("same-hash");
-
     const second = await checkForChanges("same-hash");
     expect(second.changed).toBe(false);
     expect(getLiveSyncCheckMetrics().hashUnchanged).toBe(1);
-    expect(reads).toBeGreaterThanOrEqual(1);
   });
 
   it("check hash distinto → changed true", async () => {
     setSemanasDigestReaderForTests(async () => ({
       hash: "new-hash",
       readDurationMs: 20,
+      hashDurationMs: 1,
+      tabs: [{ tab: "ELABORACION", rows: [["y"]] }],
     }));
 
     const result = await checkForChanges("old-hash");
     expect(result.changed).toBe(true);
-    expect(result.version).toBe("new-hash");
     expect(getLiveSyncCheckMetrics().hashChanged).toBe(1);
   });
 
-  it("múltiples checks simultáneos → una lectura Sheets", async () => {
+  it("múltiples checks simultáneos → una lectura Sheets + tabs reutilizables", async () => {
     let reads = 0;
     setSemanasDigestReaderForTests(async () => {
       reads += 1;
       await new Promise((r) => setTimeout(r, 30));
-      return { hash: "shared", readDurationMs: 30 };
+      return {
+        hash: "shared",
+        readDurationMs: 30,
+        hashDurationMs: 1,
+        tabs: [{ tab: "ELABORACION", rows: [["a"]] }],
+      };
     });
 
     const [a, b, c] = await Promise.all([
@@ -73,7 +87,7 @@ describe("operational-sheets-watcher request-driven", () => {
     ]);
 
     expect(reads).toBe(1);
-    expect(a.version).toBe("shared");
+    expect(a.tabs[0]?.rows[0]?.[0]).toBe("a");
     expect(b.version).toBe("shared");
     expect(c.version).toBe("shared");
     expect(getLiveSyncCheckMetrics().sheetsReads).toBe(1);

@@ -11,6 +11,8 @@ export interface LiveSyncCheckClientResult {
   version: string;
   revision?: number;
   checkedAt: string;
+  workItems?: unknown[];
+  counts?: unknown;
 }
 
 export interface LiveSyncPollControllerOptions {

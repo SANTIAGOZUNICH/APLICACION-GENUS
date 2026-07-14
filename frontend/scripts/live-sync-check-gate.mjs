@@ -25,8 +25,12 @@ function headers() {
   return h;
 }
 
-async function check(knownVersion) {
-  const params = new URLSearchParams({ sector: "ELABORACION" });
+async function check(knownVersion, extra = {}) {
+  const params = new URLSearchParams({
+    sector: extra.sector ?? "ELABORACION",
+  });
+  if (extra.ownerPerson) params.set("ownerPerson", extra.ownerPerson);
+  if (extra.date) params.set("date", extra.date);
   if (knownVersion) params.set("knownVersion", knownVersion);
   const t0 = performance.now();
   const res = await fetch(`${BASE}/api/v1/live-sync/check?${params}`, {
@@ -36,6 +40,16 @@ async function check(knownVersion) {
   const ms = Math.round(performance.now() - t0);
   const body = await res.json();
   return { ok: res.ok, status: res.status, ms, body };
+}
+
+function probioticQty(body) {
+  const items = body?.workItems ?? [];
+  const hit = items.find((i) =>
+    String(i.product ?? "")
+      .toUpperCase()
+      .includes("PROBIOTONIC")
+  );
+  return hit?.quantity ?? null;
 }
 
 async function workItems() {
@@ -88,8 +102,9 @@ if (WATCH) {
   const started = performance.now();
   let last = null;
   while (performance.now() - started < GATE_MAX_MS + 5_000) {
-    last = await check(FROM);
+    last = await check(FROM, { ownerPerson: "Nicolás" });
     const elapsed = Math.round(performance.now() - started);
+    const qtyFromCheck = probioticQty(last.body);
     console.log(
       JSON.stringify({
         elapsed,
@@ -97,22 +112,31 @@ if (WATCH) {
         changed: last.body?.changed,
         version: last.body?.version,
         revision: last.body?.revision,
+        quantityFromCheck: qtyFromCheck,
         metrics: last.body?.metrics,
       })
     );
     if (last.body?.changed) {
-      const items = await workItems();
-      const item = findProbiotic(items);
+      // Autoritativo: no depender de GET /work-items
+      const prod = await check(FROM, { sector: "PRODUCCION" });
+      const prodQty = probioticQty(prod.body);
       const total = Math.round(performance.now() - started);
-      const pass = total <= GATE_MAX_MS && /161/.test(String(item?.quantity ?? ""));
+      const pass =
+        total <= GATE_MAX_MS &&
+        /161/.test(String(qtyFromCheck ?? "")) &&
+        /161/.test(String(prodQty ?? "")) &&
+        (last.body?.metrics?.totalDurationMs ?? last.ms) < 2500;
       console.log(
         JSON.stringify(
           {
             gate: pass ? "PASS" : "FAIL",
             totalMs: total,
             gateMaxMs: GATE_MAX_MS,
-            quantity: item?.quantity ?? null,
-            product: item?.product ?? null,
+            quantityNicolas: qtyFromCheck,
+            quantityProduccion: prodQty,
+            checkTotalMs: last.body?.metrics?.totalDurationMs ?? last.ms,
+            parseMs: last.body?.metrics?.parseDurationMs ?? null,
+            readMs: last.body?.metrics?.readDurationMs ?? null,
           },
           null,
           2

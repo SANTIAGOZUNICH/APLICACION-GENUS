@@ -3,14 +3,16 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { google } from "googleapis";
 import { createGoogleAuth } from "@/lib/adapters/google/google-auth";
+import { getCriticalSheetFastPathId } from "@/lib/adapters/drive/drive-folder-config";
 import { operationsDocumentRepository } from "@/lib/adapters/drive/operations-document-repository";
 import type { CriticalSheetKey } from "@/lib/adapters/drive/drive-folder-config";
 import { PLANNER_TABS } from "@/lib/parsers/planner/planner-parser";
+import type { SemanasTabPayload } from "@/lib/live-sync/load-semanas-hot-path";
 
 /**
  * OperationalSheetsWatcher — servicio request-driven.
  * Calcula versión/hash de SEMANAS por contenido (Sheets API).
- * No inicia timers ni loops en background entre invocaciones.
+ * Conserva las filas del batchGet para reutilizar en el parse caliente.
  */
 
 const OPERATIONAL_TABS = [...PLANNER_TABS] as const;
@@ -31,7 +33,10 @@ export interface LiveSyncCheckMetrics {
   hashChanged: number;
   rateLimit429: number;
   lastReadDurationMs: number | null;
+  lastHashDurationMs: number | null;
   lastParseDurationMs: number | null;
+  lastProjectDurationMs: number | null;
+  lastTotalCheckDurationMs: number | null;
 }
 
 export interface SemanasVersionResult {
@@ -40,11 +45,15 @@ export interface SemanasVersionResult {
   sampledAt: string;
   fromCache: boolean;
   readDurationMs: number;
+  hashDurationMs: number;
+  tabs: SemanasTabPayload[];
 }
 
 type DigestReader = (spreadsheetId: string) => Promise<{
   hash: string;
   readDurationMs: number;
+  hashDurationMs: number;
+  tabs: SemanasTabPayload[];
 }>;
 
 const lastHashes = new Map<CriticalSheetKey, string>();
@@ -57,7 +66,10 @@ const metrics: LiveSyncCheckMetrics = {
   hashChanged: 0,
   rateLimit429: 0,
   lastReadDurationMs: null,
+  lastHashDurationMs: null,
   lastParseDurationMs: null,
+  lastProjectDurationMs: null,
+  lastTotalCheckDurationMs: null,
 };
 
 let digestReaderOverride: DigestReader | null = null;
@@ -84,9 +96,24 @@ function isRateLimitError(err: unknown): boolean {
   return false;
 }
 
+function digestFromTabs(tabs: SemanasTabPayload[]): {
+  hash: string;
+  hashDurationMs: number;
+} {
+  const hashStarted = Date.now();
+  const parts = tabs.map((t) => `${t.tab}::${serializeRows(t.rows)}`);
+  if (parts.length === 0) parts.push("empty");
+  return {
+    hash: hashRows(parts),
+    hashDurationMs: Date.now() - hashStarted,
+  };
+}
+
 async function defaultDigestReader(spreadsheetId: string): Promise<{
   hash: string;
   readDurationMs: number;
+  hashDurationMs: number;
+  tabs: SemanasTabPayload[];
 }> {
   const auth = createGoogleAuth();
   const sheets = google.sheets({ version: "v4", auth });
@@ -98,28 +125,34 @@ async function defaultDigestReader(spreadsheetId: string): Promise<{
       ranges: [...OPERATIONAL_TABS],
     });
 
-    const parts: string[] = [];
+    const tabs: SemanasTabPayload[] = [];
     for (const valueRange of response.data.valueRanges ?? []) {
       const range = valueRange.range ?? "unknown";
       const tab = range.split("!")[0]?.replace(/^'|'$/g, "") ?? range;
       const rows = (valueRange.values as string[][]) ?? [];
-      parts.push(`${tab}::${serializeRows(rows)}`);
+      tabs.push({ tab, rows });
     }
 
-    if (parts.length === 0) {
-      parts.push("empty");
-    }
+    const readDurationMs = Date.now() - started;
+    const { hash, hashDurationMs } = digestFromTabs(tabs);
 
-    return {
-      hash: hashRows(parts),
-      readDurationMs: Date.now() - started,
-    };
+    return { hash, readDurationMs, hashDurationMs, tabs };
   } catch (err) {
     if (isRateLimitError(err)) {
       metrics.rateLimit429 += 1;
     }
     throw err;
   }
+}
+
+async function resolveSemanasSpreadsheetId(): Promise<string> {
+  const fastPath = getCriticalSheetFastPathId("semanas_2026");
+  if (fastPath) return fastPath;
+
+  await operationsDocumentRepository.ensureOperationalReady();
+  const ref = await operationsDocumentRepository.tryGetCriticalSheetRef("semanas_2026");
+  if (!ref) throw new Error("SEMANAS 2026 no disponible.");
+  return ref.fileId;
 }
 
 /** Versión global de SEMANAS (ELABORACION + ACONDICIONAMIENTO vía batchGet). */
@@ -139,22 +172,21 @@ export async function getSemanasVersion(): Promise<SemanasVersionResult> {
     metrics.checksExecuted += 1;
     metrics.sheetsReads += 1;
 
-    await operationsDocumentRepository.ensureOperationalReady();
-    const ref = await operationsDocumentRepository.tryGetCriticalSheetRef("semanas_2026");
-    if (!ref) {
-      throw new Error("SEMANAS 2026 no disponible.");
-    }
-
+    const spreadsheetId = await resolveSemanasSpreadsheetId();
     const reader = digestReaderOverride ?? defaultDigestReader;
-    const { hash, readDurationMs } = await reader(ref.fileId);
+    const { hash, readDurationMs, hashDurationMs, tabs } = await reader(spreadsheetId);
+
     metrics.lastReadDurationMs = readDurationMs;
+    metrics.lastHashDurationMs = hashDurationMs;
 
     const result: SemanasVersionResult = {
       version: hash,
-      spreadsheetId: ref.fileId,
+      spreadsheetId,
       sampledAt: new Date().toISOString(),
       fromCache: false,
       readDurationMs,
+      hashDurationMs,
+      tabs,
     };
 
     cachedVersion = result;
@@ -171,9 +203,7 @@ export async function getSemanasVersion(): Promise<SemanasVersionResult> {
 export async function computeSheetDigest(
   key: CriticalSheetKey
 ): Promise<SheetContentDigest | null> {
-  if (key !== "semanas_2026") {
-    return null;
-  }
+  if (key !== "semanas_2026") return null;
 
   try {
     const version = await getSemanasVersion();
@@ -188,10 +218,6 @@ export async function computeSheetDigest(
   }
 }
 
-/**
- * Compara knownVersion con el hash vivo de SEMANAS.
- * No rebuild — solo lectura/versión. Side effect: actualiza métricas de igualdad.
- */
 export async function checkForChanges(knownVersion: string | null | undefined): Promise<{
   changed: boolean;
   version: string;
@@ -204,11 +230,8 @@ export async function checkForChanges(knownVersion: string | null | undefined): 
   const known = knownVersion?.trim() || null;
   const changed = Boolean(known) && known !== digest.version;
 
-  if (changed) {
-    metrics.hashChanged += 1;
-  } else if (known) {
-    metrics.hashUnchanged += 1;
-  }
+  if (changed) metrics.hashChanged += 1;
+  else if (known) metrics.hashUnchanged += 1;
 
   return {
     changed,
@@ -222,13 +245,15 @@ export async function checkForChanges(knownVersion: string | null | undefined): 
 
 export function rememberSheetHash(key: CriticalSheetKey, hash: string): void {
   lastHashes.set(key, hash);
-  if (key === "semanas_2026") {
-    if (cachedVersion && cachedVersion.version === hash) {
-      cachedVersionAt = Date.now();
-    } else if (cachedVersion) {
-      cachedVersion = { ...cachedVersion, version: hash, sampledAt: new Date().toISOString() };
-      cachedVersionAt = Date.now();
+  if (key === "semanas_2026" && cachedVersion) {
+    if (cachedVersion.version !== hash) {
+      cachedVersion = {
+        ...cachedVersion,
+        version: hash,
+        sampledAt: new Date().toISOString(),
+      };
     }
+    cachedVersionAt = Date.now();
   }
 }
 
@@ -242,6 +267,14 @@ export function getLiveSyncCheckMetrics(): LiveSyncCheckMetrics {
 
 export function recordParseDuration(ms: number): void {
   metrics.lastParseDurationMs = ms;
+}
+
+export function recordProjectDuration(ms: number): void {
+  metrics.lastProjectDurationMs = ms;
+}
+
+export function recordTotalCheckDuration(ms: number): void {
+  metrics.lastTotalCheckDurationMs = ms;
 }
 
 export function recordHashComparison(changed: boolean): void {
@@ -263,7 +296,10 @@ export function resetOperationalSheetsWatcherForTests(): void {
   metrics.hashChanged = 0;
   metrics.rateLimit429 = 0;
   metrics.lastReadDurationMs = null;
+  metrics.lastHashDurationMs = null;
   metrics.lastParseDurationMs = null;
+  metrics.lastProjectDurationMs = null;
+  metrics.lastTotalCheckDurationMs = null;
 }
 
 /** Solo tests — inyecta lector de digest sin Sheets API. */

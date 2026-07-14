@@ -64,6 +64,9 @@ export interface OperationalPlanSnapshot {
   qualityItems: QualityItem[];
   message?: string;
   operationalOverlay?: OperationalOverlay;
+  /** Version SEMANAS / revision Live Sync — anti-stale. */
+  semanasVersion?: string | null;
+  revision?: number;
 }
 
 /** Overlay operativo autoritativo del servidor (Live Sync). */

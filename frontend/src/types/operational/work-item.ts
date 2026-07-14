@@ -110,4 +110,8 @@ export interface WorkItemsResponse {
   qualityItems?: import("@/features/os/operational/types").QualityItem[];
   /** Estado operativo server-side — propagación cross-usuario vía Live Sync. */
   operationalOverlay?: import("@/features/os/operational/types").OperationalOverlay;
+  /** Revision del snapshot en la instancia que respondió — anti-stale en cliente. */
+  revision?: number;
+  /** Hash SEMANAS aplicado en esa instancia (si existe). */
+  semanasVersion?: string | null;
 }
