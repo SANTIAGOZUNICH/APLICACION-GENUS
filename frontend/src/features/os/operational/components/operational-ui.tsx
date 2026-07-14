@@ -188,6 +188,12 @@ export function SyncStatusBar({
           {detailMessage}
         </p>
       )}
+      {isReal && (
+        <p className="text-[11px] leading-relaxed text-[var(--os-text-muted)]">
+          Trabajo operativo desde SEMANAS 2026. Enriquecimiento PEDIDOS / Dashboard KPI
+          pendiente: convertir PEDIDOS 2026 de Office .xlsx a Google Sheets nativo.
+        </p>
+      )}
     </div>
   );
 }

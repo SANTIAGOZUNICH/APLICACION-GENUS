@@ -161,11 +161,13 @@ describe("Auth session helpers", () => {
   });
 
   it("expone helpers de sesión preview", () => {
-    const session: OsAuthSession = mapMockUserToSession(MOCK_PREVIEW_USERS[0], false);
+    const produccionUser = MOCK_PREVIEW_USERS.find((u) => u.sector === "PRODUCCION");
+    expect(produccionUser).toBeDefined();
+    const session: OsAuthSession = mapMockUserToSession(produccionUser!, false);
     writeAuthSessionToStorages(session, sessionStorage, localStorage);
 
     expect(isAuthenticatedPreview()).toBe(true);
-    expect(getCurrentAuthSession()?.user.email).toBe(MOCK_PREVIEW_USERS[0].email);
+    expect(getCurrentAuthSession()?.user.email).toBe(produccionUser!.email);
     expect(getAuthSector()?.id).toBe("PRODUCCION");
 
     clearAuthSession();

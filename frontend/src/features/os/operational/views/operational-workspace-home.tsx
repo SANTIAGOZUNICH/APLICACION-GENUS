@@ -2,16 +2,15 @@
 
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { CalidadOperationalView } from "./calidad-operational-view";
+import { DepositoOperationalView } from "./deposito-operational-view";
 import {
   ElaboracionOperationalView,
   EnvasadoOperationalView,
 } from "./envasado-operational-view";
 import { ProduccionOperationalView } from "./produccion-operational-view";
-import { PremiumWorkspaceHome } from "@/features/os/workspace/components/premium/premium-workspace-home";
 
 /**
- * Home operativa de /mi-trabajo — tablas tipo Sheets, filtrada por sector/persona.
- * Sectores sin vista operativa aún usan fallback premium (Depósito).
+ * Home operativa de /mi-trabajo — tablas tipo Sheets, filtrada por sector.
  */
 export function OperationalWorkspaceHome() {
   const { sectorId } = usePreviewSession();
@@ -29,7 +28,9 @@ export function OperationalWorkspaceHome() {
       return <ProduccionOperationalView />;
     case "DIRECCION":
       return <ProduccionOperationalView />;
+    case "DEPOSITO":
+      return <DepositoOperationalView />;
     default:
-      return <PremiumWorkspaceHome />;
+      return <DepositoOperationalView />;
   }
 }
