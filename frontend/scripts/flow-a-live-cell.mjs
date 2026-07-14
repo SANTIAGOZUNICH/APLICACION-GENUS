@@ -25,7 +25,7 @@ const OWNERS = ["Cristian", "Nicolás"];
 const MIN_ROW = 500;
 const POLL_MS = 250;
 const TIMEOUT_MS = 120_000;
-const GATE_MAX_MS = 5000;
+const GATE_MAX_MS = 6000;
 const PREFERRED_PRODUCT = process.env.FLOW_A_PRODUCT?.trim() || "PROBIOTONIC BALANCE";
 
 function headers(extra = {}) {

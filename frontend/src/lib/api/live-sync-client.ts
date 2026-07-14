@@ -10,6 +10,42 @@ export async function fetchLiveSyncStatus(): Promise<LiveSyncStatus & { mode?: s
   return response.json() as Promise<LiveSyncStatus & { mode?: string }>;
 }
 
+export interface LiveSyncCheckResponse {
+  changed: boolean;
+  version: string;
+  revision?: number;
+  checkedAt: string;
+  mode?: string;
+}
+
+/** Poll liviano Sheet→app. No descarga WorkItems. */
+export async function fetchLiveSyncCheck(params: {
+  sector: SectorId;
+  knownVersion?: string | null;
+  date?: string | null;
+  weekStart?: string | null;
+  signal?: AbortSignal;
+}): Promise<LiveSyncCheckResponse> {
+  const search = new URLSearchParams({ sector: params.sector });
+  if (params.knownVersion) search.set("knownVersion", params.knownVersion);
+  if (params.date) search.set("date", params.date);
+  if (params.weekStart) search.set("weekStart", params.weekStart);
+
+  const response = await fetch(`/api/v1/live-sync/check?${search.toString()}`, {
+    cache: "no-store",
+    signal: params.signal,
+  });
+
+  if (response.status === 429) {
+    throw new Error("RATE_LIMITED");
+  }
+  if (!response.ok) {
+    throw new Error("No se pudo ejecutar live-sync check.");
+  }
+
+  return response.json() as Promise<LiveSyncCheckResponse>;
+}
+
 export function connectLiveSyncStream(
   sector: SectorId,
   onEvent: (event: LiveSyncEvent) => void,

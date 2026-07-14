@@ -24,7 +24,7 @@ interface UseOperationalPlanResult {
   refresh: () => void;
 }
 
-/** Plan operativo con Live Sync — SSE en lugar de polling cada 30s. */
+/** Plan operativo con Live Sync — poll /check (Sheets) + SSE (Genus OS). */
 export function useOperationalPlan(
   sector: SectorId,
   options?: UseOperationalPlanOptions
@@ -49,6 +49,8 @@ export function useOperationalPlan(
   const { connected, updatedAgoLabel, revision: syncRevision } = useLiveSync({
     sector,
     enabled,
+    date,
+    weekStart,
     onUpdate: refresh,
   });
 

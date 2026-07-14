@@ -8,9 +8,13 @@ import { operationalEventBus } from "@/lib/live-sync/operational-event-bus";
 import { liveSyncStore } from "@/lib/live-sync/live-sync-store";
 import { serverOperationalState } from "@/lib/live-sync/server-operational-state";
 import {
-  detectChangedSheetsByContent,
+  getLiveSyncCheckMetrics,
+  getRememberedSheetHash,
+  getSemanasVersion,
+  invalidateSemanasVersionCache,
   rememberSheetHash,
-  computeSheetDigest,
+  recordHashComparison,
+  recordParseDuration,
 } from "@/lib/live-sync/operational-sheets-watcher";
 import type { LiveSyncSnapshot, LiveSyncStatus } from "@/lib/live-sync/types";
 import {
@@ -31,22 +35,38 @@ const CRITICAL_SHEETS: CriticalSheetKey[] = [
   "asignacion_lotes_2026",
 ];
 
-/** Poll de contenido Sheets — no Drive modifiedTime. */
-const SHEETS_POLL_MS = Number(process.env.GENUS_LIVE_SYNC_POLL_MS ?? "3000");
+/** Última versión SEMANAS ya aplicada al snapshot de esta instancia. */
+let lastAppliedSemanasVersion: string | null = null;
+let ensureAppliedInFlight: Promise<{
+  version: string;
+  revision?: number;
+  checkedAt: string;
+}> | null = null;
 
-let backgroundTimer: ReturnType<typeof setInterval> | null = null;
+export interface LiveSyncCheckResponse {
+  changed: boolean;
+  version: string;
+  revision?: number;
+  checkedAt: string;
+  metrics: ReturnType<typeof getLiveSyncCheckMetrics>;
+}
 
 function invalidateSpreadsheetCache(spreadsheetId: string): void {
   serverCache.deleteByPrefix(`sheet:${spreadsheetId}:`);
 }
 
-async function rebuildSnapshot(reason: string): Promise<LiveSyncSnapshot | null> {
+async function rebuildSnapshot(
+  reason: string,
+  options?: { semanasVersion?: string }
+): Promise<LiveSyncSnapshot | null> {
   const existing = liveSyncStore.getSyncInFlight();
   if (existing) return existing;
 
   const promise = (async () => {
+    const parseStarted = Date.now();
     try {
       const pipeline = await loadOperationalPipeline();
+      recordParseDuration(Date.now() - parseStarted);
 
       if (
         pipeline.workItems.length === 0 &&
@@ -67,9 +87,9 @@ async function rebuildSnapshot(reason: string): Promise<LiveSyncSnapshot | null>
 
       liveSyncStore.setSnapshot(snapshot);
 
-      for (const key of CRITICAL_SHEETS) {
-        const digest = await computeSheetDigest(key);
-        if (digest) rememberSheetHash(key, digest.hash);
+      if (options?.semanasVersion) {
+        rememberSheetHash("semanas_2026", options.semanasVersion);
+        lastAppliedSemanasVersion = options.semanasVersion;
       }
 
       operationalEventBus.publish({
@@ -106,28 +126,6 @@ async function rebuildSnapshot(reason: string): Promise<LiveSyncSnapshot | null>
   return promise;
 }
 
-/**
- * Sync operativa: hash de contenido Sheets API.
- * Drive no participa en la detección normal.
- */
-async function syncIfNeeded(force = false): Promise<void> {
-  const current = liveSyncStore.getSnapshot();
-
-  if (!force && current) {
-    const { changed } = await detectChangedSheetsByContent();
-    if (changed.length === 0) return;
-
-    for (const key of changed) {
-      const ref = await operationsDocumentRepository.tryGetCriticalSheetRef(key);
-      if (ref) invalidateSpreadsheetCache(ref.fileId);
-    }
-  } else if (!force && !current) {
-    // cold — rebuild below
-  }
-
-  await rebuildSnapshot(force ? "forced" : "sheet-content-change");
-}
-
 function applyOperationalOverlay(snapshot: LiveSyncSnapshot): LiveSyncSnapshot {
   return {
     ...snapshot,
@@ -144,30 +142,100 @@ export interface ListForSectorOptions {
   weekStart?: string | null;
 }
 
+/**
+ * Live Sync Engine — request-driven para Sheet→app.
+ * Genus OS → otros usuarios sigue por operaciones + SSE.
+ * No hay setInterval server-side permanente.
+ */
 export class LiveSyncEngine {
-  constructor() {
-    this.ensureBackgroundSync();
-  }
+  /**
+   * Check liviano idempotente:
+   * - lee hash SEMANAS (dedupe / cache 2s en el watcher);
+   * - si knownVersion === hash → sin rebuild;
+   * - si cambió → invalidar, parsear, snapshot, SSE;
+   * - `changed` se deriva por caller según knownVersion.
+   */
+  async check(knownVersion?: string | null): Promise<LiveSyncCheckResponse> {
+    const known = knownVersion?.trim() || null;
+    const detection = await getSemanasVersion();
 
-  private ensureBackgroundSync(): void {
-    if (backgroundTimer || typeof setInterval === "undefined") return;
-    if (process.env.GENUS_LIVE_SYNC_DISABLED === "true") return;
-
-    backgroundTimer = setInterval(() => {
-      void syncIfNeeded(false);
-    }, SHEETS_POLL_MS);
-
-    if (typeof backgroundTimer === "object" && "unref" in backgroundTimer) {
-      backgroundTimer.unref();
+    if (known && known === detection.version) {
+      recordHashComparison(false);
+      if (!liveSyncStore.getSnapshot()) {
+        await this.ensureSemanasSnapshotApplied(detection);
+      } else if (!lastAppliedSemanasVersion) {
+        lastAppliedSemanasVersion = detection.version;
+        rememberSheetHash("semanas_2026", detection.version);
+      }
+      return {
+        changed: false,
+        version: detection.version,
+        revision: liveSyncStore.getSnapshot()?.revision,
+        checkedAt: detection.sampledAt,
+        metrics: getLiveSyncCheckMetrics(),
+      };
     }
+
+    const state = await this.ensureSemanasSnapshotApplied(detection);
+    const changed = Boolean(known) && known !== state.version;
+    if (known) recordHashComparison(changed);
+
+    return {
+      changed,
+      version: state.version,
+      revision: state.revision,
+      checkedAt: state.checkedAt,
+      metrics: getLiveSyncCheckMetrics(),
+    };
   }
 
-  /** Lectura caliente — nunca bloquea en Drive crawl completo. */
+  private async ensureSemanasSnapshotApplied(
+    prefetched?: Awaited<ReturnType<typeof getSemanasVersion>>
+  ): Promise<{
+    version: string;
+    revision?: number;
+    checkedAt: string;
+  }> {
+    if (ensureAppliedInFlight) return ensureAppliedInFlight;
+
+    ensureAppliedInFlight = (async () => {
+      const detection = prefetched ?? (await getSemanasVersion());
+      const snapshot = liveSyncStore.getSnapshot();
+      const applied =
+        lastAppliedSemanasVersion ?? getRememberedSheetHash("semanas_2026") ?? null;
+
+      if (snapshot && applied === detection.version) {
+        return {
+          version: detection.version,
+          revision: snapshot.revision,
+          checkedAt: detection.sampledAt,
+        };
+      }
+
+      invalidateSemanasVersionCache();
+      invalidateSpreadsheetCache(detection.spreadsheetId);
+
+      const rebuilt = await rebuildSnapshot("live-sync-check", {
+        semanasVersion: detection.version,
+      });
+
+      return {
+        version: detection.version,
+        revision: rebuilt?.revision ?? liveSyncStore.getSnapshot()?.revision,
+        checkedAt: new Date().toISOString(),
+      };
+    })().finally(() => {
+      ensureAppliedInFlight = null;
+    });
+
+    return ensureAppliedInFlight;
+  }
+
+  /** Lectura caliente — no dispara detección Sheets en background. */
   async getSnapshot(): Promise<LiveSyncSnapshot | null> {
     const cached = liveSyncStore.getSnapshot();
     if (cached) {
       void operationsDocumentRepository.ensureOperationalReady();
-      void syncIfNeeded(false);
       return applyOperationalOverlay(cached);
     }
 
@@ -277,6 +345,8 @@ export class LiveSyncEngine {
       const ref = await operationsDocumentRepository.tryGetCriticalSheetRef(key);
       if (ref) invalidateSpreadsheetCache(ref.fileId);
     }
+    invalidateSemanasVersionCache();
+    lastAppliedSemanasVersion = null;
     return rebuildSnapshot("manual");
   }
 }
@@ -294,4 +364,10 @@ export function getProductionOverviewFromSnapshot() {
   const overview = buildProductionOverview(items);
   overview.warnings = snapshot.warnings.slice(0, 10);
   return overview;
+}
+
+/** Solo tests. */
+export function resetLiveSyncEngineCheckStateForTests(): void {
+  lastAppliedSemanasVersion = null;
+  ensureAppliedInFlight = null;
 }
