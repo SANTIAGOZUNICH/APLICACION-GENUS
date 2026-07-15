@@ -243,7 +243,7 @@ export function CalidadOperationalView() {
           updatedAgoLabel={updatedAgoLabel}
           liveConnected={liveConnected}
           loading={loading}
-          detailMessage={data?.message}
+          detailMessage={data?.source === "native" ? null : data?.message}
         />
       </header>
 

@@ -12,6 +12,7 @@ import { OperationalDayNav } from "../components/operational-day-nav";
 import { OperationalWeekBoard } from "../components/operational-week-board";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { useOperationalCalendar } from "../hooks/use-operational-calendar";
+import { nativeDayEmptyMessage, nativeEmptyPlanMessage } from "../lib/native-empty-copy";
 import { ELABORACION_RAMAS, SECTOR_PERSONNEL } from "../lib/sector-personnel";
 import { useOperationalStore } from "../store/operational-store-context";
 
@@ -90,7 +91,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           updatedAgoLabel={updatedAgoLabel}
           liveConnected={liveConnected}
           loading={loading}
-          detailMessage={data?.message}
+          detailMessage={data?.source === "native" ? null : data?.message}
         />
       </header>
 
@@ -131,7 +132,12 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           onSaveProgress={handleSave}
           onMarkFinished={handleFinish}
           emptyMessage={
-            data?.message ?? "No hay trabajos planificados para este día."
+            data?.source === "native"
+              ? nativeEmptyPlanMessage({
+                  date: calendar.selectedDate,
+                  sector: sectorId,
+                })
+              : (data?.message ?? "No hay trabajos planificados para este día.")
           }
         />
       )}
@@ -216,7 +222,7 @@ export function ElaboracionOperationalView() {
           updatedAgoLabel={updatedAgoLabel}
           liveConnected={liveConnected}
           loading={loading}
-          detailMessage={data?.message}
+          detailMessage={data?.source === "native" ? null : data?.message}
         />
       </header>
 
@@ -262,7 +268,11 @@ export function ElaboracionOperationalView() {
                 getObservation={getObservation}
                 onSaveProgress={handleSave}
                 onMarkFinished={handleFinish}
-                emptyMessage={`No hay trabajos para ${rama} en este día.`}
+                emptyMessage={
+                  data?.source === "native"
+                    ? nativeDayEmptyMessage(rama)
+                    : `No hay trabajos para ${rama} en este día.`
+                }
               />
             </section>
           ))}
