@@ -283,7 +283,15 @@ describe("PlanningService foundation", () => {
     expect(premium).toHaveLength(1);
   });
 
-  it("flag planning source sheets es default", () => {
+  it("flag planning source sheets es default sin override ni Preview+DB", () => {
     expect(getPlanningSource()).toBe("sheets");
+  });
+
+  it("rollback a source=sheets con flag explícito", () => {
+    const prev = process.env.GENUS_PLANNING_SOURCE;
+    process.env.GENUS_PLANNING_SOURCE = "sheets";
+    expect(getPlanningSource()).toBe("sheets");
+    if (prev === undefined) delete process.env.GENUS_PLANNING_SOURCE;
+    else process.env.GENUS_PLANNING_SOURCE = prev;
   });
 });
