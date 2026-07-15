@@ -45,13 +45,18 @@ export function TwinShell({
 
   const resolvedInitials = userInitials ?? email.slice(0, 2).toUpperCase();
 
+  const effectiveActiveNav = home.sidebarItems.includes(activeSidebarId)
+    ? activeSidebarId
+    : home.sidebarItems[0];
+
   return (
     <div className="flex h-dvh min-h-[680px] overflow-hidden bg-[var(--os-bg)]">
       <OsSidebar
         sectorLabel={home.definition.title}
         sectorEmail={email}
-        activeNav={activeSidebarId}
+        activeNav={effectiveActiveNav}
         sidebarItems={home.sidebarItems}
+        labelOverrides={home.sidebarLabelOverrides}
         showRestricted={showRestricted}
         creamyTeaser={creamyTeaser}
         onNav={navigateSidebar}

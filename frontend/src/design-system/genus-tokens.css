@@ -5,12 +5,14 @@
 
 .genus-ds-root,
 .design-preview-root {
-  /* Brand */
-  --genus-brand-primary: #1fa39a;
-  --genus-brand-primary-soft: #e6f7f6;
-  --genus-brand-primary-muted: rgb(31 163 154 / 0.14);
-  --genus-brand-secondary: #0f4c5c;
-  --genus-brand-secondary-soft: #e8f1f3;
+  /* Brand — identidad GENUS OS (navy institucional + turquesa Genus) */
+  --genus-brand-primary: #18b8b0;
+  --genus-brand-primary-soft: #e3f7f5;
+  --genus-brand-primary-muted: rgb(24 184 176 / 0.14);
+  --genus-brand-secondary: #123b5d;
+  --genus-brand-secondary-soft: #e8eef3;
+  --genus-brand-navy: #123b5d;
+  --genus-brand-navy-dark: #082e4c;
 
   /* Neutrals */
   --genus-neutral-50: #f8fafc;
@@ -35,10 +37,10 @@
   --genus-info-soft: #f0f9ff;
 
   /* Surfaces */
-  --genus-surface-bg: #f4f7fa;
+  --genus-surface-bg: #f4f8fa;
   --genus-surface-card: #ffffff;
-  --genus-surface-muted: #f8fafc;
-  --genus-surface-sidebar: #0f172a;
+  --genus-surface-muted: #eef4f7;
+  --genus-surface-sidebar: #082e4c;
 
   /* Text */
   --genus-text-primary: #0f172a;
@@ -56,11 +58,11 @@
   --genus-space-12: 3rem;
   --genus-space-16: 4rem;
 
-  /* Radius */
+  /* Radius — ~10px como base (mockup GENUS OS) */
   --genus-radius-sm: 0.5rem;
-  --genus-radius-md: 0.75rem;
-  --genus-radius-lg: 1rem;
-  --genus-radius-xl: 1.125rem;
+  --genus-radius-md: 0.625rem;
+  --genus-radius-lg: 0.75rem;
+  --genus-radius-xl: 0.875rem;
   --genus-radius-full: 9999px;
 
   /* Shadows */

@@ -1,16 +1,15 @@
 import type { Metadata } from "next";
-import { OsSignInScreen } from "@/features/os/auth/components";
+import { OsLoginGate } from "@/features/os/auth/components/os-login-gate";
 
 export const metadata: Metadata = {
   title: "Ingresar — Genus OS",
-  description: "Vista previa de acceso al Manufacturing Operating System.",
+  description: "Acceso al sistema operativo de Laboratorio Genus.",
 };
 
-/** Access Preview — credenciales mock internas; sin auth real. */
 export default function LoginPage() {
   return (
     <div className="design-preview-root">
-      <OsSignInScreen accessPreview />
+      <OsLoginGate />
     </div>
   );
 }

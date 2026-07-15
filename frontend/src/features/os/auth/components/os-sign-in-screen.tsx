@@ -2,7 +2,7 @@
 
 import { useCallback, useId, useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Lock, Mail } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { GENUS_COMPANY_NAME } from "../constants";
 import {
   findMockUserByEmail,
@@ -58,6 +58,7 @@ export function OsSignInScreen({
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
   const [authError, setAuthError] = useState<string | null>(null);
   const [pendingRedirect, setPendingRedirect] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
 
   const emailEntered = email.trim().length > 0;
   const matchedUser = useMemo(
@@ -168,6 +169,13 @@ export function OsSignInScreen({
 
             <div className="relative flex h-full flex-col px-12 py-14 xl:px-16 xl:py-16">
               <GenusOsLogo className="size-12 text-[var(--os-teal)]" />
+              <h1 className="mt-10 max-w-md text-[1.75rem] font-semibold leading-tight tracking-tight text-[var(--os-sidebar-text)] xl:text-[2rem]">
+                El laboratorio, organizado en un solo lugar.
+              </h1>
+              <p className="mt-4 max-w-sm text-[0.9375rem] leading-relaxed text-[var(--os-sidebar-muted)]">
+                Producción, elaboración, envasado, calidad y materias primas trabajando con la
+                misma información.
+              </p>
               <OsInstitutionalCredential />
               <OsOperationalContext />
             </div>
@@ -223,7 +231,7 @@ export function OsSignInScreen({
                 <OsAuthField
                   label="Contraseña"
                   htmlFor="os-sign-in-password"
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   autoComplete="current-password"
                   required
                   placeholder="••••••••"
@@ -238,6 +246,22 @@ export function OsSignInScreen({
                   disabled={!isInteractive}
                   error={fieldErrors.password}
                   leadingIcon={<Lock className="size-[1.125rem]" aria-hidden="true" />}
+                  trailingAction={
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      disabled={!isInteractive}
+                      className="pointer-events-auto rounded p-1 text-[var(--os-text-muted)] transition-colors hover:text-[var(--os-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)]/40"
+                      aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                      aria-pressed={showPassword}
+                    >
+                      {showPassword ? (
+                        <EyeOff className="size-[1.125rem]" aria-hidden="true" />
+                      ) : (
+                        <Eye className="size-[1.125rem]" aria-hidden="true" />
+                      )}
+                    </button>
+                  }
                 />
 
                 <div className="border border-[var(--os-border-subtle)] px-4 py-3.5">

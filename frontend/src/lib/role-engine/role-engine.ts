@@ -25,6 +25,7 @@ export function resolveSectorHome(sectorId: SectorId): ResolvedSectorHome {
     workItemSources: [...definition.workItemSources],
     allowedActions: [...definition.allowedActions],
     sidebarItems: resolveSidebarItems(definition),
+    sidebarLabelOverrides: definition.sidebarLabelOverrides ?? {},
     creamyContext: definition.creamyContext,
     emptyState: definition.emptyState,
     homeViewKey: definition.homeViewKey,

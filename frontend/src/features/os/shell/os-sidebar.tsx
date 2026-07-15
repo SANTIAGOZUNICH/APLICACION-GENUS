@@ -1,16 +1,26 @@
 "use client";
 
 import {
+  Beaker,
+  Boxes,
   Briefcase,
   Calendar,
+  CheckCircle2,
+  ClipboardCheck,
   Factory,
+  FileText,
   FlaskConical,
+  History,
   LayoutDashboard,
+  ListPlus,
   LogOut,
   Package,
+  PackageSearch,
   Search,
   Settings,
   Shield,
+  ShieldCheck,
+  XCircle,
 } from "lucide-react";
 import type { SidebarItemId } from "@/lib/role-engine/types";
 import type { CreamyTeaser } from "@/features/os/session/preview-context";
@@ -24,6 +34,21 @@ const ICONS = {
   configuracion: Settings,
   produccion: Factory,
   direccion: LayoutDashboard,
+  ordenes_elaboracion: FileText,
+  ordenes_acondicionamiento: FileText,
+  ordenes: FileText,
+  historial: History,
+  pendientes: ClipboardCheck,
+  aprobados: CheckCircle2,
+  rechazados: XCircle,
+  stock: Boxes,
+  control_mp: PackageSearch,
+  asignar_trabajos: ListPlus,
+  ver_elaboracion: Beaker,
+  ver_envasado_masivo: Package,
+  ver_envasado_premium: Package,
+  ver_calidad: ShieldCheck,
+  ver_materia_prima: Boxes,
 } as const;
 
 const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
@@ -35,6 +60,21 @@ const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
   configuracion: "Configuración",
   produccion: "Producción",
   direccion: "Dirección",
+  ordenes_elaboracion: "Órdenes de elaboración",
+  ordenes_acondicionamiento: "Órdenes de acondicionamiento",
+  ordenes: "Órdenes",
+  historial: "Historial",
+  pendientes: "Pendientes",
+  aprobados: "Aprobados",
+  rechazados: "Rechazados",
+  stock: "Stock",
+  control_mp: "Control de Materias Primas",
+  asignar_trabajos: "Asignar trabajos",
+  ver_elaboracion: "Elaboración",
+  ver_envasado_masivo: "Envasado Masivo",
+  ver_envasado_premium: "Envasado Premium",
+  ver_calidad: "Calidad",
+  ver_materia_prima: "Materias Primas",
 };
 
 interface OsSidebarProps {
@@ -42,6 +82,7 @@ interface OsSidebarProps {
   sectorEmail: string;
   activeNav?: SidebarItemId;
   sidebarItems: SidebarItemId[];
+  labelOverrides?: Partial<Record<SidebarItemId, string>>;
   showRestricted?: boolean;
   creamyTeaser?: CreamyTeaser | null;
   onNav?: (itemId: SidebarItemId) => void;
@@ -55,6 +96,7 @@ export function OsSidebar({
   sectorEmail,
   activeNav = "mi_trabajo",
   sidebarItems,
+  labelOverrides,
   creamyTeaser,
   onNav,
   onLogout,
@@ -83,11 +125,13 @@ export function OsSidebar({
         {sidebarItems.map((itemId) => {
           const Icon = ICONS[itemId];
           const active = activeNav === itemId;
+          const label = labelOverrides?.[itemId] ?? SIDEBAR_LABELS[itemId];
           return (
             <button
               key={itemId}
               type="button"
               onClick={() => onNav?.(itemId)}
+              aria-current={active ? "page" : undefined}
               className={`flex w-full items-center gap-3 rounded-[var(--os-radius-sm)] px-3 py-2.5 text-left text-sm transition-colors ${
                 active
                   ? "bg-[var(--os-teal-muted)] font-medium text-white"
@@ -95,7 +139,7 @@ export function OsSidebar({
               }`}
             >
               <Icon className="size-4 shrink-0" aria-hidden="true" />
-              {SIDEBAR_LABELS[itemId]}
+              {label}
             </button>
           );
         })}

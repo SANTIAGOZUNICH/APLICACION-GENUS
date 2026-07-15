@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowLeft, Bell } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { formatTime } from "@/features/work/lib/calendar";
+import { NotificationBell } from "@/features/os/feedback/notification-bell";
 
 interface OsHeaderProps {
   title: string;
@@ -10,7 +11,16 @@ interface OsHeaderProps {
   onBack?: () => void;
 }
 
-/** Header mínimo con navegación atrás en vistas de detalle. */
+function todayLabel(): string {
+  const formatted = new Date().toLocaleDateString("es-AR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+}
+
+/** Header — título de pantalla, fecha real, notificaciones y avatar. */
 export function OsHeader({ title, userInitials, showBack, onBack }: OsHeaderProps) {
   return (
     <header
@@ -28,18 +38,14 @@ export function OsHeader({ title, userInitials, showBack, onBack }: OsHeaderProp
             Volver
           </button>
         )}
-        <h1 className="truncate text-base font-semibold text-[var(--os-text)]">{title}</h1>
+        <div className="min-w-0">
+          <h1 className="truncate text-base font-semibold text-[var(--os-text)]">{title}</h1>
+          <p className="truncate text-xs text-[var(--os-text-muted)]">{todayLabel()}</p>
+        </div>
       </div>
 
       <div className="flex items-center gap-3">
-        <button
-          type="button"
-          className="relative rounded-full p-2 text-[var(--os-text-muted)] transition-colors hover:bg-[var(--os-bg)] hover:text-[var(--os-text)]"
-          aria-label="Notificaciones"
-        >
-          <Bell className="size-5" />
-          <span className="absolute right-1.5 top-1.5 size-2 rounded-full bg-[var(--os-teal)]" />
-        </button>
+        <NotificationBell />
 
         <div className="flex size-8 items-center justify-center rounded-full bg-[var(--os-teal-soft)] text-xs font-semibold text-[var(--os-teal)]">
           {userInitials}

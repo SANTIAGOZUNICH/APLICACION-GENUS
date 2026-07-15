@@ -35,7 +35,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Reportar problema",
       "Registrar avance",
     ],
-    sidebarItems: [...BASE_SIDEBAR],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "historial"],
     creamyContext: {
       role: "Copiloto de envasado masivo",
       topics: ["prioridades", "OA", "bloqueos", "insumos", "entregas"],
@@ -73,7 +73,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Entregar a Calidad",
       "Reportar problema",
     ],
-    sidebarItems: [...BASE_SIDEBAR],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "historial"],
     creamyContext: {
       role: "Copiloto de envasado premium",
       topics: ["prioridades", "OA", "lotes premium", "insumos", "entregas"],
@@ -104,7 +104,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Marcar terminada",
       "Observaciones",
     ],
-    sidebarItems: [...BASE_SIDEBAR],
+    sidebarItems: ["mi_trabajo", "ordenes_elaboracion", "historial"],
     creamyContext: {
       role: "Copiloto de elaboración",
       topics: ["OE", "kg", "responsable", "lotes", "prioridades"],
@@ -159,7 +159,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Rechazar lote",
       "Solicitar liberación",
     ],
-    sidebarItems: [...BASE_SIDEBAR],
+    sidebarItems: ["pendientes", "aprobados", "rechazados"],
     creamyContext: {
       role: "Copiloto de calidad",
       topics: ["lotes", "liberaciones", "análisis", "microbiología", "bloqueos"],
@@ -205,27 +205,27 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
 
   defineSector({
     id: "MATERIA_PRIMA",
-    title: "Materia Prima",
-    description: "Gestión de materias primas y abastecimiento de elaboración.",
+    title: "Materias Primas",
+    description: "Stock de materias primas y control de preparación para Elaboración.",
     homeLayout: "supply_prep",
     visiblePanels: ["header_greeting", "summary_strip", "work_block_list", "context_panel"],
     quickActions: ["prepare_insumos", "report_problem", "consult_entity"],
     visibleEntities: ["insumo", "oe", "lote", "pedido"],
     workItemSources: ["semanas_2026"],
     allowedActions: ["Registrar entrega MP", "Reportar faltante", "Consultar OE"],
-    sidebarItems: [...BASE_SIDEBAR],
+    sidebarItems: ["stock", "control_mp", "historial"],
     creamyContext: {
       role: "Copiloto de materia prima",
       topics: ["stock MP", "faltantes", "OE", "proveedores"],
-      defaultHint: "Sector en preparación. Creamy ayudará con abastecimiento y faltantes.",
+      defaultHint: "¿Qué materia prima necesitás? Puedo ayudarte con el stock y la preparación.",
       baseSuggestions: ["Ver faltantes", "Consultar OE", "Ver stock"],
     },
     emptyState: {
-      title: "Sector en preparación",
-      message: "La Home de Materia Prima se migrará al Role Engine próximamente.",
+      title: "Sin materias primas cargadas",
+      message: "Todavía no se cargó stock de materias primas.",
     },
     homeViewKey: "materia-prima-home",
-    dataMode: "placeholder",
+    dataMode: "work_items",
   }),
 
   defineSector({
@@ -274,9 +274,21 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Resolver bloqueo",
       "Ver plan semanal",
       "Priorizar trabajo",
+      "Asignar trabajo",
+      "Reasignar trabajo",
     ],
-    sidebarItems: [...BASE_SIDEBAR],
-    restrictedSidebarItems: ["produccion"],
+    sidebarItems: [
+      "mi_trabajo",
+      "asignar_trabajos",
+      "ver_elaboracion",
+      "ver_envasado_masivo",
+      "ver_envasado_premium",
+      "ver_calidad",
+      "ver_materia_prima",
+      "ordenes",
+      "historial",
+    ],
+    sidebarLabelOverrides: { mi_trabajo: "Panel general" },
     creamyContext: {
       role: "Copiloto de producción",
       topics: [

@@ -1,6 +1,5 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
 import {
@@ -15,60 +14,19 @@ interface WorkItemProgressTableProps {
   variant: "envasado" | "elaboracion";
   getFinishedQty: (itemId: string) => string;
   getObservation: (itemId: string) => string;
-  onSaveProgress: (
-    itemId: string,
-    payload: { finishedQty: string; observation: string }
-  ) => void;
-  onMarkFinished: (
-    item: WorkItem,
-    payload: { finishedQty: string; observation: string }
-  ) => void;
+  onSelectItem: (item: WorkItem) => void;
   emptyMessage?: string;
 }
 
-interface RowDraft {
-  finishedQty: string;
-  observation: string;
-}
-
-/** Tabla operativa con avance editable — Envasado / Elaboración. */
+/** Tabla operativa — Envasado / Elaboración. La fila abre el drawer de trabajo. */
 export function WorkItemProgressTable({
   items,
   variant,
   getFinishedQty,
   getObservation,
-  onSaveProgress,
-  onMarkFinished,
+  onSelectItem,
   emptyMessage = "Sin registros.",
 }: WorkItemProgressTableProps) {
-  const [drafts, setDrafts] = useState<Record<string, RowDraft>>({});
-
-  useEffect(() => {
-    setDrafts((prev) => {
-      const next = { ...prev };
-      for (const item of items) {
-        if (!next[item.id]) {
-          next[item.id] = {
-            finishedQty: getFinishedQty(item.id),
-            observation: getObservation(item.id),
-          };
-        }
-      }
-      return next;
-    });
-  }, [items, getFinishedQty, getObservation]);
-
-  const updateDraft = useCallback((itemId: string, patch: Partial<RowDraft>) => {
-    setDrafts((prev) => ({
-      ...prev,
-      [itemId]: {
-        finishedQty: prev[itemId]?.finishedQty ?? "",
-        observation: prev[itemId]?.observation ?? "",
-        ...patch,
-      },
-    }));
-  }, []);
-
   if (items.length === 0) {
     return (
       <p className="rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-border)] px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
@@ -79,7 +37,7 @@ export function WorkItemProgressTable({
 
   return (
     <div className="overflow-x-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
-      <table className="w-full min-w-[960px] border-collapse text-sm">
+      <table className="w-full min-w-[900px] border-collapse text-sm">
         <thead>
           <tr className="border-b border-[var(--os-border)] bg-[var(--os-bg)]">
             {variant === "envasado" && (
@@ -88,16 +46,19 @@ export function WorkItemProgressTable({
               </th>
             )}
             <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
+              Fecha
+            </th>
+            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
               Cliente
             </th>
             <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
               Producto
             </th>
             <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Planificada
+              {variant === "envasado" ? "Unidades planificadas" : "Kg planificados"}
             </th>
             <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              {variant === "envasado" ? "Terminada" : "Real terminada"}
+              {variant === "envasado" ? "Unidades realizadas" : "Kg realizados"}
             </th>
             {variant === "envasado" && (
               <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
@@ -105,34 +66,29 @@ export function WorkItemProgressTable({
               </th>
             )}
             <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Plazo
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              {variant === "envasado" ? "OA" : "OE"}
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
               Estado
             </th>
             <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
               Observación
             </th>
             <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Acciones
+              Acción
             </th>
           </tr>
         </thead>
         <tbody>
           {items.map((item) => {
-            const draft = drafts[item.id] ?? { finishedQty: "", observation: "" };
             const planned = plannedQuantityLabel(item.quantity, item.unit);
-            const diff = formatOperationalDifference(item.quantity, draft.finishedQty);
-            const ref = variant === "envasado" ? item.oaRef : item.oeRef;
+            const finishedQty = getFinishedQty(item.id);
+            const diff = formatOperationalDifference(item.quantity, finishedQty);
             const isTransferred = isWorkTransferredStatus(item.status);
+            const observation = getObservation(item.id);
 
             return (
               <tr
                 key={item.id}
-                className={`border-b border-[var(--os-border-subtle)] last:border-b-0 ${
+                onClick={() => onSelectItem(item)}
+                className={`cursor-pointer border-b border-[var(--os-border-subtle)] last:border-b-0 ${
                   isTransferred
                     ? "border-l-4 border-l-[var(--os-teal)] bg-[var(--os-teal-soft)]/40"
                     : "hover:bg-[var(--os-bg)]/60"
@@ -143,22 +99,15 @@ export function WorkItemProgressTable({
                     {displayField(item.line)}
                   </td>
                 )}
+                <td className="px-3 py-2.5 align-top">
+                  {displayField(item.dayLabel ?? item.plannedDate)}
+                </td>
                 <td className="px-3 py-2.5 align-top">{displayField(item.client)}</td>
                 <td className="px-3 py-2.5 align-top font-medium">
                   {displayField(item.product)}
                 </td>
                 <td className="px-3 py-2.5 align-top tabular-nums">{planned}</td>
-                <td className="px-3 py-2.5 align-top">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={draft.finishedQty}
-                    onChange={(e) => updateDraft(item.id, { finishedQty: e.target.value })}
-                    placeholder="0"
-                    disabled={isTransferred}
-                    className="w-24 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm tabular-nums disabled:opacity-50"
-                  />
-                </td>
+                <td className="px-3 py-2.5 align-top tabular-nums">{finishedQty || "—"}</td>
                 {variant === "envasado" && (
                   <td
                     className={`px-3 py-2.5 align-top tabular-nums font-medium ${
@@ -173,70 +122,26 @@ export function WorkItemProgressTable({
                   </td>
                 )}
                 <td className="px-3 py-2.5 align-top">
-                  {displayField(item.dayLabel ?? item.deliveryDate)}
-                </td>
-                <td className="px-3 py-2.5 align-top font-mono text-xs">
-                  {displayField(ref)}
-                </td>
-                <td className="px-3 py-2.5 align-top">
                   {isTransferred ? (
                     <div className="space-y-1">
                       <StatusChip status={item.status} />
                       <p className="text-xs font-medium text-[var(--os-teal)]">
                         {WORK_TRANSFER.deliveredToQuality}
                       </p>
-                      <p className="text-xs text-[var(--os-text-muted)]">
-                        {WORK_TRANSFER.nextResponsibleQuality}
-                      </p>
                     </div>
                   ) : (
                     <StatusChip status={item.status} />
                   )}
                 </td>
-                <td className="px-3 py-2.5 align-top">
-                  {isTransferred ? (
-                    <span className="text-xs text-[var(--os-text-muted)]">
-                      {getObservation(item.id) || "—"}
-                    </span>
-                  ) : (
-                    <input
-                      type="text"
-                      value={draft.observation}
-                      onChange={(e) => updateDraft(item.id, { observation: e.target.value })}
-                      placeholder="Observación…"
-                      className="min-w-[140px] rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm"
-                    />
-                  )}
+                <td className="px-3 py-2.5 align-top max-w-[220px] truncate text-xs text-[var(--os-text-muted)]">
+                  {observation || "—"}
                 </td>
                 <td className="px-3 py-2.5 align-top">
-                  {isTransferred ? (
-                    <span className="text-xs font-medium text-[var(--os-teal)]">
-                      {WORK_TRANSFER.deliveredToQuality}
-                    </span>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      <ActionButton
-                        label={WORK_TRANSFER.saveProgressAction}
-                        variant="neutral"
-                        onClick={() =>
-                          onSaveProgress(item.id, {
-                            finishedQty: draft.finishedQty,
-                            observation: draft.observation,
-                          })
-                        }
-                      />
-                      <ActionButton
-                        label={WORK_TRANSFER.markFinishedAction}
-                        variant="approve"
-                        onClick={() =>
-                          onMarkFinished(item, {
-                            finishedQty: draft.finishedQty || item.quantity || "",
-                            observation: draft.observation,
-                          })
-                        }
-                      />
-                    </div>
-                  )}
+                  <ActionButton
+                    label={isTransferred ? "Ver detalle" : "Ver / Registrar avance"}
+                    variant="neutral"
+                    onClick={() => onSelectItem(item)}
+                  />
                 </td>
               </tr>
             );

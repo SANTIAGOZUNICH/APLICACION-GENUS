@@ -1,29 +1,52 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { usePreviewContext } from "@/features/os/session/preview-context";
 import { personNamesMatch } from "@/lib/operational/display-fields";
 import { WorkItemProgressTable } from "../components/work-item-progress-table";
-import { SyncStatusBar } from "../components/operational-ui";
+import { WorkItemDrawer } from "../components/work-item-drawer";
+import { SyncStatusBar, OperationalTabs } from "../components/operational-ui";
 import { OperationalDayNav } from "../components/operational-day-nav";
 import { OperationalWeekBoard } from "../components/operational-week-board";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { useOperationalCalendar } from "../hooks/use-operational-calendar";
 import { nativeDayEmptyMessage, nativeEmptyPlanMessage } from "../lib/native-empty-copy";
 import { ELABORACION_RAMAS, SECTOR_PERSONNEL } from "../lib/sector-personnel";
+import { LINE_TAB_LABELS, resolveLineBucket, type LineBucket } from "../lib/line-buckets";
+import { listManualWorkItems } from "../adapters/manual-work-items-repository";
+import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { useOperationalStore } from "../store/operational-store-context";
 
 interface EnvasadoOperationalViewProps {
   sectorId: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM";
 }
 
-/** Vista operativa envasado — avance por línea, filtrado por día (Hoy). */
+function useOptionalLineToggle(sectorId: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM") {
+  const storageKey = `genus_os_${sectorId.toLowerCase()}_linea_opcional_enabled`;
+  const [enabled, setEnabled] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const raw = window.localStorage.getItem(storageKey);
+    return raw === null ? true : raw === "true";
+  });
+
+  const toggle = useCallback(() => {
+    setEnabled((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") window.localStorage.setItem(storageKey, String(next));
+      return next;
+    });
+  }, [storageKey]);
+
+  return { enabled, toggle };
+}
+
+/** Vista operativa envasado — pestañas por línea, filtrado por día (Hoy). */
 export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewProps) {
   const workspace = useRequiredWorkspace();
-  const { applyEffectiveStatus } = usePreviewContext();
+  const { applyEffectiveStatus, showToast } = usePreviewContext();
   const calendar = useOperationalCalendar();
   const {
     applyProgressToWorkItems,
@@ -32,6 +55,18 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     getFinishedQty,
     getObservation,
   } = useOperationalStore();
+  const { enabled: optionalLineEnabled, toggle: toggleOptionalLine } =
+    useOptionalLineToggle(sectorId);
+
+  const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const availableLines: LineBucket[] = useMemo(() => {
+    const base: LineBucket[] = sectorId === "ENVASADO_MASIVO" ? ["1", "2", "3"] : ["1"];
+    return optionalLineEnabled ? [...base, sectorId === "ENVASADO_MASIVO" ? "opcional" : "2"] : base;
+  }, [sectorId, optionalLineEnabled]);
+
+  const [activeLine, setActiveLine] = useState<LineBucket>("1");
 
   const planOptions =
     calendar.viewMode === "week"
@@ -42,16 +77,22 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     useOperationalPlan(sectorId, planOptions);
 
   const workItems = useMemo(() => {
-    const base = applyEffectiveStatus(data?.workItems ?? []);
+    const manual = listManualWorkItems(sectorId);
+    const base = applyEffectiveStatus([...(data?.workItems ?? []), ...manual]);
     return applyProgressToWorkItems(base);
-  }, [data?.workItems, applyEffectiveStatus, applyProgressToWorkItems]);
+  }, [data?.workItems, sectorId, applyEffectiveStatus, applyProgressToWorkItems]);
+
+  const itemsForActiveLine = useMemo(
+    () => workItems.filter((item) => (resolveLineBucket(item.line) ?? "1") === activeLine),
+    [workItems, activeLine]
+  );
 
   const sortedItems = useMemo(
     () =>
-      [...workItems].sort((a, b) =>
+      [...itemsForActiveLine].sort((a, b) =>
         (a.line ?? "").localeCompare(b.line ?? "", "es", { sensitivity: "base" })
       ),
-    [workItems]
+    [itemsForActiveLine]
   );
 
   const handleSave = useCallback(
@@ -61,8 +102,9 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         updatedBy: workspace.context.displayName,
         sector: sectorId,
       });
+      showToast("Avance guardado.");
     },
-    [saveWorkProgress, workspace.context.displayName, sectorId]
+    [saveWorkProgress, workspace.context.displayName, sectorId, showToast]
   );
 
   const handleFinish = useCallback(
@@ -71,9 +113,18 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         ...payload,
         updatedBy: workspace.context.displayName,
       });
+      pushNotification({
+        kind: "trabajo_finalizado",
+        title: `Trabajo finalizado — ${workspace.sectorLabel}`,
+        message: `${item.product ?? "Producto"} · ${item.client ?? ""} listo para revisión de Calidad.`,
+        sectors: ["CALIDAD"],
+      });
+      showToast("Trabajo enviado a Calidad.");
     },
-    [markWorkFinished, workspace.context.displayName]
+    [markWorkFinished, workspace.context.displayName, workspace.sectorLabel, showToast]
   );
+
+  const tabs = availableLines.map((bucket) => ({ id: bucket, label: LINE_TAB_LABELS[bucket] }));
 
   return (
     <TwinShell title={workspace.sectorLabel}>
@@ -124,30 +175,59 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       )}
 
       {!loading && calendar.viewMode === "day" && (
-        <WorkItemProgressTable
-          items={sortedItems}
-          variant="envasado"
-          getFinishedQty={getFinishedQty}
-          getObservation={getObservation}
-          onSaveProgress={handleSave}
-          onMarkFinished={handleFinish}
-          emptyMessage={
-            data?.source === "native"
-              ? nativeEmptyPlanMessage({
-                  date: calendar.selectedDate,
-                  sector: sectorId,
-                })
-              : (data?.message ?? "No hay trabajos planificados para este día.")
-          }
-        />
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <OperationalTabs tabs={tabs} activeId={activeLine} onChange={(id) => setActiveLine(id as LineBucket)} />
+            <label className="flex items-center gap-2 text-xs text-[var(--os-text-muted)]">
+              <input
+                type="checkbox"
+                checked={optionalLineEnabled}
+                onChange={toggleOptionalLine}
+                className="size-4 accent-[var(--os-teal)]"
+              />
+              Línea opcional activa
+            </label>
+          </div>
+
+          <WorkItemProgressTable
+            items={sortedItems}
+            variant="envasado"
+            getFinishedQty={getFinishedQty}
+            getObservation={getObservation}
+            onSelectItem={(item) => {
+              setSelectedItem(item);
+              setDrawerOpen(true);
+            }}
+            emptyMessage={
+              data?.source === "native"
+                ? nativeEmptyPlanMessage({
+                    date: calendar.selectedDate,
+                    sector: sectorId,
+                  })
+                : (data?.message ?? "No hay trabajos planificados para este día.")
+            }
+          />
+        </div>
       )}
+
+      <WorkItemDrawer
+        item={selectedItem}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        variant="envasado"
+        responsibleLabel="Línea"
+        getFinishedQty={getFinishedQty}
+        getObservation={getObservation}
+        onSaveProgress={handleSave}
+        onMarkFinished={handleFinish}
+      />
     </TwinShell>
   );
 }
 
 /** Elaboración — sector único con ramas Cristian / Nicolás separadas. */
 export function ElaboracionOperationalView() {
-  const { applyEffectiveStatus } = usePreviewContext();
+  const { applyEffectiveStatus, showToast } = usePreviewContext();
   const calendar = useOperationalCalendar();
   const {
     applyProgressToWorkItems,
@@ -156,6 +236,9 @@ export function ElaboracionOperationalView() {
     getFinishedQty,
     getObservation,
   } = useOperationalStore();
+
+  const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const planOptions =
     calendar.viewMode === "week"
@@ -166,7 +249,8 @@ export function ElaboracionOperationalView() {
     useOperationalPlan("ELABORACION", planOptions);
 
   const workItems = useMemo(() => {
-    const base = applyEffectiveStatus(data?.workItems ?? []);
+    const manual = listManualWorkItems("ELABORACION");
+    const base = applyEffectiveStatus([...(data?.workItems ?? []), ...manual]);
     return applyProgressToWorkItems(base);
   }, [data?.workItems, applyEffectiveStatus, applyProgressToWorkItems]);
 
@@ -190,8 +274,9 @@ export function ElaboracionOperationalView() {
         updatedBy: rama,
         sector: "ELABORACION",
       });
+      showToast("Avance guardado.");
     },
-    [saveWorkProgress, workItems]
+    [saveWorkProgress, workItems, showToast]
   );
 
   const handleFinish = useCallback(
@@ -201,8 +286,15 @@ export function ElaboracionOperationalView() {
         ...payload,
         updatedBy: rama,
       });
+      pushNotification({
+        kind: "trabajo_finalizado",
+        title: "Trabajo finalizado — Elaboración",
+        message: `${item.product ?? "Producto"} · ${item.client ?? ""} listo para revisión de Calidad.`,
+        sectors: ["CALIDAD"],
+      });
+      showToast("Trabajo enviado a Calidad.");
     },
-    [markWorkFinished]
+    [markWorkFinished, showToast]
   );
 
   return (
@@ -266,8 +358,10 @@ export function ElaboracionOperationalView() {
                 variant="elaboracion"
                 getFinishedQty={getFinishedQty}
                 getObservation={getObservation}
-                onSaveProgress={handleSave}
-                onMarkFinished={handleFinish}
+                onSelectItem={(item) => {
+                  setSelectedItem(item);
+                  setDrawerOpen(true);
+                }}
                 emptyMessage={
                   data?.source === "native"
                     ? nativeDayEmptyMessage(rama)
@@ -278,6 +372,18 @@ export function ElaboracionOperationalView() {
           ))}
         </div>
       )}
+
+      <WorkItemDrawer
+        item={selectedItem}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        variant="elaboracion"
+        responsibleLabel="Responsable"
+        getFinishedQty={getFinishedQty}
+        getObservation={getObservation}
+        onSaveProgress={handleSave}
+        onMarkFinished={handleFinish}
+      />
     </TwinShell>
   );
 }

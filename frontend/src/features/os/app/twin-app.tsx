@@ -18,6 +18,18 @@ import { WireframePlanSemanal } from "@/features/work/views/plan-semanal";
 import { WireframeConsulta } from "@/features/work/views/consulta";
 import { WireframeProduccion } from "@/features/sectors/wireframes/produccion";
 import { WireframeDireccion } from "@/features/sectors/wireframes/direccion";
+import { CalidadOperationalView } from "@/features/os/operational/views/calidad-operational-view";
+import { OeListView } from "@/features/os/operational/views/oe-list-view";
+import { OaListView } from "@/features/os/operational/views/oa-list-view";
+import { HistorialView } from "@/features/os/operational/views/historial-view";
+import { MateriaPrimaStockView } from "@/features/os/operational/views/materia-prima-stock-view";
+import { MateriaPrimaControlView } from "@/features/os/operational/views/materia-prima-control-view";
+import { AsignarTrabajosView } from "@/features/os/operational/views/asignar-trabajos-view";
+import {
+  ElaboracionOperationalView,
+  EnvasadoOperationalView,
+} from "@/features/os/operational/views/envasado-operational-view";
+import { TwinShell } from "@/features/os/shell/twin-shell";
 
 /** Router del Digital Twin — navegación entre Home, utilidades y detalle. */
 export function TwinRouter() {
@@ -41,6 +53,62 @@ export function TwinRouter() {
       return <WireframeProduccion />;
     case "direccion":
       return <WireframeDireccion />;
+
+    case "ordenes-elaboracion":
+      return <OeListView />;
+    case "ordenes-acondicionamiento":
+      return (
+        <OaListView
+          sectorId={sectorId === "ENVASADO_PREMIUM" ? "ENVASADO_PREMIUM" : "ENVASADO_MASIVO"}
+        />
+      );
+    case "ordenes":
+      return (
+        <TwinShell title="Órdenes">
+          <div className="space-y-10">
+            <OeListView readOnly embedded />
+            <OaListView sectorId="ENVASADO_MASIVO" readOnly embedded title="Órdenes de Acondicionamiento — Masivo" />
+            <OaListView sectorId="ENVASADO_PREMIUM" readOnly embedded title="Órdenes de Acondicionamiento — Premium" />
+          </div>
+        </TwinShell>
+      );
+    case "historial":
+      return (
+        <HistorialView
+          sectors={
+            sectorId === "PRODUCCION"
+              ? ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM"]
+              : sectorId === "MATERIA_PRIMA"
+                ? ["ELABORACION"]
+                : [sectorId]
+          }
+        />
+      );
+    case "pendientes":
+      return <CalidadOperationalView initialTab="pendientes" />;
+    case "aprobados":
+      return <CalidadOperationalView initialTab="aprobados" />;
+    case "rechazados":
+      return <CalidadOperationalView initialTab="rechazados" />;
+
+    case "stock":
+      return <MateriaPrimaStockView />;
+    case "control-mp":
+      return <MateriaPrimaControlView />;
+
+    case "asignar-trabajos":
+      return <AsignarTrabajosView />;
+    case "ver-elaboracion":
+      return <ElaboracionOperationalView />;
+    case "ver-envasado-masivo":
+      return <EnvasadoOperationalView sectorId="ENVASADO_MASIVO" />;
+    case "ver-envasado-premium":
+      return <EnvasadoOperationalView sectorId="ENVASADO_PREMIUM" />;
+    case "ver-calidad":
+      return <CalidadOperationalView />;
+    case "ver-materia-prima":
+      return <MateriaPrimaStockView />;
+
     case "work-detail":
       return <WorkDetailView />;
     case "oa-detail":

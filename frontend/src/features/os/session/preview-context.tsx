@@ -67,6 +67,7 @@ interface PreviewContextValue {
   closeCreamy: () => void;
   setCreamyTeaser: (teaser: CreamyTeaser | null) => void;
   dismissToast: () => void;
+  showToast: (message: string, type?: "success" | "info") => void;
 }
 
 const PreviewContext = createContext<PreviewContextValue | null>(null);
@@ -251,6 +252,9 @@ export function PreviewProvider({
     setCreamyTeaserState(teaser);
   }, []);
   const dismissToast = useCallback(() => setToast(null), []);
+  const showToast = useCallback((message: string, type: "success" | "info" = "success") => {
+    setToast({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, message, type });
+  }, []);
 
   const value = useMemo<PreviewContextValue>(
     () => ({
@@ -280,6 +284,7 @@ export function PreviewProvider({
       closeCreamy,
       setCreamyTeaser,
       dismissToast,
+      showToast,
     }),
     [
       session,
@@ -308,6 +313,7 @@ export function PreviewProvider({
       closeCreamy,
       setCreamyTeaser,
       dismissToast,
+      showToast,
     ]
   );
 

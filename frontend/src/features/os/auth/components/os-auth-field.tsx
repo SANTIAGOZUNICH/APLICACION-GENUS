@@ -9,6 +9,7 @@ interface OsAuthFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   hint?: string;
   error?: string;
   leadingIcon?: React.ReactNode;
+  trailingAction?: React.ReactNode;
 }
 
 /** Campo de formulario auth — 48px, radius 12px, labels visibles. */
@@ -18,6 +19,7 @@ export function OsAuthField({
   hint,
   error,
   leadingIcon,
+  trailingAction,
   className = "",
   ...inputProps
 }: OsAuthFieldProps) {
@@ -53,12 +55,17 @@ export function OsAuthField({
           aria-describedby={[hintId, errorId].filter(Boolean).join(" ") || undefined}
           aria-invalid={error ? true : undefined}
           className={`${baseInputClassName} ${leadingIcon ? "pl-11" : ""} ${
+            trailingAction ? "pr-11" : ""
+          } ${
             error
               ? "border-[var(--genus-error)] focus-visible:border-[var(--genus-error)] focus-visible:ring-[var(--genus-error)]/12"
               : "border-[var(--os-border)]"
           } ${className}`}
           {...inputProps}
         />
+        {trailingAction && (
+          <div className="absolute inset-y-0 right-0 flex items-center pr-3">{trailingAction}</div>
+        )}
       </div>
       {error && (
         <p id={errorId} role="alert" className="text-sm text-[var(--genus-error)]">

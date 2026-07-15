@@ -29,7 +29,8 @@ describe("Role Engine — F9.3", () => {
     expect(home.panels).toContain("date_navigator");
     expect(home.quickActions).toContain("open_oa");
     expect(home.sidebarItems).toContain("mi_trabajo");
-    expect(home.sidebarItems).toContain("plan_semanal");
+    expect(home.sidebarItems).toContain("ordenes_acondicionamiento");
+    expect(home.sidebarItems).toContain("historial");
   });
 
   it("resuelve Elaboración con ownerPerson como fuente de filtro", () => {
