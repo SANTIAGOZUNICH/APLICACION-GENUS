@@ -41,6 +41,11 @@ const PRODUCCION_TABS = [
 
 type ProduccionTabId = (typeof PRODUCCION_TABS)[number]["id"];
 
+interface ProduccionOperationalViewProps {
+  /** Native: CTA para ir a crear/abrir semana de planificación. */
+  onCreateWeek?: () => void;
+}
+
 function sortWorkItemsTransferredFirst(items: WorkItem[]): WorkItem[] {
   return [...items].sort((a, b) => {
     const aTransferred = isWorkTransferredStatus(a.status) ? 1 : 0;
@@ -51,7 +56,9 @@ function sortWorkItemsTransferredFirst(items: WorkItem[]): WorkItem[] {
 }
 
 /** Producción / Supervisión — visión general con actividad cross-sector. */
-export function ProduccionOperationalView() {
+export function ProduccionOperationalView({
+  onCreateWeek,
+}: ProduccionOperationalViewProps = {}) {
   const workspace = useRequiredWorkspace();
   const { applyEffectiveStatus } = usePreviewContext();
   const {
@@ -65,6 +72,8 @@ export function ProduccionOperationalView() {
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
     useOperationalPlan("PRODUCCION");
   const [activeTab, setActiveTab] = useState<ProduccionTabId>("elaboracion");
+  const isNativeEmpty =
+    data?.source === "native" && !loading && (data.workItems?.length ?? 0) === 0;
 
   const workItems = useMemo(() => {
     const base = applyEffectiveStatus(data?.workItems ?? []);
@@ -260,9 +269,26 @@ export function ProduccionOperationalView() {
           updatedAgoLabel={updatedAgoLabel}
           liveConnected={liveConnected}
           loading={loading}
-          detailMessage={data?.message}
+          detailMessage={data?.source === "native" ? null : data?.message}
         />
       </header>
+
+      {isNativeEmpty && (
+        <div className="mb-6 rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] px-5 py-6">
+          <p className="text-sm text-[var(--os-text)]">
+            {data?.message ?? "Todavía no hay una planificación publicada."}
+          </p>
+          {onCreateWeek && (
+            <button
+              type="button"
+              className="mt-4 rounded bg-[var(--os-teal)] px-4 py-2 text-sm font-medium text-white"
+              onClick={onCreateWeek}
+            >
+              Crear semana
+            </button>
+          )}
+        </div>
+      )}
 
       {completionEvents.length > 0 && (
         <div className="mb-4">

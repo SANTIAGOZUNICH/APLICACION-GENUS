@@ -46,7 +46,7 @@ async function listNativeWorkItems(
         scannedAt: new Date().toISOString(),
         workItems: [],
         counts: { total: 0, hoy: 0, semana: 0, pendientes: 0, bloqueados: 0 },
-        message: "Planificación nativa sin DATABASE_URL.",
+        message: "Producción todavía no publicó una planificación.",
         planningSource: "native",
       },
       { status: 503 }
@@ -64,6 +64,14 @@ async function listNativeWorkItems(
   if (date) workItems = filterWorkItemsByDate(workItems, date);
   else if (weekStart) workItems = filterWorkItemsByWeekStart(workItems, weekStart);
 
+  const emptyMessage = date
+    ? "Hoy no hay trabajos publicados."
+    : weekStart
+      ? "Esta semana no hay trabajos publicados."
+      : sector === "PRODUCCION" || sector === "DIRECCION"
+        ? "Todavía no hay una planificación publicada."
+        : "Producción todavía no publicó una planificación.";
+
   return NextResponse.json({
     sector,
     ownerPerson,
@@ -72,7 +80,7 @@ async function listNativeWorkItems(
     workItems,
     qualityItems: [],
     counts: countMiTrabajoSections(workItems),
-    message: "Planificación nativa Genus OS (Postgres).",
+    message: workItems.length === 0 ? emptyMessage : undefined,
     planningSource: "native",
   });
 }

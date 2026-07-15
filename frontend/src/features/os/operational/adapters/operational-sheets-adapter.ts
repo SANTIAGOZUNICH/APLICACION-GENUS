@@ -24,7 +24,8 @@ function mergeCompletionsIntoSnapshot(
 }
 
 function qualitySeedForSource(source: OperationalPlanSnapshot["source"]): QualityItem[] {
-  return source === "drive" ? [] : mockQualityItems();
+  // Native / Sheets reales: sin mock. Solo demo local.
+  return source === "demo" ? mockQualityItems() : [];
 }
 
 /** Carga plan operativo — respeta API real; no inventa mock si el servidor respondió. */
@@ -56,11 +57,21 @@ export async function loadOperationalPlan(
       semanasVersion: response.semanasVersion,
       message:
         response.message ??
-        (response.source === "demo"
-          ? "Servidor en modo demo — configurá GENUS_DATA_MODE=real y credenciales Google en Vercel."
-          : response.workItems.length === 0
-            ? "Sin trabajos en SEMANAS 2026 para este sector."
-            : undefined),
+        (response.source === "native"
+          ? response.workItems.length === 0
+            ? date
+              ? "Hoy no hay trabajos publicados."
+              : weekStart
+                ? "Esta semana no hay trabajos publicados."
+                : sector === "PRODUCCION" || sector === "DIRECCION"
+                  ? "Todavía no hay una planificación publicada."
+                  : "Producción todavía no publicó una planificación."
+            : undefined
+          : response.source === "demo"
+            ? "Servidor en modo demo — configurá GENUS_DATA_MODE=real y credenciales Google en Vercel."
+            : response.workItems.length === 0
+              ? "Sin trabajos en SEMANAS 2026 para este sector."
+              : undefined),
     });
   } catch (err) {
     const message =

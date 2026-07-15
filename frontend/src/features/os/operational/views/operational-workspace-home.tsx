@@ -13,7 +13,7 @@ import { ProduccionOperationalView } from "./produccion-operational-view";
 import { ProduccionPlanningView } from "./produccion-planning-view";
 
 /**
- * Home operativa de /mi-trabajo — tablas tipo Sheets, filtrada por sector.
+ * Home operativa de /mi-trabajo — filtrada por sector.
  */
 export function OperationalWorkspaceHome() {
   const { sectorId } = usePreviewSession();
@@ -54,7 +54,9 @@ export function OperationalWorkspaceHome() {
           {prodTab === "planificacion" ? (
             <ProduccionPlanningView />
           ) : (
-            <ProduccionOperationalView />
+            <ProduccionOperationalView
+              onCreateWeek={() => setProdTab("planificacion")}
+            />
           )}
         </div>
       );

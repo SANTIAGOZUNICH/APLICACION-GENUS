@@ -140,55 +140,76 @@ export function SyncStatusBar({
     ? lastRefreshAt.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
     : "—");
 
-  const isReal = source === "drive";
+  const isNative = source === "native";
+  const isSheets = source === "drive";
+
+  const badgeClass = isNative || isSheets
+    ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
+    : "bg-amber-50 text-amber-900 ring-1 ring-amber-200";
+
+  const badgeLabel = isNative
+    ? "Genus OS"
+    : isSheets
+      ? "Datos reales"
+      : "Demo / sin conexión";
+
+  const sourceLabel = isNative
+    ? "Planificación publicada"
+    : isSheets
+      ? "SEMANAS 2026 · Google Sheets"
+      : "Sin datos de Sheets — revisar GENUS_DATA_MODE y Drive";
+
+  // Native: nunca mostrar banners técnicos ni menciones a Sheets/Postgres.
+  const showDetail =
+    Boolean(detailMessage) &&
+    !isNative &&
+    !/sheets|postgres|database_url|genus_data_mode/i.test(detailMessage ?? "");
 
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-3 text-xs">
         <span
-          className={`inline-flex items-center rounded-full px-2.5 py-0.5 font-medium ${
-            isReal
-              ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
-              : "bg-amber-50 text-amber-900 ring-1 ring-amber-200"
-          }`}
+          className={`inline-flex items-center rounded-full px-2.5 py-0.5 font-medium ${badgeClass}`}
         >
-          {isReal ? "Datos reales" : "Demo / sin conexión"}
+          {badgeLabel}
         </span>
-        <span className="text-[var(--os-text-muted)]">
-          {isReal
-            ? "SEMANAS 2026 · Google Sheets"
-            : "Sin datos de Sheets — revisar GENUS_DATA_MODE y Drive"}
-        </span>
+        <span className="text-[var(--os-text-muted)]">{sourceLabel}</span>
         <span className="font-mono text-[10px] text-[var(--os-text-muted)]">{buildLabel()}</span>
         <span className="text-[var(--os-text-muted)]">·</span>
         <span className="text-[var(--os-text-muted)]">
           Actualizado {timeLabel}
         </span>
-        {isReal && (
+        {(isSheets || isNative) && (
           <>
             <span className="text-[var(--os-text-muted)]">·</span>
             <span
               className={`inline-flex items-center gap-1 ${
-                liveConnected ? "text-emerald-700" : "text-[var(--os-text-muted)]"
+                liveConnected || isNative
+                  ? "text-emerald-700"
+                  : "text-[var(--os-text-muted)]"
               }`}
             >
               <span
                 className={`inline-block h-1.5 w-1.5 rounded-full ${
-                  liveConnected ? "bg-emerald-500" : "bg-gray-300"
+                  liveConnected || isNative ? "bg-emerald-500" : "bg-gray-300"
                 }`}
               />
-              {liveConnected ? "En vivo" : "Reconectando…"}
+              {isNative
+                ? "En planta"
+                : liveConnected
+                  ? "En vivo"
+                  : "Reconectando…"}
             </span>
           </>
         )}
         {loading && <span className="text-[var(--os-teal)]">Actualizando…</span>}
       </div>
-      {detailMessage && (
+      {showDetail && (
         <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
           {detailMessage}
         </p>
       )}
-      {isReal && (
+      {isSheets && (
         <p className="text-[11px] leading-relaxed text-[var(--os-text-muted)]">
           Trabajo operativo desde SEMANAS 2026. Enriquecimiento PEDIDOS / Dashboard KPI
           pendiente: convertir PEDIDOS 2026 de Office .xlsx a Google Sheets nativo.

@@ -233,7 +233,7 @@ export function ProduccionPlanningView() {
           Planificación nativa
         </h2>
         <p className="text-sm text-[var(--os-text-muted)]">
-          Responsable: Agustina Zunich · Genus OS es la fuente de verdad (Preview)
+          Responsable: Agustina Zunich · Planificá y publicá la semana para la planta
         </p>
       </header>
 
