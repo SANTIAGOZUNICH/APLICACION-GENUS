@@ -10,7 +10,10 @@ import {
 } from "@/lib/operational/work-item-filters";
 import { workItemsService } from "@/lib/operational/work-items.service";
 import { getPlanningService } from "@/lib/planning/get-planning-service";
-import { projectNativeWorkItems } from "@/lib/planning/native-projector";
+import {
+  projectNativeQualityItems,
+  projectNativeWorkItems,
+} from "@/lib/planning/native-projector";
 import { getPlanningSource } from "@/lib/planning/planning-source";
 import { CURRENT_SECTOR_OPTIONS, type CurrentSectorId } from "@/types/operational/sector";
 import type { SectorId } from "@/types/operational/sector";
@@ -64,6 +67,17 @@ async function listNativeWorkItems(
   if (date) workItems = filterWorkItemsByDate(workItems, date);
   else if (weekStart) workItems = filterWorkItemsByWeekStart(workItems, weekStart);
 
+  // Calidad: bandeja desde entregas persistidas (todos los sectores).
+  const qualityRows =
+    sector === "CALIDAD" || sector === "PRODUCCION" || sector === "DIRECCION"
+      ? await getPlanningService().listPublishedItems({
+          sector: "CALIDAD",
+          date: null,
+          weekStart: null,
+        })
+      : [];
+  const qualityItems = projectNativeQualityItems(qualityRows);
+
   const emptyMessage = date
     ? "Hoy no hay trabajos publicados."
     : weekStart
@@ -77,10 +91,25 @@ async function listNativeWorkItems(
     ownerPerson,
     source: "native" as const,
     scannedAt: new Date().toISOString(),
-    workItems,
-    qualityItems: [],
-    counts: countMiTrabajoSections(workItems),
-    message: workItems.length === 0 ? emptyMessage : undefined,
+    workItems:
+      sector === "CALIDAD"
+        ? [] // Calidad usa qualityItems como bandeja principal
+        : workItems,
+    qualityItems:
+      sector === "CALIDAD" || sector === "PRODUCCION" || sector === "DIRECCION"
+        ? qualityItems
+        : [],
+    counts: countMiTrabajoSections(
+      sector === "CALIDAD" ? workItems : workItems
+    ),
+    message:
+      sector === "CALIDAD"
+        ? qualityItems.length === 0
+          ? "No hay trabajos pendientes de Calidad."
+          : undefined
+        : workItems.length === 0
+          ? emptyMessage
+          : undefined,
     planningSource: "native",
   });
 }

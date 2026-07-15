@@ -16,6 +16,13 @@ import {
   postQualityDecision,
   postSaveProgress,
 } from "@/lib/api/live-sync-client";
+import { usePreviewContext } from "@/features/os/session/preview-context";
+import {
+  isNativeOperationsClient,
+  postNativeCompleteWork,
+  postNativeQualityDecision,
+  postNativeSaveProgress,
+} from "@/lib/planning/operations-client";
 import type { CompletionEvent, QualityDecisionStatus, OperationalOverlay } from "../types";
 import {
   applyWorkProgressToItems,
@@ -72,10 +79,19 @@ const STORAGE_KEYS = [
 ] as const;
 
 export function OperationalStoreProvider({ children }: { children: ReactNode }) {
+  const { session } = usePreviewContext();
   const [decisionMap, setDecisionMap] = useState<DecisionMap>({});
   const [progressMap, setProgressMap] = useState<ProgressMap>({});
   const [completionEvents, setCompletionEvents] = useState<CompletionEvent[]>([]);
   const [revision, setRevision] = useState(0);
+
+  const actor = useMemo(
+    () =>
+      session
+        ? { email: session.email, sector: session.sectorId }
+        : null,
+    [session]
+  );
 
   const syncFromStorage = useCallback(() => {
     setDecisionMap(readDecisionMap());
@@ -116,16 +132,25 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     ) => {
       recordQualityDecision(itemId, status, options);
       syncFromStorage();
-      if (status === "aprobado" || status === "rechazado") {
-        void postQualityDecision({
+      if (status !== "aprobado" && status !== "rechazado") return;
+
+      if (isNativeOperationsClient() && actor) {
+        void postNativeQualityDecision(actor, {
           itemId,
           status,
-          decidedBy: options?.decidedBy,
           observation: options?.observation,
         }).catch(() => {});
+        return;
       }
+
+      void postQualityDecision({
+        itemId,
+        status,
+        decidedBy: options?.decidedBy,
+        observation: options?.observation,
+      }).catch(() => {});
     },
-    [syncFromStorage]
+    [syncFromStorage, actor]
   );
 
   const approveQualityItem = useCallback(
@@ -166,6 +191,16 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         status: "en_curso",
       });
       syncFromStorage();
+
+      if (isNativeOperationsClient() && actor) {
+        void postNativeSaveProgress(actor, {
+          itemId,
+          finishedQty: payload.finishedQty,
+          observation: payload.observation,
+        }).catch(() => {});
+        return;
+      }
+
       void postSaveProgress({
         itemId,
         sector: payload.sector,
@@ -174,7 +209,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         updatedBy: payload.updatedBy,
       }).catch(() => {});
     },
-    [syncFromStorage]
+    [syncFromStorage, actor]
   );
 
   const markWorkFinished = useCallback(
@@ -188,6 +223,16 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         completedBy: payload.updatedBy ?? "Operario",
       });
       syncFromStorage();
+
+      if (isNativeOperationsClient() && actor) {
+        void postNativeCompleteWork(actor, {
+          itemId: item.id,
+          finishedQty: payload.finishedQty,
+          observation: payload.observation,
+        }).catch(() => {});
+        return;
+      }
+
       void postCompleteWork({
         item,
         finishedQty: payload.finishedQty,
@@ -195,7 +240,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         completedBy: payload.updatedBy,
       }).catch(() => {});
     },
-    [syncFromStorage]
+    [syncFromStorage, actor]
   );
 
   const applyProgressToWorkItems = useCallback(

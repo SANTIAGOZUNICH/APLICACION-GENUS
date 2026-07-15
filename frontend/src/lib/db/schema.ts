@@ -99,6 +99,13 @@ export const workItems = pgTable(
     createdBy: text("created_by").notNull(),
     source: workItemSourceEnum("source").notNull().default("native"),
     originRef: text("origin_ref"),
+    /** Avance operativo (Beta Operativa). */
+    finishedQuantity: text("finished_quantity"),
+    operationalObservation: text("operational_observation"),
+    progressUpdatedAt: timestamp("progress_updated_at", { withTimezone: true }),
+    progressUpdatedBy: text("progress_updated_by"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    completedBy: text("completed_by"),
     version: integer("version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
