@@ -67,6 +67,12 @@ export interface PlanningWorkItemRecord {
   createdBy: string;
   source: "native" | "import_sheets";
   originRef: string | null;
+  finishedQuantity: string | null;
+  operationalObservation: string | null;
+  progressUpdatedAt: string | null;
+  progressUpdatedBy: string | null;
+  completedAt: string | null;
+  completedBy: string | null;
   version: number;
   createdAt: string;
   updatedAt: string;

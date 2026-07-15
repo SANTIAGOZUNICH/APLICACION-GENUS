@@ -87,10 +87,28 @@ export class MemoryPlanningRepository implements PlanningRepository {
     const publishedWeekIds = new Set(
       [...this.weeks.values()].filter((w) => w.status === "PUBLISHED").map((w) => w.id)
     );
+    const operational = new Set([
+      "PUBLICADO",
+      "ESPERANDO_MATERIALES",
+      "LISTO_PARA_INICIAR",
+      "EN_PROCESO",
+      "BLOQUEADO",
+      "TERMINADO_SECTOR",
+      "PENDIENTE_CALIDAD",
+      "RECHAZADO_CALIDAD",
+      "APROBADO_CALIDAD",
+      "LIBERADO",
+    ]);
     let list = [...this.items.values()].filter(
-      (i) => i.status === "PUBLICADO" && publishedWeekIds.has(i.planningWeekId)
+      (i) => operational.has(i.status) && publishedWeekIds.has(i.planningWeekId)
     );
-    if (filters.sector && filters.sector !== "PRODUCCION" && filters.sector !== "DIRECCION") {
+    if (
+      filters.sector &&
+      filters.sector !== "PRODUCCION" &&
+      filters.sector !== "DIRECCION" &&
+      filters.sector !== "CALIDAD" &&
+      filters.sector !== "DEPOSITO"
+    ) {
       list = list.filter((i) => i.sector === filters.sector);
     }
     if (filters.ownerPerson) {
@@ -133,6 +151,12 @@ export class MemoryPlanningRepository implements PlanningRepository {
       createdBy: actor.email,
       source: "native",
       originRef: null,
+      finishedQuantity: null,
+      operationalObservation: null,
+      progressUpdatedAt: null,
+      progressUpdatedBy: null,
+      completedAt: null,
+      completedBy: null,
       version: 1,
       createdAt: ts,
       updatedAt: ts,

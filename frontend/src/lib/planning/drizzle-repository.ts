@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { getDb, type GenusDb } from "@/lib/db/client";
 import {
   operationalEvents,
@@ -59,6 +59,14 @@ function mapItem(row: WorkItemRow): PlanningWorkItemRecord {
     createdBy: row.createdBy,
     source: row.source,
     originRef: row.originRef,
+    finishedQuantity: row.finishedQuantity,
+    operationalObservation: row.operationalObservation,
+    progressUpdatedAt: row.progressUpdatedAt
+      ? row.progressUpdatedAt.toISOString()
+      : null,
+    progressUpdatedBy: row.progressUpdatedBy,
+    completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+    completedBy: row.completedBy,
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -146,8 +154,21 @@ export class DrizzlePlanningRepository implements PlanningRepository {
     date?: string | null;
     weekStart?: string | null;
   }): Promise<PlanningWorkItemRecord[]> {
+    // Incluye ciclo operativo post-publicación (avance / calidad), no solo PUBLICADO.
+    const operationalStatuses = [
+      "PUBLICADO",
+      "ESPERANDO_MATERIALES",
+      "LISTO_PARA_INICIAR",
+      "EN_PROCESO",
+      "BLOQUEADO",
+      "TERMINADO_SECTOR",
+      "PENDIENTE_CALIDAD",
+      "RECHAZADO_CALIDAD",
+      "APROBADO_CALIDAD",
+      "LIBERADO",
+    ] as const;
     const conditions = [
-      eq(workItems.status, "PUBLICADO"),
+      inArray(workItems.status, [...operationalStatuses]),
       eq(planningWeeks.status, "PUBLISHED"),
     ];
 
