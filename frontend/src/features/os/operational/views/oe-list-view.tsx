@@ -13,6 +13,7 @@ import {
   type OperationalTableColumn,
 } from "../components/operational-ui";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
+import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { getLatestDocumentByRef } from "../adapters/order-documents-repository";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 
@@ -43,7 +44,7 @@ export function OeListView({ readOnly = false, embedded = false }: OeListViewPro
   const [refreshTick, setRefreshTick] = useState(0);
 
   const rows = useMemo<OeRow[]>(() => {
-    const items = data?.workItems ?? [];
+    const items = mergeManualWorkItems("ELABORACION", data?.workItems ?? []);
     const byRef = new Map<string, OeRow>();
     for (const item of items) {
       if (!item.oeRef) continue;

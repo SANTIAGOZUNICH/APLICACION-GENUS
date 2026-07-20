@@ -103,8 +103,8 @@ describe("Auth contracts — MockAuthAdapter", () => {
 
   it("signOut limpia la sesión persistida", async () => {
     await adapter.signIn({
-      email: "deposito@laboratoriogenus.com.ar",
-      password: "deposito123",
+      email: "mp@laboratoriogenus.com.ar",
+      password: "mp123",
       rememberMe: false,
     });
 

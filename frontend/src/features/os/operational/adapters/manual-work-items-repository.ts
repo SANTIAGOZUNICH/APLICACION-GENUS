@@ -76,6 +76,16 @@ export function listManualWorkItems(sector: SectorId): WorkItem[] {
   return readAll().filter((item) => item.sector === sector);
 }
 
+/**
+ * Punto único de fusión: todo consumidor de WorkItems por sector (vistas operativas,
+ * Control de MP, Panel de Producción, listados de OE/OA) debe pasar por acá para que
+ * los trabajos creados en Asignar Trabajos aparezcan de forma consistente en todas
+ * las pantallas — evita reimplementar el merge en cada vista.
+ */
+export function mergeManualWorkItems(sector: SectorId, items: WorkItem[]): WorkItem[] {
+  return [...items, ...listManualWorkItems(sector)];
+}
+
 export function listAllManualWorkItems(): WorkItem[] {
   return [...readAll()];
 }

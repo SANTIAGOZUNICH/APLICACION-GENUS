@@ -16,7 +16,7 @@ import { useOperationalCalendar } from "../hooks/use-operational-calendar";
 import { nativeDayEmptyMessage, nativeEmptyPlanMessage } from "../lib/native-empty-copy";
 import { ELABORACION_RAMAS, SECTOR_PERSONNEL } from "../lib/sector-personnel";
 import { LINE_TAB_LABELS, resolveLineBucket, type LineBucket } from "../lib/line-buckets";
-import { listManualWorkItems } from "../adapters/manual-work-items-repository";
+import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { useOperationalStore } from "../store/operational-store-context";
 
@@ -77,8 +77,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     useOperationalPlan(sectorId, planOptions);
 
   const workItems = useMemo(() => {
-    const manual = listManualWorkItems(sectorId);
-    const base = applyEffectiveStatus([...(data?.workItems ?? []), ...manual]);
+    const base = applyEffectiveStatus(mergeManualWorkItems(sectorId, data?.workItems ?? []));
     return applyProgressToWorkItems(base);
   }, [data?.workItems, sectorId, applyEffectiveStatus, applyProgressToWorkItems]);
 
@@ -249,8 +248,7 @@ export function ElaboracionOperationalView() {
     useOperationalPlan("ELABORACION", planOptions);
 
   const workItems = useMemo(() => {
-    const manual = listManualWorkItems("ELABORACION");
-    const base = applyEffectiveStatus([...(data?.workItems ?? []), ...manual]);
+    const base = applyEffectiveStatus(mergeManualWorkItems("ELABORACION", data?.workItems ?? []));
     return applyProgressToWorkItems(base);
   }, [data?.workItems, applyEffectiveStatus, applyProgressToWorkItems]);
 

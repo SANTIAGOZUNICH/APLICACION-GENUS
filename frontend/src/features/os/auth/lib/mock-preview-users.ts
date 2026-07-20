@@ -1,6 +1,13 @@
 /**
  * @mock-temp Beta Operativa — accesos demo por sector (sin auth real).
  * Un usuario = un sector. Elaboración agrupa ramas Cristian / Nicolás en la vista.
+ *
+ * Login activo de Genus OS: exactamente los seis accesos sectoriales de planta
+ * (Elaboración, Producción, Envasado Masivo, Envasado Premium, Calidad,
+ * Materias Primas). Depósito y Dirección NO son accesos activos del login
+ * nuevo — sus SectorDefinition en el Role Engine se conservan (siguen siendo
+ * sectores válidos del sistema para otras superficies), pero deliberadamente
+ * no tienen usuario mock aquí para que no puedan autenticarse en /login.
  */
 
 import { SECTOR_PERSONNEL } from "@/features/os/operational/lib/sector-personnel";
@@ -85,28 +92,6 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
     roleLabel: "Operario",
     sectorLabel: "Materias Primas",
     jobTitle: "Responsable de Materias Primas",
-    redirectTo: "/mi-trabajo",
-  },
-  {
-    email: "deposito@laboratoriogenus.com.ar",
-    password: "deposito123",
-    sector: "DEPOSITO",
-    displayName: SECTOR_PERSONNEL.DEPOSITO,
-    role: "ROL-OP",
-    roleLabel: "Operario",
-    sectorLabel: "Depósito",
-    jobTitle: "Responsable de Depósito",
-    redirectTo: "/mi-trabajo",
-  },
-  {
-    email: "direccion@laboratoriogenus.com.ar",
-    password: "direccion123",
-    sector: "DIRECCION",
-    displayName: "Santiago Zunich",
-    role: "ROL-DI",
-    roleLabel: "Dirección",
-    sectorLabel: "Dirección",
-    jobTitle: "Director General",
     redirectTo: "/mi-trabajo",
   },
 ];

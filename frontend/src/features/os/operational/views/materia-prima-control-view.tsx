@@ -8,7 +8,8 @@ import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { getFormulaForProduct } from "../adapters/formula-repository";
-import { getTotalStockByCodigo } from "../adapters/materia-prima-repository";
+import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
+import { getStockByCodigo, getTotalStockByCodigo } from "../adapters/materia-prima-repository";
 import {
   confirmPreparation,
   getConfirmation,
@@ -26,7 +27,7 @@ export function MateriaPrimaControlView() {
   const notifiedRefsRef = useRef<Set<string>>(new Set());
 
   const pendingWorks = useMemo(() => {
-    const items = data?.workItems ?? [];
+    const items = mergeManualWorkItems("ELABORACION", data?.workItems ?? []);
     const byRef = new Map<string, (typeof items)[number]>();
     for (const item of items) {
       if (!item.oeRef) continue;
@@ -48,7 +49,10 @@ export function MateriaPrimaControlView() {
         const stock = getTotalStockByCodigo(line.codigo);
         const faltante = stock < line.cantidadRequerida;
         const prepared = selectedOe ? isCodePrepared(selectedOe, line.codigo) : false;
-        return { ...line, stock, faltante, prepared };
+        const lotes = getStockByCodigo(line.codigo)
+          .filter((lot) => lot.stock > 0)
+          .map((lot) => lot.lote);
+        return { ...line, stock, faltante, prepared, lotes };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [formula, selectedOe, tick]
@@ -162,6 +166,7 @@ export function MateriaPrimaControlView() {
                     <span className="block text-xs text-[var(--os-text-muted)]">
                       Requiere {line.cantidadRequerida.toFixed(2)} {line.unidad} · Stock{" "}
                       {line.stock.toFixed(2)} {line.unidad}
+                      {line.lotes.length > 0 ? ` · Lote${line.lotes.length > 1 ? "s" : ""}: ${line.lotes.join(", ")}` : ""}
                     </span>
                   </span>
                 </label>

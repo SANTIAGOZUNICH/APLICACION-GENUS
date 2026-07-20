@@ -7,6 +7,7 @@ import { usePreviewContext } from "@/features/os/session/preview-context";
 import { displayField } from "@/lib/operational/display-fields";
 import { SECTOR_LABELS } from "@/types/operational/sector";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/dialog";
 import {
   Drawer,
   DrawerBody,
@@ -81,6 +82,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
   const [rejectReason, setRejectReason] = useState("");
   const [showRejectField, setShowRejectField] = useState(false);
   const [rejectError, setRejectError] = useState<string | null>(null);
+  const [confirmApprove, setConfirmApprove] = useState(false);
 
   const qualityItems = useMemo(() => {
     const seed = data?.qualityItems ?? [];
@@ -147,6 +149,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     });
     notifyOrigin(reviewItem, true);
     showToast("Trabajo aprobado.");
+    setConfirmApprove(false);
     setReviewItem(null);
   }, [reviewItem, approveQualityItem, workspace.context.displayName, calidadObservation, notifyOrigin, showToast]);
 
@@ -469,7 +472,11 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                 <Button variant="destructive" onClick={handleReject}>
                   {showRejectField ? "Confirmar rechazo" : "Rechazar"}
                 </Button>
-                <Button variant="primary" onClick={handleApprove} disabled={showRejectField}>
+                <Button
+                  variant="primary"
+                  onClick={() => setConfirmApprove(true)}
+                  disabled={showRejectField}
+                >
                   Aprobar
                 </Button>
               </DrawerFooter>
@@ -477,6 +484,16 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
           )}
         </DrawerContent>
       </Drawer>
+
+      <ConfirmDialog
+        open={confirmApprove}
+        onOpenChange={setConfirmApprove}
+        title="Aprobar trabajo"
+        description={`${displayField(reviewItem?.product)} quedará marcado como aprobado y ${reviewItem?.receivedFrom ? SECTOR_LABELS[reviewItem.receivedFrom] : "el sector de origen"} va a ser notificado. ¿Confirmás la aprobación?`}
+        confirmLabel="Sí, aprobar"
+        cancelLabel="Cancelar"
+        onConfirm={handleApprove}
+      />
     </TwinShell>
   );
 }

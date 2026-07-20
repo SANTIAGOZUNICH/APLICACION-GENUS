@@ -14,6 +14,7 @@ import {
   type OperationalTableColumn,
 } from "../components/operational-ui";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
+import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { getLatestDocumentByRef } from "../adapters/order-documents-repository";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 
@@ -46,7 +47,7 @@ export function OaListView({ sectorId, readOnly = false, title, embedded = false
   const [refreshTick, setRefreshTick] = useState(0);
 
   const rows = useMemo<OaRow[]>(() => {
-    const items = data?.workItems ?? [];
+    const items = mergeManualWorkItems(sectorId, data?.workItems ?? []);
     const byRef = new Map<string, OaRow>();
     for (const item of items) {
       if (!item.oaRef) continue;
@@ -72,7 +73,7 @@ export function OaListView({ sectorId, readOnly = false, title, embedded = false
         (row.producto ?? "").toLowerCase().includes(q)
       );
     });
-  }, [data?.workItems, search]);
+  }, [data?.workItems, search, sectorId]);
 
   const refOptions = useMemo(() => rows.map((r) => r.ref), [rows]);
 

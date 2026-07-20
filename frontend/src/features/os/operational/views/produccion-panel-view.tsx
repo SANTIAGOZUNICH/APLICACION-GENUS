@@ -10,6 +10,7 @@ import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { useOperationalStore } from "../store/operational-store-context";
 import { isWorkTransferredStatus } from "../lib/work-transfer-labels";
 import { getFormulaForProduct } from "../adapters/formula-repository";
+import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { getTotalStockByCodigo } from "../adapters/materia-prima-repository";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { OperationalTable, StatusChip, type OperationalTableColumn } from "../components/operational-ui";
@@ -73,9 +74,9 @@ export function ProduccionPanelView() {
   const calidad = useOperationalPlan("CALIDAD");
 
   const bySector: Record<(typeof PRODUCING_SECTORS)[number], WorkItem[]> = {
-    ELABORACION: elaboracion.data?.workItems ?? [],
-    ENVASADO_MASIVO: masivo.data?.workItems ?? [],
-    ENVASADO_PREMIUM: premium.data?.workItems ?? [],
+    ELABORACION: mergeManualWorkItems("ELABORACION", elaboracion.data?.workItems ?? []),
+    ENVASADO_MASIVO: mergeManualWorkItems("ENVASADO_MASIVO", masivo.data?.workItems ?? []),
+    ENVASADO_PREMIUM: mergeManualWorkItems("ENVASADO_PREMIUM", premium.data?.workItems ?? []),
   };
 
   const allActiveItems = useMemo(

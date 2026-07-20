@@ -54,6 +54,8 @@ export function AsignarTrabajosView() {
   const lineOptions = sector === "ENVASADO_MASIVO" ? MASIVO_LINES : PREMIUM_LINES;
 
   const items = useMemo(() => listAllManualWorkItems(), [tick]);
+  const [reassigningId, setReassigningId] = useState<string | null>(null);
+  const [reassignDate, setReassignDate] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -123,20 +125,54 @@ export function AsignarTrabajosView() {
     {
       key: "acciones",
       header: "Acción",
-      render: (r) => (
-        <button
-          type="button"
-          className="text-xs font-medium text-[var(--os-teal)] hover:underline"
-          onClick={() => {
-            const nextDate = window.prompt("Nueva fecha (AAAA-MM-DD):", r.plannedDate ?? today());
-            if (!nextDate) return;
-            reassignManualWorkItem(r.id, { plannedDate: nextDate }, workspace.context.displayName);
-            setTick((v) => v + 1);
-          }}
-        >
-          Reasignar fecha
-        </button>
-      ),
+      render: (r) =>
+        reassigningId === r.id ? (
+          <div className="flex items-center gap-1.5">
+            <input
+              type="date"
+              value={reassignDate}
+              onChange={(e) => setReassignDate(e.target.value)}
+              aria-label={`Nueva fecha para ${r.product ?? "trabajo"}`}
+              className="rounded border border-[var(--os-border)] px-1.5 py-1 text-xs"
+            />
+            <button
+              type="button"
+              className="text-xs font-medium text-[var(--os-teal)] hover:underline"
+              onClick={() => {
+                if (!reassignDate) return;
+                reassignManualWorkItem(r.id, { plannedDate: reassignDate }, workspace.context.displayName);
+                pushNotification({
+                  kind: "trabajo_asignado",
+                  title: `Trabajo reasignado — ${SECTOR_LABELS[r.sector]}`,
+                  message: `${r.product ?? "Producto"} · ${r.client ?? ""} — nueva fecha ${new Date(reassignDate).toLocaleDateString("es-AR")}`,
+                  sectors: [r.sector],
+                });
+                setReassigningId(null);
+                setTick((v) => v + 1);
+              }}
+            >
+              Guardar
+            </button>
+            <button
+              type="button"
+              className="text-xs text-[var(--os-text-muted)] hover:underline"
+              onClick={() => setReassigningId(null)}
+            >
+              Cancelar
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="text-xs font-medium text-[var(--os-teal)] hover:underline"
+            onClick={() => {
+              setReassigningId(r.id);
+              setReassignDate(r.plannedDate ?? today());
+            }}
+          >
+            Reasignar fecha
+          </button>
+        ),
     },
   ];
 
