@@ -114,7 +114,7 @@ describe("Auth contracts — MockAuthAdapter", () => {
     expect(sessionStorage.getItem(GENUS_OS_AUTH_SESSION_KEY)).toBeNull();
   });
 
-  it("autentica exactamente los seis accesos sectoriales activos", async () => {
+  it("autentica exactamente los siete accesos sectoriales activos", async () => {
     const expected = [
       ["elaboracion@laboratoriogenus.com.ar", "elaboracion123", "ELABORACION"],
       ["produccion@laboratoriogenus.com.ar", "produccion123", "PRODUCCION"],
@@ -122,9 +122,10 @@ describe("Auth contracts — MockAuthAdapter", () => {
       ["epremium@laboratoriogenus.com.ar", "epremium123", "ENVASADO_PREMIUM"],
       ["calidad@laboratoriogenus.com.ar", "calidad123", "CALIDAD"],
       ["mp@laboratoriogenus.com.ar", "mp123", "MATERIA_PRIMA"],
+      ["codificado@laboratoriogenus.com.ar", "codificado123", "CODIFICADO"],
     ] as const;
 
-    expect(MOCK_PREVIEW_USERS).toHaveLength(6);
+    expect(MOCK_PREVIEW_USERS).toHaveLength(7);
 
     for (const [email, password, sector] of expected) {
       const session = await adapter.signIn({ email, password, rememberMe: false });

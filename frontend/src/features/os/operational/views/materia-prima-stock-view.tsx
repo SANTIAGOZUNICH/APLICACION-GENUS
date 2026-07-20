@@ -1,9 +1,17 @@
 "use client";
 
-import { useMemo, useState, type ClipboardEvent } from "react";
-import { Download, Pencil, Trash2 } from "lucide-react";
+import { useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { ClipboardPaste, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/dialog";
+import {
+  ConfirmDialog,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import {
@@ -12,14 +20,30 @@ import {
   type OperationalTableColumn,
 } from "../components/operational-ui";
 import {
+  findDuplicate,
   getAllMateriasPrimas,
-  parseClipboardRows,
+  importMateriasPrimas,
   removeMateriaPrima,
   resolveEstado,
   upsertMateriaPrima,
   type MateriaPrimaEstado,
   type MateriaPrimaLot,
 } from "../adapters/materia-prima-repository";
+import {
+  MP_FIELD_ALIASES,
+  buildMpFromMappedRow,
+  validateMpRow,
+  type MateriaPrimaMappedRow,
+} from "../lib/materia-prima-import";
+import {
+  autoMapColumns,
+  parseGrid,
+  parseNonNegativeNumber,
+  rowToObject,
+  type ColumnMapping,
+  type RowValidationIssue,
+} from "../lib/clipboard-import";
+import { formatDateDisplay, parseFlexibleDate } from "../lib/delivery-date";
 
 const ESTADO_FILTERS: Array<{ id: MateriaPrimaEstado | "todos"; label: string }> = [
   { id: "todos", label: "Todos" },
@@ -29,10 +53,102 @@ const ESTADO_FILTERS: Array<{ id: MateriaPrimaEstado | "todos"; label: string }>
   { id: "agotado", label: "Agotado" },
 ];
 
+const MP_IMPORT_FIELDS: Array<{ key: keyof MateriaPrimaMappedRow; label: string; required?: boolean }> = [
+  { key: "codigo", label: "Código", required: true },
+  { key: "nombre", label: "Nombre", required: true },
+  { key: "lote", label: "Lote", required: true },
+  { key: "proveedor", label: "Proveedor" },
+  { key: "cantidad", label: "Cantidad", required: true },
+  { key: "unidad", label: "Unidad", required: true },
+  { key: "fechaIngreso", label: "Fecha ingreso" },
+  { key: "vencimiento", label: "Fecha vencimiento" },
+  { key: "ubicacion", label: "Ubicación" },
+  { key: "estadoManual", label: "Estado" },
+  { key: "observaciones", label: "Observaciones" },
+];
+
+type MpFormState = {
+  codigo: string;
+  nombre: string;
+  lote: string;
+  proveedor: string;
+  cantidad: string;
+  unidad: string;
+  fechaIngreso: string;
+  vencimiento: string;
+  ubicacion: string;
+  estadoManual: "" | MateriaPrimaEstado;
+  observaciones: string;
+};
+
+interface ImportPreviewRow {
+  rowNumber: number;
+  source: string[];
+  mapped: Partial<MateriaPrimaMappedRow>;
+  issues: RowValidationIssue[];
+  mp: ReturnType<typeof buildMpFromMappedRow>;
+}
+
+function emptyForm(): MpFormState {
+  return {
+    codigo: "",
+    nombre: "",
+    lote: "",
+    proveedor: "",
+    cantidad: "",
+    unidad: "kg",
+    fechaIngreso: new Date().toISOString().slice(0, 10),
+    vencimiento: "",
+    ubicacion: "",
+    estadoManual: "",
+    observaciones: "",
+  };
+}
+
+function formFromMateriaPrima(mp: MateriaPrimaLot): MpFormState {
+  return {
+    codigo: mp.codigo,
+    nombre: mp.nombre,
+    lote: mp.lote,
+    proveedor: mp.proveedor,
+    cantidad: String(mp.stock),
+    unidad: mp.unidad,
+    fechaIngreso: mp.fechaIngreso ?? "",
+    vencimiento: mp.vencimiento ?? "",
+    ubicacion: mp.ubicacion,
+    estadoManual: mp.estadoManual ?? "",
+    observaciones: mp.observaciones,
+  };
+}
+
 function toCsv(rows: MateriaPrimaLot[]): string {
-  const header = ["Código", "Materia prima", "Lote", "Stock", "Unidad", "Vencimiento", "Estado"];
+  const header = [
+    "Código",
+    "Materia prima",
+    "Lote",
+    "Proveedor",
+    "Cantidad",
+    "Unidad",
+    "Fecha ingreso",
+    "Vencimiento",
+    "Ubicación",
+    "Estado",
+    "Observaciones",
+  ];
   const lines = rows.map((r) =>
-    [r.codigo, r.nombre, r.lote, r.stock, r.unidad, r.vencimiento ?? "", resolveEstado(r)]
+    [
+      r.codigo,
+      r.nombre,
+      r.lote,
+      r.proveedor,
+      r.stock,
+      r.unidad,
+      r.fechaIngreso ?? "",
+      r.vencimiento ?? "",
+      r.ubicacion,
+      resolveEstado(r),
+      r.observaciones,
+    ]
       .map((v) => `"${String(v).replace(/"/g, '""')}"`)
       .join(",")
   );
@@ -45,29 +161,38 @@ export function MateriaPrimaStockView() {
   const [items, setItems] = useState<MateriaPrimaLot[]>(() => getAllMateriasPrimas());
   const [search, setSearch] = useState("");
   const [estadoFilter, setEstadoFilter] = useState<MateriaPrimaEstado | "todos">("todos");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Partial<MateriaPrimaLot>>({});
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<MateriaPrimaLot | null>(null);
+  const [form, setForm] = useState<MpFormState>(() => emptyForm());
+  const [formError, setFormError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MateriaPrimaLot | null>(null);
-  const [pasteFeedback, setPasteFeedback] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [customMapping, setCustomMapping] = useState<ColumnMapping>({});
+  const [feedback, setFeedback] = useState<string | null>(null);
 
   const refresh = () => setItems(getAllMateriasPrimas());
 
-  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
-    const text = event.clipboardData.getData("text/plain");
-    if (!text.includes("\t") && !text.includes("\n")) return;
-    event.preventDefault();
-    const rows = parseClipboardRows(text);
-    if (rows.length === 0) {
-      setPasteFeedback("No se detectaron filas válidas. Usá el formato Código, Materia prima, Lote, Stock, Unidad, Vencimiento separado por tabulaciones.");
-      return;
-    }
-    for (const row of rows) {
-      upsertMateriaPrima({ ...row, updatedBy: workspace.context.displayName });
-    }
-    refresh();
-    setPasteFeedback(`${rows.length} fila${rows.length === 1 ? "" : "s"} cargada${rows.length === 1 ? "" : "s"} desde Excel.`);
-    window.setTimeout(() => setPasteFeedback(null), 4000);
-  };
+  const grid = useMemo(() => parseGrid(importText), [importText]);
+  const autoMapping = useMemo(() => autoMapColumns(grid.headers, MP_FIELD_ALIASES), [grid.headers]);
+  const mapping = useMemo(() => ({ ...autoMapping, ...customMapping }), [autoMapping, customMapping]);
+  const importPreview = useMemo<ImportPreviewRow[]>(() => {
+    if (!importText.trim()) return [];
+    return grid.rows.map((row, index) => {
+      const rowNumber = grid.hasHeaderRow ? index + 2 : index + 1;
+      const mapped = rowToObject(row, mapping) as Partial<MateriaPrimaMappedRow>;
+      const issues = validateMpRow(mapped, rowNumber);
+      return {
+        rowNumber,
+        source: row,
+        mapped,
+        issues,
+        mp: buildMpFromMappedRow(mapped),
+      };
+    });
+  }, [grid, importText, mapping]);
+  const importValidRows = importPreview.filter((row) => row.issues.length === 0);
+  const importIssueRows = importPreview.filter((row) => row.issues.length > 0);
 
   const filtered = useMemo(() => {
     return items.filter((mp) => {
@@ -78,31 +203,74 @@ export function MateriaPrimaStockView() {
       return (
         mp.codigo.toLowerCase().includes(q) ||
         mp.nombre.toLowerCase().includes(q) ||
-        mp.lote.toLowerCase().includes(q)
+        mp.lote.toLowerCase().includes(q) ||
+        mp.proveedor.toLowerCase().includes(q) ||
+        mp.ubicacion.toLowerCase().includes(q)
       );
     });
   }, [items, search, estadoFilter]);
 
-  const startEdit = (mp: MateriaPrimaLot) => {
-    setEditingId(mp.id);
-    setDraft(mp);
+  const showFeedback = (message: string) => {
+    setFeedback(message);
+    window.setTimeout(() => setFeedback(null), 4500);
   };
 
-  const saveEdit = () => {
-    if (!editingId) return;
+  const startCreate = () => {
+    setEditing(null);
+    setForm(emptyForm());
+    setFormError(null);
+    setFormOpen(true);
+  };
+
+  const startEdit = (mp: MateriaPrimaLot) => {
+    setEditing(mp);
+    setForm(formFromMateriaPrima(mp));
+    setFormError(null);
+    setFormOpen(true);
+  };
+
+  const saveForm = (event: FormEvent) => {
+    event.preventDefault();
+    const cantidad = parseNonNegativeNumber(form.cantidad);
+    if (!form.codigo.trim() || !form.nombre.trim() || !form.lote.trim()) {
+      setFormError("Completá Código, Nombre y Lote.");
+      return;
+    }
+    if (cantidad === null) {
+      setFormError("Cantidad debe ser un número mayor o igual a 0.");
+      return;
+    }
+    if (!form.unidad.trim()) {
+      setFormError("Unidad es obligatoria.");
+      return;
+    }
+    const duplicate = findDuplicate(form.codigo, form.lote, { excludeId: editing?.id });
+    if (duplicate) {
+      setFormError(`Ya existe ${duplicate.codigo} con lote ${duplicate.lote}. Editá ese registro o cambiá el lote.`);
+      return;
+    }
+
     upsertMateriaPrima({
-      id: editingId,
-      codigo: draft.codigo ?? "",
-      nombre: draft.nombre ?? "",
-      lote: draft.lote ?? "",
-      stock: Number(draft.stock) || 0,
-      unidad: draft.unidad ?? "kg",
-      vencimiento: draft.vencimiento ?? null,
+      id: editing?.id,
+      codigo: form.codigo,
+      nombre: form.nombre,
+      lote: form.lote,
+      proveedor: form.proveedor,
+      stock: cantidad,
+      cantidad,
+      unidad: form.unidad,
+      fechaIngreso: form.fechaIngreso ? parseFlexibleDate(form.fechaIngreso) : null,
+      vencimiento: form.vencimiento ? parseFlexibleDate(form.vencimiento) : null,
+      ubicacion: form.ubicacion,
+      estadoManual: form.estadoManual || null,
+      observaciones: form.observaciones,
       updatedBy: workspace.context.displayName,
+      createdBy: workspace.context.displayName,
     });
-    setEditingId(null);
-    setDraft({});
+    setFormOpen(false);
+    setEditing(null);
     refresh();
+    showFeedback(editing ? "Materia prima actualizada." : "Materia prima creada.");
   };
 
   const handleExport = () => {
@@ -116,92 +284,87 @@ export function MateriaPrimaStockView() {
     URL.revokeObjectURL(url);
   };
 
+  const handleImportConfirm = () => {
+    if (importValidRows.length === 0) {
+      showFeedback("No hay filas válidas para importar.");
+      return;
+    }
+    const result = importMateriasPrimas(
+      importValidRows.map((row) => row.mp),
+      workspace.context.displayName
+    );
+    refresh();
+    setImportOpen(false);
+    setImportText("");
+    setCustomMapping({});
+    showFeedback(
+      `Importación lista: ${result.imported} nuevas, ${result.updated} actualizadas, ${result.duplicates} duplicadas, ${result.errors.length} errores.`
+    );
+  };
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    const lowerName = file.name.toLowerCase();
+    if (lowerName.endsWith(".xlsx")) {
+      showFeedback("Para .xlsx preferimos CSV o pegar desde Excel en esta versión local.");
+      return;
+    }
+    if (!lowerName.endsWith(".csv") && file.type !== "text/csv") {
+      showFeedback("Solo se importa CSV como texto. También podés pegar desde Excel.");
+      return;
+    }
+    setImportText(await file.text());
+    setCustomMapping({});
+    setImportOpen(true);
+  };
+
   const columns: OperationalTableColumn<MateriaPrimaLot>[] = [
     {
       key: "codigo",
       header: "Código",
-      render: (r) =>
-        editingId === r.id ? (
-          <input
-            value={draft.codigo ?? ""}
-            onChange={(e) => setDraft((d) => ({ ...d, codigo: e.target.value }))}
-            className="w-24 rounded border border-[var(--os-border)] px-2 py-1 text-sm"
-          />
-        ) : (
-          <span className="font-mono text-xs">{r.codigo}</span>
-        ),
+      render: (r) => <span className="font-mono text-xs">{r.codigo}</span>,
     },
     {
       key: "nombre",
       header: "Materia prima",
-      render: (r) =>
-        editingId === r.id ? (
-          <input
-            value={draft.nombre ?? ""}
-            onChange={(e) => setDraft((d) => ({ ...d, nombre: e.target.value }))}
-            className="w-40 rounded border border-[var(--os-border)] px-2 py-1 text-sm"
-          />
-        ) : (
-          r.nombre
-        ),
+      render: (r) => (
+        <div>
+          <p className="font-medium text-[var(--os-text)]">{r.nombre}</p>
+          {r.proveedor && <p className="text-xs text-[var(--os-text-muted)]">{r.proveedor}</p>}
+        </div>
+      ),
     },
     {
       key: "lote",
       header: "Lote",
-      render: (r) =>
-        editingId === r.id ? (
-          <input
-            value={draft.lote ?? ""}
-            onChange={(e) => setDraft((d) => ({ ...d, lote: e.target.value }))}
-            className="w-24 rounded border border-[var(--os-border)] px-2 py-1 text-sm"
-          />
-        ) : (
-          <span className="font-mono text-xs">{r.lote}</span>
-        ),
+      render: (r) => <span className="font-mono text-xs">{r.lote}</span>,
     },
     {
       key: "stock",
-      header: "Stock",
-      render: (r) =>
-        editingId === r.id ? (
-          <input
-            type="number"
-            value={draft.stock ?? 0}
-            onChange={(e) => setDraft((d) => ({ ...d, stock: Number(e.target.value) }))}
-            className="w-20 rounded border border-[var(--os-border)] px-2 py-1 text-sm tabular-nums"
-          />
-        ) : (
-          <span className="tabular-nums">{r.stock}</span>
-        ),
+      header: "Cantidad",
+      render: (r) => <span className="tabular-nums">{r.stock}</span>,
     },
     {
       key: "unidad",
       header: "Unidad",
-      render: (r) =>
-        editingId === r.id ? (
-          <input
-            value={draft.unidad ?? ""}
-            onChange={(e) => setDraft((d) => ({ ...d, unidad: e.target.value }))}
-            className="w-16 rounded border border-[var(--os-border)] px-2 py-1 text-sm"
-          />
-        ) : (
-          r.unidad
-        ),
+      render: (r) => r.unidad,
+    },
+    {
+      key: "ingreso",
+      header: "Ingreso",
+      render: (r) => formatDateDisplay(r.fechaIngreso),
     },
     {
       key: "vencimiento",
       header: "Vencimiento",
-      render: (r) =>
-        editingId === r.id ? (
-          <input
-            type="date"
-            value={draft.vencimiento ?? ""}
-            onChange={(e) => setDraft((d) => ({ ...d, vencimiento: e.target.value }))}
-            className="rounded border border-[var(--os-border)] px-2 py-1 text-sm"
-          />
-        ) : (
-          r.vencimiento ?? "—"
-        ),
+      render: (r) => formatDateDisplay(r.vencimiento),
+    },
+    {
+      key: "ubicacion",
+      header: "Ubicación",
+      render: (r) => r.ubicacion || "—",
     },
     {
       key: "estado",
@@ -211,42 +374,32 @@ export function MateriaPrimaStockView() {
     {
       key: "acciones",
       header: "Acción",
-      render: (r) =>
-        editingId === r.id ? (
-          <div className="flex gap-2">
-            <Button size="sm" variant="primary" onClick={saveEdit}>
-              Guardar
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => setEditingId(null)}>
-              Cancelar
-            </Button>
-          </div>
-        ) : (
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => startEdit(r)}
-              aria-label={`Editar ${r.nombre}`}
-              className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-[var(--os-bg)] hover:text-[var(--os-text)]"
-            >
-              <Pencil className="size-4" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setDeleteTarget(r)}
-              aria-label={`Eliminar ${r.nombre}`}
-              className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-rose-50 hover:text-rose-700"
-            >
-              <Trash2 className="size-4" aria-hidden="true" />
-            </button>
-          </div>
-        ),
+      render: (r) => (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => startEdit(r)}
+            aria-label={`Editar ${r.nombre}`}
+            className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-[var(--os-bg)] hover:text-[var(--os-text)]"
+          >
+            <Pencil className="size-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setDeleteTarget(r)}
+            aria-label={`Eliminar ${r.nombre}`}
+            className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-rose-50 hover:text-rose-700"
+          >
+            <Trash2 className="size-4" aria-hidden="true" />
+          </button>
+        </div>
+      ),
     },
   ];
 
   return (
     <TwinShell title="Stock de Materias Primas">
-    <div className="space-y-4">
+    <div className="space-y-5">
       <header className="space-y-2">
         <h2 className="text-2xl font-semibold tracking-tight">Stock de Materias Primas</h2>
         <p className="text-sm text-[var(--os-text-muted)]">
@@ -254,19 +407,15 @@ export function MateriaPrimaStockView() {
         </p>
       </header>
 
-      <div
-        onPaste={handlePaste}
-        tabIndex={0}
-        role="group"
-        aria-label="Área para pegar filas desde Excel"
-        className="rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-teal)]/50 bg-[var(--os-teal-soft)]/30 px-4 py-3 text-xs text-[var(--os-text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--os-teal)]"
-      >
-        Hacé clic acá y pegá (Ctrl+V) filas copiadas de Excel — Código, Materia prima, Lote, Stock,
-        Unidad, Vencimiento (separadas por tabulación).
-        {pasteFeedback && (
-          <p className="mt-1 font-medium text-[var(--os-teal)]">{pasteFeedback}</p>
-        )}
+      <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-teal)]/40 bg-[var(--os-teal-soft)]/30 px-4 py-3 text-sm text-[var(--os-text)]">
+        Datos locales (este navegador) — no sincroniza entre dispositivos
       </div>
+
+      {feedback && (
+        <p className="rounded-[var(--os-radius-sm)] border border-[var(--os-teal)]/30 bg-[var(--os-teal-soft)]/40 px-4 py-2 text-sm font-medium text-[var(--os-teal)]">
+          {feedback}
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -291,10 +440,25 @@ export function MateriaPrimaStockView() {
             ))}
           </select>
         </div>
-        <Button variant="secondary" onClick={handleExport}>
-          <Download className="mr-1.5 size-4" aria-hidden="true" />
-          Exportar CSV
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" onClick={() => setImportOpen(true)}>
+            <ClipboardPaste className="size-4" aria-hidden="true" />
+            Pegar desde Excel
+          </Button>
+          <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--sidebar-item-hover)]">
+            <Upload className="size-4" aria-hidden="true" />
+            CSV
+            <input className="sr-only" type="file" accept=".csv,text/csv,.xlsx" onChange={handleFileChange} />
+          </label>
+          <Button variant="primary" onClick={startCreate}>
+            <Plus className="size-4" aria-hidden="true" />
+            Nueva materia prima
+          </Button>
+          <Button variant="secondary" onClick={handleExport}>
+            <Download className="size-4" aria-hidden="true" />
+            Exportar CSV
+          </Button>
+        </div>
       </div>
 
       <OperationalTable
@@ -313,12 +477,213 @@ export function MateriaPrimaStockView() {
         variant="destructive"
         onConfirm={() => {
           if (deleteTarget) {
-            removeMateriaPrima(deleteTarget.id);
+            removeMateriaPrima(deleteTarget.id, workspace.context.displayName);
             refresh();
+            showFeedback("Materia prima archivada.");
           }
         }}
       />
+
+      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editing ? "Editar materia prima" : "Nueva materia prima"}</DialogTitle>
+            <DialogDescription>
+              Cargá los datos del lote. El estado queda automático salvo que elijas una anulación manual.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={saveForm} className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <Field label="Código*" value={form.codigo} onChange={(value) => setForm((f) => ({ ...f, codigo: value }))} />
+              <Field label="Nombre*" value={form.nombre} onChange={(value) => setForm((f) => ({ ...f, nombre: value }))} />
+              <Field label="Lote*" value={form.lote} onChange={(value) => setForm((f) => ({ ...f, lote: value }))} />
+              <Field label="Proveedor" value={form.proveedor} onChange={(value) => setForm((f) => ({ ...f, proveedor: value }))} />
+              <Field label="Cantidad*" type="number" min="0" step="any" value={form.cantidad} onChange={(value) => setForm((f) => ({ ...f, cantidad: value }))} />
+              <Field label="Unidad*" value={form.unidad} onChange={(value) => setForm((f) => ({ ...f, unidad: value }))} />
+              <Field label="Fecha ingreso" type="date" value={form.fechaIngreso} onChange={(value) => setForm((f) => ({ ...f, fechaIngreso: value }))} />
+              <Field label="Fecha vencimiento" type="date" value={form.vencimiento} onChange={(value) => setForm((f) => ({ ...f, vencimiento: value }))} />
+              <Field label="Ubicación" value={form.ubicacion} onChange={(value) => setForm((f) => ({ ...f, ubicacion: value }))} />
+              <label className="space-y-1.5 text-sm font-medium">
+                Estado
+                <select
+                  value={form.estadoManual}
+                  onChange={(event) =>
+                    setForm((f) => ({ ...f, estadoManual: event.target.value as "" | MateriaPrimaEstado }))
+                  }
+                  className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
+                >
+                  <option value="">Auto</option>
+                  <option value="disponible">Disponible</option>
+                  <option value="por_vencer">Por vencer</option>
+                  <option value="vencido">Vencido</option>
+                  <option value="agotado">Agotado</option>
+                </select>
+              </label>
+              <label className="space-y-1.5 text-sm font-medium sm:col-span-2">
+                Observaciones
+                <textarea
+                  value={form.observaciones}
+                  onChange={(event) => setForm((f) => ({ ...f, observaciones: event.target.value }))}
+                  rows={3}
+                  className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+            {formError && <p className="text-sm font-medium text-rose-700">{formError}</p>}
+            <DialogFooter>
+              <Button type="button" variant="secondary" onClick={() => setFormOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="submit" variant="primary">
+                Guardar
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Pegar desde Excel</DialogTitle>
+            <DialogDescription>
+              Pegá una tabla copiada desde Excel/Sheets o cargá un CSV. Revisá el mapeo antes de confirmar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <textarea
+              value={importText}
+              onChange={(event) => {
+                setImportText(event.target.value);
+                setCustomMapping({});
+              }}
+              placeholder="Pegá acá columnas como Código, Nombre, Lote, Proveedor, Cantidad, Unidad..."
+              rows={8}
+              className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 font-mono text-xs"
+            />
+
+            {grid.headers.length > 0 && (
+              <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] p-3">
+                <h3 className="mb-2 text-sm font-semibold">Mapeo de columnas</h3>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {MP_IMPORT_FIELDS.map((field) => (
+                    <label key={field.key} className="space-y-1 text-xs font-medium">
+                      {field.label}{field.required ? "*" : ""}
+                      <select
+                        value={mapping[field.key] ?? ""}
+                        onChange={(event) =>
+                          setCustomMapping((current) => ({
+                            ...current,
+                            [field.key]: event.target.value === "" ? null : Number(event.target.value),
+                          }))
+                        }
+                        className="w-full rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1.5"
+                      >
+                        <option value="">Sin mapear</option>
+                        {grid.headers.map((header, index) => (
+                          <option key={`${header}-${index}`} value={index}>
+                            {header}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {importIssueRows.length > 0 && (
+              <div className="rounded-[var(--os-radius-sm)] border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                <p className="font-semibold">Filas con errores (se excluyen al importar)</p>
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  {importIssueRows.slice(0, 12).map((row) => (
+                    <li key={row.rowNumber}>
+                      Fila {row.rowNumber}: {row.issues.map((issue) => issue.message).join(" ")}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div className="overflow-x-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead className="bg-[var(--os-bg)] text-xs uppercase text-[var(--os-text-muted)]">
+                  <tr>
+                    <th className="px-3 py-2 text-left">Fila</th>
+                    <th className="px-3 py-2 text-left">Código</th>
+                    <th className="px-3 py-2 text-left">Nombre</th>
+                    <th className="px-3 py-2 text-left">Lote</th>
+                    <th className="px-3 py-2 text-left">Cantidad</th>
+                    <th className="px-3 py-2 text-left">Unidad</th>
+                    <th className="px-3 py-2 text-left">Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {importPreview.slice(0, 20).map((row) => (
+                    <tr key={row.rowNumber} className="border-t border-[var(--os-border-subtle)]">
+                      <td className="px-3 py-2">{row.rowNumber}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{row.mapped.codigo}</td>
+                      <td className="px-3 py-2">{row.mapped.nombre}</td>
+                      <td className="px-3 py-2 font-mono text-xs">{row.mapped.lote}</td>
+                      <td className="px-3 py-2 tabular-nums">{row.mapped.cantidad}</td>
+                      <td className="px-3 py-2">{row.mapped.unidad}</td>
+                      <td className="px-3 py-2">
+                        {row.issues.length === 0 ? (
+                          <span className="text-[var(--os-teal)]">Lista</span>
+                        ) : (
+                          <span className="text-amber-700">Excluida</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-[var(--os-text-muted)]">
+              {importValidRows.length} filas válidas de {importPreview.length}. Se excluyen las filas con errores.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => setImportOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" variant="primary" onClick={handleImportConfirm}>
+              Confirmar importación
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
     </TwinShell>
+  );
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  type = "text",
+  min,
+  step,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  min?: string;
+  step?: string;
+}) {
+  return (
+    <label className="space-y-1.5 text-sm font-medium">
+      {label}
+      <input
+        type={type}
+        min={min}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
+      />
+    </label>
   );
 }

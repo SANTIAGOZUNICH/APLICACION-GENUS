@@ -9,17 +9,18 @@ import {
 } from "../session/preview-context";
 import { useSectorWorkItems } from "@/features/work/hooks/use-sector-work-items";
 import { buildCopilotContext } from "@/features/work/lib/creamy-copilot";
+import { canAccessAsignacionLotes } from "@/features/os/operational/lib/asignacion-lotes-rbac";
 import {
   extractProblems,
   extractUpcomingDeliveries,
   filterWorkItemsForDate,
 } from "@/features/work/lib/work-items-day-view";
 import { startOfDay } from "@/features/work/lib/calendar";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 
 /** Creamy como compañera — bubble flotante + drawer contextual. */
 export function CreamyCompanion() {
-  const { creamyOpen, closeCreamy, openCreamy, creamyTeaser, applyEffectiveStatus } =
+  const { creamyOpen, closeCreamy, openCreamy, creamyTeaser, applyEffectiveStatus, navigateSidebar } =
     usePreviewContext();
   const { sectorId, ownerPerson } = usePreviewSession();
   const home = useResolvedHome();
@@ -48,6 +49,18 @@ export function CreamyCompanion() {
     [data?.workItems, today, applyEffectiveStatus]
   );
   const problems = useMemo(() => extractProblems(dayItems), [dayItems]);
+  const canSearchLotes = canAccessAsignacionLotes(sectorId);
+  const openAsignacionLotes = useCallback(() => {
+    navigateSidebar("asignacion_lotes");
+  }, [navigateSidebar]);
+  const handleSuggestionClick = useCallback(
+    (suggestion: string) => {
+      if (canSearchLotes && /lote|asignaci[oó]n/i.test(suggestion)) {
+        openAsignacionLotes();
+      }
+    },
+    [canSearchLotes, openAsignacionLotes]
+  );
 
   return (
     <>
@@ -100,6 +113,9 @@ export function CreamyCompanion() {
                 upcomingDeliveries={upcomingDeliveries}
                 problems={problems}
                 copilot={copilot}
+                onSuggestionClick={handleSuggestionClick}
+                lotesSearchEnabled={canSearchLotes}
+                onOpenAsignacionLotes={openAsignacionLotes}
               />
             </div>
           </aside>

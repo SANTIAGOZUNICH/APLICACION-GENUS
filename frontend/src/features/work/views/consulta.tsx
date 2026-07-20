@@ -4,13 +4,25 @@ import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { EmptyState } from "@/features/work/components/empty-state";
-import { usePreviewContext } from "@/features/os/session/preview-context";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { useMultiSectorWorkItems } from "@/features/work/hooks/use-multi-sector-work-items";
 import {
   defaultSearchSuggestions,
   searchWorkItems,
   type SearchResult,
 } from "@/features/work/lib/search-work-items";
+import { searchAsignacionLotes } from "@/features/os/operational/lib/asignacion-lotes-search";
+import { canAccessAsignacionLotes } from "@/features/os/operational/lib/asignacion-lotes-rbac";
+
+type ConsultaLotResult = {
+  id: string;
+  type: "Asignación de lote";
+  label: string;
+  meta: string;
+  href: "asignacion_lotes";
+};
+
+type ConsultaResult = SearchResult | ConsultaLotResult;
 
 interface WireframeConsultaProps {
   initialQuery?: string;
@@ -18,7 +30,16 @@ interface WireframeConsultaProps {
 
 /** Consulta tipo Spotlight — búsqueda sobre WorkItems reales. */
 export function WireframeConsulta({ initialQuery = "" }: WireframeConsultaProps) {
-  const { applyEffectiveStatus, openWorkItem, openOa, openOe, openClient } = usePreviewContext();
+  const {
+    applyEffectiveStatus,
+    openWorkItem,
+    openOa,
+    openOe,
+    openClient,
+    navigateSidebar,
+    setCreamyTeaser,
+  } = usePreviewContext();
+  const { sectorId } = usePreviewSession();
   const { items, loading } = useMultiSectorWorkItems([
     "ELABORACION",
     "ENVASADO_MASIVO",
@@ -31,12 +52,37 @@ export function WireframeConsulta({ initialQuery = "" }: WireframeConsultaProps)
 
   const workItems = useMemo(() => applyEffectiveStatus(items), [items, applyEffectiveStatus]);
 
-  const results = useMemo(() => {
-    if (!query.trim()) return defaultSearchSuggestions(workItems);
-    return searchWorkItems(workItems, query);
-  }, [query, workItems]);
+  const canSearchLotes = canAccessAsignacionLotes(sectorId);
 
-  const handleSelect = (result: SearchResult) => {
+  const results = useMemo<ConsultaResult[]>(() => {
+    if (!query.trim()) return defaultSearchSuggestions(workItems);
+    const workResults = searchWorkItems(workItems, query);
+    if (!canSearchLotes) return workResults;
+    const lotResults: ConsultaLotResult[] = searchAsignacionLotes(query, { limit: 6 }).map((item) => ({
+      id: `asignacion-lote-${item.id}`,
+      type: "Asignación de lote",
+      label: `${item.producto} · ${item.lote}`,
+      meta: [
+        item.codigo ? `Código ${item.codigo}` : null,
+        item.vto ? `Vto ${item.vto}` : null,
+        item.cantidades ? `${item.cantidades} u.` : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      href: "asignacion_lotes",
+    }));
+    return [...lotResults, ...workResults].slice(0, 12);
+  }, [canSearchLotes, query, workItems]);
+
+  const handleSelect = (result: ConsultaResult) => {
+    if (result.href === "asignacion_lotes") {
+      setCreamyTeaser({
+        headline: result.label,
+        hint: result.meta || "Registro encontrado en Asignación de lotes.",
+      });
+      navigateSidebar("asignacion_lotes");
+      return;
+    }
     if (result.href === "client" && result.ref) {
       openClient(result.ref);
       return;

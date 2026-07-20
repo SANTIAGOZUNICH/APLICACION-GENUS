@@ -25,6 +25,7 @@ import { HistorialView } from "@/features/os/operational/views/historial-view";
 import { MateriaPrimaStockView } from "@/features/os/operational/views/materia-prima-stock-view";
 import { MateriaPrimaControlView } from "@/features/os/operational/views/materia-prima-control-view";
 import { AsignarTrabajosView } from "@/features/os/operational/views/asignar-trabajos-view";
+import { AsignacionLotesView } from "@/features/os/operational/views/asignacion-lotes-view";
 import {
   ElaboracionOperationalView,
   EnvasadoOperationalView,
@@ -98,6 +99,8 @@ export function TwinRouter() {
 
     case "asignar-trabajos":
       return <AsignarTrabajosView />;
+    case "asignacion-lotes":
+      return <AsignacionLotesView />;
     case "ver-elaboracion":
       return <ElaboracionOperationalView />;
     case "ver-envasado-masivo":

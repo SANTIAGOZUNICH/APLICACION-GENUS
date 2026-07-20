@@ -10,6 +10,7 @@ import {
 import { MateriaPrimaStockView } from "./materia-prima-stock-view";
 import { ProduccionOperationalView } from "./produccion-operational-view";
 import { ProduccionPanelView } from "./produccion-panel-view";
+import { AsignacionLotesView } from "./asignacion-lotes-view";
 
 /**
  * Home operativa de /mi-trabajo — filtrada por sector.
@@ -24,6 +25,8 @@ export function OperationalWorkspaceHome() {
       return <EnvasadoOperationalView sectorId="ENVASADO_PREMIUM" />;
     case "ELABORACION":
       return <ElaboracionOperationalView />;
+    case "CODIFICADO":
+      return <AsignacionLotesView />;
     case "CALIDAD":
       return <CalidadOperationalView />;
     case "MATERIA_PRIMA":

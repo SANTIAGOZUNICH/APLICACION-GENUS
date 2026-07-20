@@ -3,9 +3,10 @@
 import { useMemo, useState } from "react";
 import { Download, Eye } from "lucide-react";
 import { displayField } from "@/lib/operational/display-fields";
-import { usePreviewContext } from "@/features/os/session/preview-context";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { UploadDocumentDialog } from "../components/upload-document-dialog";
+import { DeliveryDateBadge } from "../components/delivery-date-badge";
 import {
   OperationalTable,
   StatusChip,
@@ -15,11 +16,13 @@ import {
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { getLatestDocumentByRef } from "../adapters/order-documents-repository";
+import { canOrderDocumentAction } from "../lib/order-documents-rbac";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 
 interface OeRow {
   ref: string;
   fecha: string | null;
+  deliveryDate: string | null;
   cliente: string | null;
   producto: string | null;
   cantidad: string;
@@ -38,6 +41,7 @@ interface OeListViewProps {
 export function OeListView({ readOnly = false, embedded = false }: OeListViewProps = {}) {
   const workspace = useRequiredWorkspace();
   const { openOe } = usePreviewContext();
+  const { sectorId } = usePreviewSession();
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
     useOperationalPlan("ELABORACION");
   const [search, setSearch] = useState("");
@@ -52,6 +56,7 @@ export function OeListView({ readOnly = false, embedded = false }: OeListViewPro
         byRef.set(item.oeRef, {
           ref: item.oeRef,
           fecha: item.plannedDate ?? item.dayLabel ?? item.date,
+          deliveryDate: item.deliveryDate,
           cliente: item.client,
           producto: item.product,
           cantidad: [item.quantity, item.unit ?? "kg"].filter(Boolean).join(" "),
@@ -73,10 +78,16 @@ export function OeListView({ readOnly = false, embedded = false }: OeListViewPro
   }, [data?.workItems, search]);
 
   const refOptions = useMemo(() => rows.map((r) => r.ref), [rows]);
+  const canViewDocuments = canOrderDocumentAction("OE", "view", sectorId);
+  const canDownloadDocuments = canOrderDocumentAction("OE", "download", sectorId);
+  const canUploadDocuments = canOrderDocumentAction("OE", "upload", sectorId);
+  const uploadAvailable = canUploadDocuments && refOptions.length > 0;
+  const readOnlyNotice = readOnly && !uploadAvailable;
 
   const columns: OperationalTableColumn<OeRow>[] = [
     { key: "ref", header: "Número", render: (r) => <span className="font-mono text-xs">{r.ref}</span> },
     { key: "fecha", header: "Fecha", render: (r) => displayField(r.fecha) },
+    { key: "deliveryDate", header: "Fecha de entrega", render: (r) => <DeliveryDateBadge deliveryDate={r.deliveryDate} /> },
     { key: "cliente", header: "Cliente", render: (r) => displayField(r.cliente) },
     { key: "producto", header: "Producto", render: (r) => displayField(r.producto) },
     { key: "cantidad", header: "Cantidad", render: (r) => r.cantidad || "—" },
@@ -88,6 +99,9 @@ export function OeListView({ readOnly = false, embedded = false }: OeListViewPro
       render: (r) => {
         const doc = getLatestDocumentByRef(r.ref);
         if (!doc) return <span className="text-xs text-[var(--os-text-muted)]">Sin archivo</span>;
+        if (!canViewDocuments) {
+          return <span className="text-xs text-[var(--os-text-muted)]">Sin acceso</span>;
+        }
         return (
           <div className="flex items-center gap-2">
             <a
@@ -100,15 +114,17 @@ export function OeListView({ readOnly = false, embedded = false }: OeListViewPro
               <Eye className="size-3.5" aria-hidden="true" />
               Ver
             </a>
-            <a
-              href={doc.fileDataUrl}
-              download={doc.fileName}
-              className="inline-flex items-center gap-1 text-xs text-[var(--os-teal)] hover:underline"
-              aria-label={`Descargar ${doc.fileName}`}
-            >
-              <Download className="size-3.5" aria-hidden="true" />
-              Descargar
-            </a>
+            {canDownloadDocuments && (
+              <a
+                href={doc.fileDataUrl}
+                download={doc.fileName}
+                className="inline-flex items-center gap-1 text-xs text-[var(--os-teal)] hover:underline"
+                aria-label={`Descargar ${doc.fileName}`}
+              >
+                <Download className="size-3.5" aria-hidden="true" />
+                Descargar
+              </a>
+            )}
           </div>
         );
       },
@@ -121,7 +137,7 @@ export function OeListView({ readOnly = false, embedded = false }: OeListViewPro
         if (!doc) return <span className="text-xs text-[var(--os-text-muted)]">—</span>;
         return (
           <span className="text-xs text-[var(--os-text-muted)]">
-            {new Date(doc.uploadedAt).toLocaleDateString("es-AR")} · {doc.uploadedBy}
+            v{doc.version} · {new Date(doc.uploadedAt).toLocaleDateString("es-AR")} · {doc.uploadedBy}
           </span>
         );
       },
@@ -164,6 +180,10 @@ export function OeListView({ readOnly = false, embedded = false }: OeListViewPro
         </div>
       )}
 
+      <div className="rounded-[var(--os-radius-sm)] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        Archivos en este navegador (demo). No es Drive/multiusuario.
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <input
           type="search"
@@ -173,13 +193,18 @@ export function OeListView({ readOnly = false, embedded = false }: OeListViewPro
           aria-label="Buscar orden de elaboración"
           className="w-full max-w-xs rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
         />
-        {!readOnly && refOptions.length > 0 && (
+        {uploadAvailable && (
           <UploadDocumentDialog
             kind="OE"
             refOptions={refOptions}
             uploadedBy={workspace.context.displayName}
+            canUpload={canUploadDocuments}
+            actorSectorId={sectorId}
             onUploaded={() => setRefreshTick((v) => v + 1)}
           />
+        )}
+        {readOnlyNotice && (
+          <span className="text-xs text-[var(--os-text-muted)]">Carga deshabilitada para esta vista.</span>
         )}
       </div>
 

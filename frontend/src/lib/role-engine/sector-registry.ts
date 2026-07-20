@@ -128,20 +128,20 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     quickActions: ["mark_done", "report_problem", "consult_entity"],
     visibleEntities: ["work_item", "oa", "lote", "pedido"],
     workItemSources: ["semanas_2026"],
-    allowedActions: ["Marcar codificado", "Reportar problema", "Consultar lote"],
-    sidebarItems: [...BASE_SIDEBAR],
+    allowedActions: ["Marcar codificado", "Reportar problema", "Consultar lote", "Gestionar asignación de lotes"],
+    sidebarItems: ["mi_trabajo", "asignacion_lotes", "consulta", "plan_semanal"],
     creamyContext: {
       role: "Copiloto de codificado",
-      topics: ["cola de codificación", "lotes", "OA", "prioridades"],
-      defaultHint: "Sector en preparación. Creamy ayudará con la cola de codificación.",
-      baseSuggestions: ["Ver cola", "Consultar lote", "Ver OA"],
+      topics: ["cola de codificación", "lotes", "OA", "asignación de lotes"],
+      defaultHint: "Puedo ayudarte con la cola de codificación y la asignación de lotes.",
+      baseSuggestions: ["Ver asignación de lotes", "Consultar lote", "Buscá Creamy en asignación de lotes"],
     },
     emptyState: {
-      title: "Sector en preparación",
-      message: "La Home de Codificado se migrará al Role Engine próximamente.",
+      title: "Sin trabajos de codificado",
+      message: "No hay ítems en cola. Podés gestionar Asignación de lotes desde el menú.",
     },
     homeViewKey: "codificado-home",
-    dataMode: "placeholder",
+    dataMode: "work_items",
   }),
 
   defineSector({
@@ -159,12 +159,12 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Rechazar lote",
       "Solicitar liberación",
     ],
-    sidebarItems: ["pendientes", "aprobados", "rechazados"],
+    sidebarItems: ["pendientes", "aprobados", "rechazados", "asignacion_lotes"],
     creamyContext: {
       role: "Copiloto de calidad",
-      topics: ["lotes", "liberaciones", "análisis", "microbiología", "bloqueos"],
-      defaultHint: "¿Qué lote analizamos primero? Puedo ayudarte con resultados y liberaciones.",
-      baseSuggestions: ["Ver pendientes", "Consultar lote", "Ver liberaciones"],
+      topics: ["lotes", "liberaciones", "análisis", "microbiología", "bloqueos", "asignación de lotes"],
+      defaultHint: "¿Qué lote analizamos primero? Puedo ayudarte con resultados, liberaciones y asignación de lotes.",
+      baseSuggestions: ["Ver pendientes", "Consultar lote", "Buscá en asignación de lotes", "Ver liberaciones"],
     },
     emptyState: {
       title: "Sin lotes pendientes",
@@ -280,6 +280,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     sidebarItems: [
       "mi_trabajo",
       "asignar_trabajos",
+      "asignacion_lotes",
       "ver_elaboracion",
       "ver_envasado_masivo",
       "ver_envasado_premium",
@@ -297,10 +298,12 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
         "carga de trabajo",
         "planificación",
         "bloqueos",
+        "asignación de lotes",
+        "fecha de entrega",
       ],
       defaultHint:
-        "¿Qué sector necesita atención ahora? Revisemos cuellos de botella y prioridades.",
-      baseSuggestions: ["Ver bloqueos", "Ver carga", "Ver plan semanal"],
+        "¿Qué sector necesita atención ahora? Revisemos cuellos de botella, entregas y lotes.",
+      baseSuggestions: ["Ver bloqueos", "Ver carga", "Buscá en asignación de lotes", "Ver plan semanal"],
     },
     emptyState: {
       title: "Sin señales activas",
