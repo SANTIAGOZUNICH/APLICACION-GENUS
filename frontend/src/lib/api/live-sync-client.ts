@@ -123,6 +123,20 @@ export async function postQualityDecision(payload: {
   });
 }
 
+export async function postCancelWork(payload: {
+  itemId: string;
+  reason: string;
+  cancelledBy?: string;
+  sector?: SectorId;
+  actorSectorId: string;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "cancel_work", ...payload }),
+  });
+}
+
 /** Segundos transcurridos desde una marca ISO — para indicador "Actualizado hace X s". */
 export function secondsSince(iso: string | null | undefined): number | null {
   if (!iso) return null;

@@ -8,6 +8,10 @@ import { useOperationalStore } from "../store/operational-store-context";
 import { OperationalTable, StatusChip, type OperationalTableColumn } from "../components/operational-ui";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
+import {
+  getManualWorkItemMeta,
+  listInactiveManualWorkItems,
+} from "../adapters/manual-work-items-repository";
 
 interface HistorialRow {
   id: string;
@@ -16,7 +20,7 @@ interface HistorialRow {
   cliente: string | null;
   producto: string;
   cantidad: string;
-  estado: "pendiente" | "aprobado" | "rechazado";
+  estado: "pendiente" | "aprobado" | "rechazado" | "cancelado" | "completo";
   observacionSector: string;
   observacionCalidad: string;
   decididoPor: string;
@@ -37,29 +41,61 @@ export function HistorialView({ sectors, title = "Historial" }: HistorialViewPro
     const qualityItems = calidadData?.qualityItems ?? [];
     const events = completionEvents.filter((e) => sectors.includes(e.sourceSector));
 
-    return events
-      .map((event) => {
-        const qualityItem = qualityItems.find((q) => q.relatedWorkItemId === event.workItemId);
-        const estado = qualityItem
-          ? getQualityStatus(qualityItem.id, qualityItem.status)
-          : "pendiente";
-        const observacionCalidad = qualityItem ? getQualityObservation(qualityItem.id) : "";
+    const completionRows = events.map((event) => {
+      const qualityItem = qualityItems.find((q) => q.relatedWorkItemId === event.workItemId);
+      const estado = qualityItem
+        ? getQualityStatus(qualityItem.id, qualityItem.status)
+        : "pendiente";
+      const observacionCalidad = qualityItem ? getQualityObservation(qualityItem.id) : "";
 
-        return {
-          id: event.id,
-          fecha: event.completedAt,
-          sector: event.sourceSector,
-          cliente: event.client,
-          producto: event.product,
-          cantidad: [event.finishedQty, event.unit ?? ""].filter(Boolean).join(" "),
-          estado,
-          observacionSector: event.observation,
-          observacionCalidad,
-          decididoPor: event.completedBy,
-        } satisfies HistorialRow;
-      })
+      return {
+        id: event.id,
+        fecha: event.completedAt,
+        sector: event.sourceSector,
+        cliente: event.client,
+        producto: event.product,
+        cantidad: [event.finishedQty, event.unit ?? ""].filter(Boolean).join(" "),
+        estado,
+        observacionSector: event.observation,
+        observacionCalidad,
+        decididoPor: event.completedBy,
+      } satisfies HistorialRow;
+    });
+
+    const inactiveManualRows =
+      workspace.context.sectorId === "PRODUCCION"
+        ? listInactiveManualWorkItems()
+            .filter((item) => sectors.includes(item.sector))
+            .map((item) => {
+              const meta = getManualWorkItemMeta(item.id);
+              const archived = Boolean(meta?.archived);
+              return {
+                id: `manual-inactive-${item.id}`,
+                fecha: meta?.cancelledAt ?? meta?.archivedAt ?? item.deliveryDate ?? item.plannedDate ?? "",
+                sector: item.sector,
+                cliente: item.client,
+                producto: item.product ?? "Trabajo manual",
+                cantidad: [item.quantity, item.unit ?? ""].filter(Boolean).join(" "),
+                estado: item.status === "cancelado" ? "cancelado" : "completo",
+                observacionSector:
+                  meta?.cancelReason ??
+                  (archived ? "Trabajo finalizado archivado por Producción." : item.notes ?? ""),
+                observacionCalidad: "",
+                decididoPor: meta?.cancelledBy ?? meta?.archivedBy ?? meta?.assignedBy ?? "Producción",
+              } satisfies HistorialRow;
+            })
+        : [];
+
+    return [...completionRows, ...inactiveManualRows]
       .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
-  }, [completionEvents, calidadData?.qualityItems, sectors, getQualityStatus, getQualityObservation]);
+  }, [
+    completionEvents,
+    calidadData?.qualityItems,
+    sectors,
+    getQualityStatus,
+    getQualityObservation,
+    workspace.context.sectorId,
+  ]);
 
   const showSectorColumn = sectors.length > 1;
 
@@ -67,7 +103,10 @@ export function HistorialView({ sectors, title = "Historial" }: HistorialViewPro
     {
       key: "fecha",
       header: "Fecha",
-      render: (r) => new Date(r.fecha).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }),
+      render: (r) =>
+        r.fecha
+          ? new Date(r.fecha).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })
+          : "—",
     },
     ...(showSectorColumn
       ? [

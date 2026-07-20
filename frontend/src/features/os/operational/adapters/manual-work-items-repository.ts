@@ -7,6 +7,8 @@
 
 import type { SectorId } from "@/types/operational/sector";
 import type { OriginStage, WorkItem, WorkItemPriority } from "@/types/operational/work-item";
+import { gateWorkMutation, type WorkMutationAttempt } from "../lib/work-mutation-rbac";
+import { resolveAssignedWorkLifecycleAction } from "../lib/assigned-work-lifecycle";
 
 const ORIGIN_STAGE_BY_SECTOR: Record<
   "ELABORACION" | "ENVASADO_MASIVO" | "ENVASADO_PREMIUM",
@@ -43,6 +45,19 @@ export interface ManualWorkItemMeta {
   assignedAt: string;
   reassignedBy?: string;
   reassignedAt?: string;
+  /** Baja lógica — oculto de bandejas activas pero conservado. */
+  archived?: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
+  /** Eliminación lógica de pendiente sin avance (no aparece en merge activo). */
+  deleted?: boolean;
+  deletedAt?: string;
+  deletedBy?: string;
+  /** Cancelación con historial. */
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelReason?: string;
+  cancelSector?: string;
 }
 
 function readAll(): WorkItem[] {
@@ -76,7 +91,13 @@ function writeMeta(meta: Record<string, ManualWorkItemMeta>): void {
 }
 
 export function listManualWorkItems(sector: SectorId): WorkItem[] {
-  return readAll().filter((item) => item.sector === sector);
+  return readAll().filter((item) => {
+    if (item.sector !== sector) return false;
+    const meta = readMeta()[item.id];
+    if (meta?.deleted || meta?.archived) return false;
+    if (item.status === "cancelado") return false;
+    return true;
+  });
 }
 
 /**
@@ -84,17 +105,143 @@ export function listManualWorkItems(sector: SectorId): WorkItem[] {
  * Control de MP, Panel de Producción, listados de OE/OA) debe pasar por acá para que
  * los trabajos creados en Asignar Trabajos aparezcan de forma consistente en todas
  * las pantallas — evita reimplementar el merge en cada vista.
+ *
+ * Excluye eliminados, archivados y cancelados de las bandejas activas.
  */
 export function mergeManualWorkItems(sector: SectorId, items: WorkItem[]): WorkItem[] {
   return [...items, ...listManualWorkItems(sector)];
 }
 
-export function listAllManualWorkItems(): WorkItem[] {
-  return [...readAll()];
+export function listAllManualWorkItems(options?: {
+  includeInactive?: boolean;
+}): WorkItem[] {
+  const all = readAll();
+  if (options?.includeInactive) return [...all];
+  const meta = readMeta();
+  return all.filter((item) => {
+    const m = meta[item.id];
+    if (m?.deleted || m?.archived) return false;
+    if (item.status === "cancelado") return false;
+    return true;
+  });
+}
+
+/** Historial: cancelados y archivados (no eliminados duros de pendientes). */
+export function listInactiveManualWorkItems(): WorkItem[] {
+  const meta = readMeta();
+  return readAll().filter((item) => {
+    const m = meta[item.id];
+    return item.status === "cancelado" || Boolean(m?.archived);
+  });
 }
 
 export function getManualWorkItemMeta(id: string): ManualWorkItemMeta | null {
   return readMeta()[id] ?? null;
+}
+
+export function getManualWorkItemById(id: string): WorkItem | null {
+  return readAll().find((item) => item.id === id) ?? null;
+}
+
+export type ManualWorkMutationResult =
+  | { ok: true; item: WorkItem; action: "eliminar" | "cancelar" | "archivar" }
+  | { ok: false; error: string; code?: string };
+
+export function deleteOrCancelManualWorkItem(input: {
+  id: string;
+  actorSectorId: SectorId;
+  actorName: string;
+  cancelReason?: string;
+  /** true si hay avance en OperationalStore. */
+  hasProgressRecord?: boolean;
+  finishedQty?: string | null;
+}): ManualWorkMutationResult {
+  const gate = gateWorkMutation(input.actorSectorId);
+  if (!gate.ok) {
+    return { ok: false, error: gate.error, code: gate.code };
+  }
+
+  const items = readAll();
+  const idx = items.findIndex((item) => item.id === input.id);
+  if (idx < 0) {
+    return { ok: false, error: "No encontramos ese trabajo asignado.", code: "NOT_FOUND" };
+  }
+
+  const item = items[idx]!;
+  const decision = resolveAssignedWorkLifecycleAction(
+    { status: item.status, finishedQty: input.finishedQty ?? item.finishedQty },
+    { hasProgressRecord: input.hasProgressRecord }
+  );
+
+  if (decision.action === "bloquear_finalizado" && item.status === "completo") {
+    return { ok: false, error: decision.reason, code: "FINALIZED" };
+  }
+  if (decision.action === "bloquear_finalizado") {
+    return { ok: false, error: decision.reason, code: "ALREADY_INACTIVE" };
+  }
+
+  const meta = readMeta();
+  const now = new Date().toISOString();
+
+  if (decision.action === "eliminar") {
+    // Baja lógica de pendiente: no aparece en merge; no toca OE/OA ni Calidad.
+    meta[input.id] = {
+      ...(meta[input.id] ?? { assignedBy: input.actorName, assignedAt: now }),
+      deleted: true,
+      deletedAt: now,
+      deletedBy: input.actorName,
+    };
+    writeMeta(meta);
+    // Conservamos el registro en el array para auditoría, filtrado por meta.deleted.
+    return { ok: true, item, action: "eliminar" };
+  }
+
+  if (decision.action === "archivar") {
+    meta[input.id] = {
+      ...(meta[input.id] ?? { assignedBy: input.actorName, assignedAt: now }),
+      archived: true,
+      archivedAt: now,
+      archivedBy: input.actorName,
+    };
+    writeMeta(meta);
+    return { ok: true, item, action: "archivar" };
+  }
+
+  // cancelar
+  const reason = (input.cancelReason ?? "").trim();
+  if (!reason) {
+    return {
+      ok: false,
+      error: "El motivo de cancelación es obligatorio.",
+      code: "REASON_REQUIRED",
+    };
+  }
+
+  const cancelled: WorkItem = {
+    ...item,
+    status: "cancelado",
+    notes: [item.notes, `Cancelado: ${reason}`].filter(Boolean).join(" · "),
+  };
+  items[idx] = cancelled;
+  writeAll(items);
+
+  meta[input.id] = {
+    ...(meta[input.id] ?? { assignedBy: input.actorName, assignedAt: now }),
+    cancelledAt: now,
+    cancelledBy: input.actorName,
+    cancelReason: reason,
+    cancelSector: input.actorSectorId,
+  };
+  writeMeta(meta);
+
+  return { ok: true, item: cancelled, action: "cancelar" };
+}
+
+/** Solo PRODUCCION — wrapper tipado para tests / pipeline. */
+export function assertProduccionWorkMutation(
+  actorSectorId: SectorId | null | undefined
+): WorkMutationAttempt {
+  return gateWorkMutation(actorSectorId);
 }
 
 export function createManualWorkItem(input: CreateManualWorkItemInput): WorkItem {

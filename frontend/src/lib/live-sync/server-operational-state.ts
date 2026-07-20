@@ -167,6 +167,42 @@ class ServerOperationalState {
     return record;
   }
 
+  /**
+   * Cancela un trabajo en el overlay server-side (solo PRODUCCION — validado en route).
+   * No elimina OE/OA ni decisiones de Calidad.
+   */
+  cancelWork(
+    itemId: string,
+    options: { cancelledBy: string; reason: string; sector?: SectorId }
+  ): WorkProgressPayload {
+    const existing = this.progress.get(itemId);
+    const record: WorkProgressPayload = {
+      itemId,
+      finishedQty: existing?.finishedQty ?? "",
+      observation: [existing?.observation, `Cancelado: ${options.reason}`]
+        .filter(Boolean)
+        .join(" · "),
+      status: "cancelado",
+      updatedAt: new Date().toISOString(),
+      updatedBy: options.cancelledBy,
+      sector: options.sector ?? existing?.sector,
+    };
+    this.progress.set(itemId, record);
+    this.revision += 1;
+
+    operationalEventBus.publish({
+      type: "work.progress",
+      revision: this.revision,
+      at: record.updatedAt,
+      itemId,
+      sector: record.sector ?? "PRODUCCION",
+      status: "cancelado",
+      notifySectors: NOTIFY_ON_PROGRESS,
+    });
+
+    return record;
+  }
+
   applyToWorkItems<T extends WorkItem>(items: T[]): T[] {
     return items.map((item) => {
       const saved = this.progress.get(item.id);

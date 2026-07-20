@@ -3,6 +3,7 @@ import { canUseDriveAdapter } from "@/lib/api/bff-helpers";
 import { getServerDataMode } from "@/lib/config/data-mode";
 import { serverOperationalState } from "@/lib/live-sync/server-operational-state";
 import { validateQualityDecisionActor } from "@/features/os/operational/lib/quality-decision-rbac";
+import { validateWorkMutationActor } from "@/features/os/operational/lib/work-mutation-rbac";
 import type { WorkItem } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 
@@ -32,6 +33,15 @@ type OperationAction =
       decidedBy?: string;
       observation?: string;
       /** Obligatorio: debe ser exactamente CALIDAD (no es auth server-side). */
+      actorSectorId?: SectorId;
+    }
+  | {
+      action: "cancel_work";
+      itemId: string;
+      reason: string;
+      cancelledBy?: string;
+      sector?: SectorId;
+      /** Obligatorio: debe ser exactamente PRODUCCION. */
       actorSectorId?: SectorId;
     };
 
@@ -86,6 +96,24 @@ export async function POST(request: Request) {
       const record = serverOperationalState.decideQuality(body.itemId, body.status, {
         decidedBy: body.decidedBy,
         observation: body.observation,
+      });
+      return NextResponse.json({ ok: true, revision: serverOperationalState.getRevision(), record });
+    }
+    case "cancel_work": {
+      const gate = validateWorkMutationActor(body.actorSectorId);
+      if (!gate.ok) {
+        return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
+      }
+      if (!body.reason?.trim()) {
+        return NextResponse.json(
+          { error: "El motivo de cancelación es obligatorio.", code: "REASON_REQUIRED" },
+          { status: 400 }
+        );
+      }
+      const record = serverOperationalState.cancelWork(body.itemId, {
+        cancelledBy: body.cancelledBy ?? "Producción",
+        reason: body.reason.trim(),
+        sector: body.sector,
       });
       return NextResponse.json({ ok: true, revision: serverOperationalState.getRevision(), record });
     }

@@ -271,6 +271,9 @@ export function StatusChip({
     label = WORK_TRANSFER.pendingReview;
   } else if (normalized === "rechazado" || normalized === "bloqueado") {
     cls = "bg-rose-50 text-rose-800";
+  } else if (normalized === "cancelado") {
+    cls = "bg-slate-100 text-slate-700";
+    label = "Cancelado";
   } else if (normalized === "pendiente" || normalized === "en_curso") {
     cls = "bg-amber-50 text-amber-900";
   }

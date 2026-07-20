@@ -1,7 +1,7 @@
 "use client";
 
 import { Sparkles, X } from "lucide-react";
-import { ContextPanel } from "./context-panel";
+import { CreamyChat } from "@/features/os/assistant/creamy-chat";
 import {
   usePreviewContext,
   usePreviewSession,
@@ -10,11 +10,7 @@ import {
 import { useSectorWorkItems } from "@/features/work/hooks/use-sector-work-items";
 import { buildCopilotContext } from "@/features/work/lib/creamy-copilot";
 import { canAccessAsignacionLotes } from "@/features/os/operational/lib/asignacion-lotes-rbac";
-import {
-  extractProblems,
-  extractUpcomingDeliveries,
-  filterWorkItemsForDate,
-} from "@/features/work/lib/work-items-day-view";
+import { filterWorkItemsForDate } from "@/features/work/lib/work-items-day-view";
 import { startOfDay } from "@/features/work/lib/calendar";
 import { useCallback, useMemo } from "react";
 
@@ -27,10 +23,13 @@ export function CreamyCompanion() {
   const { data } = useSectorWorkItems(sectorId, { ownerPerson });
 
   const today = useMemo(() => startOfDay(new Date()), []);
+  const workItems = useMemo(
+    () => applyEffectiveStatus(data?.workItems ?? []),
+    [data?.workItems, applyEffectiveStatus]
+  );
   const dayItems = useMemo(() => {
-    const items = applyEffectiveStatus(data?.workItems ?? []);
-    return filterWorkItemsForDate(items, today, today);
-  }, [data?.workItems, today, applyEffectiveStatus]);
+    return filterWorkItemsForDate(workItems, today, today);
+  }, [workItems, today]);
 
   const copilot = useMemo(
     () =>
@@ -44,23 +43,10 @@ export function CreamyCompanion() {
     [creamyTeaser, dayItems, home.creamyContext, home.definition.title]
   );
 
-  const upcomingDeliveries = useMemo(
-    () => extractUpcomingDeliveries(applyEffectiveStatus(data?.workItems ?? []), today),
-    [data?.workItems, today, applyEffectiveStatus]
-  );
-  const problems = useMemo(() => extractProblems(dayItems), [dayItems]);
   const canSearchLotes = canAccessAsignacionLotes(sectorId);
   const openAsignacionLotes = useCallback(() => {
     navigateSidebar("asignacion_lotes");
   }, [navigateSidebar]);
-  const handleSuggestionClick = useCallback(
-    (suggestion: string) => {
-      if (canSearchLotes && /lote|asignaci[oó]n/i.test(suggestion)) {
-        openAsignacionLotes();
-      }
-    },
-    [canSearchLotes, openAsignacionLotes]
-  );
 
   return (
     <>
@@ -108,12 +94,11 @@ export function CreamyCompanion() {
                 <X className="size-4" />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-6">
-              <ContextPanel
-                upcomingDeliveries={upcomingDeliveries}
-                problems={problems}
-                copilot={copilot}
-                onSuggestionClick={handleSuggestionClick}
+            <div className="min-h-0 flex-1">
+              <CreamyChat
+                sectorId={sectorId}
+                workItems={workItems}
+                suggestions={copilot.suggestions}
                 lotesSearchEnabled={canSearchLotes}
                 onOpenAsignacionLotes={openAsignacionLotes}
               />
