@@ -113,6 +113,43 @@ describe("Auth contracts — MockAuthAdapter", () => {
     expect(adapter.getSession()).toBeNull();
     expect(sessionStorage.getItem(GENUS_OS_AUTH_SESSION_KEY)).toBeNull();
   });
+
+  it("autentica exactamente los seis accesos sectoriales activos", async () => {
+    const expected = [
+      ["elaboracion@laboratoriogenus.com.ar", "elaboracion123", "ELABORACION"],
+      ["produccion@laboratoriogenus.com.ar", "produccion123", "PRODUCCION"],
+      ["emasivo@laboratoriogenus.com.ar", "emasivo123", "ENVASADO_MASIVO"],
+      ["epremium@laboratoriogenus.com.ar", "epremium123", "ENVASADO_PREMIUM"],
+      ["calidad@laboratoriogenus.com.ar", "calidad123", "CALIDAD"],
+      ["mp@laboratoriogenus.com.ar", "mp123", "MATERIA_PRIMA"],
+    ] as const;
+
+    expect(MOCK_PREVIEW_USERS).toHaveLength(6);
+
+    for (const [email, password, sector] of expected) {
+      const session = await adapter.signIn({ email, password, rememberMe: false });
+      expect(session?.sector.id).toBe(sector);
+      await adapter.signOut();
+    }
+  });
+
+  it("rechaza accesos antiguos desactivados", async () => {
+    const blocked = [
+      "deposito@laboratoriogenus.com.ar",
+      "direccion@laboratoriogenus.com.ar",
+      "masivo@laboratoriogenus.com.ar",
+      "premium@laboratoriogenus.com.ar",
+    ];
+
+    for (const email of blocked) {
+      const session = await adapter.signIn({
+        email,
+        password: "cualquiercosa",
+        rememberMe: false,
+      });
+      expect(session).toBeNull();
+    }
+  });
 });
 
 describe("Auth session storage — migración legacy", () => {

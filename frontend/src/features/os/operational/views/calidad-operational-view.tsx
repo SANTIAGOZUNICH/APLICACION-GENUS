@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
-import { usePreviewContext } from "@/features/os/session/preview-context";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { displayField } from "@/lib/operational/display-fields";
 import { SECTOR_LABELS } from "@/types/operational/sector";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,10 @@ import {
 } from "../components/operational-ui";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { filterQualityByKind, filterQualityByStatus } from "../lib/operational-filters";
+import {
+  canDecideQuality,
+  QUALITY_DECISION_DENIED_MESSAGE,
+} from "../lib/quality-decision-rbac";
 import { WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { useOperationalStore } from "../store/operational-store-context";
 import type { QualityItem } from "../types";
@@ -66,7 +70,9 @@ interface CalidadOperationalViewProps {
 /** Calidad — Pendientes (Elaboraciones/Envasados) · Aprobados · Rechazados. */
 export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOperationalViewProps) {
   const workspace = useRequiredWorkspace();
+  const { sectorId } = usePreviewSession();
   const { showToast } = usePreviewContext();
+  const canDecide = canDecideQuality(sectorId);
   const {
     getQualityStatus,
     getQualityObservation,
@@ -83,6 +89,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
   const [showRejectField, setShowRejectField] = useState(false);
   const [rejectError, setRejectError] = useState<string | null>(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const qualityItems = useMemo(() => {
     const seed = data?.qualityItems ?? [];
@@ -127,6 +134,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
       setRejectReason("");
       setShowRejectField(false);
       setRejectError(null);
+      setActionError(null);
     },
     [getQualityObservation]
   );
@@ -143,18 +151,44 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
 
   const handleApprove = useCallback(() => {
     if (!reviewItem) return;
-    approveQualityItem(reviewItem.id, {
+    if (!canDecideQuality(sectorId)) {
+      setActionError(QUALITY_DECISION_DENIED_MESSAGE);
+      showToast(QUALITY_DECISION_DENIED_MESSAGE, "info");
+      setConfirmApprove(false);
+      return;
+    }
+    const result = approveQualityItem(reviewItem.id, {
+      actorSectorId: sectorId,
       decidedBy: workspace.context.displayName,
       observation: calidadObservation,
     });
+    if (!result.ok) {
+      setActionError(result.error);
+      showToast(result.error, "info");
+      setConfirmApprove(false);
+      return;
+    }
     notifyOrigin(reviewItem, true);
     showToast("Trabajo aprobado.");
     setConfirmApprove(false);
     setReviewItem(null);
-  }, [reviewItem, approveQualityItem, workspace.context.displayName, calidadObservation, notifyOrigin, showToast]);
+  }, [
+    reviewItem,
+    sectorId,
+    approveQualityItem,
+    workspace.context.displayName,
+    calidadObservation,
+    notifyOrigin,
+    showToast,
+  ]);
 
   const handleReject = useCallback(() => {
     if (!reviewItem) return;
+    if (!canDecideQuality(sectorId)) {
+      setActionError(QUALITY_DECISION_DENIED_MESSAGE);
+      showToast(QUALITY_DECISION_DENIED_MESSAGE, "info");
+      return;
+    }
     if (!showRejectField) {
       setShowRejectField(true);
       return;
@@ -163,14 +197,29 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
       setRejectError("El motivo de rechazo es obligatorio.");
       return;
     }
-    rejectQualityItem(reviewItem.id, {
+    const result = rejectQualityItem(reviewItem.id, {
+      actorSectorId: sectorId,
       decidedBy: workspace.context.displayName,
       observation: rejectReason.trim(),
     });
+    if (!result.ok) {
+      setActionError(result.error);
+      showToast(result.error, "info");
+      return;
+    }
     notifyOrigin(reviewItem, false);
     showToast("Trabajo rechazado.");
     setReviewItem(null);
-  }, [reviewItem, showRejectField, rejectReason, rejectQualityItem, workspace.context.displayName, notifyOrigin, showToast]);
+  }, [
+    reviewItem,
+    sectorId,
+    showRejectField,
+    rejectReason,
+    rejectQualityItem,
+    workspace.context.displayName,
+    notifyOrigin,
+    showToast,
+  ]);
 
   const buildColumns = useCallback(
     (kind: "granel" | "salida"): OperationalTableColumn<QualityItem>[] => {
@@ -218,7 +267,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
           render: (row) =>
             row.status === "pendiente" ? (
               <Button size="sm" variant="secondary" onClick={() => openReview(row)}>
-                Revisar
+                {canDecide ? "Revisar" : "Ver detalle"}
               </Button>
             ) : (
               <span className="text-xs text-[var(--os-text-muted)]">—</span>
@@ -226,7 +275,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
         },
       ];
     },
-    [getQualityObservation, openReview]
+    [canDecide, openReview]
   );
 
   const granelColumns = useMemo(() => buildColumns("granel"), [buildColumns]);
@@ -289,7 +338,9 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
           Hola, {workspace.context.displayName}
         </h2>
         <p className="text-sm text-[var(--os-text-muted)]">
-          Calidad · {workspace.context.jobTitle}
+          {canDecide
+            ? `Calidad · ${workspace.context.jobTitle}`
+            : `Consulta de Calidad · sesión ${SECTOR_LABELS[sectorId] ?? sectorId} (solo lectura)`}
         </p>
         <SyncStatusBar
           source={data?.source ?? "demo"}
@@ -300,6 +351,16 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
           detailMessage={data?.source === "native" ? null : data?.message}
         />
       </header>
+
+      {!canDecide && (
+        <div
+          role="status"
+          className="mb-4 rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-4 py-3 text-sm text-[var(--os-text)]"
+        >
+          Vista de consulta: podés ver pendientes, aprobados y rechazados. Solo el sector Calidad
+          puede aprobar o rechazar.
+        </div>
+      )}
 
       {topTab === "pendientes" && transferidosCount > 0 && (
         <div className="mb-4 rounded-[var(--os-radius-sm)] border border-[var(--os-teal)]/30 bg-[var(--os-teal-soft)] px-4 py-3 text-sm text-[var(--os-text)]">
@@ -439,11 +500,13 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                     value={calidadObservation}
                     onChange={(e) => setCalidadObservation(e.target.value)}
                     rows={2}
-                    className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
+                    readOnly={!canDecide}
+                    disabled={!canDecide}
+                    className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-70"
                   />
                 </div>
 
-                {showRejectField && (
+                {canDecide && showRejectField && (
                   <div className="space-y-2">
                     <label htmlFor="reject-reason" className="text-sm font-medium text-rose-700">
                       Motivo de rechazo (obligatorio)
@@ -467,19 +530,33 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                     )}
                   </div>
                 )}
+
+                {actionError && (
+                  <p role="alert" className="text-sm text-rose-700">
+                    {actionError}
+                  </p>
+                )}
               </DrawerBody>
-              <DrawerFooter>
-                <Button variant="destructive" onClick={handleReject}>
-                  {showRejectField ? "Confirmar rechazo" : "Rechazar"}
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={() => setConfirmApprove(true)}
-                  disabled={showRejectField}
-                >
-                  Aprobar
-                </Button>
-              </DrawerFooter>
+              {canDecide ? (
+                <DrawerFooter>
+                  <Button variant="destructive" onClick={handleReject}>
+                    {showRejectField ? "Confirmar rechazo" : "Rechazar"}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={() => setConfirmApprove(true)}
+                    disabled={showRejectField}
+                  >
+                    Aprobar
+                  </Button>
+                </DrawerFooter>
+              ) : (
+                <DrawerFooter>
+                  <Button variant="secondary" onClick={() => setReviewItem(null)}>
+                    Cerrar
+                  </Button>
+                </DrawerFooter>
+              )}
             </>
           )}
         </DrawerContent>

@@ -113,6 +113,8 @@ export async function postQualityDecision(payload: {
   status: "aprobado" | "rechazado";
   decidedBy?: string;
   observation?: string;
+  /** Sector de la sesión — defensa de acción en el pipeline (no auth server completo). */
+  actorSectorId?: string;
 }): Promise<void> {
   await fetch("/api/v1/live-sync/operations", {
     method: "POST",

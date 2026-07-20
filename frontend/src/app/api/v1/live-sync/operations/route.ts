@@ -30,6 +30,8 @@ type OperationAction =
       status: "aprobado" | "rechazado";
       decidedBy?: string;
       observation?: string;
+      /** Defensa de acción: si viene informado, solo CALIDAD puede decidir. */
+      actorSectorId?: SectorId;
     };
 
 /** Mutaciones operativas — propagación inmediata vía SSE (sin esperar Sheets). */
@@ -71,6 +73,18 @@ export async function POST(request: Request) {
       });
     }
     case "quality_decision": {
+      // Defensa de acción (no auth server completo): si el cliente informa
+      // actorSectorId, solo CALIDAD puede persistir la decisión.
+      if (body.actorSectorId && body.actorSectorId !== "CALIDAD") {
+        return NextResponse.json(
+          {
+            error:
+              "Solo el sector Calidad puede aprobar o rechazar. Tu sesión no tiene permiso para decidir.",
+            code: "QUALITY_DECISION_FORBIDDEN",
+          },
+          { status: 403 }
+        );
+      }
       const record = serverOperationalState.decideQuality(body.itemId, body.status, {
         decidedBy: body.decidedBy,
         observation: body.observation,
