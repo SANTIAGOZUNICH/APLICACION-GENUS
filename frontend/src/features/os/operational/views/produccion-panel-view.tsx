@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
-import { usePreviewContext } from "@/features/os/session/preview-context";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { SECTOR_LABELS } from "@/types/operational/sector";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
@@ -12,11 +12,14 @@ import { isWorkTransferredStatus } from "../lib/work-transfer-labels";
 import { getFormulaForProduct } from "../adapters/formula-repository";
 import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { getTotalStockByCodigo } from "../adapters/materia-prima-repository";
-import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { getDeliveryByWorkItemId } from "../adapters/delivery-repository";
 import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-adapter";
+import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { OperationalTable, StatusChip, type OperationalTableColumn } from "../components/operational-ui";
+import { AssignedWorkLifecycleActions } from "../components/assigned-work-lifecycle-actions";
 import { Button } from "@/components/ui/button";
+import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
+import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
 
 const PRODUCING_SECTORS = ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM"] as const;
 
@@ -29,6 +32,7 @@ interface SectorSummary {
 
 interface ActiveRow {
   id: string;
+  item: WorkItem;
   sector: string;
   fecha: string | null;
   cliente: string | null;
@@ -68,8 +72,12 @@ function KpiTile({ label, value, tone }: { label: string; value: number; tone?: 
 
 /** Panel general de Producción — KPIs, estado por sector, trabajos activos, atención requerida. */
 export function ProduccionPanelView() {
-  const { navigateTo } = usePreviewContext();
-  const { getQualityStatus, getFinishedQty } = useOperationalStore();
+  const { navigateTo, showToast } = usePreviewContext();
+  const { sectorId } = usePreviewSession();
+  const workspace = useRequiredWorkspace();
+  const canMutateWorks = canMutateAssignedWork(sectorId);
+  const { getQualityStatus, getFinishedQty, refreshDecisions } = useOperationalStore();
+  const [panelTick, setPanelTick] = useState(0);
 
   const elaboracion = useOperationalPlan("ELABORACION");
   const masivo = useOperationalPlan("ENVASADO_MASIVO");
@@ -85,7 +93,7 @@ export function ProduccionPanelView() {
   const allActiveItems = useMemo(
     () => PRODUCING_SECTORS.flatMap((s) => bySector[s]),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [elaboracion.data, masivo.data, premium.data]
+    [elaboracion.data, masivo.data, premium.data, panelTick]
   );
 
   const qualityItems = calidad.data?.qualityItems ?? [];
@@ -153,6 +161,7 @@ export function ProduccionPanelView() {
     .filter((i) => i.status !== "cancelado")
     .map((i) => ({
       id: i.id,
+      item: i,
       sector: SECTOR_LABELS[i.sector],
       fecha: i.plannedDate ?? i.dayLabel,
       cliente: i.client,
@@ -178,6 +187,28 @@ export function ProduccionPanelView() {
     { key: "cantidad", header: "Cantidad", render: (r) => r.cantidad || "—" },
     { key: "asignado", header: "Asignado a", render: (r) => displayField(r.asignadoA) },
     { key: "estado", header: "Estado", render: (r) => <StatusChip status={r.estado} /> },
+    ...(canMutateWorks
+      ? [
+          {
+            key: "acciones",
+            header: "Acción",
+            render: (r: ActiveRow) => (
+              <AssignedWorkLifecycleActions
+                item={r.item}
+                actorSectorId={sectorId}
+                actorName={workspace.context.displayName}
+                finishedQty={getFinishedQty(r.id)}
+                compact
+                onChanged={() => {
+                  refreshDecisions();
+                  setPanelTick((v) => v + 1);
+                }}
+                onToast={(message) => showToast(message, "info")}
+              />
+            ),
+          } satisfies OperationalTableColumn<ActiveRow>,
+        ]
+      : []),
   ];
 
   const sectorViewMap: Record<string, "ver-elaboracion" | "ver-envasado-masivo" | "ver-envasado-premium" | "ver-calidad"> = {

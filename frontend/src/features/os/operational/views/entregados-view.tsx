@@ -126,10 +126,12 @@ function ActionMenu({
   onDetail,
   onArchive,
   onAnnul,
+  onDelete,
 }: {
   onDetail: () => void;
   onArchive: () => void;
   onAnnul: () => void;
+  onDelete: () => void;
 }) {
   const itemClass =
     "block w-full rounded px-3 py-1.5 text-left text-xs font-medium hover:bg-[var(--os-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)]";
@@ -150,6 +152,9 @@ function ActionMenu({
         </button>
         <button type="button" className={`${itemClass} text-rose-700`} onClick={onAnnul}>
           Anular entrega
+        </button>
+        <button type="button" className={`${itemClass} text-rose-700`} onClick={onDelete}>
+          Borrar entrega
         </button>
       </div>
     </details>
@@ -206,9 +211,9 @@ export function EntregadosView() {
   const [archiveTarget, setArchiveTarget] = useState<DeliveryRecord | null>(null);
   const [annulTarget, setAnnulTarget] = useState<DeliveryRecord | null>(null);
   const [annulReason, setAnnulReason] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState<DeliveryRecord | null>(null);
+  const [deleteGuideTarget, setDeleteGuideTarget] = useState<DeliveryRecord | null>(null);
+  const [deleteGuideStep, setDeleteGuideStep] = useState<"explain" | "reason" | "confirm">("explain");
   const [deleteReason, setDeleteReason] = useState("");
-  const [deleteStep, setDeleteStep] = useState<"confirm" | "reason">("confirm");
   const [actionError, setActionError] = useState<string | null>(null);
 
   const workItemsById = useMemo(() => {
@@ -427,26 +432,68 @@ export function EntregadosView() {
     showToast("Entrega anulada. El trabajo vuelve a pendientes de entrega.");
   }, [annulReason, annulTarget, refreshDecisions, sectorId, showToast, workspace.context.displayName]);
 
-  const executeDelete = useCallback(() => {
-    if (!deleteTarget) return;
+  const closeDeleteGuide = useCallback(() => {
+    setDeleteGuideTarget(null);
+    setDeleteGuideStep("explain");
+    setDeleteReason("");
+    setActionError(null);
+  }, []);
+
+  const openDeleteGuide = useCallback((record: DeliveryRecord) => {
+    setDeleteGuideTarget(record);
+    setDeleteReason("");
+    setActionError(null);
+    setDeleteGuideStep(record.archived ? "reason" : "explain");
+  }, []);
+
+  const executeGuidedDelete = useCallback(() => {
+    if (!deleteGuideTarget) return;
     const reason = deleteReason.trim();
     if (!reason) {
       setActionError("El motivo de eliminación es obligatorio.");
       return;
     }
-    const result = deleteDeliveryRecord({ id: deleteTarget.id, actorSectorId: sectorId, actorName: workspace.context.displayName, reason });
+
+    let target = deleteGuideTarget;
+
+    if (!target.archived && target.status === "ENTREGADO") {
+      const archiveResult = archiveDelivery({
+        id: target.id,
+        actorSectorId: sectorId,
+        actorName: workspace.context.displayName,
+      });
+      if (!archiveResult.ok) {
+        setActionError(archiveResult.error);
+        showToast(archiveResult.error, "info");
+        return;
+      }
+      void postArchiveDelivery({ id: target.id, actorSectorId: sectorId }).catch(() => {});
+      target = archiveResult.record;
+    }
+
+    const result = deleteDeliveryRecord({
+      id: target.id,
+      actorSectorId: sectorId,
+      actorName: workspace.context.displayName,
+      reason,
+    });
     if (!result.ok) {
       setActionError(result.error);
       showToast(result.error, "info");
       return;
     }
-    void postDeleteDeliveryRecord({ id: deleteTarget.id, reason, actorSectorId: sectorId }).catch(() => {});
-    setDeleteTarget(null);
-    setDeleteReason("");
-    setActionError(null);
+    void postDeleteDeliveryRecord({ id: target.id, reason, actorSectorId: sectorId }).catch(() => {});
+    closeDeleteGuide();
     setTick((value) => value + 1);
-    showToast("Registro eliminado definitivamente.");
-  }, [deleteReason, deleteTarget, sectorId, showToast, workspace.context.displayName]);
+    showToast("Entrega eliminada definitivamente. Queda auditoría REGISTRO_ELIMINADO.");
+  }, [
+    closeDeleteGuide,
+    deleteGuideTarget,
+    deleteReason,
+    sectorId,
+    showToast,
+    workspace.context.displayName,
+  ]);
 
   const deliveryColumns: OperationalTableColumn<DeliveryRecord>[] = [
     { key: "actual", header: "Entregado", render: (record) => formatDateTime(record.actualDeliveredAt) },
@@ -469,6 +516,7 @@ export function EntregadosView() {
             setAnnulReason("");
             setActionError(null);
           }}
+          onDelete={() => openDeleteGuide(record)}
         />
       ) : (
         <Button variant="secondary" size="sm" onClick={() => setDetail(record)}>
@@ -513,17 +561,8 @@ export function EntregadosView() {
           <Button variant="secondary" size="sm" onClick={() => executeRestore(record)}>
             Restaurar
           </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => {
-              setDeleteTarget(record);
-              setDeleteReason("");
-              setDeleteStep("confirm");
-              setActionError(null);
-            }}
-          >
-            Eliminar definitivamente
+          <Button variant="destructive" size="sm" onClick={() => openDeleteGuide(record)}>
+            Borrar entrega
           </Button>
         </div>
       ) : (
@@ -542,6 +581,14 @@ export function EntregadosView() {
           <h2 className="text-2xl font-semibold tracking-tight">Entregados</h2>
           <p className="text-sm text-[var(--os-text-muted)]">
             Producción confirma entregas aprobadas por Calidad, archiva registros y puede anular una entrega para devolverla a pendientes.
+          </p>
+          <p className="text-sm text-[var(--os-text-muted)]">
+            <strong className="font-medium text-[var(--os-text)]">Descartar notificación</strong> solo oculta el
+            aviso en Creamy; no modifica la entrega.{" "}
+            <strong className="font-medium text-[var(--os-text)]">Archivar</strong> saca la entrega de la lista
+            principal pero permite restaurarla desde Archivados.{" "}
+            <strong className="font-medium text-[var(--os-text)]">Borrar entrega</strong> elimina el registro
+            visible y no se puede deshacer; queda solo una huella de auditoría (REGISTRO_ELIMINADO).
           </p>
           {!canMutate && (
             <p className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-4 py-3 text-sm text-[var(--os-text-muted)]">
@@ -737,58 +784,78 @@ export function EntregadosView() {
       </Dialog>
 
       <Dialog
-        open={deleteTarget !== null && deleteStep === "confirm"}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDeleteTarget(null);
-            setDeleteStep("confirm");
-            setDeleteReason("");
-          }
-        }}
+        open={deleteGuideTarget !== null && deleteGuideStep === "explain"}
+        onOpenChange={(open) => !open && closeDeleteGuide()}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>¿Eliminar definitivamente?</DialogTitle>
-            <DialogDescription>
-              Esta acción no se puede deshacer. Producto: {deleteTarget?.product ?? "—"}. Cliente:{" "}
-              {deleteTarget?.client ?? "—"}. Lote: {deleteTarget?.lote ?? "—"}. Entrega:{" "}
-              {deleteTarget ? formatDateTime(deleteTarget.actualDeliveredAt) : "—"}. No se borrarán OE/OA,
-              Calidad, lotes ni el trabajo relacionado.
+            <DialogTitle>Borrar entrega</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-sm text-[var(--os-text-muted)]">
+                <p>
+                  Para proteger el historial, la entrega se archivará antes de poder eliminarse
+                  definitivamente.
+                </p>
+                <p>
+                  Descartar una notificación solo oculta el aviso. Archivar permite restaurar. Borrar
+                  entrega elimina el registro visible y no se puede restaurar.
+                </p>
+              </div>
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button variant="secondary" onClick={closeDeleteGuide}>
+              Cancelar
+            </Button>
             <Button
               variant="secondary"
               onClick={() => {
-                setDeleteTarget(null);
-                setDeleteStep("confirm");
+                if (deleteGuideTarget) {
+                  executeArchive(deleteGuideTarget);
+                  closeDeleteGuide();
+                }
               }}
             >
-              Cancelar
+              Archivar solamente
             </Button>
-            <Button variant="destructive" onClick={() => setDeleteStep("reason")}>
-              Continuar
+            <Button variant="destructive" onClick={() => setDeleteGuideStep("reason")}>
+              Continuar para eliminar
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
       <Dialog
-        open={deleteTarget !== null && deleteStep === "reason"}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDeleteTarget(null);
-            setDeleteStep("confirm");
-            setDeleteReason("");
-          }
-        }}
+        open={deleteGuideTarget !== null && deleteGuideStep === "reason"}
+        onOpenChange={(open) => !open && closeDeleteGuide()}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Confirmar eliminación definitiva</DialogTitle>
+            <DialogTitle>Motivo de eliminación</DialogTitle>
             <DialogDescription>
-              Indicá el motivo obligatorio. Solo quedará una huella de auditoría (REGISTRO_ELIMINADO).
+              Indicá el motivo obligatorio antes de continuar.
             </DialogDescription>
           </DialogHeader>
+          {deleteGuideTarget && (
+            <dl className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <dt className="text-xs uppercase text-[var(--os-text-muted)]">Producto</dt>
+                <dd className="font-medium">{deleteGuideTarget.product}</dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase text-[var(--os-text-muted)]">Cliente</dt>
+                <dd>{displayField(deleteGuideTarget.client)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase text-[var(--os-text-muted)]">Lote</dt>
+                <dd className="font-mono text-xs">{displayField(deleteGuideTarget.lote)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase text-[var(--os-text-muted)]">Entregado</dt>
+                <dd>{formatDateTime(deleteGuideTarget.actualDeliveredAt)}</dd>
+              </div>
+            </dl>
+          )}
           <textarea
             value={deleteReason}
             onChange={(e) => setDeleteReason(e.target.value)}
@@ -798,17 +865,50 @@ export function EntregadosView() {
           />
           {actionError && <p role="alert" className="text-sm text-rose-700">{actionError}</p>}
           <DialogFooter>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setDeleteTarget(null);
-                setDeleteStep("confirm");
-                setDeleteReason("");
-              }}
-            >
+            <Button variant="secondary" onClick={closeDeleteGuide}>
               Cancelar
             </Button>
-            <Button variant="destructive" onClick={executeDelete} disabled={!deleteReason.trim()}>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (!deleteReason.trim()) {
+                  setActionError("El motivo de eliminación es obligatorio.");
+                  return;
+                }
+                setActionError(null);
+                setDeleteGuideStep("confirm");
+              }}
+              disabled={!deleteReason.trim()}
+            >
+              Continuar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteGuideTarget !== null && deleteGuideStep === "confirm"}
+        onOpenChange={(open) => !open && closeDeleteGuide()}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar definitivamente</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 text-sm text-[var(--os-text-muted)]">
+                <p>
+                  ¿Querés eliminar definitivamente esta entrega? Dejará de aparecer en Entregados y en las
+                  búsquedas de Creamy. Esta acción no puede deshacerse.
+                </p>
+                <p>Quedará registrada una huella de auditoría (REGISTRO_ELIMINADO).</p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          {actionError && <p role="alert" className="text-sm text-rose-700">{actionError}</p>}
+          <DialogFooter>
+            <Button variant="secondary" onClick={closeDeleteGuide}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={executeGuidedDelete}>
               Eliminar definitivamente
             </Button>
           </DialogFooter>

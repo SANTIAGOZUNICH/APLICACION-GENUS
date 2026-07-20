@@ -27,6 +27,12 @@ import {
   completionEventToQualityItem,
 } from "@/features/os/operational/lib/completion-events";
 import {
+  getFormulaForProduct,
+} from "@/features/os/operational/adapters/formula-repository";
+import {
+  listActiveSubstitutions,
+} from "@/features/os/operational/adapters/mp-substitutions-repository";
+import {
   readCompletionEvents,
   readDecisionMap,
 } from "@/features/os/operational/store/operational-store";
@@ -37,11 +43,13 @@ import {
 import type {
   CreamyLocalSnapshot,
   CreamyDeliverySummary,
+  CreamyFormulaSummary,
   CreamyLotSummary,
   CreamyOrderDocumentSummary,
   CreamyOrderSummary,
   CreamyQualityPendingSummary,
   CreamyRawMaterialSummary,
+  CreamySubstitutionSummary,
   CreamyWorkItemSummary,
 } from "./types";
 
@@ -280,6 +288,49 @@ function buildQualityPending(actorSectorId: SectorId): CreamyQualityPendingSumma
     }));
 }
 
+const FORMULA_LIMIT = 20;
+const SUBSTITUTION_LIMIT = 20;
+
+function buildFormulas(workItems: CreamyWorkItemSummary[]): CreamyFormulaSummary[] {
+  const products = Array.from(new Set(workItems.map((w) => w.product).filter(Boolean) as string[]));
+  const results: CreamyFormulaSummary[] = [];
+  for (const product of products.slice(0, FORMULA_LIMIT)) {
+    const formula = getFormulaForProduct(product);
+    if (formula) {
+      results.push({
+        product: formula.product,
+        estimated: formula.estimated,
+        lines: formula.lines.map((line) => ({
+          codigo: line.codigo,
+          nombre: line.nombre,
+          cantidadRequerida: line.cantidadRequerida,
+          unidad: line.unidad,
+        })),
+      });
+    }
+  }
+  return results;
+}
+
+function buildSubstitutions(actorSectorId: SectorId): CreamySubstitutionSummary[] {
+  if (!canCreamyAccessDomain(actorSectorId, "substitutions")) return [];
+  return listActiveSubstitutions()
+    .slice(0, SUBSTITUTION_LIMIT)
+    .map((s) => ({
+      id: s.id,
+      originalCodigo: s.originalCodigo,
+      originalNombre: s.originalNombre,
+      substituteCodigo: s.substituteCodigo,
+      substituteNombre: s.substituteNombre,
+      products: s.products,
+      motivo: s.motivo,
+      approvedBy: s.approvedBy,
+      approvedAt: s.approvedAt,
+      expiresAt: s.expiresAt,
+      notes: s.notes,
+    }));
+}
+
 export function buildCreamyLocalSnapshot({
   actorSectorId,
   workItems = [],
@@ -312,6 +363,15 @@ export function buildCreamyLocalSnapshot({
       )
     : [];
 
+  // Only include formulas for sectors that work with elaboration (have rawMaterials or works access)
+  const formulaWorkItems = actorSectorId === "ELABORACION" || actorSectorId === "PRODUCCION"
+    ? visibleWorkItems.filter((w) => w.sector === "ELABORACION" || w.ownerSector === "ELABORACION")
+    : [];
+  const formulas = formulaWorkItems.length > 0 ? buildFormulas(formulaWorkItems) : undefined;
+  const substitutions = canCreamyAccessDomain(actorSectorId, "substitutions")
+    ? buildSubstitutions(actorSectorId)
+    : undefined;
+
   return {
     capturedAt: new Date().toISOString(),
     source: "local_browser",
@@ -330,6 +390,8 @@ export function buildCreamyLocalSnapshot({
     orders,
     qualityPending,
     deliveries,
+    formulas,
+    substitutions,
     notes: [
       "actorSectorId es client-supplied y no reemplaza autenticación server-side.",
       "Snapshot filtrado del navegador local; no incluye binarios fileDataUrl.",

@@ -155,6 +155,33 @@ export interface CreamyDeliverySummary {
   archived: boolean;
 }
 
+export interface CreamyFormulaLineSummary {
+  codigo: string;
+  nombre: string;
+  cantidadRequerida: number;
+  unidad: string;
+}
+
+export interface CreamyFormulaSummary {
+  product: string;
+  estimated: boolean;
+  lines: CreamyFormulaLineSummary[];
+}
+
+export interface CreamySubstitutionSummary {
+  id: string;
+  originalCodigo: string;
+  originalNombre: string;
+  substituteCodigo: string;
+  substituteNombre: string;
+  products: string[];
+  motivo: string;
+  approvedBy: string;
+  approvedAt: string;
+  expiresAt: string | null;
+  notes: string | null;
+}
+
 export interface CreamyLocalSnapshot {
   capturedAt: string;
   source: "local_browser";
@@ -173,6 +200,10 @@ export interface CreamyLocalSnapshot {
   orders: CreamyOrderSummary[];
   qualityPending: CreamyQualityPendingSummary[];
   deliveries: CreamyDeliverySummary[];
+  /** Formula/BOM summaries for elaboration work products. */
+  formulas?: CreamyFormulaSummary[];
+  /** Active approved MP substitutions visible to actor sector. */
+  substitutions?: CreamySubstitutionSummary[];
   notes: string[];
 }
 
@@ -191,4 +222,7 @@ export interface AssistantChatResponse {
   reply: string;
   sources: SourceCitation[];
   usedTools: string[];
+  /** Non-secret provider info for diagnostics. */
+  provider?: string;
+  model?: string;
 }

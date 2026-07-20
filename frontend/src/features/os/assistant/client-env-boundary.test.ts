@@ -13,8 +13,11 @@ describe("Creamy client env boundary", () => {
       const source = readFileSync(join(process.cwd(), relativePath), "utf8");
       expect(source).not.toContain("OPENAI_API_KEY");
       expect(source).not.toContain("CREAMY_OPENAI_API_KEY");
+      expect(source).not.toContain("GEMINI_API_KEY");
       expect(source).not.toContain("@ai-sdk/openai");
+      expect(source).not.toContain("@ai-sdk/google");
       expect(source).not.toContain("createOpenAI");
+      expect(source).not.toContain("createGoogleGenerativeAI");
     }
   });
 });

@@ -8,6 +8,7 @@ export type CreamyAccessDomain =
   | "orders_oa"
   | "quality"
   | "deliveries"
+  | "substitutions"
   | "help";
 
 const ALL_DOMAINS = new Set<CreamyAccessDomain>([
@@ -18,17 +19,34 @@ const ALL_DOMAINS = new Set<CreamyAccessDomain>([
   "orders_oa",
   "quality",
   "deliveries",
+  "substitutions",
   "help",
 ]);
 
 const DOMAIN_MATRIX: Partial<Record<SectorId, ReadonlySet<CreamyAccessDomain>>> = {
   PRODUCCION: ALL_DOMAINS,
-  CALIDAD: new Set(["works", "lots", "orders_oe", "orders_oa", "quality", "deliveries", "help"]),
+  CALIDAD: new Set([
+    "works",
+    "lots",
+    "orders_oe",
+    "orders_oa",
+    "quality",
+    "deliveries",
+    "substitutions",
+    "help",
+  ]),
   DIRECCION: new Set(["deliveries", "help"]),
-  ELABORACION: new Set(["works", "orders_oe", "help"]),
+  ELABORACION: new Set([
+    "works",
+    "lots",
+    "rawMaterials",
+    "orders_oe",
+    "substitutions",
+    "help",
+  ]),
   ENVASADO_MASIVO: new Set(["works", "orders_oa", "help"]),
   ENVASADO_PREMIUM: new Set(["works", "orders_oa", "help"]),
-  MATERIA_PRIMA: new Set(["rawMaterials", "orders_oe", "help"]),
+  MATERIA_PRIMA: new Set(["rawMaterials", "orders_oe", "substitutions", "help"]),
   CODIFICADO: new Set(["lots", "help"]),
 };
 

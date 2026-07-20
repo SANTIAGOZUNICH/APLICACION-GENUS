@@ -1,22 +1,18 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
+import { resolveCreamyProvider } from "@/lib/assistant/creamy-provider";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** Estado de configuración de Creamy — no expone secretos. */
 export async function GET() {
-  const configured = Boolean(
-    process.env.CREAMY_OPENAI_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim()
-  );
-  const model =
-    process.env.CREAMY_OPENAI_MODEL?.trim() ||
-    (configured ? "gpt-4o-mini" : null);
+  const resolved = resolveCreamyProvider();
 
   return NextResponse.json({
-    configured,
-    model: configured ? model : null,
-    provider: configured ? "openai" : null,
+    configured: resolved.configured,
+    provider: resolved.configured ? resolved.provider : null,
+    model: resolved.configured ? resolved.model : null,
   });
 }

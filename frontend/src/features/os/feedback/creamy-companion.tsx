@@ -17,6 +17,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 type CreamyConfigStatus = "checking" | "configured" | "not_configured" | "offline";
 
+interface CreamyStatusPayload {
+  configured?: boolean;
+  provider?: string | null;
+  model?: string | null;
+}
+
 /** Creamy global — FAB flotante + panel de conversación compartida. */
 export function CreamyCompanion() {
   const { creamyOpen, closeCreamy, openCreamy, creamyTeaser, applyEffectiveStatus, navigateSidebar } =
@@ -26,6 +32,7 @@ export function CreamyCompanion() {
   const home = useResolvedHome();
   const { data } = useSectorWorkItems(sectorId, { ownerPerson });
   const [configStatus, setConfigStatus] = useState<CreamyConfigStatus>("checking");
+  const [providerInfo, setProviderInfo] = useState<{ provider?: string | null; model?: string | null }>({});
   const [keyboardInset, setKeyboardInset] = useState(0);
 
   const today = useMemo(() => startOfDay(new Date()), []);
@@ -63,9 +70,10 @@ export function CreamyCompanion() {
     void fetch("/api/v1/assistant/status")
       .then(async (response) => {
         if (!response.ok) throw new Error("status_failed");
-        const payload = (await response.json()) as { configured?: boolean };
+        const payload = (await response.json()) as CreamyStatusPayload;
         if (!cancelled) {
           setConfigStatus(payload.configured ? "configured" : "not_configured");
+          setProviderInfo({ provider: payload.provider, model: payload.model });
         }
       })
       .catch(() => {
@@ -112,7 +120,9 @@ export function CreamyCompanion() {
 
   const statusLabel =
     configStatus === "configured"
-      ? "IA configurada"
+      ? providerInfo.provider
+        ? `${providerInfo.provider === "gemini" ? "Gemini" : "OpenAI"}${providerInfo.model ? ` · ${providerInfo.model}` : ""}`
+        : "IA configurada"
       : configStatus === "not_configured"
         ? "IA no configurada"
         : configStatus === "offline"

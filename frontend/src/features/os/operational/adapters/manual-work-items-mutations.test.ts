@@ -8,6 +8,7 @@ import {
   listAllManualWorkItems,
   listInactiveManualWorkItems,
   mergeManualWorkItems,
+  restoreManualWorkItem,
   type CreateManualWorkItemInput,
 } from "./manual-work-items-repository";
 
@@ -149,6 +150,82 @@ describe("manual-work-items mutations", () => {
     expect(result.ok).toBe(true);
     expect(listAllManualWorkItems().map((work) => work.id)).toEqual([kept.id]);
     expect(getManualWorkItemMeta(kept.id)?.deleted).toBeUndefined();
+  });
+
+  it("eliminar pendiente y restaurar vuelve a la lista activa", () => {
+    const item = createAssignedWork();
+
+    const deleted = deleteOrCancelManualWorkItem({
+      id: item.id,
+      actorSectorId: "PRODUCCION",
+      actorName: "Produccion",
+    });
+    expect(deleted.ok).toBe(true);
+    if (!deleted.ok) return;
+    expect(listAllManualWorkItems().map((work) => work.id)).not.toContain(item.id);
+
+    const restored = restoreManualWorkItem({
+      id: item.id,
+      actorSectorId: "PRODUCCION",
+      actorName: "Produccion",
+    });
+    expect(restored.ok).toBe(true);
+    if (!restored.ok) return;
+    expect(restored.action).toBe("restaurar");
+    expect(listAllManualWorkItems().map((work) => work.id)).toContain(item.id);
+    expect(getManualWorkItemMeta(item.id)?.deleted).toBe(false);
+  });
+
+  it("cancelar y restaurar vuelve a pendiente activo", () => {
+    const item = setStatus(createAssignedWork(), "en_curso");
+
+    const cancelled = deleteOrCancelManualWorkItem({
+      id: item.id,
+      actorSectorId: "PRODUCCION",
+      actorName: "Produccion",
+      cancelReason: "Cliente suspendio pedido",
+      hasProgressRecord: true,
+      finishedQty: "5",
+    });
+    expect(cancelled.ok).toBe(true);
+    if (!cancelled.ok) return;
+    expect(cancelled.item.status).toBe("cancelado");
+    expect(mergeManualWorkItems(item.sector, []).map((work) => work.id)).not.toContain(item.id);
+
+    const restored = restoreManualWorkItem({
+      id: item.id,
+      actorSectorId: "PRODUCCION",
+      actorName: "Produccion",
+    });
+    expect(restored.ok).toBe(true);
+    if (!restored.ok) return;
+    expect(restored.item.status).toBe("pendiente");
+    expect(mergeManualWorkItems(item.sector, []).map((work) => work.id)).toContain(item.id);
+    expect(getManualWorkItemMeta(item.id)?.cancelReason).toBeUndefined();
+  });
+
+  it("conflicto bloquea restaurar si ya existe un trabajo activo similar", () => {
+    const original = createAssignedWork({ product: "Producto A", client: "Cliente X" });
+    const replacement = createAssignedWork({ product: "Producto A", client: "Cliente X" });
+
+    const deleted = deleteOrCancelManualWorkItem({
+      id: original.id,
+      actorSectorId: "PRODUCCION",
+      actorName: "Produccion",
+    });
+    expect(deleted.ok).toBe(true);
+    if (!deleted.ok) return;
+
+    const restored = restoreManualWorkItem({
+      id: original.id,
+      actorSectorId: "PRODUCCION",
+      actorName: "Produccion",
+    });
+    expect(restored.ok).toBe(false);
+    if (restored.ok) return;
+    expect(restored.code).toBe("RESTORE_CONFLICT");
+    expect(listAllManualWorkItems().map((work) => work.id)).toContain(replacement.id);
+    expect(listAllManualWorkItems().map((work) => work.id)).not.toContain(original.id);
   });
 });
 

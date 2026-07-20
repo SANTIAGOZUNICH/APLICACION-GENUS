@@ -1,17 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { MoreVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  ConfirmDialog,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
@@ -20,9 +10,7 @@ import { SECTOR_LABELS } from "@/types/operational/sector";
 import { ELABORACION_RAMAS } from "../lib/sector-personnel";
 import {
   createManualWorkItem,
-  deleteOrCancelManualWorkItem,
   ensureDeliveryDatesMigrated,
-  getManualWorkItemById,
   getManualWorkItemMeta,
   listAllManualWorkItems,
   reassignManualWorkItem,
@@ -30,21 +18,15 @@ import {
 import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { OperationalTable, StatusChip, type OperationalTableColumn } from "../components/operational-ui";
 import { DeliveryDateBadge } from "../components/delivery-date-badge";
+import { AssignedWorkLifecycleActions } from "../components/assigned-work-lifecycle-actions";
 import {
   filterByDeliveryDate,
-  formatDateDisplay,
   sortByDeliveryDateNearest,
   todayIso,
 } from "../lib/delivery-date";
-import { resolveAssignedWorkLifecycleAction } from "../lib/assigned-work-lifecycle";
-import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
 import { useOperationalStore } from "../store/operational-store-context";
-import { postCancelWork } from "@/lib/api/live-sync-client";
 
 type AssignableSector = Extract<SectorId, "ELABORACION" | "ENVASADO_MASIVO" | "ENVASADO_PREMIUM">;
-type WorkMutationDialog =
-  | { action: "eliminar" | "cancelar" | "archivar" | "info"; itemId: string }
-  | null;
 
 const MASIVO_LINES = ["Línea 1", "Línea 2", "Línea 3", "Línea opcional"];
 const PREMIUM_LINES = ["Línea 1", "Línea 2 opcional"];
@@ -69,9 +51,6 @@ export function AsignarTrabajosView() {
   const [filterDelivery, setFilterDelivery] = useState("");
   const [reassigningId, setReassigningId] = useState<string | null>(null);
   const [reassignDelivery, setReassignDelivery] = useState("");
-  const [mutationDialog, setMutationDialog] = useState<WorkMutationDialog>(null);
-  const [cancelReason, setCancelReason] = useState("");
-  const [cancelError, setCancelError] = useState<string | null>(null);
 
   useEffect(() => {
     ensureDeliveryDatesMigrated();
@@ -79,11 +58,12 @@ export function AsignarTrabajosView() {
 
   const unit = sector === "ELABORACION" ? "kg" : "un.";
   const lineOptions = sector === "ENVASADO_MASIVO" ? MASIVO_LINES : PREMIUM_LINES;
-  const canMutate = canMutateAssignedWork(session.sectorId);
 
   const items = useMemo(() => {
     const all = sortByDeliveryDateNearest(listAllManualWorkItems());
     return filterByDeliveryDate(all, filterDelivery || null);
+    // tick fuerza relectura de localStorage tras mutaciones.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick, filterDelivery]);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -130,170 +110,10 @@ export function AsignarTrabajosView() {
     window.setTimeout(() => setFeedback(null), 4000);
   };
 
-  const selectedMutationItem = mutationDialog
-    ? (getManualWorkItemById(mutationDialog.itemId) ??
-      items.find((item) => item.id === mutationDialog.itemId) ??
-      null)
-    : null;
-
-  const describeMutationItem = () => {
-    if (!selectedMutationItem) return "No encontramos los datos del trabajo seleccionado.";
-    return [
-      `Producto: ${selectedMutationItem.product ?? "—"}`,
-      `Cliente: ${selectedMutationItem.client ?? "—"}`,
-      `Sector: ${SECTOR_LABELS[selectedMutationItem.sector]}`,
-      `Entrega: ${formatDateDisplay(selectedMutationItem.deliveryDate)}`,
-    ].join(" · ");
-  };
-
-  const closeMutationDialog = () => {
-    setMutationDialog(null);
-    setCancelReason("");
-    setCancelError(null);
-  };
-
-  const openMutationDialog = (
-    itemId: string,
-    action: NonNullable<WorkMutationDialog>["action"]
-  ) => {
-    setCancelReason("");
-    setCancelError(null);
-    setMutationDialog({ itemId, action });
-  };
-
-  const handleMutationSuccess = (
-    action: "eliminar" | "cancelar" | "archivar",
-    item: NonNullable<typeof selectedMutationItem>
-  ) => {
-    const actionLabel =
-      action === "eliminar" ? "eliminado" : action === "cancelar" ? "cancelado" : "archivado";
-    pushNotification({
-      kind: "trabajo_asignado",
-      title: `Trabajo ${actionLabel} — ${SECTOR_LABELS[item.sector]}`,
-      message: `${item.product ?? "Producto"} · ${item.client ?? "Cliente"} — entrega ${formatDateDisplay(item.deliveryDate)}`,
-      sectors: [item.sector],
-    });
+  const notifyLifecycleChange = (message: string) => {
+    setFeedback(message);
     setTick((v) => v + 1);
-    setFeedback(`Trabajo ${actionLabel} correctamente.`);
     window.setTimeout(() => setFeedback(null), 4000);
-  };
-
-  const executeMutation = (action: "eliminar" | "cancelar" | "archivar") => {
-    if (!selectedMutationItem) {
-      setFeedback("No encontramos el trabajo seleccionado.");
-      return;
-    }
-    if (!canMutate) {
-      setFeedback("Solo Producción puede modificar trabajos asignados.");
-      closeMutationDialog();
-      return;
-    }
-
-    const reason = cancelReason.trim();
-    if (action === "cancelar" && !reason) {
-      setCancelError("El motivo de cancelación es obligatorio.");
-      return;
-    }
-
-    const finishedQty = getFinishedQty(selectedMutationItem.id);
-    const result = deleteOrCancelManualWorkItem({
-      id: selectedMutationItem.id,
-      actorSectorId: session.sectorId,
-      actorName: workspace.context.displayName,
-      cancelReason: action === "cancelar" ? reason : undefined,
-      hasProgressRecord: finishedQty.trim().length > 0,
-      finishedQty,
-    });
-
-    if (!result.ok) {
-      setFeedback(result.error);
-      if (action === "cancelar" && result.code === "REASON_REQUIRED") {
-        setCancelError(result.error);
-        return;
-      }
-      closeMutationDialog();
-      return;
-    }
-
-    if (action === "cancelar") {
-      void postCancelWork({
-        itemId: selectedMutationItem.id,
-        reason,
-        cancelledBy: workspace.context.displayName,
-        sector: selectedMutationItem.sector,
-        actorSectorId: session.sectorId,
-      }).catch(() => {});
-    }
-
-    handleMutationSuccess(result.action, result.item);
-    closeMutationDialog();
-  };
-
-  const renderMutationMenu = (r: (typeof items)[number]) => {
-    if (!canMutate) return null;
-
-    const finishedQty = getFinishedQty(r.id);
-    const decision = resolveAssignedWorkLifecycleAction(
-      { status: r.status, finishedQty },
-      { hasProgressRecord: finishedQty.trim().length > 0 }
-    );
-
-    const buttonClass =
-      "block w-full rounded px-3 py-1.5 text-left text-xs font-medium hover:bg-[var(--os-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)]";
-    const destructiveClass = `${buttonClass} text-rose-700`;
-    const neutralClass = `${buttonClass} text-[var(--os-text)]`;
-
-    return (
-      <details className="group relative">
-        <summary
-          className="inline-flex h-7 w-7 cursor-pointer list-none items-center justify-center rounded border border-[var(--os-border)] text-[var(--os-text-muted)] hover:text-[var(--os-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)] [&::-webkit-details-marker]:hidden"
-          aria-label={`Más acciones para ${r.product ?? "trabajo"}`}
-        >
-          <MoreVertical className="h-4 w-4" aria-hidden="true" />
-        </summary>
-        <div className="absolute right-0 z-20 mt-1 min-w-44 rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] p-1 shadow-lg">
-          {decision.action === "eliminar" && (
-            <button
-              type="button"
-              className={destructiveClass}
-              onClick={() => openMutationDialog(r.id, "eliminar")}
-            >
-              Eliminar trabajo
-            </button>
-          )}
-          {decision.action === "cancelar" && (
-            <button
-              type="button"
-              className={destructiveClass}
-              onClick={() => openMutationDialog(r.id, "cancelar")}
-            >
-              Cancelar trabajo
-            </button>
-          )}
-          {decision.action === "archivar" && (
-            <button
-              type="button"
-              className={neutralClass}
-              onClick={() => openMutationDialog(r.id, "archivar")}
-            >
-              Archivar
-            </button>
-          )}
-          {decision.action === "bloquear_finalizado" && (
-            <button
-              type="button"
-              className={`${neutralClass} text-[var(--os-text-muted)]`}
-              onClick={() => openMutationDialog(r.id, "info")}
-            >
-              Ver motivo
-            </button>
-          )}
-          <p className="px-3 py-1 text-[11px] leading-snug text-[var(--os-text-muted)]">
-            {decision.reason}
-          </p>
-        </div>
-      </details>
-    );
   };
 
   const columns: OperationalTableColumn<(typeof items)[number]>[] = [
@@ -382,7 +202,14 @@ export function AsignarTrabajosView() {
             >
               Editar entrega
             </button>
-            {renderMutationMenu(r)}
+            <AssignedWorkLifecycleActions
+              item={r}
+              actorSectorId={session.sectorId}
+              actorName={workspace.context.displayName}
+              finishedQty={getFinishedQty(r.id)}
+              onChanged={() => notifyLifecycleChange("Lista de trabajos actualizada.")}
+              onToast={(message) => notifyLifecycleChange(message)}
+            />
           </div>
         ),
     },
@@ -394,8 +221,10 @@ export function AsignarTrabajosView() {
         <header>
           <h2 className="text-2xl font-semibold tracking-tight">Asignar trabajos</h2>
           <p className="text-sm text-[var(--os-text-muted)]">
-            Creá y asigná trabajos con fecha de entrega. Los trabajos se ordenan por la entrega más
-            próxima.
+            Creá y asigná trabajos con fecha de entrega. Usá el botón rojo{" "}
+            <strong>Eliminar trabajo</strong> (papelera) en cada fila para quitar pendientes sin avances, o{" "}
+            <strong>Cancelar trabajo</strong> si ya tienen avance. Los cancelados/eliminados se revisan en
+            Historial.
           </p>
         </header>
 
@@ -601,92 +430,9 @@ export function AsignarTrabajosView() {
         </section>
       </div>
 
-      <ConfirmDialog
-        open={mutationDialog?.action === "eliminar"}
-        onOpenChange={(open) => {
-          if (!open) closeMutationDialog();
-        }}
-        title="¿Querés eliminar este trabajo asignado?"
-        description={describeMutationItem()}
-        confirmLabel="Eliminar trabajo"
-        cancelLabel="Cancelar"
-        variant="destructive"
-        onConfirm={() => executeMutation("eliminar")}
-      />
 
-      <Dialog
-        open={mutationDialog?.action === "cancelar"}
-        onOpenChange={(open) => {
-          if (!open) closeMutationDialog();
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Cancelar trabajo</DialogTitle>
-            <DialogDescription>
-              Indicá el motivo para cancelar este trabajo. {describeMutationItem()}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <label htmlFor="cancel-work-reason" className="text-sm font-medium">
-              Motivo de cancelación
-            </label>
-            <textarea
-              id="cancel-work-reason"
-              value={cancelReason}
-              onChange={(e) => {
-                setCancelReason(e.target.value);
-                if (e.target.value.trim()) setCancelError(null);
-              }}
-              rows={3}
-              required
-              aria-invalid={Boolean(cancelError)}
-              className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
-            />
-            {cancelError && (
-              <p role="alert" className="text-xs text-rose-700">
-                {cancelError}
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="secondary" onClick={closeMutationDialog}>
-              Cancelar
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => executeMutation("cancelar")}
-              disabled={!cancelReason.trim()}
-            >
-              Cancelar trabajo
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
-      <ConfirmDialog
-        open={mutationDialog?.action === "archivar"}
-        onOpenChange={(open) => {
-          if (!open) closeMutationDialog();
-        }}
-        title="Archivar trabajo finalizado"
-        description={`Este trabajo ya fue finalizado y no puede eliminarse. Al archivarlo dejará de aparecer en las bandejas activas y quedará disponible en el historial. ${describeMutationItem()}`}
-        confirmLabel="Archivar"
-        cancelLabel="Cancelar"
-        onConfirm={() => executeMutation("archivar")}
-      />
 
-      <ConfirmDialog
-        open={mutationDialog?.action === "info"}
-        onOpenChange={(open) => {
-          if (!open) closeMutationDialog();
-        }}
-        title="Este trabajo no se puede modificar"
-        description="El trabajo ya está finalizado o inactivo y no admite eliminación desde esta pantalla."
-        confirmLabel="Entendido"
-        cancelLabel="Cerrar"
-        onConfirm={closeMutationDialog}
-      />
     </TwinShell>
   );
 }

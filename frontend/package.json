@@ -19,6 +19,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.18",
     "@ai-sdk/openai": "^4.0.16",
     "@neondatabase/serverless": "^1.1.0",
     "@radix-ui/react-dialog": "^1.1.18",

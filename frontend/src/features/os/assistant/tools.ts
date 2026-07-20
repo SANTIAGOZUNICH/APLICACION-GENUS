@@ -16,6 +16,13 @@ import {
   isOwnWorkOnlySector,
   type CreamyAccessDomain,
 } from "./permissions";
+import {
+  searchSubstitutions,
+  type SubstitutionSearchInput,
+} from "@/features/os/operational/adapters/mp-substitutions-repository";
+import {
+  getFormulaForProduct,
+} from "@/features/os/operational/adapters/formula-repository";
 
 export { isStepCount };
 
@@ -24,37 +31,125 @@ const HELP_CATALOG = [
   {
     id: "help-trabajos",
     label: "Ayuda · Trabajos",
-    keywords: ["trabajo", "pendiente", "avance", "terminar", "produccion", "elaboracion", "envasado"],
+    keywords: ["trabajo", "pendiente", "avance", "terminar", "produccion", "elaboracion", "envasado", "tarea"],
     text:
-      "Para consultar trabajos, abrí Mi trabajo o Producción. Creamy puede buscar y resumir trabajos, pero no cambia estados ni aprueba decisiones.",
+      "Para consultar trabajos, abrí Mi trabajo o Producción → pestaña Trabajos. " +
+      "Creamy puede buscar y resumir trabajos, pero no cambia estados ni aprueba decisiones. " +
+      "Podés filtrar por sector, estado (pendiente, en_curso, completo) o fecha.",
+    navHint: "Menú lateral → Mi trabajo (tu sector) o Producción (global)",
+  },
+  {
+    id: "help-eliminar-trabajo",
+    label: "Ayuda · Eliminar trabajo",
+    keywords: ["eliminar", "borrar", "trabajo", "cancelar trabajo", "remover tarea"],
+    text:
+      "Para eliminar un trabajo: 1) Abrí el trabajo desde Mi trabajo. 2) Presioná el ícono de tres puntos (⋮) o el botón Opciones. " +
+      "3) Seleccioná Eliminar y confirmá. Solo el sector propietario o Producción pueden eliminar trabajos.",
+    navHint: "Mi trabajo → abrir trabajo → opciones → Eliminar",
   },
   {
     id: "help-lotes",
     label: "Ayuda · Asignación de lotes",
-    keywords: ["lote", "codificado", "asignacion", "vencimiento", "vto"],
+    keywords: ["lote", "codificado", "asignacion", "vencimiento", "vto", "codigo"],
     text:
-      "Asignación de lotes permite consultar lote, producto, código, cantidades, vencimiento y análisis. Creamy solo lee el snapshot local.",
+      "Asignación de lotes permite consultar lote, producto, código, cantidades, vencimiento y análisis. " +
+      "Creamy solo lee el snapshot local. Para actualizar los datos, recargá la vista de Asignación de Lotes.",
+    navHint: "Menú lateral → Asignación de Lotes",
+    hrefView: "/asignacion-lotes",
   },
   {
     id: "help-mp",
     label: "Ayuda · Materia prima",
-    keywords: ["materia prima", "mp", "stock", "disponibilidad", "vencimiento"],
+    keywords: ["materia prima", "mp", "stock", "disponibilidad", "vencimiento", "insumo", "ingrediente"],
     text:
-      "Stock de Materias Primas muestra código, lote, cantidad, unidad, ubicación y vencimiento. Solo Materia Prima y Producción pueden consultar este dominio desde Creamy.",
+      "Stock de Materias Primas muestra código, lote, cantidad, unidad, ubicación y vencimiento. " +
+      "Solo Materia Prima, Elaboración y Producción pueden consultar este dominio desde Creamy. " +
+      "Para ingresar nueva MP, usá la vista Materia Prima → Registrar ingreso.",
+    navHint: "Menú lateral → Materia Prima",
+    hrefView: "/materia-prima",
+  },
+  {
+    id: "help-sustituciones",
+    label: "Ayuda · Sustituciones de Materias Primas",
+    keywords: ["sustitucion", "sustituto", "reemplazo", "mp alternativa", "cambio insumo", "sustituir"],
+    text:
+      "Las sustituciones aprobadas permiten reemplazar una MP por otra en casos de quiebre de stock o equivalencia validada. " +
+      "Creamy solo informa sustituciones aprobadas y vigentes; nunca inventa alternativas. " +
+      "Para consultar: pedile a Creamy 'buscar sustituciones para MP-035' o 'sustituciones aprobadas para Glicerina'. " +
+      "Las aprobaciones las gestiona Calidad o Producción.",
+    navHint: "Consultá a Creamy con la tool searchApprovedSubstitutions",
   },
   {
     id: "help-ordenes",
-    label: "Ayuda · OE/OA",
-    keywords: ["oe", "oa", "orden", "documento", "archivo"],
+    label: "Ayuda · OE/OA — Órdenes",
+    keywords: ["oe", "oa", "orden", "documento", "archivo", "orden elaboracion", "orden acondicionamiento"],
     text:
-      "Las OE y OA se listan desde trabajos y documentos locales. Creamy muestra metadata de archivos, nunca contenido binario ni enlaces de data URL.",
+      "Las OE (Órdenes de Elaboración) y OA (Órdenes de Acondicionamiento) se listan en el módulo de Órdenes. " +
+      "Creamy muestra metadata de archivos, nunca contenido binario ni enlaces de datos URL. " +
+      "Para buscar una OE específica: pedí 'buscá la OE-123'.",
+    navHint: "Menú lateral → Órdenes (OE) o Acondicionamiento (OA)",
+    hrefView: "/ordenes",
+  },
+  {
+    id: "help-oe-elaboracion",
+    label: "Ayuda · OE — Elaboración",
+    keywords: ["orden elaboracion", "oe elaboracion", "elaborar producto", "batch"],
+    text:
+      "Las OE de Elaboración están vinculadas a trabajos del sector ELABORACION. " +
+      "Pasos para consultar una OE: 1) Pedile a Creamy 'buscá OE-XXX'. 2) O abrí el trabajo en Mi Trabajo y buscá la referencia OE. " +
+      "Para cargar una OE nueva, contactá a Producción.",
+    navHint: "Mi trabajo (ELABORACION) → trabajo → ver OE vinculada",
   },
   {
     id: "help-calidad",
     label: "Ayuda · Calidad",
-    keywords: ["calidad", "aprobar", "rechazar", "decision", "gmp", "liberar"],
+    keywords: ["calidad", "aprobar", "rechazar", "decision", "gmp", "liberar", "pendiente calidad"],
     text:
-      "Calidad recibe trabajos terminados y registra decisiones. Creamy puede listar pendientes; decisiones GMP deben derivarse a Calidad, Producción o DT.",
+      "Calidad recibe trabajos terminados y registra decisiones (aprobar/rechazar). " +
+      "Creamy puede listar pendientes de Calidad; las decisiones GMP deben derivarse a Calidad, Producción o DT. " +
+      "Para ver pendientes: pedí a Creamy 'trabajos pendientes de Calidad'.",
+    navHint: "Menú lateral → Calidad",
+    hrefView: "/calidad",
+  },
+  {
+    id: "help-entregas",
+    label: "Ayuda · Entregas",
+    keywords: ["entrega", "remito", "despacho", "cliente", "entregar", "historial entregas"],
+    text:
+      "El módulo de Entregas registra lo que fue despachado a clientes. " +
+      "Podés consultar: historial por cliente, entregas fuera de fecha, o pendientes de entrega (aprobados sin entregar). " +
+      "Para archivar una entrega: 1) Abrí Entregas. 2) Buscá la entrega. 3) Usá Archivar en opciones.",
+    navHint: "Menú lateral → Entregas",
+    hrefView: "/entregas",
+  },
+  {
+    id: "help-archivar-entrega",
+    label: "Ayuda · Archivar entrega",
+    keywords: ["archivar entrega", "ocultar entrega", "entrega archivada"],
+    text:
+      "Para archivar una entrega: 1) Abrí la vista Entregas. 2) Buscá la entrega por remito, cliente o producto. " +
+      "3) En opciones (⋮) seleccioná Archivar. Las entregas archivadas no aparecen por defecto pero se pueden ver con 'Mostrar archivadas'.",
+    navHint: "Entregas → buscar entrega → opciones → Archivar",
+  },
+  {
+    id: "help-elaboracion-operadores",
+    label: "Ayuda · Operadores de Elaboración",
+    keywords: ["operador", "elaboracion persona", "responsable elaboracion", "asignar operador", "turno"],
+    text:
+      "Cada trabajo de Elaboración puede tener un operador (ownerPerson) asignado. " +
+      "Para consultar qué está haciendo un operador, pedile a Creamy 'trabajos de Ana en Elaboración'. " +
+      "Para asignar o cambiar el operador, usá la vista de edición del trabajo en Producción.",
+    navHint: "Producción → trabajo → Editar → Operador",
+  },
+  {
+    id: "help-asignacion-lotes",
+    label: "Ayuda · Asignación de lotes a trabajos",
+    keywords: ["asignar lote", "lote trabajo", "loteRef", "relacionar lote", "numero lote"],
+    text:
+      "Un trabajo puede tener un lote asignado (loteRef). " +
+      "Para consultar el lote de un trabajo específico: pedile a Creamy 'lote del trabajo OE-123' o buscá el trabajo. " +
+      "La asignación de lotes se registra en la vista Asignación de Lotes.",
+    navHint: "Asignación de Lotes → buscar por producto o código",
   },
 ] as const;
 
@@ -127,6 +222,46 @@ interface CustomerInput {
 interface DateRangeInput {
   fromDate?: string;
   toDate?: string;
+  limit?: number;
+}
+
+interface ElaborationWorkInput {
+  status?: string;
+  onlyToday?: boolean;
+  onlyPlanned?: boolean;
+  limit?: number;
+}
+
+interface ElaborationWorkByOperatorInput {
+  ownerPerson: string;
+  status?: string;
+  limit?: number;
+}
+
+interface FormulaInput {
+  product: string;
+}
+
+interface FormulaAvailabilityInput {
+  product: string;
+}
+
+interface ElaborationObservationsInput {
+  product?: string;
+  ownerPerson?: string;
+  limit?: number;
+}
+
+interface SubstitutionSearchToolInput {
+  originalCodigo?: string;
+  product?: string;
+  query?: string;
+  limit?: number;
+}
+
+interface ElaborationOrderInput {
+  ref?: string;
+  query?: string;
   limit?: number;
 }
 
@@ -667,6 +802,247 @@ export function createCreamyToolRuntime({ actorSectorId, snapshot }: RuntimeInpu
         message: results.length ? undefined : "No encontré una guía para esa consulta.",
       };
     },
+
+    getElaborationWork(input: ElaborationWorkInput = {}): CreamyToolResult {
+      if (!canCreamyAccessDomain(actorSectorId, "works")) return denied("works");
+      const now = new Date().toISOString().slice(0, 10);
+      const limit = clampLimit(input.limit);
+      const results = workItems
+        .filter((item) => canSeeWorkItem(actorSectorId, item))
+        .filter((item) => item.sector === "ELABORACION" || item.ownerSector === "ELABORACION")
+        .filter((item) => !input.status || item.status === input.status)
+        .filter((item) => {
+          if (input.onlyToday) {
+            return item.plannedDate?.slice(0, 10) === now || item.deliveryDate?.slice(0, 10) === now;
+          }
+          if (input.onlyPlanned) {
+            const d = item.plannedDate ?? item.deliveryDate;
+            return d != null && d.slice(0, 10) >= now;
+          }
+          return true;
+        })
+        .slice(0, limit);
+      return {
+        results: results.map(workResult),
+        localOnly: true,
+        sources: sourceUnique(results.map(workSource)),
+        message: results.length ? undefined : "No encontré trabajos de Elaboración con esos filtros en el snapshot local.",
+      };
+    },
+
+    getElaborationWorkByOperator(input: ElaborationWorkByOperatorInput): CreamyToolResult {
+      if (!canCreamyAccessDomain(actorSectorId, "works")) return denied("works");
+      if (!input.ownerPerson?.trim()) {
+        return emptyResult("Indicá el nombre del operador para buscar sus trabajos.");
+      }
+      const limit = clampLimit(input.limit);
+      const results = workItems
+        .filter((item) => canSeeWorkItem(actorSectorId, item))
+        .filter((item) => item.sector === "ELABORACION" || item.ownerSector === "ELABORACION")
+        .filter((item) => includesQuery([item.ownerPerson], input.ownerPerson))
+        .filter((item) => !input.status || item.status === input.status)
+        .slice(0, limit);
+      return {
+        results: results.map(workResult),
+        localOnly: true,
+        sources: sourceUnique(results.map(workSource)),
+        message: results.length
+          ? undefined
+          : `No encontré trabajos de Elaboración para el operador "${input.ownerPerson}" en el snapshot local.`,
+      };
+    },
+
+    getProductFormulaOrBOM(input: FormulaInput): CreamyToolResult {
+      if (!canCreamyAccessDomain(actorSectorId, "works") && !canCreamyAccessDomain(actorSectorId, "rawMaterials")) {
+        return denied("rawMaterials");
+      }
+      if (!input.product?.trim()) {
+        return emptyResult("Indicá el nombre del producto para buscar su fórmula.");
+      }
+      // Prefer snapshot formulas first
+      const snapshotFormula = snapshot?.formulas?.find((f) =>
+        normalizeText(f.product).includes(normalizeText(input.product))
+      );
+      const formula = snapshotFormula ?? getFormulaForProduct(input.product);
+      if (!formula) {
+        return emptyResult(`No se encontró fórmula para "${input.product}" en los datos locales.`);
+      }
+      return {
+        results: [
+          {
+            product: formula.product,
+            estimated: formula.estimated,
+            lines: formula.lines,
+            localOnly: true,
+            warning: formula.estimated
+              ? "Fórmula estimada automáticamente — no es una BOM oficial cargada."
+              : undefined,
+          },
+        ],
+        localOnly: true,
+        sources: [{ type: "work", id: `formula:${formula.product}`, label: `Fórmula · ${formula.product}` }],
+        message: undefined,
+      };
+    },
+
+    checkProductFormulaAvailability(input: FormulaAvailabilityInput): CreamyToolResult {
+      if (!canCreamyAccessDomain(actorSectorId, "rawMaterials")) return denied("rawMaterials");
+      if (!input.product?.trim()) {
+        return emptyResult("Indicá el producto para verificar disponibilidad de su fórmula.");
+      }
+      const snapshotFormula = snapshot?.formulas?.find((f) =>
+        normalizeText(f.product).includes(normalizeText(input.product))
+      );
+      const formula = snapshotFormula ?? getFormulaForProduct(input.product);
+      if (!formula) {
+        return emptyResult(`No se encontró fórmula para "${input.product}".`);
+      }
+      const lines = formula.lines.map((line) => {
+        const matches = rawMaterials.filter((mp) =>
+          normalizeText(mp.codigo).includes(normalizeText(line.codigo)) ||
+          normalizeText(mp.nombre).includes(normalizeText(line.nombre))
+        );
+        const totalDisponible = matches.reduce((sum, mp) => sum + mp.cantidad, 0);
+        return {
+          codigo: line.codigo,
+          nombre: line.nombre,
+          cantidadRequerida: line.cantidadRequerida,
+          unidad: line.unidad,
+          totalDisponible,
+          suficiente: totalDisponible >= line.cantidadRequerida,
+          lotes: matches.slice(0, 3).map((mp) => ({
+            id: mp.id,
+            lote: mp.lote,
+            cantidad: mp.cantidad,
+            unidad: mp.unidad,
+            vencimientoLabel: formatDate(mp.vencimiento),
+          })),
+        };
+      });
+      const allSufficient = lines.every((l) => l.suficiente);
+      const sources = sourceUnique(
+        rawMaterials
+          .filter((mp) =>
+            formula.lines.some(
+              (l) =>
+                normalizeText(mp.codigo).includes(normalizeText(l.codigo)) ||
+                normalizeText(mp.nombre).includes(normalizeText(l.nombre))
+            )
+          )
+          .slice(0, MAX_TOOL_RESULTS)
+          .map(rawMaterialSource)
+      );
+      return {
+        results: [
+          {
+            product: formula.product,
+            estimated: formula.estimated,
+            allSufficient,
+            lines,
+            warning: formula.estimated ? "Fórmula estimada — verificar con BOM oficial." : undefined,
+          },
+        ],
+        localOnly: true,
+        sources,
+        message: allSufficient
+          ? `Stock local aparentemente suficiente para ${formula.product}.`
+          : `Hay ingredientes con stock insuficiente para ${formula.product}. Revisá con Materia Prima.`,
+      };
+    },
+
+    getPreviousElaborationObservations(input: ElaborationObservationsInput = {}): CreamyToolResult {
+      if (!canCreamyAccessDomain(actorSectorId, "works")) return denied("works");
+      const limit = clampLimit(input.limit);
+      const results = workItems
+        .filter((item) => canSeeWorkItem(actorSectorId, item))
+        .filter((item) => item.sector === "ELABORACION" || item.ownerSector === "ELABORACION")
+        .filter((item) => item.status === "completo" || item.status === "revision")
+        .filter((item) => !input.product || includesQuery([item.product], input.product))
+        .filter((item) => !input.ownerPerson || includesQuery([item.ownerPerson], input.ownerPerson))
+        .filter((item) => item.operationalObservation || item.notes)
+        .slice(0, limit);
+      return {
+        results: results.map((item) => ({
+          id: item.id,
+          product: item.product,
+          ownerPerson: item.ownerPerson,
+          plannedDateLabel: formatDate(item.plannedDate),
+          status: item.status,
+          operationalObservation: item.operationalObservation,
+          notes: item.notes,
+        })),
+        localOnly: true,
+        sources: sourceUnique(results.map(workSource)),
+        message: results.length
+          ? undefined
+          : "No encontré observaciones anteriores de Elaboración con esos filtros.",
+      };
+    },
+
+    searchApprovedSubstitutions(input: SubstitutionSearchToolInput = {}): CreamyToolResult {
+      if (!canCreamyAccessDomain(actorSectorId, "substitutions")) return denied("substitutions");
+      // Prefer snapshot substitutions, fall back to live repository
+      const sourceData = snapshot?.substitutions;
+      let results;
+      if (sourceData) {
+        const q = normalizeText(input.query);
+        const product = normalizeText(input.product);
+        const codigo = normalizeText(input.originalCodigo);
+        results = sourceData.filter((s) => {
+          if (product && s.products.length > 0 && !s.products.some((p) => normalizeText(p).includes(product))) return false;
+          if (codigo && !normalizeText(s.originalCodigo).includes(codigo)) return false;
+          if (q && !includesQuery([s.originalCodigo, s.originalNombre, s.substituteCodigo, s.substituteNombre, s.motivo, s.notes, ...s.products], q)) return false;
+          return true;
+        });
+      } else {
+        results = searchSubstitutions({
+          originalCodigo: input.originalCodigo,
+          product: input.product,
+          query: input.query,
+        });
+      }
+      const limited = results.slice(0, clampLimit(input.limit));
+      return {
+        results: limited,
+        localOnly: true,
+        sources: limited.map((s) => ({
+          type: "raw_material" as const,
+          id: s.id,
+          label: `Sustitución: ${s.originalCodigo} → ${s.substituteCodigo}`,
+        })),
+        message: limited.length
+          ? undefined
+          : "No se encontraron sustituciones aprobadas y vigentes para esa búsqueda. No uses alternativas no listadas.",
+      };
+    },
+
+    getElaborationOrder(input: ElaborationOrderInput = {}): CreamyToolResult {
+      if (!canCreamyAccessDomain(actorSectorId, "orders_oe")) return denied("orders_oe");
+      const limit = clampLimit(input.limit);
+      const results = orders
+        .filter((order) => order.kind === "OE")
+        .filter((order) => canSeeOrder(actorSectorId, order))
+        .filter((order) => !input.ref || normalizeText(order.ref) === normalizeText(input.ref))
+        .filter((order) =>
+          includesQuery(
+            [
+              order.id,
+              order.ref,
+              order.cliente,
+              order.producto,
+              ...order.documents.flatMap((doc) => [doc.fileName, doc.producto, doc.cliente, doc.lote]),
+            ],
+            input.query
+          )
+        )
+        .slice(0, limit);
+      return {
+        results: results.map(orderResult),
+        localOnly: true,
+        sources: sourceUnique(results.map(orderSource)),
+        message: results.length ? undefined : "No encontré OEs visibles con esos filtros.",
+      };
+    },
   };
 }
 
@@ -860,7 +1236,7 @@ export function createCreamyTools(input: RuntimeInput): ToolSet {
       execute: (toolInput) => runtime.getDeliveriesByDateRange(toolInput),
     }),
     getApplicationHelp: tool({
-      description: "Devuelve ayuda estática de uso de Genus OS.",
+      description: "Devuelve ayuda estática de uso de Genus OS, con instrucciones paso a paso.",
       inputSchema: jsonSchema<SearchInput>({
         type: "object",
         properties: {
@@ -870,6 +1246,103 @@ export function createCreamyTools(input: RuntimeInput): ToolSet {
         additionalProperties: false,
       }),
       execute: (toolInput) => runtime.getApplicationHelp(toolInput),
+    }),
+    getElaborationWork: tool({
+      description:
+        "Lista trabajos visibles del sector Elaboración. Soporta filtro por estado, solo hoy o solo planificados.",
+      inputSchema: jsonSchema<ElaborationWorkInput>({
+        type: "object",
+        properties: {
+          status: { type: "string", description: "pendiente | en_curso | completo | revision | cancelado" },
+          onlyToday: { type: "boolean" },
+          onlyPlanned: { type: "boolean" },
+          limit: { type: "number", maximum: MAX_TOOL_RESULTS },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.getElaborationWork(toolInput),
+    }),
+    getElaborationWorkByOperator: tool({
+      description: "Lista trabajos de Elaboración asignados a un operador (ownerPerson).",
+      inputSchema: jsonSchema<ElaborationWorkByOperatorInput>({
+        type: "object",
+        required: ["ownerPerson"],
+        properties: {
+          ownerPerson: { type: "string" },
+          status: { type: "string" },
+          limit: { type: "number", maximum: MAX_TOOL_RESULTS },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.getElaborationWorkByOperator(toolInput),
+    }),
+    getProductFormulaOrBOM: tool({
+      description:
+        "Devuelve la fórmula/BOM (lista de materias primas) para un producto. Puede ser estimada si no hay BOM oficial cargada.",
+      inputSchema: jsonSchema<FormulaInput>({
+        type: "object",
+        required: ["product"],
+        properties: {
+          product: { type: "string" },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.getProductFormulaOrBOM(toolInput),
+    }),
+    checkProductFormulaAvailability: tool({
+      description:
+        "Verifica si hay stock local suficiente de todas las materias primas de la fórmula de un producto.",
+      inputSchema: jsonSchema<FormulaAvailabilityInput>({
+        type: "object",
+        required: ["product"],
+        properties: {
+          product: { type: "string" },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.checkProductFormulaAvailability(toolInput),
+    }),
+    getPreviousElaborationObservations: tool({
+      description:
+        "Devuelve observaciones y notas de trabajos completados/en revisión de Elaboración, filtrable por producto u operador.",
+      inputSchema: jsonSchema<ElaborationObservationsInput>({
+        type: "object",
+        properties: {
+          product: { type: "string" },
+          ownerPerson: { type: "string" },
+          limit: { type: "number", maximum: MAX_TOOL_RESULTS },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.getPreviousElaborationObservations(toolInput),
+    }),
+    searchApprovedSubstitutions: tool({
+      description:
+        "Busca sustituciones de materias primas aprobadas y vigentes. Solo retorna datos autorizados; nunca inventa alternativas.",
+      inputSchema: jsonSchema<SubstitutionSearchToolInput>({
+        type: "object",
+        properties: {
+          originalCodigo: { type: "string", description: "Código MP original ej: MP-035" },
+          product: { type: "string", description: "Producto al que aplica la sustitución" },
+          query: { type: "string", description: "Texto libre" },
+          limit: { type: "number", maximum: MAX_TOOL_RESULTS },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.searchApprovedSubstitutions(toolInput),
+    }),
+    getElaborationOrder: tool({
+      description: "Busca Órdenes de Elaboración (OE) visibles por referencia o texto.",
+      inputSchema: jsonSchema<ElaborationOrderInput>({
+        type: "object",
+        properties: {
+          ref: { type: "string", description: "Número de OE ej: OE-123" },
+          query: { type: "string" },
+          limit: { type: "number", maximum: MAX_TOOL_RESULTS },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.getElaborationOrder(toolInput),
     }),
   };
 }

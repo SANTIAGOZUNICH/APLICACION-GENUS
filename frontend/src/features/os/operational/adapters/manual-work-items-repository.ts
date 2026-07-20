@@ -135,6 +135,140 @@ export function listInactiveManualWorkItems(): WorkItem[] {
   });
 }
 
+/** Pendientes eliminados lógicamente (meta.deleted) — para pestaña Cancelados y eliminados. */
+export function listDeletedManualWorkItems(): WorkItem[] {
+  const meta = readMeta();
+  return readAll().filter((item) => Boolean(meta[item.id]?.deleted));
+}
+
+export type CancelledOrDeletedKind = "eliminado" | "cancelado" | "archivado";
+
+export interface CancelledOrDeletedRow {
+  item: WorkItem;
+  kind: CancelledOrDeletedKind;
+  previousStatus: string;
+  at: string;
+  actor: string;
+  reason: string;
+}
+
+/** Lista unificada para la pestaña Cancelados y eliminados. */
+export function listCancelledAndDeletedManualWorks(): CancelledOrDeletedRow[] {
+  const meta = readMeta();
+  const rows: CancelledOrDeletedRow[] = [];
+  for (const item of readAll()) {
+    const m = meta[item.id];
+    if (m?.deleted) {
+      rows.push({
+        item,
+        kind: "eliminado",
+        previousStatus: "pendiente",
+        at: m.deletedAt ?? "",
+        actor: m.deletedBy ?? m.assignedBy ?? "Producción",
+        reason: "Eliminado sin avances (baja lógica).",
+      });
+      continue;
+    }
+    if (item.status === "cancelado") {
+      rows.push({
+        item,
+        kind: "cancelado",
+        previousStatus: "en_curso / con avances",
+        at: m?.cancelledAt ?? "",
+        actor: m?.cancelledBy ?? m?.assignedBy ?? "Producción",
+        reason: m?.cancelReason ?? "Sin motivo registrado.",
+      });
+      continue;
+    }
+    if (m?.archived) {
+      rows.push({
+        item,
+        kind: "archivado",
+        previousStatus: item.status,
+        at: m.archivedAt ?? "",
+        actor: m.archivedBy ?? m.assignedBy ?? "Producción",
+        reason: "Archivado por Producción.",
+      });
+    }
+  }
+  return rows.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
+}
+
+/**
+ * Restaura un trabajo eliminado o cancelado si no hay conflicto de ID activo.
+ * No restaura entregas ni toca OE/OA/Calidad/lotes.
+ */
+export function restoreManualWorkItem(input: {
+  id: string;
+  actorSectorId: SectorId;
+  actorName: string;
+}): ManualWorkMutationResult {
+  const gate = gateWorkMutation(input.actorSectorId);
+  if (!gate.ok) {
+    return { ok: false, error: gate.error, code: gate.code };
+  }
+
+  const items = readAll();
+  const idx = items.findIndex((item) => item.id === input.id);
+  if (idx < 0) {
+    return { ok: false, error: "No encontramos ese trabajo.", code: "NOT_FOUND" };
+  }
+
+  const item = items[idx]!;
+  const meta = readMeta();
+  const current = meta[input.id];
+  if (!current?.deleted && item.status !== "cancelado" && !current?.archived) {
+    return { ok: true, item, action: "restaurar" };
+  }
+
+  // Conflicto: otro trabajo activo con mismo producto+cliente+sector+fecha (heurística suave)
+  const activeConflict = listAllManualWorkItems().find(
+    (other) =>
+      other.id !== item.id &&
+      other.sector === item.sector &&
+      other.product === item.product &&
+      other.client === item.client &&
+      (other.deliveryDate ?? other.plannedDate) === (item.deliveryDate ?? item.plannedDate)
+  );
+  if (activeConflict) {
+    return {
+      ok: false,
+      error:
+        "No se puede restaurar: ya existe un trabajo activo similar (mismo producto, cliente, sector y fecha). Revisá Asignar trabajos.",
+      code: "RESTORE_CONFLICT",
+    };
+  }
+
+  const now = new Date().toISOString();
+  const restored: WorkItem = {
+    ...item,
+    status: item.status === "cancelado" ? "pendiente" : item.status,
+  };
+  items[idx] = restored;
+  writeAll(items);
+
+  meta[input.id] = {
+    ...current,
+    assignedBy: current?.assignedBy ?? input.actorName,
+    assignedAt: current?.assignedAt ?? now,
+    deleted: false,
+    deletedAt: undefined,
+    deletedBy: undefined,
+    archived: false,
+    archivedAt: undefined,
+    archivedBy: undefined,
+    cancelledAt: undefined,
+    cancelledBy: undefined,
+    cancelReason: undefined,
+    cancelSector: undefined,
+    reassignedBy: input.actorName,
+    reassignedAt: now,
+  };
+  writeMeta(meta);
+
+  return { ok: true, item: restored, action: "restaurar" };
+}
+
 export function getManualWorkItemMeta(id: string): ManualWorkItemMeta | null {
   return readMeta()[id] ?? null;
 }
@@ -144,7 +278,7 @@ export function getManualWorkItemById(id: string): WorkItem | null {
 }
 
 export type ManualWorkMutationResult =
-  | { ok: true; item: WorkItem; action: "eliminar" | "cancelar" | "archivar" }
+  | { ok: true; item: WorkItem; action: "eliminar" | "cancelar" | "archivar" | "restaurar" }
   | { ok: false; error: string; code?: string };
 
 export function deleteOrCancelManualWorkItem(input: {
