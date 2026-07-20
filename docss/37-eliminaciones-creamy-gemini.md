@@ -77,7 +77,7 @@ Módulo: `frontend/src/lib/assistant/creamy-provider.ts`
 CREAMY_AI_PROVIDER=gemini|openai|auto   # recomendado: gemini
 CREAMY_AI_FALLBACK=true|false           # recomendado: true
 GEMINI_API_KEY=
-CREAMY_GEMINI_MODEL=gemini-2.0-flash
+CREAMY_GEMINI_MODEL=gemini-2.5-flash
 CREAMY_OPENAI_API_KEY=
 OPENAI_API_KEY=                         # fallback de variable OpenAI
 CREAMY_OPENAI_MODEL=gpt-4o-mini
@@ -88,6 +88,9 @@ CREAMY_OPENAI_MODEL=gpt-4o-mini
 - `gemini` → exige `GEMINI_API_KEY` (sin salto silencioso a OpenAI).
 - `openai` → `CREAMY_OPENAI_API_KEY` o `OPENAI_API_KEY`.
 - `auto` / ausente → Gemini si hay key; si no, OpenAI; si no, 503.
+
+Modelo Gemini predeterminado: **`gemini-2.5-flash`** (`DEFAULT_GEMINI_MODEL`).  
+`CREAMY_GEMINI_MODEL` sigue siendo override. `gemini-2.0-flash` está retirado/deprecado por Google.
 
 ### Fallback (`CREAMY_AI_FALLBACK=true`)
 

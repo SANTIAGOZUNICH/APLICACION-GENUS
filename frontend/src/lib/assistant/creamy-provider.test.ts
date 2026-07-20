@@ -1,18 +1,107 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_GEMINI_MODEL,
   isFallbackEnabled,
   resolveCreamyFallbackProvider,
   resolveCreamyProvider,
   shouldAttemptFallback,
 } from "./creamy-provider";
+import { createCreamyTools, createCreamyToolRuntime } from "@/features/os/assistant/tools";
+import type { CreamyLocalSnapshot } from "@/features/os/assistant/types";
 
 describe("resolveCreamyProvider", () => {
   it("auto prefers Gemini when GEMINI_API_KEY is set", () => {
     const result = resolveCreamyProvider({ GEMINI_API_KEY: "gk-test" });
     expect(result.provider).toBe("gemini");
     expect(result.configured).toBe(true);
-    expect(result.model).toBe("gemini-2.0-flash");
+    expect(result.model).toBe("gemini-2.5-flash");
     expect(result.missingKey).toBeUndefined();
+  });
+
+  it("defaults to gemini-2.5-flash when CREAMY_GEMINI_MODEL is unset", () => {
+    expect(DEFAULT_GEMINI_MODEL).toBe("gemini-2.5-flash");
+    const withKey = resolveCreamyProvider({
+      CREAMY_AI_PROVIDER: "gemini",
+      GEMINI_API_KEY: "gk-test",
+    });
+    expect(withKey.model).toBe("gemini-2.5-flash");
+
+    const withoutKey = resolveCreamyProvider({ CREAMY_AI_PROVIDER: "gemini" });
+    expect(withoutKey.model).toBe("gemini-2.5-flash");
+
+    const autoUnconfigured = resolveCreamyProvider({});
+    expect(autoUnconfigured.model).toBe("gemini-2.5-flash");
+  });
+
+  it("CREAMY_GEMINI_MODEL override still wins over the default", () => {
+    const result = resolveCreamyProvider({
+      GEMINI_API_KEY: "gk-test",
+      CREAMY_GEMINI_MODEL: "gemini-2.0-flash",
+    });
+    expect(result.model).toBe("gemini-2.0-flash");
+  });
+
+  it("gemini-2.5-flash default supports the Creamy tools flow", () => {
+    const resolved = resolveCreamyProvider({
+      CREAMY_AI_PROVIDER: "gemini",
+      GEMINI_API_KEY: "gk-test",
+    });
+    expect(resolved.model).toBe(DEFAULT_GEMINI_MODEL);
+    expect(resolved.model).toBe("gemini-2.5-flash");
+
+    const snapshot: CreamyLocalSnapshot = {
+      capturedAt: "2026-07-20T10:00:00.000Z",
+      source: "local_browser",
+      actorSectorId: "PRODUCCION",
+      limits: {
+        workItems: 10,
+        lots: 10,
+        rawMaterials: 10,
+        orders: 10,
+        qualityPending: 10,
+        deliveries: 10,
+      },
+      workItems: [],
+      lots: [],
+      rawMaterials: [],
+      orders: [],
+      qualityPending: [],
+      deliveries: [],
+      notes: [],
+    };
+
+    const tools = createCreamyTools({
+      actorSectorId: "PRODUCCION",
+      snapshot,
+    });
+    const toolNames = Object.keys(tools);
+    expect(toolNames).toEqual(
+      expect.arrayContaining([
+        "searchWorkItems",
+        "getApplicationHelp",
+        "searchDeliveries",
+        "getPendingDeliveries",
+        "getElaborationWork",
+        "getElaborationWorkByOperator",
+        "getProductFormulaOrBOM",
+        "checkRawMaterialAvailability",
+        "searchApprovedSubstitutions",
+        "getElaborationOrder",
+      ])
+    );
+
+    const runtime = createCreamyToolRuntime({
+      actorSectorId: "PRODUCCION",
+      snapshot,
+    });
+    const help = runtime.getApplicationHelp({ query: "entrega" });
+    expect(help.localOnly).toBe(true);
+    expect(Array.isArray(help.results)).toBe(true);
+    expect(help.results.length).toBeGreaterThan(0);
+
+    const substitutions = runtime.searchApprovedSubstitutions({});
+    expect(substitutions.localOnly).toBe(true);
+    expect(Array.isArray(substitutions.results)).toBe(true);
   });
 
   it("auto falls back to OpenAI when no Gemini key", () => {

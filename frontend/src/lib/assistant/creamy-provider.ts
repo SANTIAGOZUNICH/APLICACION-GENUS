@@ -16,8 +16,8 @@ export interface CreamyResolvedProvider {
   errorMessage?: string;
 }
 
-const DEFAULT_GEMINI_MODEL = "gemini-2.0-flash";
-const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+export const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 
 function getEnv(env: Partial<NodeJS.ProcessEnv> | undefined, key: string): string | undefined {
   return (env ?? process.env)[key]?.trim() || undefined;
