@@ -159,7 +159,14 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Rechazar lote",
       "Solicitar liberación",
     ],
-    sidebarItems: ["pendientes", "aprobados", "rechazados", "asignacion_lotes"],
+    sidebarItems: [
+      "pendientes",
+      "ordenes_elaboracion",
+      "ordenes_acondicionamiento",
+      "aprobados",
+      "rechazados",
+      "asignacion_lotes",
+    ],
     creamyContext: {
       role: "Copiloto de calidad",
       topics: ["lotes", "liberaciones", "análisis", "microbiología", "bloqueos", "asignación de lotes"],
@@ -213,7 +220,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     visibleEntities: ["insumo", "oe", "lote", "pedido"],
     workItemSources: ["semanas_2026"],
     allowedActions: ["Registrar entrega MP", "Reportar faltante", "Consultar OE"],
-    sidebarItems: ["stock", "control_mp", "historial"],
+    sidebarItems: ["stock", "control_mp", "ordenes_elaboracion", "historial"],
     creamyContext: {
       role: "Copiloto de materia prima",
       topics: ["stock MP", "faltantes", "OE", "proveedores"],
@@ -279,6 +286,8 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     ],
     sidebarItems: [
       "mi_trabajo",
+      "ordenes_elaboracion",
+      "ordenes_acondicionamiento",
       "asignar_trabajos",
       "entregados",
       "asignacion_lotes",
@@ -287,7 +296,6 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "ver_envasado_premium",
       "ver_calidad",
       "ver_materia_prima",
-      "ordenes",
       "historial",
     ],
     sidebarLabelOverrides: { mi_trabajo: "Panel general" },

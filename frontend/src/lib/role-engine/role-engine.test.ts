@@ -38,6 +38,18 @@ describe("Role Engine — F9.3", () => {
     expect(home.homeViewKey).toBe("elaboracion-home");
     expect(home.layout).toBe("work_blocks");
     expect(home.creamyContext.role).toContain("elaboración");
+    expect(home.sidebarItems).toContain("ordenes_elaboracion");
+  });
+
+  it("Calidad y Producción exponen OE/OA en el menú lateral", () => {
+    const calidad = resolveSectorHome("CALIDAD");
+    expect(calidad.sidebarItems).toContain("ordenes_elaboracion");
+    expect(calidad.sidebarItems).toContain("ordenes_acondicionamiento");
+
+    const produccion = resolveSectorHome("PRODUCCION");
+    expect(produccion.sidebarItems).toContain("ordenes_elaboracion");
+    expect(produccion.sidebarItems).toContain("ordenes_acondicionamiento");
+    expect(produccion.sidebarItems).not.toContain("ordenes");
   });
 
   it("expone helpers de panel y acción rápida", () => {

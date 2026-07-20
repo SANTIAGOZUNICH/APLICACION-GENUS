@@ -58,19 +58,20 @@ export function TwinRouter() {
 
     case "ordenes-elaboracion":
       return <OeListView />;
-    case "ordenes-acondicionamiento":
-      return (
-        <OaListView
-          sectorId={sectorId === "ENVASADO_PREMIUM" ? "ENVASADO_PREMIUM" : "ENVASADO_MASIVO"}
-        />
-      );
+    case "ordenes-acondicionamiento": {
+      // Masivo/Premium solo ven sus OA; Calidad/Producción ven todas.
+      if (sectorId === "ENVASADO_MASIVO" || sectorId === "ENVASADO_PREMIUM") {
+        return <OaListView sectorId={sectorId} />;
+      }
+      return <OaListView />;
+    }
     case "ordenes":
+      // Compatibilidad: redirige mentalmente a los módulos OE/OA dedicados.
       return (
         <TwinShell title="Órdenes">
           <div className="space-y-10">
-            <OeListView readOnly embedded />
-            <OaListView sectorId="ENVASADO_MASIVO" readOnly embedded title="Órdenes de Acondicionamiento — Masivo" />
-            <OaListView sectorId="ENVASADO_PREMIUM" readOnly embedded title="Órdenes de Acondicionamiento — Premium" />
+            <OeListView embedded />
+            <OaListView embedded title="Órdenes de Acondicionamiento" />
           </div>
         </TwinShell>
       );

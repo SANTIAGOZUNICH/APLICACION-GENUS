@@ -188,10 +188,13 @@ export function NativeOrdersListView({
       </header>
 
       {dbUnavailable && (
-        <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-          <strong>No legalmente operativo en este entorno:</strong> falta{" "}
-          <code>DATABASE_URL</code> (Neon). El modelo, APIs y UI están preparados; no se
-          simula sincronización con localStorage.
+        <div
+          className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+          data-testid="orders-db-unavailable-banner"
+        >
+          <strong>Configuración pendiente:</strong> falta <code>DATABASE_URL</code> (Neon). El
+          módulo permanece visible; la creación y sincronización requieren la base compartida. No se
+          usa localStorage para órdenes legales.
         </div>
       )}
 
@@ -201,9 +204,13 @@ export function NativeOrdersListView({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--os-border)] pb-2">
+      <div
+        className="flex flex-wrap items-center gap-2 border-b border-[var(--os-border)] pb-2"
+        data-testid={`orders-tabs-${type.toLowerCase()}`}
+      >
         <button
           type="button"
+          data-testid="orders-tab-pendientes"
           onClick={() => {
             setTab("pendientes");
             setPage(1);
@@ -218,6 +225,7 @@ export function NativeOrdersListView({
         </button>
         <button
           type="button"
+          data-testid="orders-tab-completas"
           onClick={() => {
             setTab("completas");
             setPage(1);
@@ -232,10 +240,27 @@ export function NativeOrdersListView({
         </button>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {canCreate && !readOnly && (
-            <Button type="button" onClick={() => setCreateOpen(true)} disabled={dbUnavailable}>
-              <FilePlus2 className="mr-1.5 size-4" />
-              {type === "OE" ? "Crear Orden de Elaboración" : "Crear Orden de Acondicionamiento"}
-            </Button>
+            <div className="flex flex-col items-end gap-1">
+              <Button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                disabled={dbUnavailable}
+                data-testid={`crear-orden-${type.toLowerCase()}`}
+              >
+                <FilePlus2 className="mr-1.5 size-4" />
+                {type === "OE"
+                  ? "Crear Orden de Elaboración"
+                  : "Crear Orden de Acondicionamiento"}
+              </Button>
+              {dbUnavailable && (
+                <p
+                  className="max-w-xs text-right text-xs text-amber-800"
+                  data-testid="orders-db-required-hint"
+                >
+                  Para crear órdenes es necesario configurar la base de datos.
+                </p>
+              )}
+            </div>
           )}
         </div>
       </div>
