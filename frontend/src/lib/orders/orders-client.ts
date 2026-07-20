@@ -52,6 +52,90 @@ export async function fetchOrderTemplates(
   return data.templates;
 }
 
+/** Catálogo de referencia — funciona sin DATABASE_URL (solo preview). */
+export async function fetchBuiltinTemplates(
+  type?: OrderDocType
+): Promise<OrderTemplateRecord[]> {
+  const qs = type ? `?type=${type}` : "";
+  const res = await fetch(`/api/v1/order-templates/builtin${qs}`, {
+    cache: "no-store",
+  });
+  const data = await parseJson<{ templates: OrderTemplateRecord[] }>(res);
+  return data.templates;
+}
+
+export async function fetchAllOrderTemplates(
+  session: OrdersClientSession,
+  type?: OrderDocType
+): Promise<OrderTemplateRecord[]> {
+  const params = new URLSearchParams({ all: "1" });
+  if (type) params.set("type", type);
+  const res = await fetch(`/api/v1/order-templates?${params}`, {
+    headers: actorHeaders(session),
+    cache: "no-store",
+  });
+  const data = await parseJson<{ templates: OrderTemplateRecord[] }>(res);
+  return data.templates;
+}
+
+export async function importSeedTemplatesApi(
+  session: OrdersClientSession,
+  type?: OrderDocType
+): Promise<OrderTemplateRecord[]> {
+  const res = await fetch("/api/v1/order-templates", {
+    method: "POST",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ action: "import_seed", type }),
+  });
+  const data = await parseJson<{ templates: OrderTemplateRecord[] }>(res);
+  return data.templates;
+}
+
+export async function createTemplateApi(
+  session: OrdersClientSession,
+  input: {
+    type: OrderDocType;
+    productName: string;
+    productCode: string;
+    brandClient?: string | null;
+    changeReason?: string;
+  }
+): Promise<OrderTemplateRecord> {
+  const res = await fetch("/api/v1/order-templates", {
+    method: "POST",
+    headers: actorHeaders(session),
+    body: JSON.stringify(input),
+  });
+  const data = await parseJson<{ template: OrderTemplateRecord }>(res);
+  return data.template;
+}
+
+export async function templateActionApi(
+  session: OrdersClientSession,
+  id: string,
+  action: "duplicate" | "new_version" | "obsolete",
+  extra?: Record<string, unknown>
+): Promise<OrderTemplateRecord> {
+  const res = await fetch(`/api/v1/order-templates/${id}`, {
+    method: "POST",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ action, ...extra }),
+  });
+  const data = await parseJson<{ template: OrderTemplateRecord }>(res);
+  return data.template;
+}
+
+export async function fetchTemplateHistoryApi(
+  session: OrdersClientSession,
+  id: string
+): Promise<{ template: OrderTemplateRecord; versions: OrderTemplateRecord[] }> {
+  const res = await fetch(`/api/v1/order-templates/${id}?history=1`, {
+    headers: actorHeaders(session),
+    cache: "no-store",
+  });
+  return parseJson(res);
+}
+
 export async function fetchOrders(
   session: OrdersClientSession,
   filters: ListOrdersFilters

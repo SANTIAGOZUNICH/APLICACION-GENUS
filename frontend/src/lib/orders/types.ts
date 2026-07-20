@@ -185,11 +185,32 @@ export type OrderTemplateRecord = {
   status: TemplateStatus;
   content: OrderContent;
   changeReason: string | null;
+  /** Origen del archivo de referencia (si aplica). Persistido en changeReason / meta. */
+  sourceFile?: string | null;
   previousVersionId: string | null;
   createdBy: string;
   updatedBy: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CreateTemplateInput = {
+  type: OrderDocType;
+  productName: string;
+  productCode: string;
+  brandClient?: string | null;
+  productId?: string;
+  content?: OrderContent;
+  changeReason?: string;
+  sourceFile?: string | null;
+};
+
+export type DuplicateTemplateInput = {
+  templateId: string;
+  productName?: string;
+  productCode?: string;
+  brandClient?: string | null;
+  changeReason?: string;
 };
 
 export type OperationalOrderRecord = {

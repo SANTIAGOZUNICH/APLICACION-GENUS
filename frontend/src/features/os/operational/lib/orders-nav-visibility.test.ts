@@ -56,7 +56,7 @@ describe("OE/OA navegación y CTA por sector", () => {
   });
 });
 
-/** Reglas de UI del CTA: visible si canCreate; disabled si falta DB. */
+/** Reglas de UI del CTA: visible si canCreate; el diálogo explica si falta DB o plantilla. */
 export function resolveCreateOrderCtaState(input: {
   canCreate: boolean;
   readOnly?: boolean;
@@ -65,19 +65,20 @@ export function resolveCreateOrderCtaState(input: {
   const visible = input.canCreate && !input.readOnly;
   return {
     visible,
-    enabled: visible && !input.dbUnavailable,
+    // El botón abre el modal aunque falte DB; la creación real se bloquea dentro.
+    enabled: visible,
     showDbHint: visible && input.dbUnavailable,
   };
 }
 
 describe("CTA crear orden con/sin base de datos", () => {
-  it("sin DB: botón visible pero deshabilitado con hint", () => {
+  it("sin DB: botón visible y abre modal; hint de configuración", () => {
     const state = resolveCreateOrderCtaState({
       canCreate: true,
       dbUnavailable: true,
     });
     expect(state.visible).toBe(true);
-    expect(state.enabled).toBe(false);
+    expect(state.enabled).toBe(true);
     expect(state.showDbHint).toBe(true);
   });
 

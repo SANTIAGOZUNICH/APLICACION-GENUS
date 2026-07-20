@@ -54,9 +54,13 @@ describe("legal print layout snapshots", () => {
   });
 
   it("OA Laude conserva texto legal de etiquetado y autorizaciones vacías", () => {
-    const html = renderToStaticMarkup(
-      <LegalOrderPreview order={sampleOrder("OA", buildCremaFacialLaudeOaTemplateContent())} />
-    );
+    const content = buildCremaFacialLaudeOaTemplateContent();
+    // Cliente de ejemplo vive en metadatos de plantilla (brandClient), no como dato fijo del contenido.
+    const order = sampleOrder("OA", {
+      ...content,
+      header: { ...content.header, client: "LAUDE" },
+    });
+    const html = renderToStaticMarkup(<LegalOrderPreview order={order} />);
     expect(html).toContain("ORDEN DE ACONDICIONAMIENTO");
     expect(html).toContain("CREMA FACIAL");
     expect(html).toContain("LAUDE");
@@ -66,6 +70,7 @@ describe("legal print layout snapshots", () => {
     expect(html).toContain("AUTORIZACION PRODUCCION");
     expect(html).toContain("AUTORIZACION CONTROL CALIDAD");
     expect(html).toContain("AUTORIZACION DIRECCION TECNICA");
+    expect(html).toContain("ENVASE");
     expect(html).not.toContain("Completado:");
   });
 });

@@ -15,8 +15,11 @@ import { canOrderDocumentAction } from "../lib/order-documents-rbac";
 import { canOrderAction } from "@/lib/orders/rbac";
 import {
   createOrderApi,
+  createTemplateApi,
+  fetchBuiltinTemplates,
   fetchOrderTemplates,
   fetchOrders,
+  importSeedTemplatesApi,
 } from "@/lib/orders/orders-client";
 import type {
   OperationalOrderRecord,
@@ -27,6 +30,7 @@ import type {
 import type { SectorId } from "@/types/operational/sector";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { CreateOrderDialog } from "../components/create-order-dialog";
+import { MasterTemplatesPanel } from "../components/master-templates-panel";
 import { OperationalOrderEditor } from "../components/operational-order-editor";
 import { Button } from "@/components/ui/button";
 
@@ -71,12 +75,34 @@ export function NativeOrdersListView({
   const [dbUnavailable, setDbUnavailable] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [templates, setTemplates] = useState<OrderTemplateRecord[]>([]);
+  const [builtinTemplates, setBuiltinTemplates] = useState<OrderTemplateRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [histOpen, setHistOpen] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [templatesPanelKey, setTemplatesPanelKey] = useState(0);
 
   const canCreate = canOrderAction(type, "create", sectorId);
+  const canManageTemplates = canOrderAction(type, "manage_templates", sectorId);
   const canUploadHistorical = canOrderDocumentAction(type, "upload", sectorId);
+
+  const loadTemplates = useCallback(async () => {
+    if (!session.email) return;
+    const builtin = await fetchBuiltinTemplates(type).catch(() => []);
+    setBuiltinTemplates(builtin);
+    try {
+      const list = await fetchOrderTemplates(session, type);
+      setTemplates(list);
+      setDbUnavailable(false);
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "DATABASE_UNAVAILABLE" || (err as { status?: number }).status === 503) {
+        setDbUnavailable(true);
+        setTemplates([]);
+      } else {
+        setTemplates([]);
+      }
+    }
+  }, [session, type]);
 
   const load = useCallback(async () => {
     if (!session.email) return;
@@ -121,11 +147,9 @@ export function NativeOrdersListView({
   }, [load, refreshTick]);
 
   useEffect(() => {
-    if (!canCreate || !session.email) return;
-    void fetchOrderTemplates(session, type)
-      .then(setTemplates)
-      .catch(() => setTemplates([]));
-  }, [canCreate, session, type]);
+    if ((!canCreate && !canManageTemplates) || !session.email) return;
+    void loadTemplates();
+  }, [canCreate, canManageTemplates, session, loadTemplates, refreshTick]);
 
   const historicalDocs = useMemo(() => listDocumentsByKind(type), [type, refreshTick]);
 
@@ -178,6 +202,30 @@ export function NativeOrdersListView({
     title ??
     (type === "OE" ? "Órdenes de Elaboración" : "Órdenes de Acondicionamiento");
 
+  const handleImportTemplate = async () => {
+    if (dbUnavailable) return;
+    const list = await importSeedTemplatesApi(session, type);
+    setTemplates(list);
+    setRefreshTick((v) => v + 1);
+  };
+
+  const handleCreateFirstTemplate = async () => {
+    if (dbUnavailable) {
+      setTemplatesPanelKey((k) => k + 1);
+      return;
+    }
+    const name =
+      type === "OE" ? "NUEVO PRODUCTO OE" : "NUEVO PRODUCTO OA";
+    const code = type === "OE" ? "PT-NUEVO" : "OA-NUEVO";
+    const t = await createTemplateApi(session, {
+      type,
+      productName: name,
+      productCode: `${code}-${Date.now().toString(36).slice(-4).toUpperCase()}`,
+    });
+    setTemplates((prev) => [...prev.filter((x) => x.id !== t.id), t]);
+    setRefreshTick((v) => v + 1);
+  };
+
   const content = (
     <div className="space-y-4">
       <header className="space-y-2">
@@ -194,7 +242,7 @@ export function NativeOrdersListView({
         >
           <strong>Configuración pendiente:</strong> falta <code>DATABASE_URL</code> (Neon). El
           módulo permanece visible; la creación y sincronización requieren la base compartida. No se
-          usa localStorage para órdenes legales.
+          usa localStorage para órdenes legales. Podés abrir la vista previa del modelo de plantilla.
         </div>
       )}
 
@@ -244,7 +292,6 @@ export function NativeOrdersListView({
               <Button
                 type="button"
                 onClick={() => setCreateOpen(true)}
-                disabled={dbUnavailable}
                 data-testid={`crear-orden-${type.toLowerCase()}`}
               >
                 <FilePlus2 className="mr-1.5 size-4" />
@@ -257,7 +304,13 @@ export function NativeOrdersListView({
                   className="max-w-xs text-right text-xs text-amber-800"
                   data-testid="orders-db-required-hint"
                 >
-                  Para crear órdenes es necesario configurar la base de datos.
+                  Para crear órdenes es necesario configurar la base de datos. El botón abre el
+                  formulario con la explicación.
+                </p>
+              )}
+              {!dbUnavailable && templates.length === 0 && (
+                <p className="max-w-xs text-right text-xs text-amber-800">
+                  No hay plantillas maestras. Importá o creá una desde Plantillas maestras.
                 </p>
               )}
             </div>
@@ -389,6 +442,18 @@ export function NativeOrdersListView({
         </>
       )}
 
+      <MasterTemplatesPanel
+        key={templatesPanelKey}
+        type={type}
+        session={session}
+        canManage={canManageTemplates && !readOnly}
+        dbUnavailable={dbUnavailable}
+        onTemplatesChanged={(list) => {
+          setTemplates(list);
+          setRefreshTick((v) => v + 1);
+        }}
+      />
+
       <section className="rounded border border-[var(--os-border)] bg-[var(--os-surface)]">
         <button
           type="button"
@@ -440,9 +505,18 @@ export function NativeOrdersListView({
         onOpenChange={setCreateOpen}
         type={type}
         templates={templates}
+        builtinTemplates={builtinTemplates}
+        dbUnavailable={dbUnavailable}
+        canManageTemplates={canManageTemplates}
         defaultSector={
           type === "OE" ? "ELABORACION" : oaSector ?? "ENVASADO_MASIVO"
         }
+        onCreateTemplate={() => {
+          void handleCreateFirstTemplate();
+        }}
+        onImportTemplate={() => {
+          void handleImportTemplate();
+        }}
         onCreate={async (input) => {
           const order = await createOrderApi(session, input);
           setCreateOpen(false);

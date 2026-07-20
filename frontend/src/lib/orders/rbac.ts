@@ -11,6 +11,7 @@ export type OrderAction =
   | "save_as_master"
   | "propose_master"
   | "approve_master"
+  | "manage_templates"
   | "review"
   | "return"
   | "archive"
@@ -24,40 +25,23 @@ export const ORDERS_DENIED_MESSAGE =
 export const ORDERS_MISSING_ACTOR_MESSAGE =
   "Falta actorSectorId. Las acciones sobre órdenes requieren sector autenticado.";
 
+const TEMPLATE_MANAGERS: readonly OrderAction[] = [
+  "create",
+  "view",
+  "review",
+  "return",
+  "archive",
+  "annul",
+  "download",
+  "save_as_master",
+  "approve_master",
+  "manage_templates",
+];
+
 const OE_ACTIONS: Partial<Record<SectorId, readonly OrderAction[]>> = {
-  CALIDAD: [
-    "create",
-    "view",
-    "review",
-    "return",
-    "archive",
-    "annul",
-    "download",
-    "save_as_master",
-    "approve_master",
-  ],
-  PRODUCCION: [
-    "create",
-    "view",
-    "review",
-    "return",
-    "archive",
-    "annul",
-    "download",
-    "save_as_master",
-    "approve_master",
-  ],
-  DIRECCION: [
-    "create",
-    "view",
-    "review",
-    "return",
-    "archive",
-    "annul",
-    "download",
-    "save_as_master",
-    "approve_master",
-  ],
+  CALIDAD: TEMPLATE_MANAGERS,
+  PRODUCCION: TEMPLATE_MANAGERS,
+  DIRECCION: TEMPLATE_MANAGERS,
   ELABORACION: [
     "view",
     "edit",
@@ -70,39 +54,9 @@ const OE_ACTIONS: Partial<Record<SectorId, readonly OrderAction[]>> = {
 };
 
 const OA_ACTIONS: Partial<Record<SectorId, readonly OrderAction[]>> = {
-  CALIDAD: [
-    "create",
-    "view",
-    "review",
-    "return",
-    "archive",
-    "annul",
-    "download",
-    "save_as_master",
-    "approve_master",
-  ],
-  PRODUCCION: [
-    "create",
-    "view",
-    "review",
-    "return",
-    "archive",
-    "annul",
-    "download",
-    "save_as_master",
-    "approve_master",
-  ],
-  DIRECCION: [
-    "create",
-    "view",
-    "review",
-    "return",
-    "archive",
-    "annul",
-    "download",
-    "save_as_master",
-    "approve_master",
-  ],
+  CALIDAD: TEMPLATE_MANAGERS,
+  PRODUCCION: TEMPLATE_MANAGERS,
+  DIRECCION: TEMPLATE_MANAGERS,
   ENVASADO_MASIVO: [
     "view",
     "edit",

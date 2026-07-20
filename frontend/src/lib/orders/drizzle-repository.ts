@@ -33,6 +33,8 @@ function toIso(value: Date | string | null | undefined): string | null {
 }
 
 function mapTemplate(row: typeof orderTemplates.$inferSelect): OrderTemplateRecord {
+  const changeReason = row.changeReason;
+  const sourceMatch = changeReason?.match(/origen:\s*(.+)$/i);
   return {
     id: row.id,
     type: row.type,
@@ -43,7 +45,8 @@ function mapTemplate(row: typeof orderTemplates.$inferSelect): OrderTemplateReco
     version: row.version,
     status: row.status,
     content: row.content as OrderContent,
-    changeReason: row.changeReason,
+    changeReason,
+    sourceFile: sourceMatch?.[1]?.trim() ?? null,
     previousVersionId: row.previousVersionId,
     createdBy: row.createdBy,
     updatedBy: row.updatedBy,
@@ -85,12 +88,27 @@ function mapOrder(row: typeof operationalOrders.$inferSelect): OperationalOrderR
 export class DrizzleOrdersRepository implements OrdersRepository {
   private seeded = false;
 
+  /**
+   * Seed idempotente: inserta plantillas iniciales por (productId, type, version=1).
+   * No duplica si ya existen. Usa UUIDs fijos válidos.
+   */
   async ensureSeed(): Promise<void> {
     if (this.seeded) return;
     const db = getDb();
-    const existing = await db.select({ id: orderTemplates.id }).from(orderTemplates).limit(1);
-    if (existing.length === 0) {
-      for (const t of seedTemplateRecords()) {
+    for (const t of seedTemplateRecords()) {
+      const existing = await db
+        .select({ id: orderTemplates.id })
+        .from(orderTemplates)
+        .where(
+          and(
+            eq(orderTemplates.productId, t.productId),
+            eq(orderTemplates.type, t.type),
+            eq(orderTemplates.version, t.version)
+          )
+        )
+        .limit(1);
+      if (existing.length > 0) continue;
+      try {
         await db.insert(orderTemplates).values({
           id: t.id,
           type: t.type,
@@ -108,6 +126,20 @@ export class DrizzleOrdersRepository implements OrdersRepository {
           createdAt: new Date(t.createdAt),
           updatedAt: new Date(t.updatedAt),
         });
+      } catch (err) {
+        // Carrera concurrente o id ya presente: re-check por product
+        const again = await db
+          .select({ id: orderTemplates.id })
+          .from(orderTemplates)
+          .where(
+            and(
+              eq(orderTemplates.productId, t.productId),
+              eq(orderTemplates.type, t.type),
+              eq(orderTemplates.version, t.version)
+            )
+          )
+          .limit(1);
+        if (again.length === 0) throw err;
       }
     }
     this.seeded = true;
@@ -127,6 +159,36 @@ export class DrizzleOrdersRepository implements OrdersRepository {
           .from(orderTemplates)
           .where(eq(orderTemplates.status, "VIGENTE"))
           .orderBy(asc(orderTemplates.productName));
+    return rows.map(mapTemplate);
+  }
+
+  async listTemplateHistory(
+    productId: string,
+    type: OrderDocType
+  ): Promise<OrderTemplateRecord[]> {
+    await this.ensureSeed();
+    const db = getDb();
+    const rows = await db
+      .select()
+      .from(orderTemplates)
+      .where(and(eq(orderTemplates.productId, productId), eq(orderTemplates.type, type)))
+      .orderBy(desc(orderTemplates.version));
+    return rows.map(mapTemplate);
+  }
+
+  async listAllTemplates(type?: OrderDocType): Promise<OrderTemplateRecord[]> {
+    await this.ensureSeed();
+    const db = getDb();
+    const rows = type
+      ? await db
+          .select()
+          .from(orderTemplates)
+          .where(eq(orderTemplates.type, type))
+          .orderBy(asc(orderTemplates.productName), desc(orderTemplates.version))
+      : await db
+          .select()
+          .from(orderTemplates)
+          .orderBy(asc(orderTemplates.productName), desc(orderTemplates.version));
     return rows.map(mapTemplate);
   }
 
@@ -186,6 +248,33 @@ export class DrizzleOrdersRepository implements OrdersRepository {
       .update(orderTemplates)
       .set({ status: "OBSOLETA", updatedAt: new Date() })
       .where(eq(orderTemplates.id, id));
+  }
+
+  async updateTemplateContent(
+    id: string,
+    patch: Partial<
+      Pick<
+        OrderTemplateRecord,
+        "content" | "productName" | "productCode" | "brandClient" | "changeReason" | "updatedBy"
+      >
+    >
+  ): Promise<OrderTemplateRecord | null> {
+    const db = getDb();
+    const existing = await this.getTemplate(id);
+    if (!existing) return null;
+    await db
+      .update(orderTemplates)
+      .set({
+        ...(patch.content !== undefined ? { content: patch.content } : {}),
+        ...(patch.productName !== undefined ? { productName: patch.productName } : {}),
+        ...(patch.productCode !== undefined ? { productCode: patch.productCode } : {}),
+        ...(patch.brandClient !== undefined ? { brandClient: patch.brandClient } : {}),
+        ...(patch.changeReason !== undefined ? { changeReason: patch.changeReason } : {}),
+        ...(patch.updatedBy !== undefined ? { updatedBy: patch.updatedBy } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(orderTemplates.id, id));
+    return this.getTemplate(id);
   }
 
   async nextOrderNumber(type: OrderDocType, year: number): Promise<string> {

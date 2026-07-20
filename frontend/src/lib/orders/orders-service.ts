@@ -2,14 +2,19 @@ import { randomUUID } from "node:crypto";
 import {
   cloneContent,
   computeCompletionPercentage,
+  createEmptyOaContent,
+  createEmptyOeContent,
   mergeFormOverrides,
   normalizeOrderContent,
   summarizeContentDiff,
 } from "@/lib/orders/content";
 import type { OrdersRepository } from "@/lib/orders/repository";
 import { assertCanAccessAssignedOrder, assertCanOrderAction } from "@/lib/orders/rbac";
+import { seedTemplateRecords } from "@/lib/orders/seed-templates";
 import type {
   CreateOrderInput,
+  CreateTemplateInput,
+  DuplicateTemplateInput,
   ListOrdersFilters,
   OperationalOrderRecord,
   OrderContent,
@@ -32,6 +37,17 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function slugifyProductId(name: string, code: string): string {
+  const base = `${name}-${code}`
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+  return base || `producto-${randomUUID().slice(0, 8)}`;
+}
+
 function notify(
   repo: OrdersRepository,
   input: Omit<OsNotificationRecord, "id" | "readBy" | "dismissedBy" | "createdAt">
@@ -52,10 +68,231 @@ export class OrdersService {
     return this.repo.listTemplates(type);
   }
 
+  async listAllTemplates(type?: OrderDocType) {
+    if (this.repo.listAllTemplates) return this.repo.listAllTemplates(type);
+    return this.repo.listTemplates(type);
+  }
+
+  async listTemplateHistory(productId: string, type: OrderDocType) {
+    if (this.repo.listTemplateHistory) {
+      return this.repo.listTemplateHistory(productId, type);
+    }
+    const all = await this.listAllTemplates(type);
+    return all
+      .filter((t) => t.productId === productId)
+      .sort((a, b) => b.version - a.version);
+  }
+
   async getTemplate(id: string) {
     const t = await this.repo.getTemplate(id);
     if (!t) throw new OrdersNotFoundError("Plantilla no encontrada.");
     return t;
+  }
+
+  /** Importa plantillas de referencia seed sin duplicar. */
+  async importSeedTemplates(actor: OrdersActor, type?: OrderDocType) {
+    assertCanOrderAction(type ?? "OE", "manage_templates", actor);
+    if (!type) {
+      assertCanOrderAction("OA", "manage_templates", actor);
+    }
+    if (this.repo.ensureSeed) {
+      await this.repo.ensureSeed();
+    } else {
+      for (const t of seedTemplateRecords()) {
+        if (type && t.type !== type) continue;
+        const existing = await this.repo.getVigenteTemplate(t.productId, t.type);
+        if (!existing) {
+          const byId = await this.repo.getTemplate(t.id);
+          if (!byId) await this.repo.insertTemplate(t);
+        }
+      }
+    }
+    return this.listTemplates(type);
+  }
+
+  async createTemplate(input: CreateTemplateInput, actor: OrdersActor) {
+    assertCanOrderAction(input.type, "manage_templates", actor);
+    const productName = input.productName.trim();
+    const productCode = input.productCode.trim();
+    if (!productName) throw new OrdersValidationError("El nombre de producto es obligatorio.");
+    if (!productCode) throw new OrdersValidationError("El código de producto es obligatorio.");
+    const productId =
+      input.productId?.trim() || slugifyProductId(productName, productCode);
+    const existing = await this.repo.getVigenteTemplate(productId, input.type);
+    if (existing) {
+      throw new OrdersValidationError(
+        "Ya existe una plantilla vigente para este producto. Duplicá o creá una nueva versión."
+      );
+    }
+    const content =
+      input.content ??
+      (input.type === "OE"
+        ? createEmptyOeContent({ productName, code: productCode })
+        : createEmptyOaContent({ productName, productCode }));
+    const ts = nowIso();
+    const reason =
+      input.changeReason?.trim() ||
+      (input.sourceFile
+        ? `Plantilla nueva — origen: ${input.sourceFile}`
+        : "Plantilla maestra nueva (sin archivo)");
+    const template: OrderTemplateRecord = {
+      id: randomUUID(),
+      type: input.type,
+      productId,
+      productName,
+      productCode,
+      brandClient: input.brandClient?.trim() || null,
+      version: 1,
+      status: "VIGENTE",
+      content: normalizeOrderContent(content),
+      changeReason: reason,
+      sourceFile: input.sourceFile ?? null,
+      previousVersionId: null,
+      createdBy: actor.email,
+      updatedBy: actor.email,
+      createdAt: ts,
+      updatedAt: ts,
+    };
+    const saved = await this.repo.insertTemplate(template);
+    await this.repo.appendAudit({
+      orderId: null,
+      eventType: "TEMPLATE_CREATED",
+      actor: actor.email,
+      actorSector: actor.sector,
+      metadata: {
+        templateId: saved.id,
+        type: saved.type,
+        productId: saved.productId,
+        sourceFile: saved.sourceFile ?? null,
+      },
+    });
+    return saved;
+  }
+
+  async duplicateTemplate(input: DuplicateTemplateInput, actor: OrdersActor) {
+    const source = await this.getTemplate(input.templateId);
+    assertCanOrderAction(source.type, "manage_templates", actor);
+    const productName = (input.productName ?? `${source.productName} (copia)`).trim();
+    const productCode = (input.productCode ?? `${source.productCode}-COPY`).trim();
+    const productId = slugifyProductId(productName, productCode);
+    return this.createTemplate(
+      {
+        type: source.type,
+        productName,
+        productCode,
+        productId,
+        brandClient: input.brandClient ?? source.brandClient,
+        content: cloneContent(source.content),
+        changeReason:
+          input.changeReason?.trim() ||
+          `Duplicada desde ${source.productName} v${source.version}`,
+        sourceFile: source.sourceFile ?? null,
+      },
+      actor
+    );
+  }
+
+  async createTemplateVersion(
+    templateId: string,
+    actor: OrdersActor,
+    changeReason: string,
+    content?: OrderContent
+  ) {
+    const current = await this.getTemplate(templateId);
+    assertCanOrderAction(current.type, "manage_templates", actor);
+    if (!changeReason.trim()) {
+      throw new OrdersValidationError("Motivo de modificación obligatorio.");
+    }
+    if (current.status !== "VIGENTE") {
+      throw new OrdersValidationError("Solo se puede versionar la plantilla vigente.");
+    }
+    await this.repo.markTemplateObsolete(current.id);
+    const ts = nowIso();
+    const next: OrderTemplateRecord = {
+      id: randomUUID(),
+      type: current.type,
+      productId: current.productId,
+      productName: current.productName,
+      productCode: current.productCode,
+      brandClient: current.brandClient,
+      version: current.version + 1,
+      status: "VIGENTE",
+      content: normalizeOrderContent(content ?? current.content),
+      changeReason: changeReason.trim(),
+      sourceFile: current.sourceFile ?? null,
+      previousVersionId: current.id,
+      createdBy: actor.email,
+      updatedBy: actor.email,
+      createdAt: ts,
+      updatedAt: ts,
+    };
+    const saved = await this.repo.insertTemplate(next);
+    await this.repo.appendAudit({
+      orderId: null,
+      eventType: "TEMPLATE_VERSION_CREATED",
+      actor: actor.email,
+      actorSector: actor.sector,
+      metadata: {
+        previousTemplateId: current.id,
+        newTemplateId: saved.id,
+        version: saved.version,
+      },
+    });
+    return saved;
+  }
+
+  async markTemplateObsoleteManaged(templateId: string, actor: OrdersActor) {
+    const current = await this.getTemplate(templateId);
+    assertCanOrderAction(current.type, "manage_templates", actor);
+    await this.repo.markTemplateObsolete(templateId);
+    await this.repo.appendAudit({
+      orderId: null,
+      eventType: "TEMPLATE_MARKED_OBSOLETE",
+      actor: actor.email,
+      actorSector: actor.sector,
+      metadata: { templateId, productId: current.productId, version: current.version },
+    });
+    return { ...current, status: "OBSOLETA" as const };
+  }
+
+  async updateTemplate(
+    templateId: string,
+    actor: OrdersActor,
+    patch: {
+      content?: OrderContent;
+      productName?: string;
+      productCode?: string;
+      brandClient?: string | null;
+      changeReason?: string;
+    }
+  ) {
+    const current = await this.getTemplate(templateId);
+    assertCanOrderAction(current.type, "manage_templates", actor);
+    if (current.status !== "VIGENTE") {
+      throw new OrdersValidationError(
+        "No se puede editar una plantilla obsoleta. Creá una nueva versión."
+      );
+    }
+    if (!this.repo.updateTemplateContent) {
+      throw new OrdersValidationError("Actualización de plantilla no disponible.");
+    }
+    const updated = await this.repo.updateTemplateContent(templateId, {
+      content: patch.content ? normalizeOrderContent(patch.content) : undefined,
+      productName: patch.productName?.trim(),
+      productCode: patch.productCode?.trim(),
+      brandClient: patch.brandClient,
+      changeReason: patch.changeReason?.trim(),
+      updatedBy: actor.email,
+    });
+    if (!updated) throw new OrdersNotFoundError("Plantilla no encontrada.");
+    await this.repo.appendAudit({
+      orderId: null,
+      eventType: "TEMPLATE_EDITED",
+      actor: actor.email,
+      actorSector: actor.sector,
+      metadata: { templateId, version: updated.version },
+    });
+    return updated;
   }
 
   async createOrder(input: CreateOrderInput, actor: OrdersActor) {
@@ -156,6 +393,7 @@ export class OrdersService {
         orderNumber: saved.orderNumber,
         templateId: template.id,
         templateVersion: template.version,
+        snapshotTaken: true,
       },
     });
     return saved;

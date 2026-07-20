@@ -50,12 +50,44 @@ export class MemoryOrdersRepository implements OrdersRepository {
     }
   }
 
+  async ensureSeed(): Promise<void> {
+    for (const t of seedTemplateRecords()) {
+      const hasProduct = [...this.templates.values()].some(
+        (x) => x.productId === t.productId && x.type === t.type && x.version === t.version
+      );
+      if (!hasProduct && !this.templates.has(t.id)) {
+        this.templates.set(t.id, structuredClone(t));
+      }
+    }
+  }
+
   async listTemplates(type?: OrderDocType): Promise<OrderTemplateRecord[]> {
     let list = [...this.templates.values()];
     if (type) list = list.filter((t) => t.type === type);
     return list
       .filter((t) => t.status === "VIGENTE")
       .sort((a, b) => a.productName.localeCompare(b.productName))
+      .map((t) => structuredClone(t));
+  }
+
+  async listAllTemplates(type?: OrderDocType): Promise<OrderTemplateRecord[]> {
+    let list = [...this.templates.values()];
+    if (type) list = list.filter((t) => t.type === type);
+    return list
+      .sort(
+        (a, b) =>
+          a.productName.localeCompare(b.productName) || b.version - a.version
+      )
+      .map((t) => structuredClone(t));
+  }
+
+  async listTemplateHistory(
+    productId: string,
+    type: OrderDocType
+  ): Promise<OrderTemplateRecord[]> {
+    return [...this.templates.values()]
+      .filter((t) => t.productId === productId && t.type === type)
+      .sort((a, b) => b.version - a.version)
       .map((t) => structuredClone(t));
   }
 
@@ -86,6 +118,21 @@ export class MemoryOrdersRepository implements OrdersRepository {
       t.status = "OBSOLETA";
       t.updatedAt = nowIso();
     }
+  }
+
+  async updateTemplateContent(
+    id: string,
+    patch: Partial<
+      Pick<
+        OrderTemplateRecord,
+        "content" | "productName" | "productCode" | "brandClient" | "changeReason" | "updatedBy"
+      >
+    >
+  ): Promise<OrderTemplateRecord | null> {
+    const t = this.templates.get(id);
+    if (!t) return null;
+    Object.assign(t, patch, { updatedAt: nowIso() });
+    return structuredClone(t);
   }
 
   async nextOrderNumber(type: OrderDocType, year: number): Promise<string> {

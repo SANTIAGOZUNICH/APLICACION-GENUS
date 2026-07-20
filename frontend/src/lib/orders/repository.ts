@@ -14,6 +14,11 @@ import type {
 
 export interface OrdersRepository {
   listTemplates(type?: OrderDocType): Promise<OrderTemplateRecord[]>;
+  listAllTemplates?(type?: OrderDocType): Promise<OrderTemplateRecord[]>;
+  listTemplateHistory?(
+    productId: string,
+    type: OrderDocType
+  ): Promise<OrderTemplateRecord[]>;
   getTemplate(id: string): Promise<OrderTemplateRecord | null>;
   getVigenteTemplate(
     productId: string,
@@ -21,6 +26,15 @@ export interface OrdersRepository {
   ): Promise<OrderTemplateRecord | null>;
   insertTemplate(template: OrderTemplateRecord): Promise<OrderTemplateRecord>;
   markTemplateObsolete(id: string): Promise<void>;
+  updateTemplateContent?(
+    id: string,
+    patch: Partial<
+      Pick<
+        OrderTemplateRecord,
+        "content" | "productName" | "productCode" | "brandClient" | "changeReason" | "updatedBy"
+      >
+    >
+  ): Promise<OrderTemplateRecord | null>;
 
   nextOrderNumber(type: OrderDocType, year: number): Promise<string>;
 
