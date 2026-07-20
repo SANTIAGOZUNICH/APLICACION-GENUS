@@ -19,6 +19,7 @@ import { LINE_TAB_LABELS, resolveLineBucket, type LineBucket } from "../lib/line
 import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { useOperationalStore } from "../store/operational-store-context";
+import { sortByDeliveryDateNearest } from "../lib/delivery-date";
 
 interface EnvasadoOperationalViewProps {
   sectorId: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM";
@@ -78,7 +79,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
 
   const workItems = useMemo(() => {
     const base = applyEffectiveStatus(mergeManualWorkItems(sectorId, data?.workItems ?? []));
-    return applyProgressToWorkItems(base);
+    return sortByDeliveryDateNearest(applyProgressToWorkItems(base));
   }, [data?.workItems, sectorId, applyEffectiveStatus, applyProgressToWorkItems]);
 
   const itemsForActiveLine = useMemo(
@@ -87,10 +88,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   );
 
   const sortedItems = useMemo(
-    () =>
-      [...itemsForActiveLine].sort((a, b) =>
-        (a.line ?? "").localeCompare(b.line ?? "", "es", { sensitivity: "base" })
-      ),
+    () => sortByDeliveryDateNearest(itemsForActiveLine),
     [itemsForActiveLine]
   );
 
@@ -249,7 +247,7 @@ export function ElaboracionOperationalView() {
 
   const workItems = useMemo(() => {
     const base = applyEffectiveStatus(mergeManualWorkItems("ELABORACION", data?.workItems ?? []));
-    return applyProgressToWorkItems(base);
+    return sortByDeliveryDateNearest(applyProgressToWorkItems(base));
   }, [data?.workItems, applyEffectiveStatus, applyProgressToWorkItems]);
 
   const ramas = useMemo(

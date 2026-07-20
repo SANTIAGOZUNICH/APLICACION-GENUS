@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { canUseDriveAdapter } from "@/lib/api/bff-helpers";
 import { getServerDataMode } from "@/lib/config/data-mode";
 import { serverOperationalState } from "@/lib/live-sync/server-operational-state";
+import { validateQualityDecisionActor } from "@/features/os/operational/lib/quality-decision-rbac";
 import type { WorkItem } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 
@@ -30,7 +31,7 @@ type OperationAction =
       status: "aprobado" | "rechazado";
       decidedBy?: string;
       observation?: string;
-      /** Defensa de acción: si viene informado, solo CALIDAD puede decidir. */
+      /** Obligatorio: debe ser exactamente CALIDAD (no es auth server-side). */
       actorSectorId?: SectorId;
     };
 
@@ -73,15 +74,12 @@ export async function POST(request: Request) {
       });
     }
     case "quality_decision": {
-      // Defensa de acción (no auth server completo): si el cliente informa
-      // actorSectorId, solo CALIDAD puede persistir la decisión.
-      if (body.actorSectorId && body.actorSectorId !== "CALIDAD") {
+      // actorSectorId obligatorio y exactamente CALIDAD.
+      // No reemplaza identidad autenticada server-side (el cliente podría falsificarlo).
+      const gate = validateQualityDecisionActor(body.actorSectorId);
+      if (!gate.ok) {
         return NextResponse.json(
-          {
-            error:
-              "Solo el sector Calidad puede aprobar o rechazar. Tu sesión no tiene permiso para decidir.",
-            code: "QUALITY_DECISION_FORBIDDEN",
-          },
+          { error: gate.error, code: gate.code },
           { status: 403 }
         );
       }

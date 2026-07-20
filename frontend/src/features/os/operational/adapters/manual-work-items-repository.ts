@@ -26,9 +26,12 @@ export interface CreateManualWorkItemInput {
   client: string;
   product: string;
   plannedDate: string;
+  /** Fecha de entrega operativa (ISO). Independiente de plannedDate. */
+  deliveryDate: string;
   quantity: string;
   unit: string;
-  priority: WorkItemPriority;
+  /** Conservado por compatibilidad; la UI de asignación ya no lo expone. */
+  priority?: WorkItemPriority | null;
   oeRef: string | null;
   oaRef: string | null;
   notes: string | null;
@@ -120,9 +123,9 @@ export function createManualWorkItem(input: CreateManualWorkItemInput): WorkItem
     quantity: input.quantity,
     unit: input.unit,
     line: input.line,
-    deliveryDate: input.plannedDate,
+    deliveryDate: input.deliveryDate,
     status: "pendiente",
-    priority: input.priority,
+    priority: input.priority ?? "NORMAL",
     pedidoRef: null,
     oeRef: input.oeRef,
     oaRef: input.oaRef,
@@ -150,7 +153,12 @@ export function createManualWorkItem(input: CreateManualWorkItemInput): WorkItem
 
 export function reassignManualWorkItem(
   id: string,
-  patch: { plannedDate?: string; ownerPerson?: string | null; line?: string | null },
+  patch: {
+    plannedDate?: string;
+    deliveryDate?: string;
+    ownerPerson?: string | null;
+    line?: string | null;
+  },
   reassignedBy: string
 ): void {
   const items = readAll().map((item) =>
@@ -158,7 +166,7 @@ export function reassignManualWorkItem(
       ? {
           ...item,
           plannedDate: patch.plannedDate ?? item.plannedDate,
-          deliveryDate: patch.plannedDate ?? item.deliveryDate,
+          deliveryDate: patch.deliveryDate ?? item.deliveryDate,
           ownerPerson: patch.ownerPerson !== undefined ? patch.ownerPerson : item.ownerPerson,
           line: patch.line !== undefined ? patch.line : item.line,
         }
@@ -171,4 +179,18 @@ export function reassignManualWorkItem(
     meta[id] = { ...meta[id], reassignedBy, reassignedAt: new Date().toISOString() };
     writeMeta(meta);
   }
+}
+
+/** Migración suave: si hay plannedDate pero no deliveryDate, copiar plannedDate. */
+export function ensureDeliveryDatesMigrated(): void {
+  const items = readAll();
+  let changed = false;
+  const next = items.map((item) => {
+    if (!item.deliveryDate && item.plannedDate) {
+      changed = true;
+      return { ...item, deliveryDate: item.plannedDate };
+    }
+    return item;
+  });
+  if (changed) writeAll(next);
 }

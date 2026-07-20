@@ -4,6 +4,7 @@ import {
   canDecideQuality,
   gateQualityDecision,
   QUALITY_DECISION_DENIED_MESSAGE,
+  QUALITY_DECISION_MISSING_ACTOR_MESSAGE,
 } from "./quality-decision-rbac";
 import {
   clearOperationalStore,
@@ -31,12 +32,23 @@ describe("quality-decision-rbac", () => {
     expect(denied.ok).toBe(false);
     if (!denied.ok) {
       expect(denied.error).toBe(QUALITY_DECISION_DENIED_MESSAGE);
+      expect(denied.code).toBe("QUALITY_DECISION_FORBIDDEN");
+    }
+  });
+
+  it("gateQualityDecision rechaza actor faltante con code específico", () => {
+    const missing = gateQualityDecision(null);
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) {
+      expect(missing.error).toBe(QUALITY_DECISION_MISSING_ACTOR_MESSAGE);
+      expect(missing.code).toBe("QUALITY_DECISION_MISSING_ACTOR");
     }
   });
 
   it("assertCanDecideQuality lanza si el sector no es CALIDAD", () => {
     expect(() => assertCanDecideQuality("CALIDAD")).not.toThrow();
     expect(() => assertCanDecideQuality("PRODUCCION")).toThrow(QUALITY_DECISION_DENIED_MESSAGE);
+    expect(() => assertCanDecideQuality(null)).toThrow(QUALITY_DECISION_MISSING_ACTOR_MESSAGE);
   });
 });
 
@@ -92,6 +104,7 @@ describe("quality-decision action pipeline", () => {
     expect(approve.ok).toBe(false);
     if (!approve.ok) {
       expect(approve.error).toBe(QUALITY_DECISION_DENIED_MESSAGE);
+      expect(approve.code).toBe("QUALITY_DECISION_FORBIDDEN");
     }
     expect(getEffectiveQualityStatus("q-prod-1", "pendiente")).toBe("pendiente");
 

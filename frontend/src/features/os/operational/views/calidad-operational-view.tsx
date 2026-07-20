@@ -27,6 +27,7 @@ import {
   SyncStatusBar,
   type OperationalTableColumn,
 } from "../components/operational-ui";
+import { DeliveryDateBadge } from "../components/delivery-date-badge";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { filterQualityByKind, filterQualityByStatus } from "../lib/operational-filters";
 import {
@@ -238,6 +239,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
               { key: "lote", header: "Lote / Granel", render: (row) => <span className="font-mono text-xs font-medium text-[var(--os-teal)]">{displayField(row.lote)}</span> },
               { key: "product", header: "Producto", render: (row) => displayField(row.product) },
               { key: "client", header: "Cliente", render: (row) => displayField(row.client) },
+              { key: "deliveryDate", header: "Fecha de entrega", render: (row) => <DeliveryDateBadge deliveryDate={row.deliveryDate} /> },
               { key: "quantity", header: "Cantidad", render: (row) => displayField(row.quantity) },
               { key: "oe", header: "OE", render: (row) => <span className="font-mono text-xs">{displayField(row.oe)}</span> },
             ]
@@ -254,6 +256,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
               },
               { key: "product", header: "Producto", render: (row) => displayField(row.product) },
               { key: "client", header: "Cliente", render: (row) => displayField(row.client) },
+              { key: "deliveryDate", header: "Fecha de entrega", render: (row) => <DeliveryDateBadge deliveryDate={row.deliveryDate} /> },
               { key: "quantity", header: "Cantidad", render: (row) => displayField(row.quantity) },
               { key: "oa", header: "OA", render: (row) => <span className="font-mono text-xs">{displayField(row.oa)}</span> },
             ];

@@ -8,6 +8,7 @@ import {
 } from "../lib/operational-progress";
 import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { ActionButton, StatusChip } from "./operational-ui";
+import { DeliveryDateBadge } from "./delivery-date-badge";
 
 interface WorkItemProgressTableProps {
   items: WorkItem[];
@@ -47,6 +48,9 @@ export function WorkItemProgressTable({
             )}
             <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
               Fecha
+            </th>
+            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
+              Fecha de entrega
             </th>
             <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
               Cliente
@@ -101,6 +105,9 @@ export function WorkItemProgressTable({
                 )}
                 <td className="px-3 py-2.5 align-top">
                   {displayField(item.dayLabel ?? item.plannedDate)}
+                </td>
+                <td className="px-3 py-2.5 align-top">
+                  <DeliveryDateBadge deliveryDate={item.deliveryDate} />
                 </td>
                 <td className="px-3 py-2.5 align-top">{displayField(item.client)}</td>
                 <td className="px-3 py-2.5 align-top font-medium">
