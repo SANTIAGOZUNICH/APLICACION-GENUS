@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Bell } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { usePreviewSession } from "@/features/os/session/preview-context";
+import { fetchOsNotifications } from "@/lib/orders/orders-client";
 import {
   dismissNotification,
   dismissReadNotifications,
@@ -23,18 +24,69 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString("es-AR");
 }
 
-/** Campana de notificaciones — filtrada por sector destinatario, persistida en localStorage. */
+type BellItem = OsNotification & { source?: "local" | "server" };
+
+/** Campana: une notificaciones demo locales + notificaciones Neon de órdenes OE/OA. */
 export function NotificationBell() {
-  const { sectorId } = usePreviewSession();
+  const { sectorId, email } = usePreviewSession();
   const [open, setOpen] = useState(false);
-  const [items, setItems] = useState<OsNotification[]>([]);
+  const [items, setItems] = useState<BellItem[]>([]);
   const [confirmDismissRead, setConfirmDismissRead] = useState(false);
 
   useEffect(() => {
-    const load = () => setItems(getNotificationsForSector(sectorId));
-    load();
-    return subscribeNotifications(load);
+    const loadLocal = () => {
+      const local = getNotificationsForSector(sectorId).map((n) => ({
+        ...n,
+        source: "local" as const,
+      }));
+      setItems((prev) => {
+        const server = prev.filter((p) => p.source === "server");
+        const merged = [...server, ...local];
+        const seen = new Set<string>();
+        return merged.filter((n) => {
+          if (seen.has(n.id)) return false;
+          seen.add(n.id);
+          return true;
+        });
+      });
+    };
+    loadLocal();
+    return subscribeNotifications(loadLocal);
   }, [sectorId]);
+
+  useEffect(() => {
+    if (!email) return;
+    let cancelled = false;
+    const pull = async () => {
+      try {
+        const server = await fetchOsNotifications({ email, sector: sectorId });
+        if (cancelled) return;
+        const mapped: BellItem[] = server.map((n) => ({
+          id: n.id,
+          kind: n.kind as OsNotification["kind"],
+          title: n.title,
+          message: n.message,
+          sectors: n.sectors,
+          createdAt: n.createdAt,
+          read: n.readBy.includes(email),
+          dismissed: n.dismissedBy.includes(email),
+          source: "server",
+        }));
+        setItems((prev) => {
+          const local = prev.filter((p) => p.source !== "server");
+          return [...mapped.filter((m) => !m.dismissed), ...local];
+        });
+      } catch {
+        // Sin Neon u otros errores: se conservan notificaciones locales.
+      }
+    };
+    void pull();
+    const id = window.setInterval(() => void pull(), 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [email, sectorId]);
 
   const unreadCount = items.filter((n) => !n.read).length;
 
@@ -72,70 +124,77 @@ export function NotificationBell() {
             <div className="border-b border-[var(--os-border-subtle)] px-4 py-3">
               <p className="text-sm font-semibold text-[var(--os-text)]">Notificaciones</p>
               <p className="mt-0.5 text-[11px] text-[var(--os-text-muted)]">
-                Descartar solo oculta la notificación para esta vista.
+                Descartar no elimina la orden asociada.
               </p>
             </div>
             <div className="max-h-96 overflow-y-auto">
               {items.length === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
-                  Sin notificaciones.
+                  Sin notificaciones
                 </p>
               ) : (
-                items.slice(0, 30).map((n) => (
-                  <div
-                    key={n.id}
-                    className={`border-b border-[var(--os-border-subtle)] px-4 py-3 last:border-b-0 ${
-                      n.read ? "" : "bg-[var(--os-teal-soft)]/40"
-                    }`}
-                  >
-                    <p className="text-sm font-medium text-[var(--os-text)]">{n.title}</p>
-                    <p className="mt-0.5 text-xs text-[var(--os-text-muted)]">{n.message}</p>
-                    <p className="mt-1 text-[11px] text-[var(--os-text-muted)]">
-                      {relativeTime(n.createdAt)}
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {!n.read && (
-                        <button
-                          type="button"
-                          onClick={() => markNotificationRead(n.id)}
-                          className="text-[11px] font-medium text-[var(--os-teal)] hover:underline"
-                        >
-                          Marcar leída
-                        </button>
-                      )}
+                <ul className="divide-y divide-[var(--os-border-subtle)]">
+                  {items.map((n) => (
+                    <li key={n.id} className="px-4 py-3">
                       <button
                         type="button"
-                        onClick={() => dismissNotification(n.id)}
-                        className="text-[11px] font-medium text-[var(--os-text-muted)] hover:text-[var(--os-text)] hover:underline"
+                        className="w-full text-left"
+                        onClick={() => {
+                          if (n.source !== "server") markNotificationRead(n.id);
+                          setItems((prev) =>
+                            prev.map((x) => (x.id === n.id ? { ...x, read: true } : x))
+                          );
+                        }}
+                      >
+                        <p className={`text-sm ${n.read ? "font-normal" : "font-semibold"}`}>
+                          {n.title}
+                        </p>
+                        <p className="mt-0.5 text-xs text-[var(--os-text-muted)]">{n.message}</p>
+                        <p className="mt-1 text-[10px] text-[var(--os-text-muted)]">
+                          {relativeTime(n.createdAt)}
+                          {n.source === "server" ? " · servidor" : ""}
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        className="mt-1 text-[11px] text-[var(--os-teal)] hover:underline"
+                        onClick={() => {
+                          if (n.source !== "server") dismissNotification(n.id);
+                          setItems((prev) => prev.filter((x) => x.id !== n.id));
+                        }}
                       >
                         Descartar
                       </button>
-                    </div>
-                  </div>
-                ))
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
-            <div className="border-t border-[var(--os-border-subtle)] px-4 py-3">
-              <button
-                type="button"
-                disabled={!items.some((item) => item.read)}
-                onClick={() => setConfirmDismissRead(true)}
-                className="text-xs font-medium text-[var(--os-text-muted)] hover:text-[var(--os-text)] hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Descartar todas las leídas
-              </button>
-            </div>
+            {items.some((n) => n.read && n.source !== "server") && (
+              <div className="border-t border-[var(--os-border-subtle)] px-4 py-2">
+                <button
+                  type="button"
+                  className="text-xs text-[var(--os-text-muted)] hover:underline"
+                  onClick={() => setConfirmDismissRead(true)}
+                >
+                  Descartar leídas (locales)
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}
+
       <ConfirmDialog
         open={confirmDismissRead}
         onOpenChange={setConfirmDismissRead}
-        title="Descartar notificaciones leídas"
-        description="Las notificaciones leídas se ocultarán de esta vista. No se elimina información operativa."
-        confirmLabel="Descartar leídas"
-        cancelLabel="Cancelar"
-        onConfirm={() => dismissReadNotifications(sectorId)}
+        title="Descartar leídas"
+        description="Se ocultarán las notificaciones locales ya leídas. No elimina órdenes."
+        confirmLabel="Descartar"
+        onConfirm={() => {
+          dismissReadNotifications(sectorId);
+          setItems((prev) => prev.filter((n) => n.source === "server" || !n.read));
+        }}
       />
     </div>
   );

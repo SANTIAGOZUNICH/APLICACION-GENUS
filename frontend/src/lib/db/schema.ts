@@ -2,6 +2,7 @@ import {
   check,
   date,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
@@ -49,6 +50,29 @@ export const workItemPriorityEnum = pgEnum("work_item_priority", [
   "ESTA_SEMANA",
   "NORMAL",
   "BAJA",
+]);
+
+export const orderDocTypeEnum = pgEnum("order_doc_type", ["OE", "OA"]);
+
+export const orderTemplateStatusEnum = pgEnum("order_template_status", [
+  "VIGENTE",
+  "OBSOLETA",
+]);
+
+export const operationalOrderStatusEnum = pgEnum("operational_order_status", [
+  "BORRADOR",
+  "PENDIENTE",
+  "EN_PROCESO",
+  "COMPLETA",
+  "DEVUELTA_PARA_CORRECCION",
+  "ANULADA",
+  "ARCHIVADA",
+]);
+
+export const templateProposalStatusEnum = pgEnum("template_proposal_status", [
+  "PENDIENTE",
+  "APROBADA",
+  "RECHAZADA",
 ]);
 
 export const planningWeeks = pgTable(
@@ -146,6 +170,163 @@ export const operationalEvents = pgTable("operational_events", {
     .defaultNow(),
 });
 
+/** Plantilla maestra versionada por producto (OE/OA). Nunca se sobrescribe sin historial. */
+export const orderTemplates = pgTable(
+  "order_templates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    type: orderDocTypeEnum("type").notNull(),
+    productId: text("product_id").notNull(),
+    productName: text("product_name").notNull(),
+    productCode: text("product_code").notNull(),
+    brandClient: text("brand_client"),
+    version: integer("version").notNull().default(1),
+    status: orderTemplateStatusEnum("status").notNull().default("VIGENTE"),
+    content: jsonb("content").notNull(),
+    changeReason: text("change_reason"),
+    previousVersionId: uuid("previous_version_id"),
+    createdBy: text("created_by").notNull(),
+    updatedBy: text("updated_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("order_templates_product_type_version_uidx").on(
+      table.productId,
+      table.type,
+      table.version
+    ),
+  ]
+);
+
+/** Orden operativa con snapshot inmutable de la plantilla usada. */
+export const operationalOrders = pgTable(
+  "operational_orders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orderNumber: text("order_number").notNull(),
+    type: orderDocTypeEnum("type").notNull(),
+    templateId: uuid("template_id")
+      .notNull()
+      .references(() => orderTemplates.id),
+    templateVersion: integer("template_version").notNull(),
+    templateSnapshot: jsonb("template_snapshot").notNull(),
+    product: text("product").notNull(),
+    client: text("client").notNull(),
+    code: text("code").notNull(),
+    lot: text("lot").notNull(),
+    assignedSector: text("assigned_sector").notNull(),
+    status: operationalOrderStatusEnum("status").notNull().default("PENDIENTE"),
+    formData: jsonb("form_data").notNull(),
+    completionPercentage: integer("completion_percentage").notNull().default(0),
+    revision: integer("revision").notNull().default(1),
+    version: integer("version").notNull().default(1),
+    linkedWorkItemId: text("linked_work_item_id"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    reviewedBy: text("reviewed_by"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    completedBy: text("completed_by"),
+    createdBy: text("created_by").notNull(),
+    updatedBy: text("updated_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [uniqueIndex("operational_orders_number_uidx").on(table.orderNumber)]
+);
+
+export const orderVersions = pgTable("order_versions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orderId: uuid("order_id")
+    .notNull()
+    .references(() => operationalOrders.id, { onDelete: "cascade" }),
+  version: integer("version").notNull(),
+  snapshot: jsonb("snapshot").notNull(),
+  event: text("event").notNull(),
+  reason: text("reason"),
+  createdBy: text("created_by").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const templateChangeProposals = pgTable("template_change_proposals", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  templateId: uuid("template_id")
+    .notNull()
+    .references(() => orderTemplates.id),
+  orderId: uuid("order_id").references(() => operationalOrders.id, {
+    onDelete: "set null",
+  }),
+  proposedChanges: jsonb("proposed_changes").notNull(),
+  proposedBy: text("proposed_by").notNull(),
+  proposedAt: timestamp("proposed_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  status: templateProposalStatusEnum("status").notNull().default("PENDIENTE"),
+  decidedBy: text("decided_by"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  decisionReason: text("decision_reason"),
+});
+
+export const orderAuditEvents = pgTable("order_audit_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  orderId: uuid("order_id").references(() => operationalOrders.id, {
+    onDelete: "set null",
+  }),
+  eventType: text("event_type").notNull(),
+  actor: text("actor").notNull(),
+  actorSector: text("actor_sector").notNull(),
+  metadata: jsonb("metadata"),
+  timestamp: timestamp("timestamp", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+/** Secuencia atómica por tipo+año — nunca COUNT+1. */
+export const orderNumberSequences = pgTable(
+  "order_number_sequences",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    type: orderDocTypeEnum("type").notNull(),
+    year: integer("year").notNull(),
+    lastValue: integer("last_value").notNull().default(0),
+  },
+  (table) => [
+    uniqueIndex("order_number_sequences_type_year_uidx").on(table.type, table.year),
+  ]
+);
+
+export const osNotifications = pgTable("os_notifications", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  kind: text("kind").notNull(),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  sectors: jsonb("sectors").notNull(),
+  href: text("href"),
+  orderId: uuid("order_id").references(() => operationalOrders.id, {
+    onDelete: "set null",
+  }),
+  readBy: jsonb("read_by").notNull().default([]),
+  dismissedBy: jsonb("dismissed_by").notNull().default([]),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export type PlanningWeekRow = typeof planningWeeks.$inferSelect;
 export type WorkItemRow = typeof workItems.$inferSelect;
 export type OperationalEventRow = typeof operationalEvents.$inferSelect;
+export type OrderTemplateRow = typeof orderTemplates.$inferSelect;
+export type OperationalOrderRow = typeof operationalOrders.$inferSelect;
+export type OrderVersionRow = typeof orderVersions.$inferSelect;
+export type TemplateChangeProposalRow = typeof templateChangeProposals.$inferSelect;
+export type OrderAuditEventRow = typeof orderAuditEvents.$inferSelect;
+export type OsNotificationRow = typeof osNotifications.$inferSelect;

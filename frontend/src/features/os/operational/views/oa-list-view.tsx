@@ -1,36 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Download, Eye } from "lucide-react";
-import { displayField } from "@/lib/operational/display-fields";
-import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import type { SectorId } from "@/types/operational/sector";
-import { TwinShell } from "@/features/os/shell/twin-shell";
-import { UploadDocumentDialog } from "../components/upload-document-dialog";
-import { DeliveryDateBadge } from "../components/delivery-date-badge";
-import {
-  OperationalTable,
-  StatusChip,
-  SyncStatusBar,
-  type OperationalTableColumn,
-} from "../components/operational-ui";
-import { useOperationalPlan } from "../hooks/use-operational-plan";
-import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
-import { getLatestDocumentByRef } from "../adapters/order-documents-repository";
-import { canOrderDocumentAction } from "../lib/order-documents-rbac";
-import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
-
-interface OaRow {
-  ref: string;
-  fecha: string | null;
-  deliveryDate: string | null;
-  cliente: string | null;
-  producto: string | null;
-  cantidad: string;
-  linea: string | null;
-  estado: string;
-  workItemId: string;
-}
+import { NativeOrdersListView } from "./native-orders-list-view";
 
 interface OaListViewProps {
   sectorId: Extract<SectorId, "ENVASADO_MASIVO" | "ENVASADO_PREMIUM">;
@@ -40,188 +11,20 @@ interface OaListViewProps {
   embedded?: boolean;
 }
 
-/** Listado de Órdenes de Acondicionamiento — cada sector ve solo sus propias OA. */
-export function OaListView({ sectorId, readOnly = false, title, embedded = false }: OaListViewProps) {
-  const workspace = useRequiredWorkspace();
-  const { openOa } = usePreviewContext();
-  const { sectorId: actorSectorId } = usePreviewSession();
-  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
-    useOperationalPlan(sectorId);
-  const [search, setSearch] = useState("");
-  const [refreshTick, setRefreshTick] = useState(0);
-
-  const rows = useMemo<OaRow[]>(() => {
-    const items = mergeManualWorkItems(sectorId, data?.workItems ?? []);
-    const byRef = new Map<string, OaRow>();
-    for (const item of items) {
-      if (!item.oaRef) continue;
-      if (!byRef.has(item.oaRef)) {
-        byRef.set(item.oaRef, {
-          ref: item.oaRef,
-          fecha: item.plannedDate ?? item.dayLabel ?? item.date,
-          deliveryDate: item.deliveryDate,
-          cliente: item.client,
-          producto: item.product,
-          cantidad: [item.quantity, item.unit ?? "un."].filter(Boolean).join(" "),
-          linea: item.line,
-          estado: item.status,
-          workItemId: item.id,
-        });
-      }
-    }
-    return [...byRef.values()].filter((row) => {
-      if (!search.trim()) return true;
-      const q = search.trim().toLowerCase();
-      return (
-        row.ref.toLowerCase().includes(q) ||
-        (row.cliente ?? "").toLowerCase().includes(q) ||
-        (row.producto ?? "").toLowerCase().includes(q)
-      );
-    });
-  }, [data?.workItems, search, sectorId]);
-
-  const refOptions = useMemo(() => rows.map((r) => r.ref), [rows]);
-  const canViewDocuments = canOrderDocumentAction("OA", "view", actorSectorId);
-  const canDownloadDocuments = canOrderDocumentAction("OA", "download", actorSectorId);
-  const canUploadDocuments = canOrderDocumentAction("OA", "upload", actorSectorId);
-  const uploadAvailable = canUploadDocuments && refOptions.length > 0;
-  const readOnlyNotice = readOnly && !uploadAvailable;
-
-  const columns: OperationalTableColumn<OaRow>[] = [
-    { key: "ref", header: "Número", render: (r) => <span className="font-mono text-xs">{r.ref}</span> },
-    { key: "fecha", header: "Fecha", render: (r) => displayField(r.fecha) },
-    { key: "deliveryDate", header: "Fecha de entrega", render: (r) => <DeliveryDateBadge deliveryDate={r.deliveryDate} /> },
-    { key: "cliente", header: "Cliente", render: (r) => displayField(r.cliente) },
-    { key: "producto", header: "Producto", render: (r) => displayField(r.producto) },
-    { key: "cantidad", header: "Cantidad", render: (r) => r.cantidad || "—" },
-    { key: "linea", header: "Línea", render: (r) => displayField(r.linea) },
-    { key: "estado", header: "Estado", render: (r) => <StatusChip status={r.estado} /> },
-    {
-      key: "archivo",
-      header: "Archivo",
-      render: (r) => {
-        const doc = getLatestDocumentByRef(r.ref);
-        if (!doc) return <span className="text-xs text-[var(--os-text-muted)]">Sin archivo</span>;
-        if (!canViewDocuments) {
-          return <span className="text-xs text-[var(--os-text-muted)]">Sin acceso</span>;
-        }
-        return (
-          <div className="flex items-center gap-2">
-            <a
-              href={doc.fileDataUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-[var(--os-teal)] hover:underline"
-            >
-              <Eye className="size-3.5" aria-hidden="true" />
-              Ver
-            </a>
-            {canDownloadDocuments && (
-              <a
-                href={doc.fileDataUrl}
-                download={doc.fileName}
-                className="inline-flex items-center gap-1 text-xs text-[var(--os-teal)] hover:underline"
-              >
-                <Download className="size-3.5" aria-hidden="true" />
-                Descargar
-              </a>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      key: "carga",
-      header: "Carga",
-      render: (r) => {
-        const doc = getLatestDocumentByRef(r.ref);
-        if (!doc) return <span className="text-xs text-[var(--os-text-muted)]">—</span>;
-        return (
-          <span className="text-xs text-[var(--os-text-muted)]">
-            v{doc.version} · {new Date(doc.uploadedAt).toLocaleDateString("es-AR")} · {doc.uploadedBy}
-          </span>
-        );
-      },
-    },
-    {
-      key: "acciones",
-      header: "Acciones",
-      render: (r) => (
-        <button
-          type="button"
-          onClick={() => openOa(r.ref, r.workItemId)}
-          className="text-xs font-medium text-[var(--os-teal)] hover:underline"
-        >
-          Ver trabajo
-        </button>
-      ),
-    },
-  ];
-
-  const content = (
-    <div className="space-y-4">
-      <header className="space-y-2">
-        <h2 className="text-2xl font-semibold tracking-tight">
-          {title ?? "Órdenes de Acondicionamiento"}
-        </h2>
-        <p className="text-sm text-[var(--os-text-muted)]">
-          {workspace.sectorLabel} · {workspace.context.jobTitle}
-        </p>
-        <SyncStatusBar
-          source={data?.source ?? "demo"}
-          lastRefreshAt={lastRefreshAt}
-          updatedAgoLabel={updatedAgoLabel}
-          liveConnected={liveConnected}
-          loading={loading}
-          detailMessage={data?.source === "native" ? null : data?.message}
-        />
-      </header>
-
-      {error && (
-        <div className="rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
-          {error}
-        </div>
-      )}
-
-      <div className="rounded-[var(--os-radius-sm)] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        Archivos en este navegador (demo). No es Drive/multiusuario.
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Buscar por número, cliente o producto…"
-          aria-label="Buscar orden de acondicionamiento"
-          className="w-full max-w-xs rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
-        />
-        {uploadAvailable && (
-          <UploadDocumentDialog
-            kind="OA"
-            refOptions={refOptions}
-            uploadedBy={workspace.context.displayName}
-            canUpload={canUploadDocuments}
-            actorSectorId={actorSectorId}
-            onUploaded={() => setRefreshTick((v) => v + 1)}
-          />
-        )}
-        {readOnlyNotice && (
-          <span className="text-xs text-[var(--os-text-muted)]">Carga deshabilitada para esta vista.</span>
-        )}
-      </div>
-
-      <div key={refreshTick}>
-        <OperationalTable
-          columns={columns}
-          rows={rows}
-          rowKey={(r) => r.ref}
-          emptyMessage="Sin órdenes de acondicionamiento para mostrar."
-        />
-      </div>
-    </div>
+/** Listado OA nativo — Masivo/Premium ven/editan solo sus órdenes asignadas. */
+export function OaListView({
+  sectorId,
+  readOnly = false,
+  title,
+  embedded = false,
+}: OaListViewProps) {
+  return (
+    <NativeOrdersListView
+      type="OA"
+      oaSector={sectorId}
+      readOnly={readOnly}
+      embedded={embedded}
+      title={title ?? "Órdenes de Acondicionamiento"}
+    />
   );
-
-  if (embedded) return content;
-  return <TwinShell title={title ?? "Órdenes de Acondicionamiento"}>{content}</TwinShell>;
 }

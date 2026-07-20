@@ -33,7 +33,9 @@ try {
   const sql = neon(url);
   const db = drizzle(sql);
   await migrate(db, { migrationsFolder });
-  console.log("[db:migrate] OK — tablas planning_weeks / work_items / operational_events.");
+  console.log(
+    "[db:migrate] OK — planning + operational_orders / order_templates / os_notifications."
+  );
 } catch (err) {
   console.error("[db:migrate] falló:", err);
   process.exit(1);
