@@ -3,7 +3,7 @@ import { canCreamyAccessDomain } from "./permissions";
 
 describe("Creamy assistant permissions", () => {
   it("permite a Producción consultar todos los dominios", () => {
-    for (const domain of ["works", "lots", "rawMaterials", "orders_oe", "orders_oa", "quality", "help"] as const) {
+    for (const domain of ["works", "lots", "rawMaterials", "orders_oe", "orders_oa", "quality", "deliveries", "help"] as const) {
       expect(canCreamyAccessDomain("PRODUCCION", domain)).toBe(true);
     }
   });
@@ -11,6 +11,7 @@ describe("Creamy assistant permissions", () => {
   it("aplica permisos razonables por sector", () => {
     expect(canCreamyAccessDomain("CALIDAD", "works")).toBe(true);
     expect(canCreamyAccessDomain("CALIDAD", "quality")).toBe(true);
+    expect(canCreamyAccessDomain("CALIDAD", "deliveries")).toBe(true);
     expect(canCreamyAccessDomain("CALIDAD", "rawMaterials")).toBe(false);
 
     expect(canCreamyAccessDomain("ELABORACION", "works")).toBe(true);
@@ -27,12 +28,14 @@ describe("Creamy assistant permissions", () => {
 
     expect(canCreamyAccessDomain("CODIFICADO", "lots")).toBe(true);
     expect(canCreamyAccessDomain("CODIFICADO", "works")).toBe(false);
+
+    expect(canCreamyAccessDomain("DIRECCION", "deliveries")).toBe(true);
+    expect(canCreamyAccessDomain("DIRECCION", "rawMaterials")).toBe(false);
   });
 
   it("deniega sectores faltantes o sensibles fuera de matriz", () => {
     expect(canCreamyAccessDomain(null, "works")).toBe(false);
     expect(canCreamyAccessDomain(undefined, "quality")).toBe(false);
-    expect(canCreamyAccessDomain("DIRECCION", "rawMaterials")).toBe(false);
     expect(canCreamyAccessDomain("COMERCIAL", "orders_oe")).toBe(false);
   });
 });

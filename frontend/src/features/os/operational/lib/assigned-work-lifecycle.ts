@@ -33,11 +33,13 @@ export function resolveAssignedWorkLifecycleAction(
     };
   }
 
-  if (status === "completo") {
+  if (status === "completo" || status === "entregado") {
     return {
       action: "archivar",
       reason:
-        "Este trabajo ya fue finalizado y no puede eliminarse. Podés archivarlo o solicitar una corrección.",
+        status === "entregado"
+          ? "Este trabajo ya fue entregado. Gestioná la entrega desde Entregados."
+          : "Este trabajo ya fue finalizado y no puede eliminarse. Podés archivarlo o solicitar una corrección.",
     };
   }
 

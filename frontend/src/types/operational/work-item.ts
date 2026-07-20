@@ -33,6 +33,7 @@ export const WORK_ITEM_STATUSES = [
   "bloqueado",
   "completo",
   "revision",
+  "entregado",
   "cancelado",
 ] as const;
 export type WorkItemStatus = (typeof WORK_ITEM_STATUSES)[number];

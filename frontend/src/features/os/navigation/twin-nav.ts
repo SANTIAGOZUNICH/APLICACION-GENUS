@@ -20,6 +20,7 @@ export type TwinView =
   | "stock"
   | "control-mp"
   | "asignar-trabajos"
+  | "entregados"
   | "asignacion-lotes"
   | "ver-elaboracion"
   | "ver-envasado-masivo"
@@ -59,6 +60,7 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   stock: "stock",
   control_mp: "control-mp",
   asignar_trabajos: "asignar-trabajos",
+  entregados: "entregados",
   asignacion_lotes: "asignacion-lotes",
   ver_elaboracion: "ver-elaboracion",
   ver_envasado_masivo: "ver-envasado-masivo",
@@ -87,6 +89,7 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     stock: "stock",
     "control-mp": "control_mp",
     "asignar-trabajos": "asignar_trabajos",
+    entregados: "entregados",
     "asignacion-lotes": "asignacion_lotes",
     "ver-elaboracion": "ver_elaboracion",
     "ver-envasado-masivo": "ver_envasado_masivo",
@@ -126,6 +129,7 @@ export function viewTitle(view: TwinView): string {
     stock: "Stock de Materias Primas",
     "control-mp": "Control de Materias Primas",
     "asignar-trabajos": "Asignar trabajos",
+    entregados: "Entregados",
     "asignacion-lotes": "Asignación de lotes",
     "ver-elaboracion": "Elaboración",
     "ver-envasado-masivo": "Envasado Masivo",

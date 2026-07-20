@@ -15,6 +15,10 @@ import {
   listAllManualWorkItems,
 } from "@/features/os/operational/adapters/manual-work-items-repository";
 import {
+  listAllDeliveries,
+  type DeliveryRecord,
+} from "@/features/os/operational/adapters/delivery-repository";
+import {
   listDocumentsByKind,
   type OrderDocument,
   type OrderDocumentKind,
@@ -32,6 +36,7 @@ import {
 } from "./permissions";
 import type {
   CreamyLocalSnapshot,
+  CreamyDeliverySummary,
   CreamyLotSummary,
   CreamyOrderDocumentSummary,
   CreamyOrderSummary,
@@ -45,6 +50,7 @@ const LOT_LIMIT = 40;
 const RAW_MATERIAL_LIMIT = 40;
 const ORDER_LIMIT = 40;
 const QUALITY_LIMIT = 40;
+const DELIVERY_LIMIT = 40;
 
 interface BuildSnapshotInput {
   actorSectorId: SectorId;
@@ -125,6 +131,28 @@ function summarizeRawMaterial(mp: MateriaPrimaLot): CreamyRawMaterialSummary {
     ubicacion: mp.ubicacion,
     observaciones: mp.observaciones,
     estado: resolveEstado(mp),
+  };
+}
+
+function summarizeDelivery(delivery: DeliveryRecord): CreamyDeliverySummary {
+  return {
+    id: delivery.id,
+    workItemId: delivery.workItemId,
+    qualityItemId: delivery.qualityItemId ?? null,
+    product: delivery.product,
+    codigo: delivery.codigo,
+    client: delivery.client,
+    lote: delivery.lote,
+    sourceSector: delivery.sourceSector,
+    quantity: delivery.quantity,
+    unit: delivery.unit,
+    plannedDeliveryDate: delivery.plannedDeliveryDate,
+    actualDeliveredAt: delivery.actualDeliveredAt,
+    remito: delivery.remito,
+    receivedBy: delivery.receivedBy,
+    observations: delivery.observations,
+    status: delivery.status === "ANULADO" ? "ANULADO" : "ENTREGADO",
+    archived: Boolean(delivery.archived),
   };
 }
 
@@ -230,7 +258,7 @@ function buildQualityPending(actorSectorId: SectorId): CreamyQualityPendingSumma
       status: decisions[item.id]?.status ?? item.status,
       observation: decisions[item.id]?.observation ?? item.observation,
     }))
-    .filter((item) => item.status === "pendiente")
+    .filter((item) => item.status === "pendiente" || item.status === "aprobado")
     .map((item) => ({
       id: item.id,
       kind: item.kind,
@@ -275,6 +303,14 @@ export function buildCreamyLocalSnapshot({
     : [];
   const orders = cap(buildOrders(actorSectorId, visibleWorkItems), ORDER_LIMIT);
   const qualityPending = cap(buildQualityPending(actorSectorId), QUALITY_LIMIT);
+  const deliveries = canCreamyAccessDomain(actorSectorId, "deliveries")
+    ? cap(
+        listAllDeliveries({ includeArchived: true })
+          .sort((a, b) => b.actualDeliveredAt.localeCompare(a.actualDeliveredAt))
+          .map(summarizeDelivery),
+        DELIVERY_LIMIT
+      )
+    : [];
 
   return {
     capturedAt: new Date().toISOString(),
@@ -286,12 +322,14 @@ export function buildCreamyLocalSnapshot({
       rawMaterials: RAW_MATERIAL_LIMIT,
       orders: ORDER_LIMIT,
       qualityPending: QUALITY_LIMIT,
+      deliveries: DELIVERY_LIMIT,
     },
     workItems: visibleWorkItems,
     lots,
     rawMaterials,
     orders,
     qualityPending,
+    deliveries,
     notes: [
       "actorSectorId es client-supplied y no reemplaza autenticación server-side.",
       "Snapshot filtrado del navegador local; no incluye binarios fileDataUrl.",

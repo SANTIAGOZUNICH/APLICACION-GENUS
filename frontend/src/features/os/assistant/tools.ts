@@ -3,6 +3,7 @@ import "server-only";
 import { isStepCount, jsonSchema, tool, type ToolSet } from "ai";
 import { OPERATIONAL_SECTOR_IDS, SECTOR_LABELS, type SectorId } from "@/types/operational/sector";
 import type {
+  CreamyDeliverySummary,
   CreamyLocalSnapshot,
   CreamyOrderSummary,
   CreamyQualityPendingSummary,
@@ -106,6 +107,27 @@ interface RawMaterialAvailabilityInput {
 interface OrderSearchInput extends SearchInput {
   kind?: "OE" | "OA";
   ref?: string;
+}
+
+interface DeliverySearchInput extends SearchInput {
+  customer?: string;
+  product?: string;
+  lote?: string;
+  codigo?: string;
+  fromDate?: string;
+  toDate?: string;
+  includeArchived?: boolean;
+}
+
+interface CustomerInput {
+  customer?: string;
+  limit?: number;
+}
+
+interface DateRangeInput {
+  fromDate?: string;
+  toDate?: string;
+  limit?: number;
 }
 
 function emptyResult<T>(message: string): CreamyToolResult<T> {
@@ -217,6 +239,14 @@ function qualitySource(item: CreamyQualityPendingSummary): SourceCitation {
   return { type: "quality", id: item.id, label: `Calidad · ${item.product}` };
 }
 
+function deliverySource(item: CreamyDeliverySummary): SourceCitation {
+  return {
+    type: "delivery",
+    id: item.id,
+    label: `Entrega · ${item.product}${item.client ? ` · ${item.client}` : ""}`,
+  };
+}
+
 function workResult(item: CreamyWorkItemSummary) {
   return {
     ...item,
@@ -241,12 +271,73 @@ function orderResult(order: CreamyOrderSummary) {
   };
 }
 
+function deliveryResult(item: CreamyDeliverySummary) {
+  return {
+    ...item,
+    plannedDeliveryDateLabel: formatDate(item.plannedDeliveryDate),
+    actualDeliveredAtLabel: formatDate(item.actualDeliveredAt),
+    quantityLabel: formatQuantity(item.quantity, item.unit),
+    late:
+      item.plannedDeliveryDate != null &&
+      dateMs(item.actualDeliveredAt) != null &&
+      dateMs(item.plannedDeliveryDate) != null
+        ? dateMs(item.actualDeliveredAt)! > dateMs(item.plannedDeliveryDate)!
+        : null,
+  };
+}
+
 export function createCreamyToolRuntime({ actorSectorId, snapshot }: RuntimeInput) {
   const workItems = snapshot?.workItems ?? [];
   const lots = snapshot?.lots ?? [];
   const rawMaterials = snapshot?.rawMaterials ?? [];
   const orders = snapshot?.orders ?? [];
   const qualityPending = snapshot?.qualityPending ?? [];
+  const deliveries = snapshot?.deliveries ?? [];
+
+  const searchDeliveriesRuntime = (
+    input: DeliverySearchInput = {}
+  ): CreamyToolResult<ReturnType<typeof deliveryResult>> => {
+    if (!canCreamyAccessDomain(actorSectorId, "deliveries")) return denied("deliveries");
+    const limit = clampLimit(input.limit);
+    const from = dateMs(input.fromDate);
+    const to = dateMs(input.toDate);
+    const results = deliveries
+      .filter((item) => item.status === "ENTREGADO")
+      .filter((item) => input.includeArchived || !item.archived)
+      .filter((item) =>
+        includesQuery(
+          [
+            item.id,
+            item.workItemId,
+            item.product,
+            item.codigo,
+            item.client,
+            item.lote,
+            item.remito,
+            item.receivedBy,
+            item.observations,
+          ],
+          input.query
+        )
+      )
+      .filter((item) => includesQuery([item.client], input.customer))
+      .filter((item) => includesQuery([item.product], input.product))
+      .filter((item) => includesQuery([item.lote], input.lote))
+      .filter((item) => includesQuery([item.codigo], input.codigo))
+      .filter((item) => {
+        const actual = dateMs(item.actualDeliveredAt);
+        if (from != null && (actual == null || actual < from)) return false;
+        if (to != null && (actual == null || actual > to)) return false;
+        return true;
+      })
+      .slice(0, limit);
+    return {
+      results: results.map(deliveryResult),
+      localOnly: true,
+      sources: sourceUnique(results.map(deliverySource)),
+      message: results.length ? undefined : "No encontré entregas con esos filtros en el snapshot local.",
+    };
+  };
 
   return {
     searchWorkItems(input: WorkSearchInput = {}): CreamyToolResult {
@@ -496,6 +587,73 @@ export function createCreamyToolRuntime({ actorSectorId, snapshot }: RuntimeInpu
       };
     },
 
+    searchDeliveries: searchDeliveriesRuntime,
+
+    getPendingDeliveries(input: SearchInput = {}): CreamyToolResult {
+      if (!canCreamyAccessDomain(actorSectorId, "deliveries")) return denied("deliveries");
+      const deliveredWorkIds = new Set(
+        deliveries.filter((item) => item.status === "ENTREGADO").map((item) => item.workItemId)
+      );
+      const limit = clampLimit(input.limit);
+      const results = qualityPending
+        .filter((item) => item.status === "aprobado")
+        .filter((item) => item.relatedWorkItemId && !deliveredWorkIds.has(item.relatedWorkItemId))
+        .filter((item) =>
+          includesQuery(
+            [item.id, item.product, item.client, item.lote, item.oe, item.oa, item.line, item.observation],
+            input.query
+          )
+        )
+        .slice(0, limit);
+      return {
+        results: results.map((item) => ({
+          ...item,
+          deliveryDateLabel: formatDate(item.deliveryDate),
+          completedAtLabel: formatDate(item.completedAt),
+        })),
+        localOnly: true,
+        sources: sourceUnique(results.map(qualitySource)),
+        message: results.length ? undefined : "No encontré trabajos aprobados pendientes de entrega.",
+      };
+    },
+
+    getLateDeliveries(input: DateRangeInput = {}): CreamyToolResult {
+      if (!canCreamyAccessDomain(actorSectorId, "deliveries")) return denied("deliveries");
+      const limit = clampLimit(input.limit);
+      const from = dateMs(input.fromDate);
+      const to = dateMs(input.toDate);
+      const results = deliveries
+        .filter((item) => item.status === "ENTREGADO")
+        .filter((item) => !item.archived)
+        .filter((item) => {
+          const actual = dateMs(item.actualDeliveredAt);
+          const planned = dateMs(item.plannedDeliveryDate);
+          if (actual == null || planned == null || actual <= planned) return false;
+          if (from != null && actual < from) return false;
+          if (to != null && actual > to) return false;
+          return true;
+        })
+        .slice(0, limit);
+      return {
+        results: results.map(deliveryResult),
+        localOnly: true,
+        sources: sourceUnique(results.map(deliverySource)),
+        message: results.length ? undefined : "No encontré entregas fuera de fecha.",
+      };
+    },
+
+    getDeliveriesByCustomer(input: CustomerInput = {}): CreamyToolResult {
+      if (!canCreamyAccessDomain(actorSectorId, "deliveries")) return denied("deliveries");
+      const customer = input.customer;
+      if (!customer) return emptyResult("Indicá un cliente para buscar entregas.");
+      return searchDeliveriesRuntime({ customer, limit: input.limit });
+    },
+
+    getDeliveriesByDateRange(input: DateRangeInput = {}): CreamyToolResult {
+      if (!canCreamyAccessDomain(actorSectorId, "deliveries")) return denied("deliveries");
+      return searchDeliveriesRuntime(input);
+    },
+
     getApplicationHelp(input: SearchInput = {}): CreamyToolResult {
       if (!canCreamyAccessDomain(actorSectorId, "help")) return denied("help");
       const limit = clampLimit(input.limit);
@@ -631,6 +789,75 @@ export function createCreamyTools(input: RuntimeInput): ToolSet {
         additionalProperties: false,
       }),
       execute: (toolInput) => runtime.getPendingQualityDecisions(toolInput),
+    }),
+    searchDeliveries: tool({
+      description: "Busca entregas por texto, cliente, producto, lote, código o rango de fechas.",
+      inputSchema: jsonSchema<DeliverySearchInput>({
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          customer: { type: "string" },
+          product: { type: "string" },
+          lote: { type: "string" },
+          codigo: { type: "string" },
+          fromDate: { type: "string", description: "YYYY-MM-DD" },
+          toDate: { type: "string", description: "YYYY-MM-DD" },
+          includeArchived: { type: "boolean" },
+          limit: { type: "number", maximum: MAX_TOOL_RESULTS },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.searchDeliveries(toolInput),
+    }),
+    getPendingDeliveries: tool({
+      description: "Lista trabajos aprobados por Calidad que todavía no fueron entregados.",
+      inputSchema: jsonSchema<SearchInput>({
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          limit: { type: "number", maximum: MAX_TOOL_RESULTS },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.getPendingDeliveries(toolInput),
+    }),
+    getLateDeliveries: tool({
+      description: "Devuelve entregas realizadas fuera de fecha, opcionalmente por rango.",
+      inputSchema: jsonSchema<DateRangeInput>({
+        type: "object",
+        properties: {
+          fromDate: { type: "string", description: "YYYY-MM-DD" },
+          toDate: { type: "string", description: "YYYY-MM-DD" },
+          limit: { type: "number", maximum: MAX_TOOL_RESULTS },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.getLateDeliveries(toolInput),
+    }),
+    getDeliveriesByCustomer: tool({
+      description: "Lista entregas de un cliente.",
+      inputSchema: jsonSchema<CustomerInput>({
+        type: "object",
+        properties: {
+          customer: { type: "string" },
+          limit: { type: "number", maximum: MAX_TOOL_RESULTS },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.getDeliveriesByCustomer(toolInput),
+    }),
+    getDeliveriesByDateRange: tool({
+      description: "Lista entregas dentro de un rango de fechas.",
+      inputSchema: jsonSchema<DateRangeInput>({
+        type: "object",
+        properties: {
+          fromDate: { type: "string", description: "YYYY-MM-DD" },
+          toDate: { type: "string", description: "YYYY-MM-DD" },
+          limit: { type: "number", maximum: MAX_TOOL_RESULTS },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.getDeliveriesByDateRange(toolInput),
     }),
     getApplicationHelp: tool({
       description: "Devuelve ayuda estática de uso de Genus OS.",

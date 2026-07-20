@@ -5,22 +5,24 @@ import { AlertCircle, ExternalLink, RefreshCcw, Send, Sparkles, Square } from "l
 import type { SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
 import { buildCreamyLocalSnapshot } from "./build-local-snapshot";
+import { useCreamyChat } from "./creamy-chat-context";
 import type {
   AssistantChatResponse,
   CreamyChatMessage,
   SourceCitation,
 } from "./types";
 
-const STORAGE_KEY = "genus_os_creamy_chat";
-
 const DEFAULT_SUGGESTIONS = [
-  "¿Qué trabajos tengo vencidos?",
-  "Buscá el lote Creamy",
-  "¿Qué OE/OA aparecen en mi snapshot?",
-  "¿Hay materias primas por vencer?",
-  "¿Qué decisiones de Calidad faltan?",
-  "¿Cómo cargo una OE u OA?",
+  "¿Qué trabajos vencen esta semana?",
+  "¿Qué está haciendo Elaboración?",
+  "Buscá el producto Creamy en asignación de lotes.",
+  "¿Qué lotes vencen este mes?",
+  "¿Qué trabajos esperan aprobación de Calidad?",
+  "¿Qué se entregó hoy?",
+  "¿Qué está aprobado pero todavía no fue entregado?",
 ];
+
+const REQUEST_TIMEOUT_MS = 30_000;
 
 interface CreamyChatProps {
   sectorId: SectorId;
@@ -28,6 +30,8 @@ interface CreamyChatProps {
   suggestions?: string[];
   lotesSearchEnabled?: boolean;
   onOpenAsignacionLotes?: () => void;
+  compact?: boolean;
+  showHeaderActions?: boolean;
 }
 
 function makeId(prefix = "msg"): string {
@@ -37,39 +41,42 @@ function makeId(prefix = "msg"): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function welcomeMessage(): CreamyChatMessage {
-  return {
-    id: "creamy-welcome",
-    role: "assistant",
-    content:
-      "Hola, soy Creamy. Puedo consultar tu snapshot local de trabajos, lotes, materias primas, OE/OA y Calidad según permisos. No ejecuto acciones ni apruebo decisiones.",
-    createdAt: new Date().toISOString(),
-  };
-}
-
-function safeStoredMessages(value: string | null): CreamyChatMessage[] | null {
-  if (!value) return null;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!Array.isArray(parsed)) return null;
-    const messages = parsed.filter((item): item is CreamyChatMessage => {
-      if (!item || typeof item !== "object") return false;
-      const record = item as Record<string, unknown>;
-      return (
-        typeof record.id === "string" &&
-        (record.role === "user" || record.role === "assistant") &&
-        typeof record.content === "string" &&
-        typeof record.createdAt === "string"
-      );
-    });
-    return messages.length ? messages : null;
-  } catch {
-    return null;
-  }
-}
-
 function formatSource(source: SourceCitation): string {
   return source.label || `${source.type}:${source.id}`;
+}
+
+function friendlyError(
+  err: unknown,
+  payload?: { code?: string; error?: string; message?: string },
+  options?: { timedOut?: boolean; status?: number }
+): string {
+  const code = payload?.code || payload?.error;
+  if (code === "CREAMY_NOT_CONFIGURED") {
+    return "Creamy no está configurado todavía. Revisá la configuración del asistente antes de volver a intentar.";
+  }
+  if (code === "CREAMY_AI_FAILED" || options?.status === 502) {
+    return "El proveedor de IA respondió con un error. Probá de nuevo en unos segundos.";
+  }
+  if (code === "CREAMY_ABORTED" || options?.status === 499) {
+    return "La respuesta de Creamy fue interrumpida.";
+  }
+  if (options?.status === 429 || code === "RATE_LIMIT") {
+    return "Se alcanzó el límite de uso de Creamy. Esperá un momento e intentá otra vez.";
+  }
+  if (options?.status === 503) {
+    return "Creamy no está disponible temporalmente. Revisá la configuración o reintentá más tarde.";
+  }
+  if (options?.timedOut) {
+    return "Creamy tardó demasiado en responder. Probá de nuevo en unos segundos.";
+  }
+  if (err instanceof TypeError) {
+    return "No se pudo conectar con Creamy. Revisá la conexión de red e intentá nuevamente.";
+  }
+  if (typeof payload?.message === "string" && payload.message.trim()) {
+    return payload.message;
+  }
+  if (err instanceof Error) return err.message;
+  return "Creamy no pudo responder.";
 }
 
 export function CreamyChat({
@@ -78,30 +85,29 @@ export function CreamyChat({
   suggestions,
   lotesSearchEnabled = false,
   onOpenAsignacionLotes,
+  compact = false,
+  showHeaderActions = true,
 }: CreamyChatProps) {
-  const [messages, setMessages] = useState<CreamyChatMessage[]>(() => [welcomeMessage()]);
+  const { messages, setMessages, resetConversation: resetSharedConversation } = useCreamyChat();
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const timeoutRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chips = useMemo(() => suggestions?.length ? suggestions : DEFAULT_SUGGESTIONS, [suggestions]);
 
   useEffect(() => {
-    const stored = safeStoredMessages(window.sessionStorage.getItem(STORAGE_KEY));
-    if (!stored) return;
-    const timer = window.setTimeout(() => setMessages(stored), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-30)));
     messagesEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages, loading]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    if (timeoutRef.current != null) {
+      window.clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
     setLoading(false);
   }, []);
 
@@ -123,7 +129,12 @@ export function CreamyChat({
       setLoading(true);
 
       const controller = new AbortController();
+      let timedOut = false;
       abortRef.current = controller;
+      timeoutRef.current = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, REQUEST_TIMEOUT_MS);
 
       try {
         const snapshot = buildCreamyLocalSnapshot({ actorSectorId: sectorId, workItems });
@@ -140,12 +151,16 @@ export function CreamyChat({
             snapshot,
           }),
         });
-        const payload = (await response.json()) as Partial<AssistantChatResponse> & {
+        const payload = (await response.json().catch(() => ({}))) as Partial<AssistantChatResponse> & {
           message?: string;
           error?: string;
+          code?: string;
         };
         if (!response.ok) {
-          throw new Error(payload.message || payload.error || "Creamy no pudo responder.");
+          throw Object.assign(new Error(friendlyError(undefined, payload, { status: response.status })), {
+            payload,
+            status: response.status,
+          });
         }
         setMessages((current) => [
           ...current,
@@ -160,16 +175,21 @@ export function CreamyChat({
         ]);
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
-          setError("Respuesta cancelada.");
+          setError(timedOut ? friendlyError(err, undefined, { timedOut: true }) : "Respuesta cancelada.");
           return;
         }
-        setError(err instanceof Error ? err.message : "Creamy no pudo responder.");
+        const maybe = err as { payload?: { code?: string; error?: string; message?: string }; status?: number };
+        setError(friendlyError(err, maybe.payload, { status: maybe.status }));
       } finally {
+        if (timeoutRef.current != null) {
+          window.clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
         if (abortRef.current === controller) abortRef.current = null;
         setLoading(false);
       }
     },
-    [loading, messages, sectorId, workItems]
+    [loading, messages, sectorId, setMessages, workItems]
   );
 
   const handleSubmit = useCallback(() => {
@@ -187,13 +207,14 @@ export function CreamyChat({
 
   const resetConversation = useCallback(() => {
     stop();
-    setMessages([welcomeMessage()]);
+    resetSharedConversation();
     setInput("");
     setError(null);
-  }, [stop]);
+  }, [resetSharedConversation, stop]);
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-[var(--os-surface)]">
+      {!compact && (
       <div className="border-b border-[var(--os-border)] bg-gradient-to-r from-slate-950 via-slate-900 to-[var(--os-teal)] px-5 py-4 text-white">
         <div className="flex items-start gap-3">
           <div className="rounded-full bg-white/15 p-2">
@@ -207,8 +228,9 @@ export function CreamyChat({
           </div>
         </div>
       </div>
+      )}
 
-      <div className="flex flex-wrap gap-2 border-b border-[var(--os-border)] px-5 py-3">
+      <div className={`flex flex-wrap gap-2 border-b border-[var(--os-border)] ${compact ? "px-4 py-3" : "px-5 py-3"}`}>
         {chips.map((suggestion) => (
           <button
             key={suggestion}
@@ -232,7 +254,7 @@ export function CreamyChat({
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <div className={`min-h-0 flex-1 overflow-y-auto ${compact ? "px-4 py-3" : "px-5 py-4"}`}>
         <div className="space-y-4">
           {messages.map((message) => {
             const isAssistant = message.role === "assistant";
@@ -284,7 +306,7 @@ export function CreamyChat({
         </div>
       )}
 
-      <div className="border-t border-[var(--os-border)] px-5 py-4">
+      <div className={`border-t border-[var(--os-border)] ${compact ? "px-4 py-3" : "px-5 py-4"}`}>
         <label htmlFor="creamy-chat-input" className="sr-only">
           Mensaje para Creamy
         </label>
@@ -297,17 +319,21 @@ export function CreamyChat({
           maxLength={4000}
           placeholder="Preguntale a Creamy por trabajos, lotes, OE/OA, MP o Calidad…"
           disabled={loading}
-          className="max-h-32 min-h-20 w-full resize-none rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-white px-3 py-2 text-sm text-[var(--os-text)] outline-none transition focus:border-[var(--os-teal)] focus:ring-2 focus:ring-[var(--os-teal-muted)] disabled:bg-slate-50"
+          className={`${compact ? "min-h-16" : "min-h-20"} max-h-32 w-full resize-none rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-white px-3 py-2 text-sm text-[var(--os-text)] outline-none transition focus:border-[var(--os-teal)] focus:ring-2 focus:ring-[var(--os-teal-muted)] disabled:bg-slate-50`}
         />
         <div className="mt-3 flex items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={resetConversation}
-            className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium text-[var(--os-text-muted)] hover:bg-[var(--os-bg)]"
-          >
-            <RefreshCcw className="size-3.5" aria-hidden="true" />
-            Nueva conversación
-          </button>
+          {showHeaderActions ? (
+            <button
+              type="button"
+              onClick={resetConversation}
+              className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium text-[var(--os-text-muted)] hover:bg-[var(--os-bg)]"
+            >
+              <RefreshCcw className="size-3.5" aria-hidden="true" />
+              Nueva conversación
+            </button>
+          ) : (
+            <span aria-hidden="true" />
+          )}
           <div className="flex items-center gap-2">
             {loading && (
               <button

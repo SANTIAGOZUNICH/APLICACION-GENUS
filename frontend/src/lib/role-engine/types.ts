@@ -99,6 +99,7 @@ export const SIDEBAR_ITEM_IDS = [
   "stock",
   "control_mp",
   "asignar_trabajos",
+  "entregados",
   "asignacion_lotes",
   "ver_elaboracion",
   "ver_envasado_masivo",

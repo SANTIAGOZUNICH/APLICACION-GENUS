@@ -6,7 +6,7 @@ const snapshot: CreamyLocalSnapshot = {
   capturedAt: "2026-07-20T10:00:00.000Z",
   source: "local_browser",
   actorSectorId: "PRODUCCION",
-  limits: { workItems: 40, lots: 40, rawMaterials: 40, orders: 40, qualityPending: 40 },
+  limits: { workItems: 40, lots: 40, rawMaterials: 40, orders: 40, qualityPending: 40, deliveries: 40 },
   workItems: [
     {
       id: "w-elab-1",
@@ -126,6 +126,46 @@ const snapshot: CreamyLocalSnapshot = {
       completedBy: "Ana",
       observation: "Listo para revisar",
     },
+    {
+      id: "qc:w-env-1",
+      kind: "salida",
+      lote: "L-SH-001",
+      product: "Shampoo",
+      client: "Cliente B",
+      oe: null,
+      oa: "OA-1",
+      line: "L1",
+      quantity: "500 un.",
+      dayLabel: "22 julio",
+      deliveryDate: "2026-07-23",
+      status: "aprobado",
+      relatedWorkItemId: "w-env-1",
+      receivedFrom: "ENVASADO_MASIVO",
+      completedAt: "2026-07-22T09:00:00.000Z",
+      completedBy: "Beto",
+      observation: "Aprobado",
+    },
+  ],
+  deliveries: [
+    {
+      id: "del-1",
+      workItemId: "w-elab-1",
+      qualityItemId: "qc:w-elab-1",
+      product: "Creamy Facial",
+      codigo: "PR-120",
+      client: "Cliente A",
+      lote: "L-CR-001",
+      sourceSector: "ELABORACION",
+      quantity: "100",
+      unit: "kg",
+      plannedDeliveryDate: "2026-07-19",
+      actualDeliveredAt: "2026-07-21T10:00:00.000Z",
+      remito: "R-1",
+      receivedBy: "Cliente A",
+      observations: null,
+      status: "ENTREGADO",
+      archived: false,
+    },
   ],
   notes: [],
 };
@@ -187,5 +227,106 @@ describe("Creamy assistant tools", () => {
     const quality = produccion.getPendingQualityDecisions({ query: "Creamy" });
     expect(quality.results).toHaveLength(1);
     expect(quality.sources[0]).toEqual({ type: "quality", id: "qc:w-elab-1", label: "Calidad · Creamy Facial" });
+  });
+
+  it("consulta entregas y pendientes de entrega con permisos", () => {
+    const produccion = createCreamyToolRuntime({ actorSectorId: "PRODUCCION", snapshot });
+
+    const deliveries = produccion.searchDeliveries({ customer: "Cliente A" });
+    expect(deliveries.results).toHaveLength(1);
+    expect(deliveries.sources[0]).toEqual({
+      type: "delivery",
+      id: "del-1",
+      label: "Entrega · Creamy Facial · Cliente A",
+    });
+
+    const late = produccion.getLateDeliveries();
+    expect(late.results).toHaveLength(1);
+    expect(late.results[0]).toMatchObject({ late: true });
+
+    const byRange = produccion.getDeliveriesByDateRange({
+      fromDate: "2026-07-20",
+      toDate: "2026-07-22",
+    });
+    expect(byRange.results).toHaveLength(1);
+
+    const pending = produccion.getPendingDeliveries({ query: "Shampoo" });
+    expect(pending.results).toHaveLength(1);
+    expect(pending.sources[0]).toEqual({ type: "quality", id: "qc:w-env-1", label: "Calidad · Shampoo" });
+  });
+
+  it("limita entregas a sectores con permiso", () => {
+    const direccion = createCreamyToolRuntime({ actorSectorId: "DIRECCION", snapshot });
+    expect(direccion.searchDeliveries({ query: "Creamy" }).results).toHaveLength(1);
+
+    const elaboracion = createCreamyToolRuntime({ actorSectorId: "ELABORACION", snapshot });
+    expect(elaboracion.searchDeliveries({ query: "Creamy" }).results).toEqual([]);
+  });
+
+  it("excluye registros eliminados y muestra archivados solo con includeArchived", () => {
+    const extendedSnapshot: CreamyLocalSnapshot = {
+      ...snapshot,
+      deliveries: [
+        ...snapshot.deliveries,
+        {
+          id: "del-archived",
+          workItemId: "w-arch-1",
+          qualityItemId: "qc:w-arch-1",
+          product: "Producto Archivado",
+          codigo: "PR-200",
+          client: "Cliente Arch",
+          lote: "L-ARCH",
+          sourceSector: "ELABORACION",
+          quantity: "50",
+          unit: "kg",
+          plannedDeliveryDate: "2026-07-18",
+          actualDeliveredAt: "2026-07-20T10:00:00.000Z",
+          remito: "R-ARCH",
+          receivedBy: "Cliente Arch",
+          observations: null,
+          status: "ENTREGADO",
+          archived: true,
+        },
+        {
+          id: "del-deleted",
+          workItemId: "w-del-1",
+          qualityItemId: "qc:w-del-1",
+          product: "Producto Eliminado",
+          codigo: "PR-999",
+          client: "Cliente Del",
+          lote: "L-DEL",
+          sourceSector: "ELABORACION",
+          quantity: "10",
+          unit: "kg",
+          plannedDeliveryDate: "2026-07-17",
+          actualDeliveredAt: "2026-07-19T10:00:00.000Z",
+          remito: "R-DEL",
+          receivedBy: "Cliente Del",
+          observations: null,
+          status: "REGISTRO_ELIMINADO",
+          archived: false,
+        },
+      ],
+    };
+
+    const runtime = createCreamyToolRuntime({ actorSectorId: "PRODUCCION", snapshot: extendedSnapshot });
+
+    const activeOnly = runtime.searchDeliveries({ customer: "Cliente A" });
+    expect(activeOnly.results).toHaveLength(1);
+    expect(activeOnly.results[0]).toMatchObject({ id: "del-1" });
+    expect(activeOnly.results).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "del-deleted" })])
+    );
+    expect(activeOnly.results).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "del-archived" })])
+    );
+
+    const withArchived = runtime.searchDeliveries({ query: "Archivado", includeArchived: true });
+    expect(withArchived.results).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "del-archived", archived: true })])
+    );
+    expect(withArchived.results).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "del-deleted" })])
+    );
   });
 });

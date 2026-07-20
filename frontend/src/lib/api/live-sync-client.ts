@@ -1,6 +1,7 @@
 import type { SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
 import type { LiveSyncEvent, LiveSyncStatus } from "@/lib/live-sync/types";
+import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
 
 export async function fetchLiveSyncStatus(): Promise<LiveSyncStatus & { mode?: string }> {
   const response = await fetch("/api/v1/live-sync/status", { cache: "no-store" });
@@ -134,6 +135,62 @@ export async function postCancelWork(payload: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "cancel_work", ...payload }),
+  });
+}
+
+export async function postDeliverWork(
+  payload: DeliveryRecord & { actorSectorId: string }
+): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "deliver_work", ...payload }),
+  });
+}
+
+export async function postArchiveDelivery(payload: {
+  id: string;
+  actorSectorId: string;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "archive_delivery", ...payload }),
+  });
+}
+
+export async function postRestoreDelivery(payload: {
+  id: string;
+  actorSectorId: string;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "restore_delivery", ...payload }),
+  });
+}
+
+export async function postDeleteDeliveryRecord(payload: {
+  id: string;
+  reason: string;
+  actorSectorId: string;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "delete_delivery_record", ...payload }),
+  });
+}
+
+export async function postAnnulDelivery(payload: {
+  id: string;
+  reason: string;
+  actorSectorId: string;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "annul_delivery", ...payload }),
   });
 }
 

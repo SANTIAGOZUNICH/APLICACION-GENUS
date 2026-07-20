@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { Bell } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/dialog";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
+  dismissNotification,
+  dismissReadNotifications,
   getNotificationsForSector,
-  markSectorNotificationsRead,
+  markNotificationRead,
   subscribeNotifications,
   type OsNotification,
 } from "./notifications-store";
@@ -25,6 +28,7 @@ export function NotificationBell() {
   const { sectorId } = usePreviewSession();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<OsNotification[]>([]);
+  const [confirmDismissRead, setConfirmDismissRead] = useState(false);
 
   useEffect(() => {
     const load = () => setItems(getNotificationsForSector(sectorId));
@@ -38,10 +42,7 @@ export function NotificationBell() {
     <div className="relative">
       <button
         type="button"
-        onClick={() => {
-          setOpen((v) => !v);
-          if (!open && unreadCount > 0) markSectorNotificationsRead(sectorId);
-        }}
+        onClick={() => setOpen((v) => !v)}
         className="relative rounded-full p-2 text-[var(--os-text-muted)] transition-colors hover:bg-[var(--os-bg)] hover:text-[var(--os-text)]"
         aria-label={`Notificaciones${unreadCount > 0 ? ` (${unreadCount} sin leer)` : ""}`}
         aria-expanded={open}
@@ -70,6 +71,9 @@ export function NotificationBell() {
           >
             <div className="border-b border-[var(--os-border-subtle)] px-4 py-3">
               <p className="text-sm font-semibold text-[var(--os-text)]">Notificaciones</p>
+              <p className="mt-0.5 text-[11px] text-[var(--os-text-muted)]">
+                Descartar solo oculta la notificación para esta vista.
+              </p>
             </div>
             <div className="max-h-96 overflow-y-auto">
               {items.length === 0 ? (
@@ -89,13 +93,50 @@ export function NotificationBell() {
                     <p className="mt-1 text-[11px] text-[var(--os-text-muted)]">
                       {relativeTime(n.createdAt)}
                     </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {!n.read && (
+                        <button
+                          type="button"
+                          onClick={() => markNotificationRead(n.id)}
+                          className="text-[11px] font-medium text-[var(--os-teal)] hover:underline"
+                        >
+                          Marcar leída
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => dismissNotification(n.id)}
+                        className="text-[11px] font-medium text-[var(--os-text-muted)] hover:text-[var(--os-text)] hover:underline"
+                      >
+                        Descartar
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
             </div>
+            <div className="border-t border-[var(--os-border-subtle)] px-4 py-3">
+              <button
+                type="button"
+                disabled={!items.some((item) => item.read)}
+                onClick={() => setConfirmDismissRead(true)}
+                className="text-xs font-medium text-[var(--os-text-muted)] hover:text-[var(--os-text)] hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Descartar todas las leídas
+              </button>
+            </div>
           </div>
         </>
       )}
+      <ConfirmDialog
+        open={confirmDismissRead}
+        onOpenChange={setConfirmDismissRead}
+        title="Descartar notificaciones leídas"
+        description="Las notificaciones leídas se ocultarán de esta vista. No se elimina información operativa."
+        confirmLabel="Descartar leídas"
+        cancelLabel="Cancelar"
+        onConfirm={() => dismissReadNotifications(sectorId)}
+      />
     </div>
   );
 }

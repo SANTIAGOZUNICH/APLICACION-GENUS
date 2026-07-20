@@ -6,6 +6,7 @@ import { PreviewProvider, usePreviewContext } from "@/features/os/session/previe
 import { isAuthenticatedPreview } from "@/features/os/auth/lib/auth-session-helpers";
 import { OperationalStoreProvider } from "@/features/os/operational";
 import { WorkspaceProvider } from "@/features/os/workspace/workspace-provider";
+import { CreamyChatProvider } from "@/features/os/assistant/creamy-chat-context";
 import type { TwinNavEntry } from "@/features/os/navigation/twin-nav";
 import { TwinRouter } from "./twin-app";
 
@@ -33,11 +34,13 @@ export function OsAppRoot({ initialNav }: OsAppRootProps = {}) {
   return (
     <PreviewProvider initialNav={initialNav}>
       <OperationalStoreProvider>
-        <WorkspaceProvider>
-          <div className="design-preview-root min-h-dvh bg-[var(--os-bg)]">
-            <TwinAppInner />
-          </div>
-        </WorkspaceProvider>
+        <CreamyChatProvider>
+          <WorkspaceProvider>
+            <div className="design-preview-root min-h-dvh bg-[var(--os-bg)]">
+              <TwinAppInner />
+            </div>
+          </WorkspaceProvider>
+        </CreamyChatProvider>
       </OperationalStoreProvider>
     </PreviewProvider>
   );

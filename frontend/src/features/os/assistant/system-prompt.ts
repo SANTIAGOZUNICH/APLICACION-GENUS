@@ -10,7 +10,7 @@ interface PromptInput {
 
 export function buildCreamySystemPrompt({ actorSectorId, snapshot }: PromptInput): string {
   const counts = snapshot
-    ? `Snapshot local: ${snapshot.workItems.length} trabajos, ${snapshot.lots.length} lotes, ${snapshot.rawMaterials.length} materias primas, ${snapshot.orders.length} órdenes, ${snapshot.qualityPending.length} pendientes de Calidad.`
+    ? `Snapshot local: ${snapshot.workItems.length} trabajos, ${snapshot.lots.length} lotes, ${snapshot.rawMaterials.length} materias primas, ${snapshot.orders.length} órdenes, ${snapshot.qualityPending.length} pendientes/aprobados de Calidad, ${snapshot.deliveries.length} entregas.`
     : "No se recibió snapshot local; si necesitás datos operativos, pedí al usuario que actualice o abra la vista correspondiente.";
 
   return [

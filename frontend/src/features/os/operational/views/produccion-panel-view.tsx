@@ -13,7 +13,10 @@ import { getFormulaForProduct } from "../adapters/formula-repository";
 import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { getTotalStockByCodigo } from "../adapters/materia-prima-repository";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
+import { getDeliveryByWorkItemId } from "../adapters/delivery-repository";
+import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-adapter";
 import { OperationalTable, StatusChip, type OperationalTableColumn } from "../components/operational-ui";
+import { Button } from "@/components/ui/button";
 
 const PRODUCING_SECTORS = ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM"] as const;
 
@@ -42,7 +45,7 @@ function todayIso(): string {
 function isOverdue(item: WorkItem): boolean {
   const due = item.deliveryDate ?? item.plannedDate;
   if (!due) return false;
-  if (item.status === "completo" || item.status === "revision" || item.status === "cancelado") return false;
+  if (item.status === "completo" || item.status === "revision" || item.status === "cancelado" || item.status === "entregado") return false;
   return due < todayIso();
 }
 
@@ -86,7 +89,12 @@ export function ProduccionPanelView() {
   );
 
   const qualityItems = calidad.data?.qualityItems ?? [];
-  const aprobados = qualityItems.filter((q) => getQualityStatus(q.id, q.status) === "aprobado").length;
+  const qualityWithDecisions = applyQualityDecisionsToItems(qualityItems, getQualityStatus);
+  const aprobadosItems = qualityWithDecisions.filter((q) => q.status === "aprobado");
+  const pendientesEntrega = aprobadosItems.filter(
+    (q) => q.relatedWorkItemId && !getDeliveryByWorkItemId(q.relatedWorkItemId)
+  );
+  const aprobados = aprobadosItems.length;
   const rechazados = qualityItems.filter((q) => getQualityStatus(q.id, q.status) === "rechazado").length;
 
   const pendientes = allActiveItems.filter((i) => i.status === "pendiente").length;
@@ -189,14 +197,49 @@ export function ProduccionPanelView() {
         </p>
       </header>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
         <KpiTile label="Pendientes" value={pendientes} />
         <KpiTile label="En proceso" value={enProceso} tone="warn" />
         <KpiTile label="Esperando Calidad" value={esperandoCalidad} tone="warn" />
         <KpiTile label="Aprobados" value={aprobados} tone="ok" />
+        <KpiTile label="Pend. entrega" value={pendientesEntrega.length} tone="warn" />
         <KpiTile label="Rechazados" value={rechazados} tone="danger" />
         <KpiTile label="Con faltantes" value={faltantesRefs.length} tone="danger" />
       </div>
+      {pendientesEntrega.length > 0 && (
+        <section className="space-y-3 rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-[var(--os-text)]">Aprobados pendientes de entrega</h3>
+              <p className="text-xs text-[var(--os-text-muted)]">
+                Solo Producción puede confirmar la entrega real.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigateTo({ view: "entregados" })}
+              className="text-sm font-medium text-[var(--os-teal)] hover:underline"
+            >
+              Ir a Entregados →
+            </button>
+          </div>
+          <ul className="divide-y divide-[var(--os-border-subtle)]">
+            {pendientesEntrega.slice(0, 5).map((item) => (
+              <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{item.product}</p>
+                  <p className="truncate text-xs text-[var(--os-text-muted)]">
+                    {item.client} · {item.lote ?? "Sin lote"}
+                  </p>
+                </div>
+                <Button size="sm" variant="primary" onClick={() => navigateTo({ view: "entregados" })}>
+                  Marcar como entregado
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section>
         <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">

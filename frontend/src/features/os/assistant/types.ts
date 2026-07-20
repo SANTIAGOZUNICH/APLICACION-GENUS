@@ -21,6 +21,7 @@ export type SourceCitationType =
   | "raw_material"
   | "order"
   | "quality"
+  | "delivery"
   | "help";
 
 export interface SourceCitation {
@@ -134,6 +135,26 @@ export interface CreamyQualityPendingSummary {
   observation: string | null;
 }
 
+export interface CreamyDeliverySummary {
+  id: string;
+  workItemId: string;
+  qualityItemId: string | null;
+  product: string;
+  codigo: string | null;
+  client: string | null;
+  lote: string | null;
+  sourceSector: SectorId;
+  quantity: string | null;
+  unit: string | null;
+  plannedDeliveryDate: string | null;
+  actualDeliveredAt: string;
+  remito: string | null;
+  receivedBy: string | null;
+  observations: string | null;
+  status: "ENTREGADO" | "ANULADO" | "REGISTRO_ELIMINADO";
+  archived: boolean;
+}
+
 export interface CreamyLocalSnapshot {
   capturedAt: string;
   source: "local_browser";
@@ -144,12 +165,14 @@ export interface CreamyLocalSnapshot {
     rawMaterials: number;
     orders: number;
     qualityPending: number;
+    deliveries: number;
   };
   workItems: CreamyWorkItemSummary[];
   lots: CreamyLotSummary[];
   rawMaterials: CreamyRawMaterialSummary[];
   orders: CreamyOrderSummary[];
   qualityPending: CreamyQualityPendingSummary[];
+  deliveries: CreamyDeliverySummary[];
   notes: string[];
 }
 
