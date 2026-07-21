@@ -11,6 +11,29 @@ export function multiplyTotal(
   return Number((bultos * cantidad).toFixed(6));
 }
 
+/**
+ * Presentación de bultos a partir de stock total y cantidad por bulto.
+ * No inventa conversión si falta cantidadPorBulto.
+ */
+export function formatMeBultosDisplay(
+  stockTotal: number,
+  cantidadPorBulto: number | null | undefined
+): string {
+  if (cantidadPorBulto == null || !Number.isFinite(cantidadPorBulto) || cantidadPorBulto <= 0) {
+    return "";
+  }
+  if (!Number.isFinite(stockTotal)) return "";
+  const completos = Math.floor(stockTotal / cantidadPorBulto);
+  const remanente = Number((stockTotal - completos * cantidadPorBulto).toFixed(6));
+  if (remanente === 0) {
+    return String(completos);
+  }
+  if (completos === 0) {
+    return `${remanente} unidades`;
+  }
+  return `${completos} completos + ${remanente} unidades`;
+}
+
 export type MpStockEstado =
   | "Sin dato"
   | "Sin stock"

@@ -23,6 +23,7 @@ export type TwinView =
   | "mp-compras"
   | "ingresos-me"
   | "salidas-me"
+  | "inventario-me"
   | "avisos-me"
   | "semanas-produccion"
   | "asignar-trabajos"
@@ -69,6 +70,7 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   mp_compras: "mp-compras",
   ingresos_me: "ingresos-me",
   salidas_me: "salidas-me",
+  inventario_me: "inventario-me",
   avisos_me: "avisos-me",
   semanas_produccion: "semanas-produccion",
   asignar_trabajos: "asignar-trabajos",
@@ -104,6 +106,7 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     "mp-compras": "mp_compras",
     "ingresos-me": "ingresos_me",
     "salidas-me": "salidas_me",
+    "inventario-me": "inventario_me",
     "avisos-me": "avisos_me",
     "semanas-produccion": "semanas_produccion",
     "asignar-trabajos": "asignar_trabajos",
@@ -150,6 +153,7 @@ export function viewTitle(view: TwinView): string {
     "mp-compras": "Compras MP",
     "ingresos-me": "Ingresos ME",
     "salidas-me": "Salidas ME",
+    "inventario-me": "Inventario ME",
     "avisos-me": "Avisos",
     "semanas-produccion": "Semanas de Producción",
     "asignar-trabajos": "Asignar trabajos",

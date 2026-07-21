@@ -117,7 +117,10 @@ export function MeSalidasView() {
       if (filterEntregado === "si" && !r.entregado) return false;
       if (filterEntregado === "no" && r.entregado) return false;
       if (!q) return true;
-      return [r.egresoNro, r.cliente, r.remitoNro, r.descripcion].join(" ").toLowerCase().includes(q);
+      return [r.egresoNro, r.cliente, r.remitoNro, r.descripcion, r.codigo, r.oaNumber, r.comentarios]
+        .join(" ")
+        .toLowerCase()
+        .includes(q);
     });
   }, [rows, search, filterControl, filterEntregado]);
 
@@ -142,6 +145,17 @@ export function MeSalidasView() {
       key: label,
       header: label,
       render: (row) => {
+        if (label === "COMENTARIOS") {
+          const oaTag =
+            row.origen === "OA"
+              ? `Origen automático OA ${row.oaNumber ?? ""}`.trim()
+              : "";
+          const parts = [oaTag, row.comentarios].filter(Boolean);
+          return displayCell(parts.join(" · ") || null);
+        }
+        if (label === "DESCRIPCIÓN" && row.origen === "OA" && row.codigo) {
+          return displayCell(`${row.descripcion || ""} [${row.codigo}]`.trim());
+        }
         const v = row[key];
         if (typeof v === "boolean") return v ? "Sí" : "No";
         return displayCell(v);
@@ -191,8 +205,8 @@ export function MeSalidasView() {
         </div>
       )}
       <p className="mb-3 text-xs text-[var(--os-text-muted)]">
-        Módulo «Salidas ME» (la hoja de referencia decía Salidas Producto Terminado). Columnas
-        exactas sin cambios.
+        Incluye salidas manuales y salidas automáticas generadas al entregar una OA. Las salidas OA
+        no se editan ni eliminan desde aquí (trazabilidad).
       </p>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {canWrite && (
@@ -242,7 +256,10 @@ export function MeSalidasView() {
                 {
                   key: "acciones",
                   header: "",
-                  render: (row: MeSalidaRow) => (
+                  render: (row: MeSalidaRow) =>
+                    row.origen === "OA" ? (
+                      <span className="text-xs text-[var(--os-text-muted)]">OA</span>
+                    ) : (
                     <div className="flex gap-1">
                       <button
                         type="button"
@@ -269,7 +286,7 @@ export function MeSalidasView() {
                         <Trash2 className="size-4 text-red-700" />
                       </button>
                     </div>
-                  ),
+                    ),
                 } as OperationalTableColumn<MeSalidaRow>,
               ]
             : []),

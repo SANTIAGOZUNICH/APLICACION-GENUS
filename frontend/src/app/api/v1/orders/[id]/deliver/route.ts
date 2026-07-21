@@ -14,13 +14,19 @@ export async function POST(request: Request, ctx: Ctx) {
   try {
     const { id } = await ctx.params;
     const actor = resolveOrdersActor(request);
-    const body = (await request.json()) as { confirm?: boolean; allowIncomplete?: boolean };
-    const order = await getOrdersService().deliver(
-      id,
-      actor,
-      Boolean(body.confirm),
-      { allowIncomplete: Boolean(body.allowIncomplete) }
-    );
+    const body = (await request.json()) as {
+      confirm?: boolean;
+      allowIncomplete?: boolean;
+      allowNegativeMeStock?: boolean;
+      negativeMeStockReason?: string;
+      includeDesechadosMe?: boolean;
+    };
+    const order = await getOrdersService().deliver(id, actor, Boolean(body.confirm), {
+      allowIncomplete: Boolean(body.allowIncomplete),
+      allowNegativeMeStock: Boolean(body.allowNegativeMeStock),
+      negativeMeStockReason: body.negativeMeStockReason,
+      includeDesechadosMe: Boolean(body.includeDesechadosMe),
+    });
     return NextResponse.json({ order, legallyOperational: true });
   } catch (err) {
     return ordersErrorResponse(err);

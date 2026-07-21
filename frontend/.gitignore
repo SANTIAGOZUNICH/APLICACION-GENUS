@@ -34,3 +34,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# ─── Fórmulas confidenciales (nunca al repo) ───
+*.zip
+!**/testdata/**/*.zip
+**/private-formulas/**
+**/ORDEN\ DE\ ELABORACION*
+**/formulas-import-reports/**
+**/formulas-extract/**
+**/genus-formulas-*/
+**/tmp/private-formulas/**
+

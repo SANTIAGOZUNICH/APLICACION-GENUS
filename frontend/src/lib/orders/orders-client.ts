@@ -26,14 +26,31 @@ function actorHeaders(session: OrdersClientSession): HeadersInit {
 }
 
 async function parseJson<T>(res: Response): Promise<T> {
-  const body = (await res.json()) as T & { error?: string; code?: string };
+  const body = (await res.json()) as T & {
+    error?: string;
+    code?: string;
+    shortages?: Array<{
+      codigo: string;
+      material: string;
+      materialId: string | null;
+      stockDisponible: number;
+      cantidadSolicitada: number;
+      diferencia: number;
+    }>;
+  };
   if (!res.ok) {
     const err = new Error(
       (body as { error?: string }).error ?? `HTTP ${res.status}`
-    ) as Error & { status?: number; code?: string; current?: OperationalOrderRecord };
+    ) as Error & {
+      status?: number;
+      code?: string;
+      current?: OperationalOrderRecord;
+      shortages?: typeof body.shortages;
+    };
     err.status = res.status;
     err.code = (body as { code?: string }).code;
     err.current = (body as { current?: OperationalOrderRecord }).current;
+    err.shortages = body.shortages;
     throw err;
   }
   return body;
@@ -269,7 +286,12 @@ export async function saveOrderProgressApi(
 export async function deliverOrderApi(
   session: OrdersClientSession,
   id: string,
-  opts?: { allowIncomplete?: boolean }
+  opts?: {
+    allowIncomplete?: boolean;
+    allowNegativeMeStock?: boolean;
+    negativeMeStockReason?: string;
+    includeDesechadosMe?: boolean;
+  }
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}/deliver`, {
     method: "POST",
@@ -277,6 +299,9 @@ export async function deliverOrderApi(
     body: JSON.stringify({
       confirm: true,
       allowIncomplete: Boolean(opts?.allowIncomplete),
+      allowNegativeMeStock: Boolean(opts?.allowNegativeMeStock),
+      negativeMeStockReason: opts?.negativeMeStockReason,
+      includeDesechadosMe: Boolean(opts?.includeDesechadosMe),
     }),
   });
   const data = await parseJson<{ order: OperationalOrderRecord }>(res);

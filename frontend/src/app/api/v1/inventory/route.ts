@@ -94,6 +94,8 @@ async function listResource(
       return service.listMeSalidas(actor);
     case "me_stock":
       return service.listMeMaterials(actor);
+    case "me_inventario":
+      return service.listMeInventario(actor);
     case "me_avisos":
       return service.listMeAlerts(actor);
     case "mp_stock":

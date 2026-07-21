@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db/client";
 import {
+  MeStockShortageError,
   OrdersConflictError,
   OrdersForbiddenError,
   OrdersNotFoundError,
@@ -24,6 +25,17 @@ export function ensureOrdersPersistenceReady(): NextResponse | null {
 }
 
 export function ordersErrorResponse(err: unknown): NextResponse {
+  if (err instanceof MeStockShortageError) {
+    return NextResponse.json(
+      {
+        error: err.message,
+        code: err.code,
+        shortages: err.shortages,
+        legallyOperational: false,
+      },
+      { status: 400 }
+    );
+  }
   if (
     err instanceof OrdersValidationError ||
     err instanceof OrdersNotFoundError ||

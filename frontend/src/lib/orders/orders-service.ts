@@ -34,6 +34,7 @@ import type {
   TemplateChangeProposalRecord,
 } from "@/lib/orders/types";
 import {
+  MeStockShortageError,
   OrdersConflictError,
   OrdersForbiddenError,
   OrdersNotFoundError,
@@ -351,11 +352,45 @@ export class OrdersService {
       if (input.lot != null) formData.header.lot = input.lot;
     }
     const normalized = normalizeOrderContent(formData);
+
+    // Autocompletar desde banco privado si hay coincidencia única vigente
+    let formulaProductId: string | null = null;
+    let formulaVersionId: string | null = null;
+    let formulaVersionHash: string | null = null;
+    if (input.type === "OE" && normalized.kind === "OE") {
+      const clientName = input.client ?? normalized.header.client;
+      const productName = input.product ?? normalized.header.productName;
+      if (clientName && productName) {
+        const { readyFormulaBank } = await import("@/lib/formulas/get-formula-bank");
+        const { emptyOeMaterial } = await import("@/lib/orders/content");
+        const bank = await readyFormulaBank();
+        const snap = bank.resolveVigente(clientName, productName);
+        if (snap) {
+          formulaProductId = snap.formulaProductId;
+          formulaVersionId = snap.formulaVersionId;
+          formulaVersionHash = snap.versionHash;
+          if (!normalized.materials.some((m) => m.formulaPct != null)) {
+            normalized.materials = snap.ingredients.map((ing) =>
+              emptyOeMaterial({
+                materiaPrima: ing.materialName,
+                codigo: ing.materialCodeOrPhase,
+                formulaPct: ing.percentage,
+              })
+            );
+            normalized.procedureSteps = snap.procedureSteps.map((s) => ({
+              id: s.id,
+              text: s.instruction,
+            }));
+          }
+        }
+      }
+    }
+
     return this.persistNewOrder({
       type: input.type,
       template,
       snapshot,
-      normalized,
+      normalized: normalizeOrderContent(normalized),
       product: input.product ?? normalized.header.productName,
       client:
         input.client ??
@@ -370,6 +405,9 @@ export class OrdersService {
       status: "PENDIENTE",
       linkedWorkItemId: input.linkedWorkItemId ?? null,
       actor,
+      formulaProductId,
+      formulaVersionId,
+      formulaVersionHash,
     });
   }
 
@@ -556,6 +594,9 @@ export class OrdersService {
     status: OperationalOrderRecord["status"];
     linkedWorkItemId: string | null;
     actor: OrdersActor;
+    formulaProductId?: string | null;
+    formulaVersionId?: string | null;
+    formulaVersionHash?: string | null;
   }) {
     const year = new Date().getFullYear();
     const orderNumber = await this.repo.nextOrderNumber(args.type, year);
@@ -572,6 +613,9 @@ export class OrdersService {
       code: args.code,
       lot: args.lot,
       assignedSector: args.assignedSector,
+      formulaProductId: args.formulaProductId ?? null,
+      formulaVersionId: args.formulaVersionId ?? null,
+      formulaVersionHash: args.formulaVersionHash ?? null,
       status: args.status,
       formData: args.normalized,
       completionPercentage: computeCompletionPercentage(args.normalized),
@@ -838,7 +882,12 @@ export class OrdersService {
     id: string,
     actor: OrdersActor,
     confirm: boolean,
-    opts?: { allowIncomplete?: boolean }
+    opts?: {
+      allowIncomplete?: boolean;
+      allowNegativeMeStock?: boolean;
+      negativeMeStockReason?: string;
+      includeDesechadosMe?: boolean;
+    }
   ) {
     if (!confirm) {
       throw new OrdersValidationError(
@@ -867,6 +916,34 @@ export class OrdersService {
       );
     }
 
+    // Pre-check stock ME (sin mutar) antes de marcar la OA como entregada
+    if (current.type === "OA" && current.formData.kind === "OA") {
+      const { getInventoryService, memoryInventoryRepo } = await import(
+        "@/lib/inventory/get-inventory-service"
+      );
+      const { hydrateInventoryFromNeon } = await import("@/lib/inventory/neon-persist");
+      const { previewOaMeShortages, assertNoSilentNegative } = await import(
+        "@/lib/inventory/me-oa-bridge"
+      );
+      const { InventoryValidationError } = await import("@/lib/inventory/inventory-service");
+      await hydrateInventoryFromNeon(memoryInventoryRepo);
+      const shortages = previewOaMeShortages(getInventoryService(), actor, current);
+      try {
+        assertNoSilentNegative(shortages, {
+          allowNegativeStock: opts?.allowNegativeMeStock,
+          negativeReason: opts?.negativeMeStockReason,
+        });
+      } catch (err) {
+        if (err instanceof InventoryValidationError) {
+          throw new MeStockShortageError(
+            err.message,
+            err.shortages ?? shortages
+          );
+        }
+        throw err;
+      }
+    }
+
     const ts = nowIso();
     const status = missing.length > 0 ? "COMPLETA_CON_PENDIENTES" : "COMPLETA";
     const normalized = normalizeOrderContent(current.formData);
@@ -883,6 +960,24 @@ export class OrdersService {
       const fresh = await this.repo.getOrder(id);
       throw new OrdersConflictError("Conflicto al entregar.", fresh!);
     }
+
+    if (updated.type === "OA" && updated.formData.kind === "OA") {
+      const { getInventoryService, memoryInventoryRepo } = await import(
+        "@/lib/inventory/get-inventory-service"
+      );
+      const { hydrateInventoryFromNeon, persistInventorySnapshot } = await import(
+        "@/lib/inventory/neon-persist"
+      );
+      const { applyOaDeliveryToMe } = await import("@/lib/inventory/me-oa-bridge");
+      await hydrateInventoryFromNeon(memoryInventoryRepo);
+      applyOaDeliveryToMe(getInventoryService(), actor, updated, {
+        allowNegativeStock: opts?.allowNegativeMeStock,
+        negativeReason: opts?.negativeMeStockReason,
+        includeDesechados: opts?.includeDesechadosMe,
+      });
+      await persistInventorySnapshot(memoryInventoryRepo);
+    }
+
     await this.repo.insertOrderVersion({
       id: randomUUID(),
       orderId: id,
@@ -904,6 +999,7 @@ export class OrdersService {
         templateUnchanged: true,
         pendingFields: missing,
         status,
+        meStockNegativeAllowed: Boolean(opts?.allowNegativeMeStock),
       },
     });
     await notify(this.repo, {
@@ -1153,6 +1249,23 @@ export class OrdersService {
       const fresh = await this.repo.getOrder(id);
       throw new OrdersConflictError("Conflicto al devolver.", fresh!);
     }
+    if (current.type === "OA") {
+      const { getInventoryService, memoryInventoryRepo } = await import(
+        "@/lib/inventory/get-inventory-service"
+      );
+      const { hydrateInventoryFromNeon, persistInventorySnapshot } = await import(
+        "@/lib/inventory/neon-persist"
+      );
+      const { reverseOaMeSalidas } = await import("@/lib/inventory/me-oa-bridge");
+      await hydrateInventoryFromNeon(memoryInventoryRepo);
+      reverseOaMeSalidas(
+        getInventoryService(),
+        actor,
+        id,
+        `Devolución OA: ${reason.trim()}`
+      );
+      await persistInventorySnapshot(memoryInventoryRepo);
+    }
     await this.repo.appendAudit({
       orderId: id,
       eventType: "ORDER_RETURNED",
@@ -1231,6 +1344,23 @@ export class OrdersService {
     if (!updated) {
       const fresh = await this.repo.getOrder(id);
       throw new OrdersConflictError("Conflicto al anular.", fresh!);
+    }
+    if (current.type === "OA") {
+      const { getInventoryService, memoryInventoryRepo } = await import(
+        "@/lib/inventory/get-inventory-service"
+      );
+      const { hydrateInventoryFromNeon, persistInventorySnapshot } = await import(
+        "@/lib/inventory/neon-persist"
+      );
+      const { reverseOaMeSalidas } = await import("@/lib/inventory/me-oa-bridge");
+      await hydrateInventoryFromNeon(memoryInventoryRepo);
+      reverseOaMeSalidas(
+        getInventoryService(),
+        actor,
+        id,
+        `Anulación OA: ${reason || "sin motivo"}`
+      );
+      await persistInventorySnapshot(memoryInventoryRepo);
     }
     await this.repo.appendAudit({
       orderId: id,

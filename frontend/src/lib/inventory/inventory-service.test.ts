@@ -58,6 +58,7 @@ describe("DEPOSITO acceso y navegación", () => {
     expect(home.sidebarItems).toEqual([
       "ingresos_me",
       "salidas_me",
+      "inventario_me",
       "avisos_me",
       "semanas_produccion",
     ]);
@@ -215,31 +216,32 @@ describe("InventoryService ME/MP", () => {
     expect(list[0]!.id).not.toBe(list[1]!.id);
   });
 
-  it("salida descuenta por materialId; stock negativo requiere confirmación", () => {
+  it("salida MANUAL no descuenta; OA sí descuenta con confirmación si negativo", () => {
     const ing = svc.upsertMeIngreso(deposito, {
       descripcionInsumo: "Cajas",
+      codigo: "CAJ-X",
       bultos: 1,
       cantidad: 100,
     });
+    // Manual: no afecta stock
+    svc.upsertMeSalida(deposito, {
+      descripcion: "Cajas",
+      codigo: "CAJ-X",
+      materialId: ing.materialId,
+      bultos: 2,
+      cantidad: 100,
+      origen: "MANUAL",
+    });
+    expect(svc.listMeMaterials(deposito)[0]?.stockActual).toBe(100);
+
     expect(() =>
-      svc.upsertMeSalida(deposito, {
-        descripcion: "Cajas",
-        materialId: ing.materialId,
-        bultos: 2,
-        cantidad: 100,
-      })
+      svc.applyOaStockDelta(deposito, ing.materialId!, -200, {})
     ).toThrow(InventoryValidationError);
 
-    svc.upsertMeSalida(
-      deposito,
-      {
-        descripcion: "Cajas",
-        materialId: ing.materialId,
-        bultos: 2,
-        cantidad: 100,
-      },
-      { allowNegativeStock: true, negativeReason: "urgencia producción" }
-    );
+    svc.applyOaStockDelta(deposito, ing.materialId!, -200, {
+      allowNegative: true,
+      reason: "urgencia producción",
+    });
     expect(svc.listMeMaterials(deposito)[0]?.stockActual).toBe(-100);
   });
 

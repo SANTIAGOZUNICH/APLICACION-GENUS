@@ -75,6 +75,9 @@ export function emptyOaMaterial(nro: number, partial?: Partial<OaMaterialRow>): 
     usados: "",
     fecha: "",
     responsable: "",
+    materialId: null,
+    cliente: "",
+    unidad: "u",
     ...partial,
   };
 }

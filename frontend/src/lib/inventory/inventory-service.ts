@@ -12,6 +12,7 @@ import {
   calcMeAlertLevel,
   calcMpEstadoStock,
   calcMpEstadoVencimiento,
+  formatMeBultosDisplay,
   multiplyTotal,
   parseOptionalNumber,
 } from "./calcs";
@@ -20,6 +21,7 @@ import {
   ME_ALERT_NOTIFY_SECTORS,
   canReadInventory,
   canWriteInventory,
+  canWriteOaMeSalida,
   type InventoryModule,
 } from "./rbac";
 import type {
@@ -27,6 +29,7 @@ import type {
   MeAlert,
   MeAlertStatus,
   MeIngresoRow,
+  MeInventarioViewRow,
   MeMaterial,
   MeSalidaRow,
   MpCompraRow,
@@ -50,6 +53,15 @@ export type InventoryNotificationPayload = {
   alertId: string;
 };
 
+type OaMeShortageLite = {
+  codigo: string;
+  material: string;
+  materialId: string | null;
+  stockDisponible: number;
+  cantidadSolicitada: number;
+  diferencia: number;
+};
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -70,9 +82,11 @@ export class InventoryForbiddenError extends Error {
 export class InventoryValidationError extends Error {
   status = 400;
   code = "VALIDATION";
-  constructor(message: string) {
+  shortages?: OaMeShortageLite[];
+  constructor(message: string, shortages?: OaMeShortageLite[]) {
     super(message);
     this.name = "InventoryValidationError";
+    this.shortages = shortages;
   }
 }
 
@@ -157,6 +171,7 @@ export class InventoryService {
       codigo: input.codigo ?? existing?.codigo ?? "",
       descripcion: input.descripcionInsumo ?? existing?.descripcionInsumo ?? "",
       ubicacion: input.ubicacion ?? existing?.ubicacion ?? "",
+      cliente: input.cliente ?? existing?.cliente ?? "",
     });
 
     const row: MeIngresoRow = {
@@ -242,17 +257,22 @@ export class InventoryService {
     input: Partial<MeSalidaRow> & { id?: string },
     opts?: { allowNegativeStock?: boolean; negativeReason?: string }
   ) {
+    void opts;
     this.guard(actor, "me_salidas", true);
     const existing = input.id ? this.repo.getMeSalida(input.id) : null;
     const bultos = parseOptionalNumber(input.bultos);
     const cantidad = parseOptionalNumber(input.cantidad);
-    const total = multiplyTotal(bultos, cantidad);
+    // Prefer cantidad as unidades when bultos empty (salidas OA)
+    const total =
+      multiplyTotal(bultos, cantidad) ??
+      (cantidad != null ? cantidad : null);
     const now = nowIso();
+    const origen = input.origen ?? existing?.origen ?? "MANUAL";
 
     let materialId = input.materialId ?? existing?.materialId ?? null;
-    if (!materialId && input.descripcion) {
-      // Solo por ID/código — no conciliar por texto ambiguo
-      materialId = null;
+    const codigo = (input.codigo ?? existing?.codigo ?? "").trim();
+    if (!materialId && codigo) {
+      materialId = this.repo.findMeMaterialByCodigo(codigo)?.id ?? null;
     }
 
     const row: MeSalidaRow = {
@@ -269,23 +289,24 @@ export class InventoryService {
       entregado: input.entregado ?? existing?.entregado ?? false,
       comentarios: input.comentarios ?? existing?.comentarios ?? "",
       materialId,
+      codigo,
+      unidad: input.unidad ?? existing?.unidad ?? "u",
+      origen,
+      oaId: input.oaId ?? existing?.oaId ?? null,
+      oaNumber: input.oaNumber ?? existing?.oaNumber ?? null,
+      oaVersion: input.oaVersion ?? existing?.oaVersion ?? null,
+      materialLineId: input.materialLineId ?? existing?.materialLineId ?? null,
+      idempotencyKey: input.idempotencyKey ?? existing?.idempotencyKey ?? null,
+      reverted: input.reverted ?? existing?.reverted ?? false,
+      revertedAt: input.revertedAt ?? existing?.revertedAt ?? null,
+      revertReason: input.revertReason ?? existing?.revertReason ?? null,
       createdBy: existing?.createdBy ?? actor.email,
       updatedBy: actor.email,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
 
-    if (existing?.materialId && existing.total != null) {
-      this.applyMeStockDelta(existing.materialId, existing.total); // revert salida
-    }
-    if (row.materialId && row.total != null) {
-      this.applyMeStockDelta(row.materialId, -row.total, {
-        allowNegative: opts?.allowNegativeStock,
-        reason: opts?.negativeReason,
-        actor,
-      });
-    }
-
+    // Salidas MANUALES no descuentan inventario (solo OA).
     this.repo.upsertMeSalida(row);
     this.audit(
       actor,
@@ -295,7 +316,6 @@ export class InventoryService {
       existing as unknown as Record<string, unknown> | null,
       row as unknown as Record<string, unknown>
     );
-    if (row.materialId) this.syncMeAlerts(actor, row.materialId);
     return row;
   }
 
@@ -304,8 +324,18 @@ export class InventoryService {
     if (!reason.trim()) throw new InventoryValidationError("Motivo obligatorio para eliminar salida.");
     const existing = this.repo.getMeSalida(id);
     if (!existing) throw new InventoryNotFoundError("Salida ME no encontrada.");
-    if (existing.materialId && existing.total != null) {
-      this.applyMeStockDelta(existing.materialId, existing.total, { actor, reason });
+    // Solo revertir stock si era salida OA activa
+    if (
+      existing.origen === "OA" &&
+      !existing.reverted &&
+      existing.materialId &&
+      (existing.total ?? existing.cantidad) != null
+    ) {
+      this.applyMeStockDelta(existing.materialId, existing.total ?? existing.cantidad ?? 0, {
+        actor,
+        reason,
+      });
+      this.syncMeAlerts(actor, existing.materialId);
     }
     this.repo.deleteMeSalida(id);
     this.audit(
@@ -317,7 +347,6 @@ export class InventoryService {
       null,
       reason
     );
-    if (existing.materialId) this.syncMeAlerts(actor, existing.materialId);
   }
 
   private nextMeEgresoNro() {
@@ -392,7 +421,13 @@ export class InventoryService {
 
   private resolveOrCreateMeMaterial(
     actor: InventoryActor,
-    input: { materialId: string | null; codigo: string; descripcion: string; ubicacion: string }
+    input: {
+      materialId: string | null;
+      codigo: string;
+      descripcion: string;
+      ubicacion: string;
+      cliente?: string;
+    }
   ): MeMaterial {
     if (input.materialId) {
       const existing = this.repo.getMeMaterial(input.materialId);
@@ -400,14 +435,27 @@ export class InventoryService {
     }
     if (input.codigo.trim()) {
       const byCode = this.repo.findMeMaterialByCodigo(input.codigo);
-      if (byCode) return byCode;
+      if (byCode) {
+        // Actualizar cliente/descripcion si venían vacíos
+        const patched: MeMaterial = {
+          ...byCode,
+          descripcion: byCode.descripcion || input.descripcion.trim() || byCode.descripcion,
+          cliente: byCode.cliente || input.cliente?.trim() || byCode.cliente,
+          ubicacion: byCode.ubicacion || input.ubicacion,
+          updatedAt: nowIso(),
+        };
+        this.repo.upsertMeMaterial(patched);
+        return patched;
+      }
     }
     const created: MeMaterial = {
       id: randomUUID(),
       codigo: input.codigo.trim(),
       descripcion: input.descripcion.trim() || "Sin descripción",
+      cliente: input.cliente?.trim() ?? "",
       ubicacion: input.ubicacion,
       unidad: "u",
+      cantidadPorBulto: null,
       stockActual: 0,
       stockMinimo: null,
       puntoReposicion: null,
@@ -418,6 +466,195 @@ export class InventoryService {
     this.repo.upsertMeMaterial(created);
     this.audit(actor, "me_stock", created.id, "create", null, created as unknown as Record<string, unknown>);
     return created;
+  }
+
+  /** STOCK = ingresos − salidas OA activas. */
+  recalculateMeStock(materialId: string): MeMaterial {
+    const mat = this.repo.getMeMaterial(materialId);
+    if (!mat) throw new InventoryNotFoundError("Material ME no encontrado.");
+    const ingresos = this.repo
+      .listMeIngresos()
+      .filter((r) => r.materialId === materialId)
+      .reduce((acc, r) => acc + (r.total ?? 0), 0);
+    const salidasOa = this.repo
+      .listMeSalidas()
+      .filter((r) => r.materialId === materialId && r.origen === "OA" && !r.reverted)
+      .reduce((acc, r) => acc + (r.total ?? r.cantidad ?? 0), 0);
+    const stockActual = Number((ingresos - salidasOa).toFixed(6));
+    const updated: MeMaterial = { ...mat, stockActual, updatedAt: nowIso() };
+    this.repo.upsertMeMaterial(updated);
+    return updated;
+  }
+
+  listMeInventario(actor: InventoryActor): MeInventarioViewRow[] {
+    this.guard(actor, "me_stock", false);
+    return this.repo.listMeMaterials().map((m) => {
+      const fresh = this.recalculateMeStock(m.id);
+      return {
+        materialId: fresh.id,
+        codigo: fresh.codigo,
+        cliente: fresh.cliente,
+        insumo: fresh.descripcion,
+        bultosDisplay: formatMeBultosDisplay(fresh.stockActual, fresh.cantidadPorBulto),
+        cantidadTotal: fresh.stockActual,
+        ubicacion: fresh.ubicacion,
+        updatedAt: fresh.updatedAt,
+      };
+    });
+  }
+
+  getMeMaterialById(actor: InventoryActor, id: string) {
+    this.guard(actor, "me_stock", false);
+    return this.repo.getMeMaterial(id);
+  }
+
+  getMeMaterialByCodigo(actor: InventoryActor, codigo: string) {
+    this.guard(actor, "me_stock", false);
+    return this.repo.findMeMaterialByCodigo(codigo);
+  }
+
+  applyOaStockDelta(
+    actor: InventoryActor,
+    materialId: string,
+    delta: number,
+    opts?: { allowNegative?: boolean; reason?: string }
+  ) {
+    if (!canWriteOaMeSalida(actor.sector) && !canWriteInventory(actor.sector, "me_ajustes")) {
+      throw new InventoryForbiddenError("Sector no puede ajustar stock ME por OA.");
+    }
+    this.applyMeStockDelta(materialId, delta, {
+      allowNegative: opts?.allowNegative,
+      reason: opts?.reason,
+      actor,
+    });
+  }
+
+  resolveMeMaterialByCodigo(
+    actor: InventoryActor,
+    input: { codigo: string; descripcion: string; cliente?: string; materialId?: string | null }
+  ) {
+    if (!canWriteOaMeSalida(actor.sector) && !canWriteInventory(actor.sector, "me_ingresos")) {
+      throw new InventoryForbiddenError("Sector no puede resolver materiales ME.");
+    }
+    return this.resolveOrCreateMeMaterial(actor, {
+      materialId: input.materialId ?? null,
+      codigo: input.codigo,
+      descripcion: input.descripcion,
+      ubicacion: "",
+      cliente: input.cliente,
+    });
+  }
+
+  createOaMeSalida(
+    actor: InventoryActor,
+    input: {
+      codigo: string;
+      descripcion: string;
+      cliente: string;
+      unidad: string;
+      cantidad: number;
+      materialId: string;
+      oaId: string;
+      oaNumber: string;
+      oaVersion: number;
+      materialLineId: string;
+      idempotencyKey: string;
+    }
+  ): MeSalidaRow {
+    if (!canWriteOaMeSalida(actor.sector)) {
+      throw new InventoryForbiddenError("Sector no puede generar salidas ME desde OA.");
+    }
+    // Bypass guard me_salidas (solo DEPOSITO CRUD manual); OA es automática.
+    const existing = this.repo.listMeSalidas().find((s) => s.idempotencyKey === input.idempotencyKey);
+    const now = nowIso();
+    const row: MeSalidaRow = {
+      id: existing?.id ?? randomUUID(),
+      fecha: todayIso(),
+      egresoNro: existing?.egresoNro ?? this.nextMeEgresoNro(),
+      cliente: input.cliente,
+      remitoNro: input.oaNumber,
+      descripcion: input.descripcion,
+      bultos: 1,
+      cantidad: input.cantidad,
+      total: input.cantidad,
+      control: true,
+      entregado: true,
+      comentarios: `Origen automático · OA ${input.oaNumber} · id ${input.oaId}`,
+      materialId: input.materialId,
+      codigo: input.codigo,
+      unidad: input.unidad,
+      origen: "OA",
+      oaId: input.oaId,
+      oaNumber: input.oaNumber,
+      oaVersion: input.oaVersion,
+      materialLineId: input.materialLineId,
+      idempotencyKey: input.idempotencyKey,
+      reverted: false,
+      revertedAt: null,
+      revertReason: null,
+      createdBy: existing?.createdBy ?? actor.email,
+      updatedBy: actor.email,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.repo.upsertMeSalida(row);
+    this.audit(
+      actor,
+      "me_salidas_oa",
+      row.id,
+      existing ? "update" : "create",
+      existing as unknown as Record<string, unknown> | null,
+      row as unknown as Record<string, unknown>
+    );
+    return row;
+  }
+
+  findMeSalidaByIdempotencyKey(key: string) {
+    return this.repo.listMeSalidas().find((s) => s.idempotencyKey === key) ?? null;
+  }
+
+  findActiveMeSalidaForOaLine(oaId: string, materialLineId: string) {
+    return (
+      this.repo
+        .listMeSalidas()
+        .filter(
+          (s) =>
+            s.oaId === oaId &&
+            s.materialLineId === materialLineId &&
+            s.origen === "OA" &&
+            !s.reverted
+        )
+        .sort((a, b) => (b.oaVersion ?? 0) - (a.oaVersion ?? 0))[0] ?? null
+    );
+  }
+
+  listMeSalidasByOaId(oaId: string) {
+    return this.repo.listMeSalidas().filter((s) => s.oaId === oaId);
+  }
+
+  markMeSalidaReverted(actor: InventoryActor, id: string, reason: string) {
+    if (!canWriteOaMeSalida(actor.sector) && !canWriteInventory(actor.sector, "me_salidas")) {
+      throw new InventoryForbiddenError("Sector no puede revertir salidas OA.");
+    }
+    const existing = this.repo.getMeSalida(id);
+    if (!existing) return;
+    this.repo.upsertMeSalida({
+      ...existing,
+      reverted: true,
+      revertedAt: nowIso(),
+      revertReason: reason,
+      updatedBy: actor.email,
+      updatedAt: nowIso(),
+    });
+  }
+
+  markMeSalidaReplaced(actor: InventoryActor, id: string, reason: string) {
+    this.markMeSalidaReverted(actor, id, reason);
+  }
+
+  /** Expuesto para puente OA (avisos post-descuento). */
+  syncMeAlertsPublic(actor: InventoryActor, materialId: string) {
+    return this.syncMeAlerts(actor, materialId);
   }
 
   private applyMeStockDelta(

@@ -24,6 +24,7 @@ import { OaListView } from "@/features/os/operational/views/oa-list-view";
 import { HistorialView } from "@/features/os/operational/views/historial-view";
 import { MeIngresosView } from "@/features/os/operational/views/me-ingresos-view";
 import { MeSalidasView } from "@/features/os/operational/views/me-salidas-view";
+import { MeInventarioView } from "@/features/os/operational/views/me-inventario-view";
 import { MeAvisosView } from "@/features/os/operational/views/me-avisos-view";
 import { SemanasProduccionView } from "@/features/os/operational/views/semanas-produccion-view";
 import { MpHubView } from "@/features/os/operational/views/mp-hub-view";
@@ -108,6 +109,8 @@ export function TwinRouter() {
       return <MeIngresosView />;
     case "salidas-me":
       return <MeSalidasView />;
+    case "inventario-me":
+      return <MeInventarioView />;
     case "avisos-me":
       return <MeAvisosView />;
     case "semanas-produccion":

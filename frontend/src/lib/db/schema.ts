@@ -221,6 +221,9 @@ export const operationalOrders = pgTable(
     code: text("code").notNull(),
     lot: text("lot").notNull(),
     assignedSector: text("assigned_sector").notNull(),
+    formulaProductId: uuid("formula_product_id"),
+    formulaVersionId: uuid("formula_version_id"),
+    formulaVersionHash: text("formula_version_hash"),
     status: operationalOrderStatusEnum("status").notNull().default("PENDIENTE"),
     formData: jsonb("form_data").notNull(),
     completionPercentage: integer("completion_percentage").notNull().default(0),
@@ -406,3 +409,109 @@ export type OrderVersionRow = typeof orderVersions.$inferSelect;
 export type TemplateChangeProposalRow = typeof templateChangeProposals.$inferSelect;
 export type OrderAuditEventRow = typeof orderAuditEvents.$inferSelect;
 export type OsNotificationRow = typeof osNotifications.$inferSelect;
+
+/** Banco privado de fórmulas (Neon) — sin endpoint de listado completo. */
+export const formulaProducts = pgTable(
+  "formula_products",
+  {
+    id: uuid("id").primaryKey(),
+    normalizedClient: text("normalized_client").notNull(),
+    normalizedProduct: text("normalized_product").notNull(),
+    displayClient: text("display_client").notNull(),
+    displayProduct: text("display_product").notNull(),
+    productCode: text("product_code"),
+    activeVersionId: uuid("active_version_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("formula_products_norm_uidx").on(t.normalizedClient, t.normalizedProduct),
+  ]
+);
+
+export const formulaVersions = pgTable("formula_versions", {
+  id: uuid("id").primaryKey(),
+  productId: uuid("product_id")
+    .notNull()
+    .references(() => formulaProducts.id, { onDelete: "cascade" }),
+  version: integer("version").notNull(),
+  status: text("status").notNull(), // VIGENTE | HISTORICA | CONFLICTO | BORRADOR_PROPUESTA
+  sourceFile: text("source_file"),
+  sourceSheet: text("source_sheet"),
+  sourceModifiedAt: timestamp("source_modified_at", { withTimezone: true }),
+  sourceHash: text("source_hash").notNull(),
+  semanticHash: text("semantic_hash").notNull(),
+  importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+  percentageTotal: text("percentage_total"),
+  validationStatus: text("validation_status").notNull().default("OK"),
+  warnings: jsonb("warnings").notNull().default([]),
+  previousVersionId: uuid("previous_version_id"),
+  conflictCode: text("conflict_code"),
+  altSourcePaths: jsonb("alt_source_paths").notNull().default([]),
+});
+
+export const formulaIngredients = pgTable("formula_ingredients", {
+  id: uuid("id").primaryKey(),
+  formulaVersionId: uuid("formula_version_id")
+    .notNull()
+    .references(() => formulaVersions.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  materialName: text("material_name").notNull(),
+  materialCodeOrPhase: text("material_code_or_phase"),
+  percentage: text("percentage"),
+  notes: text("notes"),
+});
+
+export const formulaProcedureSteps = pgTable("formula_procedure_steps", {
+  id: uuid("id").primaryKey(),
+  formulaVersionId: uuid("formula_version_id")
+    .notNull()
+    .references(() => formulaVersions.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  instruction: text("instruction").notNull(),
+});
+
+export const formulaSpecifications = pgTable("formula_specifications", {
+  id: uuid("id").primaryKey(),
+  formulaVersionId: uuid("formula_version_id")
+    .notNull()
+    .references(() => formulaVersions.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  name: text("name").notNull(),
+  expectedValue: text("expected_value"),
+  unit: text("unit"),
+  notes: text("notes"),
+});
+
+export const formulaImportRuns = pgTable("formula_import_runs", {
+  id: uuid("id").primaryKey(),
+  sourceArchiveHash: text("source_archive_hash").notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  status: text("status").notNull(),
+  filesScanned: integer("files_scanned").notNull().default(0),
+  formulasDetected: integer("formulas_detected").notNull().default(0),
+  inserted: integer("inserted").notNull().default(0),
+  duplicated: integer("duplicated").notNull().default(0),
+  warnings: jsonb("warnings").notNull().default([]),
+  errors: jsonb("errors").notNull().default([]),
+});
+
+export const formulaProposals = pgTable("formula_proposals", {
+  id: uuid("id").primaryKey(),
+  productId: uuid("product_id")
+    .notNull()
+    .references(() => formulaProducts.id, { onDelete: "cascade" }),
+  proposedVersionId: uuid("proposed_version_id").references(() => formulaVersions.id, {
+    onDelete: "set null",
+  }),
+  status: text("status").notNull().default("PENDIENTE"),
+  reason: text("reason"),
+  createdBy: text("created_by").notNull(),
+  createdBySector: text("created_by_sector").notNull(),
+  decidedBy: text("decided_by"),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  payload: jsonb("payload").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+

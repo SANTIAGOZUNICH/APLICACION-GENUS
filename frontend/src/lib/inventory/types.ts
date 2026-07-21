@@ -11,6 +11,7 @@ export type MeIngresoRow = {
   descripcionInsumo: string;
   bultos: number | null;
   cantidad: number | null;
+  /** TOTAL = BULTOS × CANTIDAD (unidades). */
   total: number | null;
   ubicacion: string;
   materialId: string | null;
@@ -19,6 +20,8 @@ export type MeIngresoRow = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type MeSalidaOrigen = "MANUAL" | "OA";
 
 export type MeSalidaRow = {
   id: string;
@@ -34,6 +37,20 @@ export type MeSalidaRow = {
   entregado: boolean;
   comentarios: string;
   materialId: string | null;
+  /** Código funcional del material (clave de conciliación). */
+  codigo: string;
+  unidad: string;
+  /** Solo salidas con origen OA descuentan inventario. */
+  origen: MeSalidaOrigen;
+  oaId: string | null;
+  oaNumber: string | null;
+  oaVersion: number | null;
+  materialLineId: string | null;
+  /** oaId + oaVersion + materialLineId */
+  idempotencyKey: string | null;
+  reverted: boolean;
+  revertedAt: string | null;
+  revertReason: string | null;
   createdBy: string;
   updatedBy: string;
   createdAt: string;
@@ -42,10 +59,15 @@ export type MeSalidaRow = {
 
 export type MeMaterial = {
   id: string;
+  /** Código funcional único por material (no UUID). */
   codigo: string;
   descripcion: string;
+  cliente: string;
   ubicacion: string;
   unidad: string;
+  /** Unidades por bulto cerrado; null = no calcular bultos. */
+  cantidadPorBulto: number | null;
+  /** STOCK = ingresos − salidas OA (recalculado). */
   stockActual: number;
   stockMinimo: number | null;
   puntoReposicion: number | null;
@@ -53,6 +75,26 @@ export type MeMaterial = {
   observacion: string;
   updatedAt: string;
 };
+
+/** Fila visible de Inventario ME (5 columnas). */
+export type MeInventarioViewRow = {
+  materialId: string;
+  codigo: string;
+  cliente: string;
+  insumo: string;
+  bultosDisplay: string;
+  cantidadTotal: number;
+  ubicacion: string;
+  updatedAt: string;
+};
+
+export const ME_INVENTARIO_COLUMNS = [
+  "CLIENTE",
+  "INSUMO",
+  "BULTOS",
+  "CANTIDAD TOTAL",
+  "UBICACIÓN",
+] as const;
 
 export type MeAlertStatus =
   | "STOCK_OK"

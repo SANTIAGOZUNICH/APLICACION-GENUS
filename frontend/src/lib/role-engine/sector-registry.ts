@@ -189,14 +189,15 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     sidebarItems: [
       "ingresos_me",
       "salidas_me",
+      "inventario_me",
       "avisos_me",
       "semanas_produccion",
     ],
     creamyContext: {
       role: "Copiloto de depósito",
-      topics: ["ingresos ME", "salidas ME", "avisos", "semanas"],
-      defaultHint: "¿Cargamos un ingreso de material de empaque o revisamos avisos de stock?",
-      baseSuggestions: ["Nuevo ingreso ME", "Ver avisos", "Consultar semanas"],
+      topics: ["ingresos ME", "salidas ME", "inventario ME", "avisos", "semanas"],
+      defaultHint: "¿Cargamos un ingreso ME o revisamos el inventario automático?",
+      baseSuggestions: ["Nuevo ingreso ME", "Ver inventario ME", "Ver avisos"],
     },
     emptyState: {
       title: "Depósito listo",

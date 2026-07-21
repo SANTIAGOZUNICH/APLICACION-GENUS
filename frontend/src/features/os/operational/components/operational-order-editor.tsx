@@ -76,6 +76,18 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnReason, setReturnReason] = useState("");
   const [missingFields, setMissingFields] = useState<string[]>([]);
+  const [meShortages, setMeShortages] = useState<
+    Array<{
+      codigo: string;
+      material: string;
+      stockDisponible: number;
+      cantidadSolicitada: number;
+      diferencia: number;
+    }>
+  >([]);
+  const [meShortageOpen, setMeShortageOpen] = useState(false);
+  const [meShortageReason, setMeShortageReason] = useState("");
+  const [pendingAllowIncomplete, setPendingAllowIncomplete] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const versionRef = useRef(1);
 
@@ -272,7 +284,10 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     setMasterOpen(true);
   };
 
-  const onDeliver = async (allowIncomplete = false) => {
+  const onDeliver = async (
+    allowIncomplete = false,
+    meOpts?: { allowNegativeMeStock?: boolean; negativeMeStockReason?: string }
+  ) => {
     if (!form) return;
     const missing = validateDeliver(form);
     if (missing.length && !allowIncomplete) {
@@ -284,13 +299,29 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     try {
       const updated = await deliverOrderApi(session, orderId, {
         allowIncomplete: allowIncomplete || missing.length > 0,
+        allowNegativeMeStock: meOpts?.allowNegativeMeStock,
+        negativeMeStockReason: meOpts?.negativeMeStockReason,
       });
       setOrder(updated);
       setForm(updated.formData);
       versionRef.current = updated.version;
       setDeliverOpen(false);
+      setMeShortageOpen(false);
+      setMeShortages([]);
+      setMeShortageReason("");
       setSaveState("saved");
     } catch (err) {
+      const e = err as Error & {
+        code?: string;
+        shortages?: typeof meShortages;
+      };
+      if (e.code === "ME_STOCK_SHORTAGE" && e.shortages?.length) {
+        setMeShortages(e.shortages);
+        setPendingAllowIncomplete(allowIncomplete || missing.length > 0);
+        setMeShortageOpen(true);
+        setDeliverOpen(false);
+        return;
+      }
       setError(err instanceof Error ? err.message : "No se pudo entregar.");
     }
   };
@@ -662,6 +693,58 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
                 Entregar
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={meShortageOpen} onOpenChange={setMeShortageOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Stock ME insuficiente</DialogTitle>
+            <DialogDescription>
+              No hay stock suficiente para la cantidad utilizada. Podés cancelar o confirmar con
+              motivo (no se deja stock negativo en silencio).
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-2 text-sm" data-testid="me-stock-shortages">
+            {meShortages.map((s) => (
+              <li key={`${s.codigo}-${s.material}`} className="rounded border border-rose-200 bg-rose-50 px-3 py-2">
+                <div>
+                  <span className="font-medium">{s.codigo}</span> — {s.material}
+                </div>
+                <div className="text-rose-900">
+                  Disponible: {s.stockDisponible} · Solicitado: {s.cantidadSolicitada} · Falta:{" "}
+                  {s.diferencia}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <label className="block space-y-1 text-sm">
+            <span>Motivo (obligatorio para confirmar)</span>
+            <textarea
+              value={meShortageReason}
+              onChange={(e) => setMeShortageReason(e.target.value)}
+              className="min-h-20 w-full rounded border px-3 py-2"
+              data-testid="me-shortage-reason"
+            />
+          </label>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button type="button" variant="secondary" onClick={() => setMeShortageOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              data-testid="me-shortage-confirm"
+              disabled={!meShortageReason.trim()}
+              onClick={() =>
+                void onDeliver(pendingAllowIncomplete, {
+                  allowNegativeMeStock: true,
+                  negativeMeStockReason: meShortageReason.trim(),
+                })
+              }
+            >
+              Entregar con stock insuficiente
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

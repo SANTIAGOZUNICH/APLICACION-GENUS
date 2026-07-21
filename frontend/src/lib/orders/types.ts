@@ -123,6 +123,10 @@ export type OaMaterialRow = {
   usados: string;
   fecha: string;
   responsable: string;
+  /** UUID interno del material ME (opcional). */
+  materialId: string | null;
+  cliente: string;
+  unidad: string;
 };
 
 export type OaOperarioRow = {
@@ -273,6 +277,10 @@ export type OperationalOrderRecord = {
   code: string;
   lot: string;
   assignedSector: OrderAssignedSector;
+  /** Snapshot del banco privado (OE): no cambia si la maestra se actualiza. */
+  formulaProductId: string | null;
+  formulaVersionId: string | null;
+  formulaVersionHash: string | null;
   status: OrderStatus;
   formData: OrderContent;
   completionPercentage: number;
@@ -391,10 +399,31 @@ export type PatchOrderInput = {
 
 export class OrdersValidationError extends Error {
   readonly status = 400;
-  readonly code = "ORDERS_VALIDATION";
-  constructor(message: string) {
+  readonly code: string = "ORDERS_VALIDATION";
+  constructor(message: string, code?: string) {
     super(message);
     this.name = "OrdersValidationError";
+    if (code) this.code = code;
+  }
+}
+
+/** Stock ME insuficiente al entregar OA — requiere confirmación + motivo. */
+export class MeStockShortageError extends OrdersValidationError {
+  readonly shortages: Array<{
+    codigo: string;
+    material: string;
+    materialId: string | null;
+    stockDisponible: number;
+    cantidadSolicitada: number;
+    diferencia: number;
+  }>;
+  constructor(
+    message: string,
+    shortages: MeStockShortageError["shortages"]
+  ) {
+    super(message, "ME_STOCK_SHORTAGE");
+    this.name = "MeStockShortageError";
+    this.shortages = shortages;
   }
 }
 

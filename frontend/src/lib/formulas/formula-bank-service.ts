@@ -1,0 +1,400 @@
+/**
+ * Banco privado de fórmulas — servicio en memoria (tests) / Neon (import).
+ * No expone listado completo del banco.
+ */
+
+import { createHash, randomUUID } from "node:crypto";
+import {
+  normalizeSearchKey,
+  looksLikeCopyName,
+  type FormulaProductRecord,
+  type FormulaSnapshot,
+  type FormulaVersionRecord,
+  type ParsedFormulaDraft,
+} from "./types";
+
+export class FormulaBankForbiddenError extends Error {
+  status = 403;
+  code = "FORBIDDEN";
+  constructor(message: string) {
+    super(message);
+    this.name = "FormulaBankForbiddenError";
+  }
+}
+
+export class FormulaBankNotFoundError extends Error {
+  status = 404;
+  code = "NOT_FOUND";
+  constructor(message: string) {
+    super(message);
+    this.name = "FormulaBankNotFoundError";
+  }
+}
+
+export class MemoryFormulaBank {
+  products: FormulaProductRecord[] = [];
+  versions: FormulaVersionRecord[] = [];
+  importRunHashes = new Set<string>();
+
+  reset() {
+    this.products = [];
+    this.versions = [];
+    this.importRunHashes = new Set();
+  }
+}
+
+export class FormulaBankService {
+  constructor(private readonly store: MemoryFormulaBank) {}
+
+  hasImportedArchive(hash: string) {
+    return this.store.importRunHashes.has(hash);
+  }
+
+  markArchiveImported(hash: string) {
+    this.store.importRunHashes.add(hash);
+  }
+
+  /**
+   * Resultado de resolución por cliente+producto.
+   * No lista el banco; solo una coincidencia o conflicto.
+   */
+  resolveLookup(
+    client: string,
+    product: string
+  ):
+    | { kind: "found"; snapshot: FormulaSnapshot }
+    | { kind: "conflict"; code: string; message: string }
+    | { kind: "not_found"; message: string } {
+    const nc = normalizeSearchKey(client);
+    const np = normalizeSearchKey(product);
+    if (!nc || !np || nc === "pendiente" || np === "pendiente") {
+      return {
+        kind: "not_found",
+        message: "No se encontró una fórmula vigente para este cliente y producto.",
+      };
+    }
+    const prod = this.store.products.find(
+      (p) => p.normalizedClient === nc && p.normalizedProduct === np
+    );
+    if (!prod) {
+      return {
+        kind: "not_found",
+        message: "No se encontró una fórmula vigente para este cliente y producto.",
+      };
+    }
+    if (!prod.activeVersionId) {
+      const tied = this.store.versions.find(
+        (v) => v.productId === prod.id && v.conflictCode === "TIED_LATEST_VERSION"
+      );
+      if (tied) {
+        return {
+          kind: "conflict",
+          code: "TIED_LATEST_VERSION",
+          message:
+            "Existen varias versiones recientes y ninguna fue activada automáticamente.",
+        };
+      }
+      return {
+        kind: "not_found",
+        message: "No se encontró una fórmula vigente para este cliente y producto.",
+      };
+    }
+    const ver = this.store.versions.find((v) => v.id === prod.activeVersionId);
+    if (!ver || ver.status !== "VIGENTE") {
+      return {
+        kind: "not_found",
+        message: "No se encontró una fórmula vigente para este cliente y producto.",
+      };
+    }
+    return { kind: "found", snapshot: this.toSnapshot(prod, ver) };
+  }
+
+  resolveVigente(client: string, product: string): FormulaSnapshot | null {
+    const result = this.resolveLookup(client, product);
+    return result.kind === "found" ? result.snapshot : null;
+  }
+
+  getVersionForAuthorizedOrder(versionId: string): FormulaSnapshot | null {
+    const ver = this.store.versions.find((v) => v.id === versionId);
+    if (!ver) return null;
+    const prod = this.store.products.find((p) => p.id === ver.productId);
+    if (!prod) return null;
+    return this.toSnapshot(prod, ver);
+  }
+
+  /**
+   * Incorpora borradores parseados: dedupe hash/semántica, vigencia por fecha archivo.
+   * No imprime ingredientes en logs.
+   */
+  ingestDrafts(
+    drafts: ParsedFormulaDraft[],
+    opts?: { archiveHash?: string }
+  ): {
+    inserted: number;
+    duplicated: number;
+    conflicts: number;
+    warnings: number;
+    products: number;
+  } {
+    if (opts?.archiveHash && this.hasImportedArchive(opts.archiveHash)) {
+      return {
+        inserted: 0,
+        duplicated: drafts.length,
+        conflicts: 0,
+        warnings: 0,
+        products: this.store.products.length,
+      };
+    }
+
+    // Agrupar por semantic hash primero (copias idénticas)
+    const bySemantic = new Map<string, ParsedFormulaDraft>();
+    for (const d of drafts) {
+      const prev = bySemantic.get(d.semanticHash);
+      if (!prev) {
+        bySemantic.set(d.semanticHash, { ...d, altSourcePaths: [...d.altSourcePaths] });
+        continue;
+      }
+      prev.altSourcePaths = [
+        ...new Set([...prev.altSourcePaths, d.sourceFile, ...d.altSourcePaths]),
+      ];
+      // Preferir no-copia y fecha más reciente al fusionar metadatos
+      const prevTime = prev.sourceModifiedAt ? Date.parse(prev.sourceModifiedAt) : 0;
+      const curTime = d.sourceModifiedAt ? Date.parse(d.sourceModifiedAt) : 0;
+      if (curTime > prevTime || (curTime === prevTime && looksLikeCopyName(prev.sourceFile) && !looksLikeCopyName(d.sourceFile))) {
+        bySemantic.set(d.semanticHash, {
+          ...d,
+          altSourcePaths: prev.altSourcePaths,
+        });
+      }
+    }
+
+    let inserted = 0;
+    let duplicated = drafts.length - bySemantic.size;
+    let conflicts = 0;
+    let warnings = 0;
+
+    // Agrupar por producto normalizado
+    const byProduct = new Map<string, ParsedFormulaDraft[]>();
+    for (const d of bySemantic.values()) {
+      const key = `${normalizeSearchKey(d.displayClient)}||${normalizeSearchKey(d.displayProduct)}`;
+      const list = byProduct.get(key) ?? [];
+      list.push(d);
+      byProduct.set(key, list);
+      warnings += d.warnings.length;
+    }
+
+    for (const [, list] of byProduct) {
+      const client = list[0]!.displayClient;
+      const product = list[0]!.displayProduct;
+      const nc = normalizeSearchKey(client);
+      const np = normalizeSearchKey(product);
+      let prod = this.store.products.find(
+        (p) => p.normalizedClient === nc && p.normalizedProduct === np
+      );
+      if (!prod) {
+        prod = {
+          id: randomUUID(),
+          normalizedClient: nc,
+          normalizedProduct: np,
+          displayClient: client,
+          displayProduct: product,
+          productCode: list[0]!.productCode || "",
+          activeVersionId: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        this.store.products.push(prod);
+      }
+
+      // Ordenar por fecha de modificación del archivo (no import)
+      const ranked = [...list].sort((a, b) => {
+        const ta = a.sourceModifiedAt ? Date.parse(a.sourceModifiedAt) : 0;
+        const tb = b.sourceModifiedAt ? Date.parse(b.sourceModifiedAt) : 0;
+        return tb - ta;
+      });
+
+      const latestTime = ranked[0]?.sourceModifiedAt
+        ? Date.parse(ranked[0].sourceModifiedAt)
+        : 0;
+      const tied = ranked.filter((d) => {
+        const t = d.sourceModifiedAt ? Date.parse(d.sourceModifiedAt) : 0;
+        return t === latestTime && d.semanticHash !== ranked[0]!.semanticHash;
+      });
+
+      let vigenteDraft = ranked[0]!;
+      let conflict: string | null = null;
+
+      if (tied.length > 0) {
+        const nonCopy = [vigenteDraft, ...tied].filter((d) => !looksLikeCopyName(d.sourceFile));
+        if (nonCopy.length === 1) {
+          vigenteDraft = nonCopy[0]!;
+        } else if (nonCopy.length !== 1) {
+          conflict = "TIED_LATEST_VERSION";
+          conflicts += 1;
+        }
+      }
+
+      let versionNum = this.store.versions.filter((v) => v.productId === prod!.id).length;
+      let prevId: string | null = prod.activeVersionId;
+
+      for (const d of ranked) {
+        if (this.store.versions.some((v) => v.sourceHash === d.sourceHash || v.semanticHash === d.semanticHash)) {
+          duplicated += 1;
+          continue;
+        }
+        versionNum += 1;
+        const isVigente = !conflict && d.semanticHash === vigenteDraft.semanticHash;
+        const ver: FormulaVersionRecord = {
+          id: randomUUID(),
+          productId: prod.id,
+          version: versionNum,
+          status: conflict && d.semanticHash === vigenteDraft.semanticHash
+            ? "CONFLICTO"
+            : isVigente
+              ? "VIGENTE"
+              : "HISTORICA",
+          sourceFile: d.sourceFile,
+          sourceSheet: d.sourceSheet,
+          sourceModifiedAt: d.sourceModifiedAt,
+          sourceHash: d.sourceHash,
+          semanticHash: d.semanticHash,
+          importedAt: new Date().toISOString(),
+          percentageTotal: d.percentageTotal,
+          validationStatus: d.warnings.length ? "WARN" : "OK",
+          warnings: d.warnings,
+          previousVersionId: prevId,
+          conflictCode: conflict && d.semanticHash === vigenteDraft.semanticHash ? conflict : null,
+          altSourcePaths: d.altSourcePaths,
+          ingredients: d.ingredients.map((i) => ({ ...i, id: randomUUID() })),
+          procedureSteps: d.procedureSteps.map((s) => ({ ...s, id: randomUUID() })),
+          specifications: d.specifications.map((s) => ({ ...s, id: randomUUID() })),
+        };
+        this.store.versions.push(ver);
+        inserted += 1;
+        if (ver.status === "VIGENTE") {
+          // Dejar anteriores HISTORICA
+          for (const v of this.store.versions) {
+            if (v.productId === prod.id && v.id !== ver.id && v.status === "VIGENTE") {
+              v.status = "HISTORICA";
+            }
+          }
+          prod.activeVersionId = ver.id;
+          prevId = ver.id;
+        }
+      }
+      prod.updatedAt = new Date().toISOString();
+    }
+
+    if (opts?.archiveHash) this.markArchiveImported(opts.archiveHash);
+
+    return {
+      inserted,
+      duplicated,
+      conflicts,
+      warnings,
+      products: this.store.products.length,
+    };
+  }
+
+  proposeNewVersionFromOe(input: {
+    client: string;
+    product: string;
+    productCode?: string;
+    ingredients: FormulaVersionRecord["ingredients"];
+    procedureSteps: FormulaVersionRecord["procedureSteps"];
+    reason: string;
+    actorEmail: string;
+    actorSector: string;
+  }): FormulaVersionRecord {
+    const nc = normalizeSearchKey(input.client);
+    const np = normalizeSearchKey(input.product);
+    let prod = this.store.products.find(
+      (p) => p.normalizedClient === nc && p.normalizedProduct === np
+    );
+    if (!prod) {
+      prod = {
+        id: randomUUID(),
+        normalizedClient: nc,
+        normalizedProduct: np,
+        displayClient: input.client,
+        displayProduct: input.product,
+        productCode: input.productCode ?? "",
+        activeVersionId: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      this.store.products.push(prod);
+    }
+    const semantic = createHash("sha256")
+      .update(
+        JSON.stringify({
+          c: nc,
+          p: np,
+          i: input.ingredients.map((x) => [x.materialName, x.percentage]),
+        })
+      )
+      .digest("hex");
+    const ver: FormulaVersionRecord = {
+      id: randomUUID(),
+      productId: prod.id,
+      version: this.store.versions.filter((v) => v.productId === prod!.id).length + 1,
+      status: "BORRADOR_PROPUESTA",
+      sourceFile: null,
+      sourceSheet: null,
+      sourceModifiedAt: null,
+      sourceHash: `oe-propose:${semantic}`,
+      semanticHash: semantic,
+      importedAt: new Date().toISOString(),
+      percentageTotal: null,
+      validationStatus: "OK",
+      warnings: [],
+      previousVersionId: prod.activeVersionId,
+      conflictCode: null,
+      altSourcePaths: [],
+      ingredients: input.ingredients,
+      procedureSteps: input.procedureSteps,
+      specifications: [],
+    };
+    this.store.versions.push(ver);
+    void input.reason;
+    void input.actorEmail;
+    void input.actorSector;
+    return ver;
+  }
+
+  approveProposal(versionId: string): FormulaVersionRecord {
+    const ver = this.store.versions.find((v) => v.id === versionId);
+    if (!ver) throw new FormulaBankNotFoundError("Propuesta no encontrada.");
+    for (const v of this.store.versions) {
+      if (v.productId === ver.productId && v.status === "VIGENTE") v.status = "HISTORICA";
+    }
+    ver.status = "VIGENTE";
+    const prod = this.store.products.find((p) => p.id === ver.productId)!;
+    prod.activeVersionId = ver.id;
+    prod.updatedAt = new Date().toISOString();
+    return ver;
+  }
+
+  private toSnapshot(prod: FormulaProductRecord, ver: FormulaVersionRecord): FormulaSnapshot {
+    return {
+      formulaProductId: prod.id,
+      formulaVersionId: ver.id,
+      versionHash: ver.semanticHash,
+      displayClient: prod.displayClient,
+      displayProduct: prod.displayProduct,
+      productCode: prod.productCode,
+      ingredients: ver.ingredients,
+      procedureSteps: ver.procedureSteps,
+      specifications: ver.specifications,
+      percentageTotal: ver.percentageTotal,
+    };
+  }
+}
+
+export const memoryFormulaBank = new MemoryFormulaBank();
+export const formulaBankService = new FormulaBankService(memoryFormulaBank);
+
+export function resetFormulaBankForTests() {
+  memoryFormulaBank.reset();
+  return new FormulaBankService(memoryFormulaBank);
+}

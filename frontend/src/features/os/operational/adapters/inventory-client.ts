@@ -6,6 +6,7 @@ export type InventoryResource =
   | "me_ingresos"
   | "me_salidas"
   | "me_stock"
+  | "me_inventario"
   | "me_avisos"
   | "mp_stock"
   | "mp_ingresos"

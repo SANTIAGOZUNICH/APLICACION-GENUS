@@ -32,7 +32,9 @@ export function canReadInventory(sector: SectorId | undefined, module: Inventory
       sector === "DEPOSITO" ||
       sector === "PRODUCCION" ||
       sector === "CALIDAD" ||
-      sector === "MATERIA_PRIMA"
+      sector === "MATERIA_PRIMA" ||
+      sector === "ENVASADO_MASIVO" ||
+      sector === "ENVASADO_PREMIUM"
     );
   }
   if (module.startsWith("mp_")) {
@@ -44,6 +46,18 @@ export function canReadInventory(sector: SectorId | undefined, module: Inventory
     );
   }
   return false;
+}
+
+/** Escritura de salidas OA automáticas (entrega OA). */
+export function canWriteOaMeSalida(sector: SectorId | undefined): boolean {
+  if (!sector) return false;
+  return (
+    sector === "ENVASADO_MASIVO" ||
+    sector === "ENVASADO_PREMIUM" ||
+    sector === "PRODUCCION" ||
+    sector === "CALIDAD" ||
+    sector === "DEPOSITO"
+  );
 }
 
 export function canWriteInventory(sector: SectorId | undefined, module: InventoryModule): boolean {
