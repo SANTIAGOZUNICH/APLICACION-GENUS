@@ -1,12 +1,21 @@
 import React from "react";
 import {
   Document,
+  Image,
   Page,
   Text,
   View,
   StyleSheet,
 } from "@react-pdf/renderer";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { OaContent, OeContent, OperationalOrderRecord } from "@/lib/orders/types";
+
+const LOGO_CANDIDATES = [
+  join(process.cwd(), "public", "brand", "laboratorio-genus-logo.jpg"),
+  join(process.cwd(), "frontend", "public", "brand", "laboratorio-genus-logo.jpg"),
+];
+const LOGO_PATH = LOGO_CANDIDATES.find((p) => existsSync(p)) ?? null;
 
 const styles = StyleSheet.create({
   page: {
@@ -34,6 +43,11 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: "Helvetica-Bold",
   },
+  logoImage: {
+    width: 78,
+    height: 32,
+    objectFit: "contain",
+  },
   titleBox: {
     width: "36%",
     padding: 8,
@@ -46,6 +60,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 16,
     fontFamily: "Helvetica-Bold",
+  },
+  titleOa: {
+    fontSize: 11,
+    fontFamily: "Helvetica-Bold",
+    textAlign: "center",
   },
   typeBox: {
     width: "36%",
@@ -71,6 +90,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#efefef",
     fontFamily: "Helvetica-Bold",
   },
+  label: { fontSize: 7, color: "#333", marginBottom: 1 },
+  value: { fontFamily: "Helvetica-Bold", fontSize: 8 },
   meta: { fontSize: 7, color: "#444", marginTop: 10 },
   signBox: {
     borderWidth: 1,
@@ -81,13 +102,46 @@ const styles = StyleSheet.create({
   },
   signLabel: { fontSize: 7, marginBottom: 12 },
   muted: { color: "#666", fontSize: 7 },
+  sideBySide: {
+    flexDirection: "row",
+    marginTop: 4,
+  },
+  sidePanel: {
+    borderWidth: 0.5,
+    borderColor: "#555",
+    padding: 4,
+  },
 });
+
+function GenusLogo() {
+  if (LOGO_PATH) {
+    return <Image src={LOGO_PATH} style={styles.logoImage} />;
+  }
+  return <Text style={styles.logoText}>LABORATORIO GENUS</Text>;
+}
 
 function SignatureBlock({ label }: { label: string }) {
   return (
     <View style={styles.signBox}>
       <Text style={styles.signLabel}>{label}</Text>
       <Text style={styles.muted}> </Text>
+    </View>
+  );
+}
+
+function FieldCell({
+  label,
+  value,
+  width,
+}: {
+  label: string;
+  value: string | number | null | undefined;
+  width: string | number;
+}) {
+  return (
+    <View style={[styles.cell, { width }]}>
+      <Text style={styles.label}>{label}</Text>
+      <Text style={styles.value}>{value ?? ""}</Text>
     </View>
   );
 }
@@ -185,7 +239,7 @@ function OePdfBody({
             <Text>{m.kgAPesar ?? ""}</Text>
           </View>
           <View style={[styles.cell, { width: "14.5%" }]}>
-            <Text>{m.ajuste}</Text>
+            <Text>{m.ajuste ?? ""}</Text>
           </View>
           <View style={[styles.cell, { width: "14.5%" }]}>
             <Text>{m.lote}</Text>
@@ -304,6 +358,14 @@ function OePdfBody({
   );
 }
 
+function oaOperariosText(content: OaContent): string {
+  const fromList = (content.envasado.operariosList ?? [])
+    .map((o) => o.nombre.trim())
+    .filter(Boolean);
+  if (fromList.length > 0) return fromList.join(", ");
+  return content.envasado.operarios?.trim() ?? "";
+}
+
 function OaPdfBody({
   order,
   content,
@@ -312,51 +374,51 @@ function OaPdfBody({
   content: OaContent;
 }) {
   const h = content.header;
+  const cargas = content.rendimientos.cargasParciales ?? [];
+  const pesoFilas = content.controlesPeso.filas ?? [];
+  const etiq = content.etiquetadoCodificado;
+  const matCols: { key: string; width: string }[] = [
+    { key: "Nº", width: "6%" },
+    { key: "Codigo", width: "12%" },
+    { key: "Nombre", width: "22%" },
+    { key: "Recibidos", width: "12%" },
+    { key: "Desechados", width: "12%" },
+    { key: "Usados", width: "12%" },
+    { key: "Fecha", width: "12%" },
+    { key: "Responsable", width: "12%" },
+  ];
+
   return (
     <>
       <View style={styles.headerRow}>
         <View style={styles.logoBox}>
-          <Text style={styles.logoText}>Laboratorio Genus</Text>
+          <GenusLogo />
         </View>
-        <View style={[styles.titleBox, { width: "72%" }]}>
-          <Text style={styles.title}>ORDEN DE ACONDICIONAMIENTO</Text>
+        <View style={[styles.titleBox, { width: "72%", borderRightWidth: 0 }]}>
+          <Text style={styles.titleOa}>ORDEN DE ACONDICIONAMIENTO</Text>
         </View>
       </View>
 
       <View style={styles.row}>
-        <View style={[styles.cell, { width: "100%" }]}>
-          <Text>
-            PRODUCTO: {h.productName} CLIENTE: {h.client}
-          </Text>
-        </View>
+        <FieldCell label="PRODUCTO" value={h.productName} width="55%" />
+        <FieldCell label="CLIENTE" value={h.client} width="45%" />
       </View>
       <View style={styles.row}>
-        <View style={[styles.cell, { width: "25%" }]}>
-          <Text>LOTE: {h.lot}</Text>
-        </View>
-        <View style={[styles.cell, { width: "25%" }]}>
-          <Text>ANALISIS: {h.analisis}</Text>
-        </View>
-        <View style={[styles.cell, { width: "25%" }]}>
-          <Text>CODIGO PRODUCTO: {h.productCode}</Text>
-        </View>
-        <View style={[styles.cell, { width: "25%" }]}>
-          <Text>VTO.: {h.vto}</Text>
-        </View>
+        <FieldCell label="LOTE" value={h.lot} width="25%" />
+        <FieldCell label="ANALISIS" value={h.analisis} width="25%" />
+        <FieldCell label="CODIGO PRODUCTO" value={h.productCode} width="25%" />
+        <FieldCell label="VTO" value={h.vto} width="25%" />
       </View>
       <View style={styles.row}>
-        <View style={[styles.cell, { width: "50%" }]}>
-          <Text>APROBO: {h.aprobo}</Text>
-        </View>
-        <View style={[styles.cell, { width: "50%" }]}>
-          <Text>FECHA DE EMISION: {h.fechaEmision}</Text>
-        </View>
+        <FieldCell label="APROBO" value={h.aprobo} width="50%" />
+        <FieldCell label="FECHA DE EMISION" value={h.fechaEmision} width="50%" />
       </View>
 
       <Text style={styles.sectionTitle}>ANALISIS DE GRANEL</Text>
       <View style={styles.row}>
         <View style={[styles.cell, { width: "70%" }]}>
-          <Text>RESULTADO: {content.analisisGranel.resultado}</Text>
+          <Text style={styles.label}>RESULTADO</Text>
+          <Text style={styles.value}>{content.analisisGranel.resultado}</Text>
         </View>
         <View style={[styles.cell, { width: "30%" }]}>
           <SignatureBlock label="FIRMA" />
@@ -364,92 +426,171 @@ function OaPdfBody({
       </View>
 
       <Text style={styles.sectionTitle}>
-        SUMINISTRO DE MATERIALES DE ACONDICIONAMIENTO · FECHA: {content.materialsFecha}
+        SUMINISTRO DE MATERIALES DE ACONDICIONAMIENTO
       </Text>
+      <Text style={{ marginBottom: 2 }}>FECHA: {content.materialsFecha}</Text>
       <View style={[styles.row, styles.th]} wrap={false}>
-        {["Nº", "Codigo", "Nombre del insumo", "Recibidos", "Desechados", "Usados", "Fecha", "Responsable"].map(
-          (label) => (
-            <View key={label} style={[styles.cell, styles.th, { width: "12.5%" }]}>
-              <Text>{label}</Text>
-            </View>
-          )
-        )}
+        {matCols.map((col) => (
+          <View key={col.key} style={[styles.cell, styles.th, { width: col.width }]}>
+            <Text>{col.key}</Text>
+          </View>
+        ))}
       </View>
       {content.materials.map((m) => (
         <View key={m.id} style={styles.row} wrap={false}>
-          <View style={[styles.cell, { width: "12.5%" }]}>
+          <View style={[styles.cell, { width: "6%" }]}>
             <Text>{m.nro}</Text>
           </View>
-          <View style={[styles.cell, { width: "12.5%" }]}>
+          <View style={[styles.cell, { width: "12%" }]}>
             <Text>{m.codigo}</Text>
           </View>
-          <View style={[styles.cell, { width: "12.5%" }]}>
+          <View style={[styles.cell, { width: "22%" }]}>
             <Text>{m.nombreInsumo}</Text>
           </View>
-          <View style={[styles.cell, { width: "12.5%" }]}>
+          <View style={[styles.cell, { width: "12%" }]}>
             <Text>{m.recibidos}</Text>
           </View>
-          <View style={[styles.cell, { width: "12.5%" }]}>
+          <View style={[styles.cell, { width: "12%" }]}>
             <Text>{m.desechados}</Text>
           </View>
-          <View style={[styles.cell, { width: "12.5%" }]}>
+          <View style={[styles.cell, { width: "12%" }]}>
             <Text>{m.usados}</Text>
           </View>
-          <View style={[styles.cell, { width: "12.5%" }]}>
+          <View style={[styles.cell, { width: "12%" }]}>
             <Text>{m.fecha}</Text>
           </View>
-          <View style={[styles.cell, { width: "12.5%" }]}>
+          <View style={[styles.cell, { width: "12%" }]}>
             <Text>{m.responsable}</Text>
           </View>
         </View>
       ))}
 
       <Text style={styles.sectionTitle}>ENVASADO</Text>
-      <Text>FECHA DE INICIO: {content.envasado.fechaInicio}</Text>
-      <Text>FECHA DE TERMINACION: {content.envasado.fechaTerminacion}</Text>
-      <Text>OPERARIOS INTERVINENTES: {content.envasado.operarios}</Text>
-
-      <Text style={styles.sectionTitle}>RENDIMIENTOS</Text>
-      <Text>
-        Producción Teórica (unidades): {content.rendimientos.produccionTeoricaUnidades ?? ""} ·
-        Contenido Teórico: {content.rendimientos.contenidoTeorico}
-      </Text>
-      <Text>
-        Fecha: {content.rendimientos.fecha} · Cant. Unidades:{" "}
-        {content.rendimientos.cantidadUnidades ?? ""} · Rendimiento A:{" "}
-        {content.rendimientos.rendimientoA ?? ""}% · Teórico: {content.rendimientos.rangoTeorico}
-      </Text>
-      <Text style={{ marginTop: 4 }}>OBSERVACIONES: {content.observaciones}</Text>
-
-      <Text style={styles.sectionTitle}>CONTROLES EN PROCESO — Control de peso/volumen</Text>
-      <Text>CONTROL ENVASAMIENTO: {content.controlesPeso.limiteTexto}</Text>
-      <Text>
-        FECHA {content.controlesPeso.fecha} · INICIO {content.controlesPeso.inicio} · MEDIO{" "}
-        {content.controlesPeso.medio} · FINAL {content.controlesPeso.final}
-      </Text>
       <View style={styles.row}>
-        <View style={{ width: "33%", paddingRight: 2 }}>
-          <SignatureBlock label="FIRMA INICIO" />
-        </View>
-        <View style={{ width: "34%", paddingHorizontal: 2 }}>
-          <SignatureBlock label="FIRMA MEDIO" />
-        </View>
-        <View style={{ width: "33%", paddingLeft: 2 }}>
-          <SignatureBlock label="FIRMA FINAL" />
+        <FieldCell
+          label="FECHA DE INICIO"
+          value={content.envasado.fechaInicio}
+          width="35%"
+        />
+        <FieldCell
+          label="FECHA DE TERMINACION"
+          value={content.envasado.fechaTerminacion}
+          width="35%"
+        />
+        <View style={[styles.cell, { width: "30%" }]}>
+          <Text style={styles.label}>OPERARIOS INTERVINIENTES</Text>
+          <Text style={styles.value}>{oaOperariosText(content)}</Text>
         </View>
       </View>
 
+      <View style={styles.sideBySide}>
+        <View style={[styles.sidePanel, { width: "58%", marginRight: 4 }]}>
+          <Text style={[styles.sectionTitle, { marginTop: 0 }]}>RENDIMIENTOS</Text>
+          <Text>
+            Producción Teórica (unidades):{" "}
+            {content.rendimientos.produccionTeoricaUnidades ?? ""}
+          </Text>
+          <Text>Contenido Teórico: {content.rendimientos.contenidoTeorico}</Text>
+          <View style={[styles.row, styles.th, { marginTop: 4 }]} wrap={false}>
+            <View style={[styles.cell, styles.th, { width: "50%" }]}>
+              <Text>Fecha</Text>
+            </View>
+            <View style={[styles.cell, styles.th, { width: "50%" }]}>
+              <Text>Cant. Unidades</Text>
+            </View>
+          </View>
+          {cargas.map((c) => (
+            <View key={c.id} style={styles.row} wrap={false}>
+              <View style={[styles.cell, { width: "50%" }]}>
+                <Text>{c.fecha}</Text>
+              </View>
+              <View style={[styles.cell, { width: "50%" }]}>
+                <Text>{c.cantidadUnidades ?? ""}</Text>
+              </View>
+            </View>
+          ))}
+          <Text style={{ marginTop: 4 }}>
+            Rendimiento A: {content.rendimientos.rendimientoA ?? ""}% · Teórico:{" "}
+            {content.rendimientos.rangoTeorico}
+          </Text>
+          {(content.rendimientos.cantidadUnidades != null ||
+            content.rendimientos.unidadesDesechadas != null ||
+            content.rendimientos.unidadesAceptadas != null) && (
+            <Text style={{ marginTop: 2 }}>
+              Llenadas: {content.rendimientos.cantidadUnidades ?? ""} · Desechadas:{" "}
+              {content.rendimientos.unidadesDesechadas ?? ""} · Aceptadas:{" "}
+              {content.rendimientos.unidadesAceptadas ?? ""}
+            </Text>
+          )}
+        </View>
+        <View style={[styles.sidePanel, { width: "42%" }]}>
+          <Text style={[styles.sectionTitle, { marginTop: 0 }]}>OBSERVACIONES</Text>
+          <Text>{content.observaciones}</Text>
+        </View>
+      </View>
+
+      <Text style={styles.sectionTitle}>CONTROLES EN PROCESO — Control de peso/volumen</Text>
+      <Text>CONTROL ENVASAMIENTO: {content.controlesPeso.limiteTexto}</Text>
+      <View style={[styles.row, styles.th, { marginTop: 3 }]} wrap={false}>
+        {["FECHA", "INICIO", "FIRMA", "MEDIO", "FIRMA", "FINAL", "FIRMA"].map((label, i) => (
+          <View
+            key={`${label}-${i}`}
+            style={[styles.cell, styles.th, { width: i === 0 ? "16%" : "14%" }]}
+          >
+            <Text>{label}</Text>
+          </View>
+        ))}
+      </View>
+      {pesoFilas.map((f) => (
+        <View key={f.id} style={styles.row} wrap={false}>
+          <View style={[styles.cell, { width: "16%" }]}>
+            <Text>{f.fecha}</Text>
+          </View>
+          <View style={[styles.cell, { width: "14%" }]}>
+            <Text>{f.inicio}</Text>
+          </View>
+          <View style={[styles.cell, { width: "14%" }]}>
+            <Text> </Text>
+          </View>
+          <View style={[styles.cell, { width: "14%" }]}>
+            <Text>{f.medio}</Text>
+          </View>
+          <View style={[styles.cell, { width: "14%" }]}>
+            <Text> </Text>
+          </View>
+          <View style={[styles.cell, { width: "14%" }]}>
+            <Text>{f.final}</Text>
+          </View>
+          <View style={[styles.cell, { width: "14%" }]}>
+            <Text> </Text>
+          </View>
+        </View>
+      ))}
+
       <Text style={styles.sectionTitle}>CONTROLES EN PROCESO — Etiquetado / Codificado</Text>
-      <Text>{content.etiquetadoCodificadoLegalText}</Text>
-      <Text>
-        Notas: {content.etiquetadoCodificado.notas} · Fecha responsable:{" "}
-        {content.etiquetadoCodificado.fechaResponsable}
-      </Text>
+      <Text style={{ marginBottom: 3 }}>{content.etiquetadoCodificadoLegalText}</Text>
+      <View style={styles.row}>
+        <FieldCell label="Lote codificado" value={etiq.loteCodificado} width="25%" />
+        <FieldCell
+          label="Vencimiento codificado"
+          value={etiq.vencimientoCodificado}
+          width="25%"
+        />
+        <FieldCell label="Fecha del control" value={etiq.fechaControl} width="25%" />
+        <FieldCell label="Responsable" value={etiq.responsable} width="25%" />
+      </View>
+      <View style={styles.row}>
+        <FieldCell label="Observaciones" value={etiq.observaciones} width="40%" />
+        <FieldCell label="Resultado" value={etiq.resultado} width="20%" />
+        <FieldCell label="Fecha responsable" value={etiq.fechaResponsable} width="20%" />
+        <FieldCell label="Notas" value={etiq.notas} width="20%" />
+      </View>
 
       <Text style={styles.sectionTitle}>ANALISIS DE PRODUCTO TERMINADO</Text>
       <View style={styles.row}>
         <View style={[styles.cell, { width: "70%" }]}>
-          <Text>RESULTADO: {content.analisisProductoTerminado.resultado}</Text>
+          <Text style={styles.label}>RESULTADO</Text>
+          <Text style={styles.value}>{content.analisisProductoTerminado.resultado}</Text>
         </View>
         <View style={[styles.cell, { width: "30%" }]}>
           <SignatureBlock label="FIRMA" />

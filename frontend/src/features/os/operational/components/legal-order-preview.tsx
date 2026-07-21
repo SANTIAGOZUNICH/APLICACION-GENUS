@@ -2,6 +2,14 @@
 
 import type { OperationalOrderRecord } from "@/lib/orders/types";
 
+function oaOperariosText(order: Extract<OperationalOrderRecord["formData"], { kind: "OA" }>) {
+  const fromList = (order.envasado.operariosList ?? [])
+    .map((o) => o.nombre.trim())
+    .filter(Boolean);
+  if (fromList.length > 0) return fromList.join(", ");
+  return order.envasado.operarios?.trim() ?? "";
+}
+
 /** Vista de impresión/legal A4 — sin chrome de UI ni % completado. */
 export function LegalOrderPreview({ order }: { order: OperationalOrderRecord }) {
   const c = order.formData;
@@ -16,7 +24,24 @@ export function LegalOrderPreview({ order }: { order: OperationalOrderRecord }) 
         }
       `}</style>
       <div className="mb-3 flex border border-neutral-700">
-        <div className="w-[28%] p-2 font-bold">Laboratorio Genus</div>
+        <div className="flex w-[28%] items-center gap-2 p-2 font-bold">
+          {c.kind === "OA" ? (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/brand/laboratorio-genus-logo.jpg"
+                alt=""
+                className="h-8 w-auto object-contain"
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+              <span>LABORATORIO GENUS</span>
+            </>
+          ) : (
+            <span>Laboratorio Genus</span>
+          )}
+        </div>
         <div className="w-[44%] bg-neutral-200 p-2 text-center text-base font-bold">
           {c.kind === "OE" ? "OE" : "ORDEN DE ACONDICIONAMIENTO"}
         </div>
@@ -49,7 +74,7 @@ export function LegalOrderPreview({ order }: { order: OperationalOrderRecord }) 
                   <td className="border p-1">{m.codigo}</td>
                   <td className="border p-1">{m.formulaPct}</td>
                   <td className="border p-1">{m.kgAPesar}</td>
-                  <td className="border p-1">{m.ajuste}</td>
+                  <td className="border p-1">{m.ajuste ?? ""}</td>
                   <td className="border p-1">{m.lote}</td>
                 </tr>
               ))}
@@ -81,31 +106,74 @@ export function LegalOrderPreview({ order }: { order: OperationalOrderRecord }) 
         </>
       ) : (
         <>
-          <p className="font-semibold">
-            PRODUCTO: {c.header.productName} · CLIENTE: {c.header.client}
-          </p>
-          <p>
-            LOTE: {c.header.lot} · ANALISIS: {c.header.analisis} · CODIGO: {c.header.productCode} ·
-            VTO: {c.header.vto}
-          </p>
-          <p>
-            APROBO: {c.header.aprobo} · FECHA EMISION: {c.header.fechaEmision}
-          </p>
+          <div className="grid grid-cols-2 gap-0 border border-neutral-600 text-[10px]">
+            <div className="border-r p-1">
+              <div className="text-neutral-600">PRODUCTO</div>
+              <div className="font-semibold">{c.header.productName}</div>
+            </div>
+            <div className="p-1">
+              <div className="text-neutral-600">CLIENTE</div>
+              <div className="font-semibold">{c.header.client}</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-0 border border-t-0 border-neutral-600 text-[10px]">
+            <div className="border-r p-1">
+              <div className="text-neutral-600">LOTE</div>
+              <div className="font-semibold">{c.header.lot}</div>
+            </div>
+            <div className="border-r p-1">
+              <div className="text-neutral-600">ANALISIS</div>
+              <div className="font-semibold">{c.header.analisis}</div>
+            </div>
+            <div className="border-r p-1">
+              <div className="text-neutral-600">CODIGO PRODUCTO</div>
+              <div className="font-semibold">{c.header.productCode}</div>
+            </div>
+            <div className="p-1">
+              <div className="text-neutral-600">VTO</div>
+              <div className="font-semibold">{c.header.vto}</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-0 border border-t-0 border-neutral-600 text-[10px]">
+            <div className="border-r p-1">
+              <div className="text-neutral-600">APROBO</div>
+              <div className="font-semibold">{c.header.aprobo}</div>
+            </div>
+            <div className="p-1">
+              <div className="text-neutral-600">FECHA DE EMISION</div>
+              <div className="font-semibold">{c.header.fechaEmision}</div>
+            </div>
+          </div>
+
           <h4 className="mt-3 bg-neutral-200 px-1 font-bold">ANALISIS DE GRANEL</h4>
-          <p>RESULTADO: {c.analisisGranel.resultado} · FIRMA: ________</p>
+          <div className="flex gap-2 text-[10px]">
+            <div className="flex-1 border p-1">
+              RESULTADO: {c.analisisGranel.resultado}
+            </div>
+            <div className="h-14 w-[30%] border p-1">FIRMA</div>
+          </div>
+
           <h4 className="mt-3 bg-neutral-200 px-1 font-bold">
             SUMINISTRO DE MATERIALES DE ACONDICIONAMIENTO
           </h4>
+          <p className="text-[10px]">FECHA: {c.materialsFecha}</p>
           <table className="w-full border-collapse text-[10px]">
             <thead>
               <tr className="bg-neutral-100">
-                {["Nº", "Codigo", "Nombre", "Recibidos", "Desechados", "Usados", "Fecha", "Resp."].map(
-                  (h) => (
-                    <th key={h} className="border p-1 text-left">
-                      {h}
-                    </th>
-                  )
-                )}
+                {[
+                  "Nº",
+                  "Codigo",
+                  "Nombre",
+                  "Recibidos",
+                  "Desechados",
+                  "Usados",
+                  "Fecha",
+                  "Responsable",
+                ].map((h) => (
+                  <th key={h} className="border p-1 text-left">
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -123,24 +191,118 @@ export function LegalOrderPreview({ order }: { order: OperationalOrderRecord }) 
               ))}
             </tbody>
           </table>
-          <h4 className="mt-3 bg-neutral-200 px-1 font-bold">ENVASADO / RENDIMIENTOS</h4>
-          <p>
-            Inicio {c.envasado.fechaInicio} · Fin {c.envasado.fechaTerminacion} · Operarios{" "}
-            {c.envasado.operarios}
-          </p>
-          <p>
-            Teórica {c.rendimientos.produccionTeoricaUnidades} · Unidades{" "}
-            {c.rendimientos.cantidadUnidades} · Rendimiento A {c.rendimientos.rendimientoA}% (
-            {c.rendimientos.rangoTeorico})
-          </p>
-          <p>Observaciones: {c.observaciones}</p>
+
+          <h4 className="mt-3 bg-neutral-200 px-1 font-bold">ENVASADO</h4>
+          <div className="grid grid-cols-3 gap-0 border border-neutral-600 text-[10px]">
+            <div className="border-r p-1">
+              <div className="text-neutral-600">FECHA DE INICIO</div>
+              <div>{c.envasado.fechaInicio}</div>
+            </div>
+            <div className="border-r p-1">
+              <div className="text-neutral-600">FECHA DE TERMINACION</div>
+              <div>{c.envasado.fechaTerminacion}</div>
+            </div>
+            <div className="p-1">
+              <div className="text-neutral-600">OPERARIOS INTERVINIENTES</div>
+              <div>{oaOperariosText(c)}</div>
+            </div>
+          </div>
+
+          <div className="mt-3 grid grid-cols-[58%_1fr] gap-2">
+            <div className="border border-neutral-600 p-2">
+              <h4 className="mb-1 bg-neutral-200 px-1 font-bold">RENDIMIENTOS</h4>
+              <p className="text-[10px]">
+                Producción Teórica (unidades): {c.rendimientos.produccionTeoricaUnidades ?? ""}
+              </p>
+              <p className="text-[10px]">Contenido Teórico: {c.rendimientos.contenidoTeorico}</p>
+              <table className="mt-2 w-full border-collapse text-[10px]">
+                <thead>
+                  <tr className="bg-neutral-100">
+                    <th className="border p-1 text-left">Fecha</th>
+                    <th className="border p-1 text-left">Cant. Unidades</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(c.rendimientos.cargasParciales ?? []).map((row) => (
+                    <tr key={row.id}>
+                      <td className="border p-1">{row.fecha}</td>
+                      <td className="border p-1">{row.cantidadUnidades ?? ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-1 text-[10px]">
+                Rendimiento A: {c.rendimientos.rendimientoA ?? ""}% · Teórico:{" "}
+                {c.rendimientos.rangoTeorico}
+              </p>
+              {(c.rendimientos.cantidadUnidades != null ||
+                c.rendimientos.unidadesDesechadas != null ||
+                c.rendimientos.unidadesAceptadas != null) && (
+                <p className="text-[10px]">
+                  Llenadas: {c.rendimientos.cantidadUnidades ?? ""} · Desechadas:{" "}
+                  {c.rendimientos.unidadesDesechadas ?? ""} · Aceptadas:{" "}
+                  {c.rendimientos.unidadesAceptadas ?? ""}
+                </p>
+              )}
+            </div>
+            <div className="border border-neutral-600 p-2">
+              <h4 className="mb-1 bg-neutral-200 px-1 font-bold">OBSERVACIONES</h4>
+              <p className="whitespace-pre-wrap text-[10px]">{c.observaciones}</p>
+            </div>
+          </div>
+
+          <h4 className="mt-3 bg-neutral-200 px-1 font-bold">
+            CONTROLES EN PROCESO — Control de peso/volumen
+          </h4>
+          <p className="text-[10px]">CONTROL ENVASAMIENTO: {c.controlesPeso.limiteTexto}</p>
+          <table className="mt-1 w-full border-collapse text-[10px]">
+            <thead>
+              <tr className="bg-neutral-100">
+                {["FECHA", "INICIO", "FIRMA", "MEDIO", "FIRMA", "FINAL", "FIRMA"].map((h, i) => (
+                  <th key={`${h}-${i}`} className="border p-1 text-left">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(c.controlesPeso.filas ?? []).map((f) => (
+                <tr key={f.id}>
+                  <td className="border p-1">{f.fecha}</td>
+                  <td className="border p-1">{f.inicio}</td>
+                  <td className="border p-1"> </td>
+                  <td className="border p-1">{f.medio}</td>
+                  <td className="border p-1"> </td>
+                  <td className="border p-1">{f.final}</td>
+                  <td className="border p-1"> </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
           <h4 className="mt-3 bg-neutral-200 px-1 font-bold">
             CONTROLES EN PROCESO — Etiquetado / Codificado
           </h4>
-          <p>{c.etiquetadoCodificadoLegalText}</p>
-          <p>
-            Resultado PT: {c.analisisProductoTerminado.resultado} · FIRMA: ________
-          </p>
+          <p className="text-[10px]">{c.etiquetadoCodificadoLegalText}</p>
+          <div className="mt-1 grid grid-cols-2 gap-1 text-[10px]">
+            <div>Lote codificado: {c.etiquetadoCodificado.loteCodificado}</div>
+            <div>Vencimiento codificado: {c.etiquetadoCodificado.vencimientoCodificado}</div>
+            <div>Fecha del control: {c.etiquetadoCodificado.fechaControl}</div>
+            <div>Responsable: {c.etiquetadoCodificado.responsable}</div>
+            <div>Observaciones: {c.etiquetadoCodificado.observaciones}</div>
+            <div>Resultado: {c.etiquetadoCodificado.resultado}</div>
+            <div>Fecha responsable: {c.etiquetadoCodificado.fechaResponsable}</div>
+            <div>Notas: {c.etiquetadoCodificado.notas}</div>
+          </div>
+
+          <h4 className="mt-3 bg-neutral-200 px-1 font-bold">ANALISIS DE PRODUCTO TERMINADO</h4>
+          <div className="flex gap-2 text-[10px]">
+            <div className="flex-1 border p-1">
+              RESULTADO: {c.analisisProductoTerminado.resultado}
+            </div>
+            <div className="h-14 w-[30%] border p-1">FIRMA</div>
+          </div>
+
           <div className="mt-4 grid grid-cols-3 gap-2">
             <div className="h-14 border p-1">AUTORIZACION PRODUCCION</div>
             <div className="h-14 border p-1">AUTORIZACION CONTROL CALIDAD</div>
