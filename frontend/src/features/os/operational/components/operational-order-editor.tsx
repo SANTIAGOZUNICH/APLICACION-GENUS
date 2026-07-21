@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { Button } from "@/components/ui/button";
 import {
-  ConfirmDialog,
   Dialog,
   DialogContent,
   DialogDescription,
