@@ -1,7 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { TwinShell } from "@/features/os/shell/twin-shell";
+import { useState } from "react";
 import { WireframePlanSemanal } from "@/features/work/views/plan-semanal";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { canWriteInventory } from "@/lib/inventory/rbac";
@@ -22,20 +21,13 @@ export function SemanasProduccionView() {
   const [tab, setTab] = useState<SectorId>("ELABORACION");
   const readOnly = !canWriteInventory(sectorId, "semanas_ro");
 
-  const banner = useMemo(
-    () =>
-      readOnly
-        ? "Solo lectura: no podés crear, editar, eliminar trabajos, cambiar fechas, cantidades, avances, finalizar ni aprobar/rechazar."
-        : null,
-    [readOnly]
-  );
-
   return (
     <div className="space-y-0">
-      {banner && (
+      {readOnly && (
         <div className="mx-auto max-w-[var(--os-content-max,1200px)] px-4 pt-4 md:px-6">
           <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950">
-            Semanas de Producción — {banner}
+            Semanas de Producción — Solo lectura: no podés crear, editar, eliminar trabajos, cambiar
+            fechas, cantidades, avances, finalizar ni aprobar/rechazar.
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {TABS.map((t) => (
@@ -54,23 +46,14 @@ export function SemanasProduccionView() {
             ))}
           </div>
           <p className="mt-2 text-xs text-[var(--os-text-muted)]">
-            Vista consultiva del plan ({TABS.find((t) => t.id === tab)?.label}). Las acciones de
-            escritura están bloqueadas en UI, store y API para DEPOSITO.
+            Vista consultiva ({TABS.find((t) => t.id === tab)?.label}). Escritura bloqueada en UI y
+            API para DEPOSITO.
           </p>
         </div>
       )}
-      {/* Plan semanal reutiliza WorkItems; sin botones de mutación en este wireframe. */}
-      <div className={readOnly ? "pointer-events-none select-none opacity-95" : undefined}>
+      <div className={readOnly ? "select-none" : undefined} aria-disabled={readOnly || undefined}>
         <WireframePlanSemanal />
       </div>
-      {readOnly && (
-        <TwinShell title="Acciones bloqueadas">
-          <p className="text-sm text-[var(--os-text-muted)]">
-            Intentar mutar semanas vía API con sector DEPOSITO responde 403 (assertCanMutateSemanas /
-            assertProduccionActor).
-          </p>
-        </TwinShell>
-      )}
     </div>
   );
 }
