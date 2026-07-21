@@ -30,11 +30,11 @@ export function validateDeliverOe(content: OeContent): string[] {
 export function validateDeliverOa(content: OaContent): string[] {
   const c = recomputeOaDerived(content);
   const missing: string[] = [];
+  // Código, lote, cliente, VTO, análisis y responsables específicos son opcionales.
   if (!c.header.productName.trim()) missing.push("Producto");
-  if (!c.header.client.trim()) missing.push("Cliente");
-  if (!c.header.lot.trim()) missing.push("Lote");
-  if (!c.header.vto.trim()) missing.push("VTO");
-  if (!c.header.productCode.trim()) missing.push("Código");
+  if (!c.header.fechaEmision.trim() && !c.envasado.fechaInicio.trim()) {
+    missing.push("Fecha de la jornada");
+  }
   if (!c.materials.some((m) => m.nombreInsumo.trim() || m.codigo.trim())) {
     missing.push("Materiales");
   }
@@ -63,9 +63,6 @@ export function validateDeliverOa(content: OaContent): string[] {
   }
   if ((c.rendimientos.cantidadUnidades ?? 0) <= 0) missing.push("Cantidades de unidades");
   if (c.rendimientos.rendimientoA == null) missing.push("Rendimiento");
-  if (!c.analisisProductoTerminado.resultado.trim()) {
-    missing.push("Resultado de producto terminado");
-  }
   return missing;
 }
 

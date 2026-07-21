@@ -37,9 +37,16 @@ import { validateDeliver } from "@/lib/orders/validators";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/orders/actor";
 import { OeFormSections } from "./oe-form-sections";
 import { OaFormSections, renumberOaMaterials } from "./oa-form-sections";
+import { OaSimpleWizard } from "./oa-simple-wizard";
 import { LegalOrderPreview } from "./legal-order-preview";
+import {
+  initOaSimpleFormFromLegal,
+  mapOASimpleFormToLegalDocument,
+  type OaSimpleForm,
+} from "@/lib/orders/oa-simple-form";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+type OaEditorMode = "simple" | "full";
 
 interface OperationalOrderEditorProps {
   orderId: string;
@@ -55,6 +62,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
 
   const [order, setOrder] = useState<OperationalOrderRecord | null>(null);
   const [form, setForm] = useState<OrderContent | null>(null);
+  const [oaSimple, setOaSimple] = useState<OaSimpleForm | null>(null);
+  const [oaMode, setOaMode] = useState<OaEditorMode>("simple");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<OperationalOrderRecord | null>(null);
@@ -73,6 +82,21 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       const o = await fetchOrder(session, orderId);
       setOrder(o);
       setForm(o.formData);
+      if (o.formData.kind === "OA") {
+        setOaSimple(
+          initOaSimpleFormFromLegal(o.formData, {
+            sector:
+              o.assignedSector === "ENVASADO_PREMIUM"
+                ? "ENVASADO_PREMIUM"
+                : o.assignedSector === "ENVASADO_MASIVO"
+                  ? "ENVASADO_MASIVO"
+                  : "",
+          })
+        );
+        setOaMode("simple");
+      } else {
+        setOaSimple(null);
+      }
       versionRef.current = o.version;
       setSaveState("idle");
       setConflict(null);
@@ -144,6 +168,21 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         });
         setOrder(updated);
         setForm(updated.formData);
+        if (updated.formData.kind === "OA") {
+          const oaForm = updated.formData;
+          setOaSimple((prev) =>
+            prev
+              ? prev
+              : initOaSimpleFormFromLegal(oaForm, {
+                  sector:
+                    updated.assignedSector === "ENVASADO_PREMIUM"
+                      ? "ENVASADO_PREMIUM"
+                      : updated.assignedSector === "ENVASADO_MASIVO"
+                        ? "ENVASADO_MASIVO"
+                        : "",
+                })
+          );
+        }
         versionRef.current = updated.version;
         setSaveState("saved");
         setConflict(null);
@@ -175,6 +214,17 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       }, 900);
       return next;
     });
+  };
+
+  const updateOaSimple = (nextSimple: OaSimpleForm) => {
+    if (!canEdit && sectorId !== "CODIFICADO") return;
+    if (!canEdit && !canOrderAction("OA", "edit_codificado", sectorId)) return;
+    setOaSimple(nextSimple);
+    const legal = mapOASimpleFormToLegalDocument(
+      nextSimple,
+      form?.kind === "OA" ? form : undefined
+    );
+    updateForm(() => legal);
   };
 
   const saveNow = async () => {
@@ -384,6 +434,18 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             onClick={() => {
               setOrder(conflict);
               setForm(conflict.formData);
+              if (conflict.formData.kind === "OA") {
+                setOaSimple(
+                  initOaSimpleFormFromLegal(conflict.formData, {
+                    sector:
+                      conflict.assignedSector === "ENVASADO_PREMIUM"
+                        ? "ENVASADO_PREMIUM"
+                        : conflict.assignedSector === "ENVASADO_MASIVO"
+                          ? "ENVASADO_MASIVO"
+                          : "",
+                  })
+                );
+              }
               versionRef.current = conflict.version;
               setConflict(null);
               setSaveState("idle");
@@ -424,29 +486,68 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             })
           }
         />
-      ) : (
-        <OaFormSections
-          content={form}
-          readOnly={!canEdit}
+      ) : oaMode === "simple" && oaSimple ? (
+        <OaSimpleWizard
+          simple={oaSimple}
+          legalBase={form}
+          readOnly={!canEdit && sectorId !== "CODIFICADO"}
           codificadoOnly={sectorId === "CODIFICADO"}
-          onChange={(next) => updateForm(() => recomputeOaDerived(next))}
-          onAddMaterial={() =>
-            updateForm((prev) => {
-              if (prev.kind !== "OA") return prev;
-              const nro = prev.materials.length + 1;
-              return { ...prev, materials: [...prev.materials, emptyOaMaterial(nro)] };
-            })
-          }
-          onRemoveMaterial={(id) =>
-            updateForm((prev) => {
-              if (prev.kind !== "OA") return prev;
-              return renumberOaMaterials({
-                ...prev,
-                materials: prev.materials.filter((m) => m.id !== id),
-              });
-            })
-          }
+          onChange={updateOaSimple}
+          onRequestFullForm={() => {
+            setOaMode("full");
+          }}
+          onPreview={() => setShowPreview(true)}
+          onSaveProgress={() => void saveNow()}
+          onDeliver={() => setDeliverOpen(true)}
+          canDeliver={canDeliver}
+          canSave={canEdit || sectorId === "CODIFICADO"}
         />
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" onClick={() => setOaMode("simple")}>
+              Volver a carga simple
+            </Button>
+            <p className="text-xs text-[var(--os-text-muted)] self-center">
+              Formulario completo · el PDF legal no cambia
+            </p>
+          </div>
+          <OaFormSections
+            content={form}
+            readOnly={!canEdit}
+            codificadoOnly={sectorId === "CODIFICADO"}
+            onChange={(next) => {
+              const legal = recomputeOaDerived(next);
+              updateForm(() => legal);
+              setOaSimple(
+                initOaSimpleFormFromLegal(legal, {
+                  sector:
+                    order.assignedSector === "ENVASADO_PREMIUM"
+                      ? "ENVASADO_PREMIUM"
+                      : order.assignedSector === "ENVASADO_MASIVO"
+                        ? "ENVASADO_MASIVO"
+                        : "",
+                })
+              );
+            }}
+            onAddMaterial={() =>
+              updateForm((prev) => {
+                if (prev.kind !== "OA") return prev;
+                const nro = prev.materials.length + 1;
+                return { ...prev, materials: [...prev.materials, emptyOaMaterial(nro)] };
+              })
+            }
+            onRemoveMaterial={(id) =>
+              updateForm((prev) => {
+                if (prev.kind !== "OA") return prev;
+                return renumberOaMaterials({
+                  ...prev,
+                  materials: prev.materials.filter((m) => m.id !== id),
+                });
+              })
+            }
+          />
+        </div>
       )}
 
       <Dialog open={formulaPromptOpen} onOpenChange={setFormulaPromptOpen}>

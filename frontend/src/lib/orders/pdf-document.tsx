@@ -10,6 +10,7 @@ import {
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { OaContent, OeContent, OperationalOrderRecord } from "@/lib/orders/types";
+import { sanitizeLegalPrintValue } from "@/lib/orders/oa-simple-form";
 
 const LOGO_CANDIDATES = [
   join(process.cwd(), "public", "brand", "laboratorio-genus-logo.jpg"),
@@ -150,7 +151,7 @@ function FieldCell({
   return (
     <View style={[styles.cell, { width }]}>
       <Text style={styles.label}>{label}</Text>
-      <Text style={styles.value}>{value ?? ""}</Text>
+      <Text style={styles.value}>{sanitizeLegalPrintValue(value)}</Text>
     </View>
   );
 }
