@@ -92,15 +92,23 @@ const styles = StyleSheet.create({
   },
   label: { fontSize: 7, color: "#333", marginBottom: 1 },
   value: { fontFamily: "Helvetica-Bold", fontSize: 8 },
-  meta: { fontSize: 7, color: "#444", marginTop: 10 },
+  meta: { fontSize: 6.5, color: "#444", marginTop: 6 },
+  metaFixed: {
+    fontSize: 6.5,
+    color: "#444",
+    position: "absolute",
+    bottom: 14,
+    left: 28,
+    right: 28,
+  },
   signBox: {
     borderWidth: 1,
     borderColor: "#555",
-    minHeight: 36,
-    padding: 4,
-    marginTop: 4,
+    minHeight: 30,
+    padding: 3,
+    marginTop: 3,
   },
-  signLabel: { fontSize: 7, marginBottom: 12 },
+  signLabel: { fontSize: 7, marginBottom: 10 },
   muted: { color: "#666", fontSize: 7 },
   sideBySide: {
     flexDirection: "row",
@@ -115,6 +123,7 @@ const styles = StyleSheet.create({
 
 function GenusLogo() {
   if (LOGO_PATH) {
+    // eslint-disable-next-line jsx-a11y/alt-text -- @react-pdf Image has no DOM alt attribute
     return <Image src={LOGO_PATH} style={styles.logoImage} />;
   }
   return <Text style={styles.logoText}>LABORATORIO GENUS</Text>;
@@ -510,18 +519,14 @@ function OaPdfBody({
             </View>
           ))}
           <Text style={{ marginTop: 4 }}>
+            TOTAL UNIDADES LLENADAS: {content.rendimientos.cantidadUnidades ?? ""} ·
+            DESECHADAS: {content.rendimientos.unidadesDesechadas ?? ""} · ACEPTADAS:{" "}
+            {content.rendimientos.unidadesAceptadas ?? ""}
+          </Text>
+          <Text style={{ marginTop: 2 }}>
             Rendimiento A: {content.rendimientos.rendimientoA ?? ""}% · Teórico:{" "}
             {content.rendimientos.rangoTeorico}
           </Text>
-          {(content.rendimientos.cantidadUnidades != null ||
-            content.rendimientos.unidadesDesechadas != null ||
-            content.rendimientos.unidadesAceptadas != null) && (
-            <Text style={{ marginTop: 2 }}>
-              Llenadas: {content.rendimientos.cantidadUnidades ?? ""} · Desechadas:{" "}
-              {content.rendimientos.unidadesDesechadas ?? ""} · Aceptadas:{" "}
-              {content.rendimientos.unidadesAceptadas ?? ""}
-            </Text>
-          )}
         </View>
         <View style={[styles.sidePanel, { width: "42%" }]}>
           <Text style={[styles.sectionTitle, { marginTop: 0 }]}>OBSERVACIONES</Text>
@@ -597,7 +602,7 @@ function OaPdfBody({
         </View>
       </View>
 
-      <View style={[styles.row, { marginTop: 10 }]}>
+      <View style={[styles.row, { marginTop: 6 }]} wrap={false}>
         <View style={{ width: "33%", paddingRight: 2 }}>
           <SignatureBlock label="AUTORIZACION PRODUCCION" />
         </View>
@@ -609,7 +614,7 @@ function OaPdfBody({
         </View>
       </View>
 
-      <Text style={styles.meta}>
+      <Text style={styles.metaFixed} fixed>
         {order.orderNumber} · plantilla v{order.templateVersion} · rev {order.revision} ·
         generado {new Date().toISOString()} · id {order.id}
       </Text>
