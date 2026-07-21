@@ -99,6 +99,9 @@ export async function createTemplateApi(
     productCode: string;
     brandClient?: string | null;
     changeReason?: string;
+    content?: OrderTemplateRecord["content"];
+    productId?: string;
+    sourceFile?: string | null;
   }
 ): Promise<OrderTemplateRecord> {
   const res = await fetch("/api/v1/order-templates", {
@@ -108,6 +111,31 @@ export async function createTemplateApi(
   });
   const data = await parseJson<{ template: OrderTemplateRecord }>(res);
   return data.template;
+}
+
+export async function createOrderFromScratchApi(
+  session: OrdersClientSession,
+  input: {
+    type: OrderDocType;
+    product: string;
+    code: string;
+    client: string;
+    lot: string;
+    assignedSector: string;
+    content?: OrderTemplateRecord["content"];
+    alsoCreateMaster?: boolean;
+    masterChangeReason?: string;
+  }
+): Promise<{
+  order: OperationalOrderRecord;
+  template: OrderTemplateRecord | null;
+}> {
+  const res = await fetch("/api/v1/orders", {
+    method: "POST",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ ...input, fromScratch: true }),
+  });
+  return parseJson(res);
 }
 
 export async function templateActionApi(

@@ -55,6 +55,7 @@ describe("legal print layout snapshots", () => {
 
   it("OA Laude conserva texto legal de etiquetado y autorizaciones vacías", () => {
     const content = buildCremaFacialLaudeOaTemplateContent();
+    if (content.kind !== "OA") throw new Error("expected OA");
     // Cliente de ejemplo vive en metadatos de plantilla (brandClient), no como dato fijo del contenido.
     const order = sampleOrder("OA", {
       ...content,

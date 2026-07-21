@@ -21,6 +21,7 @@ import {
   type OrdersClientSession,
 } from "@/lib/orders/orders-client";
 import { LegalOrderPreview } from "./legal-order-preview";
+import { TemplateScratchEditor } from "./template-scratch-editor";
 
 interface MasterTemplatesPanelProps {
   type: OrderDocType;
@@ -42,11 +43,13 @@ export function MasterTemplatesPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [scratchOpen, setScratchOpen] = useState(false);
   const [productName, setProductName] = useState("");
   const [productCode, setProductCode] = useState("");
   const [brandClient, setBrandClient] = useState("");
   const [preview, setPreview] = useState<OrderTemplateRecord | null>(null);
   const [history, setHistory] = useState<OrderTemplateRecord[] | null>(null);
+  const [chooseModeOpen, setChooseModeOpen] = useState(false);
 
   const reload = useCallback(async () => {
     if (!session.email || dbUnavailable) {
@@ -118,8 +121,8 @@ export function MasterTemplatesPanel({
               type="button"
               size="sm"
               data-testid="btn-nueva-plantilla"
-              disabled={dbUnavailable || busy}
-              onClick={() => setCreateOpen(true)}
+              disabled={busy}
+              onClick={() => setChooseModeOpen(true)}
             >
               Nueva plantilla {type}
             </Button>
@@ -375,6 +378,68 @@ export function MasterTemplatesPanel({
           </ul>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={chooseModeOpen} onOpenChange={setChooseModeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nueva plantilla {type}</DialogTitle>
+            <DialogDescription>
+              Podés crear desde cero (formulario legal vacío) o duplicar una existente.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              data-testid="btn-plantilla-desde-cero"
+              onClick={() => {
+                setChooseModeOpen(false);
+                setScratchOpen(true);
+              }}
+            >
+              Crear desde cero
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setChooseModeOpen(false);
+                setCreateOpen(true);
+              }}
+            >
+              Alta rápida (producto/código)
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={vigentes.length === 0 || dbUnavailable || busy}
+              onClick={() => {
+                setChooseModeOpen(false);
+                const first = vigentes[0];
+                if (!first) return;
+                void run(async () => {
+                  await templateActionApi(session, first.id, "duplicate");
+                });
+              }}
+            >
+              Duplicar plantilla existente
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <TemplateScratchEditor
+        open={scratchOpen}
+        onOpenChange={setScratchOpen}
+        type={type}
+        session={session}
+        dbUnavailable={dbUnavailable}
+        defaultSector={type === "OE" ? "ELABORACION" : "ENVASADO_MASIVO"}
+        mode="template"
+        onSaved={({ template }) => {
+          if (template) onTemplatesChanged([template]);
+          void reload();
+        }}
+      />
     </section>
   );
 }

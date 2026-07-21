@@ -6,6 +6,7 @@ export type OrderAction =
   | "create"
   | "view"
   | "edit"
+  | "edit_formula"
   | "save_progress"
   | "deliver"
   | "save_as_master"
@@ -28,6 +29,9 @@ export const ORDERS_MISSING_ACTOR_MESSAGE =
 const TEMPLATE_MANAGERS: readonly OrderAction[] = [
   "create",
   "view",
+  "edit",
+  "edit_formula",
+  "save_progress",
   "review",
   "return",
   "archive",
@@ -50,7 +54,8 @@ const OE_ACTIONS: Partial<Record<SectorId, readonly OrderAction[]>> = {
     "propose_master",
     "download",
   ],
-  MATERIA_PRIMA: ["view", "download"],
+  /** MP puede corregir/proponer fórmula teórica; no aprueba maestra ni entrega. */
+  MATERIA_PRIMA: ["view", "download", "edit_formula", "save_progress", "propose_master"],
 };
 
 const OA_ACTIONS: Partial<Record<SectorId, readonly OrderAction[]>> = {
@@ -73,7 +78,7 @@ const OA_ACTIONS: Partial<Record<SectorId, readonly OrderAction[]>> = {
     "propose_master",
     "download",
   ],
-  CODIFICADO: ["view", "edit_codificado", "download"],
+  CODIFICADO: ["view", "edit_codificado", "download", "save_progress"],
 };
 
 export function canOrderAction(
@@ -117,9 +122,6 @@ export function assertCanAccessAssignedOrder(
       );
     }
   }
-  if (type === "OE" && action === "edit" && actor.sector !== "ELABORACION") {
-    // create/review sectors already gated above
-  }
 }
 
 export type OrderActionGate =
@@ -146,4 +148,32 @@ export function gateOrderAction(
     return { ok: false, error: ORDERS_DENIED_MESSAGE, code: "ORDERS_FORBIDDEN" };
   }
   return { ok: true };
+}
+
+/** Campos de fórmula teórica OE. */
+export type OeFormulaField =
+  | "materiaPrima"
+  | "codigo"
+  | "formulaPct"
+  | "kgAPesar"
+  | "addMaterial"
+  | "removeMaterial"
+  | "procedure"
+  | "specs";
+
+/** Campos operativos de elaboración. */
+export type OeOperationalField = "ajuste" | "ajusteMotivo" | "lote" | "headerOps" | "results";
+
+export function canEditOeFormula(sectorId: SectorId | null | undefined): boolean {
+  return canOrderAction("OE", "edit_formula", sectorId);
+}
+
+export function canEditOeOperational(sectorId: SectorId | null | undefined): boolean {
+  return canOrderAction("OE", "edit", sectorId);
+}
+
+export function canApproveMasterVersion(sectorId: SectorId | null | undefined): boolean {
+  return (
+    sectorId === "CALIDAD" || sectorId === "PRODUCCION" || sectorId === "DIRECCION"
+  );
 }

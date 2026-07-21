@@ -9,7 +9,8 @@ import {
   summarizeContentDiff,
 } from "@/lib/orders/content";
 import type { OrdersRepository } from "@/lib/orders/repository";
-import { assertCanAccessAssignedOrder, assertCanOrderAction } from "@/lib/orders/rbac";
+import { assertCanAccessAssignedOrder, assertCanOrderAction, canOrderAction } from "@/lib/orders/rbac";
+import { applyElaboracionMaterialPatch, assertAjusteValid, didFormulaChange } from "@/lib/orders/oe-ajuste";
 import { seedTemplateRecords } from "@/lib/orders/seed-templates";
 import type {
   CreateOrderInput,
@@ -435,8 +436,13 @@ export class OrdersService {
 
     const isCodificadoOnly =
       actor.sector === "CODIFICADO" && current.type === "OA";
+    const isMpFormulaOnly =
+      actor.sector === "MATERIA_PRIMA" && current.type === "OE";
+
     if (isCodificadoOnly) {
       assertCanOrderAction("OA", "edit_codificado", actor);
+    } else if (isMpFormulaOnly) {
+      assertCanOrderAction("OE", "edit_formula", actor);
     } else {
       assertCanAccessAssignedOrder(
         current.type,
@@ -448,13 +454,57 @@ export class OrdersService {
 
     assertOrderTypeMatch(current.type, input.formData);
     let nextForm = normalizeOrderContent(input.formData);
+
     if (isCodificadoOnly && current.formData.kind === "OA" && nextForm.kind === "OA") {
-      // Solo permite mutar campos de codificado
       nextForm = {
         ...current.formData,
         etiquetadoCodificado: nextForm.etiquetadoCodificado,
         etiquetadoCodificadoLegalText: current.formData.etiquetadoCodificadoLegalText,
       };
+    }
+
+      if (current.formData.kind === "OE" && nextForm.kind === "OE") {
+      const canFormula = canOrderAction("OE", "edit_formula", actor.sector);
+      if (!canFormula) {
+        // Elaboración (u otros sin fórmula): solo ajuste/lote operativos.
+        nextForm = normalizeOrderContent(
+          applyElaboracionMaterialPatch(current.formData, nextForm, actor.email)
+        );
+        // Conservar procedimiento y specs teóricas
+        if (nextForm.kind === "OE") {
+          nextForm = {
+            ...nextForm,
+            procedureSteps: current.formData.procedureSteps,
+            processControl: {
+              ...nextForm.processControl,
+              aspectoSpec: current.formData.processControl.aspectoSpec,
+              colorSpec: current.formData.processControl.colorSpec,
+              olorSpec: current.formData.processControl.olorSpec,
+              phSpec: current.formData.processControl.phSpec,
+              viscosidadSpec: current.formData.processControl.viscosidadSpec,
+            },
+          };
+        }
+      }
+      if (isMpFormulaOnly && nextForm.kind === "OE") {
+        // MP solo toca materiales/fórmula; no resultados operativos ni cabecera de lote.
+        nextForm = normalizeOrderContent({
+          ...current.formData,
+          materials: nextForm.materials,
+          procedureSteps: nextForm.procedureSteps,
+          processControl: {
+            ...current.formData.processControl,
+            aspectoSpec: nextForm.processControl.aspectoSpec,
+            colorSpec: nextForm.processControl.colorSpec,
+            olorSpec: nextForm.processControl.olorSpec,
+            phSpec: nextForm.processControl.phSpec,
+            viscosidadSpec: nextForm.processControl.viscosidadSpec,
+          },
+        });
+      }
+      if (nextForm.kind === "OE") {
+        assertAjusteValid(nextForm);
+      }
     }
 
     const updated = await this.repo.updateOrderOptimistic(id, input.expectedVersion, {
@@ -475,14 +525,107 @@ export class OrdersService {
         fresh
       );
     }
+    const formulaChanged =
+      current.formData.kind === "OE" &&
+      updated.formData.kind === "OE" &&
+      didFormulaChange(current.formData, updated.formData);
     await this.repo.appendAudit({
       orderId: id,
-      eventType: "ORDER_SAVE_PROGRESS",
+      eventType: formulaChanged ? "ORDER_FORMULA_CHANGED" : "ORDER_SAVE_PROGRESS",
       actor: actor.email,
       actorSector: actor.sector,
-      metadata: { version: updated.version },
+      metadata: {
+        version: updated.version,
+        formulaChanged,
+        templateUnchanged: true,
+      },
     });
     return updated;
+  }
+
+  /**
+   * Crea una orden operativa desde contenido vacío (sin elegir maestra previa).
+   * Opcionalmente deja también una plantilla maestra v1 VIGENTE.
+   */
+  async createOrderFromScratch(
+    input: {
+      type: OrderDocType;
+      product: string;
+      code: string;
+      client: string;
+      lot: string;
+      assignedSector: import("@/types/operational/sector").SectorId;
+      content?: OrderContent;
+      alsoCreateMaster?: boolean;
+      masterChangeReason?: string;
+    },
+    actor: OrdersActor
+  ) {
+    assertCanOrderAction(input.type, "create", actor);
+    if (!input.product.trim()) {
+      throw new OrdersValidationError("Falta producto.");
+    }
+    if (!input.code.trim()) {
+      throw new OrdersValidationError("Falta código.");
+    }
+    const baseContent =
+      input.content ??
+      (input.type === "OE"
+        ? createEmptyOeContent({
+            productName: input.product,
+            code: input.code,
+            client: input.client,
+            lot: input.lot,
+          })
+        : createEmptyOaContent({
+            productName: input.product,
+            productCode: input.code,
+            client: input.client,
+            lot: input.lot,
+          }));
+    const snapshot = normalizeOrderContent(baseContent);
+
+    if (input.alsoCreateMaster) {
+      assertCanOrderAction(input.type, "manage_templates", actor);
+    }
+
+    const template = await this.createTemplate(
+      {
+        type: input.type,
+        productName: input.product,
+        productCode: input.code,
+        brandClient: input.client || null,
+        productId: input.alsoCreateMaster
+          ? undefined
+          : `scratch-${input.type.toLowerCase()}-${randomUUID()}`,
+        content: snapshot,
+        changeReason: input.alsoCreateMaster
+          ? input.masterChangeReason?.trim() ||
+            "Plantilla maestra creada junto con la orden inicial"
+          : "Plantilla técnica de orden creada desde cero (no listada como maestra)",
+      },
+      actor
+    );
+
+    const order = await this.createOrder(
+      {
+        type: input.type,
+        templateId: template.id,
+        product: input.product,
+        code: input.code,
+        client: input.client,
+        lot: input.lot,
+        assignedSector: input.assignedSector,
+        formOverrides: snapshot,
+      },
+      actor
+    );
+
+    if (!input.alsoCreateMaster) {
+      await this.repo.markTemplateObsolete(template.id);
+    }
+
+    return { order, template: input.alsoCreateMaster ? template : null };
   }
 
   async deliver(id: string, actor: OrdersActor, confirm: boolean) {

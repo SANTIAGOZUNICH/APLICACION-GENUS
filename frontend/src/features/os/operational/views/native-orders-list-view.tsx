@@ -15,7 +15,6 @@ import { canOrderDocumentAction } from "../lib/order-documents-rbac";
 import { canOrderAction } from "@/lib/orders/rbac";
 import {
   createOrderApi,
-  createTemplateApi,
   fetchBuiltinTemplates,
   fetchOrderTemplates,
   fetchOrders,
@@ -32,6 +31,7 @@ import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider
 import { CreateOrderDialog } from "../components/create-order-dialog";
 import { MasterTemplatesPanel } from "../components/master-templates-panel";
 import { OperationalOrderEditor } from "../components/operational-order-editor";
+import { TemplateScratchEditor } from "../components/template-scratch-editor";
 import { Button } from "@/components/ui/button";
 
 type TabKey = "pendientes" | "completas";
@@ -74,6 +74,7 @@ export function NativeOrdersListView({
   const [error, setError] = useState<string | null>(null);
   const [dbUnavailable, setDbUnavailable] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [scratchOrderOpen, setScratchOrderOpen] = useState(false);
   const [templates, setTemplates] = useState<OrderTemplateRecord[]>([]);
   const [builtinTemplates, setBuiltinTemplates] = useState<OrderTemplateRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -206,23 +207,6 @@ export function NativeOrdersListView({
     if (dbUnavailable) return;
     const list = await importSeedTemplatesApi(session, type);
     setTemplates(list);
-    setRefreshTick((v) => v + 1);
-  };
-
-  const handleCreateFirstTemplate = async () => {
-    if (dbUnavailable) {
-      setTemplatesPanelKey((k) => k + 1);
-      return;
-    }
-    const name =
-      type === "OE" ? "NUEVO PRODUCTO OE" : "NUEVO PRODUCTO OA";
-    const code = type === "OE" ? "PT-NUEVO" : "OA-NUEVO";
-    const t = await createTemplateApi(session, {
-      type,
-      productName: name,
-      productCode: `${code}-${Date.now().toString(36).slice(-4).toUpperCase()}`,
-    });
-    setTemplates((prev) => [...prev.filter((x) => x.id !== t.id), t]);
     setRefreshTick((v) => v + 1);
   };
 
@@ -512,7 +496,7 @@ export function NativeOrdersListView({
           type === "OE" ? "ELABORACION" : oaSector ?? "ENVASADO_MASIVO"
         }
         onCreateTemplate={() => {
-          void handleCreateFirstTemplate();
+          setScratchOrderOpen(true);
         }}
         onImportTemplate={() => {
           void handleImportTemplate();
@@ -521,6 +505,21 @@ export function NativeOrdersListView({
           const order = await createOrderApi(session, input);
           setCreateOpen(false);
           setSelectedId(order.id);
+          setRefreshTick((v) => v + 1);
+        }}
+      />
+
+      <TemplateScratchEditor
+        open={scratchOrderOpen}
+        onOpenChange={setScratchOrderOpen}
+        type={type}
+        session={session}
+        dbUnavailable={dbUnavailable}
+        defaultSector={type === "OE" ? "ELABORACION" : oaSector ?? "ENVASADO_MASIVO"}
+        mode="order"
+        onSaved={({ orderId, template }) => {
+          if (template) setTemplates((prev) => [...prev.filter((t) => t.id !== template.id), template]);
+          if (orderId) setSelectedId(orderId);
           setRefreshTick((v) => v + 1);
         }}
       />

@@ -29,7 +29,14 @@ export type OeMaterialRow = {
   codigo: string;
   formulaPct: number | null;
   kgAPesar: number | null;
-  ajuste: string;
+  /**
+   * Ajuste (+/- kg) respecto de kg teóricos a pesar.
+   * Kg real utilizado = kgAPesar + ajuste.
+   */
+  ajuste: number | null;
+  ajusteMotivo: string;
+  ajusteAt: string | null;
+  ajusteBy: string | null;
   lote: string;
 };
 
@@ -57,6 +64,9 @@ export type OeContent = {
   totals: {
     formulaPctSum: number | null;
     kgSum: number | null;
+    ajusteSum: number | null;
+    kgRealSum: number | null;
+    diferenciaPct: number | null;
     cantidadReal: number | null;
     mermaPct: number | null;
     cantidadObtenida: number | null;
@@ -111,6 +121,26 @@ export type OaMaterialRow = {
   responsable: string;
 };
 
+export type OaOperarioRow = {
+  id: string;
+  nombre: string;
+  sector: string;
+};
+
+export type OaCargaParcialRow = {
+  id: string;
+  fecha: string;
+  cantidadUnidades: number | null;
+};
+
+export type OaPesoControlRow = {
+  id: string;
+  fecha: string;
+  inicio: string;
+  medio: string;
+  final: string;
+};
+
 export type OaContent = {
   kind: "OA";
   title: "ORDEN DE ACONDICIONAMIENTO";
@@ -133,29 +163,43 @@ export type OaContent = {
   envasado: {
     fechaInicio: string;
     fechaTerminacion: string;
+    /** Texto legado / resumen. */
     operarios: string;
+    operariosList: OaOperarioRow[];
   };
   rendimientos: {
     produccionTeoricaUnidades: number | null;
     contenidoTeorico: string;
     fecha: string;
+    /** Total llenadas (suma de cargas parciales). */
     cantidadUnidades: number | null;
+    unidadesDesechadas: number | null;
+    unidadesAceptadas: number | null;
     rendimientoA: number | null;
     rangoTeorico: "95-101%";
+    cargasParciales: OaCargaParcialRow[];
   };
   observaciones: string;
   controlesPeso: {
     limiteTexto: "Limite inferior/ superior: +/- 5 %";
+    /** Campos legado (primera fila). */
     fecha: string;
     inicio: string;
     medio: string;
     final: string;
+    filas: OaPesoControlRow[];
   };
   /** Texto legal fijo — no editable en órdenes comunes. */
   etiquetadoCodificadoLegalText: "Codificar en la hoja lote y vencimiento, como se realiza en el envase y firmar fecha del responsable.";
   etiquetadoCodificado: {
     notas: string;
     fechaResponsable: string;
+    loteCodificado: string;
+    vencimientoCodificado: string;
+    fechaControl: string;
+    responsable: string;
+    observaciones: string;
+    resultado: "" | "CONFORME" | "NO_CONFORME";
   };
   analisisProductoTerminado: {
     resultado: string;

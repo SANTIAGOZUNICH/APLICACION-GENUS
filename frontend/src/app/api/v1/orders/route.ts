@@ -50,7 +50,36 @@ export async function POST(request: Request) {
   if (blocked) return blocked;
   try {
     const actor = resolveOrdersActor(request);
-    const body = (await request.json()) as CreateOrderInput;
+    const body = (await request.json()) as CreateOrderInput & {
+      fromScratch?: boolean;
+      alsoCreateMaster?: boolean;
+      masterChangeReason?: string;
+      content?: CreateOrderInput["formOverrides"];
+      product?: string;
+      code?: string;
+      client?: string;
+      lot?: string;
+    };
+    if (body.fromScratch) {
+      const result = await getOrdersService().createOrderFromScratch(
+        {
+          type: body.type,
+          product: body.product ?? "",
+          code: body.code ?? "",
+          client: body.client ?? "",
+          lot: body.lot ?? "",
+          assignedSector: body.assignedSector,
+          content: body.content as never,
+          alsoCreateMaster: body.alsoCreateMaster,
+          masterChangeReason: body.masterChangeReason,
+        },
+        actor
+      );
+      return NextResponse.json(
+        { ...result, legallyOperational: true },
+        { status: 201 }
+      );
+    }
     const order = await getOrdersService().createOrder(body, actor);
     return NextResponse.json({ order, legallyOperational: true }, { status: 201 });
   } catch (err) {

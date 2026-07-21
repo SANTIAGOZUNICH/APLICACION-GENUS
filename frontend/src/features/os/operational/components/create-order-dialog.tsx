@@ -142,11 +142,37 @@ export function CreateOrderDialog({
                 ? "Crear Orden de Elaboración"
                 : "Crear Orden de Acondicionamiento"}
             </DialogTitle>
-            <DialogDescription>
-              Se crea una copia (snapshot) de la plantilla maestra vigente. Las órdenes anteriores no
-              cambian si luego se actualiza la maestra.
-            </DialogDescription>
-          </DialogHeader>
+          <DialogDescription>
+            Se crea una copia (snapshot) de la plantilla maestra vigente. También podés crear una
+            orden nueva desde cero sin elegir maestra.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={templates.length > 0 ? "secondary" : "primary"}
+            data-testid="create-mode-master"
+            onClick={() => {/* default master mode */}}
+          >
+            Usar una plantilla maestra
+          </Button>
+          {canManageTemplates && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              data-testid="create-mode-scratch"
+              onClick={() => {
+                onOpenChange(false);
+                onCreateTemplate?.();
+              }}
+            >
+              Crear una orden nueva desde cero
+            </Button>
+          )}
+        </div>
 
           {dbUnavailable && (
             <div

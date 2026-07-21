@@ -5,6 +5,9 @@ import {
   createEmptyOeContent,
   emptyOeMaterial,
   emptyOaMaterial,
+  emptyOaCarga,
+  emptyOaOperario,
+  emptyOaPesoFila,
   normalizeOrderContent,
   stepsFromTexts,
 } from "@/lib/orders/content";
@@ -101,14 +104,22 @@ export function buildCremaFacialLaudeOaTemplateContent(): OrderContent {
     emptyOaMaterial(5, { nombreInsumo: "CAJA / ESTUCHE", codigo: "" }),
   ];
   base.materialsFecha = "";
-  base.envasado = { fechaInicio: "", fechaTerminacion: "", operarios: "" };
+  base.envasado = {
+    fechaInicio: "",
+    fechaTerminacion: "",
+    operarios: "",
+    operariosList: [emptyOaOperario()],
+  };
   base.rendimientos = {
     produccionTeoricaUnidades: null,
     contenidoTeorico: "",
     fecha: "",
     cantidadUnidades: null,
+    unidadesDesechadas: null,
+    unidadesAceptadas: null,
     rendimientoA: null,
     rangoTeorico: "95-101%",
+    cargasParciales: [emptyOaCarga(), emptyOaCarga(), emptyOaCarga()],
   };
   base.observaciones = "";
   base.controlesPeso = {
@@ -117,8 +128,23 @@ export function buildCremaFacialLaudeOaTemplateContent(): OrderContent {
     inicio: "",
     medio: "",
     final: "",
+    filas: [emptyOaPesoFila(), emptyOaPesoFila(), emptyOaPesoFila()],
   };
   base.analisisProductoTerminado = { resultado: "" };
+  return normalizeOrderContent(base);
+}
+
+/** Contenido de ejemplo con datos del Word de referencia (solo para PDF comparación). */
+export function buildCremaFacialLaudeOaSampleOrderContent(): OrderContent {
+  const base = buildCremaFacialLaudeOaTemplateContent();
+  if (base.kind !== "OA") return base;
+  base.header.client = "LAUDE";
+  base.header.lot = "J26003";
+  base.header.productCode = "HIDRATANTE";
+  base.header.vto = "2028-01-06";
+  base.header.aprobo = "SANTIAGO";
+  base.header.fechaEmision = "2026-06-04";
+  base.analisisGranel = { resultado: "APROBADO", aprobado: true };
   return normalizeOrderContent(base);
 }
 

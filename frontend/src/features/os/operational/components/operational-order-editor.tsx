@@ -16,10 +16,12 @@ import { canOrderAction } from "@/lib/orders/rbac";
 import {
   emptyOeMaterial,
   emptyOaMaterial,
+  formulaFingerprint,
   normalizeOrderContent,
   recomputeOeDerived,
   recomputeOaDerived,
 } from "@/lib/orders/content";
+import { didFormulaChange } from "@/lib/orders/oe-ajuste";
 import {
   archiveOrderApi,
   deliverOrderApi,
@@ -34,7 +36,7 @@ import type { OaContent, OeContent, OperationalOrderRecord, OrderContent } from 
 import { validateDeliver } from "@/lib/orders/validators";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/orders/actor";
 import { OeFormSections } from "./oe-form-sections";
-import { OaFormSections } from "./oa-form-sections";
+import { OaFormSections, renumberOaMaterials } from "./oa-form-sections";
 import { LegalOrderPreview } from "./legal-order-preview";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
@@ -103,7 +105,12 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     !!order &&
     !locked &&
     (canOrderAction(order.type, "edit", sectorId) ||
+      canOrderAction(order.type, "edit_formula", sectorId) ||
       canOrderAction(order.type, "edit_codificado", sectorId));
+  const canEditFormula =
+    !!order && order.type === "OE" && !locked && canOrderAction("OE", "edit_formula", sectorId);
+  const canEditOperational =
+    !!order && order.type === "OE" && !locked && canOrderAction("OE", "edit", sectorId);
   const canDeliver = !!order && canOrderAction(order.type, "deliver", sectorId) && !locked;
   const canMaster =
     !!order &&
@@ -113,6 +120,19 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const canReturn = !!order && canOrderAction(order.type, "return", sectorId);
   const canArchive = !!order && canOrderAction(order.type, "archive", sectorId);
   const canDownload = !!order && canOrderAction(order.type, "download", sectorId);
+
+  const [formulaPromptOpen, setFormulaPromptOpen] = useState(false);
+  const [pendingFormulaForm, setPendingFormulaForm] = useState<OrderContent | null>(null);
+  const formulaBaselineRef = useRef<OeContent | null>(null);
+
+  useEffect(() => {
+    if (order?.formData.kind === "OE") {
+      formulaBaselineRef.current = order.formData;
+    }
+  }, [order?.id, order?.formData]);
+
+  // silence unused helper import used for baseline compare in update path
+  void formulaFingerprint;
 
   const persist = useCallback(
     async (nextForm: OrderContent, expectedVersion: number) => {
@@ -159,8 +179,35 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
 
   const saveNow = async () => {
     if (!form) return;
+    if (
+      canEditFormula &&
+      form.kind === "OE" &&
+      formulaBaselineRef.current &&
+      didFormulaChange(formulaBaselineRef.current, form)
+    ) {
+      setPendingFormulaForm(form);
+      setFormulaPromptOpen(true);
+      return;
+    }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     await persist(form, versionRef.current);
+  };
+
+  const applyFormulaOrderOnly = async () => {
+    const pending = pendingFormulaForm;
+    if (!pending) return;
+    setFormulaPromptOpen(false);
+    setPendingFormulaForm(null);
+    if (pending.kind === "OE") {
+      formulaBaselineRef.current = pending;
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    await persist(pending, versionRef.current);
+  };
+
+  const applyFormulaAndProposeMaster = async () => {
+    await applyFormulaOrderOnly();
+    setMasterOpen(true);
   };
 
   const onDeliver = async () => {
@@ -358,7 +405,11 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       ) : form.kind === "OE" ? (
         <OeFormSections
           content={form}
-          readOnly={!canEdit}
+          fieldMode={{
+            canEditFormula,
+            canEditOperational: canEditOperational || canEditFormula,
+            actorEmail: email ?? undefined,
+          }}
           onChange={(next) => updateForm(() => recomputeOeDerived(next))}
           onAddMaterial={() =>
             updateForm((prev) => {
@@ -386,9 +437,43 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               return { ...prev, materials: [...prev.materials, emptyOaMaterial(nro)] };
             })
           }
+          onRemoveMaterial={(id) =>
+            updateForm((prev) => {
+              if (prev.kind !== "OA") return prev;
+              return renumberOaMaterials({
+                ...prev,
+                materials: prev.materials.filter((m) => m.id !== id),
+              });
+            })
+          }
         />
       )}
 
+      <Dialog open={formulaPromptOpen} onOpenChange={setFormulaPromptOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cambio de fórmula</DialogTitle>
+            <DialogDescription>
+              ¿Este cambio corresponde solamente a esta orden o debe proponerse como una nueva
+              versión de la plantilla maestra?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button type="button" variant="secondary" onClick={() => {
+              setFormulaPromptOpen(false);
+              setPendingFormulaForm(null);
+            }}>
+              Cancelar
+            </Button>
+            <Button type="button" variant="secondary" onClick={applyFormulaOrderOnly} data-testid="formula-order-only">
+              Aplicar solamente a esta orden
+            </Button>
+            <Button type="button" onClick={() => void applyFormulaAndProposeMaster()} data-testid="formula-propose-master">
+              Proponer nueva versión maestra
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={deliverOpen}
         onOpenChange={setDeliverOpen}
