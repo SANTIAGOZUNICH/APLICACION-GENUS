@@ -152,6 +152,12 @@ export class MemoryOrdersRepository implements OrdersRepository {
     return o ? structuredClone(o) : null;
   }
 
+  async deleteOrder(id: string): Promise<boolean> {
+    const existed = this.orders.delete(id);
+    this.versions = this.versions.filter((v) => v.orderId !== id);
+    return existed;
+  }
+
   async listOrders(filters: ListOrdersFilters): Promise<{
     items: OperationalOrderRecord[];
     total: number;
@@ -171,6 +177,25 @@ export class MemoryOrdersRepository implements OrdersRepository {
     if (filters.status) list = list.filter((o) => o.status === filters.status);
     if (filters.assignedSector) {
       list = list.filter((o) => o.assignedSector === filters.assignedSector);
+    }
+    if (filters.unassigned) {
+      list = list.filter((o) => o.assignedSector === "SIN_ASIGNAR");
+    }
+    if (filters.emptyProduct) list = list.filter((o) => !o.product.trim());
+    if (filters.emptyClient) list = list.filter((o) => !o.client.trim());
+    if (filters.emptyLot) list = list.filter((o) => !o.lot.trim());
+    if (filters.createdBy) {
+      list = list.filter((o) => o.createdBy === filters.createdBy);
+    }
+    if (filters.emptyDraft) {
+      list = list.filter(
+        (o) =>
+          o.status === "BORRADOR" &&
+          !o.product.trim() &&
+          !o.client.trim() &&
+          !o.code.trim() &&
+          !o.lot.trim()
+      );
     }
     if (filters.product) {
       const p = filters.product.toLowerCase();
@@ -205,6 +230,8 @@ export class MemoryOrdersRepository implements OrdersRepository {
           return a.orderNumber.localeCompare(b.orderNumber);
         case "entrega_desc":
           return (b.completedAt ?? "").localeCompare(a.completedAt ?? "");
+        case "updated_desc":
+          return b.updatedAt.localeCompare(a.updatedAt);
         case "fecha_desc":
         default:
           return b.createdAt.localeCompare(a.createdAt);

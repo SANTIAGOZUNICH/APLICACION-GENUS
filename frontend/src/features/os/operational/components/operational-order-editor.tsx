@@ -24,6 +24,7 @@ import {
 import { didFormulaChange } from "@/lib/orders/oe-ajuste";
 import {
   archiveOrderApi,
+  deleteEmptyDraftApi,
   deliverOrderApi,
   fetchOrder,
   orderPdfUrl,
@@ -32,6 +33,8 @@ import {
   saveAsMasterApi,
   saveOrderProgressApi,
 } from "@/lib/orders/orders-client";
+import { canDeleteEmptyDraft } from "@/lib/orders/empty-draft";
+import { statusLabel } from "@/lib/orders/empty-draft";
 import type { OaContent, OeContent, OperationalOrderRecord, OrderContent } from "@/lib/orders/types";
 import { validateDeliver } from "@/lib/orders/validators";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/orders/actor";
@@ -122,8 +125,18 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
 
   const locked =
     order?.status === "COMPLETA" ||
+    order?.status === "COMPLETA_CON_PENDIENTES" ||
     order?.status === "ARCHIVADA" ||
     order?.status === "ANULADA";
+
+  const canDeleteDraft =
+    !!order &&
+    !!email &&
+    canDeleteEmptyDraft(order, {
+      email,
+      sector: sectorId,
+      displayName: email,
+    });
 
   const canEdit =
     !!order &&
@@ -260,16 +273,19 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     setMasterOpen(true);
   };
 
-  const onDeliver = async () => {
+  const onDeliver = async (allowIncomplete = false) => {
     if (!form) return;
     const missing = validateDeliver(form);
-    if (missing.length) {
+    if (missing.length && !allowIncomplete) {
       setMissingFields(missing);
+      setDeliverOpen(true);
       return;
     }
     setMissingFields([]);
     try {
-      const updated = await deliverOrderApi(session, orderId);
+      const updated = await deliverOrderApi(session, orderId, {
+        allowIncomplete: allowIncomplete || missing.length > 0,
+      });
       setOrder(updated);
       setForm(updated.formData);
       versionRef.current = updated.version;
@@ -355,8 +371,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             {order.orderNumber} · {order.product}
           </h3>
           <p className="text-xs text-[var(--os-text-muted)]">
-            {order.status} · plantilla v{order.templateVersion} · rev {order.revision} · sector{" "}
-            {order.assignedSector}
+            {statusLabel(order.status)} · plantilla v{order.templateVersion} · rev {order.revision} ·
+            sector {order.assignedSector}
           </p>
           <p className="mt-1 text-sm">
             Completado: <strong>{order.completionPercentage}%</strong>
@@ -365,8 +381,27 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         </div>
         <div className="flex flex-wrap gap-2">
           {canEdit && (
-            <Button type="button" variant="secondary" onClick={() => void saveNow()}>
+            <Button type="button" variant="secondary" onClick={() => void saveNow()} data-testid="guardar-avance">
               Guardar avance
+            </Button>
+          )}
+          {canDeleteDraft && (
+            <Button
+              type="button"
+              variant="secondary"
+              data-testid="eliminar-borrador"
+              onClick={() => {
+                if (
+                  !window.confirm(
+                    "¿Querés eliminar este borrador? Esta acción no afectará plantillas ni otras órdenes."
+                  )
+                ) {
+                  return;
+                }
+                void deleteEmptyDraftApi(session, orderId).then(() => onClose());
+              }}
+            >
+              Eliminar borrador
             </Button>
           )}
           {canMaster && (
@@ -377,7 +412,13 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             </Button>
           )}
           {canDeliver && (
-            <Button type="button" onClick={() => setDeliverOpen(true)}>
+            <Button
+              type="button"
+              onClick={() => {
+                if (form) setMissingFields(validateDeliver(form));
+                setDeliverOpen(true);
+              }}
+            >
               Entregar
             </Button>
           )}
@@ -575,19 +616,56 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <ConfirmDialog
-        open={deliverOpen}
-        onOpenChange={setDeliverOpen}
-        title="Entregar orden"
-        description="¿Confirmás que la orden está completa? Se enviará a Calidad y Producción para su revisión. No modifica la plantilla maestra."
-        confirmLabel="Entregar"
-        onConfirm={() => void onDeliver()}
-      />
-      {missingFields.length > 0 && (
-        <p className="text-sm text-rose-700">
-          Campos faltantes: {missingFields.join(", ")}
-        </p>
-      )}
+      <Dialog open={deliverOpen} onOpenChange={setDeliverOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Entregar orden</DialogTitle>
+            <DialogDescription>
+              {missingFields.length > 0
+                ? "Esta orden tiene información sin completar. Podés guardarla como borrador o entregarla con campos pendientes."
+                : "¿Confirmás que la orden está completa? Se notificará a Calidad y Producción. No modifica la plantilla maestra."}
+            </DialogDescription>
+          </DialogHeader>
+          {missingFields.length > 0 && (
+            <ul className="list-disc pl-5 text-sm text-rose-800" data-testid="deliver-missing-fields">
+              {missingFields.map((f) => (
+                <li key={f}>{f}</li>
+              ))}
+            </ul>
+          )}
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <Button type="button" variant="secondary" onClick={() => setDeliverOpen(false)}>
+              {missingFields.length > 0 ? "Volver a editar" : "Cancelar"}
+            </Button>
+            {missingFields.length > 0 && (
+              <Button
+                type="button"
+                variant="secondary"
+                data-testid="deliver-save-draft"
+                onClick={() => {
+                  setDeliverOpen(false);
+                  void saveNow();
+                }}
+              >
+                Guardar como borrador
+              </Button>
+            )}
+            {missingFields.length > 0 ? (
+              <Button
+                type="button"
+                data-testid="deliver-incomplete"
+                onClick={() => void onDeliver(true)}
+              >
+                Entregar con campos pendientes
+              </Button>
+            ) : (
+              <Button type="button" data-testid="deliver-confirm" onClick={() => void onDeliver(false)}>
+                Entregar
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={masterOpen} onOpenChange={setMasterOpen}>
         <DialogContent>

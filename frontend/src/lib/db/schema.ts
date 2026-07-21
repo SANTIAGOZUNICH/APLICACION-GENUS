@@ -64,6 +64,7 @@ export const operationalOrderStatusEnum = pgEnum("operational_order_status", [
   "PENDIENTE",
   "EN_PROCESO",
   "COMPLETA",
+  "COMPLETA_CON_PENDIENTES",
   "DEVUELTA_PARA_CORRECCION",
   "ANULADA",
   "ARCHIVADA",

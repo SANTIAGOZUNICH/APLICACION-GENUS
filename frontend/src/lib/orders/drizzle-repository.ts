@@ -67,7 +67,7 @@ function mapOrder(row: typeof operationalOrders.$inferSelect): OperationalOrderR
     client: row.client,
     code: row.code,
     lot: row.lot,
-    assignedSector: row.assignedSector as SectorId,
+    assignedSector: row.assignedSector as OperationalOrderRecord["assignedSector"],
     status: row.status,
     formData: row.formData as OrderContent,
     completionPercentage: row.completionPercentage,
@@ -340,6 +340,15 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     return rows[0] ? mapOrder(rows[0]) : null;
   }
 
+  async deleteOrder(id: string): Promise<boolean> {
+    const db = getDb();
+    const deleted = await db
+      .delete(operationalOrders)
+      .where(eq(operationalOrders.id, id))
+      .returning({ id: operationalOrders.id });
+    return deleted.length > 0;
+  }
+
   async listOrders(filters: ListOrdersFilters): Promise<{
     items: OperationalOrderRecord[];
     total: number;
@@ -360,6 +369,25 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     if (filters.status) list = list.filter((o) => o.status === filters.status);
     if (filters.assignedSector) {
       list = list.filter((o) => o.assignedSector === filters.assignedSector);
+    }
+    if (filters.unassigned) {
+      list = list.filter((o) => o.assignedSector === "SIN_ASIGNAR");
+    }
+    if (filters.emptyProduct) list = list.filter((o) => !o.product.trim());
+    if (filters.emptyClient) list = list.filter((o) => !o.client.trim());
+    if (filters.emptyLot) list = list.filter((o) => !o.lot.trim());
+    if (filters.createdBy) {
+      list = list.filter((o) => o.createdBy === filters.createdBy);
+    }
+    if (filters.emptyDraft) {
+      list = list.filter(
+        (o) =>
+          o.status === "BORRADOR" &&
+          !o.product.trim() &&
+          !o.client.trim() &&
+          !o.code.trim() &&
+          !o.lot.trim()
+      );
     }
     if (filters.product) {
       const p = filters.product.toLowerCase();
@@ -405,6 +433,8 @@ export class DrizzleOrdersRepository implements OrdersRepository {
           return a.orderNumber.localeCompare(b.orderNumber);
         case "entrega_desc":
           return (b.completedAt ?? "").localeCompare(a.completedAt ?? "");
+        case "updated_desc":
+          return b.updatedAt.localeCompare(a.updatedAt);
         default:
           return b.createdAt.localeCompare(a.createdAt);
       }

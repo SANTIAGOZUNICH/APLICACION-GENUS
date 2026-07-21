@@ -40,6 +40,7 @@ export interface OrdersRepository {
 
   insertOrder(order: OperationalOrderRecord): Promise<OperationalOrderRecord>;
   getOrder(id: string): Promise<OperationalOrderRecord | null>;
+  deleteOrder(id: string): Promise<boolean>;
   listOrders(filters: ListOrdersFilters): Promise<{
     items: OperationalOrderRecord[];
     total: number;

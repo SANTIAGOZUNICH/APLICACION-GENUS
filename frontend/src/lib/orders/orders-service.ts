@@ -12,12 +12,19 @@ import type { OrdersRepository } from "@/lib/orders/repository";
 import { assertCanAccessAssignedOrder, assertCanOrderAction, canOrderAction } from "@/lib/orders/rbac";
 import { applyElaboracionMaterialPatch, assertAjusteValid, didFormulaChange } from "@/lib/orders/oe-ajuste";
 import { seedTemplateRecords } from "@/lib/orders/seed-templates";
+import {
+  canDeleteEmptyDraft,
+  isEmptyDraftOrder,
+  resolveInitialAssignedSector,
+  SIN_ASIGNAR,
+} from "@/lib/orders/empty-draft";
 import type {
   CreateOrderInput,
   CreateTemplateInput,
   DuplicateTemplateInput,
   ListOrdersFilters,
   OperationalOrderRecord,
+  OrderAssignedSector,
   OrderContent,
   OrderDocType,
   OrderTemplateRecord,
@@ -32,7 +39,7 @@ import {
   OrdersNotFoundError,
   OrdersValidationError,
 } from "@/lib/orders/types";
-import { assertDeliverable, assertOrderTypeMatch } from "@/lib/orders/validators";
+import { assertOrderTypeMatch, validateDeliver } from "@/lib/orders/validators";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -298,6 +305,23 @@ export class OrdersService {
 
   async createOrder(input: CreateOrderInput, actor: OrdersActor) {
     assertCanOrderAction(input.type, "create", actor);
+
+    if (input.emptyDraft || !input.templateId) {
+      const result = await this.createEmptyDraft(
+        {
+          type: input.type,
+          product: input.product ?? "",
+          code: input.code ?? "",
+          client: input.client ?? "",
+          lot: input.lot ?? "",
+          assignedSector: input.assignedSector,
+          content: input.formOverrides as OrderContent | undefined,
+        },
+        actor
+      );
+      return result.order;
+    }
+
     const template = await this.repo.getTemplate(input.templateId);
     if (!template || template.status !== "VIGENTE") {
       throw new OrdersNotFoundError("Plantilla maestra vigente no encontrada.");
@@ -305,72 +329,261 @@ export class OrdersService {
     if (template.type !== input.type) {
       throw new OrdersValidationError("El tipo de plantilla no coincide con la orden.");
     }
-    if (input.type === "OE" && input.assignedSector !== "ELABORACION") {
-      throw new OrdersValidationError("Las OE deben asignarse a ELABORACION.");
-    }
-    if (
-      input.type === "OA" &&
-      input.assignedSector !== "ENVASADO_MASIVO" &&
-      input.assignedSector !== "ENVASADO_PREMIUM"
-    ) {
-      throw new OrdersValidationError(
-        "Las OA deben asignarse a ENVASADO_MASIVO o ENVASADO_PREMIUM."
-      );
-    }
+
+    const assignedSector = resolveInitialAssignedSector(
+      input.type,
+      actor.sector,
+      input.assignedSector
+    );
+    this.assertAssignedSectorAllowed(input.type, actor, assignedSector);
 
     const snapshot = cloneContent(template.content);
     const formData = mergeFormOverrides(snapshot, input.formOverrides);
     if (formData.kind === "OE") {
-      if (input.product) formData.header.productName = input.product;
-      if (input.client) formData.header.client = input.client;
-      if (input.code) formData.header.code = input.code;
-      if (input.lot) formData.header.lot = input.lot;
+      if (input.product != null) formData.header.productName = input.product;
+      if (input.client != null) formData.header.client = input.client;
+      if (input.code != null) formData.header.code = input.code;
+      if (input.lot != null) formData.header.lot = input.lot;
     } else {
-      if (input.product) formData.header.productName = input.product;
-      if (input.client) formData.header.client = input.client;
-      if (input.code) formData.header.productCode = input.code;
-      if (input.lot) formData.header.lot = input.lot;
+      if (input.product != null) formData.header.productName = input.product;
+      if (input.client != null) formData.header.client = input.client;
+      if (input.code != null) formData.header.productCode = input.code;
+      if (input.lot != null) formData.header.lot = input.lot;
     }
     const normalized = normalizeOrderContent(formData);
-    const year = new Date().getFullYear();
-    const orderNumber = await this.repo.nextOrderNumber(input.type, year);
-    const ts = nowIso();
-    const order: OperationalOrderRecord = {
-      id: randomUUID(),
-      orderNumber,
+    return this.persistNewOrder({
       type: input.type,
-      templateId: template.id,
-      templateVersion: template.version,
-      templateSnapshot: snapshot,
-      product:
-        input.product ??
-        (normalized.kind === "OE"
-          ? normalized.header.productName
-          : normalized.header.productName),
+      template,
+      snapshot,
+      normalized,
+      product: input.product ?? normalized.header.productName,
       client:
         input.client ??
         (normalized.kind === "OE" ? normalized.header.client : normalized.header.client),
       code:
         input.code ??
-        (normalized.kind === "OE"
-          ? normalized.header.code
-          : normalized.header.productCode),
+        (normalized.kind === "OE" ? normalized.header.code : normalized.header.productCode),
       lot:
         input.lot ??
         (normalized.kind === "OE" ? normalized.header.lot : normalized.header.lot),
-      assignedSector: input.assignedSector,
+      assignedSector,
       status: "PENDIENTE",
-      formData: normalized,
-      completionPercentage: computeCompletionPercentage(normalized),
+      linkedWorkItemId: input.linkedWorkItemId ?? null,
+      actor,
+    });
+  }
+
+  /**
+   * Crea OE/OA completamente vacía (BORRADOR) sin exigir plantilla ni datos.
+   * No notifica. No crea plantilla maestra.
+   */
+  async createEmptyDraft(
+    input: {
+      type: OrderDocType;
+      product?: string;
+      code?: string;
+      client?: string;
+      lot?: string;
+      assignedSector?: OrderAssignedSector | null;
+      content?: OrderContent;
+      alsoCreateMaster?: boolean;
+      masterChangeReason?: string;
+      confirmEmptyMaster?: boolean;
+    },
+    actor: OrdersActor
+  ) {
+    assertCanOrderAction(input.type, "create", actor);
+    const assignedSector = resolveInitialAssignedSector(
+      input.type,
+      actor.sector,
+      input.assignedSector
+    );
+    this.assertAssignedSectorAllowed(input.type, actor, assignedSector);
+
+    const product = (input.product ?? "").trim();
+    const code = (input.code ?? "").trim();
+    const client = (input.client ?? "").trim();
+    const lot = (input.lot ?? "").trim();
+
+    const baseContent =
+      input.content ??
+      (input.type === "OE"
+        ? createEmptyOeContent({
+            productName: product,
+            code,
+            client,
+            lot,
+          })
+        : createEmptyOaContent({
+            productName: product,
+            productCode: code,
+            client,
+            lot,
+          }));
+    const snapshot = normalizeOrderContent(baseContent);
+
+    let masterTemplate: OrderTemplateRecord | null = null;
+    if (input.alsoCreateMaster) {
+      assertCanOrderAction(input.type, "manage_templates", actor);
+      const emptyMaster =
+        !product && !code && isEmptyDraftOrder({
+          product,
+          client,
+          code,
+          lot,
+          status: "BORRADOR",
+          formData: snapshot,
+          completionPercentage: 0,
+        });
+      if (emptyMaster && !input.confirmEmptyMaster) {
+        throw new OrdersValidationError(
+          "Esta plantilla todavía no contiene información. Confirmá para guardarla igualmente."
+        );
+      }
+      masterTemplate = await this.createTemplate(
+        {
+          type: input.type,
+          productName: product || `Borrador ${input.type}`,
+          productCode: code || `DRAFT-${randomUUID().slice(0, 8)}`,
+          brandClient: client || null,
+          content: snapshot,
+          changeReason:
+            input.masterChangeReason?.trim() ||
+            "Plantilla maestra creada desde borrador",
+        },
+        actor
+      );
+    }
+
+    const ephemeral =
+      masterTemplate ??
+      (await this.insertEphemeralBlankTemplate(input.type, actor, snapshot));
+
+    const order = await this.persistNewOrder({
+      type: input.type,
+      template: ephemeral,
+      snapshot,
+      normalized: snapshot,
+      product,
+      client,
+      code,
+      lot,
+      assignedSector,
+      status: "BORRADOR",
+      linkedWorkItemId: null,
+      actor,
+    });
+
+    if (!masterTemplate) {
+      await this.repo.markTemplateObsolete(ephemeral.id);
+    }
+
+    return { order, template: masterTemplate };
+  }
+
+  private async insertEphemeralBlankTemplate(
+    type: OrderDocType,
+    actor: OrdersActor,
+    content: OrderContent
+  ): Promise<OrderTemplateRecord> {
+    const ts = nowIso();
+    const template: OrderTemplateRecord = {
+      id: randomUUID(),
+      type,
+      productId: `blank-${type.toLowerCase()}-${randomUUID()}`,
+      productName: "",
+      productCode: "",
+      brandClient: null,
+      version: 1,
+      status: "OBSOLETA",
+      content: normalizeOrderContent(content),
+      changeReason: "Plantilla técnica de borrador vacío (no maestra)",
+      sourceFile: null,
+      previousVersionId: null,
+      createdBy: actor.email,
+      updatedBy: actor.email,
+      createdAt: ts,
+      updatedAt: ts,
+    };
+    return this.repo.insertTemplate(template);
+  }
+
+  private assertAssignedSectorAllowed(
+    type: OrderDocType,
+    actor: OrdersActor,
+    assigned: OrderAssignedSector
+  ) {
+    if (type === "OE") {
+      if (assigned !== "ELABORACION" && assigned !== SIN_ASIGNAR) {
+        throw new OrdersValidationError(
+          "Las OE se asignan a ELABORACION o quedan sin asignar."
+        );
+      }
+      return;
+    }
+    if (
+      assigned !== "ENVASADO_MASIVO" &&
+      assigned !== "ENVASADO_PREMIUM" &&
+      assigned !== SIN_ASIGNAR
+    ) {
+      throw new OrdersValidationError(
+        "Las OA se asignan a Masivo, Premium o quedan sin asignar."
+      );
+    }
+    if (actor.sector === "ENVASADO_MASIVO" && assigned !== "ENVASADO_MASIVO") {
+      throw new OrdersValidationError("Masivo solo puede crear OA asignadas a Masivo.");
+    }
+    if (actor.sector === "ENVASADO_PREMIUM" && assigned !== "ENVASADO_PREMIUM") {
+      throw new OrdersValidationError("Premium solo puede crear OA asignadas a Premium.");
+    }
+    if (actor.sector === "CODIFICADO" && assigned !== SIN_ASIGNAR) {
+      throw new OrdersValidationError(
+        "Codificado crea borradores sin asignar; Producción/Calidad asignan después."
+      );
+    }
+  }
+
+  private async persistNewOrder(args: {
+    type: OrderDocType;
+    template: OrderTemplateRecord;
+    snapshot: OrderContent;
+    normalized: OrderContent;
+    product: string;
+    client: string;
+    code: string;
+    lot: string;
+    assignedSector: OrderAssignedSector;
+    status: OperationalOrderRecord["status"];
+    linkedWorkItemId: string | null;
+    actor: OrdersActor;
+  }) {
+    const year = new Date().getFullYear();
+    const orderNumber = await this.repo.nextOrderNumber(args.type, year);
+    const ts = nowIso();
+    const order: OperationalOrderRecord = {
+      id: randomUUID(),
+      orderNumber,
+      type: args.type,
+      templateId: args.template.id,
+      templateVersion: args.template.version,
+      templateSnapshot: args.snapshot,
+      product: args.product,
+      client: args.client,
+      code: args.code,
+      lot: args.lot,
+      assignedSector: args.assignedSector,
+      status: args.status,
+      formData: args.normalized,
+      completionPercentage: computeCompletionPercentage(args.normalized),
       revision: 1,
       version: 1,
-      linkedWorkItemId: input.linkedWorkItemId ?? null,
+      linkedWorkItemId: args.linkedWorkItemId,
       reviewedAt: null,
       reviewedBy: null,
       completedAt: null,
       completedBy: null,
-      createdBy: actor.email,
-      updatedBy: actor.email,
+      createdBy: args.actor.email,
+      updatedBy: args.actor.email,
       createdAt: ts,
       updatedAt: ts,
     };
@@ -382,22 +595,47 @@ export class OrdersService {
       snapshot: saved,
       event: "create",
       reason: null,
-      createdBy: actor.email,
+      createdBy: args.actor.email,
       createdAt: ts,
     });
     await this.repo.appendAudit({
       orderId: saved.id,
       eventType: "ORDER_CREATED",
-      actor: actor.email,
-      actorSector: actor.sector,
+      actor: args.actor.email,
+      actorSector: args.actor.sector,
       metadata: {
         orderNumber: saved.orderNumber,
-        templateId: template.id,
-        templateVersion: template.version,
+        templateId: args.template.id,
+        templateVersion: args.template.version,
+        status: saved.status,
+        emptyDraft: isEmptyDraftOrder(saved),
         snapshotTaken: true,
       },
     });
+    // Sin notificación en creación/autoguardado de borradores.
     return saved;
+  }
+
+  /**
+   * Crea una orden operativa desde contenido vacío (sin elegir maestra previa).
+   * Opcionalmente deja también una plantilla maestra v1 VIGENTE.
+   */
+  async createOrderFromScratch(
+    input: {
+      type: OrderDocType;
+      product?: string;
+      code?: string;
+      client?: string;
+      lot?: string;
+      assignedSector?: OrderAssignedSector | null;
+      content?: OrderContent;
+      alsoCreateMaster?: boolean;
+      masterChangeReason?: string;
+      confirmEmptyMaster?: boolean;
+    },
+    actor: OrdersActor
+  ) {
+    return this.createEmptyDraft(input, actor);
   }
 
   async listOrders(filters: ListOrdersFilters, actor: OrdersActor) {
@@ -412,20 +650,27 @@ export class OrdersService {
     if (actor.sector === "ELABORACION") {
       scoped.type = scoped.type ?? "OE";
     }
+    // CODIFICADO ve todas las OA (para codificar + sus borradores).
     return this.repo.listOrders(scoped);
   }
 
   async getOrder(id: string, actor: OrdersActor) {
     const order = await this.repo.getOrder(id);
     if (!order) throw new OrdersNotFoundError("Orden no encontrada.");
-    assertCanAccessAssignedOrder(order.type, order.assignedSector, actor, "view");
+    assertCanAccessAssignedOrder(order.type, order.assignedSector, actor, "view", {
+      createdBy: order.createdBy,
+    });
     return order;
   }
 
   async saveProgress(id: string, input: PatchOrderInput, actor: OrdersActor) {
     const current = await this.repo.getOrder(id);
     if (!current) throw new OrdersNotFoundError("Orden no encontrada.");
-    if (current.status === "COMPLETA" || current.status === "ARCHIVADA") {
+    if (
+      current.status === "COMPLETA" ||
+      current.status === "COMPLETA_CON_PENDIENTES" ||
+      current.status === "ARCHIVADA"
+    ) {
       throw new OrdersForbiddenError(
         "Una orden completa no se edita directamente. Debe devolverse para corrección."
       );
@@ -434,8 +679,14 @@ export class OrdersService {
       throw new OrdersForbiddenError("La orden está anulada.");
     }
 
+    const ownCodificadoDraft =
+      actor.sector === "CODIFICADO" &&
+      current.type === "OA" &&
+      current.assignedSector === SIN_ASIGNAR &&
+      current.createdBy === actor.email;
+
     const isCodificadoOnly =
-      actor.sector === "CODIFICADO" && current.type === "OA";
+      actor.sector === "CODIFICADO" && current.type === "OA" && !ownCodificadoDraft;
     const isMpFormulaOnly =
       actor.sector === "MATERIA_PRIMA" && current.type === "OE";
 
@@ -443,12 +694,15 @@ export class OrdersService {
       assertCanOrderAction("OA", "edit_codificado", actor);
     } else if (isMpFormulaOnly) {
       assertCanOrderAction("OE", "edit_formula", actor);
+    } else if (ownCodificadoDraft) {
+      assertCanOrderAction("OA", "save_progress", actor);
     } else {
       assertCanAccessAssignedOrder(
         current.type,
         current.assignedSector,
         actor,
-        "save_progress"
+        "save_progress",
+        { createdBy: current.createdBy }
       );
     }
 
@@ -456,6 +710,7 @@ export class OrdersService {
     let nextForm = normalizeOrderContent(input.formData);
 
     if (isCodificadoOnly && current.formData.kind === "OA" && nextForm.kind === "OA") {
+      // Codificado en OA asignada: solo etiquetado. No toca materiales/rendimientos.
       nextForm = {
         ...current.formData,
         etiquetadoCodificado: nextForm.etiquetadoCodificado,
@@ -463,14 +718,12 @@ export class OrdersService {
       };
     }
 
-      if (current.formData.kind === "OE" && nextForm.kind === "OE") {
+    if (current.formData.kind === "OE" && nextForm.kind === "OE") {
       const canFormula = canOrderAction("OE", "edit_formula", actor.sector);
       if (!canFormula) {
-        // Elaboración (u otros sin fórmula): solo ajuste/lote operativos.
         nextForm = normalizeOrderContent(
           applyElaboracionMaterialPatch(current.formData, nextForm, actor.email)
         );
-        // Conservar procedimiento y specs teóricas
         if (nextForm.kind === "OE") {
           nextForm = {
             ...nextForm,
@@ -487,7 +740,6 @@ export class OrdersService {
         }
       }
       if (isMpFormulaOnly && nextForm.kind === "OE") {
-        // MP solo toca materiales/fórmula; no resultados operativos ni cabecera de lote.
         nextForm = normalizeOrderContent({
           ...current.formData,
           materials: nextForm.materials,
@@ -507,14 +759,27 @@ export class OrdersService {
       }
     }
 
+    const headerProduct =
+      input.product ??
+      (nextForm.kind === "OE" ? nextForm.header.productName : nextForm.header.productName);
+    const headerClient =
+      input.client ??
+      (nextForm.kind === "OE" ? nextForm.header.client : nextForm.header.client);
+    const headerCode =
+      input.code ??
+      (nextForm.kind === "OE" ? nextForm.header.code : nextForm.header.productCode);
+    const headerLot =
+      input.lot ?? (nextForm.kind === "OE" ? nextForm.header.lot : nextForm.header.lot);
+
     const updated = await this.repo.updateOrderOptimistic(id, input.expectedVersion, {
       formData: nextForm,
       completionPercentage: computeCompletionPercentage(nextForm),
+      // BORRADOR permanece BORRADOR al guardar avance.
       status: current.status === "PENDIENTE" ? "EN_PROCESO" : current.status,
-      lot: input.lot ?? current.lot,
-      client: input.client ?? current.client,
-      code: input.code ?? current.code,
-      product: input.product ?? current.product,
+      lot: headerLot,
+      client: headerClient,
+      code: headerCode,
+      product: headerProduct,
       updatedBy: actor.email,
     });
     if (!updated) {
@@ -540,95 +805,41 @@ export class OrdersService {
         templateUnchanged: true,
       },
     });
+    // Sin notificación en autoguardado.
     return updated;
   }
 
-  /**
-   * Crea una orden operativa desde contenido vacío (sin elegir maestra previa).
-   * Opcionalmente deja también una plantilla maestra v1 VIGENTE.
-   */
-  async createOrderFromScratch(
-    input: {
-      type: OrderDocType;
-      product: string;
-      code: string;
-      client: string;
-      lot: string;
-      assignedSector: import("@/types/operational/sector").SectorId;
-      content?: OrderContent;
-      alsoCreateMaster?: boolean;
-      masterChangeReason?: string;
-    },
-    actor: OrdersActor
-  ) {
-    assertCanOrderAction(input.type, "create", actor);
-    if (!input.product.trim()) {
-      throw new OrdersValidationError("Falta producto.");
+  async deleteEmptyDraft(id: string, actor: OrdersActor) {
+    const current = await this.repo.getOrder(id);
+    if (!current) throw new OrdersNotFoundError("Orden no encontrada.");
+    assertCanOrderAction(current.type, "delete_draft", actor);
+    if (!canDeleteEmptyDraft(current, actor)) {
+      throw new OrdersForbiddenError(
+        "Solo se pueden eliminar borradores vacíos no entregados (creador, Producción o Calidad)."
+      );
     }
-    if (!input.code.trim()) {
-      throw new OrdersValidationError("Falta código.");
-    }
-    const baseContent =
-      input.content ??
-      (input.type === "OE"
-        ? createEmptyOeContent({
-            productName: input.product,
-            code: input.code,
-            client: input.client,
-            lot: input.lot,
-          })
-        : createEmptyOaContent({
-            productName: input.product,
-            productCode: input.code,
-            client: input.client,
-            lot: input.lot,
-          }));
-    const snapshot = normalizeOrderContent(baseContent);
-
-    if (input.alsoCreateMaster) {
-      assertCanOrderAction(input.type, "manage_templates", actor);
-    }
-
-    const template = await this.createTemplate(
-      {
-        type: input.type,
-        productName: input.product,
-        productCode: input.code,
-        brandClient: input.client || null,
-        productId: input.alsoCreateMaster
-          ? undefined
-          : `scratch-${input.type.toLowerCase()}-${randomUUID()}`,
-        content: snapshot,
-        changeReason: input.alsoCreateMaster
-          ? input.masterChangeReason?.trim() ||
-            "Plantilla maestra creada junto con la orden inicial"
-          : "Plantilla técnica de orden creada desde cero (no listada como maestra)",
+    const ok = await this.repo.deleteOrder(id);
+    if (!ok) throw new OrdersNotFoundError("Orden no encontrada.");
+    await this.repo.appendAudit({
+      orderId: null,
+      eventType: "ORDER_DRAFT_DELETED",
+      actor: actor.email,
+      actorSector: actor.sector,
+      metadata: {
+        orderId: id,
+        orderNumber: current.orderNumber,
+        type: current.type,
       },
-      actor
-    );
-
-    const order = await this.createOrder(
-      {
-        type: input.type,
-        templateId: template.id,
-        product: input.product,
-        code: input.code,
-        client: input.client,
-        lot: input.lot,
-        assignedSector: input.assignedSector,
-        formOverrides: snapshot,
-      },
-      actor
-    );
-
-    if (!input.alsoCreateMaster) {
-      await this.repo.markTemplateObsolete(template.id);
-    }
-
-    return { order, template: input.alsoCreateMaster ? template : null };
+    });
+    return { deleted: true, orderNumber: current.orderNumber };
   }
 
-  async deliver(id: string, actor: OrdersActor, confirm: boolean) {
+  async deliver(
+    id: string,
+    actor: OrdersActor,
+    confirm: boolean,
+    opts?: { allowIncomplete?: boolean }
+  ) {
     if (!confirm) {
       throw new OrdersValidationError(
         "Confirmación requerida: ¿Confirmás que la orden está completa?"
@@ -640,21 +851,33 @@ export class OrdersService {
       current.type,
       current.assignedSector,
       actor,
-      "deliver"
+      "deliver",
+      { createdBy: current.createdBy }
     );
-    if (current.status === "COMPLETA") {
+    if (current.status === "COMPLETA" || current.status === "COMPLETA_CON_PENDIENTES") {
       throw new OrdersValidationError("La orden ya está completa.");
     }
-    assertDeliverable(current.formData);
-    // Entregar NO modifica la plantilla maestra
+
+    const missing = validateDeliver(current.formData);
+    const allowIncomplete = Boolean(opts?.allowIncomplete);
+    if (missing.length > 0 && !allowIncomplete) {
+      throw new OrdersValidationError(
+        `Esta orden tiene información sin completar: ${missing.join(", ")}. ` +
+          "Podés guardarla como borrador o entregarla con campos pendientes."
+      );
+    }
+
     const ts = nowIso();
+    const status = missing.length > 0 ? "COMPLETA_CON_PENDIENTES" : "COMPLETA";
+    const normalized = normalizeOrderContent(current.formData);
     const updated = await this.repo.updateOrderOptimistic(id, current.version, {
-      status: "COMPLETA",
+      status,
       completedAt: ts,
       completedBy: actor.email,
       updatedBy: actor.email,
-      formData: normalizeOrderContent(current.formData),
-      completionPercentage: 100,
+      formData: normalized,
+      completionPercentage:
+        missing.length > 0 ? computeCompletionPercentage(normalized) : 100,
     });
     if (!updated) {
       const fresh = await this.repo.getOrder(id);
@@ -665,26 +888,42 @@ export class OrdersService {
       orderId: id,
       version: updated.revision,
       snapshot: updated,
-      event: "deliver",
-      reason: null,
+      event: missing.length > 0 ? "deliver_incomplete" : "deliver",
+      reason: missing.length > 0 ? missing.join(", ") : null,
       createdBy: actor.email,
       createdAt: ts,
     });
     await this.repo.appendAudit({
       orderId: id,
-      eventType: "ORDER_DELIVERED",
+      eventType: missing.length > 0 ? "ORDER_DELIVERED_INCOMPLETE" : "ORDER_DELIVERED",
       actor: actor.email,
       actorSector: actor.sector,
       metadata: {
         orderNumber: updated.orderNumber,
         templateId: updated.templateId,
         templateUnchanged: true,
+        pendingFields: missing,
+        status,
       },
     });
     await notify(this.repo, {
-      kind: current.type === "OE" ? "oe_completada" : "oa_completada",
-      title: current.type === "OE" ? "OE completada" : "OA completada",
-      message: `${updated.orderNumber} · ${updated.product} · Lote ${updated.lot} · ${actor.sector}`,
+      kind:
+        current.type === "OE"
+          ? missing.length
+            ? "oe_completada_pendientes"
+            : "oe_completada"
+          : missing.length
+            ? "oa_completada_pendientes"
+            : "oa_completada",
+      title:
+        current.type === "OE"
+          ? missing.length
+            ? "OE entregada con pendientes"
+            : "OE completada"
+          : missing.length
+            ? "OA entregada con pendientes"
+            : "OA completada",
+      message: `${updated.orderNumber} · ${updated.product || "Sin completar"} · ${actor.sector}`,
       sectors: ["CALIDAD", "PRODUCCION"],
       href: `/os?view=${current.type === "OE" ? "ordenes-elaboracion" : "ordenes-acondicionamiento"}&orderId=${id}`,
       orderId: id,
@@ -925,7 +1164,11 @@ export class OrdersService {
       kind: "order_returned",
       title: "Orden devuelta para corrección",
       message: `${updated.orderNumber}: ${reason.trim()}`,
-      sectors: [updated.assignedSector, "CALIDAD", "PRODUCCION"],
+      sectors: [
+        ...(updated.assignedSector !== SIN_ASIGNAR ? [updated.assignedSector] : []),
+        "CALIDAD",
+        "PRODUCCION",
+      ],
       href: `/os?orderId=${id}`,
       orderId: id,
     });
@@ -1000,7 +1243,11 @@ export class OrdersService {
       kind: "order_annulled",
       title: "Orden anulada",
       message: `${updated.orderNumber}: ${reason}`,
-      sectors: [updated.assignedSector, "CALIDAD", "PRODUCCION"],
+      sectors: [
+        ...(updated.assignedSector !== SIN_ASIGNAR ? [updated.assignedSector] : []),
+        "CALIDAD",
+        "PRODUCCION",
+      ],
       href: null,
       orderId: id,
     });

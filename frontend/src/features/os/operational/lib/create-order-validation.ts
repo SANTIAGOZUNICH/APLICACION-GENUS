@@ -1,5 +1,5 @@
-import type { OrderDocType } from "@/lib/orders/types";
-import type { SectorId } from "@/types/operational/sector";
+import type { OrderAssignedSector, OrderDocType } from "@/lib/orders/types";
+import { SIN_ASIGNAR } from "@/lib/orders/empty-draft";
 
 export type CreateOrderFieldErrors = {
   template?: string;
@@ -17,9 +17,11 @@ export type CreateOrderFormState = {
   code: string;
   client: string;
   lot: string;
-  assignedSector: SectorId;
+  assignedSector: OrderAssignedSector;
   templatesCount: number;
   dbUnavailable: boolean;
+  /** Crear borrador vacío sin plantilla ni datos. */
+  emptyDraft?: boolean;
 };
 
 export function validateCreateOrderForm(
@@ -34,36 +36,33 @@ export function validateCreateOrderForm(
       "La base de datos no está configurada. Podés ver la plantilla, pero no crear ni guardar órdenes todavía.";
     disableReasons.push("Falta base de datos");
   }
+
+  if (state.emptyDraft) {
+    // Borrador vacío: solo exige DB. Sector puede quedar SIN_ASIGNAR.
+    return {
+      ok: disableReasons.length === 0,
+      errors,
+      disableReasons,
+    };
+  }
+
   if (state.templatesCount === 0) {
     errors.template =
-      "No hay plantillas maestras disponibles. Primero debés crear o importar una plantilla.";
+      "No hay plantillas maestras disponibles. Podés crear un borrador vacío desde cero.";
     disableReasons.push("Falta plantilla");
   } else if (!state.templateId.trim()) {
     errors.template = "Falta plantilla.";
     disableReasons.push("Falta plantilla");
   }
-  if (!state.product.trim()) {
-    errors.product = "Falta producto.";
-    disableReasons.push("Falta producto");
-  }
-  if (!state.code.trim()) {
-    errors.code = "Falta código.";
-    disableReasons.push("Falta código");
-  }
-  if (!state.client.trim()) {
-    errors.client = "Falta cliente.";
-    disableReasons.push("Falta cliente");
-  }
-  if (!state.lot.trim()) {
-    errors.lot = "Falta lote.";
-    disableReasons.push("Falta lote");
-  }
+
+  // Producto/código/cliente/lote son opcionales también con plantilla.
   if (type === "OA") {
     if (
       state.assignedSector !== "ENVASADO_MASIVO" &&
-      state.assignedSector !== "ENVASADO_PREMIUM"
+      state.assignedSector !== "ENVASADO_PREMIUM" &&
+      state.assignedSector !== SIN_ASIGNAR
     ) {
-      errors.sector = "Falta sector.";
+      errors.sector = "Elegí Masivo, Premium o Sin asignar.";
       disableReasons.push("Falta sector");
     }
   }
@@ -76,5 +75,5 @@ export function validateCreateOrderForm(
 }
 
 export function emptyTemplatesExplanation(): string {
-  return "No hay plantillas maestras disponibles. Primero debés crear o importar una plantilla.";
+  return "No hay plantillas maestras disponibles. Podés crear un borrador vacío desde cero o importar/crear una plantilla.";
 }

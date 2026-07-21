@@ -158,20 +158,18 @@ export function CreateOrderDialog({
           >
             Usar una plantilla maestra
           </Button>
-          {canManageTemplates && (
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              data-testid="create-mode-scratch"
-              onClick={() => {
-                onOpenChange(false);
-                onCreateTemplate?.();
-              }}
-            >
-              Crear una orden nueva desde cero
-            </Button>
-          )}
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            data-testid="create-mode-scratch"
+            onClick={() => {
+              onOpenChange(false);
+              onCreateTemplate?.();
+            }}
+          >
+            Crear una orden nueva desde cero
+          </Button>
         </div>
 
           {dbUnavailable && (

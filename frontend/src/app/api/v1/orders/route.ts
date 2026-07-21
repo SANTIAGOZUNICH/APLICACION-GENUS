@@ -37,6 +37,12 @@ export async function GET(request: Request) {
       pageSize: url.searchParams.get("pageSize")
         ? Number(url.searchParams.get("pageSize"))
         : undefined,
+      emptyDraft: url.searchParams.get("emptyDraft") === "1" ? true : undefined,
+      unassigned: url.searchParams.get("unassigned") === "1" ? true : undefined,
+      emptyProduct: url.searchParams.get("emptyProduct") === "1" ? true : undefined,
+      emptyClient: url.searchParams.get("emptyClient") === "1" ? true : undefined,
+      emptyLot: url.searchParams.get("emptyLot") === "1" ? true : undefined,
+      createdBy: url.searchParams.get("createdBy") ?? undefined,
     };
     const result = await getOrdersService().listOrders(filters, actor);
     return NextResponse.json({ ...result, legallyOperational: true });
@@ -60,7 +66,7 @@ export async function POST(request: Request) {
       client?: string;
       lot?: string;
     };
-    if (body.fromScratch) {
+    if (body.fromScratch || body.emptyDraft) {
       const result = await getOrdersService().createOrderFromScratch(
         {
           type: body.type,
@@ -72,6 +78,7 @@ export async function POST(request: Request) {
           content: body.content as never,
           alsoCreateMaster: body.alsoCreateMaster,
           masterChangeReason: body.masterChangeReason,
+          confirmEmptyMaster: (body as { confirmEmptyMaster?: boolean }).confirmEmptyMaster,
         },
         actor
       );

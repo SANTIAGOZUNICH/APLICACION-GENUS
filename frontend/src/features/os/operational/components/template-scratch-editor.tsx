@@ -146,13 +146,15 @@ export function TemplateScratchEditor({
     }
   };
 
-  const saveOrder = async (alsoCreateMaster: boolean) => {
+  const saveOrder = async (alsoCreateMaster: boolean, confirmEmptyMaster = false) => {
     if (dbUnavailable) {
       setError("La base de datos no está configurada. No se puede crear la orden.");
       return;
     }
-    if (!productName.trim() || !productCode.trim() || !brandClient.trim() || !lot.trim()) {
-      setError("Completá producto, código, cliente y lote.");
+    if (alsoCreateMaster && !productName.trim() && !productCode.trim() && !confirmEmptyMaster) {
+      setError(
+        "Esta plantilla todavía no contiene información. Confirmá para guardarla igualmente."
+      );
       return;
     }
     setBusy(true);
@@ -192,6 +194,8 @@ export function TemplateScratchEditor({
         masterChangeReason: alsoCreateMaster
           ? "Plantilla maestra creada junto con la orden inicial"
           : undefined,
+        confirmEmptyMaster,
+        emptyDraft: true,
       });
       onSaved({ template: result.template, orderId: result.order.id });
       onOpenChange(false);

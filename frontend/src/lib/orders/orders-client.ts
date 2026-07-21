@@ -117,14 +117,16 @@ export async function createOrderFromScratchApi(
   session: OrdersClientSession,
   input: {
     type: OrderDocType;
-    product: string;
-    code: string;
-    client: string;
-    lot: string;
-    assignedSector: string;
+    product?: string;
+    code?: string;
+    client?: string;
+    lot?: string;
+    assignedSector?: string | null;
     content?: OrderTemplateRecord["content"];
     alsoCreateMaster?: boolean;
     masterChangeReason?: string;
+    confirmEmptyMaster?: boolean;
+    emptyDraft?: boolean;
   }
 ): Promise<{
   order: OperationalOrderRecord;
@@ -133,9 +135,32 @@ export async function createOrderFromScratchApi(
   const res = await fetch("/api/v1/orders", {
     method: "POST",
     headers: actorHeaders(session),
-    body: JSON.stringify({ ...input, fromScratch: true }),
+    body: JSON.stringify({
+      ...input,
+      fromScratch: true,
+      emptyDraft: input.emptyDraft ?? true,
+    }),
   });
   return parseJson(res);
+}
+
+export async function createEmptyDraftApi(
+  session: OrdersClientSession,
+  input: {
+    type: OrderDocType;
+    assignedSector?: string | null;
+  }
+): Promise<OperationalOrderRecord> {
+  const result = await createOrderFromScratchApi(session, {
+    type: input.type,
+    product: "",
+    code: "",
+    client: "",
+    lot: "",
+    assignedSector: input.assignedSector,
+    emptyDraft: true,
+  });
+  return result.order;
 }
 
 export async function templateActionApi(
@@ -189,6 +214,12 @@ export async function fetchOrders(
   if (filters.sort) params.set("sort", filters.sort);
   if (filters.page) params.set("page", String(filters.page));
   if (filters.pageSize) params.set("pageSize", String(filters.pageSize));
+  if (filters.emptyDraft) params.set("emptyDraft", "1");
+  if (filters.unassigned) params.set("unassigned", "1");
+  if (filters.emptyProduct) params.set("emptyProduct", "1");
+  if (filters.emptyClient) params.set("emptyClient", "1");
+  if (filters.emptyLot) params.set("emptyLot", "1");
+  if (filters.createdBy) params.set("createdBy", filters.createdBy);
   const res = await fetch(`/api/v1/orders?${params}`, {
     headers: actorHeaders(session),
     cache: "no-store",
@@ -237,15 +268,30 @@ export async function saveOrderProgressApi(
 
 export async function deliverOrderApi(
   session: OrdersClientSession,
-  id: string
+  id: string,
+  opts?: { allowIncomplete?: boolean }
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}/deliver`, {
     method: "POST",
     headers: actorHeaders(session),
-    body: JSON.stringify({ confirm: true }),
+    body: JSON.stringify({
+      confirm: true,
+      allowIncomplete: Boolean(opts?.allowIncomplete),
+    }),
   });
   const data = await parseJson<{ order: OperationalOrderRecord }>(res);
   return data.order;
+}
+
+export async function deleteEmptyDraftApi(
+  session: OrdersClientSession,
+  id: string
+): Promise<{ deleted: boolean; orderNumber: string }> {
+  const res = await fetch(`/api/v1/orders/${id}`, {
+    method: "DELETE",
+    headers: actorHeaders(session),
+  });
+  return parseJson(res);
 }
 
 export async function saveAsMasterApi(

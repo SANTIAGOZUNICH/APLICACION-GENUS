@@ -9,9 +9,13 @@ export type OrderStatus =
   | "PENDIENTE"
   | "EN_PROCESO"
   | "COMPLETA"
+  | "COMPLETA_CON_PENDIENTES"
   | "DEVUELTA_PARA_CORRECCION"
   | "ANULADA"
   | "ARCHIVADA";
+
+/** Sector asignado de una orden; SIN_ASIGNAR = borrador sin destino. */
+export type OrderAssignedSector = SectorId | "SIN_ASIGNAR";
 
 export type TemplateStatus = "VIGENTE" | "OBSOLETA";
 
@@ -268,7 +272,7 @@ export type OperationalOrderRecord = {
   client: string;
   code: string;
   lot: string;
-  assignedSector: SectorId;
+  assignedSector: OrderAssignedSector;
   status: OrderStatus;
   formData: OrderContent;
   completionPercentage: number;
@@ -334,14 +338,16 @@ export type OsNotificationRecord = {
 
 export type CreateOrderInput = {
   type: OrderDocType;
-  templateId: string;
+  templateId?: string;
   product?: string;
   client?: string;
   code?: string;
   lot?: string;
-  assignedSector: SectorId;
+  assignedSector?: OrderAssignedSector;
   formOverrides?: Partial<OrderContent>;
   linkedWorkItemId?: string | null;
+  /** Crear como borrador vacío (sin exigir plantilla ni datos). */
+  emptyDraft?: boolean;
 };
 
 export type ListOrdersFilters = {
@@ -349,19 +355,27 @@ export type ListOrdersFilters = {
   tab?: "pendientes" | "completas" | "all";
   search?: string;
   status?: OrderStatus;
-  assignedSector?: SectorId;
+  assignedSector?: OrderAssignedSector;
   product?: string;
   client?: string;
   year?: number;
   month?: number;
   dateFrom?: string;
   dateTo?: string;
+  /** Filtros de borradores vacíos / sin datos */
+  emptyProduct?: boolean;
+  emptyClient?: boolean;
+  emptyLot?: boolean;
+  unassigned?: boolean;
+  createdBy?: string;
+  emptyDraft?: boolean;
   sort?:
     | "fecha_desc"
     | "fecha_asc"
     | "producto"
     | "numero"
-    | "entrega_desc";
+    | "entrega_desc"
+    | "updated_desc";
   page?: number;
   pageSize?: number;
 };
@@ -431,6 +445,7 @@ export const PENDING_STATUSES: OrderStatus[] = [
 
 export const COMPLETE_STATUSES: OrderStatus[] = [
   "COMPLETA",
+  "COMPLETA_CON_PENDIENTES",
   "ARCHIVADA",
 ];
 

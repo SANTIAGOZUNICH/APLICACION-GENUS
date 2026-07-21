@@ -13,13 +13,16 @@ import {
 import { listDocumentsByKind } from "../adapters/order-documents-repository";
 import { canOrderDocumentAction } from "../lib/order-documents-rbac";
 import { canOrderAction } from "@/lib/orders/rbac";
+import { displayClient, displayProduct, displaySector, statusLabel } from "@/lib/orders/empty-draft";
 import {
+  createEmptyDraftApi,
   createOrderApi,
   fetchBuiltinTemplates,
   fetchOrderTemplates,
   fetchOrders,
   importSeedTemplatesApi,
 } from "@/lib/orders/orders-client";
+import { resolveInitialAssignedSector } from "@/lib/orders/empty-draft";
 import type {
   OperationalOrderRecord,
   OrderDocType,
@@ -64,7 +67,9 @@ export function NativeOrdersListView({
   const [status, setStatus] = useState<OrderStatus | "">("");
   const [year, setYear] = useState("");
   const [month, setMonth] = useState("");
-  const [sort, setSort] = useState("fecha_desc");
+  const [sort, setSort] = useState("updated_desc");
+  const [emptyDraftOnly, setEmptyDraftOnly] = useState(false);
+  const [unassignedOnly, setUnassignedOnly] = useState(false);
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<OperationalOrderRecord[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
@@ -121,6 +126,8 @@ export function NativeOrdersListView({
         sort: sort as never,
         page,
         pageSize: 25,
+        emptyDraft: emptyDraftOnly || undefined,
+        unassigned: unassignedOnly || undefined,
       });
       setItems(result.items);
       setPendingCount(result.pendingCount);
@@ -141,7 +148,7 @@ export function NativeOrdersListView({
     } finally {
       setLoading(false);
     }
-  }, [session, type, tab, search, status, oaSector, year, month, sort, page]);
+  }, [session, type, tab, search, status, oaSector, year, month, sort, page, emptyDraftOnly, unassignedOnly]);
 
   useEffect(() => {
     void load();
@@ -165,24 +172,31 @@ export function NativeOrdersListView({
       header: "Fecha",
       render: (r) => new Date(r.createdAt).toLocaleDateString("es-AR"),
     },
-    { key: "product", header: "Producto", render: (r) => r.product },
-    { key: "client", header: "Cliente", render: (r) => r.client },
+    { key: "product", header: "Producto", render: (r) => displayProduct(r.product) },
+    { key: "client", header: "Cliente", render: (r) => displayClient(r.client) },
     { key: "code", header: "Código", render: (r) => r.code || "—" },
     { key: "lot", header: "Lote", render: (r) => r.lot || "—" },
     {
       key: "assignedSector",
       header: "Sector",
-      render: (r) => <span className="text-xs">{r.assignedSector}</span>,
+      render: (r) => <span className="text-xs">{displaySector(r.assignedSector)}</span>,
     },
     {
       key: "status",
       header: "Estado",
-      render: (r) => <StatusChip status={r.status} />,
+      render: (r) => <StatusChip status={statusLabel(r.status)} />,
     },
     {
-      key: "completion",
-      header: "%",
-      render: (r) => <span className="text-xs">{r.completionPercentage}%</span>,
+      key: "updatedAt",
+      header: "Última modificación",
+      render: (r) => (
+        <span className="text-xs">{new Date(r.updatedAt).toLocaleString("es-AR")}</span>
+      ),
+    },
+    {
+      key: "createdBy",
+      header: "Creado por",
+      render: (r) => <span className="text-xs">{r.createdBy}</span>,
     },
     {
       key: "actions",
@@ -273,16 +287,44 @@ export function NativeOrdersListView({
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {canCreate && !readOnly && (
             <div className="flex flex-col items-end gap-1">
-              <Button
-                type="button"
-                onClick={() => setCreateOpen(true)}
-                data-testid={`crear-orden-${type.toLowerCase()}`}
-              >
-                <FilePlus2 className="mr-1.5 size-4" />
-                {type === "OE"
-                  ? "Crear Orden de Elaboración"
-                  : "Crear Orden de Acondicionamiento"}
-              </Button>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  data-testid={`crear-borrador-vacio-${type.toLowerCase()}`}
+                  disabled={dbUnavailable}
+                  onClick={() => {
+                    if (!session.email) return;
+                    void createEmptyDraftApi(session, {
+                      type,
+                      assignedSector: resolveInitialAssignedSector(
+                        type,
+                        sectorId,
+                        type === "OA" ? oaSector : undefined
+                      ),
+                    })
+                      .then((order) => {
+                        setSelectedId(order.id);
+                        setRefreshTick((v) => v + 1);
+                      })
+                      .catch((err) =>
+                        setError(err instanceof Error ? err.message : "No se pudo crear el borrador.")
+                      );
+                  }}
+                >
+                  <FilePlus2 className="mr-1.5 size-4" />
+                  {type === "OE" ? "Nueva OE vacía" : "Nueva OA vacía"}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => setCreateOpen(true)}
+                  data-testid={`crear-orden-${type.toLowerCase()}`}
+                >
+                  {type === "OE"
+                    ? "Crear Orden de Elaboración"
+                    : "Crear Orden de Acondicionamiento"}
+                </Button>
+              </div>
               {dbUnavailable && (
                 <p
                   className="max-w-xs text-right text-xs text-amber-800"
@@ -290,11 +332,6 @@ export function NativeOrdersListView({
                 >
                   Para crear órdenes es necesario configurar la base de datos. El botón abre el
                   formulario con la explicación.
-                </p>
-              )}
-              {!dbUnavailable && templates.length === 0 && (
-                <p className="max-w-xs text-right text-xs text-amber-800">
-                  No hay plantillas maestras. Importá o creá una desde Plantillas maestras.
                 </p>
               )}
             </div>
@@ -331,6 +368,7 @@ export function NativeOrdersListView({
               "PENDIENTE",
               "EN_PROCESO",
               "COMPLETA",
+              "COMPLETA_CON_PENDIENTES",
               "DEVUELTA_PARA_CORRECCION",
               "ANULADA",
               "ARCHIVADA",
@@ -372,12 +410,37 @@ export function NativeOrdersListView({
             onChange={(e) => setSort(e.target.value)}
             className="rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-2 text-sm"
           >
+            <option value="updated_desc">Última modificación</option>
             <option value="fecha_desc">Fecha más reciente</option>
             <option value="fecha_asc">Fecha más antigua</option>
             <option value="producto">Producto</option>
             <option value="numero">Número de orden</option>
             <option value="entrega_desc">Fecha de entrega</option>
           </select>
+        </label>
+        <label className="flex items-center gap-2 self-end pb-2 text-xs">
+          <input
+            type="checkbox"
+            checked={emptyDraftOnly}
+            onChange={(e) => {
+              setEmptyDraftOnly(e.target.checked);
+              setPage(1);
+            }}
+            data-testid="filter-empty-drafts"
+          />
+          Borradores vacíos
+        </label>
+        <label className="flex items-center gap-2 self-end pb-2 text-xs">
+          <input
+            type="checkbox"
+            checked={unassignedOnly}
+            onChange={(e) => {
+              setUnassignedOnly(e.target.checked);
+              setPage(1);
+            }}
+            data-testid="filter-unassigned"
+          />
+          Sin asignar
         </label>
       </div>
 

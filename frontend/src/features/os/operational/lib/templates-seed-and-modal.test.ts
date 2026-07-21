@@ -84,8 +84,8 @@ describe("plantillas maestras — empty state y RBAC", () => {
     expect(v.disableReasons).toContain("Falta base de datos");
   });
 
-  it("modal explica faltantes de campos", () => {
-    const v = validateCreateOrderForm("OE", {
+  it("modal permite campos vacíos; solo bloquea sin DB o sin plantilla (modo maestra)", () => {
+    const emptyOk = validateCreateOrderForm("OE", {
       templateId: SEED_OE_SERUM_TEMPLATE_ID,
       product: "",
       code: "",
@@ -95,14 +95,21 @@ describe("plantillas maestras — empty state y RBAC", () => {
       templatesCount: 1,
       dbUnavailable: false,
     });
-    expect(v.disableReasons).toEqual(
-      expect.arrayContaining([
-        "Falta producto",
-        "Falta código",
-        "Falta cliente",
-        "Falta lote",
-      ])
-    );
+    expect(emptyOk.ok).toBe(true);
+    expect(emptyOk.disableReasons).toEqual([]);
+
+    const draft = validateCreateOrderForm("OA", {
+      templateId: "",
+      product: "",
+      code: "",
+      client: "",
+      lot: "",
+      assignedSector: "SIN_ASIGNAR",
+      templatesCount: 0,
+      dbUnavailable: false,
+      emptyDraft: true,
+    });
+    expect(draft.ok).toBe(true);
   });
 });
 

@@ -14,8 +14,13 @@ export async function POST(request: Request, ctx: Ctx) {
   try {
     const { id } = await ctx.params;
     const actor = resolveOrdersActor(request);
-    const body = (await request.json()) as { confirm?: boolean };
-    const order = await getOrdersService().deliver(id, actor, Boolean(body.confirm));
+    const body = (await request.json()) as { confirm?: boolean; allowIncomplete?: boolean };
+    const order = await getOrdersService().deliver(
+      id,
+      actor,
+      Boolean(body.confirm),
+      { allowIncomplete: Boolean(body.allowIncomplete) }
+    );
     return NextResponse.json({ order, legallyOperational: true });
   } catch (err) {
     return ordersErrorResponse(err);

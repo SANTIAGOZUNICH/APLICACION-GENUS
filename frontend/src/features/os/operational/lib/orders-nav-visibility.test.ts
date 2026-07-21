@@ -42,8 +42,9 @@ describe("OE/OA navegación y CTA por sector", () => {
   it("EMASIVO/EPREMIUM ven OA, no crean, pueden editar/entregar", () => {
     expectSidebarHas("ENVASADO_MASIVO", "ordenes_acondicionamiento");
     expectSidebarHas("ENVASADO_PREMIUM", "ordenes_acondicionamiento");
-    expect(canOrderAction("OA", "create", "ENVASADO_MASIVO")).toBe(false);
-    expect(canOrderAction("OA", "create", "ENVASADO_PREMIUM")).toBe(false);
+    expect(canOrderAction("OA", "create", "ENVASADO_MASIVO")).toBe(true);
+    expect(canOrderAction("OA", "create", "ENVASADO_PREMIUM")).toBe(true);
+    expect(canOrderAction("OA", "create", "CODIFICADO")).toBe(true);
     expect(canOrderAction("OA", "edit", "ENVASADO_MASIVO")).toBe(true);
     expect(canOrderAction("OA", "deliver", "ENVASADO_PREMIUM")).toBe(true);
   });

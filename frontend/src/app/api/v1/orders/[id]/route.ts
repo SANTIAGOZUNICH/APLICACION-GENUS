@@ -35,3 +35,16 @@ export async function PATCH(request: Request, ctx: Ctx) {
     return ordersErrorResponse(err);
   }
 }
+
+export async function DELETE(request: Request, ctx: Ctx) {
+  const blocked = ensureOrdersPersistenceReady();
+  if (blocked) return blocked;
+  try {
+    const { id } = await ctx.params;
+    const actor = resolveOrdersActor(request);
+    const result = await getOrdersService().deleteEmptyDraft(id, actor);
+    return NextResponse.json({ ...result, legallyOperational: true });
+  } catch (err) {
+    return ordersErrorResponse(err);
+  }
+}
