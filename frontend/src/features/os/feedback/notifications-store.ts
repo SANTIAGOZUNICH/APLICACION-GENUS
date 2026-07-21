@@ -13,7 +13,8 @@ export type NotificationKind =
   | "mp_faltante"
   | "trabajo_atrasado"
   | "trabajo_asignado"
-  | "trabajo_entregado";
+  | "trabajo_entregado"
+  | "me_aviso";
 
 export interface OsNotification {
   id: string;

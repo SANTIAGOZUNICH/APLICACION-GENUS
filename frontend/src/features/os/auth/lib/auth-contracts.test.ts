@@ -114,7 +114,7 @@ describe("Auth contracts — MockAuthAdapter", () => {
     expect(sessionStorage.getItem(GENUS_OS_AUTH_SESSION_KEY)).toBeNull();
   });
 
-  it("autentica exactamente los siete accesos sectoriales activos", async () => {
+  it("autentica exactamente los ocho accesos sectoriales activos", async () => {
     const expected = [
       ["elaboracion@laboratoriogenus.com.ar", "elaboracion123", "ELABORACION"],
       ["produccion@laboratoriogenus.com.ar", "produccion123", "PRODUCCION"],
@@ -123,9 +123,10 @@ describe("Auth contracts — MockAuthAdapter", () => {
       ["calidad@laboratoriogenus.com.ar", "calidad123", "CALIDAD"],
       ["mp@laboratoriogenus.com.ar", "mp123", "MATERIA_PRIMA"],
       ["codificado@laboratoriogenus.com.ar", "codificado123", "CODIFICADO"],
+      ["deposito@laboratoriogenus.com.ar", "deposito123", "DEPOSITO"],
     ] as const;
 
-    expect(MOCK_PREVIEW_USERS).toHaveLength(7);
+    expect(MOCK_PREVIEW_USERS).toHaveLength(8);
 
     for (const [email, password, sector] of expected) {
       const session = await adapter.signIn({ email, password, rememberMe: false });
@@ -134,9 +135,15 @@ describe("Auth contracts — MockAuthAdapter", () => {
     }
   });
 
+  it("documenta credencial temporal de Depósito", () => {
+    const deposito = MOCK_PREVIEW_USERS.find((u) => u.sector === "DEPOSITO");
+    expect(deposito?.email).toBe("deposito@laboratoriogenus.com.ar");
+    expect(deposito?.password).toBe("deposito123");
+    expect(deposito?.jobTitle.toLowerCase()).toContain("temporal");
+  });
+
   it("rechaza accesos antiguos desactivados", async () => {
     const blocked = [
-      "deposito@laboratoriogenus.com.ar",
       "direccion@laboratoriogenus.com.ar",
       "masivo@laboratoriogenus.com.ar",
       "premium@laboratoriogenus.com.ar",

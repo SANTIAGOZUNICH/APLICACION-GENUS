@@ -22,8 +22,11 @@ import { CalidadOperationalView } from "@/features/os/operational/views/calidad-
 import { OeListView } from "@/features/os/operational/views/oe-list-view";
 import { OaListView } from "@/features/os/operational/views/oa-list-view";
 import { HistorialView } from "@/features/os/operational/views/historial-view";
-import { MateriaPrimaStockView } from "@/features/os/operational/views/materia-prima-stock-view";
-import { MateriaPrimaControlView } from "@/features/os/operational/views/materia-prima-control-view";
+import { MeIngresosView } from "@/features/os/operational/views/me-ingresos-view";
+import { MeSalidasView } from "@/features/os/operational/views/me-salidas-view";
+import { MeAvisosView } from "@/features/os/operational/views/me-avisos-view";
+import { SemanasProduccionView } from "@/features/os/operational/views/semanas-produccion-view";
+import { MpHubView } from "@/features/os/operational/views/mp-hub-view";
 import { AsignarTrabajosView } from "@/features/os/operational/views/asignar-trabajos-view";
 import { AsignacionLotesView } from "@/features/os/operational/views/asignacion-lotes-view";
 import { EntregadosView } from "@/features/os/operational/views/entregados-view";
@@ -59,14 +62,12 @@ export function TwinRouter() {
     case "ordenes-elaboracion":
       return <OeListView />;
     case "ordenes-acondicionamiento": {
-      // Masivo/Premium solo ven sus OA; Calidad/Producción ven todas.
       if (sectorId === "ENVASADO_MASIVO" || sectorId === "ENVASADO_PREMIUM") {
         return <OaListView sectorId={sectorId} />;
       }
       return <OaListView />;
     }
     case "ordenes":
-      // Compatibilidad: redirige mentalmente a los módulos OE/OA dedicados.
       return (
         <TwinShell title="Órdenes">
           <div className="space-y-10">
@@ -95,9 +96,22 @@ export function TwinRouter() {
       return <CalidadOperationalView initialTab="rechazados" />;
 
     case "stock":
-      return <MateriaPrimaStockView />;
+      return <MpHubView key="Stock" initialTab="Stock" />;
+    case "mp-ingresos":
+      return <MpHubView key="Ingresos MP" initialTab="Ingresos MP" />;
     case "control-mp":
-      return <MateriaPrimaControlView />;
+      return <MpHubView key="Control semanal" initialTab="Control semanal" />;
+    case "mp-compras":
+      return <MpHubView key="Compras MP" initialTab="Compras MP" />;
+
+    case "ingresos-me":
+      return <MeIngresosView />;
+    case "salidas-me":
+      return <MeSalidasView />;
+    case "avisos-me":
+      return <MeAvisosView />;
+    case "semanas-produccion":
+      return <SemanasProduccionView />;
 
     case "asignar-trabajos":
       return <AsignarTrabajosView />;
@@ -114,7 +128,7 @@ export function TwinRouter() {
     case "ver-calidad":
       return <CalidadOperationalView />;
     case "ver-materia-prima":
-      return <MateriaPrimaStockView />;
+      return <MpHubView initialTab="Stock" />;
 
     case "work-detail":
       return <WorkDetailView />;

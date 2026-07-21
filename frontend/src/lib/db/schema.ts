@@ -322,6 +322,81 @@ export const osNotifications = pgTable("os_notifications", {
     .defaultNow(),
 });
 
+/** Inventario ME/MP — documento JSON por fila (columnas comerciales en payload). */
+export const invMeIngresos = pgTable("inv_me_ingresos", {
+  id: uuid("id").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const invMeSalidas = pgTable("inv_me_salidas", {
+  id: uuid("id").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const invMeMaterials = pgTable("inv_me_materials", {
+  id: uuid("id").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const invMeAlerts = pgTable("inv_me_alerts", {
+  id: uuid("id").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const invMeAlertReads = pgTable(
+  "inv_me_alert_reads",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    alertId: uuid("alert_id").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    payload: jsonb("payload").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("inv_me_alert_reads_alert_email_uidx").on(table.alertId, table.actorEmail),
+  ]
+);
+
+export const invMpStock = pgTable("inv_mp_stock", {
+  id: uuid("id").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const invMpIngresos = pgTable("inv_mp_ingresos", {
+  id: uuid("id").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const invMpControl = pgTable("inv_mp_control", {
+  id: uuid("id").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const invMpCompras = pgTable("inv_mp_compras", {
+  id: uuid("id").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const invAjustes = pgTable("inv_ajustes", {
+  id: uuid("id").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const invAudit = pgTable("inv_audit", {
+  id: uuid("id").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type PlanningWeekRow = typeof planningWeeks.$inferSelect;
 export type WorkItemRow = typeof workItems.$inferSelect;
 export type OperationalEventRow = typeof operationalEvents.$inferSelect;

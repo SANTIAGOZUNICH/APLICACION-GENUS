@@ -19,6 +19,12 @@ export type TwinView =
   | "rechazados"
   | "stock"
   | "control-mp"
+  | "mp-ingresos"
+  | "mp-compras"
+  | "ingresos-me"
+  | "salidas-me"
+  | "avisos-me"
+  | "semanas-produccion"
   | "asignar-trabajos"
   | "entregados"
   | "asignacion-lotes"
@@ -59,6 +65,12 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   rechazados: "rechazados",
   stock: "stock",
   control_mp: "control-mp",
+  mp_ingresos: "mp-ingresos",
+  mp_compras: "mp-compras",
+  ingresos_me: "ingresos-me",
+  salidas_me: "salidas-me",
+  avisos_me: "avisos-me",
+  semanas_produccion: "semanas-produccion",
   asignar_trabajos: "asignar-trabajos",
   entregados: "entregados",
   asignacion_lotes: "asignacion-lotes",
@@ -88,6 +100,12 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     rechazados: "rechazados",
     stock: "stock",
     "control-mp": "control_mp",
+    "mp-ingresos": "mp_ingresos",
+    "mp-compras": "mp_compras",
+    "ingresos-me": "ingresos_me",
+    "salidas-me": "salidas_me",
+    "avisos-me": "avisos_me",
+    "semanas-produccion": "semanas_produccion",
     "asignar-trabajos": "asignar_trabajos",
     entregados: "entregados",
     "asignacion-lotes": "asignacion_lotes",
@@ -126,8 +144,14 @@ export function viewTitle(view: TwinView): string {
     pendientes: "Pendientes",
     aprobados: "Aprobados",
     rechazados: "Rechazados",
-    stock: "Stock de Materias Primas",
-    "control-mp": "Control de Materias Primas",
+    stock: "Stock",
+    "control-mp": "Control semanal",
+    "mp-ingresos": "Ingresos MP",
+    "mp-compras": "Compras MP",
+    "ingresos-me": "Ingresos ME",
+    "salidas-me": "Salidas ME",
+    "avisos-me": "Avisos",
+    "semanas-produccion": "Semanas de Producción",
     "asignar-trabajos": "Asignar trabajos",
     entregados: "Entregados",
     "asignacion-lotes": "Asignación de lotes",

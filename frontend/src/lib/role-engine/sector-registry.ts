@@ -2,15 +2,6 @@ import { defineSector } from "@/lib/role-engine/sector-definition";
 import type { SectorDefinition } from "@/lib/role-engine/types";
 import type { SectorId } from "@/types/operational/sector";
 
-const BASE_SIDEBAR = [
-  "mi_trabajo",
-  "plan_semanal",
-  "consulta",
-  "insumos",
-  "calidad",
-  "configuracion",
-] as const;
-
 export const SECTOR_DEFINITIONS: SectorDefinition[] = [
   defineSector({
     id: "ENVASADO_MASIVO",
@@ -195,16 +186,21 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Reportar faltante",
       "Consultar pedido",
     ],
-    sidebarItems: [...BASE_SIDEBAR],
+    sidebarItems: [
+      "ingresos_me",
+      "salidas_me",
+      "avisos_me",
+      "semanas_produccion",
+    ],
     creamyContext: {
       role: "Copiloto de depósito",
-      topics: ["insumos", "faltantes", "pedidos", "preparación"],
-      defaultHint: "¿Qué pedido preparamos? Revisemos envases, tapas y etiquetas.",
-      baseSuggestions: ["Ver pedidos", "Reportar faltante", "Consultar insumos"],
+      topics: ["ingresos ME", "salidas ME", "avisos", "semanas"],
+      defaultHint: "¿Cargamos un ingreso de material de empaque o revisamos avisos de stock?",
+      baseSuggestions: ["Nuevo ingreso ME", "Ver avisos", "Consultar semanas"],
     },
     emptyState: {
-      title: "Sin pedidos a preparar",
-      message: "No hay insumos pendientes de preparación.",
+      title: "Depósito listo",
+      message: "Ingresos ME, salidas ME y avisos comienzan vacíos. Sin datos históricos importados.",
     },
     homeViewKey: "deposito-home",
     dataMode: "mock",
@@ -220,16 +216,16 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     visibleEntities: ["insumo", "oe", "lote", "pedido"],
     workItemSources: ["semanas_2026"],
     allowedActions: ["Registrar entrega MP", "Reportar faltante", "Consultar OE"],
-    sidebarItems: ["stock", "control_mp", "ordenes_elaboracion", "historial"],
+    sidebarItems: ["stock", "mp_ingresos", "control_mp", "mp_compras", "ordenes_elaboracion", "historial"],
     creamyContext: {
       role: "Copiloto de materia prima",
-      topics: ["stock MP", "faltantes", "OE", "proveedores"],
-      defaultHint: "¿Qué materia prima necesitás? Puedo ayudarte con el stock y la preparación.",
-      baseSuggestions: ["Ver faltantes", "Consultar OE", "Ver stock"],
+      topics: ["stock MP", "ingresos MP", "control semanal", "compras MP"],
+      defaultHint: "¿Stock, ingreso, control semanal o compras MP?",
+      baseSuggestions: ["Ver stock", "Nuevo ingreso MP", "Control semanal"],
     },
     emptyState: {
       title: "Sin materias primas cargadas",
-      message: "Todavía no se cargó stock de materias primas.",
+      message: "Las tablas MP comienzan vacías. No se importaron registros históricos.",
     },
     homeViewKey: "materia-prima-home",
     dataMode: "work_items",

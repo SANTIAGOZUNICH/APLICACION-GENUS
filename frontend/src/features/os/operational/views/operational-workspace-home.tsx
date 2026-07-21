@@ -7,7 +7,7 @@ import {
   ElaboracionOperationalView,
   EnvasadoOperationalView,
 } from "./envasado-operational-view";
-import { MateriaPrimaStockView } from "./materia-prima-stock-view";
+import { MpHubView } from "./mp-hub-view";
 import { ProduccionOperationalView } from "./produccion-operational-view";
 import { ProduccionPanelView } from "./produccion-panel-view";
 import { AsignacionLotesView } from "./asignacion-lotes-view";
@@ -30,7 +30,7 @@ export function OperationalWorkspaceHome() {
     case "CALIDAD":
       return <CalidadOperationalView />;
     case "MATERIA_PRIMA":
-      return <MateriaPrimaStockView />;
+      return <MpHubView initialTab="Stock" />;
     case "PRODUCCION":
       return <ProduccionPanelView />;
     case "DIRECCION":
