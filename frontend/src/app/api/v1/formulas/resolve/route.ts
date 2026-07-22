@@ -9,36 +9,44 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Resuelve UNA fórmula vigente por cliente+producto.
+ * Resuelve UNA fórmula vigente por productId (preferido) o cliente+producto exacto.
  * No lista el banco. No expone GET /formulas.
  */
 export async function POST(request: Request) {
   try {
     const actor = resolveOrdersActor(request);
-    // Documentado: autenticación preview vía headers; validar sector en servidor.
     const allowed = ["CALIDAD", "PRODUCCION", "MATERIA_PRIMA", "ELABORACION", "DIRECCION"];
     if (!allowed.includes(actor.sector)) {
       return NextResponse.json({ error: "Sector no autorizado" }, { status: 403 });
     }
 
-    const body = (await request.json()) as { client?: string; product?: string };
+    const body = (await request.json()) as {
+      client?: string;
+      product?: string;
+      productId?: string;
+    };
+    const productId = (body.productId ?? "").trim();
     const client = (body.client ?? "").trim();
     const product = (body.product ?? "").trim();
-    if (!client || !product) {
+
+    if (!productId && (!client || !product)) {
       return NextResponse.json(
-        { error: "client y product son obligatorios" },
+        { error: "productId o (client y product) son obligatorios" },
         { status: 400 }
       );
     }
 
     const bank = await readyFormulaBank();
-    const lookup = bank.resolveLookup(client, product);
+    const lookup = productId
+      ? bank.resolveByProductId(productId)
+      : bank.resolveLookup(client, product);
 
     if (lookup.kind === "conflict") {
       return NextResponse.json({
         found: false,
         conflict: true,
         conflictCode: lookup.code,
+        reason: lookup.reason ?? "conflict",
         message: lookup.message,
         persistenceReady: isDatabaseConfigured(),
       });
@@ -47,6 +55,7 @@ export async function POST(request: Request) {
     if (lookup.kind === "not_found") {
       return NextResponse.json({
         found: false,
+        reason: lookup.reason ?? "name_mismatch",
         message: lookup.message,
         persistenceReady: isDatabaseConfigured(),
       });
@@ -73,6 +82,9 @@ export async function POST(request: Request) {
         formulaProductId: snap.formulaProductId,
         formulaVersionId: snap.formulaVersionId,
         versionHash: snap.versionHash,
+        displayClient: snap.displayClient,
+        displayProduct: snap.displayProduct,
+        productCode: snap.productCode,
       },
       materials: partial.materials.map((m) => ({
         materiaPrima: m.materiaPrima,

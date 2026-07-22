@@ -14,6 +14,11 @@ import {
   type FormulaVersionRecord,
   type ParsedFormulaDraft,
 } from "./types";
+import {
+  findUniqueExactProduct,
+  listActiveFormulaOptions,
+  type FormulaOption,
+} from "./formula-options";
 
 export class FormulaBankForbiddenError extends Error {
   status = 403;
@@ -56,32 +61,144 @@ export class FormulaBankService {
     this.store.importRunHashes.add(hash);
   }
 
+  /** Opciones activas para combobox (sin ingredientes/%/procedimiento). */
+  listActiveOptions(): FormulaOption[] {
+    return listActiveFormulaOptions(this.store.products, this.store.versions);
+  }
+
   /**
    * Resultado de resolución por cliente+producto.
-   * No lista el banco; solo una coincidencia o conflicto.
+   * Coincidencia exacta normalizada (display o alias). Nunca fuzzy silencioso.
    */
   resolveLookup(
     client: string,
     product: string
   ):
     | { kind: "found"; snapshot: FormulaSnapshot }
-    | { kind: "conflict"; code: string; message: string }
-    | { kind: "not_found"; message: string } {
+    | { kind: "conflict"; code: string; message: string; reason?: string }
+    | {
+        kind: "not_found";
+        message: string;
+        reason?:
+          | "name_mismatch"
+          | "no_active"
+          | "pending_client"
+          | "pending_product"
+          | "review_required"
+          | "ambiguous";
+      } {
     const nc = normalizeSearchKey(client);
     const np = normalizeSearchKey(product);
-    if (!nc || !np || isPendingClient(client) || isPendingProduct(product)) {
+    if (!nc || !np) {
       return {
         kind: "not_found",
-        message: "No se encontró una fórmula vigente para este cliente y producto.",
+        reason: "name_mismatch",
+        message: "No se encontró por diferencia de nombre.",
       };
     }
-    const prod = this.store.products.find(
+    if (isPendingClient(client)) {
+      return {
+        kind: "not_found",
+        reason: "pending_client",
+        message: "Cliente pendiente: la fórmula no está disponible para OE.",
+      };
+    }
+    if (isPendingProduct(product)) {
+      return {
+        kind: "not_found",
+        reason: "pending_product",
+        message: "Producto pendiente: la fórmula no está disponible para OE.",
+      };
+    }
+
+    // 1) Match canónico display normalizado
+    let prod = this.store.products.find(
       (p) => p.normalizedClient === nc && p.normalizedProduct === np
     );
+
+    // 2) Alias exacto único (filename/sheet/código) — sin fuzzy
+    if (!prod) {
+      const options = this.listActiveOptions();
+      const byAlias = findUniqueExactProduct(options, client, product);
+      if (byAlias) {
+        prod = this.store.products.find((p) => p.id === byAlias.productId);
+      } else {
+        const clientHits = options.filter(
+          (o) => normalizeSearchKey(o.client) === nc
+        );
+        const multi = clientHits.filter((o) => {
+          const keys = [o.productLabel, o.code, ...o.aliases].map(normalizeSearchKey);
+          return keys.includes(np);
+        });
+        if (multi.length > 1) {
+          return {
+            kind: "not_found",
+            reason: "ambiguous",
+            message: "Hay varias coincidencias: elegí una.",
+          };
+        }
+      }
+    }
+
     if (!prod) {
       return {
         kind: "not_found",
-        message: "No se encontró una fórmula vigente para este cliente y producto.",
+        reason: "name_mismatch",
+        message: "No se encontró por diferencia de nombre.",
+      };
+    }
+    return this.resolveProductRecord(prod);
+  }
+
+  /** Resolución inequívoca por productId (selector). */
+  resolveByProductId(
+    productId: string
+  ):
+    | { kind: "found"; snapshot: FormulaSnapshot }
+    | { kind: "conflict"; code: string; message: string; reason?: string }
+    | {
+        kind: "not_found";
+        message: string;
+        reason?:
+          | "name_mismatch"
+          | "no_active"
+          | "pending_client"
+          | "pending_product"
+          | "review_required"
+          | "ambiguous";
+      } {
+    const prod = this.store.products.find((p) => p.id === productId);
+    if (!prod) {
+      return {
+        kind: "not_found",
+        reason: "no_active",
+        message: "Producto sin fórmula activa.",
+      };
+    }
+    return this.resolveProductRecord(prod);
+  }
+
+  private resolveProductRecord(
+    prod: FormulaProductRecord
+  ):
+    | { kind: "found"; snapshot: FormulaSnapshot }
+    | { kind: "conflict"; code: string; message: string; reason?: string }
+    | {
+        kind: "not_found";
+        message: string;
+        reason?:
+          | "name_mismatch"
+          | "no_active"
+          | "pending_client"
+          | "pending_product"
+          | "review_required"
+          | "ambiguous";
+      } {
+    if (isPendingClient(prod.displayClient)) {
+      return {
+        kind: "not_found",
+        reason: "pending_client",
+        message: "Cliente pendiente: la fórmula no está disponible para OE.",
       };
     }
     if (!prod.activeVersionId) {
@@ -92,26 +209,30 @@ export class FormulaBankService {
         return {
           kind: "conflict",
           code: "TIED_LATEST_VERSION",
+          reason: "conflict",
           message:
-            "Existen varias versiones recientes y ninguna fue activada automáticamente.",
+            "Fórmula excluida por conflicto: existen varias versiones y ninguna fue activada.",
         };
       }
       return {
         kind: "not_found",
-        message: "No se encontró una fórmula vigente para este cliente y producto.",
+        reason: "no_active",
+        message: "Producto sin fórmula activa.",
       };
     }
     const ver = this.store.versions.find((v) => v.id === prod.activeVersionId);
     if (!ver || ver.status !== "VIGENTE") {
       return {
         kind: "not_found",
-        message: "No se encontró una fórmula vigente para este cliente y producto.",
+        reason: "no_active",
+        message: "Producto sin fórmula activa.",
       };
     }
     if (ver.reviewRequired) {
       return {
         kind: "not_found",
-        message: "La fórmula vigente requiere revisión y no está disponible para OE.",
+        reason: "review_required",
+        message: "Fórmula requiere revisión y no está disponible para OE.",
       };
     }
     return { kind: "found", snapshot: this.toSnapshot(prod, ver) };

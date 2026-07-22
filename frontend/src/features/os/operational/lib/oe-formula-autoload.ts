@@ -11,18 +11,23 @@ import type { OeContent, OeMaterialRow, OeProcedureStep } from "@/lib/orders/typ
 
 export type FormulaAutoloadStatus =
   | "idle"
+  | "select_client"
+  | "select_product"
   | "searching"
   | "found"
   | "not_found"
+  | "multiple"
   | "conflict"
   | "error"
   | "skipped_manual"
-  | "awaiting_confirm";
+  | "awaiting_confirm"
+  | "did_you_mean";
 
 export type FormulaResolvePayload = {
   found: boolean;
   conflict?: boolean;
   conflictCode?: string;
+  reason?: string;
   message?: string;
   persistenceReady?: boolean;
   error?: string;
@@ -108,23 +113,66 @@ export function applyFormulaResolveToOe(
   };
 }
 
-export function statusMessage(status: FormulaAutoloadStatus): string {
+export function clearFormulaFromOe(content: OeContent): OeContent {
+  return recomputeOeDerived({
+    ...content,
+    materials: [emptyOeMaterial()],
+    procedureSteps: [],
+  });
+}
+
+export function statusMessage(
+  status: FormulaAutoloadStatus,
+  detail?: string
+): string {
   switch (status) {
+    case "select_client":
+      return "Seleccioná un cliente.";
+    case "select_product":
+      return "Seleccioná un producto.";
     case "searching":
       return "Buscando fórmula…";
     case "found":
-      return "Fórmula encontrada y cargada";
+      return "Fórmula encontrada y cargada.";
     case "not_found":
-      return "No encontramos una fórmula maestra; podés completar manualmente";
+      return (
+        detail ||
+        "No existe fórmula activa; podés completar la OE manualmente."
+      );
+    case "multiple":
+      return "Hay varias coincidencias: elegí una.";
+    case "did_you_mean":
+      return detail ? `¿Quisiste decir ${detail}?` : "¿Quisiste decir…?";
     case "conflict":
-      return "Hay varias versiones posibles; se requiere revisión (no se eligió automáticamente)";
+      return "Fórmula excluida por conflicto; no se eligió automáticamente.";
     case "error":
-      return "No se pudo consultar el banco de fórmulas. Reintentá o completá manualmente.";
+      return "No pudimos consultar el banco de fórmulas";
     case "skipped_manual":
       return "Se conservó la fórmula editada manualmente";
     case "awaiting_confirm":
       return "¿Reemplazar la fórmula cargada por la del nuevo cliente/producto?";
     default:
       return "";
+  }
+}
+
+/** Mapea reason del API a mensaje de estado. */
+export function messageForResolveReason(reason?: string, apiMessage?: string): string {
+  switch (reason) {
+    case "pending_client":
+      return "Cliente pendiente: la fórmula no está disponible para OE.";
+    case "review_required":
+      return "Fórmula requiere revisión y no está disponible para OE.";
+    case "no_active":
+      return "Producto sin fórmula activa; podés completar la OE manualmente.";
+    case "ambiguous":
+      return "Hay varias coincidencias: elegí una.";
+    case "name_mismatch":
+      return "No se encontró por diferencia de nombre; podés completar manualmente.";
+    default:
+      return (
+        apiMessage ||
+        "No existe fórmula activa; podés completar la OE manualmente."
+      );
   }
 }

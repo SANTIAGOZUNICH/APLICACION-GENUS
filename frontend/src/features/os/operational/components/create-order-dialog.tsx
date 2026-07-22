@@ -16,11 +16,16 @@ import type {
   OrderTemplateRecord,
 } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
+import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
   emptyTemplatesExplanation,
   validateCreateOrderForm,
 } from "../lib/create-order-validation";
 import { LegalOrderPreview } from "./legal-order-preview";
+import {
+  FormulaClientProductPickers,
+  type SelectedFormulaOption,
+} from "./formula-client-product-pickers";
 
 interface CreateOrderDialogProps {
   open: boolean;
@@ -51,11 +56,17 @@ export function CreateOrderDialog({
   onImportTemplate,
   onPreviewTemplate,
 }: CreateOrderDialogProps) {
+  const { sectorId, email } = usePreviewSession();
+  const session = useMemo(
+    () => ({ email: email ?? "", sector: sectorId }),
+    [email, sectorId]
+  );
   const [templateId, setTemplateId] = useState("");
   const [lot, setLot] = useState("");
   const [client, setClient] = useState("");
   const [code, setCode] = useState("");
   const [product, setProduct] = useState("");
+  const [boundProductId, setBoundProductId] = useState<string | null>(null);
   const [assignedSector, setAssignedSector] = useState<SectorId>(defaultSector);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +79,7 @@ export function CreateOrderDialog({
     setProduct(first?.productName ?? "");
     setCode(first?.productCode ?? "");
     setClient(first?.brandClient ?? "");
+    setBoundProductId(null);
     setLot("");
     setAssignedSector(defaultSector);
     setError(null);
@@ -135,7 +147,7 @@ export function CreateOrderDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg overflow-visible">
           <DialogHeader>
             <DialogTitle>
               {type === "OE"
@@ -274,19 +286,68 @@ export function CreateOrderDialog({
                 </p>
               )}
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="space-y-1">
-                <span className="text-xs text-[var(--os-text-muted)]">Producto</span>
-                <input
-                  value={product}
-                  onChange={(e) => setProduct(e.target.value)}
-                  className="w-full rounded border px-3 py-2"
-                  data-testid="create-order-product"
-                />
-                {validation.errors.product && (
-                  <p className="text-xs text-rose-700">{validation.errors.product}</p>
-                )}
-              </label>
+            <div className="grid grid-cols-2 gap-2 overflow-visible">
+              {type === "OE" ? (
+                <div className="col-span-2 overflow-visible">
+                  <FormulaClientProductPickers
+                    session={session}
+                    client={client}
+                    product={product}
+                    enabled={!dbUnavailable}
+                    selectedProductId={boundProductId}
+                    onClientTextChange={(v) => {
+                      setClient(v);
+                      setProduct("");
+                      setBoundProductId(null);
+                    }}
+                    onProductTextChange={(v) => {
+                      setProduct(v);
+                      setBoundProductId(null);
+                    }}
+                    onClientSelected={(v) => {
+                      setClient(v);
+                      setProduct("");
+                      setBoundProductId(null);
+                    }}
+                    onProductSelected={(opt: SelectedFormulaOption) => {
+                      setClient(opt.client);
+                      setProduct(opt.productLabel);
+                      setCode(opt.code || code);
+                      setBoundProductId(opt.productId);
+                    }}
+                    onCommitProductText={() => {
+                      /* create: solo exacto vía selección; no carga fórmula aquí */
+                    }}
+                  />
+                </div>
+              ) : (
+                <>
+                  <label className="space-y-1">
+                    <span className="text-xs text-[var(--os-text-muted)]">Producto</span>
+                    <input
+                      value={product}
+                      onChange={(e) => setProduct(e.target.value)}
+                      className="w-full rounded border px-3 py-2"
+                      data-testid="create-order-product"
+                    />
+                    {validation.errors.product && (
+                      <p className="text-xs text-rose-700">{validation.errors.product}</p>
+                    )}
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-xs text-[var(--os-text-muted)]">Cliente</span>
+                    <input
+                      value={client}
+                      onChange={(e) => setClient(e.target.value)}
+                      className="w-full rounded border px-3 py-2"
+                      data-testid="create-order-client"
+                    />
+                    {validation.errors.client && (
+                      <p className="text-xs text-rose-700">{validation.errors.client}</p>
+                    )}
+                  </label>
+                </>
+              )}
               <label className="space-y-1">
                 <span className="text-xs text-[var(--os-text-muted)]">Código</span>
                 <input
@@ -297,18 +358,6 @@ export function CreateOrderDialog({
                 />
                 {validation.errors.code && (
                   <p className="text-xs text-rose-700">{validation.errors.code}</p>
-                )}
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs text-[var(--os-text-muted)]">Cliente</span>
-                <input
-                  value={client}
-                  onChange={(e) => setClient(e.target.value)}
-                  className="w-full rounded border px-3 py-2"
-                  data-testid="create-order-client"
-                />
-                {validation.errors.client && (
-                  <p className="text-xs text-rose-700">{validation.errors.client}</p>
                 )}
               </label>
               <label className="space-y-1">

@@ -40,12 +40,16 @@ import { validateDeliver } from "@/lib/orders/validators";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/orders/actor";
 import {
   applyFormulaResolveToOe,
+  clearFormulaFromOe,
   formulaIdentityKey,
+  messageForResolveReason,
   needsReplaceConfirmation,
   oeHasFormulaContent,
   type FormulaAutoloadStatus,
 } from "../lib/oe-formula-autoload";
 import { OeFormSections } from "./oe-form-sections";
+import type { SelectedFormulaOption } from "./formula-client-product-pickers";
+import { fetchFormulaProductOptionsApi } from "@/lib/orders/orders-client";
 import { OaFormSections, renumberOaMaterials } from "./oa-form-sections";
 import { OaSimpleWizard } from "./oa-simple-wizard";
 import { LegalOrderPreview } from "./legal-order-preview";
@@ -101,7 +105,10 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const versionRef = useRef(1);
   const [formulaStatus, setFormulaStatus] = useState<FormulaAutoloadStatus>("idle");
+  const [formulaStatusDetail, setFormulaStatusDetail] = useState<string | undefined>();
   const [formulaReplaceOpen, setFormulaReplaceOpen] = useState(false);
+  const [didYouMean, setDidYouMean] = useState<SelectedFormulaOption | null>(null);
+  const [boundProductId, setBoundProductId] = useState<string | null>(null);
   const formulaIdentityRef = useRef<string | null>(null);
   const formulaResolveSeq = useRef(0);
   const pendingResolvePayloadRef = useRef<Awaited<
@@ -144,15 +151,22 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         formulaVersionId: o.formulaVersionId,
         formulaVersionHash: o.formulaVersionHash,
       };
+      setBoundProductId(o.formulaProductId);
+      setDidYouMean(null);
       if (o.formData.kind === "OE") {
         const client = o.formData.header.client.trim();
         const product = o.formData.header.productName.trim();
         formulaIdentityRef.current =
           client && product ? formulaIdentityKey(client, product) : null;
+        if (!client) setFormulaStatus("select_client");
+        else if (!product) setFormulaStatus("select_product");
+        else if (o.formulaVersionId) setFormulaStatus("found");
+        else setFormulaStatus("idle");
       } else {
         formulaIdentityRef.current = null;
+        setFormulaStatus("idle");
       }
-      setFormulaStatus("idle");
+      setFormulaStatusDetail(undefined);
       setSaveState("idle");
       setConflict(null);
     } catch (err) {
@@ -287,7 +301,19 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           formulaVersionId: applied.formulaVersionId,
           formulaVersionHash: applied.formulaVersionHash,
         };
-        const next = normalizeOrderContent(applied.content);
+        setBoundProductId(applied.formulaProductId);
+        setDidYouMean(null);
+        const withCode =
+          payload.snapshot?.productCode
+            ? {
+                ...applied.content,
+                header: {
+                  ...applied.content.header,
+                  code: payload.snapshot.productCode || applied.content.header.code,
+                },
+              }
+            : applied.content;
+        const next = normalizeOrderContent(withCode);
         setSaveState("dirty");
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => {
@@ -296,18 +322,53 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         return next;
       });
       setFormulaStatus("found");
+      setFormulaStatusDetail(undefined);
     },
     [persist]
   );
 
+  const invalidateBoundFormula = useCallback(() => {
+    setBoundProductId(null);
+    formulaSnapshotRef.current = {
+      formulaProductId: null,
+      formulaVersionId: null,
+      formulaVersionHash: null,
+    };
+    formulaIdentityRef.current = null;
+    setDidYouMean(null);
+    setForm((prev) => {
+      if (!prev || prev.kind !== "OE") return prev;
+      if (!oeHasFormulaContent(prev)) return prev;
+      const cleared = normalizeOrderContent(clearFormulaFromOe(prev));
+      setSaveState("dirty");
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        void persist(cleared, versionRef.current);
+      }, 400);
+      return cleared;
+    });
+  }, [persist]);
+
   const runFormulaResolve = useCallback(
-    async (client: string, product: string, forceReplace: boolean) => {
+    async (
+      client: string,
+      product: string,
+      forceReplace: boolean,
+      productId?: string
+    ) => {
       if (!canEditFormula || locked) return;
       const identity = formulaIdentityKey(client, product);
       const seq = ++formulaResolveSeq.current;
       setFormulaStatus("searching");
+      setFormulaStatusDetail(undefined);
+      setDidYouMean(null);
       try {
-        const result = await resolveFormulaMasterApi(session, client, product);
+        const result = await resolveFormulaMasterApi(
+          session,
+          client,
+          product,
+          productId
+        );
         if (seq !== formulaResolveSeq.current) return;
 
         if (result.persistenceReady === false) {
@@ -317,10 +378,50 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         }
         if (result.conflict) {
           setFormulaStatus("conflict");
+          setFormulaStatusDetail(result.message);
           return;
         }
         if (!result.found) {
+          if (result.reason === "ambiguous") {
+            setFormulaStatus("multiple");
+            return;
+          }
+          // Sugerencia única de alta confianza (solo UI; no carga sola).
+          if (!productId && client.trim() && product.trim()) {
+            try {
+              const opts = await fetchFormulaProductOptionsApi(
+                session,
+                client,
+                product
+              );
+              const high = opts.products.filter(
+                (p) => p.rank === "exact_prefix" || p.rank === "word_prefix"
+              );
+              if (high.length === 1) {
+                const only = high[0]!;
+                setDidYouMean({
+                  productId: only.productId,
+                  versionId: only.versionId,
+                  client: only.client,
+                  productLabel: only.productLabel,
+                  code: only.code,
+                });
+                setFormulaStatus("did_you_mean");
+                setFormulaStatusDetail(only.productLabel);
+                return;
+              }
+              if (opts.products.length > 1) {
+                setFormulaStatus("multiple");
+                return;
+              }
+            } catch {
+              /* ignore suggestion fetch */
+            }
+          }
           setFormulaStatus("not_found");
+          setFormulaStatusDetail(
+            messageForResolveReason(result.reason, result.message)
+          );
           return;
         }
 
@@ -350,38 +451,105 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         setError(
           err instanceof Error
             ? err.message
-            : "No se pudo consultar el banco de fórmulas."
+            : "No pudimos consultar el banco de fórmulas"
         );
       }
     },
     [canEditFormula, locked, session, applyResolvedFormula]
   );
 
+  // Sin auto-resolve por texto: solo selección explícita / exacto único en Enter.
+  const onClientTextChange = useCallback(
+    (nextClient: string) => {
+      updateForm((prev) => {
+        if (prev.kind !== "OE") return prev;
+        return {
+          ...prev,
+          header: { ...prev.header, client: nextClient, productName: "" },
+        };
+      });
+      invalidateBoundFormula();
+      setFormulaStatus(nextClient.trim() ? "select_product" : "select_client");
+      setFormulaStatusDetail(undefined);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- updateForm estable por closure
+    [invalidateBoundFormula]
+  );
+
+  const onProductTextChange = useCallback(
+    (nextProduct: string) => {
+      updateForm((prev) => {
+        if (prev.kind !== "OE") return prev;
+        return {
+          ...prev,
+          header: { ...prev.header, productName: nextProduct },
+        };
+      });
+      if (boundProductId) {
+        invalidateBoundFormula();
+      }
+      setFormulaStatus("select_product");
+      setFormulaStatusDetail(undefined);
+      setDidYouMean(null);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [boundProductId, invalidateBoundFormula]
+  );
+
+  const onClientSelected = useCallback(
+    (nextClient: string) => {
+      updateForm((prev) => {
+        if (prev.kind !== "OE") return prev;
+        return {
+          ...prev,
+          header: { ...prev.header, client: nextClient, productName: "" },
+        };
+      });
+      invalidateBoundFormula();
+      setFormulaStatus("select_product");
+      setFormulaStatusDetail(undefined);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [invalidateBoundFormula]
+  );
+
+  const onProductSelected = useCallback(
+    (option: SelectedFormulaOption) => {
+      updateForm((prev) => {
+        if (prev.kind !== "OE") return prev;
+        return {
+          ...prev,
+          header: {
+            ...prev.header,
+            client: option.client,
+            productName: option.productLabel,
+            code: option.code || prev.header.code,
+          },
+        };
+      });
+      void runFormulaResolve(
+        option.client,
+        option.productLabel,
+        false,
+        option.productId
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [runFormulaResolve]
+  );
+
+  const onCommitProductText = useCallback(
+    (client: string, product: string) => {
+      // Texto libre: intentar exacto único vía API (aliases). Nunca fuzzy auto-load.
+      void runFormulaResolve(client, product, false);
+    },
+    [runFormulaResolve]
+  );
+
   const oeClient = form?.kind === "OE" ? form.header.client : "";
   const oeProduct = form?.kind === "OE" ? form.header.productName : "";
-
-  // Auto-resolve cuando cliente + producto tienen valor (debounce 500 ms).
-  useEffect(() => {
-    if (!canEditFormula || locked) return;
-    const client = oeClient.trim();
-    const product = oeProduct.trim();
-    if (!client || !product) {
-      return;
-    }
-    const identity = formulaIdentityKey(client, product);
-    if (
-      identity === formulaIdentityRef.current &&
-      formulaSnapshotRef.current.formulaVersionId &&
-      formRef.current?.kind === "OE" &&
-      formRef.current.materials.some((m) => m.formulaPct != null)
-    ) {
-      return;
-    }
-    const t = setTimeout(() => {
-      void runFormulaResolve(client, product, false);
-    }, 500);
-    return () => clearTimeout(t);
-  }, [oeClient, oeProduct, canEditFormula, locked, runFormulaResolve]);
+  void oeClient;
+  void oeProduct;
 
   const updateForm = (updater: (prev: OrderContent) => OrderContent) => {
     if (!form || !canEdit) return;
@@ -701,6 +869,19 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             actorEmail: email ?? undefined,
           }}
           formulaStatus={formulaStatus}
+          formulaStatusDetail={formulaStatusDetail}
+          session={session}
+          selectedProductId={boundProductId}
+          didYouMean={didYouMean}
+          onAcceptDidYouMean={() => {
+            if (!didYouMean) return;
+            onProductSelected(didYouMean);
+          }}
+          onClientTextChange={onClientTextChange}
+          onProductTextChange={onProductTextChange}
+          onClientSelected={onClientSelected}
+          onProductSelected={onProductSelected}
+          onCommitProductText={onCommitProductText}
           onChange={(next) => updateForm(() => recomputeOeDerived(next))}
           onAddMaterial={() =>
             updateForm((prev) => {

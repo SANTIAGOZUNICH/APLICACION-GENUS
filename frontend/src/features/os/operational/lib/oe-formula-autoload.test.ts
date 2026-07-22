@@ -42,11 +42,14 @@ describe("oe-formula-autoload", () => {
   });
 
   it("fórmula no encontrada / conflicto / error tienen mensajes claros", () => {
-    expect(statusMessage("not_found")).toMatch(/completar manualmente/i);
-    expect(statusMessage("conflict")).toMatch(/no se eligió/i);
-    expect(statusMessage("error")).toMatch(/No se pudo consultar/i);
+    expect(statusMessage("not_found")).toMatch(/completar|manualmente|activa/i);
+    expect(statusMessage("conflict")).toMatch(/conflicto/i);
+    expect(statusMessage("error")).toMatch(/No pudimos consultar/i);
     expect(statusMessage("searching")).toMatch(/Buscando/i);
     expect(statusMessage("found")).toMatch(/cargada/i);
+    expect(statusMessage("select_client")).toMatch(/cliente/i);
+    expect(statusMessage("select_product")).toMatch(/producto/i);
+    expect(statusMessage("multiple")).toMatch(/varias coincidencias/i);
   });
 
   it("no sobrescribe sin confirmación si ya hay edición manual", () => {

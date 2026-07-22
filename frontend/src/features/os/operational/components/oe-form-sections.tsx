@@ -2,8 +2,13 @@
 
 import type { OeContent } from "@/lib/orders/types";
 import { computeKgRealUtilizado } from "@/lib/orders/content";
+import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type { FormulaAutoloadStatus } from "../lib/oe-formula-autoload";
 import { statusMessage } from "../lib/oe-formula-autoload";
+import {
+  FormulaClientProductPickers,
+  type SelectedFormulaOption,
+} from "./formula-client-product-pickers";
 
 export type OeFieldMode = {
   /** CALIDAD / PRODUCCION / MP */
@@ -23,6 +28,16 @@ interface OeFormSectionsProps {
   onRemoveMaterial: (id: string) => void;
   /** Estado de resolución automática de fórmula maestra. */
   formulaStatus?: FormulaAutoloadStatus;
+  formulaStatusDetail?: string;
+  session?: OrdersClientSession | null;
+  selectedProductId?: string | null;
+  didYouMean?: SelectedFormulaOption | null;
+  onAcceptDidYouMean?: () => void;
+  onClientTextChange?: (client: string) => void;
+  onProductTextChange?: (product: string) => void;
+  onClientSelected?: (client: string) => void;
+  onProductSelected?: (option: SelectedFormulaOption) => void;
+  onCommitProductText?: (client: string, product: string) => void;
 }
 
 function Field({
@@ -64,6 +79,16 @@ export function OeFormSections({
   onAddMaterial,
   onRemoveMaterial,
   formulaStatus = "idle",
+  formulaStatusDetail,
+  session = null,
+  selectedProductId = null,
+  didYouMean = null,
+  onAcceptDidYouMean,
+  onClientTextChange,
+  onProductTextChange,
+  onClientSelected,
+  onProductSelected,
+  onCommitProductText,
 }: OeFormSectionsProps) {
   const mode: OeFieldMode = fieldMode ?? {
     canEditFormula: !readOnly,
@@ -74,6 +99,14 @@ export function OeFormSections({
   const h = content.header;
   const setHeader = (patch: Partial<OeContent["header"]>) =>
     onChange({ ...content, header: { ...h, ...patch } });
+
+  const usePickers =
+    !!session &&
+    !!onClientTextChange &&
+    !!onProductTextChange &&
+    !!onClientSelected &&
+    !!onProductSelected &&
+    !!onCommitProductText;
 
   const patchMaterial = (
     id: string,
@@ -93,9 +126,11 @@ export function OeFormSections({
     });
   };
 
+  const bannerMsg = statusMessage(formulaStatus, formulaStatusDetail);
+
   return (
     <div className="space-y-4" data-testid="oe-form-sections">
-      {formulaStatus !== "idle" && statusMessage(formulaStatus) ? (
+      {formulaStatus !== "idle" && bannerMsg ? (
         <p
           className={`rounded border px-2 py-1.5 text-xs ${
             formulaStatus === "error" || formulaStatus === "conflict"
@@ -108,19 +143,46 @@ export function OeFormSections({
           data-status={formulaStatus}
           role="status"
         >
-          {statusMessage(formulaStatus)}
+          {bannerMsg}
         </p>
       ) : null}
-      <details open className="rounded border border-[var(--os-border)] p-3">
+      <details open className="rounded border border-[var(--os-border)] p-3 overflow-visible">
         <summary className="cursor-pointer font-medium">Encabezado OE</summary>
-        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          <Field
-            label="Producto"
-            value={h.productName}
-            readOnly={formulaLocked && opsLocked}
-            lockedLook={formulaLocked}
-            onChange={(v) => setHeader({ productName: v })}
-          />
+        <div className="mt-3 grid gap-2 sm:grid-cols-3 overflow-visible">
+          {usePickers ? (
+            <div className="sm:col-span-3 overflow-visible">
+              <FormulaClientProductPickers
+                session={session!}
+                client={h.client}
+                product={h.productName}
+                enabled={!formulaLocked && !opsLocked}
+                selectedProductId={selectedProductId}
+                didYouMean={didYouMean}
+                onAcceptDidYouMean={onAcceptDidYouMean}
+                onClientTextChange={onClientTextChange!}
+                onProductTextChange={onProductTextChange!}
+                onClientSelected={onClientSelected!}
+                onProductSelected={onProductSelected!}
+                onCommitProductText={onCommitProductText!}
+              />
+            </div>
+          ) : (
+            <>
+              <Field
+                label="Producto"
+                value={h.productName}
+                readOnly={formulaLocked && opsLocked}
+                lockedLook={formulaLocked}
+                onChange={(v) => setHeader({ productName: v })}
+              />
+              <Field
+                label="Cliente"
+                value={h.client}
+                readOnly={opsLocked && formulaLocked}
+                onChange={(v) => setHeader({ client: v })}
+              />
+            </>
+          )}
           <Field
             label="Código"
             value={h.code}
@@ -153,12 +215,6 @@ export function OeFormSections({
             value={h.vigencia}
             readOnly={opsLocked && formulaLocked}
             onChange={(v) => setHeader({ vigencia: v })}
-          />
-          <Field
-            label="Cliente"
-            value={h.client}
-            readOnly={opsLocked && formulaLocked}
-            onChange={(v) => setHeader({ client: v })}
           />
           <Field
             label="Envase cúbica"

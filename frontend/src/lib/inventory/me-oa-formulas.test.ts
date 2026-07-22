@@ -436,11 +436,12 @@ describe("Banco privado de fórmulas (sintético)", () => {
     expect(old?.ingredients[0]?.percentage).toBe(50);
   });
 
-  it("no existe endpoint público de listado del banco (solo resolve/by-version/proposals)", async () => {
+  it("no existe endpoint público de listado del banco (solo resolve/by-version/proposals/options)", async () => {
     const routes = [
       "src/app/api/v1/formulas/resolve/route.ts",
       "src/app/api/v1/formulas/by-version/route.ts",
       "src/app/api/v1/formulas/proposals/route.ts",
+      "src/app/api/v1/formulas/options/route.ts",
     ];
     const fs = await import("node:fs");
     expect(fs.existsSync("src/app/api/v1/formulas/route.ts")).toBe(false);

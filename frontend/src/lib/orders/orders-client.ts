@@ -283,21 +283,26 @@ export async function saveOrderProgressApi(
   return data.order;
 }
 
-/** Resuelve UNA fórmula vigente por cliente+producto. No lista el banco. */
+/** Resuelve UNA fórmula vigente por productId o cliente+producto exacto. */
 export async function resolveFormulaMasterApi(
   session: OrdersClientSession,
   client: string,
-  product: string
+  product: string,
+  productId?: string
 ): Promise<{
   found: boolean;
   conflict?: boolean;
   conflictCode?: string;
+  reason?: string;
   message?: string;
   persistenceReady?: boolean;
   snapshot?: {
     formulaProductId: string;
     formulaVersionId: string;
     versionHash: string;
+    displayClient?: string;
+    displayProduct?: string;
+    productCode?: string;
   };
   materials?: Array<{
     materiaPrima: string;
@@ -309,7 +314,11 @@ export async function resolveFormulaMasterApi(
   const res = await fetch("/api/v1/formulas/resolve", {
     method: "POST",
     headers: actorHeaders(session),
-    body: JSON.stringify({ client, product }),
+    body: JSON.stringify(
+      productId
+        ? { productId }
+        : { client, product }
+    ),
     cache: "no-store",
   });
   // Errores de red/DB no deben silenciarse: el caller muestra status error.
@@ -325,12 +334,16 @@ export async function resolveFormulaMasterApi(
     found: boolean;
     conflict?: boolean;
     conflictCode?: string;
+    reason?: string;
     message?: string;
     persistenceReady?: boolean;
     snapshot?: {
       formulaProductId: string;
       formulaVersionId: string;
       versionHash: string;
+      displayClient?: string;
+      displayProduct?: string;
+      productCode?: string;
     };
     materials?: Array<{
       materiaPrima?: string;
@@ -343,6 +356,7 @@ export async function resolveFormulaMasterApi(
     found: data.found,
     conflict: data.conflict,
     conflictCode: data.conflictCode,
+    reason: data.reason,
     message: data.message,
     persistenceReady: data.persistenceReady,
     snapshot: data.snapshot,
@@ -352,6 +366,61 @@ export async function resolveFormulaMasterApi(
       formulaPct: m.formulaPct ?? null,
     })),
     procedureSteps: data.procedureSteps,
+  };
+}
+
+export type FormulaClientOption = { client: string; rank?: string };
+export type FormulaProductOption = {
+  productId: string;
+  versionId: string;
+  productLabel: string;
+  client: string;
+  code: string;
+  aliases: string[];
+  rank?: string;
+};
+
+export async function fetchFormulaClientOptionsApi(
+  session: OrdersClientSession,
+  q: string
+): Promise<{ clients: FormulaClientOption[]; persistenceReady?: boolean }> {
+  const params = new URLSearchParams({ scope: "clients", q, limit: "10" });
+  const res = await fetch(`/api/v1/formulas/options?${params}`, {
+    headers: actorHeaders(session),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return (await res.json()) as {
+    clients: FormulaClientOption[];
+    persistenceReady?: boolean;
+  };
+}
+
+export async function fetchFormulaProductOptionsApi(
+  session: OrdersClientSession,
+  client: string,
+  q: string
+): Promise<{ products: FormulaProductOption[]; persistenceReady?: boolean }> {
+  const params = new URLSearchParams({
+    scope: "products",
+    client,
+    q,
+    limit: "10",
+  });
+  const res = await fetch(`/api/v1/formulas/options?${params}`, {
+    headers: actorHeaders(session),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return (await res.json()) as {
+    products: FormulaProductOption[];
+    persistenceReady?: boolean;
   };
 }
 
