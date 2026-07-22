@@ -29,6 +29,13 @@
       "when": 1784640000000,
       "tag": "0004_formula_bank_and_me_oa",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784740000000,
+      "tag": "0005_avisos_mp_stock_coa",
+      "breakpoints": true
     }
   ]
 }

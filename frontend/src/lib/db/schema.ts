@@ -1,6 +1,9 @@
 import {
+  bigint,
+  boolean,
   check,
   date,
+  doublePrecision,
   integer,
   jsonb,
   pgEnum,
@@ -512,6 +515,192 @@ export const formulaProposals = pgTable("formula_proposals", {
   decidedBy: text("decided_by"),
   decidedAt: timestamp("decided_at", { withTimezone: true }),
   payload: jsonb("payload").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Avisos internos (mensajería por sector) — migración 0005. */
+export const osInternalMessages = pgTable("os_internal_messages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  priority: text("priority").notNull().default("NORMAL"),
+  fromSector: text("from_sector").notNull(),
+  fromEmail: text("from_email").notNull(),
+  toSectors: jsonb("to_sectors").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  audit: jsonb("audit").notNull().default({}),
+});
+
+export const osInternalMessageRecipients = pgTable(
+  "os_internal_message_recipients",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => osInternalMessages.id, { onDelete: "cascade" }),
+    sector: text("sector").notNull(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("os_internal_message_recipients_msg_sector_uidx").on(
+      table.messageId,
+      table.sector
+    ),
+  ]
+);
+
+/** Control semanal MP v2 — migración 0005. */
+export const mpWeeklyControls = pgTable("mp_weekly_controls", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  status: text("status").notNull().default("BORRADOR"),
+  client: text("client").notNull().default(""),
+  product: text("product").notNull().default(""),
+  quantityKg: doublePrecision("quantity_kg"),
+  linkedOeId: uuid("linked_oe_id"),
+  driveFileId: text("drive_file_id"),
+  driveModifiedTime: text("drive_modified_time"),
+  driveChecksum: text("drive_checksum"),
+  formulaSnapshot: jsonb("formula_snapshot"),
+  source: text("source"),
+  createdBy: text("created_by").notNull(),
+  updatedBy: text("updated_by").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  audit: jsonb("audit").notNull().default({}),
+});
+
+export const mpWeeklyControlLines = pgTable("mp_weekly_control_lines", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  controlId: uuid("control_id")
+    .notNull()
+    .references(() => mpWeeklyControls.id, { onDelete: "cascade" }),
+  sortOrder: integer("sort_order").notNull().default(0),
+  codigo: text("codigo").notNull().default(""),
+  materiaPrima: text("materia_prima").notNull().default(""),
+  formulaPct: doublePrecision("formula_pct"),
+  kgNecesarios: doublePrecision("kg_necesarios"),
+  kgEditados: doublePrecision("kg_editados"),
+  stockActual: doublePrecision("stock_actual"),
+  stockProyectado: doublePrecision("stock_proyectado"),
+  diferencia: doublePrecision("diferencia"),
+  estado: text("estado").notNull().default("Sin código"),
+  lote: text("lote").notNull().default(""),
+  preparado: boolean("preparado").notNull().default(false),
+  observacion: text("observacion").notNull().default(""),
+  payload: jsonb("payload").notNull().default({}),
+});
+
+/** Ledger stock MP — migración 0005. */
+export const mpStockBalances = pgTable("mp_stock_balances", {
+  codigo: text("codigo").primaryKey(),
+  descripcion: text("descripcion").notNull().default(""),
+  saldoInicial: doublePrecision("saldo_inicial").notNull().default(0),
+  saldoInicialSeededAt: timestamp("saldo_inicial_seeded_at", { withTimezone: true }),
+  stockActual: doublePrecision("stock_actual").notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  payload: jsonb("payload").notNull().default({}),
+});
+
+export const mpStockMovements = pgTable(
+  "mp_stock_movements",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    codigo: text("codigo").notNull(),
+    kind: text("kind").notNull(),
+    quantity: doublePrecision("quantity").notNull(),
+    balanceAfter: doublePrecision("balance_after"),
+    reason: text("reason").notNull().default(""),
+    refType: text("ref_type"),
+    refId: text("ref_id"),
+    lote: text("lote"),
+    proveedor: text("proveedor"),
+    documento: text("documento"),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    reversed: boolean("reversed").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    payload: jsonb("payload").notNull().default({}),
+  },
+  (table) => [
+    uniqueIndex("mp_stock_movements_idempotency_uidx").on(table.idempotencyKey),
+  ]
+);
+
+/** COA metadata — binarios en Drive; migración 0005. */
+export const coaFolders = pgTable(
+  "coa_folders",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    parentId: uuid("parent_id"),
+    name: text("name").notNull(),
+    driveFolderId: text("drive_folder_id").notNull(),
+    path: text("path").notNull().default("/"),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    archived: boolean("archived").notNull().default(false),
+    audit: jsonb("audit").notNull().default({}),
+  },
+  (table) => [
+    uniqueIndex("coa_folders_drive_folder_uidx").on(table.driveFolderId),
+  ]
+);
+
+export const coaFiles = pgTable(
+  "coa_files",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    folderId: uuid("folder_id")
+      .notNull()
+      .references(() => coaFolders.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull().default(0),
+    driveFileId: text("drive_file_id").notNull(),
+    currentVersion: integer("current_version").notNull().default(1),
+    createdBy: text("created_by").notNull(),
+    updatedBy: text("updated_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    archived: boolean("archived").notNull().default(false),
+    audit: jsonb("audit").notNull().default({}),
+  },
+  (table) => [uniqueIndex("coa_files_drive_file_uidx").on(table.driveFileId)]
+);
+
+export const coaFileVersions = pgTable(
+  "coa_file_versions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    fileId: uuid("file_id")
+      .notNull()
+      .references(() => coaFiles.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    driveFileId: text("drive_file_id").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull().default(0),
+    uploadedBy: text("uploaded_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    checksum: text("checksum"),
+  },
+  (table) => [
+    uniqueIndex("coa_file_versions_file_version_uidx").on(table.fileId, table.version),
+  ]
+);
+
+export const featureAuditEvents = pgTable("feature_audit_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  domain: text("domain").notNull(),
+  action: text("action").notNull(),
+  actorEmail: text("actor_email").notNull(),
+  actorSector: text("actor_sector").notNull(),
+  entityId: text("entity_id"),
+  idempotencyKey: text("idempotency_key"),
+  payload: jsonb("payload").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
