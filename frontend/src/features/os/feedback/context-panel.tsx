@@ -1,5 +1,9 @@
-import { AlertCircle, CalendarClock, Sparkles } from "lucide-react";
+"use client";
+
+import { useMemo, useState } from "react";
+import { AlertCircle, CalendarClock, Search, Sparkles } from "lucide-react";
 import type { CopilotContext } from "@/features/work/lib/creamy-copilot";
+import { answerLotesQuery } from "@/features/os/operational/lib/asignacion-lotes-creamy";
 
 interface DeliveryItem {
   client: string;
@@ -12,6 +16,8 @@ interface ContextPanelProps {
   problems: string[];
   copilot: CopilotContext;
   onSuggestionClick?: (suggestion: string) => void;
+  lotesSearchEnabled?: boolean;
+  onOpenAsignacionLotes?: () => void;
 }
 
 /** Panel lateral — entregas, problemas y Creamy copiloto contextual. */
@@ -20,7 +26,12 @@ export function ContextPanel({
   problems,
   copilot,
   onSuggestionClick,
+  lotesSearchEnabled = false,
+  onOpenAsignacionLotes,
 }: ContextPanelProps) {
+  const [lotesQuery, setLotesQuery] = useState("");
+  const lotesAnswer = useMemo(() => answerLotesQuery(lotesQuery), [lotesQuery]);
+
   return (
     <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:self-start">
       <section className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-5 shadow-[var(--os-shadow-sm)]">
@@ -88,6 +99,49 @@ export function ContextPanel({
             </button>
           ))}
         </div>
+
+        {lotesSearchEnabled && (
+          <div className="mt-5 rounded-[var(--os-radius-sm)] border border-[var(--os-teal-muted)] bg-white/70 p-3">
+            <label
+              htmlFor="creamy-lotes-search"
+              className="text-xs font-semibold uppercase tracking-wide text-[var(--os-teal)]"
+            >
+              Preguntá por un lote o producto
+            </label>
+            <div className="relative mt-2">
+              <Search
+                className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[var(--os-text-muted)]"
+                aria-hidden="true"
+              />
+              <input
+                id="creamy-lotes-search"
+                type="search"
+                value={lotesQuery}
+                onChange={(event) => setLotesQuery(event.target.value)}
+                placeholder="Creamy, PR-120, L-CR-001..."
+                className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-[var(--os-teal)] focus:ring-2 focus:ring-[var(--os-teal-muted)]"
+              />
+            </div>
+
+            {lotesQuery.trim() && (
+              <div className="mt-3 space-y-2">
+                <p className="text-xs font-medium text-[var(--os-text)]">{lotesAnswer.headline}</p>
+                <p className="text-xs text-[var(--os-text-muted)]">{lotesAnswer.hint}</p>
+                {lotesAnswer.results.map((result) => (
+                  <button
+                    key={result.id}
+                    type="button"
+                    onClick={onOpenAsignacionLotes}
+                    className="block w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-left text-xs transition-colors hover:border-[var(--os-teal)]"
+                  >
+                    <span className="block font-medium text-[var(--os-text)]">{result.label}</span>
+                    <span className="mt-0.5 block text-[var(--os-text-muted)]">{result.meta || "Sin metadata"}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </section>
     </aside>
   );

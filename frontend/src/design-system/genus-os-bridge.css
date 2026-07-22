@@ -10,8 +10,8 @@
   /* Sidebar */
   --os-sidebar-bg: var(--genus-surface-sidebar);
   --os-sidebar-text: var(--genus-text-inverse);
-  --os-sidebar-muted: var(--genus-neutral-400);
-  --os-sidebar-hover: var(--genus-neutral-800);
+  --os-sidebar-muted: #a9c3d6;
+  --os-sidebar-hover: var(--genus-brand-navy);
   --os-sidebar-active: var(--genus-brand-primary);
 
   /* Surfaces & text */
@@ -35,4 +35,38 @@
   --os-shadow: var(--genus-shadow-sm);
   --os-shadow-card: var(--genus-shadow-md);
   --os-shadow-card-hover: var(--genus-shadow-lg);
+
+  /*
+   * Alias de tokens "legacy" (07-design-system) → identidad GENUS OS (navy/turquesa).
+   * Permite reutilizar Button/Dialog/StatusBadge/etc. sin duplicarlos: dentro del
+   * Digital Twin heredan automáticamente la paleta navy + turquesa del mockup.
+   */
+  --color-action: var(--genus-brand-primary);
+  --color-accent: var(--genus-brand-primary);
+  --color-ok: var(--genus-success);
+  --color-attention: var(--genus-warning);
+  --color-problem: var(--genus-error);
+  --color-neutral: var(--genus-text-secondary);
+  --background: var(--genus-surface-bg);
+  --surface: var(--genus-surface-card);
+  --surface-elevated: var(--genus-surface-card);
+  --border: var(--genus-neutral-200);
+  --border-subtle: var(--genus-neutral-100);
+  --foreground: var(--genus-text-primary);
+  --muted-foreground: var(--genus-text-secondary);
+  --ring: var(--genus-brand-primary);
+  --sidebar-item-hover: var(--genus-neutral-100);
+  --sidebar-item-active-bg: var(--genus-brand-primary-muted);
+  --sidebar-item-active-border: var(--genus-brand-primary);
+  --badge-ok-bg: var(--genus-success-soft);
+  --badge-ok-text: var(--genus-success);
+  --badge-attention-bg: var(--genus-warning-soft);
+  --badge-attention-text: var(--genus-warning);
+  --badge-problem-bg: var(--genus-error-soft);
+  --badge-problem-text: var(--genus-error);
+  --badge-neutral-bg: var(--genus-neutral-100);
+  --badge-neutral-text: var(--genus-text-secondary);
+  --radius-sm: var(--genus-radius-sm);
+  --radius-md: var(--genus-radius-md);
+  --radius-lg: var(--genus-radius-lg);
 }

@@ -103,8 +103,8 @@ describe("Auth contracts — MockAuthAdapter", () => {
 
   it("signOut limpia la sesión persistida", async () => {
     await adapter.signIn({
-      email: "deposito@laboratoriogenus.com.ar",
-      password: "deposito123",
+      email: "mp@laboratoriogenus.com.ar",
+      password: "mp123",
       rememberMe: false,
     });
 
@@ -112,6 +112,51 @@ describe("Auth contracts — MockAuthAdapter", () => {
 
     expect(adapter.getSession()).toBeNull();
     expect(sessionStorage.getItem(GENUS_OS_AUTH_SESSION_KEY)).toBeNull();
+  });
+
+  it("autentica exactamente los ocho accesos sectoriales activos", async () => {
+    const expected = [
+      ["elaboracion@laboratoriogenus.com.ar", "elaboracion123", "ELABORACION"],
+      ["produccion@laboratoriogenus.com.ar", "produccion123", "PRODUCCION"],
+      ["emasivo@laboratoriogenus.com.ar", "emasivo123", "ENVASADO_MASIVO"],
+      ["epremium@laboratoriogenus.com.ar", "epremium123", "ENVASADO_PREMIUM"],
+      ["calidad@laboratoriogenus.com.ar", "calidad123", "CALIDAD"],
+      ["mp@laboratoriogenus.com.ar", "mp123", "MATERIA_PRIMA"],
+      ["codificado@laboratoriogenus.com.ar", "codificado123", "CODIFICADO"],
+      ["deposito@laboratoriogenus.com.ar", "deposito123", "DEPOSITO"],
+    ] as const;
+
+    expect(MOCK_PREVIEW_USERS).toHaveLength(8);
+
+    for (const [email, password, sector] of expected) {
+      const session = await adapter.signIn({ email, password, rememberMe: false });
+      expect(session?.sector.id).toBe(sector);
+      await adapter.signOut();
+    }
+  });
+
+  it("documenta credencial temporal de Depósito", () => {
+    const deposito = MOCK_PREVIEW_USERS.find((u) => u.sector === "DEPOSITO");
+    expect(deposito?.email).toBe("deposito@laboratoriogenus.com.ar");
+    expect(deposito?.password).toBe("deposito123");
+    expect(deposito?.jobTitle.toLowerCase()).toContain("temporal");
+  });
+
+  it("rechaza accesos antiguos desactivados", async () => {
+    const blocked = [
+      "direccion@laboratoriogenus.com.ar",
+      "masivo@laboratoriogenus.com.ar",
+      "premium@laboratoriogenus.com.ar",
+    ];
+
+    for (const email of blocked) {
+      const session = await adapter.signIn({
+        email,
+        password: "cualquiercosa",
+        rememberMe: false,
+      });
+      expect(session).toBeNull();
+    }
   });
 });
 

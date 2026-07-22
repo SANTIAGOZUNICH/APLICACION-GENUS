@@ -18,6 +18,10 @@ import {
 } from "@/lib/api/live-sync-client";
 import type { CompletionEvent, QualityDecisionStatus, OperationalOverlay } from "../types";
 import {
+  gateQualityDecision,
+  type QualityDecisionAttempt,
+} from "../lib/quality-decision-rbac";
+import {
   applyWorkProgressToItems,
   getEffectiveQualityStatus,
   getEffectiveWorkStatus,
@@ -38,6 +42,13 @@ import {
   type WorkProgressRecord,
 } from "./operational-store";
 
+export type QualityDecisionOptions = {
+  /** Sector de la sesión activa — obligatorio para RBAC de decisión. */
+  actorSectorId: SectorId;
+  decidedBy?: string;
+  observation?: string;
+};
+
 interface OperationalStoreValue {
   decisionMap: DecisionMap;
   progressMap: ProgressMap;
@@ -45,8 +56,8 @@ interface OperationalStoreValue {
   revision: number;
   getQualityStatus: (itemId: string, seedStatus: QualityDecisionStatus) => QualityDecisionStatus;
   getQualityObservation: (itemId: string) => string;
-  approveQualityItem: (itemId: string, options?: { decidedBy?: string; observation?: string }) => void;
-  rejectQualityItem: (itemId: string, options?: { decidedBy?: string; observation?: string }) => void;
+  approveQualityItem: (itemId: string, options: QualityDecisionOptions) => QualityDecisionAttempt;
+  rejectQualityItem: (itemId: string, options: QualityDecisionOptions) => QualityDecisionAttempt;
   getWorkStatus: (itemId: string, seedStatus: WorkItemStatus) => WorkItemStatus;
   getFinishedQty: (itemId: string) => string;
   getObservation: (itemId: string) => string;
@@ -112,30 +123,40 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     (
       itemId: string,
       status: QualityDecisionStatus,
-      options?: { decidedBy?: string; observation?: string }
-    ) => {
-      recordQualityDecision(itemId, status, options);
+      options: QualityDecisionOptions
+    ): QualityDecisionAttempt => {
+      const gate = gateQualityDecision(options.actorSectorId);
+      if (!gate.ok) {
+        return gate;
+      }
+
+      recordQualityDecision(itemId, status, {
+        decidedBy: options.decidedBy,
+        observation: options.observation,
+      });
       syncFromStorage();
       if (status === "aprobado" || status === "rechazado") {
         void postQualityDecision({
           itemId,
           status,
-          decidedBy: options?.decidedBy,
-          observation: options?.observation,
+          decidedBy: options.decidedBy,
+          observation: options.observation,
+          actorSectorId: options.actorSectorId,
         }).catch(() => {});
       }
+      return { ok: true };
     },
     [syncFromStorage]
   );
 
   const approveQualityItem = useCallback(
-    (itemId: string, options?: { decidedBy?: string; observation?: string }) =>
+    (itemId: string, options: QualityDecisionOptions) =>
       applyQualityDecision(itemId, "aprobado", options),
     [applyQualityDecision]
   );
 
   const rejectQualityItem = useCallback(
-    (itemId: string, options?: { decidedBy?: string; observation?: string }) =>
+    (itemId: string, options: QualityDecisionOptions) =>
       applyQualityDecision(itemId, "rechazado", options),
     [applyQualityDecision]
   );

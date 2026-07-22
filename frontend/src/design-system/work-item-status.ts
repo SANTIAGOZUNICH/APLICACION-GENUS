@@ -40,6 +40,12 @@ export const workItemStatusDisplay: Record<WorkItemStatus, WorkItemStatusDisplay
     colorVar: "var(--genus-brand-secondary)",
     bgVar: "var(--genus-brand-secondary-soft)",
   },
+  entregado: {
+    label: "Entregado",
+    dotClassName: "bg-[var(--genus-success)]",
+    colorVar: "var(--genus-success)",
+    bgVar: "var(--genus-success-soft)",
+  },
   cancelado: {
     label: "Cancelado",
     dotClassName: "bg-[var(--genus-neutral-400)]",

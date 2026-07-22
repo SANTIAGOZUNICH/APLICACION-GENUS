@@ -2,15 +2,6 @@ import { defineSector } from "@/lib/role-engine/sector-definition";
 import type { SectorDefinition } from "@/lib/role-engine/types";
 import type { SectorId } from "@/types/operational/sector";
 
-const BASE_SIDEBAR = [
-  "mi_trabajo",
-  "plan_semanal",
-  "consulta",
-  "insumos",
-  "calidad",
-  "configuracion",
-] as const;
-
 export const SECTOR_DEFINITIONS: SectorDefinition[] = [
   defineSector({
     id: "ENVASADO_MASIVO",
@@ -35,7 +26,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Reportar problema",
       "Registrar avance",
     ],
-    sidebarItems: [...BASE_SIDEBAR],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "historial"],
     creamyContext: {
       role: "Copiloto de envasado masivo",
       topics: ["prioridades", "OA", "bloqueos", "insumos", "entregas"],
@@ -73,7 +64,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Entregar a Calidad",
       "Reportar problema",
     ],
-    sidebarItems: [...BASE_SIDEBAR],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "historial"],
     creamyContext: {
       role: "Copiloto de envasado premium",
       topics: ["prioridades", "OA", "lotes premium", "insumos", "entregas"],
@@ -104,7 +95,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Marcar terminada",
       "Observaciones",
     ],
-    sidebarItems: [...BASE_SIDEBAR],
+    sidebarItems: ["mi_trabajo", "ordenes_elaboracion", "historial"],
     creamyContext: {
       role: "Copiloto de elaboración",
       topics: ["OE", "kg", "responsable", "lotes", "prioridades"],
@@ -128,20 +119,20 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     quickActions: ["mark_done", "report_problem", "consult_entity"],
     visibleEntities: ["work_item", "oa", "lote", "pedido"],
     workItemSources: ["semanas_2026"],
-    allowedActions: ["Marcar codificado", "Reportar problema", "Consultar lote"],
-    sidebarItems: [...BASE_SIDEBAR],
+    allowedActions: ["Marcar codificado", "Reportar problema", "Consultar lote", "Gestionar asignación de lotes"],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "asignacion_lotes", "consulta", "plan_semanal"],
     creamyContext: {
       role: "Copiloto de codificado",
-      topics: ["cola de codificación", "lotes", "OA", "prioridades"],
-      defaultHint: "Sector en preparación. Creamy ayudará con la cola de codificación.",
-      baseSuggestions: ["Ver cola", "Consultar lote", "Ver OA"],
+      topics: ["cola de codificación", "lotes", "OA", "asignación de lotes"],
+      defaultHint: "Puedo ayudarte con la cola de codificación y la asignación de lotes.",
+      baseSuggestions: ["Ver asignación de lotes", "Consultar lote", "Buscá Creamy en asignación de lotes"],
     },
     emptyState: {
-      title: "Sector en preparación",
-      message: "La Home de Codificado se migrará al Role Engine próximamente.",
+      title: "Sin trabajos de codificado",
+      message: "No hay ítems en cola. Podés gestionar Asignación de lotes desde el menú.",
     },
     homeViewKey: "codificado-home",
-    dataMode: "placeholder",
+    dataMode: "work_items",
   }),
 
   defineSector({
@@ -159,12 +150,19 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Rechazar lote",
       "Solicitar liberación",
     ],
-    sidebarItems: [...BASE_SIDEBAR],
+    sidebarItems: [
+      "pendientes",
+      "ordenes_elaboracion",
+      "ordenes_acondicionamiento",
+      "aprobados",
+      "rechazados",
+      "asignacion_lotes",
+    ],
     creamyContext: {
       role: "Copiloto de calidad",
-      topics: ["lotes", "liberaciones", "análisis", "microbiología", "bloqueos"],
-      defaultHint: "¿Qué lote analizamos primero? Puedo ayudarte con resultados y liberaciones.",
-      baseSuggestions: ["Ver pendientes", "Consultar lote", "Ver liberaciones"],
+      topics: ["lotes", "liberaciones", "análisis", "microbiología", "bloqueos", "asignación de lotes"],
+      defaultHint: "¿Qué lote analizamos primero? Puedo ayudarte con resultados, liberaciones y asignación de lotes.",
+      baseSuggestions: ["Ver pendientes", "Consultar lote", "Buscá en asignación de lotes", "Ver liberaciones"],
     },
     emptyState: {
       title: "Sin lotes pendientes",
@@ -188,16 +186,22 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Reportar faltante",
       "Consultar pedido",
     ],
-    sidebarItems: [...BASE_SIDEBAR],
+    sidebarItems: [
+      "ingresos_me",
+      "salidas_me",
+      "inventario_me",
+      "avisos_me",
+      "semanas_produccion",
+    ],
     creamyContext: {
       role: "Copiloto de depósito",
-      topics: ["insumos", "faltantes", "pedidos", "preparación"],
-      defaultHint: "¿Qué pedido preparamos? Revisemos envases, tapas y etiquetas.",
-      baseSuggestions: ["Ver pedidos", "Reportar faltante", "Consultar insumos"],
+      topics: ["ingresos ME", "salidas ME", "inventario ME", "avisos", "semanas"],
+      defaultHint: "¿Cargamos un ingreso ME o revisamos el inventario automático?",
+      baseSuggestions: ["Nuevo ingreso ME", "Ver inventario ME", "Ver avisos"],
     },
     emptyState: {
-      title: "Sin pedidos a preparar",
-      message: "No hay insumos pendientes de preparación.",
+      title: "Depósito listo",
+      message: "Ingresos ME, salidas ME y avisos comienzan vacíos. Sin datos históricos importados.",
     },
     homeViewKey: "deposito-home",
     dataMode: "mock",
@@ -205,27 +209,27 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
 
   defineSector({
     id: "MATERIA_PRIMA",
-    title: "Materia Prima",
-    description: "Gestión de materias primas y abastecimiento de elaboración.",
+    title: "Materias Primas",
+    description: "Stock de materias primas y control de preparación para Elaboración.",
     homeLayout: "supply_prep",
     visiblePanels: ["header_greeting", "summary_strip", "work_block_list", "context_panel"],
     quickActions: ["prepare_insumos", "report_problem", "consult_entity"],
     visibleEntities: ["insumo", "oe", "lote", "pedido"],
     workItemSources: ["semanas_2026"],
     allowedActions: ["Registrar entrega MP", "Reportar faltante", "Consultar OE"],
-    sidebarItems: [...BASE_SIDEBAR],
+    sidebarItems: ["stock", "mp_ingresos", "control_mp", "mp_compras", "ordenes_elaboracion", "historial"],
     creamyContext: {
       role: "Copiloto de materia prima",
-      topics: ["stock MP", "faltantes", "OE", "proveedores"],
-      defaultHint: "Sector en preparación. Creamy ayudará con abastecimiento y faltantes.",
-      baseSuggestions: ["Ver faltantes", "Consultar OE", "Ver stock"],
+      topics: ["stock MP", "ingresos MP", "control semanal", "compras MP"],
+      defaultHint: "¿Stock, ingreso, control semanal o compras MP?",
+      baseSuggestions: ["Ver stock", "Nuevo ingreso MP", "Control semanal"],
     },
     emptyState: {
-      title: "Sector en preparación",
-      message: "La Home de Materia Prima se migrará al Role Engine próximamente.",
+      title: "Sin materias primas cargadas",
+      message: "Las tablas MP comienzan vacías. No se importaron registros históricos.",
     },
     homeViewKey: "materia-prima-home",
-    dataMode: "placeholder",
+    dataMode: "work_items",
   }),
 
   defineSector({
@@ -274,9 +278,24 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Resolver bloqueo",
       "Ver plan semanal",
       "Priorizar trabajo",
+      "Asignar trabajo",
+      "Reasignar trabajo",
     ],
-    sidebarItems: [...BASE_SIDEBAR],
-    restrictedSidebarItems: ["produccion"],
+    sidebarItems: [
+      "mi_trabajo",
+      "ordenes_elaboracion",
+      "ordenes_acondicionamiento",
+      "asignar_trabajos",
+      "entregados",
+      "asignacion_lotes",
+      "ver_elaboracion",
+      "ver_envasado_masivo",
+      "ver_envasado_premium",
+      "ver_calidad",
+      "ver_materia_prima",
+      "historial",
+    ],
+    sidebarLabelOverrides: { mi_trabajo: "Panel general" },
     creamyContext: {
       role: "Copiloto de producción",
       topics: [
@@ -285,10 +304,12 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
         "carga de trabajo",
         "planificación",
         "bloqueos",
+        "asignación de lotes",
+        "fecha de entrega",
       ],
       defaultHint:
-        "¿Qué sector necesita atención ahora? Revisemos cuellos de botella y prioridades.",
-      baseSuggestions: ["Ver bloqueos", "Ver carga", "Ver plan semanal"],
+        "¿Qué sector necesita atención ahora? Revisemos cuellos de botella, entregas y lotes.",
+      baseSuggestions: ["Ver bloqueos", "Ver carga", "Buscá en asignación de lotes", "Ver plan semanal"],
     },
     emptyState: {
       title: "Sin señales activas",

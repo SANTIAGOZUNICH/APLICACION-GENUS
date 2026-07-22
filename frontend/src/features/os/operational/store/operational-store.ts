@@ -124,8 +124,10 @@ export function recordWorkProgress(
     updatedAt: new Date().toISOString(),
     updatedBy: payload.updatedBy,
     completedAt:
-      payload.status === "completo" || payload.status === "revision"
-        ? new Date().toISOString()
+      payload.status === "completo" ||
+      payload.status === "revision" ||
+      payload.status === "entregado"
+        ? existing?.completedAt ?? new Date().toISOString()
         : existing?.completedAt,
   };
 

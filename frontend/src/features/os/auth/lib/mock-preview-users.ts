@@ -1,6 +1,13 @@
 /**
  * @mock-temp Beta Operativa — accesos demo por sector (sin auth real).
  * Un usuario = un sector. Elaboración agrupa ramas Cristian / Nicolás en la vista.
+ *
+ * Login activo de Genus OS: ocho accesos sectoriales de planta
+ * (Elaboración, Producción, Envasado Masivo, Envasado Premium, Calidad,
+ * Materias Primas, Codificado, Depósito).
+ *
+ * Credencial DEPOSITO es temporal / demo (@mock-temp) — no es auth productiva.
+ * Dirección NO es acceso activo del login.
  */
 
 import { SECTOR_PERSONNEL } from "@/features/os/operational/lib/sector-personnel";
@@ -33,8 +40,8 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
     ownerPerson: null,
   },
   {
-    email: "masivo@laboratoriogenus.com.ar",
-    password: "masivo123",
+    email: "emasivo@laboratoriogenus.com.ar",
+    password: "emasivo123",
     sector: "ENVASADO_MASIVO",
     displayName: SECTOR_PERSONNEL.ENVASADO_MASIVO,
     role: "ROL-OP",
@@ -44,8 +51,8 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
     redirectTo: "/mi-trabajo",
   },
   {
-    email: "premium@laboratoriogenus.com.ar",
-    password: "premium123",
+    email: "epremium@laboratoriogenus.com.ar",
+    password: "epremium123",
     sector: "ENVASADO_PREMIUM",
     displayName: SECTOR_PERSONNEL.ENVASADO_PREMIUM,
     role: "ROL-OP",
@@ -77,6 +84,28 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
     redirectTo: "/mi-trabajo",
   },
   {
+    email: "mp@laboratoriogenus.com.ar",
+    password: "mp123",
+    sector: "MATERIA_PRIMA",
+    displayName: SECTOR_PERSONNEL.MATERIA_PRIMA,
+    role: "ROL-OP",
+    roleLabel: "Operario",
+    sectorLabel: "Materias Primas",
+    jobTitle: "Responsable de Materias Primas",
+    redirectTo: "/mi-trabajo",
+  },
+  {
+    email: "codificado@laboratoriogenus.com.ar",
+    password: "codificado123",
+    sector: "CODIFICADO",
+    displayName: "Codificado",
+    role: "ROL-OP",
+    roleLabel: "Operario",
+    sectorLabel: "Codificado",
+    jobTitle: "Responsable de Codificado",
+    redirectTo: "/mi-trabajo",
+  },
+  {
     email: "deposito@laboratoriogenus.com.ar",
     password: "deposito123",
     sector: "DEPOSITO",
@@ -84,18 +113,7 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
     role: "ROL-OP",
     roleLabel: "Operario",
     sectorLabel: "Depósito",
-    jobTitle: "Responsable de Depósito",
-    redirectTo: "/mi-trabajo",
-  },
-  {
-    email: "direccion@laboratoriogenus.com.ar",
-    password: "direccion123",
-    sector: "DIRECCION",
-    displayName: "Santiago Zunich",
-    role: "ROL-DI",
-    roleLabel: "Dirección",
-    sectorLabel: "Dirección",
-    jobTitle: "Director General",
+    jobTitle: "Responsable de Depósito (credencial temporal demo)",
     redirectTo: "/mi-trabajo",
   },
 ];

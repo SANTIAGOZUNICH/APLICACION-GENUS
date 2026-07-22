@@ -16,6 +16,7 @@ export interface QualityItem {
   line: string | null;
   quantity: string | null;
   dayLabel: string;
+  deliveryDate?: string | null;
   status: QualityDecisionStatus;
   relatedWorkItemId: string | null;
   /** Sector que entregó el trabajo — transferencia cross-sector. */
@@ -45,6 +46,7 @@ export interface CompletionEvent {
   quantityPlanned: string | null;
   unit: string | null;
   dayLabel: string | null;
+  deliveryDate?: string | null;
 }
 
 export interface OperationalActivityEntry {

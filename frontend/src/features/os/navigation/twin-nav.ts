@@ -10,6 +10,30 @@ export type TwinView =
   | "config"
   | "produccion"
   | "direccion"
+  | "ordenes-elaboracion"
+  | "ordenes-acondicionamiento"
+  | "ordenes"
+  | "historial"
+  | "pendientes"
+  | "aprobados"
+  | "rechazados"
+  | "stock"
+  | "control-mp"
+  | "mp-ingresos"
+  | "mp-compras"
+  | "ingresos-me"
+  | "salidas-me"
+  | "inventario-me"
+  | "avisos-me"
+  | "semanas-produccion"
+  | "asignar-trabajos"
+  | "entregados"
+  | "asignacion-lotes"
+  | "ver-elaboracion"
+  | "ver-envasado-masivo"
+  | "ver-envasado-premium"
+  | "ver-calidad"
+  | "ver-materia-prima"
   | "work-detail"
   | "oa-detail"
   | "oe-detail"
@@ -33,6 +57,30 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   configuracion: "config",
   produccion: "produccion",
   direccion: "direccion",
+  ordenes_elaboracion: "ordenes-elaboracion",
+  ordenes_acondicionamiento: "ordenes-acondicionamiento",
+  ordenes: "ordenes",
+  historial: "historial",
+  pendientes: "pendientes",
+  aprobados: "aprobados",
+  rechazados: "rechazados",
+  stock: "stock",
+  control_mp: "control-mp",
+  mp_ingresos: "mp-ingresos",
+  mp_compras: "mp-compras",
+  ingresos_me: "ingresos-me",
+  salidas_me: "salidas-me",
+  inventario_me: "inventario-me",
+  avisos_me: "avisos-me",
+  semanas_produccion: "semanas-produccion",
+  asignar_trabajos: "asignar-trabajos",
+  entregados: "entregados",
+  asignacion_lotes: "asignacion-lotes",
+  ver_elaboracion: "ver-elaboracion",
+  ver_envasado_masivo: "ver-envasado-masivo",
+  ver_envasado_premium: "ver-envasado-premium",
+  ver_calidad: "ver-calidad",
+  ver_materia_prima: "ver-materia-prima",
 };
 
 export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
@@ -45,6 +93,30 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     config: "configuracion",
     produccion: "produccion",
     direccion: "direccion",
+    "ordenes-elaboracion": "ordenes_elaboracion",
+    "ordenes-acondicionamiento": "ordenes_acondicionamiento",
+    ordenes: "ordenes",
+    historial: "historial",
+    pendientes: "pendientes",
+    aprobados: "aprobados",
+    rechazados: "rechazados",
+    stock: "stock",
+    "control-mp": "control_mp",
+    "mp-ingresos": "mp_ingresos",
+    "mp-compras": "mp_compras",
+    "ingresos-me": "ingresos_me",
+    "salidas-me": "salidas_me",
+    "inventario-me": "inventario_me",
+    "avisos-me": "avisos_me",
+    "semanas-produccion": "semanas_produccion",
+    "asignar-trabajos": "asignar_trabajos",
+    entregados: "entregados",
+    "asignacion-lotes": "asignacion_lotes",
+    "ver-elaboracion": "ver_elaboracion",
+    "ver-envasado-masivo": "ver_envasado_masivo",
+    "ver-envasado-premium": "ver_envasado_premium",
+    "ver-calidad": "ver_calidad",
+    "ver-materia-prima": "ver_materia_prima",
   };
   return map[view];
 }
@@ -68,6 +140,30 @@ export function viewTitle(view: TwinView): string {
     config: "Configuración",
     produccion: "Control de planta",
     direccion: "Dirección",
+    "ordenes-elaboracion": "Órdenes de Elaboración",
+    "ordenes-acondicionamiento": "Órdenes de Acondicionamiento",
+    ordenes: "Órdenes",
+    historial: "Historial",
+    pendientes: "Pendientes",
+    aprobados: "Aprobados",
+    rechazados: "Rechazados",
+    stock: "Stock",
+    "control-mp": "Control semanal",
+    "mp-ingresos": "Ingresos MP",
+    "mp-compras": "Compras MP",
+    "ingresos-me": "Ingresos ME",
+    "salidas-me": "Salidas ME",
+    "inventario-me": "Inventario ME",
+    "avisos-me": "Avisos",
+    "semanas-produccion": "Semanas de Producción",
+    "asignar-trabajos": "Asignar trabajos",
+    entregados: "Entregados",
+    "asignacion-lotes": "Asignación de lotes",
+    "ver-elaboracion": "Elaboración",
+    "ver-envasado-masivo": "Envasado Masivo",
+    "ver-envasado-premium": "Envasado Premium",
+    "ver-calidad": "Calidad",
+    "ver-materia-prima": "Materias Primas",
     "work-detail": "Trabajo",
     "oa-detail": "Orden de Acondicionamiento",
     "oe-detail": "Orden de Elaboración",
