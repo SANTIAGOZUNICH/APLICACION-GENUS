@@ -23,7 +23,8 @@ const GSHEET = "application/vnd.google-apps.spreadsheet";
 
 /**
  * Resuelve la carpeta raíz de fórmulas maestras.
- * Preferir GOOGLE_DRIVE_FORMULAS_FOLDER_ID; no asumir que ELABORACION = fórmulas.
+ * Preferir GOOGLE_DRIVE_FORMULAS_FOLDER_ID.
+ * No usar ELABORACION (órdenes operativas por mes/lote).
  */
 export function resolveFormulasFolderId(): {
   folderId: string | null;
@@ -31,13 +32,10 @@ export function resolveFormulasFolderId(): {
 } {
   const formulas = process.env.GOOGLE_DRIVE_FORMULAS_FOLDER_ID?.trim();
   if (formulas) return { folderId: formulas, envKey: "GOOGLE_DRIVE_FORMULAS_FOLDER_ID" };
-  // Fallback de diagnóstico (no asumir que son fórmulas maestras):
   const productos = process.env.GOOGLE_DRIVE_PRODUCTOS_FOLDER_ID?.trim();
   if (productos) return { folderId: productos, envKey: "GOOGLE_DRIVE_PRODUCTOS_FOLDER_ID" };
-  const elaboracion = process.env.GOOGLE_DRIVE_ELABORACION_FOLDER_ID?.trim();
-  if (elaboracion) {
-    return { folderId: elaboracion, envKey: "GOOGLE_DRIVE_ELABORACION_FOLDER_ID" };
-  }
+  // Explicitamente NO usar GOOGLE_DRIVE_ELABORACION_FOLDER_ID:
+  // suele contener OE operativas por mes, no el banco de fórmulas por cliente.
   return { folderId: null, envKey: null };
 }
 
@@ -54,11 +52,17 @@ export async function diagnoseDriveFormulasAccess(): Promise<DriveFormulasDiagno
 
   if (!folderId) {
     notes.push(
-      "Definí GOOGLE_DRIVE_FORMULAS_FOLDER_ID (recomendado) apuntando a la carpeta raíz de fórmulas maestras (subcarpetas por cliente)."
+      "Definí GOOGLE_DRIVE_FORMULAS_FOLDER_ID apuntando a la carpeta raíz de fórmulas maestras (subcarpetas por CLIENTE, no por mes)."
     );
     notes.push(
-      "No uses carpetas de órdenes operativas (ELABORACION) como fuente de fórmulas sin confirmar estructura."
+      "No uses GOOGLE_DRIVE_ELABORACION_FOLDER_ID: contiene órdenes operativas (ABRIL/MAYO/…), no el banco histórico por cliente."
     );
+    const elaboracion = process.env.GOOGLE_DRIVE_ELABORACION_FOLDER_ID?.trim();
+    if (elaboracion) {
+      notes.push(
+        "GOOGLE_DRIVE_ELABORACION_FOLDER_ID está configurada pero se ignora a propósito para sugerencias de fórmulas."
+      );
+    }
     return {
       folderConfigured: false,
       folderEnvKey: null,
@@ -147,6 +151,26 @@ export async function diagnoseDriveFormulasAccess(): Promise<DriveFormulasDiagno
     notes.push(
       `Conteo de archivos sobre muestra de ${sample.length}/${folders.length} subcarpetas (no se abrieron Excel).`
     );
+  }
+
+  const MONTHISH =
+    /^(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)(\s*\d{2,4})?$/i;
+  const monthFolders = folders.filter((f) => MONTHISH.test(f.name.trim())).length;
+  if (monthFolders >= Math.max(3, Math.floor(folders.length * 0.5))) {
+    notes.push(
+      "Las subcarpetas parecen meses (órdenes operativas), no clientes. Configurá GOOGLE_DRIVE_FORMULAS_FOLDER_ID con el banco por cliente."
+    );
+    return {
+      folderConfigured: true,
+      folderEnvKey: envKey,
+      serviceAccountConfigured: true,
+      serviceAccountAccess: true,
+      clientFoldersVisible: folders.length,
+      excelFilesVisible: excel,
+      googleSheetsVisible: gsheets,
+      estructuraCompatible: false,
+      notes,
+    };
   }
 
   const estructuraCompatible =
