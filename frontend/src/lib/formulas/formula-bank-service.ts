@@ -7,6 +7,8 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   normalizeSearchKey,
   looksLikeCopyName,
+  isPendingClient,
+  isPendingProduct,
   type FormulaProductRecord,
   type FormulaSnapshot,
   type FormulaVersionRecord,
@@ -67,7 +69,7 @@ export class FormulaBankService {
     | { kind: "not_found"; message: string } {
     const nc = normalizeSearchKey(client);
     const np = normalizeSearchKey(product);
-    if (!nc || !np || nc === "pendiente" || np === "pendiente") {
+    if (!nc || !np || isPendingClient(client) || isPendingProduct(product)) {
       return {
         kind: "not_found",
         message: "No se encontró una fórmula vigente para este cliente y producto.",
@@ -104,6 +106,12 @@ export class FormulaBankService {
       return {
         kind: "not_found",
         message: "No se encontró una fórmula vigente para este cliente y producto.",
+      };
+    }
+    if (ver.reviewRequired) {
+      return {
+        kind: "not_found",
+        message: "La fórmula vigente requiere revisión y no está disponible para OE.",
       };
     }
     return { kind: "found", snapshot: this.toSnapshot(prod, ver) };
@@ -225,12 +233,26 @@ export class FormulaBankService {
       let conflict: string | null = null;
 
       if (tied.length > 0) {
-        const nonCopy = [vigenteDraft, ...tied].filter((d) => !looksLikeCopyName(d.sourceFile));
-        if (nonCopy.length === 1) {
-          vigenteDraft = nonCopy[0]!;
-        } else if (nonCopy.length !== 1) {
-          conflict = "TIED_LATEST_VERSION";
-          conflicts += 1;
+        // Desempate por evidencia objetiva, en dos etapas:
+        // 1) Pestaña secundaria: hoja "Copia de …" o con sufijo "(2)"/"(3)"
+        //    (tab duplicada de Excel). Distingue hojas dentro del MISMO archivo.
+        // 2) Nombre de archivo copia ("Copia de …", "… (2).xlsx").
+        const isSecondarySheet = (d: ParsedFormulaDraft) =>
+          looksLikeCopyName(d.sourceSheet ?? "") ||
+          /\(\s*\d+\s*\)\s*$/.test(d.sourceSheet ?? "");
+        const group = [vigenteDraft, ...tied];
+        const primarySheets = group.filter((d) => !isSecondarySheet(d));
+        if (primarySheets.length === 1) {
+          vigenteDraft = primarySheets[0]!;
+        } else {
+          const base = primarySheets.length > 1 ? primarySheets : group;
+          const nonCopyFile = base.filter((d) => !looksLikeCopyName(d.sourceFile));
+          if (nonCopyFile.length === 1) {
+            vigenteDraft = nonCopyFile[0]!;
+          } else {
+            conflict = "TIED_LATEST_VERSION";
+            conflicts += 1;
+          }
         }
       }
 
@@ -265,6 +287,12 @@ export class FormulaBankService {
           previousVersionId: prevId,
           conflictCode: conflict && d.semanticHash === vigenteDraft.semanticHash ? conflict : null,
           altSourcePaths: d.altSourcePaths,
+          sourceConfidence: d.sourceConfidence,
+          expressionType: d.expressionType,
+          percentageSource: d.percentageSource,
+          originalPercentageTotal: d.originalPercentageTotal ?? null,
+          reviewRequired: d.reviewRequired ?? false,
+          reviewReasons: d.reviewReasons ?? [],
           ingredients: d.ingredients.map((i) => ({ ...i, id: randomUUID() })),
           procedureSteps: d.procedureSteps.map((s) => ({ ...s, id: randomUUID() })),
           specifications: d.specifications.map((s) => ({ ...s, id: randomUUID() })),

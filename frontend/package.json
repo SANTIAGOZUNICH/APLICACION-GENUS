@@ -15,7 +15,8 @@
     "db:studio": "drizzle-kit studio",
     "db:migrate-if": "node scripts/migrate-if-database.mjs",
     "formulas:scan": "tsx scripts/formulas-cli.ts scan",
-    "formulas:import": "tsx scripts/formulas-cli.ts import"
+    "formulas:import": "tsx scripts/formulas-cli.ts import",
+    "formulas:diagnose": "tsx scripts/formulas-diagnose.ts"
   },
   "engines": {
     "node": ">=20"

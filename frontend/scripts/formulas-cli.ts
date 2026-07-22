@@ -10,7 +10,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { parseWorkbookBuffer } from "../src/lib/formulas/parse-workbook";
-import { looksLikeCopyName, shouldIgnoreArchiveEntry } from "../src/lib/formulas/types";
+import {
+  isPendingClient,
+  looksLikeCopyName,
+  shouldIgnoreArchiveEntry,
+} from "../src/lib/formulas/types";
 import {
   formulaBankService,
   memoryFormulaBank,
@@ -29,23 +33,58 @@ function walkFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
+/**
+ * Cliente = 2º segmento de la ruta dentro del ZIP (la carpeta raíz NO es cliente).
+ * Solo se usa si existe un directorio de cliente real por encima del archivo.
+ */
 function folderClientHint(filePath: string, root: string): string {
   const rel = filePath.slice(root.length + 1);
-  const parts = rel.split(/[\\/]/);
-  return parts.length >= 2 ? parts[0]! : "";
+  const parts = rel.split(/[\\/]/).filter(Boolean);
+  return parts.length >= 3 ? parts[1]! : "";
+}
+
+function countBy<T extends string>(items: (T | undefined)[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const it of items) {
+    const k = it ?? "UNKNOWN";
+    out[k] = (out[k] ?? 0) + 1;
+  }
+  return out;
 }
 
 function summarizeDrafts(allDrafts: ReturnType<typeof parseWorkbookBuffer>) {
   const totalsOff = allDrafts.filter(
     (d) => d.percentageTotal != null && Math.abs(d.percentageTotal - 100) > 0.05
   ).length;
+  const reviewReasons: Record<string, number> = {};
+  for (const d of allDrafts) {
+    if (!d.reviewRequired) continue;
+    for (const reason of d.reviewReasons ?? []) {
+      reviewReasons[reason] = (reviewReasons[reason] ?? 0) + 1;
+    }
+  }
+  const pendingProduct = allDrafts.filter((d) => d.sourceConfidence === "PENDING").length;
+  const pendingClient = allDrafts.filter((d) => isPendingClient(d.displayClient)).length;
+  const reviewRequired = allDrafts.filter((d) => d.reviewRequired).length;
+  const importable = allDrafts.filter(
+    (d) =>
+      !d.reviewRequired &&
+      d.sourceConfidence !== "PENDING" &&
+      !isPendingClient(d.displayClient)
+  ).length;
   return {
     formulasDetected: allDrafts.length,
     copyNamedFiles: allDrafts.filter((d) => looksLikeCopyName(d.sourceFile)).length,
     warningCount: allDrafts.reduce((a, d) => a + d.warnings.length, 0),
-    pendingClient: allDrafts.filter((d) => d.displayClient === "PENDIENTE").length,
-    pendingProduct: allDrafts.filter((d) => d.displayProduct === "PENDIENTE").length,
+    pendingClient,
+    pendingProduct,
+    productSource: countBy(allDrafts.map((d) => d.sourceConfidence)),
+    expressionType: countBy(allDrafts.map((d) => d.expressionType)),
+    percentageSource: countBy(allDrafts.map((d) => d.percentageSource)),
     percentageTotalOff100: totalsOff,
+    reviewRequired,
+    reviewReasons,
+    importable,
   };
 }
 
@@ -75,6 +114,9 @@ async function main() {
   execFileSync("unzip", ["-qq", "-o", input, "-d", dest], { stdio: "ignore" });
 
   const files = walkFiles(dest);
+  const knownClients = [
+    ...new Set(files.map((f) => folderClientHint(f, dest)).filter(Boolean)),
+  ];
   let scanned = 0;
   let ignored = 0;
   const allDrafts = [];
@@ -90,6 +132,7 @@ async function main() {
       sourceFile: rel,
       sourceModifiedAt: st.mtime.toISOString(),
       folderClient: folderClientHint(file, dest),
+      knownClients,
     });
     allDrafts.push(...drafts);
   }
