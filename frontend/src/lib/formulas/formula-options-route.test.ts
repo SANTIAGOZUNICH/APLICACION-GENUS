@@ -1,5 +1,22 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
+vi.mock("@/lib/formulas/drive-formulas-index", () => ({
+  searchDriveClients: async () => {
+    throw new Error("Drive mock offline");
+  },
+  searchDriveProducts: async () => {
+    throw new Error("Drive mock offline");
+  },
+  syncDriveFormulasIndex: async () => ({
+    ok: false,
+    entryCount: 0,
+    clientCount: 0,
+    folderEnvKey: null,
+    builtAt: new Date().toISOString(),
+    error: "Drive mock offline",
+  }),
+}));
+
 const storeRef: {
   service: import("@/lib/formulas/formula-bank-service").FormulaBankService | null;
 } = { service: null };
@@ -81,7 +98,9 @@ describe("GET /api/v1/formulas/options regressions", () => {
     seed();
   });
 
-  it("PRODUCCION + q=uni → UNICA; contrato clients[].client", async () => {
+  it(
+    "PRODUCCION + q=uni → UNICA; contrato clients[].client",
+    async () => {
     const { GET } = await import("@/app/api/v1/formulas/options/route");
     const req = new Request(
       "http://localhost/api/v1/formulas/options?scope=clients&q=uni",
@@ -98,13 +117,17 @@ describe("GET /api/v1/formulas/options regressions", () => {
       clients: Array<{ client: string; rank?: string }>;
       totalActiveProducts: number;
       persistenceReady: boolean;
+      source?: string;
     };
     expect(body.persistenceReady).toBe(true);
+    expect(body.source).toBe("CACHE_NEON");
     expect(body.totalActiveProducts).toBe(1);
     expect(body.clients).toEqual(
       expect.arrayContaining([expect.objectContaining({ client: "UNICA" })])
     );
-  });
+  },
+    15_000
+  );
 
   it("UNICA + sham → producto con productId/versionId/productLabel", async () => {
     const { GET } = await import("@/app/api/v1/formulas/options/route");

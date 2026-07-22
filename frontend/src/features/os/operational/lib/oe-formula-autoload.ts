@@ -133,7 +133,7 @@ export function statusMessage(
     case "searching":
       return "Buscando fórmula…";
     case "found":
-      return "Fórmula encontrada y cargada.";
+      return detail || "Fórmula encontrada y cargada.";
     case "not_found":
       return (
         detail ||

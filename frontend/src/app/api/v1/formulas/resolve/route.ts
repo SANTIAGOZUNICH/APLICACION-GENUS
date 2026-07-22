@@ -4,19 +4,29 @@ import { isDatabaseConfigured } from "@/lib/db/client";
 import { readyFormulaBank } from "@/lib/formulas/get-formula-bank";
 import { emptyOeMaterial } from "@/lib/orders/content";
 import type { OeContent } from "@/lib/orders/types";
+import { resolveFormulaFromDriveFile } from "@/lib/formulas/drive-formulas-index";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const DRIVE_LOAD_ALLOWED = ["CALIDAD", "PRODUCCION", "MATERIA_PRIMA", "DIRECCION"];
+const RESOLVE_ALLOWED = [
+  "CALIDAD",
+  "PRODUCCION",
+  "MATERIA_PRIMA",
+  "ELABORACION",
+  "DIRECCION",
+];
+
 /**
- * Resuelve UNA fórmula vigente por productId (preferido) o cliente+producto exacto.
- * No lista el banco. No expone GET /formulas.
+ * Resuelve UNA fórmula:
+ * - driveFileId → Drive (Calidad/Producción/MP)
+ * - productId / client+product → Neon (respaldo / exacto)
  */
 export async function POST(request: Request) {
   try {
     const actor = resolveOrdersActor(request);
-    const allowed = ["CALIDAD", "PRODUCCION", "MATERIA_PRIMA", "ELABORACION", "DIRECCION"];
-    if (!allowed.includes(actor.sector)) {
+    if (!RESOLVE_ALLOWED.includes(actor.sector)) {
       return NextResponse.json({ error: "Sector no autorizado" }, { status: 403 });
     }
 
@@ -24,14 +34,49 @@ export async function POST(request: Request) {
       client?: string;
       product?: string;
       productId?: string;
+      driveFileId?: string;
     };
+    const driveFileId = (body.driveFileId ?? "").trim();
     const productId = (body.productId ?? "").trim();
     const client = (body.client ?? "").trim();
     const product = (body.product ?? "").trim();
 
+    // Preferir Drive cuando hay fileId
+    if (driveFileId || productId.startsWith("drive:")) {
+      if (!DRIVE_LOAD_ALLOWED.includes(actor.sector)) {
+        return NextResponse.json(
+          { error: "Elaboración no navega el banco de Drive; usa el snapshot de la OE." },
+          { status: 403 }
+        );
+      }
+      const fileId = driveFileId || productId.replace(/^drive:/, "");
+      const result = await resolveFormulaFromDriveFile({
+        fileId,
+        clientHint: client,
+        productHint: product,
+      });
+      if (!result.found) {
+        return NextResponse.json({
+          found: false,
+          source: "DRIVE",
+          message: result.message,
+          persistenceReady: isDatabaseConfigured(),
+        });
+      }
+      return NextResponse.json({
+        found: true,
+        source: "DRIVE",
+        message: "Fórmula encontrada en Drive",
+        snapshot: result.snapshot,
+        materials: result.materials,
+        procedureSteps: result.procedureSteps,
+        persistenceReady: isDatabaseConfigured(),
+      });
+    }
+
     if (!productId && (!client || !product)) {
       return NextResponse.json(
-        { error: "productId o (client y product) son obligatorios" },
+        { error: "driveFileId, productId o (client y product) son obligatorios" },
         { status: 400 }
       );
     }
@@ -48,6 +93,7 @@ export async function POST(request: Request) {
         conflictCode: lookup.code,
         reason: lookup.reason ?? "conflict",
         message: lookup.message,
+        source: "CACHE_NEON",
         persistenceReady: isDatabaseConfigured(),
       });
     }
@@ -57,6 +103,7 @@ export async function POST(request: Request) {
         found: false,
         reason: lookup.reason ?? "name_mismatch",
         message: lookup.message,
+        source: "CACHE_NEON",
         persistenceReady: isDatabaseConfigured(),
       });
     }
@@ -73,11 +120,15 @@ export async function POST(request: Request) {
 
     const partial: Pick<OeContent, "materials" | "procedureSteps"> = {
       materials,
-      procedureSteps: snap.procedureSteps.map((s) => ({ id: s.id, text: s.instruction })),
+      procedureSteps: snap.procedureSteps.map((s) => ({
+        id: s.id,
+        text: s.instruction,
+      })),
     };
 
     return NextResponse.json({
       found: true,
+      source: "CACHE_NEON",
       snapshot: {
         formulaProductId: snap.formulaProductId,
         formulaVersionId: snap.formulaVersionId,

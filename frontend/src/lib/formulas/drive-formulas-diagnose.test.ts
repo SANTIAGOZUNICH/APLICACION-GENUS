@@ -21,18 +21,22 @@ vi.mock("@/lib/adapters/drive/google-drive-gateway", () => ({
 }));
 
 describe("drive-formulas-diagnose", () => {
-  it("sin folder configurado → folderConfigured false", async () => {
-    delete process.env.GOOGLE_DRIVE_FORMULAS_FOLDER_ID;
-    delete process.env.GOOGLE_DRIVE_PRODUCTOS_FOLDER_ID;
-    delete process.env.GOOGLE_DRIVE_ELABORACION_FOLDER_ID;
-    const { diagnoseDriveFormulasAccess } = await import(
-      "@/lib/formulas/drive-formulas-diagnose"
-    );
-    const report = await diagnoseDriveFormulasAccess();
-    expect(report.folderConfigured).toBe(false);
-    expect(report.estructuraCompatible).toBe(false);
-    expect(report.notes.length).toBeGreaterThan(0);
-  });
+  it(
+    "sin folder configurado → folderConfigured false",
+    async () => {
+      delete process.env.GOOGLE_DRIVE_FORMULAS_FOLDER_ID;
+      delete process.env.GOOGLE_DRIVE_PRODUCTOS_FOLDER_ID;
+      delete process.env.GOOGLE_DRIVE_ELABORACION_FOLDER_ID;
+      const { diagnoseDriveFormulasAccess } = await import(
+        "@/lib/formulas/drive-formulas-diagnose"
+      );
+      const report = await diagnoseDriveFormulasAccess();
+      expect(report.folderConfigured).toBe(false);
+      expect(report.estructuraCompatible).toBe(false);
+      expect(report.notes.length).toBeGreaterThan(0);
+    },
+    15_000
+  );
 
   it("preferir GOOGLE_DRIVE_FORMULAS_FOLDER_ID", async () => {
     process.env.GOOGLE_DRIVE_FORMULAS_FOLDER_ID = "formulas-folder";

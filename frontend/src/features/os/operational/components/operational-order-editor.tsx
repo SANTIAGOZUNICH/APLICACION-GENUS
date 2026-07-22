@@ -343,7 +343,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       client: string,
       product: string,
       forceReplace: boolean,
-      productId?: string
+      productId?: string,
+      driveFileId?: string
     ) => {
       if (!canEditFormula || locked) return;
       const identity = formulaIdentityKey(client, product);
@@ -356,7 +357,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           session,
           client,
           product,
-          productId
+          productId,
+          driveFileId
         );
         if (seq !== formulaResolveSeq.current) return;
 
@@ -434,6 +436,10 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         }
 
         applyResolvedFormula(result, identity);
+        if (result.source === "DRIVE") {
+          setFormulaStatus("found");
+          setFormulaStatusDetail("Fórmula encontrada en Drive");
+        }
       } catch (err) {
         if (seq !== formulaResolveSeq.current) return;
         setFormulaStatus("error");
@@ -520,7 +526,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         option.client,
         option.productLabel,
         false,
-        option.productId
+        option.productId,
+        option.driveFileId
       );
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps

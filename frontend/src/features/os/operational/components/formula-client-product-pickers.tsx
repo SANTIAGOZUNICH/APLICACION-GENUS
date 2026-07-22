@@ -17,6 +17,7 @@ export type SelectedFormulaOption = {
   productLabel: string;
   code: string;
   source?: "DRIVE" | "CACHE_NEON";
+  driveFileId?: string;
 };
 
 type FormulaClientProductPickersProps = {
@@ -84,10 +85,16 @@ export function FormulaClientProductPickers({
           setClientOpts([]);
           return;
         }
+        if (res.driveError) {
+          setClientError(
+            `Drive: ${res.driveError}. Mostrando respaldo. — Reintentar`
+          );
+        }
         setClientOpts(
           res.clients.map((c) => ({
             id: c.client,
             label: c.client,
+            secondary: c.source === "CACHE_NEON" ? "cache" : undefined,
           }))
         );
       } catch {
@@ -117,6 +124,11 @@ export function FormulaClientProductPickers({
           setProductError("No pudimos cargar las sugerencias — Reintentar");
           setProductOpts([]);
           return;
+        }
+        if (res.driveError) {
+          setProductError(
+            `Drive: ${res.driveError}. Mostrando respaldo. — Reintentar`
+          );
         }
         setProductOpts(res.products);
       } catch {
@@ -219,6 +231,8 @@ export function FormulaClientProductPickers({
             client: full.client,
             productLabel: full.productLabel,
             code: full.code,
+            source: full.source,
+            driveFileId: full.driveFileId,
           });
         }}
         onCommitText={(v) => {
@@ -236,6 +250,8 @@ export function FormulaClientProductPickers({
               client: full.client,
               productLabel: full.productLabel,
               code: full.code,
+              source: full.source,
+              driveFileId: full.driveFileId,
             });
             return;
           }

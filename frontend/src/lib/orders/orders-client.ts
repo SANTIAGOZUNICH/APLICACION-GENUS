@@ -283,93 +283,12 @@ export async function saveOrderProgressApi(
   return data.order;
 }
 
-/** Resuelve UNA fórmula vigente por productId o cliente+producto exacto. */
-export async function resolveFormulaMasterApi(
-  session: OrdersClientSession,
-  client: string,
-  product: string,
-  productId?: string
-): Promise<{
-  found: boolean;
-  conflict?: boolean;
-  conflictCode?: string;
-  reason?: string;
-  message?: string;
-  persistenceReady?: boolean;
-  snapshot?: {
-    formulaProductId: string;
-    formulaVersionId: string;
-    versionHash: string;
-    displayClient?: string;
-    displayProduct?: string;
-    productCode?: string;
-  };
-  materials?: Array<{
-    materiaPrima: string;
-    codigo: string;
-    formulaPct: number | null;
-  }>;
-  procedureSteps?: Array<{ id: string; text: string }>;
-}> {
-  const res = await fetch("/api/v1/formulas/resolve", {
-    method: "POST",
-    headers: actorHeaders(session),
-    body: JSON.stringify(
-      productId
-        ? { productId }
-        : { client, product }
-    ),
-    cache: "no-store",
-  });
-  // Errores de red/DB no deben silenciarse: el caller muestra status error.
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    const err = new Error(body.error ?? `HTTP ${res.status}`) as Error & {
-      status?: number;
-    };
-    err.status = res.status;
-    throw err;
-  }
-  const data = (await res.json()) as {
-    found: boolean;
-    conflict?: boolean;
-    conflictCode?: string;
-    reason?: string;
-    message?: string;
-    persistenceReady?: boolean;
-    snapshot?: {
-      formulaProductId: string;
-      formulaVersionId: string;
-      versionHash: string;
-      displayClient?: string;
-      displayProduct?: string;
-      productCode?: string;
-    };
-    materials?: Array<{
-      materiaPrima?: string;
-      codigo?: string;
-      formulaPct?: number | null;
-    }>;
-    procedureSteps?: Array<{ id: string; text: string }>;
-  };
-  return {
-    found: data.found,
-    conflict: data.conflict,
-    conflictCode: data.conflictCode,
-    reason: data.reason,
-    message: data.message,
-    persistenceReady: data.persistenceReady,
-    snapshot: data.snapshot,
-    materials: data.materials?.map((m) => ({
-      materiaPrima: m.materiaPrima ?? "",
-      codigo: m.codigo ?? "",
-      formulaPct: m.formulaPct ?? null,
-    })),
-    procedureSteps: data.procedureSteps,
-  };
-}
-
-export type FormulaClientOption = { client: string; rank?: string };
+/** Resuelve fórmula por driveFileId, productId o cliente+producto exacto. */
+export type FormulaClientOption = {
+  client: string;
+  rank?: string;
+  source?: "DRIVE" | "CACHE_NEON";
+};
 export type FormulaProductOption = {
   productId: string;
   versionId: string;
@@ -378,12 +297,20 @@ export type FormulaProductOption = {
   code: string;
   aliases: string[];
   rank?: string;
+  source?: "DRIVE" | "CACHE_NEON";
+  driveFileId?: string;
+  modifiedTime?: string | null;
 };
 
 export async function fetchFormulaClientOptionsApi(
   session: OrdersClientSession,
   q: string
-): Promise<{ clients: FormulaClientOption[]; persistenceReady?: boolean }> {
+): Promise<{
+  clients: FormulaClientOption[];
+  persistenceReady?: boolean;
+  source?: string;
+  driveError?: string | null;
+}> {
   const params = new URLSearchParams({ scope: "clients", q, limit: "10" });
   const res = await fetch(`/api/v1/formulas/options?${params}`, {
     headers: actorHeaders(session),
@@ -396,6 +323,8 @@ export async function fetchFormulaClientOptionsApi(
   return (await res.json()) as {
     clients: FormulaClientOption[];
     persistenceReady?: boolean;
+    source?: string;
+    driveError?: string | null;
   };
 }
 
@@ -403,7 +332,12 @@ export async function fetchFormulaProductOptionsApi(
   session: OrdersClientSession,
   client: string,
   q: string
-): Promise<{ products: FormulaProductOption[]; persistenceReady?: boolean }> {
+): Promise<{
+  products: FormulaProductOption[];
+  persistenceReady?: boolean;
+  source?: string;
+  driveError?: string | null;
+}> {
   const params = new URLSearchParams({
     scope: "products",
     client,
@@ -421,6 +355,106 @@ export async function fetchFormulaProductOptionsApi(
   return (await res.json()) as {
     products: FormulaProductOption[];
     persistenceReady?: boolean;
+    source?: string;
+    driveError?: string | null;
+  };
+}
+
+export async function resolveFormulaMasterApi(
+  session: OrdersClientSession,
+  client: string,
+  product: string,
+  productId?: string,
+  driveFileId?: string
+): Promise<{
+  found: boolean;
+  conflict?: boolean;
+  conflictCode?: string;
+  reason?: string;
+  message?: string;
+  source?: string;
+  persistenceReady?: boolean;
+  snapshot?: {
+    formulaProductId: string;
+    formulaVersionId: string;
+    versionHash: string;
+    displayClient?: string;
+    displayProduct?: string;
+    productCode?: string;
+    driveFileId?: string;
+    driveModifiedTime?: string | null;
+    driveChecksum?: string;
+    sourceSheet?: string;
+  };
+  materials?: Array<{
+    materiaPrima: string;
+    codigo: string;
+    formulaPct: number | null;
+  }>;
+  procedureSteps?: Array<{ id: string; text: string }>;
+}> {
+  const res = await fetch("/api/v1/formulas/resolve", {
+    method: "POST",
+    headers: actorHeaders(session),
+    body: JSON.stringify(
+      driveFileId
+        ? { driveFileId, client, product }
+        : productId
+          ? { productId, client, product }
+          : { client, product }
+    ),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    const err = new Error(body.error ?? `HTTP ${res.status}`) as Error & {
+      status?: number;
+    };
+    err.status = res.status;
+    throw err;
+  }
+  const data = (await res.json()) as {
+    found: boolean;
+    conflict?: boolean;
+    conflictCode?: string;
+    reason?: string;
+    message?: string;
+    source?: string;
+    persistenceReady?: boolean;
+    snapshot?: {
+      formulaProductId: string;
+      formulaVersionId: string;
+      versionHash: string;
+      displayClient?: string;
+      displayProduct?: string;
+      productCode?: string;
+      driveFileId?: string;
+      driveModifiedTime?: string | null;
+      driveChecksum?: string;
+      sourceSheet?: string;
+    };
+    materials?: Array<{
+      materiaPrima?: string;
+      codigo?: string;
+      formulaPct?: number | null;
+    }>;
+    procedureSteps?: Array<{ id: string; text: string }>;
+  };
+  return {
+    found: data.found,
+    conflict: data.conflict,
+    conflictCode: data.conflictCode,
+    reason: data.reason,
+    message: data.message,
+    source: data.source,
+    persistenceReady: data.persistenceReady,
+    snapshot: data.snapshot,
+    materials: data.materials?.map((m) => ({
+      materiaPrima: m.materiaPrima ?? "",
+      codigo: m.codigo ?? "",
+      formulaPct: m.formulaPct ?? null,
+    })),
+    procedureSteps: data.procedureSteps,
   };
 }
 
