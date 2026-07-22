@@ -66,6 +66,29 @@ export class FormulaBankService {
     return listActiveFormulaOptions(this.store.products, this.store.versions);
   }
 
+  /** Conteos seguros para auditoría (sin contenido de fórmula). */
+  coverageStats(): {
+    totalVersions: number;
+    vigentes: number;
+    historicas: number;
+    conflictos: number;
+    activeProducts: number;
+    distinctClients: number;
+    completedImportRuns: number;
+  } {
+    const versions = this.store.versions;
+    const options = this.listActiveOptions();
+    return {
+      totalVersions: versions.length,
+      vigentes: versions.filter((v) => v.status === "VIGENTE").length,
+      historicas: versions.filter((v) => v.status === "HISTORICA").length,
+      conflictos: versions.filter((v) => v.status === "CONFLICTO").length,
+      activeProducts: options.length,
+      distinctClients: new Set(options.map((o) => o.client)).size,
+      completedImportRuns: [...this.store.importRunHashes].length,
+    };
+  }
+
   /**
    * Resultado de resolución por cliente+producto.
    * Coincidencia exacta normalizada (display o alias). Nunca fuzzy silencioso.

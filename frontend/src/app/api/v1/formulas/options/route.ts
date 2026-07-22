@@ -80,10 +80,10 @@ export async function GET(request: Request) {
 
     if (scope === "coverage") {
       // Solo conteos — sin nombres de fórmula ni contenido.
+      const stats = bank.coverageStats();
       return NextResponse.json({
         scope: "coverage",
-        totalActiveProducts: options.length,
-        distinctClients: new Set(options.map((o) => o.client)).size,
+        ...stats,
         persistenceReady: isDatabaseConfigured(),
       });
     }

@@ -147,7 +147,7 @@ export function CreateOrderDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-lg overflow-visible">
+        <DialogContent className="max-w-lg overflow-visible sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
               {type === "OE"

@@ -40,7 +40,6 @@ import { validateDeliver } from "@/lib/orders/validators";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/orders/actor";
 import {
   applyFormulaResolveToOe,
-  clearFormulaFromOe,
   formulaIdentityKey,
   messageForResolveReason,
   needsReplaceConfirmation,
@@ -336,18 +335,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     };
     formulaIdentityRef.current = null;
     setDidYouMean(null);
-    setForm((prev) => {
-      if (!prev || prev.kind !== "OE") return prev;
-      if (!oeHasFormulaContent(prev)) return prev;
-      const cleared = normalizeOrderContent(clearFormulaFromOe(prev));
-      setSaveState("dirty");
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        void persist(cleared, versionRef.current);
-      }, 400);
-      return cleared;
-    });
-  }, [persist]);
+    // No borrar materiales aquí: el replace se confirma al resolver una nueva fórmula.
+  }, []);
 
   const runFormulaResolve = useCallback(
     async (
@@ -548,8 +537,27 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
 
   const oeClient = form?.kind === "OE" ? form.header.client : "";
   const oeProduct = form?.kind === "OE" ? form.header.productName : "";
-  void oeClient;
-  void oeProduct;
+
+  // Fallback: autoload exacto por texto (debounce), aunque el combobox/options falle.
+  useEffect(() => {
+    if (!canEditFormula || locked) return;
+    const client = oeClient.trim();
+    const product = oeProduct.trim();
+    if (!client || !product) return;
+    const identity = formulaIdentityKey(client, product);
+    if (
+      identity === formulaIdentityRef.current &&
+      formulaSnapshotRef.current.formulaVersionId &&
+      formRef.current?.kind === "OE" &&
+      formRef.current.materials.some((m) => m.formulaPct != null)
+    ) {
+      return;
+    }
+    const t = setTimeout(() => {
+      void runFormulaResolve(client, product, false);
+    }, 550);
+    return () => clearTimeout(t);
+  }, [oeClient, oeProduct, canEditFormula, locked, runFormulaResolve]);
 
   const updateForm = (updater: (prev: OrderContent) => OrderContent) => {
     if (!form || !canEdit) return;

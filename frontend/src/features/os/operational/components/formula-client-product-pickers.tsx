@@ -70,6 +70,11 @@ export function FormulaClientProductPickers({
       try {
         const res = await fetchFormulaClientOptionsApi(session, q);
         if (seq !== clientSeq.current) return;
+        if (res.persistenceReady === false) {
+          setClientError("No pudimos cargar las sugerencias — Reintentar");
+          setClientOpts([]);
+          return;
+        }
         setClientOpts(
           res.clients.map((c) => ({
             id: c.client,
@@ -78,7 +83,7 @@ export function FormulaClientProductPickers({
         );
       } catch {
         if (seq !== clientSeq.current) return;
-        setClientError("No pudimos consultar el banco de fórmulas");
+        setClientError("No pudimos cargar las sugerencias — Reintentar");
         setClientOpts([]);
       } finally {
         if (seq === clientSeq.current) setClientLoading(false);
@@ -99,10 +104,15 @@ export function FormulaClientProductPickers({
       try {
         const res = await fetchFormulaProductOptionsApi(session, clientName, q);
         if (seq !== productSeq.current) return;
+        if (res.persistenceReady === false) {
+          setProductError("No pudimos cargar las sugerencias — Reintentar");
+          setProductOpts([]);
+          return;
+        }
         setProductOpts(res.products);
       } catch {
         if (seq !== productSeq.current) return;
-        setProductError("No pudimos consultar el banco de fórmulas");
+        setProductError("No pudimos cargar las sugerencias — Reintentar");
         setProductOpts([]);
       } finally {
         if (seq === productSeq.current) setProductLoading(false);
