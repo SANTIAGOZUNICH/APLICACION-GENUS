@@ -1,6 +1,6 @@
 /**
  * CLI privado: scan / import de ZIP de fórmulas.
- * Ejecutar vía: npm run formulas:scan -- --input /ruta.zip
+ * Import seguro: --safe-only --expected-versions N --expected-active M [--dry-run]
  * No imprime fórmulas completas ni ingredientes en logs generales.
  */
 
@@ -19,6 +19,13 @@ import {
   formulaBankService,
   memoryFormulaBank,
 } from "../src/lib/formulas/formula-bank-service";
+import {
+  SafeImportAbortError,
+  assertExpectedCounts,
+  assertSafeBankInvariants,
+  countSafeBank,
+  filterSafeOnly,
+} from "../src/lib/formulas/safe-import";
 
 function archiveSha256(filePath: string): string {
   return createHash("sha256").update(readFileSync(filePath)).digest("hex");
@@ -33,10 +40,6 @@ function walkFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-/**
- * Cliente = 2º segmento de la ruta dentro del ZIP (la carpeta raíz NO es cliente).
- * Solo se usa si existe un directorio de cliente real por encima del archivo.
- */
 function folderClientHint(filePath: string, root: string): string {
   const rel = filePath.slice(root.length + 1);
   const parts = rel.split(/[\\/]/).filter(Boolean);
@@ -88,22 +91,67 @@ function summarizeDrafts(allDrafts: ReturnType<typeof parseWorkbookBuffer>) {
   };
 }
 
-async function main() {
-  const argv = process.argv.slice(2);
+function parseArgs(argv: string[]) {
   const mode = argv.includes("import") ? "import" : "scan";
   let input = "";
+  let expectedVersions: number | null = null;
+  let expectedActive: number | null = null;
+  const safeOnly = argv.includes("--safe-only");
+  const dryRun = argv.includes("--dry-run") || argv.includes("--preflight");
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--input") input = argv[i + 1] ?? "";
+    if (argv[i] === "--expected-versions") {
+      expectedVersions = Number(argv[i + 1]);
+    }
+    if (argv[i] === "--expected-active") {
+      expectedActive = Number(argv[i + 1]);
+    }
   }
+  return { mode, input, safeOnly, dryRun, expectedVersions, expectedActive };
+}
+
+async function main() {
+  const { mode, input, safeOnly, dryRun, expectedVersions, expectedActive } = parseArgs(
+    process.argv.slice(2)
+  );
 
   if (!input) {
-    console.error("Uso: npm run formulas:scan -- --input /ruta/privada.zip");
+    console.error(
+      "Uso: npm run formulas:import -- --input /ruta.zip --safe-only --expected-versions 842 --expected-active 784 [--dry-run]"
+    );
     process.exit(2);
   }
   if (!existsSync(input)) {
     console.error(`Archivo no encontrado: ${input}`);
-    console.error("Colocá el ZIP fuera del repo, p.ej. /tmp/private-formulas/ORDEN....zip");
     process.exit(2);
+  }
+
+  if (mode === "import") {
+    if (!safeOnly) {
+      console.error(
+        JSON.stringify({
+          import: "aborted",
+          reason: "SAFE_ONLY_REQUIRED",
+          message: "formulas:import requiere --safe-only",
+        })
+      );
+      process.exit(4);
+    }
+    if (
+      expectedVersions == null ||
+      !Number.isFinite(expectedVersions) ||
+      expectedActive == null ||
+      !Number.isFinite(expectedActive)
+    ) {
+      console.error(
+        JSON.stringify({
+          import: "aborted",
+          reason: "EXPECTED_COUNTS_REQUIRED",
+          message: "Requiere --expected-versions y --expected-active",
+        })
+      );
+      process.exit(4);
+    }
   }
 
   const archiveHash = archiveSha256(input);
@@ -167,53 +215,120 @@ async function main() {
     )
   );
 
-  if (mode === "import") {
-    const {
-      isCliDatabaseConfigured,
-      cliHasCompletedImport,
-      cliPersistFormulaBank,
-      cliRecordImportRun,
-    } = await import("./formula-neon-io");
+  if (mode !== "import") return;
 
-    if (!isCliDatabaseConfigured()) {
-      console.error("import requiere DATABASE_URL (Neon Preview). Abortado.");
-      process.exit(3);
-    }
+  let safeBank: MemoryFormulaBank;
+  let safeCounts;
+  try {
+    safeBank = filterSafeOnly(memoryFormulaBank);
+    safeCounts = assertSafeBankInvariants(safeBank);
+    assertExpectedCounts(safeCounts, expectedVersions!, expectedActive!);
+  } catch (err) {
+    const code = err instanceof SafeImportAbortError ? err.code : "SAFE_FILTER_FAILED";
+    const message = err instanceof Error ? err.message : "error";
+    console.error(
+      JSON.stringify({
+        import: "aborted",
+        reason: code,
+        message,
+        counts: countSafeBank(filterSafeOnly(memoryFormulaBank)),
+      })
+    );
+    process.exit(5);
+  }
 
-    if (await cliHasCompletedImport(archiveHash)) {
-      console.log(
-        JSON.stringify({
-          import: "skipped",
-          reason: "archive_already_imported",
-          archiveSha256Prefix: archiveHash.slice(0, 12),
-        })
-      );
-      return;
-    }
+  console.log(
+    JSON.stringify({
+      preflight: {
+        dryRun,
+        archiveSha256Prefix: archiveHash.slice(0, 12),
+        duplicatedOmitted: result.duplicated,
+        safe: safeCounts,
+        expectedVersions,
+        expectedActive,
+      },
+    })
+  );
 
-    // Resultado ya ingestado en memoria arriba; persistir snapshot a Neon Preview.
-    await cliPersistFormulaBank(memoryFormulaBank);
-    await cliRecordImportRun({
+  if (dryRun) {
+    console.log(
+      JSON.stringify({
+        import: "preflight_ok",
+        wouldPersistVersions: safeCounts.versions,
+        wouldPersistActive: safeCounts.activeProducts,
+        note: "Sin escritura. Banco Neon intacto.",
+      })
+    );
+    return;
+  }
+
+  const {
+    isCliDatabaseConfigured,
+    cliHasCompletedImport,
+    cliPersistFormulaBankAtomic,
+    cliRecordFailedImportRun,
+  } = await import("./formula-neon-io");
+
+  if (!isCliDatabaseConfigured()) {
+    console.error(
+      JSON.stringify({
+        import: "aborted",
+        reason: "DATABASE_URL_REQUIRED",
+      })
+    );
+    process.exit(3);
+  }
+
+  if (await cliHasCompletedImport(archiveHash)) {
+    console.log(
+      JSON.stringify({
+        import: "skipped",
+        reason: "archive_already_imported",
+        archiveSha256Prefix: archiveHash.slice(0, 12),
+      })
+    );
+    return;
+  }
+
+  try {
+    const persisted = await cliPersistFormulaBankAtomic(safeBank, {
       archiveHash,
-      status: "COMPLETED",
       filesScanned: scanned,
       formulasDetected: allDrafts.length,
-      inserted: result.inserted,
       duplicated: result.duplicated,
-      warnings: [`warningCount=${result.warnings}`, `conflicts=${result.conflicts}`],
-      errors: [],
+      expectedVersions: expectedVersions!,
+      expectedActive: expectedActive!,
     });
     console.log(
       JSON.stringify({
         import: "ok",
-        persistedProducts: memoryFormulaBank.products.length,
-        persistedVersions: memoryFormulaBank.versions.length,
-        inserted: result.inserted,
-        duplicated: result.duplicated,
-        conflicts: result.conflicts,
-        note: "Neon Preview only. No Production sin autorización explícita.",
+        archiveSha256Prefix: archiveHash.slice(0, 12),
+        persisted: persisted.counts,
+        note: "Neon Preview only. Transacción atómica committed.",
       })
     );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "error";
+    try {
+      await cliRecordFailedImportRun({
+        archiveHash,
+        filesScanned: scanned,
+        formulasDetected: allDrafts.length,
+        duplicated: result.duplicated,
+        errors: [message.slice(0, 500)],
+      });
+    } catch {
+      /* no enmascarar el error original */
+    }
+    console.error(
+      JSON.stringify({
+        import: "failed",
+        reason: "ATOMIC_PERSIST_FAILED",
+        message: message.slice(0, 300),
+        note: "Rollback: banco anterior intacto.",
+      })
+    );
+    process.exit(6);
   }
 }
 
