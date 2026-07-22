@@ -825,6 +825,15 @@ export class OrdersService {
       code: headerCode,
       product: headerProduct,
       updatedBy: actor.email,
+      ...(input.formulaProductId !== undefined
+        ? { formulaProductId: input.formulaProductId }
+        : {}),
+      ...(input.formulaVersionId !== undefined
+        ? { formulaVersionId: input.formulaVersionId }
+        : {}),
+      ...(input.formulaVersionHash !== undefined
+        ? { formulaVersionHash: input.formulaVersionHash }
+        : {}),
     });
     if (!updated) {
       const fresh = await this.repo.getOrder(id);

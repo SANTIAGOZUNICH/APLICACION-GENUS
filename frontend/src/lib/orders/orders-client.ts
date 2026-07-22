@@ -283,6 +283,78 @@ export async function saveOrderProgressApi(
   return data.order;
 }
 
+/** Resuelve UNA fórmula vigente por cliente+producto. No lista el banco. */
+export async function resolveFormulaMasterApi(
+  session: OrdersClientSession,
+  client: string,
+  product: string
+): Promise<{
+  found: boolean;
+  conflict?: boolean;
+  conflictCode?: string;
+  message?: string;
+  persistenceReady?: boolean;
+  snapshot?: {
+    formulaProductId: string;
+    formulaVersionId: string;
+    versionHash: string;
+  };
+  materials?: Array<{
+    materiaPrima: string;
+    codigo: string;
+    formulaPct: number | null;
+  }>;
+  procedureSteps?: Array<{ id: string; text: string }>;
+}> {
+  const res = await fetch("/api/v1/formulas/resolve", {
+    method: "POST",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ client, product }),
+    cache: "no-store",
+  });
+  // Errores de red/DB no deben silenciarse: el caller muestra status error.
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    const err = new Error(body.error ?? `HTTP ${res.status}`) as Error & {
+      status?: number;
+    };
+    err.status = res.status;
+    throw err;
+  }
+  const data = (await res.json()) as {
+    found: boolean;
+    conflict?: boolean;
+    conflictCode?: string;
+    message?: string;
+    persistenceReady?: boolean;
+    snapshot?: {
+      formulaProductId: string;
+      formulaVersionId: string;
+      versionHash: string;
+    };
+    materials?: Array<{
+      materiaPrima?: string;
+      codigo?: string;
+      formulaPct?: number | null;
+    }>;
+    procedureSteps?: Array<{ id: string; text: string }>;
+  };
+  return {
+    found: data.found,
+    conflict: data.conflict,
+    conflictCode: data.conflictCode,
+    message: data.message,
+    persistenceReady: data.persistenceReady,
+    snapshot: data.snapshot,
+    materials: data.materials?.map((m) => ({
+      materiaPrima: m.materiaPrima ?? "",
+      codigo: m.codigo ?? "",
+      formulaPct: m.formulaPct ?? null,
+    })),
+    procedureSteps: data.procedureSteps,
+  };
+}
+
 export async function deliverOrderApi(
   session: OrdersClientSession,
   id: string,

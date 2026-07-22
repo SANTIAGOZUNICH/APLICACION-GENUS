@@ -395,6 +395,10 @@ export type PatchOrderInput = {
   client?: string;
   code?: string;
   product?: string;
+  /** Snapshot de fórmula maestra aplicado a esta OE (estable). */
+  formulaProductId?: string | null;
+  formulaVersionId?: string | null;
+  formulaVersionHash?: string | null;
 };
 
 export class OrdersValidationError extends Error {

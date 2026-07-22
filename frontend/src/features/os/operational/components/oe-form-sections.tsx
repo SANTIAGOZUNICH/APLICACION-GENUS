@@ -2,6 +2,8 @@
 
 import type { OeContent } from "@/lib/orders/types";
 import { computeKgRealUtilizado } from "@/lib/orders/content";
+import type { FormulaAutoloadStatus } from "../lib/oe-formula-autoload";
+import { statusMessage } from "../lib/oe-formula-autoload";
 
 export type OeFieldMode = {
   /** CALIDAD / PRODUCCION / MP */
@@ -19,6 +21,8 @@ interface OeFormSectionsProps {
   onChange: (next: OeContent) => void;
   onAddMaterial: () => void;
   onRemoveMaterial: (id: string) => void;
+  /** Estado de resolución automática de fórmula maestra. */
+  formulaStatus?: FormulaAutoloadStatus;
 }
 
 function Field({
@@ -59,6 +63,7 @@ export function OeFormSections({
   onChange,
   onAddMaterial,
   onRemoveMaterial,
+  formulaStatus = "idle",
 }: OeFormSectionsProps) {
   const mode: OeFieldMode = fieldMode ?? {
     canEditFormula: !readOnly,
@@ -90,6 +95,22 @@ export function OeFormSections({
 
   return (
     <div className="space-y-4" data-testid="oe-form-sections">
+      {formulaStatus !== "idle" && statusMessage(formulaStatus) ? (
+        <p
+          className={`rounded border px-2 py-1.5 text-xs ${
+            formulaStatus === "error" || formulaStatus === "conflict"
+              ? "border-amber-300 bg-amber-50 text-amber-950"
+              : formulaStatus === "found"
+                ? "border-emerald-300 bg-emerald-50 text-emerald-950"
+                : "border-[var(--os-border)] bg-[var(--os-bg-muted,#f5f7fa)] text-[var(--os-text-muted)]"
+          }`}
+          data-testid="oe-formula-status"
+          data-status={formulaStatus}
+          role="status"
+        >
+          {statusMessage(formulaStatus)}
+        </p>
+      ) : null}
       <details open className="rounded border border-[var(--os-border)] p-3">
         <summary className="cursor-pointer font-medium">Encabezado OE</summary>
         <div className="mt-3 grid gap-2 sm:grid-cols-3">

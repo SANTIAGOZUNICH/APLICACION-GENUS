@@ -27,6 +27,7 @@ import {
   deliverOrderApi,
   fetchOrder,
   orderPdfUrl,
+  resolveFormulaMasterApi,
   reviewOrderApi,
   returnOrderApi,
   saveAsMasterApi,
@@ -37,6 +38,13 @@ import { statusLabel } from "@/lib/orders/empty-draft";
 import type { OaContent, OeContent, OperationalOrderRecord, OrderContent } from "@/lib/orders/types";
 import { validateDeliver } from "@/lib/orders/validators";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/orders/actor";
+import {
+  applyFormulaResolveToOe,
+  formulaIdentityKey,
+  needsReplaceConfirmation,
+  oeHasFormulaContent,
+  type FormulaAutoloadStatus,
+} from "../lib/oe-formula-autoload";
 import { OeFormSections } from "./oe-form-sections";
 import { OaFormSections, renumberOaMaterials } from "./oa-form-sections";
 import { OaSimpleWizard } from "./oa-simple-wizard";
@@ -64,6 +72,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
 
   const [order, setOrder] = useState<OperationalOrderRecord | null>(null);
   const [form, setForm] = useState<OrderContent | null>(null);
+  const formRef = useRef<OrderContent | null>(null);
+  formRef.current = form;
   const [oaSimple, setOaSimple] = useState<OaSimpleForm | null>(null);
   const [oaMode, setOaMode] = useState<OaEditorMode>("simple");
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -90,6 +100,23 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const [pendingAllowIncomplete, setPendingAllowIncomplete] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const versionRef = useRef(1);
+  const [formulaStatus, setFormulaStatus] = useState<FormulaAutoloadStatus>("idle");
+  const [formulaReplaceOpen, setFormulaReplaceOpen] = useState(false);
+  const formulaIdentityRef = useRef<string | null>(null);
+  const formulaResolveSeq = useRef(0);
+  const pendingResolvePayloadRef = useRef<Awaited<
+    ReturnType<typeof resolveFormulaMasterApi>
+  > | null>(null);
+  const pendingFormulaIdentityRef = useRef<string | null>(null);
+  const formulaSnapshotRef = useRef<{
+    formulaProductId: string | null;
+    formulaVersionId: string | null;
+    formulaVersionHash: string | null;
+  }>({
+    formulaProductId: null,
+    formulaVersionId: null,
+    formulaVersionHash: null,
+  });
 
   const load = useCallback(async () => {
     try {
@@ -112,6 +139,20 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         setOaSimple(null);
       }
       versionRef.current = o.version;
+      formulaSnapshotRef.current = {
+        formulaProductId: o.formulaProductId,
+        formulaVersionId: o.formulaVersionId,
+        formulaVersionHash: o.formulaVersionHash,
+      };
+      if (o.formData.kind === "OE") {
+        const client = o.formData.header.client.trim();
+        const product = o.formData.header.productName.trim();
+        formulaIdentityRef.current =
+          client && product ? formulaIdentityKey(client, product) : null;
+      } else {
+        formulaIdentityRef.current = null;
+      }
+      setFormulaStatus("idle");
       setSaveState("idle");
       setConflict(null);
     } catch (err) {
@@ -189,9 +230,17 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         const updated = await saveOrderProgressApi(session, orderId, {
           expectedVersion,
           formData: nextForm,
+          formulaProductId: formulaSnapshotRef.current.formulaProductId,
+          formulaVersionId: formulaSnapshotRef.current.formulaVersionId,
+          formulaVersionHash: formulaSnapshotRef.current.formulaVersionHash,
         });
         setOrder(updated);
         setForm(updated.formData);
+        formulaSnapshotRef.current = {
+          formulaProductId: updated.formulaProductId,
+          formulaVersionId: updated.formulaVersionId,
+          formulaVersionHash: updated.formulaVersionHash,
+        };
         if (updated.formData.kind === "OA") {
           const oaForm = updated.formData;
           setOaSimple((prev) =>
@@ -225,6 +274,114 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     },
     [session, orderId]
   );
+
+  const applyResolvedFormula = useCallback(
+    (payload: Awaited<ReturnType<typeof resolveFormulaMasterApi>>, identity: string) => {
+      setForm((prev) => {
+        if (!prev || prev.kind !== "OE") return prev;
+        const applied = applyFormulaResolveToOe(prev, payload);
+        if (!applied) return prev;
+        formulaIdentityRef.current = identity;
+        formulaSnapshotRef.current = {
+          formulaProductId: applied.formulaProductId,
+          formulaVersionId: applied.formulaVersionId,
+          formulaVersionHash: applied.formulaVersionHash,
+        };
+        const next = normalizeOrderContent(applied.content);
+        setSaveState("dirty");
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+          void persist(next, versionRef.current);
+        }, 400);
+        return next;
+      });
+      setFormulaStatus("found");
+    },
+    [persist]
+  );
+
+  const runFormulaResolve = useCallback(
+    async (client: string, product: string, forceReplace: boolean) => {
+      if (!canEditFormula || locked) return;
+      const identity = formulaIdentityKey(client, product);
+      const seq = ++formulaResolveSeq.current;
+      setFormulaStatus("searching");
+      try {
+        const result = await resolveFormulaMasterApi(session, client, product);
+        if (seq !== formulaResolveSeq.current) return;
+
+        if (result.persistenceReady === false) {
+          setFormulaStatus("error");
+          setError("El banco de fórmulas no está disponible (base Preview no configurada).");
+          return;
+        }
+        if (result.conflict) {
+          setFormulaStatus("conflict");
+          return;
+        }
+        if (!result.found) {
+          setFormulaStatus("not_found");
+          return;
+        }
+
+        const current = formRef.current;
+        const hasContent =
+          current?.kind === "OE" ? oeHasFormulaContent(current) : false;
+        const confirmNeeded =
+          !forceReplace &&
+          needsReplaceConfirmation({
+            previousIdentity: formulaIdentityRef.current,
+            nextIdentity: identity,
+            hasContent,
+          });
+
+        if (confirmNeeded) {
+          pendingFormulaIdentityRef.current = identity;
+          pendingResolvePayloadRef.current = result;
+          setFormulaStatus("awaiting_confirm");
+          setFormulaReplaceOpen(true);
+          return;
+        }
+
+        applyResolvedFormula(result, identity);
+      } catch (err) {
+        if (seq !== formulaResolveSeq.current) return;
+        setFormulaStatus("error");
+        setError(
+          err instanceof Error
+            ? err.message
+            : "No se pudo consultar el banco de fórmulas."
+        );
+      }
+    },
+    [canEditFormula, locked, session, applyResolvedFormula]
+  );
+
+  const oeClient = form?.kind === "OE" ? form.header.client : "";
+  const oeProduct = form?.kind === "OE" ? form.header.productName : "";
+
+  // Auto-resolve cuando cliente + producto tienen valor (debounce 500 ms).
+  useEffect(() => {
+    if (!canEditFormula || locked) return;
+    const client = oeClient.trim();
+    const product = oeProduct.trim();
+    if (!client || !product) {
+      return;
+    }
+    const identity = formulaIdentityKey(client, product);
+    if (
+      identity === formulaIdentityRef.current &&
+      formulaSnapshotRef.current.formulaVersionId &&
+      formRef.current?.kind === "OE" &&
+      formRef.current.materials.some((m) => m.formulaPct != null)
+    ) {
+      return;
+    }
+    const t = setTimeout(() => {
+      void runFormulaResolve(client, product, false);
+    }, 500);
+    return () => clearTimeout(t);
+  }, [oeClient, oeProduct, canEditFormula, locked, runFormulaResolve]);
 
   const updateForm = (updater: (prev: OrderContent) => OrderContent) => {
     if (!form || !canEdit) return;
@@ -543,6 +700,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             canEditOperational: canEditOperational || canEditFormula,
             actorEmail: email ?? undefined,
           }}
+          formulaStatus={formulaStatus}
           onChange={(next) => updateForm(() => recomputeOeDerived(next))}
           onAddMaterial={() =>
             updateForm((prev) => {
@@ -620,6 +778,59 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           />
         </div>
       )}
+
+      <Dialog
+        open={formulaReplaceOpen}
+        onOpenChange={(open) => {
+          setFormulaReplaceOpen(open);
+          if (!open) {
+            pendingResolvePayloadRef.current = null;
+            pendingFormulaIdentityRef.current = null;
+            setFormulaStatus("skipped_manual");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reemplazar fórmula</DialogTitle>
+            <DialogDescription>
+              Ya hay materias primas o procedimiento cargados. ¿Reemplazarlos con la fórmula
+              maestra del nuevo cliente/producto?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="secondary"
+              data-testid="formula-replace-keep"
+              onClick={() => {
+                setFormulaReplaceOpen(false);
+                pendingResolvePayloadRef.current = null;
+                pendingFormulaIdentityRef.current = null;
+                setFormulaStatus("skipped_manual");
+              }}
+            >
+              Conservar edición actual
+            </Button>
+            <Button
+              type="button"
+              data-testid="formula-replace-confirm"
+              onClick={() => {
+                const payload = pendingResolvePayloadRef.current;
+                const identity = pendingFormulaIdentityRef.current;
+                setFormulaReplaceOpen(false);
+                if (payload && identity) {
+                  applyResolvedFormula(payload, identity);
+                }
+                pendingResolvePayloadRef.current = null;
+                pendingFormulaIdentityRef.current = null;
+              }}
+            >
+              Reemplazar con fórmula maestra
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={formulaPromptOpen} onOpenChange={setFormulaPromptOpen}>
         <DialogContent>

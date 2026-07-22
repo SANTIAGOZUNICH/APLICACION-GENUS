@@ -73,14 +73,13 @@ export async function POST(request: Request) {
         formulaProductId: snap.formulaProductId,
         formulaVersionId: snap.formulaVersionId,
         versionHash: snap.versionHash,
-        displayClient: snap.displayClient,
-        displayProduct: snap.displayProduct,
-        productCode: snap.productCode,
-        percentageTotal: snap.percentageTotal,
       },
-      materials: partial.materials,
+      materials: partial.materials.map((m) => ({
+        materiaPrima: m.materiaPrima,
+        codigo: m.codigo,
+        formulaPct: m.formulaPct,
+      })),
       procedureSteps: partial.procedureSteps,
-      specifications: snap.specifications,
       persistenceReady: isDatabaseConfigured(),
     });
   } catch (err) {

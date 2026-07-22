@@ -477,6 +477,15 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     if (patch.code !== undefined) setValues.code = patch.code;
     if (patch.product !== undefined) setValues.product = patch.product;
     if (patch.updatedBy !== undefined) setValues.updatedBy = patch.updatedBy;
+    if (patch.formulaProductId !== undefined) {
+      setValues.formulaProductId = patch.formulaProductId;
+    }
+    if (patch.formulaVersionId !== undefined) {
+      setValues.formulaVersionId = patch.formulaVersionId;
+    }
+    if (patch.formulaVersionHash !== undefined) {
+      setValues.formulaVersionHash = patch.formulaVersionHash;
+    }
     if (patch.revision !== undefined) setValues.revision = patch.revision;
     if (patch.completedAt !== undefined) {
       setValues.completedAt = patch.completedAt ? new Date(patch.completedAt) : null;
