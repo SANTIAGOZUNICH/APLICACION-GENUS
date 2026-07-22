@@ -22,8 +22,11 @@ export type SelectedFormulaOption = {
 
 type FormulaClientProductPickersProps = {
   session: OrdersClientSession;
+  /** Valores de la OE (solo para hidratar). */
   client: string;
   product: string;
+  /** Cambia al abrir otra OE / diálogo; dispara hidratación. */
+  hydrateKey?: string;
   /** Permite editar los inputs (solo lectura del formulario). */
   readOnly?: boolean;
   /** Si false, no se consultan sugerencias (p.ej. sin red) pero se puede escribir. */
@@ -45,6 +48,7 @@ export function FormulaClientProductPickers({
   session,
   client,
   product,
+  hydrateKey = "",
   readOnly = false,
   suggestionsEnabled = true,
   selectedProductId,
@@ -59,6 +63,14 @@ export function FormulaClientProductPickers({
   didYouMean,
   onAcceptDidYouMean,
 }: FormulaClientProductPickersProps) {
+  // Texto visible del input — independiente de la selección y de respuestas async.
+  const [clientQuery, setClientQuery] = useState(client);
+  const [selectedClient, setSelectedClient] = useState<string | null>(
+    client.trim() ? client : null
+  );
+  const [productQuery, setProductQuery] = useState(product);
+  const [selectedProduct, setSelectedProduct] = useState<SelectedFormulaOption | null>(null);
+
   const [clientOpts, setClientOpts] = useState<ComboboxOption[]>([]);
   const [productOpts, setProductOpts] = useState<FormulaProductOption[]>([]);
   const [clientLoading, setClientLoading] = useState(false);
@@ -67,9 +79,45 @@ export function FormulaClientProductPickers({
   const [productError, setProductError] = useState<string | null>(null);
   const clientSeq = useRef(0);
   const productSeq = useRef(0);
+  const editingClientRef = useRef(false);
+  const editingProductRef = useRef(false);
+  const prevHydrateKey = useRef<string | null>(null);
+
+  // Hidratar solo al cambiar orderId / abrir, o mientras el usuario no editó.
+  useEffect(() => {
+    const keyChanged = prevHydrateKey.current !== hydrateKey;
+    if (keyChanged) {
+      prevHydrateKey.current = hydrateKey;
+      editingClientRef.current = false;
+      editingProductRef.current = false;
+      setClientQuery(client);
+      setSelectedClient(client.trim() ? client : null);
+      setProductQuery(product);
+      setSelectedProduct(null);
+      setClientOpts([]);
+      setProductOpts([]);
+      return;
+    }
+    if (!editingClientRef.current) {
+      setClientQuery(client);
+      if (client.trim()) setSelectedClient(client);
+    }
+    if (!editingProductRef.current) {
+      setProductQuery(product);
+    }
+  }, [hydrateKey, client, product]);
 
   const canSuggest = suggestionsEnabled && !readOnly;
-  const productNeedsClient = !client.trim();
+  const productNeedsClient = !clientQuery.trim();
+
+  const clearProductLocal = useCallback(() => {
+    editingProductRef.current = true;
+    setProductQuery("");
+    setSelectedProduct(null);
+    setProductOpts([]);
+    onProductTextChange("");
+    onClearProduct?.();
+  }, [onClearProduct, onProductTextChange]);
 
   const loadClients = useCallback(
     async (q: string) => {
@@ -90,6 +138,7 @@ export function FormulaClientProductPickers({
             `Drive: ${res.driveError}. Mostrando respaldo. — Reintentar`
           );
         }
+        // Solo suggestions — nunca el texto escrito.
         setClientOpts(
           res.clients.map((c) => ({
             id: c.client,
@@ -144,26 +193,26 @@ export function FormulaClientProductPickers({
 
   useEffect(() => {
     if (!canSuggest) return;
-    const q = client.trim();
+    const q = clientQuery.trim();
     if (!q) {
       setClientOpts([]);
       return;
     }
     const t = setTimeout(() => void loadClients(q), 180);
     return () => clearTimeout(t);
-  }, [client, canSuggest, loadClients]);
+  }, [clientQuery, canSuggest, loadClients]);
 
   useEffect(() => {
     if (!canSuggest) return;
-    const c = client.trim();
-    const q = product.trim();
+    const c = (selectedClient ?? clientQuery).trim();
+    const q = productQuery.trim();
     if (!c || !q) {
       setProductOpts([]);
       return;
     }
     const t = setTimeout(() => void loadProducts(c, q), 180);
     return () => clearTimeout(t);
-  }, [client, product, canSuggest, loadProducts]);
+  }, [selectedClient, clientQuery, productQuery, canSuggest, loadProducts]);
 
   const productComboboxOpts: ComboboxOption[] = useMemo(
     () =>
@@ -175,6 +224,29 @@ export function FormulaClientProductPickers({
     [productOpts]
   );
 
+  const handleClientChange = (v: string) => {
+    editingClientRef.current = true;
+    const hadSelection = selectedClient !== null;
+    setClientQuery(v);
+    if (selectedClient && v !== selectedClient) {
+      setSelectedClient(null);
+    }
+    // Limpiar producto una sola vez al invalidar una selección de cliente.
+    if (hadSelection && v !== selectedClient) {
+      clearProductLocal();
+    }
+    onClientTextChange(v);
+  };
+
+  const handleProductChange = (v: string) => {
+    editingProductRef.current = true;
+    setProductQuery(v);
+    if (selectedProduct && v !== selectedProduct.productLabel) {
+      setSelectedProduct(null);
+    }
+    onProductTextChange(v);
+  };
+
   return (
     <div className="space-y-2" data-testid="formula-client-product-pickers">
       {statusHint ? (
@@ -184,26 +256,50 @@ export function FormulaClientProductPickers({
       ) : null}
       <SearchCombobox
         label="Cliente"
-        value={client}
+        value={clientQuery}
         readOnly={readOnly}
         testId="oe-client-combobox"
         options={clientOpts}
         loading={clientLoading}
         error={clientError}
-        onRetry={() => void loadClients(client)}
-        onChange={(v) => onClientTextChange(v)}
-        onClear={onClearClient}
-        onSelectOption={(opt) => onClientSelected(opt.label)}
+        onRetry={() => void loadClients(clientQuery)}
+        onChange={handleClientChange}
+        onClear={() => {
+          editingClientRef.current = true;
+          setClientQuery("");
+          setSelectedClient(null);
+          clearProductLocal();
+          onClearClient?.();
+          onClientTextChange("");
+        }}
+        onSelectOption={(opt) => {
+          editingClientRef.current = true;
+          const prev = selectedClient;
+          setClientQuery(opt.label);
+          setSelectedClient(opt.label);
+          if (prev !== opt.label) {
+            clearProductLocal();
+          }
+          onClientSelected(opt.label);
+        }}
         onCommitText={(v) => {
           const exactMatches = clientOpts.filter(
             (o) => normalizeSearchKey(o.label) === normalizeSearchKey(v)
           );
-          if (exactMatches.length === 1) onClientSelected(exactMatches[0]!.label);
+          if (exactMatches.length === 1) {
+            const label = exactMatches[0]!.label;
+            editingClientRef.current = true;
+            const prev = selectedClient;
+            setClientQuery(label);
+            setSelectedClient(label);
+            if (prev !== label) clearProductLocal();
+            onClientSelected(label);
+          }
         }}
       />
       <SearchCombobox
         label="Producto"
-        value={product}
+        value={productQuery}
         readOnly={readOnly || productNeedsClient}
         placeholder={
           productNeedsClient
@@ -219,13 +315,22 @@ export function FormulaClientProductPickers({
         options={productComboboxOpts}
         loading={productLoading}
         error={productError}
-        onRetry={() => void loadProducts(client, product)}
-        onChange={(v) => onProductTextChange(v)}
-        onClear={onClearProduct}
+        onRetry={() =>
+          void loadProducts(selectedClient ?? clientQuery, productQuery)
+        }
+        onChange={handleProductChange}
+        onClear={() => {
+          editingProductRef.current = true;
+          setProductQuery("");
+          setSelectedProduct(null);
+          onClearProduct?.();
+          onProductTextChange("");
+        }}
         onSelectOption={(opt) => {
           const full = productOpts.find((p) => p.productId === opt.id);
           if (!full) return;
-          onProductSelected({
+          editingProductRef.current = true;
+          const selected: SelectedFormulaOption = {
             productId: full.productId,
             versionId: full.versionId,
             client: full.client,
@@ -233,10 +338,18 @@ export function FormulaClientProductPickers({
             code: full.code,
             source: full.source,
             driveFileId: full.driveFileId,
-          });
+          };
+          setProductQuery(full.productLabel);
+          setSelectedProduct(selected);
+          if (full.client) {
+            setClientQuery(full.client);
+            setSelectedClient(full.client);
+          }
+          onProductSelected(selected);
         }}
         onCommitText={(v) => {
-          if (!client.trim() || !v.trim()) return;
+          const clientName = (selectedClient ?? clientQuery).trim();
+          if (!clientName || !v.trim()) return;
           const norm = normalizeSearchKey(v);
           const exactHits = productOpts.filter((p) => {
             const keys = [p.productLabel, p.code, ...p.aliases].map(normalizeSearchKey);
@@ -244,7 +357,8 @@ export function FormulaClientProductPickers({
           });
           if (exactHits.length === 1) {
             const full = exactHits[0]!;
-            onProductSelected({
+            editingProductRef.current = true;
+            const selected: SelectedFormulaOption = {
               productId: full.productId,
               versionId: full.versionId,
               client: full.client,
@@ -252,13 +366,16 @@ export function FormulaClientProductPickers({
               code: full.code,
               source: full.source,
               driveFileId: full.driveFileId,
-            });
+            };
+            setProductQuery(full.productLabel);
+            setSelectedProduct(selected);
+            onProductSelected(selected);
             return;
           }
-          onCommitProductText(client, v);
+          onCommitProductText(clientName, v);
         }}
       />
-      {selectedProductId ? (
+      {selectedProductId || selectedProduct ? (
         <p className="text-[11px] text-emerald-800" data-testid="oe-formula-bound">
           Fórmula vinculada por selección.
         </p>

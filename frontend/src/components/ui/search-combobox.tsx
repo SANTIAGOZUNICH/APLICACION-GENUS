@@ -120,7 +120,6 @@ export function SearchCombobox({
     (opt: ComboboxOption) => {
       onSelectOption(opt);
       setOpen(false);
-      // Devolver foco al input para seguir editando si hace falta.
       window.requestAnimationFrame(() => inputRef.current?.focus());
     },
     [onSelectOption]
@@ -128,6 +127,8 @@ export function SearchCombobox({
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (readOnly) return;
+    // Solo interceptar navegación de lista. Nunca preventDefault en letras,
+    // números, espacio, Backspace, Delete, Ctrl+V / Ctrl+A.
     if (e.key === "Escape") {
       e.preventDefault();
       setOpen(false);
@@ -147,16 +148,9 @@ export function SearchCombobox({
       }
       return;
     }
-    if (e.key === "Enter") {
-      // Solo interceptar Enter si hay lista abierta con opción.
-      if (open && options[highlight]) {
-        e.preventDefault();
-        pick(options[highlight]!);
-        return;
-      }
-      onCommitText?.(value);
-      setOpen(false);
-      // No preventDefault genérico: no bloquear submit accidental fuera de lista.
+    if (e.key === "Enter" && open && options[highlight]) {
+      e.preventDefault();
+      pick(options[highlight]!);
     }
   };
 
@@ -168,8 +162,6 @@ export function SearchCombobox({
         data-testid={testId ? `${testId}-list` : undefined}
         className="fixed z-[200] max-h-56 overflow-y-auto overscroll-contain rounded border border-[var(--os-border)] bg-[var(--os-surface,#fff)] shadow-lg"
         style={{ top: pos.top, left: pos.left, width: pos.width }}
-        // Evitar que el mousedown robe el foco del input.
-        onMouseDown={(e) => e.preventDefault()}
       >
         {loading ? (
           <li className="px-3 py-2.5 text-sm text-[var(--os-text-muted)]" role="presentation">
@@ -196,6 +188,10 @@ export function SearchCombobox({
                   : "hover:bg-[var(--os-bg-muted,#f5f7fa)]"
               }`}
               onMouseEnter={() => setHighlight(i)}
+              onMouseDown={(e) => {
+                // Conservar foco en el input; no aplicar al wrapper/input.
+                e.preventDefault();
+              }}
               onClick={() => pick(opt)}
             >
               <span className="font-medium">{opt.label}</span>

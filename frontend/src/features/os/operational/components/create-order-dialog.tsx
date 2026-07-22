@@ -293,13 +293,13 @@ export function CreateOrderDialog({
                     session={session}
                     client={client}
                     product={product}
+                    hydrateKey={open ? `create-${type}` : "closed"}
                     readOnly={false}
                     suggestionsEnabled={!dbUnavailable}
                     selectedProductId={boundProductId}
                     onClientTextChange={(v) => {
+                      // No limpiar producto en cada tecla; el picker limpia al invalidar selección.
                       setClient(v);
-                      setProduct("");
-                      setBoundProductId(null);
                     }}
                     onProductTextChange={(v) => {
                       setProduct(v);

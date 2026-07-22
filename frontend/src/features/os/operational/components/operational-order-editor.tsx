@@ -453,22 +453,42 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     [canEditFormula, locked, session, applyResolvedFormula]
   );
 
+  const canEditRef = useRef(false);
+  canEditRef.current = canEdit;
+
+  // updateForm vía setState funcional: no cerrar sobre `form` (evita no-op stale
+  // cuando onClientTextChange se memoiza con form===null del primer render).
+  const updateForm = useCallback(
+    (updater: (prev: OrderContent) => OrderContent) => {
+      setForm((prev) => {
+        if (!prev || !canEditRef.current) return prev;
+        const next = normalizeOrderContent(updater(prev));
+        setSaveState("dirty");
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+          void persist(next, versionRef.current);
+        }, 900);
+        return next;
+      });
+    },
+    [persist]
+  );
+
   // Sin auto-resolve por texto: solo selección explícita / exacto único en Enter.
+  // Al tipear Cliente NO se limpia producto en cada tecla (el picker lo hace al invalidar selección).
   const onClientTextChange = useCallback(
     (nextClient: string) => {
       updateForm((prev) => {
         if (prev.kind !== "OE") return prev;
         return {
           ...prev,
-          header: { ...prev.header, client: nextClient, productName: "" },
+          header: { ...prev.header, client: nextClient },
         };
       });
-      invalidateBoundFormula();
       setFormulaStatus(nextClient.trim() ? "select_product" : "select_client");
       setFormulaStatusDetail(undefined);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- updateForm estable por closure
-    [invalidateBoundFormula]
+    [updateForm]
   );
 
   const onProductTextChange = useCallback(
@@ -487,8 +507,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       setFormulaStatusDetail(undefined);
       setDidYouMean(null);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [boundProductId, invalidateBoundFormula]
+    [boundProductId, invalidateBoundFormula, updateForm]
   );
 
   const onClientSelected = useCallback(
@@ -504,8 +523,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       setFormulaStatus("select_product");
       setFormulaStatusDetail(undefined);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [invalidateBoundFormula]
+    [invalidateBoundFormula, updateForm]
   );
 
   const onProductSelected = useCallback(
@@ -530,8 +548,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         option.driveFileId
       );
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [runFormulaResolve]
+    [runFormulaResolve, updateForm]
   );
 
   const onCommitProductText = useCallback(
@@ -565,20 +582,6 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     }, 550);
     return () => clearTimeout(t);
   }, [oeClient, oeProduct, canEditFormula, locked, runFormulaResolve]);
-
-  const updateForm = (updater: (prev: OrderContent) => OrderContent) => {
-    if (!form || !canEdit) return;
-    setForm((prev) => {
-      if (!prev) return prev;
-      const next = normalizeOrderContent(updater(prev));
-      setSaveState("dirty");
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        void persist(next, versionRef.current);
-      }, 900);
-      return next;
-    });
-  };
 
   const updateOaSimple = (nextSimple: OaSimpleForm) => {
     if (!canEdit && sectorId !== "CODIFICADO") return;
@@ -878,6 +881,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       ) : form.kind === "OE" ? (
         <OeFormSections
           content={form}
+          hydrateKey={orderId}
           fieldMode={{
             canEditFormula,
             canEditOperational: canEditOperational || canEditFormula,

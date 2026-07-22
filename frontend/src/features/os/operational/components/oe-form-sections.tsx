@@ -38,6 +38,8 @@ interface OeFormSectionsProps {
   onClientSelected?: (client: string) => void;
   onProductSelected?: (option: SelectedFormulaOption) => void;
   onCommitProductText?: (client: string, product: string) => void;
+  /** orderId u otra clave estable para hidratar Cliente/Producto una sola vez. */
+  hydrateKey?: string;
 }
 
 function Field({
@@ -89,6 +91,7 @@ export function OeFormSections({
   onClientSelected,
   onProductSelected,
   onCommitProductText,
+  hydrateKey,
 }: OeFormSectionsProps) {
   const mode: OeFieldMode = fieldMode ?? {
     canEditFormula: !readOnly,
@@ -155,6 +158,7 @@ export function OeFormSections({
                 session={session!}
                 client={h.client}
                 product={h.productName}
+                hydrateKey={hydrateKey}
                 readOnly={formulaLocked && opsLocked}
                 suggestionsEnabled={mode.canEditFormula}
                 selectedProductId={selectedProductId}
