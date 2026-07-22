@@ -16,22 +16,25 @@ export type SelectedFormulaOption = {
   client: string;
   productLabel: string;
   code: string;
+  source?: "DRIVE" | "CACHE_NEON";
 };
 
 type FormulaClientProductPickersProps = {
   session: OrdersClientSession;
   client: string;
   product: string;
-  enabled: boolean;
+  /** Permite editar los inputs (solo lectura del formulario). */
+  readOnly?: boolean;
+  /** Si false, no se consultan sugerencias (p.ej. sin red) pero se puede escribir. */
+  suggestionsEnabled?: boolean;
   selectedProductId: string | null;
   onClientTextChange: (client: string) => void;
   onProductTextChange: (product: string) => void;
-  /** Cliente elegido (limpia producto/fórmula en el padre). */
   onClientSelected: (client: string) => void;
-  /** Producto elegido inequívocamente → cargar por id. */
   onProductSelected: (option: SelectedFormulaOption) => void;
-  /** Enter/blur: intentar exacto único (el padre resuelve). */
   onCommitProductText: (client: string, product: string) => void;
+  onClearClient?: () => void;
+  onClearProduct?: () => void;
   statusHint?: string;
   didYouMean?: SelectedFormulaOption | null;
   onAcceptDidYouMean?: () => void;
@@ -41,13 +44,16 @@ export function FormulaClientProductPickers({
   session,
   client,
   product,
-  enabled,
+  readOnly = false,
+  suggestionsEnabled = true,
   selectedProductId,
   onClientTextChange,
   onProductTextChange,
   onClientSelected,
   onProductSelected,
   onCommitProductText,
+  onClearClient,
+  onClearProduct,
   statusHint,
   didYouMean,
   onAcceptDidYouMean,
@@ -61,9 +67,12 @@ export function FormulaClientProductPickers({
   const clientSeq = useRef(0);
   const productSeq = useRef(0);
 
+  const canSuggest = suggestionsEnabled && !readOnly;
+  const productNeedsClient = !client.trim();
+
   const loadClients = useCallback(
     async (q: string) => {
-      if (!enabled) return;
+      if (!canSuggest) return;
       const seq = ++clientSeq.current;
       setClientLoading(true);
       setClientError(null);
@@ -89,12 +98,12 @@ export function FormulaClientProductPickers({
         if (seq === clientSeq.current) setClientLoading(false);
       }
     },
-    [enabled, session]
+    [canSuggest, session]
   );
 
   const loadProducts = useCallback(
     async (clientName: string, q: string) => {
-      if (!enabled || !clientName.trim()) {
+      if (!canSuggest || !clientName.trim()) {
         setProductOpts([]);
         return;
       }
@@ -118,11 +127,11 @@ export function FormulaClientProductPickers({
         if (seq === productSeq.current) setProductLoading(false);
       }
     },
-    [enabled, session]
+    [canSuggest, session]
   );
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!canSuggest) return;
     const q = client.trim();
     if (!q) {
       setClientOpts([]);
@@ -130,10 +139,10 @@ export function FormulaClientProductPickers({
     }
     const t = setTimeout(() => void loadClients(q), 180);
     return () => clearTimeout(t);
-  }, [client, enabled, loadClients]);
+  }, [client, canSuggest, loadClients]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!canSuggest) return;
     const c = client.trim();
     const q = product.trim();
     if (!c || !q) {
@@ -142,7 +151,7 @@ export function FormulaClientProductPickers({
     }
     const t = setTimeout(() => void loadProducts(c, q), 180);
     return () => clearTimeout(t);
-  }, [client, product, enabled, loadProducts]);
+  }, [client, product, canSuggest, loadProducts]);
 
   const productComboboxOpts: ComboboxOption[] = useMemo(
     () =>
@@ -154,8 +163,6 @@ export function FormulaClientProductPickers({
     [productOpts]
   );
 
-  const productDisabled = !enabled || !client.trim();
-
   return (
     <div className="space-y-2" data-testid="formula-client-product-pickers">
       {statusHint ? (
@@ -166,39 +173,34 @@ export function FormulaClientProductPickers({
       <SearchCombobox
         label="Cliente"
         value={client}
-        disabled={!enabled}
+        readOnly={readOnly}
         testId="oe-client-combobox"
         options={clientOpts}
         loading={clientLoading}
         error={clientError}
         onRetry={() => void loadClients(client)}
-        onChange={(v) => {
-          onClientTextChange(v);
-        }}
-        onSelectOption={(opt) => {
-          onClientSelected(opt.label);
-        }}
+        onChange={(v) => onClientTextChange(v)}
+        onClear={onClearClient}
+        onSelectOption={(opt) => onClientSelected(opt.label)}
         onCommitText={(v) => {
-          const exact = clientOpts.find(
+          const exactMatches = clientOpts.filter(
             (o) => normalizeSearchKey(o.label) === normalizeSearchKey(v)
           );
-          if (exact && clientOpts.filter((o) => normalizeSearchKey(o.label) === normalizeSearchKey(v)).length === 1) {
-            onClientSelected(exact.label);
-          }
+          if (exactMatches.length === 1) onClientSelected(exactMatches[0]!.label);
         }}
       />
       <SearchCombobox
         label="Producto"
         value={product}
-        disabled={productDisabled}
+        readOnly={readOnly || productNeedsClient}
         placeholder={
-          productDisabled
-            ? "Primero seleccioná un cliente"
+          productNeedsClient
+            ? "Primero escribí o seleccioná un cliente"
             : "Empezá a escribir para buscar"
         }
         emptyHint={
-          productDisabled
-            ? "Primero seleccioná un cliente"
+          productNeedsClient
+            ? "Primero escribí o seleccioná un cliente"
             : "Empezá a escribir para buscar"
         }
         testId="oe-product-combobox"
@@ -207,6 +209,7 @@ export function FormulaClientProductPickers({
         error={productError}
         onRetry={() => void loadProducts(client, product)}
         onChange={(v) => onProductTextChange(v)}
+        onClear={onClearProduct}
         onSelectOption={(opt) => {
           const full = productOpts.find((p) => p.productId === opt.id);
           if (!full) return;
@@ -220,7 +223,6 @@ export function FormulaClientProductPickers({
         }}
         onCommitText={(v) => {
           if (!client.trim() || !v.trim()) return;
-          // Solo exacto único vía padre (nunca fuzzy).
           const norm = normalizeSearchKey(v);
           const exactHits = productOpts.filter((p) => {
             const keys = [p.productLabel, p.code, ...p.aliases].map(normalizeSearchKey);
@@ -242,7 +244,7 @@ export function FormulaClientProductPickers({
       />
       {selectedProductId ? (
         <p className="text-[11px] text-emerald-800" data-testid="oe-formula-bound">
-          Fórmula vinculada por selección (id seguro).
+          Fórmula vinculada por selección.
         </p>
       ) : null}
       {didYouMean && onAcceptDidYouMean ? (

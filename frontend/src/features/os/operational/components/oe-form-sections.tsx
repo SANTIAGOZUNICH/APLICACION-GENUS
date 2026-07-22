@@ -155,7 +155,8 @@ export function OeFormSections({
                 session={session!}
                 client={h.client}
                 product={h.productName}
-                enabled={!formulaLocked && !opsLocked}
+                readOnly={formulaLocked && opsLocked}
+                suggestionsEnabled={mode.canEditFormula}
                 selectedProductId={selectedProductId}
                 didYouMean={didYouMean}
                 onAcceptDidYouMean={onAcceptDidYouMean}
@@ -164,6 +165,8 @@ export function OeFormSections({
                 onClientSelected={onClientSelected!}
                 onProductSelected={onProductSelected!}
                 onCommitProductText={onCommitProductText!}
+                onClearClient={() => onClientTextChange!("")}
+                onClearProduct={() => onProductTextChange!("")}
               />
             </div>
           ) : (

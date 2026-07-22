@@ -293,7 +293,8 @@ export function CreateOrderDialog({
                     session={session}
                     client={client}
                     product={product}
-                    enabled={!dbUnavailable}
+                    readOnly={false}
+                    suggestionsEnabled={!dbUnavailable}
                     selectedProductId={boundProductId}
                     onClientTextChange={(v) => {
                       setClient(v);
@@ -315,8 +316,17 @@ export function CreateOrderDialog({
                       setCode(opt.code || code);
                       setBoundProductId(opt.productId);
                     }}
+                    onClearClient={() => {
+                      setClient("");
+                      setProduct("");
+                      setBoundProductId(null);
+                    }}
+                    onClearProduct={() => {
+                      setProduct("");
+                      setBoundProductId(null);
+                    }}
                     onCommitProductText={() => {
-                      /* create: solo exacto vía selección; no carga fórmula aquí */
+                      /* create: selección/exacto vía picker; fórmula se carga al editar OE */
                     }}
                   />
                 </div>
