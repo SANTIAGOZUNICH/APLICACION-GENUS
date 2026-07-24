@@ -107,8 +107,14 @@ describe("Columnas exactas ME/MP", () => {
     ]);
   });
 
-  it("MP cuatro pestañas y columnas Stock/Ingresos/Control/Compras", () => {
-    expect([...MP_TABS]).toEqual(["Stock", "Ingresos MP", "Control semanal", "Compras MP"]);
+  it("MP pestañas Stock/Ingresos/Control/Compras/COA'S y columnas", () => {
+    expect([...MP_TABS]).toEqual([
+      "Stock",
+      "Ingresos MP",
+      "Control semanal",
+      "Compras MP",
+      "COA'S",
+    ]);
     expect(MP_STOCK_COLUMNS).toHaveLength(11);
     expect(MP_INGRESO_COLUMNS).toHaveLength(13);
     expect(MP_CONTROL_COLUMNS).toHaveLength(7);

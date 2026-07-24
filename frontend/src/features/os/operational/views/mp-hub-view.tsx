@@ -1,8 +1,7 @@
 "use client";
 
 /**
- * Hub MP — exactamente 4 pestañas: Stock | Ingresos MP | Control semanal | Compras MP.
- * Columnas y cálculos según GESTION_MP_GENUS.xlsx (sin datos históricos).
+ * Hub MP — pestañas: Stock | Ingresos MP | Control semanal | Compras MP | COA'S.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -17,6 +16,7 @@ import {
 } from "@/features/os/operational/adapters/inventory-client";
 import { ExcelPasteDialog } from "@/features/os/operational/components/excel-paste-dialog";
 import { MpWeeklyControlPanel } from "@/features/os/operational/components/mp-weekly-control-panel";
+import { MpCoasPanel } from "@/features/os/operational/components/mp-coas-panel";
 import {
   OperationalTable,
   type OperationalTableColumn,
@@ -47,6 +47,7 @@ const TAB_TO_RESOURCE = {
   "Ingresos MP": "mp_ingresos",
   "Control semanal": "mp_control",
   "Compras MP": "mp_compras",
+  "COA'S": "mp_stock",
 } as const;
 
 export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: MpHubTab }) {
@@ -394,7 +395,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       </div>
 
       <div className="mb-3 flex flex-wrap gap-2">
-        {canWrite && (
+        {canWrite && tab !== "Control semanal" && tab !== "COA'S" && (
           <>
             <Button type="button" onClick={openNew}>
               <Plus className="mr-1 size-4" /> Nuevo
@@ -404,6 +405,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             </Button>
           </>
         )}
+        {tab !== "Control semanal" && tab !== "COA'S" ? (
         <input
           className="rounded border px-3 py-1.5 text-sm"
           placeholder="Buscar…"
@@ -413,6 +415,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             setPage(0);
           }}
         />
+        ) : null}
       </div>
 
       {tab === "Stock" && (
@@ -473,6 +476,8 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       )}
 
       {tab === "Control semanal" && <MpWeeklyControlPanel />}
+
+      {tab === "COA'S" && <MpCoasPanel />}
 
       {tab === "Compras MP" && (
         <OperationalTable

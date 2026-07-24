@@ -314,4 +314,10 @@ export const MP_COMPRA_COLUMNS = [
   "NOTA",
 ] as const;
 
-export const MP_TABS = ["Stock", "Ingresos MP", "Control semanal", "Compras MP"] as const;
+export const MP_TABS = [
+  "Stock",
+  "Ingresos MP",
+  "Control semanal",
+  "Compras MP",
+  "COA'S",
+] as const;
