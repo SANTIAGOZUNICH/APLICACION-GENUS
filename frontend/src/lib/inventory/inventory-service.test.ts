@@ -115,7 +115,7 @@ describe("Columnas exactas ME/MP", () => {
       "Compras MP",
       "COA'S",
     ]);
-    expect(MP_STOCK_COLUMNS).toHaveLength(11);
+    expect(MP_STOCK_COLUMNS).toHaveLength(12);
     expect(MP_INGRESO_COLUMNS).toHaveLength(13);
     expect(MP_CONTROL_COLUMNS).toHaveLength(7);
     expect(MP_COMPRA_COLUMNS).toHaveLength(9);

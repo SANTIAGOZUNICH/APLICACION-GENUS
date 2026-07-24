@@ -3,8 +3,10 @@
  * Production sin Neon no ejecuta nada.
  * Prefiere DATABASE_URL_UNPOOLED (conexión directa) para migraciones.
  *
- * 0005 (avisos/MP stock/COA) queda registrada en el journal pero NO se aplica
- * hasta definir APPLY_MIGRATION_0005=1 en el entorno.
+ * 0005 (avisos/MP stock/COA) y 0006 (remitos) quedan registradas en el journal
+ * pero NO se aplican hasta definir APPLY_MIGRATION_0005=1 / APPLY_MIGRATION_0006=1.
+ * Si solo APPLY_MIGRATION_0005=1 → incluye 0005, excluye 0006.
+ * Si ambas unset → excluye ambas.
  */
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
@@ -30,17 +32,23 @@ if (!url) {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.join(__dirname, "..", "drizzle");
 const apply0005 = process.env.APPLY_MIGRATION_0005 === "1";
+const apply0006 = process.env.APPLY_MIGRATION_0006 === "1";
+
+function shouldDeferTag(tag) {
+  const t = String(tag ?? "");
+  if (t.startsWith("0005_") && !apply0005) return true;
+  if (t.startsWith("0006_") && !apply0006) return true;
+  return false;
+}
 
 function prepareMigrationsFolder() {
-  if (apply0005) return migrationsFolder;
+  if (apply0005 && apply0006) return migrationsFolder;
 
   const journalPath = path.join(migrationsFolder, "meta", "_journal.json");
   const journal = JSON.parse(fs.readFileSync(journalPath, "utf8"));
   const filtered = {
     ...journal,
-    entries: (journal.entries ?? []).filter(
-      (e) => !String(e.tag ?? "").startsWith("0005_")
-    ),
+    entries: (journal.entries ?? []).filter((e) => !shouldDeferTag(e.tag)),
   };
   if (filtered.entries.length === (journal.entries ?? []).length) {
     return migrationsFolder;
@@ -49,7 +57,8 @@ function prepareMigrationsFolder() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "genus-migrate-"));
   for (const name of fs.readdirSync(migrationsFolder)) {
     if (name === "meta") continue;
-    if (name.startsWith("0005_")) continue;
+    if (name.startsWith("0005_") && !apply0005) continue;
+    if (name.startsWith("0006_") && !apply0006) continue;
     fs.copyFileSync(
       path.join(migrationsFolder, name),
       path.join(tmp, name)
@@ -67,8 +76,11 @@ function prepareMigrationsFolder() {
     path.join(tmp, "meta", "_journal.json"),
     JSON.stringify(filtered, null, 2)
   );
+  const deferred = [];
+  if (!apply0005) deferred.push("0005");
+  if (!apply0006) deferred.push("0006");
   console.log(
-    "[db:migrate] 0005 diferida (definí APPLY_MIGRATION_0005=1 para aplicar)."
+    `[db:migrate] ${deferred.join(" y ")} diferida(s) (definí APPLY_MIGRATION_0005=1 / APPLY_MIGRATION_0006=1 para aplicar).`
   );
   return tmp;
 }
@@ -83,7 +95,9 @@ try {
   const sql = neon(url);
   const db = drizzle(sql);
   await migrate(db, { migrationsFolder: folder });
-  console.log("[db:migrate] OK — migraciones aplicadas (0005 condicionada).");
+  console.log(
+    "[db:migrate] OK — migraciones aplicadas (0005/0006 condicionadas)."
+  );
 } catch (err) {
   console.error("[db:migrate] falló:", err);
   process.exit(1);

@@ -62,6 +62,7 @@ const ICONS = {
   ver_envasado_premium: Package,
   ver_calidad: ShieldCheck,
   ver_materia_prima: Boxes,
+  remitos: FileText,
 } as const;
 
 export const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
@@ -98,6 +99,7 @@ export const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
   ver_envasado_premium: "Envasado Premium",
   ver_calidad: "Calidad",
   ver_materia_prima: "Materias Primas",
+  remitos: "Remitos",
 };
 
 interface OsSidebarProps {

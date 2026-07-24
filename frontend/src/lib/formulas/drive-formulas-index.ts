@@ -207,13 +207,38 @@ async function buildIndex(): Promise<IndexState> {
   };
 }
 
+/** Lista completa de clientes del índice (precarga). */
+export async function listDriveClientsCached(): Promise<string[]> {
+  const state = await ensureIndex(false);
+  return [...state.clients];
+}
+
+/** Productos de un cliente desde el índice en memoria (sin recorrer Drive). */
+export async function listDriveProductsForClientCached(
+  client: string
+): Promise<DriveFormulaIndexEntry[]> {
+  const state = await ensureIndex(false);
+  const clientNorm = normalizeSearchKey(client);
+  if (!clientNorm) return [];
+  return state.entries.filter(
+    (e) => normalizeSearchKey(e.client) === clientNorm
+  );
+}
+
 export async function searchDriveClients(
   query: string,
   limit = 10
 ): Promise<Array<{ client: string; rank: DriveFormulaSearchHit["rank"]; source: "DRIVE" }>> {
   const state = await ensureIndex(false);
   const q = normalizeSearchKey(query);
-  if (!q) return [];
+  // Sin query: devolver primeros N (precarga / lista inicial).
+  if (!q) {
+    return state.clients.slice(0, limit).map((client) => ({
+      client,
+      rank: "exact_prefix" as const,
+      source: "DRIVE" as const,
+    }));
+  }
   const hits: Array<{
     client: string;
     rank: DriveFormulaSearchHit["rank"];
@@ -244,10 +269,18 @@ export async function searchDriveProducts(
   const state = await ensureIndex(false);
   const clientNorm = normalizeSearchKey(client);
   const q = normalizeSearchKey(query);
-  if (!clientNorm || !q) return [];
+  if (!clientNorm) return [];
   const scoped = state.entries.filter(
     (e) => normalizeSearchKey(e.client) === clientNorm
   );
+  // Sin query: primeros N del cliente (caché por cliente).
+  if (!q) {
+    return scoped.slice(0, limit).map((e) => ({
+      ...e,
+      rank: "exact_prefix" as const,
+      score: RANK_SCORE.exact_prefix,
+    }));
+  }
   const hits: DriveFormulaSearchHit[] = [];
   for (const e of scoped) {
     let best: DriveFormulaSearchHit["rank"] | null = null;

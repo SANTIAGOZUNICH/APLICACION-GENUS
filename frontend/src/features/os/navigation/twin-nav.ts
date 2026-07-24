@@ -35,6 +35,7 @@ export type TwinView =
   | "ver-envasado-premium"
   | "ver-calidad"
   | "ver-materia-prima"
+  | "remitos"
   | "work-detail"
   | "oa-detail"
   | "oe-detail"
@@ -83,6 +84,7 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   ver_envasado_premium: "ver-envasado-premium",
   ver_calidad: "ver-calidad",
   ver_materia_prima: "ver-materia-prima",
+  remitos: "remitos",
 };
 
 export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
@@ -120,6 +122,7 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     "ver-envasado-premium": "ver_envasado_premium",
     "ver-calidad": "ver_calidad",
     "ver-materia-prima": "ver_materia_prima",
+    remitos: "remitos",
   };
   return map[view];
 }
@@ -168,6 +171,7 @@ export function viewTitle(view: TwinView): string {
     "ver-envasado-premium": "Envasado Premium",
     "ver-calidad": "Calidad",
     "ver-materia-prima": "Materias Primas",
+    remitos: "Remitos",
     "work-detail": "Trabajo",
     "oa-detail": "Orden de Acondicionamiento",
     "oe-detail": "Orden de Elaboración",

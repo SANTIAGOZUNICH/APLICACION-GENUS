@@ -263,6 +263,7 @@ export const ME_SALIDA_COLUMNS = [
 ] as const;
 
 export const MP_STOCK_COLUMNS = [
+  "CÓDIGO",
   "PROVEEDOR",
   "CLIENTE",
   "DESCRIPCIÓN MATERIA PRIMA",

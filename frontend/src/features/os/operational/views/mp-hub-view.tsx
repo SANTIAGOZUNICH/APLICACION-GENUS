@@ -258,6 +258,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
 
   const stockColumns: OperationalTableColumn<MpStockRow>[] = MP_STOCK_COLUMNS.map((label) => {
     const map: Record<string, keyof MpStockRow> = {
+      CÓDIGO: "codigo",
       PROVEEDOR: "proveedor",
       CLIENTE: "cliente",
       "DESCRIPCIÓN MATERIA PRIMA": "descripcion",
@@ -338,6 +339,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   const formFields =
     tab === "Stock"
       ? [
+          ["codigo", "CÓDIGO"],
           ["proveedor", "PROVEEDOR"],
           ["cliente", "CLIENTE"],
           ["descripcion", "DESCRIPCIÓN MATERIA PRIMA"],

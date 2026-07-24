@@ -42,7 +42,7 @@ export async function GET(request: Request) {
     const client = (url.searchParams.get("client") || "").trim();
     const limitRaw = Number(url.searchParams.get("limit") || "10");
     const limit = Number.isFinite(limitRaw)
-      ? Math.min(Math.max(Math.floor(limitRaw), 1), 50)
+      ? Math.min(Math.max(Math.floor(limitRaw), 1), 500)
       : 10;
 
     if (scope === "coverage") {

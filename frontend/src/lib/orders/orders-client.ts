@@ -304,17 +304,20 @@ export type FormulaProductOption = {
 
 export async function fetchFormulaClientOptionsApi(
   session: OrdersClientSession,
-  q: string
+  q: string,
+  opts?: { signal?: AbortSignal; limit?: number }
 ): Promise<{
   clients: FormulaClientOption[];
   persistenceReady?: boolean;
   source?: string;
   driveError?: string | null;
 }> {
-  const params = new URLSearchParams({ scope: "clients", q, limit: "10" });
+  const limit = String(opts?.limit ?? 10);
+  const params = new URLSearchParams({ scope: "clients", q, limit });
   const res = await fetch(`/api/v1/formulas/options?${params}`, {
     headers: actorHeaders(session),
     cache: "no-store",
+    signal: opts?.signal,
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -331,7 +334,8 @@ export async function fetchFormulaClientOptionsApi(
 export async function fetchFormulaProductOptionsApi(
   session: OrdersClientSession,
   client: string,
-  q: string
+  q: string,
+  opts?: { signal?: AbortSignal; limit?: number }
 ): Promise<{
   products: FormulaProductOption[];
   persistenceReady?: boolean;
@@ -342,11 +346,12 @@ export async function fetchFormulaProductOptionsApi(
     scope: "products",
     client,
     q,
-    limit: "10",
+    limit: String(opts?.limit ?? 10),
   });
   const res = await fetch(`/api/v1/formulas/options?${params}`, {
     headers: actorHeaders(session),
     cache: "no-store",
+    signal: opts?.signal,
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -358,6 +363,25 @@ export async function fetchFormulaProductOptionsApi(
     source?: string;
     driveError?: string | null;
   };
+}
+
+/** Invalida y reconstruye el índice Drive de fórmulas (no reimporta binarios). */
+export async function syncFormulaDriveIndexApi(
+  session: OrdersClientSession
+): Promise<{ ok: boolean; entryCount?: number; clientCount?: number }> {
+  const res = await fetch("/api/v1/formulas/options", {
+    method: "POST",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ force: true }),
+  });
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    error?: string;
+    entryCount?: number;
+    clientCount?: number;
+  };
+  if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+  return body as { ok: boolean; entryCount?: number; clientCount?: number };
 }
 
 export async function resolveFormulaMasterApi(

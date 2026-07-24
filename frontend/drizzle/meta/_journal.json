@@ -36,6 +36,13 @@
       "when": 1784740000000,
       "tag": "0005_avisos_mp_stock_coa",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784900000000,
+      "tag": "0006_remitos_envasado_stock",
+      "breakpoints": true
     }
   ]
 }

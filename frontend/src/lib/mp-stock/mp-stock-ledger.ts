@@ -69,19 +69,31 @@ function mem(): Mem {
 export function buildOeConsumptionKey(
   oeId: string,
   oeVersion: number,
-  lineId: string,
   codigo: string
 ): string {
-  return `${buildOeConsumptionPositionKey(oeId, lineId, codigo)}:v${oeVersion}`;
+  return `${buildOeConsumptionPositionKey(oeId, codigo)}:v${oeVersion}`;
 }
 
-/** Clave estable de posición (sin versión) para acumular deltas. */
+/** Clave estable por OE+código (consolidado; sin línea). */
 export function buildOeConsumptionPositionKey(
   oeId: string,
+  codigo: string
+): string {
+  return `oe-consumo:${oeId}:cod:${codigo.trim().toUpperCase()}`;
+}
+
+/** @deprecated mantener compat tests antiguos — preferir clave sin lineId */
+export function buildOeConsumptionKeyLegacy(
+  oeId: string,
+  oeVersion: number,
   lineId: string,
   codigo: string
 ): string {
-  return `oe-consumo:${oeId}:line:${lineId}:cod:${codigo.trim().toUpperCase()}`;
+  return `oe-consumo:${oeId}:line:${lineId}:cod:${codigo.trim().toUpperCase()}:v${oeVersion}`;
+}
+
+export function normalizeMpCodigo(codigo: string): string {
+  return codigo.trim().replace(/\s+/g, " ").toUpperCase();
 }
 
 export function buildIngresoKey(ingresoId: string, versionTag: string): string {
@@ -311,8 +323,11 @@ export class MpStockLedgerService {
     let applied = 0;
     let skippedNoCode = 0;
     const warnings: string[] = [];
+
+    // Consolidar por código (suma kg reales de líneas repetidas).
+    const byCode = new Map<string, { kgReal: number; lineIds: string[] }>();
     for (const line of params.lines) {
-      const code = line.codigo.trim().toUpperCase();
+      const code = normalizeMpCodigo(line.codigo);
       if (!code) {
         skippedNoCode += 1;
         warnings.push("Sin código — stock no actualizado");
@@ -326,25 +341,29 @@ export class MpStockLedgerService {
         });
         continue;
       }
-      const positionKey = buildOeConsumptionPositionKey(
-        params.oeId,
-        line.lineId,
-        code
-      );
+      const prev = byCode.get(code);
+      if (prev) {
+        prev.kgReal += Math.abs(line.kgReal);
+        prev.lineIds.push(line.lineId);
+      } else {
+        byCode.set(code, {
+          kgReal: Math.abs(line.kgReal),
+          lineIds: [line.lineId],
+        });
+      }
+    }
+
+    for (const [code, agg] of byCode) {
+      const positionKey = buildOeConsumptionPositionKey(params.oeId, code);
       const related = await this.listMovementsByPositionPrefix(positionKey);
       const netQty = related
         .filter((m) => !m.reversed)
         .reduce((s, m) => s + m.quantity, 0);
-      const targetQty = -Math.abs(line.kgReal);
+      const targetQty = -agg.kgReal;
       const delta = Math.round((targetQty - netQty) * 1000) / 1000;
       if (delta === 0) continue;
 
-      const applyKey = buildOeConsumptionKey(
-        params.oeId,
-        params.oeVersion,
-        line.lineId,
-        code
-      );
+      const applyKey = buildOeConsumptionKey(params.oeId, params.oeVersion, code);
       const already = await this.findByIdempotency(applyKey);
       if (already && !already.reversed) continue;
 
@@ -354,7 +373,7 @@ export class MpStockLedgerService {
         quantity: delta,
         reason:
           netQty === 0
-            ? "Consumo OE (kg real)"
+            ? `Consumo OE consolidado (kg real)${agg.lineIds.length > 1 ? ` · ${agg.lineIds.length} líneas` : ""}`
             : "Corrección consumo OE (delta)",
         idempotencyKey: applyKey,
         refType: "oe",

@@ -704,3 +704,114 @@ export const featureAuditEvents = pgTable("feature_audit_events", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Remitos — migración 0006 (diferida). Packaging fields viven en work items JSON. */
+export const remitos = pgTable(
+  "remitos",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    remitoNumber: text("remito_number"),
+    clientIdNormalized: text("client_id_normalized").notNull(),
+    clientDisplay: text("client_display").notNull(),
+    deliveryDate: date("delivery_date").notNull(),
+    status: text("status").notNull().default("BORRADOR"),
+    version: integer("version").notNull().default(1),
+    totalUnits: doublePrecision("total_units").notNull().default(0),
+    totalCajas: doublePrecision("total_cajas").notNull().default(0),
+    totalBultos: doublePrecision("total_bultos").notNull().default(0),
+    snapshot: jsonb("snapshot").notNull().default({}),
+    createdBy: text("created_by"),
+    createdBySector: text("created_by_sector"),
+    updatedBy: text("updated_by"),
+    generatedBy: text("generated_by"),
+    audit: jsonb("audit").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    generatedAt: timestamp("generated_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("remitos_client_date_version_uidx").on(
+      table.clientIdNormalized,
+      table.deliveryDate,
+      table.version
+    ),
+  ]
+);
+
+export const remitoLines = pgTable(
+  "remito_lines",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    remitoId: uuid("remito_id")
+      .notNull()
+      .references(() => remitos.id, { onDelete: "cascade" }),
+    workItemId: text("work_item_id").notNull(),
+    product: text("product").notNull().default(""),
+    lote: text("lote").notNull().default(""),
+    vto: text("vto").notNull().default(""),
+    totalUnits: doublePrecision("total_units").notNull().default(0),
+    cajas1: integer("cajas1").notNull().default(0),
+    unidades1: integer("unidades1").notNull().default(0),
+    cajas2: integer("cajas2").notNull().default(0),
+    unidades2: integer("unidades2").notNull().default(0),
+    sortOrder: integer("sort_order").notNull().default(0),
+    payload: jsonb("payload").notNull().default({}),
+  },
+  (table) => [
+    uniqueIndex("remito_lines_remito_work_uidx").on(table.remitoId, table.workItemId),
+  ]
+);
+
+export const remitoWorkLinks = pgTable(
+  "remito_work_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    remitoId: uuid("remito_id")
+      .notNull()
+      .references(() => remitos.id, { onDelete: "cascade" }),
+    workItemId: text("work_item_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("remito_work_links_work_item_uidx").on(table.workItemId)]
+);
+
+export const remitoVersions = pgTable(
+  "remito_versions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    remitoId: uuid("remito_id")
+      .notNull()
+      .references(() => remitos.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    driveFileIdXlsx: text("drive_file_id_xlsx"),
+    driveFileIdPdf: text("drive_file_id_pdf"),
+    snapshot: jsonb("snapshot").notNull().default({}),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("remito_versions_remito_version_uidx").on(table.remitoId, table.version),
+  ]
+);
+
+export const remitoFiles = pgTable(
+  "remito_files",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    remitoId: uuid("remito_id")
+      .notNull()
+      .references(() => remitos.id, { onDelete: "cascade" }),
+    versionId: uuid("version_id").references(() => remitoVersions.id, {
+      onDelete: "set null",
+    }),
+    kind: text("kind").notNull(),
+    driveFileId: text("drive_file_id").notNull(),
+    fileName: text("file_name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull().default(0),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    audit: jsonb("audit").notNull().default({}),
+  },
+  (table) => [uniqueIndex("remito_files_drive_file_uidx").on(table.driveFileId)]
+);
+

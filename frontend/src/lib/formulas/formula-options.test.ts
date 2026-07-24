@@ -145,10 +145,10 @@ describe("formula-options search & aliases", () => {
     expect(hit?.productId).toBe("p2");
   });
 
-  it("sin texto no sugiere (empezar a escribir)", () => {
+  it("sin texto precarga clientes/productos (cache OE search)", () => {
     const opts = listActiveFormulaOptions(products, versions);
-    expect(searchClients(opts, "")).toEqual([]);
-    expect(searchProductsForClient(opts, "UNICA", "")).toEqual([]);
+    expect(searchClients(opts, "").length).toBeGreaterThan(0);
+    expect(searchProductsForClient(opts, "UNICA", "").length).toBeGreaterThan(0);
   });
 
   it("resolveByProductId carga versión correcta; fuzzy no auto-resuelve", () => {

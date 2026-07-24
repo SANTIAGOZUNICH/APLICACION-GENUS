@@ -46,6 +46,8 @@ export function AsignarTrabajosView() {
   const [quantity, setQuantity] = useState("");
   const [orderRef, setOrderRef] = useState("");
   const [notes, setNotes] = useState("");
+  const [packagingLote, setPackagingLote] = useState("");
+  const [packagingVto, setPackagingVto] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const [filterDelivery, setFilterDelivery] = useState("");
@@ -91,6 +93,10 @@ export function AsignarTrabajosView() {
       oaRef: sector !== "ELABORACION" ? orderRef.trim() || null : null,
       notes: notes.trim() || null,
       assignedBy: workspace.context.displayName,
+      packagingLote:
+        sector === "ELABORACION" ? null : packagingLote.trim() || null,
+      packagingVto:
+        sector === "ELABORACION" ? null : packagingVto.trim() || null,
     });
 
     pushNotification({
@@ -132,6 +138,16 @@ export function AsignarTrabajosView() {
     { key: "cliente", header: "Cliente", render: (r) => r.client ?? "—" },
     { key: "producto", header: "Producto", render: (r) => r.product ?? "—" },
     { key: "cantidad", header: "Cantidad", render: (r) => [r.quantity, r.unit].filter(Boolean).join(" ") },
+    {
+      key: "lote",
+      header: "LOTE",
+      render: (r) => r.packagingLote || r.loteRef || "—",
+    },
+    {
+      key: "vto",
+      header: "VTO",
+      render: (r) => r.packagingVto || "—",
+    },
     { key: "asignado", header: "Asignado a", render: (r) => r.ownerPerson ?? r.line ?? "—" },
     { key: "estado", header: "Estado", render: (r) => <StatusChip status={r.status} /> },
     {
@@ -371,6 +387,37 @@ export function AsignarTrabajosView() {
               className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] px-3 py-2 text-sm"
             />
           </div>
+
+          {sector !== "ELABORACION" ? (
+            <>
+              <div className="space-y-1.5">
+                <label htmlFor="af-lote" className="text-sm font-medium">
+                  LOTE (opcional)
+                </label>
+                <input
+                  id="af-lote"
+                  value={packagingLote}
+                  onChange={(e) => setPackagingLote(e.target.value)}
+                  placeholder="Puede completarse después"
+                  className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] px-3 py-2 text-sm"
+                  data-testid="assign-packaging-lote"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="af-vto" className="text-sm font-medium">
+                  VTO (opcional)
+                </label>
+                <input
+                  id="af-vto"
+                  value={packagingVto}
+                  onChange={(e) => setPackagingVto(e.target.value)}
+                  placeholder="Puede completarse después"
+                  className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] px-3 py-2 text-sm"
+                  data-testid="assign-packaging-vto"
+                />
+              </div>
+            </>
+          ) : null}
 
           <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
             <label htmlFor="af-notes" className="text-sm font-medium">

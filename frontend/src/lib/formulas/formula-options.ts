@@ -172,8 +172,14 @@ export function searchClients(
 ): Array<{ client: string; score: number; rank: FormulaSearchHit["rank"] }> {
   const q = normalizeSearchKey(query);
   const clients = listActiveClients(options);
-  // Sin texto: no sugerir (UX: "Empezá a escribir para buscar").
-  if (!q) return [];
+  // Sin texto: precarga (primeros N).
+  if (!q) {
+    return clients.slice(0, limit).map((client) => ({
+      client,
+      score: RANK_SCORE.exact_prefix,
+      rank: "exact_prefix" as const,
+    }));
+  }
   const hits: Array<{ client: string; score: number; rank: FormulaSearchHit["rank"] }> =
     [];
   for (const client of clients) {
@@ -207,8 +213,14 @@ export function searchProductsForClient(
     (o) => normalizeSearchKey(o.client) === clientNorm
   );
   const q = normalizeSearchKey(query);
-  // Sin texto: no sugerir lista completa (UX: empezar a escribir).
-  if (!q) return [];
+  // Sin texto: precarga productos del cliente.
+  if (!q) {
+    return scoped.slice(0, limit).map((o) => ({
+      ...o,
+      score: RANK_SCORE.exact_prefix,
+      rank: "exact_prefix" as const,
+    }));
+  }
   const hits: FormulaSearchHit[] = [];
   for (const o of scoped) {
     const rank = bestRankForOption(q, o, "product");

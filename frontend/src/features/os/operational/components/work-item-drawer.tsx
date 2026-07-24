@@ -18,6 +18,8 @@ import {
 import { getLatestDocumentByRef } from "../adapters/order-documents-repository";
 import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { StatusChip } from "./operational-ui";
+import { PackagingQuantitiesBlock } from "./packaging-quantities-block";
+import { usePreviewSession } from "@/features/os/session/preview-context";
 
 interface WorkItemDrawerProps {
   item: WorkItem | null;
@@ -43,6 +45,7 @@ export function WorkItemDrawer({
   onSaveProgress,
   onMarkFinished,
 }: WorkItemDrawerProps) {
+  const { email } = usePreviewSession();
   const [finishedQty, setFinishedQty] = useState("");
   const [observation, setObservation] = useState("");
   const [confirmFinish, setConfirmFinish] = useState(false);
@@ -144,6 +147,14 @@ export function WorkItemDrawer({
               </p>
             )}
           </div>
+
+          {!isElaboracion ? (
+            <PackagingQuantitiesBlock
+              item={item}
+              actorName={email ?? "envasado"}
+              readOnly={transferred}
+            />
+          ) : null}
 
           <div className="space-y-2">
             <label htmlFor="drawer-finished-qty" className="text-sm font-medium text-[var(--os-text)]">

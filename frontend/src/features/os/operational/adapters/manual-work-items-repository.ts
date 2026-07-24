@@ -38,6 +38,9 @@ export interface CreateManualWorkItemInput {
   oaRef: string | null;
   notes: string | null;
   assignedBy: string;
+  /** Lote / VTO opcionales (especialmente Envasado). */
+  packagingLote?: string | null;
+  packagingVto?: string | null;
 }
 
 export interface ManualWorkItemMeta {
@@ -410,7 +413,7 @@ export function createManualWorkItem(input: CreateManualWorkItemInput): WorkItem
     pedidoRef: null,
     oeRef: input.oeRef,
     oaRef: input.oaRef,
-    loteRef: null,
+    loteRef: input.packagingLote?.trim() || null,
     notes: input.notes,
     actionLabel: null,
     href: null,
@@ -420,6 +423,12 @@ export function createManualWorkItem(input: CreateManualWorkItemInput): WorkItem
     dependsOn: null,
     blockedBy: null,
     unblocks: null,
+    packagingLote: input.packagingLote?.trim() || null,
+    packagingVto: input.packagingVto?.trim() || null,
+    packagingTotalUnits: null,
+    packagingCajas: null,
+    packagingUnidadesPorCaja: null,
+    packagingQtyHistory: [],
   };
 
   const items = [...readAll(), item];
@@ -430,6 +439,67 @@ export function createManualWorkItem(input: CreateManualWorkItemInput): WorkItem
   writeMeta(meta);
 
   return item;
+}
+
+/** Actualiza lote/VTO y cantidades de envasado (parcial permitido). */
+export function updateManualWorkItemPackaging(input: {
+  id: string;
+  actorName: string;
+  packagingLote?: string | null;
+  packagingVto?: string | null;
+  packagingTotalUnits?: number | null;
+  packagingCajas?: number | null;
+  packagingUnidadesPorCaja?: number | null;
+}): WorkItem | null {
+  const items = readAll();
+  const idx = items.findIndex((i) => i.id === input.id);
+  if (idx < 0) return null;
+  const prev = items[idx]!;
+  const next: WorkItem = {
+    ...prev,
+    packagingLote:
+      input.packagingLote !== undefined
+        ? input.packagingLote?.trim() || null
+        : prev.packagingLote ?? null,
+    packagingVto:
+      input.packagingVto !== undefined
+        ? input.packagingVto?.trim() || null
+        : prev.packagingVto ?? null,
+    packagingTotalUnits:
+      input.packagingTotalUnits !== undefined
+        ? input.packagingTotalUnits
+        : prev.packagingTotalUnits ?? null,
+    packagingCajas:
+      input.packagingCajas !== undefined
+        ? input.packagingCajas
+        : prev.packagingCajas ?? null,
+    packagingUnidadesPorCaja:
+      input.packagingUnidadesPorCaja !== undefined
+        ? input.packagingUnidadesPorCaja
+        : prev.packagingUnidadesPorCaja ?? null,
+    loteRef:
+      input.packagingLote !== undefined
+        ? input.packagingLote?.trim() || null
+        : prev.loteRef,
+  };
+  const hist = [...(prev.packagingQtyHistory ?? [])];
+  if (
+    input.packagingTotalUnits !== undefined ||
+    input.packagingCajas !== undefined ||
+    input.packagingUnidadesPorCaja !== undefined
+  ) {
+    hist.push({
+      at: new Date().toISOString(),
+      by: input.actorName,
+      totalUnits: next.packagingTotalUnits ?? null,
+      cajas: next.packagingCajas ?? null,
+      unidadesPorCaja: next.packagingUnidadesPorCaja ?? null,
+    });
+    next.packagingQtyHistory = hist;
+  }
+  items[idx] = next;
+  writeAll(items);
+  return next;
 }
 
 export function reassignManualWorkItem(

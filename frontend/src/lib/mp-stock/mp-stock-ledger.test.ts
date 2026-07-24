@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
   buildOeConsumptionKey,
+  buildOeConsumptionPositionKey,
   getMpStockLedger,
   resetMpStockMemoryForTests,
 } from "./mp-stock-ledger";
@@ -9,6 +10,15 @@ const mp = { email: "mp@test", sector: "MATERIA_PRIMA" as const };
 
 describe("MpStockLedgerService", () => {
   beforeEach(() => resetMpStockMemoryForTests());
+
+  it("OE consumption key es por OE+código+versión (sin lineId)", () => {
+    expect(buildOeConsumptionPositionKey("oe1", " mp1 ")).toBe(
+      "oe-consumo:oe1:cod:MP1"
+    );
+    expect(buildOeConsumptionKey("oe1", 2, "mp1")).toBe(
+      "oe-consumo:oe1:cod:MP1:v2"
+    );
+  });
 
   it("seed saldo inicial una sola vez", async () => {
     const ledger = getMpStockLedger();
@@ -140,5 +150,21 @@ describe("MpStockLedgerService", () => {
       allowNegative: true,
     });
     expect((await ledger.getBalance("MPX"))!.stockActual).toBe(41);
+  });
+
+  it("código repetido en OE se consolida en un movimiento", async () => {
+    const ledger = getMpStockLedger();
+    await ledger.seedSaldoInicialOnce(mp, "MP1", 100);
+    const r = await ledger.applyOeConsumption(mp, {
+      oeId: "oe-consol",
+      oeVersion: 1,
+      oeStatus: "COMPLETA",
+      lines: [
+        { lineId: "l1", codigo: "MP1", kgReal: 10 },
+        { lineId: "l2", codigo: "mp1", kgReal: 5 },
+      ],
+    });
+    expect(r.applied).toBe(1);
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(85);
   });
 });

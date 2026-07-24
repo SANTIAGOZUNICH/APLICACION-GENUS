@@ -100,6 +100,24 @@ export interface WorkItem {
   /** Avance operativo en vivo (Genus OS — no Sheets). */
   finishedQty?: string | null;
   operationalObservation?: string | null;
+  /** Lote PT asignado en Producción / Envasado (opcional). */
+  packagingLote?: string | null;
+  /** Vencimiento PT (opcional, ISO o texto operativo). */
+  packagingVto?: string | null;
+  /** Total oficial de unidades envasadas (opcional). */
+  packagingTotalUnits?: number | null;
+  /** Cajas cargadas (opcional). */
+  packagingCajas?: number | null;
+  /** Unidades por caja (opcional). */
+  packagingUnidadesPorCaja?: number | null;
+  /** Historial de avances de cantidades (JSON-serializable). */
+  packagingQtyHistory?: Array<{
+    at: string;
+    by: string;
+    totalUnits: number | null;
+    cajas: number | null;
+    unidadesPorCaja: number | null;
+  }> | null;
 }
 
 export interface WorkItemsResponse {
