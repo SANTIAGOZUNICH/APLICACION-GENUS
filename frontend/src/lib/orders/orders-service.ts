@@ -987,6 +987,30 @@ export class OrdersService {
       await persistInventorySnapshot(memoryInventoryRepo);
     }
 
+    if (updated.type === "OE" && updated.formData.kind === "OE") {
+      try {
+        const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
+        const { computeKgRealUtilizado } = await import("@/lib/orders/content");
+        const lines = updated.formData.materials.map((m) => ({
+          lineId: m.id,
+          codigo: m.codigo ?? "",
+          kgReal: computeKgRealUtilizado(m.kgAPesar, m.ajuste) ?? 0,
+        }));
+        await getMpStockLedger().applyOeConsumption(
+          { email: actor.email, sector: actor.sector },
+          {
+            oeId: updated.id,
+            oeVersion: updated.version,
+            oeStatus: updated.status,
+            lines,
+            allowNegative: Boolean(opts?.allowNegativeMeStock),
+          }
+        );
+      } catch {
+        /* ledger diferido si 0005 no aplicada */
+      }
+    }
+
     await this.repo.insertOrderVersion({
       id: randomUUID(),
       orderId: id,

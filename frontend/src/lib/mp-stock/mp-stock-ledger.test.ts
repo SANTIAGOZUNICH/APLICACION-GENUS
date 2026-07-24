@@ -1,0 +1,122 @@
+import { describe, expect, it, beforeEach } from "vitest";
+import {
+  buildOeConsumptionKey,
+  getMpStockLedger,
+  resetMpStockMemoryForTests,
+} from "./mp-stock-ledger";
+
+const mp = { email: "mp@test", sector: "MATERIA_PRIMA" as const };
+
+describe("MpStockLedgerService", () => {
+  beforeEach(() => resetMpStockMemoryForTests());
+
+  it("seed saldo inicial una sola vez", async () => {
+    const ledger = getMpStockLedger();
+    const a = await ledger.seedSaldoInicialOnce(mp, "MP1", 100, "Agua");
+    expect(a.stockActual).toBe(100);
+    const b = await ledger.seedSaldoInicialOnce(mp, "MP1", 999, "Agua");
+    expect(b.stockActual).toBe(100);
+  });
+
+  it("ingreso suma; anular revierte", async () => {
+    const ledger = getMpStockLedger();
+    await ledger.seedSaldoInicialOnce(mp, "MP1", 10);
+    await ledger.applyIngreso(mp, {
+      ingresoId: "ing-1",
+      versionTag: "v1",
+      codigo: "MP1",
+      quantity: 5,
+    });
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(15);
+    await ledger.applyIngreso(mp, {
+      ingresoId: "ing-1",
+      versionTag: "v1",
+      codigo: "MP1",
+      quantity: 5,
+      anular: true,
+    });
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(10);
+  });
+
+  it("borrador OE no descuenta; completa sí; no duplica", async () => {
+    const ledger = getMpStockLedger();
+    await ledger.seedSaldoInicialOnce(mp, "MP1", 100);
+    const draft = await ledger.applyOeConsumption(mp, {
+      oeId: "oe1",
+      oeVersion: 1,
+      oeStatus: "BORRADOR",
+      lines: [{ lineId: "l1", codigo: "MP1", kgReal: 10 }],
+    });
+    expect(draft.applied).toBe(0);
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(100);
+
+    const once = await ledger.applyOeConsumption(mp, {
+      oeId: "oe1",
+      oeVersion: 1,
+      oeStatus: "COMPLETA",
+      lines: [{ lineId: "l1", codigo: "MP1", kgReal: 10 }],
+    });
+    expect(once.applied).toBe(1);
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(90);
+
+    const twice = await ledger.applyOeConsumption(mp, {
+      oeId: "oe1",
+      oeVersion: 1,
+      oeStatus: "COMPLETA",
+      lines: [{ lineId: "l1", codigo: "MP1", kgReal: 10 }],
+    });
+    expect(twice.applied).toBe(0);
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(90);
+  });
+
+  it("corrección genera delta; reverso restaura", async () => {
+    const ledger = getMpStockLedger();
+    await ledger.seedSaldoInicialOnce(mp, "MP1", 100);
+    await ledger.applyOeConsumption(mp, {
+      oeId: "oe1",
+      oeVersion: 1,
+      oeStatus: "COMPLETA",
+      lines: [{ lineId: "l1", codigo: "MP1", kgReal: 10 }],
+    });
+    await ledger.applyOeConsumption(mp, {
+      oeId: "oe1",
+      oeVersion: 2,
+      oeStatus: "COMPLETA",
+      lines: [{ lineId: "l1", codigo: "MP1", kgReal: 15 }],
+    });
+    // Same idempotency base uses oeVersion in key — v2 is new key so full -15
+    // For delta path: same version key with different qty
+    const key = buildOeConsumptionKey("oe1", 1, "l1", "MP1");
+    expect(key).toContain("oe-consumo");
+
+    await ledger.reverseOeConsumption(mp, "oe1", 1);
+    // after reverse of v1 (-10 reversed => +10), stock was 100-10-15=75, +10 => 85
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(85);
+  });
+
+  it("sin código no descuenta", async () => {
+    const ledger = getMpStockLedger();
+    await ledger.seedSaldoInicialOnce(mp, "MP1", 50);
+    const r = await ledger.applyOeConsumption(mp, {
+      oeId: "oe2",
+      oeVersion: 1,
+      oeStatus: "COMPLETA",
+      lines: [{ lineId: "l1", codigo: "", kgReal: 10 }],
+    });
+    expect(r.skippedNoCode).toBe(1);
+    expect(r.applied).toBe(0);
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(50);
+  });
+
+  it("ajuste con motivo", async () => {
+    const ledger = getMpStockLedger();
+    await ledger.seedSaldoInicialOnce(mp, "MP1", 10);
+    await ledger.registerAjuste(mp, {
+      codigo: "MP1",
+      quantity: -2,
+      reason: "Merma",
+      allowNegative: true,
+    });
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(8);
+  });
+});

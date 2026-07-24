@@ -59,6 +59,7 @@ describe("DEPOSITO acceso y navegación", () => {
       "ingresos_me",
       "salidas_me",
       "inventario_me",
+      "avisos",
       "avisos_me",
       "semanas_produccion",
     ]);

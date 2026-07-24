@@ -1067,7 +1067,37 @@ export class InventoryService {
       existing as unknown as Record<string, unknown> | null,
       row as unknown as Record<string, unknown>
     );
+    void this.syncMpIngresoLedger(actor, row, existing);
     return row;
+  }
+
+  private syncMpIngresoLedger(
+    actor: InventoryActor,
+    row: MpIngresoRow,
+    existing: MpIngresoRow | null,
+    anular = false
+  ) {
+    void import("@/lib/mp-stock/mp-stock-ledger")
+      .then(({ getMpStockLedger }) =>
+        getMpStockLedger().applyIngreso(
+          { email: actor.email, sector: actor.sector },
+          {
+            ingresoId: row.id,
+            versionTag: anular ? `del:${row.updatedAt}` : row.updatedAt,
+            codigo: row.codigo,
+            quantity: row.total ?? row.cantidad ?? 0,
+            previousQuantity: anular
+              ? 0
+              : (existing?.total ?? existing?.cantidad ?? 0),
+            lote: row.lote,
+            proveedor: row.proveedor,
+            documento: row.remitoNro,
+            descripcion: row.descripcion,
+            anular,
+          }
+        )
+      )
+      .catch(() => undefined);
   }
 
   deleteMpIngreso(actor: InventoryActor, id: string, reason: string) {
@@ -1088,6 +1118,7 @@ export class InventoryService {
       null,
       reason
     );
+    this.syncMpIngresoLedger(actor, existing, null, true);
   }
 
   private nextMpIngresoNro() {
