@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS "os_internal_message_recipients" (
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "os_internal_message_recipients_sector_idx"
   ON "os_internal_message_recipients" ("sector");
-
+--> statement-breakpoint
 -- ========== CONTROL MP (snapshot por control + filas) ==========
 CREATE TABLE IF NOT EXISTS "mp_weekly_controls" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS "mp_weekly_control_lines" (
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "mp_weekly_control_lines_control_idx"
   ON "mp_weekly_control_lines" ("control_id");
-
+--> statement-breakpoint
 -- ========== STOCK MP — movimientos / ledger ==========
 CREATE TABLE IF NOT EXISTS "mp_stock_balances" (
   "codigo" text PRIMARY KEY,
@@ -116,6 +116,7 @@ CREATE INDEX IF NOT EXISTS "mp_stock_movements_codigo_idx"
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "mp_stock_movements_ref_idx"
   ON "mp_stock_movements" ("ref_type", "ref_id");
+--> statement-breakpoint
 
 -- ========== COA metadata (binarios en Drive) ==========
 CREATE TABLE IF NOT EXISTS "coa_folders" (

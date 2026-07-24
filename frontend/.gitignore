@@ -45,3 +45,5 @@ next-env.d.ts
 **/genus-formulas-*/
 **/tmp/private-formulas/**
 
+
+.env.preview.migrate

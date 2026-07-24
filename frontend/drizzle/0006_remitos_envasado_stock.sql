@@ -42,6 +42,7 @@ CREATE INDEX IF NOT EXISTS "remitos_status_idx"
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "remitos_number_idx"
   ON "remitos" ("remito_number");
+--> statement-breakpoint
 
 -- ========== LÍNEAS ==========
 CREATE TABLE IF NOT EXISTS "remito_lines" (
@@ -65,6 +66,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "remito_lines_remito_work_uidx"
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "remito_lines_remito_idx"
   ON "remito_lines" ("remito_id");
+--> statement-breakpoint
 
 -- ========== LINK GLOBAL: un work item entra en un solo remito activo ==========
 CREATE TABLE IF NOT EXISTS "remito_work_links" (
@@ -79,6 +81,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "remito_work_links_work_item_uidx"
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "remito_work_links_remito_idx"
   ON "remito_work_links" ("remito_id");
+--> statement-breakpoint
 
 -- ========== VERSIONES (xlsx/pdf en Drive) ==========
 CREATE TABLE IF NOT EXISTS "remito_versions" (
@@ -95,6 +98,7 @@ CREATE TABLE IF NOT EXISTS "remito_versions" (
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "remito_versions_remito_idx"
   ON "remito_versions" ("remito_id");
+--> statement-breakpoint
 
 -- ========== ARCHIVOS METADATA ==========
 CREATE TABLE IF NOT EXISTS "remito_files" (

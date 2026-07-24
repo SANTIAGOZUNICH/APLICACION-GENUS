@@ -12,6 +12,7 @@ ALTER TABLE "remito_versions"
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "remitos_display_name_idx"
   ON "remitos" ("display_name");
+--> statement-breakpoint
 
 -- ========== WORK VIEW ARCHIVES (bandeja "Archivar de mi vista") ==========
 -- Solo oculta ítems de la bandeja del actor; no elimina trabajos, calidad, OA ni remitos.
@@ -27,7 +28,7 @@ CREATE TABLE IF NOT EXISTS "work_view_archives" (
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "work_view_archives_sector_actor_idx"
   ON "work_view_archives" ("sector", "actor_email");
-
+--> statement-breakpoint
 -- ========== STUBS / NOTAS (paralelo — no-op seguro) ==========
 -- mp_producto / catálogo MP: columnas o tablas adicionales las agrega trabajo paralelo.
 -- Ejemplo (NO ejecutar ciegamente; dejar como nota):
