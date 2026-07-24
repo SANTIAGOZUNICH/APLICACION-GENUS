@@ -16,6 +16,7 @@ import {
   InventoryClientError,
 } from "@/features/os/operational/adapters/inventory-client";
 import { ExcelPasteDialog } from "@/features/os/operational/components/excel-paste-dialog";
+import { MpWeeklyControlPanel } from "@/features/os/operational/components/mp-weekly-control-panel";
 import {
   OperationalTable,
   type OperationalTableColumn,
@@ -471,44 +472,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         />
       )}
 
-      {tab === "Control semanal" && (
-        <OperationalTable
-          columns={[
-            ...controlColumns,
-            ...(canWrite
-              ? [
-                  {
-                    key: "compra",
-                    header: "",
-                    render: (r: MpControlRow) =>
-                      r.estado === "FALTA" ? (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={() => {
-                            setTab("Compras MP");
-                            setFormDraft({
-                              fecha: new Date().toISOString().slice(0, 10),
-                              materiaPrima: r.materiaPrima,
-                              cantidad: r.falta == null ? "" : String(r.falta),
-                              estado: "Pendiente de definir",
-                              produccionesAfecta: r.productoElaborar,
-                            });
-                            setFormOpen(true);
-                          }}
-                        >
-                          Crear compra MP
-                        </Button>
-                      ) : null,
-                  } as OperationalTableColumn<MpControlRow>,
-                ]
-              : []),
-          ]}
-          rows={pageRows as MpControlRow[]}
-          rowKey={(r) => r.id}
-          emptyMessage="Sin control semanal."
-        />
-      )}
+      {tab === "Control semanal" && <MpWeeklyControlPanel />}
 
       {tab === "Compras MP" && (
         <OperationalTable
