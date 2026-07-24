@@ -129,16 +129,23 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (tab === "Stock") {
-      return stock.filter((r) =>
-        !q ||
-        [r.descripcion, r.proveedor, r.cliente, r.lote, r.ubicacion].join(" ").toLowerCase().includes(q)
+      return stock.filter(
+        (r) =>
+          !q ||
+          [r.descripcion, r.proveedor, r.cliente, r.lote, r.ubicacion, r.codigo, r.productosAsociados]
+            .join(" ")
+            .toLowerCase()
+            .includes(q)
       );
     }
     if (tab === "Ingresos MP") {
       return ingresos.filter(
         (r) =>
           !q ||
-          [r.ingresoNro, r.descripcion, r.proveedor, r.cliente, r.lote].join(" ").toLowerCase().includes(q)
+          [r.ingresoNro, r.descripcion, r.proveedor, r.cliente, r.lote, r.codigo, r.producto, r.status]
+            .join(" ")
+            .toLowerCase()
+            .includes(q)
       );
     }
     if (tab === "Control semanal") {
@@ -194,20 +201,27 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             cliente: formDraft.cliente ?? "",
             remitoNro: formDraft.remitoNro ?? "",
             codigo: formDraft.codigo ?? "",
+            producto: formDraft.producto ?? "",
             descripcion: formDraft.descripcion ?? "",
             bultos: parseOptionalNumber(formDraft.bultos),
             cantidad: parseOptionalNumber(formDraft.cantidad),
             ubicacion: formDraft.ubicacion ?? "",
             lote: formDraft.lote ?? "",
             vencimiento: formDraft.vencimiento ?? "",
+            confirm: formDraft.confirm === "1" || undefined,
+            confirmDemote: formDraft.confirmDemote === "1" || undefined,
           },
         });
+        const saved = result.data as MpIngresoRow;
+        if (saved.stockMessage && !saved.stockImpacted) {
+          setBanner(saved.stockMessage);
+        }
         if (formDraft.compraId) {
           await mutateInventory({
             action: "link_ingreso",
             resource: "mp_compras",
             id: formDraft.compraId,
-            payload: { ingresoId: (result.data as MpIngresoRow).id },
+            payload: { ingresoId: saved.id },
           });
         }
       } else if (tab === "Control semanal") {
@@ -259,6 +273,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   const stockColumns: OperationalTableColumn<MpStockRow>[] = MP_STOCK_COLUMNS.map((label) => {
     const map: Record<string, keyof MpStockRow> = {
       CÓDIGO: "codigo",
+      PRODUCTO: "productosAsociados",
       PROVEEDOR: "proveedor",
       CLIENTE: "cliente",
       "DESCRIPCIÓN MATERIA PRIMA": "descripcion",
@@ -275,25 +290,140 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     return { key: label, header: label, render: (r) => displayCell(r[k]) };
   });
 
-  const ingresoColumns: OperationalTableColumn<MpIngresoRow>[] = MP_INGRESO_COLUMNS.map((label) => {
-    const map: Record<string, keyof MpIngresoRow> = {
-      FECHA: "fecha",
-      "INGRESO Nº": "ingresoNro",
-      PROVEEDOR: "proveedor",
-      CLIENTE: "cliente",
-      "REMITO Nº": "remitoNro",
-      CÓDIGO: "codigo",
-      "DESCRIPCIÓN MATERIA PRIMA": "descripcion",
-      BULTOS: "bultos",
-      "CANTIDAD (kg/u)": "cantidad",
-      TOTAL: "total",
-      UBICACIÓN: "ubicacion",
-      LOTE: "lote",
-      VENCIMIENTO: "vencimiento",
-    };
-    const k = map[label];
-    return { key: label, header: label, render: (r) => displayCell(r[k]) };
-  });
+  function statusChip(status: MpIngresoRow["status"] | undefined) {
+    const s = status ?? "BORRADOR";
+    const cls =
+      s === "CONFIRMADO"
+        ? "bg-emerald-100 text-emerald-800"
+        : s === "ANULADO"
+          ? "bg-slate-200 text-slate-700"
+          : "bg-amber-100 text-amber-900";
+    return (
+      <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${cls}`}>{s}</span>
+    );
+  }
+
+  async function confirmIngreso(row: MpIngresoRow) {
+    try {
+      const result = await mutateInventory({
+        action: "upsert",
+        resource: "mp_ingresos",
+        payload: {
+          id: row.id,
+          codigo: row.codigo,
+          producto: row.producto,
+          descripcion: row.descripcion,
+          bultos: row.bultos,
+          cantidad: row.cantidad,
+          confirm: true,
+        },
+      });
+      const saved = result.data as MpIngresoRow;
+      if (saved.stockMessage && !saved.stockImpacted) {
+        setBanner(saved.stockMessage);
+      } else {
+        setBanner(null);
+      }
+      await reload();
+    } catch (e) {
+      setBanner(e instanceof InventoryClientError ? e.message : "Error al confirmar");
+    }
+  }
+
+  const ingresoColumns: OperationalTableColumn<MpIngresoRow>[] = [
+    ...MP_INGRESO_COLUMNS.map((label) => {
+      const map: Record<string, keyof MpIngresoRow> = {
+        FECHA: "fecha",
+        "INGRESO Nº": "ingresoNro",
+        PROVEEDOR: "proveedor",
+        CLIENTE: "cliente",
+        "REMITO Nº": "remitoNro",
+        CÓDIGO: "codigo",
+        PRODUCTO: "producto",
+        "DESCRIPCIÓN MATERIA PRIMA": "descripcion",
+        BULTOS: "bultos",
+        "CANTIDAD (kg/u)": "cantidad",
+        TOTAL: "total",
+        UBICACIÓN: "ubicacion",
+        LOTE: "lote",
+        VENCIMIENTO: "vencimiento",
+      };
+      const k = map[label];
+      return {
+        key: label,
+        header: label,
+        render: (r: MpIngresoRow) => displayCell(r[k]),
+      } as OperationalTableColumn<MpIngresoRow>;
+    }),
+    {
+      key: "status",
+      header: "ESTADO",
+      render: (r) => statusChip(r.status),
+    },
+    ...(canWrite
+      ? [
+          {
+            key: "acciones",
+            header: "",
+            render: (r: MpIngresoRow) => {
+              const qtyReady =
+                Boolean((r.codigo ?? "").trim()) &&
+                ((r.total != null && r.total > 0) || (r.cantidad != null && r.cantidad > 0));
+              return (
+                <div className="flex flex-wrap items-center gap-1">
+                  {r.status === "BORRADOR" && qtyReady ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void confirmIngreso(r)}
+                    >
+                      Confirmar
+                    </Button>
+                  ) : null}
+                  {r.status !== "ANULADO" ? (
+                    <>
+                      <button
+                        type="button"
+                        title="Editar"
+                        onClick={() => {
+                          setFormDraft({
+                            id: r.id,
+                            fecha: r.fecha,
+                            ingresoNro: r.ingresoNro,
+                            proveedor: r.proveedor,
+                            cliente: r.cliente,
+                            remitoNro: r.remitoNro,
+                            codigo: r.codigo,
+                            producto: r.producto ?? "",
+                            descripcion: r.descripcion,
+                            bultos: r.bultos == null ? "" : String(r.bultos),
+                            cantidad: r.cantidad == null ? "" : String(r.cantidad),
+                            ubicacion: r.ubicacion,
+                            lote: r.lote,
+                            vencimiento: r.vencimiento,
+                          });
+                          setFormOpen(true);
+                        }}
+                      >
+                        <Pencil className="size-4" />
+                      </button>
+                      <button
+                        type="button"
+                        title="Anular"
+                        onClick={() => setDeleteTarget({ id: r.id, reason: "" })}
+                      >
+                        <Trash2 className="size-4 text-red-700" />
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              );
+            },
+          } as OperationalTableColumn<MpIngresoRow>,
+        ]
+      : []),
+  ];
 
   const controlColumns: OperationalTableColumn<MpControlRow>[] = MP_CONTROL_COLUMNS.map((label) => {
     const map: Record<string, keyof MpControlRow> = {
@@ -357,6 +487,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             ["cliente", "CLIENTE"],
             ["remitoNro", "REMITO Nº"],
             ["codigo", "CÓDIGO"],
+            ["producto", "PRODUCTO"],
             ["descripcion", "DESCRIPCIÓN MATERIA PRIMA"],
             ["bultos", "BULTOS"],
             ["cantidad", "CANTIDAD (kg/u)"],
@@ -510,12 +641,24 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       )}
 
       {tab === "Ingresos MP" && (
-        <OperationalTable
-          columns={ingresoColumns}
-          rows={pageRows as MpIngresoRow[]}
-          rowKey={(r) => r.id}
-          emptyMessage="Sin ingresos MP."
-        />
+        <>
+          {pageRows.some(
+            (r) =>
+              (r as MpIngresoRow).status === "BORRADOR" &&
+              !(r as MpIngresoRow).stockImpacted
+          ) ? (
+            <div className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
+              Hay borradores sin afectar Stock (falta Código o Cantidad). Completá y confirmá
+              para impactar inventario.
+            </div>
+          ) : null}
+          <OperationalTable
+            columns={ingresoColumns}
+            rows={pageRows as MpIngresoRow[]}
+            rowKey={(r) => r.id}
+            emptyMessage="Sin ingresos MP."
+          />
+        </>
       )}
 
       {tab === "Control semanal" && <MpWeeklyControlPanel />}
@@ -646,16 +789,20 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       <ConfirmDialog
         open={Boolean(deleteTarget)}
         onOpenChange={(o) => !o && setDeleteTarget(null)}
-        title="Eliminar registro"
-        description="Confirmá la eliminación. Si impacta stock, se revertirá con auditoría."
-        confirmLabel="Eliminar"
+        title={tab === "Ingresos MP" ? "Anular ingreso MP" : "Eliminar registro"}
+        description={
+          tab === "Ingresos MP"
+            ? "Se anula el ingreso (queda registrado). Si impactó stock, se revierte el ledger."
+            : "Confirmá la eliminación. Si impacta stock, se revertirá con auditoría."
+        }
+        confirmLabel={tab === "Ingresos MP" ? "Anular" : "Eliminar"}
         onConfirm={() => {
           if (!deleteTarget) return;
           void mutateInventory({
-            action: "delete",
+            action: tab === "Ingresos MP" ? "anular" : "delete",
             resource: TAB_TO_RESOURCE[tab],
             id: deleteTarget.id,
-            reason: deleteTarget.reason || "Eliminación MP",
+            reason: deleteTarget.reason || (tab === "Ingresos MP" ? "Anulación MP" : "Eliminación MP"),
           })
             .then(reload)
             .finally(() => setDeleteTarget(null));
@@ -668,6 +815,8 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         fields={
           tab === "Stock"
             ? [
+                { key: "codigo", label: "CÓDIGO" },
+                { key: "producto", label: "PRODUCTO" },
                 { key: "proveedor", label: "PROVEEDOR" },
                 { key: "cliente", label: "CLIENTE" },
                 { key: "descripcion", label: "DESCRIPCIÓN MATERIA PRIMA" },
@@ -688,6 +837,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                   { key: "cliente", label: "CLIENTE" },
                   { key: "remitoNro", label: "REMITO Nº" },
                   { key: "codigo", label: "CÓDIGO" },
+                  { key: "producto", label: "PRODUCTO" },
                   { key: "descripcion", label: "DESCRIPCIÓN MATERIA PRIMA" },
                   { key: "bultos", label: "BULTOS" },
                   { key: "cantidad", label: "CANTIDAD (kg/u)" },
@@ -719,6 +869,8 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                   ]
         }
         fieldAliases={{
+          codigo: ["codigo", "código"],
+          producto: ["producto", "producto destino", "productos"],
           proveedor: ["proveedor"],
           cliente: ["cliente"],
           descripcion: ["descripcion", "descripción", "descripcion materia prima", "materia prima"],
@@ -730,7 +882,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           fecha: ["fecha"],
           ingresoNro: ["ingreso", "ingreso n", "ingreso nº"],
           remitoNro: ["remito"],
-          codigo: ["codigo", "código"],
           bultos: ["bultos"],
           cantidad: ["cantidad"],
           total: ["total"],
@@ -776,6 +927,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                   cliente: m.cliente ?? "",
                   remitoNro: m.remitoNro ?? "",
                   codigo: m.codigo ?? "",
+                  producto: m.producto ?? "",
                   descripcion: m.descripcion ?? "",
                   bultos: parseOptionalNumber(m.bultos),
                   cantidad: parseOptionalNumber(m.cantidad),

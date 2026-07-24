@@ -224,9 +224,10 @@ interface ActionButtonProps {
   variant: "approve" | "reject" | "neutral";
   onClick: () => void;
   disabled?: boolean;
+  title?: string;
 }
 
-export function ActionButton({ label, variant, onClick, disabled }: ActionButtonProps) {
+export function ActionButton({ label, variant, onClick, disabled, title }: ActionButtonProps) {
   const styles =
     variant === "approve"
       ? "border-emerald-300 text-emerald-800 hover:bg-emerald-50"
@@ -238,7 +239,11 @@ export function ActionButton({ label, variant, onClick, disabled }: ActionButton
     <button
       type="button"
       disabled={disabled}
-      onClick={onClick}
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
       className={`rounded-[var(--os-radius-sm)] border px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${styles}`}
     >
       {label}

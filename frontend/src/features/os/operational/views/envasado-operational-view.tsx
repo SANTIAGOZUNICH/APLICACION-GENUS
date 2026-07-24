@@ -1,11 +1,18 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { usePreviewContext } from "@/features/os/session/preview-context";
 import { personNamesMatch } from "@/lib/operational/display-fields";
+import {
+  archiveFromViewApi,
+  excludeArchivedFromView,
+  fetchWorkViewArchivesApi,
+  onlyArchivedFromView,
+  restoreToViewApi,
+} from "@/lib/work-view-archive";
 import { WorkItemProgressTable } from "../components/work-item-progress-table";
 import { WorkItemDrawer } from "../components/work-item-drawer";
 import { SyncStatusBar, OperationalTabs } from "../components/operational-ui";
@@ -24,6 +31,8 @@ import { sortByDeliveryDateNearest } from "../lib/delivery-date";
 interface EnvasadoOperationalViewProps {
   sectorId: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM";
 }
+
+type EnvasadoListTab = "activos" | "archivados";
 
 function useOptionalLineToggle(sectorId: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM") {
   const storageKey = `genus_os_${sectorId.toLowerCase()}_linea_opcional_enabled`;
@@ -61,6 +70,9 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
 
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [listTab, setListTab] = useState<EnvasadoListTab>("activos");
+  const [archivedIds, setArchivedIds] = useState<string[]>([]);
+  const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
 
   const availableLines: LineBucket[] = useMemo(() => {
     const base: LineBucket[] = sectorId === "ENVASADO_MASIVO" ? ["1", "2", "3"] : ["1"];
@@ -77,6 +89,25 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
     useOperationalPlan(sectorId, planOptions);
 
+  const session = useMemo(
+    () => ({ email: workspace.context.email, sector: sectorId }),
+    [workspace.context.email, sectorId]
+  );
+
+  const refreshArchives = useCallback(async () => {
+    try {
+      const result = await fetchWorkViewArchivesApi(session, sectorId);
+      setArchivedIds(result.workItemIds);
+    } catch {
+      // Sin persistencia / schema pendiente: bandeja sin preferencias de archivo.
+      setArchivedIds([]);
+    }
+  }, [session, sectorId]);
+
+  useEffect(() => {
+    void refreshArchives();
+  }, [refreshArchives]);
+
   const workItems = useMemo(() => {
     const base = applyEffectiveStatus(mergeManualWorkItems(sectorId, data?.workItems ?? []));
     return sortByDeliveryDateNearest(applyProgressToWorkItems(base));
@@ -87,9 +118,17 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     [workItems, activeLine]
   );
 
-  const sortedItems = useMemo(
-    () => sortByDeliveryDateNearest(itemsForActiveLine),
-    [itemsForActiveLine]
+  const visibleItems = useMemo(() => {
+    const sorted = sortByDeliveryDateNearest(itemsForActiveLine);
+    if (listTab === "archivados") {
+      return onlyArchivedFromView(sorted, archivedIds);
+    }
+    return excludeArchivedFromView(sorted, archivedIds);
+  }, [itemsForActiveLine, listTab, archivedIds]);
+
+  const archivedCountForLine = useMemo(
+    () => onlyArchivedFromView(itemsForActiveLine, archivedIds).length,
+    [itemsForActiveLine, archivedIds]
   );
 
   const handleSave = useCallback(
@@ -121,7 +160,47 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     [markWorkFinished, workspace.context.displayName, workspace.sectorLabel, showToast]
   );
 
-  const tabs = availableLines.map((bucket) => ({ id: bucket, label: LINE_TAB_LABELS[bucket] }));
+  const handleArchiveFromView = useCallback(
+    async (item: WorkItem) => {
+      setArchiveBusyId(item.id);
+      try {
+        await archiveFromViewApi(session, sectorId, item.id);
+        setArchivedIds((prev) => (prev.includes(item.id) ? prev : [...prev, item.id]));
+        showToast("Quitado de tu vista. El registro operativo se conserva.");
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "No se pudo archivar de la vista.");
+      } finally {
+        setArchiveBusyId(null);
+      }
+    },
+    [session, sectorId, showToast]
+  );
+
+  const handleRestoreToView = useCallback(
+    async (item: WorkItem) => {
+      setArchiveBusyId(item.id);
+      try {
+        await restoreToViewApi(session, sectorId, item.id);
+        setArchivedIds((prev) => prev.filter((id) => id !== item.id));
+        showToast("Restaurado a tu vista.");
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "No se pudo restaurar a la vista.");
+      } finally {
+        setArchiveBusyId(null);
+      }
+    },
+    [session, sectorId, showToast]
+  );
+
+  const lineTabs = availableLines.map((bucket) => ({
+    id: bucket,
+    label: LINE_TAB_LABELS[bucket],
+  }));
+
+  const listTabs = [
+    { id: "activos", label: "Activos" },
+    { id: "archivados", label: "Archivados", count: archivedCountForLine },
+  ];
 
   return (
     <TwinShell title={workspace.sectorLabel}>
@@ -166,7 +245,10 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           weekDays={calendar.weekDays}
           today={calendar.today}
           selectedDate={calendar.selectedDate}
-          items={sortedItems}
+          items={excludeArchivedFromView(
+            sortByDeliveryDateNearest(itemsForActiveLine),
+            archivedIds
+          )}
           onSelectDay={calendar.selectDay}
         />
       )}
@@ -174,7 +256,11 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       {!loading && calendar.viewMode === "day" && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <OperationalTabs tabs={tabs} activeId={activeLine} onChange={(id) => setActiveLine(id as LineBucket)} />
+            <OperationalTabs
+              tabs={lineTabs}
+              activeId={activeLine}
+              onChange={(id) => setActiveLine(id as LineBucket)}
+            />
             <label className="flex items-center gap-2 text-xs text-[var(--os-text-muted)]">
               <input
                 type="checkbox"
@@ -186,22 +272,34 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
             </label>
           </div>
 
+          <OperationalTabs
+            tabs={listTabs}
+            activeId={listTab}
+            onChange={(id) => setListTab(id as EnvasadoListTab)}
+          />
+
           <WorkItemProgressTable
-            items={sortedItems}
+            items={visibleItems}
             variant="envasado"
+            listMode={listTab === "archivados" ? "archived" : "active"}
             getFinishedQty={getFinishedQty}
             getObservation={getObservation}
             onSelectItem={(item) => {
               setSelectedItem(item);
               setDrawerOpen(true);
             }}
+            onArchiveFromView={handleArchiveFromView}
+            onRestoreToView={handleRestoreToView}
+            archiveBusyId={archiveBusyId}
             emptyMessage={
-              data?.source === "native"
-                ? nativeEmptyPlanMessage({
-                    date: calendar.selectedDate,
-                    sector: sectorId,
-                  })
-                : (data?.message ?? "No hay trabajos planificados para este día.")
+              listTab === "archivados"
+                ? "No hay trabajos archivados de tu vista en esta línea."
+                : data?.source === "native"
+                  ? nativeEmptyPlanMessage({
+                      date: calendar.selectedDate,
+                      sector: sectorId,
+                    })
+                  : (data?.message ?? "No hay trabajos planificados para este día.")
             }
           />
         </div>

@@ -163,8 +163,10 @@ async function mutateResource(
       );
     case "mp_ingresos:upsert":
       return service.upsertMpIngreso(actor, payload as never);
+    case "mp_ingresos:anular":
+      return service.anularMpIngreso(actor, id!, reason ?? "");
     case "mp_ingresos:delete":
-      return service.deleteMpIngreso(actor, id!, reason ?? "");
+      return service.anularMpIngreso(actor, id!, reason ?? "");
     case "mp_control:upsert":
       return service.upsertMpControl(actor, payload as never);
     case "mp_control:delete":

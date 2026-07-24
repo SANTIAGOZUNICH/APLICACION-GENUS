@@ -185,6 +185,13 @@ export class MemoryInventoryRepo {
     if (matches.length === 1) return matches[0];
     return null;
   }
+  findMpStockByCodigo(codigo: string) {
+    const c = codigo.trim().toUpperCase().replace(/\s+/g, " ");
+    if (!c) return null;
+    return (
+      this.mpStock.find((r) => r.codigo.trim().toUpperCase().replace(/\s+/g, " ") === c) ?? null
+    );
+  }
 
   upsertMpIngreso(row: MpIngresoRow) {
     const i = this.mpIngresos.findIndex((r) => r.id === row.id);

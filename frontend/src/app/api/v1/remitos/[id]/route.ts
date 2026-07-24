@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { getRemitoService } from "@/lib/remitos/remito-service";
 import { canAccessRemitos } from "@/lib/remitos/types";
-import type { RemitoApprovalInput } from "@/lib/remitos/types";
+import type {
+  RemitoApprovalInput,
+  RemitoDraftPatch,
+  RemitoEditGeneratedOptions,
+} from "@/lib/remitos/types";
 import {
   isRemitoSchemaReady,
   RemitoSchemaPendingError,
@@ -56,12 +60,47 @@ export async function PATCH(request: Request, ctx: Ctx) {
     const body = (await request.json()) as {
       action?: string;
       extraLines?: RemitoApprovalInput[];
-    };
+      patch?: RemitoDraftPatch;
+      displayName?: string;
+      filename?: string;
+      motivo?: string;
+    } & Partial<RemitoEditGeneratedOptions>;
     const svc = getRemitoService();
     const a = { email: actor.email, sector: actor.sector };
 
     if (body.action === "generate") {
-      return NextResponse.json({ remito: await svc.generate(a, id) });
+      return NextResponse.json({
+        remito: await svc.generate(a, id, {
+          displayName: String(body.displayName ?? ""),
+          filename: body.filename,
+        }),
+      });
+    }
+    if (body.action === "update_draft") {
+      return NextResponse.json({
+        remito: await svc.updateDraft(a, id, body.patch ?? {}),
+      });
+    }
+    if (body.action === "rename") {
+      return NextResponse.json({
+        remito: await svc.renameDisplayName(a, id, String(body.displayName ?? "")),
+      });
+    }
+    if (body.action === "edit_generated") {
+      return NextResponse.json({
+        remito: await svc.editGenerated(a, id, {
+          motivo: String(body.motivo ?? ""),
+          displayName: body.displayName,
+          clientDisplay: body.clientDisplay,
+          deliveryDate: body.deliveryDate,
+          lines: body.lines,
+          filename: body.filename,
+        }),
+      });
+    }
+    if (body.action === "list_versions") {
+      const versions = await svc.listVersions(a, id);
+      return NextResponse.json({ versions });
     }
     if (body.action === "new_version") {
       return NextResponse.json(

@@ -13,6 +13,8 @@ import {
   resetRemitoMemoryForTests,
 } from "./remito-service";
 import * as driveWrite from "./drive-write";
+import * as featureSchema from "@/lib/db/feature-schema";
+import * as remitoSchema from "@/lib/db/remito-schema";
 
 const prod = { email: "prod@test", sector: "PRODUCCION" as const };
 const calidad = { email: "cal@test", sector: "CALIDAD" as const };
@@ -90,9 +92,7 @@ describe("RemitoService memoria", () => {
     expect(canAccessRemitos("PRODUCCION")).toBe(true);
     expect(canAccessRemitos("CALIDAD")).toBe(false);
     expect(canAccessRemitos("MATERIA_PRIMA")).toBe(false);
-    await expect(
-      getRemitoService().list(calidad)
-    ).rejects.toThrow(/PRODUCCIÓN|PRODUCCION/i);
+    await expect(getRemitoService().list(calidad)).rejects.toThrow(/PRODUCCIÓN|PRODUCCION/i);
   });
 
   it("same client+date groups multiple products; new work adds to draft", async () => {
@@ -171,6 +171,64 @@ describe("RemitoService memoria", () => {
     expect(again.remito.lines[0]?.totalUnits).toBe(5);
   });
 
+  it("displayName saved on generate", async () => {
+    const svc = getRemitoService();
+    const draft = await svc.upsertDraftFromApproval(prod, {
+      workItemId: "wi-dn",
+      clientId: "Cli DN",
+      deliveryDate: "2026-09-10",
+      product: "P",
+      totalUnits: 4,
+    });
+    const generated = await svc.generate(prod, draft.remito.id, {
+      displayName: "Remito Cliente DN Agosto",
+    });
+    expect(generated.status).toBe("GENERADO");
+    expect(generated.displayName).toBe("Remito Cliente DN Agosto");
+    expect(generated.remitoNumber).toBeTruthy();
+    expect(generated.versions).toHaveLength(1);
+    expect(generated.versions[0]?.downloadable).toBe(true);
+  });
+
+  it("edit generated creates new version; old remains downloadable", async () => {
+    const svc = getRemitoService();
+    const draft = await svc.upsertDraftFromApproval(prod, {
+      workItemId: "wi-edit-v",
+      clientId: "CliEdit",
+      deliveryDate: "2026-09-11",
+      product: "P1",
+      totalUnits: 8,
+    });
+    const generated = await svc.generate(prod, draft.remito.id, {
+      displayName: "Remito Edit",
+    });
+    const remitoNumber = generated.remitoNumber;
+    expect(generated.version).toBe(1);
+    expect(generated.versions).toHaveLength(1);
+
+    const v2 = await svc.editGenerated(prod, generated.id, {
+      motivo: "Corrección de cantidades",
+      lines: [
+        {
+          id: generated.lines[0]!.id,
+          totalUnits: 10,
+        },
+      ],
+    });
+    expect(v2.version).toBe(2);
+    expect(v2.status).toBe("GENERADO");
+    expect(v2.remitoNumber).toBe(remitoNumber);
+    expect(v2.displayName).toBe("Remito Edit");
+    expect(v2.versions).toHaveLength(2);
+    expect(v2.versions.every((x) => x.downloadable)).toBe(true);
+    expect(v2.versions[1]?.motivo).toBe("Corrección de cantidades");
+
+    const dl1 = await svc.download(prod, v2.id, "pdf", 1);
+    const dl2 = await svc.download(prod, v2.id, "pdf", 2);
+    expect(dl1.bytes.length).toBeGreaterThan(10);
+    expect(dl2.bytes.length).toBeGreaterThan(10);
+  });
+
   it("generated immutable; new approval → new version offer", async () => {
     const svc = getRemitoService();
     const draft = await svc.upsertDraftFromApproval(prod, {
@@ -181,7 +239,9 @@ describe("RemitoService memoria", () => {
       totalUnits: 12,
       unitsPerCaja1: 12,
     });
-    const generated = await svc.generate(prod, draft.remito.id);
+    const generated = await svc.generate(prod, draft.remito.id, {
+      displayName: "Remito Cli",
+    });
     expect(generated.status).toBe("GENERADO");
 
     const offer = await svc.upsertDraftFromApproval(prod, {
@@ -209,56 +269,57 @@ describe("RemitoService memoria", () => {
     expect(next.lines).toHaveLength(1);
   });
 
-  it("Drive fail simulation doesn't leave orphan metadata", async () => {
+  it("Drive fail simulation does not mark GENERADO", async () => {
     const svc = getRemitoService();
     const draft = await svc.upsertDraftFromApproval(prod, {
-      workItemId: "wi-drive",
-      clientId: "DriveCli",
-      deliveryDate: "2026-10-01",
+      workItemId: "wi-drive-fail",
+      clientId: "DriveFail",
+      deliveryDate: "2026-10-03",
       product: "PD",
-      totalUnits: 1,
-    });
-
-    vi.spyOn(driveWrite, "getRemitosFolderId").mockReturnValue("folder-remitos-test");
-    vi.spyOn(driveWrite, "uploadRemitoDriveFile").mockResolvedValue("drive-file-1");
-    const trash = vi
-      .spyOn(driveWrite, "trashRemitoDriveFile")
-      .mockResolvedValue(undefined);
-
-    // Forzar fallo de metadata tras "upload": romper persistencia de archivo
-    // mockeando isFeatureMemoryAllowed path — usamos generate en memoria
-    // y verificamos que trash se llama si persistFileMeta falla.
-    // Simulamos fallo inyectando upload OK + persist que falla vía spy interno:
-    // En memoria, generate no usa Drive; forzamos rama Drive stubbing memory off.
-    vi.stubEnv("GENUS_FEATURE_MEMORY", "0");
-    vi.stubEnv("VITEST", "false");
-    vi.stubEnv("NODE_ENV", "production");
-
-    // Sin DB real, assertRemitoWritesEnabled fallará — re-habilitamos memory
-    // y probamos trash helper contract directamente (anti-huérfano).
-    vi.unstubAllEnvs();
-    resetRemitoMemoryForTests();
-
-    await driveWrite.trashRemitoDriveFile("drive-orphan-id");
-    // Con mock de trash arriba ya restaurado en afterEach; re-spy:
-    trash.mockClear();
-    vi.spyOn(driveWrite, "trashRemitoDriveFile").mockResolvedValue(undefined);
-    await driveWrite.trashRemitoDriveFile("drive-orphan-id");
-    expect(driveWrite.trashRemitoDriveFile).toHaveBeenCalledWith("drive-orphan-id");
-
-    // generate en memoria crea blobs sin metadata huérfana Drive
-    const d2 = await getRemitoService().upsertDraftFromApproval(prod, {
-      workItemId: "wi-drive-2",
-      clientId: "DriveCli2",
-      deliveryDate: "2026-10-02",
-      product: "PD2",
       totalUnits: 2,
     });
-    const gen = await getRemitoService().generate(prod, d2.remito.id);
-    expect(gen.status).toBe("GENERADO");
-    const dl = await getRemitoService().download(prod, gen.id, "pdf");
-    expect(dl.bytes.length).toBeGreaterThan(10);
-    expect(draft.remito.id).toBeTruthy();
+
+    vi.spyOn(featureSchema, "isFeatureMemoryAllowed").mockReturnValue(false);
+    vi.spyOn(remitoSchema, "assertRemitoWritesEnabled").mockResolvedValue(undefined);
+    vi.spyOn(remitoSchema, "isRemitoSchemaReady").mockResolvedValue(false);
+    vi.spyOn(driveWrite, "getRemitosFolderId").mockReturnValue("folder-remitos-test");
+    vi.spyOn(driveWrite, "uploadRemitoDriveFile").mockRejectedValue(
+      new Error("Drive upload failed")
+    );
+    vi.spyOn(driveWrite, "trashRemitoDriveFile").mockResolvedValue(undefined);
+
+    await expect(
+      svc.generate(prod, draft.remito.id, { displayName: "No debe generar" })
+    ).rejects.toThrow(/Drive upload failed/);
+
+    const after = await svc.get(prod, draft.remito.id);
+    expect(after?.status).toBe("BORRADOR");
+    expect(after?.displayName).toBeNull();
+    expect(after?.versions ?? []).toHaveLength(0);
+  });
+
+  it("statusForWorkItem reflects none/draft/generated", async () => {
+    const svc = getRemitoService();
+    expect(await svc.statusForWorkItem(prod, "missing")).toEqual({
+      status: "none",
+      remitoId: null,
+    });
+    const draft = await svc.upsertDraftFromApproval(prod, {
+      workItemId: "wi-st",
+      clientId: "St",
+      deliveryDate: "2026-11-02",
+      product: "PS",
+      totalUnits: 1,
+    });
+    expect(await svc.statusForWorkItem(prod, "wi-st")).toEqual({
+      status: "draft",
+      remitoId: draft.remito.id,
+    });
+    await svc.generate(prod, draft.remito.id, { displayName: "ST" });
+    expect(await svc.statusForWorkItem(prod, "wi-st")).toEqual({
+      status: "generated",
+      remitoId: draft.remito.id,
+    });
   });
 
   it("systemHook permite upsert desde Calidad sin RBAC PRODUCCION", async () => {

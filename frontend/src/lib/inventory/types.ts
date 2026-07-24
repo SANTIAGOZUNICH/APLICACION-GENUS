@@ -130,6 +130,8 @@ export type MeAlertRead = {
   dismissedAt: string | null;
 };
 
+export type MpIngresoStatus = "BORRADOR" | "CONFIRMADO" | "ANULADO";
+
 export type MpStockRow = {
   id: string;
   proveedor: string;
@@ -144,6 +146,8 @@ export type MpStockRow = {
   estadoVencimiento: string;
   origen: string;
   codigo: string;
+  /** Productos destino asociados (ingresos CONFIRMADO del mismo código), unidos por " · ". */
+  productosAsociados: string;
   createdBy: string;
   updatedBy: string;
   createdAt: string;
@@ -158,6 +162,8 @@ export type MpIngresoRow = {
   cliente: string;
   remitoNro: string;
   codigo: string;
+  /** Producto destino opcional; no parte saldos de stock. */
+  producto: string;
   descripcion: string;
   bultos: number | null;
   cantidad: number | null;
@@ -166,6 +172,9 @@ export type MpIngresoRow = {
   lote: string;
   vencimiento: string;
   stockLotId: string | null;
+  status: MpIngresoStatus;
+  stockImpacted: boolean;
+  stockMessage?: string;
   createdBy: string;
   updatedBy: string;
   createdAt: string;
@@ -264,6 +273,7 @@ export const ME_SALIDA_COLUMNS = [
 
 export const MP_STOCK_COLUMNS = [
   "CÓDIGO",
+  "PRODUCTO",
   "PROVEEDOR",
   "CLIENTE",
   "DESCRIPCIÓN MATERIA PRIMA",
@@ -284,6 +294,7 @@ export const MP_INGRESO_COLUMNS = [
   "CLIENTE",
   "REMITO Nº",
   "CÓDIGO",
+  "PRODUCTO",
   "DESCRIPCIÓN MATERIA PRIMA",
   "BULTOS",
   "CANTIDAD (kg/u)",

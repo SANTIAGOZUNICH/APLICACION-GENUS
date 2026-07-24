@@ -17,6 +17,7 @@ const now = new Date().toISOString();
 const remito: RemitoRecord = {
   id: "remito-muestra-demo",
   remitoNumber: "MUESTRA-001",
+  displayName: "Remito muestra UNICA",
   clientIdNormalized: "unica",
   clientDisplay: "UNICA",
   deliveryDate: "2026-07-30",
@@ -75,6 +76,15 @@ const remito: RemitoRecord = {
       cajas2: 0,
       unidades2: 0,
       sortOrder: 2,
+    },
+  ],
+  versions: [
+    {
+      version: 1,
+      motivo: null,
+      createdBy: "demo@genus",
+      createdAt: now,
+      downloadable: true,
     },
   ],
 };

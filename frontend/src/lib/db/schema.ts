@@ -710,6 +710,8 @@ export const remitos = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     remitoNumber: text("remito_number"),
+    /** Nombre elegido por Producción (migración 0007). */
+    displayName: text("display_name"),
     clientIdNormalized: text("client_id_normalized").notNull(),
     clientDisplay: text("client_display").notNull(),
     deliveryDate: date("delivery_date").notNull(),
@@ -782,6 +784,8 @@ export const remitoVersions = pgTable(
       .notNull()
       .references(() => remitos.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
+    /** Motivo de edición / nueva versión (migración 0007). */
+    motivo: text("motivo"),
     driveFileIdXlsx: text("drive_file_id_xlsx"),
     driveFileIdPdf: text("drive_file_id_pdf"),
     snapshot: jsonb("snapshot").notNull().default({}),
@@ -813,5 +817,24 @@ export const remitoFiles = pgTable(
     audit: jsonb("audit").notNull().default({}),
   },
   (table) => [uniqueIndex("remito_files_drive_file_uidx").on(table.driveFileId)]
+);
+
+/** Preferencias "Archivar de mi vista" — migración 0007 (diferida). */
+export const workViewArchives = pgTable(
+  "work_view_archives",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sector: text("sector").notNull(),
+    workItemId: text("work_item_id").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("work_view_archives_sector_work_actor_uidx").on(
+      table.sector,
+      table.workItemId,
+      table.actorEmail
+    ),
+  ]
 );
 

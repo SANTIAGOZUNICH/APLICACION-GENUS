@@ -115,8 +115,10 @@ describe("Columnas exactas ME/MP", () => {
       "Compras MP",
       "COA'S",
     ]);
-    expect(MP_STOCK_COLUMNS).toHaveLength(12);
-    expect(MP_INGRESO_COLUMNS).toHaveLength(13);
+    expect(MP_STOCK_COLUMNS).toHaveLength(13);
+    expect(MP_INGRESO_COLUMNS).toHaveLength(14);
+    expect(MP_STOCK_COLUMNS).toContain("PRODUCTO");
+    expect(MP_INGRESO_COLUMNS).toContain("PRODUCTO");
     expect(MP_CONTROL_COLUMNS).toHaveLength(7);
     expect(MP_COMPRA_COLUMNS).toHaveLength(9);
     const home = resolveSectorHome("MATERIA_PRIMA");
@@ -301,18 +303,22 @@ describe("InventoryService ME/MP", () => {
     expect(svc.listMeMaterials(deposito)[0]?.stockActual).toBe(5);
   });
 
-  it("MP ingreso actualiza stock; editar no duplica; eliminar revierte", () => {
+  it("MP ingreso visible + stock aumenta; editar aplica delta; anular revierte y conserva fila", () => {
     const row = svc.upsertMpIngreso(mp, {
+      codigo: "GLI-01",
       descripcion: "Glicerina",
       lote: "L1",
       bultos: 2,
       cantidad: 25,
     });
     expect(row.total).toBe(50);
+    expect(row.status).toBe("CONFIRMADO");
+    expect(row.stockImpacted).toBe(true);
     expect(svc.listMpStock(mp)[0]?.cantidadKg).toBe(50);
 
     svc.upsertMpIngreso(mp, {
       id: row.id,
+      codigo: "GLI-01",
       descripcion: "Glicerina",
       lote: "L1",
       bultos: 1,
@@ -321,8 +327,78 @@ describe("InventoryService ME/MP", () => {
     });
     expect(svc.listMpStock(mp)[0]?.cantidadKg).toBe(25);
 
-    svc.deleteMpIngreso(mp, row.id, "error carga");
+    const anul = svc.anularMpIngreso(mp, row.id, "error carga");
+    expect(anul.status).toBe("ANULADO");
+    expect(svc.listMpIngresos(mp).find((r) => r.id === row.id)).toBeTruthy();
     expect(svc.listMpStock(mp)[0]?.cantidadKg).toBe(0);
+  });
+
+  it("MP ingreso incompleto = BORRADOR sin stock; completar = un impacto", () => {
+    const draft = svc.upsertMpIngreso(mp, {
+      descripcion: "Sin datos",
+    });
+    expect(draft.status).toBe("BORRADOR");
+    expect(draft.stockImpacted).toBe(false);
+    expect(draft.stockMessage).toMatch(/Guardado sin afectar Stock/);
+    expect(svc.listMpStock(mp)).toHaveLength(0);
+
+    const empty = svc.upsertMpIngreso(mp, {});
+    expect(empty.status).toBe("BORRADOR");
+    expect(empty.stockImpacted).toBe(false);
+
+    const incomplete = svc.upsertMpIngreso(mp, {
+      codigo: "MP-X",
+      descripcion: "Solo código",
+    });
+    expect(incomplete.status).toBe("BORRADOR");
+    expect(incomplete.stockImpacted).toBe(false);
+
+    const completed = svc.upsertMpIngreso(mp, {
+      id: incomplete.id,
+      codigo: "MP-X",
+      descripcion: "Solo código",
+      bultos: 1,
+      cantidad: 40,
+      confirm: true,
+    });
+    expect(completed.status).toBe("CONFIRMADO");
+    expect(completed.stockImpacted).toBe(true);
+    expect(svc.listMpStock(mp)[0]?.cantidadKg).toBe(40);
+  });
+
+  it("MP cambio de código revierte viejo y aplica nuevo; producto no duplica saldo", () => {
+    const row = svc.upsertMpIngreso(mp, {
+      codigo: "OLD-1",
+      producto: "Crema A",
+      descripcion: "Base",
+      bultos: 1,
+      cantidad: 10,
+    });
+    expect(svc.listMpStock(mp).find((s) => s.codigo === "OLD-1")?.cantidadKg).toBe(10);
+
+    const moved = svc.upsertMpIngreso(mp, {
+      id: row.id,
+      codigo: "NEW-2",
+      producto: "Crema A",
+      descripcion: "Base",
+      bultos: 1,
+      cantidad: 10,
+    });
+    expect(moved.stockImpacted).toBe(true);
+    expect(svc.listMpStock(mp).find((s) => s.codigo === "OLD-1")?.cantidadKg).toBe(0);
+    expect(svc.listMpStock(mp).find((s) => s.codigo === "NEW-2")?.cantidadKg).toBe(10);
+
+    // Segundo ingreso mismo código, otro producto → un solo saldo, productos asociados
+    svc.upsertMpIngreso(mp, {
+      codigo: "NEW-2",
+      producto: "Crema B",
+      descripcion: "Base",
+      bultos: 1,
+      cantidad: 5,
+    });
+    const stock = svc.listMpStock(mp).find((s) => s.codigo === "NEW-2");
+    expect(stock?.cantidadKg).toBe(15);
+    expect(stock?.productosAsociados).toBe("Crema A · Crema B");
   });
 
   it("control semanal calcula FALTA/ESTADO y toma stock", () => {
@@ -350,11 +426,13 @@ describe("InventoryService ME/MP", () => {
     expect(svc.listMpStock(mp)).toHaveLength(0);
 
     const ing = svc.upsertMpIngreso(mp, {
+      codigo: "ALC-01",
       descripcion: "Alcohol",
       bultos: 1,
       cantidad: 10,
       lote: "C1",
     });
+    expect(ing.status).toBe("CONFIRMADO");
     svc.linkCompraToIngreso(mp, res.compra.id, ing.id);
     expect(() => svc.linkCompraToIngreso(mp, res.compra.id, ing.id)).toThrow(
       InventoryValidationError

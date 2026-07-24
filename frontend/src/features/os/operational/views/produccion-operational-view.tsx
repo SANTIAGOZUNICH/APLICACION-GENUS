@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
-import { usePreviewContext } from "@/features/os/session/preview-context";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { buildProductionOverview } from "@/lib/operational/build-production-overview";
 import { displayField } from "@/lib/operational/display-fields";
 import { SECTOR_LABELS } from "@/types/operational/sector";
@@ -30,6 +30,18 @@ import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-lab
 import { useOperationalStore } from "../store/operational-store-context";
 import type { QualityItem } from "../types";
 import type { WorkItem } from "@/types/operational/work-item";
+import { Button } from "@/components/ui/button";
+import {
+  collectSameClientDateApprovedPackaging,
+  isPackagingQualityItem,
+  resolveRemitoInputFromQuality,
+} from "@/lib/remitos/from-quality";
+import {
+  generateRemitoApi,
+  remitoStatusForWorkApi,
+  upsertRemitoDraftApi,
+} from "@/lib/remitos/remitos-client";
+import type { RemitoWorkItemStatus } from "@/lib/remitos/types";
 
 const PRODUCCION_TABS = [
   { id: "rechazados", label: "Rechazados" },
@@ -55,12 +67,24 @@ function sortWorkItemsTransferredFirst(items: WorkItem[]): WorkItem[] {
   });
 }
 
+function workIdFromQuality(item: QualityItem): string {
+  return (
+    item.relatedWorkItemId?.trim() ||
+    (item.id.startsWith("qc:") ? item.id.slice(3) : item.id)
+  );
+}
+
 /** Producción / Supervisión — visión general con actividad cross-sector. */
 export function ProduccionOperationalView({
   onCreateWeek,
 }: ProduccionOperationalViewProps = {}) {
   const workspace = useRequiredWorkspace();
-  const { applyEffectiveStatus } = usePreviewContext();
+  const { applyEffectiveStatus, navigateTo } = usePreviewContext();
+  const { email, sectorId } = usePreviewSession();
+  const session = useMemo(
+    () => ({ email: email ?? "", sector: sectorId }),
+    [email, sectorId]
+  );
   const {
     getQualityStatus,
     getQualityObservation,
@@ -72,6 +96,16 @@ export function ProduccionOperationalView({
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
     useOperationalPlan("PRODUCCION");
   const [activeTab, setActiveTab] = useState<ProduccionTabId>("elaboracion");
+  const [remitoStatusByWork, setRemitoStatusByWork] = useState<
+    Record<string, RemitoWorkItemStatus>
+  >({});
+  const [remitoBusy, setRemitoBusy] = useState(false);
+  const [remitoError, setRemitoError] = useState<string | null>(null);
+  const [generateModal, setGenerateModal] = useState<{
+    remitoId: string;
+    items: QualityItem[];
+  } | null>(null);
+  const [displayNameInput, setDisplayNameInput] = useState("");
   const isNativeEmpty =
     data?.source === "native" && !loading && (data.workItems?.length ?? 0) === 0;
 
@@ -155,6 +189,77 @@ export function ProduccionOperationalView({
     [workItems]
   );
 
+  const refreshRemitoStatuses = useCallback(async () => {
+    if (String(sectorId).toUpperCase() !== "PRODUCCION") return;
+    const packaging = aprobados.filter(isPackagingQualityItem);
+    if (packaging.length === 0) {
+      setRemitoStatusByWork({});
+      return;
+    }
+    const next: Record<string, RemitoWorkItemStatus> = {};
+    await Promise.all(
+      packaging.map(async (item) => {
+        const wid = workIdFromQuality(item);
+        try {
+          next[wid] = await remitoStatusForWorkApi(session, wid);
+        } catch {
+          next[wid] = { status: "none", remitoId: null };
+        }
+      })
+    );
+    setRemitoStatusByWork(next);
+  }, [aprobados, sectorId, session]);
+
+  useEffect(() => {
+    if (activeTab === "aprobados") void refreshRemitoStatuses();
+  }, [activeTab, refreshRemitoStatuses]);
+
+  async function handleGenerarRemito(seed: QualityItem) {
+    setRemitoBusy(true);
+    setRemitoError(null);
+    try {
+      const group = collectSameClientDateApprovedPackaging(seed, aprobados, workItems);
+      let remitoId: string | null = null;
+      for (const item of group) {
+        const input = resolveRemitoInputFromQuality(item, workItems);
+        if (!input) continue;
+        const result = await upsertRemitoDraftApi(session, input);
+        remitoId = result.remito.id;
+      }
+      if (!remitoId) throw new Error("No se pudo crear borrador de remito.");
+      setDisplayNameInput(seed.client || "Remito");
+      setGenerateModal({ remitoId, items: group });
+      await refreshRemitoStatuses();
+    } catch (e) {
+      setRemitoError(e instanceof Error ? e.message : "Error al preparar remito");
+    } finally {
+      setRemitoBusy(false);
+    }
+  }
+
+  async function confirmGenerateRemito() {
+    if (!generateModal) return;
+    setRemitoBusy(true);
+    setRemitoError(null);
+    try {
+      await generateRemitoApi(session, generateModal.remitoId, {
+        displayName: displayNameInput,
+      });
+      setGenerateModal(null);
+      await refreshRemitoStatuses();
+      navigateTo({ view: "remitos" });
+    } catch (e) {
+      setRemitoError(e instanceof Error ? e.message : "No se pudo generar remito");
+    } finally {
+      setRemitoBusy(false);
+    }
+  }
+
+  function openRemito(status: RemitoWorkItemStatus) {
+    if (!status.remitoId) return;
+    navigateTo({ view: "remitos" });
+  }
+
   const qualityColumns: OperationalTableColumn<QualityItem>[] = useMemo(
     () => [
       {
@@ -187,8 +292,59 @@ export function ProduccionOperationalView({
           </span>
         ),
       },
+      {
+        key: "remito",
+        header: "Remito",
+        render: (row) => {
+          if (!isPackagingQualityItem(row) || row.status !== "aprobado") {
+            return <span className="text-xs text-[var(--os-text-muted)]">—</span>;
+          }
+          const wid = workIdFromQuality(row);
+          const st = remitoStatusByWork[wid] ?? { status: "none" as const, remitoId: null };
+          if (st.status === "draft" && st.remitoId) {
+            return (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={remitoBusy}
+                onClick={() => openRemito(st)}
+                data-testid={`remito-open-draft-${wid}`}
+              >
+                ABRIR BORRADOR DE REMITO
+              </Button>
+            );
+          }
+          if (st.status === "generated" && st.remitoId) {
+            return (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={remitoBusy}
+                onClick={() => openRemito(st)}
+                data-testid={`remito-ver-${wid}`}
+              >
+                VER REMITO
+              </Button>
+            );
+          }
+          return (
+            <Button
+              type="button"
+              size="sm"
+              disabled={remitoBusy}
+              onClick={() => void handleGenerarRemito(row)}
+              data-testid={`remito-generar-${wid}`}
+            >
+              GENERAR REMITO
+            </Button>
+          );
+        },
+      },
     ],
-    [getQualityObservation]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handlers use latest closures
+    [getQualityObservation, remitoBusy, remitoStatusByWork]
   );
 
   const workColumns: OperationalTableColumn<WorkItem>[] = useMemo(
@@ -301,6 +457,11 @@ export function ProduccionOperationalView({
           {error}
         </div>
       )}
+      {remitoError && (
+        <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          {remitoError}
+        </div>
+      )}
 
       <OperationalTabs
         tabs={tabs}
@@ -311,7 +472,7 @@ export function ProduccionOperationalView({
       <div className="mt-4">
         {activeTab === "rechazados" && (
           <OperationalTable
-            columns={qualityColumns}
+            columns={qualityColumns.filter((c) => c.key !== "remito")}
             rows={rechazados}
             rowKey={(row) => row.id}
             emptyMessage="Sin rechazos registrados."
@@ -330,7 +491,8 @@ export function ProduccionOperationalView({
             {transferidoElaboracion.length > 0 && (
               <p className="mb-3 text-sm text-[var(--os-text-muted)]">
                 {transferidoElaboracion.length} elaboración
-                {transferidoElaboracion.length === 1 ? "" : "es"} {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
+                {transferidoElaboracion.length === 1 ? "" : "es"}{" "}
+                {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
                 {WORK_TRANSFER.pendingReview.toLowerCase()}.
               </p>
             )}
@@ -347,7 +509,8 @@ export function ProduccionOperationalView({
             {transferidoEnvasado.length > 0 && (
               <p className="mb-3 text-sm text-[var(--os-text-muted)]">
                 {transferidoEnvasado.length} envasado
-                {transferidoEnvasado.length === 1 ? "" : "s"} {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
+                {transferidoEnvasado.length === 1 ? "" : "s"}{" "}
+                {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
                 {WORK_TRANSFER.pendingReview.toLowerCase()}.
               </p>
             )}
@@ -391,6 +554,56 @@ export function ProduccionOperationalView({
           </div>
         )}
       </div>
+
+      {generateModal ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          data-testid="produccion-remito-generate-modal"
+        >
+          <div className="w-full max-w-md space-y-3 rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-4 shadow-lg">
+            <h3 className="font-semibold">Generar remito</h3>
+            <p className="text-sm text-[var(--os-text-muted)]">
+              Se incluyen {generateModal.items.length} producto
+              {generateModal.items.length === 1 ? "" : "s"} del mismo cliente y fecha. Elegí el
+              nombre del remito.
+            </p>
+            <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
+              {generateModal.items.map((it) => (
+                <li key={it.id}>
+                  {it.product} · {it.client} · {it.deliveryDate || "—"}
+                </li>
+              ))}
+            </ul>
+            <label className="block text-sm">
+              Nombre
+              <input
+                className="mt-1 w-full rounded border border-[var(--os-border)] px-2 py-1.5"
+                value={displayNameInput}
+                onChange={(e) => setDisplayNameInput(e.target.value)}
+                data-testid="produccion-remito-display-name"
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setGenerateModal(null)}
+                disabled={remitoBusy}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                disabled={remitoBusy || !displayNameInput.trim()}
+                onClick={() => void confirmGenerateRemito()}
+                data-testid="produccion-remito-generate-confirm"
+              >
+                Generar y abrir Remitos
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </TwinShell>
   );
 }
@@ -398,10 +611,8 @@ export function ProduccionOperationalView({
 function KpiCard({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-4 py-5">
-      <p className="text-xs font-medium uppercase tracking-wide text-[var(--os-text-muted)]">
-        {label}
-      </p>
-      <p className="mt-2 text-3xl font-semibold tabular-nums text-[var(--os-text)]">{value}</p>
+      <p className="text-xs uppercase tracking-wide text-[var(--os-text-muted)]">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
     </div>
   );
 }

@@ -28,29 +28,37 @@ import {
 import {
   canAccessRemitos,
   type RemitoApprovalInput,
+  type RemitoDraftPatch,
+  type RemitoEditGeneratedOptions,
+  type RemitoGenerateOptions,
   type RemitoLine,
   type RemitoListFilters,
   type RemitoRecord,
   type RemitoStatus,
   type RemitoUpsertResult,
+  type RemitoVersionInfo,
+  type RemitoWorkItemStatus,
 } from "./types";
 
 export type RemitoActor = { email: string; sector: SectorId };
+
+type MemVersion = {
+  id: string;
+  remitoId: string;
+  version: number;
+  motivo: string | null;
+  driveFileIdXlsx: string | null;
+  driveFileIdPdf: string | null;
+  snapshot: Record<string, unknown>;
+  createdBy: string;
+  createdAt: string;
+};
 
 type Mem = {
   remitos: RemitoRecord[];
   workLinks: Map<string, string>; // workItemId -> remitoId
   blobs: Map<string, Buffer>; // driveFileId -> bytes
-  versions: Array<{
-    id: string;
-    remitoId: string;
-    version: number;
-    driveFileIdXlsx: string | null;
-    driveFileIdPdf: string | null;
-    snapshot: Record<string, unknown>;
-    createdBy: string;
-    createdAt: string;
-  }>;
+  versions: MemVersion[];
   files: Array<{
     id: string;
     remitoId: string;
@@ -102,7 +110,6 @@ function parseUnits(input: RemitoApprovalInput): {
   if (cajas1 == null || unidades1 == null) {
     const upc1 = input.unitsPerCaja1 ?? 0;
     if (upc1 > 0) {
-      // Cajas enteras × unidades/caja; remanente va a bloque 2 si aplica.
       cajas1 = Math.floor(totalUnits / upc1);
       unidades1 = upc1;
       const packed = computeCajasProduct(cajas1, unidades1) ?? 0;
@@ -146,6 +153,14 @@ function normalizeDeliveryDate(raw: string): string {
   throw new OrdersValidationError("deliveryDate inválida (usar YYYY-MM-DD).");
 }
 
+function emptyRemitoVersions(): RemitoVersionInfo[] {
+  return [];
+}
+
+function withVersions(remito: RemitoRecord, versions: RemitoVersionInfo[]): RemitoRecord {
+  return { ...remito, versions, lines: [...remito.lines] };
+}
+
 export class RemitoService {
   async list(actor: RemitoActor, filters: RemitoListFilters = {}): Promise<RemitoRecord[]> {
     assertAccess(actor);
@@ -158,10 +173,27 @@ export class RemitoService {
     return this.findById(id);
   }
 
+  async findByWorkItemId(workItemId: string): Promise<RemitoRecord | null> {
+    const remitoId = await this.findRemitoIdByWorkItem(String(workItemId ?? "").trim());
+    if (!remitoId) return null;
+    return this.findById(remitoId);
+  }
+
+  async statusForWorkItem(
+    actor: RemitoActor,
+    workItemId: string
+  ): Promise<RemitoWorkItemStatus> {
+    assertAccess(actor);
+    const remito = await this.findByWorkItemId(workItemId);
+    if (!remito) return { status: "none", remitoId: null };
+    if (remito.status === "BORRADOR") return { status: "draft", remitoId: remito.id };
+    if (remito.status === "GENERADO") return { status: "generated", remitoId: remito.id };
+    return { status: "none", remitoId: remito.id };
+  }
+
   /**
    * Tras aprobación Calidad (salida/envasado): agrega al borrador del
    * cliente+fecha. Si el remito ya está GENERADO, no muta y ofrece nueva versión.
-   * Soft-fail externo si schema pending (caller atrapa).
    *
    * `options.systemHook`: permite al pipeline de Calidad invocar el upsert
    * sin sector PRODUCCIÓN (RBAC de UI/API sigue siendo solo PRODUCCIÓN).
@@ -187,7 +219,6 @@ export class RemitoService {
     const vto = String(input.vto ?? "").trim();
     const now = new Date().toISOString();
 
-    // ¿Work item ya vinculado?
     const existingLinkRemitoId = await this.findRemitoIdByWorkItem(workItemId);
     if (existingLinkRemitoId) {
       const existing = await this.findById(existingLinkRemitoId);
@@ -196,7 +227,6 @@ export class RemitoService {
       }
     }
 
-    // Buscar borrador abierto para cliente+fecha (máxima versión BORRADOR)
     const group = remitoGroupKey(clientIdNormalized, deliveryDate);
     const all = await this.loadAll();
     const draft = all
@@ -207,7 +237,6 @@ export class RemitoService {
       )
       .sort((a, b) => b.version - a.version)[0];
 
-    // ¿Hay GENERADO inmutable para mismo grupo?
     const generated = all
       .filter(
         (r) =>
@@ -249,7 +278,7 @@ export class RemitoService {
       await this.persistRemito(draft);
       await this.persistLine(line);
       await this.persistWorkLink(draft.id, workItemId);
-      return { remito: draft, created: false };
+      return { remito: await this.attachVersions(draft), created: false };
     }
 
     const id = randomUUID();
@@ -271,6 +300,7 @@ export class RemitoService {
     const remito: RemitoRecord = {
       id,
       remitoNumber: null,
+      displayName: null,
       clientIdNormalized,
       clientDisplay,
       deliveryDate,
@@ -288,6 +318,7 @@ export class RemitoService {
       updatedAt: now,
       generatedAt: null,
       lines: [line],
+      versions: emptyRemitoVersions(),
     };
     await this.persistRemito(remito);
     await this.persistLine(line);
@@ -295,7 +326,68 @@ export class RemitoService {
     return { remito, created: true };
   }
 
-  async generate(actor: RemitoActor, remitoId: string): Promise<RemitoRecord> {
+  /**
+   * Edita borrador libremente. No muta work items originales;
+   * `applyToWorkItem` solo queda auditado (confirmación en UI).
+   */
+  async updateDraft(
+    actor: RemitoActor,
+    remitoId: string,
+    patch: RemitoDraftPatch
+  ): Promise<RemitoRecord> {
+    assertAccess(actor);
+    await assertRemitoWritesEnabled();
+    const remito = await this.findById(remitoId);
+    if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
+    if (remito.status !== "BORRADOR") {
+      throw new OrdersValidationError("Solo se pueden editar remitos en BORRADOR.");
+    }
+
+    const now = new Date().toISOString();
+    if (patch.clientDisplay != null) {
+      remito.clientDisplay = String(patch.clientDisplay).trim() || remito.clientDisplay;
+      remito.clientIdNormalized = normalizeClientId(remito.clientDisplay);
+    }
+    if (patch.deliveryDate != null) {
+      remito.deliveryDate = normalizeDeliveryDate(patch.deliveryDate);
+    }
+    if (patch.lines?.length) {
+      for (const pl of patch.lines) {
+        const line = remito.lines.find((l) => l.id === pl.id);
+        if (!line) continue;
+        if (pl.product != null) line.product = String(pl.product).trim();
+        if (pl.lote != null) line.lote = String(pl.lote).trim();
+        if (pl.vto != null) line.vto = String(pl.vto).trim();
+        if (pl.totalUnits != null) line.totalUnits = Math.max(0, Number(pl.totalUnits) || 0);
+        if (pl.cajas1 != null) line.cajas1 = Math.max(0, Math.floor(pl.cajas1));
+        if (pl.unidades1 != null) line.unidades1 = Math.max(0, Math.floor(pl.unidades1));
+        if (pl.cajas2 != null) line.cajas2 = Math.max(0, Math.floor(pl.cajas2));
+        if (pl.unidades2 != null) line.unidades2 = Math.max(0, Math.floor(pl.unidades2));
+      }
+      const totals = recomputeTotals(remito.lines);
+      remito.totalUnits = totals.totalUnits;
+      remito.totalCajas = totals.totalCajas;
+      remito.totalBultos = totals.totalBultos;
+    }
+    if (patch.applyToWorkItem) {
+      remito.snapshot = {
+        ...remito.snapshot,
+        applyToWorkItemRequested: true,
+        applyToWorkItemAt: now,
+        applyToWorkItemBy: actor.email,
+      };
+    }
+    remito.updatedBy = actor.email;
+    remito.updatedAt = now;
+    await this.persistRemito(remito);
+    return this.attachVersions(remito);
+  }
+
+  async generate(
+    actor: RemitoActor,
+    remitoId: string,
+    options: RemitoGenerateOptions
+  ): Promise<RemitoRecord> {
     assertAccess(actor);
     await assertRemitoWritesEnabled();
     const remito = await this.findById(remitoId);
@@ -306,15 +398,25 @@ export class RemitoService {
     if (remito.lines.length === 0) {
       throw new OrdersValidationError("El remito no tiene líneas.");
     }
+    const displayName = String(options.displayName ?? "").trim();
+    if (!displayName) {
+      throw new OrdersValidationError("displayName obligatorio para generar.");
+    }
 
     const now = new Date().toISOString();
     const remitoNumber =
       remito.remitoNumber ??
-      `R-${remito.deliveryDate.replace(/-/g, "")}-${remito.clientIdNormalized.slice(0, 8)}-v${remito.version}`;
+      `R-${remito.deliveryDate.replace(/-/g, "")}-${remito.clientIdNormalized.slice(0, 8)}-${String(
+        remito.version
+      ).padStart(3, "0")}`;
+
+    const fileBase =
+      String(options.filename ?? "").trim().replace(/\.(xlsx|pdf)$/i, "") || displayName;
 
     const snapshot = {
       clientDisplay: remito.clientDisplay,
       deliveryDate: remito.deliveryDate,
+      displayName,
       lines: remito.lines,
       totals: {
         totalUnits: remito.totalUnits,
@@ -327,6 +429,7 @@ export class RemitoService {
     const withMeta: RemitoRecord = {
       ...remito,
       remitoNumber,
+      displayName,
       snapshot,
       status: "GENERADO",
       generatedBy: actor.email,
@@ -335,6 +438,7 @@ export class RemitoService {
       updatedAt: now,
     };
 
+    // Generar archivos ANTES de marcar GENERADO. Si Drive falla, no persistimos GENERADO.
     const xlsx = await buildRemitoXlsx(withMeta);
     const pdf = await buildRemitoPdf(withMeta);
 
@@ -343,15 +447,18 @@ export class RemitoService {
     const uploaded: string[] = [];
 
     try {
-      if (getRemitosFolderId() && !isFeatureMemoryAllowed()) {
+      const folderConfigured = Boolean(getRemitosFolderId());
+      const useDrive = folderConfigured && !isFeatureMemoryAllowed();
+
+      if (useDrive) {
         driveXlsx = await uploadRemitoDriveFile({
-          fileName: `${remitoNumber}.xlsx`,
+          fileName: `${fileBase}.xlsx`,
           mimeType: REMITO_XLSX_MIME,
           bytes: xlsx,
         });
         uploaded.push(driveXlsx);
         drivePdf = await uploadRemitoDriveFile({
-          fileName: `${remitoNumber}.pdf`,
+          fileName: `${fileBase}.pdf`,
           mimeType: REMITO_PDF_MIME,
           bytes: pdf,
         });
@@ -359,15 +466,15 @@ export class RemitoService {
       } else if (isFeatureMemoryAllowed()) {
         mem().blobs.set(driveXlsx, xlsx);
         mem().blobs.set(drivePdf, pdf);
-      } else if (getRemitosFolderId()) {
+      } else if (folderConfigured) {
         driveXlsx = await uploadRemitoDriveFile({
-          fileName: `${remitoNumber}.xlsx`,
+          fileName: `${fileBase}.xlsx`,
           mimeType: REMITO_XLSX_MIME,
           bytes: xlsx,
         });
         uploaded.push(driveXlsx);
         drivePdf = await uploadRemitoDriveFile({
-          fileName: `${remitoNumber}.pdf`,
+          fileName: `${fileBase}.pdf`,
           mimeType: REMITO_PDF_MIME,
           bytes: pdf,
         });
@@ -380,6 +487,7 @@ export class RemitoService {
         id: versionId,
         remitoId: withMeta.id,
         version: withMeta.version,
+        motivo: null,
         driveFileIdXlsx: driveXlsx,
         driveFileIdPdf: drivePdf,
         snapshot,
@@ -392,7 +500,7 @@ export class RemitoService {
         versionId,
         kind: "xlsx",
         driveFileId: driveXlsx,
-        fileName: `${remitoNumber}.xlsx`,
+        fileName: `${fileBase}.xlsx`,
         mimeType: REMITO_XLSX_MIME,
         sizeBytes: xlsx.length,
         createdBy: actor.email,
@@ -404,7 +512,159 @@ export class RemitoService {
         versionId,
         kind: "pdf",
         driveFileId: drivePdf,
-        fileName: `${remitoNumber}.pdf`,
+        fileName: `${fileBase}.pdf`,
+        mimeType: REMITO_PDF_MIME,
+        sizeBytes: pdf.length,
+        createdBy: actor.email,
+        createdAt: now,
+      });
+    } catch (err) {
+      for (const id of uploaded) {
+        await trashRemitoDriveFile(id);
+      }
+      // No marcar GENERADO: el remito en store sigue en BORRADOR.
+      throw err;
+    }
+
+    return this.attachVersions(withMeta);
+  }
+
+  /**
+   * Edita un remito GENERADO: crea nueva versión con motivo obligatorio.
+   * Versiones anteriores permanecen descargables. Conserva remitoNumber.
+   */
+  async editGenerated(
+    actor: RemitoActor,
+    remitoId: string,
+    options: RemitoEditGeneratedOptions
+  ): Promise<RemitoRecord> {
+    assertAccess(actor);
+    await assertRemitoWritesEnabled();
+    const remito = await this.findById(remitoId);
+    if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
+    if (remito.status !== "GENERADO") {
+      throw new OrdersValidationError("editGenerated requiere remito GENERADO.");
+    }
+    const motivo = String(options.motivo ?? "").trim();
+    if (!motivo) throw new OrdersValidationError("motivo obligatorio.");
+
+    const now = new Date().toISOString();
+    if (options.displayName != null) {
+      const dn = String(options.displayName).trim();
+      if (dn) remito.displayName = dn;
+    }
+    if (options.clientDisplay != null) {
+      remito.clientDisplay = String(options.clientDisplay).trim() || remito.clientDisplay;
+      remito.clientIdNormalized = normalizeClientId(remito.clientDisplay);
+    }
+    if (options.deliveryDate != null) {
+      remito.deliveryDate = normalizeDeliveryDate(options.deliveryDate);
+    }
+    if (options.lines?.length) {
+      for (const pl of options.lines) {
+        const line = remito.lines.find((l) => l.id === pl.id);
+        if (!line) continue;
+        if (pl.product != null) line.product = String(pl.product).trim();
+        if (pl.lote != null) line.lote = String(pl.lote).trim();
+        if (pl.vto != null) line.vto = String(pl.vto).trim();
+        if (pl.totalUnits != null) line.totalUnits = Math.max(0, Number(pl.totalUnits) || 0);
+        if (pl.cajas1 != null) line.cajas1 = Math.max(0, Math.floor(pl.cajas1));
+        if (pl.unidades1 != null) line.unidades1 = Math.max(0, Math.floor(pl.unidades1));
+        if (pl.cajas2 != null) line.cajas2 = Math.max(0, Math.floor(pl.cajas2));
+        if (pl.unidades2 != null) line.unidades2 = Math.max(0, Math.floor(pl.unidades2));
+      }
+      const totals = recomputeTotals(remito.lines);
+      remito.totalUnits = totals.totalUnits;
+      remito.totalCajas = totals.totalCajas;
+      remito.totalBultos = totals.totalBultos;
+    }
+
+    remito.version = remito.version + 1;
+    remito.updatedBy = actor.email;
+    remito.updatedAt = now;
+    remito.generatedBy = actor.email;
+    remito.generatedAt = now;
+
+    const displayName = remito.displayName || remito.clientDisplay;
+    const fileBase =
+      String(options.filename ?? "").trim().replace(/\.(xlsx|pdf)$/i, "") ||
+      `${displayName}-v${remito.version}`;
+
+    const snapshot = {
+      clientDisplay: remito.clientDisplay,
+      deliveryDate: remito.deliveryDate,
+      displayName: remito.displayName,
+      motivo,
+      lines: remito.lines,
+      totals: {
+        totalUnits: remito.totalUnits,
+        totalCajas: remito.totalCajas,
+        totalBultos: remito.totalBultos,
+      },
+      generatedAt: now,
+    };
+    remito.snapshot = snapshot;
+
+    const xlsx = await buildRemitoXlsx(remito);
+    const pdf = await buildRemitoPdf(remito);
+    let driveXlsx = `mem-xlsx-${randomUUID()}`;
+    let drivePdf = `mem-pdf-${randomUUID()}`;
+    const uploaded: string[] = [];
+
+    try {
+      const folderConfigured = Boolean(getRemitosFolderId());
+      const useDrive = folderConfigured && !isFeatureMemoryAllowed();
+
+      if (useDrive || (!isFeatureMemoryAllowed() && folderConfigured)) {
+        driveXlsx = await uploadRemitoDriveFile({
+          fileName: `${fileBase}.xlsx`,
+          mimeType: REMITO_XLSX_MIME,
+          bytes: xlsx,
+        });
+        uploaded.push(driveXlsx);
+        drivePdf = await uploadRemitoDriveFile({
+          fileName: `${fileBase}.pdf`,
+          mimeType: REMITO_PDF_MIME,
+          bytes: pdf,
+        });
+        uploaded.push(drivePdf);
+      } else {
+        mem().blobs.set(driveXlsx, xlsx);
+        mem().blobs.set(drivePdf, pdf);
+      }
+
+      await this.persistRemito(remito);
+      const versionId = randomUUID();
+      await this.persistVersion({
+        id: versionId,
+        remitoId: remito.id,
+        version: remito.version,
+        motivo,
+        driveFileIdXlsx: driveXlsx,
+        driveFileIdPdf: drivePdf,
+        snapshot,
+        createdBy: actor.email,
+        createdAt: now,
+      });
+      await this.persistFileMeta({
+        id: randomUUID(),
+        remitoId: remito.id,
+        versionId,
+        kind: "xlsx",
+        driveFileId: driveXlsx,
+        fileName: `${fileBase}.xlsx`,
+        mimeType: REMITO_XLSX_MIME,
+        sizeBytes: xlsx.length,
+        createdBy: actor.email,
+        createdAt: now,
+      });
+      await this.persistFileMeta({
+        id: randomUUID(),
+        remitoId: remito.id,
+        versionId,
+        kind: "pdf",
+        driveFileId: drivePdf,
+        fileName: `${fileBase}.pdf`,
         mimeType: REMITO_PDF_MIME,
         sizeBytes: pdf.length,
         createdBy: actor.email,
@@ -417,7 +677,32 @@ export class RemitoService {
       throw err;
     }
 
-    return withMeta;
+    return this.attachVersions(remito);
+  }
+
+  async renameDisplayName(
+    actor: RemitoActor,
+    remitoId: string,
+    displayName: string
+  ): Promise<RemitoRecord> {
+    assertAccess(actor);
+    await assertRemitoWritesEnabled();
+    const remito = await this.findById(remitoId);
+    if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
+    const name = String(displayName ?? "").trim();
+    if (!name) throw new OrdersValidationError("displayName obligatorio.");
+    remito.displayName = name;
+    remito.updatedBy = actor.email;
+    remito.updatedAt = new Date().toISOString();
+    await this.persistRemito(remito);
+    return this.attachVersions(remito);
+  }
+
+  async listVersions(actor: RemitoActor, remitoId: string): Promise<RemitoVersionInfo[]> {
+    assertAccess(actor);
+    const remito = await this.findById(remitoId);
+    if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
+    return remito.versions;
   }
 
   /**
@@ -465,6 +750,7 @@ export class RemitoService {
     const remito: RemitoRecord = {
       id,
       remitoNumber: null,
+      displayName: null,
       clientIdNormalized: base.clientIdNormalized,
       clientDisplay: base.clientDisplay,
       deliveryDate: base.deliveryDate,
@@ -482,6 +768,7 @@ export class RemitoService {
       updatedAt: now,
       generatedAt: null,
       lines,
+      versions: emptyRemitoVersions(),
     };
     await this.persistRemito(remito);
     for (const line of lines) {
@@ -501,7 +788,7 @@ export class RemitoService {
     remito.updatedBy = actor.email;
     remito.updatedAt = new Date().toISOString();
     await this.persistRemito(remito);
-    return remito;
+    return this.attachVersions(remito);
   }
 
   async archive(actor: RemitoActor, remitoId: string): Promise<RemitoRecord> {
@@ -513,21 +800,34 @@ export class RemitoService {
     remito.updatedBy = actor.email;
     remito.updatedAt = new Date().toISOString();
     await this.persistRemito(remito);
-    return remito;
+    return this.attachVersions(remito);
   }
 
   async download(
     actor: RemitoActor,
     remitoId: string,
-    format: "pdf" | "xlsx"
+    format: "pdf" | "xlsx",
+    version?: number
   ): Promise<{ bytes: Buffer; fileName: string; mimeType: string }> {
     assertAccess(actor);
     const remito = await this.findById(remitoId);
     if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
 
     const store = mem();
+    let versionId: string | null = null;
+    if (version != null) {
+      const v = store.versions.find((x) => x.remitoId === remitoId && x.version === version);
+      if (!v) throw new OrdersNotFoundError(`Versión ${version} no encontrada.`);
+      versionId = v.id;
+    }
+
     const file = store.files
-      .filter((f) => f.remitoId === remitoId && f.kind === format)
+      .filter(
+        (f) =>
+          f.remitoId === remitoId &&
+          f.kind === format &&
+          (versionId == null || f.versionId === versionId)
+      )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 
     if (file && store.blobs.has(file.driveFileId)) {
@@ -538,10 +838,10 @@ export class RemitoService {
       };
     }
 
-    // Regenerar on-the-fly (borrador o sin blob)
     const bytes =
       format === "pdf" ? await buildRemitoPdf(remito) : await buildRemitoXlsx(remito);
-    const base = remito.remitoNumber ?? `remito-${remito.id.slice(0, 8)}`;
+    const base =
+      remito.displayName || remito.remitoNumber || `remito-${remito.id.slice(0, 8)}`;
     return {
       bytes,
       fileName: `${base}.${format}`,
@@ -564,14 +864,62 @@ export class RemitoService {
       const q = filters.q.trim().toLowerCase();
       const hay = [
         r.clientDisplay,
+        r.displayName ?? "",
         r.remitoNumber ?? "",
-        ...r.lines.map((l) => l.product),
+        r.deliveryDate,
+        ...r.lines.flatMap((l) => [l.product, l.lote, l.vto]),
       ]
         .join(" ")
         .toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
+  }
+
+  private async attachVersions(remito: RemitoRecord): Promise<RemitoRecord> {
+    const versions = await this.loadVersionsFor(remito.id);
+    return withVersions(remito, versions);
+  }
+
+  private async loadVersionsFor(remitoId: string): Promise<RemitoVersionInfo[]> {
+    if (isFeatureMemoryAllowed() || !isDatabaseConfigured() || !(await isRemitoSchemaReady())) {
+      return mem()
+        .versions.filter((v) => v.remitoId === remitoId)
+        .sort((a, b) => a.version - b.version)
+        .map((v) => ({
+          version: v.version,
+          motivo: v.motivo,
+          createdBy: v.createdBy,
+          createdAt: v.createdAt,
+          downloadable: Boolean(v.driveFileIdXlsx || v.driveFileIdPdf),
+        }));
+    }
+    try {
+      const db = getDb();
+      const rows = await db
+        .select()
+        .from(remitoVersions)
+        .where(eq(remitoVersions.remitoId, remitoId));
+      return rows
+        .sort((a, b) => a.version - b.version)
+        .map((v) => ({
+          version: v.version,
+          motivo: v.motivo ?? null,
+          createdBy: v.createdBy,
+          createdAt: v.createdAt.toISOString(),
+          downloadable: Boolean(v.driveFileIdXlsx || v.driveFileIdPdf),
+        }));
+    } catch {
+      return mem()
+        .versions.filter((v) => v.remitoId === remitoId)
+        .map((v) => ({
+          version: v.version,
+          motivo: v.motivo,
+          createdBy: v.createdBy,
+          createdAt: v.createdAt,
+          downloadable: Boolean(v.driveFileIdXlsx || v.driveFileIdPdf),
+        }));
+    }
   }
 
   private async loadAll(): Promise<RemitoRecord[]> {
@@ -582,13 +930,19 @@ export class RemitoService {
         if (!isFeatureMemoryAllowed()) return [];
       }
     }
-    return mem().remitos.map((r) => ({ ...r, lines: [...r.lines] }));
+    const store = mem();
+    const out: RemitoRecord[] = [];
+    for (const r of store.remitos) {
+      out.push(await this.attachVersions({ ...r, lines: [...r.lines] }));
+    }
+    return out;
   }
 
   private async loadAllFromDb(): Promise<RemitoRecord[]> {
     const db = getDb();
     const rows = await db.select().from(remitos).orderBy(desc(remitos.updatedAt));
     const lineRows = await db.select().from(remitoLines);
+    const versionRows = await db.select().from(remitoVersions);
     const byRemito = new Map<string, RemitoLine[]>();
     for (const l of lineRows) {
       const list = byRemito.get(l.remitoId) ?? [];
@@ -608,9 +962,22 @@ export class RemitoService {
       });
       byRemito.set(l.remitoId, list);
     }
+    const versionsByRemito = new Map<string, RemitoVersionInfo[]>();
+    for (const v of versionRows) {
+      const list = versionsByRemito.get(v.remitoId) ?? [];
+      list.push({
+        version: v.version,
+        motivo: v.motivo ?? null,
+        createdBy: v.createdBy,
+        createdAt: v.createdAt.toISOString(),
+        downloadable: Boolean(v.driveFileIdXlsx || v.driveFileIdPdf),
+      });
+      versionsByRemito.set(v.remitoId, list);
+    }
     return rows.map((r) => ({
       id: r.id,
       remitoNumber: r.remitoNumber,
+      displayName: r.displayName ?? null,
       clientIdNormalized: r.clientIdNormalized,
       clientDisplay: r.clientDisplay,
       deliveryDate: String(r.deliveryDate),
@@ -628,6 +995,7 @@ export class RemitoService {
       updatedAt: r.updatedAt.toISOString(),
       generatedAt: r.generatedAt ? r.generatedAt.toISOString() : null,
       lines: (byRemito.get(r.id) ?? []).sort((a, b) => a.sortOrder - b.sortOrder),
+      versions: (versionsByRemito.get(r.id) ?? []).sort((a, b) => a.version - b.version),
     }));
   }
 
@@ -660,14 +1028,21 @@ export class RemitoService {
     if (isFeatureMemoryAllowed() || !(await isRemitoSchemaReady())) {
       const store = mem();
       const idx = store.remitos.findIndex((r) => r.id === remito.id);
-      if (idx >= 0) store.remitos[idx] = { ...remito, lines: [...remito.lines] };
-      else store.remitos.push({ ...remito, lines: [...remito.lines] });
+      const copy = {
+        ...remito,
+        displayName: remito.displayName ?? null,
+        lines: [...remito.lines],
+        versions: [...(remito.versions ?? [])],
+      };
+      if (idx >= 0) store.remitos[idx] = copy;
+      else store.remitos.push(copy);
       return;
     }
     const db = getDb();
     const values = {
       id: remito.id,
       remitoNumber: remito.remitoNumber,
+      displayName: remito.displayName,
       clientIdNormalized: remito.clientIdNormalized,
       clientDisplay: remito.clientDisplay,
       deliveryDate: remito.deliveryDate,
@@ -732,7 +1107,7 @@ export class RemitoService {
     await db.insert(remitoWorkLinks).values({ remitoId, workItemId });
   }
 
-  private async persistVersion(v: Mem["versions"][number]): Promise<void> {
+  private async persistVersion(v: MemVersion): Promise<void> {
     if (isFeatureMemoryAllowed() || !(await isRemitoSchemaReady())) {
       mem().versions.push(v);
       return;
@@ -742,6 +1117,7 @@ export class RemitoService {
       id: v.id,
       remitoId: v.remitoId,
       version: v.version,
+      motivo: v.motivo,
       driveFileIdXlsx: v.driveFileIdXlsx,
       driveFileIdPdf: v.driveFileIdPdf,
       snapshot: v.snapshot,

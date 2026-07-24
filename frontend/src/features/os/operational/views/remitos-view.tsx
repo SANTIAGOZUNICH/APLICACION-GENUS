@@ -6,11 +6,20 @@ import { Button } from "@/components/ui/button";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
+  editGeneratedRemitoApi,
   fetchRemitosApi,
+  generateRemitoApi,
   remitoActionApi,
   remitoDownloadUrl,
+  renameRemitoApi,
+  updateRemitoDraftApi,
 } from "@/lib/remitos/remitos-client";
-import { canAccessRemitos, type RemitoRecord, type RemitoTab } from "@/lib/remitos/types";
+import {
+  canAccessRemitos,
+  type RemitoLine,
+  type RemitoRecord,
+  type RemitoTab,
+} from "@/lib/remitos/types";
 
 const TABS: { id: RemitoTab; label: string }[] = [
   { id: "borradores", label: "Borradores" },
@@ -18,7 +27,16 @@ const TABS: { id: RemitoTab; label: string }[] = [
   { id: "anulados", label: "Anulados" },
 ];
 
-export function RemitosView() {
+type ModalKind =
+  | null
+  | "generate"
+  | "edit-draft"
+  | "edit-generated"
+  | "rename"
+  | "versions"
+  | "preview";
+
+export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = {}) {
   const { email, sectorId } = usePreviewSession();
   const session = useMemo(
     () => ({ email: email ?? "", sector: sectorId }),
@@ -32,6 +50,12 @@ export function RemitosView() {
   const [schemaPending, setSchemaPending] = useState(false);
   const [selected, setSelected] = useState<RemitoRecord | null>(null);
   const [busy, setBusy] = useState(false);
+  const [modal, setModal] = useState<ModalKind>(null);
+  const [displayNameInput, setDisplayNameInput] = useState("");
+  const [motivoInput, setMotivoInput] = useState("");
+  const [draftLines, setDraftLines] = useState<RemitoLine[]>([]);
+  const [draftClient, setDraftClient] = useState("");
+  const [draftDate, setDraftDate] = useState("");
 
   const reload = useCallback(async () => {
     if (!allowed) return;
@@ -43,14 +67,132 @@ export function RemitosView() {
       setItems(remitos);
       setSchemaPending(pending);
       setError(null);
+      if (initialRemitoId) {
+        const found = remitos.find((r) => r.id === initialRemitoId);
+        if (found) setSelected(found);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al cargar remitos");
     }
-  }, [allowed, session, tab, q]);
+  }, [allowed, session, tab, q, initialRemitoId]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  function openEditDraft(r: RemitoRecord) {
+    setSelected(r);
+    setDraftLines(r.lines.map((l) => ({ ...l })));
+    setDraftClient(r.clientDisplay);
+    setDraftDate(r.deliveryDate);
+    setModal("edit-draft");
+  }
+
+  function openGenerate(r: RemitoRecord) {
+    setSelected(r);
+    setDisplayNameInput(r.displayName || r.clientDisplay || "");
+    setModal("generate");
+  }
+
+  function openEditGenerated(r: RemitoRecord) {
+    setSelected(r);
+    setMotivoInput("");
+    setDraftLines(r.lines.map((l) => ({ ...l })));
+    setDraftClient(r.clientDisplay);
+    setDraftDate(r.deliveryDate);
+    setModal("edit-generated");
+  }
+
+  async function submitGenerate() {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      const remito = await generateRemitoApi(session, selected.id, {
+        displayName: displayNameInput,
+      });
+      setSelected(remito);
+      setModal(null);
+      void reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo generar");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitEditDraft() {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      const remito = await updateRemitoDraftApi(session, selected.id, {
+        clientDisplay: draftClient,
+        deliveryDate: draftDate,
+        lines: draftLines.map((l) => ({
+          id: l.id,
+          product: l.product,
+          lote: l.lote,
+          vto: l.vto,
+          totalUnits: l.totalUnits,
+          cajas1: l.cajas1,
+          unidades1: l.unidades1,
+          cajas2: l.cajas2,
+          unidades2: l.unidades2,
+        })),
+      });
+      setSelected(remito);
+      setModal(null);
+      void reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo guardar borrador");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitEditGenerated() {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      const remito = await editGeneratedRemitoApi(session, selected.id, {
+        motivo: motivoInput,
+        clientDisplay: draftClient,
+        deliveryDate: draftDate,
+        lines: draftLines.map((l) => ({
+          id: l.id,
+          product: l.product,
+          lote: l.lote,
+          vto: l.vto,
+          totalUnits: l.totalUnits,
+          cajas1: l.cajas1,
+          unidades1: l.unidades1,
+          cajas2: l.cajas2,
+          unidades2: l.unidades2,
+        })),
+      });
+      setSelected(remito);
+      setModal(null);
+      void reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo editar versión");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitRename() {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      const remito = await renameRemitoApi(session, selected.id, displayNameInput);
+      setSelected(remito);
+      setModal(null);
+      void reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo renombrar");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function runAction(action: string, id: string) {
     setBusy(true);
@@ -98,8 +240,8 @@ export function RemitosView() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar cliente o producto…"
-            className="ml-auto rounded border border-[var(--os-border)] px-2 py-1.5 text-sm"
+            placeholder="Nombre, n°, cliente, producto, lote, vto, fecha…"
+            className="ml-auto min-w-[220px] rounded border border-[var(--os-border)] px-2 py-1.5 text-sm"
             data-testid="remitos-search"
           />
         </div>
@@ -115,17 +257,20 @@ export function RemitosView() {
             <table className="w-full text-left text-sm" data-testid="remitos-table">
               <thead className="border-b border-[var(--os-border)] text-xs text-[var(--os-text-muted)]">
                 <tr>
+                  <th className="px-3 py-2">Nombre</th>
+                  <th className="px-3 py-2">N° int.</th>
                   <th className="px-3 py-2">Cliente</th>
-                  <th className="px-3 py-2">Entrega</th>
+                  <th className="px-3 py-2">Prod.</th>
+                  <th className="px-3 py-2">Totales</th>
                   <th className="px-3 py-2">Ver.</th>
-                  <th className="px-3 py-2">Líneas</th>
                   <th className="px-3 py-2">Estado</th>
+                  <th className="px-3 py-2">Actor</th>
                 </tr>
               </thead>
               <tbody>
                 {items.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-3 py-6 text-[var(--os-text-muted)]">
+                    <td colSpan={8} className="px-3 py-6 text-[var(--os-text-muted)]">
                       Sin remitos.
                     </td>
                   </tr>
@@ -137,11 +282,22 @@ export function RemitosView() {
                       onClick={() => setSelected(r)}
                       data-testid={`remito-row-${r.id}`}
                     >
-                      <td className="px-3 py-2 font-medium">{r.clientDisplay}</td>
-                      <td className="px-3 py-2">{r.deliveryDate}</td>
-                      <td className="px-3 py-2">v{r.version}</td>
+                      <td className="px-3 py-2 font-medium">
+                        {r.displayName || "—"}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs">
+                        {r.remitoNumber || "—"}
+                      </td>
+                      <td className="px-3 py-2">{r.clientDisplay}</td>
                       <td className="px-3 py-2">{r.lines.length}</td>
+                      <td className="px-3 py-2 text-xs">
+                        {r.totalUnits}u · {r.totalCajas}c
+                      </td>
+                      <td className="px-3 py-2">v{r.version}</td>
                       <td className="px-3 py-2 text-xs uppercase">{r.status}</td>
+                      <td className="px-3 py-2 text-xs">
+                        {r.generatedBy || r.updatedBy || r.createdBy || "—"}
+                      </td>
                     </tr>
                   ))
                 )}
@@ -153,15 +309,19 @@ export function RemitosView() {
             {selected ? (
               <div className="space-y-3" data-testid="remito-detail">
                 <h2 className="text-base font-semibold">
-                  {selected.remitoNumber ?? "Borrador"} · {selected.clientDisplay}
+                  {selected.displayName || "Sin nombre"} ·{" "}
+                  {selected.remitoNumber ?? "Borrador"}
                 </h2>
                 <p className="text-xs text-[var(--os-text-muted)]">
-                  Entrega {selected.deliveryDate} · v{selected.version} ·{" "}
-                  {selected.status} · {selected.totalUnits} u · {selected.totalCajas} cajas
+                  {selected.clientDisplay} · Entrega {selected.deliveryDate} · v
+                  {selected.version} · {selected.status} · {selected.totalUnits} u ·{" "}
+                  {selected.totalCajas} cajas ·{" "}
+                  {selected.generatedBy || selected.updatedBy || selected.createdBy}
                 </p>
                 {selected.offersNewVersion ? (
                   <p className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs">
-                    Remito generado inmutable — hay aprobaciones nuevas. Creá una nueva versión.
+                    Remito generado inmutable — hay aprobaciones nuevas. Creá una nueva
+                    versión.
                   </p>
                 ) : null}
                 <ul className="max-h-48 space-y-1 overflow-y-auto text-xs">
@@ -173,40 +333,80 @@ export function RemitosView() {
                   ))}
                 </ul>
                 <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setModal("preview")}
+                    data-testid="remito-preview"
+                  >
+                    Vista previa
+                  </Button>
                   {selected.status === "BORRADOR" ? (
-                    <Button
-                      type="button"
-                      disabled={busy || schemaPending}
-                      onClick={() => void runAction("generate", selected.id)}
-                      data-testid="remito-generate"
-                    >
-                      Generar
-                    </Button>
+                    <>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={busy || schemaPending}
+                        onClick={() => openEditDraft(selected)}
+                        data-testid="remito-edit-draft"
+                      >
+                        Editar
+                      </Button>
+                      <Button
+                        type="button"
+                        disabled={busy || schemaPending}
+                        onClick={() => openGenerate(selected)}
+                        data-testid="remito-generate"
+                      >
+                        Generar
+                      </Button>
+                    </>
                   ) : null}
                   {selected.status === "GENERADO" ? (
                     <>
                       <Button
                         type="button"
+                        variant="secondary"
                         disabled={busy || schemaPending}
-                        onClick={() => void runAction("new_version", selected.id)}
-                        data-testid="remito-new-version"
+                        onClick={() => openEditGenerated(selected)}
+                        data-testid="remito-edit-generated"
                       >
-                        Nueva versión
+                        Editar
                       </Button>
                       <a
                         className="inline-flex items-center rounded border border-[var(--os-border)] px-3 py-1.5 text-sm"
                         href={remitoDownloadUrl(selected.id, "xlsx")}
                         data-testid="remito-dl-xlsx"
                       >
-                        XLSX
+                        Descargar XLSX
                       </a>
                       <a
                         className="inline-flex items-center rounded border border-[var(--os-border)] px-3 py-1.5 text-sm"
                         href={remitoDownloadUrl(selected.id, "pdf")}
                         data-testid="remito-dl-pdf"
                       >
-                        PDF
+                        Descargar PDF
                       </a>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => setModal("versions")}
+                        data-testid="remito-versions"
+                      >
+                        Ver versiones
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={busy}
+                        onClick={() => {
+                          setDisplayNameInput(selected.displayName || "");
+                          setModal("rename");
+                        }}
+                        data-testid="remito-rename"
+                      >
+                        Renombrar
+                      </Button>
                       <Button
                         type="button"
                         variant="secondary"
@@ -234,6 +434,245 @@ export function RemitosView() {
             )}
           </div>
         </div>
+
+        {modal && selected ? (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            data-testid="remito-modal"
+          >
+            <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-4 shadow-lg">
+              {modal === "generate" ? (
+                <div className="space-y-3">
+                  <h3 className="font-semibold">Generar remito</h3>
+                  <p className="text-sm text-[var(--os-text-muted)]">
+                    Elegí el nombre que verá Producción. El n° interno se asigna al
+                    generar.
+                  </p>
+                  <label className="block text-sm">
+                    Nombre
+                    <input
+                      className="mt-1 w-full rounded border border-[var(--os-border)] px-2 py-1.5"
+                      value={displayNameInput}
+                      onChange={(e) => setDisplayNameInput(e.target.value)}
+                      data-testid="remito-display-name-input"
+                    />
+                  </label>
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="secondary" onClick={() => setModal(null)}>
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={busy || !displayNameInput.trim()}
+                      onClick={() => void submitGenerate()}
+                      data-testid="remito-generate-confirm"
+                    >
+                      Generar
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              {modal === "rename" ? (
+                <div className="space-y-3">
+                  <h3 className="font-semibold">Renombrar</h3>
+                  <input
+                    className="w-full rounded border border-[var(--os-border)] px-2 py-1.5"
+                    value={displayNameInput}
+                    onChange={(e) => setDisplayNameInput(e.target.value)}
+                    data-testid="remito-rename-input"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="secondary" onClick={() => setModal(null)}>
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={busy || !displayNameInput.trim()}
+                      onClick={() => void submitRename()}
+                    >
+                      Guardar
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              {modal === "edit-draft" || modal === "edit-generated" ? (
+                <div className="space-y-3">
+                  <h3 className="font-semibold">
+                    {modal === "edit-draft" ? "Editar borrador" : "Editar generado (nueva versión)"}
+                  </h3>
+                  {modal === "edit-generated" ? (
+                    <label className="block text-sm">
+                      Motivo (obligatorio)
+                      <input
+                        className="mt-1 w-full rounded border border-[var(--os-border)] px-2 py-1.5"
+                        value={motivoInput}
+                        onChange={(e) => setMotivoInput(e.target.value)}
+                        data-testid="remito-motivo-input"
+                      />
+                    </label>
+                  ) : null}
+                  <label className="block text-sm">
+                    Cliente
+                    <input
+                      className="mt-1 w-full rounded border border-[var(--os-border)] px-2 py-1.5"
+                      value={draftClient}
+                      onChange={(e) => setDraftClient(e.target.value)}
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    Fecha entrega
+                    <input
+                      type="date"
+                      className="mt-1 w-full rounded border border-[var(--os-border)] px-2 py-1.5"
+                      value={draftDate}
+                      onChange={(e) => setDraftDate(e.target.value)}
+                    />
+                  </label>
+                  <div className="space-y-2">
+                    {draftLines.map((l, idx) => (
+                      <div
+                        key={l.id}
+                        className="grid grid-cols-2 gap-2 rounded border border-[var(--os-border)] p-2 text-xs"
+                      >
+                        <input
+                          value={l.product}
+                          onChange={(e) => {
+                            const next = [...draftLines];
+                            next[idx] = { ...l, product: e.target.value };
+                            setDraftLines(next);
+                          }}
+                          placeholder="Producto"
+                        />
+                        <input
+                          value={l.totalUnits}
+                          type="number"
+                          onChange={(e) => {
+                            const next = [...draftLines];
+                            next[idx] = { ...l, totalUnits: Number(e.target.value) || 0 };
+                            setDraftLines(next);
+                          }}
+                          placeholder="Unidades"
+                        />
+                        <input
+                          value={l.lote}
+                          onChange={(e) => {
+                            const next = [...draftLines];
+                            next[idx] = { ...l, lote: e.target.value };
+                            setDraftLines(next);
+                          }}
+                          placeholder="Lote"
+                        />
+                        <input
+                          value={l.vto}
+                          onChange={(e) => {
+                            const next = [...draftLines];
+                            next[idx] = { ...l, vto: e.target.value };
+                            setDraftLines(next);
+                          }}
+                          placeholder="Vto"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="secondary" onClick={() => setModal(null)}>
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={
+                        busy ||
+                        (modal === "edit-generated" && !motivoInput.trim())
+                      }
+                      onClick={() =>
+                        void (modal === "edit-draft"
+                          ? submitEditDraft()
+                          : submitEditGenerated())
+                      }
+                      data-testid="remito-edit-confirm"
+                    >
+                      Guardar
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              {modal === "versions" ? (
+                <div className="space-y-3">
+                  <h3 className="font-semibold">Versiones</h3>
+                  <ul className="space-y-2 text-sm">
+                    {(selected.versions ?? []).length === 0 ? (
+                      <li className="text-[var(--os-text-muted)]">Sin versiones.</li>
+                    ) : (
+                      (selected.versions ?? []).map((v) => (
+                        <li
+                          key={v.version}
+                          className="rounded border border-[var(--os-border)] px-2 py-2"
+                        >
+                          <div className="font-medium">
+                            v{v.version}
+                            {v.motivo ? ` · ${v.motivo}` : ""}
+                          </div>
+                          <div className="text-xs text-[var(--os-text-muted)]">
+                            {v.createdBy} · {v.createdAt}
+                          </div>
+                          {v.downloadable ? (
+                            <div className="mt-1 flex gap-2 text-xs">
+                              <a
+                                href={remitoDownloadUrl(selected.id, "pdf", {
+                                  version: v.version,
+                                })}
+                              >
+                                PDF
+                              </a>
+                              <a
+                                href={remitoDownloadUrl(selected.id, "xlsx", {
+                                  version: v.version,
+                                })}
+                              >
+                                XLSX
+                              </a>
+                            </div>
+                          ) : null}
+                        </li>
+                      ))
+                    )}
+                  </ul>
+                  <div className="flex justify-end">
+                    <Button type="button" variant="secondary" onClick={() => setModal(null)}>
+                      Cerrar
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              {modal === "preview" ? (
+                <div className="space-y-3">
+                  <h3 className="font-semibold">Vista previa</h3>
+                  <p className="text-sm">
+                    {selected.displayName || "Sin nombre"} · {selected.clientDisplay} ·{" "}
+                    {selected.deliveryDate}
+                  </p>
+                  <ul className="max-h-60 space-y-1 overflow-y-auto text-xs">
+                    {selected.lines.map((l) => (
+                      <li key={l.id}>
+                        {l.product} · {l.totalUnits} u · L:{l.lote || "—"} VTO:
+                        {l.vto || "—"}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex justify-end">
+                    <Button type="button" variant="secondary" onClick={() => setModal(null)}>
+                      Cerrar
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
       </div>
     </TwinShell>
   );

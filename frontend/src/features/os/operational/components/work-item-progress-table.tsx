@@ -2,6 +2,7 @@
 
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
+import { VIEW_ARCHIVE_TOOLTIP } from "@/lib/work-view-archive";
 import {
   formatOperationalDifference,
   plannedQuantityLabel,
@@ -17,6 +18,11 @@ interface WorkItemProgressTableProps {
   getObservation: (itemId: string) => string;
   onSelectItem: (item: WorkItem) => void;
   emptyMessage?: string;
+  /** Envasado: lista principal vs sub-pestaña Archivados. */
+  listMode?: "active" | "archived";
+  onArchiveFromView?: (item: WorkItem) => void;
+  onRestoreToView?: (item: WorkItem) => void;
+  archiveBusyId?: string | null;
 }
 
 /** Tabla operativa — Envasado / Elaboración. La fila abre el drawer de trabajo. */
@@ -27,6 +33,10 @@ export function WorkItemProgressTable({
   getObservation,
   onSelectItem,
   emptyMessage = "Sin registros.",
+  listMode = "active",
+  onArchiveFromView,
+  onRestoreToView,
+  archiveBusyId = null,
 }: WorkItemProgressTableProps) {
   if (items.length === 0) {
     return (
@@ -87,6 +97,16 @@ export function WorkItemProgressTable({
             const diff = formatOperationalDifference(item.quantity, finishedQty);
             const isTransferred = isWorkTransferredStatus(item.status);
             const observation = getObservation(item.id);
+            const busy = archiveBusyId === item.id;
+            const showArchive =
+              variant === "envasado" &&
+              listMode === "active" &&
+              isTransferred &&
+              Boolean(onArchiveFromView);
+            const showRestore =
+              variant === "envasado" &&
+              listMode === "archived" &&
+              Boolean(onRestoreToView);
 
             return (
               <tr
@@ -144,11 +164,36 @@ export function WorkItemProgressTable({
                   {observation || "—"}
                 </td>
                 <td className="px-3 py-2.5 align-top">
-                  <ActionButton
-                    label={isTransferred ? "Ver detalle" : "Ver / Registrar avance"}
-                    variant="neutral"
-                    onClick={() => onSelectItem(item)}
-                  />
+                  <div className="flex flex-col gap-1.5">
+                    <ActionButton
+                      label={
+                        listMode === "archived"
+                          ? "Ver detalle"
+                          : isTransferred
+                            ? "Ver detalle"
+                            : "Ver / Registrar avance"
+                      }
+                      variant="neutral"
+                      onClick={() => onSelectItem(item)}
+                    />
+                    {showArchive && (
+                      <ActionButton
+                        label="Archivar de mi vista"
+                        variant="neutral"
+                        disabled={busy}
+                        title={VIEW_ARCHIVE_TOOLTIP}
+                        onClick={() => onArchiveFromView?.(item)}
+                      />
+                    )}
+                    {showRestore && (
+                      <ActionButton
+                        label="Restaurar a mi vista"
+                        variant="approve"
+                        disabled={busy}
+                        onClick={() => onRestoreToView?.(item)}
+                      />
+                    )}
+                  </div>
                 </td>
               </tr>
             );

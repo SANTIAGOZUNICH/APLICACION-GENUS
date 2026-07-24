@@ -35,8 +35,34 @@ import type {
   MpCompraRow,
   MpControlRow,
   MpIngresoRow,
+  MpIngresoStatus,
   MpStockRow,
 } from "./types";
+
+const DRAFT_NO_STOCK_MSG =
+  "Guardado sin afectar Stock: falta Código o Cantidad";
+
+function normalizeMpCodigoLocal(codigo: string): string {
+  return codigo.trim().replace(/\s+/g, " ").toUpperCase();
+}
+
+/** Cantidad efectiva para stock: TOTAL si > 0, si no CANTIDAD. */
+function mpIngresoImpactQty(row: {
+  total: number | null;
+  cantidad: number | null;
+}): number {
+  if (row.total != null && Number.isFinite(row.total) && row.total > 0) {
+    return row.total;
+  }
+  if (row.cantidad != null && Number.isFinite(row.cantidad) && row.cantidad > 0) {
+    return row.cantidad;
+  }
+  return 0;
+}
+
+function canConfirmMpIngreso(codigo: string, qty: number): boolean {
+  return Boolean(normalizeMpCodigoLocal(codigo)) && qty > 0;
+}
 
 export type InventoryActor = {
   email: string;
@@ -928,6 +954,7 @@ export class InventoryService {
       estadoVencimiento: "",
       origen: input.origen ?? existing?.origen ?? "manual",
       codigo: input.codigo ?? existing?.codigo ?? "",
+      productosAsociados: existing?.productosAsociados ?? "",
       createdBy: existing?.createdBy ?? actor.email,
       updatedBy: actor.email,
       createdAt: existing?.createdAt ?? now,
@@ -1002,12 +1029,42 @@ export class InventoryService {
 
   private enrichMpStock(row: MpStockRow): MpStockRow {
     const dias = calcDiasAlVence(row.vencimiento || null);
+    const productosAsociados = this.aggregateProductosAsociados(row.codigo);
     return {
       ...row,
       estadoStock: calcMpEstadoStock(row.cantidadKg),
       diasAlVence: dias,
       estadoVencimiento: calcMpEstadoVencimiento(dias),
+      productosAsociados,
     };
+  }
+
+  /** Productos de ingresos CONFIRMADO del mismo código (sin partir saldos). */
+  private aggregateProductosAsociados(codigo: string): string {
+    const code = normalizeMpCodigoLocal(codigo);
+    if (!code) return "";
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const ing of this.repo.listMpIngresos()) {
+      if (ing.status !== "CONFIRMADO") continue;
+      if (normalizeMpCodigoLocal(ing.codigo) !== code) continue;
+      const p = (ing.producto ?? "").trim();
+      if (!p) continue;
+      const key = p.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      ordered.push(p);
+    }
+    return ordered.join(" · ");
+  }
+
+  private refreshProductosAsociadosForCodigo(codigo: string) {
+    const code = normalizeMpCodigoLocal(codigo);
+    if (!code) return;
+    for (const lot of this.repo.listMpStock()) {
+      if (normalizeMpCodigoLocal(lot.codigo) !== code) continue;
+      this.repo.upsertMpStock(this.enrichMpStock(lot));
+    }
   }
 
   // ─── MP Ingresos ───────────────────────────────────────────
@@ -1017,17 +1074,79 @@ export class InventoryService {
     return this.repo.listMpIngresos();
   }
 
-  upsertMpIngreso(actor: InventoryActor, input: Partial<MpIngresoRow> & { id?: string }) {
+  upsertMpIngreso(
+    actor: InventoryActor,
+    input: Partial<MpIngresoRow> & {
+      id?: string;
+      confirm?: boolean;
+      confirmDemote?: boolean;
+    }
+  ) {
     this.guard(actor, "mp_ingresos", true);
     const existing = input.id ? this.repo.getMpIngreso(input.id) : null;
-    const bultos = parseOptionalNumber(input.bultos);
-    const cantidad = parseOptionalNumber(input.cantidad);
+    if (existing?.status === "ANULADO") {
+      throw new InventoryValidationError("No se puede editar un ingreso anulado.");
+    }
+
+    const bultos =
+      input.bultos !== undefined ? parseOptionalNumber(input.bultos) : (existing?.bultos ?? null);
+    const cantidad =
+      input.cantidad !== undefined
+        ? parseOptionalNumber(input.cantidad)
+        : (existing?.cantidad ?? null);
     const total = multiplyTotal(bultos, cantidad);
     const now = nowIso();
+    const codigoRaw = input.codigo ?? existing?.codigo ?? "";
+    const codigo = normalizeMpCodigoLocal(codigoRaw) || (codigoRaw.trim() ? codigoRaw.trim() : "");
+    const qty = mpIngresoImpactQty({ total, cantidad });
+    const ready = canConfirmMpIngreso(codigo, qty);
 
-    // Revert previous stock impact
-    if (existing?.stockLotId && existing.total != null) {
-      this.applyMpIngresoDelta(existing.stockLotId, -existing.total);
+    let status: MpIngresoStatus;
+    if (input.status === "ANULADO") {
+      throw new InventoryValidationError("Usá anular para cancelar el ingreso.");
+    } else if (input.confirm === true && ready) {
+      status = "CONFIRMADO";
+    } else if (input.status === "CONFIRMADO") {
+      if (!ready) {
+        throw new InventoryValidationError(
+          "No se puede confirmar: falta Código válido o Cantidad/Total > 0."
+        );
+      }
+      status = "CONFIRMADO";
+    } else if (input.status === "BORRADOR") {
+      if (existing?.status === "CONFIRMADO" && existing.stockImpacted && !input.confirmDemote) {
+        throw new InventoryValidationError(
+          "Para pasar a borrador y revertir stock enviá confirmDemote=true."
+        );
+      }
+      status = "BORRADOR";
+    } else if (ready) {
+      // UX default: código + cantidad válidos → CONFIRMADO
+      status = "CONFIRMADO";
+    } else if (existing?.status === "CONFIRMADO" && existing.stockImpacted && !input.confirmDemote) {
+      // Evitar demote implícito al vaciar campos sin confirmación
+      throw new InventoryValidationError(
+        "Para pasar a borrador y revertir stock enviá confirmDemote=true."
+      );
+    } else {
+      status = "BORRADOR";
+    }
+
+    const willImpact = status === "CONFIRMADO" && ready;
+    const stockMessage = willImpact
+      ? undefined
+      : status === "BORRADOR"
+        ? DRAFT_NO_STOCK_MSG
+        : undefined;
+
+    const oldImpacted = Boolean(existing?.stockImpacted && existing.status === "CONFIRMADO");
+    const oldQty = oldImpacted ? mpIngresoImpactQty(existing!) : 0;
+    const oldCodigo = existing ? normalizeMpCodigoLocal(existing.codigo) : "";
+    const oldLotId = existing?.stockLotId ?? null;
+
+    // Revert previous lot impact (delta model)
+    if (oldImpacted && oldLotId && oldQty > 0) {
+      this.applyMpIngresoDelta(oldLotId, -oldQty);
     }
 
     const row: MpIngresoRow = {
@@ -1037,7 +1156,8 @@ export class InventoryService {
       proveedor: input.proveedor ?? existing?.proveedor ?? "",
       cliente: input.cliente ?? existing?.cliente ?? "",
       remitoNro: input.remitoNro ?? existing?.remitoNro ?? "",
-      codigo: input.codigo ?? existing?.codigo ?? "",
+      codigo,
+      producto: input.producto ?? existing?.producto ?? "",
       descripcion: input.descripcion ?? existing?.descripcion ?? "",
       bultos,
       cantidad,
@@ -1045,20 +1165,35 @@ export class InventoryService {
       ubicacion: input.ubicacion ?? existing?.ubicacion ?? "",
       lote: input.lote ?? existing?.lote ?? "",
       vencimiento: input.vencimiento ?? existing?.vencimiento ?? "",
-      stockLotId: existing?.stockLotId ?? null,
+      stockLotId: oldLotId,
+      status,
+      stockImpacted: false,
+      stockMessage,
       createdBy: existing?.createdBy ?? actor.email,
       updatedBy: actor.email,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
 
-    if (total != null && row.descripcion.trim()) {
+    if (willImpact) {
       const lot = this.resolveMpLot(actor, row);
       row.stockLotId = lot.id;
-      this.applyMpIngresoDelta(lot.id, total);
+      this.applyMpIngresoDelta(lot.id, qty);
+      row.stockImpacted = true;
+      row.stockMessage = undefined;
+    } else {
+      row.stockImpacted = false;
+      if (!row.stockMessage) row.stockMessage = DRAFT_NO_STOCK_MSG;
     }
 
     this.repo.upsertMpIngreso(row);
+
+    const newCodigo = normalizeMpCodigoLocal(row.codigo);
+    if (oldCodigo && oldCodigo !== newCodigo) {
+      this.refreshProductosAsociadosForCodigo(oldCodigo);
+    }
+    if (newCodigo) this.refreshProductosAsociadosForCodigo(newCodigo);
+
     this.audit(
       actor,
       "mp_ingresos",
@@ -1067,58 +1202,151 @@ export class InventoryService {
       existing as unknown as Record<string, unknown> | null,
       row as unknown as Record<string, unknown>
     );
-    void this.syncMpIngresoLedger(actor, row, existing);
+    void this.syncMpIngresoLedger(actor, row, existing, {
+      anular: false,
+      oldQty,
+      oldCodigo,
+      newQty: willImpact ? qty : 0,
+      newCodigo,
+    });
     return row;
   }
 
+  /**
+   * Sync ledger only when CONFIRMADO with código+qty.
+   * On anular / demote to BORRADOR: reverse previous impact.
+   * Code change: reverse old código, apply new.
+   */
   private syncMpIngresoLedger(
     actor: InventoryActor,
     row: MpIngresoRow,
     existing: MpIngresoRow | null,
-    anular = false
+    opts: {
+      anular?: boolean;
+      oldQty: number;
+      oldCodigo: string;
+      newQty: number;
+      newCodigo: string;
+    }
   ) {
+    const versionTag = row.updatedAt;
     void import("@/lib/mp-stock/mp-stock-ledger")
-      .then(({ getMpStockLedger }) =>
-        getMpStockLedger().applyIngreso(
-          { email: actor.email, sector: actor.sector },
-          {
+      .then(async ({ getMpStockLedger }) => {
+        const ledger = getMpStockLedger();
+        const actorMp = { email: actor.email, sector: actor.sector };
+
+        const applyDelta = async (
+          codigo: string,
+          quantity: number,
+          previousQuantity: number,
+          tag: string,
+          anular = false
+        ) => {
+          if (!codigo) return;
+          if (!anular && quantity === previousQuantity) return;
+          await ledger.applyIngreso(actorMp, {
             ingresoId: row.id,
-            versionTag: anular ? `del:${row.updatedAt}` : row.updatedAt,
-            codigo: row.codigo,
-            quantity: row.total ?? row.cantidad ?? 0,
-            previousQuantity: anular
-              ? 0
-              : (existing?.total ?? existing?.cantidad ?? 0),
+            versionTag: tag,
+            codigo,
+            quantity: anular ? previousQuantity : quantity,
+            previousQuantity: anular ? previousQuantity : previousQuantity,
             lote: row.lote,
             proveedor: row.proveedor,
             documento: row.remitoNro,
             descripcion: row.descripcion,
             anular,
+          });
+        };
+
+        if (opts.anular) {
+          if (opts.oldCodigo && opts.oldQty > 0) {
+            // Delta reverse: quantity 0 vs previous = -oldQty (never deletes movements)
+            await applyDelta(opts.oldCodigo, 0, opts.oldQty, `${versionTag}:anular`);
           }
-        )
-      )
+          return;
+        }
+
+        const codeChanged =
+          Boolean(opts.oldCodigo) &&
+          Boolean(opts.newCodigo) &&
+          opts.oldCodigo !== opts.newCodigo;
+
+        if (codeChanged) {
+          if (opts.oldQty > 0) {
+            await applyDelta(opts.oldCodigo, 0, opts.oldQty, `${versionTag}:rev-old`);
+          }
+          if (opts.newQty > 0) {
+            await applyDelta(opts.newCodigo, opts.newQty, 0, `${versionTag}:new`);
+          }
+          return;
+        }
+
+        const codigo = opts.newCodigo || opts.oldCodigo;
+        if (!codigo) return;
+
+        // Only sync when confirming (newQty>0) or reversing demote (oldQty>0 → 0)
+        if (opts.newQty <= 0 && opts.oldQty <= 0) return;
+        if (row.status === "CONFIRMADO" && opts.newQty > 0) {
+          await applyDelta(codigo, opts.newQty, opts.oldQty, versionTag);
+          return;
+        }
+        if (opts.oldQty > 0 && opts.newQty <= 0) {
+          await applyDelta(codigo, 0, opts.oldQty, `${versionTag}:demote`);
+        }
+      })
       .catch(() => undefined);
   }
 
-  deleteMpIngreso(actor: InventoryActor, id: string, reason: string) {
+  /** Anula ingreso: revierte ledger/stock, status ANULADO, conserva la fila. */
+  anularMpIngreso(actor: InventoryActor, id: string, reason: string) {
     this.guard(actor, "mp_ingresos", true);
     if (!reason.trim()) throw new InventoryValidationError("Motivo obligatorio.");
     const existing = this.repo.getMpIngreso(id);
     if (!existing) throw new InventoryNotFoundError("Ingreso MP no encontrado.");
-    if (existing.stockLotId && existing.total != null) {
-      this.applyMpIngresoDelta(existing.stockLotId, -existing.total);
+    if (existing.status === "ANULADO") return existing;
+
+    const oldImpacted = Boolean(existing.stockImpacted && existing.status === "CONFIRMADO");
+    const oldQty = oldImpacted ? mpIngresoImpactQty(existing) : 0;
+    const oldCodigo = normalizeMpCodigoLocal(existing.codigo);
+    const now = nowIso();
+
+    if (oldImpacted && existing.stockLotId && oldQty > 0) {
+      this.applyMpIngresoDelta(existing.stockLotId, -oldQty);
     }
-    this.repo.deleteMpIngreso(id);
+
+    const row: MpIngresoRow = {
+      ...existing,
+      status: "ANULADO",
+      stockImpacted: false,
+      stockMessage: "Anulado — stock revertido",
+      updatedBy: actor.email,
+      updatedAt: now,
+    };
+    this.repo.upsertMpIngreso(row);
+    if (oldCodigo) this.refreshProductosAsociadosForCodigo(oldCodigo);
+
     this.audit(
       actor,
       "mp_ingresos",
       id,
-      "delete",
+      "anular",
       existing as unknown as Record<string, unknown>,
-      null,
+      row as unknown as Record<string, unknown>,
       reason
     );
-    this.syncMpIngresoLedger(actor, existing, null, true);
+    void this.syncMpIngresoLedger(actor, row, existing, {
+      anular: true,
+      oldQty,
+      oldCodigo,
+      newQty: 0,
+      newCodigo: oldCodigo,
+    });
+    return row;
+  }
+
+  /** @deprecated Preferí anularMpIngreso — conserva la fila. */
+  deleteMpIngreso(actor: InventoryActor, id: string, reason: string) {
+    return this.anularMpIngreso(actor, id, reason);
   }
 
   private nextMpIngresoNro() {
@@ -1126,13 +1354,33 @@ export class InventoryService {
   }
 
   private resolveMpLot(actor: InventoryActor, ingreso: MpIngresoRow): MpStockRow {
+    const code = normalizeMpCodigoLocal(ingreso.codigo);
     if (ingreso.stockLotId) {
       const existing = this.repo.getMpStock(ingreso.stockLotId);
-      if (existing) return existing;
+      if (existing) {
+        const existingCode = normalizeMpCodigoLocal(existing.codigo);
+        // Reutilizar lote solo si el código coincide (o el lote aún no tiene código)
+        if (!code || !existingCode || existingCode === code) {
+          if (code && !existingCode) {
+            this.repo.upsertMpStock(
+              this.enrichMpStock({ ...existing, codigo: code, updatedAt: nowIso() })
+            );
+            return this.repo.getMpStock(existing.id)!;
+          }
+          return existing;
+        }
+      }
+    }
+    if (code) {
+      const byCode = this.repo.findMpStockByCodigo(code);
+      if (byCode) return byCode;
     }
     if (ingreso.lote.trim()) {
       const byLot = this.repo.findMpStockByDescLote(ingreso.descripcion, ingreso.lote);
-      if (byLot) return byLot;
+      if (byLot) {
+        const lotCode = normalizeMpCodigoLocal(byLot.codigo);
+        if (!code || !lotCode || lotCode === code) return byLot;
+      }
     }
     const created = this.enrichMpStock({
       id: randomUUID(),
@@ -1147,7 +1395,8 @@ export class InventoryService {
       diasAlVence: null,
       estadoVencimiento: "",
       origen: "ingreso",
-      codigo: ingreso.codigo,
+      codigo: code || ingreso.codigo,
+      productosAsociados: "",
       createdBy: actor.email,
       updatedBy: actor.email,
       createdAt: nowIso(),

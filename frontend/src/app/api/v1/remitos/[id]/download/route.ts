@@ -31,10 +31,19 @@ export async function GET(request: Request, ctx: Ctx) {
       throw new OrdersValidationError("format debe ser pdf|xlsx");
     }
     const customName = url.searchParams.get("filename");
+    const versionRaw = url.searchParams.get("version");
+    const version =
+      versionRaw != null && versionRaw !== ""
+        ? Number.parseInt(versionRaw, 10)
+        : undefined;
+    if (version != null && Number.isNaN(version)) {
+      throw new OrdersValidationError("version inválida");
+    }
     const result = await getRemitoService().download(
       { email: actor.email, sector: actor.sector },
       id,
-      format
+      format,
+      version
     );
     const fileName = customName?.trim() || result.fileName;
     const headers = new Headers();

@@ -69,13 +69,71 @@ export async function hydrateInventoryFromNeon(repo: MemoryInventoryRepo): Promi
   repo.meMaterials = materials.map((r) => r.payload as MeMaterial);
   repo.meAlerts = alerts.map((r) => r.payload as MeAlert);
   repo.meAlertReads = reads.map((r) => r.payload as MeAlertRead);
-  repo.mpStock = mpStock.map((r) => r.payload as MpStockRow);
-  repo.mpIngresos = mpIngresos.map((r) => r.payload as MpIngresoRow);
+  repo.mpStock = mpStock.map((r) => normalizeMpStockPayload(r.payload));
+  repo.mpIngresos = mpIngresos.map((r) => normalizeMpIngresoPayload(r.payload));
   repo.mpControl = mpControl.map((r) => r.payload as MpControlRow);
   repo.mpCompras = mpCompras.map((r) => r.payload as MpCompraRow);
   repo.ajustes = ajustes.map((r) => r.payload as StockAjuste);
   repo.audit = audit.map((r) => r.payload as InventoryAudit);
   hydrated = true;
+}
+
+function normalizeMpIngresoPayload(raw: unknown): MpIngresoRow {
+  const r = raw as Partial<MpIngresoRow>;
+  const status = r.status === "CONFIRMADO" || r.status === "ANULADO" || r.status === "BORRADOR"
+    ? r.status
+    : r.stockImpacted
+      ? "CONFIRMADO"
+      : "BORRADOR";
+  return {
+    id: String(r.id ?? ""),
+    fecha: r.fecha ?? "",
+    ingresoNro: r.ingresoNro ?? "",
+    proveedor: r.proveedor ?? "",
+    cliente: r.cliente ?? "",
+    remitoNro: r.remitoNro ?? "",
+    codigo: r.codigo ?? "",
+    producto: r.producto ?? "",
+    descripcion: r.descripcion ?? "",
+    bultos: r.bultos ?? null,
+    cantidad: r.cantidad ?? null,
+    total: r.total ?? null,
+    ubicacion: r.ubicacion ?? "",
+    lote: r.lote ?? "",
+    vencimiento: r.vencimiento ?? "",
+    stockLotId: r.stockLotId ?? null,
+    status,
+    stockImpacted: Boolean(r.stockImpacted),
+    stockMessage: r.stockMessage,
+    createdBy: r.createdBy ?? "",
+    updatedBy: r.updatedBy ?? "",
+    createdAt: r.createdAt ?? "",
+    updatedAt: r.updatedAt ?? "",
+  };
+}
+
+function normalizeMpStockPayload(raw: unknown): MpStockRow {
+  const r = raw as Partial<MpStockRow>;
+  return {
+    id: String(r.id ?? ""),
+    proveedor: r.proveedor ?? "",
+    cliente: r.cliente ?? "",
+    descripcion: r.descripcion ?? "",
+    cantidadKg: r.cantidadKg ?? null,
+    ubicacion: r.ubicacion ?? "",
+    lote: r.lote ?? "",
+    vencimiento: r.vencimiento ?? "",
+    estadoStock: r.estadoStock ?? "",
+    diasAlVence: r.diasAlVence ?? null,
+    estadoVencimiento: r.estadoVencimiento ?? "",
+    origen: r.origen ?? "",
+    codigo: r.codigo ?? "",
+    productosAsociados: r.productosAsociados ?? "",
+    createdBy: r.createdBy ?? "",
+    updatedBy: r.updatedBy ?? "",
+    createdAt: r.createdAt ?? "",
+    updatedAt: r.updatedAt ?? "",
+  };
 }
 
 export function resetInventoryHydrationFlag() {

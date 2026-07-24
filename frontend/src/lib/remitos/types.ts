@@ -30,9 +30,21 @@ export type RemitoLine = {
   sortOrder: number;
 };
 
+export type RemitoVersionInfo = {
+  version: number;
+  motivo: string | null;
+  createdBy: string;
+  createdAt: string;
+  /** true si hay xlsx/pdf disponibles para esa versión. */
+  downloadable: boolean;
+};
+
 export type RemitoRecord = {
   id: string;
+  /** Correlativo interno (no editable por el usuario). */
   remitoNumber: string | null;
+  /** Nombre elegido por Producción al generar. */
+  displayName: string | null;
   clientIdNormalized: string;
   clientDisplay: string;
   deliveryDate: string;
@@ -50,8 +62,14 @@ export type RemitoRecord = {
   updatedAt: string;
   generatedAt: string | null;
   lines: RemitoLine[];
+  versions: RemitoVersionInfo[];
   /** Si GENERADO y hay aprobación nueva pendiente de nueva versión. */
   offersNewVersion?: boolean;
+};
+
+export type RemitoWorkItemStatus = {
+  status: "none" | "draft" | "generated";
+  remitoId: string | null;
 };
 
 export type RemitoApprovalInput = {
@@ -71,6 +89,41 @@ export type RemitoApprovalInput = {
   unidades1?: number | null;
   cajas2?: number | null;
   unidades2?: number | null;
+};
+
+export type RemitoDraftPatch = {
+  clientDisplay?: string;
+  deliveryDate?: string;
+  lines?: Array<{
+    id: string;
+    product?: string;
+    lote?: string;
+    vto?: string;
+    totalUnits?: number;
+    cajas1?: number;
+    unidades1?: number;
+    cajas2?: number;
+    unidades2?: number;
+  }>;
+  /**
+   * Flag opcional: la UI pide confirmación. El servicio NO muta work items
+   * silenciosamente; el flag queda registrado en snapshot/audit si viene true.
+   */
+  applyToWorkItem?: boolean;
+};
+
+export type RemitoGenerateOptions = {
+  displayName: string;
+  filename?: string;
+};
+
+export type RemitoEditGeneratedOptions = {
+  motivo: string;
+  displayName?: string;
+  clientDisplay?: string;
+  deliveryDate?: string;
+  lines?: RemitoDraftPatch["lines"];
+  filename?: string;
 };
 
 export type RemitoUpsertResult = {

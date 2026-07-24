@@ -1,12 +1,19 @@
 import { NextResponse } from "next/server";
 import { getRemitoService } from "@/lib/remitos/remito-service";
-import type { RemitoApprovalInput, RemitoListFilters, RemitoStatus, RemitoTab } from "@/lib/remitos/types";
+import type {
+  RemitoApprovalInput,
+  RemitoDraftPatch,
+  RemitoEditGeneratedOptions,
+  RemitoListFilters,
+  RemitoStatus,
+  RemitoTab,
+} from "@/lib/remitos/types";
 import { canAccessRemitos } from "@/lib/remitos/types";
 import { isRemitoSchemaReady, remitoSchemaPendingResponse } from "@/lib/db/remito-schema";
 import { RemitoSchemaPendingError } from "@/lib/db/remito-schema";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
-import { OrdersForbiddenError } from "@/lib/orders/types";
+import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,18 +63,55 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       action?: string;
       remitoId?: string;
+      workItemId?: string;
       input?: RemitoApprovalInput;
       extraLines?: RemitoApprovalInput[];
-    };
+      patch?: RemitoDraftPatch;
+      displayName?: string;
+      filename?: string;
+      motivo?: string;
+    } & Partial<RemitoEditGeneratedOptions>;
     const svc = getRemitoService();
     const a = { email: actor.email, sector: actor.sector };
 
+    if (body.action === "status_for_work") {
+      const workItemId = String(body.workItemId ?? "").trim();
+      if (!workItemId) throw new OrdersValidationError("workItemId obligatorio.");
+      const status = await svc.statusForWorkItem(a, workItemId);
+      return NextResponse.json(status);
+    }
     if (body.action === "upsert_draft" && body.input) {
       const result = await svc.upsertDraftFromApproval(a, body.input);
       return NextResponse.json(result, { status: result.created ? 201 : 200 });
     }
+    if (body.action === "update_draft" && body.remitoId) {
+      const remito = await svc.updateDraft(a, body.remitoId, body.patch ?? {});
+      return NextResponse.json({ remito });
+    }
     if (body.action === "generate" && body.remitoId) {
-      const remito = await svc.generate(a, body.remitoId);
+      const remito = await svc.generate(a, body.remitoId, {
+        displayName: String(body.displayName ?? ""),
+        filename: body.filename,
+      });
+      return NextResponse.json({ remito });
+    }
+    if (body.action === "rename" && body.remitoId) {
+      const remito = await svc.renameDisplayName(
+        a,
+        body.remitoId,
+        String(body.displayName ?? "")
+      );
+      return NextResponse.json({ remito });
+    }
+    if (body.action === "edit_generated" && body.remitoId) {
+      const remito = await svc.editGenerated(a, body.remitoId, {
+        motivo: String(body.motivo ?? ""),
+        displayName: body.displayName,
+        clientDisplay: body.clientDisplay,
+        deliveryDate: body.deliveryDate,
+        lines: body.lines,
+        filename: body.filename,
+      });
       return NextResponse.json({ remito });
     }
     if (body.action === "new_version" && body.remitoId) {

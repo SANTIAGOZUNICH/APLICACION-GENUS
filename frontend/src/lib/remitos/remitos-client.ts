@@ -5,9 +5,14 @@ import {
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type {
   RemitoApprovalInput,
+  RemitoDraftPatch,
+  RemitoEditGeneratedOptions,
+  RemitoGenerateOptions,
   RemitoListFilters,
   RemitoRecord,
   RemitoUpsertResult,
+  RemitoVersionInfo,
+  RemitoWorkItemStatus,
 } from "@/lib/remitos/types";
 
 function headers(session: OrdersClientSession): HeadersInit {
@@ -45,7 +50,7 @@ export async function remitoActionApi(
   session: OrdersClientSession,
   action: string,
   remitoId: string,
-  extra?: { extraLines?: RemitoApprovalInput[] }
+  extra?: Record<string, unknown>
 ): Promise<RemitoRecord> {
   const res = await fetch(`/api/v1/remitos/${remitoId}`, {
     method: "PATCH",
@@ -71,12 +76,77 @@ export async function upsertRemitoDraftApi(
   return body;
 }
 
+export async function updateRemitoDraftApi(
+  session: OrdersClientSession,
+  remitoId: string,
+  patch: RemitoDraftPatch
+): Promise<RemitoRecord> {
+  return remitoActionApi(session, "update_draft", remitoId, { patch });
+}
+
+export async function generateRemitoApi(
+  session: OrdersClientSession,
+  remitoId: string,
+  options: RemitoGenerateOptions
+): Promise<RemitoRecord> {
+  return remitoActionApi(session, "generate", remitoId, options);
+}
+
+export async function renameRemitoApi(
+  session: OrdersClientSession,
+  remitoId: string,
+  displayName: string
+): Promise<RemitoRecord> {
+  return remitoActionApi(session, "rename", remitoId, { displayName });
+}
+
+export async function editGeneratedRemitoApi(
+  session: OrdersClientSession,
+  remitoId: string,
+  options: RemitoEditGeneratedOptions
+): Promise<RemitoRecord> {
+  return remitoActionApi(session, "edit_generated", remitoId, options);
+}
+
+export async function remitoStatusForWorkApi(
+  session: OrdersClientSession,
+  workItemId: string
+): Promise<RemitoWorkItemStatus> {
+  const res = await fetch("/api/v1/remitos", {
+    method: "POST",
+    headers: headers(session),
+    body: JSON.stringify({ action: "status_for_work", workItemId }),
+  });
+  const body = (await res.json()) as RemitoWorkItemStatus & { error?: string };
+  if (!res.ok) throw new Error(body.error ?? "No se pudo consultar estado de remito");
+  return { status: body.status, remitoId: body.remitoId ?? null };
+}
+
+export async function listRemitoVersionsApi(
+  session: OrdersClientSession,
+  remitoId: string
+): Promise<RemitoVersionInfo[]> {
+  const res = await fetch(`/api/v1/remitos/${remitoId}`, {
+    method: "PATCH",
+    headers: headers(session),
+    body: JSON.stringify({ action: "list_versions" }),
+  });
+  const body = (await res.json()) as {
+    versions?: RemitoVersionInfo[];
+    remito?: RemitoRecord;
+    error?: string;
+  };
+  if (!res.ok) throw new Error(body.error ?? "No se pudieron listar versiones");
+  return body.versions ?? body.remito?.versions ?? [];
+}
+
 export function remitoDownloadUrl(
   remitoId: string,
   format: "pdf" | "xlsx",
-  filename?: string
+  opts?: { filename?: string; version?: number }
 ): string {
   const qs = new URLSearchParams({ format });
-  if (filename) qs.set("filename", filename);
+  if (opts?.filename) qs.set("filename", opts.filename);
+  if (opts?.version != null) qs.set("version", String(opts.version));
   return `/api/v1/remitos/${remitoId}/download?${qs}`;
 }

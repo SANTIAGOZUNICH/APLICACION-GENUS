@@ -48,6 +48,49 @@ describe("MpStockLedgerService", () => {
     expect((await ledger.getBalance("MP1"))!.stockActual).toBe(10);
   });
 
+  it("editar ingreso aplica delta; cambio de código revierte y reaplica", async () => {
+    const ledger = getMpStockLedger();
+    await ledger.seedSaldoInicialOnce(mp, "AAA", 0);
+    await ledger.seedSaldoInicialOnce(mp, "BBB", 0);
+
+    await ledger.applyIngreso(mp, {
+      ingresoId: "ing-delta",
+      versionTag: "t1",
+      codigo: "AAA",
+      quantity: 20,
+      previousQuantity: 0,
+    });
+    expect((await ledger.getBalance("AAA"))!.stockActual).toBe(20);
+
+    await ledger.applyIngreso(mp, {
+      ingresoId: "ing-delta",
+      versionTag: "t2",
+      codigo: "AAA",
+      quantity: 15,
+      previousQuantity: 20,
+    });
+    expect((await ledger.getBalance("AAA"))!.stockActual).toBe(15);
+
+    // reverse old code via delta to 0
+    await ledger.applyIngreso(mp, {
+      ingresoId: "ing-delta",
+      versionTag: "t3-rev",
+      codigo: "AAA",
+      quantity: 0,
+      previousQuantity: 15,
+    });
+    expect((await ledger.getBalance("AAA"))!.stockActual).toBe(0);
+
+    await ledger.applyIngreso(mp, {
+      ingresoId: "ing-delta",
+      versionTag: "t3-new",
+      codigo: "BBB",
+      quantity: 15,
+      previousQuantity: 0,
+    });
+    expect((await ledger.getBalance("BBB"))!.stockActual).toBe(15);
+  });
+
   it("borrador OE no descuenta; completa sí; no duplica", async () => {
     const ledger = getMpStockLedger();
     await ledger.seedSaldoInicialOnce(mp, "MP1", 100);
