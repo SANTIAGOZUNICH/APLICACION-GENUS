@@ -17,6 +17,9 @@ import {
 import { ExcelPasteDialog } from "@/features/os/operational/components/excel-paste-dialog";
 import { MpWeeklyControlPanel } from "@/features/os/operational/components/mp-weekly-control-panel";
 import { MpCoasPanel } from "@/features/os/operational/components/mp-coas-panel";
+import { MpStockAjusteModal } from "@/features/os/operational/components/mp-stock-ajuste-modal";
+import { MpStockLedgerPanel } from "@/features/os/operational/components/mp-stock-ledger-panel";
+import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import {
   OperationalTable,
   type OperationalTableColumn,
@@ -39,6 +42,10 @@ import {
 } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
 import { usePreviewSession } from "@/features/os/session/preview-context";
+import {
+  ACTOR_EMAIL_HEADER,
+  ACTOR_SECTOR_HEADER,
+} from "@/lib/orders/actor";
 
 export type MpHubTab = (typeof MP_TABS)[number];
 
@@ -51,11 +58,14 @@ const TAB_TO_RESOURCE = {
 } as const;
 
 export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: MpHubTab }) {
-  const { sectorId } = usePreviewSession();
+  const { email, sectorId } = usePreviewSession();
   const [tab, setTab] = useState<MpHubTab>(initialTab);
   const canWrite = canWriteInventory(sectorId, TAB_TO_RESOURCE[tab]);
   const [banner, setBanner] = useState<string | null>(null);
   const [persistence, setPersistence] = useState(true);
+  const [schemaPending0005, setSchemaPending0005] = useState(false);
+  const [ajusteOpen, setAjusteOpen] = useState(false);
+  const [ledgerKey, setLedgerKey] = useState(0);
   const [search, setSearch] = useState("");
   const [pasteOpen, setPasteOpen] = useState(false);
   const [stock, setStock] = useState<MpStockRow[]>([]);
@@ -82,7 +92,21 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     setCompras(p.data);
     setPersistence(s.persistence);
     setBanner(s.message ?? null);
-  }, []);
+
+    // Probe schema 0005 via ledger (vacío / schemaPending)
+    try {
+      const probe = await fetch("/api/v1/mp-stock/ledger", {
+        headers: {
+          [ACTOR_EMAIL_HEADER]: email ?? "",
+          [ACTOR_SECTOR_HEADER]: sectorId,
+        },
+      });
+      const body = (await probe.json()) as { schemaPending?: boolean };
+      setSchemaPending0005(Boolean(body.schemaPending));
+    } catch {
+      /* ignore */
+    }
+  }, [email, sectorId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -405,6 +429,16 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             </Button>
           </>
         )}
+        {tab === "Stock" && canWrite ? (
+          <Button
+            type="button"
+            data-testid="mp-stock-ajuste-open"
+            disabled={schemaPending0005}
+            onClick={() => setAjusteOpen(true)}
+          >
+            Registrar ajuste
+          </Button>
+        ) : null}
         {tab !== "Control semanal" && tab !== "COA'S" ? (
         <input
           className="rounded border px-3 py-1.5 text-sm"
@@ -418,7 +452,10 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         ) : null}
       </div>
 
+      {tab === "Stock" ? <SchemaPendingBanner show={schemaPending0005} /> : null}
+
       {tab === "Stock" && (
+        <>
         <OperationalTable
           columns={[
             ...stockColumns,
@@ -464,6 +501,10 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           rowKey={(r) => r.id}
           emptyMessage="Stock MP vacío (sin registros históricos)."
         />
+        <div className="mt-4">
+          <MpStockLedgerPanel key={ledgerKey} schemaPending={schemaPending0005} />
+        </div>
+        </>
       )}
 
       {tab === "Ingresos MP" && (
@@ -567,6 +608,16 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           </div>
         </div>
       )}
+
+      <MpStockAjusteModal
+        open={ajusteOpen}
+        onClose={() => setAjusteOpen(false)}
+        schemaPending={schemaPending0005}
+        onSaved={() => {
+          setLedgerKey((k) => k + 1);
+          void reload();
+        }}
+      />
 
       <ConfirmDialog
         open={Boolean(ingresoPrefill)}

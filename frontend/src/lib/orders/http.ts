@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db/client";
+import { SchemaPendingError, schemaPendingResponse } from "@/lib/db/feature-schema";
 import {
   MeStockShortageError,
   OrdersConflictError,
@@ -25,6 +26,9 @@ export function ensureOrdersPersistenceReady(): NextResponse | null {
 }
 
 export function ordersErrorResponse(err: unknown): NextResponse {
+  if (err instanceof SchemaPendingError) {
+    return NextResponse.json(schemaPendingResponse(), { status: 503 });
+  }
   if (err instanceof MeStockShortageError) {
     return NextResponse.json(
       {

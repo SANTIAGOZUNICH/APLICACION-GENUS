@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
+import {
+  assertFeatureWritesEnabled,
+  isFeatureMemoryAllowed,
+  isFeatureSchemaReady,
+  SchemaPendingError,
+} from "@/lib/db/feature-schema";
 import { coaFileVersions, coaFiles, coaFolders } from "@/lib/db/schema";
 import {
   assertCoasFolderConfigured,
@@ -13,6 +19,7 @@ import {
   canViewCoas,
   type CoaFileRecord,
   type CoaFolderRecord,
+  type CoaVersionRecord,
 } from "./types";
 import type { SectorId } from "@/types/operational/sector";
 
@@ -21,21 +28,16 @@ export type CoaActor = { email: string; sector: SectorId };
 type Mem = {
   folders: CoaFolderRecord[];
   files: CoaFileRecord[];
-  versions: Array<{
-    id: string;
-    fileId: string;
-    version: number;
-    driveFileId: string;
-    mimeType: string;
-    sizeBytes: number;
-    uploadedBy: string;
-    createdAt: string;
-  }>;
+  versions: CoaVersionRecord[];
+  /** bytes de versiones en memoria (solo tests) */
+  blobs: Map<string, Buffer>;
 };
 
 const g = globalThis as unknown as { __genusCoaMem?: Mem };
 function mem(): Mem {
-  if (!g.__genusCoaMem) g.__genusCoaMem = { folders: [], files: [], versions: [] };
+  if (!g.__genusCoaMem) {
+    g.__genusCoaMem = { folders: [], files: [], versions: [], blobs: new Map() };
+  }
   return g.__genusCoaMem;
 }
 
@@ -52,7 +54,7 @@ export class CoaService {
     parentId: string | null
   ): Promise<{ folders: CoaFolderRecord[]; files: CoaFileRecord[] }> {
     assertView(actor);
-    if (isDatabaseConfigured()) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         const folders = await db
@@ -97,9 +99,10 @@ export class CoaService {
           })),
         };
       } catch {
-        /* mem */
+        if (!isFeatureMemoryAllowed()) return { folders: [], files: [] };
       }
     }
+    if (!isFeatureMemoryAllowed()) return { folders: [], files: [] };
     return {
       folders: mem().folders.filter((f) => f.parentId === parentId),
       files: mem().files.filter((f) => f.folderId === (parentId ?? "")),
@@ -112,6 +115,7 @@ export class CoaService {
     parentId: string | null
   ): Promise<CoaFolderRecord> {
     assertAdmin(actor);
+    await assertFeatureWritesEnabled();
     const clean = name.trim();
     if (!clean) throw new Error("Nombre obligatorio.");
     let parentDriveId = "mem-root";
@@ -119,8 +123,10 @@ export class CoaService {
     try {
       parentDriveId = assertCoasFolderConfigured();
     } catch {
-      if (process.env.NODE_ENV !== "test" && process.env.GOOGLE_DRIVE_COAS_FOLDER_ID) {
-        throw new Error("GOOGLE_DRIVE_COAS_FOLDER_ID no configurada.");
+      if (!isFeatureMemoryAllowed()) {
+        throw new Error(
+          "GOOGLE_DRIVE_COAS_FOLDER_ID no configurada o Service Account sin acceso Editor."
+        );
       }
     }
     if (parentId) {
@@ -178,6 +184,7 @@ export class CoaService {
     }
   ): Promise<CoaFileRecord> {
     assertAdmin(actor);
+    await assertFeatureWritesEnabled();
     validateCoaUpload({
       fileName: params.fileName,
       mimeType: params.mimeType,
@@ -186,31 +193,42 @@ export class CoaService {
     const folder = await this.getFolder(params.folderId);
     if (!folder) throw new Error("Carpeta no encontrada.");
 
-    let driveFileId = `mem-file-${randomUUID()}`;
-    try {
+    // Verificar carpeta Drive antes de subir (evita metadata huérfana).
+    if (!isFeatureMemoryAllowed()) {
+      assertCoasFolderConfigured();
       const drive = await getDriveWriteClient();
-      const res = await drive.files.create({
-        requestBody: {
-          name: params.fileName,
-          parents: [folder.driveFolderId],
-        },
-        media: {
-          mimeType: params.mimeType,
-          body: Readable.from(params.bytes),
-        },
-        fields: "id,size,mimeType",
+      const meta = await drive.files.get({
+        fileId: folder.driveFolderId,
+        fields: "id,trashed",
         supportsAllDrives: true,
       });
-      driveFileId = res.data.id!;
-    } catch (err) {
-      if (
-        process.env.NODE_ENV === "test" ||
-        !process.env.GOOGLE_DRIVE_COAS_FOLDER_ID
-      ) {
-        /* mem */
-      } else {
-        throw err;
+      if (!meta.data.id || meta.data.trashed) {
+        throw new Error("La carpeta Drive no es accesible. No se registró el archivo.");
       }
+    }
+
+    let driveFileId = `mem-file-${randomUUID()}`;
+    let driveUploaded = false;
+    try {
+      if (!isFeatureMemoryAllowed() || process.env.GOOGLE_DRIVE_COAS_FOLDER_ID) {
+        const drive = await getDriveWriteClient();
+        const res = await drive.files.create({
+          requestBody: {
+            name: params.fileName,
+            parents: [folder.driveFolderId],
+          },
+          media: {
+            mimeType: params.mimeType,
+            body: Readable.from(params.bytes),
+          },
+          fields: "id,size,mimeType",
+          supportsAllDrives: true,
+        });
+        driveFileId = res.data.id!;
+        driveUploaded = true;
+      }
+    } catch (err) {
+      if (!isFeatureMemoryAllowed()) throw err;
     }
 
     const now = new Date().toISOString();
@@ -240,6 +258,9 @@ export class CoaService {
         uploadedBy: actor.email,
         createdAt: now,
       });
+      if (isFeatureMemoryAllowed()) {
+        mem().blobs.set(driveFileId, params.bytes);
+      }
       return updated;
     }
 
@@ -268,29 +289,200 @@ export class CoaService {
         uploadedBy: actor.email,
         createdAt: now,
       });
+      if (isFeatureMemoryAllowed()) {
+        mem().blobs.set(driveFileId, params.bytes);
+      }
     } catch (err) {
-      // Rollback Drive si metadata falla
-      try {
-        const drive = await getDriveWriteClient();
-        await drive.files.update({
-          fileId: driveFileId,
-          requestBody: { trashed: true },
-          supportsAllDrives: true,
-        });
-      } catch {
-        /* ignore */
+      // Rollback Drive si metadata falla — no dejar archivo huérfano en Drive
+      // ni metadata sin archivo.
+      if (driveUploaded) {
+        try {
+          const drive = await getDriveWriteClient();
+          await drive.files.update({
+            fileId: driveFileId,
+            requestBody: { trashed: true },
+            supportsAllDrives: true,
+          });
+        } catch {
+          /* ignore trash errors */
+        }
       }
       throw err;
     }
     return file;
   }
 
+  async renameFolder(
+    actor: CoaActor,
+    folderId: string,
+    name: string
+  ): Promise<CoaFolderRecord> {
+    assertAdmin(actor);
+    await assertFeatureWritesEnabled();
+    const clean = name.trim();
+    if (!clean) throw new Error("Nombre obligatorio.");
+    const folder = await this.getFolder(folderId);
+    if (!folder) throw new Error("Carpeta no encontrada.");
+    const now = new Date().toISOString();
+    const updated: CoaFolderRecord = {
+      ...folder,
+      name: clean,
+      path: `${folder.path.replace(/\/[^/]+$/, "")}/${clean}`.replace(/\/+/g, "/"),
+      updatedAt: now,
+    };
+
+    if (!isFeatureMemoryAllowed() && !folder.driveFolderId.startsWith("mem-")) {
+      const drive = await getDriveWriteClient();
+      await drive.files.update({
+        fileId: folder.driveFolderId,
+        requestBody: { name: clean },
+        supportsAllDrives: true,
+      });
+    }
+
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+      const db = getDb();
+      await db
+        .update(coaFolders)
+        .set({
+          name: clean,
+          path: updated.path,
+          updatedAt: new Date(now),
+          audit: { action: "rename", at: now, by: actor.email },
+        })
+        .where(eq(coaFolders.id, folderId));
+      return updated;
+    }
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
+    const idx = mem().folders.findIndex((f) => f.id === folderId);
+    if (idx < 0) throw new Error("Carpeta no encontrada.");
+    mem().folders[idx] = updated;
+    return updated;
+  }
+
+  async archiveFolder(actor: CoaActor, folderId: string): Promise<void> {
+    assertAdmin(actor);
+    await assertFeatureWritesEnabled();
+    const folder = await this.getFolder(folderId);
+    if (!folder) throw new Error("Carpeta no encontrada.");
+
+    const children = (await this.list(actor, folderId)).folders;
+    const files = (await this.list(actor, folderId)).files;
+    if (children.length > 0 || files.length > 0) {
+      throw new Error(
+        "Solo se puede eliminar una carpeta vacía (auditoría). Mové o archivá el contenido primero."
+      );
+    }
+
+    if (!isFeatureMemoryAllowed() && !folder.driveFolderId.startsWith("mem-")) {
+      const drive = await getDriveWriteClient();
+      await drive.files.update({
+        fileId: folder.driveFolderId,
+        requestBody: { trashed: true },
+        supportsAllDrives: true,
+      });
+    }
+
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+      const db = getDb();
+      await db
+        .update(coaFolders)
+        .set({
+          archived: true,
+          updatedAt: new Date(),
+          audit: { action: "archive", at: new Date().toISOString(), by: actor.email },
+        })
+        .where(eq(coaFolders.id, folderId));
+      return;
+    }
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
+    mem().folders = mem().folders.filter((f) => f.id !== folderId);
+  }
+
+  async listVersions(actor: CoaActor, fileId: string): Promise<CoaVersionRecord[]> {
+    assertView(actor);
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+      try {
+        const db = getDb();
+        const rows = await db
+          .select()
+          .from(coaFileVersions)
+          .where(eq(coaFileVersions.fileId, fileId));
+        return rows
+          .map((v) => ({
+            id: v.id,
+            fileId: v.fileId,
+            version: v.version,
+            driveFileId: v.driveFileId,
+            mimeType: v.mimeType,
+            sizeBytes: v.sizeBytes,
+            uploadedBy: v.uploadedBy,
+            createdAt: v.createdAt.toISOString(),
+          }))
+          .sort((a, b) => b.version - a.version);
+      } catch {
+        if (!isFeatureMemoryAllowed()) return [];
+      }
+    }
+    if (!isFeatureMemoryAllowed()) return [];
+    return mem()
+      .versions.filter((v) => v.fileId === fileId)
+      .sort((a, b) => b.version - a.version);
+  }
+
+  async downloadVersion(
+    actor: CoaActor,
+    fileId: string,
+    version?: number
+  ): Promise<{ fileName: string; mimeType: string; bytes: Buffer }> {
+    assertView(actor);
+    const file = await this.getFile(fileId);
+    if (!file) throw new Error("Archivo no encontrado.");
+    const versions = await this.listVersions(actor, fileId);
+    const target =
+      version != null
+        ? versions.find((v) => v.version === version)
+        : versions[0] ?? {
+            driveFileId: file.driveFileId,
+            mimeType: file.mimeType,
+            version: file.currentVersion,
+          };
+    if (!target) throw new Error("Versión no encontrada.");
+
+    const driveFileId =
+      "driveFileId" in target ? target.driveFileId : file.driveFileId;
+    const mimeType = "mimeType" in target ? target.mimeType : file.mimeType;
+
+    if (isFeatureMemoryAllowed() && mem().blobs.has(driveFileId)) {
+      return {
+        fileName: file.name,
+        mimeType,
+        bytes: mem().blobs.get(driveFileId)!,
+      };
+    }
+
+    const drive = await getDriveWriteClient();
+    const res = await drive.files.get(
+      {
+        fileId: driveFileId,
+        alt: "media",
+        supportsAllDrives: true,
+      },
+      { responseType: "arraybuffer" }
+    );
+    const data = res.data as ArrayBuffer | Buffer | string;
+    const bytes = Buffer.isBuffer(data)
+      ? data
+      : Buffer.from(data as ArrayBuffer);
+    return { fileName: file.name, mimeType, bytes };
+  }
+
   async getFolder(id: string): Promise<CoaFolderRecord | null> {
-    if (isDatabaseConfigured()) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         const [f] = await db.select().from(coaFolders).where(eq(coaFolders.id, id)).limit(1);
-        if (!f) return null;
+        if (!f || f.archived) return null;
         return {
           id: f.id,
           parentId: f.parentId,
@@ -302,18 +494,19 @@ export class CoaService {
           updatedAt: f.updatedAt.toISOString(),
         };
       } catch {
-        /* mem */
+        if (!isFeatureMemoryAllowed()) return null;
       }
     }
+    if (!isFeatureMemoryAllowed()) return null;
     return mem().folders.find((f) => f.id === id) ?? null;
   }
 
   async getFile(id: string): Promise<CoaFileRecord | null> {
-    if (isDatabaseConfigured()) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         const [f] = await db.select().from(coaFiles).where(eq(coaFiles.id, id)).limit(1);
-        if (!f) return null;
+        if (!f || f.archived) return null;
         return {
           id: f.id,
           folderId: f.folderId,
@@ -328,14 +521,15 @@ export class CoaService {
           updatedAt: f.updatedAt.toISOString(),
         };
       } catch {
-        /* mem */
+        if (!isFeatureMemoryAllowed()) return null;
       }
     }
+    if (!isFeatureMemoryAllowed()) return null;
     return mem().files.find((f) => f.id === id) ?? null;
   }
 
   private async persistFolder(folder: CoaFolderRecord) {
-    if (isDatabaseConfigured()) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         await db.insert(coaFolders).values({
@@ -348,18 +542,19 @@ export class CoaService {
           createdAt: new Date(folder.createdAt),
           updatedAt: new Date(folder.updatedAt),
           archived: false,
-          audit: {},
+          audit: { action: "mkdir", at: folder.createdAt },
         });
         return;
       } catch {
-        /* mem */
+        if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
       }
     }
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
     mem().folders.push(folder);
   }
 
   private async persistFile(file: CoaFileRecord) {
-    if (isDatabaseConfigured()) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         await db
@@ -377,7 +572,7 @@ export class CoaService {
             createdAt: new Date(file.createdAt),
             updatedAt: new Date(file.updatedAt),
             archived: false,
-            audit: {},
+            audit: { action: "upload", at: file.updatedAt },
           })
           .onConflictDoUpdate({
             target: coaFiles.id,
@@ -393,16 +588,17 @@ export class CoaService {
           });
         return;
       } catch {
-        /* mem */
+        if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
       }
     }
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
     const idx = mem().files.findIndex((f) => f.id === file.id);
     if (idx >= 0) mem().files[idx] = file;
     else mem().files.push(file);
   }
 
-  private async persistVersion(v: Mem["versions"][number]) {
-    if (isDatabaseConfigured()) {
+  private async persistVersion(v: CoaVersionRecord) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         await db.insert(coaFileVersions).values({
@@ -417,9 +613,10 @@ export class CoaService {
         });
         return;
       } catch {
-        /* mem */
+        if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
       }
     }
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
     mem().versions.push(v);
   }
 }
@@ -431,6 +628,6 @@ export function getCoaService(): CoaService {
 }
 
 export function resetCoaMemoryForTests(): void {
-  g.__genusCoaMem = { folders: [], files: [], versions: [] };
+  g.__genusCoaMem = { folders: [], files: [], versions: [], blobs: new Map() };
   singleton = null;
 }

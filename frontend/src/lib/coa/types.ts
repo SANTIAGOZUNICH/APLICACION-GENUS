@@ -37,3 +37,14 @@ export type CoaFileRecord = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type CoaVersionRecord = {
+  id: string;
+  fileId: string;
+  version: number;
+  driveFileId: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedBy: string;
+  createdAt: string;
+};

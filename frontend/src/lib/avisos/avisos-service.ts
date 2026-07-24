@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import {
+  assertFeatureWritesEnabled,
+  isFeatureMemoryAllowed,
+  isFeatureSchemaReady,
+  SchemaPendingError,
+} from "@/lib/db/feature-schema";
+import {
   osInternalMessageRecipients,
   osInternalMessages,
   osNotifications,
@@ -137,6 +143,7 @@ function toRecord(
 export class AvisosService {
   async create(actor: AvisoActor, input: CreateAvisoInput): Promise<AvisoRecord> {
     assertAvisoSender(actor.sector);
+    await assertFeatureWritesEnabled();
     const title = input.title.trim();
     const body = input.body.trim();
     if (!title) throw new Error("El título es obligatorio.");
@@ -145,7 +152,7 @@ export class AvisosService {
     const priority = normalizePriority(input.priority);
     const now = new Date();
 
-    if (isDatabaseConfigured()) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         const [msg] = await db
@@ -161,6 +168,7 @@ export class AvisosService {
               createdBy: actor.email,
               createdBySector: actor.sector,
               at: now.toISOString(),
+              action: "create",
             },
           })
           .returning();
@@ -184,16 +192,12 @@ export class AvisosService {
         });
         return record;
       } catch (err) {
-        // Tabla 0005 aún no aplicada → memoria.
-        if (
-          err instanceof Error &&
-          !/does not exist|relation|42703|42P01/i.test(err.message) &&
-          !/Failed query/i.test(err.message)
-        ) {
-          // other errors: still try memory for Preview safety on missing migration
-        }
+        if (err instanceof SchemaPendingError) throw err;
+        if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
       }
     }
+
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
 
     const id = randomUUID();
     const record: AvisoRecord = {
@@ -233,7 +237,7 @@ export class AvisosService {
       !query ||
       `${m.title} ${m.body} ${m.fromSector} ${m.priority}`.toLowerCase().includes(query);
 
-    if (isDatabaseConfigured()) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         if (tab === "enviados") {
@@ -282,9 +286,11 @@ export class AvisosService {
         }
         return out.filter(filterQ);
       } catch {
-        // memoria
+        if (!isFeatureMemoryAllowed()) return [];
       }
     }
+
+    if (!isFeatureMemoryAllowed()) return [];
 
     const all = mem().messages;
     if (tab === "enviados") {
@@ -302,8 +308,9 @@ export class AvisosService {
 
   async markRead(actor: AvisoActor, messageId: string): Promise<AvisoRecord | null> {
     assertAvisoSender(actor.sector);
+    await assertFeatureWritesEnabled();
     const now = new Date();
-    if (isDatabaseConfigured()) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         await db
@@ -318,9 +325,10 @@ export class AvisosService {
           );
         return this.getForActor(actor, messageId);
       } catch {
-        // memoria
+        if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
       }
     }
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
     const msg = mem().messages.find((m) => m.id === messageId);
     if (!msg) return null;
     const r = msg.recipients.find((x) => x.sector === actor.sector);
@@ -330,8 +338,9 @@ export class AvisosService {
 
   async archive(actor: AvisoActor, messageId: string): Promise<AvisoRecord | null> {
     assertAvisoSender(actor.sector);
+    await assertFeatureWritesEnabled();
     const now = new Date();
-    if (isDatabaseConfigured()) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         await db
@@ -345,9 +354,10 @@ export class AvisosService {
           );
         return this.getForActor(actor, messageId);
       } catch {
-        // memoria
+        if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
       }
     }
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
     const msg = mem().messages.find((m) => m.id === messageId);
     if (!msg) return null;
     const r = msg.recipients.find((x) => x.sector === actor.sector);

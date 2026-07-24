@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isFeatureSchemaReady } from "@/lib/db/feature-schema";
 import { getMpControlService } from "@/lib/mp-control/mp-control-service";
 import type { MpFormulaSnapshot } from "@/lib/mp-control/types";
 import { resolveOrdersActor } from "@/lib/orders/actor";
@@ -10,11 +11,16 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
     const actor = resolveOrdersActor(request);
+    const persistenceReady = await isFeatureSchemaReady();
     const controls = await getMpControlService().list({
       email: actor.email,
       sector: actor.sector,
     });
-    return NextResponse.json({ controls });
+    return NextResponse.json({
+      controls,
+      persistenceReady,
+      schemaPending: !persistenceReady,
+    });
   } catch (err) {
     return ordersErrorResponse(err);
   }

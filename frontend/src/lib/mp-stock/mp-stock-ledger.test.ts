@@ -78,20 +78,18 @@ describe("MpStockLedgerService", () => {
       oeStatus: "COMPLETA",
       lines: [{ lineId: "l1", codigo: "MP1", kgReal: 10 }],
     });
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(90);
+
     await ledger.applyOeConsumption(mp, {
       oeId: "oe1",
       oeVersion: 2,
       oeStatus: "COMPLETA",
       lines: [{ lineId: "l1", codigo: "MP1", kgReal: 15 }],
     });
-    // Same idempotency base uses oeVersion in key — v2 is new key so full -15
-    // For delta path: same version key with different qty
-    const key = buildOeConsumptionKey("oe1", 1, "l1", "MP1");
-    expect(key).toContain("oe-consumo");
-
-    await ledger.reverseOeConsumption(mp, "oe1", 1);
-    // after reverse of v1 (-10 reversed => +10), stock was 100-10-15=75, +10 => 85
     expect((await ledger.getBalance("MP1"))!.stockActual).toBe(85);
+
+    await ledger.reverseOeConsumption(mp, "oe1");
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(100);
   });
 
   it("sin código no descuenta", async () => {
@@ -118,5 +116,29 @@ describe("MpStockLedgerService", () => {
       allowNegative: true,
     });
     expect((await ledger.getBalance("MP1"))!.stockActual).toBe(8);
+  });
+
+  it("stock = ingresos − consumo OE ± ajustes", async () => {
+    const ledger = getMpStockLedger();
+    await ledger.seedSaldoInicialOnce(mp, "MPX", 0);
+    await ledger.applyIngreso(mp, {
+      ingresoId: "ing-x",
+      versionTag: "v1",
+      codigo: "MPX",
+      quantity: 50,
+    });
+    await ledger.applyOeConsumption(mp, {
+      oeId: "oe-x",
+      oeVersion: 1,
+      oeStatus: "COMPLETA",
+      lines: [{ lineId: "l1", codigo: "MPX", kgReal: 12 }],
+    });
+    await ledger.registerAjuste(mp, {
+      codigo: "MPX",
+      quantity: 3,
+      reason: "Corrección positiva",
+      allowNegative: true,
+    });
+    expect((await ledger.getBalance("MPX"))!.stockActual).toBe(41);
   });
 });

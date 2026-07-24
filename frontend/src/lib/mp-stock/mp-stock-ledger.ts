@@ -3,6 +3,12 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
+import {
+  assertFeatureWritesEnabled,
+  isFeatureMemoryAllowed,
+  isFeatureSchemaReady,
+  SchemaPendingError,
+} from "@/lib/db/feature-schema";
 import { mpStockBalances, mpStockMovements, osNotifications } from "@/lib/db/schema";
 import type { SectorId } from "@/types/operational/sector";
 
@@ -66,7 +72,16 @@ export function buildOeConsumptionKey(
   lineId: string,
   codigo: string
 ): string {
-  return `oe-consumo:${oeId}:v${oeVersion}:line:${lineId}:cod:${codigo.trim().toUpperCase()}`;
+  return `${buildOeConsumptionPositionKey(oeId, lineId, codigo)}:v${oeVersion}`;
+}
+
+/** Clave estable de posición (sin versión) para acumular deltas. */
+export function buildOeConsumptionPositionKey(
+  oeId: string,
+  lineId: string,
+  codigo: string
+): string {
+  return `oe-consumo:${oeId}:line:${lineId}:cod:${codigo.trim().toUpperCase()}`;
 }
 
 export function buildIngresoKey(ingresoId: string, versionTag: string): string {
@@ -268,7 +283,9 @@ export class MpStockLedgerService {
 
   /**
    * Consumo OE: solo COMPLETA / COMPLETA_CON_PENDIENTES.
-   * kgReal = kgAPesar + ajuste. Idempotente por OE+línea+código+versión.
+   * kgReal = kgAPesar + ajuste.
+   * Idempotente: misma OE+línea+código no descuenta dos veces;
+   * re-entrega/corrección aplica únicamente el delta.
    */
   async applyOeConsumption(
     actor: MpStockActor,
@@ -290,6 +307,7 @@ export class MpStockLedgerService {
     ) {
       return { applied: 0, skippedNoCode: 0, warnings: [] };
     }
+    await assertFeatureWritesEnabled();
     let applied = 0;
     let skippedNoCode = 0;
     const warnings: string[] = [];
@@ -308,36 +326,37 @@ export class MpStockLedgerService {
         });
         continue;
       }
-      const key = buildOeConsumptionKey(
+      const positionKey = buildOeConsumptionPositionKey(
+        params.oeId,
+        line.lineId,
+        code
+      );
+      const related = await this.listMovementsByPositionPrefix(positionKey);
+      const netQty = related
+        .filter((m) => !m.reversed)
+        .reduce((s, m) => s + m.quantity, 0);
+      const targetQty = -Math.abs(line.kgReal);
+      const delta = Math.round((targetQty - netQty) * 1000) / 1000;
+      if (delta === 0) continue;
+
+      const applyKey = buildOeConsumptionKey(
         params.oeId,
         params.oeVersion,
         line.lineId,
         code
       );
-      const existing = await this.findByIdempotency(key);
-      const targetQty = -Math.abs(line.kgReal);
-      if (existing && !existing.reversed) {
-        const delta = targetQty - existing.quantity;
-        if (delta === 0) continue;
-        await this.applyMovement(actor, {
-          codigo: code,
-          kind: "CONSUMO_OE",
-          quantity: delta,
-          reason: "Corrección consumo OE (delta)",
-          idempotencyKey: `${key}:delta:${params.oeVersion}`,
-          refType: "oe",
-          refId: params.oeId,
-          allowNegative: params.allowNegative,
-        });
-        applied += 1;
-        continue;
-      }
+      const already = await this.findByIdempotency(applyKey);
+      if (already && !already.reversed) continue;
+
       await this.applyMovement(actor, {
         codigo: code,
         kind: "CONSUMO_OE",
-        quantity: targetQty,
-        reason: "Consumo OE (kg real)",
-        idempotencyKey: key,
+        quantity: delta,
+        reason:
+          netQty === 0
+            ? "Consumo OE (kg real)"
+            : "Corrección consumo OE (delta)",
+        idempotencyKey: applyKey,
         refType: "oe",
         refId: params.oeId,
         allowNegative: params.allowNegative,
@@ -350,13 +369,15 @@ export class MpStockLedgerService {
   async reverseOeConsumption(
     actor: MpStockActor,
     oeId: string,
-    oeVersion: number
+    _oeVersion?: number
   ): Promise<number> {
-    const prefix = `oe-consumo:${oeId}:v${oeVersion}:`;
+    await assertFeatureWritesEnabled();
     const all = await this.listMovementsByRef("oe", oeId);
     let n = 0;
     for (const m of all) {
-      if (!m.idempotencyKey.startsWith(prefix) || m.reversed) continue;
+      if (!m.idempotencyKey.startsWith(`oe-consumo:${oeId}:`) || m.reversed) {
+        continue;
+      }
       await this.applyMovement(actor, {
         codigo: m.codigo,
         kind: "REVERSO",
@@ -403,6 +424,41 @@ export class MpStockLedgerService {
       allowNegative: params.allowNegative ?? true,
       documento: params.fecha,
     });
+  }
+
+  private async listMovementsByPositionPrefix(
+    positionKey: string
+  ): Promise<MpStockMovement[]> {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+      try {
+        const db = getDb();
+        const rows = await db.select().from(mpStockMovements);
+        return rows
+          .filter((r) => r.idempotencyKey.startsWith(positionKey))
+          .map((r) => ({
+            id: r.id,
+            codigo: r.codigo,
+            kind: r.kind as MpStockMovementKind,
+            quantity: r.quantity,
+            balanceAfter: r.balanceAfter,
+            reason: r.reason,
+            refType: r.refType,
+            refId: r.refId,
+            lote: r.lote,
+            proveedor: r.proveedor,
+            documento: r.documento,
+            actorEmail: r.actorEmail,
+            actorSector: r.actorSector,
+            idempotencyKey: r.idempotencyKey,
+            reversed: r.reversed,
+            createdAt: r.createdAt.toISOString(),
+          }));
+      } catch {
+        /* fallthrough */
+      }
+    }
+    if (!isFeatureMemoryAllowed()) return [];
+    return mem().movements.filter((m) => m.idempotencyKey.startsWith(positionKey));
   }
 
   private async listMovementsByRef(
@@ -503,6 +559,7 @@ export class MpStockLedgerService {
       reverseOfKey?: string;
     }
   ): Promise<MpStockBalance> {
+    await assertFeatureWritesEnabled();
     const existing = await this.findByIdempotency(input.idempotencyKey);
     if (existing && !existing.reversed) {
       const bal = await this.getBalance(input.codigo);
@@ -629,8 +686,14 @@ export class MpStockLedgerService {
         }
         return nextBal;
       } catch {
-        /* mem */
+        if (!isFeatureMemoryAllowed()) {
+          throw new SchemaPendingError();
+        }
       }
+    }
+
+    if (!isFeatureMemoryAllowed()) {
+      throw new SchemaPendingError();
     }
 
     mem().balances.set(nextBal.codigo, nextBal);

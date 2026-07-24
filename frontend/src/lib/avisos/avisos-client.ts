@@ -17,12 +17,19 @@ export async function fetchAvisosApi(
   session: OrdersClientSession,
   tab: AvisoTab,
   q = ""
-): Promise<AvisoRecord[]> {
+): Promise<{ messages: AvisoRecord[]; schemaPending: boolean }> {
   const qs = new URLSearchParams({ tab, q });
   const res = await fetch(`/api/v1/avisos?${qs}`, { headers: headers(session) });
-  const body = (await res.json()) as { messages?: AvisoRecord[]; error?: string };
+  const body = (await res.json()) as {
+    messages?: AvisoRecord[];
+    error?: string;
+    schemaPending?: boolean;
+  };
   if (!res.ok) throw new Error(body.error ?? "No se pudieron cargar avisos");
-  return body.messages ?? [];
+  return {
+    messages: body.messages ?? [],
+    schemaPending: Boolean(body.schemaPending),
+  };
 }
 
 export async function createAvisoApi(

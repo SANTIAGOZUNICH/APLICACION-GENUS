@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAvisosService } from "@/lib/avisos/avisos-service";
 import type { AvisoPriority, AvisoTab, CreateAvisoInput } from "@/lib/avisos/types";
+import { isFeatureSchemaReady } from "@/lib/db/feature-schema";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
 import type { SectorId } from "@/types/operational/sector";
@@ -17,12 +18,17 @@ export async function GET(request: Request) {
     if (!["recibidos", "enviados", "archivados"].includes(tab)) {
       return NextResponse.json({ error: "tab inválido" }, { status: 400 });
     }
+    const persistenceReady = await isFeatureSchemaReady();
     const messages = await getAvisosService().list(
       { email: actor.email, sector: actor.sector },
       tab,
       q
     );
-    return NextResponse.json({ messages, persistenceReady: true });
+    return NextResponse.json({
+      messages,
+      persistenceReady,
+      schemaPending: !persistenceReady,
+    });
   } catch (err) {
     return ordersErrorResponse(err);
   }

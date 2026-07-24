@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
+import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
   createAvisoApi,
@@ -37,6 +38,7 @@ export function InternalAvisosView() {
   const [selected, setSelected] = useState<AvisoRecord | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [confirmSend, setConfirmSend] = useState(false);
+  const [schemaPending, setSchemaPending] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [priority, setPriority] = useState<AvisoPriority>("NORMAL");
@@ -45,8 +47,9 @@ export function InternalAvisosView() {
 
   const reload = useCallback(async () => {
     try {
-      const messages = await fetchAvisosApi(session, tab, q);
+      const { messages, schemaPending: pending } = await fetchAvisosApi(session, tab, q);
       setItems(messages);
+      setSchemaPending(pending);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al cargar avisos");
@@ -109,6 +112,7 @@ export function InternalAvisosView() {
   return (
     <TwinShell title="Avisos">
       <div className="space-y-4 p-4" data-testid="internal-avisos-view">
+        <SchemaPendingBanner show={schemaPending} />
         <div className="flex flex-wrap items-center gap-2">
           {TABS.map((t) => (
             <button
@@ -132,8 +136,13 @@ export function InternalAvisosView() {
             className="ml-auto rounded border border-[var(--os-border)] px-2 py-1.5 text-sm"
             data-testid="avisos-search"
           />
-          <Button type="button" onClick={() => setComposeOpen(true)} data-testid="avisos-compose">
-            Nuevo aviso
+          <Button
+            type="button"
+            onClick={() => setComposeOpen(true)}
+            data-testid="avisos-compose"
+            disabled={schemaPending}
+          >
+            Crear aviso
           </Button>
         </div>
 
@@ -212,6 +221,11 @@ export function InternalAvisosView() {
             data-testid="avisos-compose-dialog"
           >
             <h3 className="mb-3 text-lg font-semibold">Nuevo aviso</h3>
+            {schemaPending ? (
+              <p className="mb-2 text-sm text-amber-800">
+                Base de datos pendiente de actualización. Los cambios están deshabilitados.
+              </p>
+            ) : null}
             <label className="mb-2 block text-xs">
               Título
               <input
@@ -274,7 +288,12 @@ export function InternalAvisosView() {
                 type="button"
                 data-testid="aviso-send"
                 onClick={() => setConfirmSend(true)}
-                disabled={!title.trim() || !body.trim() || (!toAll && toSectors.length === 0)}
+                disabled={
+                  schemaPending ||
+                  !title.trim() ||
+                  !body.trim() ||
+                  (!toAll && toSectors.length === 0)
+                }
               >
                 Enviar
               </Button>

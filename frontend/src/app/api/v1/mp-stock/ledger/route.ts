@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isFeatureSchemaReady } from "@/lib/db/feature-schema";
 import { getMpStockLedger } from "@/lib/mp-stock/mp-stock-ledger";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
@@ -11,8 +12,13 @@ export async function GET(request: Request) {
     const actor = resolveOrdersActor(request);
     const url = new URL(request.url);
     const codigo = url.searchParams.get("codigo") ?? "";
+    const persistenceReady = await isFeatureSchemaReady();
     if (!codigo.trim()) {
-      return NextResponse.json({ error: "codigo requerido" }, { status: 400 });
+      return NextResponse.json({
+        persistenceReady,
+        schemaPending: !persistenceReady,
+        actor: { email: actor.email, sector: actor.sector },
+      });
     }
     const ledger = getMpStockLedger();
     const balance = await ledger.getBalance(codigo);
@@ -21,6 +27,8 @@ export async function GET(request: Request) {
       balance,
       history,
       actor: { email: actor.email, sector: actor.sector },
+      persistenceReady,
+      schemaPending: !persistenceReady,
     });
   } catch (err) {
     return ordersErrorResponse(err);

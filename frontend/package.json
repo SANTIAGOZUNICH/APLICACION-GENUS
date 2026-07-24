@@ -14,6 +14,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:migrate-if": "node scripts/migrate-if-database.mjs",
+    "db:migrate-0005-dry-run": "node scripts/migration-0005-dry-run.mjs",
     "formulas:scan": "tsx scripts/formulas-cli.ts scan",
     "formulas:import": "tsx scripts/formulas-cli.ts import",
     "formulas:diagnose": "tsx scripts/formulas-diagnose.ts"

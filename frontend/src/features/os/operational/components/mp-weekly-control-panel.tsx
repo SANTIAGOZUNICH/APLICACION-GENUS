@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
+import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import {
   FormulaClientProductPickers,
   type SelectedFormulaOption,
@@ -41,6 +42,7 @@ export function MpWeeklyControlPanel() {
   const [qty, setQty] = useState("100");
   const [sourceHint, setSourceHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [schemaPending, setSchemaPending] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -48,9 +50,14 @@ export function MpWeeklyControlPanel() {
     const res = await fetch("/api/v1/mp-control", {
       headers: actorHeaders(session.email, session.sector),
     });
-    const body = (await res.json()) as { controls?: MpWeeklyControl[]; error?: string };
+    const body = (await res.json()) as {
+      controls?: MpWeeklyControl[];
+      error?: string;
+      schemaPending?: boolean;
+    };
     if (!res.ok) throw new Error(body.error ?? "Error al listar controles");
     setControls(body.controls ?? []);
+    setSchemaPending(Boolean(body.schemaPending));
   }, [session]);
 
   useEffect(() => {
@@ -138,8 +145,11 @@ export function MpWeeklyControlPanel() {
     void patchActive({ lines });
   }
 
+  const writesEnabled = canWrite && !schemaPending;
+
   return (
     <div className="space-y-4" data-testid="mp-weekly-control-panel">
+      <SchemaPendingBanner show={schemaPending} />
       {error ? (
         <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm" role="alert">
           {error}
@@ -151,7 +161,7 @@ export function MpWeeklyControlPanel() {
         </p>
       ) : null}
 
-      {canWrite ? (
+      {writesEnabled ? (
         <div className="grid gap-3 rounded border border-[var(--os-border)] p-3 sm:grid-cols-3">
           <div className="sm:col-span-2">
             <FormulaClientProductPickers
@@ -204,7 +214,7 @@ export function MpWeeklyControlPanel() {
               onClick={() => void loadFormulaAndCreate()}
               data-testid="mp-control-load-formula"
             >
-              Cargar fórmula y crear borrador
+              Guardar control
             </Button>
             <Button type="button" variant="secondary" onClick={() => setQty("100")}>
               100 kg
@@ -214,7 +224,7 @@ export function MpWeeklyControlPanel() {
             </Button>
           </div>
         </div>
-      ) : (
+      ) : canWrite ? null : (
         <p className="text-sm text-[var(--os-text-muted)]">Solo lectura (Producción/Calidad).</p>
       )}
 
@@ -249,7 +259,7 @@ export function MpWeeklyControlPanel() {
           {active ? (
             <div className="space-y-2 p-2">
               <div className="flex flex-wrap gap-2">
-                {canWrite && active.status === "BORRADOR" ? (
+                {writesEnabled && active.status === "BORRADOR" ? (
                   <>
                     <Button
                       type="button"
@@ -293,7 +303,7 @@ export function MpWeeklyControlPanel() {
                         <input
                           className="w-20 rounded border px-1"
                           value={l.codigo}
-                          disabled={!canWrite}
+                          disabled={!writesEnabled}
                           onChange={(e) => updateLine(l.id, { codigo: e.target.value })}
                         />
                       </td>
@@ -304,7 +314,7 @@ export function MpWeeklyControlPanel() {
                           type="number"
                           className="w-16 rounded border px-1"
                           value={l.kgEditados ?? l.kgNecesarios ?? ""}
-                          disabled={!canWrite}
+                          disabled={!writesEnabled}
                           onChange={(e) =>
                             updateLine(l.id, {
                               kgEditados:
@@ -321,7 +331,7 @@ export function MpWeeklyControlPanel() {
                         <input
                           className="w-16 rounded border px-1"
                           value={l.lote}
-                          disabled={!canWrite}
+                          disabled={!writesEnabled}
                           onChange={(e) => updateLine(l.id, { lote: e.target.value })}
                         />
                       </td>
@@ -329,7 +339,7 @@ export function MpWeeklyControlPanel() {
                         <input
                           type="checkbox"
                           checked={l.preparado}
-                          disabled={!canWrite}
+                          disabled={!writesEnabled}
                           onChange={(e) =>
                             updateLine(l.id, { preparado: e.target.checked })
                           }
@@ -339,7 +349,7 @@ export function MpWeeklyControlPanel() {
                         <input
                           className="w-24 rounded border px-1"
                           value={l.observacion}
-                          disabled={!canWrite}
+                          disabled={!writesEnabled}
                           onChange={(e) =>
                             updateLine(l.id, { observacion: e.target.value })
                           }

@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
+import {
+  assertFeatureWritesEnabled,
+  isFeatureMemoryAllowed,
+  isFeatureSchemaReady,
+  SchemaPendingError,
+} from "@/lib/db/feature-schema";
 import { mpWeeklyControlLines, mpWeeklyControls } from "@/lib/db/schema";
 import { enrichControlLine } from "./calcs";
 import {
@@ -110,7 +116,7 @@ function rowToControl(
 export class MpControlService {
   async list(actor: MpControlActor): Promise<MpWeeklyControl[]> {
     assertRead(actor);
-    if (isDatabaseConfigured()) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         const rows = await db
@@ -127,9 +133,10 @@ export class MpControlService {
         }
         return out;
       } catch {
-        /* memoria */
+        if (!isFeatureMemoryAllowed()) return [];
       }
     }
+    if (!isFeatureMemoryAllowed()) return [];
     return [...mem().controls].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
@@ -151,6 +158,7 @@ export class MpControlService {
     }
   ): Promise<MpWeeklyControl> {
     assertWrite(actor);
+    await assertFeatureWritesEnabled();
     const now = new Date().toISOString();
     const lines = buildLinesFromSnapshot(
       input.snapshot,
@@ -196,6 +204,7 @@ export class MpControlService {
     }
   ): Promise<MpWeeklyControl> {
     assertWrite(actor);
+    await assertFeatureWritesEnabled();
     const existing = await this.get(actor, id);
     if (!existing) throw new Error("Control no encontrado.");
     if (existing.status === "COMPLETADO" && patch.status !== "BORRADOR") {
@@ -252,25 +261,27 @@ export class MpControlService {
 
   async deleteDraft(actor: MpControlActor, id: string): Promise<void> {
     assertWrite(actor);
+    await assertFeatureWritesEnabled();
     const existing = await this.get(actor, id);
     if (!existing) throw new Error("Control no encontrado.");
     if (existing.status !== "BORRADOR") {
       throw new Error("Solo se pueden eliminar borradores.");
     }
-    if (isDatabaseConfigured()) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         await db.delete(mpWeeklyControls).where(eq(mpWeeklyControls.id, id));
         return;
       } catch {
-        /* memoria */
+        if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
       }
     }
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
     mem().controls = mem().controls.filter((c) => c.id !== id);
   }
 
   private async persist(control: MpWeeklyControl): Promise<void> {
-    if (isDatabaseConfigured()) {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         await db
@@ -294,7 +305,11 @@ export class MpControlService {
             completedAt: control.completedAt
               ? new Date(control.completedAt)
               : null,
-            audit: {},
+            audit: {
+              updatedBy: control.updatedBy,
+              at: control.updatedAt,
+              action: "persist",
+            },
           })
           .onConflictDoUpdate({
             target: mpWeeklyControls.id,
@@ -338,9 +353,10 @@ export class MpControlService {
         }
         return;
       } catch {
-        /* memoria */
+        if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
       }
     }
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
     const idx = mem().controls.findIndex((c) => c.id === control.id);
     if (idx >= 0) mem().controls[idx] = control;
     else mem().controls.unshift(control);

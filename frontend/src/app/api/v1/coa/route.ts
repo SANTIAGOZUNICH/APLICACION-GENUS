@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCoaService } from "@/lib/coa/coa-service";
+import { isFeatureSchemaReady } from "@/lib/db/feature-schema";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
 
@@ -11,11 +12,28 @@ export async function GET(request: Request) {
     const actor = resolveOrdersActor(request);
     const url = new URL(request.url);
     const parentId = url.searchParams.get("parentId");
-    const data = await getCoaService().list(
-      { email: actor.email, sector: actor.sector },
-      parentId
-    );
-    return NextResponse.json(data);
+    const fileId = url.searchParams.get("fileId");
+    const persistenceReady = await isFeatureSchemaReady();
+    const svc = getCoaService();
+    const a = { email: actor.email, sector: actor.sector };
+
+    if (fileId) {
+      const versions = await svc.listVersions(a, fileId);
+      const file = await svc.getFile(fileId);
+      return NextResponse.json({
+        file,
+        versions,
+        persistenceReady,
+        schemaPending: !persistenceReady,
+      });
+    }
+
+    const data = await svc.list(a, parentId);
+    return NextResponse.json({
+      ...data,
+      persistenceReady,
+      schemaPending: !persistenceReady,
+    });
   } catch (err) {
     return ordersErrorResponse(err);
   }
@@ -54,6 +72,8 @@ export async function POST(request: Request) {
       action?: string;
       name?: string;
       parentId?: string | null;
+      folderId?: string;
+      fileId?: string;
     };
     if (body.action === "mkdir") {
       const folder = await svc.createFolder(
@@ -62,6 +82,18 @@ export async function POST(request: Request) {
         body.parentId ?? null
       );
       return NextResponse.json({ folder }, { status: 201 });
+    }
+    if (body.action === "rename_folder") {
+      const folder = await svc.renameFolder(
+        a,
+        String(body.folderId ?? ""),
+        String(body.name ?? "")
+      );
+      return NextResponse.json({ folder });
+    }
+    if (body.action === "delete_folder") {
+      await svc.archiveFolder(a, String(body.folderId ?? ""));
+      return NextResponse.json({ ok: true });
     }
     return NextResponse.json({ error: "action inválida" }, { status: 400 });
   } catch (err) {
