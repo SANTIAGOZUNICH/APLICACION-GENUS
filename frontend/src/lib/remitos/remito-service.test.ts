@@ -298,6 +298,29 @@ describe("RemitoService memoria", () => {
     expect(after?.versions ?? []).toHaveLength(0);
   });
 
+  it("sin carpeta Remitos Drive: error claro y sigue BORRADOR", async () => {
+    const svc = getRemitoService();
+    const draft = await svc.upsertDraftFromApproval(prod, {
+      workItemId: "wi-no-folder",
+      clientId: "NoFolder",
+      deliveryDate: "2026-10-04",
+      product: "PF",
+      totalUnits: 2,
+    });
+
+    vi.spyOn(featureSchema, "isFeatureMemoryAllowed").mockReturnValue(false);
+    vi.spyOn(remitoSchema, "assertRemitoWritesEnabled").mockResolvedValue(undefined);
+    vi.spyOn(driveWrite, "getRemitosFolderId").mockReturnValue(null);
+
+    await expect(
+      svc.generate(prod, draft.remito.id, { displayName: "Sin carpeta" })
+    ).rejects.toThrow(/GOOGLE_DRIVE_REMITOS_FOLDER_ID/);
+
+    const after = await svc.get(prod, draft.remito.id);
+    expect(after?.status).toBe("BORRADOR");
+    expect(after?.versions ?? []).toHaveLength(0);
+  });
+
   it("statusForWorkItem reflects none/draft/generated", async () => {
     const svc = getRemitoService();
     expect(await svc.statusForWorkItem(prod, "missing")).toEqual({

@@ -403,6 +403,15 @@ export class RemitoService {
       throw new OrdersValidationError("displayName obligatorio para generar.");
     }
 
+    // Preview/prod: sin carpeta Drive no se generan archivos ni se marca GENERADO.
+    // Validar ANTES de PDF/XLSX para devolver error de configuración claro.
+    const folderConfigured = Boolean(getRemitosFolderId());
+    if (!folderConfigured && !isFeatureMemoryAllowed()) {
+      throw new OrdersValidationError(
+        "GOOGLE_DRIVE_REMITOS_FOLDER_ID no configurada. Creá una carpeta Remitos distinta de fórmulas/COAs y compartila como Editor con el Service Account. No se generó el remito."
+      );
+    }
+
     const now = new Date().toISOString();
     const remitoNumber =
       remito.remitoNumber ??
@@ -447,7 +456,6 @@ export class RemitoService {
     const uploaded: string[] = [];
 
     try {
-      const folderConfigured = Boolean(getRemitosFolderId());
       const useDrive = folderConfigured && !isFeatureMemoryAllowed();
 
       if (useDrive) {
@@ -466,19 +474,11 @@ export class RemitoService {
       } else if (isFeatureMemoryAllowed()) {
         mem().blobs.set(driveXlsx, xlsx);
         mem().blobs.set(drivePdf, pdf);
-      } else if (folderConfigured) {
-        driveXlsx = await uploadRemitoDriveFile({
-          fileName: `${fileBase}.xlsx`,
-          mimeType: REMITO_XLSX_MIME,
-          bytes: xlsx,
-        });
-        uploaded.push(driveXlsx);
-        drivePdf = await uploadRemitoDriveFile({
-          fileName: `${fileBase}.pdf`,
-          mimeType: REMITO_PDF_MIME,
-          bytes: pdf,
-        });
-        uploaded.push(drivePdf);
+      } else {
+        // Defensa: folderConfigured debió validarse arriba.
+        throw new OrdersValidationError(
+          "GOOGLE_DRIVE_REMITOS_FOLDER_ID no configurada. No se generó el remito."
+        );
       }
 
       await this.persistRemito(withMeta);
