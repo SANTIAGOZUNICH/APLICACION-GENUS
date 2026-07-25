@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { Readable } from "node:stream";
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import {
@@ -8,12 +7,13 @@ import {
   isFeatureSchemaReady,
   SchemaPendingError,
 } from "@/lib/db/feature-schema";
-import { coaFileVersions, coaFiles, coaFolders } from "@/lib/db/schema";
 import {
-  assertCoasFolderConfigured,
-  getDriveWriteClient,
-  validateCoaUpload,
-} from "./drive-write";
+  coaFileVersions,
+  coaFiles,
+  coaFolders,
+  featureAuditEvents,
+} from "@/lib/db/schema";
+import { validateCoaUpload } from "./drive-write";
 import {
   canAdminCoas,
   canViewCoas,
@@ -22,6 +22,13 @@ import {
   type CoaVersionRecord,
 } from "./types";
 import type { SectorId } from "@/types/operational/sector";
+import {
+  assertPrivateFileStorageConfigured,
+  coaStorageKey,
+  FILE_STORAGE_NOT_CONFIGURED,
+  getFileStorage,
+  STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
+} from "@/lib/storage/file-storage";
 
 export type CoaActor = { email: string; sector: SectorId };
 
@@ -29,14 +36,12 @@ type Mem = {
   folders: CoaFolderRecord[];
   files: CoaFileRecord[];
   versions: CoaVersionRecord[];
-  /** bytes de versiones en memoria (solo tests) */
-  blobs: Map<string, Buffer>;
 };
 
 const g = globalThis as unknown as { __genusCoaMem?: Mem };
 function mem(): Mem {
   if (!g.__genusCoaMem) {
-    g.__genusCoaMem = { folders: [], files: [], versions: [], blobs: new Map() };
+    g.__genusCoaMem = { folders: [], files: [], versions: [] };
   }
   return g.__genusCoaMem;
 }
@@ -46,6 +51,32 @@ function assertView(a: CoaActor) {
 }
 function assertAdmin(a: CoaActor) {
   if (!canAdminCoas(a.sector)) throw new Error("Solo MP administra COA'S.");
+}
+
+function isVirtualFolderId(id: string): boolean {
+  return id.startsWith("virtual:") || id.startsWith("mem-");
+}
+
+async function auditCoa(
+  actor: CoaActor,
+  action: string,
+  entityId: string,
+  payload: Record<string, unknown> = {}
+) {
+  if (!(isDatabaseConfigured() && (await isFeatureSchemaReady()))) return;
+  try {
+    const db = getDb();
+    await db.insert(featureAuditEvents).values({
+      domain: "coa",
+      action,
+      actorEmail: actor.email,
+      actorSector: actor.sector,
+      entityId,
+      payload: { ...payload, tokenRedacted: true },
+    });
+  } catch {
+    /* best-effort */
+  }
 }
 
 export class CoaService {
@@ -118,58 +149,28 @@ export class CoaService {
     await assertFeatureWritesEnabled();
     const clean = name.trim();
     if (!clean) throw new Error("Nombre obligatorio.");
-    let parentDriveId = "mem-root";
     let path = `/${clean}`;
-    try {
-      parentDriveId = assertCoasFolderConfigured();
-    } catch {
-      if (!isFeatureMemoryAllowed()) {
-        throw new Error(
-          "GOOGLE_DRIVE_COAS_FOLDER_ID no configurada o Service Account sin acceso Editor."
-        );
-      }
-    }
     if (parentId) {
       const parent = await this.getFolder(parentId);
       if (!parent) throw new Error("Carpeta padre no encontrada.");
-      parentDriveId = parent.driveFolderId;
       path = `${parent.path.replace(/\/$/, "")}/${clean}`;
     }
 
-    let driveFolderId = `mem-${randomUUID()}`;
-    try {
-      const drive = await getDriveWriteClient();
-      const created = await drive.files.create({
-        requestBody: {
-          name: clean,
-          mimeType: "application/vnd.google-apps.folder",
-          parents: [parentDriveId],
-        },
-        fields: "id",
-        supportsAllDrives: true,
-      });
-      driveFolderId = created.data.id!;
-    } catch (err) {
-      // Sin credenciales / sin APPLY: memoria con id sintético
-      if (process.env.NODE_ENV === "test" || !process.env.GOOGLE_DRIVE_COAS_FOLDER_ID) {
-        /* ok */
-      } else if (!(err instanceof Error && /no configurada|Credenciales/i.test(err.message))) {
-        throw err;
-      }
-    }
-
+    const id = randomUUID();
     const now = new Date().toISOString();
+    // Carpeta virtual en Neon — sin Google Drive.
     const folder: CoaFolderRecord = {
-      id: randomUUID(),
+      id,
       parentId,
       name: clean,
-      driveFolderId,
+      driveFolderId: `virtual:${id}`,
       path,
       createdBy: actor.email,
       createdAt: now,
       updatedAt: now,
     };
     await this.persistFolder(folder);
+    await auditCoa(actor, "mkdir", id, { name: clean, path });
     return folder;
   }
 
@@ -185,6 +186,9 @@ export class CoaService {
   ): Promise<CoaFileRecord> {
     assertAdmin(actor);
     await assertFeatureWritesEnabled();
+    if (!isFeatureMemoryAllowed()) {
+      assertPrivateFileStorageConfigured();
+    }
     validateCoaUpload({
       fileName: params.fileName,
       mimeType: params.mimeType,
@@ -193,123 +197,129 @@ export class CoaService {
     const folder = await this.getFolder(params.folderId);
     if (!folder) throw new Error("Carpeta no encontrada.");
 
-    // Verificar carpeta Drive antes de subir (evita metadata huérfana).
-    if (!isFeatureMemoryAllowed()) {
-      assertCoasFolderConfigured();
-      const drive = await getDriveWriteClient();
-      const meta = await drive.files.get({
-        fileId: folder.driveFolderId,
-        fields: "id,trashed",
-        supportsAllDrives: true,
-      });
-      if (!meta.data.id || meta.data.trashed) {
-        throw new Error("La carpeta Drive no es accesible. No se registró el archivo.");
-      }
-    }
-
-    let driveFileId = `mem-file-${randomUUID()}`;
-    let driveUploaded = false;
-    try {
-      if (!isFeatureMemoryAllowed() || process.env.GOOGLE_DRIVE_COAS_FOLDER_ID) {
-        const drive = await getDriveWriteClient();
-        const res = await drive.files.create({
-          requestBody: {
-            name: params.fileName,
-            parents: [folder.driveFolderId],
-          },
-          media: {
-            mimeType: params.mimeType,
-            body: Readable.from(params.bytes),
-          },
-          fields: "id,size,mimeType",
-          supportsAllDrives: true,
-        });
-        driveFileId = res.data.id!;
-        driveUploaded = true;
-      }
-    } catch (err) {
-      if (!isFeatureMemoryAllowed()) throw err;
-    }
-
+    const storage = getFileStorage();
     const now = new Date().toISOString();
+    const uploadedKeys: string[] = [];
 
-    if (params.replaceFileId) {
-      const existing = await this.getFile(params.replaceFileId);
-      if (!existing) throw new Error("Archivo a reemplazar no encontrado.");
-      const nextVersion = existing.currentVersion + 1;
-      const updated: CoaFileRecord = {
-        ...existing,
+    try {
+      if (params.replaceFileId) {
+        const existing = await this.getFile(params.replaceFileId);
+        if (!existing) throw new Error("Archivo a reemplazar no encontrado.");
+        const nextVersion = existing.currentVersion + 1;
+        const storageKey = coaStorageKey({
+          folderId: folder.id,
+          fileId: existing.id,
+          version: nextVersion,
+          fileName: params.fileName,
+        });
+        const put = await storage.put({
+          storageKey,
+          bytes: params.bytes,
+          contentType: params.mimeType,
+        });
+        uploadedKeys.push(put.storageKey);
+
+        const updated: CoaFileRecord = {
+          ...existing,
+          name: params.fileName,
+          mimeType: params.mimeType,
+          sizeBytes: params.bytes.length,
+          driveFileId: put.storageKey,
+          currentVersion: nextVersion,
+          updatedBy: actor.email,
+          updatedAt: now,
+        };
+        await this.persistFile(updated, {
+          storageProvider: STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
+          sha256: put.sha256,
+        });
+        await this.persistVersion(
+          {
+            id: randomUUID(),
+            fileId: updated.id,
+            version: nextVersion,
+            driveFileId: put.storageKey,
+            mimeType: params.mimeType,
+            sizeBytes: params.bytes.length,
+            uploadedBy: actor.email,
+            createdAt: now,
+          },
+          put.sha256
+        );
+        await auditCoa(actor, "upload_version", updated.id, {
+          version: nextVersion,
+          storageKey: put.storageKey,
+          sha256: put.sha256,
+        });
+        return updated;
+      }
+
+      const fileId = randomUUID();
+      const storageKey = coaStorageKey({
+        folderId: folder.id,
+        fileId,
+        version: 1,
+        fileName: params.fileName,
+      });
+      const put = await storage.put({
+        storageKey,
+        bytes: params.bytes,
+        contentType: params.mimeType,
+      });
+      uploadedKeys.push(put.storageKey);
+
+      const file: CoaFileRecord = {
+        id: fileId,
+        folderId: params.folderId,
         name: params.fileName,
         mimeType: params.mimeType,
         sizeBytes: params.bytes.length,
-        driveFileId,
-        currentVersion: nextVersion,
+        driveFileId: put.storageKey,
+        currentVersion: 1,
+        createdBy: actor.email,
         updatedBy: actor.email,
+        createdAt: now,
         updatedAt: now,
       };
-      await this.persistFile(updated);
-      await this.persistVersion({
-        id: randomUUID(),
-        fileId: updated.id,
-        version: nextVersion,
-        driveFileId,
-        mimeType: params.mimeType,
-        sizeBytes: params.bytes.length,
-        uploadedBy: actor.email,
-        createdAt: now,
+      await this.persistFile(file, {
+        storageProvider: STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
+        sha256: put.sha256,
       });
-      if (isFeatureMemoryAllowed()) {
-        mem().blobs.set(driveFileId, params.bytes);
-      }
-      return updated;
-    }
-
-    const file: CoaFileRecord = {
-      id: randomUUID(),
-      folderId: params.folderId,
-      name: params.fileName,
-      mimeType: params.mimeType,
-      sizeBytes: params.bytes.length,
-      driveFileId,
-      currentVersion: 1,
-      createdBy: actor.email,
-      updatedBy: actor.email,
-      createdAt: now,
-      updatedAt: now,
-    };
-    try {
-      await this.persistFile(file);
-      await this.persistVersion({
-        id: randomUUID(),
-        fileId: file.id,
+      await this.persistVersion(
+        {
+          id: randomUUID(),
+          fileId: file.id,
+          version: 1,
+          driveFileId: put.storageKey,
+          mimeType: params.mimeType,
+          sizeBytes: params.bytes.length,
+          uploadedBy: actor.email,
+          createdAt: now,
+        },
+        put.sha256
+      );
+      await auditCoa(actor, "upload", file.id, {
         version: 1,
-        driveFileId,
-        mimeType: params.mimeType,
-        sizeBytes: params.bytes.length,
-        uploadedBy: actor.email,
-        createdAt: now,
+        storageKey: put.storageKey,
+        sha256: put.sha256,
       });
-      if (isFeatureMemoryAllowed()) {
-        mem().blobs.set(driveFileId, params.bytes);
-      }
+      return file;
     } catch (err) {
-      // Rollback Drive si metadata falla — no dejar archivo huérfano en Drive
-      // ni metadata sin archivo.
-      if (driveUploaded) {
+      for (const key of uploadedKeys) {
         try {
-          const drive = await getDriveWriteClient();
-          await drive.files.update({
-            fileId: driveFileId,
-            requestBody: { trashed: true },
-            supportsAllDrives: true,
-          });
+          await storage.delete(key);
         } catch {
-          /* ignore trash errors */
+          /* compensación best-effort */
         }
+      }
+      if (
+        err instanceof Error &&
+        err.message.includes(FILE_STORAGE_NOT_CONFIGURED)
+      ) {
+        throw err;
       }
       throw err;
     }
-    return file;
   }
 
   async renameFolder(
@@ -331,13 +341,8 @@ export class CoaService {
       updatedAt: now,
     };
 
-    if (!isFeatureMemoryAllowed() && !folder.driveFolderId.startsWith("mem-")) {
-      const drive = await getDriveWriteClient();
-      await drive.files.update({
-        fileId: folder.driveFolderId,
-        requestBody: { name: clean },
-        supportsAllDrives: true,
-      });
+    if (!isVirtualFolderId(folder.driveFolderId)) {
+      // Legacy Drive folders: solo renombrar metadata Neon (ya no se escribe a Drive).
     }
 
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
@@ -374,13 +379,8 @@ export class CoaService {
       );
     }
 
-    if (!isFeatureMemoryAllowed() && !folder.driveFolderId.startsWith("mem-")) {
-      const drive = await getDriveWriteClient();
-      await drive.files.update({
-        fileId: folder.driveFolderId,
-        requestBody: { trashed: true },
-        supportsAllDrives: true,
-      });
+    if (!isVirtualFolderId(folder.driveFolderId)) {
+      // Legacy Drive: archivar solo en Neon; no borrar Blob/Drive desde aquí.
     }
 
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
@@ -449,32 +449,21 @@ export class CoaService {
           };
     if (!target) throw new Error("Versión no encontrada.");
 
-    const driveFileId =
+    const storageKey =
       "driveFileId" in target ? target.driveFileId : file.driveFileId;
     const mimeType = "mimeType" in target ? target.mimeType : file.mimeType;
+    const ver = "version" in target ? target.version : file.currentVersion;
 
-    if (isFeatureMemoryAllowed() && mem().blobs.has(driveFileId)) {
-      return {
-        fileName: file.name,
-        mimeType,
-        bytes: mem().blobs.get(driveFileId)!,
-      };
-    }
+    if (!storageKey) throw new Error("Archivo sin storage key.");
 
-    const drive = await getDriveWriteClient();
-    const res = await drive.files.get(
-      {
-        fileId: driveFileId,
-        alt: "media",
-        supportsAllDrives: true,
-      },
-      { responseType: "arraybuffer" }
-    );
-    const data = res.data as ArrayBuffer | Buffer | string;
-    const bytes = Buffer.isBuffer(data)
-      ? data
-      : Buffer.from(data as ArrayBuffer);
-    return { fileName: file.name, mimeType, bytes };
+    const storage = getFileStorage();
+    const got = await storage.get(storageKey);
+    await auditCoa(actor, "download", fileId, {
+      version: ver,
+      storageKey,
+      preview: false,
+    });
+    return { fileName: file.name, mimeType, bytes: got.bytes };
   }
 
   async getFolder(id: string): Promise<CoaFolderRecord | null> {
@@ -553,7 +542,10 @@ export class CoaService {
     mem().folders.push(folder);
   }
 
-  private async persistFile(file: CoaFileRecord) {
+  private async persistFile(
+    file: CoaFileRecord,
+    extra?: { storageProvider?: string; sha256?: string }
+  ) {
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
@@ -572,7 +564,14 @@ export class CoaService {
             createdAt: new Date(file.createdAt),
             updatedAt: new Date(file.updatedAt),
             archived: false,
-            audit: { action: "upload", at: file.updatedAt },
+            audit: {
+              action: "upload",
+              at: file.updatedAt,
+              storageProvider:
+                extra?.storageProvider ?? STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
+              storageKey: file.driveFileId,
+              sha256: extra?.sha256 ?? null,
+            },
           })
           .onConflictDoUpdate({
             target: coaFiles.id,
@@ -584,6 +583,14 @@ export class CoaService {
               currentVersion: file.currentVersion,
               updatedBy: file.updatedBy,
               updatedAt: new Date(file.updatedAt),
+              audit: {
+                action: "upload",
+                at: file.updatedAt,
+                storageProvider:
+                  extra?.storageProvider ?? STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
+                storageKey: file.driveFileId,
+                sha256: extra?.sha256 ?? null,
+              },
             },
           });
         return;
@@ -597,7 +604,7 @@ export class CoaService {
     else mem().files.push(file);
   }
 
-  private async persistVersion(v: CoaVersionRecord) {
+  private async persistVersion(v: CoaVersionRecord, sha256?: string) {
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
@@ -610,6 +617,7 @@ export class CoaService {
           sizeBytes: v.sizeBytes,
           uploadedBy: v.uploadedBy,
           createdAt: new Date(v.createdAt),
+          checksum: sha256 ?? null,
         });
         return;
       } catch {
@@ -628,6 +636,6 @@ export function getCoaService(): CoaService {
 }
 
 export function resetCoaMemoryForTests(): void {
-  g.__genusCoaMem = { folders: [], files: [], versions: [], blobs: new Map() };
+  g.__genusCoaMem = { folders: [], files: [], versions: [] };
   singleton = null;
 }

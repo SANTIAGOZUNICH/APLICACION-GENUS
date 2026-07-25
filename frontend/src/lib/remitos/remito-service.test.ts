@@ -12,7 +12,6 @@ import {
   getRemitoService,
   resetRemitoMemoryForTests,
 } from "./remito-service";
-import * as driveWrite from "./drive-write";
 import * as featureSchema from "@/lib/db/feature-schema";
 import * as remitoSchema from "@/lib/db/remito-schema";
 
@@ -269,11 +268,11 @@ describe("RemitoService memoria", () => {
     expect(next.lines).toHaveLength(1);
   });
 
-  it("Drive fail simulation does not mark GENERADO", async () => {
+  it("Blob fail simulation does not mark GENERADO", async () => {
     const svc = getRemitoService();
     const draft = await svc.upsertDraftFromApproval(prod, {
-      workItemId: "wi-drive-fail",
-      clientId: "DriveFail",
+      workItemId: "wi-blob-fail",
+      clientId: "BlobFail",
       deliveryDate: "2026-10-03",
       product: "PD",
       totalUnits: 2,
@@ -282,15 +281,25 @@ describe("RemitoService memoria", () => {
     vi.spyOn(featureSchema, "isFeatureMemoryAllowed").mockReturnValue(false);
     vi.spyOn(remitoSchema, "assertRemitoWritesEnabled").mockResolvedValue(undefined);
     vi.spyOn(remitoSchema, "isRemitoSchemaReady").mockResolvedValue(false);
-    vi.spyOn(driveWrite, "getRemitosFolderId").mockReturnValue("folder-remitos-test");
-    vi.spyOn(driveWrite, "uploadRemitoDriveFile").mockRejectedValue(
-      new Error("Drive upload failed")
-    );
-    vi.spyOn(driveWrite, "trashRemitoDriveFile").mockResolvedValue(undefined);
+    process.env.BLOB_READ_WRITE_TOKEN = "test-token";
+    process.env.GENUS_FILE_STORAGE = "vercel_blob";
+    const storageMod = await import("@/lib/storage/file-storage");
+    vi.spyOn(storageMod, "getFileStorage").mockReturnValue({
+      put: async () => {
+        throw new Error("Blob upload failed");
+      },
+      get: async () => {
+        throw new Error("not found");
+      },
+      delete: async () => undefined,
+      exists: async () => false,
+      metadata: async () => null,
+      sha256: (b) => storageMod.sha256Hex(b),
+    });
 
     await expect(
       svc.generate(prod, draft.remito.id, { displayName: "No debe generar" })
-    ).rejects.toThrow(/Drive upload failed/);
+    ).rejects.toThrow(/Blob upload failed/);
 
     const after = await svc.get(prod, draft.remito.id);
     expect(after?.status).toBe("BORRADOR");
@@ -298,11 +307,11 @@ describe("RemitoService memoria", () => {
     expect(after?.versions ?? []).toHaveLength(0);
   });
 
-  it("sin carpeta Remitos Drive: error claro y sigue BORRADOR", async () => {
+  it("sin Blob configurado: error claro y sigue BORRADOR", async () => {
     const svc = getRemitoService();
     const draft = await svc.upsertDraftFromApproval(prod, {
-      workItemId: "wi-no-folder",
-      clientId: "NoFolder",
+      workItemId: "wi-no-blob",
+      clientId: "NoBlob",
       deliveryDate: "2026-10-04",
       product: "PF",
       totalUnits: 2,
@@ -310,11 +319,14 @@ describe("RemitoService memoria", () => {
 
     vi.spyOn(featureSchema, "isFeatureMemoryAllowed").mockReturnValue(false);
     vi.spyOn(remitoSchema, "assertRemitoWritesEnabled").mockResolvedValue(undefined);
-    vi.spyOn(driveWrite, "getRemitosFolderId").mockReturnValue(null);
+    const prev = process.env.BLOB_READ_WRITE_TOKEN;
+    delete process.env.BLOB_READ_WRITE_TOKEN;
 
     await expect(
-      svc.generate(prod, draft.remito.id, { displayName: "Sin carpeta" })
-    ).rejects.toThrow(/GOOGLE_DRIVE_REMITOS_FOLDER_ID/);
+      svc.generate(prod, draft.remito.id, { displayName: "Sin storage" })
+    ).rejects.toThrow(/Almacenamiento privado de archivos no configurado/);
+
+    if (prev != null) process.env.BLOB_READ_WRITE_TOKEN = prev;
 
     const after = await svc.get(prod, draft.remito.id);
     expect(after?.status).toBe("BORRADOR");

@@ -147,6 +147,8 @@ export function remitoDownloadUrl(
 ): string {
   const qs = new URLSearchParams({ format });
   if (opts?.filename) qs.set("filename", opts.filename);
-  if (opts?.version != null) qs.set("version", String(opts.version));
+  if (opts?.version != null) {
+    return `/api/v1/remitos/${remitoId}/versions/${opts.version}/download?${qs}`;
+  }
   return `/api/v1/remitos/${remitoId}/download?${qs}`;
 }

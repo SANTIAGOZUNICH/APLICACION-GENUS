@@ -31,12 +31,16 @@ export type RemitoLine = {
 };
 
 export type RemitoVersionInfo = {
+  id?: string;
   version: number;
   motivo: string | null;
   createdBy: string;
   createdAt: string;
   /** true si hay xlsx/pdf disponibles para esa versión. */
   downloadable: boolean;
+  /** storage key / legacy id — no exponer URL pública. */
+  driveFileIdXlsx?: string | null;
+  driveFileIdPdf?: string | null;
 };
 
 export type RemitoRecord = {

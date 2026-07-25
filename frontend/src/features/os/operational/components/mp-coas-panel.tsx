@@ -115,9 +115,12 @@ export function MpCoasPanel() {
   }
 
   async function previewPdf(fileId: string, version?: number) {
-    const qs = new URLSearchParams({ fileId, preview: "1" });
+    const qs = new URLSearchParams();
     if (version != null) qs.set("version", String(version));
-    const res = await fetch(`/api/v1/coa/download?${qs}`, { headers: headers() });
+    const res = await fetch(
+      `/api/v1/coas/files/${encodeURIComponent(fileId)}/preview?${qs}`,
+      { headers: headers() }
+    );
     if (!res.ok) {
       const b = (await res.json().catch(() => ({}))) as { error?: string };
       setError(b.error ?? "No se pudo previsualizar PDF");
@@ -129,9 +132,9 @@ export function MpCoasPanel() {
   }
 
   function downloadHref(fileId: string, version?: number) {
-    const qs = new URLSearchParams({ fileId });
+    const qs = new URLSearchParams();
     if (version != null) qs.set("version", String(version));
-    return `/api/v1/coa/download?${qs}`;
+    return `/api/v1/coas/files/${encodeURIComponent(fileId)}/download?${qs}`;
   }
 
   async function downloadVersion(fileId: string, version?: number) {
@@ -398,8 +401,8 @@ export function MpCoasPanel() {
       ) : null}
 
       <p className="text-[11px] text-[var(--os-text-muted)]">
-        Binarios en Drive (`GOOGLE_DRIVE_COAS_FOLDER_ID`). No usa la carpeta de fórmulas. Credenciales
-        solo en servidor.
+        Archivos en almacenamiento privado de Genus OS (Vercel Blob). Carpetas virtuales en Neon.
+        Descarga/preview solo por rutas autenticadas. Fórmulas siguen en Drive.
       </p>
 
       {renameTarget ? (

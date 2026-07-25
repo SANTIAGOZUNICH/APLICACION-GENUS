@@ -21,10 +21,12 @@ import { computeCajasProduct } from "./packing-math";
 import { buildRemitoPdf, REMITO_PDF_MIME } from "./remito-pdf";
 import { buildRemitoXlsx, REMITO_XLSX_MIME } from "./remito-xlsx";
 import {
-  trashRemitoDriveFile,
-  uploadRemitoDriveFile,
-  getRemitosFolderId,
-} from "./drive-write";
+  assertPrivateFileStorageConfigured,
+  FILE_STORAGE_NOT_CONFIGURED,
+  getFileStorage,
+  remitoStorageKey,
+  STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
+} from "@/lib/storage/file-storage";
 import {
   canAccessRemitos,
   type RemitoApprovalInput,
@@ -403,13 +405,13 @@ export class RemitoService {
       throw new OrdersValidationError("displayName obligatorio para generar.");
     }
 
-    // Preview/prod: sin carpeta Drive no se generan archivos ni se marca GENERADO.
-    // Validar ANTES de PDF/XLSX para devolver error de configuración claro.
-    const folderConfigured = Boolean(getRemitosFolderId());
-    if (!folderConfigured && !isFeatureMemoryAllowed()) {
-      throw new OrdersValidationError(
-        "GOOGLE_DRIVE_REMITOS_FOLDER_ID no configurada. Creá una carpeta Remitos distinta de fórmulas/COAs y compartila como Editor con el Service Account. No se generó el remito."
-      );
+    // Sin Blob privado no se generan archivos ni se marca GENERADO.
+    if (!isFeatureMemoryAllowed()) {
+      try {
+        assertPrivateFileStorageConfigured();
+      } catch {
+        throw new OrdersValidationError(FILE_STORAGE_NOT_CONFIGURED);
+      }
     }
 
     const now = new Date().toISOString();
@@ -447,39 +449,39 @@ export class RemitoService {
       updatedAt: now,
     };
 
-    // Generar archivos ANTES de marcar GENERADO. Si Drive falla, no persistimos GENERADO.
+    // Generar archivos ANTES de marcar GENERADO. Si Blob falla, no persistimos GENERADO.
     const xlsx = await buildRemitoXlsx(withMeta);
     const pdf = await buildRemitoPdf(withMeta);
 
-    let driveXlsx = `mem-xlsx-${randomUUID()}`;
-    let drivePdf = `mem-pdf-${randomUUID()}`;
+    const year = remito.deliveryDate.slice(0, 4) || String(new Date().getFullYear());
+    const storage = getFileStorage();
+    const keyXlsx = remitoStorageKey({
+      year,
+      remitoId: withMeta.id,
+      version: withMeta.version,
+      kind: "xlsx",
+    });
+    const keyPdf = remitoStorageKey({
+      year,
+      remitoId: withMeta.id,
+      version: withMeta.version,
+      kind: "pdf",
+    });
     const uploaded: string[] = [];
 
     try {
-      const useDrive = folderConfigured && !isFeatureMemoryAllowed();
-
-      if (useDrive) {
-        driveXlsx = await uploadRemitoDriveFile({
-          fileName: `${fileBase}.xlsx`,
-          mimeType: REMITO_XLSX_MIME,
-          bytes: xlsx,
-        });
-        uploaded.push(driveXlsx);
-        drivePdf = await uploadRemitoDriveFile({
-          fileName: `${fileBase}.pdf`,
-          mimeType: REMITO_PDF_MIME,
-          bytes: pdf,
-        });
-        uploaded.push(drivePdf);
-      } else if (isFeatureMemoryAllowed()) {
-        mem().blobs.set(driveXlsx, xlsx);
-        mem().blobs.set(drivePdf, pdf);
-      } else {
-        // Defensa: folderConfigured debió validarse arriba.
-        throw new OrdersValidationError(
-          "GOOGLE_DRIVE_REMITOS_FOLDER_ID no configurada. No se generó el remito."
-        );
-      }
+      const putX = await storage.put({
+        storageKey: keyXlsx,
+        bytes: xlsx,
+        contentType: REMITO_XLSX_MIME,
+      });
+      uploaded.push(putX.storageKey);
+      const putP = await storage.put({
+        storageKey: keyPdf,
+        bytes: pdf,
+        contentType: REMITO_PDF_MIME,
+      });
+      uploaded.push(putP.storageKey);
 
       await this.persistRemito(withMeta);
       const versionId = randomUUID();
@@ -488,9 +490,14 @@ export class RemitoService {
         remitoId: withMeta.id,
         version: withMeta.version,
         motivo: null,
-        driveFileIdXlsx: driveXlsx,
-        driveFileIdPdf: drivePdf,
-        snapshot,
+        driveFileIdXlsx: putX.storageKey,
+        driveFileIdPdf: putP.storageKey,
+        snapshot: {
+          ...snapshot,
+          storageProvider: STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
+          sha256Xlsx: putX.sha256,
+          sha256Pdf: putP.sha256,
+        },
         createdBy: actor.email,
         createdAt: now,
       });
@@ -499,7 +506,7 @@ export class RemitoService {
         remitoId: withMeta.id,
         versionId,
         kind: "xlsx",
-        driveFileId: driveXlsx,
+        driveFileId: putX.storageKey,
         fileName: `${fileBase}.xlsx`,
         mimeType: REMITO_XLSX_MIME,
         sizeBytes: xlsx.length,
@@ -511,7 +518,7 @@ export class RemitoService {
         remitoId: withMeta.id,
         versionId,
         kind: "pdf",
-        driveFileId: drivePdf,
+        driveFileId: putP.storageKey,
         fileName: `${fileBase}.pdf`,
         mimeType: REMITO_PDF_MIME,
         sizeBytes: pdf.length,
@@ -519,10 +526,17 @@ export class RemitoService {
         createdAt: now,
       });
     } catch (err) {
-      for (const id of uploaded) {
-        await trashRemitoDriveFile(id);
+      for (const key of uploaded) {
+        try {
+          await storage.delete(key);
+        } catch {
+          /* compensación */
+        }
       }
       // No marcar GENERADO: el remito en store sigue en BORRADOR.
+      if (err instanceof Error && err.message.includes(FILE_STORAGE_NOT_CONFIGURED)) {
+        throw new OrdersValidationError(FILE_STORAGE_NOT_CONFIGURED);
+      }
       throw err;
     }
 
@@ -607,31 +621,42 @@ export class RemitoService {
 
     const xlsx = await buildRemitoXlsx(remito);
     const pdf = await buildRemitoPdf(remito);
-    let driveXlsx = `mem-xlsx-${randomUUID()}`;
-    let drivePdf = `mem-pdf-${randomUUID()}`;
+    if (!isFeatureMemoryAllowed()) {
+      try {
+        assertPrivateFileStorageConfigured();
+      } catch {
+        throw new OrdersValidationError(FILE_STORAGE_NOT_CONFIGURED);
+      }
+    }
+    const storage = getFileStorage();
+    const year = remito.deliveryDate.slice(0, 4) || String(new Date().getFullYear());
+    const keyXlsx = remitoStorageKey({
+      year,
+      remitoId: remito.id,
+      version: remito.version,
+      kind: "xlsx",
+    });
+    const keyPdf = remitoStorageKey({
+      year,
+      remitoId: remito.id,
+      version: remito.version,
+      kind: "pdf",
+    });
     const uploaded: string[] = [];
 
     try {
-      const folderConfigured = Boolean(getRemitosFolderId());
-      const useDrive = folderConfigured && !isFeatureMemoryAllowed();
-
-      if (useDrive || (!isFeatureMemoryAllowed() && folderConfigured)) {
-        driveXlsx = await uploadRemitoDriveFile({
-          fileName: `${fileBase}.xlsx`,
-          mimeType: REMITO_XLSX_MIME,
-          bytes: xlsx,
-        });
-        uploaded.push(driveXlsx);
-        drivePdf = await uploadRemitoDriveFile({
-          fileName: `${fileBase}.pdf`,
-          mimeType: REMITO_PDF_MIME,
-          bytes: pdf,
-        });
-        uploaded.push(drivePdf);
-      } else {
-        mem().blobs.set(driveXlsx, xlsx);
-        mem().blobs.set(drivePdf, pdf);
-      }
+      const putX = await storage.put({
+        storageKey: keyXlsx,
+        bytes: xlsx,
+        contentType: REMITO_XLSX_MIME,
+      });
+      uploaded.push(putX.storageKey);
+      const putP = await storage.put({
+        storageKey: keyPdf,
+        bytes: pdf,
+        contentType: REMITO_PDF_MIME,
+      });
+      uploaded.push(putP.storageKey);
 
       await this.persistRemito(remito);
       const versionId = randomUUID();
@@ -640,9 +665,14 @@ export class RemitoService {
         remitoId: remito.id,
         version: remito.version,
         motivo,
-        driveFileIdXlsx: driveXlsx,
-        driveFileIdPdf: drivePdf,
-        snapshot,
+        driveFileIdXlsx: putX.storageKey,
+        driveFileIdPdf: putP.storageKey,
+        snapshot: {
+          ...snapshot,
+          storageProvider: STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
+          sha256Xlsx: putX.sha256,
+          sha256Pdf: putP.sha256,
+        },
         createdBy: actor.email,
         createdAt: now,
       });
@@ -651,7 +681,7 @@ export class RemitoService {
         remitoId: remito.id,
         versionId,
         kind: "xlsx",
-        driveFileId: driveXlsx,
+        driveFileId: putX.storageKey,
         fileName: `${fileBase}.xlsx`,
         mimeType: REMITO_XLSX_MIME,
         sizeBytes: xlsx.length,
@@ -663,7 +693,7 @@ export class RemitoService {
         remitoId: remito.id,
         versionId,
         kind: "pdf",
-        driveFileId: drivePdf,
+        driveFileId: putP.storageKey,
         fileName: `${fileBase}.pdf`,
         mimeType: REMITO_PDF_MIME,
         sizeBytes: pdf.length,
@@ -671,8 +701,12 @@ export class RemitoService {
         createdAt: now,
       });
     } catch (err) {
-      for (const id of uploaded) {
-        await trashRemitoDriveFile(id);
+      for (const key of uploaded) {
+        try {
+          await storage.delete(key);
+        } catch {
+          /* compensación */
+        }
       }
       throw err;
     }
@@ -813,40 +847,66 @@ export class RemitoService {
     const remito = await this.findById(remitoId);
     if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
 
-    const store = mem();
-    let versionId: string | null = null;
-    if (version != null) {
-      const v = store.versions.find((x) => x.remitoId === remitoId && x.version === version);
-      if (!v) throw new OrdersNotFoundError(`Versión ${version} no encontrada.`);
-      versionId = v.id;
+    const versions = remito.versions ?? [];
+    const targetVersion =
+      version != null
+        ? versions.find((v) => v.version === version)
+        : versions.sort((a, b) => b.version - a.version)[0];
+
+    const storageKey =
+      format === "pdf"
+        ? targetVersion?.driveFileIdPdf
+        : targetVersion?.driveFileIdXlsx;
+
+    // Preferir Blob privado por storage key en metadata de versión / files.
+    let key = storageKey ?? null;
+    if (!key) {
+      const store = mem();
+      let versionId: string | null = targetVersion?.id ?? null;
+      if (version != null && !versionId) {
+        const v = store.versions.find(
+          (x) => x.remitoId === remitoId && x.version === version
+        );
+        if (!v) throw new OrdersNotFoundError(`Versión ${version} no encontrada.`);
+        versionId = v.id;
+        key =
+          format === "pdf" ? v.driveFileIdPdf : v.driveFileIdXlsx;
+      }
+      const file = store.files
+        .filter(
+          (f) =>
+            f.remitoId === remitoId &&
+            f.kind === format &&
+            (versionId == null || f.versionId === versionId)
+        )
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      if (file?.driveFileId) key = file.driveFileId;
     }
 
-    const file = store.files
-      .filter(
-        (f) =>
-          f.remitoId === remitoId &&
-          f.kind === format &&
-          (versionId == null || f.versionId === versionId)
-      )
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    const base =
+      remito.displayName || remito.remitoNumber || `remito-${remito.id.slice(0, 8)}`;
+    const mimeType = format === "pdf" ? REMITO_PDF_MIME : REMITO_XLSX_MIME;
 
-    if (file && store.blobs.has(file.driveFileId)) {
+    if (key) {
+      const storage = getFileStorage();
+      const got = await storage.get(key);
       return {
-        bytes: store.blobs.get(file.driveFileId)!,
-        fileName: file.fileName,
-        mimeType: file.mimeType,
+        bytes: got.bytes,
+        fileName: `${base}.${format}`,
+        mimeType,
       };
     }
 
-    const bytes =
-      format === "pdf" ? await buildRemitoPdf(remito) : await buildRemitoXlsx(remito);
-    const base =
-      remito.displayName || remito.remitoNumber || `remito-${remito.id.slice(0, 8)}`;
-    return {
-      bytes,
-      fileName: `${base}.${format}`,
-      mimeType: format === "pdf" ? REMITO_PDF_MIME : REMITO_XLSX_MIME,
-    };
+    // Fallback regeneración solo en tests sin storage key.
+    if (isFeatureMemoryAllowed()) {
+      const bytes =
+        format === "pdf" ? await buildRemitoPdf(remito) : await buildRemitoXlsx(remito);
+      return { bytes, fileName: `${base}.${format}`, mimeType };
+    }
+
+    throw new OrdersNotFoundError(
+      "Archivo de remito no encontrado en almacenamiento privado."
+    );
   }
 
   // —— persistence helpers ——
@@ -887,11 +947,14 @@ export class RemitoService {
         .versions.filter((v) => v.remitoId === remitoId)
         .sort((a, b) => a.version - b.version)
         .map((v) => ({
+          id: v.id,
           version: v.version,
           motivo: v.motivo,
           createdBy: v.createdBy,
           createdAt: v.createdAt,
           downloadable: Boolean(v.driveFileIdXlsx || v.driveFileIdPdf),
+          driveFileIdXlsx: v.driveFileIdXlsx,
+          driveFileIdPdf: v.driveFileIdPdf,
         }));
     }
     try {
@@ -903,21 +966,27 @@ export class RemitoService {
       return rows
         .sort((a, b) => a.version - b.version)
         .map((v) => ({
+          id: v.id,
           version: v.version,
           motivo: v.motivo ?? null,
           createdBy: v.createdBy,
           createdAt: v.createdAt.toISOString(),
           downloadable: Boolean(v.driveFileIdXlsx || v.driveFileIdPdf),
+          driveFileIdXlsx: v.driveFileIdXlsx,
+          driveFileIdPdf: v.driveFileIdPdf,
         }));
     } catch {
       return mem()
         .versions.filter((v) => v.remitoId === remitoId)
         .map((v) => ({
+          id: v.id,
           version: v.version,
           motivo: v.motivo,
           createdBy: v.createdBy,
           createdAt: v.createdAt,
           downloadable: Boolean(v.driveFileIdXlsx || v.driveFileIdPdf),
+          driveFileIdXlsx: v.driveFileIdXlsx,
+          driveFileIdPdf: v.driveFileIdPdf,
         }));
     }
   }
@@ -1146,7 +1215,11 @@ export class RemitoService {
         createdAt: new Date(f.createdAt),
       });
     } catch (err) {
-      await trashRemitoDriveFile(f.driveFileId);
+      try {
+        await getFileStorage().delete(f.driveFileId);
+      } catch {
+        /* compensación */
+      }
       throw err;
     }
   }
