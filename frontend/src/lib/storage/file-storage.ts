@@ -1,7 +1,13 @@
 /**
  * FileStorageAdapter — almacenamiento privado de archivos (COA / Remitos).
  * Proveedor activo: VERCEL_BLOB_PRIVATE.
- * El token BLOB_READ_WRITE_TOKEN nunca sale del servidor.
+ *
+ * Auth (orden oficial Vercel):
+ * 1) OIDC: BLOB_STORE_ID + VERCEL_OIDC_TOKEN (inyectado/rotado en runtime)
+ * 2) Fallback local/CLI: BLOB_READ_WRITE_TOKEN (opcional)
+ *
+ * BLOB_WEBHOOK_PUBLIC_KEY solo valida webhooks — no autentica put/get/delete.
+ * Nunca exponer tokens, store IDs ni claves al cliente/logs.
  */
 import "server-only";
 
@@ -10,6 +16,8 @@ import { del, get, head, put } from "@vercel/blob";
 
 export const STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE = "VERCEL_BLOB_PRIVATE" as const;
 export type StorageProvider = typeof STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE;
+
+export type BlobAuthMode = "OIDC" | "TOKEN" | "NONE";
 
 export const FILE_STORAGE_NOT_CONFIGURED =
   "Almacenamiento privado de archivos no configurado.";
@@ -41,6 +49,13 @@ export type FileMetadata = {
   url?: string;
 };
 
+export type StorageHealth = {
+  provider: StorageProvider;
+  configured: boolean;
+  authMode: BlobAuthMode;
+  storeConfigured: boolean;
+};
+
 export interface FileStorageAdapter {
   put(params: {
     storageKey: string;
@@ -60,10 +75,54 @@ export function sha256Hex(bytes: Buffer | Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-export function isPrivateFileStorageConfigured(): boolean {
+function genusFileStorageEnabled(): boolean {
   const mode = (process.env.GENUS_FILE_STORAGE ?? "vercel_blob").trim().toLowerCase();
-  if (mode !== "vercel_blob" && mode !== "vercel_blob_private") return false;
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
+  return mode === "vercel_blob" || mode === "vercel_blob_private";
+}
+
+function storeId(): string | null {
+  return process.env.BLOB_STORE_ID?.trim() || null;
+}
+
+function oidcToken(): string | null {
+  return process.env.VERCEL_OIDC_TOKEN?.trim() || null;
+}
+
+function rwToken(): string | null {
+  return process.env.BLOB_READ_WRITE_TOKEN?.trim() || null;
+}
+
+/** OIDC usable: store conectado + token runtime, o store en Vercel (token inyectado). */
+export function hasOidcBlobAuth(): boolean {
+  if (!storeId()) return false;
+  if (oidcToken()) return true;
+  // En deployments Vercel el OIDC se inyecta en runtime aunque el health
+  // a veces se evalúe antes de materializar VERCEL_OIDC_TOKEN en el proceso.
+  return process.env.VERCEL === "1";
+}
+
+export function hasLegacyBlobTokenAuth(): boolean {
+  return Boolean(rwToken());
+}
+
+/**
+ * Webhook public key NO autentica uploads/lecturas.
+ * Solo documentamos el helper para tests / validación futura de webhooks.
+ */
+export function hasBlobWebhookPublicKey(): boolean {
+  return Boolean(process.env.BLOB_WEBHOOK_PUBLIC_KEY?.trim());
+}
+
+export function getBlobAuthMode(): BlobAuthMode {
+  if (!genusFileStorageEnabled()) return "NONE";
+  // OIDC tiene prioridad sobre token estático.
+  if (hasOidcBlobAuth()) return "OIDC";
+  if (hasLegacyBlobTokenAuth()) return "TOKEN";
+  return "NONE";
+}
+
+export function isPrivateFileStorageConfigured(): boolean {
+  return getBlobAuthMode() !== "NONE";
 }
 
 export function assertPrivateFileStorageConfigured(): void {
@@ -72,10 +131,39 @@ export function assertPrivateFileStorageConfigured(): void {
   }
 }
 
-function requireToken(): string {
-  const token = process.env.BLOB_READ_WRITE_TOKEN?.trim();
-  if (!token) throw new Error(FILE_STORAGE_NOT_CONFIGURED);
-  return token;
+/** Diagnóstico seguro — sin IDs, tokens ni claves. */
+export function getStorageHealth(): StorageHealth {
+  return {
+    provider: STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
+    configured: isPrivateFileStorageConfigured(),
+    authMode: getBlobAuthMode(),
+    storeConfigured: Boolean(storeId()),
+  };
+}
+
+type BlobAuthOptions = {
+  token?: string;
+  oidcToken?: string;
+  storeId?: string;
+};
+
+/** Opciones de auth para @vercel/blob — nunca loguear el resultado. */
+export function resolveBlobAuthOptions(): BlobAuthOptions {
+  const mode = getBlobAuthMode();
+  if (mode === "OIDC") {
+    const opts: BlobAuthOptions = {};
+    const sid = storeId();
+    if (sid) opts.storeId = sid;
+    const oidc = oidcToken();
+    if (oidc) opts.oidcToken = oidc;
+    return opts;
+  }
+  if (mode === "TOKEN") {
+    const token = rwToken();
+    if (!token) throw new Error(FILE_STORAGE_NOT_CONFIGURED);
+    return { token };
+  }
+  throw new Error(FILE_STORAGE_NOT_CONFIGURED);
 }
 
 /** Sanitiza el último segmento del pathname. */
@@ -115,17 +203,17 @@ class VercelBlobPrivateStorage implements FileStorageAdapter {
     contentType: string;
     allowOverwrite?: boolean;
   }): Promise<FilePutResult> {
-    const token = requireToken();
+    const auth = resolveBlobAuthOptions();
     const body = Buffer.isBuffer(params.bytes)
       ? params.bytes
       : Buffer.from(params.bytes);
     const sha = sha256Hex(body);
     const blob = await put(params.storageKey, body, {
       access: "private",
-      token,
       contentType: params.contentType,
       addRandomSuffix: false,
       allowOverwrite: params.allowOverwrite ?? false,
+      ...auth,
     });
     return {
       provider: STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
@@ -138,8 +226,8 @@ class VercelBlobPrivateStorage implements FileStorageAdapter {
   }
 
   async get(storageKey: string): Promise<FileGetResult> {
-    const token = requireToken();
-    const result = await get(storageKey, { access: "private", token });
+    const auth = resolveBlobAuthOptions();
+    const result = await get(storageKey, { access: "private", ...auth });
     if (!result?.stream) {
       throw new Error(`Archivo no encontrado en almacenamiento privado (${storageKey}).`);
     }
@@ -161,8 +249,8 @@ class VercelBlobPrivateStorage implements FileStorageAdapter {
   }
 
   async delete(storageKey: string): Promise<void> {
-    const token = requireToken();
-    await del(storageKey, { token });
+    const auth = resolveBlobAuthOptions();
+    await del(storageKey, { ...auth });
   }
 
   async exists(storageKey: string): Promise<boolean> {
@@ -171,9 +259,9 @@ class VercelBlobPrivateStorage implements FileStorageAdapter {
   }
 
   async metadata(storageKey: string): Promise<FileMetadata | null> {
-    const token = requireToken();
+    const auth = resolveBlobAuthOptions();
     try {
-      const h = await head(storageKey, { token });
+      const h = await head(storageKey, { ...auth });
       return {
         storageKey: h.pathname || storageKey,
         sizeBytes: h.size,
@@ -274,4 +362,5 @@ export function getFileStorage(): FileStorageAdapter {
 /** Reset memoria de tests. */
 export function resetMemoryFileStorageForTests(): void {
   g.__genusMemFileStorage = new MemoryFileStorage();
+  g.__genusFileStorage = undefined;
 }

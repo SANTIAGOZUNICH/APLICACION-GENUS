@@ -16,7 +16,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * Emite token temporal de upload cliente → Blob privado.
- * Nunca envía BLOB_READ_WRITE_TOKEN al navegador.
+ * Auth servidor: OIDC (BLOB_STORE_ID + VERCEL_OIDC_TOKEN) o fallback BLOB_READ_WRITE_TOKEN.
+ * Nunca envía tokens de store ni OIDC al navegador.
  * POST /api/v1/coas/upload-token
  */
 export async function POST(request: Request) {

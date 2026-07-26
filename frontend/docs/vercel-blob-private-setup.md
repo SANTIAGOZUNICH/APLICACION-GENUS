@@ -1,67 +1,52 @@
-# Conectar Vercel Blob privado (COA + Remitos)
+# Vercel Blob privado — COA y Remitos (OIDC)
 
-NO MERGE · NO PRODUCTION · NO aplicar migración 0008 todavía.
+Formulas **siguen en Google Drive**. COA y Remitos usan **Vercel Blob** con acceso privado.
 
-## 1. Crear store Blob en Vercel
+## Variables
 
-1. Abrí el proyecto `aplicacion-genus` en Vercel → **Storage** → **Create** → **Blob**.
-2. Elegí región cercana y creá el store.
-3. Conectalo al proyecto (Preview + Development). Production solo cuando se autorice.
-
-## 2. Variables de entorno (server only)
-
-En Vercel → Project → Settings → Environment Variables (solo **Preview** por ahora):
-
-| Variable | Valor | Público |
+| Variable | Rol | Dónde |
 |---|---|---|
-| `BLOB_READ_WRITE_TOKEN` | token del store (lo inyecta Vercel al conectar) | **NO** — nunca `NEXT_PUBLIC_` |
-| `GENUS_FILE_STORAGE` | `vercel_blob` | NO |
+| `GENUS_FILE_STORAGE=vercel_blob` | Activa el adapter | Preview / Production / local |
+| `BLOB_STORE_ID` | Store conectado (OIDC Marketplace) | Auto en Vercel al conectar Blob |
+| `VERCEL_OIDC_TOKEN` | Auth runtime (rotado por Vercel) | **Inyectado** — no crear a mano |
+| `BLOB_READ_WRITE_TOKEN` | Fallback **solo** local/CLI | Opcional; **no** crear en Vercel |
+| `BLOB_WEBHOOK_PUBLIC_KEY` | Solo verificación de webhooks | Auto; **no** autentica put/get/delete |
 
-Opcional local:
+Nunca exponer estas variables con prefijo `NEXT_PUBLIC_`.
 
-```bash
-cd frontend
-npx vercel env pull .env.local --yes
+## Auth en el adapter
+
+1. **OIDC** (preferido en Vercel): `BLOB_STORE_ID` + `VERCEL_OIDC_TOKEN` en runtime.
+2. **TOKEN** (local/CLI): `BLOB_READ_WRITE_TOKEN` si no hay OIDC.
+
+Diagnóstico seguro (sesión requerida):
+
+```http
+GET /api/v1/storage/health
 ```
 
-Verificá que `.env.local` tenga `BLOB_READ_WRITE_TOKEN` y **no** lo commitees.
+Respuesta (sin IDs ni secretos):
 
-## 3. Migración 0008 (aún NO)
-
-Archivo: `frontend/drizzle/0008_private_file_storage.sql`
-
-Queda en el journal pero **diferida** salvo `APPLY_MIGRATION_0008=1`.
-
-Hasta aplicarla, Genus guarda `storage_key` en columnas legacy `drive_file_id*` + `audit`/`checksum`. Cuando autoricen 0008:
-
-```bash
-# Solo Preview Neon, con autorización explícita:
-APPLY_MIGRATION_0008=1 npm run db:migrate-if
+```json
+{
+  "provider": "VERCEL_BLOB_PRIVATE",
+  "configured": true,
+  "authMode": "OIDC",
+  "storeConfigured": true
+}
 ```
 
-No tocar `APPLY` de 0005/0006/0007 si ya están aplicadas.
+## Checklist Preview
 
-## 4. Qué deja de usarse
+1. Blob store conectado vía OIDC en el proyecto Vercel.
+2. `GENUS_FILE_STORAGE=vercel_blob` en Preview.
+3. Confirmar `GET /api/v1/storage/health` → `configured=true`, `authMode=OIDC`.
+4. **No** crear `BLOB_READ_WRITE_TOKEN` en Vercel.
+5. Migración `0008` **no** aplicar hasta el go-ahead explícito.
 
-- `GOOGLE_DRIVE_COAS_FOLDER_ID` — no requerido
-- `GOOGLE_DRIVE_REMITOS_FOLDER_ID` — no requerido
+## Keys de almacenamiento
 
-**No modificar** `GOOGLE_DRIVE_FORMULAS_FOLDER_ID` (fórmulas siguen en Drive).
+- COA: `coas/{folderId}/{fileId}/v{n}/{fileName}`
+- Remitos: `remitos/{year}/{remitoId}/v{n}/remito.{pdf|xlsx}`
 
-## 5. Rutas autenticadas
-
-- `GET /api/v1/coas/files/:id/download`
-- `GET /api/v1/coas/files/:id/preview`
-- `GET /api/v1/remitos/:id/versions/:version/download?format=pdf|xlsx`
-- `POST /api/v1/coas/upload-token` — token temporal cliente (cargas grandes)
-
-RBAC: COA = MP admin / MP+Prod+Calidad+Dirección view · Remitos = solo PRODUCCIÓN.
-
-## 6. Verificación rápida
-
-1. Preview READY con `BLOB_READ_WRITE_TOKEN`.
-2. MP: crear carpeta virtual → subir PDF → preview → descarga.
-3. Producción: GENERAR REMITO → error claro si falta token; con token → PDF/XLSX en pestaña Remitos.
-4. Editar remito → v2; v1 sigue descargable.
-5. Calidad → Remitos = 403.
-6. Fórmulas: 842 versiones / 784 activas intactas.
+Descargas solo vía API autenticada Genus OS (nunca URL pública del blob al cliente).
