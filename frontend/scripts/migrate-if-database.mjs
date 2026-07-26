@@ -85,9 +85,12 @@ function prepareMigrationsFolder() {
   if (!apply0005) deferred.push("0005");
   if (!apply0006) deferred.push("0006");
   if (!apply0007) deferred.push("0007");
-  console.log(
-    `[db:migrate] ${deferred.join(" y ")} diferida(s) (definí APPLY_MIGRATION_0005=1 / APPLY_MIGRATION_0006=1 / APPLY_MIGRATION_0007=1 para aplicar).`
-  );
+  if (!apply0008) deferred.push("0008");
+  if (deferred.length) {
+    console.log(
+      `[db:migrate] ${deferred.join(" y ")} diferida(s) (APPLY_MIGRATION_0005/0006/0007/0008=1 para aplicar).`
+    );
+  }
   return tmp;
 }
 
