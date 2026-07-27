@@ -32,50 +32,63 @@ import type {
 } from "./types";
 
 let hydrated = false;
+let hydratePromise: Promise<void> | null = null;
 
 export async function hydrateInventoryFromNeon(repo: MemoryInventoryRepo): Promise<void> {
-  if (!isDatabaseConfigured() || hydrated) return;
-  const db = getDb();
+  if (!isDatabaseConfigured()) return;
+  if (hydrated) return;
+  if (hydratePromise) {
+    await hydratePromise;
+    return;
+  }
+  hydratePromise = (async () => {
+    const db = getDb();
 
-  const [
-    ingresos,
-    salidas,
-    materials,
-    alerts,
-    reads,
-    mpStock,
-    mpIngresos,
-    mpControl,
-    mpCompras,
-    ajustes,
-    audit,
-  ] = await Promise.all([
-    db.select().from(invMeIngresos),
-    db.select().from(invMeSalidas),
-    db.select().from(invMeMaterials),
-    db.select().from(invMeAlerts),
-    db.select().from(invMeAlertReads),
-    db.select().from(invMpStock),
-    db.select().from(invMpIngresos),
-    db.select().from(invMpControl),
-    db.select().from(invMpCompras),
-    db.select().from(invAjustes),
-    db.select().from(invAudit),
-  ]);
+    const [
+      ingresos,
+      salidas,
+      materials,
+      alerts,
+      reads,
+      mpStock,
+      mpIngresos,
+      mpControl,
+      mpCompras,
+      ajustes,
+      audit,
+    ] = await Promise.all([
+      db.select().from(invMeIngresos),
+      db.select().from(invMeSalidas),
+      db.select().from(invMeMaterials),
+      db.select().from(invMeAlerts),
+      db.select().from(invMeAlertReads),
+      db.select().from(invMpStock),
+      db.select().from(invMpIngresos),
+      db.select().from(invMpControl),
+      db.select().from(invMpCompras),
+      db.select().from(invAjustes),
+      db.select().from(invAudit),
+    ]);
 
-  repo.reset();
-  repo.meIngresos = ingresos.map((r) => r.payload as MeIngresoRow);
-  repo.meSalidas = salidas.map((r) => r.payload as MeSalidaRow);
-  repo.meMaterials = materials.map((r) => r.payload as MeMaterial);
-  repo.meAlerts = alerts.map((r) => r.payload as MeAlert);
-  repo.meAlertReads = reads.map((r) => r.payload as MeAlertRead);
-  repo.mpStock = mpStock.map((r) => normalizeMpStockPayload(r.payload));
-  repo.mpIngresos = mpIngresos.map((r) => normalizeMpIngresoPayload(r.payload));
-  repo.mpControl = mpControl.map((r) => r.payload as MpControlRow);
-  repo.mpCompras = mpCompras.map((r) => r.payload as MpCompraRow);
-  repo.ajustes = ajustes.map((r) => r.payload as StockAjuste);
-  repo.audit = audit.map((r) => r.payload as InventoryAudit);
-  hydrated = true;
+    repo.reset();
+    repo.meIngresos = ingresos.map((r) => r.payload as MeIngresoRow);
+    repo.meSalidas = salidas.map((r) => r.payload as MeSalidaRow);
+    repo.meMaterials = materials.map((r) => r.payload as MeMaterial);
+    repo.meAlerts = alerts.map((r) => r.payload as MeAlert);
+    repo.meAlertReads = reads.map((r) => r.payload as MeAlertRead);
+    repo.mpStock = mpStock.map((r) => normalizeMpStockPayload(r.payload));
+    repo.mpIngresos = mpIngresos.map((r) => normalizeMpIngresoPayload(r.payload));
+    repo.mpControl = mpControl.map((r) => r.payload as MpControlRow);
+    repo.mpCompras = mpCompras.map((r) => r.payload as MpCompraRow);
+    repo.ajustes = ajustes.map((r) => r.payload as StockAjuste);
+    repo.audit = audit.map((r) => r.payload as InventoryAudit);
+    hydrated = true;
+  })();
+  try {
+    await hydratePromise;
+  } finally {
+    hydratePromise = null;
+  }
 }
 
 function normalizeMpIngresoPayload(raw: unknown): MpIngresoRow {
@@ -138,6 +151,42 @@ function normalizeMpStockPayload(raw: unknown): MpStockRow {
 
 export function resetInventoryHydrationFlag() {
   hydrated = false;
+  hydratePromise = null;
+}
+
+/** Persiste un ingreso MP sin wipe-all (idempotente). */
+export async function persistMpIngresoRow(row: MpIngresoRow): Promise<void> {
+  if (!isDatabaseConfigured()) return;
+  const db = getDb();
+  await db
+    .insert(invMpIngresos)
+    .values({ id: row.id, payload: row, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: invMpIngresos.id,
+      set: { payload: row, updatedAt: new Date() },
+    });
+}
+
+/** Persiste un lote de stock MP sin wipe-all. */
+export async function persistMpStockRow(row: MpStockRow): Promise<void> {
+  if (!isDatabaseConfigured()) return;
+  const db = getDb();
+  await db
+    .insert(invMpStock)
+    .values({ id: row.id, payload: row, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: invMpStock.id,
+      set: { payload: row, updatedAt: new Date() },
+    });
+}
+
+/** Sincroniza todos los lotes MP en memoria (tras delta de ingreso). */
+export async function persistMpStockSnapshot(rows: MpStockRow[]): Promise<void> {
+  if (!isDatabaseConfigured() || rows.length === 0) return;
+  const db = getDb();
+  for (const row of rows) {
+    await persistMpStockRow(row);
+  }
 }
 
 export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promise<void> {

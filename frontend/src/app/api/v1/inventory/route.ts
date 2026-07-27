@@ -8,7 +8,7 @@ import {
   inventoryErrorResponse,
   resolveInventoryActor,
 } from "@/lib/inventory/http";
-import { hydrateInventoryFromNeon, persistInventorySnapshot } from "@/lib/inventory/neon-persist";
+import { hydrateInventoryFromNeon, persistInventorySnapshot, persistMpIngresoRow, persistMpStockSnapshot } from "@/lib/inventory/neon-persist";
 import type { InventoryActor } from "@/lib/inventory/inventory-service";
 import { ME_ALERT_NOTIFY_SECTORS } from "@/lib/inventory/rbac";
 
@@ -75,7 +75,13 @@ export async function POST(request: Request) {
     }
 
     const result = await mutateResource(ready.service, actor, body);
-    await persistInventorySnapshot(memoryInventoryRepo);
+    if (body.resource === "mp_ingresos") {
+      const row = result as import("@/lib/inventory/types").MpIngresoRow;
+      await persistMpIngresoRow(row);
+      await persistMpStockSnapshot(memoryInventoryRepo.mpStock);
+    } else {
+      await persistInventorySnapshot(memoryInventoryRepo);
+    }
     return NextResponse.json({ data: result, persistence: true });
   } catch (err) {
     return inventoryErrorResponse(err);

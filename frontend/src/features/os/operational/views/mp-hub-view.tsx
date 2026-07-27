@@ -139,14 +139,19 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       );
     }
     if (tab === "Ingresos MP") {
-      return ingresos.filter(
-        (r) =>
-          !q ||
-          [r.ingresoNro, r.descripcion, r.proveedor, r.cliente, r.lote, r.codigo, r.producto, r.status]
-            .join(" ")
-            .toLowerCase()
-            .includes(q)
-      );
+      return ingresos.filter((r) => {
+        const status = r.status ?? "BORRADOR";
+        const statusVisible =
+          status !== "ANULADO" ||
+          q.includes("anulado") ||
+          q === status.toLowerCase();
+        if (!statusVisible) return false;
+        if (!q) return true;
+        return [r.ingresoNro, r.descripcion, r.proveedor, r.cliente, r.lote, r.codigo, r.producto, r.status]
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
+      });
     }
     if (tab === "Control semanal") {
       return control.filter(

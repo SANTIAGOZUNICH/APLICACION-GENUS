@@ -1074,7 +1074,7 @@ export class InventoryService {
     return this.repo.listMpIngresos();
   }
 
-  upsertMpIngreso(
+  async upsertMpIngreso(
     actor: InventoryActor,
     input: Partial<MpIngresoRow> & {
       id?: string;
@@ -1202,7 +1202,7 @@ export class InventoryService {
       existing as unknown as Record<string, unknown> | null,
       row as unknown as Record<string, unknown>
     );
-    void this.syncMpIngresoLedger(actor, row, existing, {
+    await this.syncMpIngresoLedger(actor, row, existing, {
       anular: false,
       oldQty,
       oldCodigo,
@@ -1217,7 +1217,7 @@ export class InventoryService {
    * On anular / demote to BORRADOR: reverse previous impact.
    * Code change: reverse old código, apply new.
    */
-  private syncMpIngresoLedger(
+  private async syncMpIngresoLedger(
     actor: InventoryActor,
     row: MpIngresoRow,
     existing: MpIngresoRow | null,
@@ -1230,75 +1230,70 @@ export class InventoryService {
     }
   ) {
     const versionTag = row.updatedAt;
-    void import("@/lib/mp-stock/mp-stock-ledger")
-      .then(async ({ getMpStockLedger }) => {
-        const ledger = getMpStockLedger();
-        const actorMp = { email: actor.email, sector: actor.sector };
+    const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
+    const ledger = getMpStockLedger();
+    const actorMp = { email: actor.email, sector: actor.sector };
 
-        const applyDelta = async (
-          codigo: string,
-          quantity: number,
-          previousQuantity: number,
-          tag: string,
-          anular = false
-        ) => {
-          if (!codigo) return;
-          if (!anular && quantity === previousQuantity) return;
-          await ledger.applyIngreso(actorMp, {
-            ingresoId: row.id,
-            versionTag: tag,
-            codigo,
-            quantity: anular ? previousQuantity : quantity,
-            previousQuantity: anular ? previousQuantity : previousQuantity,
-            lote: row.lote,
-            proveedor: row.proveedor,
-            documento: row.remitoNro,
-            descripcion: row.descripcion,
-            anular,
-          });
-        };
+    const applyDelta = async (
+      codigo: string,
+      quantity: number,
+      previousQuantity: number,
+      tag: string,
+      anular = false
+    ) => {
+      if (!codigo) return;
+      if (!anular && quantity === previousQuantity) return;
+      await ledger.applyIngreso(actorMp, {
+        ingresoId: row.id,
+        versionTag: tag,
+        codigo,
+        quantity: anular ? previousQuantity : quantity,
+        previousQuantity: anular ? previousQuantity : previousQuantity,
+        lote: row.lote,
+        proveedor: row.proveedor,
+        documento: row.remitoNro,
+        descripcion: row.descripcion,
+        anular,
+      });
+    };
 
-        if (opts.anular) {
-          if (opts.oldCodigo && opts.oldQty > 0) {
-            // Delta reverse: quantity 0 vs previous = -oldQty (never deletes movements)
-            await applyDelta(opts.oldCodigo, 0, opts.oldQty, `${versionTag}:anular`);
-          }
-          return;
-        }
+    if (opts.anular) {
+      if (opts.oldCodigo && opts.oldQty > 0) {
+        await applyDelta(opts.oldCodigo, 0, opts.oldQty, `${versionTag}:anular`);
+      }
+      return;
+    }
 
-        const codeChanged =
-          Boolean(opts.oldCodigo) &&
-          Boolean(opts.newCodigo) &&
-          opts.oldCodigo !== opts.newCodigo;
+    const codeChanged =
+      Boolean(opts.oldCodigo) &&
+      Boolean(opts.newCodigo) &&
+      opts.oldCodigo !== opts.newCodigo;
 
-        if (codeChanged) {
-          if (opts.oldQty > 0) {
-            await applyDelta(opts.oldCodigo, 0, opts.oldQty, `${versionTag}:rev-old`);
-          }
-          if (opts.newQty > 0) {
-            await applyDelta(opts.newCodigo, opts.newQty, 0, `${versionTag}:new`);
-          }
-          return;
-        }
+    if (codeChanged) {
+      if (opts.oldQty > 0) {
+        await applyDelta(opts.oldCodigo, 0, opts.oldQty, `${versionTag}:rev-old`);
+      }
+      if (opts.newQty > 0) {
+        await applyDelta(opts.newCodigo, opts.newQty, 0, `${versionTag}:new`);
+      }
+      return;
+    }
 
-        const codigo = opts.newCodigo || opts.oldCodigo;
-        if (!codigo) return;
+    const codigo = opts.newCodigo || opts.oldCodigo;
+    if (!codigo) return;
 
-        // Only sync when confirming (newQty>0) or reversing demote (oldQty>0 → 0)
-        if (opts.newQty <= 0 && opts.oldQty <= 0) return;
-        if (row.status === "CONFIRMADO" && opts.newQty > 0) {
-          await applyDelta(codigo, opts.newQty, opts.oldQty, versionTag);
-          return;
-        }
-        if (opts.oldQty > 0 && opts.newQty <= 0) {
-          await applyDelta(codigo, 0, opts.oldQty, `${versionTag}:demote`);
-        }
-      })
-      .catch(() => undefined);
+    if (opts.newQty <= 0 && opts.oldQty <= 0) return;
+    if (row.status === "CONFIRMADO" && opts.newQty > 0) {
+      await applyDelta(codigo, opts.newQty, opts.oldQty, versionTag);
+      return;
+    }
+    if (opts.oldQty > 0 && opts.newQty <= 0) {
+      await applyDelta(codigo, 0, opts.oldQty, `${versionTag}:demote`);
+    }
   }
 
   /** Anula ingreso: revierte ledger/stock, status ANULADO, conserva la fila. */
-  anularMpIngreso(actor: InventoryActor, id: string, reason: string) {
+  async anularMpIngreso(actor: InventoryActor, id: string, reason: string) {
     this.guard(actor, "mp_ingresos", true);
     if (!reason.trim()) throw new InventoryValidationError("Motivo obligatorio.");
     const existing = this.repo.getMpIngreso(id);
@@ -1334,7 +1329,7 @@ export class InventoryService {
       row as unknown as Record<string, unknown>,
       reason
     );
-    void this.syncMpIngresoLedger(actor, row, existing, {
+    await this.syncMpIngresoLedger(actor, row, existing, {
       anular: true,
       oldQty,
       oldCodigo,

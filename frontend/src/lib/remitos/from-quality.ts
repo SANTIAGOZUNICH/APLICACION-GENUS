@@ -17,9 +17,92 @@ export function isPackagingQualityItem(item: QualityItem): boolean {
   return item.kind === "salida";
 }
 
-export function resolveRemitoInputFromQuality(
+export type RemitoQualityGaps = {
+  missingClient: boolean;
+  missingDeliveryDate: boolean;
+  missingLote: boolean;
+  missingVto: boolean;
+  missingCajas: boolean;
+  missingUnidades: boolean;
+  labels: string[];
+};
+
+function resolveWorkItem(item: QualityItem, workItems: WorkItem[]): WorkItem | null {
+  const workItemId =
+    item.relatedWorkItemId?.trim() ||
+    (item.id.startsWith("qc:") ? item.id.slice(3) : item.id);
+  return (
+    workItems.find((w) => w.id === workItemId) ??
+    workItems.find((w) => w.id === item.relatedWorkItemId) ??
+    null
+  );
+}
+
+/** Campos reales faltantes (sin defaults silenciosos). */
+export function remitoGapsFromQuality(
   item: QualityItem,
   workItems: WorkItem[] = []
+): RemitoQualityGaps {
+  const wi = resolveWorkItem(item, workItems);
+  const client = item.client?.trim() || wi?.client?.trim() || "";
+  const deliveryDate =
+    item.deliveryDate?.trim() ||
+    wi?.deliveryDate?.trim() ||
+    wi?.plannedDate?.trim() ||
+    "";
+  const lote =
+    item.lote?.trim() ||
+    wi?.packagingLote?.trim() ||
+    wi?.loteRef?.trim() ||
+    "";
+  const vto = wi?.packagingVto?.trim() || "";
+  const cajas = wi?.packagingCajas;
+  const unidades = wi?.packagingUnidadesPorCaja;
+  const labels: string[] = [];
+  const missingClient = !client || client.toLowerCase() === "sin cliente";
+  const missingDeliveryDate = !deliveryDate;
+  const missingLote = !lote;
+  const missingVto = !vto;
+  const missingCajas = cajas == null || Number(cajas) <= 0;
+  const missingUnidades = unidades == null || Number(unidades) <= 0;
+  if (missingClient) labels.push("Cliente");
+  if (missingDeliveryDate) labels.push("Fecha de entrega");
+  if (missingLote) labels.push("Lote");
+  if (missingVto) labels.push("VTO");
+  if (missingCajas) labels.push("Cajas");
+  if (missingUnidades) labels.push("Unidades por caja");
+  return {
+    missingClient,
+    missingDeliveryDate,
+    missingLote,
+    missingVto,
+    missingCajas,
+    missingUnidades,
+    labels,
+  };
+}
+
+export function hasBlockingRemitoGaps(gaps: RemitoQualityGaps): boolean {
+  return gaps.missingClient || gaps.missingDeliveryDate;
+}
+
+export function resolveRemitoInputFromQuality(
+  item: QualityItem,
+  workItems: WorkItem[] = [],
+  overrides?: Partial<
+    Pick<
+      RemitoApprovalInput,
+      | "clientId"
+      | "clientDisplay"
+      | "deliveryDate"
+      | "lote"
+      | "vto"
+      | "cajas1"
+      | "unidades1"
+      | "unitsPerCaja1"
+      | "totalUnits"
+    >
+  >
 ): RemitoApprovalInput | null {
   if (!isPackagingQualityItem(item)) return null;
 
@@ -28,28 +111,30 @@ export function resolveRemitoInputFromQuality(
     (item.id.startsWith("qc:") ? item.id.slice(3) : item.id);
   if (!workItemId) return null;
 
-  const wi =
-    workItems.find((w) => w.id === workItemId) ??
-    workItems.find((w) => w.id === item.relatedWorkItemId) ??
-    null;
+  const wi = resolveWorkItem(item, workItems);
 
   const client =
+    overrides?.clientId?.trim() ||
+    overrides?.clientDisplay?.trim() ||
     item.client?.trim() ||
     wi?.client?.trim() ||
     "Sin cliente";
   const deliveryDate =
+    overrides?.deliveryDate?.trim() ||
     item.deliveryDate?.trim() ||
     wi?.deliveryDate?.trim() ||
     wi?.plannedDate?.trim() ||
     new Date().toISOString().slice(0, 10);
   const product = item.product?.trim() || wi?.product?.trim() || "Producto";
   const lote =
+    overrides?.lote?.trim() ||
     item.lote?.trim() ||
     wi?.packagingLote?.trim() ||
     wi?.loteRef?.trim() ||
     "";
-  const vto = wi?.packagingVto?.trim() || "";
+  const vto = overrides?.vto?.trim() || wi?.packagingVto?.trim() || "";
   const totalUnits =
+    overrides?.totalUnits ??
     wi?.packagingTotalUnits ??
     (parseQty(item.quantity) ||
       parseQty(wi?.finishedQty) ||
@@ -65,9 +150,13 @@ export function resolveRemitoInputFromQuality(
     lote,
     vto,
     totalUnits,
-    cajas1: wi?.packagingCajas ?? null,
-    unidades1: wi?.packagingUnidadesPorCaja ?? null,
-    unitsPerCaja1: wi?.packagingUnidadesPorCaja ?? null,
+    cajas1: overrides?.cajas1 ?? wi?.packagingCajas ?? null,
+    unidades1: overrides?.unidades1 ?? wi?.packagingUnidadesPorCaja ?? null,
+    unitsPerCaja1:
+      overrides?.unitsPerCaja1 ??
+      overrides?.unidades1 ??
+      wi?.packagingUnidadesPorCaja ??
+      null,
   };
 }
 

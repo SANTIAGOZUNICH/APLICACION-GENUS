@@ -74,6 +74,8 @@ export async function POST(request: Request) {
       parentId?: string | null;
       folderId?: string;
       fileId?: string;
+      version?: number;
+      reason?: string;
     };
     if (body.action === "mkdir") {
       const folder = await svc.createFolder(
@@ -94,6 +96,27 @@ export async function POST(request: Request) {
     if (body.action === "delete_folder") {
       await svc.archiveFolder(a, String(body.folderId ?? ""));
       return NextResponse.json({ ok: true });
+    }
+    if (body.action === "delete_file") {
+      const result = await svc.archiveFile(
+        a,
+        String(body.fileId ?? ""),
+        body.reason
+      );
+      return NextResponse.json(result);
+    }
+    if (body.action === "delete_version") {
+      const version = Number(body.version);
+      if (!Number.isFinite(version) || version < 1) {
+        return NextResponse.json({ error: "version inválida" }, { status: 400 });
+      }
+      const result = await svc.deleteVersion(
+        a,
+        String(body.fileId ?? ""),
+        version,
+        body.reason
+      );
+      return NextResponse.json(result);
     }
     return NextResponse.json({ error: "action inválida" }, { status: 400 });
   } catch (err) {

@@ -28,6 +28,7 @@ import {
   type OperationalTableColumn,
 } from "../components/operational-ui";
 import { DeliveryDateBadge } from "../components/delivery-date-badge";
+import { useRemitoAprobadosActions } from "../components/remito-aprobados-actions";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { filterQualityByKind, filterQualityByStatus } from "../lib/operational-filters";
 import {
@@ -37,6 +38,8 @@ import {
 import { WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { useOperationalStore } from "../store/operational-store-context";
 import type { QualityItem } from "../types";
+import { canAccessRemitos } from "@/lib/remitos/types";
+import { isPackagingQualityItem } from "@/lib/remitos/from-quality";
 
 const TOP_TABS = [
   { id: "pendientes", label: "Pendientes" },
@@ -121,6 +124,14 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     () => sortReceivedFirst(filterQualityByStatus(qualityItems, "rechazado")),
     [qualityItems]
   );
+
+  const workItems = useMemo(() => data?.workItems ?? [], [data?.workItems]);
+  const canShowRemitos = canAccessRemitos(sectorId);
+  const remitoActions = useRemitoAprobadosActions({
+    aprobados,
+    workItems,
+    enabled: canShowRemitos && topTab === "aprobados",
+  });
 
   const transferidosCount = useMemo(
     () =>
@@ -298,6 +309,11 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
       },
       { key: "product", header: "Producto", render: (row) => displayField(row.product) },
       { key: "client", header: "Cliente", render: (row) => displayField(row.client) },
+      {
+        key: "deliveryDate",
+        header: "Fecha de entrega",
+        render: (row) => <DeliveryDateBadge deliveryDate={row.deliveryDate} />,
+      },
       { key: "quantity", header: "Cantidad", render: (row) => displayField(row.quantity) },
       {
         key: "ref",
@@ -316,8 +332,22 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
           </span>
         ),
       },
+      ...(remitoActions.canRemitos && topTab === "aprobados"
+        ? [
+            {
+              key: "remito",
+              header: "Remito",
+              render: (row: QualityItem) =>
+                isPackagingQualityItem(row)
+                  ? remitoActions.renderRemitoAction(row)
+                  : (
+                      <span className="text-xs text-[var(--os-text-muted)]">—</span>
+                    ),
+            } satisfies OperationalTableColumn<QualityItem>,
+          ]
+        : []),
     ],
-    [getQualityObservation]
+    [getQualityObservation, remitoActions, topTab]
   );
 
   const topTabsWithCount = TOP_TABS.map((tab) => ({
@@ -412,12 +442,20 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
         )}
 
         {topTab === "aprobados" && (
-          <OperationalTable
-            columns={decidedColumns}
-            rows={aprobados}
-            rowKey={(row) => row.id}
-            emptyMessage="Todavía no hay trabajos aprobados."
-          />
+          <>
+            {remitoActions.canRemitos ? (
+              <p className="mb-2 text-xs text-[var(--os-text-muted)]">
+                Envasados aprobados: usá GENERAR REMITO para agrupar por cliente y fecha.
+              </p>
+            ) : null}
+            <OperationalTable
+              columns={decidedColumns}
+              rows={aprobados}
+              rowKey={(row) => row.id}
+              emptyMessage="Todavía no hay trabajos aprobados."
+            />
+            {remitoActions.modals}
+          </>
         )}
 
         {topTab === "rechazados" && (

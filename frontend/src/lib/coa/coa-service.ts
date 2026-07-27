@@ -399,6 +399,215 @@ export class CoaService {
     mem().folders = mem().folders.filter((f) => f.id !== folderId);
   }
 
+  /**
+   * Elimina archivo completo: borra todos los Blobs, soft-archiva metadata y deja auditoría mínima.
+   * Si falla Blob → no archiva (queda visible). Si Blob OK y Neon falla → tombstone inconsistente.
+   */
+  async archiveFile(
+    actor: CoaActor,
+    fileId: string,
+    reason?: string
+  ): Promise<{ ok: true; versionsDeleted: number }> {
+    assertAdmin(actor);
+    await assertFeatureWritesEnabled();
+    const file = await this.getFile(fileId);
+    if (!file) throw new Error("Archivo no encontrado.");
+    const versions = await this.listVersions(actor, fileId);
+    const keys = Array.from(
+      new Set(
+        [
+          ...versions.map((v) => v.driveFileId).filter(Boolean),
+          file.driveFileId,
+        ].filter((k): k is string => Boolean(k))
+      )
+    );
+
+    const storage = getFileStorage();
+    const deletedKeys: string[] = [];
+    for (const key of keys) {
+      try {
+        await storage.delete(key);
+        deletedKeys.push(key);
+      } catch {
+        throw new Error(
+          `No se pudo borrar el archivo en almacenamiento privado (${key.slice(0, 24)}…). El archivo sigue visible. Reintentá.`
+        );
+      }
+    }
+
+    const now = new Date().toISOString();
+    const auditPayload = {
+      action: "delete_file",
+      at: now,
+      by: actor.email,
+      reason: reason?.trim() || null,
+      name: file.name,
+      folderId: file.folderId,
+      versionCount: versions.length,
+      hashes: versions.map((v) => ({ version: v.version, storageKey: v.driveFileId })),
+      blobKeysDeleted: deletedKeys.length,
+    };
+
+    try {
+      if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+        const db = getDb();
+        await db
+          .update(coaFiles)
+          .set({
+            archived: true,
+            updatedAt: new Date(now),
+            updatedBy: actor.email,
+            audit: auditPayload,
+          })
+          .where(eq(coaFiles.id, fileId));
+        // Hard-delete version rows after blobs gone — evita metadata sin blob.
+        await db.delete(coaFileVersions).where(eq(coaFileVersions.fileId, fileId));
+      } else {
+        if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
+        mem().files = mem().files.filter((f) => f.id !== fileId);
+        mem().versions = mem().versions.filter((v) => v.fileId !== fileId);
+      }
+      await auditCoa(actor, "delete_file", fileId, {
+        name: file.name,
+        reason: reason?.trim() || null,
+        versionCount: versions.length,
+        blobKeysDeleted: deletedKeys.length,
+      });
+      return { ok: true, versionsDeleted: versions.length };
+    } catch (err) {
+      await auditCoa(actor, "delete_file_inconsistent", fileId, {
+        name: file.name,
+        reason: reason?.trim() || null,
+        blobKeysDeleted: deletedKeys.length,
+        neonError: err instanceof Error ? err.message : "neon_failed",
+        needsAdminRepair: true,
+      });
+      // Best-effort hide from list even if full persist failed.
+      try {
+        if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+          const db = getDb();
+          await db
+            .update(coaFiles)
+            .set({
+              archived: true,
+              updatedAt: new Date(),
+              updatedBy: actor.email,
+              audit: { ...auditPayload, inconsistent: true },
+            })
+            .where(eq(coaFiles.id, fileId));
+        }
+      } catch {
+        /* already audited */
+      }
+      throw new Error(
+        "Los archivos binarios se eliminaron pero falló la metadata. El archivo no quedará descargable; contactá soporte para reparación."
+      );
+    }
+  }
+
+  /**
+   * Elimina una versión: borra su Blob y la fila.
+   * Si era la vigente → promover la más reciente restante.
+   * Si era la única → elimina el archivo completo.
+   */
+  async deleteVersion(
+    actor: CoaActor,
+    fileId: string,
+    version: number,
+    reason?: string
+  ): Promise<{ ok: true; fileDeleted?: boolean; currentVersion?: number }> {
+    assertAdmin(actor);
+    await assertFeatureWritesEnabled();
+    const file = await this.getFile(fileId);
+    if (!file) throw new Error("Archivo no encontrado.");
+    const versions = await this.listVersions(actor, fileId);
+    const target = versions.find((v) => v.version === version);
+    if (!target) throw new Error("Versión no encontrada.");
+
+    if (versions.length <= 1) {
+      await this.archiveFile(actor, fileId, reason || `Única versión v${version} eliminada`);
+      return { ok: true, fileDeleted: true };
+    }
+
+    const storage = getFileStorage();
+    try {
+      await storage.delete(target.driveFileId);
+    } catch {
+      throw new Error(
+        `No se pudo borrar la versión v${version} en almacenamiento privado. La versión sigue disponible.`
+      );
+    }
+
+    const remaining = versions
+      .filter((v) => v.version !== version)
+      .sort((a, b) => b.version - a.version);
+    const nextCurrent = remaining[0]!;
+    const now = new Date().toISOString();
+
+    try {
+      if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+        const db = getDb();
+        await db
+          .delete(coaFileVersions)
+          .where(
+            and(eq(coaFileVersions.fileId, fileId), eq(coaFileVersions.version, version))
+          );
+        await db
+          .update(coaFiles)
+          .set({
+            driveFileId: nextCurrent.driveFileId,
+            currentVersion: nextCurrent.version,
+            mimeType: nextCurrent.mimeType,
+            sizeBytes: nextCurrent.sizeBytes,
+            updatedAt: new Date(now),
+            updatedBy: actor.email,
+            audit: {
+              action: "delete_version",
+              at: now,
+              by: actor.email,
+              reason: reason?.trim() || null,
+              deletedVersion: version,
+              currentVersion: nextCurrent.version,
+            },
+          })
+          .where(eq(coaFiles.id, fileId));
+      } else {
+        if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
+        mem().versions = mem().versions.filter(
+          (v) => !(v.fileId === fileId && v.version === version)
+        );
+        const idx = mem().files.findIndex((f) => f.id === fileId);
+        if (idx >= 0) {
+          mem().files[idx] = {
+            ...mem().files[idx]!,
+            driveFileId: nextCurrent.driveFileId,
+            currentVersion: nextCurrent.version,
+            mimeType: nextCurrent.mimeType,
+            sizeBytes: nextCurrent.sizeBytes,
+            updatedAt: now,
+            updatedBy: actor.email,
+          };
+        }
+      }
+      await auditCoa(actor, "delete_version", fileId, {
+        version,
+        reason: reason?.trim() || null,
+        currentVersion: nextCurrent.version,
+      });
+      return { ok: true, currentVersion: nextCurrent.version };
+    } catch (err) {
+      await auditCoa(actor, "delete_version_inconsistent", fileId, {
+        version,
+        reason: reason?.trim() || null,
+        neonError: err instanceof Error ? err.message : "neon_failed",
+        needsAdminRepair: true,
+      });
+      throw new Error(
+        "El Blob de la versión se eliminó pero falló la metadata. No se mostrará como descargable; contactá soporte."
+      );
+    }
+  }
+
   async listVersions(actor: CoaActor, fileId: string): Promise<CoaVersionRecord[]> {
     assertView(actor);
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {

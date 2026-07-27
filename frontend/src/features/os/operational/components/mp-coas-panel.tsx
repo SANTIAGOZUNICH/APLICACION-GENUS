@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import { ConfirmDialog } from "@/components/ui/dialog";
@@ -16,6 +17,19 @@ import {
   type CoaFolderRecord,
   type CoaVersionRecord,
 } from "@/lib/coa/types";
+
+type DeleteFileTarget = {
+  kind: "file";
+  file: CoaFileRecord;
+  versions: CoaVersionRecord[];
+  folderName: string;
+};
+
+type DeleteVersionTarget = {
+  kind: "version";
+  file: CoaFileRecord;
+  version: CoaVersionRecord;
+};
 
 export function MpCoasPanel() {
   const { email, sectorId } = usePreviewSession();
@@ -35,6 +49,13 @@ export function MpCoasPanel() {
   const [renameTarget, setRenameTarget] = useState<CoaFolderRecord | null>(null);
   const [renameName, setRenameName] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<CoaFolderRecord | null>(null);
+  const [deleteFileTarget, setDeleteFileTarget] = useState<DeleteFileTarget | null>(null);
+  const [deleteVersionTarget, setDeleteVersionTarget] = useState<DeleteVersionTarget | null>(
+    null
+  );
+  const [deleteReason, setDeleteReason] = useState("");
+  const [deleteConfirmStep, setDeleteConfirmStep] = useState<1 | 2>(1);
+  const [menuFileId, setMenuFileId] = useState<string | null>(null);
   const [detail, setDetail] = useState<{
     file: CoaFileRecord;
     versions: CoaVersionRecord[];
@@ -89,9 +110,11 @@ export function MpCoasPanel() {
   const filteredFiles = files.filter(
     (f) => !q || f.name.toLowerCase().includes(q.toLowerCase())
   );
+  const currentFolderName = stack[stack.length - 1]?.name ?? "COA'S";
 
   async function openFile(f: CoaFileRecord) {
     setError(null);
+    setMenuFileId(null);
     if (pdfUrl) {
       URL.revokeObjectURL(pdfUrl);
       setPdfUrl(null);
@@ -155,6 +178,149 @@ export function MpCoasPanel() {
     URL.revokeObjectURL(a.href);
   }
 
+  async function beginDeleteFile(f: CoaFileRecord) {
+    setMenuFileId(null);
+    setError(null);
+    const res = await fetch(`/api/v1/coa?fileId=${encodeURIComponent(f.id)}`, {
+      headers: headers(),
+    });
+    const body = (await res.json()) as {
+      file?: CoaFileRecord;
+      versions?: CoaVersionRecord[];
+      error?: string;
+    };
+    if (!res.ok) {
+      setError(body.error ?? "No se pudo preparar eliminación");
+      return;
+    }
+    setDeleteReason("");
+    setDeleteConfirmStep(1);
+    setDeleteFileTarget({
+      kind: "file",
+      file: body.file ?? f,
+      versions: body.versions ?? [],
+      folderName: currentFolderName,
+    });
+  }
+
+  function beginDeleteVersion(file: CoaFileRecord, version: CoaVersionRecord) {
+    setDeleteReason("");
+    setDeleteConfirmStep(1);
+    setDeleteVersionTarget({ kind: "version", file, version });
+  }
+
+  async function uploadNewVersion(f: CoaFileRecord, file: File) {
+    const fd = new FormData();
+    fd.set("action", "upload");
+    fd.set("folderId", f.folderId);
+    fd.set("file", file);
+    fd.set("replaceFileId", f.id);
+    setUploadProgress(`Subiendo nueva versión de ${f.name}…`);
+    setError(null);
+    setMenuFileId(null);
+    const r = await fetch("/api/v1/coa", {
+      method: "POST",
+      headers: headers(),
+      body: fd,
+    });
+    const b = (await r.json()) as {
+      error?: string;
+      schemaPending?: boolean;
+      file?: CoaFileRecord;
+    };
+    setUploadProgress(null);
+    if (!r.ok) {
+      setError(b.error ?? "Upload falló");
+      if (b.schemaPending) setSchemaPending(true);
+      return;
+    }
+    setUploadProgress(`Versión ${b.file?.currentVersion ?? ""} guardada.`);
+    await reload();
+    if (detail?.file.id === f.id && b.file) {
+      await openFile(b.file);
+    }
+  }
+
+  async function confirmDeleteFile() {
+    if (!deleteFileTarget) return;
+    if (deleteConfirmStep === 1) {
+      setDeleteConfirmStep(2);
+      return;
+    }
+    const r = await fetch("/api/v1/coa", {
+      method: "POST",
+      headers: { ...headers(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "delete_file",
+        fileId: deleteFileTarget.file.id,
+        reason: deleteReason.trim() || undefined,
+      }),
+    });
+    const b = (await r.json()) as { error?: string };
+    if (!r.ok) {
+      setError(b.error ?? "No se pudo eliminar el archivo");
+      setDeleteFileTarget(null);
+      setDeleteConfirmStep(1);
+      return;
+    }
+    if (detail?.file.id === deleteFileTarget.file.id) setDetail(null);
+    setDeleteFileTarget(null);
+    setDeleteConfirmStep(1);
+    setDeleteReason("");
+    await reload();
+  }
+
+  async function confirmDeleteVersion() {
+    if (!deleteVersionTarget) return;
+    if (deleteConfirmStep === 1) {
+      setDeleteConfirmStep(2);
+      return;
+    }
+    const r = await fetch("/api/v1/coa", {
+      method: "POST",
+      headers: { ...headers(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "delete_version",
+        fileId: deleteVersionTarget.file.id,
+        version: deleteVersionTarget.version.version,
+        reason: deleteReason.trim() || undefined,
+      }),
+    });
+    const b = (await r.json()) as { error?: string; fileDeleted?: boolean };
+    if (!r.ok) {
+      setError(b.error ?? "No se pudo eliminar la versión");
+      setDeleteVersionTarget(null);
+      setDeleteConfirmStep(1);
+      return;
+    }
+    const fileId = deleteVersionTarget.file.id;
+    setDeleteVersionTarget(null);
+    setDeleteConfirmStep(1);
+    setDeleteReason("");
+    await reload();
+    if (b.fileDeleted) {
+      setDetail(null);
+    } else if (detail?.file.id === fileId) {
+      const refreshed = files.find((f) => f.id === fileId);
+      if (refreshed) await openFile(refreshed);
+      else {
+        const listRes = await fetch(`/api/v1/coa?fileId=${encodeURIComponent(fileId)}`, {
+          headers: headers(),
+        });
+        if (listRes.ok) {
+          const body = (await listRes.json()) as {
+            file?: CoaFileRecord;
+            versions?: CoaVersionRecord[];
+          };
+          if (body.file) setDetail({ file: body.file, versions: body.versions ?? [] });
+          else setDetail(null);
+        } else {
+          setDetail(null);
+        }
+      }
+    }
+  }
+
   return (
     <div className="space-y-3" data-testid="mp-coas-panel">
       <SchemaPendingBanner show={schemaPending} />
@@ -179,6 +345,7 @@ export function MpCoasPanel() {
               setStack(stack.slice(0, i + 1));
               setParentId(s.id);
               setDetail(null);
+              setMenuFileId(null);
             }}
           >
             {s.name}
@@ -277,7 +444,7 @@ export function MpCoasPanel() {
                   }
                   setUploadProgress(
                     existing
-                      ? `Versión ${(b.file?.currentVersion ?? 0)} guardada.`
+                      ? `Versión ${b.file?.currentVersion ?? 0} guardada.`
                       : "Archivo subido correctamente."
                   );
                   await reload();
@@ -300,6 +467,7 @@ export function MpCoasPanel() {
                 setParentId(f.id);
                 setStack((s) => [...s, { id: f.id, name: f.name }]);
                 setDetail(null);
+                setMenuFileId(null);
               }}
             >
               📁 {f.name}
@@ -328,17 +496,86 @@ export function MpCoasPanel() {
           </li>
         ))}
         {filteredFiles.map((f) => (
-          <li key={f.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+          <li key={f.id} className="relative flex items-center justify-between gap-2 px-3 py-2 text-sm">
             <button type="button" className="text-left hover:underline" onClick={() => void openFile(f)}>
               {f.name} · v{f.currentVersion} · {(f.sizeBytes / 1024).toFixed(1)} KB
             </button>
-            <button
-              type="button"
-              className="text-xs underline"
-              onClick={() => void downloadVersion(f.id)}
-            >
-              Descargar
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="text-xs underline"
+                onClick={() => void downloadVersion(f.id)}
+              >
+                Descargar
+              </button>
+              {canAdmin && !schemaPending ? (
+                <>
+                  <button
+                    type="button"
+                    className="rounded p-1 text-rose-700 hover:bg-rose-50"
+                    title="Eliminar archivo"
+                    aria-label={`Eliminar ${f.name}`}
+                    data-testid={`coa-delete-file-${f.id}`}
+                    onClick={() => void beginDeleteFile(f)}
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      className="rounded border px-2 py-0.5 text-xs"
+                      data-testid={`coa-file-menu-${f.id}`}
+                      onClick={() =>
+                        setMenuFileId((id) => (id === f.id ? null : f.id))
+                      }
+                    >
+                      Acciones ▾
+                    </button>
+                    {menuFileId === f.id ? (
+                      <div className="absolute right-0 z-20 mt-1 min-w-[11rem] rounded border bg-[var(--os-surface,#fff)] py-1 shadow-md">
+                        <button
+                          type="button"
+                          className="block w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50"
+                          onClick={() => void openFile(f)}
+                        >
+                          Ver
+                        </button>
+                        <button
+                          type="button"
+                          className="block w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50"
+                          onClick={() => {
+                            setMenuFileId(null);
+                            void downloadVersion(f.id);
+                          }}
+                        >
+                          Descargar
+                        </button>
+                        <label className="block w-full cursor-pointer px-3 py-1.5 text-left text-xs hover:bg-slate-50">
+                          Subir nueva versión
+                          <input
+                            type="file"
+                            accept=".pdf,.xls,.xlsx"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              e.target.value = "";
+                              if (file) void uploadNewVersion(f, file);
+                            }}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="block w-full px-3 py-1.5 text-left text-xs text-rose-700 hover:bg-rose-50"
+                          onClick={() => void beginDeleteFile(f)}
+                        >
+                          Eliminar archivo
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
+            </div>
           </li>
         ))}
         {filteredFolders.length === 0 && filteredFiles.length === 0 ? (
@@ -348,7 +585,20 @@ export function MpCoasPanel() {
 
       {detail ? (
         <div className="space-y-2 rounded border p-3" data-testid="coa-file-detail">
-          <h4 className="font-semibold">{detail.file.name}</h4>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <h4 className="font-semibold">{detail.file.name}</h4>
+            {canAdmin && !schemaPending ? (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50"
+                data-testid="coa-detail-delete-file"
+                onClick={() => void beginDeleteFile(detail.file)}
+              >
+                <Trash2 className="size-3.5" />
+                Eliminar archivo
+              </button>
+            ) : null}
+          </div>
           <p className="text-xs text-[var(--os-text-muted)]">
             MIME: {detail.file.mimeType} · Tamaño: {(detail.file.sizeBytes / 1024).toFixed(1)} KB ·
             Actualizado por {detail.file.updatedBy} ·{" "}
@@ -370,17 +620,18 @@ export function MpCoasPanel() {
           <h5 className="text-sm font-medium">Versiones</h5>
           <ul className="space-y-1 text-xs">
             {detail.versions.map((v) => (
-              <li key={v.id} className="flex flex-wrap gap-2">
+              <li key={v.id} className="flex flex-wrap items-center gap-2">
                 <span>
                   v{v.version} · {(v.sizeBytes / 1024).toFixed(1)} KB · {v.uploadedBy} ·{" "}
                   {new Date(v.createdAt).toLocaleString("es-AR")}
+                  {v.version === detail.file.currentVersion ? " · vigente" : ""}
                 </span>
                 <button
                   type="button"
                   className="underline"
                   onClick={() => void downloadVersion(detail.file.id, v.version)}
                 >
-                  Descargar
+                  Descargar versión
                 </button>
                 {detail.file.mimeType === "application/pdf" ? (
                   <button
@@ -389,6 +640,17 @@ export function MpCoasPanel() {
                     onClick={() => void previewPdf(detail.file.id, v.version)}
                   >
                     Ver
+                  </button>
+                ) : null}
+                {canAdmin && !schemaPending ? (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 text-rose-700 underline"
+                    data-testid={`coa-delete-version-${v.version}`}
+                    onClick={() => beginDeleteVersion(detail.file, v)}
+                  >
+                    <Trash2 className="size-3" />
+                    Eliminar versión
                   </button>
                 ) : null}
               </li>
@@ -451,7 +713,7 @@ export function MpCoasPanel() {
         open={Boolean(deleteTarget)}
         onOpenChange={(o) => !o && setDeleteTarget(null)}
         title="¿Eliminar carpeta?"
-        description="Solo carpetas vacías. Queda auditado (actor/fecha). Se mueve a papelera en Drive."
+        description="Solo carpetas vacías. Queda auditado (actor/fecha)."
         confirmLabel="Eliminar"
         variant="destructive"
         onConfirm={() => {
@@ -475,6 +737,115 @@ export function MpCoasPanel() {
           });
         }}
       />
+
+      {deleteFileTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            className="w-full max-w-md rounded bg-[var(--os-surface,#fff)] p-4 shadow"
+            data-testid="coa-delete-file-dialog"
+          >
+            <h3 className="mb-2 font-semibold">
+              {deleteConfirmStep === 1
+                ? "¿Eliminar archivo?"
+                : "Confirmación definitiva"}
+            </h3>
+            <p className="mb-2 text-sm text-[var(--os-text-muted)]">
+              Archivo: <strong>{deleteFileTarget.file.name}</strong>
+              <br />
+              Carpeta: <strong>{deleteFileTarget.folderName}</strong>
+              <br />
+              Versiones a eliminar:{" "}
+              <strong>{deleteFileTarget.versions.length || deleteFileTarget.file.currentVersion}</strong>
+            </p>
+            <p className="mb-3 text-sm">
+              {deleteConfirmStep === 1
+                ? "Se eliminarán todas las versiones y el contenido binario del almacenamiento privado. Quedará un registro mínimo de auditoría (sin el archivo)."
+                : "Esta acción no se puede deshacer. Confirmá nuevamente para borrar definitivamente."}
+            </p>
+            <label className="mb-3 block text-sm">
+              Motivo (recomendado)
+              <input
+                className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                placeholder="Ej. COA incorrecto / prueba"
+                data-testid="coa-delete-reason"
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setDeleteFileTarget(null);
+                  setDeleteConfirmStep(1);
+                  setDeleteReason("");
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                data-testid="coa-delete-file-confirm"
+                onClick={() => void confirmDeleteFile()}
+              >
+                {deleteConfirmStep === 1 ? "Continuar" : "Eliminar definitivamente"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteVersionTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div
+            className="w-full max-w-md rounded bg-[var(--os-surface,#fff)] p-4 shadow"
+            data-testid="coa-delete-version-dialog"
+          >
+            <h3 className="mb-2 font-semibold">
+              {deleteConfirmStep === 1
+                ? `¿Eliminar versión v${deleteVersionTarget.version.version}?`
+                : "Confirmación definitiva"}
+            </h3>
+            <p className="mb-3 text-sm">
+              Archivo: <strong>{deleteVersionTarget.file.name}</strong>. Solo se elimina esta
+              versión. Si es la vigente, la más reciente restante pasará a vigente. Si es la
+              única, se elimina el archivo completo.
+            </p>
+            <label className="mb-3 block text-sm">
+              Motivo (recomendado)
+              <input
+                className="mt-1 w-full rounded border px-2 py-1.5 text-sm"
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                data-testid="coa-delete-version-reason"
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setDeleteVersionTarget(null);
+                  setDeleteConfirmStep(1);
+                  setDeleteReason("");
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                data-testid="coa-delete-version-confirm"
+                onClick={() => void confirmDeleteVersion()}
+              >
+                {deleteConfirmStep === 1 ? "Continuar" : "Eliminar definitivamente"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
