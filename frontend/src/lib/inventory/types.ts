@@ -146,6 +146,11 @@ export type MpStockRow = {
   estadoVencimiento: string;
   origen: string;
   codigo: string;
+  /**
+   * true cuando el código es identidad interna (INT-MP-{id}) porque el ingreso
+   * no traía código de proveedor. Visible en Stock con advertencia.
+   */
+  codigoPendiente?: boolean;
   /** Productos destino asociados (ingresos CONFIRMADO del mismo código), unidos por " · ". */
   productosAsociados: string;
   createdBy: string;
@@ -162,6 +167,8 @@ export type MpIngresoRow = {
   cliente: string;
   remitoNro: string;
   codigo: string;
+  /** true si codigo es identidad interna INT-MP-{id}. */
+  codigoPendiente?: boolean;
   /** Producto destino opcional; no parte saldos de stock. */
   producto: string;
   descripcion: string;
@@ -180,6 +187,21 @@ export type MpIngresoRow = {
   createdAt: string;
   updatedAt: string;
 };
+
+/** Prefijo de identidad interna estable para ingresos sin código de proveedor. */
+export const MP_INTERNAL_CODIGO_PREFIX = "INT-MP-";
+
+export function isMpInternalCodigo(codigo: string): boolean {
+  return codigo
+    .trim()
+    .replace(/\s+/g, " ")
+    .toUpperCase()
+    .startsWith(MP_INTERNAL_CODIGO_PREFIX);
+}
+
+export function mpInternalCodigoForIngreso(ingresoId: string): string {
+  return `${MP_INTERNAL_CODIGO_PREFIX}${ingresoId}`;
+}
 
 export type MpControlRow = {
   id: string;

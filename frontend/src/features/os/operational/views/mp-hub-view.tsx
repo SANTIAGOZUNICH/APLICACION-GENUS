@@ -35,6 +35,7 @@ import {
   MP_INGRESO_COLUMNS,
   MP_STOCK_COLUMNS,
   MP_TABS,
+  isMpInternalCodigo,
   type MpCompraRow,
   type MpControlRow,
   type MpIngresoRow,
@@ -292,6 +293,29 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       ORIGEN: "origen",
     };
     const k = map[label];
+    if (label === "CÓDIGO") {
+      return {
+        key: label,
+        header: label,
+        render: (r) => {
+          const pending = Boolean(r.codigoPendiente) || isMpInternalCodigo(r.codigo);
+          return (
+            <span className="inline-flex flex-col gap-0.5">
+              <span>{displayCell(r.codigo)}</span>
+              {pending ? (
+                <span
+                  className="w-fit rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900"
+                  title="Identidad interna: completar código de proveedor"
+                  data-testid={`mp-stock-codigo-pendiente-${r.id}`}
+                >
+                  Sin código de proveedor
+                </span>
+              ) : null}
+            </span>
+          );
+        },
+      };
+    }
     return { key: label, header: label, render: (r) => displayCell(r[k]) };
   });
 
@@ -594,6 +618,15 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
 
       {tab === "Stock" && (
         <>
+        {stock.some((r) => r.codigoPendiente || isMpInternalCodigo(r.codigo)) ? (
+          <div
+            className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm"
+            data-testid="mp-stock-codigo-pendiente-banner"
+          >
+            Hay filas de Stock con identidad interna (sin código de proveedor). Completá el
+            código desde Ingresos MP cuando esté disponible.
+          </div>
+        ) : null}
         <OperationalTable
           columns={[
             ...stockColumns,
@@ -617,6 +650,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                               lote: r.lote,
                               vencimiento: r.vencimiento,
                               origen: r.origen,
+                              codigo: r.codigo,
                             });
                             setFormOpen(true);
                           }}
@@ -653,8 +687,9 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
               !(r as MpIngresoRow).stockImpacted
           ) ? (
             <div className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
-              Hay borradores sin afectar Stock (falta Código o Cantidad). Completá y confirmá
-              para impactar inventario.
+              Hay borradores sin afectar Stock (falta Cantidad/Total). Completá y confirmá
+              para impactar inventario. Los ingresos sin código de proveedor usan identidad
+              interna y aparecen en Stock con advertencia.
             </div>
           ) : null}
           <OperationalTable

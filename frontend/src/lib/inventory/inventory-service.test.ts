@@ -366,6 +366,24 @@ describe("InventoryService ME/MP", () => {
     expect(svc.listMpStock(mp)[0]?.cantidadKg).toBe(40);
   });
 
+  it("MP ingreso sin código + qty confirma con INT-MP y aparece en Stock", async () => {
+    const row = await svc.upsertMpIngreso(mp, {
+      descripcion: "Sin codigo proveedor",
+      lote: "L-SC",
+      bultos: 1,
+      cantidad: 12,
+      confirm: true,
+    });
+    expect(row.status).toBe("CONFIRMADO");
+    expect(row.stockImpacted).toBe(true);
+    expect(row.codigoPendiente).toBe(true);
+    expect(row.codigo).toMatch(/^INT-MP-/i);
+    const lot = svc.listMpStock(mp).find((s) => s.id === row.stockLotId);
+    expect(lot?.cantidadKg).toBe(12);
+    expect(lot?.codigoPendiente).toBe(true);
+    expect(lot?.codigo).toBe(row.codigo);
+  });
+
   it("MP cambio de código revierte viejo y aplica nuevo; producto no duplica saldo", async () => {
     const row = await svc.upsertMpIngreso(mp, {
       codigo: "OLD-1",

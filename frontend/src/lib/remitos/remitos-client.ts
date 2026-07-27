@@ -23,6 +23,14 @@ function headers(session: OrdersClientSession): HeadersInit {
   };
 }
 
+/** Headers de actor sin Content-Type (GET binarios). */
+function actorHeaders(session: OrdersClientSession): HeadersInit {
+  return {
+    [ACTOR_EMAIL_HEADER]: session.email,
+    [ACTOR_SECTOR_HEADER]: session.sector,
+  };
+}
+
 export async function fetchRemitosApi(
   session: OrdersClientSession,
   filters: RemitoListFilters = {}
@@ -151,4 +159,64 @@ export function remitoDownloadUrl(
     return `/api/v1/remitos/${remitoId}/versions/${opts.version}/download?${qs}`;
   }
   return `/api/v1/remitos/${remitoId}/download?${qs}`;
+}
+
+export type RemitoBlobDownload = {
+  blob: Blob;
+  fileName: string;
+  mimeType: string;
+};
+
+/**
+ * Descarga autenticada (headers de actor). No usar href/window.open:
+ * esas navegaciones no envían x-genus-actor-* y el API responde JSON "Sesión requerida".
+ */
+export async function downloadRemitoBlobApi(
+  session: OrdersClientSession,
+  remitoId: string,
+  format: "pdf" | "xlsx",
+  opts?: { filename?: string; version?: number }
+): Promise<RemitoBlobDownload> {
+  const url = remitoDownloadUrl(remitoId, format, opts);
+  const res = await fetch(url, { headers: actorHeaders(session) });
+  const ct = res.headers.get("Content-Type") || "";
+  if (!res.ok) {
+    const body = ct.includes("application/json")
+      ? ((await res.json().catch(() => ({}))) as { error?: string })
+      : {};
+    throw new Error(body.error ?? `Descarga falló (${res.status})`);
+  }
+  if (ct.includes("application/json")) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? "La descarga devolvió JSON en lugar del archivo");
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") ?? "";
+  const match = /filename\*=UTF-8''([^;]+)|filename="?([^"]+)"?/i.exec(cd);
+  const rawName = match?.[1] || match?.[2];
+  const fileName = opts?.filename?.trim()
+    || (rawName ? decodeURIComponent(rawName) : `remito.${format}`);
+  return { blob, fileName, mimeType: ct || blob.type };
+}
+
+/** Dispara descarga en el navegador vía Blob URL temporal (no href directo al API). */
+export async function triggerRemitoDownload(
+  session: OrdersClientSession,
+  remitoId: string,
+  format: "pdf" | "xlsx",
+  opts?: { filename?: string; version?: number }
+): Promise<void> {
+  const { blob, fileName } = await downloadRemitoBlobApi(session, remitoId, format, opts);
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = fileName;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }

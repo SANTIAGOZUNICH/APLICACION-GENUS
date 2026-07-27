@@ -38,12 +38,22 @@ import type {
   MpIngresoStatus,
   MpStockRow,
 } from "./types";
+import {
+  MP_INTERNAL_CODIGO_PREFIX,
+  isMpInternalCodigo,
+  mpInternalCodigoForIngreso,
+} from "./types";
 
 const DRAFT_NO_STOCK_MSG =
-  "Guardado sin afectar Stock: falta Código o Cantidad";
+  "Guardado sin afectar Stock: falta Cantidad/Total > 0";
 
 function normalizeMpCodigoLocal(codigo: string): string {
   return codigo.trim().replace(/\s+/g, " ").toUpperCase();
+}
+
+function isBusinessMpCodigo(codigo: string): boolean {
+  const n = normalizeMpCodigoLocal(codigo);
+  return Boolean(n) && !n.startsWith(MP_INTERNAL_CODIGO_PREFIX);
 }
 
 /** Cantidad efectiva para stock: TOTAL si > 0, si no CANTIDAD. */
@@ -60,8 +70,9 @@ function mpIngresoImpactQty(row: {
   return 0;
 }
 
-function canConfirmMpIngreso(codigo: string, qty: number): boolean {
-  return Boolean(normalizeMpCodigoLocal(codigo)) && qty > 0;
+/** Confirmable con qty>0; el código de negocio es opcional (se asigna identidad interna). */
+function canConfirmMpIngreso(qty: number): boolean {
+  return qty > 0;
 }
 
 export type InventoryActor = {
@@ -953,7 +964,15 @@ export class InventoryService {
       diasAlVence: null,
       estadoVencimiento: "",
       origen: input.origen ?? existing?.origen ?? "manual",
-      codigo: input.codigo ?? existing?.codigo ?? "",
+      // "" explícito no debe borrar el código al editar desde UI incompleta
+      codigo:
+        input.codigo !== undefined && String(input.codigo).trim() !== ""
+          ? String(input.codigo)
+          : (existing?.codigo ?? ""),
+      codigoPendiente:
+        input.codigoPendiente !== undefined
+          ? Boolean(input.codigoPendiente)
+          : existing?.codigoPendiente,
       productosAsociados: existing?.productosAsociados ?? "",
       createdBy: existing?.createdBy ?? actor.email,
       updatedBy: actor.email,
@@ -1096,10 +1115,24 @@ export class InventoryService {
         : (existing?.cantidad ?? null);
     const total = multiplyTotal(bultos, cantidad);
     const now = nowIso();
+    const ingresoId = existing?.id ?? input.id ?? randomUUID();
     const codigoRaw = input.codigo ?? existing?.codigo ?? "";
-    const codigo = normalizeMpCodigoLocal(codigoRaw) || (codigoRaw.trim() ? codigoRaw.trim() : "");
+    let codigo =
+      normalizeMpCodigoLocal(codigoRaw) || (codigoRaw.trim() ? codigoRaw.trim() : "");
+    // Si el usuario vacía el código pero ya había uno de negocio, se trata abajo.
+    // Sin código de negocio y con qty: identidad interna estable INT-MP-{id}.
     const qty = mpIngresoImpactQty({ total, cantidad });
-    const ready = canConfirmMpIngreso(codigo, qty);
+    let codigoPendiente =
+      Boolean(existing?.codigoPendiente) || isMpInternalCodigo(codigo);
+    if (!isBusinessMpCodigo(codigo) && qty > 0) {
+      if (!codigo || isMpInternalCodigo(codigo)) {
+        codigo = mpInternalCodigoForIngreso(ingresoId);
+        codigoPendiente = true;
+      }
+    } else if (isBusinessMpCodigo(codigo)) {
+      codigoPendiente = false;
+    }
+    const ready = canConfirmMpIngreso(qty);
 
     let status: MpIngresoStatus;
     if (input.status === "ANULADO") {
@@ -1109,7 +1142,7 @@ export class InventoryService {
     } else if (input.status === "CONFIRMADO") {
       if (!ready) {
         throw new InventoryValidationError(
-          "No se puede confirmar: falta Código válido o Cantidad/Total > 0."
+          "No se puede confirmar: falta Cantidad/Total > 0."
         );
       }
       status = "CONFIRMADO";
@@ -1121,7 +1154,7 @@ export class InventoryService {
       }
       status = "BORRADOR";
     } else if (ready) {
-      // UX default: código + cantidad válidos → CONFIRMADO
+      // UX default: cantidad válida → CONFIRMADO (código de negocio opcional)
       status = "CONFIRMADO";
     } else if (existing?.status === "CONFIRMADO" && existing.stockImpacted && !input.confirmDemote) {
       // Evitar demote implícito al vaciar campos sin confirmación
@@ -1134,7 +1167,9 @@ export class InventoryService {
 
     const willImpact = status === "CONFIRMADO" && ready;
     const stockMessage = willImpact
-      ? undefined
+      ? codigoPendiente
+        ? "Confirmado con identidad interna (sin código de proveedor). Completá el código cuando esté disponible."
+        : undefined
       : status === "BORRADOR"
         ? DRAFT_NO_STOCK_MSG
         : undefined;
@@ -1150,13 +1185,14 @@ export class InventoryService {
     }
 
     const row: MpIngresoRow = {
-      id: existing?.id ?? input.id ?? randomUUID(),
+      id: ingresoId,
       fecha: input.fecha ?? existing?.fecha ?? todayIso(),
       ingresoNro: input.ingresoNro ?? existing?.ingresoNro ?? this.nextMpIngresoNro(),
       proveedor: input.proveedor ?? existing?.proveedor ?? "",
       cliente: input.cliente ?? existing?.cliente ?? "",
       remitoNro: input.remitoNro ?? existing?.remitoNro ?? "",
       codigo,
+      codigoPendiente,
       producto: input.producto ?? existing?.producto ?? "",
       descripcion: input.descripcion ?? existing?.descripcion ?? "",
       bultos,
@@ -1177,10 +1213,21 @@ export class InventoryService {
 
     if (willImpact) {
       const lot = this.resolveMpLot(actor, row);
+      // Propagar flag de código pendiente al lote visible en Stock
+      if (lot.codigoPendiente !== codigoPendiente || lot.codigo !== codigo) {
+        this.repo.upsertMpStock(
+          this.enrichMpStock({
+            ...lot,
+            codigo,
+            codigoPendiente,
+            updatedAt: nowIso(),
+          })
+        );
+      }
       row.stockLotId = lot.id;
       this.applyMpIngresoDelta(lot.id, qty);
       row.stockImpacted = true;
-      row.stockMessage = undefined;
+      if (!codigoPendiente) row.stockMessage = undefined;
     } else {
       row.stockImpacted = false;
       if (!row.stockMessage) row.stockMessage = DRAFT_NO_STOCK_MSG;
@@ -1391,6 +1438,7 @@ export class InventoryService {
       estadoVencimiento: "",
       origen: "ingreso",
       codigo: code || ingreso.codigo,
+      codigoPendiente: Boolean(ingreso.codigoPendiente) || isMpInternalCodigo(code || ingreso.codigo),
       productosAsociados: "",
       createdBy: actor.email,
       updatedBy: actor.email,

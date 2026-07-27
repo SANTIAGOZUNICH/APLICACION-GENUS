@@ -8,7 +8,7 @@ import {
   inventoryErrorResponse,
   resolveInventoryActor,
 } from "@/lib/inventory/http";
-import { hydrateInventoryFromNeon, persistInventorySnapshot, persistMpIngresoRow, persistMpStockSnapshot } from "@/lib/inventory/neon-persist";
+import { hydrateInventoryFromNeon, persistInventorySnapshot, persistMpIngresoRow, persistMpStockSnapshot, refreshMpInventoryFromNeon } from "@/lib/inventory/neon-persist";
 import type { InventoryActor } from "@/lib/inventory/inventory-service";
 import { ME_ALERT_NOTIFY_SECTORS } from "@/lib/inventory/rbac";
 
@@ -19,6 +19,7 @@ async function readyService() {
   const blocked = ensureInventoryPersistenceReady();
   if (blocked) return { blocked } as const;
   await hydrateInventoryFromNeon(memoryInventoryRepo);
+  await refreshMpInventoryFromNeon(memoryInventoryRepo);
   const service = getInventoryService();
   service.onNotify(async (payload) => {
     if (!isDatabaseConfigured()) return;

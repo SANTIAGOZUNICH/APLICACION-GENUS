@@ -6,12 +6,13 @@ import { Button } from "@/components/ui/button";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
+  downloadRemitoBlobApi,
   editGeneratedRemitoApi,
   fetchRemitosApi,
   generateRemitoApi,
   remitoActionApi,
-  remitoDownloadUrl,
   renameRemitoApi,
+  triggerRemitoDownload,
   updateRemitoDraftApi,
 } from "@/lib/remitos/remitos-client";
 import {
@@ -56,6 +57,9 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
   const [draftLines, setDraftLines] = useState<RemitoLine[]>([]);
   const [draftClient, setDraftClient] = useState("");
   const [draftDate, setDraftDate] = useState("");
+  const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [downloadBusy, setDownloadBusy] = useState<"pdf" | "xlsx" | null>(null);
 
   const reload = useCallback(async () => {
     if (!allowed) return;
@@ -79,6 +83,65 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    return () => {
+      if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
+    };
+  }, [previewPdfUrl]);
+
+  function closeModal() {
+    setModal(null);
+    if (previewPdfUrl) {
+      URL.revokeObjectURL(previewPdfUrl);
+      setPreviewPdfUrl(null);
+    }
+    setPreviewLoading(false);
+  }
+
+  async function openPreview(r: RemitoRecord) {
+    setSelected(r);
+    setModal("preview");
+    setError(null);
+    if (previewPdfUrl) {
+      URL.revokeObjectURL(previewPdfUrl);
+      setPreviewPdfUrl(null);
+    }
+    if (r.status !== "GENERADO") {
+      setPreviewLoading(false);
+      return;
+    }
+    setPreviewLoading(true);
+    try {
+      const { blob } = await downloadRemitoBlobApi(session, r.id, "pdf");
+      if (!blob.type.includes("pdf") && blob.size < 50) {
+        throw new Error("La vista previa no devolvió un PDF válido");
+      }
+      setPreviewPdfUrl(URL.createObjectURL(blob));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo previsualizar el PDF");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function downloadSelected(format: "pdf" | "xlsx", version?: number) {
+    if (!selected) return;
+    setDownloadBusy(format);
+    setError(null);
+    try {
+      await triggerRemitoDownload(session, selected.id, format, {
+        version,
+        filename: selected.displayName
+          ? `${selected.displayName}.${format}`
+          : undefined,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Descarga falló");
+    } finally {
+      setDownloadBusy(null);
+    }
+  }
 
   function openEditDraft(r: RemitoRecord) {
     setSelected(r);
@@ -336,7 +399,8 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                   <Button
                     type="button"
                     variant="secondary"
-                    onClick={() => setModal("preview")}
+                    disabled={busy || previewLoading}
+                    onClick={() => void openPreview(selected)}
                     data-testid="remito-preview"
                   >
                     Vista previa
@@ -373,20 +437,24 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       >
                         Editar
                       </Button>
-                      <a
-                        className="inline-flex items-center rounded border border-[var(--os-border)] px-3 py-1.5 text-sm"
-                        href={remitoDownloadUrl(selected.id, "xlsx")}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={busy || downloadBusy !== null}
+                        onClick={() => void downloadSelected("xlsx")}
                         data-testid="remito-dl-xlsx"
                       >
-                        Descargar XLSX
-                      </a>
-                      <a
-                        className="inline-flex items-center rounded border border-[var(--os-border)] px-3 py-1.5 text-sm"
-                        href={remitoDownloadUrl(selected.id, "pdf")}
+                        {downloadBusy === "xlsx" ? "Descargando…" : "Descargar XLSX"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={busy || downloadBusy !== null}
+                        onClick={() => void downloadSelected("pdf")}
                         data-testid="remito-dl-pdf"
                       >
-                        Descargar PDF
-                      </a>
+                        {downloadBusy === "pdf" ? "Descargando…" : "Descargar PDF"}
+                      </Button>
                       <Button
                         type="button"
                         variant="secondary"
@@ -440,7 +508,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
             data-testid="remito-modal"
           >
-            <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-4 shadow-lg">
+            <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-4 shadow-lg data-[preview=true]:max-w-3xl" data-preview={modal === "preview" ? "true" : "false"}>
               {modal === "generate" ? (
                 <div className="space-y-3">
                   <h3 className="font-semibold">Generar remito</h3>
@@ -458,7 +526,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                     />
                   </label>
                   <div className="flex justify-end gap-2">
-                    <Button type="button" variant="secondary" onClick={() => setModal(null)}>
+                    <Button type="button" variant="secondary" onClick={closeModal}>
                       Cancelar
                     </Button>
                     <Button
@@ -483,7 +551,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                     data-testid="remito-rename-input"
                   />
                   <div className="flex justify-end gap-2">
-                    <Button type="button" variant="secondary" onClick={() => setModal(null)}>
+                    <Button type="button" variant="secondary" onClick={closeModal}>
                       Cancelar
                     </Button>
                     <Button
@@ -577,7 +645,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                     ))}
                   </div>
                   <div className="flex justify-end gap-2">
-                    <Button type="button" variant="secondary" onClick={() => setModal(null)}>
+                    <Button type="button" variant="secondary" onClick={closeModal}>
                       Cancelar
                     </Button>
                     <Button
@@ -620,20 +688,24 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                           </div>
                           {v.downloadable ? (
                             <div className="mt-1 flex gap-2 text-xs">
-                              <a
-                                href={remitoDownloadUrl(selected.id, "pdf", {
-                                  version: v.version,
-                                })}
+                              <button
+                                type="button"
+                                className="underline disabled:opacity-50"
+                                disabled={downloadBusy !== null}
+                                data-testid={`remito-version-dl-pdf-${v.version}`}
+                                onClick={() => void downloadSelected("pdf", v.version)}
                               >
                                 PDF
-                              </a>
-                              <a
-                                href={remitoDownloadUrl(selected.id, "xlsx", {
-                                  version: v.version,
-                                })}
+                              </button>
+                              <button
+                                type="button"
+                                className="underline disabled:opacity-50"
+                                disabled={downloadBusy !== null}
+                                data-testid={`remito-version-dl-xlsx-${v.version}`}
+                                onClick={() => void downloadSelected("xlsx", v.version)}
                               >
                                 XLSX
-                              </a>
+                              </button>
                             </div>
                           ) : null}
                         </li>
@@ -641,7 +713,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                     )}
                   </ul>
                   <div className="flex justify-end">
-                    <Button type="button" variant="secondary" onClick={() => setModal(null)}>
+                    <Button type="button" variant="secondary" onClick={closeModal}>
                       Cerrar
                     </Button>
                   </div>
@@ -649,13 +721,13 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
               ) : null}
 
               {modal === "preview" ? (
-                <div className="space-y-3">
+                <div className="space-y-3" data-testid="remito-preview-modal">
                   <h3 className="font-semibold">Vista previa</h3>
                   <p className="text-sm">
                     {selected.displayName || "Sin nombre"} · {selected.clientDisplay} ·{" "}
                     {selected.deliveryDate}
                   </p>
-                  <ul className="max-h-60 space-y-1 overflow-y-auto text-xs">
+                  <ul className="max-h-32 space-y-1 overflow-y-auto text-xs">
                     {selected.lines.map((l) => (
                       <li key={l.id}>
                         {l.product} · {l.totalUnits} u · L:{l.lote || "—"} VTO:
@@ -663,8 +735,48 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       </li>
                     ))}
                   </ul>
-                  <div className="flex justify-end">
-                    <Button type="button" variant="secondary" onClick={() => setModal(null)}>
+                  {selected.status !== "GENERADO" ? (
+                    <p className="text-sm text-[var(--os-text-muted)]">
+                      Generá el remito para ver el PDF autenticado.
+                    </p>
+                  ) : previewLoading ? (
+                    <p className="text-sm text-[var(--os-text-muted)]">Cargando PDF…</p>
+                  ) : previewPdfUrl ? (
+                    <iframe
+                      title="Vista previa remito PDF"
+                      src={previewPdfUrl}
+                      className="h-[60vh] w-full rounded border border-[var(--os-border)]"
+                      data-testid="remito-preview-iframe"
+                    />
+                  ) : (
+                    <p className="text-sm text-rose-700">
+                      No se pudo cargar el PDF. Revisá el mensaje de error arriba.
+                    </p>
+                  )}
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {selected.status === "GENERADO" ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={downloadBusy !== null}
+                          onClick={() => void downloadSelected("pdf")}
+                          data-testid="remito-preview-dl-pdf"
+                        >
+                          Descargar PDF
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={downloadBusy !== null}
+                          onClick={() => void downloadSelected("xlsx")}
+                          data-testid="remito-preview-dl-xlsx"
+                        >
+                          Descargar XLSX
+                        </Button>
+                      </>
+                    ) : null}
+                    <Button type="button" variant="secondary" onClick={closeModal}>
                       Cerrar
                     </Button>
                   </div>

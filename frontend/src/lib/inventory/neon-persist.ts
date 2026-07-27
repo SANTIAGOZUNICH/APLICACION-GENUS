@@ -106,6 +106,7 @@ function normalizeMpIngresoPayload(raw: unknown): MpIngresoRow {
     cliente: r.cliente ?? "",
     remitoNro: r.remitoNro ?? "",
     codigo: r.codigo ?? "",
+    codigoPendiente: Boolean(r.codigoPendiente),
     producto: r.producto ?? "",
     descripcion: r.descripcion ?? "",
     bultos: r.bultos ?? null,
@@ -141,12 +142,30 @@ function normalizeMpStockPayload(raw: unknown): MpStockRow {
     estadoVencimiento: r.estadoVencimiento ?? "",
     origen: r.origen ?? "",
     codigo: r.codigo ?? "",
+    codigoPendiente: Boolean(r.codigoPendiente),
     productosAsociados: r.productosAsociados ?? "",
     createdBy: r.createdBy ?? "",
     updatedBy: r.updatedBy ?? "",
     createdAt: r.createdAt ?? "",
     updatedAt: r.updatedAt ?? "",
   };
+}
+
+/**
+ * Relee solo MP stock + ingresos desde Neon en cada request.
+ * Evita split-brain entre instancias serverless (tabla Stock UI vs Ingresos).
+ */
+export async function refreshMpInventoryFromNeon(
+  repo: MemoryInventoryRepo
+): Promise<void> {
+  if (!isDatabaseConfigured()) return;
+  const db = getDb();
+  const [mpStock, mpIngresos] = await Promise.all([
+    db.select().from(invMpStock),
+    db.select().from(invMpIngresos),
+  ]);
+  repo.mpStock = mpStock.map((r) => normalizeMpStockPayload(r.payload));
+  repo.mpIngresos = mpIngresos.map((r) => normalizeMpIngresoPayload(r.payload));
 }
 
 export function resetInventoryHydrationFlag() {
