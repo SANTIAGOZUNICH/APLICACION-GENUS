@@ -26,6 +26,14 @@ function resolvePublicPlanningSource(): string {
 const nextConfig: NextConfig = {
   // Playwright / scripts locales usan 127.0.0.1; Next 16 bloquea HMR/dev assets cross-origin.
   allowedDevOrigins: ["127.0.0.1", "localhost"],
+  // pdfkit AFM + plantilla XLSX deben viajar en el serverless bundle (Preview).
+  serverExternalPackages: ["pdfkit"],
+  outputFileTracingIncludes: {
+    "/api/**/*": [
+      "./node_modules/pdfkit/js/data/**/*",
+      "./assets/remitos/**/*",
+    ],
+  },
   env: {
     NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA: process.env.VERCEL_GIT_COMMIT_SHA ?? "",
     NEXT_PUBLIC_GENUS_PLANNING_SOURCE: resolvePublicPlanningSource(),
