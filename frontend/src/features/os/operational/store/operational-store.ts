@@ -276,25 +276,31 @@ export function applyWorkProgressToItems<T extends { id: string; status: WorkIte
   return items.map((item) => {
     const saved = progress[item.id];
     if (!saved) return item;
+    const prev = item as T & {
+      finishedQty?: string;
+      packagingLote?: string | null;
+      packagingVto?: string | null;
+      packagingTotalUnits?: number | null;
+      packagingCajas?: number | null;
+      packagingUnidadesPorCaja?: number | null;
+      packingGroups?: PackingGroupRecord[] | null;
+      packingMismatchObservation?: string | null;
+    };
     const next = {
       ...item,
       ...(saved.status ? { status: saved.status } : {}),
-      ...(saved.finishedQty
-        ? { finishedQty: saved.finishedQty }
-        : {}),
-      packagingLote: saved.packagingLote ?? (item as WorkItem).packagingLote ?? null,
-      packagingVto: saved.packagingVto ?? (item as WorkItem).packagingVto ?? null,
+      ...(saved.finishedQty ? { finishedQty: saved.finishedQty } : {}),
+      packagingLote: saved.packagingLote ?? prev.packagingLote ?? null,
+      packagingVto: saved.packagingVto ?? prev.packagingVto ?? null,
       packagingTotalUnits:
-        saved.packagingTotalUnits ?? (item as WorkItem).packagingTotalUnits ?? null,
-      packagingCajas: saved.packagingCajas ?? (item as WorkItem).packagingCajas ?? null,
+        saved.packagingTotalUnits ?? prev.packagingTotalUnits ?? null,
+      packagingCajas: saved.packagingCajas ?? prev.packagingCajas ?? null,
       packagingUnidadesPorCaja:
-        saved.packagingUnidadesPorCaja ??
-        (item as WorkItem).packagingUnidadesPorCaja ??
-        null,
-      packingGroups: saved.packingGroups ?? (item as WorkItem).packingGroups ?? null,
+        saved.packagingUnidadesPorCaja ?? prev.packagingUnidadesPorCaja ?? null,
+      packingGroups: saved.packingGroups ?? prev.packingGroups ?? null,
       packingMismatchObservation:
         saved.packingMismatchObservation ??
-        (item as WorkItem).packingMismatchObservation ??
+        prev.packingMismatchObservation ??
         null,
     };
     return next as T;
