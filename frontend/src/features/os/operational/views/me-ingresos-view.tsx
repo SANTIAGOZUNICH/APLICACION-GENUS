@@ -170,7 +170,7 @@ export function MeIngresosView() {
   return (
     <TwinShell title="INGRESOS DE MATERIAL DE EMPAQUE">
       {banner && (
-        <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+        <div className="mb-4 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm text-[var(--genus-warning)]">
           {banner}
           {!persistence && " · Tablas vacías; sin simulación de persistencia."}
         </div>
@@ -359,7 +359,7 @@ export function MeIngresosView() {
         }}
       />
       {deleteId && (
-        <div className="fixed bottom-4 left-1/2 z-[60] w-full max-w-md -translate-x-1/2 rounded border bg-white p-3 shadow">
+        <div className="fixed bottom-4 left-1/2 z-[60] w-full max-w-md -translate-x-1/2 rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] p-3 shadow-[var(--os-shadow-card)]">
           <label className="block text-sm">
             Motivo
             <input

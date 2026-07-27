@@ -144,7 +144,7 @@ export function MateriaPrimaControlView() {
           </div>
 
           {formula.estimated && (
-            <p className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <p className="mt-3 rounded border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] px-3 py-2 text-xs text-[var(--genus-warning)]">
               Fórmula estimada (demo) — todavía no hay BOM cargado para este producto.
             </p>
           )}
@@ -172,7 +172,7 @@ export function MateriaPrimaControlView() {
                 </label>
                 <span
                   className={`rounded px-2 py-0.5 text-xs font-medium ${
-                    line.faltante ? "bg-rose-50 text-rose-800" : "bg-emerald-50 text-emerald-800"
+                    line.faltante ? "bg-[var(--genus-error-soft)] text-[var(--genus-error)]" : "bg-[var(--genus-success-soft)] text-[var(--genus-success)]"
                   }`}
                 >
                   {line.faltante ? "Faltante" : "Disponible"}
@@ -186,7 +186,7 @@ export function MateriaPrimaControlView() {
               {preparedCount} de {lines.length} materias primas preparadas
             </p>
             {confirmation ? (
-              <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700">
+              <span className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--genus-success)]">
                 <CheckCircle2 className="size-4" aria-hidden="true" />
                 Preparación confirmada por {confirmation.confirmedBy}
               </span>

@@ -147,7 +147,7 @@ export function InternalAvisosView() {
         </div>
 
         {error ? (
-          <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          <p className="rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm text-[var(--genus-warning)]">
             {error}
           </p>
         ) : null}

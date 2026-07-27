@@ -388,7 +388,7 @@ export function MateriaPrimaStockView() {
             type="button"
             onClick={() => setDeleteTarget(r)}
             aria-label={`Eliminar ${r.nombre}`}
-            className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-rose-50 hover:text-rose-700"
+            className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-[var(--genus-error-soft)] hover:text-[var(--genus-error)]"
           >
             <Trash2 className="size-4" aria-hidden="true" />
           </button>
@@ -529,7 +529,7 @@ export function MateriaPrimaStockView() {
                 />
               </label>
             </div>
-            {formError && <p className="text-sm font-medium text-rose-700">{formError}</p>}
+            {formError && <p className="text-sm font-medium text-[var(--genus-error)]">{formError}</p>}
             <DialogFooter>
               <Button type="button" variant="secondary" onClick={() => setFormOpen(false)}>
                 Cancelar
@@ -593,7 +593,7 @@ export function MateriaPrimaStockView() {
             )}
 
             {importIssueRows.length > 0 && (
-              <div className="rounded-[var(--os-radius-sm)] border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+              <div className="rounded-[var(--os-radius-sm)] border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] p-3 text-sm text-[var(--genus-warning)]">
                 <p className="font-semibold">Filas con errores (se excluyen al importar)</p>
                 <ul className="mt-2 list-disc space-y-1 pl-5">
                   {importIssueRows.slice(0, 12).map((row) => (

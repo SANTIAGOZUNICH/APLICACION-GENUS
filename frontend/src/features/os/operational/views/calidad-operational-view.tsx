@@ -404,7 +404,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
       )}
 
       {error && (
-        <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+        <div className="mb-4 rounded border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-4 py-3 text-sm text-[var(--genus-error)]">
           {error}
         </div>
       )}
@@ -549,7 +549,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
 
                 {canDecide && showRejectField && (
                   <div className="space-y-2">
-                    <label htmlFor="reject-reason" className="text-sm font-medium text-rose-700">
+                    <label htmlFor="reject-reason" className="text-sm font-medium text-[var(--genus-error)]">
                       Motivo de rechazo (obligatorio)
                     </label>
                     <textarea
@@ -562,10 +562,10 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                       rows={2}
                       required
                       aria-invalid={Boolean(rejectError)}
-                      className="w-full rounded-[var(--os-radius-sm)] border border-rose-300 bg-[var(--os-surface)] px-3 py-2 text-sm"
+                      className="w-full rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/35 bg-[var(--os-surface)] px-3 py-2 text-sm"
                     />
                     {rejectError && (
-                      <p role="alert" className="text-xs text-rose-700">
+                      <p role="alert" className="text-xs text-[var(--genus-error)]">
                         {rejectError}
                       </p>
                     )}
@@ -573,7 +573,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                 )}
 
                 {actionError && (
-                  <p role="alert" className="text-sm text-rose-700">
+                  <p role="alert" className="text-sm text-[var(--genus-error)]">
                     {actionError}
                   </p>
                 )}

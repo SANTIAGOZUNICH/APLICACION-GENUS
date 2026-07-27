@@ -436,7 +436,7 @@ export function AsignarTrabajosView() {
             <Button type="submit" variant="primary">
               Asignar trabajo
             </Button>
-            {feedback && <span className="text-sm text-emerald-700">{feedback}</span>}
+            {feedback && <span className="text-sm text-[var(--genus-success)]">{feedback}</span>}
           </div>
         </form>
 

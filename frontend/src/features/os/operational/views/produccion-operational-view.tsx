@@ -510,12 +510,12 @@ export function ProduccionOperationalView({
       )}
 
       {error && (
-        <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+        <div className="mb-4 rounded border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-4 py-3 text-sm text-[var(--genus-error)]">
           {error}
         </div>
       )}
       {remitoError && (
-        <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+        <div className="mb-4 rounded border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] px-4 py-3 text-sm text-[var(--genus-warning)]">
           {remitoError}
         </div>
       )}
@@ -581,7 +581,7 @@ export function ProduccionOperationalView({
         )}
         {activeTab === "kpis" && (
           <div className="space-y-4">
-            <div className="rounded-[var(--os-radius-sm)] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            <div className="rounded-[var(--os-radius-sm)] border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] px-4 py-3 text-sm text-[var(--genus-warning)]">
               <strong>KPIs provisorios</strong> — calculados desde datos disponibles (SEMANAS +
               acciones locales). Pendiente conexión a pestaña <strong>DASHBOARD</strong> real en
               PEDIDOS 2026.

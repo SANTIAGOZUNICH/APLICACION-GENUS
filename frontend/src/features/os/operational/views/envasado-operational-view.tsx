@@ -233,7 +233,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       />
 
       {error && (
-        <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+        <div className="mb-4 rounded border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-4 py-3 text-sm text-[var(--genus-error)]">
           {error}
         </div>
       )}
@@ -423,7 +423,7 @@ export function ElaboracionOperationalView() {
       />
 
       {error && (
-        <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+        <div className="mb-4 rounded border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-4 py-3 text-sm text-[var(--genus-error)]">
           {error}
         </div>
       )}

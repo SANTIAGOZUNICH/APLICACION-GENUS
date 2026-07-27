@@ -22,8 +22,8 @@ export function StatusCountStrip({
   pending: number;
 }) {
   const items = [
-    { count: blocked, label: "bloqueado", tone: "text-rose-700" },
-    { count: urgent, label: "urgente", tone: "text-amber-800" },
+    { count: blocked, label: "bloqueado", tone: "text-[var(--genus-error)]" },
+    { count: urgent, label: "urgente", tone: "text-[var(--genus-warning)]" },
     { count: inProgress, label: "en curso", tone: "text-[var(--os-teal)]" },
     { count: pending, label: "pendiente", tone: "text-[var(--os-text-muted)]" },
   ];

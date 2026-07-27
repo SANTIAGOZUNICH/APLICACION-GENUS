@@ -385,7 +385,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
         </div>
 
         {error ? (
-          <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          <p className="rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm text-[var(--genus-warning)]">
             {error}
           </p>
         ) : null}
@@ -498,7 +498,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                   {selected.generatedBy || selected.updatedBy || selected.createdBy}
                 </p>
                 {selected.offersNewVersion ? (
-                  <p className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs">
+                  <p className="rounded border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] px-2 py-1 text-xs">
                     Remito generado inmutable — hay aprobaciones nuevas. Creá una nueva
                     versión.
                   </p>
@@ -992,7 +992,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       data-testid="remito-preview-xlsx"
                     />
                   ) : (
-                    <p className="text-sm text-rose-700">
+                    <p className="text-sm text-[var(--genus-error)]">
                       No se pudo cargar la vista previa. Revisá el mensaje de error arriba.
                     </p>
                   )}

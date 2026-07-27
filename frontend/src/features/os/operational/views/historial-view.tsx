@@ -153,7 +153,7 @@ export function HistorialView({ sectors, title = "Historial" }: HistorialViewPro
       header: "Observación de Calidad",
       render: (r) => (
         <span
-          className={`text-xs ${r.estado === "rechazado" ? "font-medium text-rose-700" : "text-[var(--os-text-muted)]"}`}
+          className={`text-xs ${r.estado === "rechazado" ? "font-medium text-[var(--genus-error)]" : "text-[var(--os-text-muted)]"}`}
         >
           {r.observacionCalidad || "—"}
         </span>

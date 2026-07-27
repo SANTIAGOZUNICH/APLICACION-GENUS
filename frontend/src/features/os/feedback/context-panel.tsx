@@ -69,7 +69,7 @@ export function ContextPanel({
             {problems.map((problem) => (
               <li
                 key={problem}
-                className="rounded-[var(--os-radius-sm)] border border-rose-100 bg-rose-50/80 px-3 py-2.5 text-sm text-rose-900"
+                className="rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-3 py-2.5 text-sm text-[var(--genus-error)]"
               >
                 {problem}
               </li>
@@ -93,7 +93,7 @@ export function ContextPanel({
               key={suggestion}
               type="button"
               onClick={() => onSuggestionClick?.(suggestion)}
-              className="rounded-full border border-[var(--os-teal-muted)] bg-white/80 px-3 py-1.5 text-xs font-medium text-[var(--os-text)] transition-colors hover:border-[var(--os-teal)] hover:text-[var(--os-teal)]"
+              className="rounded-full border border-[var(--os-teal-muted)] bg-[var(--os-surface)]/80 px-3 py-1.5 text-xs font-medium text-[var(--os-text)] transition-colors hover:border-[var(--os-teal)] hover:text-[var(--os-teal)]"
             >
               {suggestion}
             </button>
@@ -101,7 +101,7 @@ export function ContextPanel({
         </div>
 
         {lotesSearchEnabled && (
-          <div className="mt-5 rounded-[var(--os-radius-sm)] border border-[var(--os-teal-muted)] bg-white/70 p-3">
+          <div className="mt-5 rounded-[var(--os-radius-sm)] border border-[var(--os-teal-muted)] bg-[var(--os-surface)]/70 p-3">
             <label
               htmlFor="creamy-lotes-search"
               className="text-xs font-semibold uppercase tracking-wide text-[var(--os-teal)]"
@@ -119,7 +119,7 @@ export function ContextPanel({
                 value={lotesQuery}
                 onChange={(event) => setLotesQuery(event.target.value)}
                 placeholder="Creamy, PR-120, L-CR-001..."
-                className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-[var(--os-teal)] focus:ring-2 focus:ring-[var(--os-teal-muted)]"
+                className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] py-2 pl-9 pr-3 text-sm outline-none focus:border-[var(--os-teal)] focus:ring-2 focus:ring-[var(--os-teal-muted)]"
               />
             </div>
 

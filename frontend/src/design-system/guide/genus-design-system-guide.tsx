@@ -63,21 +63,35 @@ export function GenusDesignSystemGuide() {
     <div className="genus-ds-root">
       <Section
         id="filosofia"
-        title="Filosofía Genus OS"
-        description="Claridad, calma, precisión de laboratorio moderno. Nunca caótico ni recargado."
+        title="Industrial Glass"
+        description="Claridad industrial + glass en chrome. --genus-* es la fuente de verdad; --os-* solo vía bridge."
       >
-        <div className="rounded-[var(--genus-radius-xl)] border border-[var(--genus-neutral-200)] bg-[var(--genus-surface-card)] p-8 shadow-[var(--genus-shadow-sm)]">
-          <p className="genus-ds-heading-m mb-4">Prioridad absoluta</p>
-          <p className="genus-ds-heading-xl text-[var(--genus-brand-primary)]">
+        <div className="genus-ds-card">
+          <p className="genus-ds-label mb-3">Prioridad absoluta</p>
+          <p className="genus-ds-heading-xl text-[var(--genus-brand-action)]">
             Entender qué tengo que hacer.
           </p>
           <p className="mt-4 genus-ds-body text-[var(--genus-text-secondary)]">
-            Referencias: Apple · Linear · Notion · Arc · Raycast · Vercel — con identidad Laboratorio Genus.
+            Navy profundo · Azul acción · Turquesa Genus · Glass en shell — nunca en tablas densas.
           </p>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <button type="button" className="genus-ds-btn-primary">
+              Acción primaria
+            </button>
+            <button type="button" className="genus-ds-btn-secondary">
+              Secundaria
+            </button>
+            <span className="genus-ds-badge bg-[var(--genus-brand-primary-soft)] text-[var(--genus-brand-primary)]">
+              Turquesa
+            </span>
+            <span className="genus-ds-badge bg-[var(--genus-info-soft)] text-[var(--genus-info)]">
+              Azul
+            </span>
+          </div>
         </div>
       </Section>
 
-      <Section id="colores" title="Colores oficiales" description="Turquesa Genus + petróleo + neutros desaturados.">
+      <Section id="colores" title="Colores oficiales" description="Industrial Glass — navy, azul acción, turquesa, neutros.">
         <div className="space-y-8">
           {genusColorSwatches.map(({ group, items }) => (
             <div key={group}>
@@ -258,31 +272,36 @@ export function GenusDesignSystemGuide() {
         </div>
       </Section>
 
-      <Section id="creamy" title="Creamy — identidad visual">
-        <div
-          className="max-w-md rounded-[var(--genus-radius-lg)] p-5"
-          style={{
-            background: genusCreamy.colors.cardBg,
-            border: `1px solid ${genusCreamy.colors.cardBorder}`,
-          }}
-        >
-          <div className="flex items-center gap-2">
-            <Sparkles className="size-4 text-[var(--genus-brand-primary)]" />
-            <p className="genus-ds-label !text-[var(--genus-brand-primary)]">Copiloto · Envasado</p>
-          </div>
-          <p className="mt-3 text-sm font-medium">Prioridad: THELMA Y LOUISE</p>
-          <p className="mt-1 text-sm text-[var(--genus-text-secondary)]">
-            Te guío con la OA y los pasos para cerrar el día.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {["Abrir OA", "Ver insumos", "Marcar avance"].map((s) => (
-              <span
-                key={s}
-                className="rounded-full border border-[var(--genus-brand-primary-muted)] bg-white/80 px-3 py-1 text-xs font-medium"
-              >
-                {s}
-              </span>
-            ))}
+      <Section id="creamy" title="Creamy — FAB + panel">
+        <div className="flex flex-wrap items-end gap-6">
+          <button
+            type="button"
+            className="flex size-14 items-center justify-center rounded-full bg-[var(--genus-brand-primary)] text-[var(--genus-brand-navy-dark)] shadow-[var(--genus-shadow-md)] ring-2 ring-white/80"
+            aria-label="Ejemplo FAB Creamy"
+          >
+            <Sparkles className="size-6" aria-hidden="true" />
+          </button>
+          <div
+            className="max-w-md flex-1 overflow-hidden rounded-[var(--genus-radius-lg)] border border-[var(--genus-border)] bg-[var(--genus-surface-glass)] shadow-[var(--genus-shadow-md)]"
+          >
+            <div
+              className="px-4 py-3 text-white"
+              style={{ background: genusCreamy.colors.panelHeader }}
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles className="size-4" aria-hidden="true" />
+                <p className="text-sm font-semibold">Creamy</p>
+              </div>
+              <p className="mt-1 text-xs text-white/75">Asistente de Genus OS</p>
+            </div>
+            <div className="p-4">
+              <p className="text-sm font-medium text-[var(--genus-text-primary)]">
+                Prioridad: contexto del sector
+              </p>
+              <p className="mt-1 text-sm text-[var(--genus-text-secondary)]">
+                Solo FAB permanente — sin tarjeta en el sidebar.
+              </p>
+            </div>
           </div>
         </div>
         <ul className="mt-6 space-y-1 text-sm text-[var(--genus-text-secondary)]">

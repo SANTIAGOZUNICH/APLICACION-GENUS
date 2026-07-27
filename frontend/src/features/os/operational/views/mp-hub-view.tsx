@@ -323,9 +323,9 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     const s = status ?? "BORRADOR";
     const cls =
       s === "CONFIRMADO"
-        ? "bg-emerald-100 text-emerald-800"
+        ? "bg-[var(--genus-success-soft)] text-[var(--genus-success)]"
         : s === "ANULADO"
-          ? "bg-slate-200 text-slate-700"
+          ? "bg-[var(--os-surface-muted)] text-[var(--os-text-muted)]"
           : "bg-amber-100 text-amber-900";
     return (
       <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${cls}`}>{s}</span>
@@ -556,7 +556,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   return (
     <TwinShell title={`Materias Primas — ${tab}`}>
       {banner && (
-        <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
+        <div className="mb-4 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm">
           {banner}
           {!persistence && " · Vista vacía sin persistencia simulada."}
         </div>
@@ -620,7 +620,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         <>
         {stock.some((r) => r.codigoPendiente || isMpInternalCodigo(r.codigo)) ? (
           <div
-            className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm"
+            className="mb-3 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm"
             data-testid="mp-stock-codigo-pendiente-banner"
           >
             Hay filas de Stock con identidad interna (sin código de proveedor). Completá el
@@ -686,7 +686,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
               (r as MpIngresoRow).status === "BORRADOR" &&
               !(r as MpIngresoRow).stockImpacted
           ) ? (
-            <div className="mb-3 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
+            <div className="mb-3 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm">
               Hay borradores sin afectar Stock (falta Cantidad/Total). Completá y confirmá
               para impactar inventario. Los ingresos sin código de proveedor usan identidad
               interna y aparecen en Stock con advertencia.

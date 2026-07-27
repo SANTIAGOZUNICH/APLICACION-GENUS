@@ -135,7 +135,7 @@ export function MeAvisosView() {
   return (
     <TwinShell title="Avisos">
       {banner && (
-        <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm">{banner}</div>
+        <div className="mb-4 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm">{banner}</div>
       )}
       {isDeposito && (
         <div className="mb-4 flex flex-wrap items-end gap-2 rounded border p-3">

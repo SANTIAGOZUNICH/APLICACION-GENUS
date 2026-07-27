@@ -150,10 +150,10 @@ function ActionMenu({
         <button type="button" className={itemClass} onClick={onArchive}>
           Archivar
         </button>
-        <button type="button" className={`${itemClass} text-rose-700`} onClick={onAnnul}>
+        <button type="button" className={`${itemClass} text-[var(--genus-error)]`} onClick={onAnnul}>
           Anular entrega
         </button>
-        <button type="button" className={`${itemClass} text-rose-700`} onClick={onDelete}>
+        <button type="button" className={`${itemClass} text-[var(--genus-error)]`} onClick={onDelete}>
           Borrar entrega
         </button>
       </div>
@@ -163,7 +163,7 @@ function ActionMenu({
 
 function KpiTile({ label, value, tone }: { label: string; value: number; tone?: "ok" | "warn" | "danger" }) {
   const toneClass =
-    tone === "ok" ? "text-emerald-700" : tone === "danger" ? "text-rose-700" : tone === "warn" ? "text-amber-700" : "text-[var(--os-text)]";
+    tone === "ok" ? "text-[var(--genus-success)]" : tone === "danger" ? "text-[var(--genus-error)]" : tone === "warn" ? "text-amber-700" : "text-[var(--os-text)]";
   return (
     <div className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4">
       <p className="text-xs font-medium uppercase tracking-wide text-[var(--os-text-muted)]">{label}</p>
@@ -713,7 +713,7 @@ export function EntregadosView() {
                   <textarea rows={2} value={form.observations} onChange={(e) => setForm((prev) => ({ ...prev, observations: e.target.value }))} className="w-full rounded border border-[var(--os-border)] px-3 py-2 text-sm" />
                 </label>
               </div>
-              {actionError && <p role="alert" className="text-sm text-rose-700">{actionError}</p>}
+              {actionError && <p role="alert" className="text-sm text-[var(--genus-error)]">{actionError}</p>}
             </div>
           )}
           <DialogFooter>
@@ -775,7 +775,7 @@ export function EntregadosView() {
             </DialogDescription>
           </DialogHeader>
           <textarea value={annulReason} onChange={(e) => setAnnulReason(e.target.value)} rows={3} className="w-full rounded border border-[var(--os-border)] px-3 py-2 text-sm" />
-          {actionError && <p role="alert" className="text-sm text-rose-700">{actionError}</p>}
+          {actionError && <p role="alert" className="text-sm text-[var(--genus-error)]">{actionError}</p>}
           <DialogFooter>
             <Button variant="secondary" onClick={() => setAnnulTarget(null)}>Cancelar</Button>
             <Button variant="destructive" onClick={executeAnnul} disabled={!annulReason.trim()}>Anular entrega</Button>
@@ -863,7 +863,7 @@ export function EntregadosView() {
             className="w-full rounded border border-[var(--os-border)] px-3 py-2 text-sm"
             placeholder="Motivo de eliminación"
           />
-          {actionError && <p role="alert" className="text-sm text-rose-700">{actionError}</p>}
+          {actionError && <p role="alert" className="text-sm text-[var(--genus-error)]">{actionError}</p>}
           <DialogFooter>
             <Button variant="secondary" onClick={closeDeleteGuide}>
               Cancelar
@@ -903,7 +903,7 @@ export function EntregadosView() {
               </div>
             </DialogDescription>
           </DialogHeader>
-          {actionError && <p role="alert" className="text-sm text-rose-700">{actionError}</p>}
+          {actionError && <p role="alert" className="text-sm text-[var(--genus-error)]">{actionError}</p>}
           <DialogFooter>
             <Button variant="secondary" onClick={closeDeleteGuide}>
               Cancelar

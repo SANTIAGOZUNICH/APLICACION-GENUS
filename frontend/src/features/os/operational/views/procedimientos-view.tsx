@@ -515,7 +515,7 @@ export function ProcedimientosView() {
                 <li>Archivos: {folderPreview.fileCount}</li>
                 <li>Tamaño total: {formatBytes(folderPreview.totalBytes)}</li>
                 {folderPreview.rejected.length > 0 && (
-                  <li className="text-amber-700">
+                  <li className="text-[var(--genus-warning)]">
                     Rechazados: {folderPreview.rejected.length}
                     <ul className="ml-4 list-disc">
                       {folderPreview.rejected.slice(0, 5).map((r) => (

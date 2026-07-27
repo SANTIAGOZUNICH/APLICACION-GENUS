@@ -51,7 +51,7 @@ export function DeliveryFilesDialog({ open, onOpenChange, refNumber }: DeliveryF
             </DialogDescription>
           </DialogHeader>
 
-          <div className="rounded-[var(--os-radius-sm)] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+          <div className="rounded-[var(--os-radius-sm)] border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] px-3 py-2 text-xs text-[var(--genus-warning)]">
             Archivos en este navegador (localStorage / demo). La descarga y eliminación afectan solo este almacenamiento local; no liberan espacio de servidor porque todavía no hay Blob/Drive para estos adjuntos.
           </div>
 

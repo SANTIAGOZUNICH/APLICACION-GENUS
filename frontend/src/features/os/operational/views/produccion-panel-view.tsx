@@ -56,11 +56,11 @@ function isOverdue(item: WorkItem): boolean {
 function KpiTile({ label, value, tone }: { label: string; value: number; tone?: "warn" | "danger" | "ok" }) {
   const toneClass =
     tone === "danger"
-      ? "text-rose-700"
+      ? "text-[var(--genus-error)]"
       : tone === "warn"
         ? "text-amber-700"
         : tone === "ok"
-          ? "text-emerald-700"
+          ? "text-[var(--genus-success)]"
           : "text-[var(--os-text)]";
   return (
     <div className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4">
@@ -327,7 +327,7 @@ export function ProduccionPanelView() {
           </h3>
           <div className="space-y-3 rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4 text-sm">
             <p>
-              <span className="font-medium text-rose-700">{faltantesRefs.length}</span> materia
+              <span className="font-medium text-[var(--genus-error)]">{faltantesRefs.length}</span> materia
               {faltantesRefs.length === 1 ? "" : "s"} prima{faltantesRefs.length === 1 ? "" : "s"} con
               faltante ({faltantesRefs.join(", ") || "—"})
             </p>
@@ -336,7 +336,7 @@ export function ProduccionPanelView() {
               {atrasados.length === 1 ? "" : "s"} atrasado{atrasados.length === 1 ? "" : "s"}
             </p>
             <p>
-              <span className="font-medium text-rose-700">{rechazados}</span> rechazo
+              <span className="font-medium text-[var(--genus-error)]">{rechazados}</span> rechazo
               {rechazados === 1 ? "" : "s"} de Calidad
             </p>
           </div>

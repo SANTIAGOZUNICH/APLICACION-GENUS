@@ -273,12 +273,12 @@ export function ProduccionPlanningView() {
       </div>
 
       {error && (
-        <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+        <div className="mb-4 rounded border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-4 py-3 text-sm text-[var(--genus-error)]">
           {error}
         </div>
       )}
       {message && (
-        <div className="mb-4 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+        <div className="mb-4 rounded border border-[var(--genus-success)]/25 bg-[var(--genus-success-soft)] px-4 py-3 text-sm text-[var(--genus-success)]">
           {message}
         </div>
       )}
@@ -531,7 +531,7 @@ function Section({
                 {canDelete && (
                   <button
                     type="button"
-                    className="text-rose-700 underline"
+                    className="text-[var(--genus-error)] underline"
                     onClick={() => onDelete(item.id)}
                   >
                     Eliminar

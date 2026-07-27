@@ -235,7 +235,7 @@ export function NativeOrdersListView({
 
       {dbUnavailable && (
         <div
-          className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+          className="rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-4 py-3 text-sm text-[var(--genus-warning)]"
           data-testid="orders-db-unavailable-banner"
         >
           <strong>Configuración pendiente:</strong> falta <code>DATABASE_URL</code> (Neon). El
@@ -245,7 +245,7 @@ export function NativeOrdersListView({
       )}
 
       {error && !dbUnavailable && (
-        <div className="rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+        <div className="rounded border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-4 py-3 text-sm text-[var(--genus-error)]">
           {error}
         </div>
       )}
