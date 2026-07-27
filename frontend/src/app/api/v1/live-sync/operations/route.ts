@@ -20,6 +20,13 @@ type OperationAction =
       finishedQty: string;
       observation: string;
       updatedBy?: string;
+      packagingLote?: string | null;
+      packagingVto?: string | null;
+      packagingTotalUnits?: number | null;
+      packagingCajas?: number | null;
+      packagingUnidadesPorCaja?: number | null;
+      packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+      packingMismatchObservation?: string | null;
     }
   | {
       action: "complete_work";
@@ -87,6 +94,13 @@ export async function POST(request: Request) {
         observation: body.observation,
         updatedBy: body.updatedBy,
         sector: body.sector,
+        packagingLote: body.packagingLote,
+        packagingVto: body.packagingVto,
+        packagingTotalUnits: body.packagingTotalUnits,
+        packagingCajas: body.packagingCajas,
+        packagingUnidadesPorCaja: body.packagingUnidadesPorCaja,
+        packingGroups: body.packingGroups,
+        packingMismatchObservation: body.packingMismatchObservation,
       });
       return NextResponse.json({ ok: true, revision: serverOperationalState.getRevision(), record });
     }

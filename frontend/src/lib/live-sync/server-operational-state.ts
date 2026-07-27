@@ -61,16 +61,58 @@ class ServerOperationalState {
       observation: string;
       updatedBy?: string;
       sector?: SectorId;
+      packagingLote?: string | null;
+      packagingVto?: string | null;
+      packagingTotalUnits?: number | null;
+      packagingCajas?: number | null;
+      packagingUnidadesPorCaja?: number | null;
+      packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+      packingMismatchObservation?: string | null;
     }
   ): WorkProgressPayload {
+    const existing = this.progress.get(itemId);
+    const keepStatus =
+      existing?.status === "revision" ||
+      existing?.status === "entregado" ||
+      existing?.status === "completo" ||
+      existing?.status === "cancelado";
     const record: WorkProgressPayload = {
       itemId,
       finishedQty: payload.finishedQty.trim(),
       observation: payload.observation.trim(),
-      status: "en_curso",
+      status: keepStatus ? existing!.status : "en_curso",
       updatedAt: new Date().toISOString(),
       updatedBy: payload.updatedBy,
-      sector: payload.sector,
+      sector: payload.sector ?? existing?.sector,
+      completedAt: existing?.completedAt,
+      packagingLote:
+        payload.packagingLote !== undefined
+          ? payload.packagingLote
+          : existing?.packagingLote ?? null,
+      packagingVto:
+        payload.packagingVto !== undefined
+          ? payload.packagingVto
+          : existing?.packagingVto ?? null,
+      packagingTotalUnits:
+        payload.packagingTotalUnits !== undefined
+          ? payload.packagingTotalUnits
+          : existing?.packagingTotalUnits ?? null,
+      packagingCajas:
+        payload.packagingCajas !== undefined
+          ? payload.packagingCajas
+          : existing?.packagingCajas ?? null,
+      packagingUnidadesPorCaja:
+        payload.packagingUnidadesPorCaja !== undefined
+          ? payload.packagingUnidadesPorCaja
+          : existing?.packagingUnidadesPorCaja ?? null,
+      packingGroups:
+        payload.packingGroups !== undefined
+          ? payload.packingGroups
+          : existing?.packingGroups ?? null,
+      packingMismatchObservation:
+        payload.packingMismatchObservation !== undefined
+          ? payload.packingMismatchObservation
+          : existing?.packingMismatchObservation ?? null,
     };
     this.progress.set(itemId, record);
     this.revision += 1;
@@ -93,6 +135,7 @@ class ServerOperationalState {
     payload: { finishedQty: string; observation: string; completedBy: string }
   ): { progress: WorkProgressPayload; completion: CompletionEvent } {
     const completedAt = new Date().toISOString();
+    const existing = this.progress.get(item.id);
     const progress: WorkProgressPayload = {
       itemId: item.id,
       finishedQty: payload.finishedQty.trim(),
@@ -102,6 +145,18 @@ class ServerOperationalState {
       updatedBy: payload.completedBy,
       completedAt,
       sector: item.sector,
+      packagingLote: item.packagingLote ?? existing?.packagingLote ?? null,
+      packagingVto: item.packagingVto ?? existing?.packagingVto ?? null,
+      packagingTotalUnits:
+        item.packagingTotalUnits ?? existing?.packagingTotalUnits ?? null,
+      packagingCajas: item.packagingCajas ?? existing?.packagingCajas ?? null,
+      packagingUnidadesPorCaja:
+        item.packagingUnidadesPorCaja ?? existing?.packagingUnidadesPorCaja ?? null,
+      packingGroups: item.packingGroups ?? existing?.packingGroups ?? null,
+      packingMismatchObservation:
+        item.packingMismatchObservation ??
+        existing?.packingMismatchObservation ??
+        null,
     };
     this.progress.set(item.id, progress);
 

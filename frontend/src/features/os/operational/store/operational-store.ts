@@ -8,6 +8,8 @@ const COMPLETIONS_KEY = "genus_os_completion_events";
 
 export type DecisionMap = Record<string, QualityDecisionRecord>;
 
+export type PackingGroupRecord = { cajas: number; unidadesPorCaja: number };
+
 export interface WorkProgressRecord {
   itemId: string;
   finishedQty: string;
@@ -16,6 +18,13 @@ export interface WorkProgressRecord {
   updatedAt: string;
   updatedBy?: string;
   completedAt?: string;
+  packagingLote?: string | null;
+  packagingVto?: string | null;
+  packagingTotalUnits?: number | null;
+  packagingCajas?: number | null;
+  packagingUnidadesPorCaja?: number | null;
+  packingGroups?: PackingGroupRecord[] | null;
+  packingMismatchObservation?: string | null;
 }
 
 export type ProgressMap = Record<string, WorkProgressRecord>;
@@ -124,6 +133,13 @@ export function recordWorkProgress(
     observation: string;
     status?: WorkItemStatus;
     updatedBy?: string;
+    packagingLote?: string | null;
+    packagingVto?: string | null;
+    packagingTotalUnits?: number | null;
+    packagingCajas?: number | null;
+    packagingUnidadesPorCaja?: number | null;
+    packingGroups?: PackingGroupRecord[] | null;
+    packingMismatchObservation?: string | null;
   }
 ): WorkProgressRecord {
   const existing = readProgressMap()[itemId];
@@ -131,7 +147,7 @@ export function recordWorkProgress(
     itemId,
     finishedQty: payload.finishedQty.trim(),
     observation: payload.observation.trim(),
-    status: payload.status,
+    status: payload.status ?? existing?.status,
     updatedAt: new Date().toISOString(),
     updatedBy: payload.updatedBy,
     completedAt:
@@ -140,12 +156,70 @@ export function recordWorkProgress(
       payload.status === "entregado"
         ? existing?.completedAt ?? new Date().toISOString()
         : existing?.completedAt,
+    packagingLote:
+      payload.packagingLote !== undefined
+        ? payload.packagingLote
+        : existing?.packagingLote ?? null,
+    packagingVto:
+      payload.packagingVto !== undefined
+        ? payload.packagingVto
+        : existing?.packagingVto ?? null,
+    packagingTotalUnits:
+      payload.packagingTotalUnits !== undefined
+        ? payload.packagingTotalUnits
+        : existing?.packagingTotalUnits ?? null,
+    packagingCajas:
+      payload.packagingCajas !== undefined
+        ? payload.packagingCajas
+        : existing?.packagingCajas ?? null,
+    packagingUnidadesPorCaja:
+      payload.packagingUnidadesPorCaja !== undefined
+        ? payload.packagingUnidadesPorCaja
+        : existing?.packagingUnidadesPorCaja ?? null,
+    packingGroups:
+      payload.packingGroups !== undefined
+        ? payload.packingGroups
+        : existing?.packingGroups ?? null,
+    packingMismatchObservation:
+      payload.packingMismatchObservation !== undefined
+        ? payload.packingMismatchObservation
+        : existing?.packingMismatchObservation ?? null,
   };
 
   const map = readProgressMap();
   map[itemId] = record;
   writeProgressMap(map);
   return record;
+}
+
+/** Guarda embalaje sin exigir cambio de finishedQty (preserva avance previo). */
+export function recordWorkPackaging(
+  itemId: string,
+  payload: {
+    updatedBy?: string;
+    packagingLote?: string | null;
+    packagingVto?: string | null;
+    packagingTotalUnits?: number | null;
+    packagingCajas?: number | null;
+    packagingUnidadesPorCaja?: number | null;
+    packingGroups?: PackingGroupRecord[] | null;
+    packingMismatchObservation?: string | null;
+  }
+): WorkProgressRecord {
+  const existing = readProgressMap()[itemId];
+  return recordWorkProgress(itemId, {
+    finishedQty: existing?.finishedQty ?? "",
+    observation: existing?.observation ?? "",
+    status: existing?.status,
+    updatedBy: payload.updatedBy,
+    packagingLote: payload.packagingLote,
+    packagingVto: payload.packagingVto,
+    packagingTotalUnits: payload.packagingTotalUnits,
+    packagingCajas: payload.packagingCajas,
+    packagingUnidadesPorCaja: payload.packagingUnidadesPorCaja,
+    packingGroups: payload.packingGroups,
+    packingMismatchObservation: payload.packingMismatchObservation,
+  });
 }
 
 /** Marca terminado y transfiere responsabilidad a Calidad. */
@@ -201,8 +275,29 @@ export function applyWorkProgressToItems<T extends { id: string; status: WorkIte
   const progress = readProgressMap();
   return items.map((item) => {
     const saved = progress[item.id];
-    if (!saved?.status) return item;
-    return { ...item, status: saved.status };
+    if (!saved) return item;
+    const next = {
+      ...item,
+      ...(saved.status ? { status: saved.status } : {}),
+      ...(saved.finishedQty
+        ? { finishedQty: saved.finishedQty }
+        : {}),
+      packagingLote: saved.packagingLote ?? (item as WorkItem).packagingLote ?? null,
+      packagingVto: saved.packagingVto ?? (item as WorkItem).packagingVto ?? null,
+      packagingTotalUnits:
+        saved.packagingTotalUnits ?? (item as WorkItem).packagingTotalUnits ?? null,
+      packagingCajas: saved.packagingCajas ?? (item as WorkItem).packagingCajas ?? null,
+      packagingUnidadesPorCaja:
+        saved.packagingUnidadesPorCaja ??
+        (item as WorkItem).packagingUnidadesPorCaja ??
+        null,
+      packingGroups: saved.packingGroups ?? (item as WorkItem).packingGroups ?? null,
+      packingMismatchObservation:
+        saved.packingMismatchObservation ??
+        (item as WorkItem).packingMismatchObservation ??
+        null,
+    };
+    return next as T;
   });
 }
 

@@ -9,6 +9,7 @@ import {
   type PackingGroup,
 } from "@/lib/remitos/packing-math";
 import { updateManualWorkItemPackaging } from "@/features/os/operational/adapters/manual-work-items-repository";
+import { useOperationalStore } from "@/features/os/operational/store/operational-store-context";
 import type { WorkItem } from "@/types/operational/work-item";
 import { PackingGroupsEditor } from "./packing-groups-editor";
 
@@ -18,12 +19,15 @@ export function PackagingQuantitiesBlock({
   actorName,
   onSaved,
   readOnly = false,
+  sector,
 }: {
   item: WorkItem;
   actorName: string;
   onSaved?: (item: WorkItem) => void;
   readOnly?: boolean;
+  sector?: WorkItem["sector"];
 }) {
+  const { saveWorkPackaging } = useOperationalStore();
   const [lote, setLote] = useState(item.packagingLote ?? item.loteRef ?? "");
   const [vto, setVto] = useState(item.packagingVto ?? "");
   const [total, setTotal] = useState(
@@ -54,23 +58,49 @@ export function PackagingQuantitiesBlock({
       return;
     }
     const summary = summarizePackingGroups(groups);
-    const updated = updateManualWorkItemPackaging({
+    const packagingTotalUnits = total === "" ? null : Number(total);
+    const packagingCajas = summary.groups[0]?.cajas ?? null;
+    const packagingUnidadesPorCaja = summary.groups[0]?.unidadesPorCaja ?? null;
+
+    // Live Sync: cualquier WorkItem (Drive o manual) — visible en Producción.
+    saveWorkPackaging(item.id, {
+      updatedBy: actorName,
+      sector: sector ?? item.sector,
+      packagingLote: lote,
+      packagingVto: vto,
+      packagingTotalUnits,
+      packagingCajas,
+      packagingUnidadesPorCaja,
+      packingGroups: groups,
+      packingMismatchObservation: packingObs,
+    });
+
+    // Compat: si es trabajo manual, también actualizar el store local.
+    const updatedManual = updateManualWorkItemPackaging({
       id: item.id,
       actorName,
       packagingLote: lote,
       packagingVto: vto,
-      packagingTotalUnits: total === "" ? null : Number(total),
+      packagingTotalUnits,
       packingGroups: groups,
-      packagingCajas: summary.groups[0]?.cajas ?? null,
-      packagingUnidadesPorCaja: summary.groups[0]?.unidadesPorCaja ?? null,
+      packagingCajas,
+      packagingUnidadesPorCaja,
       packingMismatchObservation: packingObs,
     });
-    if (!updated) {
-      setMsg("No se pudo guardar.");
-      return;
-    }
+
+    const next: WorkItem = {
+      ...(updatedManual ?? item),
+      packagingLote: lote.trim() || null,
+      packagingVto: vto.trim() || null,
+      packagingTotalUnits,
+      packagingCajas,
+      packagingUnidadesPorCaja,
+      packingGroups: groups,
+      packingMismatchObservation: packingObs.trim() || null,
+      loteRef: lote.trim() || item.loteRef,
+    };
     setMsg("Avance guardado.");
-    onSaved?.(updated);
+    onSaved?.(next);
   }
 
   return (

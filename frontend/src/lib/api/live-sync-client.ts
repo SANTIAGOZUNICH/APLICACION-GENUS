@@ -88,6 +88,13 @@ export async function postSaveProgress(payload: {
   finishedQty: string;
   observation: string;
   updatedBy?: string;
+  packagingLote?: string | null;
+  packagingVto?: string | null;
+  packagingTotalUnits?: number | null;
+  packagingCajas?: number | null;
+  packagingUnidadesPorCaja?: number | null;
+  packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+  packingMismatchObservation?: string | null;
 }): Promise<void> {
   await fetch("/api/v1/live-sync/operations", {
     method: "POST",

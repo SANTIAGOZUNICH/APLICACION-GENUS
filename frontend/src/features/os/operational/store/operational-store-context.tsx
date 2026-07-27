@@ -33,13 +33,13 @@ import {
   readProgressMap,
   recordQualityDecision,
   recordWorkCompletion,
+  recordWorkPackaging,
   recordWorkProgress,
   writeCompletionEvents,
   writeDecisionMap,
   writeProgressMap,
   type DecisionMap,
   type ProgressMap,
-  type WorkProgressRecord,
 } from "./operational-store";
 
 export type QualityDecisionOptions = {
@@ -66,6 +66,20 @@ interface OperationalStoreValue {
   saveWorkProgress: (
     itemId: string,
     payload: { finishedQty: string; observation: string; updatedBy?: string; sector?: SectorId }
+  ) => void;
+  saveWorkPackaging: (
+    itemId: string,
+    payload: {
+      updatedBy?: string;
+      sector?: SectorId;
+      packagingLote?: string | null;
+      packagingVto?: string | null;
+      packagingTotalUnits?: number | null;
+      packagingCajas?: number | null;
+      packagingUnidadesPorCaja?: number | null;
+      packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+      packingMismatchObservation?: string | null;
+    }
   ) => void;
   markWorkFinished: (
     item: WorkItem,
@@ -203,19 +217,81 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     [syncFromStorage]
   );
 
+  const saveWorkPackaging = useCallback(
+    (
+      itemId: string,
+      payload: {
+        updatedBy?: string;
+        sector?: SectorId;
+        packagingLote?: string | null;
+        packagingVto?: string | null;
+        packagingTotalUnits?: number | null;
+        packagingCajas?: number | null;
+        packagingUnidadesPorCaja?: number | null;
+        packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+        packingMismatchObservation?: string | null;
+      }
+    ) => {
+      const record = recordWorkPackaging(itemId, payload);
+      syncFromStorage();
+      void postSaveProgress({
+        itemId,
+        sector: payload.sector,
+        finishedQty: record.finishedQty,
+        observation: record.observation,
+        updatedBy: payload.updatedBy,
+        packagingLote: record.packagingLote,
+        packagingVto: record.packagingVto,
+        packagingTotalUnits: record.packagingTotalUnits,
+        packagingCajas: record.packagingCajas,
+        packagingUnidadesPorCaja: record.packagingUnidadesPorCaja,
+        packingGroups: record.packingGroups,
+        packingMismatchObservation: record.packingMismatchObservation,
+      }).catch(() => {});
+    },
+    [syncFromStorage]
+  );
+
   const markWorkFinished = useCallback(
     (
       item: WorkItem,
       payload: { finishedQty: string; observation: string; updatedBy?: string }
     ) => {
-      recordWorkCompletion(item, {
+      const prior = readProgressMap()[item.id];
+      const enriched: WorkItem = {
+        ...item,
+        packagingLote: item.packagingLote ?? prior?.packagingLote ?? null,
+        packagingVto: item.packagingVto ?? prior?.packagingVto ?? null,
+        packagingTotalUnits:
+          item.packagingTotalUnits ?? prior?.packagingTotalUnits ?? null,
+        packagingCajas: item.packagingCajas ?? prior?.packagingCajas ?? null,
+        packagingUnidadesPorCaja:
+          item.packagingUnidadesPorCaja ?? prior?.packagingUnidadesPorCaja ?? null,
+        packingGroups: item.packingGroups ?? prior?.packingGroups ?? null,
+        packingMismatchObservation:
+          item.packingMismatchObservation ??
+          prior?.packingMismatchObservation ??
+          null,
+      };
+      recordWorkCompletion(enriched, {
         finishedQty: payload.finishedQty,
         observation: payload.observation,
         completedBy: payload.updatedBy ?? "Operario",
       });
+      // Preservar embalaje al marcar revision.
+      recordWorkPackaging(enriched.id, {
+        updatedBy: payload.updatedBy,
+        packagingLote: enriched.packagingLote,
+        packagingVto: enriched.packagingVto,
+        packagingTotalUnits: enriched.packagingTotalUnits,
+        packagingCajas: enriched.packagingCajas,
+        packagingUnidadesPorCaja: enriched.packagingUnidadesPorCaja,
+        packingGroups: enriched.packingGroups,
+        packingMismatchObservation: enriched.packingMismatchObservation,
+      });
       syncFromStorage();
       void postCompleteWork({
-        item,
+        item: enriched,
         finishedQty: payload.finishedQty,
         observation: payload.observation,
         completedBy: payload.updatedBy,
@@ -233,6 +309,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
   const mergeFromServer = useCallback((overlay: OperationalOverlay) => {
     const progressRecords: ProgressMap = { ...readProgressMap() };
     for (const record of Object.values(overlay.progress)) {
+      const prev = progressRecords[record.itemId];
       progressRecords[record.itemId] = {
         itemId: record.itemId,
         finishedQty: record.finishedQty,
@@ -241,6 +318,34 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         updatedAt: record.updatedAt,
         updatedBy: record.updatedBy,
         completedAt: record.completedAt,
+        packagingLote:
+          record.packagingLote !== undefined
+            ? record.packagingLote
+            : prev?.packagingLote ?? null,
+        packagingVto:
+          record.packagingVto !== undefined
+            ? record.packagingVto
+            : prev?.packagingVto ?? null,
+        packagingTotalUnits:
+          record.packagingTotalUnits !== undefined
+            ? record.packagingTotalUnits
+            : prev?.packagingTotalUnits ?? null,
+        packagingCajas:
+          record.packagingCajas !== undefined
+            ? record.packagingCajas
+            : prev?.packagingCajas ?? null,
+        packagingUnidadesPorCaja:
+          record.packagingUnidadesPorCaja !== undefined
+            ? record.packagingUnidadesPorCaja
+            : prev?.packagingUnidadesPorCaja ?? null,
+        packingGroups:
+          record.packingGroups !== undefined
+            ? record.packingGroups
+            : prev?.packingGroups ?? null,
+        packingMismatchObservation:
+          record.packingMismatchObservation !== undefined
+            ? record.packingMismatchObservation
+            : prev?.packingMismatchObservation ?? null,
       };
     }
     writeProgressMap(progressRecords);
@@ -273,6 +378,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       getFinishedQty,
       getObservation,
       saveWorkProgress,
+      saveWorkPackaging,
       markWorkFinished,
       applyProgressToWorkItems,
       refreshDecisions: syncFromStorage,
@@ -291,6 +397,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       getFinishedQty,
       getObservation,
       saveWorkProgress,
+      saveWorkPackaging,
       markWorkFinished,
       applyProgressToWorkItems,
       syncFromStorage,
