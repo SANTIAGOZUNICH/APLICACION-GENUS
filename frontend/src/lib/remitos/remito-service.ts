@@ -847,11 +847,11 @@ export class RemitoService {
     const remito = await this.findById(remitoId);
     if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
 
-    const versions = remito.versions ?? [];
+    const versions = await this.loadVersionsFor(remitoId);
     const targetVersion =
       version != null
         ? versions.find((v) => v.version === version)
-        : versions.sort((a, b) => b.version - a.version)[0];
+        : [...versions].sort((a, b) => b.version - a.version)[0];
 
     const storageKey =
       format === "pdf"
@@ -1035,11 +1035,14 @@ export class RemitoService {
     for (const v of versionRows) {
       const list = versionsByRemito.get(v.remitoId) ?? [];
       list.push({
+        id: v.id,
         version: v.version,
         motivo: v.motivo ?? null,
         createdBy: v.createdBy,
         createdAt: v.createdAt.toISOString(),
         downloadable: Boolean(v.driveFileIdXlsx || v.driveFileIdPdf),
+        driveFileIdXlsx: v.driveFileIdXlsx,
+        driveFileIdPdf: v.driveFileIdPdf,
       });
       versionsByRemito.set(v.remitoId, list);
     }
