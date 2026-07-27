@@ -1,24 +1,27 @@
-/** Genus OS — motion sutil. Nada exagerado. */
+/** Genus OS — INDUSTRIAL GLASS motion. Respetar prefers-reduced-motion en CSS. */
 
 export const genusMotion = {
   duration: {
     instant: "0ms",
     fast: "120ms",
-    normal: "200ms",
-    slow: "320ms",
+    hover: "140ms",
+    normal: "180ms",
+    panel: "220ms",
+    slow: "280ms",
   },
   easing: {
     default: "cubic-bezier(0.4, 0, 0.2, 1)",
+    out: "cubic-bezier(0.16, 1, 0.3, 1)",
     enter: "cubic-bezier(0, 0, 0.2, 1)",
     exit: "cubic-bezier(0.4, 0, 1, 1)",
-    spring: "cubic-bezier(0.34, 1.2, 0.64, 1)",
   },
+  reducedMotion: "Respetar @media (prefers-reduced-motion: reduce) — sin animaciones infinitas ni transform.",
 } as const;
 
 export const genusMotionPresets = {
   hover: {
-    property: "color, background-color, border-color, box-shadow, opacity",
-    duration: genusMotion.duration.fast,
+    property: "color, background-color, border-color, box-shadow, opacity, transform",
+    duration: genusMotion.duration.hover,
     easing: genusMotion.easing.default,
   },
   expand: {
@@ -28,8 +31,13 @@ export const genusMotionPresets = {
   },
   drawer: {
     property: "transform",
-    duration: genusMotion.duration.slow,
-    easing: genusMotion.easing.enter,
+    duration: genusMotion.duration.panel,
+    easing: genusMotion.easing.out,
+  },
+  modal: {
+    property: "opacity, transform",
+    duration: genusMotion.duration.panel,
+    easing: genusMotion.easing.out,
   },
   loading: {
     property: "opacity",

@@ -1,47 +1,56 @@
 /**
- * Fase 1 — Puente de tokens: --os-* (preview) → --genus-* (Design System oficial).
- * Reversible: eliminar este archivo y restaurar valores literales en tokens.css del preview.
- *
- * Trade-off: los alias mantienen compatibilidad con clases existentes del Digital Twin
- * sin renombrar ~40 referencias var(--os-*) en wireframes. La fuente canónica pasa a ser --genus-*.
+ * Puente --os-* / legacy → --genus-* (Industrial Glass).
+ * Fuente canónica: --genus-*. No duplicar literales aquí.
  */
 
 .design-preview-root {
   /* Sidebar */
   --os-sidebar-bg: var(--genus-surface-sidebar);
+  --os-sidebar-bg-2: var(--genus-surface-sidebar-2);
   --os-sidebar-text: var(--genus-text-inverse);
-  --os-sidebar-muted: #a9c3d6;
-  --os-sidebar-hover: var(--genus-brand-navy);
+  --os-sidebar-muted: var(--genus-text-inverse-muted);
+  --os-sidebar-hover: rgb(255 255 255 / 0.06);
   --os-sidebar-active: var(--genus-brand-primary);
 
   /* Surfaces & text */
   --os-bg: var(--genus-surface-bg);
   --os-surface: var(--genus-surface-card);
+  --os-surface-glass: var(--genus-surface-glass);
   --os-surface-muted: var(--genus-surface-muted);
-  --os-border: var(--genus-neutral-200);
+  --os-border: var(--genus-border);
   --os-border-subtle: var(--genus-neutral-100);
   --os-text: var(--genus-text-primary);
   --os-text-muted: var(--genus-text-secondary);
+  --os-navy: var(--genus-brand-navy-dark);
+  --os-bg-muted: var(--genus-surface-muted);
 
   /* Brand accent */
   --os-teal: var(--genus-brand-primary);
   --os-teal-soft: var(--genus-brand-primary-soft);
   --os-teal-muted: var(--genus-brand-primary-muted);
+  --os-teal-glow: var(--genus-brand-primary-glow);
+  --os-action: var(--genus-brand-action);
 
   /* Radius & shadows */
   --os-radius: var(--genus-radius-xl);
   --os-radius-sm: var(--genus-radius-md);
   --os-shadow-sm: var(--genus-shadow-xs);
   --os-shadow: var(--genus-shadow-sm);
-  --os-shadow-card: var(--genus-shadow-md);
-  --os-shadow-card-hover: var(--genus-shadow-lg);
+  --os-shadow-card: var(--genus-shadow-glass);
+  --os-shadow-card-hover: var(--genus-shadow-md);
+
+  /* Z */
+  --os-z-header: var(--genus-z-header);
+  --os-z-sidebar: var(--genus-z-sidebar);
+  --os-z-overlay: var(--genus-z-overlay);
+  --os-z-modal: var(--genus-z-modal);
+  --os-z-toast: var(--genus-z-toast);
+  --os-z-creamy: var(--genus-z-creamy);
 
   /*
-   * Alias de tokens "legacy" (07-design-system) → identidad GENUS OS (navy/turquesa).
-   * Permite reutilizar Button/Dialog/StatusBadge/etc. sin duplicarlos: dentro del
-   * Digital Twin heredan automáticamente la paleta navy + turquesa del mockup.
+   * Alias legacy Track A → Industrial Glass (dentro del Twin).
    */
-  --color-action: var(--genus-brand-primary);
+  --color-action: var(--genus-brand-action);
   --color-accent: var(--genus-brand-primary);
   --color-ok: var(--genus-success);
   --color-attention: var(--genus-warning);
@@ -49,8 +58,8 @@
   --color-neutral: var(--genus-text-secondary);
   --background: var(--genus-surface-bg);
   --surface: var(--genus-surface-card);
-  --surface-elevated: var(--genus-surface-card);
-  --border: var(--genus-neutral-200);
+  --surface-elevated: var(--genus-surface-glass-strong);
+  --border: var(--genus-border);
   --border-subtle: var(--genus-neutral-100);
   --foreground: var(--genus-text-primary);
   --muted-foreground: var(--genus-text-secondary);
@@ -69,4 +78,6 @@
   --radius-sm: var(--genus-radius-sm);
   --radius-md: var(--genus-radius-md);
   --radius-lg: var(--genus-radius-lg);
+  --shadow-sm: var(--genus-shadow-sm);
+  --shadow-md: var(--genus-shadow-md);
 }

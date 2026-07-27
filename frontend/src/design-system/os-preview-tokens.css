@@ -1,21 +1,41 @@
 /**
- * F9 Digital Twin — tokens de layout + motion.
- * Colores y superficies: --genus-* vía genus-os-bridge.css (--os-* alias).
+ * Industrial Glass — layout + motion + ambient background.
+ * Colores: --genus-* vía genus-os-bridge.css.
  */
 
 @import "./genus-tokens.css";
 @import "./genus-os-bridge.css";
 
 .design-preview-root {
-  /* Layout preview-only (no equivalente semántico en genus) */
   --os-sidebar-width: 16rem;
   --os-header-height: 3.75rem;
   --os-status-height: 2rem;
   --os-space-section: 2.5rem;
   --os-space-block: 1.25rem;
+
+  /* Ambient industrial background */
+  background-color: var(--genus-surface-bg);
+  background-image:
+    radial-gradient(ellipse 70% 55% at 100% 0%, var(--genus-ambient-teal), transparent 55%),
+    radial-gradient(ellipse 55% 45% at 0% 100%, var(--genus-ambient-blue), transparent 50%),
+    linear-gradient(180deg, #f7fafc 0%, var(--genus-surface-bg) 42%, #eef3f6 100%);
+  background-attachment: fixed;
+  min-height: 100%;
+  color: var(--genus-text-primary);
 }
 
-/* F9.6 — microinteracciones del Digital Twin */
+.design-preview-root::before {
+  content: "";
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: var(--genus-z-base);
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+}
+
+/* Motion */
 @keyframes os-fade-in {
   from {
     opacity: 0;
@@ -30,7 +50,7 @@
 @keyframes os-slide-up {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
@@ -47,13 +67,24 @@
   }
 }
 
+@keyframes os-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @keyframes os-pulse-success {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgb(16 185 129 / 0);
+    box-shadow: 0 0 0 0 rgb(18 191 183 / 0);
   }
   50% {
-    box-shadow: 0 0 0 6px rgb(16 185 129 / 0.15);
+    box-shadow: 0 0 0 6px rgb(18 191 183 / 0.12);
   }
 }
 
@@ -68,7 +99,7 @@
 
 @keyframes os-workspace-highlight {
   0% {
-    background-color: rgb(45 212 191 / 0.12);
+    background-color: rgb(18 191 183 / 0.1);
   }
   100% {
     background-color: transparent;
@@ -76,23 +107,27 @@
 }
 
 .design-preview-root .os-workspace-highlight {
-  animation: os-workspace-highlight 2.5s ease-out both;
+  animation: os-workspace-highlight 2.5s var(--genus-ease-default) both;
 }
 
 .design-preview-root .os-fade-in {
-  animation: os-fade-in 0.35s ease-out both;
+  animation: os-fade-in var(--genus-duration-slow) var(--genus-ease-out) both;
 }
 
 .design-preview-root .os-slide-up {
-  animation: os-slide-up 0.4s ease-out both;
+  animation: os-slide-up var(--genus-duration-panel) var(--genus-ease-out) both;
 }
 
 .design-preview-root .os-drawer {
-  animation: os-drawer-in 0.28s ease-out both;
+  animation: os-drawer-in var(--genus-duration-panel) var(--genus-ease-out) both;
+}
+
+.design-preview-root .os-modal-in {
+  animation: os-modal-in var(--genus-duration-panel) var(--genus-ease-out) both;
 }
 
 .design-preview-root .os-pulse-success {
-  animation: os-pulse-success 0.6s ease-out;
+  animation: os-pulse-success 0.6s var(--genus-ease-default);
 }
 
 .design-preview-root .os-skeleton {
@@ -104,4 +139,27 @@
   );
   background-size: 200% 100%;
   animation: os-skeleton 1.4s ease-in-out infinite;
+}
+
+.design-preview-root .os-glass-panel {
+  background: var(--genus-surface-glass);
+  border: 1px solid var(--genus-border);
+  border-radius: var(--genus-radius-xl);
+  box-shadow: var(--genus-shadow-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .design-preview-root .os-workspace-highlight,
+  .design-preview-root .os-fade-in,
+  .design-preview-root .os-slide-up,
+  .design-preview-root .os-drawer,
+  .design-preview-root .os-modal-in,
+  .design-preview-root .os-pulse-success,
+  .design-preview-root .os-skeleton {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
 }

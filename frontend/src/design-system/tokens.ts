@@ -38,18 +38,19 @@ export const genusTokens = {
 
 export type GenusTokens = typeof genusTokens;
 
-/** Reglas que nunca deben romperse — F10+ */
+/** Reglas que nunca deben romperse — INDUSTRIAL GLASS */
 export const genusDesignRules = [
   "Prioridad: entender qué tengo que hacer en 5 segundos",
   "Nunca más de un acento de color por bloque",
-  "No colores saturados — turquesa y petróleo desaturados",
+  "--genus-* es la fuente de verdad; --os-* solo vía bridge",
+  "Glass solo en chrome/panels — nunca en contenido denso",
   "No tablas densas tipo ERP — preferir cards",
   "No KPIs en home operarios",
   "Espaciado solo de la escala oficial (4–64)",
   "Cards solo de tipos registrados en cards.ts",
   "Estados solo de status.ts — no inventar variantes",
-  "Creamy integrada al shell — no chatbot flotante",
+  "Creamy: solo FAB + panel — sin tarjeta permanente en sidebar",
   "Desktop first — operarios en estaciones de trabajo",
-  "Motion sutil — fast/normal, nunca bounce exagerado",
-  "Sombras mínimas — calma, no profundidad teatral",
+  "Motion sutil — hover/panel; respetar prefers-reduced-motion",
+  "Sombras glass/sm/md — sin glow teatral ni multi-layer",
 ] as const;

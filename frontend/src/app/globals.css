@@ -28,7 +28,11 @@ html {
 
 body {
   min-height: 100%;
-  background: var(--background);
+  background:
+    radial-gradient(ellipse 70% 50% at 100% 0%, rgb(18 191 183 / 0.07), transparent 55%),
+    radial-gradient(ellipse 50% 40% at 0% 100%, rgb(23 105 224 / 0.05), transparent 50%),
+    var(--background);
+  background-attachment: fixed;
   color: var(--foreground);
   font-family: var(--font-inter), system-ui, sans-serif;
   font-size: var(--text-body);
@@ -40,4 +44,15 @@ body {
 :focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
