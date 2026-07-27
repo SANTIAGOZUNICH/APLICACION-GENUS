@@ -17,6 +17,10 @@ import {
 } from "@/lib/remitos/remitos-client";
 import { formatLoteVtoCell, lineTotalCajas, lineTotalUnitsFromCajas } from "@/lib/remitos/line-qty";
 import {
+  groupRemitosByClient,
+  type RemitoClientFolder,
+} from "@/lib/remitos/client-folders";
+import {
   canAccessRemitos,
   type RemitoCajaCombo,
   type RemitoLine,
@@ -88,6 +92,22 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState<"pdf" | "xlsx" | null>(null);
+  const [clientFolderKey, setClientFolderKey] = useState<string | null>(null);
+  const [clientSearch, setClientSearch] = useState("");
+
+  const clientFolders = useMemo(() => {
+    const folders = groupRemitosByClient(items);
+    const qClient = clientSearch.trim().toLowerCase();
+    if (!qClient) return folders;
+    return folders.filter((f) => f.displayName.toLowerCase().includes(qClient));
+  }, [items, clientSearch]);
+
+  const activeFolder: RemitoClientFolder | null = useMemo(() => {
+    if (!clientFolderKey) return null;
+    return clientFolders.find((f) => f.key === clientFolderKey) ?? null;
+  }, [clientFolderKey, clientFolders]);
+
+  const folderRemitos = activeFolder?.remitos ?? items;
 
   const reload = useCallback(async () => {
     if (!allowed) return;
@@ -310,6 +330,26 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
       <div className="space-y-4 p-4" data-testid="remitos-view">
         <SchemaPendingBanner show={schemaPending} />
         <div className="flex flex-wrap items-center gap-2">
+          <nav className="text-sm text-[var(--os-text-muted)]" data-testid="remitos-breadcrumb">
+            <button
+              type="button"
+              className="underline-offset-2 hover:underline"
+              onClick={() => {
+                setClientFolderKey(null);
+                setSelected(null);
+              }}
+            >
+              Remitos
+            </button>
+            {activeFolder ? (
+              <>
+                <span> / </span>
+                <span className="font-medium text-[var(--os-text)]">
+                  {activeFolder.displayName}
+                </span>
+              </>
+            ) : null}
+          </nav>
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -325,13 +365,23 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
               {t.label}
             </button>
           ))}
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Nombre, n°, cliente, producto, lote, vto, fecha…"
-            className="ml-auto min-w-[220px] rounded border border-[var(--os-border)] px-2 py-1.5 text-sm"
-            data-testid="remitos-search"
-          />
+          {!clientFolderKey ? (
+            <input
+              value={clientSearch}
+              onChange={(e) => setClientSearch(e.target.value)}
+              placeholder="Buscar cliente…"
+              className="ml-auto min-w-[180px] rounded border border-[var(--os-border)] px-2 py-1.5 text-sm"
+              data-testid="remitos-client-search"
+            />
+          ) : (
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Nombre, n°, producto, lote, vto, fecha…"
+              className="ml-auto min-w-[220px] rounded border border-[var(--os-border)] px-2 py-1.5 text-sm"
+              data-testid="remitos-search"
+            />
+          )}
         </div>
 
         {error ? (
@@ -342,6 +392,46 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
 
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="overflow-x-auto rounded border border-[var(--os-border)] bg-[var(--os-surface)]">
+            {!clientFolderKey ? (
+              <table className="w-full text-left text-sm" data-testid="remitos-client-folders">
+                <thead className="border-b border-[var(--os-border)] text-xs text-[var(--os-text-muted)]">
+                  <tr>
+                    <th className="px-3 py-2">Cliente</th>
+                    <th className="px-3 py-2">Remitos</th>
+                    <th className="px-3 py-2">Última actualización</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {clientFolders.length === 0 ? (
+                    <tr>
+                      <td colSpan={3} className="px-3 py-6 text-[var(--os-text-muted)]">
+                        Sin carpetas de cliente.
+                      </td>
+                    </tr>
+                  ) : (
+                    clientFolders.map((f) => (
+                      <tr
+                        key={f.key}
+                        className="cursor-pointer border-b border-[var(--os-border)] hover:bg-[var(--os-bg-muted)]"
+                        onClick={() => {
+                          setClientFolderKey(f.key);
+                          setSelected(null);
+                        }}
+                        data-testid={`remitos-folder-${f.key}`}
+                      >
+                        <td className="px-3 py-2 font-medium">{f.displayName}</td>
+                        <td className="px-3 py-2">{f.remitoCount}</td>
+                        <td className="px-3 py-2 text-xs text-[var(--os-text-muted)]">
+                          {f.lastUpdatedAt
+                            ? new Date(f.lastUpdatedAt).toLocaleString("es-AR")
+                            : "—"}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            ) : (
             <table className="w-full text-left text-sm" data-testid="remitos-table">
               <thead className="border-b border-[var(--os-border)] text-xs text-[var(--os-text-muted)]">
                 <tr>
@@ -356,14 +446,14 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                 </tr>
               </thead>
               <tbody>
-                {items.length === 0 ? (
+                {folderRemitos.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="px-3 py-6 text-[var(--os-text-muted)]">
                       Sin remitos.
                     </td>
                   </tr>
                 ) : (
-                  items.map((r) => (
+                  folderRemitos.map((r) => (
                     <tr
                       key={r.id}
                       className="cursor-pointer border-b border-[var(--os-border)] hover:bg-[var(--os-bg-muted)]"
@@ -391,6 +481,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                 )}
               </tbody>
             </table>
+            )}
           </div>
 
           <div className="rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-3">

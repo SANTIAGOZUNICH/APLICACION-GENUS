@@ -12,8 +12,10 @@ import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from
 import type { SectorId } from "@/types/operational/sector";
 import {
   canAccessMetricas,
+  canAdminAllMetricas,
   computeRanking,
   computeTotals,
+  isMetricsEnvasadoSector,
   normalizeResponsibleKey,
   type MetricsActor,
   type MetricsListFilters,
@@ -35,9 +37,28 @@ export function resetMetricasMemoryForTests(): void {
   g.__genusMetricasMem = { metrics: [] };
 }
 
-function assertAccess(actor: MetricsActor): MetricsSector {
+function assertCanRead(actor: MetricsActor): void {
   if (!canAccessMetricas(actor.sector)) {
-    throw new OrdersForbiddenError("Métricas solo disponibles para Envasado Masivo y Premium.");
+    throw new OrdersForbiddenError(
+      "Métricas solo disponibles para Envasado Masivo, Premium y Producción."
+    );
+  }
+}
+
+/** Sector de escritura: Envasado usa el propio; Producción puede elegir targetSector. */
+function resolveWriteSector(
+  actor: MetricsActor,
+  targetSector?: MetricsSector | null
+): MetricsSector {
+  assertCanRead(actor);
+  if (canAdminAllMetricas(actor.sector)) {
+    if (targetSector && isMetricsEnvasadoSector(targetSector)) return targetSector;
+    throw new OrdersValidationError(
+      "Producción debe indicar sector ENVASADO_MASIVO o ENVASADO_PREMIUM."
+    );
+  }
+  if (!isMetricsEnvasadoSector(actor.sector)) {
+    throw new OrdersForbiddenError("Sector no autorizado para métricas.");
   }
   return actor.sector;
 }
@@ -72,11 +93,18 @@ function mapMetric(row: Record<string, unknown>): PackagingMetricRecord {
 
 function applyFilters(
   records: PackagingMetricRecord[],
-  sector: MetricsSector,
+  actor: MetricsActor,
   filters: MetricsListFilters
 ): PackagingMetricRecord[] {
   return records.filter((r) => {
-    if (r.sector !== sector || r.deletedAt) return false;
+    if (r.deletedAt) return false;
+    if (canAdminAllMetricas(actor.sector)) {
+      if (filters.sector && filters.sector !== "ALL" && r.sector !== filters.sector) {
+        return false;
+      }
+    } else if (r.sector !== actor.sector) {
+      return false;
+    }
     if (filters.dateFrom && r.metricDate < filters.dateFrom) return false;
     if (filters.dateTo && r.metricDate > filters.dateTo) return false;
     if (filters.product && !(r.product ?? "").toLowerCase().includes(filters.product.toLowerCase())) {
@@ -100,25 +128,25 @@ export class MetricasService {
     actor: MetricsActor,
     filters: MetricsListFilters = {}
   ): Promise<PackagingMetricRecord[]> {
-    const sector = assertAccess(actor);
+    assertCanRead(actor);
 
     if (isDatabaseConfigured() && (await isProcedureMetricsSchemaReady())) {
       try {
         const db = getDb();
         const res = await db.execute(sql`
           select * from packaging_metrics
-          where sector = ${sector} and deleted_at is null
+          where deleted_at is null
           order by metric_date desc, created_at desc
         `);
         const rows = (res.rows as Record<string, unknown>[]).map(mapMetric);
-        return applyFilters(rows, sector, filters);
+        return applyFilters(rows, actor, filters);
       } catch {
         if (!isFeatureMemoryAllowed()) return [];
       }
     }
 
     if (!isFeatureMemoryAllowed()) return [];
-    return applyFilters(mem().metrics, sector, filters);
+    return applyFilters(mem().metrics, actor, filters);
   }
 
   async create(
@@ -128,9 +156,10 @@ export class MetricasService {
       product?: string | null;
       units: number;
       responsibleDisplay: string;
+      targetSector?: MetricsSector | null;
     }
   ): Promise<PackagingMetricRecord> {
-    const sector = assertAccess(actor);
+    const sector = resolveWriteSector(actor, input.targetSector ?? null);
     await assertProcedureMetricsWritesEnabled();
 
     const units = Math.max(0, Math.floor(input.units));
@@ -181,11 +210,17 @@ export class MetricasService {
       responsibleDisplay?: string;
     }
   ): Promise<PackagingMetricRecord> {
-    const sector = assertAccess(actor);
+    assertCanRead(actor);
     await assertProcedureMetricsWritesEnabled();
 
     const existing = await this.getById(actor, id);
     if (!existing) throw new OrdersNotFoundError("Registro no encontrado.");
+    if (
+      !canAdminAllMetricas(actor.sector) &&
+      existing.sector !== actor.sector
+    ) {
+      throw new OrdersForbiddenError("No podés editar métricas de otro sector.");
+    }
 
     const now = nowIso();
     const updated: PackagingMetricRecord = {
@@ -212,7 +247,7 @@ export class MetricasService {
           responsible_key = ${updated.responsibleKey},
           updated_by = ${actor.email},
           updated_at = ${now}::timestamptz
-        where id = ${id}::uuid and sector = ${sector}
+        where id = ${id}::uuid
       `);
     } else if (isFeatureMemoryAllowed()) {
       const idx = mem().metrics.findIndex((m) => m.id === id);
@@ -223,17 +258,23 @@ export class MetricasService {
   }
 
   async delete(actor: MetricsActor, id: string): Promise<void> {
-    const sector = assertAccess(actor);
+    assertCanRead(actor);
     await assertProcedureMetricsWritesEnabled();
     const existing = await this.getById(actor, id);
     if (!existing) throw new OrdersNotFoundError("Registro no encontrado.");
+    if (
+      !canAdminAllMetricas(actor.sector) &&
+      existing.sector !== actor.sector
+    ) {
+      throw new OrdersForbiddenError("No podés eliminar métricas de otro sector.");
+    }
     const now = nowIso();
 
     if (isDatabaseConfigured() && (await isProcedureMetricsSchemaReady())) {
       const db = getDb();
       await db.execute(sql`
         update packaging_metrics set deleted_at = ${now}::timestamptz, updated_by = ${actor.email}, updated_at = ${now}::timestamptz
-        where id = ${id}::uuid and sector = ${sector}
+        where id = ${id}::uuid
       `);
     } else if (isFeatureMemoryAllowed()) {
       const m = mem().metrics.find((x) => x.id === id);
@@ -242,21 +283,32 @@ export class MetricasService {
   }
 
   async getById(actor: MetricsActor, id: string): Promise<PackagingMetricRecord | null> {
-    const sector = assertAccess(actor);
+    assertCanRead(actor);
     if (isDatabaseConfigured() && (await isProcedureMetricsSchemaReady())) {
       try {
         const db = getDb();
         const res = await db.execute(sql`
-          select * from packaging_metrics where id = ${id}::uuid and sector = ${sector} and deleted_at is null limit 1
+          select * from packaging_metrics where id = ${id}::uuid and deleted_at is null limit 1
         `);
         const row = (res.rows as Record<string, unknown>[])[0];
-        return row ? mapMetric(row) : null;
+        if (!row) return null;
+        const metric = mapMetric(row);
+        if (
+          !canAdminAllMetricas(actor.sector) &&
+          metric.sector !== actor.sector
+        ) {
+          return null;
+        }
+        return metric;
       } catch {
         if (!isFeatureMemoryAllowed()) return null;
       }
     }
     if (!isFeatureMemoryAllowed()) return null;
-    return mem().metrics.find((m) => m.id === id && m.sector === sector && !m.deletedAt) ?? null;
+    const m = mem().metrics.find((x) => x.id === id && !x.deletedAt);
+    if (!m) return null;
+    if (!canAdminAllMetricas(actor.sector) && m.sector !== actor.sector) return null;
+    return m;
   }
 
   async ranking(
@@ -264,8 +316,9 @@ export class MetricasService {
     filters: MetricsListFilters = {}
   ): Promise<{ ranking: MetricsRankingEntry[]; totals: { totalUnits: number; recordCount: number } }> {
     const records = await this.list(actor, filters);
+    const combined = canAdminAllMetricas(actor.sector) && (!filters.sector || filters.sector === "ALL");
     return {
-      ranking: computeRanking(records),
+      ranking: computeRanking(records, { includeSector: !combined }),
       totals: computeTotals(records),
     };
   }
@@ -277,3 +330,4 @@ export function getMetricasService(): MetricasService {
   if (!singleton) singleton = new MetricasService();
   return singleton;
 }
+

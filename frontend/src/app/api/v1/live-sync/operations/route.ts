@@ -103,7 +103,7 @@ export async function POST(request: Request) {
       });
     }
     case "quality_decision": {
-      // actorSectorId obligatorio y exactamente CALIDAD.
+      // actorSectorId obligatorio: CALIDAD | PRODUCCION.
       // No reemplaza identidad autenticada server-side (el cliente podría falsificarlo).
       const gate = validateQualityDecisionActor(body.actorSectorId);
       if (!gate.ok) {
@@ -115,6 +115,7 @@ export async function POST(request: Request) {
       const record = serverOperationalState.decideQuality(body.itemId, body.status, {
         decidedBy: body.decidedBy,
         observation: body.observation,
+        decidedBySector: String(body.actorSectorId),
       });
       // Aprobar NO crea remito/borrador/Blob. Producción usa GENERAR REMITO.
       return NextResponse.json({ ok: true, revision: serverOperationalState.getRevision(), record });

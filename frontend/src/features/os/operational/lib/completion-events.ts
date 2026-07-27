@@ -90,6 +90,7 @@ export function buildOperationalActivityFeed(input: {
     status: string;
     decidedAt: string;
     decidedBy?: string;
+    decidedBySector?: string;
     observation?: string;
     label?: string;
   }>;
@@ -114,12 +115,20 @@ export function buildOperationalActivityFeed(input: {
 
   for (const d of input.decisions) {
     if (d.status !== "aprobado" && d.status !== "rechazado") continue;
+    const who =
+      d.decidedBySector === "PRODUCCION"
+        ? "Producción"
+        : d.decidedBySector === "CALIDAD"
+          ? "Calidad"
+          : null;
+    const verb = d.status === "aprobado" ? "Aprobado" : "Rechazado";
+    const prefix = who ? `${verb} por ${who}` : verb;
     entries.push({
       id: `qd:${d.itemId}:${d.decidedAt}`,
       at: d.decidedAt,
-      actor: d.decidedBy ?? "Calidad",
+      actor: d.decidedBy ?? who ?? "Calidad",
       type: d.status === "aprobado" ? "quality_approve" : "quality_reject",
-      message: `${d.status === "aprobado" ? "Aprobado" : "Rechazado"}: ${d.label ?? d.itemId}${d.observation ? ` — ${d.observation}` : ""}`,
+      message: `${prefix}: ${d.label ?? d.itemId}${d.observation ? ` — ${d.observation}` : ""}`,
     });
   }
 

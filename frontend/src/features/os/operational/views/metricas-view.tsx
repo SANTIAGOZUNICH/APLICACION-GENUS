@@ -9,7 +9,9 @@ import { usePreviewSession } from "@/features/os/session/preview-context";
 import { fetchMetricasApi, metricasActionApi } from "@/lib/metricas/metricas-client";
 import {
   canAccessMetricas,
+  canAdminAllMetricas,
   type MetricsRankingEntry,
+  type MetricsSector,
   type PackagingMetricRecord,
 } from "@/lib/metricas/types";
 import { SECTOR_LABELS } from "@/types/operational/sector";
@@ -20,6 +22,7 @@ export function MetricasView() {
     () => ({ email: email ?? "", sector: sectorId }),
     [email, sectorId]
   );
+  const isProdAdmin = canAdminAllMetricas(sectorId);
 
   const [metrics, setMetrics] = useState<PackagingMetricRecord[]>([]);
   const [ranking, setRanking] = useState<MetricsRankingEntry[]>([]);
@@ -32,11 +35,13 @@ export function MetricasView() {
   const [product, setProduct] = useState("");
   const [units, setUnits] = useState("");
   const [responsible, setResponsible] = useState("");
+  const [targetSector, setTargetSector] = useState<MetricsSector>("ENVASADO_MASIVO");
 
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const [filterProduct, setFilterProduct] = useState("");
   const [filterResponsible, setFilterResponsible] = useState("");
+  const [filterSector, setFilterSector] = useState<"ALL" | MetricsSector>("ALL");
 
   const [editId, setEditId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -48,6 +53,7 @@ export function MetricasView() {
         dateTo: filterDateTo || undefined,
         product: filterProduct || undefined,
         responsible: filterResponsible || undefined,
+        sector: isProdAdmin ? filterSector : undefined,
       });
       setMetrics(data.metrics);
       setRanking(data.ranking);
@@ -57,7 +63,15 @@ export function MetricasView() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al cargar métricas");
     }
-  }, [session, filterDateFrom, filterDateTo, filterProduct, filterResponsible]);
+  }, [
+    session,
+    filterDateFrom,
+    filterDateTo,
+    filterProduct,
+    filterResponsible,
+    filterSector,
+    isProdAdmin,
+  ]);
 
   useEffect(() => {
     void reload();
@@ -67,7 +81,7 @@ export function MetricasView() {
     return (
       <TwinShell title="Métricas">
         <p className="text-sm text-muted-foreground">
-          Métricas disponibles solo para Envasado Masivo y Premium.
+          Métricas disponibles para Envasado Masivo, Premium y Producción.
         </p>
       </TwinShell>
     );
@@ -77,12 +91,15 @@ export function MetricasView() {
     e.preventDefault();
     setBusy(true);
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         metricDate,
         product: product.trim() || null,
         units: Number(units),
         responsibleDisplay: responsible.trim(),
       };
+      if (isProdAdmin && !editId) {
+        payload.targetSector = targetSector;
+      }
       if (editId) {
         await metricasActionApi(session, "update", { id: editId, ...payload });
         setEditId(null);
@@ -175,6 +192,20 @@ export function MetricasView() {
               data-testid="metricas-responsable"
             />
           </label>
+          {isProdAdmin && !editId ? (
+            <label className="text-sm">
+              Sector
+              <select
+                className="mt-1 block w-full rounded border px-2 py-1"
+                value={targetSector}
+                onChange={(e) => setTargetSector(e.target.value as MetricsSector)}
+                data-testid="metricas-target-sector"
+              >
+                <option value="ENVASADO_MASIVO">Envasado Masivo</option>
+                <option value="ENVASADO_PREMIUM">Envasado Premium</option>
+              </select>
+            </label>
+          ) : null}
           <div className="flex items-end gap-2">
             <Button type="submit" disabled={busy || schemaPending} data-testid="metricas-agregar">
               {editId ? "Guardar" : "Agregar registro"}
@@ -188,6 +219,20 @@ export function MetricasView() {
         </form>
 
         <div className="flex flex-wrap gap-2">
+          {isProdAdmin ? (
+            <select
+              value={filterSector}
+              onChange={(e) =>
+                setFilterSector(e.target.value as "ALL" | MetricsSector)
+              }
+              className="rounded border px-2 py-1 text-sm"
+              data-testid="metricas-filter-sector"
+            >
+              <option value="ALL">Todos</option>
+              <option value="ENVASADO_MASIVO">Envasado Masivo</option>
+              <option value="ENVASADO_PREMIUM">Envasado Premium</option>
+            </select>
+          ) : null}
           <input
             type="date"
             value={filterDateFrom}
@@ -221,6 +266,9 @@ export function MetricasView() {
             <thead className="bg-muted/50">
               <tr>
                 <th className="px-3 py-2 text-left">Fecha</th>
+                {isProdAdmin ? (
+                  <th className="px-3 py-2 text-left">Sector</th>
+                ) : null}
                 <th className="px-3 py-2 text-left">Producto</th>
                 <th className="px-3 py-2 text-right">Unidades</th>
                 <th className="px-3 py-2 text-left">Responsable</th>
@@ -231,6 +279,11 @@ export function MetricasView() {
               {metrics.map((m) => (
                 <tr key={m.id} className="border-t">
                   <td className="px-3 py-2">{m.metricDate}</td>
+                  {isProdAdmin ? (
+                    <td className="px-3 py-2 text-xs">
+                      {SECTOR_LABELS[m.sector] ?? m.sector}
+                    </td>
+                  ) : null}
                   <td className="px-3 py-2">{m.product ?? "—"}</td>
                   <td className="px-3 py-2 text-right">{m.units.toLocaleString()}</td>
                   <td className="px-3 py-2">{m.responsibleDisplay}</td>
@@ -251,7 +304,7 @@ export function MetricasView() {
               ))}
               {metrics.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">
+                  <td colSpan={isProdAdmin ? 6 : 5} className="px-3 py-6 text-center text-muted-foreground">
                     Sin registros
                   </td>
                 </tr>
@@ -266,14 +319,44 @@ export function MetricasView() {
             Total: {totals.totalUnits.toLocaleString()} unidades en {totals.recordCount} registros
           </p>
           <ul className="space-y-1" data-testid="metricas-ranking">
-            {ranking.map((r, i) => (
-              <li key={r.responsibleKey} className="flex justify-between rounded border px-3 py-2 text-sm">
-                <span>
-                  {i + 1}. {r.responsibleDisplay}
-                </span>
-                <span className="font-medium">{r.totalUnits.toLocaleString()} u.</span>
-              </li>
-            ))}
+            {ranking.map((r, i) => {
+              const pct =
+                totals.totalUnits > 0
+                  ? Math.round((r.totalUnits / totals.totalUnits) * 1000) / 10
+                  : 0;
+              return (
+                <li
+                  key={`${r.responsibleKey}-${r.sector ?? "all"}`}
+                  className="flex justify-between gap-2 rounded border px-3 py-2 text-sm"
+                >
+                  <span>
+                    {i + 1}. {r.responsibleDisplay}
+                    {r.sector ? (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        ({SECTOR_LABELS[r.sector] ?? r.sector})
+                      </span>
+                    ) : null}
+                    {r.sectorBreakdown && !r.sector ? (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {[
+                          r.sectorBreakdown.ENVASADO_MASIVO
+                            ? `Masivo ${r.sectorBreakdown.ENVASADO_MASIVO}`
+                            : null,
+                          r.sectorBreakdown.ENVASADO_PREMIUM
+                            ? `Premium ${r.sectorBreakdown.ENVASADO_PREMIUM}`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="shrink-0 font-medium">
+                    {r.totalUnits.toLocaleString()} u. · {r.recordCount} reg. · {pct}%
+                  </span>
+                </li>
+              );
+            })}
             {ranking.length === 0 && (
               <li className="text-sm text-muted-foreground">Sin datos para ranking</li>
             )}

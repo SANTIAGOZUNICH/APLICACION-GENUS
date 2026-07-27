@@ -70,6 +70,6 @@ describe("metricas ranking", () => {
   it("solo envasado accede", () => {
     expect(canAccessMetricas("ENVASADO_MASIVO")).toBe(true);
     expect(canAccessMetricas("ENVASADO_PREMIUM")).toBe(true);
-    expect(canAccessMetricas("PRODUCCION")).toBe(false);
+    expect(canAccessMetricas("PRODUCCION")).toBe(true);
   });
 });

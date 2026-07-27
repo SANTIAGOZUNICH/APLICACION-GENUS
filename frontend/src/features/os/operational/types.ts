@@ -95,7 +95,13 @@ export interface QualityDecisionRecord {
   status: QualityDecisionStatus;
   decidedAt: string;
   decidedBy?: string;
+  /** CALIDAD | PRODUCCION — para historial diferenciado. */
+  decidedBySector?: SectorId | string;
+  decidedByEmail?: string;
   observation?: string;
+  /** Estado previo si se revirtió/modificó una decisión. */
+  previousStatus?: QualityDecisionStatus;
+  changeReason?: string;
 }
 
 export const OPERATIONAL_POLL_INTERVAL_MS = 0;

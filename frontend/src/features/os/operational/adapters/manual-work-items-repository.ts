@@ -450,11 +450,45 @@ export function updateManualWorkItemPackaging(input: {
   packagingTotalUnits?: number | null;
   packagingCajas?: number | null;
   packagingUnidadesPorCaja?: number | null;
+  packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+  packingMismatchObservation?: string | null;
 }): WorkItem | null {
   const items = readAll();
   const idx = items.findIndex((i) => i.id === input.id);
   if (idx < 0) return null;
   const prev = items[idx]!;
+
+  let packingGroups =
+    input.packingGroups !== undefined
+      ? input.packingGroups
+      : prev.packingGroups ?? null;
+  let packagingCajas =
+    input.packagingCajas !== undefined
+      ? input.packagingCajas
+      : prev.packagingCajas ?? null;
+  let packagingUnidadesPorCaja =
+    input.packagingUnidadesPorCaja !== undefined
+      ? input.packagingUnidadesPorCaja
+      : prev.packagingUnidadesPorCaja ?? null;
+
+  // Una sola fuente: packingGroups manda; legacy = grupo[0].
+  if (input.packingGroups !== undefined) {
+    const g0 = packingGroups?.[0];
+    packagingCajas = g0 ? g0.cajas : null;
+    packagingUnidadesPorCaja = g0 ? g0.unidadesPorCaja : null;
+  } else if (
+    input.packagingCajas !== undefined ||
+    input.packagingUnidadesPorCaja !== undefined
+  ) {
+    packingGroups = [
+      {
+        cajas: packagingCajas ?? 0,
+        unidadesPorCaja: packagingUnidadesPorCaja ?? 0,
+      },
+      ...(prev.packingGroups?.slice(1) ?? []),
+    ];
+  }
+
   const next: WorkItem = {
     ...prev,
     packagingLote:
@@ -469,14 +503,13 @@ export function updateManualWorkItemPackaging(input: {
       input.packagingTotalUnits !== undefined
         ? input.packagingTotalUnits
         : prev.packagingTotalUnits ?? null,
-    packagingCajas:
-      input.packagingCajas !== undefined
-        ? input.packagingCajas
-        : prev.packagingCajas ?? null,
-    packagingUnidadesPorCaja:
-      input.packagingUnidadesPorCaja !== undefined
-        ? input.packagingUnidadesPorCaja
-        : prev.packagingUnidadesPorCaja ?? null,
+    packagingCajas,
+    packagingUnidadesPorCaja,
+    packingGroups,
+    packingMismatchObservation:
+      input.packingMismatchObservation !== undefined
+        ? input.packingMismatchObservation?.trim() || null
+        : prev.packingMismatchObservation ?? null,
     loteRef:
       input.packagingLote !== undefined
         ? input.packagingLote?.trim() || null
@@ -486,7 +519,8 @@ export function updateManualWorkItemPackaging(input: {
   if (
     input.packagingTotalUnits !== undefined ||
     input.packagingCajas !== undefined ||
-    input.packagingUnidadesPorCaja !== undefined
+    input.packagingUnidadesPorCaja !== undefined ||
+    input.packingGroups !== undefined
   ) {
     hist.push({
       at: new Date().toISOString(),
@@ -494,6 +528,7 @@ export function updateManualWorkItemPackaging(input: {
       totalUnits: next.packagingTotalUnits ?? null,
       cajas: next.packagingCajas ?? null,
       unidadesPorCaja: next.packagingUnidadesPorCaja ?? null,
+      packingGroups: next.packingGroups ?? null,
     });
     next.packagingQtyHistory = hist;
   }

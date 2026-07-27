@@ -301,6 +301,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "historial",
       "avisos",
       "procedimientos",
+      "metricas",
     ],
     sidebarLabelOverrides: { mi_trabajo: "Panel general" },
     creamyContext: {

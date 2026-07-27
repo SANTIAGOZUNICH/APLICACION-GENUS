@@ -14,9 +14,9 @@ import {
 import type { SectorId } from "@/types/operational/sector";
 
 describe("quality-decision-rbac", () => {
-  it("solo CALIDAD puede decidir", () => {
+  it("CALIDAD y PRODUCCION pueden decidir", () => {
     expect(canDecideQuality("CALIDAD")).toBe(true);
-    expect(canDecideQuality("PRODUCCION")).toBe(false);
+    expect(canDecideQuality("PRODUCCION")).toBe(true);
     expect(canDecideQuality("ELABORACION")).toBe(false);
     expect(canDecideQuality("ENVASADO_MASIVO")).toBe(false);
     expect(canDecideQuality("ENVASADO_PREMIUM")).toBe(false);
@@ -27,8 +27,9 @@ describe("quality-decision-rbac", () => {
 
   it("gateQualityDecision rechaza sectores no autorizados con mensaje claro", () => {
     expect(gateQualityDecision("CALIDAD")).toEqual({ ok: true });
+    expect(gateQualityDecision("PRODUCCION")).toEqual({ ok: true });
 
-    const denied = gateQualityDecision("PRODUCCION");
+    const denied = gateQualityDecision("ELABORACION");
     expect(denied.ok).toBe(false);
     if (!denied.ok) {
       expect(denied.error).toBe(QUALITY_DECISION_DENIED_MESSAGE);
@@ -45,9 +46,10 @@ describe("quality-decision-rbac", () => {
     }
   });
 
-  it("assertCanDecideQuality lanza si el sector no es CALIDAD", () => {
+  it("assertCanDecideQuality lanza si el sector no está autorizado", () => {
     expect(() => assertCanDecideQuality("CALIDAD")).not.toThrow();
-    expect(() => assertCanDecideQuality("PRODUCCION")).toThrow(QUALITY_DECISION_DENIED_MESSAGE);
+    expect(() => assertCanDecideQuality("PRODUCCION")).not.toThrow();
+    expect(() => assertCanDecideQuality("ELABORACION")).toThrow(QUALITY_DECISION_DENIED_MESSAGE);
     expect(() => assertCanDecideQuality(null)).toThrow(QUALITY_DECISION_MISSING_ACTOR_MESSAGE);
   });
 });
@@ -99,21 +101,13 @@ describe("quality-decision action pipeline", () => {
     expect(getEffectiveQualityStatus("q-2", "pendiente")).toBe("rechazado");
   });
 
-  it("PRODUCCION no puede aprobar ni rechazar — no muta el store", () => {
-    const approve = applyGatedQualityDecision("q-prod-1", "aprobado", "PRODUCCION");
-    expect(approve.ok).toBe(false);
-    if (!approve.ok) {
-      expect(approve.error).toBe(QUALITY_DECISION_DENIED_MESSAGE);
-      expect(approve.code).toBe("QUALITY_DECISION_FORBIDDEN");
-    }
-    expect(getEffectiveQualityStatus("q-prod-1", "pendiente")).toBe("pendiente");
-
-    const reject = applyGatedQualityDecision("q-prod-2", "rechazado", "PRODUCCION");
-    expect(reject.ok).toBe(false);
-    expect(getEffectiveQualityStatus("q-prod-2", "pendiente")).toBe("pendiente");
+  it("PRODUCCION puede aprobar y la decisión persiste", () => {
+    const result = applyGatedQualityDecision("q-prod-1", "aprobado", "PRODUCCION");
+    expect(result.ok).toBe(true);
+    expect(getEffectiveQualityStatus("q-prod-1", "pendiente")).toBe("aprobado");
   });
 
-  it("otros sectores de planta tampoco pueden decidir", () => {
+  it("otros sectores de planta no pueden decidir — no mutan el store", () => {
     const sectors: SectorId[] = [
       "ELABORACION",
       "ENVASADO_MASIVO",

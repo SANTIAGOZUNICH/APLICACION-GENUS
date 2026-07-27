@@ -176,6 +176,20 @@ describe("file-storage OIDC / config", () => {
     expect(
       remitoStorageKey({ year: 2026, remitoId: "r1", version: 2, kind: "xlsx" }),
     ).toBe("remitos/2026/r1/v2/remito.xlsx");
+    const { remitoClientPathSlug } = await import("./file-storage");
+    const slug = remitoClientPathSlug({
+      clientDisplay: "THELMA Y LOUISE",
+      clientIdNormalized: "thelma y louise",
+    });
+    expect(slug.startsWith("thelma-y-louise--")).toBe(true);
+    expect(
+      remitoStorageKey({
+        remitoId: "r2",
+        version: 1,
+        kind: "xlsx",
+        clientSlug: slug,
+      }),
+    ).toBe(`remitos/${slug}/r2/v1/remito.xlsx`);
 
     const bytes = Buffer.from("contenido-privado");
     const put = await storage.put({

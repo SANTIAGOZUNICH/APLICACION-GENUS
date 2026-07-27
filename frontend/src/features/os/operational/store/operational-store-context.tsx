@@ -46,7 +46,9 @@ export type QualityDecisionOptions = {
   /** Sector de la sesión activa — obligatorio para RBAC de decisión. */
   actorSectorId: SectorId;
   decidedBy?: string;
+  decidedByEmail?: string;
   observation?: string;
+  changeReason?: string;
 };
 
 interface OperationalStoreValue {
@@ -132,7 +134,10 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
 
       recordQualityDecision(itemId, status, {
         decidedBy: options.decidedBy,
+        decidedBySector: options.actorSectorId,
+        decidedByEmail: options.decidedByEmail,
         observation: options.observation,
+        changeReason: options.changeReason,
       });
       syncFromStorage();
       if (status === "aprobado" || status === "rechazado") {

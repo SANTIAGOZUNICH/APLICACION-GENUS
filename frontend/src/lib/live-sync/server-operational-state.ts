@@ -144,14 +144,25 @@ class ServerOperationalState {
   decideQuality(
     itemId: string,
     status: QualityDecisionStatus,
-    options?: { decidedBy?: string; observation?: string }
+    options?: {
+      decidedBy?: string;
+      observation?: string;
+      decidedBySector?: string;
+      decidedByEmail?: string;
+      changeReason?: string;
+    }
   ): QualityDecisionRecord {
+    const previous = this.decisions.get(itemId);
     const record: QualityDecisionRecord = {
       itemId,
       status,
       decidedAt: new Date().toISOString(),
       decidedBy: options?.decidedBy,
+      decidedBySector: options?.decidedBySector,
+      decidedByEmail: options?.decidedByEmail,
       observation: options?.observation?.trim() || undefined,
+      previousStatus: previous?.status,
+      changeReason: options?.changeReason?.trim() || undefined,
     };
     this.decisions.set(itemId, record);
     this.revision += 1;

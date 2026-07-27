@@ -40,6 +40,7 @@ import {
   assertPrivateFileStorageConfigured,
   FILE_STORAGE_NOT_CONFIGURED,
   getFileStorage,
+  remitoClientPathSlug,
   remitoStorageKey,
   STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
 } from "@/lib/storage/file-storage";
@@ -570,11 +571,16 @@ export class RemitoService {
 
     const year = remito.deliveryDate.slice(0, 4) || String(new Date().getFullYear());
     const storage = getFileStorage();
+    const clientSlug = remitoClientPathSlug({
+      clientDisplay: remito.clientDisplay,
+      clientIdNormalized: remito.clientIdNormalized,
+    });
     const keyXlsx = remitoStorageKey({
       year,
       remitoId: withMeta.id,
       version: withMeta.version,
       kind: "xlsx",
+      clientSlug,
     });
     const uploaded: string[] = [];
 
@@ -713,11 +719,16 @@ export class RemitoService {
     }
     const storage = getFileStorage();
     const year = remito.deliveryDate.slice(0, 4) || String(new Date().getFullYear());
+    const clientSlug = remitoClientPathSlug({
+      clientDisplay: remito.clientDisplay,
+      clientIdNormalized: remito.clientIdNormalized,
+    });
     const keyXlsx = remitoStorageKey({
       year,
       remitoId: remito.id,
       version: remito.version,
       kind: "xlsx",
+      clientSlug,
     });
     const uploaded: string[] = [];
 

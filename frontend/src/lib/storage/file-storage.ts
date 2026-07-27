@@ -182,14 +182,42 @@ export function coaStorageKey(params: {
   return `coas/${params.folderId}/${params.fileId}/v${params.version}/${safeFileName(params.fileName)}`;
 }
 
+export function remitoClientPathSlug(params: {
+  clientDisplay: string | null | undefined;
+  clientIdNormalized: string | null | undefined;
+}): string {
+  const normalized = String(params.clientIdNormalized ?? "")
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  const visible = String(params.clientDisplay ?? "").trim() || "SIN CLIENTE";
+  const base = visible
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  const hashSrc = normalized || visible.toLowerCase();
+  const shortHash = createHash("sha256").update(hashSrc).digest("hex").slice(0, 6);
+  return `${base || "sin-cliente"}--${shortHash}`;
+}
+
 export function remitoStorageKey(params: {
-  year: string | number;
+  year?: string | number;
   remitoId: string;
   version: number;
   kind: "pdf" | "xlsx";
+  /** Path nuevo por cliente (remitos nuevos). */
+  clientSlug?: string | null;
 }): string {
   const ext = params.kind === "pdf" ? "pdf" : "xlsx";
-  return `remitos/${params.year}/${params.remitoId}/v${params.version}/remito.${ext}`;
+  if (params.clientSlug) {
+    return `remitos/${params.clientSlug}/${params.remitoId}/v${params.version}/remito.${ext}`;
+  }
+  const year = params.year ?? new Date().getFullYear();
+  return `remitos/${year}/${params.remitoId}/v${params.version}/remito.${ext}`;
 }
 
 export function procedureStorageKey(params: {

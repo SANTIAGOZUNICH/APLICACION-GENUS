@@ -142,6 +142,7 @@ export function ProduccionOperationalView({
           status: d.status,
           decidedAt: d.decidedAt,
           decidedBy: d.decidedBy,
+          decidedBySector: d.decidedBySector,
           observation: d.observation,
           label: qualityLabelById.get(d.itemId) ?? d.itemId,
         })),

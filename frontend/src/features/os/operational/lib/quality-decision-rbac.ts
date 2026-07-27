@@ -1,24 +1,28 @@
 /**
- * RBAC de decisión de Calidad — también usable desde el route handler.
- * actorSectorId es obligatorio y debe ser exactamente "CALIDAD".
+ * RBAC de decisión de Calidad/Producción — usable desde route handler.
+ * Sectores habilitados: CALIDAD | PRODUCCION.
  *
  * Esto NO es autenticación server-side: el cliente aún podría falsificar
  * actorSectorId. Es una defensa de acción en el pipeline mientras Identity
- * Access autenticado no exista (docss/29-identity-access.md).
+ * Access autenticado no exista.
  */
 
 import type { SectorId } from "@/types/operational/sector";
 
+export const QUALITY_DECISION_ALLOWED_SECTORS = ["CALIDAD", "PRODUCCION"] as const;
+export type QualityDecisionAllowedSector =
+  (typeof QUALITY_DECISION_ALLOWED_SECTORS)[number];
+
 export const QUALITY_DECISION_DENIED_MESSAGE =
-  "Solo el sector Calidad puede aprobar o rechazar. Tu sesión no tiene permiso para decidir.";
+  "Solo Calidad o Producción pueden aprobar o rechazar. Tu sesión no tiene permiso para decidir.";
 
 export const QUALITY_DECISION_MISSING_ACTOR_MESSAGE =
-  "Falta actorSectorId. Las decisiones de Calidad requieren sector autenticado CALIDAD.";
+  "Falta actorSectorId. Las decisiones requieren sector autenticado CALIDAD o PRODUCCION.";
 
 export type QualityDecisionActorSector = SectorId | "" | null | undefined;
 
 export function canDecideQuality(sectorId: QualityDecisionActorSector): boolean {
-  return sectorId === "CALIDAD";
+  return sectorId === "CALIDAD" || sectorId === "PRODUCCION";
 }
 
 export function assertCanDecideQuality(sectorId: QualityDecisionActorSector): void {
@@ -33,7 +37,11 @@ export function assertCanDecideQuality(sectorId: QualityDecisionActorSector): vo
 
 export type QualityDecisionAttempt =
   | { ok: true }
-  | { ok: false; error: string; code: "QUALITY_DECISION_FORBIDDEN" | "QUALITY_DECISION_MISSING_ACTOR" };
+  | {
+      ok: false;
+      error: string;
+      code: "QUALITY_DECISION_FORBIDDEN" | "QUALITY_DECISION_MISSING_ACTOR";
+    };
 
 /** Valida el sector actor antes de persistir o enviar una decisión. */
 export function gateQualityDecision(
@@ -46,7 +54,7 @@ export function gateQualityDecision(
       code: "QUALITY_DECISION_MISSING_ACTOR",
     };
   }
-  if (actorSectorId !== "CALIDAD") {
+  if (!canDecideQuality(actorSectorId)) {
     return {
       ok: false,
       error: QUALITY_DECISION_DENIED_MESSAGE,
@@ -68,4 +76,24 @@ export function validateQualityDecisionActor(
     };
   }
   return gateQualityDecision(actorSectorId as SectorId);
+}
+
+export function qualityDecisionSectorLabel(
+  sector: string | null | undefined
+): "Calidad" | "Producción" | "Desconocido" {
+  if (sector === "CALIDAD") return "Calidad";
+  if (sector === "PRODUCCION") return "Producción";
+  return "Desconocido";
+}
+
+export function formatQualityDecisionMessage(input: {
+  status: "aprobado" | "rechazado" | string;
+  decidedBySector?: string | null;
+  label?: string;
+  observation?: string;
+}): string {
+  const who = qualityDecisionSectorLabel(input.decidedBySector);
+  const verb = input.status === "aprobado" ? "Aprobado" : "Rechazado";
+  const base = `${verb} por ${who}: ${input.label ?? ""}`.trim();
+  return input.observation ? `${base} — ${input.observation}` : base;
 }

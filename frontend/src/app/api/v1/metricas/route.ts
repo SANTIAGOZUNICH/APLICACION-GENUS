@@ -25,14 +25,23 @@ export async function GET(request: Request) {
   try {
     const actor = resolveOrdersActor(request);
     if (!canAccessMetricas(actor.sector)) {
-      throw new OrdersForbiddenError("Métricas solo para Envasado Masivo y Premium.");
+      throw new OrdersForbiddenError(
+        "Métricas solo para Envasado Masivo, Premium y Producción."
+      );
     }
     const url = new URL(request.url);
+    const sectorParam = url.searchParams.get("sector");
     const filters: MetricsListFilters = {
       dateFrom: url.searchParams.get("dateFrom") ?? undefined,
       dateTo: url.searchParams.get("dateTo") ?? undefined,
       product: url.searchParams.get("product") ?? undefined,
       responsible: url.searchParams.get("responsible") ?? undefined,
+      sector:
+        sectorParam === "ENVASADO_MASIVO" ||
+        sectorParam === "ENVASADO_PREMIUM" ||
+        sectorParam === "ALL"
+          ? sectorParam
+          : undefined,
     };
     const persistenceReady = await isProcedureMetricsSchemaReady();
     const svc = getMetricasService();
@@ -56,7 +65,9 @@ export async function POST(request: Request) {
   try {
     const actor = resolveOrdersActor(request);
     if (!canAccessMetricas(actor.sector)) {
-      throw new OrdersForbiddenError("Métricas solo para Envasado Masivo y Premium.");
+      throw new OrdersForbiddenError(
+        "Métricas solo para Envasado Masivo, Premium y Producción."
+      );
     }
     const body = (await request.json()) as {
       action?: string;
@@ -65,6 +76,7 @@ export async function POST(request: Request) {
       product?: string | null;
       units?: number;
       responsibleDisplay?: string;
+      targetSector?: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM" | null;
     };
     const svc = getMetricasService();
     const a = { email: actor.email, sector: actor.sector };
@@ -75,6 +87,7 @@ export async function POST(request: Request) {
         product: body.product,
         units: Number(body.units ?? 0),
         responsibleDisplay: String(body.responsibleDisplay ?? ""),
+        targetSector: body.targetSector,
       });
       return NextResponse.json({ metric }, { status: 201 });
     }

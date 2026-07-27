@@ -2,6 +2,10 @@
  * Resuelve datos de remito desde QualityItem (+ WorkItem opcional).
  */
 import { normalizeClientId } from "@/lib/remitos/grouping";
+import {
+  packingGroupsFromLegacy,
+  packingGroupsToRemitoSlots,
+} from "@/lib/remitos/packing-math";
 import type { RemitoApprovalInput } from "@/lib/remitos/types";
 import type { QualityItem } from "@/features/os/operational/types";
 import type { WorkItem } from "@/types/operational/work-item";
@@ -38,6 +42,37 @@ function resolveWorkItem(item: QualityItem, workItems: WorkItem[]): WorkItem | n
   );
 }
 
+function workPackingSlots(wi: WorkItem | null) {
+  if (!wi) {
+    return {
+      cajas1: null as number | null,
+      unidades1: null as number | null,
+      cajas2: null as number | null,
+      unidades2: null as number | null,
+      cajas3: null as number | null,
+      unidades3: null as number | null,
+      extraCajas: [] as Array<{ cajas: number; unidades: number }>,
+    };
+  }
+  const groups = packingGroupsFromLegacy({
+    packingGroups: wi.packingGroups,
+    cajas: wi.packagingCajas,
+    unidadesPorCaja: wi.packagingUnidadesPorCaja,
+  });
+  if (!groups.length) {
+    return {
+      cajas1: wi.packagingCajas ?? null,
+      unidades1: wi.packagingUnidadesPorCaja ?? null,
+      cajas2: null,
+      unidades2: null,
+      cajas3: null,
+      unidades3: null,
+      extraCajas: [],
+    };
+  }
+  return packingGroupsToRemitoSlots(groups);
+}
+
 /** Campos reales faltantes (sin defaults silenciosos). */
 export function remitoGapsFromQuality(
   item: QualityItem,
@@ -56,8 +91,9 @@ export function remitoGapsFromQuality(
     wi?.loteRef?.trim() ||
     "";
   const vto = wi?.packagingVto?.trim() || "";
-  const cajas = wi?.packagingCajas;
-  const unidades = wi?.packagingUnidadesPorCaja;
+  const slots = workPackingSlots(wi);
+  const cajas = slots.cajas1;
+  const unidades = slots.unidades1;
   const labels: string[] = [];
   const missingClient = !client || client.toLowerCase() === "sin cliente";
   const missingDeliveryDate = !deliveryDate;
@@ -99,6 +135,11 @@ export function resolveRemitoInputFromQuality(
       | "vto"
       | "cajas1"
       | "unidades1"
+      | "cajas2"
+      | "unidades2"
+      | "cajas3"
+      | "unidades3"
+      | "extraCajas"
       | "unitsPerCaja1"
       | "totalUnits"
     >
@@ -112,6 +153,7 @@ export function resolveRemitoInputFromQuality(
   if (!workItemId) return null;
 
   const wi = resolveWorkItem(item, workItems);
+  const slots = workPackingSlots(wi);
 
   const client =
     overrides?.clientId?.trim() ||
@@ -150,13 +192,17 @@ export function resolveRemitoInputFromQuality(
     lote,
     vto,
     totalUnits,
-    cajas1: overrides?.cajas1 ?? wi?.packagingCajas ?? null,
-    unidades1: overrides?.unidades1 ?? wi?.packagingUnidadesPorCaja ?? null,
+    cajas1: overrides?.cajas1 ?? slots.cajas1,
+    unidades1: overrides?.unidades1 ?? slots.unidades1,
     unitsPerCaja1:
       overrides?.unitsPerCaja1 ??
       overrides?.unidades1 ??
-      wi?.packagingUnidadesPorCaja ??
-      null,
+      slots.unidades1,
+    cajas2: overrides?.cajas2 ?? slots.cajas2,
+    unidades2: overrides?.unidades2 ?? slots.unidades2,
+    cajas3: overrides?.cajas3 ?? slots.cajas3,
+    unidades3: overrides?.unidades3 ?? slots.unidades3,
+    extraCajas: overrides?.extraCajas ?? slots.extraCajas,
   };
 }
 

@@ -106,10 +106,17 @@ export interface WorkItem {
   packagingVto?: string | null;
   /** Total oficial de unidades envasadas (opcional). */
   packagingTotalUnits?: number | null;
-  /** Cajas cargadas (opcional). */
+  /** Cajas cargadas (opcional) — legacy / grupo[0]. */
   packagingCajas?: number | null;
-  /** Unidades por caja (opcional). */
+  /** Unidades por caja (opcional) — legacy / grupo[0]. */
   packagingUnidadesPorCaja?: number | null;
+  /**
+   * Combinaciones de cajas (fuente canónica).
+   * Legacy packagingCajas/unidadesPorCaja = packingGroups[0].
+   */
+  packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+  /** Observación si producido ≠ embalado (no bloquea entrega). */
+  packingMismatchObservation?: string | null;
   /** Historial de avances de cantidades (JSON-serializable). */
   packagingQtyHistory?: Array<{
     at: string;
@@ -117,6 +124,7 @@ export interface WorkItem {
     totalUnits: number | null;
     cajas: number | null;
     unidadesPorCaja: number | null;
+    packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
   }> | null;
 }
 

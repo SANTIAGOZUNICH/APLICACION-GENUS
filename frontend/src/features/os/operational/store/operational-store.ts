@@ -79,17 +79,28 @@ export function writeCompletionEvents(events: CompletionEvent[]): void {
 export function recordQualityDecision(
   itemId: string,
   status: QualityDecisionStatus,
-  options?: { decidedBy?: string; observation?: string }
+  options?: {
+    decidedBy?: string;
+    decidedBySector?: string;
+    decidedByEmail?: string;
+    observation?: string;
+    changeReason?: string;
+  }
 ): QualityDecisionRecord {
+  const map = readDecisionMap();
+  const previous = map[itemId];
   const record: QualityDecisionRecord = {
     itemId,
     status,
     decidedAt: new Date().toISOString(),
     decidedBy: options?.decidedBy,
+    decidedBySector: options?.decidedBySector,
+    decidedByEmail: options?.decidedByEmail,
     observation: options?.observation?.trim() || undefined,
+    previousStatus: previous?.status,
+    changeReason: options?.changeReason?.trim() || undefined,
   };
 
-  const map = readDecisionMap();
   map[itemId] = record;
   writeDecisionMap(map);
   return record;

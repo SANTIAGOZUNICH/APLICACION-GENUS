@@ -2,11 +2,17 @@
 
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { packingTotalMismatchWarning } from "@/lib/remitos/packing-math";
+import {
+  packingGroupsFromLegacy,
+  packingProducedMismatchWarning,
+  summarizePackingGroups,
+  type PackingGroup,
+} from "@/lib/remitos/packing-math";
 import { updateManualWorkItemPackaging } from "@/features/os/operational/adapters/manual-work-items-repository";
 import type { WorkItem } from "@/types/operational/work-item";
+import { PackingGroupsEditor } from "./packing-groups-editor";
 
-/** Bloque LOTE / VTO + Total unidades / Cajas × Unidades (envasado). */
+/** Bloque LOTE / VTO + Total + Cajas 1/2/3 (envasado). */
 export function PackagingQuantitiesBlock({
   item,
   actorName,
@@ -23,33 +29,41 @@ export function PackagingQuantitiesBlock({
   const [total, setTotal] = useState(
     item.packagingTotalUnits != null ? String(item.packagingTotalUnits) : ""
   );
-  const [cajas, setCajas] = useState(
-    item.packagingCajas != null ? String(item.packagingCajas) : ""
+  const [groups, setGroups] = useState<PackingGroup[]>(() =>
+    packingGroupsFromLegacy({
+      packingGroups: item.packingGroups,
+      cajas: item.packagingCajas,
+      unidadesPorCaja: item.packagingUnidadesPorCaja,
+    })
   );
-  const [upc, setUpc] = useState(
-    item.packagingUnidadesPorCaja != null
-      ? String(item.packagingUnidadesPorCaja)
-      : ""
+  const [packingObs, setPackingObs] = useState(
+    item.packingMismatchObservation ?? ""
   );
   const [msg, setMsg] = useState<string | null>(null);
 
-  const warn = useMemo(() => {
-    const t = total === "" ? null : Number(total);
-    const c = cajas === "" ? null : Number(cajas);
-    const u = upc === "" ? null : Number(upc);
-    return packingTotalMismatchWarning(t, c, u);
-  }, [total, cajas, upc]);
+  const produced = total === "" ? null : Number(total);
+  const warn = useMemo(
+    () => packingProducedMismatchWarning(produced, groups),
+    [produced, groups]
+  );
 
   function save() {
     if (readOnly) return;
+    if (!warn.ok && !packingObs.trim()) {
+      setMsg("Indicá una observación si producido y embalado no coinciden.");
+      return;
+    }
+    const summary = summarizePackingGroups(groups);
     const updated = updateManualWorkItemPackaging({
       id: item.id,
       actorName,
       packagingLote: lote,
       packagingVto: vto,
       packagingTotalUnits: total === "" ? null : Number(total),
-      packagingCajas: cajas === "" ? null : Number(cajas),
-      packagingUnidadesPorCaja: upc === "" ? null : Number(upc),
+      packingGroups: groups,
+      packagingCajas: summary.groups[0]?.cajas ?? null,
+      packagingUnidadesPorCaja: summary.groups[0]?.unidadesPorCaja ?? null,
+      packingMismatchObservation: packingObs,
     });
     if (!updated) {
       setMsg("No se pudo guardar.");
@@ -87,7 +101,7 @@ export function PackagingQuantitiesBlock({
         </label>
       </div>
       <label className="block text-xs">
-        Total de unidades:{" "}
+        Total de unidades producidas:{" "}
         <input
           className="ml-1 w-28 rounded border px-2 py-1"
           value={total}
@@ -96,33 +110,18 @@ export function PackagingQuantitiesBlock({
           data-testid="packaging-total-units"
         />
       </label>
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span>Cajas:</span>
-        <input
-          className="w-20 rounded border px-2 py-1"
-          value={cajas}
-          disabled={readOnly}
-          onChange={(e) => setCajas(e.target.value)}
-          data-testid="packaging-cajas"
-        />
-        <span>×</span>
-        <span>Unidades por caja:</span>
-        <input
-          className="w-20 rounded border px-2 py-1"
-          value={upc}
-          disabled={readOnly}
-          onChange={(e) => setUpc(e.target.value)}
-          data-testid="packaging-upc"
-        />
-        {warn.calculated != null ? (
-          <span className="text-[var(--os-text-muted)]">= {warn.calculated}</span>
-        ) : null}
-      </div>
-      {!warn.ok && warn.message ? (
-        <p className="text-xs text-amber-800" role="alert" data-testid="packaging-mismatch">
-          {warn.message}
-        </p>
-      ) : null}
+
+      <PackingGroupsEditor
+        groups={groups}
+        onChange={setGroups}
+        producedUnits={produced}
+        packingObservation={packingObs}
+        onPackingObservationChange={setPackingObs}
+        readOnly={readOnly}
+        requireObservationOnMismatch
+        testIdPrefix="packaging"
+      />
+
       {!readOnly ? (
         <Button type="button" onClick={save} data-testid="packaging-save">
           Guardar avance
