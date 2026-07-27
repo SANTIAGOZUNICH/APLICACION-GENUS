@@ -33,8 +33,7 @@ export function TwinShell({
   onBack,
   userInitials,
 }: TwinShellProps) {
-  const { activeSidebarId, navigateSidebar, logout, openCreamy, creamyTeaser, currentNav } =
-    usePreviewContext();
+  const { activeSidebarId, navigateSidebar, logout, currentNav } = usePreviewContext();
   const { email } = usePreviewSession();
   const home = useResolvedHome();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -66,7 +65,7 @@ export function TwinShell({
   };
 
   return (
-    <div className="flex h-dvh max-h-dvh min-h-0 overflow-hidden bg-[var(--os-bg)]">
+    <div className="flex h-dvh max-h-dvh min-h-0 overflow-hidden bg-transparent">
       {/* Desktop sidebar — altura del viewport, nav scrollea si hace falta (sin barra del body). */}
       <div className="hidden min-h-0 shrink-0 md:flex">
         <OsSidebar
@@ -76,10 +75,7 @@ export function TwinShell({
           sidebarItems={home.sidebarItems}
           labelOverrides={home.sidebarLabelOverrides}
           showRestricted={showRestricted}
-          creamyTeaser={creamyTeaser}
           onNav={handleNav}
-          onLogout={requestLogout}
-          onOpenCreamy={openCreamy}
         />
       </div>
 
@@ -88,11 +84,11 @@ export function TwinShell({
         <div className="fixed inset-0 z-40 flex md:hidden" role="dialog" aria-modal="true" aria-label="Menú">
           <button
             type="button"
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0 bg-[var(--os-navy)]/45 backdrop-blur-[2px]"
             aria-label="Cerrar menú"
             onClick={() => setMobileNavOpen(false)}
           />
-          <div className="relative z-10 flex h-full max-h-dvh w-[min(18rem,85vw)] shadow-xl">
+          <div className="relative z-10 flex h-full max-h-dvh w-[min(18rem,85vw)] shadow-[var(--os-shadow-card-hover)]">
             <OsSidebar
               sectorLabel={home.definition.title}
               sectorEmail={email}
@@ -100,13 +96,7 @@ export function TwinShell({
               sidebarItems={home.sidebarItems}
               labelOverrides={home.sidebarLabelOverrides}
               showRestricted={showRestricted}
-              creamyTeaser={creamyTeaser}
               onNav={handleNav}
-              onLogout={requestLogout}
-              onOpenCreamy={() => {
-                setMobileNavOpen(false);
-                openCreamy();
-              }}
             />
           </div>
         </div>
@@ -116,6 +106,7 @@ export function TwinShell({
         <OsHeader
           title={resolvedTitle}
           userInitials={resolvedInitials}
+          userEmail={email}
           showBack={showBack}
           onBack={onBack}
           onOpenMenu={() => setMobileNavOpen(true)}

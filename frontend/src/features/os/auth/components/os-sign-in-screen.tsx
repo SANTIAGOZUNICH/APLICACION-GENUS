@@ -159,7 +159,15 @@ export function OsSignInScreen({
               aria-hidden="true"
               style={{
                 background:
-                  "linear-gradient(165deg, rgb(15 23 42) 0%, rgb(15 35 48) 48%, rgb(15 23 42) 100%)",
+                  "linear-gradient(165deg, var(--os-navy) 0%, var(--os-sidebar-bg-2) 48%, #0a3d45 100%)",
+              }}
+            />
+            <div
+              className="pointer-events-none absolute inset-0 opacity-40"
+              aria-hidden="true"
+              style={{
+                background:
+                  "radial-gradient(ellipse 60% 50% at 20% 20%, rgb(18 191 183 / 0.18), transparent 60%)",
               }}
             />
             <GenusOsLogo
@@ -301,7 +309,7 @@ export function OsSignInScreen({
                 <button
                   type="submit"
                   disabled={!isInteractive}
-                  className="group flex h-12 w-full items-center justify-center rounded-[12px] bg-[var(--os-teal)] text-[15px] font-semibold text-white transition-colors hover:bg-[var(--os-teal)]/92 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--os-teal)]/25 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="group flex h-12 w-full items-center justify-center rounded-[var(--os-radius-sm)] bg-[var(--os-action)] text-[15px] font-semibold text-white shadow-[var(--os-shadow-sm)] transition-colors hover:bg-[var(--os-action)]/92 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--os-action)]/25 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <span>Ingresar a Genus OS</span>
                   <ArrowRight

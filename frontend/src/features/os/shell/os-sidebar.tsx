@@ -13,7 +13,6 @@ import {
   History,
   LayoutDashboard,
   ListPlus,
-  LogOut,
   Mail,
   Package,
   PackageCheck,
@@ -28,7 +27,6 @@ import {
   BarChart3,
 } from "lucide-react";
 import type { SidebarItemId } from "@/lib/role-engine/types";
-import type { CreamyTeaser } from "@/features/os/session/preview-context";
 
 const ICONS = {
   mi_trabajo: Briefcase,
@@ -115,43 +113,42 @@ interface OsSidebarProps {
   sidebarItems: SidebarItemId[];
   labelOverrides?: Partial<Record<SidebarItemId, string>>;
   showRestricted?: boolean;
-  creamyTeaser?: CreamyTeaser | null;
   onNav?: (itemId: SidebarItemId) => void;
-  onLogout?: () => void;
-  onOpenCreamy?: () => void;
 }
 
-/** Sidebar operativa — navegación real del Digital Twin. */
+/** Sidebar operativa — navegación real del Digital Twin (sin Creamy card ni logout). */
 export function OsSidebar({
   sectorLabel,
   sectorEmail,
   activeNav = "mi_trabajo",
   sidebarItems,
   labelOverrides,
-  creamyTeaser,
   onNav,
-  onLogout,
-  onOpenCreamy,
 }: OsSidebarProps) {
   return (
     <aside
       className="flex h-full min-h-0 w-full shrink-0 flex-col bg-[var(--os-sidebar-bg)] text-[var(--os-sidebar-text)] md:w-[var(--os-sidebar-width)]"
+      style={{
+        background:
+          "linear-gradient(180deg, var(--os-sidebar-bg) 0%, var(--os-sidebar-bg-2) 100%)",
+      }}
     >
       <div className="shrink-0 px-5 py-5">
-        <div className="flex items-center gap-2">
-          <FlaskConical className="size-5 text-[var(--os-teal)]" aria-hidden="true" />
-          <p className="text-sm font-semibold">GENUS OS</p>
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-[var(--os-radius-sm)] bg-[var(--os-teal-muted)]">
+            <FlaskConical className="size-4 text-[var(--os-teal-glow)]" aria-hidden="true" />
+          </span>
+          <p className="text-sm font-semibold tracking-wide">GENUS OS</p>
         </div>
       </div>
 
-      <div className="mx-4 shrink-0 rounded-[var(--os-radius-sm)] border border-white/10 px-3 py-3">
+      <div className="mx-4 shrink-0 rounded-[var(--os-radius-sm)] border border-white/[0.08] bg-white/[0.04] px-3 py-3 backdrop-blur-sm">
         <div className="flex items-center gap-2">
-          <span className="size-2 rounded-full bg-emerald-400" aria-hidden="true" />
+          <span className="size-2 rounded-full bg-[var(--os-teal)]" aria-hidden="true" />
           <p className="text-sm font-medium">{sectorLabel}</p>
         </div>
       </div>
 
-      {/* Nav scrollea dentro del sidebar si hay muchas opciones — no genera scroll del body. */}
       <nav
         className="mt-4 min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain px-3 pb-2"
         aria-label="Menú"
@@ -166,9 +163,9 @@ export function OsSidebar({
               type="button"
               onClick={() => onNav?.(itemId)}
               aria-current={active ? "page" : undefined}
-              className={`flex w-full items-center gap-3 rounded-[var(--os-radius-sm)] px-3 py-2.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--os-sidebar-bg)] ${
+              className={`flex w-full items-center gap-3 rounded-[var(--os-radius-sm)] px-3 py-2.5 text-left text-sm transition-[color,background-color] duration-[var(--genus-duration-hover,140ms)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--os-sidebar-bg)] ${
                 active
-                  ? "bg-[var(--os-teal-muted)] font-medium text-white"
+                  ? "bg-[var(--os-teal-muted)] font-medium text-white shadow-[inset_3px_0_0_0_var(--os-teal)]"
                   : "text-[var(--os-sidebar-muted)] hover:bg-[var(--os-sidebar-hover)] hover:text-white"
               }`}
             >
@@ -179,34 +176,13 @@ export function OsSidebar({
         })}
       </nav>
 
-      <div className="shrink-0 border-t border-white/10 px-4 py-4">
+      <div className="shrink-0 border-t border-white/[0.08] px-4 py-4">
         <div className="flex items-center gap-3">
-          <div className="flex size-8 items-center justify-center rounded-full bg-[var(--os-teal)] text-[10px] font-bold text-white">
+          <div className="flex size-8 items-center justify-center rounded-full bg-[var(--os-teal)] text-[10px] font-bold text-[var(--os-navy)]">
             {sectorEmail.slice(0, 2).toUpperCase()}
           </div>
           <p className="truncate text-xs text-[var(--os-sidebar-muted)]">{sectorEmail}</p>
         </div>
-
-        <button
-          type="button"
-          onClick={onOpenCreamy}
-          className="mt-4 w-full rounded-[var(--os-radius-sm)] border border-white/10 bg-white/5 p-3 text-left transition-colors hover:border-[var(--os-teal)]/40 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)]"
-        >
-          <p className="text-sm font-medium">Creamy · Copiloto</p>
-          <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-[var(--os-sidebar-muted)]">
-            {creamyTeaser?.headline ?? "Siempre presente — contexto de tu trabajo."}
-          </p>
-          <span className="mt-2 inline-block text-xs text-[var(--os-teal)]">Abrir panel →</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={onLogout}
-          className="mt-3 flex w-full items-center gap-2 rounded-[var(--os-radius-sm)] px-2 py-2.5 text-sm text-[var(--os-sidebar-muted)] transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)]"
-        >
-          <LogOut className="size-4" aria-hidden="true" />
-          Cerrar sesión
-        </button>
       </div>
     </aside>
   );

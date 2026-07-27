@@ -149,7 +149,7 @@ export function CreamyCompanion() {
             <button
               type="button"
               onClick={handleOpen}
-              className="pointer-events-auto rounded-full border border-cyan-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-[var(--os-shadow-card)] hover:border-[var(--os-teal)]"
+              className="pointer-events-auto rounded-full border border-[var(--os-border)] bg-[var(--os-surface-glass)] px-3 py-1.5 text-xs font-semibold text-[var(--os-text)] shadow-[var(--os-shadow-card)] backdrop-blur-md hover:border-[var(--os-teal)]"
             >
               Creamy
             </button>
@@ -158,7 +158,7 @@ export function CreamyCompanion() {
             type="button"
             onClick={handleOpen}
             title="Hablar con Creamy"
-            className="pointer-events-auto group flex size-14 items-center justify-center rounded-full bg-gradient-to-br from-sky-600 via-cyan-500 to-teal-400 text-white shadow-2xl ring-2 ring-white/70 transition-transform hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:ring-offset-2"
+            className="pointer-events-auto group flex size-14 items-center justify-center rounded-full bg-[var(--os-teal)] text-[var(--os-navy)] shadow-[var(--os-shadow-card-hover)] ring-2 ring-white/80 transition-transform duration-[var(--genus-duration-hover,140ms)] hover:scale-[1.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)] focus-visible:ring-offset-2 motion-reduce:hover:scale-100"
             aria-label="Hablar con Creamy"
           >
             {panelMode === "minimized" ? (
@@ -174,19 +174,25 @@ export function CreamyCompanion() {
         <>
           <button
             type="button"
-            className="fixed inset-0 z-40 bg-slate-900/30 backdrop-blur-[1px] os-fade-in md:hidden"
+            className="fixed inset-0 z-40 bg-[var(--os-navy)]/40 backdrop-blur-[1px] os-fade-in md:hidden"
             onClick={handleClose}
             aria-label="Cerrar copiloto"
           />
           <aside
-            className="os-drawer fixed z-50 flex min-h-0 flex-col overflow-hidden border border-[var(--os-border)] bg-[var(--os-surface)] shadow-2xl max-md:inset-x-0 max-md:top-0 max-md:rounded-none md:inset-y-0 md:left-auto md:right-0 md:w-[420px] md:max-w-[450px] md:rounded-none md:border-y-0 md:border-r-0"
+            className="os-drawer fixed z-[var(--os-z-creamy)] flex min-h-0 flex-col overflow-hidden border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-card-hover)] max-md:inset-x-0 max-md:top-0 max-md:rounded-none md:inset-y-0 md:left-auto md:right-0 md:w-[420px] md:max-w-[450px] md:rounded-none md:border-y-0 md:border-r-0"
             style={{
               bottom: keyboardInset > 0 ? keyboardInset : undefined,
               height: keyboardInset > 0 ? `calc(100dvh - ${keyboardInset}px)` : undefined,
             }}
             aria-label="Creamy · Asistente de Genus OS"
           >
-            <div className="shrink-0 border-b border-[var(--os-border)] bg-gradient-to-r from-sky-700 via-cyan-600 to-teal-500 px-4 py-3 text-white">
+            <div
+              className="shrink-0 border-b border-white/10 px-4 py-3 text-white"
+              style={{
+                background:
+                  "linear-gradient(135deg, var(--os-navy) 0%, var(--os-sidebar-bg-2) 55%, #0a3d45 100%)",
+              }}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
