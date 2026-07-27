@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
-  downloadRemitoBlobApi,
   editGeneratedRemitoApi,
+  fetchRemitoPreviewHtmlApi,
   fetchRemitosApi,
   generateRemitoApi,
   remitoActionApi,
@@ -15,8 +15,10 @@ import {
   triggerRemitoDownload,
   updateRemitoDraftApi,
 } from "@/lib/remitos/remitos-client";
+import { formatLoteVtoCell, lineTotalUnitsFromCajas } from "@/lib/remitos/line-qty";
 import {
   canAccessRemitos,
+  type RemitoCajaCombo,
   type RemitoLine,
   type RemitoRecord,
   type RemitoTab,
@@ -27,6 +29,32 @@ const TABS: { id: RemitoTab; label: string }[] = [
   { id: "generados", label: "Generados" },
   { id: "anulados", label: "Anulados" },
 ];
+
+function normalizeDraftLine(l: RemitoLine): RemitoLine {
+  return {
+    ...l,
+    cajas3: l.cajas3 ?? 0,
+    unidades3: l.unidades3 ?? 0,
+    extraCajas: [...(l.extraCajas ?? [])],
+  };
+}
+
+function withAutoTotal(line: RemitoLine): RemitoLine {
+  const total = lineTotalUnitsFromCajas(line);
+  return { ...line, totalUnits: total > 0 ? total : line.totalUnits };
+}
+
+function formatCajasSummary(l: RemitoLine): string {
+  const parts = [
+    `${l.cajas1 || 0}×${l.unidades1 || 0}`,
+    `${l.cajas2 || 0}×${l.unidades2 || 0}`,
+    `${l.cajas3 || 0}×${l.unidades3 || 0}`,
+  ];
+  for (const e of l.extraCajas ?? []) {
+    parts.push(`${e.cajas}×${e.unidades}`);
+  }
+  return parts.join(" / ");
+}
 
 type ModalKind =
   | null
@@ -57,7 +85,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
   const [draftLines, setDraftLines] = useState<RemitoLine[]>([]);
   const [draftClient, setDraftClient] = useState("");
   const [draftDate, setDraftDate] = useState("");
-  const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState<"pdf" | "xlsx" | null>(null);
 
@@ -84,18 +112,9 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
     void reload();
   }, [reload]);
 
-  useEffect(() => {
-    return () => {
-      if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-    };
-  }, [previewPdfUrl]);
-
   function closeModal() {
     setModal(null);
-    if (previewPdfUrl) {
-      URL.revokeObjectURL(previewPdfUrl);
-      setPreviewPdfUrl(null);
-    }
+    setPreviewHtml(null);
     setPreviewLoading(false);
   }
 
@@ -103,23 +122,13 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
     setSelected(r);
     setModal("preview");
     setError(null);
-    if (previewPdfUrl) {
-      URL.revokeObjectURL(previewPdfUrl);
-      setPreviewPdfUrl(null);
-    }
-    if (r.status !== "GENERADO") {
-      setPreviewLoading(false);
-      return;
-    }
+    setPreviewHtml(null);
     setPreviewLoading(true);
     try {
-      const { blob } = await downloadRemitoBlobApi(session, r.id, "pdf");
-      if (!blob.type.includes("pdf") && blob.size < 50) {
-        throw new Error("La vista previa no devolvió un PDF válido");
-      }
-      setPreviewPdfUrl(URL.createObjectURL(blob));
+      const html = await fetchRemitoPreviewHtmlApi(session, r.id);
+      setPreviewHtml(html);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo previsualizar el PDF");
+      setError(e instanceof Error ? e.message : "No se pudo previsualizar el remito");
     } finally {
       setPreviewLoading(false);
     }
@@ -145,7 +154,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
 
   function openEditDraft(r: RemitoRecord) {
     setSelected(r);
-    setDraftLines(r.lines.map((l) => ({ ...l })));
+    setDraftLines(r.lines.map((l) => normalizeDraftLine(l)));
     setDraftClient(r.clientDisplay);
     setDraftDate(r.deliveryDate);
     setModal("edit-draft");
@@ -160,10 +169,20 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
   function openEditGenerated(r: RemitoRecord) {
     setSelected(r);
     setMotivoInput("");
-    setDraftLines(r.lines.map((l) => ({ ...l })));
+    setDraftLines(r.lines.map((l) => normalizeDraftLine(l)));
     setDraftClient(r.clientDisplay);
     setDraftDate(r.deliveryDate);
     setModal("edit-generated");
+  }
+
+  function updateDraftLine(idx: number, patch: Partial<RemitoLine>) {
+    setDraftLines((prev) => {
+      const next = [...prev];
+      const cur = next[idx];
+      if (!cur) return prev;
+      next[idx] = withAutoTotal({ ...cur, ...patch });
+      return next;
+    });
   }
 
   async function submitGenerate() {
@@ -200,6 +219,9 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
           unidades1: l.unidades1,
           cajas2: l.cajas2,
           unidades2: l.unidades2,
+          cajas3: l.cajas3 ?? 0,
+          unidades3: l.unidades3 ?? 0,
+          extraCajas: l.extraCajas ?? [],
         })),
       });
       setSelected(remito);
@@ -230,6 +252,9 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
           unidades1: l.unidades1,
           cajas2: l.cajas2,
           unidades2: l.unidades2,
+          cajas3: l.cajas3 ?? 0,
+          unidades3: l.unidades3 ?? 0,
+          extraCajas: l.extraCajas ?? [],
         })),
       });
       setSelected(remito);
@@ -390,8 +415,8 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                 <ul className="max-h-48 space-y-1 overflow-y-auto text-xs">
                   {selected.lines.map((l) => (
                     <li key={l.id} className="rounded border border-[var(--os-border)] px-2 py-1">
-                      {l.totalUnits} · {l.product} · L:{l.lote || "—"} VTO:{l.vto || "—"} ·{" "}
-                      {l.cajas1}x{l.unidades1} / {l.cajas2}x{l.unidades2}
+                      {l.totalUnits} · {l.product} · {formatLoteVtoCell(l.lote, l.vto)} ·{" "}
+                      {formatCajasSummary(l)}
                     </li>
                   ))}
                 </ul>
@@ -446,15 +471,17 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       >
                         {downloadBusy === "xlsx" ? "Descargando…" : "Descargar XLSX"}
                       </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={busy || downloadBusy !== null}
-                        onClick={() => void downloadSelected("pdf")}
-                        data-testid="remito-dl-pdf"
-                      >
-                        {downloadBusy === "pdf" ? "Descargando…" : "Descargar PDF"}
-                      </Button>
+                      {(selected.versions ?? []).some((v) => v.driveFileIdPdf) ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={busy || downloadBusy !== null}
+                          onClick={() => void downloadSelected("pdf")}
+                          data-testid="remito-dl-pdf"
+                        >
+                          {downloadBusy === "pdf" ? "Descargando…" : "Descargar PDF (legacy)"}
+                        </Button>
+                      ) : null}
                       <Button
                         type="button"
                         variant="secondary"
@@ -508,7 +535,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
             data-testid="remito-modal"
           >
-            <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-4 shadow-lg data-[preview=true]:max-w-3xl" data-preview={modal === "preview" ? "true" : "false"}>
+            <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-4 shadow-lg data-[wide=true]:max-w-3xl" data-wide={modal === "preview" || modal === "edit-draft" || modal === "edit-generated" ? "true" : "false"}>
               {modal === "generate" ? (
                 <div className="space-y-3">
                   <h3 className="font-semibold">Generar remito</h3>
@@ -598,49 +625,156 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       onChange={(e) => setDraftDate(e.target.value)}
                     />
                   </label>
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {draftLines.map((l, idx) => (
                       <div
                         key={l.id}
-                        className="grid grid-cols-2 gap-2 rounded border border-[var(--os-border)] p-2 text-xs"
+                        className="space-y-2 rounded border border-[var(--os-border)] p-3 text-xs"
+                        data-testid={`remito-line-editor-${idx}`}
                       >
-                        <input
-                          value={l.product}
-                          onChange={(e) => {
-                            const next = [...draftLines];
-                            next[idx] = { ...l, product: e.target.value };
-                            setDraftLines(next);
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="block">
+                            Producto
+                            <input
+                              className="mt-0.5 w-full rounded border border-[var(--os-border)] px-2 py-1"
+                              value={l.product}
+                              onChange={(e) => updateDraftLine(idx, { product: e.target.value })}
+                            />
+                          </label>
+                          <label className="block">
+                            Total unidades (auto)
+                            <input
+                              className="mt-0.5 w-full rounded border border-[var(--os-border)] px-2 py-1"
+                              value={l.totalUnits}
+                              type="number"
+                              readOnly
+                              data-testid={`remito-line-total-${idx}`}
+                            />
+                          </label>
+                          <label className="block">
+                            Lote
+                            <input
+                              className="mt-0.5 w-full rounded border border-[var(--os-border)] px-2 py-1"
+                              value={l.lote}
+                              onChange={(e) => updateDraftLine(idx, { lote: e.target.value })}
+                            />
+                          </label>
+                          <label className="block">
+                            VTO
+                            <input
+                              className="mt-0.5 w-full rounded border border-[var(--os-border)] px-2 py-1"
+                              value={l.vto}
+                              onChange={(e) => updateDraftLine(idx, { vto: e.target.value })}
+                            />
+                          </label>
+                        </div>
+                        <p className="text-[var(--os-text-muted)]">
+                          {formatLoteVtoCell(l.lote, l.vto)}
+                        </p>
+                        {(
+                          [
+                            { label: "Cajas 1", cajasKey: "cajas1", unidadesKey: "unidades1" },
+                            { label: "Cajas 2", cajasKey: "cajas2", unidadesKey: "unidades2" },
+                            { label: "Cajas 3", cajasKey: "cajas3", unidadesKey: "unidades3" },
+                          ] as const
+                        ).map((slot) => (
+                          <div
+                            key={slot.label}
+                            className="flex flex-wrap items-center gap-2"
+                          >
+                            <span className="w-16 shrink-0 font-medium">{slot.label}:</span>
+                            <input
+                              type="number"
+                              min={0}
+                              className="w-20 rounded border border-[var(--os-border)] px-2 py-1"
+                              value={l[slot.cajasKey] ?? 0}
+                              onChange={(e) =>
+                                updateDraftLine(idx, {
+                                  [slot.cajasKey]: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                                })
+                              }
+                              aria-label={`${slot.label} cantidad`}
+                            />
+                            <span>×</span>
+                            <input
+                              type="number"
+                              min={0}
+                              className="w-20 rounded border border-[var(--os-border)] px-2 py-1"
+                              value={l[slot.unidadesKey] ?? 0}
+                              onChange={(e) =>
+                                updateDraftLine(idx, {
+                                  [slot.unidadesKey]: Math.max(
+                                    0,
+                                    Math.floor(Number(e.target.value) || 0)
+                                  ),
+                                })
+                              }
+                              aria-label={`${slot.label} unidades por caja`}
+                            />
+                          </div>
+                        ))}
+                        {(l.extraCajas ?? []).map((extra, ei) => (
+                          <div
+                            key={`extra-${ei}`}
+                            className="flex flex-wrap items-center gap-2 rounded border border-dashed border-[var(--os-border)] bg-[var(--os-bg)] px-2 py-1"
+                            data-testid={`remito-line-extra-${idx}-${ei}`}
+                          >
+                            <span className="w-16 shrink-0 font-medium">Extra {ei + 1}:</span>
+                            <input
+                              type="number"
+                              min={0}
+                              className="w-20 rounded border border-[var(--os-border)] px-2 py-1"
+                              value={extra.cajas}
+                              onChange={(e) => {
+                                const extras = [...(l.extraCajas ?? [])];
+                                extras[ei] = {
+                                  ...extra,
+                                  cajas: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                                };
+                                updateDraftLine(idx, { extraCajas: extras });
+                              }}
+                            />
+                            <span>×</span>
+                            <input
+                              type="number"
+                              min={0}
+                              className="w-20 rounded border border-[var(--os-border)] px-2 py-1"
+                              value={extra.unidades}
+                              onChange={(e) => {
+                                const extras = [...(l.extraCajas ?? [])];
+                                extras[ei] = {
+                                  ...extra,
+                                  unidades: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                                };
+                                updateDraftLine(idx, { extraCajas: extras });
+                              }}
+                            />
+                            <button
+                              type="button"
+                              className="underline"
+                              onClick={() => {
+                                const extras = (l.extraCajas ?? []).filter((_, i) => i !== ei);
+                                updateDraftLine(idx, { extraCajas: extras });
+                              }}
+                            >
+                              Quitar
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          className="underline"
+                          data-testid={`remito-add-caja-${idx}`}
+                          onClick={() => {
+                            const extras: RemitoCajaCombo[] = [
+                              ...(l.extraCajas ?? []),
+                              { cajas: 0, unidades: 0 },
+                            ];
+                            updateDraftLine(idx, { extraCajas: extras });
                           }}
-                          placeholder="Producto"
-                        />
-                        <input
-                          value={l.totalUnits}
-                          type="number"
-                          onChange={(e) => {
-                            const next = [...draftLines];
-                            next[idx] = { ...l, totalUnits: Number(e.target.value) || 0 };
-                            setDraftLines(next);
-                          }}
-                          placeholder="Unidades"
-                        />
-                        <input
-                          value={l.lote}
-                          onChange={(e) => {
-                            const next = [...draftLines];
-                            next[idx] = { ...l, lote: e.target.value };
-                            setDraftLines(next);
-                          }}
-                          placeholder="Lote"
-                        />
-                        <input
-                          value={l.vto}
-                          onChange={(e) => {
-                            const next = [...draftLines];
-                            next[idx] = { ...l, vto: e.target.value };
-                            setDraftLines(next);
-                          }}
-                          placeholder="Vto"
-                        />
+                        >
+                          Agregar otro tipo de caja
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -688,15 +822,17 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                           </div>
                           {v.downloadable ? (
                             <div className="mt-1 flex gap-2 text-xs">
-                              <button
-                                type="button"
-                                className="underline disabled:opacity-50"
-                                disabled={downloadBusy !== null}
-                                data-testid={`remito-version-dl-pdf-${v.version}`}
-                                onClick={() => void downloadSelected("pdf", v.version)}
-                              >
-                                PDF
-                              </button>
+                              {v.driveFileIdPdf ? (
+                                <button
+                                  type="button"
+                                  className="underline disabled:opacity-50"
+                                  disabled={downloadBusy !== null}
+                                  data-testid={`remito-version-dl-pdf-${v.version}`}
+                                  onClick={() => void downloadSelected("pdf", v.version)}
+                                >
+                                  PDF
+                                </button>
+                              ) : null}
                               <button
                                 type="button"
                                 className="underline disabled:opacity-50"
@@ -722,59 +858,35 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
 
               {modal === "preview" ? (
                 <div className="space-y-3" data-testid="remito-preview-modal">
-                  <h3 className="font-semibold">Vista previa</h3>
+                  <h3 className="font-semibold">Vista previa (Excel)</h3>
                   <p className="text-sm">
                     {selected.displayName || "Sin nombre"} · {selected.clientDisplay} ·{" "}
                     {selected.deliveryDate}
                   </p>
-                  <ul className="max-h-32 space-y-1 overflow-y-auto text-xs">
-                    {selected.lines.map((l) => (
-                      <li key={l.id}>
-                        {l.product} · {l.totalUnits} u · L:{l.lote || "—"} VTO:
-                        {l.vto || "—"}
-                      </li>
-                    ))}
-                  </ul>
-                  {selected.status !== "GENERADO" ? (
-                    <p className="text-sm text-[var(--os-text-muted)]">
-                      Generá el remito para ver el PDF autenticado.
-                    </p>
-                  ) : previewLoading ? (
-                    <p className="text-sm text-[var(--os-text-muted)]">Cargando PDF…</p>
-                  ) : previewPdfUrl ? (
-                    <iframe
-                      title="Vista previa remito PDF"
-                      src={previewPdfUrl}
-                      className="h-[60vh] w-full rounded border border-[var(--os-border)]"
-                      data-testid="remito-preview-iframe"
+                  {previewLoading ? (
+                    <p className="text-sm text-[var(--os-text-muted)]">Cargando vista previa…</p>
+                  ) : previewHtml ? (
+                    <div
+                      className="rounded border border-[var(--os-border)]"
+                      dangerouslySetInnerHTML={{ __html: previewHtml }}
+                      data-testid="remito-preview-xlsx"
                     />
                   ) : (
                     <p className="text-sm text-rose-700">
-                      No se pudo cargar el PDF. Revisá el mensaje de error arriba.
+                      No se pudo cargar la vista previa. Revisá el mensaje de error arriba.
                     </p>
                   )}
                   <div className="flex flex-wrap justify-end gap-2">
                     {selected.status === "GENERADO" ? (
-                      <>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={downloadBusy !== null}
-                          onClick={() => void downloadSelected("pdf")}
-                          data-testid="remito-preview-dl-pdf"
-                        >
-                          Descargar PDF
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={downloadBusy !== null}
-                          onClick={() => void downloadSelected("xlsx")}
-                          data-testid="remito-preview-dl-xlsx"
-                        >
-                          Descargar XLSX
-                        </Button>
-                      </>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={downloadBusy !== null}
+                        onClick={() => void downloadSelected("xlsx")}
+                        data-testid="remito-preview-dl-xlsx"
+                      >
+                        Descargar XLSX
+                      </Button>
                     ) : null}
                     <Button type="button" variant="secondary" onClick={closeModal}>
                       Cerrar

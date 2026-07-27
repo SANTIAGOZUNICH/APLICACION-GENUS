@@ -15,6 +15,11 @@ export function canAccessRemitos(sector: SectorId | string | null | undefined): 
   return String(sector ?? "").toUpperCase() === "PRODUCCION";
 }
 
+export type RemitoCajaCombo = {
+  cajas: number;
+  unidades: number;
+};
+
 export type RemitoLine = {
   id: string;
   remitoId: string;
@@ -27,6 +32,14 @@ export type RemitoLine = {
   unidades1: number;
   cajas2: number;
   unidades2: number;
+  /** Tercer tipo de caja (columnas L/N del modelo). */
+  cajas3: number;
+  unidades3: number;
+  /**
+   * Combinaciones extra (>3). Las primeras 3 van a columnas oficiales;
+   * el resto se anota en la línea L/VTO como EXTRA.
+   */
+  extraCajas: RemitoCajaCombo[];
   sortOrder: number;
 };
 
@@ -93,6 +106,11 @@ export type RemitoApprovalInput = {
   unidades1?: number | null;
   cajas2?: number | null;
   unidades2?: number | null;
+  cajas3?: number | null;
+  unidades3?: number | null;
+  extraCajas?: RemitoCajaCombo[] | null;
+  /** Unidades por caja para bloque 3 (opcional). */
+  unitsPerCaja3?: number | null;
 };
 
 export type RemitoDraftPatch = {
@@ -108,6 +126,9 @@ export type RemitoDraftPatch = {
     unidades1?: number;
     cajas2?: number;
     unidades2?: number;
+    cajas3?: number;
+    unidades3?: number;
+    extraCajas?: RemitoCajaCombo[];
   }>;
   /**
    * Flag opcional: la UI pide confirmación. El servicio NO muta work items

@@ -18,8 +18,24 @@ import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from
 import type { SectorId } from "@/types/operational/sector";
 import { normalizeClientId, remitoGroupKey } from "./grouping";
 import { computeCajasProduct } from "./packing-math";
-import { buildRemitoPdf, REMITO_PDF_MIME } from "./remito-pdf";
-import { buildRemitoXlsx, REMITO_XLSX_MIME } from "./remito-xlsx";
+import { buildRemitoXlsx, remitoXlsxToPreviewHtml, REMITO_XLSX_MIME } from "./remito-xlsx";
+import { lineTotalCajas, lineTotalUnitsFromCajas } from "./line-qty";
+import type {
+  RemitoApprovalInput,
+  RemitoCajaCombo,
+  RemitoDraftPatch,
+  RemitoEditGeneratedOptions,
+  RemitoGenerateOptions,
+  RemitoLine,
+  RemitoListFilters,
+  RemitoRecord,
+  RemitoStatus,
+  RemitoTab,
+  RemitoUpsertResult,
+  RemitoVersionInfo,
+  RemitoWorkItemStatus,
+} from "./types";
+import { canAccessRemitos } from "./types";
 import {
   assertPrivateFileStorageConfigured,
   FILE_STORAGE_NOT_CONFIGURED,
@@ -27,20 +43,6 @@ import {
   remitoStorageKey,
   STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
 } from "@/lib/storage/file-storage";
-import {
-  canAccessRemitos,
-  type RemitoApprovalInput,
-  type RemitoDraftPatch,
-  type RemitoEditGeneratedOptions,
-  type RemitoGenerateOptions,
-  type RemitoLine,
-  type RemitoListFilters,
-  type RemitoRecord,
-  type RemitoStatus,
-  type RemitoUpsertResult,
-  type RemitoVersionInfo,
-  type RemitoWorkItemStatus,
-} from "./types";
 
 export type RemitoActor = { email: string; sector: SectorId };
 
@@ -102,12 +104,23 @@ function parseUnits(input: RemitoApprovalInput): {
   unidades1: number;
   cajas2: number;
   unidades2: number;
+  cajas3: number;
+  unidades3: number;
+  extraCajas: RemitoCajaCombo[];
 } {
   const totalUnits = Math.max(0, Number(input.totalUnits) || 0);
   let cajas1 = input.cajas1 != null ? Math.max(0, Math.floor(input.cajas1)) : null;
   let unidades1 = input.unidades1 != null ? Math.max(0, Math.floor(input.unidades1)) : null;
   let cajas2 = input.cajas2 != null ? Math.max(0, Math.floor(input.cajas2)) : null;
   let unidades2 = input.unidades2 != null ? Math.max(0, Math.floor(input.unidades2)) : null;
+  let cajas3 = input.cajas3 != null ? Math.max(0, Math.floor(input.cajas3)) : null;
+  let unidades3 = input.unidades3 != null ? Math.max(0, Math.floor(input.unidades3)) : null;
+  const extraCajas = (input.extraCajas ?? [])
+    .map((e) => ({
+      cajas: Math.max(0, Math.floor(Number(e.cajas) || 0)),
+      unidades: Math.max(0, Math.floor(Number(e.unidades) || 0)),
+    }))
+    .filter((e) => e.cajas > 0 || e.unidades > 0);
 
   if (cajas1 == null || unidades1 == null) {
     const upc1 = input.unitsPerCaja1 ?? 0;
@@ -127,13 +140,28 @@ function parseUnits(input: RemitoApprovalInput): {
   }
   if (cajas2 == null) cajas2 = 0;
   if (unidades2 == null) unidades2 = 0;
+  if (cajas3 == null) cajas3 = 0;
+  if (unidades3 == null) unidades3 = 0;
 
-  return {
-    totalUnits,
+  const fromCajas = lineTotalUnitsFromCajas({
     cajas1: cajas1 ?? 0,
     unidades1: unidades1 ?? 0,
     cajas2,
     unidades2,
+    cajas3,
+    unidades3,
+    extraCajas,
+  });
+
+  return {
+    totalUnits: fromCajas > 0 ? fromCajas : totalUnits,
+    cajas1: cajas1 ?? 0,
+    unidades1: unidades1 ?? 0,
+    cajas2,
+    unidades2,
+    cajas3,
+    unidades3,
+    extraCajas,
   };
 }
 
@@ -142,8 +170,18 @@ function recomputeTotals(lines: RemitoLine[]): {
   totalCajas: number;
   totalBultos: number;
 } {
+  const normalized = lines.map((l) => {
+    const units = lineTotalUnitsFromCajas(l);
+    return units > 0 ? { ...l, totalUnits: units } : l;
+  });
+  // Mutate totals on lines for consistency
+  for (let i = 0; i < lines.length; i++) {
+    if (normalized[i] && normalized[i]!.totalUnits !== lines[i]!.totalUnits) {
+      lines[i]!.totalUnits = normalized[i]!.totalUnits;
+    }
+  }
   const totalUnits = lines.reduce((s, l) => s + l.totalUnits, 0);
-  const totalCajas = lines.reduce((s, l) => s + l.cajas1 + l.cajas2, 0);
+  const totalCajas = lines.reduce((s, l) => s + lineTotalCajas(l), 0);
   return { totalUnits, totalCajas, totalBultos: totalCajas };
 }
 
@@ -154,6 +192,93 @@ function normalizeDeliveryDate(raw: string): string {
   if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
   throw new OrdersValidationError("deliveryDate inválida (usar YYYY-MM-DD).");
 }
+
+function qtyToLineFields(qty: ReturnType<typeof parseUnits>) {
+  return {
+    totalUnits: qty.totalUnits,
+    cajas1: qty.cajas1,
+    unidades1: qty.unidades1,
+    cajas2: qty.cajas2,
+    unidades2: qty.unidades2,
+    cajas3: qty.cajas3,
+    unidades3: qty.unidades3,
+    extraCajas: qty.extraCajas,
+  };
+}
+
+function linePayload(line: RemitoLine): Record<string, unknown> {
+  return {
+    cajas3: line.cajas3 ?? 0,
+    unidades3: line.unidades3 ?? 0,
+    extraCajas: line.extraCajas ?? [],
+  };
+}
+
+function hydrateLineFromDb(l: {
+  id: string;
+  remitoId: string;
+  workItemId: string;
+  product: string;
+  lote: string;
+  vto: string;
+  totalUnits: number;
+  cajas1: number;
+  unidades1: number;
+  cajas2: number;
+  unidades2: number;
+  sortOrder: number;
+  payload?: unknown;
+}): RemitoLine {
+  const p = (l.payload ?? {}) as {
+    cajas3?: number;
+    unidades3?: number;
+    extraCajas?: RemitoCajaCombo[];
+  };
+  return {
+    id: l.id,
+    remitoId: l.remitoId,
+    workItemId: l.workItemId,
+    product: l.product,
+    lote: l.lote,
+    vto: l.vto,
+    totalUnits: l.totalUnits,
+    cajas1: l.cajas1,
+    unidades1: l.unidades1,
+    cajas2: l.cajas2,
+    unidades2: l.unidades2,
+    cajas3: p.cajas3 ?? 0,
+    unidades3: p.unidades3 ?? 0,
+    extraCajas: Array.isArray(p.extraCajas) ? p.extraCajas : [],
+    sortOrder: l.sortOrder,
+  };
+}
+
+function applyLinePatch(
+  line: RemitoLine,
+  pl: NonNullable<RemitoDraftPatch["lines"]>[number]
+): void {
+  if (pl.product != null) line.product = String(pl.product).trim();
+  if (pl.lote != null) line.lote = String(pl.lote).trim();
+  if (pl.vto != null) line.vto = String(pl.vto).trim();
+  if (pl.cajas1 != null) line.cajas1 = Math.max(0, Math.floor(pl.cajas1));
+  if (pl.unidades1 != null) line.unidades1 = Math.max(0, Math.floor(pl.unidades1));
+  if (pl.cajas2 != null) line.cajas2 = Math.max(0, Math.floor(pl.cajas2));
+  if (pl.unidades2 != null) line.unidades2 = Math.max(0, Math.floor(pl.unidades2));
+  if (pl.cajas3 != null) line.cajas3 = Math.max(0, Math.floor(pl.cajas3));
+  if (pl.unidades3 != null) line.unidades3 = Math.max(0, Math.floor(pl.unidades3));
+  if (pl.extraCajas != null) {
+    line.extraCajas = pl.extraCajas.map((e) => ({
+      cajas: Math.max(0, Math.floor(Number(e.cajas) || 0)),
+      unidades: Math.max(0, Math.floor(Number(e.unidades) || 0)),
+    }));
+  }
+  const fromCajas = lineTotalUnitsFromCajas(line);
+  if (fromCajas > 0) line.totalUnits = fromCajas;
+  else if (pl.totalUnits != null) line.totalUnits = Math.max(0, Number(pl.totalUnits) || 0);
+}
+
+/** MIME legacy para remitos antiguos que sí tienen PDF en Blob. */
+const REMITO_PDF_MIME = "application/pdf";
 
 function emptyRemitoVersions(): RemitoVersionInfo[] {
   return [];
@@ -263,11 +388,7 @@ export class RemitoService {
         product,
         lote,
         vto,
-        totalUnits: qty.totalUnits,
-        cajas1: qty.cajas1,
-        unidades1: qty.unidades1,
-        cajas2: qty.cajas2,
-        unidades2: qty.unidades2,
+        ...qtyToLineFields(qty),
         sortOrder: draft.lines.length,
       };
       draft.lines.push(line);
@@ -291,11 +412,7 @@ export class RemitoService {
       product,
       lote,
       vto,
-      totalUnits: qty.totalUnits,
-      cajas1: qty.cajas1,
-      unidades1: qty.unidades1,
-      cajas2: qty.cajas2,
-      unidades2: qty.unidades2,
+      ...qtyToLineFields(qty),
       sortOrder: 0,
     };
     const totals = recomputeTotals([line]);
@@ -357,14 +474,7 @@ export class RemitoService {
       for (const pl of patch.lines) {
         const line = remito.lines.find((l) => l.id === pl.id);
         if (!line) continue;
-        if (pl.product != null) line.product = String(pl.product).trim();
-        if (pl.lote != null) line.lote = String(pl.lote).trim();
-        if (pl.vto != null) line.vto = String(pl.vto).trim();
-        if (pl.totalUnits != null) line.totalUnits = Math.max(0, Number(pl.totalUnits) || 0);
-        if (pl.cajas1 != null) line.cajas1 = Math.max(0, Math.floor(pl.cajas1));
-        if (pl.unidades1 != null) line.unidades1 = Math.max(0, Math.floor(pl.unidades1));
-        if (pl.cajas2 != null) line.cajas2 = Math.max(0, Math.floor(pl.cajas2));
-        if (pl.unidades2 != null) line.unidades2 = Math.max(0, Math.floor(pl.unidades2));
+        applyLinePatch(line, pl);
       }
       const totals = recomputeTotals(remito.lines);
       remito.totalUnits = totals.totalUnits;
@@ -382,6 +492,11 @@ export class RemitoService {
     remito.updatedBy = actor.email;
     remito.updatedAt = now;
     await this.persistRemito(remito);
+    if (patch.lines?.length) {
+      for (const line of remito.lines) {
+        await this.upsertLine(line);
+      }
+    }
     return this.attachVersions(remito);
   }
 
@@ -449,9 +564,9 @@ export class RemitoService {
       updatedAt: now,
     };
 
-    // Generar archivos ANTES de marcar GENERADO. Si Blob falla, no persistimos GENERADO.
+    // Generar XLSX ANTES de marcar GENERADO. Si Blob falla, no persistimos GENERADO.
+    // Remitos nuevos: solo XLSX (sin PDF).
     const xlsx = await buildRemitoXlsx(withMeta);
-    const pdf = await buildRemitoPdf(withMeta);
 
     const year = remito.deliveryDate.slice(0, 4) || String(new Date().getFullYear());
     const storage = getFileStorage();
@@ -460,12 +575,6 @@ export class RemitoService {
       remitoId: withMeta.id,
       version: withMeta.version,
       kind: "xlsx",
-    });
-    const keyPdf = remitoStorageKey({
-      year,
-      remitoId: withMeta.id,
-      version: withMeta.version,
-      kind: "pdf",
     });
     const uploaded: string[] = [];
 
@@ -476,12 +585,6 @@ export class RemitoService {
         contentType: REMITO_XLSX_MIME,
       });
       uploaded.push(putX.storageKey);
-      const putP = await storage.put({
-        storageKey: keyPdf,
-        bytes: pdf,
-        contentType: REMITO_PDF_MIME,
-      });
-      uploaded.push(putP.storageKey);
 
       await this.persistRemito(withMeta);
       const versionId = randomUUID();
@@ -491,12 +594,11 @@ export class RemitoService {
         version: withMeta.version,
         motivo: null,
         driveFileIdXlsx: putX.storageKey,
-        driveFileIdPdf: putP.storageKey,
+        driveFileIdPdf: null,
         snapshot: {
           ...snapshot,
           storageProvider: STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
           sha256Xlsx: putX.sha256,
-          sha256Pdf: putP.sha256,
         },
         createdBy: actor.email,
         createdAt: now,
@@ -510,18 +612,6 @@ export class RemitoService {
         fileName: `${fileBase}.xlsx`,
         mimeType: REMITO_XLSX_MIME,
         sizeBytes: xlsx.length,
-        createdBy: actor.email,
-        createdAt: now,
-      });
-      await this.persistFileMeta({
-        id: randomUUID(),
-        remitoId: withMeta.id,
-        versionId,
-        kind: "pdf",
-        driveFileId: putP.storageKey,
-        fileName: `${fileBase}.pdf`,
-        mimeType: REMITO_PDF_MIME,
-        sizeBytes: pdf.length,
         createdBy: actor.email,
         createdAt: now,
       });
@@ -578,14 +668,7 @@ export class RemitoService {
       for (const pl of options.lines) {
         const line = remito.lines.find((l) => l.id === pl.id);
         if (!line) continue;
-        if (pl.product != null) line.product = String(pl.product).trim();
-        if (pl.lote != null) line.lote = String(pl.lote).trim();
-        if (pl.vto != null) line.vto = String(pl.vto).trim();
-        if (pl.totalUnits != null) line.totalUnits = Math.max(0, Number(pl.totalUnits) || 0);
-        if (pl.cajas1 != null) line.cajas1 = Math.max(0, Math.floor(pl.cajas1));
-        if (pl.unidades1 != null) line.unidades1 = Math.max(0, Math.floor(pl.unidades1));
-        if (pl.cajas2 != null) line.cajas2 = Math.max(0, Math.floor(pl.cajas2));
-        if (pl.unidades2 != null) line.unidades2 = Math.max(0, Math.floor(pl.unidades2));
+        applyLinePatch(line, pl);
       }
       const totals = recomputeTotals(remito.lines);
       remito.totalUnits = totals.totalUnits;
@@ -619,8 +702,8 @@ export class RemitoService {
     };
     remito.snapshot = snapshot;
 
+    // Solo XLSX para versiones nuevas (sin PDF).
     const xlsx = await buildRemitoXlsx(remito);
-    const pdf = await buildRemitoPdf(remito);
     if (!isFeatureMemoryAllowed()) {
       try {
         assertPrivateFileStorageConfigured();
@@ -636,12 +719,6 @@ export class RemitoService {
       version: remito.version,
       kind: "xlsx",
     });
-    const keyPdf = remitoStorageKey({
-      year,
-      remitoId: remito.id,
-      version: remito.version,
-      kind: "pdf",
-    });
     const uploaded: string[] = [];
 
     try {
@@ -651,14 +728,13 @@ export class RemitoService {
         contentType: REMITO_XLSX_MIME,
       });
       uploaded.push(putX.storageKey);
-      const putP = await storage.put({
-        storageKey: keyPdf,
-        bytes: pdf,
-        contentType: REMITO_PDF_MIME,
-      });
-      uploaded.push(putP.storageKey);
 
       await this.persistRemito(remito);
+      if (options.lines?.length) {
+        for (const line of remito.lines) {
+          await this.upsertLine(line);
+        }
+      }
       const versionId = randomUUID();
       await this.persistVersion({
         id: versionId,
@@ -666,12 +742,11 @@ export class RemitoService {
         version: remito.version,
         motivo,
         driveFileIdXlsx: putX.storageKey,
-        driveFileIdPdf: putP.storageKey,
+        driveFileIdPdf: null,
         snapshot: {
           ...snapshot,
           storageProvider: STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
           sha256Xlsx: putX.sha256,
-          sha256Pdf: putP.sha256,
         },
         createdBy: actor.email,
         createdAt: now,
@@ -685,18 +760,6 @@ export class RemitoService {
         fileName: `${fileBase}.xlsx`,
         mimeType: REMITO_XLSX_MIME,
         sizeBytes: xlsx.length,
-        createdBy: actor.email,
-        createdAt: now,
-      });
-      await this.persistFileMeta({
-        id: randomUUID(),
-        remitoId: remito.id,
-        versionId,
-        kind: "pdf",
-        driveFileId: putP.storageKey,
-        fileName: `${fileBase}.pdf`,
-        mimeType: REMITO_PDF_MIME,
-        sizeBytes: pdf.length,
         createdBy: actor.email,
         createdAt: now,
       });
@@ -772,11 +835,7 @@ export class RemitoService {
         product: String(input.product).trim(),
         lote: String(input.lote ?? "").trim(),
         vto: String(input.vto ?? "").trim(),
-        totalUnits: qty.totalUnits,
-        cajas1: qty.cajas1,
-        unidades1: qty.unidades1,
-        cajas2: qty.cajas2,
-        unidades2: qty.unidades2,
+        ...qtyToLineFields(qty),
         sortOrder: lines.length,
       });
     }
@@ -897,16 +956,41 @@ export class RemitoService {
       };
     }
 
-    // Fallback regeneración solo en tests sin storage key.
-    if (isFeatureMemoryAllowed()) {
-      const bytes =
-        format === "pdf" ? await buildRemitoPdf(remito) : await buildRemitoXlsx(remito);
-      return { bytes, fileName: `${base}.${format}`, mimeType };
+    // Fallback regeneración solo XLSX en tests sin storage key.
+    // PDF no se regenera: remitos nuevos no generan PDF.
+    if (format === "xlsx" && isFeatureMemoryAllowed()) {
+      const bytes = await buildRemitoXlsx(remito);
+      return { bytes, fileName: `${base}.xlsx`, mimeType };
+    }
+
+    if (format === "pdf") {
+      throw new OrdersNotFoundError(
+        "PDF no disponible para este remito (solo XLSX en remitos nuevos)."
+      );
     }
 
     throw new OrdersNotFoundError(
       "Archivo de remito no encontrado en almacenamiento privado."
     );
+  }
+
+  /** Vista previa HTML estilo Excel a partir del XLSX (plantilla real). */
+  async previewHtml(actor: RemitoActor, remitoId: string): Promise<string> {
+    assertAccess(actor);
+    const remito = await this.findById(remitoId);
+    if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
+    let bytes: Buffer;
+    if (remito.status === "GENERADO") {
+      try {
+        const dl = await this.download(actor, remitoId, "xlsx");
+        bytes = dl.bytes;
+      } catch {
+        bytes = await buildRemitoXlsx(remito);
+      }
+    } else {
+      bytes = await buildRemitoXlsx(remito);
+    }
+    return remitoXlsxToPreviewHtml(bytes);
   }
 
   // —— persistence helpers ——
@@ -1015,20 +1099,7 @@ export class RemitoService {
     const byRemito = new Map<string, RemitoLine[]>();
     for (const l of lineRows) {
       const list = byRemito.get(l.remitoId) ?? [];
-      list.push({
-        id: l.id,
-        remitoId: l.remitoId,
-        workItemId: l.workItemId,
-        product: l.product,
-        lote: l.lote,
-        vto: l.vto,
-        totalUnits: l.totalUnits,
-        cajas1: l.cajas1,
-        unidades1: l.unidades1,
-        cajas2: l.cajas2,
-        unidades2: l.unidades2,
-        sortOrder: l.sortOrder,
-      });
+      list.push(hydrateLineFromDb(l));
       byRemito.set(l.remitoId, list);
     }
     const versionsByRemito = new Map<string, RemitoVersionInfo[]>();
@@ -1149,7 +1220,12 @@ export class RemitoService {
     if (isFeatureMemoryAllowed() || !(await isRemitoSchemaReady())) {
       const remito = mem().remitos.find((r) => r.id === line.remitoId);
       if (remito && !remito.lines.some((l) => l.id === line.id)) {
-        remito.lines.push(line);
+        remito.lines.push({
+          ...line,
+          cajas3: line.cajas3 ?? 0,
+          unidades3: line.unidades3 ?? 0,
+          extraCajas: line.extraCajas ?? [],
+        });
       }
       return;
     }
@@ -1167,7 +1243,53 @@ export class RemitoService {
       cajas2: line.cajas2,
       unidades2: line.unidades2,
       sortOrder: line.sortOrder,
+      payload: linePayload(line),
     });
+  }
+
+  private async upsertLine(line: RemitoLine): Promise<void> {
+    if (isFeatureMemoryAllowed() || !(await isRemitoSchemaReady())) {
+      const remito = mem().remitos.find((r) => r.id === line.remitoId);
+      if (!remito) return;
+      const idx = remito.lines.findIndex((l) => l.id === line.id);
+      const copy = {
+        ...line,
+        cajas3: line.cajas3 ?? 0,
+        unidades3: line.unidades3 ?? 0,
+        extraCajas: line.extraCajas ?? [],
+      };
+      if (idx >= 0) remito.lines[idx] = copy;
+      else remito.lines.push(copy);
+      return;
+    }
+    const db = getDb();
+    const values = {
+      product: line.product,
+      lote: line.lote,
+      vto: line.vto,
+      totalUnits: line.totalUnits,
+      cajas1: line.cajas1,
+      unidades1: line.unidades1,
+      cajas2: line.cajas2,
+      unidades2: line.unidades2,
+      sortOrder: line.sortOrder,
+      payload: linePayload(line),
+    };
+    const existing = await db
+      .select({ id: remitoLines.id })
+      .from(remitoLines)
+      .where(eq(remitoLines.id, line.id))
+      .limit(1);
+    if (existing.length) {
+      await db.update(remitoLines).set(values).where(eq(remitoLines.id, line.id));
+    } else {
+      await db.insert(remitoLines).values({
+        id: line.id,
+        remitoId: line.remitoId,
+        workItemId: line.workItemId,
+        ...values,
+      });
+    }
   }
 
   private async persistWorkLink(remitoId: string, workItemId: string): Promise<void> {

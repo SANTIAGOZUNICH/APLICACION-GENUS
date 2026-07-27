@@ -222,8 +222,8 @@ describe("RemitoService memoria", () => {
     expect(v2.versions.every((x) => x.downloadable)).toBe(true);
     expect(v2.versions[1]?.motivo).toBe("Corrección de cantidades");
 
-    const dl1 = await svc.download(prod, v2.id, "pdf", 1);
-    const dl2 = await svc.download(prod, v2.id, "pdf", 2);
+    const dl1 = await svc.download(prod, v2.id, "xlsx", 1);
+    const dl2 = await svc.download(prod, v2.id, "xlsx", 2);
     expect(dl1.bytes.length).toBeGreaterThan(10);
     expect(dl2.bytes.length).toBeGreaterThan(10);
   });

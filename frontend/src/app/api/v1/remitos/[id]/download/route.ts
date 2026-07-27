@@ -26,7 +26,7 @@ export async function GET(request: Request, ctx: Ctx) {
     }
     const { id } = await ctx.params;
     const url = new URL(request.url);
-    const format = (url.searchParams.get("format") ?? "pdf").toLowerCase();
+    const format = (url.searchParams.get("format") ?? "xlsx").toLowerCase();
     if (format !== "pdf" && format !== "xlsx") {
       throw new OrdersValidationError("format debe ser pdf|xlsx");
     }

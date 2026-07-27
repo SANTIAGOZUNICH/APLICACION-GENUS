@@ -148,6 +148,18 @@ export async function listRemitoVersionsApi(
   return body.versions ?? body.remito?.versions ?? [];
 }
 
+export async function fetchRemitoPreviewHtmlApi(
+  session: OrdersClientSession,
+  remitoId: string
+): Promise<string> {
+  const res = await fetch(`/api/v1/remitos/${remitoId}/preview`, {
+    headers: actorHeaders(session),
+  });
+  const body = (await res.json()) as { html?: string; error?: string };
+  if (!res.ok) throw new Error(body.error ?? "No se pudo generar vista previa");
+  return body.html ?? "";
+}
+
 export function remitoDownloadUrl(
   remitoId: string,
   format: "pdf" | "xlsx",
