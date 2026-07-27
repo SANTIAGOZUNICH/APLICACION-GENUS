@@ -15,7 +15,7 @@ interface OperationalTabsProps {
   onChange: (id: string) => void;
 }
 
-/** Pestañas operativas — estilo planilla, sin decoración premium. */
+/** Pestañas operativas — Industrial Glass, sin decoración premium. */
 export function OperationalTabs({ tabs, activeId, onChange }: OperationalTabsProps) {
   return (
     <div
@@ -31,9 +31,9 @@ export function OperationalTabs({ tabs, activeId, onChange }: OperationalTabsPro
             role="tab"
             aria-selected={active}
             onClick={() => onChange(tab.id)}
-            className={`-mb-px rounded-t-[var(--os-radius-sm)] px-4 py-2.5 text-sm font-medium transition-colors ${
+            className={`-mb-px rounded-t-[var(--os-radius-sm)] px-4 py-2.5 text-sm font-medium transition-colors duration-[var(--genus-duration-hover,140ms)] ${
               active
-                ? "border border-b-[var(--os-surface)] border-[var(--os-border)] bg-[var(--os-surface)] text-[var(--os-text)]"
+                ? "border border-b-[var(--os-surface)] border-[var(--os-border)] bg-[var(--os-surface-glass)] text-[var(--os-text)] shadow-[var(--os-shadow-sm)]"
                 : "text-[var(--os-text-muted)] hover:text-[var(--os-text)]"
             }`}
           >
@@ -78,10 +78,10 @@ export function OperationalTable<T>({
   }
 
   return (
-    <div className="overflow-x-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
+    <div className="overflow-x-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)]">
       <table className="w-full min-w-[640px] border-collapse text-sm">
         <thead>
-          <tr className="border-b border-[var(--os-border)] bg-[var(--os-bg)]">
+          <tr className="border-b border-[var(--os-border)] bg-[var(--os-surface-muted)]/70">
             {columns.map((col) => (
               <th
                 key={col.key}
@@ -96,7 +96,7 @@ export function OperationalTable<T>({
           {rows.map((row) => (
             <tr
               key={rowKey(row)}
-              className="border-b border-[var(--os-border-subtle)] last:border-b-0 hover:bg-[var(--os-bg)]/60"
+              className="border-b border-[var(--os-border-subtle)] last:border-b-0 transition-colors hover:bg-[var(--os-teal-soft)]/40"
             >
               {columns.map((col) => (
                 <td key={col.key} className={`px-3 py-2.5 align-top ${col.className ?? ""}`}>
@@ -144,8 +144,8 @@ export function SyncStatusBar({
   const isSheets = source === "drive";
 
   const badgeClass = isNative || isSheets
-    ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200"
-    : "bg-amber-50 text-amber-900 ring-1 ring-amber-200";
+    ? "bg-[var(--genus-success-soft)] text-[var(--genus-success)] ring-1 ring-[var(--genus-success)]/20"
+    : "bg-[var(--genus-warning-soft)] text-[var(--genus-warning)] ring-1 ring-[var(--genus-warning)]/20";
 
   const badgeLabel = isNative
     ? "Genus OS"
@@ -185,13 +185,13 @@ export function SyncStatusBar({
             <span
               className={`inline-flex items-center gap-1 ${
                 liveConnected || isNative
-                  ? "text-emerald-700"
+                  ? "text-[var(--genus-success)]"
                   : "text-[var(--os-text-muted)]"
               }`}
             >
               <span
                 className={`inline-block h-1.5 w-1.5 rounded-full ${
-                  liveConnected || isNative ? "bg-emerald-500" : "bg-gray-300"
+                  liveConnected || isNative ? "bg-[var(--genus-success)]" : "bg-[var(--os-border)]"
                 }`}
               />
               {isNative
@@ -205,7 +205,7 @@ export function SyncStatusBar({
         {loading && <span className="text-[var(--os-teal)]">Actualizando…</span>}
       </div>
       {showDetail && (
-        <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+        <p className="rounded-[var(--os-radius-sm)] border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] px-3 py-2 text-xs text-[var(--genus-warning)]">
           {detailMessage}
         </p>
       )}
@@ -230,9 +230,9 @@ interface ActionButtonProps {
 export function ActionButton({ label, variant, onClick, disabled, title }: ActionButtonProps) {
   const styles =
     variant === "approve"
-      ? "border-emerald-300 text-emerald-800 hover:bg-emerald-50"
+      ? "border-[var(--genus-success)]/35 text-[var(--genus-success)] hover:bg-[var(--genus-success-soft)]"
       : variant === "reject"
-        ? "border-rose-300 text-rose-800 hover:bg-rose-50"
+        ? "border-[var(--genus-error)]/35 text-[var(--genus-error)] hover:bg-[var(--genus-error-soft)]"
         : "border-[var(--os-border)] text-[var(--os-text-muted)] hover:border-[var(--os-teal)]";
 
   return (
@@ -267,7 +267,7 @@ export function StatusChip({
     cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
     label = WORK_TRANSFER.awaitingApproval;
   } else if (normalized === "aprobado") {
-    cls = "bg-emerald-50 text-emerald-800";
+    cls = "bg-[var(--genus-success-soft)] text-[var(--genus-success)]";
   } else if (isWorkTransferredStatus(normalized) || normalized === "revision") {
     cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
     label = WORK_TRANSFER.pendingReview;
@@ -275,22 +275,22 @@ export function StatusChip({
     cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
     label = WORK_TRANSFER.pendingReview;
   } else if (normalized === "rechazado" || normalized === "bloqueado") {
-    cls = "bg-rose-50 text-rose-800";
+    cls = "bg-[var(--genus-error-soft)] text-[var(--genus-error)]";
   } else if (normalized === "entregado" || normalized === "en_fecha") {
-    cls = "bg-emerald-50 text-emerald-800";
+    cls = "bg-[var(--genus-success-soft)] text-[var(--genus-success)]";
     label = normalized === "en_fecha" ? "En fecha" : "Entregado";
   } else if (normalized === "fuera_fecha") {
-    cls = "bg-amber-50 text-amber-900";
+    cls = "bg-[var(--genus-warning-soft)] text-[var(--genus-warning)]";
     label = "Fuera de fecha";
   } else if (normalized === "cancelado") {
-    cls = "bg-slate-100 text-slate-700";
+    cls = "bg-[var(--os-surface-muted)] text-[var(--os-text-muted)]";
     label = "Cancelado";
   } else if (normalized === "pendiente" || normalized === "en_curso") {
-    cls = "bg-amber-50 text-amber-900";
+    cls = "bg-[var(--genus-warning-soft)] text-[var(--genus-warning)]";
   }
 
   return (
-    <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium capitalize ${cls}`}>
+    <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${cls}`}>
       {label}
     </span>
   );

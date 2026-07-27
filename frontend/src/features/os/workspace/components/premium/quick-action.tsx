@@ -13,10 +13,10 @@ export function QuickAction({ label, onClick, variant = "secondary" }: QuickActi
     <button
       type="button"
       onClick={onClick}
-      className={`group inline-flex items-center gap-2 rounded-[12px] px-5 py-3 text-sm font-semibold transition-all duration-200 ease-out ${
+      className={`group inline-flex items-center gap-2 rounded-[var(--os-radius-sm)] px-5 py-3 text-sm font-semibold transition-all duration-[var(--genus-duration-hover,140ms)] ease-out ${
         isPrimary
-          ? "bg-[var(--os-teal)] text-white hover:bg-[var(--os-teal)]/92 hover:shadow-[var(--os-shadow)]"
-          : "border border-[var(--os-border)] bg-[var(--os-surface)] text-[var(--os-text)] hover:border-[var(--os-teal)]/40 hover:text-[var(--os-teal)]"
+          ? "bg-[var(--os-action)] text-white hover:bg-[var(--os-action)]/92 hover:shadow-[var(--os-shadow)]"
+          : "border border-[var(--os-border)] bg-[var(--os-surface-glass)] text-[var(--os-text)] shadow-[var(--os-shadow-sm)] hover:border-[var(--os-teal)]/40 hover:text-[var(--os-teal)]"
       }`}
     >
       <span>{label}</span>

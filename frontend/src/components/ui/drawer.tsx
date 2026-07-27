@@ -17,7 +17,7 @@ const DrawerOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "fixed inset-0 z-50 bg-[var(--os-navy,#071925)]/40 backdrop-blur-[1px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className
     )}
     {...props}
@@ -34,7 +34,7 @@ const DrawerContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed inset-y-0 right-0 z-50 flex h-full w-full flex-col border-l border-[var(--os-border,var(--border))] bg-[var(--os-surface,var(--surface))] shadow-2xl outline-none",
+        "fixed inset-y-0 right-0 z-50 flex h-full w-full flex-col border-l border-[var(--os-border,var(--border))] bg-[var(--os-surface,var(--surface))] shadow-[var(--os-shadow-card-hover,var(--shadow-md))] outline-none",
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right data-[state=closed]:duration-200 data-[state=open]:duration-250",
         widthClassName ?? "sm:max-w-lg",
         className

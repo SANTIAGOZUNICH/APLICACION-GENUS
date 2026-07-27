@@ -266,8 +266,8 @@ export function CreamyChat({
                 <div
                   className={`max-w-[88%] rounded-[var(--os-radius)] px-4 py-3 text-sm shadow-[var(--os-shadow-sm)] ${
                     isAssistant
-                      ? "border border-[var(--os-border)] bg-white text-[var(--os-text)]"
-                      : "bg-slate-950 text-white"
+                      ? "border border-[var(--os-border)] bg-[var(--os-surface)] text-[var(--os-text)]"
+                      : "bg-[var(--os-navy)] text-[var(--os-sidebar-text)]"
                   }`}
                 >
                   <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
@@ -290,7 +290,7 @@ export function CreamyChat({
 
           {loading && (
             <div className="flex justify-start">
-              <div className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-white px-4 py-3 text-sm text-[var(--os-text-muted)] shadow-[var(--os-shadow-sm)]">
+              <div className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] px-4 py-3 text-sm text-[var(--os-text-muted)] shadow-[var(--os-shadow-sm)]">
                 Creamy está pensando…
               </div>
             </div>
@@ -300,7 +300,7 @@ export function CreamyChat({
       </div>
 
       {error && (
-        <div className="mx-5 mb-3 flex items-start gap-2 rounded-[var(--os-radius-sm)] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+        <div className="mx-5 mb-3 flex items-start gap-2 rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-3 py-2 text-sm text-[var(--genus-error)]">
           <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <p>{error}</p>
         </div>
@@ -319,7 +319,7 @@ export function CreamyChat({
           maxLength={4000}
           placeholder="Preguntale a Creamy por trabajos, lotes, OE/OA, MP o Calidad…"
           disabled={loading}
-          className={`${compact ? "min-h-16" : "min-h-20"} max-h-32 w-full resize-none rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-white px-3 py-2 text-sm text-[var(--os-text)] outline-none transition focus:border-[var(--os-teal)] focus:ring-2 focus:ring-[var(--os-teal-muted)] disabled:bg-slate-50`}
+          className={`${compact ? "min-h-16" : "min-h-20"} max-h-32 w-full resize-none rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm text-[var(--os-text)] outline-none transition focus:border-[var(--os-teal)] focus:ring-2 focus:ring-[var(--os-teal-muted)] disabled:bg-[var(--os-surface-muted)]`}
         />
         <div className="mt-3 flex items-center justify-between gap-2">
           {showHeaderActions ? (
@@ -339,7 +339,7 @@ export function CreamyChat({
               <button
                 type="button"
                 onClick={stop}
-                className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700"
+                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-3 py-2 text-xs font-semibold text-[var(--genus-error)]"
               >
                 <Square className="size-3" aria-hidden="true" />
                 Detener
@@ -349,7 +349,7 @@ export function CreamyChat({
               type="button"
               onClick={handleSubmit}
               disabled={loading || !input.trim()}
-              className="inline-flex items-center gap-2 rounded-full bg-[var(--os-teal)] px-4 py-2 text-sm font-semibold text-white shadow-[var(--os-shadow-sm)] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-full bg-[var(--os-action)] px-4 py-2 text-sm font-semibold text-white shadow-[var(--os-shadow-sm)] transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Enviar
               <Send className="size-4" aria-hidden="true" />
