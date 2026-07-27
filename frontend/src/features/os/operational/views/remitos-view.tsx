@@ -15,7 +15,7 @@ import {
   triggerRemitoDownload,
   updateRemitoDraftApi,
 } from "@/lib/remitos/remitos-client";
-import { formatLoteVtoCell, lineTotalUnitsFromCajas } from "@/lib/remitos/line-qty";
+import { formatLoteVtoCell, lineTotalCajas, lineTotalUnitsFromCajas } from "@/lib/remitos/line-qty";
 import {
   canAccessRemitos,
   type RemitoCajaCombo,
@@ -632,6 +632,15 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                         className="space-y-2 rounded border border-[var(--os-border)] p-3 text-xs"
                         data-testid={`remito-line-editor-${idx}`}
                       >
+                        <div>
+                          <p className="text-sm font-semibold uppercase">{l.product}</p>
+                          <p className="text-[var(--os-text-muted)]">
+                            {formatCajasSummary(l).replace(/\//g, " · ")}
+                          </p>
+                          <p className="mt-1 font-medium">
+                            Total producto: {l.totalUnits} unidades
+                          </p>
+                        </div>
                         <div className="grid grid-cols-2 gap-2">
                           <label className="block">
                             Producto
@@ -778,6 +787,26 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       </div>
                     ))}
                   </div>
+                  {(() => {
+                    const totalBultos = draftLines.reduce((s, l) => s + lineTotalCajas(l), 0);
+                    const totalUnidades = draftLines.reduce((s, l) => {
+                      const u = lineTotalUnitsFromCajas(l);
+                      return s + (u > 0 ? u : l.totalUnits || 0);
+                    }, 0);
+                    return (
+                      <div
+                        className="rounded border border-[var(--os-border)] bg-[var(--os-bg,#f8fafc)] p-3 text-sm"
+                        data-testid="remito-edit-summary"
+                      >
+                        <h4 className="mb-2 font-semibold">RESUMEN DEL REMITO</h4>
+                        <ul className="space-y-1">
+                          <li>Total de productos: {draftLines.length}</li>
+                          <li>Total de bultos: {totalBultos}</li>
+                          <li className="font-semibold">TOTAL DE UNIDADES: {totalUnidades}</li>
+                        </ul>
+                      </div>
+                    );
+                  })()}
                   <div className="flex justify-end gap-2">
                     <Button type="button" variant="secondary" onClick={closeModal}>
                       Cancelar

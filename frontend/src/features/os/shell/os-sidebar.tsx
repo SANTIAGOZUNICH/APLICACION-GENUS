@@ -24,6 +24,8 @@ import {
   ShieldCheck,
   Tags,
   XCircle,
+  FolderOpen,
+  BarChart3,
 } from "lucide-react";
 import type { SidebarItemId } from "@/lib/role-engine/types";
 import type { CreamyTeaser } from "@/features/os/session/preview-context";
@@ -63,6 +65,8 @@ const ICONS = {
   ver_calidad: ShieldCheck,
   ver_materia_prima: Boxes,
   remitos: FileText,
+  procedimientos: FolderOpen,
+  metricas: BarChart3,
 } as const;
 
 export const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
@@ -100,6 +104,8 @@ export const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
   ver_calidad: "Calidad",
   ver_materia_prima: "Materias Primas",
   remitos: "Remitos",
+  procedimientos: "Procedimientos",
+  metricas: "Métricas",
 };
 
 interface OsSidebarProps {

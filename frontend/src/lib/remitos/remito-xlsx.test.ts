@@ -80,17 +80,55 @@ describe("buildRemitoXlsx — REMITO_MODELO_APP", () => {
     expect(sheet!.getCell("L23").value).toBe(3);
     expect(sheet!.getCell("N23").value).toBe(4);
     const a23 = sheet!.getCell("A23").value as ExcelJS.CellFormulaValue;
-    expect(a23).toMatchObject({ formula: "D23*F23+H23*J23+L23*N23" });
+    expect(a23).toMatchObject({ formula: "D23*F23+H23*J23+L23*N23", result: 37 });
     expect(String(sheet!.getCell("C24").value)).toContain("L: 1234");
     expect(String(sheet!.getCell("C24").value)).toContain("VTO: 2/8");
     expect(sheet!.getCell("C47").value).toBe("TOTAL BULTOS: ");
     const a47 = sheet!.getCell("A47").value as ExcelJS.CellFormulaValue;
-    expect(a47).toMatchObject({ formula: "A23" });
+    expect(a47).toMatchObject({ formula: "A23", result: 37 });
     const d47 = sheet!.getCell("D47").value as ExcelJS.CellFormulaValue;
     expect(d47.formula).toContain("D23");
     expect(d47.formula).toContain("L23");
+    expect(d47.result).toBe(6); // 2+1+3 cajas
     expect(sheet!.pageSetup.orientation).toBe("portrait");
     expect(sheet!.pageSetup.scale).toBe(81);
+  });
+
+  it("escribe totales por producto y general para CREMA+SHAMPOO", async () => {
+    const bytes = await buildRemitoXlsx(
+      remito([
+        line({
+          id: "l1",
+          workItemId: "w1",
+          product: "CREMA TEST",
+          cajas1: 100,
+          unidades1: 10,
+          totalUnits: 1000,
+        }),
+        line({
+          id: "l2",
+          workItemId: "w2",
+          product: "SHAMPOO TEST",
+          cajas1: 60,
+          unidades1: 20,
+          totalUnits: 1200,
+          sortOrder: 1,
+        }),
+      ])
+    );
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(bytes);
+    const sheet = wb.getWorksheet("THELMA Y LOUISE")!;
+    const a23 = sheet.getCell("A23").value as ExcelJS.CellFormulaValue;
+    const a27 = sheet.getCell("A27").value as ExcelJS.CellFormulaValue;
+    const a47 = sheet.getCell("A47").value as ExcelJS.CellFormulaValue;
+    const d47 = sheet.getCell("D47").value as ExcelJS.CellFormulaValue;
+    expect(a23).toMatchObject({ result: 1000 });
+    expect(a27).toMatchObject({ result: 1200 });
+    expect(a47).toMatchObject({ formula: "A23+A27", result: 2200 });
+    expect(d47.result).toBe(160);
+    expect(d47.formula).toContain("D23");
+    expect(d47.formula).toContain("D27");
   });
 
   it("inserta bloques antes de totales si hay más de 6 productos", async () => {
@@ -123,7 +161,7 @@ describe("buildRemitoXlsx — REMITO_MODELO_APP", () => {
     expect(PRODUCT_BLOCK_ROWS).toHaveLength(6);
   });
 
-  it("anota EXTRA cuando hay más de 3 combinaciones de caja", async () => {
+  it("incluye cajas extra en fórmulas de unidades y TOTAL BULTOS", async () => {
     const bytes = await buildRemitoXlsx(
       remito([
         line({
@@ -142,8 +180,15 @@ describe("buildRemitoXlsx — REMITO_MODELO_APP", () => {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(bytes);
     const sheet = wb.getWorksheet("THELMA Y LOUISE")!;
-    expect(sheet.getCell("A23").value).toBe(23);
+    const a23 = sheet.getCell("A23").value as ExcelJS.CellFormulaValue;
+    expect(a23).toMatchObject({
+      formula: "D23*F23+H23*J23+L23*N23+6",
+      result: 23,
+    });
     expect(String(sheet.getCell("C24").value)).toContain("EXTRA:");
     expect(String(sheet.getCell("C24").value)).toContain("2×3");
+    const d47 = sheet.getCell("D47").value as ExcelJS.CellFormulaValue;
+    expect(d47.formula).toContain("+2");
+    expect(d47.result).toBe(5); // 1+1+1+2
   });
 });

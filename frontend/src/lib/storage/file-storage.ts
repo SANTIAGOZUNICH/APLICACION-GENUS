@@ -192,6 +192,15 @@ export function remitoStorageKey(params: {
   return `remitos/${params.year}/${params.remitoId}/v${params.version}/remito.${ext}`;
 }
 
+export function procedureStorageKey(params: {
+  folderId: string;
+  fileId: string;
+  version: number;
+  fileName: string;
+}): string {
+  return `procedimientos/${params.folderId}/${params.fileId}/v${params.version}/${safeFileName(params.fileName)}`;
+}
+
 class VercelBlobPrivateStorage implements FileStorageAdapter {
   sha256(bytes: Buffer | Uint8Array): string {
     return sha256Hex(bytes);

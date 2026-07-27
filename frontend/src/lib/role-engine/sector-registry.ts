@@ -26,7 +26,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Reportar problema",
       "Registrar avance",
     ],
-    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "historial", "avisos"],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "historial", "avisos", "procedimientos", "metricas"],
     creamyContext: {
       role: "Copiloto de envasado masivo",
       topics: ["prioridades", "OA", "bloqueos", "insumos", "entregas"],
@@ -64,7 +64,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Entregar a Calidad",
       "Reportar problema",
     ],
-    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "historial", "avisos"],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "historial", "avisos", "procedimientos", "metricas"],
     creamyContext: {
       role: "Copiloto de envasado premium",
       topics: ["prioridades", "OA", "lotes premium", "insumos", "entregas"],
@@ -95,7 +95,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Marcar terminada",
       "Observaciones",
     ],
-    sidebarItems: ["mi_trabajo", "ordenes_elaboracion", "historial", "avisos"],
+    sidebarItems: ["mi_trabajo", "ordenes_elaboracion", "historial", "avisos", "procedimientos"],
     creamyContext: {
       role: "Copiloto de elaboración",
       topics: ["OE", "kg", "responsable", "lotes", "prioridades"],
@@ -120,7 +120,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     visibleEntities: ["work_item", "oa", "lote", "pedido"],
     workItemSources: ["semanas_2026"],
     allowedActions: ["Marcar codificado", "Reportar problema", "Consultar lote", "Gestionar asignación de lotes"],
-    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "asignacion_lotes", "consulta", "plan_semanal", "avisos"],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "asignacion_lotes", "consulta", "plan_semanal", "avisos", "procedimientos"],
     creamyContext: {
       role: "Copiloto de codificado",
       topics: ["cola de codificación", "lotes", "OA", "asignación de lotes"],
@@ -158,6 +158,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "rechazados",
       "asignacion_lotes",
       "avisos",
+      "procedimientos",
     ],
     creamyContext: {
       role: "Copiloto de calidad",
@@ -194,6 +195,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "avisos",
       "avisos_me",
       "semanas_produccion",
+      "procedimientos",
     ],
     creamyContext: {
       role: "Copiloto de depósito",
@@ -219,7 +221,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     visibleEntities: ["insumo", "oe", "lote", "pedido"],
     workItemSources: ["semanas_2026"],
     allowedActions: ["Registrar entrega MP", "Reportar faltante", "Consultar OE"],
-    sidebarItems: ["stock", "mp_ingresos", "control_mp", "mp_compras", "ordenes_elaboracion", "historial", "avisos"],
+    sidebarItems: ["stock", "mp_ingresos", "control_mp", "mp_compras", "ordenes_elaboracion", "historial", "avisos", "procedimientos"],
     creamyContext: {
       role: "Copiloto de materia prima",
       topics: ["stock MP", "ingresos MP", "control semanal", "compras MP"],
@@ -244,7 +246,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     visibleEntities: ["pedido", "oa", "oe", "plan_semanal"],
     workItemSources: ["pedidos_2026"],
     allowedActions: ["Consultar pedido", "Ver entregas", "Ver plan semanal"],
-    sidebarItems: ["mi_trabajo", "consulta", "plan_semanal", "configuracion"],
+    sidebarItems: ["mi_trabajo", "consulta", "plan_semanal", "configuracion", "procedimientos"],
     creamyContext: {
       role: "Copiloto comercial",
       topics: ["pedidos", "entregas", "clientes", "compromisos"],
@@ -298,6 +300,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "remitos",
       "historial",
       "avisos",
+      "procedimientos",
     ],
     sidebarLabelOverrides: { mi_trabajo: "Panel general" },
     creamyContext: {
@@ -333,7 +336,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     visibleEntities: ["pedido", "plan_semanal", "lote"],
     workItemSources: ["semanas_2026", "pedidos_2026"],
     allowedActions: ["Ver panorama", "Consultar pedido", "Ver alertas"],
-    sidebarItems: ["mi_trabajo", "consulta", "plan_semanal", "configuracion"],
+    sidebarItems: ["mi_trabajo", "consulta", "plan_semanal", "configuracion", "procedimientos"],
     restrictedSidebarItems: ["direccion"],
     creamyContext: {
       role: "Copiloto ejecutivo",

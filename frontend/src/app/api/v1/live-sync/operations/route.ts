@@ -116,17 +116,7 @@ export async function POST(request: Request) {
         decidedBy: body.decidedBy,
         observation: body.observation,
       });
-      if (body.status === "aprobado") {
-        const { softUpsertRemitoFromQualityApproval } = await import(
-          "@/lib/remitos/quality-hook"
-        );
-        await softUpsertRemitoFromQualityApproval({
-          itemId: body.itemId,
-          status: body.status,
-          actorEmail: body.decidedBy,
-          actorSector: body.actorSectorId,
-        });
-      }
+      // Aprobar NO crea remito/borrador/Blob. Producción usa GENERAR REMITO.
       return NextResponse.json({ ok: true, revision: serverOperationalState.getRevision(), record });
     }
     case "cancel_work": {

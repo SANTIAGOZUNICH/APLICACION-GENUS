@@ -104,8 +104,17 @@ function toFillLine(
   };
 }
 
-function productFormula(row: number): string {
-  return `D${row}*F${row}+H${row}*J${row}+L${row}*N${row}`;
+function productFormula(row: number, extraUnits = 0): string {
+  const base = `D${row}*F${row}+H${row}*J${row}+L${row}*N${row}`;
+  return extraUnits > 0 ? `${base}+${extraUnits}` : base;
+}
+
+function extrasUnits(extras: RemitoCajaCombo[]): number {
+  return extras.reduce((s, e) => s + (e.cajas || 0) * (e.unidades || 0), 0);
+}
+
+function extrasCajas(extras: RemitoCajaCombo[]): number {
+  return extras.reduce((s, e) => s + (e.cajas || 0), 0);
 }
 
 function clearProductBlock(sheet: ExcelJS.Worksheet, dataRow: number) {
@@ -125,14 +134,14 @@ function writeProductBlock(sheet: ExcelJS.Worksheet, dataRow: number, line: Fill
   const c2 = combos[1] ?? { cajas: 0, unidades: 0 };
   const c3 = combos[2] ?? { cajas: 0, unidades: 0 };
   const extras = combos.slice(3);
+  const extraU = extrasUnits(extras);
+  const total = line.totalUnits;
 
-  const hasExtras = extras.length > 0;
-  if (hasExtras) {
-    // Fórmula Excel solo cubre 3 slots; el total completo va como valor.
-    sheet.getCell(`A${dataRow}`).value = line.totalUnits;
-  } else {
-    sheet.getCell(`A${dataRow}`).value = { formula: productFormula(dataRow) };
-  }
+  // Fórmula auditable + result cacheado (Excel/LibreOffice muestran valor sin recalcular).
+  sheet.getCell(`A${dataRow}`).value = {
+    formula: productFormula(dataRow, extraU),
+    result: total,
+  };
 
   sheet.getCell(`C${dataRow}`).value = line.product;
 
@@ -149,7 +158,7 @@ function writeProductBlock(sheet: ExcelJS.Worksheet, dataRow: number, line: Fill
   sheet.getCell(`N${dataRow}`).value = c3.unidades || null;
 
   let loteVto = formatLoteVtoCell(line.lote, line.vto);
-  if (hasExtras) {
+  if (extras.length > 0) {
     const extraTxt = extras
       .map((e) => `${e.cajas}×${e.unidades}`)
       .join(" + ");
@@ -219,19 +228,31 @@ function writeHeader(sheet: ExcelJS.Worksheet, remito: RemitoRecord) {
 function writeTotals(
   sheet: ExcelJS.Worksheet,
   dataRows: number[],
-  filledRows: number[],
+  filledLines: Array<{ row: number; line: FillLine }>,
   totalsRow: number
 ) {
+  const filledRows = filledLines.map((f) => f.row);
   const unitParts = filledRows.map((r) => `A${r}`);
-  const cajaParts = filledRows.flatMap((r) => [`D${r}`, `H${r}`, `L${r}`]);
+  const totalUnits = filledLines.reduce((s, f) => s + f.line.totalUnits, 0);
+  const totalBultos = filledLines.reduce((s, f) => s + lineTotalCajas(f.line), 0);
+
+  // TOTAL BULTOS: D/H/L de cada producto + literales de cajas extra (no hay columnas extra).
+  const cajaParts: string[] = [];
+  for (const { row, line } of filledLines) {
+    cajaParts.push(`D${row}`, `H${row}`, `L${row}`);
+    const extra = extrasCajas(line.extraCajas ?? []);
+    if (extra > 0) cajaParts.push(String(extra));
+  }
 
   sheet.getCell(`A${totalsRow}`).value = unitParts.length
-    ? { formula: unitParts.join("+") }
+    ? { formula: unitParts.join("+"), result: totalUnits }
     : 0;
   sheet.getCell(`C${totalsRow}`).value = "TOTAL BULTOS: ";
   const cajaFormula = cajaParts.length ? cajaParts.join("+") : "0";
-  // D47:I47 está combinado en el modelo; escribir solo en la celda ancla.
-  sheet.getCell(`D${totalsRow}`).value = { formula: cajaFormula };
+  // D47:I47 combinado — escribir fórmula+result en ancla D (única celda visible del merge).
+  const dCell = sheet.getCell(`D${totalsRow}`);
+  dCell.value = { formula: cajaFormula, result: totalBultos };
+  dCell.alignment = { ...(dCell.alignment ?? {}), horizontal: "left", vertical: "middle" };
 
   // Limpiar bloques de plantilla no usados (muestra THELMA)
   for (const r of dataRows) {
@@ -246,11 +267,11 @@ function fillTemplateSheet(sheet: ExcelJS.Worksheet, remito: RemitoRecord, lines
   for (const r of PRODUCT_BLOCK_ROWS) clearProductBlock(sheet, r);
 
   const { dataRows, totalsRow } = ensureProductBlocks(sheet, Math.max(lines.length, 1));
-  const filled: number[] = [];
+  const filled: Array<{ row: number; line: FillLine }> = [];
   lines.forEach((line, i) => {
     const row = dataRows[i]!;
     writeProductBlock(sheet, row, line);
-    filled.push(row);
+    filled.push({ row, line });
   });
   writeTotals(sheet, dataRows, filled, totalsRow);
 }

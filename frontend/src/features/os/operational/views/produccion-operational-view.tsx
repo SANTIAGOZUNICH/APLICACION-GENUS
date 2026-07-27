@@ -34,14 +34,20 @@ import { Button } from "@/components/ui/button";
 import {
   collectSameClientDateApprovedPackaging,
   isPackagingQualityItem,
-  resolveRemitoInputFromQuality,
 } from "@/lib/remitos/from-quality";
+import {
+  buildComposeLinesFromQuality,
+  composeLineToApprovalInput,
+  producedVsBoxedWarning,
+  type RemitoComposeLine,
+} from "@/lib/remitos/compose-from-quality";
 import {
   generateRemitoApi,
   remitoStatusForWorkApi,
   upsertRemitoDraftApi,
 } from "@/lib/remitos/remitos-client";
 import type { RemitoWorkItemStatus } from "@/lib/remitos/types";
+import { RemitoComposeEditor } from "../components/remito-compose-editor";
 
 const PRODUCCION_TABS = [
   { id: "rechazados", label: "Rechazados" },
@@ -101,10 +107,10 @@ export function ProduccionOperationalView({
   >({});
   const [remitoBusy, setRemitoBusy] = useState(false);
   const [remitoError, setRemitoError] = useState<string | null>(null);
-  const [generateModal, setGenerateModal] = useState<{
-    remitoId: string;
-    items: QualityItem[];
-  } | null>(null);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeLines, setComposeLines] = useState<RemitoComposeLine[]>([]);
+  const [composeClient, setComposeClient] = useState("");
+  const [composeDate, setComposeDate] = useState("");
   const [displayNameInput, setDisplayNameInput] = useState("");
   const isNativeEmpty =
     data?.source === "native" && !loading && (data.workItems?.length ?? 0) === 0;
@@ -214,38 +220,60 @@ export function ProduccionOperationalView({
     if (activeTab === "aprobados") void refreshRemitoStatuses();
   }, [activeTab, refreshRemitoStatuses]);
 
-  async function handleGenerarRemito(seed: QualityItem) {
+  function handleGenerarRemito(seed: QualityItem) {
+    setRemitoError(null);
+    const built = buildComposeLinesFromQuality(seed, aprobados, workItems);
+    if (built.lines.length === 0) {
+      setRemitoError("No hay productos aptos para remito en este grupo.");
+      return;
+    }
+    setComposeLines(built.lines);
+    setComposeClient(built.clientDisplay);
+    setComposeDate(built.deliveryDate);
+    setDisplayNameInput(built.clientDisplay || seed.client || "Remito");
+    setComposeOpen(true);
+  }
+
+  async function persistComposeLines(): Promise<string> {
+    let remitoId: string | null = null;
+    for (const line of composeLines) {
+      const input = composeLineToApprovalInput(line, composeClient, composeDate);
+      const result = await upsertRemitoDraftApi(session, input);
+      remitoId = result.remito.id;
+    }
+    if (!remitoId) throw new Error("No se pudo crear remito.");
+    return remitoId;
+  }
+
+  async function saveComposeDraft() {
     setRemitoBusy(true);
     setRemitoError(null);
     try {
-      const group = collectSameClientDateApprovedPackaging(seed, aprobados, workItems);
-      let remitoId: string | null = null;
-      for (const item of group) {
-        const input = resolveRemitoInputFromQuality(item, workItems);
-        if (!input) continue;
-        const result = await upsertRemitoDraftApi(session, input);
-        remitoId = result.remito.id;
-      }
-      if (!remitoId) throw new Error("No se pudo crear borrador de remito.");
-      setDisplayNameInput(seed.client || "Remito");
-      setGenerateModal({ remitoId, items: group });
+      await persistComposeLines();
+      setComposeOpen(false);
       await refreshRemitoStatuses();
+      navigateTo({ view: "remitos" });
     } catch (e) {
-      setRemitoError(e instanceof Error ? e.message : "Error al preparar remito");
+      setRemitoError(e instanceof Error ? e.message : "Error al guardar borrador");
     } finally {
       setRemitoBusy(false);
     }
   }
 
-  async function confirmGenerateRemito() {
-    if (!generateModal) return;
+  async function generateComposeExcel() {
+    const warning = producedVsBoxedWarning(composeLines);
+    if (warning) {
+      const ok = window.confirm(
+        `${warning}\n\n¿Generar el Excel con las cantidades del editor de todas formas?`
+      );
+      if (!ok) return;
+    }
     setRemitoBusy(true);
     setRemitoError(null);
     try {
-      await generateRemitoApi(session, generateModal.remitoId, {
-        displayName: displayNameInput,
-      });
-      setGenerateModal(null);
+      const remitoId = await persistComposeLines();
+      await generateRemitoApi(session, remitoId, { displayName: displayNameInput });
+      setComposeOpen(false);
       await refreshRemitoStatuses();
       navigateTo({ view: "remitos" });
     } catch (e) {
@@ -253,6 +281,13 @@ export function ProduccionOperationalView({
     } finally {
       setRemitoBusy(false);
     }
+  }
+
+  function cancelCompose() {
+    // Cancelar sin persistir: no borrador, no metadata, no Blob.
+    setComposeOpen(false);
+    setComposeLines([]);
+    setRemitoError(null);
   }
 
   function openRemito(status: RemitoWorkItemStatus) {
@@ -330,21 +365,42 @@ export function ProduccionOperationalView({
             );
           }
           return (
-            <Button
-              type="button"
-              size="sm"
-              disabled={remitoBusy}
-              onClick={() => void handleGenerarRemito(row)}
-              data-testid={`remito-generar-${wid}`}
-            >
-              GENERAR REMITO
-            </Button>
+            <div className="flex max-w-[12rem] flex-col gap-1">
+              <Button
+                type="button"
+                size="sm"
+                disabled={remitoBusy}
+                onClick={() => handleGenerarRemito(row)}
+                data-testid={`remito-generar-${wid}`}
+              >
+                GENERAR REMITO
+              </Button>
+              {(() => {
+                const n = collectSameClientDateApprovedPackaging(
+                  row,
+                  aprobados,
+                  workItems
+                ).length;
+                return n > 1 ? (
+                  <span
+                    className="text-[10px] text-[var(--os-text-muted)]"
+                    data-testid={`remito-group-hint-${wid}`}
+                  >
+                    {n} productos agrupados (mismo cliente y fecha)
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-[var(--os-text-muted)]">
+                    Apto para remito
+                  </span>
+                );
+              })()}
+            </div>
           );
         },
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps -- handlers use latest closures
-    [getQualityObservation, remitoBusy, remitoStatusByWork]
+    [getQualityObservation, remitoBusy, remitoStatusByWork, aprobados, workItems]
   );
 
   const workColumns: OperationalTableColumn<WorkItem>[] = useMemo(
@@ -555,54 +611,23 @@ export function ProduccionOperationalView({
         )}
       </div>
 
-      {generateModal ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          data-testid="produccion-remito-generate-modal"
-        >
-          <div className="w-full max-w-md space-y-3 rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-4 shadow-lg">
-            <h3 className="font-semibold">Generar remito</h3>
-            <p className="text-sm text-[var(--os-text-muted)]">
-              Se incluyen {generateModal.items.length} producto
-              {generateModal.items.length === 1 ? "" : "s"} del mismo cliente y fecha. Elegí el
-              nombre del remito.
-            </p>
-            <ul className="max-h-40 space-y-1 overflow-y-auto text-xs">
-              {generateModal.items.map((it) => (
-                <li key={it.id}>
-                  {it.product} · {it.client} · {it.deliveryDate || "—"}
-                </li>
-              ))}
-            </ul>
-            <label className="block text-sm">
-              Nombre
-              <input
-                className="mt-1 w-full rounded border border-[var(--os-border)] px-2 py-1.5"
-                value={displayNameInput}
-                onChange={(e) => setDisplayNameInput(e.target.value)}
-                data-testid="produccion-remito-display-name"
-              />
-            </label>
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setGenerateModal(null)}
-                disabled={remitoBusy}
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="button"
-                disabled={remitoBusy || !displayNameInput.trim()}
-                onClick={() => void confirmGenerateRemito()}
-                data-testid="produccion-remito-generate-confirm"
-              >
-                Generar y abrir Remitos
-              </Button>
-            </div>
-          </div>
-        </div>
+      {composeOpen ? (
+        <RemitoComposeEditor
+          title="Generar remito"
+          lines={composeLines}
+          onChangeLines={setComposeLines}
+          clientDisplay={composeClient}
+          onClientChange={setComposeClient}
+          deliveryDate={composeDate}
+          onDeliveryDateChange={setComposeDate}
+          displayName={displayNameInput}
+          onDisplayNameChange={setDisplayNameInput}
+          busy={remitoBusy}
+          error={remitoError}
+          onCancel={cancelCompose}
+          onSaveDraft={() => void saveComposeDraft()}
+          onGenerateExcel={() => void generateComposeExcel()}
+        />
       ) : null}
     </TwinShell>
   );

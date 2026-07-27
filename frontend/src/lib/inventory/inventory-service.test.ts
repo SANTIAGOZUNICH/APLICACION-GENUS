@@ -62,6 +62,7 @@ describe("DEPOSITO acceso y navegación", () => {
       "avisos",
       "avisos_me",
       "semanas_produccion",
+      "procedimientos",
     ]);
   });
 

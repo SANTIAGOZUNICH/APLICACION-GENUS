@@ -115,6 +115,8 @@ export const SIDEBAR_ITEM_IDS = [
   "ver_calidad",
   "ver_materia_prima",
   "remitos",
+  "procedimientos",
+  "metricas",
 ] as const;
 
 export type SidebarItemId = (typeof SIDEBAR_ITEM_IDS)[number];
