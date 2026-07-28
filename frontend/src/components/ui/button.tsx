@@ -9,13 +9,13 @@ const buttonVariants = cva(
     variants: {
       variant: {
         primary:
-          "bg-[var(--color-action)] text-white shadow-[var(--shadow-sm)] hover:bg-[var(--color-action)]/90",
+          "os-btn-motion bg-[var(--color-action)] text-white shadow-[var(--shadow-sm)] hover:bg-[var(--color-action)]/90 hover:shadow-[var(--shadow-md)]",
         secondary:
-          "border border-[var(--border)] bg-[var(--surface-elevated)] text-[var(--foreground)] shadow-[var(--shadow-sm)] hover:border-[var(--color-accent)]/35 hover:bg-[var(--surface)]",
+          "os-btn-motion border border-[var(--border)] bg-[var(--surface-elevated)] text-[var(--foreground)] shadow-[var(--shadow-sm)] hover:border-[var(--color-accent)]/35 hover:bg-[var(--surface)]",
         tertiary:
-          "text-[var(--color-action)] hover:bg-[var(--sidebar-item-active-bg)]",
+          "os-btn-motion text-[var(--color-action)] hover:bg-[var(--sidebar-item-active-bg)]",
         destructive:
-          "bg-[var(--color-problem)] text-white hover:bg-[var(--color-problem)]/90",
+          "os-btn-motion bg-[var(--color-problem)] text-white hover:bg-[var(--color-problem)]/90",
       },
       size: {
         sm: "h-8 px-3 text-xs",

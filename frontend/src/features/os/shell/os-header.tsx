@@ -13,6 +13,7 @@ interface OsHeaderProps {
   onBack?: () => void;
   onOpenMenu?: () => void;
   onLogout?: () => void;
+  scrolled?: boolean;
 }
 
 function todayLabel(): string {
@@ -33,6 +34,7 @@ export function OsHeader({
   onBack,
   onOpenMenu,
   onLogout,
+  scrolled = false,
 }: OsHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuId = useId();
@@ -58,7 +60,9 @@ export function OsHeader({
 
   return (
     <header
-      className="flex shrink-0 items-center justify-between border-b border-[var(--os-border)] bg-[var(--os-surface-glass)] px-4 backdrop-blur-md sm:px-6 md:px-8"
+      className={`os-header-glass flex shrink-0 items-center justify-between px-4 sm:px-6 md:px-8 ${
+        scrolled ? "is-scrolled" : ""
+      }`}
       style={{ height: "var(--os-header-height)" }}
     >
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">

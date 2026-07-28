@@ -15,7 +15,7 @@ interface OperationalTabsProps {
   onChange: (id: string) => void;
 }
 
-/** Pestañas operativas — Industrial Glass, sin decoración premium. */
+/** Pestañas operativas — Industrial Glass, indicador animado. */
 export function OperationalTabs({ tabs, activeId, onChange }: OperationalTabsProps) {
   return (
     <div
@@ -31,7 +31,7 @@ export function OperationalTabs({ tabs, activeId, onChange }: OperationalTabsPro
             role="tab"
             aria-selected={active}
             onClick={() => onChange(tab.id)}
-            className={`-mb-px rounded-t-[var(--os-radius-sm)] px-4 py-2.5 text-sm font-medium transition-colors duration-[var(--genus-duration-hover,140ms)] ${
+            className={`relative -mb-px rounded-t-[var(--os-radius-sm)] px-4 py-2.5 text-sm font-medium transition-[color,background-color,border-color] duration-[var(--genus-duration-hover,140ms)] ${
               active
                 ? "border border-b-[var(--os-surface)] border-[var(--os-border)] bg-[var(--os-surface-glass)] text-[var(--os-text)] shadow-[var(--os-shadow-sm)]"
                 : "text-[var(--os-text-muted)] hover:text-[var(--os-text)]"
@@ -41,6 +41,12 @@ export function OperationalTabs({ tabs, activeId, onChange }: OperationalTabsPro
             {tab.count !== undefined && (
               <span className="ml-1.5 text-xs text-[var(--os-text-muted)]">({tab.count})</span>
             )}
+            <span
+              aria-hidden="true"
+              className={`pointer-events-none absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-[var(--os-teal)] transition-opacity duration-[var(--genus-duration-hover,140ms)] ${
+                active ? "opacity-100" : "opacity-0"
+              }`}
+            />
           </button>
         );
       })}
@@ -78,10 +84,10 @@ export function OperationalTable<T>({
   }
 
   return (
-    <div className="overflow-x-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)]">
+    <div className="os-scroll-main overflow-x-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)]">
       <table className="w-full min-w-[640px] border-collapse text-sm">
-        <thead>
-          <tr className="border-b border-[var(--os-border)] bg-[var(--os-surface-muted)]/70">
+        <thead className="sticky top-0 z-[1]">
+          <tr className="border-b border-[var(--os-border)] bg-[var(--os-surface-glass)] backdrop-blur-md">
             {columns.map((col) => (
               <th
                 key={col.key}
@@ -96,7 +102,7 @@ export function OperationalTable<T>({
           {rows.map((row) => (
             <tr
               key={rowKey(row)}
-              className="border-b border-[var(--os-border-subtle)] last:border-b-0 transition-colors hover:bg-[var(--os-teal-soft)]/40"
+              className="border-b border-[var(--os-border-subtle)] last:border-b-0 transition-colors hover:bg-[var(--os-teal-soft)]/40 hover:shadow-[inset_3px_0_0_0_rgb(18_191_183_/_0.45)]"
             >
               {columns.map((col) => (
                 <td key={col.key} className={`px-3 py-2.5 align-top ${col.className ?? ""}`}>

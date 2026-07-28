@@ -149,32 +149,39 @@ export function OsSidebar({
         </div>
       </div>
 
-      <nav
-        className="mt-4 min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain px-3 pb-2"
-        aria-label="Menú"
-      >
-        {sidebarItems.map((itemId) => {
-          const Icon = ICONS[itemId];
-          const active = activeNav === itemId;
-          const label = labelOverrides?.[itemId] ?? SIDEBAR_LABELS[itemId];
-          return (
-            <button
-              key={itemId}
-              type="button"
-              onClick={() => onNav?.(itemId)}
-              aria-current={active ? "page" : undefined}
-              className={`flex w-full items-center gap-3 rounded-[var(--os-radius-sm)] px-3 py-2.5 text-left text-sm transition-[color,background-color] duration-[var(--genus-duration-hover,140ms)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--os-sidebar-bg)] ${
-                active
-                  ? "bg-[var(--os-teal-muted)] font-medium text-white shadow-[inset_3px_0_0_0_var(--os-teal)]"
-                  : "text-[var(--os-sidebar-muted)] hover:bg-[var(--os-sidebar-hover)] hover:text-white"
-              }`}
-            >
-              <Icon className="size-4 shrink-0" aria-hidden="true" />
-              {label}
-            </button>
-          );
-        })}
-      </nav>
+      <div className="os-scroll-fade os-scroll-fade-sidebar relative mt-4 min-h-0 flex-1">
+        <nav
+          className="os-scroll-sidebar h-full space-y-0.5 overflow-y-auto overscroll-contain px-3 pb-2"
+          aria-label="Menú"
+        >
+          {sidebarItems.map((itemId) => {
+            const Icon = ICONS[itemId];
+            const active = activeNav === itemId;
+            const label = labelOverrides?.[itemId] ?? SIDEBAR_LABELS[itemId];
+            return (
+              <button
+                key={itemId}
+                type="button"
+                onClick={() => onNav?.(itemId)}
+                aria-current={active ? "page" : undefined}
+                className={`os-nav-item flex w-full items-center gap-3 rounded-[var(--os-radius-sm)] px-3 py-2.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--os-sidebar-bg)] ${
+                  active
+                    ? "bg-[var(--os-teal-muted)] font-medium text-white"
+                    : "text-[var(--os-sidebar-muted)] hover:bg-[var(--os-sidebar-hover)] hover:text-white"
+                }`}
+              >
+                <Icon
+                  className={`size-4 shrink-0 transition-transform duration-[var(--genus-duration-hover,140ms)] ${
+                    active ? "scale-105" : ""
+                  }`}
+                  aria-hidden="true"
+                />
+                {label}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
 
       <div className="shrink-0 border-t border-white/[0.08] px-4 py-4">
         <div className="flex items-center gap-3">

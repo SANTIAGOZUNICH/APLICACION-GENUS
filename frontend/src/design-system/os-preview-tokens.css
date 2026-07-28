@@ -1,5 +1,5 @@
 /**
- * Industrial Glass — layout + motion + ambient background.
+ * Industrial Glass — layout + motion + scrollbars + ambient.
  * Colores: --genus-* vía genus-os-bridge.css.
  */
 
@@ -12,31 +12,216 @@
   --os-status-height: 2rem;
   --os-space-section: 2.5rem;
   --os-space-block: 1.25rem;
+  --os-rail-width: 3px;
+  --os-scroll-size: 7px;
+  --os-scroll-thumb: rgb(15 42 56 / 0.28);
+  --os-scroll-thumb-hover: rgb(18 191 183 / 0.55);
+  --os-scroll-track: transparent;
+  --os-scroll-sidebar-thumb: rgb(18 191 183 / 0.28);
+  --os-scroll-sidebar-thumb-hover: rgb(85 226 216 / 0.55);
+  --os-scroll-sidebar-track: rgb(255 255 255 / 0.03);
 
-  /* Ambient industrial background */
+  position: relative;
+  isolation: isolate;
+  min-height: 100%;
+  color: var(--genus-text-primary);
   background-color: var(--genus-surface-bg);
   background-image:
     radial-gradient(ellipse 70% 55% at 100% 0%, var(--genus-ambient-teal), transparent 55%),
     radial-gradient(ellipse 55% 45% at 0% 100%, var(--genus-ambient-blue), transparent 50%),
     linear-gradient(180deg, #f7fafc 0%, var(--genus-surface-bg) 42%, #eef3f6 100%);
   background-attachment: fixed;
-  min-height: 100%;
-  color: var(--genus-text-primary);
+  scrollbar-width: thin;
+  scrollbar-color: var(--os-scroll-thumb) var(--os-scroll-track);
 }
 
+/* Ambient moving lights (CSS only) */
 .design-preview-root::before {
   content: "";
   pointer-events: none;
   position: fixed;
-  inset: 0;
+  inset: -20% -10%;
   z-index: var(--genus-z-base);
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 1;
+  background:
+    radial-gradient(ellipse 42% 36% at 18% 28%, rgb(18 191 183 / 0.14), transparent 62%),
+    radial-gradient(ellipse 38% 32% at 86% 18%, rgb(23 105 224 / 0.1), transparent 60%),
+    radial-gradient(ellipse 48% 40% at 72% 88%, rgb(18 191 183 / 0.07), transparent 65%);
+  animation: os-ambient-drift 24s var(--genus-ease-default) infinite alternate;
+  will-change: transform;
+}
+
+/* Technical grid + noise */
+.design-preview-root::after {
+  content: "";
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--genus-z-base) + 1);
+  opacity: 0.045;
+  background-image:
+    linear-gradient(rgb(15 42 56 / 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(15 42 56 / 0.04) 1px, transparent 1px),
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size:
+    48px 48px,
+    48px 48px,
+    auto;
   mix-blend-mode: multiply;
 }
 
-/* Motion */
+/* ========== Scrollbars Industrial Glass ========== */
+.design-preview-root *,
+.design-preview-root {
+  scrollbar-width: thin;
+  scrollbar-color: var(--os-scroll-thumb) var(--os-scroll-track);
+}
+
+.design-preview-root *::-webkit-scrollbar {
+  width: var(--os-scroll-size);
+  height: var(--os-scroll-size);
+}
+
+.design-preview-root *::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.design-preview-root *::-webkit-scrollbar-track {
+  background: var(--os-scroll-track);
+  border-radius: 999px;
+}
+
+.design-preview-root *::-webkit-scrollbar-thumb {
+  background: var(--os-scroll-thumb);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color var(--genus-duration-hover) var(--genus-ease-default);
+}
+
+.design-preview-root *::-webkit-scrollbar-thumb:hover {
+  background: var(--os-scroll-thumb-hover);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.design-preview-root *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.design-preview-root .os-scroll-sidebar {
+  --os-scroll-thumb: var(--os-scroll-sidebar-thumb);
+  --os-scroll-thumb-hover: var(--os-scroll-sidebar-thumb-hover);
+  --os-scroll-track: var(--os-scroll-sidebar-track);
+  scrollbar-color: var(--os-scroll-sidebar-thumb) var(--os-scroll-sidebar-track);
+}
+
+.design-preview-root .os-scroll-main {
+  --os-scroll-thumb: rgb(15 42 56 / 0.26);
+  --os-scroll-thumb-hover: rgb(18 191 183 / 0.5);
+  scrollbar-gutter: stable;
+}
+
+@media (max-width: 767px) {
+  .design-preview-root,
+  .design-preview-root * {
+    scrollbar-width: thin;
+  }
+
+  .design-preview-root *::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+}
+
+/* Scroll fade edges */
+.design-preview-root .os-scroll-fade {
+  position: relative;
+}
+
+.design-preview-root .os-scroll-fade::before,
+.design-preview-root .os-scroll-fade::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  left: 0;
+  right: var(--os-scroll-size);
+  height: 1.25rem;
+  z-index: 2;
+  opacity: 0.85;
+}
+
+.design-preview-root .os-scroll-fade::before {
+  top: 0;
+  background: linear-gradient(180deg, var(--genus-surface-bg) 0%, transparent 100%);
+}
+
+.design-preview-root .os-scroll-fade::after {
+  bottom: 0;
+  background: linear-gradient(0deg, var(--genus-surface-bg) 0%, transparent 100%);
+}
+
+.design-preview-root .os-scroll-fade-sidebar::before {
+  background: linear-gradient(180deg, var(--os-sidebar-bg) 0%, transparent 100%);
+  right: 0;
+}
+
+.design-preview-root .os-scroll-fade-sidebar::after {
+  background: linear-gradient(0deg, var(--os-sidebar-bg-2) 0%, transparent 100%);
+  right: 0;
+}
+
+/* Right tech rail — frames content without eating useful width */
+.design-preview-root .os-right-rail {
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--os-rail-width);
+  z-index: calc(var(--genus-z-sticky) + 1);
+  background: linear-gradient(
+    180deg,
+    rgb(7 25 37 / 0.55) 0%,
+    rgb(18 191 183 / 0.35) 48%,
+    rgb(23 105 224 / 0.28) 100%
+  );
+  box-shadow:
+    -1px 0 12px rgb(18 191 183 / 0.12),
+    0 0 1px rgb(85 226 216 / 0.35);
+  opacity: 0.85;
+}
+
+@media (max-width: 767px) {
+  .design-preview-root .os-right-rail {
+    display: none;
+  }
+}
+
+/* ========== Motion ========== */
+@keyframes os-ambient-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(2.5%, -1.5%, 0) scale(1.04);
+  }
+}
+
 @keyframes os-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes os-page-enter {
   from {
     opacity: 0;
     transform: translateY(6px);
@@ -60,9 +245,11 @@
 
 @keyframes os-drawer-in {
   from {
-    transform: translateX(100%);
+    opacity: 0.92;
+    transform: translateX(12px);
   }
   to {
+    opacity: 1;
     transform: translateX(0);
   }
 }
@@ -70,7 +257,7 @@
 @keyframes os-modal-in {
   from {
     opacity: 0;
-    transform: scale(0.98);
+    transform: scale(0.985);
   }
   to {
     opacity: 1;
@@ -106,6 +293,41 @@
   }
 }
 
+@keyframes os-fab-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 rgb(18 191 183 / 0.18),
+      var(--genus-shadow-md);
+  }
+  50% {
+    box-shadow:
+      0 0 0 10px rgb(18 191 183 / 0),
+      var(--genus-shadow-md);
+  }
+}
+
+@keyframes os-sync-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes os-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .design-preview-root .os-workspace-highlight {
   animation: os-workspace-highlight 2.5s var(--genus-ease-default) both;
 }
@@ -114,16 +336,20 @@
   animation: os-fade-in var(--genus-duration-slow) var(--genus-ease-out) both;
 }
 
+.design-preview-root .os-page-enter {
+  animation: os-page-enter 240ms var(--genus-ease-out) both;
+}
+
 .design-preview-root .os-slide-up {
   animation: os-slide-up var(--genus-duration-panel) var(--genus-ease-out) both;
 }
 
 .design-preview-root .os-drawer {
-  animation: os-drawer-in var(--genus-duration-panel) var(--genus-ease-out) both;
+  animation: os-drawer-in 220ms var(--genus-ease-out) both;
 }
 
 .design-preview-root .os-modal-in {
-  animation: os-modal-in var(--genus-duration-panel) var(--genus-ease-out) both;
+  animation: os-modal-in 220ms var(--genus-ease-out) both;
 }
 
 .design-preview-root .os-pulse-success {
@@ -138,7 +364,7 @@
     var(--os-surface-muted) 75%
   );
   background-size: 200% 100%;
-  animation: os-skeleton 1.4s ease-in-out infinite;
+  animation: os-skeleton 1.8s ease-in-out infinite;
 }
 
 .design-preview-root .os-glass-panel {
@@ -150,16 +376,174 @@
   -webkit-backdrop-filter: blur(12px);
 }
 
+.design-preview-root .os-header-glass {
+  background: rgb(255 255 255 / 0.72);
+  border-bottom: 1px solid var(--genus-border);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.65) inset, 0 4px 18px rgb(7 25 37 / 0.04);
+  transition: box-shadow var(--genus-duration-normal) var(--genus-ease-default);
+}
+
+.design-preview-root .os-header-glass.is-scrolled {
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.55) inset, 0 8px 24px rgb(7 25 37 / 0.08);
+}
+
+.design-preview-root .os-nav-item {
+  transition:
+    color var(--genus-duration-hover) var(--genus-ease-default),
+    background-color var(--genus-duration-hover) var(--genus-ease-default),
+    box-shadow var(--genus-duration-hover) var(--genus-ease-default),
+    transform var(--genus-duration-hover) var(--genus-ease-default);
+}
+
+.design-preview-root .os-nav-item:hover:not([aria-current="page"]) {
+  transform: translateX(2px);
+}
+
+.design-preview-root .os-nav-item[aria-current="page"] {
+  box-shadow:
+    inset 3px 0 0 0 var(--os-teal),
+    0 0 18px rgb(18 191 183 / 0.12);
+}
+
+.design-preview-root .os-nav-item[aria-current="page"] svg {
+  filter: drop-shadow(0 0 4px rgb(85 226 216 / 0.45));
+}
+
+.design-preview-root .os-card-lift {
+  transition:
+    transform var(--genus-duration-hover) var(--genus-ease-default),
+    box-shadow var(--genus-duration-hover) var(--genus-ease-default),
+    border-color var(--genus-duration-hover) var(--genus-ease-default);
+}
+
+.design-preview-root .os-card-lift:hover {
+  transform: translateY(-1px);
+  border-color: rgb(18 191 183 / 0.28);
+  box-shadow: var(--genus-shadow-md);
+}
+
+.design-preview-root .os-btn-motion {
+  transition:
+    transform var(--genus-duration-fast) var(--genus-ease-default),
+    box-shadow var(--genus-duration-hover) var(--genus-ease-default),
+    filter var(--genus-duration-hover) var(--genus-ease-default);
+}
+
+.design-preview-root .os-btn-motion:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.design-preview-root .os-btn-motion:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.design-preview-root .os-fab-breathe {
+  animation: os-fab-breathe 3.6s var(--genus-ease-default) infinite;
+}
+
+.design-preview-root .os-fab-breathe:hover,
+.design-preview-root .os-fab-breathe:focus-visible {
+  animation: none;
+}
+
+.design-preview-root .os-sync-pulse {
+  animation: os-sync-pulse 1.4s var(--genus-ease-default) infinite;
+}
+
+.design-preview-root .os-stagger > * {
+  animation: os-card-enter 220ms var(--genus-ease-out) both;
+}
+
+.design-preview-root .os-stagger > *:nth-child(1) {
+  animation-delay: 0ms;
+}
+.design-preview-root .os-stagger > *:nth-child(2) {
+  animation-delay: 20ms;
+}
+.design-preview-root .os-stagger > *:nth-child(3) {
+  animation-delay: 40ms;
+}
+.design-preview-root .os-stagger > *:nth-child(4) {
+  animation-delay: 60ms;
+}
+.design-preview-root .os-stagger > *:nth-child(5) {
+  animation-delay: 80ms;
+}
+.design-preview-root .os-stagger > *:nth-child(6) {
+  animation-delay: 100ms;
+}
+.design-preview-root .os-stagger > *:nth-child(n + 7) {
+  animation: none;
+}
+
+/* Login scene */
+.design-preview-root .os-login-scene {
+  position: relative;
+  overflow: hidden;
+  background: var(--os-navy);
+}
+
+.design-preview-root .os-login-scene::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: -15%;
+  background:
+    radial-gradient(ellipse 50% 42% at 22% 30%, rgb(18 191 183 / 0.22), transparent 60%),
+    radial-gradient(ellipse 45% 38% at 82% 20%, rgb(23 105 224 / 0.16), transparent 58%),
+    radial-gradient(ellipse 55% 45% at 60% 90%, rgb(18 191 183 / 0.1), transparent 62%),
+    linear-gradient(165deg, #071925 0%, #0b2636 48%, #0a3d45 100%);
+  animation: os-ambient-drift 26s var(--genus-ease-default) infinite alternate;
+}
+
+.design-preview-root .os-login-scene::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0.06;
+  background-image:
+    linear-gradient(rgb(244 248 250 / 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(244 248 250 / 0.08) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.design-preview-root .os-login-form-panel {
+  background: rgb(255 255 255 / 0.86);
+  border: 1px solid rgb(15 42 56 / 0.08);
+  box-shadow: var(--genus-shadow-lg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .design-preview-root::before,
+  .design-preview-root .os-login-scene::before {
+    animation: none !important;
+  }
+
   .design-preview-root .os-workspace-highlight,
   .design-preview-root .os-fade-in,
+  .design-preview-root .os-page-enter,
   .design-preview-root .os-slide-up,
   .design-preview-root .os-drawer,
   .design-preview-root .os-modal-in,
   .design-preview-root .os-pulse-success,
-  .design-preview-root .os-skeleton {
+  .design-preview-root .os-skeleton,
+  .design-preview-root .os-fab-breathe,
+  .design-preview-root .os-sync-pulse,
+  .design-preview-root .os-stagger > * {
     animation: none !important;
     transition: none !important;
+    transform: none !important;
+  }
+
+  .design-preview-root .os-nav-item:hover:not([aria-current="page"]),
+  .design-preview-root .os-card-lift:hover,
+  .design-preview-root .os-btn-motion:hover:not(:disabled),
+  .design-preview-root .os-btn-motion:active:not(:disabled) {
     transform: none !important;
   }
 }

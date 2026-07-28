@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { OsHeader, OsStatusBar } from "./os-header";
 import { OsSidebar } from "./os-sidebar";
 import { ActionToast } from "./action-toast";
@@ -23,7 +23,13 @@ interface TwinShellProps {
   userInitials?: string;
 }
 
-/** Shell del Digital Twin — una sola barra vertical en el contenido principal. */
+/**
+ * Shell del Digital Twin.
+ * Scrolls reales (audit):
+ * - Sidebar nav: overflow-y-auto (independiente, menús largos).
+ * - main: overflow-y-auto (scroll principal de contenido).
+ * - root: overflow-hidden (sin scroll del body / una sola barra de contenido).
+ */
 export function TwinShell({
   title,
   children,
@@ -38,6 +44,9 @@ export function TwinShell({
   const home = useResolvedHome();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [mainScrolled, setMainScrolled] = useState(false);
+  const [pageEnter, setPageEnter] = useState(true);
+  const mainRef = useRef<HTMLElement>(null);
 
   const showRestricted =
     home.sidebarItems.includes("produccion") || home.sidebarItems.includes("direccion");
@@ -64,9 +73,26 @@ export function TwinShell({
     logout();
   };
 
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const onScroll = () => setMainScrolled(el.scrollTop > 4);
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Entrada de página al cambiar sección — no remonta hijos; solo reinicia CSS animation.
+  useEffect(() => {
+    setPageEnter(false);
+    const id = window.requestAnimationFrame(() => setPageEnter(true));
+    return () => window.cancelAnimationFrame(id);
+  }, [activeSidebarId, currentNav.view]);
+
   return (
-    <div className="flex h-dvh max-h-dvh min-h-0 overflow-hidden bg-transparent">
-      {/* Desktop sidebar — altura del viewport, nav scrollea si hace falta (sin barra del body). */}
+    <div className="relative flex h-dvh max-h-dvh min-h-0 overflow-hidden bg-transparent">
+      <div className="os-right-rail" aria-hidden="true" />
+
       <div className="hidden min-h-0 shrink-0 md:flex">
         <OsSidebar
           sectorLabel={home.definition.title}
@@ -79,7 +105,6 @@ export function TwinShell({
         />
       </div>
 
-      {/* Mobile drawer */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-40 flex md:hidden" role="dialog" aria-modal="true" aria-label="Menú">
           <button
@@ -102,7 +127,7 @@ export function TwinShell({
         </div>
       )}
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <OsHeader
           title={resolvedTitle}
           userInitials={resolvedInitials}
@@ -111,13 +136,18 @@ export function TwinShell({
           onBack={onBack}
           onOpenMenu={() => setMobileNavOpen(true)}
           onLogout={requestLogout}
+          scrolled={mainScrolled}
         />
-        {/* Única barra vertical del layout: solo el main hace scroll. */}
-        <main
-          className={`os-fade-in min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 md:px-8 md:py-8 ${contentClassName ?? ""}`}
-        >
-          {children}
-        </main>
+        <div className="os-scroll-fade relative min-h-0 flex-1">
+          <main
+            ref={mainRef}
+            className={`os-scroll-main min-h-0 h-full overflow-x-hidden overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 md:px-8 md:py-8 ${
+              pageEnter ? "os-page-enter" : ""
+            } ${contentClassName ?? ""}`}
+          >
+            {children}
+          </main>
+        </div>
         <OsStatusBar syncTime={syncTime} />
       </div>
       <CreamyCompanion />

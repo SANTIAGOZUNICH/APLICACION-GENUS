@@ -101,7 +101,10 @@ export function NotificationBell() {
       >
         <Bell className="size-5" />
         {unreadCount > 0 && (
-          <span className="absolute right-1.5 top-1.5 flex size-4 items-center justify-center rounded-full bg-[var(--genus-error,#b91c1c)] text-[9px] font-bold text-white">
+          <span
+            key={unreadCount}
+            className="os-pulse-success absolute right-1.5 top-1.5 flex size-4 items-center justify-center rounded-full bg-[var(--genus-error,#b91c1c)] text-[9px] font-bold text-white"
+          >
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>
         )}
@@ -127,7 +130,7 @@ export function NotificationBell() {
                 Descartar no elimina la orden asociada.
               </p>
             </div>
-            <div className="max-h-96 overflow-y-auto">
+            <div className="os-scroll-main max-h-96 overflow-y-auto">
               {items.length === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
                   Sin notificaciones

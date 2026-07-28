@@ -158,7 +158,7 @@ export function CreamyCompanion() {
             type="button"
             onClick={handleOpen}
             title="Hablar con Creamy"
-            className="pointer-events-auto group flex size-14 items-center justify-center rounded-full bg-[var(--os-teal)] text-[var(--os-navy)] shadow-[var(--os-shadow-card-hover)] ring-2 ring-white/80 transition-transform duration-[var(--genus-duration-hover,140ms)] hover:scale-[1.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)] focus-visible:ring-offset-2 motion-reduce:hover:scale-100"
+            className="pointer-events-auto os-fab-breathe group flex size-14 items-center justify-center rounded-full bg-[var(--os-teal)] text-[var(--os-navy)] shadow-[var(--os-shadow-card-hover)] ring-2 ring-white/80 transition-transform duration-[var(--genus-duration-hover,140ms)] hover:scale-[1.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)] focus-visible:ring-offset-2 motion-reduce:hover:scale-100"
             aria-label="Hablar con Creamy"
           >
             {panelMode === "minimized" ? (
