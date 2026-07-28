@@ -53,6 +53,12 @@ import { FormulasAdminPanel } from "@/features/os/operational/components/formula
 
 export type MpHubTab = (typeof MP_TABS)[number];
 
+const STOCK_MOBILE_VISIBLE = new Set(["CÓDIGO", "DESCRIPCIÓN MATERIA PRIMA", "ESTADO STOCK"]);
+const INGRESO_MOBILE_VISIBLE = new Set(["CÓDIGO", "DESCRIPCIÓN MATERIA PRIMA"]);
+const COMPRA_MOBILE_VISIBLE = new Set(["MATERIA PRIMA", "ESTADO"]);
+/** Tablas MP anchas: secundarias solo desde xl; bajo eso → “Más datos”. */
+const COLLAPSE_WIDE = "xl" as const;
+
 const TAB_TO_RESOURCE = {
   Stock: "mp_stock",
   "Ingresos MP": "mp_ingresos",
@@ -304,6 +310,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       return {
         key: label,
         header: label,
+        hideOnMobile: false,
         render: (r) => {
           const pending = Boolean(r.codigoPendiente) || isMpInternalCodigo(r.codigo);
           return (
@@ -323,7 +330,12 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         },
       };
     }
-    return { key: label, header: label, render: (r) => displayCell(r[k]) };
+    return {
+      key: label,
+      header: label,
+      hideOnMobile: STOCK_MOBILE_VISIBLE.has(label) ? false : COLLAPSE_WIDE,
+      render: (r) => displayCell(r[k]),
+    };
   });
 
   function statusChip(status: MpIngresoRow["status"] | undefined) {
@@ -388,6 +400,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       return {
         key: label,
         header: label,
+        hideOnMobile: INGRESO_MOBILE_VISIBLE.has(label) ? false : COLLAPSE_WIDE,
         render: (r: MpIngresoRow) => displayCell(r[k]),
       } as OperationalTableColumn<MpIngresoRow>;
     }),
@@ -488,7 +501,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         }
         return v;
       },
-      className: label === "ESTADO" ? "min-w-[5rem]" : undefined,
     };
   });
 
@@ -505,7 +517,12 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       NOTA: "nota",
     };
     const k = map[label];
-    return { key: label, header: label, render: (r) => displayCell(r[k]) };
+    return {
+      key: label,
+      header: label,
+      hideOnMobile: COMPRA_MOBILE_VISIBLE.has(label) ? false : COLLAPSE_WIDE,
+      render: (r) => displayCell(r[k]),
+    };
   });
 
   const formFields =
@@ -649,7 +666,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                     key: "acciones",
                     header: "",
                     render: (r: MpStockRow) => (
-                      <div className="flex gap-1">
+                      <div className="flex flex-wrap items-center gap-1">
                         <button
                           type="button"
                           onClick={() => {

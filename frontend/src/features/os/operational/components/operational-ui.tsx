@@ -1,6 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 
 export interface OperationalTab {
@@ -60,8 +61,31 @@ export interface OperationalTableColumn<T> {
   headerTitle?: string;
   render: (row: T) => ReactNode;
   className?: string;
-  /** Oculta en viewports < md (datos secundarios). */
-  hideOnMobile?: boolean;
+  /**
+   * Columna secundaria: se oculta bajo el breakpoint y pasa a “Más datos”.
+   * true ≡ collapseBelow "md". Usar "lg"/"xl" en tablas anchas (tablet/laptop).
+   */
+  hideOnMobile?: boolean | "md" | "lg" | "xl";
+}
+
+type CollapseBelow = "md" | "lg" | "xl";
+
+function resolveCollapse(hideOnMobile?: boolean | CollapseBelow): CollapseBelow | null {
+  if (!hideOnMobile) return null;
+  if (hideOnMobile === true) return "md";
+  return hideOnMobile;
+}
+
+function hideColClass(bp: CollapseBelow): string {
+  if (bp === "xl") return "hidden xl:table-cell";
+  if (bp === "lg") return "hidden lg:table-cell";
+  return "hidden md:table-cell";
+}
+
+function moreToggleClass(bp: CollapseBelow): string {
+  if (bp === "xl") return "xl:hidden";
+  if (bp === "lg") return "lg:hidden";
+  return "md:hidden";
 }
 
 interface OperationalTableProps<T> {
@@ -71,13 +95,26 @@ interface OperationalTableProps<T> {
   emptyMessage?: string;
 }
 
-/** Tabla funcional — sin scroll horizontal; wrap + densidad responsive. */
+/** Tabla funcional — sin scroll horizontal; secundarios en “Más datos”. */
 export function OperationalTable<T>({
   columns,
   rows,
   rowKey,
   emptyMessage = "Sin registros.",
 }: OperationalTableProps<T>) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const secondaryMeta = columns
+    .map((c) => ({ col: c, bp: resolveCollapse(c.hideOnMobile) }))
+    .filter((x): x is { col: OperationalTableColumn<T>; bp: CollapseBelow } => x.bp != null);
+  const hasSecondary = secondaryMeta.length > 0;
+  /** Breakpoint más amplio entre secundarias → el chevron se muestra hasta ahí. */
+  const expanderBp: CollapseBelow = secondaryMeta.reduce<CollapseBelow>((acc, x) => {
+    const order = { md: 0, lg: 1, xl: 2 } as const;
+    return order[x.bp] > order[acc] ? x.bp : acc;
+  }, "md");
+  const primaryCount = columns.filter((c) => !resolveCollapse(c.hideOnMobile)).length;
+  const visibleColCount = primaryCount + (hasSecondary ? 1 : 0);
+
   if (rows.length === 0) {
     return (
       <p className="rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-border)] px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
@@ -87,41 +124,95 @@ export function OperationalTable<T>({
   }
 
   return (
-    <div className="os-table-wrap overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)]">
+    <div className="os-table-wrap max-w-full min-w-0 overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)]">
       <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,13px)]">
         <thead className="sticky top-0 z-[1]">
           <tr className="border-b border-[var(--os-border)] bg-[var(--os-surface-glass)] backdrop-blur-md">
-            {columns.map((col) => (
-              <th
-                key={col.key}
-                title={col.headerTitle ?? col.header}
-                className={`px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--os-text-muted)] sm:px-3 sm:py-2.5 ${
-                  col.hideOnMobile ? "hidden md:table-cell" : ""
-                } ${col.className ?? ""}`}
-              >
-                <span className="block truncate">{col.header}</span>
-              </th>
-            ))}
+            {hasSecondary ? (
+              <th className={`w-8 px-1 py-2 ${moreToggleClass(expanderBp)}`} aria-label="Más datos" />
+            ) : null}
+            {columns.map((col) => {
+              const bp = resolveCollapse(col.hideOnMobile);
+              return (
+                <th
+                  key={col.key}
+                  title={col.headerTitle ?? col.header}
+                  className={`min-w-0 overflow-hidden px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--os-text-muted)] sm:px-3 sm:py-2.5 ${
+                    bp ? hideColClass(bp) : ""
+                  } ${col.className ?? ""}`}
+                >
+                  <span className="block truncate">{col.header}</span>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr
-              key={rowKey(row)}
-              className="border-b border-[var(--os-border-subtle)] last:border-b-0 transition-colors hover:bg-[var(--os-teal-soft)]/40 hover:shadow-[inset_3px_0_0_0_rgb(18_191_183_/_0.45)]"
-            >
-              {columns.map((col) => (
-                <td
-                  key={col.key}
-                  className={`min-w-0 break-words px-2 py-2 align-top sm:px-3 sm:py-2.5 ${
-                    col.hideOnMobile ? "hidden md:table-cell" : ""
-                  } ${col.className ?? ""}`}
-                >
-                  {col.render(row)}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {rows.map((row) => {
+            const id = rowKey(row);
+            const isOpen = Boolean(expanded[id]);
+            return (
+              <Fragment key={id}>
+                <tr className="border-b border-[var(--os-border-subtle)] last:border-b-0 transition-colors hover:bg-[var(--os-teal-soft)]/40 hover:shadow-[inset_3px_0_0_0_rgb(18_191_183_/_0.45)]">
+                  {hasSecondary ? (
+                    <td className={`w-8 px-1 py-2 align-top ${moreToggleClass(expanderBp)}`}>
+                      <button
+                        type="button"
+                        className="inline-flex size-7 items-center justify-center rounded text-[var(--os-text-muted)] hover:bg-[var(--os-teal-soft)]/50"
+                        aria-expanded={isOpen}
+                        aria-label={isOpen ? "Ocultar más datos" : "Más datos"}
+                        data-testid={`os-table-more-${id}`}
+                        onClick={() =>
+                          setExpanded((prev) => ({ ...prev, [id]: !prev[id] }))
+                        }
+                      >
+                        {isOpen ? (
+                          <ChevronDown className="size-4" />
+                        ) : (
+                          <ChevronRight className="size-4" />
+                        )}
+                      </button>
+                    </td>
+                  ) : null}
+                  {columns.map((col) => {
+                    const bp = resolveCollapse(col.hideOnMobile);
+                    return (
+                      <td
+                        key={col.key}
+                        className={`min-w-0 overflow-hidden break-words px-2 py-2 align-top sm:px-3 sm:py-2.5 ${
+                          bp ? hideColClass(bp) : ""
+                        } ${col.className ?? ""}`}
+                      >
+                        {col.render(row)}
+                      </td>
+                    );
+                  })}
+                </tr>
+                {hasSecondary && isOpen ? (
+                  <tr className={`border-b border-[var(--os-border-subtle)] ${moreToggleClass(expanderBp)}`}>
+                    <td
+                      colSpan={visibleColCount}
+                      className="bg-[var(--os-surface-glass)] px-3 py-2"
+                      data-testid={`os-table-more-panel-${id}`}
+                    >
+                      <dl className="grid gap-2 text-[length:var(--os-table-font-secondary,12px)] sm:grid-cols-2">
+                        {secondaryMeta.map(({ col }) => (
+                          <div key={col.key} className="min-w-0">
+                            <dt className="font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
+                              {col.headerTitle ?? col.header}
+                            </dt>
+                            <dd className="mt-0.5 break-words text-[var(--os-text)]">
+                              {col.render(row)}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </td>
+                  </tr>
+                ) : null}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>

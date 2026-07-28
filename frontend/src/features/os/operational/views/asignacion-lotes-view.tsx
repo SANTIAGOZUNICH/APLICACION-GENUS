@@ -413,7 +413,12 @@ export function AsignacionLotesView() {
 
   const columns: OperationalTableColumn<AsignacionLote>[] = [
     { key: "lote", header: "Lote", render: (row) => <span className="font-mono text-xs">{row.lote}</span> },
-    { key: "fecha", header: "Fecha", render: (row) => formatDateDisplay(row.fecha) },
+    {
+      key: "fecha",
+      header: "Fecha",
+      hideOnMobile: "xl",
+      render: (row) => formatDateDisplay(row.fecha),
+    },
     {
       key: "producto",
       header: "Producto",
@@ -424,17 +429,48 @@ export function AsignacionLotesView() {
         </div>
       ),
     },
-    { key: "codigo", header: "Código", render: (row) => <span className="font-mono text-xs">{row.codigo}</span> },
-    { key: "cantidades", header: "Cantidades", render: (row) => <span className="tabular-nums">{row.cantidades}</span> },
-    { key: "vto", header: "VTO", render: (row) => formatDateDisplay(row.vto) },
-    { key: "muestras", header: "Muestras", render: (row) => row.muestras || "—" },
-    { key: "cjMuestra", header: "CJ muestra", render: (row) => row.cjMuestra || "—" },
-    { key: "fechaAnalisis", header: "Análisis", render: (row) => formatDateDisplay(row.fechaAnalisis) },
+    {
+      key: "codigo",
+      header: "Código",
+      hideOnMobile: "xl",
+      render: (row) => <span className="font-mono text-xs">{row.codigo}</span>,
+    },
+    {
+      key: "cantidades",
+      header: "Cantidades",
+      hideOnMobile: "xl",
+      render: (row) => <span className="tabular-nums">{row.cantidades}</span>,
+    },
+    {
+      key: "vto",
+      header: "VTO",
+      hideOnMobile: "xl",
+      render: (row) => formatDateDisplay(row.vto),
+    },
+    {
+      key: "muestras",
+      header: "Muestras",
+      hideOnMobile: "xl",
+      render: (row) => row.muestras || "—",
+    },
+    {
+      key: "cjMuestra",
+      header: "CJ muestra",
+      hideOnMobile: "xl",
+      render: (row) => row.cjMuestra || "—",
+    },
+    {
+      key: "fechaAnalisis",
+      header: "Análisis",
+      hideOnMobile: "xl",
+      render: (row) => formatDateDisplay(row.fechaAnalisis),
+    },
     {
       key: "acciones",
       header: "Acción",
+      className: "whitespace-nowrap",
       render: (row) => (
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-1">
           <button
             type="button"
             disabled={!canMutate}
