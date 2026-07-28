@@ -13,13 +13,13 @@
   --os-space-section: 2.5rem;
   --os-space-block: 1.25rem;
   --os-rail-width: 3px;
-  --os-scroll-size: 7px;
-  --os-scroll-thumb: rgb(15 42 56 / 0.28);
-  --os-scroll-thumb-hover: rgb(18 191 183 / 0.55);
-  --os-scroll-track: transparent;
-  --os-scroll-sidebar-thumb: rgb(18 191 183 / 0.28);
-  --os-scroll-sidebar-thumb-hover: rgb(85 226 216 / 0.55);
-  --os-scroll-sidebar-track: rgb(255 255 255 / 0.03);
+  --os-scroll-size: 8px;
+  --os-scroll-thumb: rgb(15 42 56 / 0.34);
+  --os-scroll-thumb-hover: rgb(18 191 183 / 0.62);
+  --os-scroll-track: rgb(15 42 56 / 0.04);
+  --os-scroll-sidebar-thumb: rgb(18 191 183 / 0.38);
+  --os-scroll-sidebar-thumb-hover: rgb(85 226 216 / 0.62);
+  --os-scroll-sidebar-track: rgb(255 255 255 / 0.05);
 
   position: relative;
   isolation: isolate;
@@ -111,17 +111,19 @@
   background: transparent;
 }
 
+.design-preview-root .os-scroll-main {
+  --os-scroll-thumb: rgb(15 42 56 / 0.34);
+  --os-scroll-thumb-hover: rgb(18 191 183 / 0.58);
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+}
+
 .design-preview-root .os-scroll-sidebar {
   --os-scroll-thumb: var(--os-scroll-sidebar-thumb);
   --os-scroll-thumb-hover: var(--os-scroll-sidebar-thumb-hover);
   --os-scroll-track: var(--os-scroll-sidebar-track);
   scrollbar-color: var(--os-scroll-sidebar-thumb) var(--os-scroll-sidebar-track);
-}
-
-.design-preview-root .os-scroll-main {
-  --os-scroll-thumb: rgb(15 42 56 / 0.26);
-  --os-scroll-thumb-hover: rgb(18 191 183 / 0.5);
-  scrollbar-gutter: stable;
+  overflow-y: scroll;
 }
 
 @media (max-width: 767px) {
@@ -181,17 +183,17 @@
   right: 0;
   bottom: 0;
   width: var(--os-rail-width);
-  z-index: calc(var(--genus-z-sticky) + 1);
+  z-index: calc(var(--genus-z-header) + 5);
   background: linear-gradient(
     180deg,
-    rgb(7 25 37 / 0.55) 0%,
-    rgb(18 191 183 / 0.35) 48%,
-    rgb(23 105 224 / 0.28) 100%
+    rgb(7 25 37 / 0.72) 0%,
+    rgb(18 191 183 / 0.55) 45%,
+    rgb(23 105 224 / 0.42) 100%
   );
   box-shadow:
-    -1px 0 12px rgb(18 191 183 / 0.12),
-    0 0 1px rgb(85 226 216 / 0.35);
-  opacity: 0.85;
+    -2px 0 14px rgb(18 191 183 / 0.18),
+    0 0 1px rgb(85 226 216 / 0.5);
+  opacity: 0.95;
 }
 
 @media (max-width: 767px) {

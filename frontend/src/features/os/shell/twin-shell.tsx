@@ -141,7 +141,7 @@ export function TwinShell({
         <div className="os-scroll-fade relative min-h-0 flex-1">
           <main
             ref={mainRef}
-            className={`os-scroll-main min-h-0 h-full overflow-x-hidden overflow-y-auto px-4 py-5 sm:px-6 sm:py-6 md:px-8 md:py-8 ${
+            className={`os-scroll-main min-h-0 h-full overflow-x-hidden overflow-y-scroll px-4 py-5 sm:px-6 sm:py-6 md:px-8 md:py-8 ${
               pageEnter ? "os-page-enter" : ""
             } ${contentClassName ?? ""}`}
           >

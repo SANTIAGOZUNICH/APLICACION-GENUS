@@ -151,7 +151,7 @@ export function OsSidebar({
 
       <div className="os-scroll-fade os-scroll-fade-sidebar relative mt-4 min-h-0 flex-1">
         <nav
-          className="os-scroll-sidebar h-full space-y-0.5 overflow-y-auto overscroll-contain px-3 pb-2"
+          className="os-scroll-sidebar h-full space-y-0.5 overflow-y-scroll overscroll-contain px-3 pb-2"
           aria-label="Menú"
         >
           {sidebarItems.map((itemId) => {
