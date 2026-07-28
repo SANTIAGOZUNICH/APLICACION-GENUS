@@ -59,13 +59,14 @@ function slugifyProductId(name: string, code: string): string {
 
 function notify(
   repo: OrdersRepository,
-  input: Omit<OsNotificationRecord, "id" | "readBy" | "dismissedBy" | "createdAt">
+  input: Omit<OsNotificationRecord, "id" | "readBy" | "dismissedBy" | "deletedBy" | "createdAt">
 ): Promise<OsNotificationRecord> {
   return repo.insertNotification({
     id: randomUUID(),
     ...input,
     readBy: [],
     dismissedBy: [],
+    deletedBy: [],
     createdAt: nowIso(),
   });
 }
@@ -1593,6 +1594,10 @@ export class OrdersService {
 
   dismissReadNotifications(actor: OrdersActor) {
     return this.repo.dismissReadNotifications(actor.sector, actor.email);
+  }
+
+  deleteAllNotifications(actor: OrdersActor) {
+    return this.repo.deleteAllNotificationsForActor(actor.sector, actor.email);
   }
 
   private async requireOrder(id: string) {

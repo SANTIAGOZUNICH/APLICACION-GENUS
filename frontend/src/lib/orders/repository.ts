@@ -83,6 +83,8 @@ export interface OrdersRepository {
   dismissNotification(id: string, actorEmail: string): Promise<void>;
   restoreNotification(id: string, actorEmail: string): Promise<void>;
   dismissReadNotifications(sector: string, actorEmail: string): Promise<void>;
+  /** Eliminación definitiva para el actor (Activas+Archivadas) + tombstones. */
+  deleteAllNotificationsForActor(sector: string, actorEmail: string): Promise<number>;
 
   /** Helper for tests / seed */
   ensureSeed?(actor?: OrdersActor, contents?: OrderContent[]): Promise<void>;

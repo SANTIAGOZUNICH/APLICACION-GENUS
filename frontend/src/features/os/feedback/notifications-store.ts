@@ -1,8 +1,10 @@
 import type { SectorId } from "@/types/operational/sector";
+import { localNotificationFingerprint } from "@/lib/orders/notification-event-keys";
 
-/** @mock-temp Centro de notificaciones — demo persistida en localStorage, desacoplada de la UI. */
+/** @mock-temp Centro de notificaciones demo — localStorage. Tombstones evitan regeneración. */
 
 const NOTIFICATIONS_KEY = "genus_os_notifications";
+const TOMBSTONES_KEY = "genus_os_notifications_deleted";
 const NOTIFICATIONS_EVENT = "genus_os_notifications_changed";
 const MAX_NOTIFICATIONS = 200;
 
@@ -45,12 +47,33 @@ function writeAll(items: OsNotification[]): void {
   window.dispatchEvent(new Event(NOTIFICATIONS_EVENT));
 }
 
+function readTombstones(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(TOMBSTONES_KEY);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw) as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeTombstones(keys: Set<string>): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(TOMBSTONES_KEY, JSON.stringify([...keys]));
+}
+
 export function pushNotification(input: {
   kind: NotificationKind;
   title: string;
   message: string;
   sectors: SectorId[];
-}): OsNotification {
+}): OsNotification | null {
+  const fp = localNotificationFingerprint(input);
+  const tombs = readTombstones();
+  if (tombs.has(fp) || tombs.has(`kind:${input.kind}`)) {
+    return null;
+  }
   const notification: OsNotification = {
     id: `ntf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     kind: input.kind,
@@ -67,8 +90,14 @@ export function pushNotification(input: {
 }
 
 export function getNotificationsForSector(sectorId: SectorId): OsNotification[] {
+  const tombs = readTombstones();
   return readAll()
-    .filter((n) => n.sectors.includes(sectorId) && !n.dismissed)
+    .filter((n) => {
+      if (!n.sectors.includes(sectorId) || n.dismissed) return false;
+      if (tombs.has(`id:${n.id}`)) return false;
+      if (tombs.has(localNotificationFingerprint(n))) return false;
+      return true;
+    })
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
@@ -90,6 +119,29 @@ export function dismissReadNotifications(sectorId: SectorId): void {
     n.sectors.includes(sectorId) && n.read ? { ...n, dismissed: true } : n
   );
   writeAll(items);
+}
+
+/**
+ * Eliminación definitiva local: limpia bandeja del sector y deja tombstones
+ * para que pushNotification no regenere los mismos avisos.
+ */
+export function deleteAllNotificationsForSector(sectorId: SectorId): number {
+  const tombs = readTombstones();
+  const all = readAll();
+  let count = 0;
+  const remaining: OsNotification[] = [];
+  for (const n of all) {
+    if (!n.sectors.includes(sectorId)) {
+      remaining.push(n);
+      continue;
+    }
+    count += 1;
+    tombs.add(`id:${n.id}`);
+    tombs.add(localNotificationFingerprint(n));
+  }
+  writeTombstones(tombs);
+  writeAll(remaining);
+  return count;
 }
 
 export function subscribeNotifications(callback: () => void): () => void {

@@ -389,6 +389,7 @@ describe("notificaciones dismiss por usuario", () => {
       orderId: null,
       readBy: [],
       dismissedBy: [],
+      deletedBy: [],
       createdAt: new Date().toISOString(),
     });
 

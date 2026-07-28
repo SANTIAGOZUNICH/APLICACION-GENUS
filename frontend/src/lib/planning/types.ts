@@ -53,6 +53,8 @@ export interface PlanningWorkItemRecord {
   id: string;
   planningWeekId: string;
   plannedDate: string;
+  /** Fin inclusive del rango de aparición (null = solo plannedDate). */
+  plannedDateTo?: string | null;
   client: string;
   product: string;
   plannedQuantity: string;

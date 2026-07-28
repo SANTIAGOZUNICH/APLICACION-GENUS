@@ -96,6 +96,7 @@ async function emitAvisoNotifications(params: {
         orderId: null,
         readBy: [],
         dismissedBy: [],
+        deletedBy: [],
       });
       return;
     } catch {

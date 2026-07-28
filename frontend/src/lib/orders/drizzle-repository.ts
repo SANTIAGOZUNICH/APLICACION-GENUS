@@ -8,9 +8,11 @@ import {
   orderTemplates,
   orderVersions,
   osNotifications,
+  osNotificationUserTombstones,
   templateChangeProposals,
 } from "@/lib/db/schema";
 import type { OrdersRepository } from "@/lib/orders/repository";
+import { notificationEventKeys } from "@/lib/orders/notification-event-keys";
 import { seedTemplateRecords } from "@/lib/orders/seed-templates";
 import type {
   ListOrdersFilters,
@@ -663,9 +665,10 @@ export class DrizzleOrdersRepository implements OrdersRepository {
       orderId: notification.orderId,
       readBy: notification.readBy,
       dismissedBy: notification.dismissedBy,
+      deletedBy: notification.deletedBy ?? [],
       createdAt: new Date(notification.createdAt),
     });
-    return notification;
+    return { ...notification, deletedBy: notification.deletedBy ?? [] };
   }
 
   async listNotificationsForSector(
@@ -675,6 +678,11 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   ): Promise<OsNotificationRecord[]> {
     const db = getDb();
     const rows = await db.select().from(osNotifications).orderBy(desc(osNotifications.createdAt));
+    const tombstones = await db
+      .select()
+      .from(osNotificationUserTombstones)
+      .where(eq(osNotificationUserTombstones.userEmail, actorEmail));
+    const tombstoneKeys = new Set(tombstones.map((t) => t.eventKey));
     const includeDismissed = options?.includeDismissed ?? false;
     return rows
       .map((r) => ({
@@ -687,10 +695,13 @@ export class DrizzleOrdersRepository implements OrdersRepository {
         orderId: r.orderId,
         readBy: (r.readBy as string[]) ?? [],
         dismissedBy: (r.dismissedBy as string[]) ?? [],
+        deletedBy: (r.deletedBy as string[]) ?? [],
         createdAt: toIso(r.createdAt)!,
       }))
       .filter((n) => {
         if (!n.sectors.includes(sector as SectorId)) return false;
+        if (n.deletedBy.includes(actorEmail)) return false;
+        if (notificationEventKeys(n).some((k) => tombstoneKeys.has(k))) return false;
         const dismissed = n.dismissedBy.includes(actorEmail);
         return includeDismissed ? dismissed : !dismissed;
       });
@@ -717,6 +728,8 @@ export class DrizzleOrdersRepository implements OrdersRepository {
       .where(eq(osNotifications.id, id))
       .limit(1);
     if (!rows[0]) return;
+    const deletedBy = (rows[0].deletedBy as string[]) ?? [];
+    if (deletedBy.includes(actorEmail)) return;
     const dismissedBy = [...((rows[0].dismissedBy as string[]) ?? [])];
     if (!dismissedBy.includes(actorEmail)) dismissedBy.push(actorEmail);
     await db
@@ -733,6 +746,8 @@ export class DrizzleOrdersRepository implements OrdersRepository {
       .where(eq(osNotifications.id, id))
       .limit(1);
     if (!rows[0]) return;
+    const deletedBy = (rows[0].deletedBy as string[]) ?? [];
+    if (deletedBy.includes(actorEmail)) return;
     const dismissedBy = ((rows[0].dismissedBy as string[]) ?? []).filter(
       (e) => e !== actorEmail
     );
@@ -748,6 +763,8 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     for (const r of rows) {
       const sectors = r.sectors as SectorId[];
       if (!sectors.includes(sector as SectorId)) continue;
+      const deletedBy = (r.deletedBy as string[]) ?? [];
+      if (deletedBy.includes(actorEmail)) continue;
       const readBy = (r.readBy as string[]) ?? [];
       const dismissedBy = (r.dismissedBy as string[]) ?? [];
       if (!readBy.includes(actorEmail) || dismissedBy.includes(actorEmail)) continue;
@@ -756,5 +773,42 @@ export class DrizzleOrdersRepository implements OrdersRepository {
         .set({ dismissedBy: [...dismissedBy, actorEmail] })
         .where(eq(osNotifications.id, r.id));
     }
+  }
+
+  async deleteAllNotificationsForActor(sector: string, actorEmail: string): Promise<number> {
+    const db = getDb();
+    const rows = await db.select().from(osNotifications);
+    let count = 0;
+    for (const r of rows) {
+      const sectors = r.sectors as SectorId[];
+      if (!sectors.includes(sector as SectorId)) continue;
+      const deletedBy = [...((r.deletedBy as string[]) ?? [])];
+      const already = deletedBy.includes(actorEmail);
+      if (!already) {
+        deletedBy.push(actorEmail);
+        count += 1;
+      }
+      const dismissedBy = ((r.dismissedBy as string[]) ?? []).filter((e) => e !== actorEmail);
+      await db
+        .update(osNotifications)
+        .set({ deletedBy, dismissedBy })
+        .where(eq(osNotifications.id, r.id));
+
+      const record = {
+        id: r.id,
+        kind: r.kind,
+        title: r.title,
+        message: r.message,
+        href: r.href,
+        orderId: r.orderId,
+      };
+      for (const eventKey of notificationEventKeys(record)) {
+        await db
+          .insert(osNotificationUserTombstones)
+          .values({ userEmail: actorEmail, eventKey })
+          .onConflictDoNothing();
+      }
+    }
+    return count;
   }
 }

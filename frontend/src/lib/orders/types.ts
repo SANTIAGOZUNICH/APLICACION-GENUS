@@ -341,6 +341,8 @@ export type OsNotificationRecord = {
   orderId: string | null;
   readBy: string[];
   dismissedBy: string[];
+  /** Emails con eliminación definitiva (no restaurable). */
+  deletedBy: string[];
   createdAt: string;
 };
 

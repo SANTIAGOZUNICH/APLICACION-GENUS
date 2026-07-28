@@ -40,6 +40,8 @@ export class MemoryOrdersRepository implements OrdersRepository {
   proposals = new Map<string, TemplateChangeProposalRecord>();
   audits: OrderAuditEventRecord[] = [];
   notifications: OsNotificationRecord[] = [];
+  /** Test tombstones: `${email}::${eventKey}` */
+  tombstones = new Set<string>();
   sequences = new Map<string, number>();
 
   constructor(seed = true) {
@@ -335,8 +337,12 @@ export class MemoryOrdersRepository implements OrdersRepository {
   async insertNotification(
     notification: OsNotificationRecord
   ): Promise<OsNotificationRecord> {
-    this.notifications.unshift(structuredClone(notification));
-    return structuredClone(notification);
+    const row = {
+      ...structuredClone(notification),
+      deletedBy: notification.deletedBy ?? [],
+    };
+    this.notifications.unshift(row);
+    return structuredClone(row);
   }
 
   async listNotificationsForSector(
@@ -348,10 +354,13 @@ export class MemoryOrdersRepository implements OrdersRepository {
     return this.notifications
       .filter((n) => {
         if (!n.sectors.includes(sector as never)) return false;
+        const deleted = (n.deletedBy ?? []).includes(actorEmail);
+        if (deleted) return false;
+        if (this.tombstones.has(`${actorEmail}::id:${n.id}`)) return false;
         const dismissed = n.dismissedBy.includes(actorEmail);
         return includeDismissed ? dismissed : !dismissed;
       })
-      .map((n) => structuredClone(n));
+      .map((n) => structuredClone({ ...n, deletedBy: n.deletedBy ?? [] }));
   }
 
   async markNotificationRead(id: string, actorEmail: string): Promise<void> {
@@ -366,15 +375,35 @@ export class MemoryOrdersRepository implements OrdersRepository {
 
   async restoreNotification(id: string, actorEmail: string): Promise<void> {
     const n = this.notifications.find((x) => x.id === id);
-    if (n) n.dismissedBy = n.dismissedBy.filter((e) => e !== actorEmail);
+    if (!n) return;
+    if ((n.deletedBy ?? []).includes(actorEmail)) return;
+    n.dismissedBy = n.dismissedBy.filter((e) => e !== actorEmail);
   }
 
   async dismissReadNotifications(sector: string, actorEmail: string): Promise<void> {
     for (const n of this.notifications) {
       if (!n.sectors.includes(sector as never)) continue;
+      if ((n.deletedBy ?? []).includes(actorEmail)) continue;
       if (n.readBy.includes(actorEmail) && !n.dismissedBy.includes(actorEmail)) {
         n.dismissedBy.push(actorEmail);
       }
     }
+  }
+
+  async deleteAllNotificationsForActor(sector: string, actorEmail: string): Promise<number> {
+    let count = 0;
+    for (const n of this.notifications) {
+      if (!n.sectors.includes(sector as never)) continue;
+      n.deletedBy = n.deletedBy ?? [];
+      if (!n.deletedBy.includes(actorEmail)) {
+        n.deletedBy.push(actorEmail);
+        count += 1;
+      }
+      n.dismissedBy = n.dismissedBy.filter((e) => e !== actorEmail);
+      this.tombstones.add(`${actorEmail}::id:${n.id}`);
+      if (n.href) this.tombstones.add(`${actorEmail}::href:${n.href}`);
+      if (n.orderId) this.tombstones.add(`${actorEmail}::order:${n.kind}:${n.orderId}`);
+    }
+    return count;
   }
 }

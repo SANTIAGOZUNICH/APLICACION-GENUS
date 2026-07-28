@@ -651,6 +651,17 @@ export async function dismissReadOsNotificationsApi(
   await parseJson(res);
 }
 
+export async function deleteAllOsNotificationsApi(
+  session: OrdersClientSession
+): Promise<{ deleted: number }> {
+  const res = await fetch("/api/v1/notifications", {
+    method: "PATCH",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ action: "delete_all" }),
+  });
+  return parseJson<{ deleted: number }>(res);
+}
+
 export function orderPdfUrl(id: string): string {
   return `/api/v1/orders/${id}/pdf`;
 }

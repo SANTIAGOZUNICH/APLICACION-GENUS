@@ -42,6 +42,7 @@ export function AsignarTrabajosView() {
   const [client, setClient] = useState("");
   const [product, setProduct] = useState("");
   const [plannedDate, setPlannedDate] = useState(todayIso());
+  const [plannedDateTo, setPlannedDateTo] = useState(todayIso());
   const [deliveryDate, setDeliveryDate] = useState(todayIso());
   const [quantity, setQuantity] = useState("");
   const [orderRef, setOrderRef] = useState("");
@@ -74,6 +75,14 @@ export function AsignarTrabajosView() {
       setFeedback("Completá cliente, producto y cantidad.");
       return;
     }
+    if (!plannedDate || !plannedDateTo) {
+      setFeedback("Indicá el rango Desde / Hasta de la asignación.");
+      return;
+    }
+    if (plannedDateTo < plannedDate) {
+      setFeedback("Hasta no puede ser anterior a Desde.");
+      return;
+    }
     if (!deliveryDate) {
       setFeedback("La fecha de entrega es obligatoria.");
       return;
@@ -86,6 +95,7 @@ export function AsignarTrabajosView() {
       client: client.trim(),
       product: product.trim(),
       plannedDate,
+      plannedDateTo,
       deliveryDate,
       quantity: quantity.trim(),
       unit,
@@ -102,7 +112,7 @@ export function AsignarTrabajosView() {
     pushNotification({
       kind: "trabajo_asignado",
       title: `Nuevo trabajo asignado — ${SECTOR_LABELS[sector]}`,
-      message: `${product.trim()} · ${client.trim()} — entrega ${new Date(deliveryDate + "T12:00:00").toLocaleDateString("es-AR")}`,
+      message: `${product.trim()} · ${client.trim()} — ${new Date(plannedDate + "T12:00:00").toLocaleDateString("es-AR")} → ${new Date(plannedDateTo + "T12:00:00").toLocaleDateString("es-AR")}`,
       sectors: [sector],
     });
 
@@ -123,17 +133,23 @@ export function AsignarTrabajosView() {
   };
 
   const columns: OperationalTableColumn<(typeof items)[number]>[] = [
-    { key: "sector", header: "Sector", render: (r) => SECTOR_LABELS[r.sector] },
+    { key: "sector", header: "Sector", hideOnMobile: "xl", render: (r) => SECTOR_LABELS[r.sector] },
     {
       key: "entrega",
       header: "Fecha de entrega",
+      hideOnMobile: "xl",
       render: (r) => <DeliveryDateBadge deliveryDate={r.deliveryDate} />,
     },
     {
       key: "fecha",
-      header: "Fecha planificada",
-      render: (r) =>
-        r.plannedDate ? new Date(r.plannedDate + "T12:00:00").toLocaleDateString("es-AR") : "—",
+      header: "Rango planificado",
+      render: (r) => {
+        if (!r.plannedDate) return "—";
+        const from = new Date(r.plannedDate + "T12:00:00").toLocaleDateString("es-AR");
+        const toIso = r.plannedDateTo || r.plannedDate;
+        const to = new Date(toIso + "T12:00:00").toLocaleDateString("es-AR");
+        return from === to ? from : `${from} → ${to}`;
+      },
     },
     { key: "cliente", header: "Cliente", render: (r) => r.client ?? "—" },
     { key: "producto", header: "Producto", render: (r) => r.product ?? "—" },
@@ -333,14 +349,33 @@ export function AsignarTrabajosView() {
           </div>
 
           <div className="space-y-1.5">
-            <label htmlFor="af-date" className="text-sm font-medium">
-              Fecha planificada
+            <label htmlFor="af-date-from" className="text-sm font-medium">
+              Desde (aparición en Semana)
             </label>
             <input
-              id="af-date"
+              id="af-date-from"
               type="date"
               value={plannedDate}
-              onChange={(e) => setPlannedDate(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPlannedDate(v);
+                if (plannedDateTo < v) setPlannedDateTo(v);
+              }}
+              className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] px-3 py-2 text-sm"
+              required
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor="af-date-to" className="text-sm font-medium">
+              Hasta (aparición en Semana)
+            </label>
+            <input
+              id="af-date-to"
+              type="date"
+              value={plannedDateTo}
+              min={plannedDate}
+              onChange={(e) => setPlannedDateTo(e.target.value)}
               className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] px-3 py-2 text-sm"
               required
             />

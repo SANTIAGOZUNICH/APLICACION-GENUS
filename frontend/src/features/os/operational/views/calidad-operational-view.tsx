@@ -302,6 +302,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
               {
                 key: "received",
                 header: "Sector de origen",
+                hideOnMobile: "xl" as const,
                 render: (row) => (
                   <span className="text-xs font-medium text-[var(--os-teal)]">
                     {row.receivedFrom ? SECTOR_LABELS[row.receivedFrom] : "Planilla"}
@@ -310,15 +311,16 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
               },
               { key: "lote", header: "Lote / Granel", render: (row) => <span className="font-mono text-xs font-medium text-[var(--os-teal)]">{displayField(row.lote)}</span> },
               { key: "product", header: "Producto", render: (row) => displayField(row.product) },
-              { key: "client", header: "Cliente", render: (row) => displayField(row.client) },
-              { key: "deliveryDate", header: "Fecha de entrega", render: (row) => <DeliveryDateBadge deliveryDate={row.deliveryDate} /> },
-              { key: "quantity", header: "Cantidad", render: (row) => displayField(row.quantity) },
-              { key: "oe", header: "OE", render: (row) => <span className="font-mono text-xs">{displayField(row.oe)}</span> },
+              { key: "client", header: "Cliente", hideOnMobile: "xl" as const, render: (row) => displayField(row.client) },
+              { key: "deliveryDate", header: "Fecha de entrega", hideOnMobile: "xl" as const, render: (row) => <DeliveryDateBadge deliveryDate={row.deliveryDate} /> },
+              { key: "quantity", header: "Cantidad", hideOnMobile: "xl" as const, render: (row) => displayField(row.quantity) },
+              { key: "oe", header: "OE", hideOnMobile: "xl" as const, render: (row) => <span className="font-mono text-xs">{displayField(row.oe)}</span> },
             ]
           : [
               {
                 key: "received",
                 header: "Sector de origen",
+                hideOnMobile: "xl" as const,
                 render: (row) => (
                   <span className="text-xs font-medium text-[var(--os-teal)]">
                     {row.receivedFrom ? SECTOR_LABELS[row.receivedFrom] : "Planilla"}
@@ -327,10 +329,10 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                 ),
               },
               { key: "product", header: "Producto", render: (row) => displayField(row.product) },
-              { key: "client", header: "Cliente", render: (row) => displayField(row.client) },
-              { key: "deliveryDate", header: "Fecha de entrega", render: (row) => <DeliveryDateBadge deliveryDate={row.deliveryDate} /> },
-              { key: "quantity", header: "Cantidad", render: (row) => displayField(row.quantity) },
-              { key: "oa", header: "OA", render: (row) => <span className="font-mono text-xs">{displayField(row.oa)}</span> },
+              { key: "client", header: "Cliente", hideOnMobile: "xl" as const, render: (row) => displayField(row.client) },
+              { key: "deliveryDate", header: "Fecha de entrega", hideOnMobile: "xl" as const, render: (row) => <DeliveryDateBadge deliveryDate={row.deliveryDate} /> },
+              { key: "quantity", header: "Cantidad", hideOnMobile: "xl" as const, render: (row) => displayField(row.quantity) },
+              { key: "oa", header: "OA", hideOnMobile: "xl" as const, render: (row) => <span className="font-mono text-xs">{displayField(row.oa)}</span> },
             ];
 
       return [

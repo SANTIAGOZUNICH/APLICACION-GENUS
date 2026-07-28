@@ -1,6 +1,10 @@
 import type { WorkItem } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 import { personNamesMatch } from "@/lib/operational/display-fields";
+import {
+  workItemCoversDate,
+  workItemOverlapsWeek,
+} from "@/lib/operational/work-item-date-range";
 
 /** Sectores que alimentan la vista agregada de Producción (cross-sector). */
 export const PRODUCTION_AGGREGATE_SECTOR_IDS = [
@@ -41,20 +45,21 @@ export function filterWorkItemsForSectorAndPerson(
   return filterWorkItemsForOwnerPerson(filterWorkItemsForSector(items, sector), ownerPerson);
 }
 
-/** Filtra por fecha planificada ISO (YYYY-MM-DD). */
+/** Filtra por día cubierto por el rango planificado (plannedDate…plannedDateTo). */
 export function filterWorkItemsByDate(items: WorkItem[], date: string): WorkItem[] {
   const target = date.trim();
   if (!target) return items;
-  return items.filter((item) => item.plannedDate === target);
+  return items.filter((item) => workItemCoversDate(item, target));
 }
 
-/** Filtra por lunes de semana operativa (weekStart / weekId). */
+/**
+ * Filtra trabajos que solapan la semana L–V.
+ * Incluye weekStart/weekId legacy y rangos plannedDate…plannedDateTo.
+ */
 export function filterWorkItemsByWeekStart(items: WorkItem[], weekStart: string): WorkItem[] {
   const target = weekStart.trim();
   if (!target) return items;
-  return items.filter(
-    (item) => item.weekStart === target || item.weekId === target
-  );
+  return items.filter((item) => workItemOverlapsWeek(item, target));
 }
 
 export function partitionMiTrabajoSections(items: WorkItem[]): {

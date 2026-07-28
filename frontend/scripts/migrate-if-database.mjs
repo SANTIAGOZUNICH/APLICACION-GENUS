@@ -10,6 +10,7 @@
  * 0010 = lifecycle_audit_events. Solo Preview con gate.
  * 0011 = enum COMPLETA_CON_PENDIENTES (gap de 0002 ausente del journal). Gate.
  * 0012 = mp_weekly status check + asignacion_lotes durable. Gate.
+ * 0013 = notification deleted_by + tombstones + work_items.planned_date_to. Gate.
  */
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
@@ -42,6 +43,7 @@ const apply0009 = process.env.APPLY_MIGRATION_0009 === "1";
 const apply0010 = process.env.APPLY_MIGRATION_0010 === "1";
 const apply0011 = process.env.APPLY_MIGRATION_0011 === "1";
 const apply0012 = process.env.APPLY_MIGRATION_0012 === "1";
+const apply0013 = process.env.APPLY_MIGRATION_0013 === "1";
 
 function shouldDeferTag(tag) {
   const t = String(tag ?? "");
@@ -53,6 +55,7 @@ function shouldDeferTag(tag) {
   if (t.startsWith("0010_") && !apply0010) return true;
   if (t.startsWith("0011_") && !apply0011) return true;
   if (t.startsWith("0012_") && !apply0012) return true;
+  if (t.startsWith("0013_") && !apply0013) return true;
   return false;
 }
 
@@ -65,7 +68,8 @@ function prepareMigrationsFolder() {
     apply0009 &&
     apply0010 &&
     apply0011 &&
-    apply0012
+    apply0012 &&
+    apply0013
   ) {
     return migrationsFolder;
   }
@@ -91,6 +95,7 @@ function prepareMigrationsFolder() {
     if (name.startsWith("0010_") && !apply0010) continue;
     if (name.startsWith("0011_") && !apply0011) continue;
     if (name.startsWith("0012_") && !apply0012) continue;
+    if (name.startsWith("0013_") && !apply0013) continue;
     fs.copyFileSync(
       path.join(migrationsFolder, name),
       path.join(tmp, name)
@@ -117,6 +122,7 @@ function prepareMigrationsFolder() {
   if (!apply0010) deferred.push("0010");
   if (!apply0011) deferred.push("0011");
   if (!apply0012) deferred.push("0012");
+  if (!apply0013) deferred.push("0013");
   if (deferred.length) {
     console.log(
       `[db:migrate] ${deferred.join(" y ")} diferida(s) (APPLY_MIGRATION_0005…0012=1 para aplicar).`

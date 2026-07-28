@@ -24,6 +24,7 @@ export function projectNativeWorkItem(item: PlanningWorkItemRecord): WorkItem {
       item.sector === "ELABORACION" ? "ELABORACION" : "ACONDICIONAMIENTO",
     date: item.plannedDate,
     plannedDate: item.plannedDate,
+    plannedDateTo: item.plannedDateTo ?? item.plannedDate,
     dateHeaderSourceRange: null,
     dateResolutionMethod: null,
     dayLabel: dayOfWeekName(item.plannedDate),

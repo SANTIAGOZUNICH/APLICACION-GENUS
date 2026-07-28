@@ -27,8 +27,11 @@ export interface CreateManualWorkItemInput {
   line: string | null;
   client: string;
   product: string;
+  /** Inicio del rango planificado (ISO). */
   plannedDate: string;
-  /** Fecha de entrega operativa (ISO). Independiente de plannedDate. */
+  /** Fin inclusive del rango planificado (ISO). Default = plannedDate. */
+  plannedDateTo?: string;
+  /** Fecha de entrega operativa (ISO). Independiente del rango de aparición. */
   deliveryDate: string;
   quantity: string;
   unit: string;
@@ -397,6 +400,7 @@ export function createManualWorkItem(input: CreateManualWorkItemInput): WorkItem
     originStage: ORIGIN_STAGE_BY_SECTOR[input.sector],
     date: input.plannedDate,
     plannedDate: input.plannedDate,
+    plannedDateTo: (input.plannedDateTo?.trim() || input.plannedDate) || null,
     dayLabel: null,
     dayOfWeek: null,
     weekLabel: null,
@@ -541,6 +545,7 @@ export function reassignManualWorkItem(
   id: string,
   patch: {
     plannedDate?: string;
+    plannedDateTo?: string;
     deliveryDate?: string;
     ownerPerson?: string | null;
     line?: string | null;
@@ -552,6 +557,10 @@ export function reassignManualWorkItem(
       ? {
           ...item,
           plannedDate: patch.plannedDate ?? item.plannedDate,
+          plannedDateTo:
+            patch.plannedDateTo !== undefined
+              ? patch.plannedDateTo
+              : (item.plannedDateTo ?? item.plannedDate),
           deliveryDate: patch.deliveryDate ?? item.deliveryDate,
           ownerPerson: patch.ownerPerson !== undefined ? patch.ownerPerson : item.ownerPerson,
           line: patch.line !== undefined ? patch.line : item.line,

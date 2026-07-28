@@ -54,4 +54,21 @@ describe("work-item date filters", () => {
     const hoy = filterWorkItemsByDate(items, today);
     expect(hoy.map((i) => i.product).sort()).toEqual(["HOY-A", "HOY-M"]);
   });
+
+  it("rango plannedDate…plannedDateTo aparece en cada día sin clonar id", () => {
+    const items = [
+      createSectorWorkItem("ENVASADO_MASIVO", "range", {
+        plannedDate: "2026-07-28",
+        plannedDateTo: "2026-07-31",
+        product: "RANGO",
+      }),
+    ];
+    expect(filterWorkItemsByDate(items, "2026-07-28")).toHaveLength(1);
+    expect(filterWorkItemsByDate(items, "2026-07-29")[0]?.id).toBe(
+      filterWorkItemsByDate(items, "2026-07-28")[0]?.id
+    );
+    expect(filterWorkItemsByDate(items, "2026-07-31")).toHaveLength(1);
+    expect(filterWorkItemsByDate(items, "2026-08-01")).toHaveLength(0);
+    expect(filterWorkItemsByWeekStart(items, "2026-07-27")).toHaveLength(1);
+  });
 });

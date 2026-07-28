@@ -57,8 +57,13 @@ export interface WorkItem {
   originStage: OriginStage;
   /** Fecha textual legacy del planner (ej. "14 julio"). */
   date: string | null;
-  /** Fecha planificada ISO YYYY-MM-DD (zona BA). */
+  /** Fecha planificada ISO YYYY-MM-DD (zona BA) — inicio del rango asignado. */
   plannedDate: string | null;
+  /**
+   * Fin inclusive del rango planificado (ISO). Si null, el trabajo cubre solo plannedDate.
+   * Un solo workItemId aparece en cada día del rango en Semana; KPIs no se duplican.
+   */
+  plannedDateTo?: string | null;
   /** Celda del encabezado de fecha en SEMANAS (auditoría). */
   dateHeaderSourceRange?: string | null;
   /** Método de resolución temporal del planner. */

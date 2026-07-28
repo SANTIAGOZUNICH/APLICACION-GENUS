@@ -6,11 +6,13 @@ import { LifecycleConfirmDialog } from "@/features/os/operational/components/lif
 import { syntheticLifecycleItem } from "@/features/os/operational/components/lifecycle-synthetic";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
+  deleteAllOsNotificationsApi,
   dismissReadOsNotificationsApi,
   fetchOsNotifications,
   patchOsNotificationApi,
 } from "@/lib/orders/orders-client";
 import {
+  deleteAllNotificationsForSector,
   dismissNotification as dismissLocalNotification,
   dismissReadNotifications as dismissLocalReadNotifications,
   getNotificationsForSector,
@@ -40,6 +42,7 @@ export function NotificationBell() {
   const [activeItems, setActiveItems] = useState<BellItem[]>([]);
   const [archivedItems, setArchivedItems] = useState<BellItem[]>([]);
   const [confirmDismissRead, setConfirmDismissRead] = useState(false);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [pendingDismiss, setPendingDismiss] = useState<BellItem | null>(null);
 
   const session = email ? { email, sector: sectorId } : null;
@@ -174,6 +177,20 @@ export function NotificationBell() {
     void pullServer();
   }
 
+  async function handleDeleteAll() {
+    if (session) {
+      try {
+        await deleteAllOsNotificationsApi(session);
+      } catch {
+        // Local cleanup still runs
+      }
+    }
+    deleteAllNotificationsForSector(sectorId);
+    setActiveItems([]);
+    setArchivedItems([]);
+    void pullServer();
+  }
+
   return (
     <div className="relative">
       <button
@@ -275,17 +292,28 @@ export function NotificationBell() {
                 </ul>
               )}
             </div>
-            {tab === "activas" && activeItems.some((n) => n.read) && (
-              <div className="border-t border-[var(--os-border-subtle)] px-4 py-2">
+            {(tab === "activas" && activeItems.some((n) => n.read)) ||
+            activeItems.length > 0 ||
+            archivedItems.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-3 border-t border-[var(--os-border-subtle)] px-4 py-2">
+                {tab === "activas" && activeItems.some((n) => n.read) ? (
+                  <button
+                    type="button"
+                    className="text-xs text-rose-700 hover:underline"
+                    onClick={() => setConfirmDismissRead(true)}
+                  >
+                    Borrar leídas
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  className="text-xs text-rose-700 hover:underline"
-                  onClick={() => setConfirmDismissRead(true)}
+                  className="text-xs font-medium text-rose-800 hover:underline"
+                  onClick={() => setConfirmDeleteAll(true)}
                 >
-                  Borrar leídas
+                  Eliminar todas
                 </button>
               </div>
-            )}
+            ) : null}
           </div>
         </>
       )}
@@ -324,6 +352,24 @@ export function NotificationBell() {
         onConfirm={async () => {
           await handleDismissRead();
           setConfirmDismissRead(false);
+        }}
+      />
+
+      <LifecycleConfirmDialog
+        pending={
+          confirmDeleteAll
+            ? syntheticLifecycleItem(
+                "eliminar",
+                "Eliminar todas las notificaciones",
+                "Se eliminan de forma definitiva de tu bandeja (activas y archivadas). No se pueden restaurar. No borra órdenes ni avisos de otros usuarios."
+              )
+            : null
+        }
+        forceReason
+        onClose={() => setConfirmDeleteAll(false)}
+        onConfirm={async () => {
+          await handleDeleteAll();
+          setConfirmDeleteAll(false);
         }}
       />
     </div>

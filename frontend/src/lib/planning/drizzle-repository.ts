@@ -45,6 +45,7 @@ function mapItem(row: WorkItemRow): PlanningWorkItemRecord {
     id: row.id,
     planningWeekId: row.planningWeekId,
     plannedDate: String(row.plannedDate),
+    plannedDateTo: row.plannedDateTo ? String(row.plannedDateTo) : null,
     client: row.client,
     product: row.product,
     plannedQuantity: row.plannedQuantity,
@@ -169,12 +170,17 @@ export class DrizzlePlanningRepository implements PlanningRepository {
       conditions.push(eq(workItems.branchOwner, filters.ownerPerson));
     }
     if (filters.date) {
-      conditions.push(eq(workItems.plannedDate, filters.date));
+      // Cubrir rango planned_date … coalesce(planned_date_to, planned_date)
+      conditions.push(
+        sql`(${workItems.plannedDate} <= ${filters.date} AND coalesce(${workItems.plannedDateTo}, ${workItems.plannedDate}) >= ${filters.date})`
+      );
     }
     if (filters.weekStart) {
       conditions.push(eq(planningWeeks.weekStart, filters.weekStart));
-      conditions.push(gte(workItems.plannedDate, filters.weekStart));
-      conditions.push(lt(workItems.plannedDate, addDaysIso(filters.weekStart, 5)));
+      const weekEnd = addDaysIso(filters.weekStart, 4);
+      conditions.push(
+        sql`(${workItems.plannedDate} <= ${weekEnd} AND coalesce(${workItems.plannedDateTo}, ${workItems.plannedDate}) >= ${filters.weekStart})`
+      );
     }
 
     const rows = await this.db

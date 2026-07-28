@@ -37,14 +37,14 @@ export type LifecycleRowActionsProps = {
   entityLabel?: string;
   entityStatus?: string;
   disabled?: boolean;
-  /** Si false, no muestra menú ⋮ (solo Abrir + Borrar). Default true cuando hay más acciones. */
+  /** Si false, no muestra menú ⋮ (solo Abrir + Eliminar). Default true cuando hay más acciones. */
   showOverflowMenu?: boolean;
   className?: string;
 };
 
 /**
- * Acciones de fila: [Abrir] [Borrar] (+ ⋮ si hay más).
- * “Borrar” abre confirmación; la política decide eliminar/anular/archivar.
+ * Acciones de fila: [Abrir] [Eliminar] (+ ⋮ si hay más).
+ * “Eliminar” abre confirmación; la política decide eliminar/anular/archivar.
  */
 export function LifecycleRowActions({
   items,
@@ -121,7 +121,7 @@ export function LifecycleRowActions({
             data-testid="lifecycle-row-delete"
           >
             <Trash2 className="size-3.5" />
-            Borrar
+            Eliminar
           </Button>
           <Button
             type="button"
@@ -130,8 +130,8 @@ export function LifecycleRowActions({
             className="inline-flex size-8 p-0 text-rose-700 hover:bg-rose-50 sm:hidden"
             disabled={disabled || busy}
             onClick={() => setPending(primaryDelete)}
-            aria-label="Borrar"
-            title="Borrar"
+            aria-label="Eliminar"
+            title="Eliminar"
             data-testid="lifecycle-row-delete-icon"
           >
             <Trash2 className="size-4" />

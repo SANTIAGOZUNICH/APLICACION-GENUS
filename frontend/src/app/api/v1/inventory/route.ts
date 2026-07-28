@@ -35,6 +35,7 @@ async function readyService() {
         orderId: null,
         readBy: [],
         dismissedBy: [],
+        deletedBy: [],
         createdAt: new Date(),
       });
     } catch (err) {

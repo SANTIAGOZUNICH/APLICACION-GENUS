@@ -133,6 +133,7 @@ async function notify(params: {
         orderId: null,
         readBy: [],
         dismissedBy: [],
+        deletedBy: [],
       });
       return;
     } catch {

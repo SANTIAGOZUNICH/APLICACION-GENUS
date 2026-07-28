@@ -8,6 +8,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -113,6 +114,8 @@ export const workItems = pgTable(
       .notNull()
       .references(() => planningWeeks.id, { onDelete: "cascade" }),
     plannedDate: date("planned_date").notNull(),
+    /** Fin inclusive del rango de aparición en Semana (nullable = solo plannedDate). */
+    plannedDateTo: date("planned_date_to"),
     client: text("client").notNull(),
     product: text("product").notNull(),
     plannedQuantity: text("planned_quantity").notNull(),
@@ -323,10 +326,25 @@ export const osNotifications = pgTable("os_notifications", {
   }),
   readBy: jsonb("read_by").notNull().default([]),
   dismissedBy: jsonb("dismissed_by").notNull().default([]),
+  /** Emails que eliminaron el aviso de forma definitiva (no restaurable). */
+  deletedBy: jsonb("deleted_by").notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
 });
+
+/** Tombstones por usuario/evento — impiden regenerar avisos eliminados. */
+export const osNotificationUserTombstones = pgTable(
+  "os_notification_user_tombstones",
+  {
+    userEmail: text("user_email").notNull(),
+    eventKey: text("event_key").notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userEmail, table.eventKey] }),
+  ]
+);
 
 /** Inventario ME/MP — documento JSON por fila (columnas comerciales en payload). */
 export const invMeIngresos = pgTable("inv_me_ingresos", {

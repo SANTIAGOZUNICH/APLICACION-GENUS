@@ -33,6 +33,10 @@ export async function PATCH(request: Request) {
       await svc.dismissReadNotifications(actor);
       return NextResponse.json({ ok: true });
     }
+    if (body.action === "delete_all") {
+      const deleted = await svc.deleteAllNotifications(actor);
+      return NextResponse.json({ ok: true, deleted });
+    }
     return NextResponse.json({ error: "action inválida" }, { status: 400 });
   } catch (err) {
     return ordersErrorResponse(err);

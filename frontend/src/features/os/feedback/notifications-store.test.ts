@@ -33,19 +33,40 @@ describe("notifications-store dismissal", () => {
       title: "Entregado",
       message: "Producto entregado",
       sectors: ["PRODUCCION"],
-    });
+    })!;
     const second = pushNotification({
       kind: "trabajo_asignado",
       title: "Asignado",
       message: "Producto asignado",
       sectors: ["PRODUCCION"],
-    });
+    })!;
 
     markNotificationRead(first.id);
     dismissReadNotifications("PRODUCCION");
     expect(getNotificationsForSector("PRODUCCION").map((item) => item.id)).toEqual([second.id]);
 
     dismissNotification(second.id);
+    expect(getNotificationsForSector("PRODUCCION")).toEqual([]);
+  });
+
+  it("Eliminar todas limpia bandeja y bloquea regeneración por fingerprint", async () => {
+    const { deleteAllNotificationsForSector } = await import("./notifications-store");
+    pushNotification({
+      kind: "trabajo_asignado",
+      title: "Asignado",
+      message: "Producto asignado",
+      sectors: ["PRODUCCION"],
+    });
+    expect(getNotificationsForSector("PRODUCCION").length).toBeGreaterThan(0);
+    deleteAllNotificationsForSector("PRODUCCION");
+    expect(getNotificationsForSector("PRODUCCION")).toEqual([]);
+    const again = pushNotification({
+      kind: "trabajo_asignado",
+      title: "Asignado",
+      message: "Producto asignado",
+      sectors: ["PRODUCCION"],
+    });
+    expect(again).toBeNull();
     expect(getNotificationsForSector("PRODUCCION")).toEqual([]);
   });
 });
