@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMpControlService } from "@/lib/mp-control/mp-control-service";
-import type { MpWeeklyControlLine } from "@/lib/mp-control/types";
+import type { MpWeeklyControlLine, MpWeeklyControlStatus } from "@/lib/mp-control/types";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
 
@@ -34,15 +34,27 @@ export async function PATCH(request: Request, ctx: Ctx) {
       product?: string;
       linkedOeId?: string | null;
       lines?: MpWeeklyControlLine[];
-      status?: "BORRADOR" | "COMPLETADO";
+      status?: MpWeeklyControlStatus;
       recalcFromSnapshot?: boolean;
       stockByCodigo?: Record<string, number>;
+      lifecycleAction?: "annul" | "archive" | "restore";
+      reason?: string;
     };
-    const control = await getMpControlService().update(
-      { email: actor.email, sector: actor.sector },
-      id,
-      body
-    );
+    const svc = getMpControlService();
+    const mpActor = { email: actor.email, sector: actor.sector };
+    if (body.lifecycleAction === "annul") {
+      const control = await svc.annul(mpActor, id, body.reason ?? "");
+      return NextResponse.json({ control });
+    }
+    if (body.lifecycleAction === "archive") {
+      const control = await svc.archive(mpActor, id);
+      return NextResponse.json({ control });
+    }
+    if (body.lifecycleAction === "restore") {
+      const control = await svc.restore(mpActor, id);
+      return NextResponse.json({ control });
+    }
+    const control = await svc.update(mpActor, id, body);
     return NextResponse.json({ control });
   } catch (err) {
     return ordersErrorResponse(err);

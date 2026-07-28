@@ -237,6 +237,88 @@ class ServerOperationalState {
   }
 
   /**
+   * Anula una decisión de calidad: conserva historial (previousStatus + motivo),
+   * vuelve el ítem a pendiente y no crea remito.
+   */
+  annulQualityDecision(
+    itemId: string,
+    options: {
+      reason: string;
+      decidedBy: string;
+      decidedBySector: string;
+      decidedByEmail?: string;
+    }
+  ): QualityDecisionRecord {
+    const previous = this.decisions.get(itemId);
+    if (!previous || (previous.status !== "aprobado" && previous.status !== "rechazado")) {
+      throw new Error("Solo se pueden anular decisiones aprobadas o rechazadas.");
+    }
+    if (!options.reason.trim()) {
+      throw new Error("Motivo obligatorio para anular la decisión.");
+    }
+    const record: QualityDecisionRecord = {
+      itemId,
+      status: "pendiente",
+      decidedAt: new Date().toISOString(),
+      decidedBy: options.decidedBy,
+      decidedBySector: options.decidedBySector,
+      decidedByEmail: options.decidedByEmail,
+      observation: previous.observation,
+      previousStatus: previous.status,
+      changeReason: options.reason.trim(),
+    };
+    this.decisions.set(itemId, record);
+    this.revision += 1;
+    operationalEventBus.publish({
+      type: "quality.decided",
+      revision: this.revision,
+      at: record.decidedAt,
+      itemId,
+      status: "pendiente",
+      notifySectors: NOTIFY_ON_QUALITY,
+    });
+    return record;
+  }
+
+  /**
+   * Restaura un trabajo cancelado → en_curso, si no hay conflicto de estado.
+   */
+  restoreCancelledWork(
+    itemId: string,
+    options: { restoredBy: string; reason?: string; sector?: SectorId }
+  ): WorkProgressPayload {
+    const existing = this.progress.get(itemId);
+    if (!existing || existing.status !== "cancelado") {
+      throw new Error("Solo se restauran trabajos en estado cancelado.");
+    }
+    const record: WorkProgressPayload = {
+      ...existing,
+      status: "en_curso",
+      observation: [
+        existing.observation,
+        options.reason?.trim() ? `Restaurado: ${options.reason.trim()}` : "Restaurado",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      updatedAt: new Date().toISOString(),
+      updatedBy: options.restoredBy,
+      sector: options.sector ?? existing.sector,
+    };
+    this.progress.set(itemId, record);
+    this.revision += 1;
+    operationalEventBus.publish({
+      type: "work.progress",
+      revision: this.revision,
+      at: record.updatedAt,
+      itemId,
+      sector: record.sector ?? "PRODUCCION",
+      status: "en_curso",
+      notifySectors: NOTIFY_ON_PROGRESS,
+    });
+    return record;
+  }
+
+  /**
    * Cancela un trabajo en el overlay server-side (solo PRODUCCION — validado en route).
    * No elimina OE/OA ni decisiones de Calidad.
    */

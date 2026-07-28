@@ -45,6 +45,7 @@ export function MetricasView() {
 
   const [editId, setEditId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -54,6 +55,7 @@ export function MetricasView() {
         product: filterProduct || undefined,
         responsible: filterResponsible || undefined,
         sector: isProdAdmin ? filterSector : undefined,
+        onlyDeleted: showArchived,
       });
       setMetrics(data.metrics);
       setRanking(data.ranking);
@@ -71,6 +73,7 @@ export function MetricasView() {
     filterResponsible,
     filterSector,
     isProdAdmin,
+    showArchived,
   ]);
 
   useEffect(() => {
@@ -133,7 +136,19 @@ export function MetricasView() {
       setConfirmDeleteId(null);
       await reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al eliminar");
+      setError(err instanceof Error ? err.message : "Error al archivar");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRestore(id: string) {
+    setBusy(true);
+    try {
+      await metricasActionApi(session, "restore", { id });
+      await reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al restaurar");
     } finally {
       setBusy(false);
     }
@@ -219,6 +234,23 @@ export function MetricasView() {
         </form>
 
         <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={showArchived ? "secondary" : "tertiary"}
+            onClick={() => setShowArchived(false)}
+          >
+            Activos
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={showArchived ? "tertiary" : "secondary"}
+            onClick={() => setShowArchived(true)}
+            data-testid="metricas-tab-archived"
+          >
+            Archivados
+          </Button>
           {isProdAdmin ? (
             <select
               value={filterSector}
@@ -288,17 +320,30 @@ export function MetricasView() {
                   <td className="px-3 py-2 text-right">{m.units.toLocaleString()}</td>
                   <td className="px-3 py-2">{m.responsibleDisplay}</td>
                   <td className="px-3 py-2 text-right">
-                    <Button size="sm" variant="tertiary" disabled={busy || schemaPending} onClick={() => startEdit(m)}>
-                      Editar
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="tertiary"
-                      disabled={busy || schemaPending}
-                      onClick={() => setConfirmDeleteId(m.id)}
-                    >
-                      Eliminar
-                    </Button>
+                    {showArchived ? (
+                      <Button
+                        size="sm"
+                        variant="tertiary"
+                        disabled={busy || schemaPending}
+                        onClick={() => void handleRestore(m.id)}
+                      >
+                        Restaurar
+                      </Button>
+                    ) : (
+                      <>
+                        <Button size="sm" variant="tertiary" disabled={busy || schemaPending} onClick={() => startEdit(m)}>
+                          Editar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="tertiary"
+                          disabled={busy || schemaPending}
+                          onClick={() => setConfirmDeleteId(m.id)}
+                        >
+                          Archivar
+                        </Button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -368,9 +413,9 @@ export function MetricasView() {
           onOpenChange={(open) => {
             if (!open) setConfirmDeleteId(null);
           }}
-          title="Confirmar eliminación"
-          description="¿Eliminar este registro de métricas?"
-          confirmLabel="Eliminar"
+          title="Archivar métrica"
+          description="¿Archivar este registro? Podés restaurarlo desde la pestaña Archivados."
+          confirmLabel="Archivar"
           onConfirm={() => void handleDelete()}
           onCancel={() => setConfirmDeleteId(null)}
         />

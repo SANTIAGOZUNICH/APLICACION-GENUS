@@ -116,6 +116,18 @@ export async function editGeneratedRemitoApi(
   return remitoActionApi(session, "edit_generated", remitoId, options);
 }
 
+export async function deleteRemitoDraftApi(
+  session: OrdersClientSession,
+  remitoId: string
+): Promise<void> {
+  const res = await fetch(`/api/v1/remitos/${remitoId}`, {
+    method: "DELETE",
+    headers: headers(session),
+  });
+  const body = (await res.json()) as { deleted?: boolean; error?: string };
+  if (!res.ok) throw new Error(body.error ?? "No se pudo eliminar el borrador");
+}
+
 export async function remitoStatusForWorkApi(
   session: OrdersClientSession,
   workItemId: string

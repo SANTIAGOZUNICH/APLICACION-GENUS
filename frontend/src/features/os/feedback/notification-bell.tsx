@@ -1,15 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Bell } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { usePreviewSession } from "@/features/os/session/preview-context";
-import { fetchOsNotifications } from "@/lib/orders/orders-client";
 import {
-  dismissNotification,
-  dismissReadNotifications,
+  dismissReadOsNotificationsApi,
+  fetchOsNotifications,
+  patchOsNotificationApi,
+} from "@/lib/orders/orders-client";
+import {
+  dismissNotification as dismissLocalNotification,
+  dismissReadNotifications as dismissLocalReadNotifications,
   getNotificationsForSector,
-  markNotificationRead,
+  markNotificationRead as markLocalNotificationRead,
   subscribeNotifications,
   type OsNotification,
 } from "./notifications-store";
@@ -25,13 +29,18 @@ function relativeTime(iso: string): string {
 }
 
 type BellItem = OsNotification & { source?: "local" | "server" };
+type TabId = "activas" | "archivadas";
 
 /** Campana: une notificaciones demo locales + notificaciones Neon de órdenes OE/OA. */
 export function NotificationBell() {
   const { sectorId, email } = usePreviewSession();
   const [open, setOpen] = useState(false);
-  const [items, setItems] = useState<BellItem[]>([]);
+  const [tab, setTab] = useState<TabId>("activas");
+  const [activeItems, setActiveItems] = useState<BellItem[]>([]);
+  const [archivedItems, setArchivedItems] = useState<BellItem[]>([]);
   const [confirmDismissRead, setConfirmDismissRead] = useState(false);
+
+  const session = email ? { email, sector: sectorId } : null;
 
   useEffect(() => {
     const loadLocal = () => {
@@ -39,7 +48,7 @@ export function NotificationBell() {
         ...n,
         source: "local" as const,
       }));
-      setItems((prev) => {
+      setActiveItems((prev) => {
         const server = prev.filter((p) => p.source === "server");
         const merged = [...server, ...local];
         const seen = new Set<string>();
@@ -54,41 +63,114 @@ export function NotificationBell() {
     return subscribeNotifications(loadLocal);
   }, [sectorId]);
 
-  useEffect(() => {
-    if (!email) return;
-    let cancelled = false;
-    const pull = async () => {
-      try {
-        const server = await fetchOsNotifications({ email, sector: sectorId });
-        if (cancelled) return;
-        const mapped: BellItem[] = server.map((n) => ({
+  const pullServer = useCallback(async () => {
+    if (!session) return;
+    try {
+      const [active, archived] = await Promise.all([
+        fetchOsNotifications(session, { includeDismissed: false }),
+        fetchOsNotifications(session, { includeDismissed: true }),
+      ]);
+      const mapServer = (list: typeof active, dismissed: boolean): BellItem[] =>
+        list.map((n) => ({
           id: n.id,
           kind: n.kind as OsNotification["kind"],
           title: n.title,
           message: n.message,
           sectors: n.sectors,
           createdAt: n.createdAt,
-          read: n.readBy.includes(email),
-          dismissed: n.dismissedBy.includes(email),
-          source: "server",
+          read: n.readBy.includes(session.email),
+          dismissed,
+          source: "server" as const,
         }));
-        setItems((prev) => {
-          const local = prev.filter((p) => p.source !== "server");
-          return [...mapped.filter((m) => !m.dismissed), ...local];
-        });
-      } catch {
-        // Sin Neon u otros errores: se conservan notificaciones locales.
-      }
+
+      setActiveItems((prev) => {
+        const local = prev.filter((p) => p.source !== "server");
+        return [...mapServer(active, false), ...local];
+      });
+      setArchivedItems(mapServer(archived, true));
+    } catch {
+      // Sin Neon u otros errores: se conservan notificaciones locales.
+    }
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    const run = async () => {
+      await pullServer();
+      if (cancelled) return;
     };
-    void pull();
-    const id = window.setInterval(() => void pull(), 30000);
+    void run();
+    const id = window.setInterval(() => void pullServer(), 30000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [email, sectorId]);
+  }, [session, pullServer]);
 
-  const unreadCount = items.filter((n) => !n.read).length;
+  const items = tab === "activas" ? activeItems : archivedItems;
+  const unreadCount = activeItems.filter((n) => !n.read).length;
+
+  async function handleMarkRead(n: BellItem) {
+    if (n.source === "server" && session) {
+      try {
+        await patchOsNotificationApi(session, n.id, "read");
+      } catch {
+        // Optimistic UI anyway
+      }
+    } else {
+      markLocalNotificationRead(n.id);
+    }
+    const mark = (list: BellItem[]) =>
+      list.map((x) => (x.id === n.id ? { ...x, read: true } : x));
+    setActiveItems(mark);
+    setArchivedItems(mark);
+  }
+
+  async function handleDismiss(n: BellItem) {
+    if (n.source === "server" && session) {
+      try {
+        await patchOsNotificationApi(session, n.id, "dismiss");
+      } catch {
+        return;
+      }
+      setActiveItems((prev) => prev.filter((x) => x.id !== n.id));
+      setArchivedItems((prev) => [
+        { ...n, dismissed: true, read: true },
+        ...prev.filter((x) => x.id !== n.id),
+      ]);
+    } else {
+      dismissLocalNotification(n.id);
+      setActiveItems((prev) => prev.filter((x) => x.id !== n.id));
+    }
+  }
+
+  async function handleRestore(n: BellItem) {
+    if (n.source === "server" && session) {
+      try {
+        await patchOsNotificationApi(session, n.id, "restore");
+      } catch {
+        return;
+      }
+      setArchivedItems((prev) => prev.filter((x) => x.id !== n.id));
+      setActiveItems((prev) => [{ ...n, dismissed: false }, ...prev.filter((x) => x.id !== n.id)]);
+    }
+  }
+
+  async function handleDismissRead() {
+    const hasServerRead = activeItems.some((n) => n.read && n.source === "server");
+    const hasLocalRead = activeItems.some((n) => n.read && n.source !== "server");
+    if (hasServerRead && session) {
+      try {
+        await dismissReadOsNotificationsApi(session);
+      } catch {
+        // fall through for local
+      }
+    }
+    if (hasLocalRead) dismissLocalReadNotifications(sectorId);
+    setActiveItems((prev) => prev.filter((n) => !n.read));
+    void pullServer();
+  }
 
   return (
     <div className="relative">
@@ -129,11 +211,27 @@ export function NotificationBell() {
               <p className="mt-0.5 text-[11px] text-[var(--os-text-muted)]">
                 Descartar no elimina la orden asociada.
               </p>
+              <div className="mt-2 flex gap-1">
+                {(["activas", "archivadas"] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    className={`rounded px-2 py-0.5 text-[11px] capitalize ${
+                      tab === t
+                        ? "bg-[var(--os-teal)] text-white"
+                        : "text-[var(--os-text-muted)] hover:bg-[var(--os-bg)]"
+                    }`}
+                    onClick={() => setTab(t)}
+                  >
+                    {t === "activas" ? "Activas" : "Archivadas"}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="os-scroll-main max-h-96 overflow-y-auto">
               {items.length === 0 ? (
                 <p className="px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
-                  Sin notificaciones
+                  {tab === "activas" ? "Sin notificaciones" : "Sin archivadas"}
                 </p>
               ) : (
                 <ul className="divide-y divide-[var(--os-border-subtle)]">
@@ -142,12 +240,7 @@ export function NotificationBell() {
                       <button
                         type="button"
                         className="w-full text-left"
-                        onClick={() => {
-                          if (n.source !== "server") markNotificationRead(n.id);
-                          setItems((prev) =>
-                            prev.map((x) => (x.id === n.id ? { ...x, read: true } : x))
-                          );
-                        }}
+                        onClick={() => void handleMarkRead(n)}
                       >
                         <p className={`text-sm ${n.read ? "font-normal" : "font-semibold"}`}>
                           {n.title}
@@ -155,32 +248,39 @@ export function NotificationBell() {
                         <p className="mt-0.5 text-xs text-[var(--os-text-muted)]">{n.message}</p>
                         <p className="mt-1 text-[10px] text-[var(--os-text-muted)]">
                           {relativeTime(n.createdAt)}
-                          {n.source === "server" ? " · servidor" : ""}
+                          {n.source === "server" ? " · servidor" : " · demo"}
                         </p>
                       </button>
-                      <button
-                        type="button"
-                        className="mt-1 text-[11px] text-[var(--os-teal)] hover:underline"
-                        onClick={() => {
-                          if (n.source !== "server") dismissNotification(n.id);
-                          setItems((prev) => prev.filter((x) => x.id !== n.id));
-                        }}
-                      >
-                        Descartar
-                      </button>
+                      {tab === "activas" ? (
+                        <button
+                          type="button"
+                          className="mt-1 text-[11px] text-[var(--os-teal)] hover:underline"
+                          onClick={() => void handleDismiss(n)}
+                        >
+                          Descartar
+                        </button>
+                      ) : n.source === "server" ? (
+                        <button
+                          type="button"
+                          className="mt-1 text-[11px] text-[var(--os-teal)] hover:underline"
+                          onClick={() => void handleRestore(n)}
+                        >
+                          Restaurar
+                        </button>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
               )}
             </div>
-            {items.some((n) => n.read && n.source !== "server") && (
+            {tab === "activas" && activeItems.some((n) => n.read) && (
               <div className="border-t border-[var(--os-border-subtle)] px-4 py-2">
                 <button
                   type="button"
                   className="text-xs text-[var(--os-text-muted)] hover:underline"
                   onClick={() => setConfirmDismissRead(true)}
                 >
-                  Descartar leídas (locales)
+                  Descartar leídas
                 </button>
               </div>
             )}
@@ -192,11 +292,11 @@ export function NotificationBell() {
         open={confirmDismissRead}
         onOpenChange={setConfirmDismissRead}
         title="Descartar leídas"
-        description="Se ocultarán las notificaciones locales ya leídas. No elimina órdenes."
+        description="Se archivarán las notificaciones ya leídas. No elimina órdenes."
         confirmLabel="Descartar"
         onConfirm={() => {
-          dismissReadNotifications(sectorId);
-          setItems((prev) => prev.filter((n) => n.source === "server" || !n.read));
+          void handleDismissRead();
+          setConfirmDismissRead(false);
         }}
       />
     </div>

@@ -882,6 +882,60 @@ export class RemitoService {
     return remito;
   }
 
+  /**
+   * Elimina un borrador sin versiones generadas. Borra archivos Blob asociados y metadata.
+   */
+  async deleteDraft(actor: RemitoActor, remitoId: string): Promise<void> {
+    assertAccess(actor);
+    await assertRemitoWritesEnabled();
+    const remito = await this.findById(remitoId);
+    if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
+    if (remito.status !== "BORRADOR") {
+      throw new OrdersValidationError("Solo se pueden eliminar borradores.");
+    }
+    const versions = await this.loadVersionsFor(remitoId);
+    if (versions.length > 0) {
+      throw new OrdersValidationError(
+        "No se puede eliminar un borrador con versiones generadas."
+      );
+    }
+
+    const files = await this.loadFilesForRemito(remitoId);
+    const draftFiles = files.filter((f) => !f.versionId);
+    if (draftFiles.length > 0) {
+      const storage = getFileStorage();
+      for (const f of draftFiles) {
+        try {
+          await storage.delete(f.driveFileId);
+        } catch {
+          /* best effort */
+        }
+        mem().blobs.delete(f.driveFileId);
+      }
+    }
+
+    if (isFeatureMemoryAllowed() || !(await isRemitoSchemaReady())) {
+      const store = mem();
+      store.remitos = store.remitos.filter((r) => r.id !== remitoId);
+      store.files = store.files.filter((f) => f.remitoId !== remitoId);
+      store.versions = store.versions.filter((v) => v.remitoId !== remitoId);
+      for (const [workItemId, linkedRemitoId] of [...store.workLinks.entries()]) {
+        if (linkedRemitoId === remitoId) store.workLinks.delete(workItemId);
+      }
+    } else {
+      const db = getDb();
+      await db.delete(remitos).where(eq(remitos.id, remitoId));
+    }
+
+    const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+    recordLifecycleEvent({
+      entityKind: "remito",
+      entityId: remitoId,
+      action: "eliminar",
+      actor: { email: actor.email, sector: actor.sector },
+    });
+  }
+
   async annul(actor: RemitoActor, remitoId: string, reason?: string): Promise<RemitoRecord> {
     assertAccess(actor);
     await assertRemitoWritesEnabled();
@@ -1129,6 +1183,33 @@ export class RemitoService {
           driveFileIdXlsx: v.driveFileIdXlsx,
           driveFileIdPdf: v.driveFileIdPdf,
         }));
+    }
+  }
+
+  private async loadFilesForRemito(remitoId: string): Promise<Mem["files"]> {
+    if (isFeatureMemoryAllowed() || !isDatabaseConfigured() || !(await isRemitoSchemaReady())) {
+      return mem().files.filter((f) => f.remitoId === remitoId);
+    }
+    try {
+      const db = getDb();
+      const rows = await db
+        .select()
+        .from(remitoFiles)
+        .where(eq(remitoFiles.remitoId, remitoId));
+      return rows.map((f) => ({
+        id: f.id,
+        remitoId: f.remitoId,
+        versionId: f.versionId,
+        kind: f.kind as "xlsx" | "pdf",
+        driveFileId: f.driveFileId,
+        fileName: f.fileName,
+        mimeType: f.mimeType,
+        sizeBytes: f.sizeBytes,
+        createdBy: f.createdBy,
+        createdAt: f.createdAt.toISOString(),
+      }));
+    } catch {
+      return mem().files.filter((f) => f.remitoId === remitoId);
     }
   }
 

@@ -17,10 +17,10 @@ import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import {
   listCancelledAndDeletedManualWorks,
-  restoreManualWorkItem,
   type CancelledOrDeletedKind,
   type CancelledOrDeletedRow,
 } from "../adapters/manual-work-items-repository";
+import { AssignedWorkLifecycleActions } from "../components/assigned-work-lifecycle-actions";
 
 interface HistorialRow {
   id: string;
@@ -100,21 +100,12 @@ export function HistorialView({ sectors, title = "Historial" }: HistorialViewPro
 
   const canRestore = workspace.context.sectorId === "PRODUCCION";
 
-  const handleRestore = useCallback(
-    (row: CancelledOrDeletedRow) => {
-      const result = restoreManualWorkItem({
-        id: row.item.id,
-        actorSectorId: sectorId,
-        actorName: workspace.context.displayName,
-      });
-      if (!result.ok) {
-        showFeedback(result.error);
-        return;
-      }
+  const handleRestoreFeedback = useCallback(
+    (message: string) => {
       setTick((value) => value + 1);
-      showFeedback("Trabajo restaurado. Volvió a la bandeja activa.");
+      showFeedback(message);
     },
-    [sectorId, showFeedback, workspace.context.displayName]
+    [showFeedback]
   );
 
   const showSectorColumn = sectors.length > 1;
@@ -203,10 +194,17 @@ export function HistorialView({ sectors, title = "Historial" }: HistorialViewPro
       key: "accion",
       header: "Acción",
       render: (r) =>
-        canRestore ? (
-          <Button variant="secondary" size="sm" onClick={() => handleRestore(r)}>
-            Restaurar
-          </Button>
+        canRestore && (r.kind === "cancelado" || r.kind === "eliminado" || r.kind === "archivado") ? (
+          <AssignedWorkLifecycleActions
+            item={r.item}
+            actorSectorId={sectorId}
+            actorName={workspace.context.displayName}
+            inactiveKind={r.kind}
+            onChanged={() => handleRestoreFeedback("Trabajo restaurado. Volvió a la bandeja activa.")}
+            onToast={(message) => showFeedback(message)}
+          />
+        ) : canRestore ? (
+          <span className="text-xs text-[var(--os-text-muted)]">—</span>
         ) : (
           <span className="text-xs text-[var(--os-text-muted)]">Solo Producción</span>
         ),

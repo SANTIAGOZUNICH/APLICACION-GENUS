@@ -29,6 +29,8 @@ export type MetricsListFilters = {
   responsible?: string;
   /** Solo Producción: filtrar Masivo/Premium; omitir = todos. */
   sector?: MetricsSector | "ALL";
+  /** Si true, lista solo soft-deleted (para restaurar). */
+  onlyDeleted?: boolean;
 };
 
 export type MetricsRankingEntry = {

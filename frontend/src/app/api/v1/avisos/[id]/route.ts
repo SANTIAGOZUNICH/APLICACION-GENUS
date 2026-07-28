@@ -25,6 +25,11 @@ export async function PATCH(request: Request, ctx: Ctx) {
       if (!message) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
       return NextResponse.json({ message });
     }
+    if (body.action === "restore") {
+      const message = await svc.restore(a, id);
+      if (!message) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+      return NextResponse.json({ message });
+    }
     return NextResponse.json({ error: "action inválida" }, { status: 400 });
   } catch (err) {
     return ordersErrorResponse(err);

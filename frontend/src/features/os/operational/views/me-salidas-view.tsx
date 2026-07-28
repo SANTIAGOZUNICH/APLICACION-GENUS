@@ -154,7 +154,26 @@ export function MeSalidasView() {
           return displayCell(parts.join(" · ") || null);
         }
         if (label === "DESCRIPCIÓN" && row.origen === "OA" && row.codigo) {
-          return displayCell(`${row.descripcion || ""} [${row.codigo}]`.trim());
+          return (
+            <span className="inline-flex flex-wrap items-center gap-1">
+              {displayCell(`${row.descripcion || ""} [${row.codigo}]`.trim())}
+              {row.reverted ? (
+                <span className="rounded bg-red-100 px-1 text-[10px] font-semibold uppercase text-red-800">
+                  ANULADA
+                </span>
+              ) : null}
+            </span>
+          );
+        }
+        if (label === "DESCRIPCIÓN" && row.reverted) {
+          return (
+            <span className="inline-flex flex-wrap items-center gap-1">
+              {displayCell(row.descripcion)}
+              <span className="rounded bg-red-100 px-1 text-[10px] font-semibold uppercase text-red-800">
+                ANULADA
+              </span>
+            </span>
+          );
         }
         const v = row[key];
         if (typeof v === "boolean") return v ? "Sí" : "No";
@@ -206,7 +225,7 @@ export function MeSalidasView() {
       )}
       <p className="mb-3 text-xs text-[var(--os-text-muted)]">
         Incluye salidas manuales y salidas automáticas generadas al entregar una OA. Las salidas OA
-        no se editan ni eliminan desde aquí (trazabilidad).
+        no se editan desde aquí; podés anularlas para revertir el descuento de stock.
       </p>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {canWrite && (
@@ -256,10 +275,24 @@ export function MeSalidasView() {
                 {
                   key: "acciones",
                   header: "",
-                  render: (row: MeSalidaRow) =>
-                    row.origen === "OA" ? (
-                      <span className="text-xs text-[var(--os-text-muted)]">OA</span>
-                    ) : (
+                  render: (row: MeSalidaRow) => {
+                    if (row.reverted) {
+                      return (
+                        <span className="text-xs text-[var(--os-text-muted)]">Anulada</span>
+                      );
+                    }
+                    if (row.origen === "OA") {
+                      return (
+                        <button
+                          type="button"
+                          className="text-xs text-red-700 hover:underline"
+                          onClick={() => setDeleteId(row.id)}
+                        >
+                          Anular
+                        </button>
+                      );
+                    }
+                    return (
                     <div className="flex gap-1">
                       <button
                         type="button"
@@ -282,11 +315,16 @@ export function MeSalidasView() {
                       >
                         <Pencil className="size-4" />
                       </button>
-                      <button type="button" onClick={() => setDeleteId(row.id)}>
+                      <button
+                        type="button"
+                        title="Anular salida"
+                        onClick={() => setDeleteId(row.id)}
+                      >
                         <Trash2 className="size-4 text-red-700" />
                       </button>
                     </div>
-                    ),
+                    );
+                  },
                 } as OperationalTableColumn<MeSalidaRow>,
               ]
             : []),
@@ -401,9 +439,9 @@ export function MeSalidasView() {
       <ConfirmDialog
         open={Boolean(deleteId)}
         onOpenChange={(o) => !o && setDeleteId(null)}
-        title="Eliminar salida ME"
-        description="Se revertirá el impacto en stock."
-        confirmLabel="Eliminar"
+        title="Anular salida ME"
+        description="Se revertirá el impacto en stock (si aplica) y la fila quedará marcada como ANULADA."
+        confirmLabel="Anular"
         onConfirm={() => {
           if (!deleteId) return;
           void mutateInventory({

@@ -49,7 +49,7 @@ export async function createAvisoApi(
 export async function patchAvisoApi(
   session: OrdersClientSession,
   id: string,
-  action: "read" | "archive"
+  action: "read" | "archive" | "restore"
 ): Promise<AvisoRecord> {
   const res = await fetch(`/api/v1/avisos/${id}`, {
     method: "PATCH",

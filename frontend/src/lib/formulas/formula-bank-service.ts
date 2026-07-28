@@ -17,6 +17,7 @@ import {
 import {
   findUniqueExactProduct,
   listActiveFormulaOptions,
+  visibleProductLabel,
   type FormulaOption,
 } from "./formula-options";
 
@@ -38,15 +39,62 @@ export class FormulaBankNotFoundError extends Error {
   }
 }
 
+export class FormulaBankConflictError extends Error {
+  status = 409;
+  code = "CONFLICT";
+  usageRefs?: Array<{ kind: string; id: string; label: string }>;
+  constructor(
+    message: string,
+    usageRefs?: Array<{ kind: string; id: string; label: string }>
+  ) {
+    super(message);
+    this.name = "FormulaBankConflictError";
+    this.usageRefs = usageRefs;
+  }
+}
+
+export class FormulaBankValidationError extends Error {
+  status = 400;
+  code = "VALIDATION";
+  constructor(message: string) {
+    super(message);
+    this.name = "FormulaBankValidationError";
+  }
+}
+
+export type FormulaAdminEntry = {
+  productId: string;
+  client: string;
+  productLabel: string;
+  code: string;
+  activeVersionId: string | null;
+  archived: boolean;
+  versionCount: number;
+  vigenteVersion: number | null;
+  sourceFile: string | null;
+  updatedAt: string;
+};
+
+export type FormulaAdminAuditEvent = {
+  productId: string;
+  action: "archive" | "restore" | "delete";
+  reason: string;
+  actorEmail: string;
+  actorSector: string;
+  at: string;
+};
+
 export class MemoryFormulaBank {
   products: FormulaProductRecord[] = [];
   versions: FormulaVersionRecord[] = [];
   importRunHashes = new Set<string>();
+  adminAudit: FormulaAdminAuditEvent[] = [];
 
   reset() {
     this.products = [];
     this.versions = [];
     this.importRunHashes = new Set();
+    this.adminAudit = [];
   }
 }
 
@@ -532,6 +580,181 @@ export class FormulaBankService {
     void input.actorEmail;
     void input.actorSector;
     return ver;
+  }
+
+  /** Catálogo administrativo (metadata; sin ingredientes/%/procedimiento). */
+  listAdminEntries(opts?: {
+    query?: string;
+    includeArchived?: boolean;
+    limit?: number;
+  }): FormulaAdminEntry[] {
+    const q = normalizeSearchKey(opts?.query ?? "");
+    const limit = opts?.limit ?? 200;
+    const includeArchived = Boolean(opts?.includeArchived);
+    const byVersion = new Map(this.store.versions.map((v) => [v.id, v]));
+    const out: FormulaAdminEntry[] = [];
+
+    for (const p of this.store.products) {
+      if (isPendingClient(p.displayClient)) continue;
+      const active = Boolean(p.activeVersionId);
+      if (!active && !includeArchived) continue;
+
+      const productVersions = this.store.versions.filter((v) => v.productId === p.id);
+      const activeVer = p.activeVersionId ? byVersion.get(p.activeVersionId) : undefined;
+      const label = visibleProductLabel(p, activeVer ?? productVersions[0]);
+      const haystack = normalizeSearchKey(
+        [p.displayClient, label, p.productCode, p.displayProduct].join(" ")
+      );
+      if (q && !haystack.includes(q)) continue;
+
+      const vigente = productVersions.find((v) => v.status === "VIGENTE" && !v.reviewRequired);
+      out.push({
+        productId: p.id,
+        client: p.displayClient,
+        productLabel: label,
+        code: p.productCode || "",
+        activeVersionId: p.activeVersionId,
+        archived: !p.activeVersionId,
+        versionCount: productVersions.length,
+        vigenteVersion: vigente?.version ?? null,
+        sourceFile: (activeVer ?? vigente)?.sourceFile ?? null,
+        updatedAt: p.updatedAt,
+      });
+    }
+
+    out.sort(
+      (a, b) =>
+        a.client.localeCompare(b.client, "es", { sensitivity: "base" }) ||
+        a.productLabel.localeCompare(b.productLabel, "es", { sensitivity: "base" })
+    );
+    return out.slice(0, limit);
+  }
+
+  private recordAdminAudit(event: Omit<FormulaAdminAuditEvent, "at"> & { at?: string }) {
+    this.store.adminAudit.push({
+      ...event,
+      at: event.at ?? new Date().toISOString(),
+    });
+  }
+
+  private findRestorableVersion(productId: string): FormulaVersionRecord | null {
+    const versions = this.store.versions.filter((v) => v.productId === productId);
+    const vigente = versions
+      .filter((v) => v.status === "VIGENTE" && !v.reviewRequired)
+      .sort((a, b) => b.version - a.version);
+    if (vigente[0]) return vigente[0];
+    const fallback = versions
+      .filter((v) => v.status !== "BORRADOR_PROPUESTA" && v.status !== "CONFLICTO")
+      .sort((a, b) => b.version - a.version);
+    return fallback[0] ?? null;
+  }
+
+  archiveFormula(input: {
+    productId: string;
+    reason: string;
+    actorEmail: string;
+    actorSector: string;
+  }): FormulaAdminEntry {
+    const reason = input.reason.trim();
+    if (!reason) {
+      throw new FormulaBankValidationError("Motivo obligatorio para archivar la fórmula.");
+    }
+    const prod = this.store.products.find((p) => p.id === input.productId);
+    if (!prod) throw new FormulaBankNotFoundError("Fórmula no encontrada.");
+    if (!prod.activeVersionId) {
+      throw new FormulaBankConflictError("La fórmula ya está archivada.");
+    }
+    prod.activeVersionId = null;
+    prod.updatedAt = new Date().toISOString();
+    this.recordAdminAudit({
+      productId: prod.id,
+      action: "archive",
+      reason,
+      actorEmail: input.actorEmail,
+      actorSector: input.actorSector,
+    });
+    return this.listAdminEntries({ includeArchived: true, limit: 10_000 }).find(
+      (e) => e.productId === prod.id
+    )!;
+  }
+
+  restoreFormula(input: {
+    productId: string;
+    reason: string;
+    actorEmail: string;
+    actorSector: string;
+  }): FormulaAdminEntry {
+    const reason = input.reason.trim();
+    if (!reason) {
+      throw new FormulaBankValidationError("Motivo obligatorio para restaurar la fórmula.");
+    }
+    const prod = this.store.products.find((p) => p.id === input.productId);
+    if (!prod) throw new FormulaBankNotFoundError("Fórmula no encontrada.");
+    if (prod.activeVersionId) {
+      throw new FormulaBankConflictError("La fórmula ya está activa.");
+    }
+    const ver = this.findRestorableVersion(prod.id);
+    if (!ver) {
+      throw new FormulaBankConflictError(
+        "No hay versión restaurable (conflicto o propuesta pendiente)."
+      );
+    }
+    for (const v of this.store.versions) {
+      if (v.productId === prod.id && v.status === "VIGENTE" && v.id !== ver.id) {
+        v.status = "HISTORICA";
+      }
+    }
+    ver.status = "VIGENTE";
+    prod.activeVersionId = ver.id;
+    prod.updatedAt = new Date().toISOString();
+    this.recordAdminAudit({
+      productId: prod.id,
+      action: "restore",
+      reason,
+      actorEmail: input.actorEmail,
+      actorSector: input.actorSector,
+    });
+    return this.listAdminEntries({ includeArchived: true, limit: 10_000 }).find(
+      (e) => e.productId === prod.id
+    )!;
+  }
+
+  async deleteFormulaPermanently(
+    input: {
+      productId: string;
+      reason: string;
+      actorEmail: string;
+      actorSector: string;
+    },
+    findUsage: (
+      product: FormulaProductRecord,
+      versionIds: string[]
+    ) => Promise<Array<{ kind: string; id: string; label: string }>>
+  ): Promise<{ deletedProductId: string }> {
+    const reason = input.reason.trim();
+    if (!reason) {
+      throw new FormulaBankValidationError("Motivo obligatorio para eliminar la fórmula.");
+    }
+    const prod = this.store.products.find((p) => p.id === input.productId);
+    if (!prod) throw new FormulaBankNotFoundError("Fórmula no encontrada.");
+    const versionIds = this.store.versions.filter((v) => v.productId === prod.id).map((v) => v.id);
+    const usage = await findUsage(prod, versionIds);
+    if (usage.length) {
+      throw new FormulaBankConflictError(
+        "No se puede eliminar: la fórmula tiene referencias en OE, OA o Control MP.",
+        usage
+      );
+    }
+    this.store.products = this.store.products.filter((p) => p.id !== prod.id);
+    this.store.versions = this.store.versions.filter((v) => v.productId !== prod.id);
+    this.recordAdminAudit({
+      productId: prod.id,
+      action: "delete",
+      reason,
+      actorEmail: input.actorEmail,
+      actorSector: input.actorSector,
+    });
+    return { deletedProductId: prod.id };
   }
 
   approveProposal(versionId: string): FormulaVersionRecord {

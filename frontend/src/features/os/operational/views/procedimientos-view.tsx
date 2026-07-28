@@ -80,6 +80,7 @@ export function ProcedimientosView() {
   const [folderPreview, setFolderPreview] = useState<FolderPreview | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ type: "file" | "folder"; id: string; name: string } | null>(null);
+  const [includeArchived, setIncludeArchived] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -91,6 +92,7 @@ export function ProcedimientosView() {
         ? await searchProcedimientosApi(session, q, mimeFilter === "all" ? undefined : mimeFilter)
         : await fetchProcedimientosApi(session, parentId, {
             mimeFilter: mimeFilter === "all" ? undefined : mimeFilter,
+            includeArchived,
           });
       setFolders(data.folders);
       setFiles(data.files);
@@ -99,7 +101,7 @@ export function ProcedimientosView() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al cargar");
     }
-  }, [session, parentId, q, mimeFilter]);
+  }, [session, parentId, q, mimeFilter, includeArchived]);
 
   useEffect(() => {
     void reload();
@@ -307,6 +309,38 @@ export function ProcedimientosView() {
     }
   }
 
+  async function handleArchive(type: "file" | "folder", id: string) {
+    setBusy(true);
+    try {
+      await procedimientosActionApi(
+        session,
+        type === "file" ? "archive_file" : "archive_folder",
+        type === "file" ? { fileId: id } : { folderId: id }
+      );
+      await reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error al archivar");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRestore(type: "file" | "folder", id: string) {
+    setBusy(true);
+    try {
+      await procedimientosActionApi(
+        session,
+        type === "file" ? "restore_file" : "restore_folder",
+        type === "file" ? { fileId: id } : { folderId: id }
+      );
+      await reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error al restaurar");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function openPreview(file: ProcedureFileRecord) {
     if (file.mime === "application/pdf" || file.mime.startsWith("image/")) {
       void loadPreview(file);
@@ -367,6 +401,15 @@ export function ProcedimientosView() {
               </option>
             ))}
           </select>
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={includeArchived}
+              onChange={(e) => setIncludeArchived(e.target.checked)}
+              data-testid="procedimientos-include-archived"
+            />
+            Ver archivados
+          </label>
           <Button
             size="sm"
             disabled={busy || schemaPending}
@@ -444,6 +487,25 @@ export function ProcedimientosView() {
                   📁 {f.name}
                 </button>
                 <div className="flex gap-1">
+                  {f.status === "archived" ? (
+                    <Button
+                      size="sm"
+                      variant="tertiary"
+                      disabled={busy || schemaPending}
+                      onClick={() => void handleRestore("folder", f.id)}
+                    >
+                      Restaurar
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="tertiary"
+                      disabled={busy || schemaPending}
+                      onClick={() => void handleArchive("folder", f.id)}
+                    >
+                      Archivar
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="tertiary"
@@ -470,6 +532,25 @@ export function ProcedimientosView() {
                   <Button size="sm" variant="tertiary" onClick={() => void downloadFile(f)}>
                     Descargar
                   </Button>
+                  {f.status === "archived" ? (
+                    <Button
+                      size="sm"
+                      variant="tertiary"
+                      disabled={busy || schemaPending}
+                      onClick={() => void handleRestore("file", f.id)}
+                    >
+                      Restaurar
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="tertiary"
+                      disabled={busy || schemaPending}
+                      onClick={() => void handleArchive("file", f.id)}
+                    >
+                      Archivar
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="tertiary"
@@ -565,9 +646,9 @@ export function ProcedimientosView() {
           onOpenChange={(open) => {
             if (!open) setConfirmDelete(null);
           }}
-          title="Confirmar eliminación"
-          description={`¿Eliminar "${confirmDelete?.name}"? Esta acción no se puede deshacer.`}
-          confirmLabel="Eliminar"
+          title="Eliminar definitivo"
+          description={`¿Eliminar "${confirmDelete?.name}"? Primero preferí Archivar. Esta acción borra Blob y no se puede deshacer.`}
+          confirmLabel="Eliminar definitivo"
           onConfirm={() => void handleDelete()}
           onCancel={() => setConfirmDelete(null)}
         />

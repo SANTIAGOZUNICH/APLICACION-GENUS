@@ -15,8 +15,11 @@ import {
   type MpControlActor,
   type MpFormulaSnapshot,
   type MpWeeklyControl,
+  type MpWeeklyControlLifecycleMeta,
   type MpWeeklyControlLine,
+  type MpWeeklyControlStatus,
 } from "./types";
+import { mpControlLifecycleActions } from "@/lib/lifecycle/adapters/common";
 
 type Mem = { controls: MpWeeklyControl[] };
 const g = globalThis as unknown as { __genusMpControlMem?: Mem };
@@ -71,10 +74,17 @@ function recalcLines(
   });
 }
 
+function parseLifecycleMeta(audit: unknown): MpWeeklyControlLifecycleMeta {
+  if (!audit || typeof audit !== "object") return {};
+  const lifecycle = (audit as { lifecycle?: MpWeeklyControlLifecycleMeta }).lifecycle;
+  return lifecycle && typeof lifecycle === "object" ? { ...lifecycle } : {};
+}
+
 function rowToControl(
   row: typeof mpWeeklyControls.$inferSelect,
   lines: Array<typeof mpWeeklyControlLines.$inferSelect>
 ): MpWeeklyControl {
+  const audit = row.audit as Record<string, unknown> | null;
   return {
     id: row.id,
     status: row.status as MpWeeklyControl["status"],
@@ -110,6 +120,7 @@ function rowToControl(
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+    lifecycle: parseLifecycleMeta(audit),
   };
 }
 
@@ -197,7 +208,7 @@ export class MpControlService {
       product?: string;
       linkedOeId?: string | null;
       lines?: MpWeeklyControlLine[];
-      status?: "BORRADOR" | "COMPLETADO";
+      status?: MpWeeklyControlStatus;
       /** Si true, recalcula kg desde snapshot sin alterar formulaSnapshot. */
       recalcFromSnapshot?: boolean;
       stockByCodigo?: Record<string, number>;
@@ -207,8 +218,14 @@ export class MpControlService {
     await assertFeatureWritesEnabled();
     const existing = await this.get(actor, id);
     if (!existing) throw new Error("Control no encontrado.");
-    if (existing.status === "COMPLETADO" && patch.status !== "BORRADOR") {
-      // permitir solo lectura tras completar salvo reopen explícito no pedido
+    if (existing.status === "COMPLETADO" && patch.status === "BORRADOR") {
+      throw new Error("No se puede reabrir un control completado. Anulá o archivá.");
+    }
+    if (
+      (existing.status === "ANULADO" || existing.status === "ARCHIVADO") &&
+      !patch.status
+    ) {
+      throw new Error("Control inactivo. Usá restaurar o anular según corresponda.");
     }
     let lines = patch.lines ?? existing.lines;
     const quantityKg =
@@ -259,14 +276,27 @@ export class MpControlService {
     return next;
   }
 
-  async deleteDraft(actor: MpControlActor, id: string): Promise<void> {
+  async deleteDraft(actor: MpControlActor, id: string, reason?: string): Promise<void> {
     assertWrite(actor);
     await assertFeatureWritesEnabled();
     const existing = await this.get(actor, id);
     if (!existing) throw new Error("Control no encontrado.");
+    const decision = mpControlLifecycleActions(existing);
+    if (!decision.eliminar.allowed) {
+      throw new Error(
+        decision.eliminar.reason ||
+          "No se puede eliminar: usá Anular o Archivar si tiene referencias o está confirmado."
+      );
+    }
     if (existing.status !== "BORRADOR") {
       throw new Error("Solo se pueden eliminar borradores.");
     }
+    if (existing.linkedOeId) {
+      throw new Error(
+        "No se puede eliminar: tiene OE vinculada. Anulá o archivá el control."
+      );
+    }
+    void reason;
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
@@ -280,7 +310,99 @@ export class MpControlService {
     mem().controls = mem().controls.filter((c) => c.id !== id);
   }
 
-  private async persist(control: MpWeeklyControl): Promise<void> {
+  async annul(
+    actor: MpControlActor,
+    id: string,
+    reason: string
+  ): Promise<MpWeeklyControl> {
+    assertWrite(actor);
+    await assertFeatureWritesEnabled();
+    if (!reason.trim()) throw new Error("El motivo de anulación es obligatorio.");
+    const existing = await this.get(actor, id);
+    if (!existing) throw new Error("Control no encontrado.");
+    const decision = mpControlLifecycleActions(existing);
+    if (!decision.anular.allowed || decision.anular.action !== "anular") {
+      throw new Error(decision.anular.reason || "No se puede anular este control.");
+    }
+    const now = new Date().toISOString();
+    const next: MpWeeklyControl = {
+      ...existing,
+      status: "ANULADO",
+      updatedBy: actor.email,
+      updatedAt: now,
+      lifecycle: {
+        ...existing.lifecycle,
+        annulReason: reason.trim(),
+        annulledAt: now,
+        annulledBy: actor.email,
+      },
+    };
+    await this.persist(next, { action: "annul", reason: reason.trim() });
+    return next;
+  }
+
+  async archive(actor: MpControlActor, id: string): Promise<MpWeeklyControl> {
+    assertWrite(actor);
+    await assertFeatureWritesEnabled();
+    const existing = await this.get(actor, id);
+    if (!existing) throw new Error("Control no encontrado.");
+    const decision = mpControlLifecycleActions(existing);
+    if (!decision.archivar.allowed || decision.archivar.action !== "archivar") {
+      throw new Error(decision.archivar.reason || "No se puede archivar este control.");
+    }
+    const now = new Date().toISOString();
+    const next: MpWeeklyControl = {
+      ...existing,
+      status: "ARCHIVADO",
+      updatedBy: actor.email,
+      updatedAt: now,
+      lifecycle: {
+        ...existing.lifecycle,
+        previousStatus: existing.status as MpWeeklyControlStatus,
+        archivedAt: now,
+        archivedBy: actor.email,
+      },
+    };
+    await this.persist(next, { action: "archive" });
+    return next;
+  }
+
+  async restore(actor: MpControlActor, id: string): Promise<MpWeeklyControl> {
+    assertWrite(actor);
+    await assertFeatureWritesEnabled();
+    const existing = await this.get(actor, id);
+    if (!existing) throw new Error("Control no encontrado.");
+    const decision = mpControlLifecycleActions(existing);
+    if (!decision.restaurar.allowed) {
+      throw new Error(decision.restaurar.reason || "No se puede restaurar este control.");
+    }
+    const now = new Date().toISOString();
+    const restoredStatus =
+      existing.lifecycle?.previousStatus === "COMPLETADO"
+        ? "COMPLETADO"
+        : "COMPLETADO";
+    const next: MpWeeklyControl = {
+      ...existing,
+      status: restoredStatus,
+      updatedBy: actor.email,
+      updatedAt: now,
+      lifecycle: {
+        ...existing.lifecycle,
+        restoredAt: now,
+        restoredBy: actor.email,
+        previousStatus: undefined,
+        archivedAt: undefined,
+        archivedBy: undefined,
+      },
+    };
+    await this.persist(next, { action: "restore" });
+    return next;
+  }
+
+  private async persist(
+    control: MpWeeklyControl,
+    auditEvent?: { action: string; reason?: string }
+  ): Promise<void> {
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
@@ -308,7 +430,9 @@ export class MpControlService {
             audit: {
               updatedBy: control.updatedBy,
               at: control.updatedAt,
-              action: "persist",
+              action: auditEvent?.action ?? "persist",
+              reason: auditEvent?.reason,
+              lifecycle: control.lifecycle ?? {},
             },
           })
           .onConflictDoUpdate({

@@ -135,4 +135,53 @@ describe("MpControlService", () => {
     // stockActual de entrada intacto en línea (no muta ledger)
     expect(c.lines[0]!.stockActual).toBe(100);
   });
+
+  it("lifecycle: completar → archivar → restaurar → anular", async () => {
+    const svc = getMpControlService();
+    const actor = { email: "mp@test", sector: "MATERIA_PRIMA" as const };
+    const c = await svc.create(actor, {
+      client: "UNICA",
+      product: "X",
+      quantityKg: 100,
+      snapshot: snap,
+    });
+    const completed = await svc.update(actor, c.id, { status: "COMPLETADO" });
+    expect(completed.status).toBe("COMPLETADO");
+
+    const archived = await svc.archive(actor, c.id);
+    expect(archived.status).toBe("ARCHIVADO");
+
+    const restored = await svc.restore(actor, c.id);
+    expect(restored.status).toBe("COMPLETADO");
+
+    const annulled = await svc.annul(actor, c.id, "Error de fórmula");
+    expect(annulled.status).toBe("ANULADO");
+    expect(annulled.lifecycle?.annulReason).toBe("Error de fórmula");
+  });
+
+  it("no elimina borrador con OE vinculada", async () => {
+    const svc = getMpControlService();
+    const actor = { email: "mp@test", sector: "MATERIA_PRIMA" as const };
+    const c = await svc.create(actor, {
+      client: "UNICA",
+      product: "X",
+      quantityKg: 100,
+      snapshot: snap,
+    });
+    await svc.update(actor, c.id, { linkedOeId: "oe-123" });
+    await expect(svc.deleteDraft(actor, c.id)).rejects.toThrow(/OE vinculada/);
+  });
+
+  it("no hard-delete completado", async () => {
+    const svc = getMpControlService();
+    const actor = { email: "mp@test", sector: "MATERIA_PRIMA" as const };
+    const c = await svc.create(actor, {
+      client: "UNICA",
+      product: "X",
+      quantityKg: 100,
+      snapshot: snap,
+    });
+    await svc.update(actor, c.id, { status: "COMPLETADO" });
+    await expect(svc.deleteDraft(actor, c.id)).rejects.toThrow(/Anular o Archivar/);
+  });
 });

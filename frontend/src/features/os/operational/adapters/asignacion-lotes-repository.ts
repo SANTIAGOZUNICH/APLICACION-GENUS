@@ -1,60 +1,22 @@
 /**
- * @mock-temp Repositorio local de Asignación de lotes — localStorage.
- * Sustituible por tablas reales cuando exista backend operativo para Codificado/Calidad.
+ * Cache local de Asignación de lotes — localStorage como fallback offline.
+ * Las mutaciones deben pasar por `/api/v1/asignacion-lotes` (autorizado en servidor).
  */
 
 import { parseFlexibleDate } from "../lib/delivery-date";
+import type {
+  AsignacionLote,
+  AsignacionLoteImportError,
+  AsignacionLoteImportResult,
+  AsignacionLoteUpsertInput,
+} from "@/lib/asignacion-lotes/types";
 
-export interface AsignacionLote {
-  id: string;
-  lote: string;
-  fecha: string;
-  producto: string;
-  codigo: string;
-  marca: string;
-  cantidades: number;
-  vto: string | null;
-  muestras: string;
-  cjMuestra: string;
-  fechaAnalisis: string | null;
-  observaciones: string;
-  createdAt: string;
-  createdBy: string;
-  updatedAt: string;
-  updatedBy: string;
-  archived?: boolean;
-}
-
-export type AsignacionLoteUpsertInput = {
-  id?: string;
-  lote: string;
-  fecha: string;
-  producto: string;
-  codigo: string;
-  marca?: string;
-  cantidades: number;
-  vto?: string | null;
-  muestras?: string;
-  cjMuestra?: string;
-  fechaAnalisis?: string | null;
-  observaciones?: string;
-  createdBy?: string;
-  updatedBy: string;
-  archived?: boolean;
+export type {
+  AsignacionLote,
+  AsignacionLoteImportError,
+  AsignacionLoteImportResult,
+  AsignacionLoteUpsertInput,
 };
-
-export interface AsignacionLoteImportError {
-  rowIndex: number;
-  field?: string;
-  message: string;
-}
-
-export interface AsignacionLoteImportResult {
-  imported: number;
-  skipped: number;
-  duplicates: number;
-  errors: AsignacionLoteImportError[];
-}
 
 const STORAGE_KEY = "genus_os_asignacion_lotes";
 
@@ -165,6 +127,11 @@ function readAll(): AsignacionLote[] {
   }
 }
 
+/** Reemplaza la caché local con datos del servidor. */
+export function replaceAsignacionLotesCache(items: AsignacionLote[]): void {
+  writeAll(items);
+}
+
 export function getAllAsignacionLotes(options: { includeArchived?: boolean } = {}): AsignacionLote[] {
   return [...readAll()]
     .filter((item) => options.includeArchived || !item.archived)
@@ -187,6 +154,7 @@ export function findDuplicateAsignacionLote(
   );
 }
 
+/** @deprecated Usar upsertAsignacionLoteApi — solo caché offline legacy. */
 export function upsertAsignacionLote(input: AsignacionLoteUpsertInput): AsignacionLote {
   const items = readAll();
   const now = new Date().toISOString();
@@ -217,6 +185,7 @@ export function upsertAsignacionLote(input: AsignacionLoteUpsertInput): Asignaci
   return record;
 }
 
+/** @deprecated Usar patchAsignacionLoteApi — solo caché offline legacy. */
 export function softDeleteAsignacionLote(id: string, updatedBy: string): void {
   const now = new Date().toISOString();
   writeAll(
@@ -233,6 +202,24 @@ export function softDeleteAsignacionLote(id: string, updatedBy: string): void {
   );
 }
 
+/** @deprecated Usar patchAsignacionLoteApi — solo caché offline legacy. */
+export function restoreAsignacionLote(id: string, updatedBy: string): void {
+  const now = new Date().toISOString();
+  writeAll(
+    readAll().map((item) =>
+      item.id === id
+        ? {
+            ...item,
+            archived: false,
+            updatedAt: now,
+            updatedBy,
+          }
+        : item
+    )
+  );
+}
+
+/** @deprecated Usar importAsignacionLotesApi — solo caché offline legacy. */
 export function importAsignacionLotes(
   rows: AsignacionLoteUpsertInput[],
   updatedBy: string

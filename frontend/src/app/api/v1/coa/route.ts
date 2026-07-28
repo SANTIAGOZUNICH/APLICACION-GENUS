@@ -13,13 +13,14 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const parentId = url.searchParams.get("parentId");
     const fileId = url.searchParams.get("fileId");
+    const includeArchived = url.searchParams.get("includeArchived") === "true";
     const persistenceReady = await isFeatureSchemaReady();
     const svc = getCoaService();
     const a = { email: actor.email, sector: actor.sector };
 
     if (fileId) {
       const versions = await svc.listVersions(a, fileId);
-      const file = await svc.getFile(fileId);
+      const file = await svc.getFile(fileId, { includeArchived: true });
       return NextResponse.json({
         file,
         versions,
@@ -28,7 +29,7 @@ export async function GET(request: Request) {
       });
     }
 
-    const data = await svc.list(a, parentId);
+    const data = await svc.list(a, parentId, { includeArchived });
     return NextResponse.json({
       ...data,
       persistenceReady,
@@ -93,17 +94,37 @@ export async function POST(request: Request) {
       );
       return NextResponse.json({ folder });
     }
-    if (body.action === "delete_folder") {
+    if (body.action === "archive_folder") {
       await svc.archiveFolder(a, String(body.folderId ?? ""));
       return NextResponse.json({ ok: true });
     }
+    if (body.action === "delete_folder") {
+      await svc.hardDeleteFolder(a, String(body.folderId ?? ""));
+      return NextResponse.json({ ok: true });
+    }
+    if (body.action === "restore_folder") {
+      const folder = await svc.restoreFolder(a, String(body.folderId ?? ""));
+      return NextResponse.json({ folder });
+    }
+    if (body.action === "archive_file") {
+      await svc.softArchiveFile(
+        a,
+        String(body.fileId ?? ""),
+        body.reason
+      );
+      return NextResponse.json({ ok: true });
+    }
     if (body.action === "delete_file") {
-      const result = await svc.archiveFile(
+      const result = await svc.hardDeleteFile(
         a,
         String(body.fileId ?? ""),
         body.reason
       );
       return NextResponse.json(result);
+    }
+    if (body.action === "restore_file") {
+      const file = await svc.restoreFile(a, String(body.fileId ?? ""));
+      return NextResponse.json({ file });
     }
     if (body.action === "delete_version") {
       const version = Number(body.version);

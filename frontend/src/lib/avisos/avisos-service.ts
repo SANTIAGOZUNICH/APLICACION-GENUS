@@ -365,6 +365,35 @@ export class AvisosService {
     return msg;
   }
 
+  /** Restaura un aviso archivado a la bandeja del receptor (limpia archivedAt). */
+  async restore(actor: AvisoActor, messageId: string): Promise<AvisoRecord | null> {
+    assertAvisoSender(actor.sector);
+    await assertFeatureWritesEnabled();
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+      try {
+        const db = getDb();
+        await db
+          .update(osInternalMessageRecipients)
+          .set({ archivedAt: null })
+          .where(
+            and(
+              eq(osInternalMessageRecipients.messageId, messageId),
+              eq(osInternalMessageRecipients.sector, actor.sector)
+            )
+          );
+        return this.getForActor(actor, messageId);
+      } catch {
+        if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
+      }
+    }
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
+    const msg = mem().messages.find((m) => m.id === messageId);
+    if (!msg) return null;
+    const r = msg.recipients.find((x) => x.sector === actor.sector);
+    if (r) r.archivedAt = null;
+    return msg;
+  }
+
   async getForActor(actor: AvisoActor, messageId: string): Promise<AvisoRecord | null> {
     const list = [
       ...(await this.list(actor, "recibidos")),

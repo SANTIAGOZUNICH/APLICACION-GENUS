@@ -125,4 +125,42 @@ describe("live-sync delivery operations", () => {
     const annulled = serverOperationalState.annulDelivery(delivered.id, "Error", "Producción");
     expect(annulled?.status).toBe("ANULADO");
   });
+
+  it("restore_work restaura trabajo cancelado", () => {
+    const itemId = `wi-restore-${Date.now()}`;
+    serverOperationalState.cancelWork(itemId, {
+      cancelledBy: "Producción",
+      reason: "Prueba",
+      sector: "ELABORACION",
+    });
+    const restored = serverOperationalState.restoreCancelledWork(itemId, {
+      restoredBy: "Producción",
+      sector: "ELABORACION",
+    });
+    expect(restored.status).toBe("en_curso");
+  });
+
+  it("restore_work falla si no está cancelado", () => {
+    expect(() =>
+      serverOperationalState.restoreCancelledWork(`wi-not-cancelled-${Date.now()}`, {
+        restoredBy: "Producción",
+      })
+    ).toThrow(/cancelado/);
+  });
+
+  it("quality_annul revierte decisión a pendiente", () => {
+    const itemId = `qc-annul-${Date.now()}`;
+    serverOperationalState.decideQuality(itemId, "aprobado", {
+      decidedBy: "Calidad",
+      decidedBySector: "CALIDAD",
+    });
+    const annulled = serverOperationalState.annulQualityDecision(itemId, {
+      reason: "Error de lote",
+      decidedBy: "Calidad",
+      decidedBySector: "CALIDAD",
+    });
+    expect(annulled.status).toBe("pendiente");
+    expect(annulled.previousStatus).toBe("aprobado");
+    expect(annulled.changeReason).toBe("Error de lote");
+  });
 });

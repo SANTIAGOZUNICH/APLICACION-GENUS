@@ -1,7 +1,23 @@
 import type { SectorId } from "@/types/operational/sector";
 import type { MpControlLineEstado } from "./calcs";
 
-export type MpWeeklyControlStatus = "BORRADOR" | "COMPLETADO";
+export type MpWeeklyControlStatus =
+  | "BORRADOR"
+  | "COMPLETADO"
+  | "ANULADO"
+  | "ARCHIVADO";
+
+/** Metadatos de lifecycle persistidos en audit (Neon) o memoria. */
+export type MpWeeklyControlLifecycleMeta = {
+  previousStatus?: MpWeeklyControlStatus;
+  annulReason?: string;
+  annulledAt?: string;
+  annulledBy?: string;
+  archivedAt?: string;
+  archivedBy?: string;
+  restoredAt?: string;
+  restoredBy?: string;
+};
 
 export type MpWeeklyControlLine = {
   id: string;
@@ -53,6 +69,7 @@ export type MpWeeklyControl = {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+  lifecycle?: MpWeeklyControlLifecycleMeta;
 };
 
 export type MpControlActor = { email: string; sector: SectorId };

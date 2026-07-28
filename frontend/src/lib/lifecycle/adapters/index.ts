@@ -18,4 +18,10 @@ export {
   mpIngresoToLifecycleState,
   remitoLifecycleActions,
   remitoToLifecycleState,
+  plantillaLifecycleActions,
+  metricaLifecycleActions,
+  avisoLifecycleActions,
+  mpStockLifecycleActions,
+  mpControlLifecycleActions,
+  mpControlToLifecycleState,
 } from "./common";

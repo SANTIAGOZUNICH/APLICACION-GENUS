@@ -1,7 +1,25 @@
+import { getCurrentAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
+import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
+import type { LiveSyncEvent, LiveSyncStatus } from "@/lib/live-sync/types";
+import {
+  ACTOR_EMAIL_HEADER,
+  ACTOR_SECTOR_HEADER,
+} from "@/lib/orders/actor";
 import type { SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
-import type { LiveSyncEvent, LiveSyncStatus } from "@/lib/live-sync/types";
-import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
+
+function jsonActorHeaders(): HeadersInit {
+  const session = getCurrentAuthSession();
+  return {
+    "Content-Type": "application/json",
+    ...(session
+      ? {
+          [ACTOR_EMAIL_HEADER]: session.user.email,
+          [ACTOR_SECTOR_HEADER]: session.sector.id,
+        }
+      : {}),
+  };
+}
 
 export async function fetchLiveSyncStatus(): Promise<LiveSyncStatus & { mode?: string }> {
   const response = await fetch("/api/v1/live-sync/status", { cache: "no-store" });
@@ -126,8 +144,21 @@ export async function postQualityDecision(payload: {
 }): Promise<void> {
   await fetch("/api/v1/live-sync/operations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "quality_decision", ...payload }),
+  });
+}
+
+export async function postQualityAnnul(payload: {
+  itemId: string;
+  reason: string;
+  decidedBy?: string;
+  actorSectorId?: string;
+}): Promise<void> {
+  await fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "quality_annul", ...payload }),
   });
 }
 
@@ -140,7 +171,7 @@ export async function postCancelWork(payload: {
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "cancel_work", ...payload }),
   });
 }
@@ -150,7 +181,7 @@ export async function postDeliverWork(
 ): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "deliver_work", ...payload }),
   });
 }
@@ -161,7 +192,7 @@ export async function postArchiveDelivery(payload: {
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "archive_delivery", ...payload }),
   });
 }
@@ -172,7 +203,7 @@ export async function postRestoreDelivery(payload: {
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "restore_delivery", ...payload }),
   });
 }
@@ -184,7 +215,7 @@ export async function postDeleteDeliveryRecord(payload: {
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "delete_delivery_record", ...payload }),
   });
 }
@@ -196,8 +227,22 @@ export async function postAnnulDelivery(payload: {
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "annul_delivery", ...payload }),
+  });
+}
+
+export async function postRestoreWork(payload: {
+  itemId: string;
+  actorSectorId: SectorId;
+  restoredBy?: string;
+  reason?: string;
+  sector?: SectorId;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "restore_work", ...payload }),
   });
 }
 

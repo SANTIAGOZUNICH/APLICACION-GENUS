@@ -257,24 +257,44 @@ export class InventoryService {
   }
 
   deleteMeIngreso(actor: InventoryActor, id: string, reason: string) {
+    return this.anularMeIngreso(actor, id, reason);
+  }
+
+  /**
+   * Anula ingreso ME: revierte stock, conserva la fila (no hard delete).
+   * Idempotente si ya está anulado.
+   */
+  anularMeIngreso(actor: InventoryActor, id: string, reason: string) {
     this.guard(actor, "me_ingresos", true);
-    if (!reason.trim()) throw new InventoryValidationError("Motivo obligatorio para eliminar ingreso.");
+    if (!reason.trim()) throw new InventoryValidationError("Motivo obligatorio para anular ingreso.");
     const existing = this.repo.getMeIngreso(id);
     if (!existing) throw new InventoryNotFoundError("Ingreso ME no encontrado.");
+    if (existing.anulado) return existing;
+
     if (existing.materialId && existing.total != null) {
       this.applyMeStockDelta(existing.materialId, -existing.total, { actor, reason });
     }
-    this.repo.deleteMeIngreso(id);
+    const now = nowIso();
+    const row: MeIngresoRow = {
+      ...existing,
+      anulado: true,
+      anuladoAt: now,
+      anuladoReason: reason.trim(),
+      updatedBy: actor.email,
+      updatedAt: now,
+    };
+    this.repo.upsertMeIngreso(row);
     this.audit(
       actor,
       "me_ingresos",
       id,
-      "delete",
+      "anular",
       existing as unknown as Record<string, unknown>,
-      null,
+      row as unknown as Record<string, unknown>,
       reason
     );
     if (existing.materialId) this.syncMeAlerts(actor, existing.materialId);
+    return row;
   }
 
   private nextMeIngresoNro() {
@@ -357,33 +377,59 @@ export class InventoryService {
   }
 
   deleteMeSalida(actor: InventoryActor, id: string, reason: string) {
+    return this.anularMeSalida(actor, id, reason);
+  }
+
+  /**
+   * Anula salida ME: reintegra stock una sola vez (OA), conserva fila ANULADA (reverted).
+   * Idempotente si ya estaba anulada.
+   */
+  anularMeSalida(actor: InventoryActor, id: string, reason: string) {
     this.guard(actor, "me_salidas", true);
-    if (!reason.trim()) throw new InventoryValidationError("Motivo obligatorio para eliminar salida.");
+    if (!reason.trim()) {
+      throw new InventoryValidationError("Motivo obligatorio para anular salida.");
+    }
     const existing = this.repo.getMeSalida(id);
     if (!existing) throw new InventoryNotFoundError("Salida ME no encontrada.");
-    // Solo revertir stock si era salida OA activa
+    if (existing.reverted) {
+      return existing;
+    }
+
+    const qty = existing.total ?? existing.cantidad ?? 0;
     if (
       existing.origen === "OA" &&
-      !existing.reverted &&
       existing.materialId &&
-      (existing.total ?? existing.cantidad) != null
+      qty != null &&
+      Number(qty) !== 0
     ) {
-      this.applyMeStockDelta(existing.materialId, existing.total ?? existing.cantidad ?? 0, {
+      this.applyMeStockDelta(existing.materialId, Number(qty), {
         actor,
-        reason,
+        reason: `Anulación salida ME: ${reason.trim()}`,
+        allowNegative: true,
       });
       this.syncMeAlerts(actor, existing.materialId);
     }
-    this.repo.deleteMeSalida(id);
+
+    const now = nowIso();
+    const row = {
+      ...existing,
+      reverted: true,
+      revertedAt: now,
+      revertReason: reason.trim(),
+      updatedBy: actor.email,
+      updatedAt: now,
+    };
+    this.repo.upsertMeSalida(row);
     this.audit(
       actor,
       "me_salidas",
       id,
-      "delete",
+      "anular",
       existing as unknown as Record<string, unknown>,
-      null,
+      row as unknown as Record<string, unknown>,
       reason
     );
+    return row;
   }
 
   private nextMeEgresoNro() {
@@ -992,20 +1038,10 @@ export class InventoryService {
     return row;
   }
 
-  deleteMpStock(actor: InventoryActor, id: string, reason: string) {
+  deleteMpStock(actor: InventoryActor, _id: string, _reason: string): never {
     this.guard(actor, "mp_stock", true);
-    if (!reason.trim()) throw new InventoryValidationError("Motivo obligatorio.");
-    const existing = this.repo.getMpStock(id);
-    if (!existing) throw new InventoryNotFoundError("Stock MP no encontrado.");
-    this.repo.deleteMpStock(id);
-    this.audit(
-      actor,
-      "mp_stock",
-      id,
-      "delete",
-      existing as unknown as Record<string, unknown>,
-      null,
-      reason
+    throw new InventoryValidationError(
+      "El saldo de inventario MP no se elimina. Usá un ajuste de stock o anulá el ingreso que lo originó."
     );
   }
 
@@ -1466,7 +1502,10 @@ export class InventoryService {
 
   listMpControl(actor: InventoryActor) {
     this.guard(actor, "mp_control", false);
-    return this.repo.listMpControl().map((r) => this.enrichControl(r));
+    return this.repo
+      .listMpControl()
+      .filter((r) => !r.archived)
+      .map((r) => this.enrichControl(r));
   }
 
   upsertMpControl(actor: InventoryActor, input: Partial<MpControlRow> & { id?: string }) {
@@ -1519,7 +1558,49 @@ export class InventoryService {
 
   deleteMpControl(actor: InventoryActor, id: string) {
     this.guard(actor, "mp_control", true);
-    this.repo.deleteMpControl(id);
+    const existing = this.repo.listMpControl().find((r) => r.id === id);
+    if (!existing) return;
+    // Soft-archive: no hard-delete (stock impact via linked lots stays auditable)
+    const now = nowIso();
+    this.repo.upsertMpControl({
+      ...existing,
+      archived: true,
+      updatedBy: actor.email,
+      updatedAt: now,
+    });
+    this.audit(
+      actor,
+      "mp_control",
+      id,
+      "archive",
+      existing as unknown as Record<string, unknown>,
+      { archived: true },
+      "Archivar control semanal (inventory)"
+    );
+  }
+
+  restoreMpControl(actor: InventoryActor, id: string) {
+    this.guard(actor, "mp_control", true);
+    const existing = this.repo.listMpControl().find((r) => r.id === id);
+    if (!existing) throw new InventoryNotFoundError("Control MP no encontrado.");
+    const now = nowIso();
+    const row = {
+      ...existing,
+      archived: false,
+      updatedBy: actor.email,
+      updatedAt: now,
+    };
+    this.repo.upsertMpControl(row);
+    this.audit(
+      actor,
+      "mp_control",
+      id,
+      "restore",
+      existing as unknown as Record<string, unknown>,
+      row as unknown as Record<string, unknown>,
+      "Restaurar control semanal (inventory)"
+    );
+    return row;
   }
 
   private enrichControl(row: MpControlRow): MpControlRow {
@@ -1619,7 +1700,26 @@ export class InventoryService {
 
   deleteMpCompra(actor: InventoryActor, id: string) {
     this.guard(actor, "mp_compras", true);
-    this.repo.deleteMpCompra(id);
+    const existing = this.repo.getMpCompra(id);
+    if (!existing) throw new InventoryNotFoundError("Compra no encontrada.");
+    // No hard delete: marcar Cancelada (anulación operativa).
+    const updated: MpCompraRow = {
+      ...existing,
+      estado: "Cancelada",
+      updatedBy: actor.email,
+      updatedAt: nowIso(),
+    };
+    this.repo.upsertMpCompra(updated);
+    this.audit(
+      actor,
+      "mp_compras",
+      id,
+      "anular",
+      existing as unknown as Record<string, unknown>,
+      updated as unknown as Record<string, unknown>,
+      "Cancelada desde UI (sin hard delete)"
+    );
+    return updated;
   }
 
   /**

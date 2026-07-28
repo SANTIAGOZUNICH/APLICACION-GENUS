@@ -86,3 +86,100 @@ export function formulaLifecycleActions(f: {
     restaurar: canRestore(s),
   };
 }
+
+export function plantillaLifecycleActions(t: {
+  id: string;
+  status: string;
+}) {
+  const s: LifecycleEntityState = {
+    kind: "plantilla",
+    id: t.id,
+    status: t.status,
+    archived: t.status === "OBSOLETA",
+  };
+  return {
+    archivar: canArchive(s),
+    restaurar: canRestore(s),
+    eliminar: canDelete({ ...s, isDraft: false }),
+  };
+}
+
+export function metricaLifecycleActions(m: {
+  id: string;
+  deletedAt: string | null;
+}) {
+  const s: LifecycleEntityState = {
+    kind: "metrica",
+    id: m.id,
+    status: m.deletedAt ? "ARCHIVADO" : "ACTIVO",
+    archived: Boolean(m.deletedAt),
+  };
+  return {
+    archivar: canArchive(s),
+    restaurar: canRestore(s),
+    eliminar: canDelete(s),
+  };
+}
+
+export function avisoLifecycleActions(a: {
+  id: string;
+  archivedAt: string | null;
+}) {
+  const s: LifecycleEntityState = {
+    kind: "aviso",
+    id: a.id,
+    status: a.archivedAt ? "ARCHIVADO" : "ACTIVO",
+    archived: Boolean(a.archivedAt),
+  };
+  return {
+    archivar: canArchive(s),
+    restaurar: canRestore(s),
+  };
+}
+
+/** Control semanal MP v2 — borrador eliminar; confirmado anular/archivar; archivado restaurar. */
+export function mpControlToLifecycleState(c: {
+  id: string;
+  status: string;
+  linkedOeId?: string | null;
+}): LifecycleEntityState {
+  const refs = c.linkedOeId
+    ? [{ kind: "oe" as const, id: c.linkedOeId, label: `OE vinculada (${c.linkedOeId})` }]
+    : [];
+  return {
+    kind: "mp_control",
+    id: c.id,
+    status: c.status,
+    isDraft: c.status === "BORRADOR",
+    archived: c.status === "ARCHIVADO",
+    referencedBy: refs,
+  };
+}
+
+export function mpControlLifecycleActions(c: {
+  id: string;
+  status: string;
+  linkedOeId?: string | null;
+}) {
+  const s = mpControlToLifecycleState(c);
+  return {
+    eliminar: canDelete(s),
+    anular: canAnnul(s),
+    archivar: canArchive(s),
+    restaurar: canRestore(s),
+  };
+}
+
+/** Saldo de inventario: nunca eliminar; solo ajuste / anular origen. */
+export function mpStockLifecycleActions(s: { id: string; codigo: string }) {
+  const entity: LifecycleEntityState = {
+    kind: "mp_ajuste",
+    id: s.id,
+    status: "CONFIRMADO",
+    referencedBy: [{ kind: "mp_ingreso", id: s.codigo, label: `Stock ${s.codigo}` }],
+  };
+  return {
+    eliminar: canDelete(entity),
+    anular: canAnnul(entity),
+  };
+}

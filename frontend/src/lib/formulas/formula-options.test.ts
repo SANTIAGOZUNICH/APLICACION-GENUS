@@ -193,4 +193,20 @@ describe("formula-options search & aliases", () => {
       }
     }
   });
+
+  it("excluye productos archivados (activeVersionId null)", () => {
+    const archived = product({
+      id: "p-arch",
+      displayClient: "UNICA",
+      displayProduct: "ARCHIVADO",
+      activeVersionId: null,
+    });
+    const allProducts = [...products, archived];
+    const allVersions = [
+      ...versions,
+      version({ id: "v-arch", productId: "p-arch", status: "VIGENTE" }),
+    ];
+    const opts = listActiveFormulaOptions(allProducts, allVersions);
+    expect(opts.some((o) => o.productId === "p-arch")).toBe(false);
+  });
 });

@@ -249,7 +249,7 @@ export function MeIngresosView() {
                       >
                         <Plus className="size-4" />
                       </button>
-                      <button type="button" aria-label="Eliminar" onClick={() => setDeleteId(row.id)}>
+                      <button type="button" aria-label="Anular" title="Anular" onClick={() => setDeleteId(row.id)}>
                         <Trash2 className="size-4 text-red-700" />
                       </button>
                     </div>
@@ -337,20 +337,20 @@ export function MeIngresosView() {
       <ConfirmDialog
         open={Boolean(deleteId)}
         onOpenChange={(o) => !o && setDeleteId(null)}
-        title="Eliminar ingreso ME"
-        description="Se revertirá el impacto en stock. Indicá el motivo."
-        confirmLabel="Eliminar"
+        title="Anular ingreso ME"
+        description="Se revertirá el impacto en stock y se conservará el registro anulado. Indicá el motivo."
+        confirmLabel="Anular"
         onConfirm={() => {
           if (!deleteId) return;
           void mutateInventory({
             action: "delete",
             resource: "me_ingresos",
             id: deleteId,
-            reason: deleteReason || "Eliminación de ingreso ME",
+            reason: deleteReason || "Anulación de ingreso ME",
           })
             .then(() => reload())
             .catch((e) =>
-              setBanner(e instanceof Error ? e.message : "No se pudo eliminar")
+              setBanner(e instanceof Error ? e.message : "No se pudo anular")
             )
             .finally(() => {
               setDeleteId(null);

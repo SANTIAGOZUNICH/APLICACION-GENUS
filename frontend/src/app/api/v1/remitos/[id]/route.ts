@@ -123,7 +123,28 @@ export async function PATCH(request: Request, ctx: Ctx) {
     if (body.action === "restore") {
       return NextResponse.json({ remito: await svc.restore(a, id) });
     }
+    if (body.action === "delete_draft") {
+      await svc.deleteDraft(a, id);
+      return NextResponse.json({ deleted: true, id });
+    }
     return NextResponse.json({ error: "action inválida" }, { status: 400 });
+  } catch (err) {
+    return remitosError(err);
+  }
+}
+
+export async function DELETE(request: Request, ctx: Ctx) {
+  try {
+    const actor = resolveOrdersActor(request);
+    if (!canAccessRemitos(actor.sector)) {
+      throw new OrdersForbiddenError("Solo PRODUCCIÓN puede acceder a Remitos.");
+    }
+    const { id } = await ctx.params;
+    await getRemitoService().deleteDraft(
+      { email: actor.email, sector: actor.sector },
+      id
+    );
+    return NextResponse.json({ deleted: true, id });
   } catch (err) {
     return remitosError(err);
   }

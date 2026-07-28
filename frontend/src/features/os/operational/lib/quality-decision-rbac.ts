@@ -40,7 +40,10 @@ export type QualityDecisionAttempt =
   | {
       ok: false;
       error: string;
-      code: "QUALITY_DECISION_FORBIDDEN" | "QUALITY_DECISION_MISSING_ACTOR";
+      code:
+        | "QUALITY_DECISION_FORBIDDEN"
+        | "QUALITY_DECISION_MISSING_ACTOR"
+        | "REASON_REQUIRED";
     };
 
 /** Valida el sector actor antes de persistir o enviar una decisión. */

@@ -69,7 +69,7 @@ describe("CoaService memoria", () => {
     ).rejects.toThrow(/Solo MP/);
   });
 
-  it("elimina archivo y versiones en memoria (MP admin)", async () => {
+  it("hard delete elimina blobs y versiones en memoria (MP admin)", async () => {
     const storageMod = await import("@/lib/storage/file-storage");
     const deleted: string[] = [];
     vi.spyOn(storageMod, "getFileStorage").mockReturnValue({
@@ -104,13 +104,76 @@ describe("CoaService memoria", () => {
       bytes: Buffer.from("%PDF-1.5"),
       replaceFileId: file.id,
     });
-    const result = await svc.archiveFile(mp, file.id, "prueba");
+    const result = await svc.hardDeleteFile(mp, file.id, "prueba");
     expect(result.versionsDeleted).toBe(2);
     expect(deleted.length).toBeGreaterThanOrEqual(2);
     expect(await svc.getFile(file.id)).toBeNull();
     await expect(
-      svc.archiveFile({ email: "p@test", sector: "PRODUCCION" }, file.id)
+      svc.hardDeleteFile({ email: "p@test", sector: "PRODUCCION" }, file.id)
     ).rejects.toThrow(/Solo MP/);
+  });
+
+  it("soft archive conserva blobs y versiones; restore vuelve a activos", async () => {
+    const storageMod = await import("@/lib/storage/file-storage");
+    const keys = new Map<string, Buffer>();
+    const deleted: string[] = [];
+    vi.spyOn(storageMod, "getFileStorage").mockReturnValue({
+      put: async ({
+        storageKey,
+        bytes,
+      }: {
+        storageKey: string;
+        bytes: Buffer;
+      }) => {
+        keys.set(storageKey, bytes);
+        return {
+          provider: "VERCEL_BLOB_PRIVATE",
+          storageKey,
+          url: "https://example.invalid",
+          sizeBytes: bytes.length,
+          contentType: "application/pdf",
+          sha256: "abc",
+        };
+      },
+      get: async (key: string) => ({
+        storageKey: key,
+        bytes: keys.get(key) ?? Buffer.from("x"),
+        contentType: "application/pdf",
+        sizeBytes: 1,
+      }),
+      delete: async (key: string) => {
+        deleted.push(key);
+      },
+      head: async (key: string) => ({
+        storageKey: key,
+        sizeBytes: keys.get(key)?.length ?? 0,
+        contentType: "application/pdf",
+      }),
+    } as never);
+
+    const svc = getCoaService();
+    const mp = { email: "mp@test", sector: "MATERIA_PRIMA" as const };
+    const folder = await svc.createFolder(mp, "Arch", null);
+    const file = await svc.upload(mp, {
+      folderId: folder.id,
+      fileName: "keep.pdf",
+      mimeType: "application/pdf",
+      bytes: Buffer.from("%PDF-keep"),
+    });
+
+    await svc.softArchiveFile(mp, file.id, "archivar");
+    expect(deleted).toHaveLength(0);
+    expect(await svc.getFile(file.id)).toBeNull();
+    expect(await svc.getFile(file.id, { includeArchived: true })).not.toBeNull();
+    const archivedList = await svc.list(mp, folder.id, { includeArchived: true });
+    expect(archivedList.files.some((f) => f.id === file.id)).toBe(true);
+    expect(await svc.listVersions(mp, file.id)).toHaveLength(1);
+
+    const restored = await svc.restoreFile(mp, file.id);
+    expect(restored.id).toBe(file.id);
+    const activeList = await svc.list(mp, folder.id);
+    expect(activeList.files.some((f) => f.id === file.id)).toBe(true);
+    expect(deleted).toHaveLength(0);
   });
 
   it("eliminar versión vigente promueve la anterior", async () => {

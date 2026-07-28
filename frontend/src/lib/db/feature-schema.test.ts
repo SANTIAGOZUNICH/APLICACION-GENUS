@@ -65,7 +65,7 @@ describe("COA — fallo Drive no deja metadata", () => {
     expect(after.folders.some((f) => f.name === "Vacia")).toBe(false);
   });
 
-  it("no elimina carpeta con archivos", async () => {
+  it("archiva carpeta con archivos (soft); hard delete rechaza no vacía", async () => {
     const svc = getCoaService();
     const mp = { email: "mp@test", sector: "MATERIA_PRIMA" as const };
     const folder = await svc.createFolder(mp, "ConArchivos", null);
@@ -75,6 +75,9 @@ describe("COA — fallo Drive no deja metadata", () => {
       mimeType: "application/pdf",
       bytes: Buffer.from("%PDF"),
     });
-    await expect(svc.archiveFolder(mp, folder.id)).rejects.toThrow(/vacía/);
+    await svc.archiveFolder(mp, folder.id);
+    const archived = await svc.list(mp, null, { includeArchived: true });
+    expect(archived.folders.some((f) => f.name === "ConArchivos")).toBe(true);
+    await expect(svc.hardDeleteFolder(mp, folder.id)).rejects.toThrow(/vacía/);
   });
 });

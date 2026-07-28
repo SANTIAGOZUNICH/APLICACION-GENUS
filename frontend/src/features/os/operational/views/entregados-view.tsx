@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { MoreVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   ConfirmDialog,
@@ -17,6 +16,8 @@ import { usePreviewContext, usePreviewSession } from "@/features/os/session/prev
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { postAnnulDelivery, postArchiveDelivery, postDeleteDeliveryRecord, postDeliverWork, postRestoreDelivery } from "@/lib/api/live-sync-client";
+import { deliveryLifecycleActions } from "@/lib/lifecycle/adapters/common";
+import type { LifecycleAction } from "@/lib/lifecycle";
 import { SECTOR_LABELS, type SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
@@ -41,6 +42,7 @@ import { useOperationalStore } from "../store/operational-store-context";
 import { getWorkProgress, recordWorkProgress } from "../store/operational-store";
 import type { QualityItem } from "../types";
 import { DeliveryFilesDialog } from "./delivery-files-dialog";
+import { DeliveryLifecycleActions } from "../components/delivery-lifecycle-actions";
 
 type EntregadosTab = "entregados" | "archivados" | "pendientes";
 type TimelinessFilter = "todos" | "en_fecha" | "fuera_fecha";
@@ -122,45 +124,6 @@ function splitQuantity(quantity: string | null | undefined, fallbackUnit?: strin
   return { quantity: match[1] || quantity, unit: match[2] || fallbackUnit || null };
 }
 
-function ActionMenu({
-  onDetail,
-  onArchive,
-  onAnnul,
-  onDelete,
-}: {
-  onDetail: () => void;
-  onArchive: () => void;
-  onAnnul: () => void;
-  onDelete: () => void;
-}) {
-  const itemClass =
-    "block w-full rounded px-3 py-1.5 text-left text-xs font-medium hover:bg-[var(--os-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)]";
-  return (
-    <details className="group relative">
-      <summary
-        className="inline-flex h-7 w-7 cursor-pointer list-none items-center justify-center rounded border border-[var(--os-border)] text-[var(--os-text-muted)] hover:text-[var(--os-text)] [&::-webkit-details-marker]:hidden"
-        aria-label="Acciones de entrega"
-      >
-        <MoreVertical className="h-4 w-4" aria-hidden="true" />
-      </summary>
-      <div className="absolute right-0 z-20 mt-1 min-w-44 rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] p-1 shadow-lg">
-        <button type="button" className={itemClass} onClick={onDetail}>
-          Ver detalle
-        </button>
-        <button type="button" className={itemClass} onClick={onArchive}>
-          Archivar
-        </button>
-        <button type="button" className={`${itemClass} text-[var(--genus-error)]`} onClick={onAnnul}>
-          Anular entrega
-        </button>
-        <button type="button" className={`${itemClass} text-[var(--genus-error)]`} onClick={onDelete}>
-          Borrar entrega
-        </button>
-      </div>
-    </details>
-  );
-}
-
 function KpiTile({ label, value, tone }: { label: string; value: number; tone?: "ok" | "warn" | "danger" }) {
   const toneClass =
     tone === "ok" ? "text-[var(--genus-success)]" : tone === "danger" ? "text-[var(--genus-error)]" : tone === "warn" ? "text-amber-700" : "text-[var(--os-text)]";
@@ -208,9 +171,6 @@ export function EntregadosView() {
   });
   const [detail, setDetail] = useState<DeliveryRecord | null>(null);
   const [filesRef, setFilesRef] = useState<string | null>(null);
-  const [archiveTarget, setArchiveTarget] = useState<DeliveryRecord | null>(null);
-  const [annulTarget, setAnnulTarget] = useState<DeliveryRecord | null>(null);
-  const [annulReason, setAnnulReason] = useState("");
   const [deleteGuideTarget, setDeleteGuideTarget] = useState<DeliveryRecord | null>(null);
   const [deleteGuideStep, setDeleteGuideStep] = useState<"explain" | "reason" | "confirm">("explain");
   const [deleteReason, setDeleteReason] = useState("");
@@ -384,10 +344,9 @@ export function EntregadosView() {
     const result = archiveDelivery({ id: record.id, actorSectorId: sectorId, actorName: workspace.context.displayName });
     if (!result.ok) {
       showToast(result.error, "info");
-      return;
+      throw new Error(result.error);
     }
     void postArchiveDelivery({ id: record.id, actorSectorId: sectorId }).catch(() => {});
-    setArchiveTarget(null);
     setTick((value) => value + 1);
     showToast("Entrega archivada.");
   }, [sectorId, showToast, workspace.context.displayName]);
@@ -396,41 +355,68 @@ export function EntregadosView() {
     const result = restoreDelivery({ id: record.id, actorSectorId: sectorId, actorName: workspace.context.displayName });
     if (!result.ok) {
       showToast(result.error, "info");
-      return;
+      throw new Error(result.error);
     }
     void postRestoreDelivery({ id: record.id, actorSectorId: sectorId }).catch(() => {});
     setTick((value) => value + 1);
     showToast("Entrega restaurada.");
   }, [sectorId, showToast, workspace.context.displayName]);
 
-  const executeAnnul = useCallback(() => {
-    if (!annulTarget) return;
-    const reason = annulReason.trim();
-    if (!reason) {
-      setActionError("El motivo de anulación es obligatorio.");
-      return;
-    }
-    const result = annulDelivery({ id: annulTarget.id, actorSectorId: sectorId, actorName: workspace.context.displayName, reason });
-    if (!result.ok) {
-      setActionError(result.error);
-      showToast(result.error, "info");
-      return;
-    }
-    const existingProgress = getWorkProgress(result.record.workItemId);
-    recordWorkProgress(result.record.workItemId, {
-      finishedQty: existingProgress?.finishedQty ?? "",
-      observation: existingProgress?.observation ?? "",
-      status: "revision",
-      updatedBy: workspace.context.displayName,
-    });
-    refreshDecisions();
-    void postAnnulDelivery({ id: annulTarget.id, reason, actorSectorId: sectorId }).catch(() => {});
-    setAnnulTarget(null);
-    setAnnulReason("");
-    setActionError(null);
-    setTick((value) => value + 1);
-    showToast("Entrega anulada. El trabajo vuelve a pendientes de entrega.");
-  }, [annulReason, annulTarget, refreshDecisions, sectorId, showToast, workspace.context.displayName]);
+  const handleDeliveryLifecycle = useCallback(
+    async (record: DeliveryRecord, action: LifecycleAction, reason: string) => {
+      if (action === "archivar") {
+        executeArchive(record);
+        return;
+      }
+      if (action === "restaurar") {
+        executeRestore(record);
+        return;
+      }
+      if (action === "anular") {
+        const result = annulDelivery({
+          id: record.id,
+          actorSectorId: sectorId,
+          actorName: workspace.context.displayName,
+          reason,
+        });
+        if (!result.ok) {
+          showToast(result.error, "info");
+          throw new Error(result.error);
+        }
+        const existingProgress = getWorkProgress(result.record.workItemId);
+        recordWorkProgress(result.record.workItemId, {
+          finishedQty: existingProgress?.finishedQty ?? "",
+          observation: existingProgress?.observation ?? "",
+          status: "revision",
+          updatedBy: workspace.context.displayName,
+        });
+        refreshDecisions();
+        void postAnnulDelivery({ id: record.id, reason, actorSectorId: sectorId }).catch(() => {});
+        setTick((value) => value + 1);
+        showToast("Entrega anulada. El trabajo vuelve a pendientes de entrega.");
+      }
+    },
+    [executeArchive, executeRestore, refreshDecisions, sectorId, showToast, workspace.context.displayName]
+  );
+
+  const executeHardDelete = useCallback(
+    async (record: DeliveryRecord, reason: string) => {
+      const result = deleteDeliveryRecord({
+        id: record.id,
+        actorSectorId: sectorId,
+        actorName: workspace.context.displayName,
+        reason,
+      });
+      if (!result.ok) {
+        showToast(result.error, "info");
+        throw new Error(result.error);
+      }
+      void postDeleteDeliveryRecord({ id: record.id, reason, actorSectorId: sectorId }).catch(() => {});
+      setTick((value) => value + 1);
+      showToast("Entrega eliminada definitivamente. Queda auditoría REGISTRO_ELIMINADO.");
+    },
+    [sectorId, showToast, workspace.context.displayName]
+  );
 
   const closeDeleteGuide = useCallback(() => {
     setDeleteGuideTarget(null);
@@ -507,22 +493,26 @@ export function EntregadosView() {
     {
       key: "actions",
       header: "Acción",
-      render: (record) => canMutate ? (
-        <ActionMenu
-          onDetail={() => setDetail(record)}
-          onArchive={() => setArchiveTarget(record)}
-          onAnnul={() => {
-            setAnnulTarget(record);
-            setAnnulReason("");
-            setActionError(null);
-          }}
-          onDelete={() => openDeleteGuide(record)}
-        />
-      ) : (
-        <Button variant="secondary" size="sm" onClick={() => setDetail(record)}>
-          Ver detalle
-        </Button>
-      ),
+      render: (record) =>
+        canMutate ? (
+          <div className="flex flex-wrap items-center gap-1">
+            <Button variant="secondary" size="sm" onClick={() => setDetail(record)}>
+              Ver detalle
+            </Button>
+            <DeliveryLifecycleActions
+              record={record}
+              canMutate={canMutate}
+              onAction={(action, reason) => handleDeliveryLifecycle(record, action, reason)}
+            />
+            <Button variant="destructive" size="sm" onClick={() => openDeleteGuide(record)}>
+              Borrar
+            </Button>
+          </div>
+        ) : (
+          <Button variant="secondary" size="sm" onClick={() => setDetail(record)}>
+            Ver detalle
+          </Button>
+        ),
     },
   ];
 
@@ -556,18 +546,25 @@ export function EntregadosView() {
     {
       key: "actions",
       header: "Acción",
-      render: (record) => canMutate ? (
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" size="sm" onClick={() => executeRestore(record)}>
-            Restaurar
-          </Button>
-          <Button variant="destructive" size="sm" onClick={() => openDeleteGuide(record)}>
-            Borrar entrega
-          </Button>
-        </div>
-      ) : (
-        <span className="text-xs text-[var(--os-text-muted)]">Solo Producción</span>
-      ),
+      render: (record) =>
+        canMutate ? (
+          <DeliveryLifecycleActions
+            record={record}
+            canMutate={canMutate}
+            includeHardDelete
+            hardDeleteDecision={
+              deliveryLifecycleActions({
+                id: record.id,
+                status: record.status,
+                archived: record.archived,
+              }).eliminarDefinitivo
+            }
+            onAction={(action, reason) => handleDeliveryLifecycle(record, action, reason)}
+            onHardDelete={(reason) => executeHardDelete(record, reason)}
+          />
+        ) : (
+          <span className="text-xs text-[var(--os-text-muted)]">Solo Producción</span>
+        ),
     },
   ];
 
@@ -753,33 +750,6 @@ export function EntregadosView() {
               </div>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      <ConfirmDialog
-        open={archiveTarget !== null}
-        onOpenChange={(open) => !open && setArchiveTarget(null)}
-        title="Archivar entrega"
-        description="Esta entrega dejará de aparecer en la lista principal, pero seguirá disponible en Archivados."
-        confirmLabel="Archivar"
-        cancelLabel="Cancelar"
-        onConfirm={() => archiveTarget && executeArchive(archiveTarget)}
-      />
-
-      <Dialog open={annulTarget !== null} onOpenChange={(open) => !open && setAnnulTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Anular entrega</DialogTitle>
-            <DialogDescription>
-              La entrega quedará anulada y el trabajo volverá a pendientes de entrega. Indicá el motivo.
-            </DialogDescription>
-          </DialogHeader>
-          <textarea value={annulReason} onChange={(e) => setAnnulReason(e.target.value)} rows={3} className="w-full rounded border border-[var(--os-border)] px-3 py-2 text-sm" />
-          {actionError && <p role="alert" className="text-sm text-[var(--genus-error)]">{actionError}</p>}
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setAnnulTarget(null)}>Cancelar</Button>
-            <Button variant="destructive" onClick={executeAnnul} disabled={!annulReason.trim()}>Anular entrega</Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 

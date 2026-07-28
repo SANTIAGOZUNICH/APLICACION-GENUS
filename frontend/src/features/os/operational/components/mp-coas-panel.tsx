@@ -25,6 +25,11 @@ type DeleteFileTarget = {
   folderName: string;
 };
 
+type ArchiveFileTarget = {
+  file: CoaFileRecord;
+  folderName: string;
+};
+
 type DeleteVersionTarget = {
   kind: "version";
   file: CoaFileRecord;
@@ -36,6 +41,7 @@ export function MpCoasPanel() {
   const canView = canViewCoas(sectorId);
   const canAdmin = canAdminCoas(sectorId);
   const [parentId, setParentId] = useState<string | null>(null);
+  const [listMode, setListMode] = useState<"active" | "archived">("active");
   const [stack, setStack] = useState<Array<{ id: string | null; name: string }>>([
     { id: null, name: "COA'S" },
   ]);
@@ -48,8 +54,14 @@ export function MpCoasPanel() {
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<CoaFolderRecord | null>(null);
   const [renameName, setRenameName] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState<CoaFolderRecord | null>(null);
   const [deleteFileTarget, setDeleteFileTarget] = useState<DeleteFileTarget | null>(null);
+  const [archiveFileTarget, setArchiveFileTarget] = useState<ArchiveFileTarget | null>(null);
+  const [archiveFolderTarget, setArchiveFolderTarget] = useState<CoaFolderRecord | null>(null);
+  const [restoreFileTarget, setRestoreFileTarget] = useState<CoaFileRecord | null>(null);
+  const [restoreFolderTarget, setRestoreFolderTarget] = useState<CoaFolderRecord | null>(null);
+  const [hardDeleteFolderTarget, setHardDeleteFolderTarget] = useState<CoaFolderRecord | null>(
+    null
+  );
   const [deleteVersionTarget, setDeleteVersionTarget] = useState<DeleteVersionTarget | null>(
     null
   );
@@ -72,7 +84,10 @@ export function MpCoasPanel() {
 
   const reload = useCallback(async () => {
     if (!canView) return;
-    const qs = parentId ? `?parentId=${encodeURIComponent(parentId)}` : "";
+    const params = new URLSearchParams();
+    if (parentId) params.set("parentId", parentId);
+    if (listMode === "archived") params.set("includeArchived", "true");
+    const qs = params.size ? `?${params}` : "";
     const res = await fetch(`/api/v1/coa${qs}`, { headers: headers() });
     const body = (await res.json()) as {
       folders?: CoaFolderRecord[];
@@ -84,7 +99,7 @@ export function MpCoasPanel() {
     setFolders(body.folders ?? []);
     setFiles(body.files ?? []);
     setSchemaPending(Boolean(body.schemaPending));
-  }, [canView, parentId, headers]);
+  }, [canView, parentId, listMode, headers]);
 
   useEffect(() => {
     void reload().catch((e) => setError(e instanceof Error ? e.message : "Error"));
@@ -178,7 +193,7 @@ export function MpCoasPanel() {
     URL.revokeObjectURL(a.href);
   }
 
-  async function beginDeleteFile(f: CoaFileRecord) {
+  async function beginHardDeleteFile(f: CoaFileRecord) {
     setMenuFileId(null);
     setError(null);
     const res = await fetch(`/api/v1/coa?fileId=${encodeURIComponent(f.id)}`, {
@@ -201,6 +216,53 @@ export function MpCoasPanel() {
       versions: body.versions ?? [],
       folderName: currentFolderName,
     });
+  }
+
+  function beginArchiveFile(f: CoaFileRecord) {
+    setMenuFileId(null);
+    setError(null);
+    setArchiveFileTarget({ file: f, folderName: currentFolderName });
+  }
+
+  async function confirmArchiveFile() {
+    if (!archiveFileTarget) return;
+    const r = await fetch("/api/v1/coa", {
+      method: "POST",
+      headers: { ...headers(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "archive_file",
+        fileId: archiveFileTarget.file.id,
+      }),
+    });
+    const b = (await r.json()) as { error?: string };
+    if (!r.ok) {
+      setError(b.error ?? "No se pudo archivar el archivo");
+      setArchiveFileTarget(null);
+      return;
+    }
+    if (detail?.file.id === archiveFileTarget.file.id) setDetail(null);
+    setArchiveFileTarget(null);
+    await reload();
+  }
+
+  async function confirmRestoreFile() {
+    if (!restoreFileTarget) return;
+    const r = await fetch("/api/v1/coa", {
+      method: "POST",
+      headers: { ...headers(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "restore_file",
+        fileId: restoreFileTarget.id,
+      }),
+    });
+    const b = (await r.json()) as { error?: string };
+    if (!r.ok) {
+      setError(b.error ?? "No se pudo restaurar el archivo");
+      setRestoreFileTarget(null);
+      return;
+    }
+    setRestoreFileTarget(null);
+    await reload();
   }
 
   function beginDeleteVersion(file: CoaFileRecord, version: CoaVersionRecord) {
@@ -336,6 +398,30 @@ export function MpCoasPanel() {
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
+        <div className="flex rounded border p-0.5 text-xs" data-testid="coa-list-mode-tabs">
+          <button
+            type="button"
+            className={`rounded px-2 py-1 ${listMode === "active" ? "bg-slate-100 font-medium" : ""}`}
+            onClick={() => {
+              setListMode("active");
+              setDetail(null);
+              setMenuFileId(null);
+            }}
+          >
+            Activos
+          </button>
+          <button
+            type="button"
+            className={`rounded px-2 py-1 ${listMode === "archived" ? "bg-slate-100 font-medium" : ""}`}
+            onClick={() => {
+              setListMode("archived");
+              setDetail(null);
+              setMenuFileId(null);
+            }}
+          >
+            Archivados
+          </button>
+        </div>
         {stack.map((s, i) => (
           <button
             key={`${s.id}-${i}`}
@@ -359,7 +445,7 @@ export function MpCoasPanel() {
         />
       </div>
 
-      {canAdmin ? (
+      {canAdmin && listMode === "active" ? (
         <div className="flex flex-wrap gap-2">
           <input
             className="rounded border px-2 py-1 text-sm"
@@ -474,23 +560,51 @@ export function MpCoasPanel() {
             </button>
             {canAdmin && !schemaPending ? (
               <>
-                <button
-                  type="button"
-                  className="text-xs underline"
-                  onClick={() => {
-                    setRenameTarget(f);
-                    setRenameName(f.name);
-                  }}
-                >
-                  Renombrar
-                </button>
-                <button
-                  type="button"
-                  className="text-xs text-rose-700 underline"
-                  onClick={() => setDeleteTarget(f)}
-                >
-                  Eliminar
-                </button>
+                {listMode === "active" ? (
+                  <>
+                    <button
+                      type="button"
+                      className="text-xs underline"
+                      onClick={() => {
+                        setRenameTarget(f);
+                        setRenameName(f.name);
+                      }}
+                    >
+                      Renombrar
+                    </button>
+                    <button
+                      type="button"
+                      className="text-xs underline"
+                      onClick={() => setArchiveFolderTarget(f)}
+                    >
+                      Archivar
+                    </button>
+                    <button
+                      type="button"
+                      className="text-xs text-rose-700 underline"
+                      onClick={() => setHardDeleteFolderTarget(f)}
+                    >
+                      Eliminar definitivo
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="text-xs underline"
+                      onClick={() => setRestoreFolderTarget(f)}
+                    >
+                      Restaurar
+                    </button>
+                    <button
+                      type="button"
+                      className="text-xs text-rose-700 underline"
+                      onClick={() => setHardDeleteFolderTarget(f)}
+                    >
+                      Eliminar definitivo
+                    </button>
+                  </>
+                )}
               </>
             ) : null}
           </li>
@@ -510,16 +624,44 @@ export function MpCoasPanel() {
               </button>
               {canAdmin && !schemaPending ? (
                 <>
-                  <button
-                    type="button"
-                    className="rounded p-1 text-rose-700 hover:bg-rose-50"
-                    title="Eliminar archivo"
-                    aria-label={`Eliminar ${f.name}`}
-                    data-testid={`coa-delete-file-${f.id}`}
-                    onClick={() => void beginDeleteFile(f)}
-                  >
-                    <Trash2 className="size-4" />
-                  </button>
+                  {listMode === "active" ? (
+                    <>
+                      <button
+                        type="button"
+                        className="text-xs underline"
+                        onClick={() => beginArchiveFile(f)}
+                      >
+                        Archivar
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded p-1 text-rose-700 hover:bg-rose-50"
+                        title="Eliminar definitivo"
+                        aria-label={`Eliminar definitivo ${f.name}`}
+                        data-testid={`coa-delete-file-${f.id}`}
+                        onClick={() => void beginHardDeleteFile(f)}
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="text-xs underline"
+                        onClick={() => setRestoreFileTarget(f)}
+                      >
+                        Restaurar
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs text-rose-700 underline"
+                        onClick={() => void beginHardDeleteFile(f)}
+                      >
+                        Eliminar definitivo
+                      </button>
+                    </>
+                  )}
                   <div className="relative">
                     <button
                       type="button"
@@ -563,13 +705,41 @@ export function MpCoasPanel() {
                             }}
                           />
                         </label>
-                        <button
-                          type="button"
-                          className="block w-full px-3 py-1.5 text-left text-xs text-rose-700 hover:bg-rose-50"
-                          onClick={() => void beginDeleteFile(f)}
-                        >
-                          Eliminar archivo
-                        </button>
+                        {listMode === "active" ? (
+                          <>
+                            <button
+                              type="button"
+                              className="block w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50"
+                              onClick={() => beginArchiveFile(f)}
+                            >
+                              Archivar
+                            </button>
+                            <button
+                              type="button"
+                              className="block w-full px-3 py-1.5 text-left text-xs text-rose-700 hover:bg-rose-50"
+                              onClick={() => void beginHardDeleteFile(f)}
+                            >
+                              Eliminar definitivo
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="block w-full px-3 py-1.5 text-left text-xs hover:bg-slate-50"
+                              onClick={() => setRestoreFileTarget(f)}
+                            >
+                              Restaurar
+                            </button>
+                            <button
+                              type="button"
+                              className="block w-full px-3 py-1.5 text-left text-xs text-rose-700 hover:bg-rose-50"
+                              onClick={() => void beginHardDeleteFile(f)}
+                            >
+                              Eliminar definitivo
+                            </button>
+                          </>
+                        )}
                       </div>
                     ) : null}
                   </div>
@@ -588,15 +758,45 @@ export function MpCoasPanel() {
           <div className="flex flex-wrap items-start justify-between gap-2">
             <h4 className="font-semibold">{detail.file.name}</h4>
             {canAdmin && !schemaPending ? (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50"
-                data-testid="coa-detail-delete-file"
-                onClick={() => void beginDeleteFile(detail.file)}
-              >
-                <Trash2 className="size-3.5" />
-                Eliminar archivo
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {listMode === "active" ? (
+                  <>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded border px-2 py-1 text-xs hover:bg-slate-50"
+                      onClick={() => beginArchiveFile(detail.file)}
+                    >
+                      Archivar
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50"
+                      data-testid="coa-detail-delete-file"
+                      onClick={() => void beginHardDeleteFile(detail.file)}
+                    >
+                      <Trash2 className="size-3.5" />
+                      Eliminar definitivo
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="rounded border px-2 py-1 text-xs hover:bg-slate-50"
+                      onClick={() => setRestoreFileTarget(detail.file)}
+                    >
+                      Restaurar
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50"
+                      onClick={() => void beginHardDeleteFile(detail.file)}
+                    >
+                      Eliminar definitivo
+                    </button>
+                  </>
+                )}
+              </div>
             ) : null}
           </div>
           <p className="text-xs text-[var(--os-text-muted)]">
@@ -710,32 +910,107 @@ export function MpCoasPanel() {
       ) : null}
 
       <ConfirmDialog
-        open={Boolean(deleteTarget)}
-        onOpenChange={(o) => !o && setDeleteTarget(null)}
-        title="¿Eliminar carpeta?"
-        description="Solo carpetas vacías. Queda auditado (actor/fecha)."
-        confirmLabel="Eliminar"
+        open={Boolean(archiveFolderTarget)}
+        onOpenChange={(o) => !o && setArchiveFolderTarget(null)}
+        title="¿Archivar carpeta?"
+        description="La carpeta quedará oculta en Activos. Podés restaurarla desde Archivados."
+        confirmLabel="Archivar"
+        onConfirm={() => {
+          if (!archiveFolderTarget) return;
+          void fetch("/api/v1/coa", {
+            method: "POST",
+            headers: { ...headers(), "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "archive_folder",
+              folderId: archiveFolderTarget.id,
+            }),
+          }).then(async (r) => {
+            const b = (await r.json()) as { error?: string };
+            if (!r.ok) {
+              setError(b.error ?? "No se pudo archivar");
+              setArchiveFolderTarget(null);
+              return;
+            }
+            setArchiveFolderTarget(null);
+            await reload();
+          });
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(restoreFolderTarget)}
+        onOpenChange={(o) => !o && setRestoreFolderTarget(null)}
+        title="¿Restaurar carpeta?"
+        description="Volverá a aparecer en Activos."
+        confirmLabel="Restaurar"
+        onConfirm={() => {
+          if (!restoreFolderTarget) return;
+          void fetch("/api/v1/coa", {
+            method: "POST",
+            headers: { ...headers(), "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "restore_folder",
+              folderId: restoreFolderTarget.id,
+            }),
+          }).then(async (r) => {
+            const b = (await r.json()) as { error?: string };
+            if (!r.ok) {
+              setError(b.error ?? "No se pudo restaurar");
+              setRestoreFolderTarget(null);
+              return;
+            }
+            setRestoreFolderTarget(null);
+            setListMode("active");
+            await reload();
+          });
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(hardDeleteFolderTarget)}
+        onOpenChange={(o) => !o && setHardDeleteFolderTarget(null)}
+        title="¿Eliminar carpeta definitivamente?"
+        description="Solo carpetas vacías (sin archivos ni subcarpetas, activos o archivados). Queda auditado."
+        confirmLabel="Eliminar definitivamente"
         variant="destructive"
         onConfirm={() => {
-          if (!deleteTarget) return;
+          if (!hardDeleteFolderTarget) return;
           void fetch("/api/v1/coa", {
             method: "POST",
             headers: { ...headers(), "Content-Type": "application/json" },
             body: JSON.stringify({
               action: "delete_folder",
-              folderId: deleteTarget.id,
+              folderId: hardDeleteFolderTarget.id,
             }),
           }).then(async (r) => {
             const b = (await r.json()) as { error?: string };
             if (!r.ok) {
               setError(b.error ?? "No se pudo eliminar");
-              setDeleteTarget(null);
+              setHardDeleteFolderTarget(null);
               return;
             }
-            setDeleteTarget(null);
+            setHardDeleteFolderTarget(null);
             await reload();
           });
         }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(archiveFileTarget)}
+        onOpenChange={(o) => !o && setArchiveFileTarget(null)}
+        title="¿Archivar archivo?"
+        description="El archivo quedará oculto en Activos. Los binarios se conservan y podés restaurarlo."
+        confirmLabel="Archivar"
+        onConfirm={() => void confirmArchiveFile()}
+      />
+
+      <ConfirmDialog
+        open={Boolean(restoreFileTarget)}
+        onOpenChange={(o) => !o && setRestoreFileTarget(null)}
+        title="¿Restaurar archivo?"
+        description="Volverá a aparecer en Activos."
+        confirmLabel="Restaurar"
+        onConfirm={() => void confirmRestoreFile()}
       />
 
       {deleteFileTarget ? (

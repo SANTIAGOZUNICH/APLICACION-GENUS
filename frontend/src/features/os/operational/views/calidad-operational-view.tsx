@@ -7,7 +7,15 @@ import { usePreviewContext, usePreviewSession } from "@/features/os/session/prev
 import { displayField } from "@/lib/operational/display-fields";
 import { SECTOR_LABELS } from "@/types/operational/sector";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/dialog";
+import {
+  ConfirmDialog,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Drawer,
   DrawerBody,
@@ -40,6 +48,7 @@ import { useOperationalStore } from "../store/operational-store-context";
 import type { QualityItem } from "../types";
 import { canAccessRemitos } from "@/lib/remitos/types";
 import { isPackagingQualityItem } from "@/lib/remitos/from-quality";
+import { FormulasAdminPanel } from "../components/formulas-admin-panel";
 
 const TOP_TABS = [
   { id: "pendientes", label: "Pendientes" },
@@ -74,7 +83,7 @@ interface CalidadOperationalViewProps {
 /** Calidad — Pendientes (Elaboraciones/Envasados) · Aprobados · Rechazados. */
 export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOperationalViewProps) {
   const workspace = useRequiredWorkspace();
-  const { sectorId } = usePreviewSession();
+  const { sectorId, email } = usePreviewSession();
   const { showToast } = usePreviewContext();
   const canDecide = canDecideQuality(sectorId);
   const {
@@ -82,6 +91,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     getQualityObservation,
     approveQualityItem,
     rejectQualityItem,
+    annulQualityItem,
   } = useOperationalStore();
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
     useOperationalPlan("CALIDAD");
@@ -94,6 +104,13 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
   const [rejectError, setRejectError] = useState<string | null>(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [annulTarget, setAnnulTarget] = useState<QualityItem | null>(null);
+  const [annulReason, setAnnulReason] = useState("");
+  const [annulError, setAnnulError] = useState<string | null>(null);
+  const formulaSession = useMemo(
+    () => ({ email: email ?? "", sector: sectorId }),
+    [email, sectorId]
+  );
 
   const qualityItems = useMemo(() => {
     const seed = data?.qualityItems ?? [];
@@ -233,6 +250,48 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     showToast,
   ]);
 
+  const openAnnul = useCallback((item: QualityItem) => {
+    setAnnulTarget(item);
+    setAnnulReason("");
+    setAnnulError(null);
+  }, []);
+
+  const handleAnnul = useCallback(() => {
+    if (!annulTarget) return;
+    if (!canDecideQuality(sectorId)) {
+      setAnnulError(QUALITY_DECISION_DENIED_MESSAGE);
+      showToast(QUALITY_DECISION_DENIED_MESSAGE, "info");
+      return;
+    }
+    const reason = annulReason.trim();
+    if (!reason) {
+      setAnnulError("El motivo es obligatorio.");
+      return;
+    }
+    const result = annulQualityItem(annulTarget.id, {
+      reason,
+      actorSectorId: sectorId,
+      actorName: workspace.context.displayName,
+      actorEmail: email ?? undefined,
+    });
+    if (!result.ok) {
+      setAnnulError(result.error);
+      showToast(result.error, "info");
+      return;
+    }
+    showToast("Decisión anulada — el trabajo vuelve a Pendientes.");
+    setAnnulTarget(null);
+    setAnnulReason("");
+  }, [
+    annulTarget,
+    annulReason,
+    sectorId,
+    email,
+    annulQualityItem,
+    workspace.context.displayName,
+    showToast,
+  ]);
+
   const buildColumns = useCallback(
     (kind: "granel" | "salida"): OperationalTableColumn<QualityItem>[] => {
       const base: OperationalTableColumn<QualityItem>[] =
@@ -346,8 +405,25 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
             } satisfies OperationalTableColumn<QualityItem>,
           ]
         : []),
+      ...(canDecide && (topTab === "aprobados" || topTab === "rechazados")
+        ? [
+            {
+              key: "annul",
+              header: "Acciones",
+              render: (row: QualityItem) => (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => openAnnul(row)}
+                >
+                  Anular decisión
+                </Button>
+              ),
+            } satisfies OperationalTableColumn<QualityItem>,
+          ]
+        : []),
     ],
-    [getQualityObservation, remitoActions, topTab]
+    [getQualityObservation, remitoActions, topTab, canDecide, openAnnul]
   );
 
   const topTabsWithCount = TOP_TABS.map((tab) => ({
@@ -612,6 +688,58 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
         cancelLabel="Cancelar"
         onConfirm={handleApprove}
       />
+
+      <Dialog
+        open={annulTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAnnulTarget(null);
+            setAnnulReason("");
+            setAnnulError(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Anular decisión</DialogTitle>
+            <DialogDescription>
+              {annulTarget
+                ? `${displayField(annulTarget.product)} volverá a Pendientes. Indicá el motivo de la anulación.`
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <label htmlFor="annul-reason" className="block text-sm">
+            Motivo (obligatorio)
+            <textarea
+              id="annul-reason"
+              value={annulReason}
+              onChange={(e) => {
+                setAnnulReason(e.target.value);
+                if (e.target.value.trim()) setAnnulError(null);
+              }}
+              rows={3}
+              className="mt-1 w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
+            />
+          </label>
+          {annulError ? (
+            <p role="alert" className="text-sm text-[var(--genus-error)]">
+              {annulError}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setAnnulTarget(null)}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={handleAnnul}>
+              Anular decisión
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <div className="mt-6">
+        <FormulasAdminPanel session={formulaSession} sectorId={sectorId} />
+      </div>
     </TwinShell>
   );
 }

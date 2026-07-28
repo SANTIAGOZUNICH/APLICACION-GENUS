@@ -27,9 +27,17 @@ describe("assigned-work-lifecycle", () => {
     expect(decision.reason).toContain("finalizado");
   });
 
-  it("bloquea trabajos ya cancelados", () => {
+  it("bloquea trabajos ya cancelados — ofrece restaurar", () => {
     const decision = resolveAssignedWorkLifecycleAction({ status: "cancelado" });
-    expect(decision.action).toBe("bloquear_finalizado");
-    expect(decision.reason).toContain("cancelado");
+    expect(decision.action).toBe("restaurar");
+    expect(decision.reason).toContain("Restaurar");
+  });
+
+  it("restaurar eliminados desde historial", () => {
+    const decision = resolveAssignedWorkLifecycleAction(
+      { status: "pendiente" },
+      { inactiveKind: "eliminado" }
+    );
+    expect(decision.action).toBe("restaurar");
   });
 });

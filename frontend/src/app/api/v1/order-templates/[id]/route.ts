@@ -56,7 +56,7 @@ export async function POST(request: Request, ctx: Ctx) {
     const actor = resolveOrdersActor(request);
     const { id } = await ctx.params;
     const body = (await request.json()) as {
-      action: "duplicate" | "new_version" | "obsolete";
+      action: "duplicate" | "new_version" | "obsolete" | "restore";
       productName?: string;
       productCode?: string;
       brandClient?: string | null;
@@ -88,6 +88,10 @@ export async function POST(request: Request, ctx: Ctx) {
     }
     if (body.action === "obsolete") {
       const template = await service.markTemplateObsoleteManaged(id, actor);
+      return NextResponse.json({ template, legallyOperational: true });
+    }
+    if (body.action === "restore") {
+      const template = await service.restoreTemplateManaged(id, actor);
       return NextResponse.json({ template, legallyOperational: true });
     }
     return NextResponse.json({ error: "Acción no reconocida." }, { status: 400 });

@@ -15,6 +15,10 @@ export type MeIngresoRow = {
   total: number | null;
   ubicacion: string;
   materialId: string | null;
+  /** Soft-anulado: conserva fila y revierte stock. */
+  anulado?: boolean;
+  anuladoAt?: string | null;
+  anuladoReason?: string | null;
   createdBy: string;
   updatedBy: string;
   createdAt: string;

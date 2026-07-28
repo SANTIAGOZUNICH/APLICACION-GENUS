@@ -2,18 +2,21 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/dialog";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import {
   FormulaClientProductPickers,
   type SelectedFormulaOption,
 } from "@/features/os/operational/components/formula-client-product-pickers";
+import { LifecycleActionsMenu } from "@/features/os/operational/components/lifecycle-actions-menu";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
 } from "@/lib/orders/actor";
 import { resolveFormulaMasterApi } from "@/lib/orders/orders-client";
+import { mpControlLifecycleActions } from "@/lib/lifecycle/adapters/common";
+import type { LifecycleAction } from "@/lib/lifecycle";
+import { matchesVisibilityFilter } from "@/lib/lifecycle";
 import type { MpWeeklyControl, MpWeeklyControlLine } from "@/lib/mp-control/types";
 import { canWriteMpControl } from "@/lib/mp-control/types";
 
@@ -43,8 +46,8 @@ export function MpWeeklyControlPanel() {
   const [sourceHint, setSourceHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [schemaPending, setSchemaPending] = useState(false);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [visibility, setVisibility] = useState<"activos" | "archivados" | "anulados">("activos");
 
   const reload = useCallback(async () => {
     const res = await fetch("/api/v1/mp-control", {
@@ -147,6 +150,98 @@ export function MpWeeklyControlPanel() {
 
   const writesEnabled = canWrite && !schemaPending;
 
+  const visibleControls = useMemo(
+    () =>
+      controls.filter((c) =>
+        matchesVisibilityFilter(visibility, {
+          status: c.status,
+          archived: c.status === "ARCHIVADO",
+        })
+      ),
+    [controls, visibility]
+  );
+
+  async function runLifecycle(action: LifecycleAction, reason: string) {
+    if (!active || !canWrite) return;
+    if (action === "eliminar") {
+      const res = await fetch(`/api/v1/mp-control/${active.id}`, {
+        method: "DELETE",
+        headers: actorHeaders(session.email, session.sector),
+      });
+      const body = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(body.error ?? "No se pudo eliminar");
+      setActive(null);
+      await reload();
+      return;
+    }
+    const lifecycleAction =
+      action === "anular" ? "annul" : action === "archivar" ? "archive" : action === "restaurar" ? "restore" : null;
+    if (!lifecycleAction) throw new Error("Acción no soportada.");
+    const res = await fetch(`/api/v1/mp-control/${active.id}`, {
+      method: "PATCH",
+      headers: actorHeaders(session.email, session.sector),
+      body: JSON.stringify({ lifecycleAction, reason }),
+    });
+    const body = (await res.json()) as { control?: MpWeeklyControl; error?: string };
+    if (!res.ok) throw new Error(body.error ?? "No se pudo completar la acción");
+    setActive(body.control!);
+    await reload();
+  }
+
+  const lifecycleMenuItems = useMemo(() => {
+    if (!active) return [];
+    const lc = mpControlLifecycleActions(active);
+    const linkedImpact = active.linkedOeId
+      ? {
+          summary: `OE vinculada: ${active.linkedOeId}. No se puede hard-delete.`,
+          preservesAudit: true,
+          references: lc.eliminar.impact?.references ?? [],
+          warnings: ["El control no descuenta stock; anular/archivar conserva auditoría."],
+        }
+      : undefined;
+    return [
+      ...(lc.eliminar.allowed
+        ? [
+            {
+              action: "eliminar" as const,
+              label: "Eliminar borrador",
+              decision: lc.eliminar,
+              impact: lc.eliminar.impact,
+            },
+          ]
+        : []),
+      ...(lc.anular.allowed && lc.anular.action === "anular"
+        ? [
+            {
+              action: "anular" as const,
+              label: "Anular",
+              decision: lc.anular,
+              impact: linkedImpact ?? lc.anular.impact,
+            },
+          ]
+        : []),
+      ...(lc.archivar.allowed && lc.archivar.action === "archivar"
+        ? [
+            {
+              action: "archivar" as const,
+              label: "Archivar",
+              decision: lc.archivar,
+              impact: linkedImpact,
+            },
+          ]
+        : []),
+      ...(lc.restaurar.allowed
+        ? [
+            {
+              action: "restaurar" as const,
+              label: "Restaurar",
+              decision: lc.restaurar,
+            },
+          ]
+        : []),
+    ];
+  }, [active]);
+
   return (
     <div className="space-y-4" data-testid="mp-weekly-control-panel">
       <SchemaPendingBanner show={schemaPending} />
@@ -229,8 +324,25 @@ export function MpWeeklyControlPanel() {
       )}
 
       <div className="grid gap-3 lg:grid-cols-3">
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-1">
+            {(["activos", "archivados", "anulados"] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                className={`rounded border px-2 py-1 text-xs capitalize ${
+                  visibility === f
+                    ? "border-[var(--os-teal)] bg-[var(--os-bg-muted)]"
+                    : "border-[var(--os-border)]"
+                }`}
+                onClick={() => setVisibility(f)}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
         <ul className="rounded border border-[var(--os-border)] divide-y max-h-80 overflow-y-auto">
-          {controls.map((c) => (
+          {visibleControls.map((c) => (
             <li key={c.id}>
               <button
                 type="button"
@@ -250,34 +362,33 @@ export function MpWeeklyControlPanel() {
               </button>
             </li>
           ))}
-          {controls.length === 0 ? (
+          {visibleControls.length === 0 ? (
             <li className="px-3 py-4 text-sm text-[var(--os-text-muted)]">Sin controles.</li>
           ) : null}
         </ul>
+        </div>
 
         <div className="lg:col-span-2 overflow-x-auto rounded border border-[var(--os-border)]">
           {active ? (
             <div className="space-y-2 p-2">
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {writesEnabled && active.status === "BORRADOR" ? (
-                  <>
-                    <Button
-                      type="button"
-                      onClick={() => void patchActive({ status: "COMPLETADO" })}
-                    >
-                      Completar
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => setDeleteId(active.id)}
-                    >
-                      Eliminar borrador
-                    </Button>
-                  </>
+                  <Button
+                    type="button"
+                    onClick={() => void patchActive({ status: "COMPLETADO" })}
+                  >
+                    Completar
+                  </Button>
+                ) : null}
+                {writesEnabled && lifecycleMenuItems.length > 0 ? (
+                  <LifecycleActionsMenu
+                    items={lifecycleMenuItems}
+                    onAction={runLifecycle}
+                  />
                 ) : null}
                 <span className="text-xs text-[var(--os-text-muted)] self-center">
                   Snapshot: {active.formulaSnapshot ? "inmutable" : "—"} · no descuenta stock
+                  {active.linkedOeId ? ` · OE ${active.linkedOeId}` : ""}
                 </span>
               </div>
               <table className="w-full text-xs" data-testid="mp-control-lines">
@@ -367,25 +478,6 @@ export function MpWeeklyControlPanel() {
           )}
         </div>
       </div>
-
-      <ConfirmDialog
-        open={!!deleteId}
-        onOpenChange={(o) => !o && setDeleteId(null)}
-        title="¿Eliminar borrador?"
-        description="Solo borra el control MP. No modifica Drive ni OE ni stock."
-        confirmLabel="Eliminar"
-        onConfirm={() => {
-          if (!deleteId) return;
-          void fetch(`/api/v1/mp-control/${deleteId}`, {
-            method: "DELETE",
-            headers: actorHeaders(session.email, session.sector),
-          }).then(async () => {
-            setDeleteId(null);
-            setActive(null);
-            await reload();
-          });
-        }}
-      />
     </div>
   );
 }

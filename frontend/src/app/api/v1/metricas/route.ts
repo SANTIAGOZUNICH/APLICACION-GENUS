@@ -42,6 +42,7 @@ export async function GET(request: Request) {
         sectorParam === "ALL"
           ? sectorParam
           : undefined,
+      onlyDeleted: url.searchParams.get("onlyDeleted") === "1",
     };
     const persistenceReady = await isProcedureMetricsSchemaReady();
     const svc = getMetricasService();
@@ -103,6 +104,10 @@ export async function POST(request: Request) {
     if (body.action === "delete" && body.id) {
       await svc.delete(a, body.id);
       return NextResponse.json({ ok: true });
+    }
+    if (body.action === "restore" && body.id) {
+      const metric = await svc.restore(a, body.id);
+      return NextResponse.json({ metric });
     }
 
     throw new OrdersValidationError("action desconocida");

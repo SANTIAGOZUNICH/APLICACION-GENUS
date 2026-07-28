@@ -16,7 +16,10 @@ const fetchProducts = vi.fn();
 vi.mock("@/lib/orders/orders-client", () => ({
   fetchFormulaClientOptionsApi: (...args: unknown[]) => fetchClients(...args),
   fetchFormulaProductOptionsApi: (...args: unknown[]) => fetchProducts(...args),
+  syncFormulaDriveIndexApi: vi.fn().mockResolvedValue({ ok: true }),
 }));
+
+import { invalidateFormulaCatalogCache } from "@/lib/formulas/formula-catalog-cache";
 
 describe("SearchCombobox escritura real", () => {
   afterEach(() => {
@@ -107,35 +110,56 @@ describe("FormulaClientProductPickers query vs selected", () => {
   const session = { email: "produccion@test", sector: "PRODUCCION" as const };
 
   beforeEach(() => {
+    invalidateFormulaCatalogCache();
     fetchClients.mockReset();
     fetchProducts.mockReset();
     fetchClients.mockResolvedValue({
       scope: "clients",
-      query: "uni",
+      query: "",
       source: "DRIVE",
-      clients: [{ client: "UNICA", rank: "exact_prefix", source: "DRIVE" }],
-      persistenceReady: true,
-    });
-    fetchProducts.mockResolvedValue({
-      scope: "products",
-      query: "sham",
-      client: "UNICA",
-      source: "DRIVE",
-      products: [
-        {
-          productId: "drive:1",
-          versionId: "drive:1",
-          driveFileId: "1",
-          productLabel: "SHAMPOO SOLIDO",
-          client: "UNICA",
-          code: "",
-          aliases: ["SHAMPOO SOLIDO"],
-          rank: "exact_prefix",
-          source: "DRIVE",
-        },
+      clients: [
+        { client: "UNICA", rank: "exact_prefix", source: "DRIVE" },
+        { client: "ACME", rank: "exact_prefix", source: "DRIVE" },
       ],
       persistenceReady: true,
     });
+    fetchProducts.mockImplementation(async (_session: unknown, client: string) => ({
+      scope: "products",
+      query: "",
+      client,
+      source: "DRIVE",
+      products:
+        client === "UNICA"
+          ? [
+              {
+                productId: "drive:1",
+                versionId: "drive:1",
+                driveFileId: "1",
+                productLabel: "SHAMPOO SOLIDO",
+                client: "UNICA",
+                code: "",
+                aliases: ["SHAMPOO SOLIDO"],
+                rank: "exact_prefix",
+                source: "DRIVE",
+              },
+            ]
+          : client === "ACME"
+            ? [
+                {
+                  productId: "drive:2",
+                  versionId: "drive:2",
+                  driveFileId: "2",
+                  productLabel: "CREMA ACME",
+                  client: "ACME",
+                  code: "",
+                  aliases: ["CREMA ACME"],
+                  rank: "exact_prefix",
+                  source: "DRIVE",
+                },
+              ]
+            : [],
+      persistenceReady: true,
+    }));
   });
 
   afterEach(() => {

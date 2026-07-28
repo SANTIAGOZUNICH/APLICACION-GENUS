@@ -29,6 +29,13 @@ import {
 } from "@/lib/inventory/types";
 import { MOCK_PREVIEW_USERS } from "@/features/os/auth/lib/mock-preview-users";
 import { resolveSectorHome } from "@/lib/role-engine/role-engine";
+import { applyOaDeliveryToMe } from "@/lib/inventory/me-oa-bridge";
+import {
+  createEmptyOaContent,
+  emptyOaMaterial,
+  normalizeOrderContent,
+} from "@/lib/orders/content";
+import type { OperationalOrderRecord } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
 
 const deposito = {
@@ -39,11 +46,56 @@ const mp = { email: "mp@laboratoriogenus.com.ar", sector: "MATERIA_PRIMA" as Sec
 const produccion = {
   email: "produccion@laboratoriogenus.com.ar",
   sector: "PRODUCCION" as SectorId,
+  displayName: "Producción",
 };
 const elaboracion = {
   email: "elaboracion@laboratoriogenus.com.ar",
   sector: "ELABORACION" as SectorId,
 };
+
+function makeOaForSalida(materialId: string, codigo: string, usados: string): OperationalOrderRecord {
+  const content = createEmptyOaContent({ productName: "Crema", client: "Cliente X" });
+  content.materials = [
+    emptyOaMaterial(1, {
+      id: "line-1",
+      codigo,
+      nombreInsumo: "Insumo",
+      usados,
+      materialId,
+    }),
+  ];
+  const normalized = normalizeOrderContent(content);
+  return {
+    id: "oa-anular-test",
+    orderNumber: "OA-2026-000001",
+    type: "OA",
+    templateId: "t",
+    templateVersion: 1,
+    templateSnapshot: normalized,
+    product: "Crema",
+    client: "Cliente X",
+    code: "C1",
+    lot: "L1",
+    assignedSector: "ENVASADO_MASIVO",
+    formulaProductId: null,
+    formulaVersionId: null,
+    formulaVersionHash: null,
+    status: "COMPLETA",
+    formData: normalized,
+    completionPercentage: 100,
+    revision: 1,
+    version: 1,
+    linkedWorkItemId: null,
+    reviewedAt: null,
+    reviewedBy: null,
+    completedAt: null,
+    completedBy: null,
+    createdBy: produccion.email,
+    updatedBy: produccion.email,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 describe("DEPOSITO acceso y navegación", () => {
   it("login deposito está entre los ocho accesos", () => {
@@ -471,6 +523,32 @@ describe("InventoryService ME/MP", () => {
     expect(canReadInventory("PRODUCCION", "me_ingresos")).toBe(true);
     expect(canWriteInventory("PRODUCCION", "me_ingresos")).toBe(false);
     expect(canWriteInventory("PRODUCCION", "me_avisos")).toBe(true);
+  });
+});
+
+describe("ME salidas anular", () => {
+  it("anular salida OA es idempotente y reintegra stock una sola vez", () => {
+    const repo = new MemoryInventoryRepo();
+    const svc = new InventoryService(repo);
+    const ing = svc.upsertMeIngreso(deposito, {
+      codigo: "ANU-01",
+      descripcionInsumo: "Cajas",
+      bultos: 1,
+      cantidad: 500,
+    });
+    const oa = makeOaForSalida(ing.materialId!, "ANU-01", "80");
+    applyOaDeliveryToMe(svc, produccion, oa);
+    expect(svc.listMeInventario(deposito)[0]?.cantidadTotal).toBe(420);
+
+    const salida = svc.listMeSalidas(deposito).find((s) => s.origen === "OA" && !s.reverted)!;
+    const first = svc.anularMeSalida(deposito, salida.id, "Error de carga");
+    expect(first.reverted).toBe(true);
+    expect(svc.listMeInventario(deposito)[0]?.cantidadTotal).toBe(500);
+
+    const second = svc.anularMeSalida(deposito, salida.id, "segundo intento");
+    expect(second.reverted).toBe(true);
+    expect(second.id).toBe(first.id);
+    expect(svc.listMeInventario(deposito)[0]?.cantidadTotal).toBe(500);
   });
 });
 

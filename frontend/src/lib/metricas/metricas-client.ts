@@ -32,6 +32,7 @@ export async function fetchMetricasApi(
   if (filters.product) qs.set("product", filters.product);
   if (filters.responsible) qs.set("responsible", filters.responsible);
   if (filters.sector) qs.set("sector", filters.sector);
+  if (filters.onlyDeleted) qs.set("onlyDeleted", "1");
   const res = await fetch(`/api/v1/metricas?${qs}`, { headers: headers(session) });
   const body = (await res.json()) as {
     metrics?: PackagingMetricRecord[];

@@ -129,15 +129,24 @@ export class MetricasService {
     filters: MetricsListFilters = {}
   ): Promise<PackagingMetricRecord[]> {
     assertCanRead(actor);
+    const onlyDeleted = Boolean(filters.onlyDeleted);
 
     if (isDatabaseConfigured() && (await isProcedureMetricsSchemaReady())) {
       try {
         const db = getDb();
-        const res = await db.execute(sql`
+        const res = await db.execute(
+          onlyDeleted
+            ? sql`
+          select * from packaging_metrics
+          where deleted_at is not null
+          order by metric_date desc, created_at desc
+        `
+            : sql`
           select * from packaging_metrics
           where deleted_at is null
           order by metric_date desc, created_at desc
-        `);
+        `
+        );
         const rows = (res.rows as Record<string, unknown>[]).map(mapMetric);
         return applyFilters(rows, actor, filters);
       } catch {
@@ -146,7 +155,10 @@ export class MetricasService {
     }
 
     if (!isFeatureMemoryAllowed()) return [];
-    return applyFilters(mem().metrics, actor, filters);
+    const base = mem().metrics.filter((m) =>
+      onlyDeleted ? Boolean(m.deletedAt) : !m.deletedAt
+    );
+    return applyFilters(base, actor, filters);
   }
 
   async create(
@@ -280,6 +292,44 @@ export class MetricasService {
       const m = mem().metrics.find((x) => x.id === id);
       if (m) m.deletedAt = now;
     }
+  }
+
+  /** Restaura una métrica soft-deleted (limpia deleted_at). */
+  async restore(actor: MetricsActor, id: string): Promise<PackagingMetricRecord> {
+    assertCanRead(actor);
+    await assertProcedureMetricsWritesEnabled();
+
+    if (isDatabaseConfigured() && (await isProcedureMetricsSchemaReady())) {
+      const db = getDb();
+      const existing = await db.execute(sql`
+        select * from packaging_metrics where id = ${id}::uuid limit 1
+      `);
+      const row = (existing.rows as Record<string, unknown>[])[0];
+      if (!row) throw new OrdersNotFoundError("Registro no encontrado.");
+      const metric = mapMetric(row);
+      if (
+        !canAdminAllMetricas(actor.sector) &&
+        metric.sector !== actor.sector
+      ) {
+        throw new OrdersForbiddenError("No podés restaurar métricas de otro sector.");
+      }
+      if (!metric.deletedAt) return metric;
+      const now = nowIso();
+      await db.execute(sql`
+        update packaging_metrics set deleted_at = null, updated_by = ${actor.email}, updated_at = ${now}::timestamptz
+        where id = ${id}::uuid
+      `);
+      return { ...metric, deletedAt: null };
+    }
+
+    if (!isFeatureMemoryAllowed()) throw new OrdersNotFoundError("Registro no encontrado.");
+    const m = mem().metrics.find((x) => x.id === id);
+    if (!m) throw new OrdersNotFoundError("Registro no encontrado.");
+    if (!canAdminAllMetricas(actor.sector) && m.sector !== actor.sector) {
+      throw new OrdersForbiddenError("No podés restaurar métricas de otro sector.");
+    }
+    m.deletedAt = null;
+    return m;
   }
 
   async getById(actor: MetricsActor, id: string): Promise<PackagingMetricRecord | null> {

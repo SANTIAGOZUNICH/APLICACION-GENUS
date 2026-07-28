@@ -53,6 +53,10 @@ describe("AvisosService", () => {
 
     const sent = await svc.list({ email: "prod@test", sector: "PRODUCCION" }, "enviados");
     expect(sent.some((m) => m.id === msg.id)).toBe(true);
+
+    await svc.restore({ email: "cal@test", sector: "CALIDAD" }, msg.id);
+    const calidadInbox = await svc.list({ email: "cal@test", sector: "CALIDAD" }, "recibidos");
+    expect(calidadInbox.some((m) => m.id === msg.id)).toBe(true);
   });
 
   it("toAll envía a todos los participantes", async () => {

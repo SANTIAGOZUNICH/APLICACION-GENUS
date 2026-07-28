@@ -16,6 +16,13 @@ import {
   recordLifecycleEvent,
 } from "./audit";
 import { orderLifecycleActions } from "./adapters/orders";
+import {
+  avisoLifecycleActions,
+  metricaLifecycleActions,
+  mpStockLifecycleActions,
+  mpControlLifecycleActions,
+  plantillaLifecycleActions,
+} from "./adapters/common";
 
 describe("lifecycle policy", () => {
   it("borra borrador pendiente sin refs", () => {
@@ -134,6 +141,23 @@ describe("lifecycle policy", () => {
     expect(done.archivar.allowed).toBe(true);
   });
 
+  it("stock MP no se elimina directamente", () => {
+    const d = mpStockLifecycleActions({ id: "s1", codigo: "ABC" });
+    expect(d.eliminar.allowed).toBe(false);
+  });
+
+  it("plantilla obsoleta se restaura; métrica archivada se restaura", () => {
+    expect(
+      plantillaLifecycleActions({ id: "t1", status: "OBSOLETA" }).restaurar.allowed
+    ).toBe(true);
+    expect(
+      metricaLifecycleActions({ id: "m1", deletedAt: "2026-01-01" }).restaurar.allowed
+    ).toBe(true);
+    expect(
+      avisoLifecycleActions({ id: "a1", archivedAt: "2026-01-01" }).restaurar.allowed
+    ).toBe(true);
+  });
+
   it("resolvePrimaryLifecycleAction", () => {
     const p = resolvePrimaryLifecycleAction({
       kind: "trabajo",
@@ -142,6 +166,27 @@ describe("lifecycle policy", () => {
       isDraft: true,
     });
     expect(p.action).toBe("eliminar");
+  });
+
+  it("adapter MP control: borrador eliminar; completo anular/archivar; archivado restaurar", () => {
+    const draft = mpControlLifecycleActions({ id: "1", status: "BORRADOR" });
+    expect(draft.eliminar.allowed).toBe(true);
+
+    const done = mpControlLifecycleActions({ id: "2", status: "COMPLETADO" });
+    expect(done.eliminar.allowed).toBe(false);
+    expect(done.anular.allowed).toBe(true);
+    expect(done.archivar.allowed).toBe(true);
+
+    const linked = mpControlLifecycleActions({
+      id: "3",
+      status: "COMPLETADO",
+      linkedOeId: "oe-99",
+    });
+    expect(linked.eliminar.allowed).toBe(false);
+    expect(linked.anular.impact?.references.length).toBeGreaterThan(0);
+
+    const archived = mpControlLifecycleActions({ id: "4", status: "ARCHIVADO" });
+    expect(archived.restaurar.allowed).toBe(true);
   });
 });
 

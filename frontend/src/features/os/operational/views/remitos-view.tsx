@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/dialog";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
+  deleteRemitoDraftApi,
   editGeneratedRemitoApi,
   fetchRemitoPreviewHtmlApi,
   fetchRemitosApi,
@@ -94,6 +96,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
   const [downloadBusy, setDownloadBusy] = useState<"pdf" | "xlsx" | null>(null);
   const [clientFolderKey, setClientFolderKey] = useState<string | null>(null);
   const [clientSearch, setClientSearch] = useState("");
+  const [confirmDeleteDraft, setConfirmDeleteDraft] = useState(false);
 
   const clientFolders = useMemo(() => {
     const folders = groupRemitosByClient(items);
@@ -314,6 +317,25 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
       setBusy(false);
     }
   }
+
+  async function submitDeleteDraft() {
+    if (!selected) return;
+    setBusy(true);
+    try {
+      await deleteRemitoDraftApi(session, selected.id);
+      setSelected(null);
+      setConfirmDeleteDraft(false);
+      void reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo eliminar el borrador");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const canDeleteDraft =
+    selected?.status === "BORRADOR" &&
+    (!selected.versions || selected.versions.length === 0);
 
   if (!allowed) {
     return (
@@ -540,6 +562,17 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       >
                         Generar
                       </Button>
+                      {canDeleteDraft ? (
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          disabled={busy || schemaPending}
+                          onClick={() => setConfirmDeleteDraft(true)}
+                          data-testid="remito-delete-draft"
+                        >
+                          Eliminar borrador
+                        </Button>
+                      ) : null}
                     </>
                   ) : null}
                   {selected.status === "GENERADO" ? (
@@ -1028,6 +1061,17 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
           </div>
         ) : null}
       </div>
+
+      <ConfirmDialog
+        open={confirmDeleteDraft}
+        onOpenChange={setConfirmDeleteDraft}
+        title="Eliminar borrador"
+        description={`¿Eliminar el borrador de ${selected?.displayName || selected?.clientDisplay || "este remito"}? Esta acción no se puede deshacer.`}
+        confirmLabel="Eliminar borrador"
+        cancelLabel="Cancelar"
+        variant="destructive"
+        onConfirm={() => void submitDeleteDraft()}
+      />
     </TwinShell>
   );
 }

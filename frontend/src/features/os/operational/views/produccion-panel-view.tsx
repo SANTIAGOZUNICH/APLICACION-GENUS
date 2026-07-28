@@ -20,6 +20,7 @@ import { AssignedWorkLifecycleActions } from "../components/assigned-work-lifecy
 import { Button } from "@/components/ui/button";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
+import { FormulasAdminPanel } from "../components/formulas-admin-panel";
 
 const PRODUCING_SECTORS = ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM"] as const;
 
@@ -73,7 +74,11 @@ function KpiTile({ label, value, tone }: { label: string; value: number; tone?: 
 /** Panel general de Producción — KPIs, estado por sector, trabajos activos, atención requerida. */
 export function ProduccionPanelView() {
   const { navigateTo, showToast } = usePreviewContext();
-  const { sectorId } = usePreviewSession();
+  const { sectorId, email } = usePreviewSession();
+  const formulaSession = useMemo(
+    () => ({ email: email ?? "", sector: sectorId }),
+    [email, sectorId]
+  );
   const workspace = useRequiredWorkspace();
   const canMutateWorks = canMutateAssignedWork(sectorId);
   const { getQualityStatus, getFinishedQty, refreshDecisions } = useOperationalStore();
@@ -198,7 +203,6 @@ export function ProduccionPanelView() {
                 actorSectorId={sectorId}
                 actorName={workspace.context.displayName}
                 finishedQty={getFinishedQty(r.id)}
-                compact
                 onChanged={() => {
                   refreshDecisions();
                   setPanelTick((v) => v + 1);
@@ -355,6 +359,10 @@ export function ProduccionPanelView() {
             </div>
           </div>
         </aside>
+      </div>
+
+      <div className="mt-6">
+        <FormulasAdminPanel session={formulaSession} sectorId={sectorId} />
       </div>
     </div>
     </TwinShell>

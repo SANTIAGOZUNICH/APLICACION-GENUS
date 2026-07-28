@@ -253,6 +253,14 @@ export class DrizzleOrdersRepository implements OrdersRepository {
       .where(eq(orderTemplates.id, id));
   }
 
+  async markTemplateVigente(id: string): Promise<void> {
+    const db = getDb();
+    await db
+      .update(orderTemplates)
+      .set({ status: "VIGENTE", updatedAt: new Date() })
+      .where(eq(orderTemplates.id, id));
+  }
+
   async updateTemplateContent(
     id: string,
     patch: Partial<
@@ -662,10 +670,12 @@ export class DrizzleOrdersRepository implements OrdersRepository {
 
   async listNotificationsForSector(
     sector: string,
-    actorEmail: string
+    actorEmail: string,
+    options?: { includeDismissed?: boolean }
   ): Promise<OsNotificationRecord[]> {
     const db = getDb();
     const rows = await db.select().from(osNotifications).orderBy(desc(osNotifications.createdAt));
+    const includeDismissed = options?.includeDismissed ?? false;
     return rows
       .map((r) => ({
         id: r.id,
@@ -679,9 +689,11 @@ export class DrizzleOrdersRepository implements OrdersRepository {
         dismissedBy: (r.dismissedBy as string[]) ?? [],
         createdAt: toIso(r.createdAt)!,
       }))
-      .filter(
-        (n) => n.sectors.includes(sector as SectorId) && !n.dismissedBy.includes(actorEmail)
-      );
+      .filter((n) => {
+        if (!n.sectors.includes(sector as SectorId)) return false;
+        const dismissed = n.dismissedBy.includes(actorEmail);
+        return includeDismissed ? dismissed : !dismissed;
+      });
   }
 
   async markNotificationRead(id: string, actorEmail: string): Promise<void> {
@@ -711,5 +723,38 @@ export class DrizzleOrdersRepository implements OrdersRepository {
       .update(osNotifications)
       .set({ dismissedBy })
       .where(eq(osNotifications.id, id));
+  }
+
+  async restoreNotification(id: string, actorEmail: string): Promise<void> {
+    const db = getDb();
+    const rows = await db
+      .select()
+      .from(osNotifications)
+      .where(eq(osNotifications.id, id))
+      .limit(1);
+    if (!rows[0]) return;
+    const dismissedBy = ((rows[0].dismissedBy as string[]) ?? []).filter(
+      (e) => e !== actorEmail
+    );
+    await db
+      .update(osNotifications)
+      .set({ dismissedBy })
+      .where(eq(osNotifications.id, id));
+  }
+
+  async dismissReadNotifications(sector: string, actorEmail: string): Promise<void> {
+    const db = getDb();
+    const rows = await db.select().from(osNotifications);
+    for (const r of rows) {
+      const sectors = r.sectors as SectorId[];
+      if (!sectors.includes(sector as SectorId)) continue;
+      const readBy = (r.readBy as string[]) ?? [];
+      const dismissedBy = (r.dismissedBy as string[]) ?? [];
+      if (!readBy.includes(actorEmail) || dismissedBy.includes(actorEmail)) continue;
+      await db
+        .update(osNotifications)
+        .set({ dismissedBy: [...dismissedBy, actorEmail] })
+        .where(eq(osNotifications.id, r.id));
+    }
   }
 }

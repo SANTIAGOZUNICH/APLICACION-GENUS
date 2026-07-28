@@ -230,9 +230,24 @@ export function MasterTemplatesPanel({
                           })
                         }
                       >
-                        Marcar obsoleta
+                        Archivar (obsoleta)
                       </Button>
                     </>
+                  )}
+                  {t.status === "OBSOLETA" && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={dbUnavailable || busy}
+                      onClick={() =>
+                        void run(async () => {
+                          await templateActionApi(session, t.id, "restore");
+                        })
+                      }
+                    >
+                      Restaurar
+                    </Button>
                   )}
                   <Button
                     type="button"

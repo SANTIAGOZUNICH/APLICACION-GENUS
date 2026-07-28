@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState, type ChangeEvent, type FormEvent } from "react";
-import { ClipboardPaste, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { ClipboardPaste, Download, Pencil, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   ConfirmDialog,
@@ -12,15 +12,20 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { usePreviewSession } from "@/features/os/session/preview-context";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
+import {
+  fetchAsignacionLotesApi,
+  importAsignacionLotesApi,
+  patchAsignacionLoteApi,
+  upsertAsignacionLoteApi,
+} from "@/lib/asignacion-lotes/asignacion-lotes-client";
 import { OperationalTable, type OperationalTableColumn } from "../components/operational-ui";
 import {
   findDuplicateAsignacionLote,
   getAllAsignacionLotes,
-  importAsignacionLotes,
-  softDeleteAsignacionLote,
-  upsertAsignacionLote,
+  replaceAsignacionLotesCache,
   type AsignacionLote,
 } from "../adapters/asignacion-lotes-repository";
 import {
@@ -171,12 +176,18 @@ function dateForField(item: AsignacionLote, field: DateField): string | null {
   return field === "fecha" ? item.fecha : item[field];
 }
 
-/** Asignación de lotes — carga local operativa para Calidad, Producción y Codificado. */
+/** Asignación de lotes — API autorizada con caché local offline. */
 export function AsignacionLotesView() {
   const workspace = useRequiredWorkspace();
+  const { email, sectorId } = usePreviewSession();
+  const session = useMemo(
+    () => ({ email: email ?? workspace.context.email, sector: sectorId ?? workspace.context.sectorId }),
+    [email, sectorId, workspace.context.email, workspace.context.sectorId]
+  );
   const canAccess = canAccessAsignacionLotes(workspace.context.sectorId);
   const canMutate = canMutateAsignacionLotes(workspace.context.sectorId);
   const [items, setItems] = useState<AsignacionLote[]>(() => getAllAsignacionLotes());
+  const [offlineCache, setOfflineCache] = useState(false);
   const [search, setSearch] = useState("");
   const [producto, setProducto] = useState("");
   const [codigo, setCodigo] = useState("");
@@ -192,12 +203,29 @@ export function AsignacionLotesView() {
   const [form, setForm] = useState<AsignacionFormState>(() => emptyForm());
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AsignacionLote | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
   const [customMapping, setCustomMapping] = useState<ColumnMapping>({});
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  const refresh = () => setItems(getAllAsignacionLotes());
+  const refresh = useCallback(async () => {
+    try {
+      const { items: allItems } = await fetchAsignacionLotesApi(session, {
+        includeArchived: true,
+      });
+      replaceAsignacionLotesCache(allItems);
+      setItems(getAllAsignacionLotes({ includeArchived: showArchived }));
+      setOfflineCache(false);
+    } catch {
+      setItems(getAllAsignacionLotes({ includeArchived: showArchived }));
+      setOfflineCache(true);
+    }
+  }, [session, showArchived]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const grid = useMemo(() => parseGrid(importText), [importText]);
   const autoMapping = useMemo(() => autoMapColumns(grid.headers, ASIGNACION_LOTES_FIELD_ALIASES), [grid.headers]);
@@ -285,7 +313,7 @@ export function AsignacionLotesView() {
     setFormOpen(true);
   };
 
-  const saveForm = (event: FormEvent) => {
+  const saveForm = async (event: FormEvent) => {
     event.preventDefault();
     const cantidades = parseNonNegativeNumber(form.cantidades);
     if (!form.lote.trim() || !form.fecha.trim() || !form.producto.trim() || !form.codigo.trim()) {
@@ -306,44 +334,52 @@ export function AsignacionLotesView() {
       return;
     }
 
-    upsertAsignacionLote({
-      id: editing?.id,
-      lote: form.lote,
-      fecha: parseFlexibleDate(form.fecha) ?? form.fecha,
-      producto: form.producto,
-      codigo: form.codigo,
-      marca: form.marca,
-      cantidades,
-      vto: form.vto ? parseFlexibleDate(form.vto) : null,
-      muestras: form.muestras,
-      cjMuestra: form.cjMuestra,
-      fechaAnalisis: form.fechaAnalisis ? parseFlexibleDate(form.fechaAnalisis) : null,
-      observaciones: form.observaciones,
-      updatedBy: workspace.context.displayName,
-      createdBy: workspace.context.displayName,
-    });
-    setFormOpen(false);
-    setEditing(null);
-    refresh();
-    showFeedback(editing ? "Asignación actualizada." : "Asignación creada.");
+    try {
+      await upsertAsignacionLoteApi(session, {
+        id: editing?.id,
+        lote: form.lote,
+        fecha: parseFlexibleDate(form.fecha) ?? form.fecha,
+        producto: form.producto,
+        codigo: form.codigo,
+        marca: form.marca,
+        cantidades,
+        vto: form.vto ? parseFlexibleDate(form.vto) : null,
+        muestras: form.muestras,
+        cjMuestra: form.cjMuestra,
+        fechaAnalisis: form.fechaAnalisis ? parseFlexibleDate(form.fechaAnalisis) : null,
+        observaciones: form.observaciones,
+        updatedBy: workspace.context.displayName,
+        createdBy: workspace.context.displayName,
+      });
+      setFormOpen(false);
+      setEditing(null);
+      await refresh();
+      showFeedback(editing ? "Asignación actualizada." : "Asignación creada.");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "No se pudo guardar.");
+    }
   };
 
-  const handleImportConfirm = () => {
+  const handleImportConfirm = async () => {
     if (importValidRows.length === 0) {
       showFeedback("No hay filas válidas para importar.");
       return;
     }
-    const result = importAsignacionLotes(
-      importValidRows.map((row) => row.lote),
-      workspace.context.displayName
-    );
-    refresh();
-    setImportOpen(false);
-    setImportText("");
-    setCustomMapping({});
-    showFeedback(
-      `Importación lista: ${result.imported} cargadas, ${result.skipped} omitidas, ${result.duplicates} duplicadas, ${result.errors.length} errores.`
-    );
+    try {
+      const result = await importAsignacionLotesApi(
+        session,
+        importValidRows.map((row) => row.lote)
+      );
+      await refresh();
+      setImportOpen(false);
+      setImportText("");
+      setCustomMapping({});
+      showFeedback(
+        `Importación lista: ${result.imported} cargadas, ${result.skipped} omitidas, ${result.duplicates} duplicadas, ${result.errors.length} errores.`
+      );
+    } catch (err) {
+      showFeedback(err instanceof Error ? err.message : "No se pudo importar.");
+    }
   };
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -407,15 +443,37 @@ export function AsignacionLotesView() {
           >
             <Pencil className="size-4" aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            disabled={!canMutate}
-            onClick={() => setDeleteTarget(row)}
-            aria-label={`Eliminar ${row.lote}`}
-            className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-[var(--genus-error-soft)] hover:text-[var(--genus-error)] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Trash2 className="size-4" aria-hidden="true" />
-          </button>
+          {row.archived ? (
+            <button
+              type="button"
+              disabled={!canMutate}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await patchAsignacionLoteApi(session, row.id, "restore");
+                    await refresh();
+                    showFeedback("Asignación restaurada.");
+                  } catch (err) {
+                    showFeedback(err instanceof Error ? err.message : "No se pudo restaurar.");
+                  }
+                })();
+              }}
+              aria-label={`Restaurar ${row.lote}`}
+              className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-[var(--os-bg)] hover:text-[var(--os-text)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <RotateCcw className="size-4" aria-hidden="true" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={!canMutate}
+              onClick={() => setDeleteTarget(row)}
+              aria-label={`Archivar ${row.lote}`}
+              className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-[var(--genus-error-soft)] hover:text-[var(--genus-error)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Trash2 className="size-4" aria-hidden="true" />
+            </button>
+          )}
         </div>
       ),
     },
@@ -445,7 +503,18 @@ export function AsignacionLotesView() {
         </header>
 
         <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-teal)]/40 bg-[var(--os-teal-soft)]/30 px-4 py-3 text-sm text-[var(--os-text)]">
-          Datos locales (este navegador) — no sincroniza entre dispositivos
+          {offlineCache
+            ? "Sin conexión al servidor — mostrando caché local de este navegador"
+            : "Sincronizado con servidor — caché local como respaldo offline"}
+          <label className="ml-4 inline-flex items-center gap-1 text-xs">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+              data-testid="asignacion-lotes-show-archived"
+            />
+            Ver archivados
+          </label>
         </div>
 
         {feedback && (
@@ -562,11 +631,17 @@ export function AsignacionLotesView() {
           confirmLabel="Archivar"
           variant="destructive"
           onConfirm={() => {
-            if (deleteTarget) {
-              softDeleteAsignacionLote(deleteTarget.id, workspace.context.displayName);
-              refresh();
-              showFeedback("Asignación archivada.");
-            }
+            if (!deleteTarget) return;
+            void (async () => {
+              try {
+                await patchAsignacionLoteApi(session, deleteTarget.id, "archive");
+                setDeleteTarget(null);
+                await refresh();
+                showFeedback("Asignación archivada.");
+              } catch (err) {
+                showFeedback(err instanceof Error ? err.message : "No se pudo archivar.");
+              }
+            })();
           }}
         />
 

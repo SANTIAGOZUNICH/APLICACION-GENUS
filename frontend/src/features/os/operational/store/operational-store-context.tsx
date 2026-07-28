@@ -13,6 +13,7 @@ import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 import {
   postCompleteWork,
+  postQualityAnnul,
   postQualityDecision,
   postSaveProgress,
 } from "@/lib/api/live-sync-client";
@@ -51,6 +52,13 @@ export type QualityDecisionOptions = {
   changeReason?: string;
 };
 
+export type QualityAnnulOptions = {
+  reason: string;
+  actorSectorId: SectorId;
+  actorName?: string;
+  actorEmail?: string;
+};
+
 interface OperationalStoreValue {
   decisionMap: DecisionMap;
   progressMap: ProgressMap;
@@ -60,6 +68,7 @@ interface OperationalStoreValue {
   getQualityObservation: (itemId: string) => string;
   approveQualityItem: (itemId: string, options: QualityDecisionOptions) => QualityDecisionAttempt;
   rejectQualityItem: (itemId: string, options: QualityDecisionOptions) => QualityDecisionAttempt;
+  annulQualityItem: (itemId: string, options: QualityAnnulOptions) => QualityDecisionAttempt;
   getWorkStatus: (itemId: string, seedStatus: WorkItemStatus) => WorkItemStatus;
   getFinishedQty: (itemId: string) => string;
   getObservation: (itemId: string) => string;
@@ -178,6 +187,41 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     (itemId: string, options: QualityDecisionOptions) =>
       applyQualityDecision(itemId, "rechazado", options),
     [applyQualityDecision]
+  );
+
+  const annulQualityItem = useCallback(
+    (itemId: string, options: QualityAnnulOptions): QualityDecisionAttempt => {
+      const gate = gateQualityDecision(options.actorSectorId);
+      if (!gate.ok) {
+        return gate;
+      }
+      const reason = options.reason.trim();
+      if (!reason) {
+        return {
+          ok: false,
+          error: "Motivo obligatorio para anular la decisión.",
+          code: "REASON_REQUIRED",
+        };
+      }
+
+      const previous = readDecisionMap()[itemId];
+      recordQualityDecision(itemId, "pendiente", {
+        decidedBy: options.actorName,
+        decidedBySector: options.actorSectorId,
+        decidedByEmail: options.actorEmail,
+        observation: previous?.observation,
+        changeReason: reason,
+      });
+      syncFromStorage();
+      void postQualityAnnul({
+        itemId,
+        reason,
+        decidedBy: options.actorName,
+        actorSectorId: options.actorSectorId,
+      }).catch(() => {});
+      return { ok: true };
+    },
+    [syncFromStorage]
   );
 
   const getWorkStatus = useCallback(
@@ -374,6 +418,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       getQualityObservation: getQualityObs,
       approveQualityItem,
       rejectQualityItem,
+      annulQualityItem,
       getWorkStatus,
       getFinishedQty,
       getObservation,
@@ -393,6 +438,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       getQualityObs,
       approveQualityItem,
       rejectQualityItem,
+      annulQualityItem,
       getWorkStatus,
       getFinishedQty,
       getObservation,

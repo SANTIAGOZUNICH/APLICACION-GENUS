@@ -32,11 +32,16 @@ import {
 
 export type CoaActor = { email: string; sector: SectorId };
 
+type MemFolder = CoaFolderRecord & { archived?: boolean };
+type MemFile = CoaFileRecord & { archived?: boolean };
+
 type Mem = {
-  folders: CoaFolderRecord[];
-  files: CoaFileRecord[];
+  folders: MemFolder[];
+  files: MemFile[];
   versions: CoaVersionRecord[];
 };
+
+export type CoaListOptions = { includeArchived?: boolean };
 
 const g = globalThis as unknown as { __genusCoaMem?: Mem };
 function mem(): Mem {
@@ -82,9 +87,11 @@ async function auditCoa(
 export class CoaService {
   async list(
     actor: CoaActor,
-    parentId: string | null
+    parentId: string | null,
+    options: CoaListOptions = {}
   ): Promise<{ folders: CoaFolderRecord[]; files: CoaFileRecord[] }> {
     assertView(actor);
+    const wantArchived = Boolean(options.includeArchived);
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
@@ -93,15 +100,18 @@ export class CoaService {
           .from(coaFolders)
           .where(
             parentId
-              ? and(eq(coaFolders.parentId, parentId), eq(coaFolders.archived, false))
-              : and(isNull(coaFolders.parentId), eq(coaFolders.archived, false))
+              ? and(
+                  eq(coaFolders.parentId, parentId),
+                  eq(coaFolders.archived, wantArchived)
+                )
+              : and(isNull(coaFolders.parentId), eq(coaFolders.archived, wantArchived))
           );
         const files = parentId
           ? await db
               .select()
               .from(coaFiles)
               .where(
-                and(eq(coaFiles.folderId, parentId), eq(coaFiles.archived, false))
+                and(eq(coaFiles.folderId, parentId), eq(coaFiles.archived, wantArchived))
               )
           : [];
         return {
@@ -135,8 +145,16 @@ export class CoaService {
     }
     if (!isFeatureMemoryAllowed()) return { folders: [], files: [] };
     return {
-      folders: mem().folders.filter((f) => f.parentId === parentId),
-      files: mem().files.filter((f) => f.folderId === (parentId ?? "")),
+      folders: mem()
+        .folders.filter(
+          (f) => f.parentId === parentId && Boolean(f.archived) === wantArchived
+        )
+        .map(({ archived: _a, ...f }) => f),
+      files: mem()
+        .files.filter(
+          (f) => f.folderId === (parentId ?? "") && Boolean(f.archived) === wantArchived
+        )
+        .map(({ archived: _a, ...f }) => f),
     };
   }
 
@@ -368,49 +386,160 @@ export class CoaService {
   async archiveFolder(actor: CoaActor, folderId: string): Promise<void> {
     assertAdmin(actor);
     await assertFeatureWritesEnabled();
-    const folder = await this.getFolder(folderId);
+    const folder = await this.getFolder(folderId, { includeArchived: true });
     if (!folder) throw new Error("Carpeta no encontrada.");
-
-    const children = (await this.list(actor, folderId)).folders;
-    const files = (await this.list(actor, folderId)).files;
-    if (children.length > 0 || files.length > 0) {
-      throw new Error(
-        "Solo se puede eliminar una carpeta vacía (auditoría). Mové o archivá el contenido primero."
-      );
+    if (await this.isFolderArchived(folderId)) {
+      throw new Error("La carpeta ya está archivada.");
     }
 
-    if (!isVirtualFolderId(folder.driveFolderId)) {
-      // Legacy Drive: archivar solo en Neon; no borrar Blob/Drive desde aquí.
-    }
-
+    const now = new Date().toISOString();
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       const db = getDb();
       await db
         .update(coaFolders)
         .set({
           archived: true,
-          updatedAt: new Date(),
-          audit: { action: "archive", at: new Date().toISOString(), by: actor.email },
+          updatedAt: new Date(now),
+          audit: { action: "archive", at: now, by: actor.email },
         })
         .where(eq(coaFolders.id, folderId));
+      await auditCoa(actor, "archive_folder", folderId, { name: folder.name });
+      return;
+    }
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
+    const idx = mem().folders.findIndex((f) => f.id === folderId);
+    if (idx < 0) throw new Error("Carpeta no encontrada.");
+    mem().folders[idx] = { ...mem().folders[idx]!, archived: true, updatedAt: now };
+  }
+
+  async hardDeleteFolder(actor: CoaActor, folderId: string): Promise<void> {
+    assertAdmin(actor);
+    await assertFeatureWritesEnabled();
+    const folder = await this.getFolder(folderId, { includeArchived: true });
+    if (!folder) throw new Error("Carpeta no encontrada.");
+
+    const childCount = await this.countFolderChildren(folderId);
+    if (childCount.subfolders > 0 || childCount.files > 0) {
+      throw new Error(
+        "Solo se puede eliminar definitivamente una carpeta vacía (sin archivos ni subcarpetas, activos o archivados)."
+      );
+    }
+
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+      const db = getDb();
+      await db.delete(coaFolders).where(eq(coaFolders.id, folderId));
+      await auditCoa(actor, "delete_folder", folderId, { name: folder.name });
       return;
     }
     if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
     mem().folders = mem().folders.filter((f) => f.id !== folderId);
+    await auditCoa(actor, "delete_folder", folderId, { name: folder.name });
+  }
+
+  async restoreFolder(actor: CoaActor, folderId: string): Promise<CoaFolderRecord> {
+    assertAdmin(actor);
+    await assertFeatureWritesEnabled();
+    const folder = await this.getFolder(folderId, { includeArchived: true });
+    if (!folder) throw new Error("Carpeta no encontrada.");
+    if (!(await this.isFolderArchived(folderId))) {
+      throw new Error("La carpeta no está archivada.");
+    }
+
+    const now = new Date().toISOString();
+    const restored: CoaFolderRecord = { ...folder, updatedAt: now };
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+      const db = getDb();
+      await db
+        .update(coaFolders)
+        .set({
+          archived: false,
+          updatedAt: new Date(now),
+          audit: { action: "restore", at: now, by: actor.email },
+        })
+        .where(eq(coaFolders.id, folderId));
+      await auditCoa(actor, "restore_folder", folderId, { name: folder.name });
+      return restored;
+    }
+    if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
+    const idx = mem().folders.findIndex((f) => f.id === folderId);
+    if (idx < 0) throw new Error("Carpeta no encontrada.");
+    mem().folders[idx] = { ...mem().folders[idx]!, archived: false, updatedAt: now };
+    return restored;
+  }
+
+  /** Soft-archive: oculta metadata sin borrar Blobs ni versiones. */
+  async softArchiveFile(
+    actor: CoaActor,
+    fileId: string,
+    reason?: string
+  ): Promise<void> {
+    assertAdmin(actor);
+    await assertFeatureWritesEnabled();
+    const file = await this.getFile(fileId, { includeArchived: true });
+    if (!file) throw new Error("Archivo no encontrado.");
+    if (await this.isFileArchived(fileId)) {
+      throw new Error("El archivo ya está archivado.");
+    }
+
+    const now = new Date().toISOString();
+    const auditPayload = {
+      action: "archive_file",
+      at: now,
+      by: actor.email,
+      reason: reason?.trim() || null,
+      name: file.name,
+      folderId: file.folderId,
+    };
+
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+      const db = getDb();
+      await db
+        .update(coaFiles)
+        .set({
+          archived: true,
+          updatedAt: new Date(now),
+          updatedBy: actor.email,
+          audit: auditPayload,
+        })
+        .where(eq(coaFiles.id, fileId));
+    } else {
+      if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
+      const idx = mem().files.findIndex((f) => f.id === fileId);
+      if (idx < 0) throw new Error("Archivo no encontrado.");
+      mem().files[idx] = {
+        ...mem().files[idx]!,
+        archived: true,
+        updatedAt: now,
+        updatedBy: actor.email,
+      };
+    }
+    await auditCoa(actor, "archive_file", fileId, {
+      name: file.name,
+      reason: reason?.trim() || null,
+    });
+  }
+
+  /** Alias retrocompatible → softArchiveFile. */
+  async archiveFile(
+    actor: CoaActor,
+    fileId: string,
+    reason?: string
+  ): Promise<void> {
+    return this.softArchiveFile(actor, fileId, reason);
   }
 
   /**
    * Elimina archivo completo: borra todos los Blobs, soft-archiva metadata y deja auditoría mínima.
    * Si falla Blob → no archiva (queda visible). Si Blob OK y Neon falla → tombstone inconsistente.
    */
-  async archiveFile(
+  async hardDeleteFile(
     actor: CoaActor,
     fileId: string,
     reason?: string
   ): Promise<{ ok: true; versionsDeleted: number }> {
     assertAdmin(actor);
     await assertFeatureWritesEnabled();
-    const file = await this.getFile(fileId);
+    const file = await this.getFile(fileId, { includeArchived: true });
     if (!file) throw new Error("Archivo no encontrado.");
     const versions = await this.listVersions(actor, fileId);
     const keys = Array.from(
@@ -508,6 +637,43 @@ export class CoaService {
     }
   }
 
+  async restoreFile(actor: CoaActor, fileId: string): Promise<CoaFileRecord> {
+    assertAdmin(actor);
+    await assertFeatureWritesEnabled();
+    const file = await this.getFile(fileId, { includeArchived: true });
+    if (!file) throw new Error("Archivo no encontrado.");
+    if (!(await this.isFileArchived(fileId))) {
+      throw new Error("El archivo no está archivado.");
+    }
+
+    const now = new Date().toISOString();
+    const restored: CoaFileRecord = { ...file, updatedAt: now, updatedBy: actor.email };
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+      const db = getDb();
+      await db
+        .update(coaFiles)
+        .set({
+          archived: false,
+          updatedAt: new Date(now),
+          updatedBy: actor.email,
+          audit: { action: "restore", at: now, by: actor.email },
+        })
+        .where(eq(coaFiles.id, fileId));
+    } else {
+      if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
+      const idx = mem().files.findIndex((f) => f.id === fileId);
+      if (idx < 0) throw new Error("Archivo no encontrado.");
+      mem().files[idx] = {
+        ...mem().files[idx]!,
+        archived: false,
+        updatedAt: now,
+        updatedBy: actor.email,
+      };
+    }
+    await auditCoa(actor, "restore_file", fileId, { name: file.name });
+    return restored;
+  }
+
   /**
    * Elimina una versión: borra su Blob y la fila.
    * Si era la vigente → promover la más reciente restante.
@@ -528,7 +694,7 @@ export class CoaService {
     if (!target) throw new Error("Versión no encontrada.");
 
     if (versions.length <= 1) {
-      await this.archiveFile(actor, fileId, reason || `Única versión v${version} eliminada`);
+      await this.hardDeleteFile(actor, fileId, reason || `Única versión v${version} eliminada`);
       return { ok: true, fileDeleted: true };
     }
 
@@ -648,7 +814,7 @@ export class CoaService {
     version?: number
   ): Promise<{ fileName: string; mimeType: string; bytes: Buffer }> {
     assertView(actor);
-    const file = await this.getFile(fileId);
+    const file = await this.getFile(fileId, { includeArchived: true });
     if (!file) throw new Error("Archivo no encontrado.");
     const versions = await this.listVersions(actor, fileId);
     const target =
@@ -678,12 +844,16 @@ export class CoaService {
     return { fileName: file.name, mimeType, bytes: got.bytes };
   }
 
-  async getFolder(id: string): Promise<CoaFolderRecord | null> {
+  async getFolder(
+    id: string,
+    options: { includeArchived?: boolean } = {}
+  ): Promise<CoaFolderRecord | null> {
+    const includeArchived = Boolean(options.includeArchived);
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         const [f] = await db.select().from(coaFolders).where(eq(coaFolders.id, id)).limit(1);
-        if (!f || f.archived) return null;
+        if (!f || (!includeArchived && f.archived)) return null;
         return {
           id: f.id,
           parentId: f.parentId,
@@ -699,15 +869,22 @@ export class CoaService {
       }
     }
     if (!isFeatureMemoryAllowed()) return null;
-    return mem().folders.find((f) => f.id === id) ?? null;
+    const f = mem().folders.find((x) => x.id === id);
+    if (!f || (!includeArchived && f.archived)) return null;
+    const { archived: _a, ...rest } = f;
+    return rest;
   }
 
-  async getFile(id: string): Promise<CoaFileRecord | null> {
+  async getFile(
+    id: string,
+    options: { includeArchived?: boolean } = {}
+  ): Promise<CoaFileRecord | null> {
+    const includeArchived = Boolean(options.includeArchived);
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
         const [f] = await db.select().from(coaFiles).where(eq(coaFiles.id, id)).limit(1);
-        if (!f || f.archived) return null;
+        if (!f || (!includeArchived && f.archived)) return null;
         return {
           id: f.id,
           folderId: f.folderId,
@@ -726,7 +903,72 @@ export class CoaService {
       }
     }
     if (!isFeatureMemoryAllowed()) return null;
-    return mem().files.find((f) => f.id === id) ?? null;
+    const f = mem().files.find((x) => x.id === id);
+    if (!f || (!includeArchived && f.archived)) return null;
+    const { archived: _a, ...rest } = f;
+    return rest;
+  }
+
+  private async isFolderArchived(folderId: string): Promise<boolean> {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+      try {
+        const db = getDb();
+        const [f] = await db
+          .select({ archived: coaFolders.archived })
+          .from(coaFolders)
+          .where(eq(coaFolders.id, folderId))
+          .limit(1);
+        return Boolean(f?.archived);
+      } catch {
+        if (!isFeatureMemoryAllowed()) return false;
+      }
+    }
+    if (!isFeatureMemoryAllowed()) return false;
+    return Boolean(mem().folders.find((f) => f.id === folderId)?.archived);
+  }
+
+  private async isFileArchived(fileId: string): Promise<boolean> {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+      try {
+        const db = getDb();
+        const [f] = await db
+          .select({ archived: coaFiles.archived })
+          .from(coaFiles)
+          .where(eq(coaFiles.id, fileId))
+          .limit(1);
+        return Boolean(f?.archived);
+      } catch {
+        if (!isFeatureMemoryAllowed()) return false;
+      }
+    }
+    if (!isFeatureMemoryAllowed()) return false;
+    return Boolean(mem().files.find((f) => f.id === fileId)?.archived);
+  }
+
+  private async countFolderChildren(
+    folderId: string
+  ): Promise<{ subfolders: number; files: number }> {
+    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+      try {
+        const db = getDb();
+        const subfolders = await db
+          .select({ id: coaFolders.id })
+          .from(coaFolders)
+          .where(eq(coaFolders.parentId, folderId));
+        const files = await db
+          .select({ id: coaFiles.id })
+          .from(coaFiles)
+          .where(eq(coaFiles.folderId, folderId));
+        return { subfolders: subfolders.length, files: files.length };
+      } catch {
+        if (!isFeatureMemoryAllowed()) return { subfolders: 0, files: 0 };
+      }
+    }
+    if (!isFeatureMemoryAllowed()) return { subfolders: 0, files: 0 };
+    return {
+      subfolders: mem().folders.filter((f) => f.parentId === folderId).length,
+      files: mem().files.filter((f) => f.folderId === folderId).length,
+    };
   }
 
   private async persistFolder(folder: CoaFolderRecord) {

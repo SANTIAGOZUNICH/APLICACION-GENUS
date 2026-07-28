@@ -183,7 +183,7 @@ export async function createEmptyDraftApi(
 export async function templateActionApi(
   session: OrdersClientSession,
   id: string,
-  action: "duplicate" | "new_version" | "obsolete",
+  action: "duplicate" | "new_version" | "obsolete" | "restore",
   extra?: Record<string, unknown>
 ): Promise<OrderTemplateRecord> {
   const res = await fetch(`/api/v1/order-templates/${id}`, {
@@ -613,14 +613,42 @@ export async function decideProposalApi(
 }
 
 export async function fetchOsNotifications(
-  session: OrdersClientSession
+  session: OrdersClientSession,
+  options?: { includeDismissed?: boolean }
 ): Promise<OsNotificationRecord[]> {
-  const res = await fetch("/api/v1/notifications", {
+  const params = new URLSearchParams();
+  if (options?.includeDismissed) params.set("includeDismissed", "1");
+  const qs = params.toString();
+  const res = await fetch(`/api/v1/notifications${qs ? `?${qs}` : ""}`, {
     headers: actorHeaders(session),
     cache: "no-store",
   });
   const data = await parseJson<{ notifications: OsNotificationRecord[] }>(res);
   return data.notifications;
+}
+
+export async function patchOsNotificationApi(
+  session: OrdersClientSession,
+  id: string,
+  action: "dismiss" | "restore" | "read"
+): Promise<void> {
+  const res = await fetch(`/api/v1/notifications/${id}`, {
+    method: "PATCH",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ action }),
+  });
+  await parseJson(res);
+}
+
+export async function dismissReadOsNotificationsApi(
+  session: OrdersClientSession
+): Promise<void> {
+  const res = await fetch("/api/v1/notifications", {
+    method: "PATCH",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ action: "dismiss_read" }),
+  });
+  await parseJson(res);
 }
 
 export function orderPdfUrl(id: string): string {

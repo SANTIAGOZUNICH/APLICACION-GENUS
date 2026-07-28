@@ -264,6 +264,42 @@ export class OrdersService {
     return { ...current, status: "OBSOLETA" as const };
   }
 
+  /**
+   * Restaura plantilla OBSOLETA → VIGENTE.
+   * Si ya hay otra VIGENTE del mismo producto/tipo, la marca OBSOLETA primero.
+   */
+  async restoreTemplateManaged(templateId: string, actor: OrdersActor) {
+    const current = await this.getTemplate(templateId);
+    assertCanOrderAction(current.type, "manage_templates", actor);
+    if (current.status === "VIGENTE") return current;
+    if (!this.repo.markTemplateVigente) {
+      throw new OrdersValidationError("Restaurar plantilla no disponible en este repositorio.");
+    }
+    const siblings = (await this.repo.listTemplates(current.type)).filter(
+      (t) =>
+        t.productId === current.productId &&
+        t.status === "VIGENTE" &&
+        t.id !== current.id
+    );
+    for (const s of siblings) {
+      await this.repo.markTemplateObsolete(s.id);
+    }
+    await this.repo.markTemplateVigente(templateId);
+    await this.repo.appendAudit({
+      orderId: null,
+      eventType: "TEMPLATE_RESTORED",
+      actor: actor.email,
+      actorSector: actor.sector,
+      metadata: {
+        templateId,
+        productId: current.productId,
+        version: current.version,
+        demoted: siblings.map((s) => s.id),
+      },
+    });
+    return { ...current, status: "VIGENTE" as const };
+  }
+
   async updateTemplate(
     templateId: string,
     actor: OrdersActor,
@@ -1539,8 +1575,24 @@ export class OrdersService {
     return order;
   }
 
-  listNotifications(actor: OrdersActor) {
-    return this.repo.listNotificationsForSector(actor.sector, actor.email);
+  listNotifications(actor: OrdersActor, options?: { includeDismissed?: boolean }) {
+    return this.repo.listNotificationsForSector(actor.sector, actor.email, options);
+  }
+
+  markNotificationRead(id: string, actor: OrdersActor) {
+    return this.repo.markNotificationRead(id, actor.email);
+  }
+
+  dismissNotification(id: string, actor: OrdersActor) {
+    return this.repo.dismissNotification(id, actor.email);
+  }
+
+  restoreNotification(id: string, actor: OrdersActor) {
+    return this.repo.restoreNotification(id, actor.email);
+  }
+
+  dismissReadNotifications(actor: OrdersActor) {
+    return this.repo.dismissReadNotifications(actor.sector, actor.email);
   }
 
   private async requireOrder(id: string) {

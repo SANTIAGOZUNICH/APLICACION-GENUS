@@ -45,7 +45,7 @@ export interface WorkCompletedEvent extends LiveSyncEventBase {
 export interface QualityDecidedEvent extends LiveSyncEventBase {
   type: "quality.decided";
   itemId: string;
-  status: "aprobado" | "rechazado";
+  status: "aprobado" | "rechazado" | "pendiente";
   notifySectors: SectorId[];
 }
 

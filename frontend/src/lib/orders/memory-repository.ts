@@ -120,6 +120,14 @@ export class MemoryOrdersRepository implements OrdersRepository {
     }
   }
 
+  async markTemplateVigente(id: string): Promise<void> {
+    const t = this.templates.get(id);
+    if (t) {
+      t.status = "VIGENTE";
+      t.updatedAt = nowIso();
+    }
+  }
+
   async updateTemplateContent(
     id: string,
     patch: Partial<
@@ -333,13 +341,16 @@ export class MemoryOrdersRepository implements OrdersRepository {
 
   async listNotificationsForSector(
     sector: string,
-    actorEmail: string
+    actorEmail: string,
+    options?: { includeDismissed?: boolean }
   ): Promise<OsNotificationRecord[]> {
+    const includeDismissed = options?.includeDismissed ?? false;
     return this.notifications
-      .filter(
-        (n) =>
-          n.sectors.includes(sector as never) && !n.dismissedBy.includes(actorEmail)
-      )
+      .filter((n) => {
+        if (!n.sectors.includes(sector as never)) return false;
+        const dismissed = n.dismissedBy.includes(actorEmail);
+        return includeDismissed ? dismissed : !dismissed;
+      })
       .map((n) => structuredClone(n));
   }
 
@@ -351,5 +362,19 @@ export class MemoryOrdersRepository implements OrdersRepository {
   async dismissNotification(id: string, actorEmail: string): Promise<void> {
     const n = this.notifications.find((x) => x.id === id);
     if (n && !n.dismissedBy.includes(actorEmail)) n.dismissedBy.push(actorEmail);
+  }
+
+  async restoreNotification(id: string, actorEmail: string): Promise<void> {
+    const n = this.notifications.find((x) => x.id === id);
+    if (n) n.dismissedBy = n.dismissedBy.filter((e) => e !== actorEmail);
+  }
+
+  async dismissReadNotifications(sector: string, actorEmail: string): Promise<void> {
+    for (const n of this.notifications) {
+      if (!n.sectors.includes(sector as never)) continue;
+      if (n.readBy.includes(actorEmail) && !n.dismissedBy.includes(actorEmail)) {
+        n.dismissedBy.push(actorEmail);
+      }
+    }
   }
 }

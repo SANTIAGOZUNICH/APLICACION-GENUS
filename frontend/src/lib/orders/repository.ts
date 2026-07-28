@@ -26,6 +26,7 @@ export interface OrdersRepository {
   ): Promise<OrderTemplateRecord | null>;
   insertTemplate(template: OrderTemplateRecord): Promise<OrderTemplateRecord>;
   markTemplateObsolete(id: string): Promise<void>;
+  markTemplateVigente?(id: string): Promise<void>;
   updateTemplateContent?(
     id: string,
     patch: Partial<
@@ -75,10 +76,13 @@ export interface OrdersRepository {
   ): Promise<OsNotificationRecord>;
   listNotificationsForSector(
     sector: string,
-    actorEmail: string
+    actorEmail: string,
+    options?: { includeDismissed?: boolean }
   ): Promise<OsNotificationRecord[]>;
   markNotificationRead(id: string, actorEmail: string): Promise<void>;
   dismissNotification(id: string, actorEmail: string): Promise<void>;
+  restoreNotification(id: string, actorEmail: string): Promise<void>;
+  dismissReadNotifications(sector: string, actorEmail: string): Promise<void>;
 
   /** Helper for tests / seed */
   ensureSeed?(actor?: OrdersActor, contents?: OrderContent[]): Promise<void>;

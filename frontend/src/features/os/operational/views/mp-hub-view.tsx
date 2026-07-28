@@ -47,6 +47,7 @@ import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
 } from "@/lib/orders/actor";
+import { FormulasAdminPanel } from "@/features/os/operational/components/formulas-admin-panel";
 
 export type MpHubTab = (typeof MP_TABS)[number];
 
@@ -79,6 +80,10 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; reason: string } | null>(null);
   const [page, setPage] = useState(0);
   const pageSize = 25;
+  const formulaSession = useMemo(
+    () => ({ email: email ?? "", sector: sectorId }),
+    [email, sectorId]
+  );
 
   const reload = useCallback(async () => {
     const [s, i, c, p] = await Promise.all([
@@ -1009,6 +1014,10 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           await reload();
         }}
       />
+
+      <div className="mt-6">
+        <FormulasAdminPanel session={formulaSession} sectorId={sectorId} />
+      </div>
     </TwinShell>
   );
 }

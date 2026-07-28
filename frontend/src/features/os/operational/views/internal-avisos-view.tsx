@@ -80,6 +80,14 @@ export function InternalAvisosView() {
     void reload();
   }
 
+  async function restoreSelected() {
+    if (!selected) return;
+    await patchAvisoApi(session, selected.id, "restore");
+    setSelected(null);
+    setTab("recibidos");
+    void reload();
+  }
+
   async function doSend() {
     try {
       await createAvisoApi(session, {
@@ -204,6 +212,11 @@ export function InternalAvisosView() {
                 {tab === "recibidos" ? (
                   <Button type="button" variant="secondary" onClick={() => void archiveSelected()}>
                     Archivar
+                  </Button>
+                ) : null}
+                {tab === "archivados" ? (
+                  <Button type="button" variant="secondary" onClick={() => void restoreSelected()}>
+                    Restaurar
                   </Button>
                 ) : null}
               </div>

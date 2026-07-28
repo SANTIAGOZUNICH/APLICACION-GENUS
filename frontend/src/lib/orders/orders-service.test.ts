@@ -368,3 +368,40 @@ describe("operational orders RBAC + lifecycle", () => {
     void saved;
   });
 });
+
+describe("notificaciones dismiss por usuario", () => {
+  let service: OrdersService;
+  let repo: MemoryOrdersRepository;
+
+  beforeEach(() => {
+    repo = new MemoryOrdersRepository();
+    service = new OrdersService(repo);
+  });
+
+  it("dismiss solo oculta para el actor que descartó", async () => {
+    await repo.insertNotification({
+      id: "ntf-shared",
+      kind: "order_created",
+      title: "Orden nueva",
+      message: "OE creada",
+      sectors: ["CALIDAD", "PRODUCCION"],
+      href: null,
+      orderId: null,
+      readBy: [],
+      dismissedBy: [],
+      createdAt: new Date().toISOString(),
+    });
+
+    await service.dismissNotification("ntf-shared", calidad);
+
+    expect(await service.listNotifications(calidad)).toHaveLength(0);
+    expect(await service.listNotifications(produccion)).toHaveLength(1);
+
+    const archived = await service.listNotifications(calidad, { includeDismissed: true });
+    expect(archived).toHaveLength(1);
+    expect(archived[0]!.dismissedBy).toContain(calidad.email);
+
+    await service.restoreNotification("ntf-shared", calidad);
+    expect(await service.listNotifications(calidad)).toHaveLength(1);
+  });
+});
