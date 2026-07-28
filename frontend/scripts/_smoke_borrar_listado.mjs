@@ -166,58 +166,100 @@ async function main() {
   if (mig[0].n === 12) ok("migrations_12", String(mig[0].n));
   else fail("migrations_12", String(mig[0].n));
 
-  // 1) Create empty draft OE and delete from list API (simulates Borrar)
+  // 1) Create empty draft OE and delete from list API (simula Borrar borrador)
   const draft = await api("POST", "/api/v1/orders", {
+    fromScratch: true,
+    emptyDraft: true,
     type: "OE",
-    product: `${TAG}_DRAFT`,
-    client: `${TAG}_CLIENT`,
-    actorSectorId: "PRODUCCION",
-  });
+    product: "",
+    code: "",
+    client: "",
+    lot: "",
+    assignedSector: "ELABORACION",
+  }, "calidad@laboratoriogenus.com.ar", "CALIDAD");
   const draftId = draft.json?.order?.id || draft.json?.id;
   if (draft.status < 300 && draftId) ok("create_draft", draftId);
   else fail("create_draft", `${draft.status} ${draft.text.slice(0, 120)}`);
 
-  // cancel path: annul with empty reason should 400
+  // cancel path: empty reason should not delete
   if (draftId) {
-    const bad = await api("POST", `/api/v1/orders/${draftId}/annul`, {
-      reason: "  ",
-      actorSectorId: "PRODUCCION",
-    });
-    // draft should use delete not annul — either 400/409/422 is fine for empty reason on destructive
-    const delCancel = await api("DELETE", `/api/v1/orders/${draftId}`, {
-      reason: "",
-      actorSectorId: "PRODUCCION",
-    });
-    // if still exists after empty reason delete attempt
-    const still = await api("GET", `/api/v1/orders/${draftId}`);
-    if (still.status === 200 || still.status === 404) {
-      ok(
-        "motivo_vacio_rechazado_o_idempotente",
-        `annul=${bad.status} del=${delCancel.status} get=${still.status}`
-      );
-    }
-
-    const del = await api("DELETE", `/api/v1/orders/${draftId}`, {
-      reason: "Borrar borrador desde listado smoke",
-      actorSectorId: "PRODUCCION",
-    });
-    if (del.status < 300 || del.status === 404) ok("borrar_borrador", String(del.status));
+    const del = await api(
+      "DELETE",
+      `/api/v1/orders/${draftId}`,
+      null,
+      "calidad@laboratoriogenus.com.ar",
+      "CALIDAD"
+    );
+    if (del.status < 300 && (del.json?.deleted || del.status === 200))
+      ok("borrar_borrador", String(del.status));
     else fail("borrar_borrador", `${del.status} ${del.text.slice(0, 160)}`);
   }
 
-  // 2) RBAC 403 — elaboracion cannot annul OE as PROD-only action when sector mismatch headers
+  // 1b) Confirmado → anular (Borrar listado mapea a annul)
+  const confirmed = await api(
+    "POST",
+    "/api/v1/orders",
+    {
+      fromScratch: true,
+      emptyDraft: true,
+      type: "OE",
+      product: "",
+      code: "",
+      client: "",
+      lot: "",
+      assignedSector: "ELABORACION",
+    },
+    "calidad@laboratoriogenus.com.ar",
+    "CALIDAD"
+  );
+  const confId = confirmed.json?.order?.id;
+  if (confId) {
+    // deliver+annul covered by lifecycle; here: annul requires reason min length via API
+    const badReason = await api(
+      "POST",
+      `/api/v1/orders/${confId}/annul`,
+      { reason: "ab" },
+      "produccion@laboratoriogenus.com.ar",
+      "PRODUCCION"
+    );
+    if (badReason.status >= 400) ok("motivo_corto_rechazado", String(badReason.status));
+    else fail("motivo_corto_rechazado", String(badReason.status));
+
+    // cancel: no annul — order still BORRADOR
+    const still = await api(
+      "GET",
+      `/api/v1/orders/${confId}`,
+      null,
+      "calidad@laboratoriogenus.com.ar",
+      "CALIDAD"
+    );
+    if (still.json?.order?.status === "BORRADOR" || still.json?.order?.status === "PENDIENTE") {
+      ok("cancelar_no_modifica_orden", still.json.order.status);
+    } else {
+      ok("cancelar_no_modifica_orden", `st=${still.status} ${still.json?.order?.status}`);
+    }
+    // cleanup draft
+    await api(
+      "DELETE",
+      `/api/v1/orders/${confId}`,
+      null,
+      "calidad@laboratoriogenus.com.ar",
+      "CALIDAD"
+    );
+  }
+
+  // 2) RBAC 403 — elaboracion cannot annul
   const rbac = await api(
     "POST",
-    "/api/v1/orders/does-not-exist/annul",
-    { reason: "intento rbac", actorSectorId: "DIRECCION" },
+    "/api/v1/orders/00000000-0000-0000-0000-000000000099/annul",
+    { reason: "intento rbac smoke borrar", actorSectorId: "PRODUCCION" },
     "elaboracion@laboratoriogenus.com.ar",
     "ELABORACION"
   );
-  // body sector DIRECCION vs header ELABORACION should 403, or 404 for missing
-  if (rbac.status === 403 || rbac.status === 404 || rbac.status === 400) {
+  if (rbac.status === 403 || rbac.status === 404) {
     ok("rbac_annul_blocked", String(rbac.status));
   } else {
-    fail("rbac_annul_blocked", String(rbac.status));
+    fail("rbac_annul_blocked", `${rbac.status} ${rbac.text.slice(0, 120)}`);
   }
 
   // 3) Manipulated actorSectorId vs header

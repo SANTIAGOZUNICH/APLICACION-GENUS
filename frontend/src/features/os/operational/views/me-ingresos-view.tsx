@@ -114,6 +114,7 @@ export function MeIngresosView() {
 
   const pageRows = filtered.slice(page * pageSize, page * pageSize + pageSize);
 
+  const ME_INGRESO_PRIMARY = new Set(["CÓDIGO", "DESCRIPCIÓN INSUMO"]);
   const columns: OperationalTableColumn<MeIngresoRow>[] = ME_INGRESO_COLUMNS.map((label) => {
     const keyMap: Record<string, keyof MeIngresoRow> = {
       FECHA: "fecha",
@@ -132,6 +133,7 @@ export function MeIngresosView() {
     return {
       key: label,
       header: label,
+      hideOnMobile: ME_INGRESO_PRIMARY.has(label) ? false : ("xl" as const),
       render: (row) => displayCell(row[key]),
     };
   });
@@ -206,10 +208,11 @@ export function MeIngresosView() {
                   key: "acciones",
                   header: "",
                   render: (row: MeIngresoRow) => (
-                    <div className="flex gap-1">
+                    <div className="flex flex-wrap gap-1">
                       <button
                         type="button"
                         aria-label="Editar"
+                        className="inline-flex size-8 items-center justify-center"
                         onClick={() =>
                           setForm({
                             id: row.id,

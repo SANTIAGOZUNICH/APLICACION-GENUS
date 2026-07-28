@@ -111,11 +111,12 @@ export function MeAvisosView() {
       header: "",
       render: (r) =>
         canWrite ? (
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="flex max-w-[11rem] flex-col gap-1 sm:max-w-none sm:flex-row sm:flex-wrap">
             <Button
               type="button"
               size="sm"
               variant="secondary"
+              className="justify-start whitespace-normal text-left"
               onClick={() =>
                 void mutateInventory({
                   action: "patch",

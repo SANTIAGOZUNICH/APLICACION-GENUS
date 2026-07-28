@@ -126,6 +126,7 @@ export function MeSalidasView() {
 
   const pageRows = filtered.slice(page * pageSize, page * pageSize + pageSize);
 
+  const ME_SALIDA_PRIMARY = new Set(["DESCRIPCIÓN", "CONTROL", "ENTREGADO"]);
   const columns: OperationalTableColumn<MeSalidaRow>[] = ME_SALIDA_COLUMNS.map((label) => {
     const keyMap: Record<string, keyof MeSalidaRow> = {
       FECHA: "fecha",
@@ -144,6 +145,7 @@ export function MeSalidasView() {
     return {
       key: label,
       header: label,
+      hideOnMobile: ME_SALIDA_PRIMARY.has(label) ? false : ("xl" as const),
       render: (row) => {
         if (label === "COMENTARIOS") {
           const oaTag =

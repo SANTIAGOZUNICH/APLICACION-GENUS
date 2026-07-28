@@ -178,7 +178,7 @@ export function OsSignInScreen({
           {/* Formulario — protagonista en móvil */}
           <main
             id="os-sign-in-form"
-            className="relative flex flex-1 items-center justify-center px-5 py-8 sm:px-10 lg:px-14 lg:py-12"
+            className="relative flex min-w-0 max-w-full flex-1 flex-col items-center justify-center overflow-x-clip px-5 py-8 sm:px-10 lg:px-14 lg:py-12"
           >
             <div className="mb-6 flex w-full max-w-[26.5rem] items-center gap-3 md:hidden">
               <GenusOsLogo className="size-9 text-[var(--os-teal-glow)]" />
