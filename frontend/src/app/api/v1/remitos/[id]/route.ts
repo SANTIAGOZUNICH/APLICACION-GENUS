@@ -109,10 +109,19 @@ export async function PATCH(request: Request, ctx: Ctx) {
       );
     }
     if (body.action === "annul") {
-      return NextResponse.json({ remito: await svc.annul(a, id) });
+      return NextResponse.json({
+        remito: await svc.annul(
+          a,
+          id,
+          typeof body.motivo === "string" ? body.motivo : undefined
+        ),
+      });
     }
     if (body.action === "archive") {
       return NextResponse.json({ remito: await svc.archive(a, id) });
+    }
+    if (body.action === "restore") {
+      return NextResponse.json({ remito: await svc.restore(a, id) });
     }
     return NextResponse.json({ error: "action inválida" }, { status: 400 });
   } catch (err) {

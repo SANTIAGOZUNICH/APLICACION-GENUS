@@ -571,6 +571,33 @@ export async function archiveOrderApi(
   return data.order;
 }
 
+export async function annulOrderApi(
+  session: OrdersClientSession,
+  id: string,
+  reason: string
+): Promise<OperationalOrderRecord> {
+  const res = await fetch(`/api/v1/orders/${id}/annul`, {
+    method: "POST",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ reason }),
+  });
+  const data = await parseJson<{ order: OperationalOrderRecord }>(res);
+  return data.order;
+}
+
+export async function restoreOrderApi(
+  session: OrdersClientSession,
+  id: string
+): Promise<OperationalOrderRecord> {
+  const res = await fetch(`/api/v1/orders/${id}/restore`, {
+    method: "POST",
+    headers: actorHeaders(session),
+    body: JSON.stringify({}),
+  });
+  const data = await parseJson<{ order: OperationalOrderRecord }>(res);
+  return data.order;
+}
+
 export async function decideProposalApi(
   session: OrdersClientSession,
   proposalId: string,

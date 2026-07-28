@@ -611,6 +611,16 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       </Button>
                     </>
                   ) : null}
+                  {selected.status === "ARCHIVADO" ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => void runAction("restore", selected.id)}
+                    >
+                      Restaurar
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             ) : (

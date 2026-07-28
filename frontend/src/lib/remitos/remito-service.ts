@@ -882,16 +882,27 @@ export class RemitoService {
     return remito;
   }
 
-  async annul(actor: RemitoActor, remitoId: string): Promise<RemitoRecord> {
+  async annul(actor: RemitoActor, remitoId: string, reason?: string): Promise<RemitoRecord> {
     assertAccess(actor);
     await assertRemitoWritesEnabled();
     const remito = await this.findById(remitoId);
     if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
     if (remito.status === "ANULADO") return remito;
+    if (remito.status === "BORRADOR") {
+      throw new OrdersValidationError("Los borradores se eliminan; no se anulan.");
+    }
     remito.status = "ANULADO";
     remito.updatedBy = actor.email;
     remito.updatedAt = new Date().toISOString();
     await this.persistRemito(remito);
+    const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+    recordLifecycleEvent({
+      entityKind: "remito",
+      entityId: remitoId,
+      action: "anular",
+      actor: { email: actor.email, sector: actor.sector },
+      reason: reason?.trim() || null,
+    });
     return this.attachVersions(remito);
   }
 
@@ -900,10 +911,45 @@ export class RemitoService {
     await assertRemitoWritesEnabled();
     const remito = await this.findById(remitoId);
     if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
+    if (remito.status === "ARCHIVADO") return remito;
+    if (remito.status === "ANULADO") {
+      throw new OrdersValidationError("Un remito anulado no se archiva.");
+    }
     remito.status = "ARCHIVADO";
     remito.updatedBy = actor.email;
     remito.updatedAt = new Date().toISOString();
     await this.persistRemito(remito);
+    const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+    recordLifecycleEvent({
+      entityKind: "remito",
+      entityId: remitoId,
+      action: "archivar",
+      actor: { email: actor.email, sector: actor.sector },
+    });
+    return this.attachVersions(remito);
+  }
+
+  async restore(actor: RemitoActor, remitoId: string): Promise<RemitoRecord> {
+    assertAccess(actor);
+    await assertRemitoWritesEnabled();
+    const remito = await this.findById(remitoId);
+    if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
+    if (remito.status !== "ARCHIVADO") {
+      throw new OrdersValidationError("Solo se restauran remitos archivados.");
+    }
+    const withVersions = await this.attachVersions(remito);
+    remito.status =
+      withVersions.versions && withVersions.versions.length > 0 ? "GENERADO" : "BORRADOR";
+    remito.updatedBy = actor.email;
+    remito.updatedAt = new Date().toISOString();
+    await this.persistRemito(remito);
+    const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+    recordLifecycleEvent({
+      entityKind: "remito",
+      entityId: remitoId,
+      action: "restaurar",
+      actor: { email: actor.email, sector: actor.sector },
+    });
     return this.attachVersions(remito);
   }
 

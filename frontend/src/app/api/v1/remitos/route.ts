@@ -119,11 +119,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ remito }, { status: 201 });
     }
     if (body.action === "annul" && body.remitoId) {
-      const remito = await svc.annul(a, body.remitoId);
+      const remito = await svc.annul(
+        a,
+        body.remitoId,
+        typeof body.motivo === "string" ? body.motivo : undefined
+      );
       return NextResponse.json({ remito });
     }
     if (body.action === "archive" && body.remitoId) {
       const remito = await svc.archive(a, body.remitoId);
+      return NextResponse.json({ remito });
+    }
+    if (body.action === "restore" && body.remitoId) {
+      const remito = await svc.restore(a, body.remitoId);
       return NextResponse.json({ remito });
     }
     return NextResponse.json({ error: "action inválida" }, { status: 400 });

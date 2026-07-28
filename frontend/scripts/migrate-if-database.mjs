@@ -3,10 +3,11 @@
  * Production sin Neon no ejecuta nada.
  * Prefiere DATABASE_URL_UNPOOLED (conexión directa) para migraciones.
  *
- * 0005–0009 quedan registradas en el journal pero NO se aplican hasta
- * APPLY_MIGRATION_0005/0006/0007/0008/0009=1.
+ * 0005–0010 quedan registradas en el journal pero NO se aplican hasta
+ * APPLY_MIGRATION_0005/0006/0007/0008/0009/0010=1.
  * 0008 = almacenamiento privado Vercel Blob (COA/Remitos). No tocar 0005–0007.
  * 0009 = procedimientos + métricas envasado. Solo Preview con gate.
+ * 0010 = lifecycle_audit_events. Solo Preview con gate.
  */
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
@@ -36,6 +37,7 @@ const apply0006 = process.env.APPLY_MIGRATION_0006 === "1";
 const apply0007 = process.env.APPLY_MIGRATION_0007 === "1";
 const apply0008 = process.env.APPLY_MIGRATION_0008 === "1";
 const apply0009 = process.env.APPLY_MIGRATION_0009 === "1";
+const apply0010 = process.env.APPLY_MIGRATION_0010 === "1";
 
 function shouldDeferTag(tag) {
   const t = String(tag ?? "");
@@ -44,11 +46,12 @@ function shouldDeferTag(tag) {
   if (t.startsWith("0007_") && !apply0007) return true;
   if (t.startsWith("0008_") && !apply0008) return true;
   if (t.startsWith("0009_") && !apply0009) return true;
+  if (t.startsWith("0010_") && !apply0010) return true;
   return false;
 }
 
 function prepareMigrationsFolder() {
-  if (apply0005 && apply0006 && apply0007 && apply0008 && apply0009) {
+  if (apply0005 && apply0006 && apply0007 && apply0008 && apply0009 && apply0010) {
     return migrationsFolder;
   }
 
@@ -70,6 +73,7 @@ function prepareMigrationsFolder() {
     if (name.startsWith("0007_") && !apply0007) continue;
     if (name.startsWith("0008_") && !apply0008) continue;
     if (name.startsWith("0009_") && !apply0009) continue;
+    if (name.startsWith("0010_") && !apply0010) continue;
     fs.copyFileSync(
       path.join(migrationsFolder, name),
       path.join(tmp, name)
@@ -93,9 +97,10 @@ function prepareMigrationsFolder() {
   if (!apply0007) deferred.push("0007");
   if (!apply0008) deferred.push("0008");
   if (!apply0009) deferred.push("0009");
+  if (!apply0010) deferred.push("0010");
   if (deferred.length) {
     console.log(
-      `[db:migrate] ${deferred.join(" y ")} diferida(s) (APPLY_MIGRATION_0005/0006/0007/0008/0009=1 para aplicar).`
+      `[db:migrate] ${deferred.join(" y ")} diferida(s) (APPLY_MIGRATION_0005…0010=1 para aplicar).`
     );
   }
   return tmp;
@@ -112,7 +117,7 @@ try {
   const db = drizzle(sql);
   await migrate(db, { migrationsFolder: folder });
   console.log(
-    "[db:migrate] OK — migraciones aplicadas (0005–0009 condicionadas)."
+    "[db:migrate] OK — migraciones aplicadas (0005–0010 condicionadas)."
   );
 } catch (err) {
   console.error("[db:migrate] falló:", err);

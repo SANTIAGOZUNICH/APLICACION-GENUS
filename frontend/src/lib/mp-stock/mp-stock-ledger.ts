@@ -82,6 +82,11 @@ export function buildOeConsumptionPositionKey(
   return `oe-consumo:${oeId}:cod:${codigo.trim().toUpperCase()}`;
 }
 
+/** Un solo reverso neto por OE+código (idempotente; no duplica reintegro). */
+export function buildOeNetReverseKey(oeId: string, codigo: string): string {
+  return `oe-reverso-neto:${oeId}:cod:${codigo.trim().toUpperCase()}`;
+}
+
 /** @deprecated mantener compat tests antiguos — preferir clave sin lineId */
 export function buildOeConsumptionKeyLegacy(
   oeId: string,
@@ -385,6 +390,11 @@ export class MpStockLedgerService {
     return { applied, skippedNoCode, warnings };
   }
 
+  /**
+   * Revierte el consumo OE: un solo movimiento compensatorio por código
+   * con los kg reales netos consumidos. Idempotente — no duplica reintegro.
+   * Tras el reverso, un nuevo applyOeConsumption (reabrir/redeliver) vuelve a descontar.
+   */
   async reverseOeConsumption(
     actor: MpStockActor,
     oeId: string,
@@ -392,24 +402,69 @@ export class MpStockLedgerService {
   ): Promise<number> {
     await assertFeatureWritesEnabled();
     const all = await this.listMovementsByRef("oe", oeId);
-    let n = 0;
+    const byCode = new Map<string, { net: number; keys: string[] }>();
+
     for (const m of all) {
-      if (!m.idempotencyKey.startsWith(`oe-consumo:${oeId}:`) || m.reversed) {
+      if (m.kind === "REVERSO") continue;
+      if (!m.idempotencyKey.startsWith(`oe-consumo:${oeId}:`)) continue;
+      if (m.reversed) continue;
+      const code = m.codigo.trim().toUpperCase();
+      if (!code) continue;
+      const agg = byCode.get(code) ?? { net: 0, keys: [] };
+      agg.net = Math.round((agg.net + m.quantity) * 1000) / 1000;
+      agg.keys.push(m.idempotencyKey);
+      byCode.set(code, agg);
+    }
+
+    let n = 0;
+    for (const [code, agg] of byCode) {
+      if (agg.net === 0) {
+        for (const key of agg.keys) await this.markMovementReversed(key);
         continue;
       }
+
+      const reverseKey = buildOeNetReverseKey(oeId, code);
+      const existing = await this.findByIdempotency(reverseKey);
+      if (existing && !existing.reversed) {
+        for (const key of agg.keys) await this.markMovementReversed(key);
+        continue;
+      }
+
+      // Consumo neto es negativo; reintegro = -net (kg reales).
+      const reverseQty = Math.round(-agg.net * 1000) / 1000;
       await this.applyMovement(actor, {
-        codigo: m.codigo,
+        codigo: code,
         kind: "REVERSO",
-        quantity: -m.quantity,
-        reason: "Reverso consumo OE (anular/reabrir)",
-        idempotencyKey: `${m.idempotencyKey}:reverso`,
+        quantity: reverseQty,
+        reason: "Reverso consumo OE (anular) — consolidado por código (kg real)",
+        idempotencyKey: reverseKey,
         refType: "oe",
         refId: oeId,
-        reverseOfKey: m.idempotencyKey,
+        reverseOfKey: agg.keys[0],
+        allowNegative: true,
       });
+      for (const key of agg.keys.slice(1)) {
+        await this.markMovementReversed(key);
+      }
       n += 1;
     }
     return n;
+  }
+
+  private async markMovementReversed(idempotencyKey: string): Promise<void> {
+    if (isDatabaseConfigured()) {
+      try {
+        const db = getDb();
+        await db
+          .update(mpStockMovements)
+          .set({ reversed: true })
+          .where(eq(mpStockMovements.idempotencyKey, idempotencyKey));
+      } catch {
+        /* memory fallback below */
+      }
+    }
+    const orig = mem().movements.find((m) => m.idempotencyKey === idempotencyKey);
+    if (orig) orig.reversed = true;
   }
 
   async registerAjuste(

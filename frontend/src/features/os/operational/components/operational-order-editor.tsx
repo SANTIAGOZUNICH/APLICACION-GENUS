@@ -23,16 +23,20 @@ import {
 import { didFormulaChange } from "@/lib/orders/oe-ajuste";
 import {
   archiveOrderApi,
+  annulOrderApi,
   deleteEmptyDraftApi,
   deliverOrderApi,
   fetchOrder,
   orderPdfUrl,
   resolveFormulaMasterApi,
+  restoreOrderApi,
   reviewOrderApi,
   returnOrderApi,
   saveAsMasterApi,
   saveOrderProgressApi,
 } from "@/lib/orders/orders-client";
+import { orderLifecycleActions } from "@/lib/lifecycle/adapters/orders";
+import { LifecycleActionsMenu } from "./lifecycle-actions-menu";
 import { canDeleteEmptyDraft } from "@/lib/orders/empty-draft";
 import { statusLabel } from "@/lib/orders/empty-draft";
 import type { OaContent, OeContent, OperationalOrderRecord, OrderContent } from "@/lib/orders/types";
@@ -221,7 +225,9 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const canReview = !!order && canOrderAction(order.type, "review", sectorId);
   const canReturn = !!order && canOrderAction(order.type, "return", sectorId);
   const canArchive = !!order && canOrderAction(order.type, "archive", sectorId);
+  const canAnnul = !!order && canOrderAction(order.type, "annul", sectorId);
   const canDownload = !!order && canOrderAction(order.type, "download", sectorId);
+  const lifecycle = order ? orderLifecycleActions(order) : null;
 
   const [formulaPromptOpen, setFormulaPromptOpen] = useState(false);
   const [pendingFormulaForm, setPendingFormulaForm] = useState<OrderContent | null>(null);
@@ -747,6 +753,14 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             {statusLabel(order.status)} · plantilla v{order.templateVersion} · rev {order.revision} ·
             sector {order.assignedSector}
           </p>
+          {order.status === "ANULADA" && (
+            <p
+              className="mt-2 inline-flex rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-amber-900"
+              data-testid="order-annulled-banner"
+            >
+              ANULADA — documento histórico · sin efecto operativo · auditoría conservada
+            </p>
+          )}
           <p className="mt-1 text-sm">
             Completado: <strong>{order.completionPercentage}%</strong>
             <span className="ml-3 text-xs text-[var(--os-text-muted)]">{saveLabel}</span>
@@ -809,14 +823,87 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               Devolver para corrección
             </Button>
           )}
-          {canArchive && (
+          {canArchive && order.status === "ARCHIVADA" && lifecycle?.restaurar.allowed && (
             <Button
               type="button"
               variant="secondary"
-              onClick={() => void archiveOrderApi(session, orderId).then(setOrder)}
+              onClick={() =>
+                void restoreOrderApi(session, orderId)
+                  .then(setOrder)
+                  .catch((e) => setError(e instanceof Error ? e.message : "Error al restaurar"))
+              }
+            >
+              Restaurar
+            </Button>
+          )}
+          {canArchive && order.status !== "ARCHIVADA" && order.status !== "ANULADA" && order.status !== "BORRADOR" && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() =>
+                void archiveOrderApi(session, orderId)
+                  .then(setOrder)
+                  .catch((e) => setError(e instanceof Error ? e.message : "Error al archivar"))
+              }
             >
               Archivar
             </Button>
+          )}
+          {(canAnnul || canArchive) && lifecycle && (
+            <LifecycleActionsMenu
+              items={[
+                ...(canAnnul && lifecycle.anular.allowed
+                  ? [
+                      {
+                        action: "anular" as const,
+                        label: "Anular",
+                        decision: lifecycle.anular,
+                        impact: {
+                          summary:
+                            order.type === "OE"
+                              ? "Revertirá el consumo de MP (kg reales) una sola vez por código y marcará la OE como ANULADA."
+                              : "Revertirá las salidas de materiales de empaque una sola vez y marcará la OA como ANULADA.",
+                          preservesAudit: true,
+                          references: [],
+                          warnings: ["Se conserva el historial legal y los snapshots de fórmula."],
+                        },
+                      },
+                    ]
+                  : []),
+                ...(canArchive && lifecycle.archivar.allowed
+                  ? [
+                      {
+                        action: "archivar" as const,
+                        label: "Archivar",
+                        decision: lifecycle.archivar,
+                      },
+                    ]
+                  : []),
+                ...(canArchive && lifecycle.restaurar.allowed
+                  ? [
+                      {
+                        action: "restaurar" as const,
+                        label: "Restaurar",
+                        decision: lifecycle.restaurar,
+                      },
+                    ]
+                  : []),
+              ]}
+              onAction={async (action, reason) => {
+                if (action === "anular") {
+                  const next = await annulOrderApi(session, orderId, reason);
+                  setOrder(next);
+                  return;
+                }
+                if (action === "archivar") {
+                  setOrder(await archiveOrderApi(session, orderId));
+                  return;
+                }
+                if (action === "restaurar") {
+                  setOrder(await restoreOrderApi(session, orderId));
+                }
+              }}
+            />
           )}
           <Button type="button" variant="secondary" onClick={() => setShowPreview((v) => !v)}>
             Vista previa PDF

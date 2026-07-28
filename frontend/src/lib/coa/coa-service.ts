@@ -423,17 +423,20 @@ export class CoaService {
     );
 
     const storage = getFileStorage();
-    const deletedKeys: string[] = [];
-    for (const key of keys) {
-      try {
-        await storage.delete(key);
-        deletedKeys.push(key);
-      } catch {
-        throw new Error(
-          `No se pudo borrar el archivo en almacenamiento privado (${key.slice(0, 24)}…). El archivo sigue visible. Reintentá.`
-        );
-      }
+    const { deleteBlobsThenMetadata } = await import("@/lib/lifecycle/blob-safe");
+    const blobResult = await deleteBlobsThenMetadata({
+      storage,
+      keys,
+      afterBlobsDeleted: async () => {
+        /* metadata below */
+      },
+    });
+    if (!blobResult.ok) {
+      throw new Error(
+        `No se pudo borrar el archivo en almacenamiento privado (${blobResult.failedKey.slice(0, 24)}…). El archivo sigue visible. Reintentá.`
+      );
     }
+    const deletedKeys = blobResult.deletedKeys;
 
     const now = new Date().toISOString();
     const auditPayload = {

@@ -1,4 +1,10 @@
 import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
+import {
+  canAnnul,
+  canArchive,
+  canDelete,
+  type LifecycleDecision,
+} from "@/lib/lifecycle";
 
 export type AssignedWorkLifecycleAction =
   | "eliminar"
@@ -11,12 +17,18 @@ export interface AssignedWorkLifecycleDecision {
   reason: string;
 }
 
+function toLegacy(d: LifecycleDecision): AssignedWorkLifecycleDecision {
+  if (!d.allowed || d.action === "bloquear") {
+    return { action: "bloquear_finalizado", reason: d.reason };
+  }
+  if (d.action === "eliminar") return { action: "eliminar", reason: d.reason };
+  if (d.action === "anular") return { action: "cancelar", reason: d.reason };
+  if (d.action === "archivar") return { action: "archivar", reason: d.reason };
+  return { action: "bloquear_finalizado", reason: d.reason };
+}
+
 /**
- * Decide la acción permitida según estado y avance registrado.
- * - pendiente sin avance → eliminar
- * - en_curso / con avance / revision → cancelar (baja lógica)
- * - completo → no eliminar; archivar opcional
- * - cancelado → ya cancelado
+ * Decide la acción permitida según estado y avance — delega en política universal.
  */
 export function resolveAssignedWorkLifecycleAction(
   item: Pick<WorkItem, "status"> & { finishedQty?: string | null },
@@ -38,30 +50,33 @@ export function resolveAssignedWorkLifecycleAction(
       action: "archivar",
       reason:
         status === "entregado"
-          ? "Este trabajo ya fue entregado. Gestioná la entrega desde Entregados."
+          ? "Este trabajo ya fue entregado. Gestioná la entrega desde Entregados o archivá el trabajo."
           : "Este trabajo ya fue finalizado y no puede eliminarse. Podés archivarlo o solicitar una corrección.",
     };
   }
 
-  if (status === "revision") {
-    return {
-      action: "cancelar",
-      reason: "El trabajo ya tiene actividad o fue enviado a Calidad. Solo puede cancelarse.",
-    };
-  }
-
-  if (status === "en_curso" || status === "bloqueado" || hasProgress) {
-    return {
-      action: "cancelar",
-      reason: "El trabajo ya tiene actividad registrada. Solo puede cancelarse con motivo.",
-    };
+  if (status === "revision" || status === "en_curso" || status === "bloqueado" || hasProgress) {
+    return toLegacy(
+      canAnnul({
+        kind: "trabajo",
+        id: "work",
+        status,
+        isDraft: false,
+        hasProgress: true,
+      })
+    );
   }
 
   if (status === "pendiente") {
-    return {
-      action: "eliminar",
-      reason: "Trabajo pendiente sin avances — puede eliminarse.",
-    };
+    return toLegacy(
+      canDelete({
+        kind: "trabajo",
+        id: "work",
+        status: "pendiente",
+        isDraft: true,
+        hasProgress: false,
+      })
+    );
   }
 
   return {

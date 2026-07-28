@@ -336,4 +336,35 @@ describe("operational orders RBAC + lifecycle", () => {
     expect(content.procedureTitle).toBe("PROCEDIMIENTO DE ELABORACIÓN");
     expect(Object.values(content.signatures).every((s) => s === null)).toBe(true);
   });
+
+  it("anular OE exige motivo, es idempotente y RBAC bloquea sectores no autorizados", async () => {
+    const t = (await service.listTemplates("OE"))[0]!;
+    const order = await service.createOrder(
+      { type: "OE", templateId: t.id, assignedSector: "ELABORACION" },
+      calidad
+    );
+    const filled = fillOeForDeliver(order.formData);
+    const saved = await service.saveProgress(
+      order.id,
+      { expectedVersion: order.version, formData: filled },
+      elaboracion
+    );
+    const delivered = await service.deliver(order.id, elaboracion, true);
+    expect(
+      delivered.status === "COMPLETA" || delivered.status === "COMPLETA_CON_PENDIENTES"
+    ).toBe(true);
+
+    await expect(service.annul(order.id, elaboracion, "x")).rejects.toBeInstanceOf(
+      OrdersForbiddenError
+    );
+    await expect(service.annul(order.id, produccion, "")).rejects.toBeInstanceOf(
+      OrdersValidationError
+    );
+
+    const annulled = await service.annul(order.id, produccion, "Error de carga");
+    expect(annulled.status).toBe("ANULADA");
+    const again = await service.annul(order.id, produccion, "segundo intento");
+    expect(again.status).toBe("ANULADA");
+    void saved;
+  });
 });

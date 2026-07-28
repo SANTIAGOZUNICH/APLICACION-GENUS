@@ -1299,6 +1299,18 @@ export class OrdersService {
       );
       await persistInventorySnapshot(memoryInventoryRepo);
     }
+    if (current.type === "OE") {
+      try {
+        const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
+        await getMpStockLedger().reverseOeConsumption(
+          { email: actor.email, sector: actor.sector },
+          id,
+          current.version
+        );
+      } catch {
+        /* schema MP diferido */
+      }
+    }
     await this.repo.appendAudit({
       orderId: id,
       eventType: "ORDER_RETURNED",
@@ -1349,6 +1361,13 @@ export class OrdersService {
   async archive(id: string, actor: OrdersActor) {
     const current = await this.requireOrder(id);
     assertCanOrderAction(current.type, "archive", actor);
+    if (current.status === "ARCHIVADA") return current;
+    if (current.status === "ANULADA") {
+      throw new OrdersValidationError("Una orden anulada no se archiva; consultá el historial.");
+    }
+    if (current.status === "BORRADOR") {
+      throw new OrdersValidationError("Los borradores se eliminan; no se archivan.");
+    }
     const updated = await this.repo.updateOrderOptimistic(id, current.version, {
       status: "ARCHIVADA",
       updatedBy: actor.email,
@@ -1362,7 +1381,42 @@ export class OrdersService {
       eventType: "ORDER_ARCHIVED",
       actor: actor.email,
       actorSector: actor.sector,
-      metadata: null,
+      metadata: { previousStatus: current.status },
+    });
+    return updated;
+  }
+
+  /**
+   * Restaura una orden archivada al estado previo operativo (COMPLETA por defecto).
+   * No re-aplica ni revierte stock: el archivado no tocó ledger.
+   */
+  async restore(id: string, actor: OrdersActor) {
+    const current = await this.requireOrder(id);
+    assertCanOrderAction(current.type, "archive", actor);
+    if (current.status !== "ARCHIVADA") {
+      throw new OrdersValidationError("Solo se restauran órdenes archivadas.");
+    }
+    const updated = await this.repo.updateOrderOptimistic(id, current.version, {
+      status: "COMPLETA",
+      updatedBy: actor.email,
+    });
+    if (!updated) {
+      const fresh = await this.repo.getOrder(id);
+      throw new OrdersConflictError("Conflicto al restaurar.", fresh!);
+    }
+    await this.repo.appendAudit({
+      orderId: id,
+      eventType: "ORDER_RESTORED",
+      actor: actor.email,
+      actorSector: actor.sector,
+      metadata: { restoredTo: "COMPLETA" },
+    });
+    const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+    recordLifecycleEvent({
+      entityKind: current.type === "OE" ? "oe" : "oa",
+      entityId: id,
+      action: "restaurar",
+      actor: { email: actor.email, sector: actor.sector },
     });
     return updated;
   }
@@ -1370,6 +1424,25 @@ export class OrdersService {
   async annul(id: string, actor: OrdersActor, reason: string) {
     const current = await this.requireOrder(id);
     assertCanOrderAction(current.type, "annul", actor);
+    const trimmed = reason?.trim() ?? "";
+    if (!trimmed) {
+      throw new OrdersValidationError("Motivo obligatorio para anular la orden.");
+    }
+    // Idempotencia: ya anulada → no repetir reversos de stock.
+    if (current.status === "ANULADA") {
+      return current;
+    }
+    if (current.status === "BORRADOR") {
+      throw new OrdersValidationError(
+        "Los borradores se eliminan; no se anulan. Usá eliminar borrador vacío."
+      );
+    }
+    if (current.status === "ARCHIVADA") {
+      throw new OrdersValidationError(
+        "Restaurá la orden archivada antes de anularla."
+      );
+    }
+
     const updated = await this.repo.updateOrderOptimistic(id, current.version, {
       status: "ANULADA",
       updatedBy: actor.email,
@@ -1378,6 +1451,32 @@ export class OrdersService {
       const fresh = await this.repo.getOrder(id);
       throw new OrdersConflictError("Conflicto al anular.", fresh!);
     }
+
+    let mpReversed = 0;
+    let meReversed = 0;
+
+    if (current.type === "OE") {
+      try {
+        const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
+        const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+        mpReversed = await getMpStockLedger().reverseOeConsumption(
+          { email: actor.email, sector: actor.sector },
+          id,
+          current.version
+        );
+        recordLifecycleEvent({
+          entityKind: "oe",
+          entityId: id,
+          action: "anular",
+          actor: { email: actor.email, sector: actor.sector },
+          reason: trimmed,
+          impact: { mpReversedCodes: mpReversed },
+        });
+      } catch {
+        /* ledger diferido si schema MP no listo */
+      }
+    }
+
     if (current.type === "OA") {
       const { getInventoryService, memoryInventoryRepo } = await import(
         "@/lib/inventory/get-inventory-service"
@@ -1387,25 +1486,35 @@ export class OrdersService {
       );
       const { reverseOaMeSalidas } = await import("@/lib/inventory/me-oa-bridge");
       await hydrateInventoryFromNeon(memoryInventoryRepo);
-      reverseOaMeSalidas(
+      meReversed = reverseOaMeSalidas(
         getInventoryService(),
         actor,
         id,
-        `Anulación OA: ${reason || "sin motivo"}`
+        `Anulación OA: ${trimmed}`
       );
       await persistInventorySnapshot(memoryInventoryRepo);
+      const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+      recordLifecycleEvent({
+        entityKind: "oa",
+        entityId: id,
+        action: "anular",
+        actor: { email: actor.email, sector: actor.sector },
+        reason: trimmed,
+        impact: { meReversedSalidas: meReversed },
+      });
     }
+
     await this.repo.appendAudit({
       orderId: id,
       eventType: "ORDER_ANNULLED",
       actor: actor.email,
       actorSector: actor.sector,
-      metadata: { reason },
+      metadata: { reason: trimmed, mpReversed, meReversed },
     });
     await notify(this.repo, {
       kind: "order_annulled",
       title: "Orden anulada",
-      message: `${updated.orderNumber}: ${reason}`,
+      message: `${updated.orderNumber}: ${trimmed}`,
       sectors: [
         ...(updated.assignedSector !== SIN_ASIGNAR ? [updated.assignedSector] : []),
         "CALIDAD",

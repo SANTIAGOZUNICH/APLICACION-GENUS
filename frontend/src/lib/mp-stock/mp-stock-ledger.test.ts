@@ -141,8 +141,49 @@ describe("MpStockLedgerService", () => {
     });
     expect((await ledger.getBalance("MP1"))!.stockActual).toBe(85);
 
-    await ledger.reverseOeConsumption(mp, "oe1");
+    const n = await ledger.reverseOeConsumption(mp, "oe1");
+    expect(n).toBe(1);
     expect((await ledger.getBalance("MP1"))!.stockActual).toBe(100);
+  });
+
+  it("reverso OE: un movimiento por código, idempotente, reabrir reaplica consumo", async () => {
+    const ledger = getMpStockLedger();
+    await ledger.seedSaldoInicialOnce(mp, "MP1", 100);
+    await ledger.seedSaldoInicialOnce(mp, "MP2", 50);
+    await ledger.applyOeConsumption(mp, {
+      oeId: "oe-rev",
+      oeVersion: 1,
+      oeStatus: "COMPLETA",
+      lines: [
+        { lineId: "l1", codigo: "MP1", kgReal: 10 },
+        { lineId: "l2", codigo: "MP1", kgReal: 5 },
+        { lineId: "l3", codigo: "MP2", kgReal: 8 },
+      ],
+    });
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(85);
+    expect((await ledger.getBalance("MP2"))!.stockActual).toBe(42);
+
+    const first = await ledger.reverseOeConsumption(mp, "oe-rev");
+    expect(first).toBe(2);
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(100);
+    expect((await ledger.getBalance("MP2"))!.stockActual).toBe(50);
+
+    const second = await ledger.reverseOeConsumption(mp, "oe-rev");
+    expect(second).toBe(0);
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(100);
+
+    await ledger.applyOeConsumption(mp, {
+      oeId: "oe-rev",
+      oeVersion: 2,
+      oeStatus: "COMPLETA",
+      lines: [
+        { lineId: "l1", codigo: "MP1", kgReal: 10 },
+        { lineId: "l2", codigo: "MP1", kgReal: 5 },
+        { lineId: "l3", codigo: "MP2", kgReal: 8 },
+      ],
+    });
+    expect((await ledger.getBalance("MP1"))!.stockActual).toBe(85);
+    expect((await ledger.getBalance("MP2"))!.stockActual).toBe(42);
   });
 
   it("sin código no descuenta", async () => {
