@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardPaste, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/dialog";
 import { TwinShell } from "@/features/os/shell/twin-shell";
+import { LifecycleConfirmDialog } from "@/features/os/operational/components/lifecycle-confirm-dialog";
+import { syntheticLifecycleItem } from "@/features/os/operational/components/lifecycle-synthetic";
 import {
   fetchInventory,
   mutateInventory,
@@ -76,8 +77,7 @@ export function MeSalidasView() {
   const [filterControl, setFilterControl] = useState<"todos" | "si" | "no">("todos");
   const [filterEntregado, setFilterEntregado] = useState<"todos" | "si" | "no">("todos");
   const [form, setForm] = useState<FormState | null>(null);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [deleteReason, setDeleteReason] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [page, setPage] = useState(0);
   const pageSize = 20;
@@ -286,7 +286,12 @@ export function MeSalidasView() {
                         <button
                           type="button"
                           className="text-xs text-red-700 hover:underline"
-                          onClick={() => setDeleteId(row.id)}
+                          onClick={() =>
+                            setPendingDelete({
+                              id: row.id,
+                              label: row.descripcion || row.cliente || row.id,
+                            })
+                          }
                         >
                           Anular
                         </button>
@@ -317,8 +322,14 @@ export function MeSalidasView() {
                       </button>
                       <button
                         type="button"
-                        title="Anular salida"
-                        onClick={() => setDeleteId(row.id)}
+                        aria-label="Borrar"
+                        title="Borrar"
+                        onClick={() =>
+                          setPendingDelete({
+                            id: row.id,
+                            label: row.descripcion || row.cliente || row.id,
+                          })
+                        }
                       >
                         <Trash2 className="size-4 text-red-700" />
                       </button>
@@ -436,25 +447,28 @@ export function MeSalidasView() {
         </div>
       )}
 
-      <ConfirmDialog
-        open={Boolean(deleteId)}
-        onOpenChange={(o) => !o && setDeleteId(null)}
-        title="Anular salida ME"
-        description="Se revertirá el impacto en stock (si aplica) y la fila quedará marcada como ANULADA."
-        confirmLabel="Anular"
-        onConfirm={() => {
-          if (!deleteId) return;
-          void mutateInventory({
+      <LifecycleConfirmDialog
+        pending={
+          pendingDelete
+            ? syntheticLifecycleItem(
+                "anular",
+                "Anular salida ME",
+                "Se revertirá el impacto en stock (si aplica) y la fila quedará marcada como ANULADA."
+              )
+            : null
+        }
+        forceReason
+        entityLabel={pendingDelete?.label}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={async (reason) => {
+          if (!pendingDelete) return;
+          await mutateInventory({
             action: "delete",
             resource: "me_salidas",
-            id: deleteId,
-            reason: deleteReason || "Eliminación de salida ME",
-          })
-            .then(() => reload())
-            .finally(() => {
-              setDeleteId(null);
-              setDeleteReason("");
-            });
+            id: pendingDelete.id,
+            reason,
+          });
+          await reload();
         }}
       />
 

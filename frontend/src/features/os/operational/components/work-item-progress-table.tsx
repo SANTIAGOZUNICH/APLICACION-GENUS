@@ -25,6 +25,10 @@ interface WorkItemProgressTableProps {
   archiveBusyId?: string | null;
 }
 
+const thClass =
+  "px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--os-text-muted)] sm:px-3 sm:py-2.5";
+const tdClass = "min-w-0 px-2 py-2 align-top sm:px-3 sm:py-2.5";
+
 /** Tabla operativa — Envasado / Elaboración. La fila abre el drawer de trabajo. */
 export function WorkItemProgressTable({
   items,
@@ -47,47 +51,29 @@ export function WorkItemProgressTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
-      <table className="w-full min-w-[900px] border-collapse text-sm">
+    <div className="os-table-wrap overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
+      <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,13px)]">
         <thead>
           <tr className="border-b border-[var(--os-border)] bg-[var(--os-bg)]">
             {variant === "envasado" && (
-              <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-                Línea
-              </th>
+              <th className={`${thClass} hidden md:table-cell`}>Línea</th>
             )}
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Fecha
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Fecha de entrega
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Cliente
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Producto
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
+            <th className={`${thClass} hidden sm:table-cell`}>Fecha</th>
+            <th className={`${thClass} hidden md:table-cell`}>Fecha de entrega</th>
+            <th className={`${thClass} hidden md:table-cell`}>Cliente</th>
+            <th className={thClass}>Producto</th>
+            <th className={`${thClass} hidden sm:table-cell`}>
               {variant === "envasado" ? "Unidades planificadas" : "Kg planificados"}
             </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
+            <th className={`${thClass} hidden sm:table-cell`}>
               {variant === "envasado" ? "Unidades realizadas" : "Kg realizados"}
             </th>
             {variant === "envasado" && (
-              <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-                Diferencia
-              </th>
+              <th className={`${thClass} hidden md:table-cell`}>Diferencia</th>
             )}
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Estado
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Observación
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Acción
-            </th>
+            <th className={thClass}>Estado</th>
+            <th className={`${thClass} hidden lg:table-cell`}>Observación</th>
+            <th className={thClass}>Acción</th>
           </tr>
         </thead>
         <tbody>
@@ -119,25 +105,27 @@ export function WorkItemProgressTable({
                 }`}
               >
                 {variant === "envasado" && (
-                  <td className="px-3 py-2.5 align-top font-medium">
-                    {displayField(item.line)}
+                  <td className={`${tdClass} hidden font-medium md:table-cell`}>
+                    <span className="os-break">{displayField(item.line)}</span>
                   </td>
                 )}
-                <td className="px-3 py-2.5 align-top">
-                  {displayField(item.dayLabel ?? item.plannedDate)}
+                <td className={`${tdClass} hidden sm:table-cell`}>
+                  <span className="os-break">{displayField(item.dayLabel ?? item.plannedDate)}</span>
                 </td>
-                <td className="px-3 py-2.5 align-top">
+                <td className={`${tdClass} hidden md:table-cell`}>
                   <DeliveryDateBadge deliveryDate={item.deliveryDate} />
                 </td>
-                <td className="px-3 py-2.5 align-top">{displayField(item.client)}</td>
-                <td className="px-3 py-2.5 align-top font-medium">
-                  {displayField(item.product)}
+                <td className={`${tdClass} hidden md:table-cell`}>
+                  <span className="os-break">{displayField(item.client)}</span>
                 </td>
-                <td className="px-3 py-2.5 align-top tabular-nums">{planned}</td>
-                <td className="px-3 py-2.5 align-top tabular-nums">{finishedQty || "—"}</td>
+                <td className={`${tdClass} font-medium`}>
+                  <span className="os-break">{displayField(item.product)}</span>
+                </td>
+                <td className={`${tdClass} hidden tabular-nums sm:table-cell`}>{planned}</td>
+                <td className={`${tdClass} hidden tabular-nums sm:table-cell`}>{finishedQty || "—"}</td>
                 {variant === "envasado" && (
                   <td
-                    className={`px-3 py-2.5 align-top tabular-nums font-medium ${
+                    className={`${tdClass} hidden tabular-nums font-medium md:table-cell ${
                       diff.startsWith("+")
                         ? "text-emerald-700"
                         : diff.startsWith("-")
@@ -148,7 +136,7 @@ export function WorkItemProgressTable({
                     {diff}
                   </td>
                 )}
-                <td className="px-3 py-2.5 align-top">
+                <td className={tdClass}>
                   {isTransferred ? (
                     <div className="space-y-1">
                       <StatusChip status={item.status} />
@@ -160,10 +148,10 @@ export function WorkItemProgressTable({
                     <StatusChip status={item.status} />
                   )}
                 </td>
-                <td className="px-3 py-2.5 align-top max-w-[220px] truncate text-xs text-[var(--os-text-muted)]">
-                  {observation || "—"}
+                <td className={`${tdClass} hidden text-xs text-[var(--os-text-muted)] lg:table-cell`}>
+                  <span className="os-break">{observation || "—"}</span>
                 </td>
-                <td className="px-3 py-2.5 align-top">
+                <td className={tdClass}>
                   <div className="flex flex-col gap-1.5">
                     <ActionButton
                       label={

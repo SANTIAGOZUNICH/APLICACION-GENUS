@@ -203,6 +203,8 @@ export function ProduccionPanelView() {
                 actorSectorId={sectorId}
                 actorName={workspace.context.displayName}
                 finishedQty={getFinishedQty(r.id)}
+                onOpen={() => navigateTo({ view: sectorViewMap[r.item.sector] })}
+                primaryLabel="Abrir"
                 onChanged={() => {
                   refreshDecisions();
                   setPanelTick((v) => v + 1);

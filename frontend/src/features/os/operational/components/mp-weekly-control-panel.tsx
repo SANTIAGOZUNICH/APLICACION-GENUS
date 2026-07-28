@@ -368,7 +368,7 @@ export function MpWeeklyControlPanel() {
         </ul>
         </div>
 
-        <div className="lg:col-span-2 overflow-x-auto rounded border border-[var(--os-border)]">
+        <div className="os-table-wrap min-w-0 overflow-x-clip rounded border border-[var(--os-border)] lg:col-span-2">
           {active ? (
             <div className="space-y-2 p-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -386,25 +386,25 @@ export function MpWeeklyControlPanel() {
                     onAction={runLifecycle}
                   />
                 ) : null}
-                <span className="text-xs text-[var(--os-text-muted)] self-center">
+                <span className="self-center text-xs text-[var(--os-text-muted)]">
                   Snapshot: {active.formulaSnapshot ? "inmutable" : "—"} · no descuenta stock
                   {active.linkedOeId ? ` · OE ${active.linkedOeId}` : ""}
                 </span>
               </div>
-              <table className="w-full text-xs" data-testid="mp-control-lines">
+              <table className="os-table w-full max-w-full table-fixed text-xs" data-testid="mp-control-lines">
                 <thead>
                   <tr className="border-b text-left">
                     <th className="p-1">Código</th>
                     <th className="p-1">Materia prima</th>
-                    <th className="p-1">% </th>
+                    <th className="hidden p-1 md:table-cell">% </th>
                     <th className="p-1">Kg nec.</th>
-                    <th className="p-1">Stock</th>
-                    <th className="p-1">Proyect.</th>
-                    <th className="p-1">Dif.</th>
+                    <th className="hidden p-1 sm:table-cell">Stock</th>
+                    <th className="hidden p-1 md:table-cell">Proyect.</th>
+                    <th className="hidden p-1 md:table-cell">Dif.</th>
                     <th className="p-1">Estado</th>
-                    <th className="p-1">Lote</th>
-                    <th className="p-1">Prep.</th>
-                    <th className="p-1">Obs.</th>
+                    <th className="hidden p-1 lg:table-cell">Lote</th>
+                    <th className="hidden p-1 lg:table-cell">Prep.</th>
+                    <th className="hidden p-1 xl:table-cell">Obs.</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -412,18 +412,20 @@ export function MpWeeklyControlPanel() {
                     <tr key={l.id} className="border-b">
                       <td className="p-1">
                         <input
-                          className="w-20 rounded border px-1"
+                          className="w-full min-w-0 max-w-[5rem] rounded border px-1"
                           value={l.codigo}
                           disabled={!writesEnabled}
                           onChange={(e) => updateLine(l.id, { codigo: e.target.value })}
                         />
                       </td>
-                      <td className="p-1">{l.materiaPrima}</td>
-                      <td className="p-1">{l.formulaPct ?? "—"}</td>
+                      <td className="min-w-0 p-1">
+                        <span className="os-break">{l.materiaPrima}</span>
+                      </td>
+                      <td className="hidden p-1 md:table-cell">{l.formulaPct ?? "—"}</td>
                       <td className="p-1">
                         <input
                           type="number"
-                          className="w-16 rounded border px-1"
+                          className="w-full min-w-0 max-w-[4rem] rounded border px-1"
                           value={l.kgEditados ?? l.kgNecesarios ?? ""}
                           disabled={!writesEnabled}
                           onChange={(e) =>
@@ -434,19 +436,19 @@ export function MpWeeklyControlPanel() {
                           }
                         />
                       </td>
-                      <td className="p-1">{l.stockActual ?? "—"}</td>
-                      <td className="p-1">{l.stockProyectado ?? "—"}</td>
-                      <td className="p-1">{l.diferencia ?? "—"}</td>
+                      <td className="hidden p-1 sm:table-cell">{l.stockActual ?? "—"}</td>
+                      <td className="hidden p-1 md:table-cell">{l.stockProyectado ?? "—"}</td>
+                      <td className="hidden p-1 md:table-cell">{l.diferencia ?? "—"}</td>
                       <td className="p-1">{l.estado}</td>
-                      <td className="p-1">
+                      <td className="hidden p-1 lg:table-cell">
                         <input
-                          className="w-16 rounded border px-1"
+                          className="w-full min-w-0 max-w-[4rem] rounded border px-1"
                           value={l.lote}
                           disabled={!writesEnabled}
                           onChange={(e) => updateLine(l.id, { lote: e.target.value })}
                         />
                       </td>
-                      <td className="p-1">
+                      <td className="hidden p-1 lg:table-cell">
                         <input
                           type="checkbox"
                           checked={l.preparado}
@@ -456,9 +458,9 @@ export function MpWeeklyControlPanel() {
                           }
                         />
                       </td>
-                      <td className="p-1">
+                      <td className="hidden p-1 xl:table-cell">
                         <input
-                          className="w-24 rounded border px-1"
+                          className="w-full min-w-0 rounded border px-1"
                           value={l.observacion}
                           disabled={!writesEnabled}
                           onChange={(e) =>

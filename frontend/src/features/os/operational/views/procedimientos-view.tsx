@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/dialog";
+import { LifecycleConfirmDialog } from "@/features/os/operational/components/lifecycle-confirm-dialog";
+import { syntheticLifecycleItem } from "@/features/os/operational/components/lifecycle-synthetic";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
@@ -641,16 +642,22 @@ export function ProcedimientosView() {
           </div>
         )}
 
-        <ConfirmDialog
-          open={Boolean(confirmDelete)}
-          onOpenChange={(open) => {
-            if (!open) setConfirmDelete(null);
+        <LifecycleConfirmDialog
+          pending={
+            confirmDelete
+              ? syntheticLifecycleItem(
+                  "eliminar_definitivo",
+                  "Eliminar definitivo",
+                  `¿Eliminar "${confirmDelete.name}"? Primero preferí Archivar. Esta acción borra Blob y no se puede deshacer.`
+                )
+              : null
+          }
+          forceReason
+          entityLabel={confirmDelete?.name}
+          onClose={() => setConfirmDelete(null)}
+          onConfirm={async () => {
+            await handleDelete();
           }}
-          title="Eliminar definitivo"
-          description={`¿Eliminar "${confirmDelete?.name}"? Primero preferí Archivar. Esta acción borra Blob y no se puede deshacer.`}
-          confirmLabel="Eliminar definitivo"
-          onConfirm={() => void handleDelete()}
-          onCancel={() => setConfirmDelete(null)}
         />
       </div>
     </TwinShell>

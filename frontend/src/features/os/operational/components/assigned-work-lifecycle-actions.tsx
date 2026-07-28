@@ -9,7 +9,7 @@ import {
   executeAssignedWorkLifecycleAction,
 } from "../lib/assigned-work-lifecycle";
 import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
-import { LifecycleActionsMenu } from "./lifecycle-actions-menu";
+import { LifecycleRowActions } from "./lifecycle-row-actions";
 
 interface AssignedWorkLifecycleActionsProps {
   item: WorkItem;
@@ -20,10 +20,12 @@ interface AssignedWorkLifecycleActionsProps {
   onChanged?: () => void;
   onToast?: (message: string, tone?: "ok" | "info") => void;
   disabled?: boolean;
+  onOpen?: () => void;
+  primaryLabel?: string;
 }
 
 /**
- * Menú Acciones unificado para trabajos asignados (eliminar / cancelar / archivar / restaurar).
+ * Acciones de fila para trabajos: [Abrir?] [Borrar] + menú extra.
  */
 export function AssignedWorkLifecycleActions({
   item,
@@ -34,6 +36,8 @@ export function AssignedWorkLifecycleActions({
   onChanged,
   onToast,
   disabled,
+  onOpen,
+  primaryLabel = "Abrir",
 }: AssignedWorkLifecycleActionsProps) {
   const canMutate = canMutateAssignedWork(actorSectorId);
 
@@ -46,7 +50,22 @@ export function AssignedWorkLifecycleActions({
     [item.status, finishedQty, inactiveKind]
   );
 
-  if (!canMutate || items.length === 0) return null;
+  if (!canMutate || items.length === 0) {
+    if (onOpen) {
+      return (
+        <LifecycleRowActions
+          items={[]}
+          onAction={async () => undefined}
+          onPrimary={onOpen}
+          primaryLabel={primaryLabel}
+          disabled={disabled}
+          entityLabel={item.product || item.id}
+          entityStatus={item.status}
+        />
+      );
+    }
+    return null;
+  }
 
   const handleAction = async (action: LifecycleAction, reason: string) => {
     const result = await executeAssignedWorkLifecycleAction({
@@ -76,11 +95,14 @@ export function AssignedWorkLifecycleActions({
   };
 
   return (
-    <LifecycleActionsMenu
+    <LifecycleRowActions
       items={items}
       onAction={handleAction}
+      onPrimary={onOpen}
+      primaryLabel={primaryLabel}
       disabled={disabled}
-      align="right"
+      entityLabel={`${item.product || "Trabajo"} · ${item.client || item.id}`}
+      entityStatus={item.status}
     />
   );
 }

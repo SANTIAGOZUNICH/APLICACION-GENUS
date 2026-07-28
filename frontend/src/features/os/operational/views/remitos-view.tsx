@@ -17,6 +17,7 @@ import {
   triggerRemitoDownload,
   updateRemitoDraftApi,
 } from "@/lib/remitos/remitos-client";
+import { RemitoLifecycleRowActions } from "../components/remito-lifecycle-row-actions";
 import { formatLoteVtoCell, lineTotalCajas, lineTotalUnitsFromCajas } from "@/lib/remitos/line-qty";
 import {
   groupRemitosByClient,
@@ -392,7 +393,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
               value={clientSearch}
               onChange={(e) => setClientSearch(e.target.value)}
               placeholder="Buscar cliente…"
-              className="ml-auto min-w-[180px] rounded border border-[var(--os-border)] px-2 py-1.5 text-sm"
+              className="ml-auto min-w-0 w-full basis-full rounded border border-[var(--os-border)] px-2 py-1.5 text-sm sm:w-auto sm:min-w-[10rem] sm:basis-auto"
               data-testid="remitos-client-search"
             />
           ) : (
@@ -400,7 +401,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Nombre, n°, producto, lote, vto, fecha…"
-              className="ml-auto min-w-[220px] rounded border border-[var(--os-border)] px-2 py-1.5 text-sm"
+              className="ml-auto min-w-0 w-full basis-full rounded border border-[var(--os-border)] px-2 py-1.5 text-sm sm:w-auto sm:min-w-[12rem] sm:basis-auto"
               data-testid="remitos-search"
             />
           )}
@@ -412,15 +413,15 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
           </p>
         ) : null}
 
-        <div className="grid gap-3 lg:grid-cols-2">
-          <div className="overflow-x-auto rounded border border-[var(--os-border)] bg-[var(--os-surface)]">
+        <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+          <div className="os-table-wrap min-w-0 overflow-x-clip rounded border border-[var(--os-border)] bg-[var(--os-surface)]">
             {!clientFolderKey ? (
-              <table className="w-full text-left text-sm" data-testid="remitos-client-folders">
+              <table className="os-table w-full max-w-full table-fixed text-left text-[length:var(--os-table-font,13px)]" data-testid="remitos-client-folders">
                 <thead className="border-b border-[var(--os-border)] text-xs text-[var(--os-text-muted)]">
                   <tr>
                     <th className="px-3 py-2">Cliente</th>
-                    <th className="px-3 py-2">Remitos</th>
-                    <th className="px-3 py-2">Última actualización</th>
+                    <th className="hidden px-3 py-2 sm:table-cell">Remitos</th>
+                    <th className="hidden px-3 py-2 md:table-cell">Última actualización</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -441,9 +442,11 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                         }}
                         data-testid={`remitos-folder-${f.key}`}
                       >
-                        <td className="px-3 py-2 font-medium">{f.displayName}</td>
-                        <td className="px-3 py-2">{f.remitoCount}</td>
-                        <td className="px-3 py-2 text-xs text-[var(--os-text-muted)]">
+                        <td className="px-3 py-2 font-medium">
+                          <span className="os-break">{f.displayName}</span>
+                        </td>
+                        <td className="hidden px-3 py-2 sm:table-cell">{f.remitoCount}</td>
+                        <td className="hidden px-3 py-2 text-xs text-[var(--os-text-muted)] md:table-cell">
                           {f.lastUpdatedAt
                             ? new Date(f.lastUpdatedAt).toLocaleString("es-AR")
                             : "—"}
@@ -454,23 +457,24 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                 </tbody>
               </table>
             ) : (
-            <table className="w-full text-left text-sm" data-testid="remitos-table">
+            <table className="os-table w-full max-w-full table-fixed text-left text-[length:var(--os-table-font,13px)]" data-testid="remitos-table">
               <thead className="border-b border-[var(--os-border)] text-xs text-[var(--os-text-muted)]">
                 <tr>
                   <th className="px-3 py-2">Nombre</th>
-                  <th className="px-3 py-2">N° int.</th>
-                  <th className="px-3 py-2">Cliente</th>
+                  <th className="hidden px-3 py-2 sm:table-cell">N° int.</th>
+                  <th className="hidden px-3 py-2 md:table-cell">Cliente</th>
                   <th className="px-3 py-2">Prod.</th>
-                  <th className="px-3 py-2">Totales</th>
-                  <th className="px-3 py-2">Ver.</th>
-                  <th className="px-3 py-2">Estado</th>
-                  <th className="px-3 py-2">Actor</th>
+                  <th className="hidden px-3 py-2 sm:table-cell">Totales</th>
+                  <th className="hidden px-3 py-2 md:table-cell">Ver.</th>
+                  <th className="hidden px-3 py-2 lg:table-cell">Estado</th>
+                  <th className="hidden px-3 py-2 lg:table-cell">Actor</th>
+                  <th className="w-[7.5rem] px-3 py-2">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {folderRemitos.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-3 py-6 text-[var(--os-text-muted)]">
+                    <td colSpan={9} className="px-3 py-6 text-[var(--os-text-muted)]">
                       Sin remitos.
                     </td>
                   </tr>
@@ -478,25 +482,69 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                   folderRemitos.map((r) => (
                     <tr
                       key={r.id}
-                      className="cursor-pointer border-b border-[var(--os-border)] hover:bg-[var(--os-bg-muted)]"
-                      onClick={() => setSelected(r)}
+                      className="border-b border-[var(--os-border)] hover:bg-[var(--os-bg-muted)]"
                       data-testid={`remito-row-${r.id}`}
                     >
-                      <td className="px-3 py-2 font-medium">
-                        {r.displayName || "—"}
+                      <td
+                        className="cursor-pointer px-3 py-2 font-medium"
+                        onClick={() => setSelected(r)}
+                      >
+                        <span className="os-break">{r.displayName || "—"}</span>
                       </td>
-                      <td className="px-3 py-2 font-mono text-xs">
+                      <td
+                        className="hidden cursor-pointer px-3 py-2 font-mono text-xs sm:table-cell"
+                        onClick={() => setSelected(r)}
+                      >
                         {r.remitoNumber || "—"}
                       </td>
-                      <td className="px-3 py-2">{r.clientDisplay}</td>
-                      <td className="px-3 py-2">{r.lines.length}</td>
-                      <td className="px-3 py-2 text-xs">
+                      <td
+                        className="hidden cursor-pointer px-3 py-2 md:table-cell"
+                        onClick={() => setSelected(r)}
+                      >
+                        <span className="os-break">{r.clientDisplay}</span>
+                      </td>
+                      <td className="cursor-pointer px-3 py-2" onClick={() => setSelected(r)}>
+                        {r.lines.length}
+                      </td>
+                      <td
+                        className="hidden cursor-pointer px-3 py-2 text-xs sm:table-cell"
+                        onClick={() => setSelected(r)}
+                      >
                         {r.totalUnits}u · {r.totalCajas}c
                       </td>
-                      <td className="px-3 py-2">v{r.version}</td>
-                      <td className="px-3 py-2 text-xs uppercase">{r.status}</td>
-                      <td className="px-3 py-2 text-xs">
-                        {r.generatedBy || r.updatedBy || r.createdBy || "—"}
+                      <td
+                        className="hidden cursor-pointer px-3 py-2 md:table-cell"
+                        onClick={() => setSelected(r)}
+                      >
+                        v{r.version}
+                      </td>
+                      <td
+                        className="hidden cursor-pointer px-3 py-2 text-xs uppercase lg:table-cell"
+                        onClick={() => setSelected(r)}
+                      >
+                        {r.status}
+                      </td>
+                      <td
+                        className="hidden cursor-pointer px-3 py-2 text-xs lg:table-cell"
+                        onClick={() => setSelected(r)}
+                      >
+                        <span className="os-break">{r.generatedBy || r.updatedBy || r.createdBy || "—"}</span>
+                      </td>
+                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                        <RemitoLifecycleRowActions
+                          remito={r}
+                          session={session}
+                          disabled={busy || schemaPending}
+                          canDeleteDraft={
+                            r.status === "BORRADOR" && (!r.versions || r.versions.length === 0)
+                          }
+                          onOpen={() => setSelected(r)}
+                          onChanged={() => {
+                            if (selected?.id === r.id) setSelected(null);
+                            void reload();
+                          }}
+                          onError={(message) => setError(message)}
+                        />
                       </td>
                     </tr>
                   ))

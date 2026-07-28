@@ -184,11 +184,16 @@ export function OsSidebar({
       </div>
 
       <div className="shrink-0 border-t border-white/[0.08] px-4 py-4">
-        <div className="flex items-center gap-3">
-          <div className="flex size-8 items-center justify-center rounded-full bg-[var(--os-teal)] text-[10px] font-bold text-[var(--os-navy)]">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--os-teal)] text-[10px] font-bold text-[var(--os-navy)]">
             {sectorEmail.slice(0, 2).toUpperCase()}
           </div>
-          <p className="truncate text-xs text-[var(--os-sidebar-muted)]">{sectorEmail}</p>
+          <p
+            className="min-w-0 flex-1 truncate text-xs text-[var(--os-sidebar-muted)]"
+            title={sectorEmail}
+          >
+            {sectorEmail}
+          </p>
         </div>
       </div>
     </aside>

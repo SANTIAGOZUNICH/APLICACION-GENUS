@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/dialog";
+import { LifecycleConfirmDialog } from "@/features/os/operational/components/lifecycle-confirm-dialog";
+import { syntheticLifecycleItem } from "@/features/os/operational/components/lifecycle-synthetic";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { fetchMetricasApi, metricasActionApi } from "@/lib/metricas/metricas-client";
@@ -45,6 +46,7 @@ export function MetricasView() {
 
   const [editId, setEditId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteLabel, setConfirmDeleteLabel] = useState("");
   const [showArchived, setShowArchived] = useState(false);
 
   const reload = useCallback(async () => {
@@ -293,17 +295,17 @@ export function MetricasView() {
           />
         </div>
 
-        <div className="overflow-x-auto rounded border">
-          <table className="w-full text-sm" data-testid="metricas-table">
+        <div className="os-table-wrap overflow-x-clip rounded border">
+          <table className="os-table w-full max-w-full table-fixed text-[length:var(--os-table-font,13px)]" data-testid="metricas-table">
             <thead className="bg-muted/50">
               <tr>
                 <th className="px-3 py-2 text-left">Fecha</th>
                 {isProdAdmin ? (
-                  <th className="px-3 py-2 text-left">Sector</th>
+                  <th className="hidden px-3 py-2 text-left md:table-cell">Sector</th>
                 ) : null}
                 <th className="px-3 py-2 text-left">Producto</th>
                 <th className="px-3 py-2 text-right">Unidades</th>
-                <th className="px-3 py-2 text-left">Responsable</th>
+                <th className="hidden px-3 py-2 text-left md:table-cell">Responsable</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -312,13 +314,17 @@ export function MetricasView() {
                 <tr key={m.id} className="border-t">
                   <td className="px-3 py-2">{m.metricDate}</td>
                   {isProdAdmin ? (
-                    <td className="px-3 py-2 text-xs">
+                    <td className="hidden px-3 py-2 text-xs md:table-cell">
                       {SECTOR_LABELS[m.sector] ?? m.sector}
                     </td>
                   ) : null}
-                  <td className="px-3 py-2">{m.product ?? "—"}</td>
+                  <td className="px-3 py-2">
+                    <span className="os-break">{m.product ?? "—"}</span>
+                  </td>
                   <td className="px-3 py-2 text-right">{m.units.toLocaleString()}</td>
-                  <td className="px-3 py-2">{m.responsibleDisplay}</td>
+                  <td className="hidden px-3 py-2 md:table-cell">
+                    <span className="os-break">{m.responsibleDisplay}</span>
+                  </td>
                   <td className="px-3 py-2 text-right">
                     {showArchived ? (
                       <Button
@@ -338,9 +344,12 @@ export function MetricasView() {
                           size="sm"
                           variant="tertiary"
                           disabled={busy || schemaPending}
-                          onClick={() => setConfirmDeleteId(m.id)}
+                          onClick={() => {
+                            setConfirmDeleteId(m.id);
+                            setConfirmDeleteLabel(m.product ?? m.responsibleDisplay ?? m.id);
+                          }}
                         >
-                          Archivar
+                          Borrar
                         </Button>
                       </>
                     )}
@@ -408,16 +417,25 @@ export function MetricasView() {
           </ul>
         </section>
 
-        <ConfirmDialog
-          open={Boolean(confirmDeleteId)}
-          onOpenChange={(open) => {
-            if (!open) setConfirmDeleteId(null);
+        <LifecycleConfirmDialog
+          pending={
+            confirmDeleteId
+              ? syntheticLifecycleItem(
+                  "archivar",
+                  "Archivar métrica",
+                  "¿Archivar este registro? Podés restaurarlo desde la pestaña Archivados."
+                )
+              : null
+          }
+          forceReason
+          entityLabel={confirmDeleteLabel}
+          onClose={() => {
+            setConfirmDeleteId(null);
+            setConfirmDeleteLabel("");
           }}
-          title="Archivar métrica"
-          description="¿Archivar este registro? Podés restaurarlo desde la pestaña Archivados."
-          confirmLabel="Archivar"
-          onConfirm={() => void handleDelete()}
-          onCancel={() => setConfirmDeleteId(null)}
+          onConfirm={async () => {
+            await handleDelete();
+          }}
         />
       </div>
     </TwinShell>

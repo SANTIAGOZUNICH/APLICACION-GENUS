@@ -21,7 +21,12 @@ import type { LifecycleAction } from "@/lib/lifecycle";
 import { SECTOR_LABELS, type SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
-import { OperationalTabs, StatusChip, type OperationalTableColumn } from "../components/operational-ui";
+import {
+  OperationalTable,
+  OperationalTabs,
+  StatusChip,
+  type OperationalTableColumn,
+} from "../components/operational-ui";
 import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-adapter";
 import { getAllAsignacionLotes } from "../adapters/asignacion-lotes-repository";
 import { listAllManualWorkItems } from "../adapters/manual-work-items-repository";
@@ -483,46 +488,85 @@ export function EntregadosView() {
 
   const deliveryColumns: OperationalTableColumn<DeliveryRecord>[] = [
     { key: "actual", header: "Entregado", render: (record) => formatDateTime(record.actualDeliveredAt) },
-    { key: "planned", header: "Plan", render: (record) => formatDate(record.plannedDeliveryDate) },
+    {
+      key: "planned",
+      header: "Plan",
+      hideOnMobile: true,
+      render: (record) => formatDate(record.plannedDeliveryDate),
+    },
     { key: "product", header: "Producto", render: (record) => record.product },
-    { key: "client", header: "Cliente", render: (record) => displayField(record.client) },
-    { key: "codigo", header: "Código", render: (record) => <span className="font-mono text-xs">{displayField(record.codigo)}</span> },
-    { key: "lote", header: "Lote", render: (record) => <span className="font-mono text-xs">{displayField(record.lote)}</span> },
-    { key: "sector", header: "Origen", render: (record) => SECTOR_LABELS[record.sourceSector] },
+    {
+      key: "client",
+      header: "Cliente",
+      hideOnMobile: true,
+      render: (record) => displayField(record.client),
+    },
+    {
+      key: "codigo",
+      header: "Código",
+      hideOnMobile: true,
+      render: (record) => <span className="font-mono text-xs">{displayField(record.codigo)}</span>,
+    },
+    {
+      key: "lote",
+      header: "Lote",
+      hideOnMobile: true,
+      render: (record) => <span className="font-mono text-xs">{displayField(record.lote)}</span>,
+    },
+    {
+      key: "sector",
+      header: "Origen",
+      hideOnMobile: true,
+      render: (record) => SECTOR_LABELS[record.sourceSector],
+    },
     { key: "status", header: "Estado", render: (record) => <StatusChip status={isLateDelivery(record) ? "fuera_fecha" : "en_fecha"} /> },
     {
       key: "actions",
       header: "Acción",
-      render: (record) =>
-        canMutate ? (
-          <div className="flex flex-wrap items-center gap-1">
-            <Button variant="secondary" size="sm" onClick={() => setDetail(record)}>
-              Ver detalle
-            </Button>
-            <DeliveryLifecycleActions
-              record={record}
-              canMutate={canMutate}
-              onAction={(action, reason) => handleDeliveryLifecycle(record, action, reason)}
-            />
-            <Button variant="destructive" size="sm" onClick={() => openDeleteGuide(record)}>
-              Borrar
-            </Button>
-          </div>
-        ) : (
-          <Button variant="secondary" size="sm" onClick={() => setDetail(record)}>
-            Ver detalle
-          </Button>
-        ),
+      render: (record) => (
+        <DeliveryLifecycleActions
+          record={record}
+          canMutate={canMutate}
+          onOpen={() => setDetail(record)}
+          primaryLabel="Ver detalle"
+          onAction={(action, reason) => handleDeliveryLifecycle(record, action, reason)}
+        />
+      ),
     },
   ];
 
   const pendingColumns: OperationalTableColumn<QualityItem>[] = [
-    { key: "origin", header: "Origen", render: (item) => item.receivedFrom ? SECTOR_LABELS[item.receivedFrom] : "Planilla" },
+    {
+      key: "origin",
+      header: "Origen",
+      hideOnMobile: true,
+      render: (item) => (item.receivedFrom ? SECTOR_LABELS[item.receivedFrom] : "Planilla"),
+    },
     { key: "product", header: "Producto", render: (item) => item.product },
-    { key: "client", header: "Cliente", render: (item) => item.client },
-    { key: "lote", header: "Lote", render: (item) => <span className="font-mono text-xs">{displayField(item.lote)}</span> },
-    { key: "quantity", header: "Cantidad", render: (item) => displayField(item.quantity) },
-    { key: "ref", header: "OE / OA", render: (item) => <span className="font-mono text-xs">{displayField(getQualityRef(item))}</span> },
+    {
+      key: "client",
+      header: "Cliente",
+      hideOnMobile: true,
+      render: (item) => item.client,
+    },
+    {
+      key: "lote",
+      header: "Lote",
+      hideOnMobile: true,
+      render: (item) => <span className="font-mono text-xs">{displayField(item.lote)}</span>,
+    },
+    {
+      key: "quantity",
+      header: "Cantidad",
+      hideOnMobile: true,
+      render: (item) => displayField(item.quantity),
+    },
+    {
+      key: "ref",
+      header: "OE / OA",
+      hideOnMobile: true,
+      render: (item) => <span className="font-mono text-xs">{displayField(getQualityRef(item))}</span>,
+    },
     { key: "status", header: "Estado", render: () => <StatusChip status="aprobado" /> },
     {
       key: "actions",
@@ -539,32 +583,46 @@ export function EntregadosView() {
 
   const archivedColumns: OperationalTableColumn<DeliveryRecord>[] = [
     { key: "archived", header: "Archivado", render: (record) => formatDateTime(record.archivedAt) },
-    { key: "actual", header: "Entregado", render: (record) => formatDateTime(record.actualDeliveredAt) },
+    {
+      key: "actual",
+      header: "Entregado",
+      hideOnMobile: true,
+      render: (record) => formatDateTime(record.actualDeliveredAt),
+    },
     { key: "product", header: "Producto", render: (record) => record.product },
-    { key: "client", header: "Cliente", render: (record) => displayField(record.client) },
-    { key: "lote", header: "Lote", render: (record) => <span className="font-mono text-xs">{displayField(record.lote)}</span> },
+    {
+      key: "client",
+      header: "Cliente",
+      hideOnMobile: true,
+      render: (record) => displayField(record.client),
+    },
+    {
+      key: "lote",
+      header: "Lote",
+      hideOnMobile: true,
+      render: (record) => <span className="font-mono text-xs">{displayField(record.lote)}</span>,
+    },
     {
       key: "actions",
       header: "Acción",
-      render: (record) =>
-        canMutate ? (
-          <DeliveryLifecycleActions
-            record={record}
-            canMutate={canMutate}
-            includeHardDelete
-            hardDeleteDecision={
-              deliveryLifecycleActions({
-                id: record.id,
-                status: record.status,
-                archived: record.archived,
-              }).eliminarDefinitivo
-            }
-            onAction={(action, reason) => handleDeliveryLifecycle(record, action, reason)}
-            onHardDelete={(reason) => executeHardDelete(record, reason)}
-          />
-        ) : (
-          <span className="text-xs text-[var(--os-text-muted)]">Solo Producción</span>
-        ),
+      render: (record) => (
+        <DeliveryLifecycleActions
+          record={record}
+          canMutate={canMutate}
+          onOpen={() => setDetail(record)}
+          primaryLabel="Ver detalle"
+          includeHardDelete
+          hardDeleteDecision={
+            deliveryLifecycleActions({
+              id: record.id,
+              status: record.status,
+              archived: record.archived,
+            }).eliminarDefinitivo
+          }
+          onAction={(action, reason) => handleDeliveryLifecycle(record, action, reason)}
+          onHardDelete={(reason) => executeHardDelete(record, reason)}
+        />
+      ),
     },
   ];
 
@@ -651,7 +709,7 @@ export function EntregadosView() {
                 <option value="client_asc">Cliente A-Z</option>
               </select>
             </div>
-            <OperationalTableLike columns={deliveryColumns} rows={pagedDeliveries} rowKey={(record) => record.id} emptyMessage="Sin entregas para los filtros seleccionados." />
+            <OperationalTable columns={deliveryColumns} rows={pagedDeliveries} rowKey={(record) => record.id} emptyMessage="Sin entregas para los filtros seleccionados." />
             <div className="flex items-center justify-between text-sm text-[var(--os-text-muted)]">
               <span>{filteredDeliveries.length} resultado(s)</span>
               <div className="flex items-center gap-2">
@@ -664,11 +722,11 @@ export function EntregadosView() {
         )}
 
         {tab === "archivados" && (
-          <OperationalTableLike columns={archivedColumns} rows={archivedDeliveries} rowKey={(record) => record.id} emptyMessage="No hay entregas archivadas." />
+          <OperationalTable columns={archivedColumns} rows={archivedDeliveries} rowKey={(record) => record.id} emptyMessage="No hay entregas archivadas." />
         )}
 
         {tab === "pendientes" && (
-          <OperationalTableLike columns={pendingColumns} rows={pendingApproved} rowKey={(item) => item.id} emptyMessage={calidad.loading ? "Cargando aprobados de Calidad..." : "No hay trabajos aprobados pendientes de entrega."} />
+          <OperationalTable columns={pendingColumns} rows={pendingApproved} rowKey={(item) => item.id} emptyMessage={calidad.loading ? "Cargando aprobados de Calidad..." : "No hay trabajos aprobados pendientes de entrega."} />
         )}
       </div>
 
@@ -891,51 +949,5 @@ export function EntregadosView() {
         refNumber={filesRef}
       />
     </TwinShell>
-  );
-}
-
-function OperationalTableLike<T>({
-  columns,
-  rows,
-  rowKey,
-  emptyMessage,
-}: {
-  columns: OperationalTableColumn<T>[];
-  rows: T[];
-  rowKey: (row: T) => string;
-  emptyMessage: string;
-}) {
-  if (rows.length === 0) {
-    return (
-      <p className="rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-border)] px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
-        {emptyMessage}
-      </p>
-    );
-  }
-  return (
-    <div className="overflow-x-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
-      <table className="w-full min-w-[900px] border-collapse text-sm">
-        <thead>
-          <tr className="border-b border-[var(--os-border)] bg-[var(--os-bg)]">
-            {columns.map((column) => (
-              <th key={column.key} className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-                {column.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={rowKey(row)} className="border-b border-[var(--os-border-subtle)] last:border-b-0 hover:bg-[var(--os-bg)]/60">
-              {columns.map((column) => (
-                <td key={column.key} className="px-3 py-2.5 align-top">
-                  {column.render(row)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
   );
 }

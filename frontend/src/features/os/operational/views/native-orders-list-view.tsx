@@ -34,6 +34,7 @@ import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider
 import { CreateOrderDialog } from "../components/create-order-dialog";
 import { MasterTemplatesPanel } from "../components/master-templates-panel";
 import { OperationalOrderEditor } from "../components/operational-order-editor";
+import { OrderLifecycleRowActions } from "../components/order-lifecycle-row-actions";
 import { TemplateScratchEditor } from "../components/template-scratch-editor";
 import { Button } from "@/components/ui/button";
 
@@ -174,11 +175,12 @@ export function NativeOrdersListView({
     },
     { key: "product", header: "Producto", render: (r) => displayProduct(r.product) },
     { key: "client", header: "Cliente", render: (r) => displayClient(r.client) },
-    { key: "code", header: "Código", render: (r) => r.code || "—" },
-    { key: "lot", header: "Lote", render: (r) => r.lot || "—" },
+    { key: "code", header: "Código", hideOnMobile: true, render: (r) => r.code || "—" },
+    { key: "lot", header: "Lote", hideOnMobile: true, render: (r) => r.lot || "—" },
     {
       key: "assignedSector",
       header: "Sector",
+      hideOnMobile: true,
       render: (r) => <span className="text-xs">{displaySector(r.assignedSector)}</span>,
     },
     {
@@ -188,27 +190,32 @@ export function NativeOrdersListView({
     },
     {
       key: "updatedAt",
-      header: "Última modificación",
+      header: "Modificación",
+      headerTitle: "Última modificación",
       render: (r) => (
         <span className="text-xs">{new Date(r.updatedAt).toLocaleString("es-AR")}</span>
       ),
     },
     {
       key: "createdBy",
-      header: "Creado por",
+      header: "Creador",
+      headerTitle: "Creado por",
+      hideOnMobile: true,
       render: (r) => <span className="text-xs">{r.createdBy}</span>,
     },
     {
       key: "actions",
       header: "Acciones",
+      className: "w-[7.5rem]",
       render: (r) => (
-        <button
-          type="button"
-          className="text-xs font-medium text-[var(--os-teal)] hover:underline"
-          onClick={() => setSelectedId(r.id)}
-        >
-          Abrir
-        </button>
+        <OrderLifecycleRowActions
+          order={r}
+          session={session}
+          sectorId={sectorId}
+          onOpen={() => setSelectedId(r.id)}
+          onChanged={() => setRefreshTick((v) => v + 1)}
+          onError={(message) => setError(message)}
+        />
       ),
     },
   ];

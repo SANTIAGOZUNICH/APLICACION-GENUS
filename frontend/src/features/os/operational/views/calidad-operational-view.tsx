@@ -49,6 +49,8 @@ import type { QualityItem } from "../types";
 import { canAccessRemitos } from "@/lib/remitos/types";
 import { isPackagingQualityItem } from "@/lib/remitos/from-quality";
 import { FormulasAdminPanel } from "../components/formulas-admin-panel";
+import { LifecycleRowActions } from "../components/lifecycle-row-actions";
+import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
 
 const TOP_TABS = [
   { id: "pendientes", label: "Pendientes" },
@@ -408,22 +410,52 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
       ...(canDecide && (topTab === "aprobados" || topTab === "rechazados")
         ? [
             {
-              key: "annul",
+              key: "actions",
               header: "Acciones",
+              className: "w-[7.5rem]",
               render: (row: QualityItem) => (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => openAnnul(row)}
-                >
-                  Anular decisión
-                </Button>
+                <LifecycleRowActions
+                  items={[
+                    syntheticLifecycleItem(
+                      "anular",
+                      "Anular decisión",
+                      "El trabajo volverá a Pendientes. Indicá el motivo de la anulación."
+                    ),
+                  ]}
+                  onPrimary={() => openReview(row)}
+                  primaryLabel="Ver"
+                  entityLabel={displayField(row.product)}
+                  entityStatus={row.status}
+                  onAction={async (_action, reason) => {
+                    if (!canDecideQuality(sectorId)) {
+                      throw new Error(QUALITY_DECISION_DENIED_MESSAGE);
+                    }
+                    const result = annulQualityItem(row.id, {
+                      reason,
+                      actorSectorId: sectorId,
+                      actorName: workspace.context.displayName,
+                      actorEmail: email ?? undefined,
+                    });
+                    if (!result.ok) throw new Error(result.error);
+                    showToast("Decisión anulada — el trabajo vuelve a Pendientes.");
+                  }}
+                />
               ),
             } satisfies OperationalTableColumn<QualityItem>,
           ]
         : []),
     ],
-    [getQualityObservation, remitoActions, topTab, canDecide, openAnnul]
+    [
+      getQualityObservation,
+      remitoActions,
+      topTab,
+      canDecide,
+      openReview,
+      sectorId,
+      workspace.context.displayName,
+      email,
+      showToast,
+    ]
   );
 
   const topTabsWithCount = TOP_TABS.map((tab) => ({

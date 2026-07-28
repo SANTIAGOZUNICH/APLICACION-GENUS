@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardPaste, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/dialog";
 import { TwinShell } from "@/features/os/shell/twin-shell";
+import { LifecycleConfirmDialog } from "@/features/os/operational/components/lifecycle-confirm-dialog";
+import { syntheticLifecycleItem } from "@/features/os/operational/components/lifecycle-synthetic";
 import {
   fetchInventory,
   mutateInventory,
@@ -68,8 +69,7 @@ export function MeIngresosView() {
   const [banner, setBanner] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<FormState | null>(null);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [deleteReason, setDeleteReason] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [page, setPage] = useState(0);
   const pageSize = 20;
@@ -249,7 +249,17 @@ export function MeIngresosView() {
                       >
                         <Plus className="size-4" />
                       </button>
-                      <button type="button" aria-label="Anular" title="Anular" onClick={() => setDeleteId(row.id)}>
+                      <button
+                        type="button"
+                        aria-label="Borrar"
+                        title="Borrar"
+                        onClick={() =>
+                          setPendingDelete({
+                            id: row.id,
+                            label: row.descripcionInsumo || row.codigo || row.id,
+                          })
+                        }
+                      >
                         <Trash2 className="size-4 text-red-700" />
                       </button>
                     </div>
@@ -334,42 +344,30 @@ export function MeIngresosView() {
         </div>
       )}
 
-      <ConfirmDialog
-        open={Boolean(deleteId)}
-        onOpenChange={(o) => !o && setDeleteId(null)}
-        title="Anular ingreso ME"
-        description="Se revertirá el impacto en stock y se conservará el registro anulado. Indicá el motivo."
-        confirmLabel="Anular"
-        onConfirm={() => {
-          if (!deleteId) return;
-          void mutateInventory({
+      <LifecycleConfirmDialog
+        pending={
+          pendingDelete
+            ? syntheticLifecycleItem(
+                "anular",
+                "Anular ingreso ME",
+                "Se revertirá el impacto en stock y se conservará el registro anulado."
+              )
+            : null
+        }
+        forceReason
+        entityLabel={pendingDelete?.label}
+        onClose={() => setPendingDelete(null)}
+        onConfirm={async (reason) => {
+          if (!pendingDelete) return;
+          await mutateInventory({
             action: "delete",
             resource: "me_ingresos",
-            id: deleteId,
-            reason: deleteReason || "Anulación de ingreso ME",
-          })
-            .then(() => reload())
-            .catch((e) =>
-              setBanner(e instanceof Error ? e.message : "No se pudo anular")
-            )
-            .finally(() => {
-              setDeleteId(null);
-              setDeleteReason("");
-            });
+            id: pendingDelete.id,
+            reason,
+          });
+          await reload();
         }}
       />
-      {deleteId && (
-        <div className="fixed bottom-4 left-1/2 z-[60] w-full max-w-md -translate-x-1/2 rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] p-3 shadow-[var(--os-shadow-card)]">
-          <label className="block text-sm">
-            Motivo
-            <input
-              className="mt-1 w-full rounded border px-2 py-1"
-              value={deleteReason}
-              onChange={(e) => setDeleteReason(e.target.value)}
-            />
-          </label>
-        </div>
-      )}
 
       <ExcelPasteDialog
         open={pasteOpen}

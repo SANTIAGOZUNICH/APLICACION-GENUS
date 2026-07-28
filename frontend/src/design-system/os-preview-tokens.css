@@ -6,7 +6,21 @@
 @import "./genus-tokens.css";
 @import "./genus-os-bridge.css";
 
+html,
+body {
+  max-width: 100vw;
+  overflow-x: clip;
+}
+
+.design-preview-root,
+.design-preview-root * {
+  box-sizing: border-box;
+}
+
 .design-preview-root {
+  --os-table-font: 13px;
+  --os-table-font-secondary: 12px;
+  --os-density-pad-x: 0.5rem;
   --os-sidebar-width: 16rem;
   --os-header-height: 3.75rem;
   --os-status-height: 2rem;
@@ -24,6 +38,8 @@
   position: relative;
   isolation: isolate;
   min-height: 100%;
+  max-width: 100%;
+  overflow-x: clip;
   color: var(--genus-text-primary);
   background-color: var(--genus-surface-bg);
   background-image:
@@ -33,6 +49,28 @@
   background-attachment: fixed;
   scrollbar-width: thin;
   scrollbar-color: var(--os-scroll-thumb) var(--os-scroll-track);
+}
+
+.os-no-x-scroll {
+  overflow-x: clip;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.os-table-wrap {
+  overflow-x: clip;
+  max-width: 100%;
+}
+
+.os-table {
+  width: 100%;
+  max-width: 100%;
+  table-layout: fixed;
+}
+
+.os-break {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* Ambient moving lights (CSS only) */

@@ -4,7 +4,8 @@ import { useMemo } from "react";
 import type { LifecycleAction } from "@/lib/lifecycle";
 import { deliveryLifecycleActions } from "@/lib/lifecycle/adapters/common";
 import type { DeliveryRecord } from "../adapters/delivery-repository";
-import { LifecycleActionsMenu } from "./lifecycle-actions-menu";
+import type { LifecycleMenuItem } from "./lifecycle-actions-menu";
+import { LifecycleRowActions } from "./lifecycle-row-actions";
 
 type Props = {
   record: DeliveryRecord;
@@ -15,10 +16,12 @@ type Props = {
   hardDeleteDecision?: ReturnType<typeof deliveryLifecycleActions>["eliminarDefinitivo"];
   onHardDelete?: (reason: string) => void | Promise<void>;
   disabled?: boolean;
+  onOpen?: () => void;
+  primaryLabel?: string;
 };
 
 /**
- * Menú Acciones unificado para entregas (archivar / restaurar / anular / borrar).
+ * Acciones de fila para entregas: [Abrir?] [Borrar] + menú extra.
  */
 export function DeliveryLifecycleActions({
   record,
@@ -28,6 +31,8 @@ export function DeliveryLifecycleActions({
   hardDeleteDecision,
   onHardDelete,
   disabled,
+  onOpen,
+  primaryLabel = "Ver detalle",
 }: Props) {
   const lifecycle = useMemo(
     () =>
@@ -39,49 +44,66 @@ export function DeliveryLifecycleActions({
     [record.archived, record.id, record.status]
   );
 
-  if (!canMutate) return null;
-
-  const items = [
-    ...(lifecycle.archivar.allowed
-      ? [{ action: "archivar" as const, label: "Archivar", decision: lifecycle.archivar }]
-      : []),
-    ...(lifecycle.restaurar.allowed
-      ? [{ action: "restaurar" as const, label: "Restaurar", decision: lifecycle.restaurar }]
-      : []),
-    ...(lifecycle.anular.allowed
-      ? [
-          {
-            action: "anular" as const,
-            label: "Anular entrega",
-            decision: lifecycle.anular,
-            impact: {
-              summary:
-                "La entrega volverá a pendientes de entrega. El trabajo recuperará estado de revisión/aprobado.",
-              preservesAudit: true,
-              references: [],
-              warnings: [],
+  const items = useMemo(() => {
+    const list: LifecycleMenuItem[] = [
+      ...(lifecycle.archivar.allowed
+        ? [{ action: "archivar" as const, label: "Archivar", decision: lifecycle.archivar }]
+        : []),
+      ...(lifecycle.restaurar.allowed
+        ? [{ action: "restaurar" as const, label: "Restaurar", decision: lifecycle.restaurar }]
+        : []),
+      ...(lifecycle.anular.allowed
+        ? [
+            {
+              action: "anular" as const,
+              label: "Anular entrega",
+              decision: lifecycle.anular,
+              impact: {
+                summary:
+                  "La entrega volverá a pendientes de entrega. El trabajo recuperará estado de revisión/aprobado.",
+                preservesAudit: true,
+                references: [],
+                warnings: [],
+              },
             },
-          },
-        ]
-      : []),
-    ...(includeHardDelete && hardDeleteDecision?.allowed
-      ? [
-          {
-            action: "eliminar_definitivo" as const,
-            label: "Borrar entrega",
-            decision: hardDeleteDecision,
-            impact: hardDeleteDecision.impact,
-          },
-        ]
-      : []),
-  ];
+          ]
+        : []),
+      ...(includeHardDelete && hardDeleteDecision?.allowed
+        ? [
+            {
+              action: "eliminar_definitivo" as const,
+              label: "Borrar entrega",
+              decision: hardDeleteDecision,
+              impact: hardDeleteDecision.impact,
+            },
+          ]
+        : []),
+    ];
+    return list;
+  }, [hardDeleteDecision, includeHardDelete, lifecycle]);
 
-  if (items.length === 0) return null;
+  if (!canMutate) {
+    if (onOpen) {
+      return (
+        <LifecycleRowActions
+          items={[]}
+          onAction={async () => undefined}
+          onPrimary={onOpen}
+          primaryLabel={primaryLabel}
+          disabled={disabled}
+          entityLabel={record.product}
+          entityStatus={record.status}
+        />
+      );
+    }
+    return null;
+  }
+
+  if (items.length === 0 && !onOpen) return null;
 
   return (
-    <LifecycleActionsMenu
+    <LifecycleRowActions
       items={items}
-      disabled={disabled}
       onAction={async (action, reason) => {
         if (action === "eliminar_definitivo" && onHardDelete) {
           await onHardDelete(reason);
@@ -89,6 +111,11 @@ export function DeliveryLifecycleActions({
         }
         await onAction(action, reason);
       }}
+      onPrimary={onOpen}
+      primaryLabel={primaryLabel}
+      disabled={disabled}
+      entityLabel={`${record.product} · ${record.client ?? "Sin cliente"}`}
+      entityStatus={record.status}
     />
   );
 }

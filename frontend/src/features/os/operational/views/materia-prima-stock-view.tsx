@@ -605,16 +605,16 @@ export function MateriaPrimaStockView() {
               </div>
             )}
 
-            <div className="overflow-x-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
-              <table className="w-full min-w-[720px] text-sm">
+            <div className="os-table-wrap overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
+              <table className="os-table w-full max-w-full table-fixed text-[length:var(--os-table-font,13px)]">
                 <thead className="bg-[var(--os-bg)] text-xs uppercase text-[var(--os-text-muted)]">
                   <tr>
                     <th className="px-3 py-2 text-left">Fila</th>
                     <th className="px-3 py-2 text-left">Código</th>
                     <th className="px-3 py-2 text-left">Nombre</th>
-                    <th className="px-3 py-2 text-left">Lote</th>
-                    <th className="px-3 py-2 text-left">Cantidad</th>
-                    <th className="px-3 py-2 text-left">Unidad</th>
+                    <th className="hidden px-3 py-2 text-left md:table-cell">Lote</th>
+                    <th className="hidden px-3 py-2 text-left sm:table-cell">Cantidad</th>
+                    <th className="hidden px-3 py-2 text-left md:table-cell">Unidad</th>
                     <th className="px-3 py-2 text-left">Estado</th>
                   </tr>
                 </thead>
@@ -622,11 +622,17 @@ export function MateriaPrimaStockView() {
                   {importPreview.slice(0, 20).map((row) => (
                     <tr key={row.rowNumber} className="border-t border-[var(--os-border-subtle)]">
                       <td className="px-3 py-2">{row.rowNumber}</td>
-                      <td className="px-3 py-2 font-mono text-xs">{row.mapped.codigo}</td>
-                      <td className="px-3 py-2">{row.mapped.nombre}</td>
-                      <td className="px-3 py-2 font-mono text-xs">{row.mapped.lote}</td>
-                      <td className="px-3 py-2 tabular-nums">{row.mapped.cantidad}</td>
-                      <td className="px-3 py-2">{row.mapped.unidad}</td>
+                      <td className="px-3 py-2 font-mono text-xs">
+                        <span className="os-break">{row.mapped.codigo}</span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className="os-break">{row.mapped.nombre}</span>
+                      </td>
+                      <td className="hidden px-3 py-2 font-mono text-xs md:table-cell">
+                        <span className="os-break">{row.mapped.lote}</span>
+                      </td>
+                      <td className="hidden px-3 py-2 tabular-nums sm:table-cell">{row.mapped.cantidad}</td>
+                      <td className="hidden px-3 py-2 md:table-cell">{row.mapped.unidad}</td>
                       <td className="px-3 py-2">
                         {row.issues.length === 0 ? (
                           <span className="text-[var(--os-teal)]">Lista</span>

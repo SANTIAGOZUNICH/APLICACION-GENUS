@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Bell } from "lucide-react";
-import { ConfirmDialog } from "@/components/ui/dialog";
+import { LifecycleConfirmDialog } from "@/features/os/operational/components/lifecycle-confirm-dialog";
+import { syntheticLifecycleItem } from "@/features/os/operational/components/lifecycle-synthetic";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
   dismissReadOsNotificationsApi,
@@ -39,6 +40,7 @@ export function NotificationBell() {
   const [activeItems, setActiveItems] = useState<BellItem[]>([]);
   const [archivedItems, setArchivedItems] = useState<BellItem[]>([]);
   const [confirmDismissRead, setConfirmDismissRead] = useState(false);
+  const [pendingDismiss, setPendingDismiss] = useState<BellItem | null>(null);
 
   const session = email ? { email, sector: sectorId } : null;
 
@@ -254,10 +256,10 @@ export function NotificationBell() {
                       {tab === "activas" ? (
                         <button
                           type="button"
-                          className="mt-1 text-[11px] text-[var(--os-teal)] hover:underline"
-                          onClick={() => void handleDismiss(n)}
+                          className="mt-1 text-[11px] text-rose-700 hover:underline"
+                          onClick={() => setPendingDismiss(n)}
                         >
-                          Descartar
+                          Borrar
                         </button>
                       ) : n.source === "server" ? (
                         <button
@@ -277,10 +279,10 @@ export function NotificationBell() {
               <div className="border-t border-[var(--os-border-subtle)] px-4 py-2">
                 <button
                   type="button"
-                  className="text-xs text-[var(--os-text-muted)] hover:underline"
+                  className="text-xs text-rose-700 hover:underline"
                   onClick={() => setConfirmDismissRead(true)}
                 >
-                  Descartar leídas
+                  Borrar leídas
                 </button>
               </div>
             )}
@@ -288,14 +290,39 @@ export function NotificationBell() {
         </>
       )}
 
-      <ConfirmDialog
-        open={confirmDismissRead}
-        onOpenChange={setConfirmDismissRead}
-        title="Descartar leídas"
-        description="Se archivarán las notificaciones ya leídas. No elimina órdenes."
-        confirmLabel="Descartar"
-        onConfirm={() => {
-          void handleDismissRead();
+      <LifecycleConfirmDialog
+        pending={
+          pendingDismiss
+            ? syntheticLifecycleItem(
+                "descartar_bandeja",
+                "Descartar notificación",
+                "Descartar no elimina la orden asociada; solo oculta el aviso en tu bandeja."
+              )
+            : null
+        }
+        forceReason
+        entityLabel={pendingDismiss?.title}
+        onClose={() => setPendingDismiss(null)}
+        onConfirm={async () => {
+          if (!pendingDismiss) return;
+          await handleDismiss(pendingDismiss);
+        }}
+      />
+
+      <LifecycleConfirmDialog
+        pending={
+          confirmDismissRead
+            ? syntheticLifecycleItem(
+                "descartar_bandeja",
+                "Descartar leídas",
+                "Se archivarán las notificaciones ya leídas. No elimina órdenes."
+              )
+            : null
+        }
+        forceReason
+        onClose={() => setConfirmDismissRead(false)}
+        onConfirm={async () => {
+          await handleDismissRead();
           setConfirmDismissRead(false);
         }}
       />

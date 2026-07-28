@@ -57,8 +57,11 @@ export function OperationalTabs({ tabs, activeId, onChange }: OperationalTabsPro
 export interface OperationalTableColumn<T> {
   key: string;
   header: string;
+  headerTitle?: string;
   render: (row: T) => ReactNode;
   className?: string;
+  /** Oculta en viewports < md (datos secundarios). */
+  hideOnMobile?: boolean;
 }
 
 interface OperationalTableProps<T> {
@@ -68,7 +71,7 @@ interface OperationalTableProps<T> {
   emptyMessage?: string;
 }
 
-/** Tabla funcional tipo Sheets — filas densas, legibles. */
+/** Tabla funcional — sin scroll horizontal; wrap + densidad responsive. */
 export function OperationalTable<T>({
   columns,
   rows,
@@ -84,16 +87,19 @@ export function OperationalTable<T>({
   }
 
   return (
-    <div className="os-scroll-main overflow-x-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)]">
-      <table className="w-full min-w-[640px] border-collapse text-sm">
+    <div className="os-table-wrap overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)]">
+      <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,13px)]">
         <thead className="sticky top-0 z-[1]">
           <tr className="border-b border-[var(--os-border)] bg-[var(--os-surface-glass)] backdrop-blur-md">
             {columns.map((col) => (
               <th
                 key={col.key}
-                className={`px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)] ${col.className ?? ""}`}
+                title={col.headerTitle ?? col.header}
+                className={`px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--os-text-muted)] sm:px-3 sm:py-2.5 ${
+                  col.hideOnMobile ? "hidden md:table-cell" : ""
+                } ${col.className ?? ""}`}
               >
-                {col.header}
+                <span className="block truncate">{col.header}</span>
               </th>
             ))}
           </tr>
@@ -105,7 +111,12 @@ export function OperationalTable<T>({
               className="border-b border-[var(--os-border-subtle)] last:border-b-0 transition-colors hover:bg-[var(--os-teal-soft)]/40 hover:shadow-[inset_3px_0_0_0_rgb(18_191_183_/_0.45)]"
             >
               {columns.map((col) => (
-                <td key={col.key} className={`px-3 py-2.5 align-top ${col.className ?? ""}`}>
+                <td
+                  key={col.key}
+                  className={`min-w-0 break-words px-2 py-2 align-top sm:px-3 sm:py-2.5 ${
+                    col.hideOnMobile ? "hidden md:table-cell" : ""
+                  } ${col.className ?? ""}`}
+                >
                   {col.render(row)}
                 </td>
               ))}

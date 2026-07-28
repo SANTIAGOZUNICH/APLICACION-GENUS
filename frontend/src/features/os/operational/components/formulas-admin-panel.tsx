@@ -155,7 +155,7 @@ export function FormulasAdminPanel({
         : "La fórmula volverá a estar disponible en selectores de OE.";
 
   async function confirmAction() {
-    if (!pending || !reason.trim()) return;
+    if (!pending || reason.trim().length < 3) return;
     setBusy(true);
     setError(null);
     try {

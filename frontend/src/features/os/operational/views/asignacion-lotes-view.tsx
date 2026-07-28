@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormE
 import { ClipboardPaste, Download, Pencil, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  ConfirmDialog,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -12,6 +11,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
+import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
@@ -623,25 +624,30 @@ export function AsignacionLotesView() {
           </div>
         </div>
 
-        <ConfirmDialog
-          open={deleteTarget !== null}
-          onOpenChange={(open) => !open && setDeleteTarget(null)}
-          title="Archivar asignación"
-          description={`Se archivará el lote ${deleteTarget?.lote ?? ""} (${deleteTarget?.codigo ?? ""}).`}
-          confirmLabel="Archivar"
-          variant="destructive"
-          onConfirm={() => {
+        <LifecycleConfirmDialog
+          pending={
+            deleteTarget
+              ? syntheticLifecycleItem(
+                  "archivar",
+                  "Archivar asignación",
+                  `Se archivará el lote ${deleteTarget.lote} (${deleteTarget.codigo}).`
+                )
+              : null
+          }
+          forceReason
+          entityLabel={`${deleteTarget?.lote ?? ""} · ${deleteTarget?.producto ?? ""}`}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={async (_reason) => {
             if (!deleteTarget) return;
-            void (async () => {
-              try {
-                await patchAsignacionLoteApi(session, deleteTarget.id, "archive");
-                setDeleteTarget(null);
-                await refresh();
-                showFeedback("Asignación archivada.");
-              } catch (err) {
-                showFeedback(err instanceof Error ? err.message : "No se pudo archivar.");
-              }
-            })();
+            try {
+              await patchAsignacionLoteApi(session, deleteTarget.id, "archive");
+              setDeleteTarget(null);
+              await refresh();
+              showFeedback("Asignación archivada.");
+            } catch (err) {
+              showFeedback(err instanceof Error ? err.message : "No se pudo archivar.");
+              throw err;
+            }
           }}
         />
 
@@ -747,16 +753,16 @@ export function AsignacionLotesView() {
                 </div>
               )}
 
-              <div className="overflow-x-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
-                <table className="w-full min-w-[760px] text-sm">
+              <div className="os-table-wrap overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
+                <table className="os-table w-full max-w-full table-fixed text-[length:var(--os-table-font,13px)]">
                   <thead className="bg-[var(--os-bg)] text-xs uppercase text-[var(--os-text-muted)]">
                     <tr>
                       <th className="px-3 py-2 text-left">Fila</th>
                       <th className="px-3 py-2 text-left">Lote</th>
-                      <th className="px-3 py-2 text-left">Fecha</th>
+                      <th className="hidden px-3 py-2 text-left md:table-cell">Fecha</th>
                       <th className="px-3 py-2 text-left">Producto</th>
-                      <th className="px-3 py-2 text-left">Código</th>
-                      <th className="px-3 py-2 text-left">Cantidades</th>
+                      <th className="hidden px-3 py-2 text-left md:table-cell">Código</th>
+                      <th className="hidden px-3 py-2 text-left sm:table-cell">Cantidades</th>
                       <th className="px-3 py-2 text-left">Estado</th>
                     </tr>
                   </thead>
@@ -764,11 +770,17 @@ export function AsignacionLotesView() {
                     {importPreview.slice(0, 20).map((row) => (
                       <tr key={row.rowNumber} className="border-t border-[var(--os-border-subtle)]">
                         <td className="px-3 py-2">{row.rowNumber}</td>
-                        <td className="px-3 py-2 font-mono text-xs">{row.mapped.lote}</td>
-                        <td className="px-3 py-2">{row.mapped.fecha}</td>
-                        <td className="px-3 py-2">{row.mapped.producto}</td>
-                        <td className="px-3 py-2 font-mono text-xs">{row.mapped.codigo}</td>
-                        <td className="px-3 py-2 tabular-nums">{row.mapped.cantidades}</td>
+                        <td className="px-3 py-2 font-mono text-xs">
+                          <span className="os-break">{row.mapped.lote}</span>
+                        </td>
+                        <td className="hidden px-3 py-2 md:table-cell">{row.mapped.fecha}</td>
+                        <td className="px-3 py-2">
+                          <span className="os-break">{row.mapped.producto}</span>
+                        </td>
+                        <td className="hidden px-3 py-2 font-mono text-xs md:table-cell">
+                          <span className="os-break">{row.mapped.codigo}</span>
+                        </td>
+                        <td className="hidden px-3 py-2 tabular-nums sm:table-cell">{row.mapped.cantidades}</td>
                         <td className="px-3 py-2">
                           {row.issues.length === 0 ? (
                             <span className="text-[var(--os-teal)]">Lista</span>

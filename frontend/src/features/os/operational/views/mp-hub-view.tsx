@@ -8,6 +8,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardPaste, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
+import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
+import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import {
   fetchInventory,
@@ -77,7 +79,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   const [ingresoPrefill, setIngresoPrefill] = useState<Record<string, unknown> | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [formDraft, setFormDraft] = useState<Record<string, string>>({});
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; reason: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
   const [page, setPage] = useState(0);
   const pageSize = 25;
   const formulaSession = useMemo(
@@ -444,8 +446,14 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                       </button>
                       <button
                         type="button"
-                        title="Anular"
-                        onClick={() => setDeleteTarget({ id: r.id, reason: "" })}
+                        title="Borrar"
+                        aria-label="Borrar"
+                        onClick={() =>
+                          setDeleteTarget({
+                            id: r.id,
+                            label: r.descripcion || r.codigo || r.id,
+                          })
+                        }
                       >
                         <Trash2 className="size-4 text-red-700" />
                       </button>
@@ -664,7 +672,14 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                         </button>
                         <button
                           type="button"
-                          onClick={() => setDeleteTarget({ id: r.id, reason: "" })}
+                          title="Borrar"
+                          aria-label="Borrar"
+                          onClick={() =>
+                            setDeleteTarget({
+                              id: r.id,
+                              label: r.descripcion || r.codigo || r.id,
+                            })
+                          }
                         >
                           <Trash2 className="size-4 text-red-700" />
                         </button>
@@ -831,26 +846,30 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         }}
       />
 
-      <ConfirmDialog
-        open={Boolean(deleteTarget)}
-        onOpenChange={(o) => !o && setDeleteTarget(null)}
-        title={tab === "Ingresos MP" ? "Anular ingreso MP" : "Eliminar registro"}
-        description={
-          tab === "Ingresos MP"
-            ? "Se anula el ingreso (queda registrado). Si impactó stock, se revierte el ledger."
-            : "Confirmá la eliminación. Si impacta stock, se revertirá con auditoría."
+      <LifecycleConfirmDialog
+        pending={
+          deleteTarget
+            ? syntheticLifecycleItem(
+                tab === "Ingresos MP" ? "anular" : "eliminar",
+                tab === "Ingresos MP" ? "Anular ingreso MP" : "Eliminar registro",
+                tab === "Ingresos MP"
+                  ? "Se anula el ingreso (queda registrado). Si impactó stock, se revierte el ledger."
+                  : "Confirmá la eliminación. Si impacta stock, se revertirá con auditoría."
+              )
+            : null
         }
-        confirmLabel={tab === "Ingresos MP" ? "Anular" : "Eliminar"}
-        onConfirm={() => {
+        forceReason
+        entityLabel={deleteTarget?.label}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={async (reason) => {
           if (!deleteTarget) return;
-          void mutateInventory({
+          await mutateInventory({
             action: tab === "Ingresos MP" ? "anular" : "delete",
             resource: TAB_TO_RESOURCE[tab],
             id: deleteTarget.id,
-            reason: deleteTarget.reason || (tab === "Ingresos MP" ? "Anulación MP" : "Eliminación MP"),
-          })
-            .then(reload)
-            .finally(() => setDeleteTarget(null));
+            reason,
+          });
+          await reload();
         }}
       />
 
