@@ -11,6 +11,7 @@
  * 0011 = enum COMPLETA_CON_PENDIENTES (gap de 0002 ausente del journal). Gate.
  * 0012 = mp_weekly status check + asignacion_lotes durable. Gate.
  * 0013 = notification deleted_by + tombstones + work_items.planned_date_to. Gate.
+ * 0014 = Codificado + depósito graneles. Gate APPLY_MIGRATION_0014=1.
  */
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
@@ -44,6 +45,7 @@ const apply0010 = process.env.APPLY_MIGRATION_0010 === "1";
 const apply0011 = process.env.APPLY_MIGRATION_0011 === "1";
 const apply0012 = process.env.APPLY_MIGRATION_0012 === "1";
 const apply0013 = process.env.APPLY_MIGRATION_0013 === "1";
+const apply0014 = process.env.APPLY_MIGRATION_0014 === "1";
 
 function shouldDeferTag(tag) {
   const t = String(tag ?? "");
@@ -56,6 +58,7 @@ function shouldDeferTag(tag) {
   if (t.startsWith("0011_") && !apply0011) return true;
   if (t.startsWith("0012_") && !apply0012) return true;
   if (t.startsWith("0013_") && !apply0013) return true;
+  if (t.startsWith("0014_") && !apply0014) return true;
   return false;
 }
 
@@ -69,7 +72,8 @@ function prepareMigrationsFolder() {
     apply0010 &&
     apply0011 &&
     apply0012 &&
-    apply0013
+    apply0013 &&
+    apply0014
   ) {
     return migrationsFolder;
   }
@@ -96,6 +100,7 @@ function prepareMigrationsFolder() {
     if (name.startsWith("0011_") && !apply0011) continue;
     if (name.startsWith("0012_") && !apply0012) continue;
     if (name.startsWith("0013_") && !apply0013) continue;
+    if (name.startsWith("0014_") && !apply0014) continue;
     fs.copyFileSync(
       path.join(migrationsFolder, name),
       path.join(tmp, name)
@@ -123,12 +128,22 @@ function prepareMigrationsFolder() {
   if (!apply0011) deferred.push("0011");
   if (!apply0012) deferred.push("0012");
   if (!apply0013) deferred.push("0013");
+  if (!apply0014) deferred.push("0014");
   if (deferred.length) {
     console.log(
-      `[db:migrate] ${deferred.join(" y ")} diferida(s) (APPLY_MIGRATION_0005…0012=1 para aplicar).`
+      `[db:migrate] ${deferred.join(" y ")} diferida(s) (APPLY_MIGRATION_0005…0014=1 para aplicar).`
     );
   }
   return tmp;
+}
+
+function isTransientNeonQuotaError(err) {
+  const msg = String(err?.cause?.message ?? err?.message ?? err ?? "");
+  return (
+    msg.includes("data transfer quota") ||
+    msg.includes("HTTP status 402") ||
+    /status\s*402/i.test(msg)
+  );
 }
 
 const folder = prepareMigrationsFolder();
@@ -142,9 +157,17 @@ try {
   const db = drizzle(sql);
   await migrate(db, { migrationsFolder: folder });
   console.log(
-    "[db:migrate] OK — migraciones aplicadas (0005–0012 condicionadas)."
+    "[db:migrate] OK — migraciones aplicadas (0005–0014 condicionadas)."
   );
 } catch (err) {
+  // Preview puede quedar sin cuota Neon temporalmente; no bloquear el build
+  // de UI. Las migraciones gated (p.ej. 0014) nunca se aplican sin flag.
+  if (isTransientNeonQuotaError(err)) {
+    console.warn(
+      "[db:migrate] Neon cuota/402 — skip migrate; build continúa sin tocar schema."
+    );
+    process.exit(0);
+  }
   console.error("[db:migrate] falló:", err);
   process.exit(1);
 }
