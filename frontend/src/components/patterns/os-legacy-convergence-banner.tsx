@@ -24,20 +24,20 @@ export function OsLegacyConvergenceBanner() {
   return (
     <div
       role="status"
-      className="border-b border-[var(--border)] bg-[var(--muted)]/40 px-4 py-2.5 text-sm text-[var(--foreground)]"
+      className="border-b border-[var(--border)] bg-[var(--border-subtle)]/40 px-4 py-2.5 text-sm text-[var(--foreground)]"
     >
       <p className="mx-auto max-w-5xl">
         <span className="font-medium">Genus OS — nueva experiencia disponible.</span>{" "}
         Podés probar{" "}
-        <Link href="/mi-trabajo" className="font-medium text-[var(--primary)] underline-offset-2 hover:underline">
+        <Link href="/mi-trabajo" className="font-medium text-[var(--color-action)] underline-offset-2 hover:underline">
           Mi Trabajo
         </Link>
         ,{" "}
-        <Link href="/plan-semanal" className="font-medium text-[var(--primary)] underline-offset-2 hover:underline">
+        <Link href="/plan-semanal" className="font-medium text-[var(--color-action)] underline-offset-2 hover:underline">
           Plan semanal
         </Link>{" "}
         y{" "}
-        <Link href="/consulta" className="font-medium text-[var(--primary)] underline-offset-2 hover:underline">
+        <Link href="/consulta" className="font-medium text-[var(--color-action)] underline-offset-2 hover:underline">
           Consulta
         </Link>
         . Este workspace legacy sigue operativo.

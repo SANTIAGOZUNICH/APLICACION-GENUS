@@ -1,37 +1,39 @@
 /**
- * Genus OS — INDUSTRIAL GLASS
+ * Genus OS — INDUSTRIAL GLASS NIGHT
  * Fuente de verdad visual: --genus-*
  * Scope: .genus-ds-root / .design-preview-root
+ * Un solo ambiente navy/petróleo/turquesa — sidebar, header y contenido
+ * comparten la misma familia de superficies (--genus-surface-*).
  */
 
 .genus-ds-root,
 .design-preview-root {
-  /* Brand — Industrial Glass */
+  /* Brand — Industrial Glass (sin cambios de hue, es el único acento) */
   --genus-brand-primary: #12bfb7;
-  --genus-brand-primary-soft: #e6faf8;
+  --genus-brand-primary-soft: rgb(18 191 183 / 0.16);
   --genus-brand-primary-muted: rgb(18 191 183 / 0.14);
   --genus-brand-primary-glow: #55e2d8;
-  --genus-brand-action: #1769e0;
-  --genus-brand-action-soft: #e8f1fc;
+  --genus-brand-action: #1a7ae8;
+  --genus-brand-action-soft: rgb(23 105 224 / 0.16);
   --genus-brand-action-muted: rgb(23 105 224 / 0.14);
   --genus-brand-secondary: #0b2636;
-  --genus-brand-secondary-soft: #e8eef3;
+  --genus-brand-secondary-soft: rgb(11 38 54 / 0.5);
   --genus-brand-navy: #0b2636;
   --genus-brand-navy-dark: #071925;
 
-  /* Neutrals */
-  --genus-neutral-50: #f4f8fa;
-  --genus-neutral-100: #eef4f7;
-  --genus-neutral-200: #dce6ec;
-  --genus-neutral-300: #c5d3db;
-  --genus-neutral-400: #93a4ae;
-  --genus-neutral-500: #60727c;
-  --genus-neutral-600: #4a5b65;
-  --genus-neutral-700: #334650;
-  --genus-neutral-800: #1f323c;
-  --genus-neutral-900: #10232d;
+  /* Neutrals — misma escala, ahora en registro navy oscuro */
+  --genus-neutral-50: #eff7f9;
+  --genus-neutral-100: #d8e6ec;
+  --genus-neutral-200: #a9c0cc;
+  --genus-neutral-300: #7e97a4;
+  --genus-neutral-400: #5c7480;
+  --genus-neutral-500: #465b66;
+  --genus-neutral-600: #34454e;
+  --genus-neutral-700: #253540;
+  --genus-neutral-800: #182631;
+  --genus-neutral-900: #0e1922;
 
-  /* Semantic — controlled, never fill whole cards */
+  /* Semantic — se conserva identidad, contraste e icono; solo en superficies chicas */
   --genus-success: #15803d;
   --genus-success-soft: #ecfdf3;
   --genus-warning: #b45309;
@@ -41,25 +43,25 @@
   --genus-info: #1769e0;
   --genus-info-soft: #e8f1fc;
 
-  /* Surfaces */
-  --genus-surface-bg: #f4f8fa;
-  --genus-surface-card: #ffffff;
-  --genus-surface-glass: rgb(255 255 255 / 0.78);
-  --genus-surface-glass-strong: rgb(255 255 255 / 0.9);
-  --genus-surface-muted: #eef4f7;
+  /* Surfaces — escala de elevación navy, sidebar/header/contenido en el mismo ambiente */
+  --genus-surface-bg: #0a1d29;
+  --genus-surface-card: #0f2634;
+  --genus-surface-glass: rgb(15 38 52 / 0.62);
+  --genus-surface-glass-strong: rgb(15 38 52 / 0.82);
+  --genus-surface-muted: #0d2029;
   --genus-surface-sidebar: #071925;
   --genus-surface-sidebar-2: #0b2636;
-  --genus-border: rgb(15 42 56 / 0.1);
-  --genus-border-strong: rgb(15 42 56 / 0.16);
+  --genus-border: rgb(255 255 255 / 0.1);
+  --genus-border-strong: rgb(255 255 255 / 0.16);
 
-  /* Ambient (background wash — not decorative blobs) */
-  --genus-ambient-teal: rgb(18 191 183 / 0.09);
-  --genus-ambient-blue: rgb(23 105 224 / 0.06);
+  /* Ambient (background wash — no bloques decorativos) */
+  --genus-ambient-teal: rgb(18 191 183 / 0.11);
+  --genus-ambient-blue: rgb(23 105 224 / 0.08);
 
   /* Text */
-  --genus-text-primary: #10232d;
-  --genus-text-secondary: #60727c;
-  --genus-text-inverse: #f4f8fa;
+  --genus-text-primary: #eaf3f6;
+  --genus-text-secondary: #93a8b4;
+  --genus-text-inverse: #f1f8fa;
   --genus-text-inverse-muted: rgb(244 248 250 / 0.62);
 
   /* Spacing */
@@ -80,14 +82,14 @@
   --genus-radius-xl: 1rem;
   --genus-radius-full: 9999px;
 
-  /* Shadows — soft, wide, nearly invisible */
-  --genus-shadow-xs: 0 1px 2px rgb(7 25 37 / 0.04);
-  --genus-shadow-sm: 0 1px 2px rgb(7 25 37 / 0.04), 0 2px 8px rgb(7 25 37 / 0.04);
-  --genus-shadow-md: 0 1px 2px rgb(7 25 37 / 0.03), 0 8px 24px rgb(7 25 37 / 0.06);
-  --genus-shadow-lg: 0 2px 4px rgb(7 25 37 / 0.04), 0 16px 40px rgb(7 25 37 / 0.08);
-  --genus-shadow-glass: 0 1px 0 rgb(255 255 255 / 0.7) inset, 0 8px 28px rgb(7 25 37 / 0.06);
-  --genus-shadow-focus: 0 0 0 3px rgb(18 191 183 / 0.22);
-  --genus-shadow-focus-action: 0 0 0 3px rgb(23 105 224 / 0.22);
+  /* Shadows — sobre navy: menos "sombra caída", más halo + borde de vidrio */
+  --genus-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.35);
+  --genus-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.32), 0 2px 10px rgb(0 0 0 / 0.35);
+  --genus-shadow-md: 0 1px 2px rgb(0 0 0 / 0.3), 0 10px 28px rgb(0 0 0 / 0.42);
+  --genus-shadow-lg: 0 2px 4px rgb(0 0 0 / 0.32), 0 20px 48px rgb(0 0 0 / 0.5);
+  --genus-shadow-glass: 0 1px 0 rgb(255 255 255 / 0.07) inset, 0 10px 32px rgb(0 0 0 / 0.4);
+  --genus-shadow-focus: 0 0 0 3px rgb(18 191 183 / 0.32);
+  --genus-shadow-focus-action: 0 0 0 3px rgb(23 105 224 / 0.32);
 
   /* Typography sizes */
   --genus-text-heading-xl: 2.25rem;

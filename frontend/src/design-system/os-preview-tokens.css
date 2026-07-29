@@ -28,9 +28,9 @@ body {
   --os-space-block: 1.25rem;
   --os-rail-width: 3px;
   --os-scroll-size: 8px;
-  --os-scroll-thumb: rgb(15 42 56 / 0.34);
+  --os-scroll-thumb: rgb(255 255 255 / 0.16);
   --os-scroll-thumb-hover: rgb(18 191 183 / 0.62);
-  --os-scroll-track: rgb(15 42 56 / 0.04);
+  --os-scroll-track: rgb(255 255 255 / 0.04);
   --os-scroll-sidebar-thumb: rgb(18 191 183 / 0.38);
   --os-scroll-sidebar-thumb-hover: rgb(85 226 216 / 0.62);
   --os-scroll-sidebar-track: rgb(255 255 255 / 0.05);
@@ -45,7 +45,7 @@ body {
   background-image:
     radial-gradient(ellipse 70% 55% at 100% 0%, var(--genus-ambient-teal), transparent 55%),
     radial-gradient(ellipse 55% 45% at 0% 100%, var(--genus-ambient-blue), transparent 50%),
-    linear-gradient(180deg, #f7fafc 0%, var(--genus-surface-bg) 42%, #eef3f6 100%);
+    linear-gradient(180deg, #0d2230 0%, var(--genus-surface-bg) 42%, #081521 100%);
   background-attachment: fixed;
   scrollbar-width: thin;
   scrollbar-color: var(--os-scroll-thumb) var(--os-scroll-track);
@@ -89,23 +89,23 @@ body {
   will-change: transform;
 }
 
-/* Technical grid + noise */
+/* Technical grid + noise — líneas claras sobre navy (mix-blend-mode: screen) */
 .design-preview-root::after {
   content: "";
   pointer-events: none;
   position: fixed;
   inset: 0;
   z-index: calc(var(--genus-z-base) + 1);
-  opacity: 0.045;
+  opacity: 0.05;
   background-image:
-    linear-gradient(rgb(15 42 56 / 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(15 42 56 / 0.04) 1px, transparent 1px),
+    linear-gradient(rgb(244 248 250 / 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(244 248 250 / 0.05) 1px, transparent 1px),
     url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-size:
     48px 48px,
     48px 48px,
     auto;
-  mix-blend-mode: multiply;
+  mix-blend-mode: screen;
 }
 
 /* ========== Scrollbars Industrial Glass ========== */
@@ -150,7 +150,7 @@ body {
 }
 
 .design-preview-root .os-scroll-main {
-  --os-scroll-thumb: rgb(15 42 56 / 0.34);
+  --os-scroll-thumb: rgb(255 255 255 / 0.16);
   --os-scroll-thumb-hover: rgb(18 191 183 / 0.58);
   scrollbar-gutter: stable;
   overflow-y: scroll;
@@ -417,16 +417,16 @@ body {
 }
 
 .design-preview-root .os-header-glass {
-  background: rgb(255 255 255 / 0.72);
+  background: rgb(10 29 41 / 0.72);
   border-bottom: 1px solid var(--genus-border);
   backdrop-filter: blur(14px) saturate(1.15);
   -webkit-backdrop-filter: blur(14px) saturate(1.15);
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.65) inset, 0 4px 18px rgb(7 25 37 / 0.04);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.06) inset, 0 4px 18px rgb(0 0 0 / 0.32);
   transition: box-shadow var(--genus-duration-normal) var(--genus-ease-default);
 }
 
 .design-preview-root .os-header-glass.is-scrolled {
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.55) inset, 0 8px 24px rgb(7 25 37 / 0.08);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 8px 24px rgb(0 0 0 / 0.4);
 }
 
 .design-preview-root .os-nav-item {
@@ -551,8 +551,8 @@ body {
 }
 
 .design-preview-root .os-login-form-panel {
-  background: rgb(255 255 255 / 0.86);
-  border: 1px solid rgb(15 42 56 / 0.08);
+  background: rgb(15 38 52 / 0.72);
+  border: 1px solid rgb(255 255 255 / 0.1);
   box-shadow: var(--genus-shadow-lg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
