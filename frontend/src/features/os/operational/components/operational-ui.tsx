@@ -374,6 +374,12 @@ export function StatusChip({
   if (transferredInbox && normalized === "pendiente") {
     cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
     label = WORK_TRANSFER.awaitingApproval;
+  } else if (normalized === "en_codificado") {
+    cls = "bg-[var(--genus-info-soft,var(--os-teal-soft))] text-[var(--genus-info,var(--os-teal))]";
+    label = WORK_TRANSFER.inCodificado;
+  } else if (normalized === "codificado_completo") {
+    cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
+    label = "Codificado completo";
   } else if (normalized === "aprobado") {
     cls = "bg-[var(--genus-success-soft)] text-[var(--genus-success)]";
   } else if (isWorkTransferredStatus(normalized) || normalized === "revision") {

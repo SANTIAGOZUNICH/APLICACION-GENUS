@@ -94,6 +94,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     approveQualityItem,
     rejectQualityItem,
     annulQualityItem,
+    progressMap,
   } = useOperationalStore();
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
     useOperationalPlan("CALIDAD");
@@ -172,13 +173,24 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
 
   const notifyOrigin = useCallback((item: QualityItem, approved: boolean) => {
     if (!item.receivedFrom) return;
+    const sectors = new Set([item.receivedFrom]);
+    if (!approved) {
+      // Rechazo: Codificado + Envasado de origen si vino vía Codificado
+      const progress = progressMap[item.relatedWorkItemId ?? ""];
+      if (progress?.viaCodificado) {
+        sectors.add("CODIFICADO");
+        if (progress.codificadoOriginSector) {
+          sectors.add(progress.codificadoOriginSector as typeof item.receivedFrom);
+        }
+      }
+    }
     pushNotification({
       kind: approved ? "calidad_aprobado" : "calidad_rechazado",
       title: approved ? "Calidad aprobó tu trabajo" : "Calidad rechazó tu trabajo",
       message: `${item.product} · ${item.client}${approved ? "" : " — revisá el motivo del rechazo"}`,
-      sectors: [item.receivedFrom],
+      sectors: [...sectors],
     });
-  }, []);
+  }, [progressMap]);
 
   const handleApprove = useCallback(() => {
     if (!reviewItem) return;

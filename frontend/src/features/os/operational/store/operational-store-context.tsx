@@ -36,11 +36,14 @@ import {
   recordWorkCompletion,
   recordWorkPackaging,
   recordWorkProgress,
+  recordSendToCodificado,
+  recordDeliverFromCodificado,
   writeCompletionEvents,
   writeDecisionMap,
   writeProgressMap,
   type DecisionMap,
   type ProgressMap,
+  type WorkProgressRecord,
 } from "./operational-store";
 
 export type QualityDecisionOptions = {
@@ -94,6 +97,26 @@ interface OperationalStoreValue {
     item: WorkItem,
     payload: { finishedQty: string; observation: string; updatedBy?: string }
   ) => void;
+  sendToCodificado: (
+    item: WorkItem,
+    payload: {
+      totalUnits: number;
+      observation?: string;
+      updatedBy?: string;
+      bulkRemainderKg?: number | null;
+      bulkRemainderObservation?: string | null;
+      bulkRemainderId?: string | null;
+    }
+  ) => { already: boolean; progress: WorkProgressRecord };
+  deliverFromCodificado: (
+    item: WorkItem,
+    payload: {
+      updatedBy?: string;
+      observation?: string;
+      packagingLote?: string | null;
+      packagingVto?: string | null;
+    }
+  ) => { already: boolean; progress: WorkProgressRecord };
   applyProgressToWorkItems: <T extends { id: string; status: WorkItemStatus }>(items: T[]) => T[];
   refreshDecisions: () => void;
   mergeFromServer: (overlay: OperationalOverlay) => void;
@@ -344,6 +367,70 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     [syncFromStorage]
   );
 
+  const sendToCodificado = useCallback(
+    (
+      item: WorkItem,
+      payload: {
+        totalUnits: number;
+        observation?: string;
+        updatedBy?: string;
+        bulkRemainderKg?: number | null;
+        bulkRemainderObservation?: string | null;
+        bulkRemainderId?: string | null;
+      }
+    ) => {
+      const result = recordSendToCodificado(item, {
+        totalUnits: payload.totalUnits,
+        observation: payload.observation,
+        sentBy: payload.updatedBy ?? "Operario",
+        bulkRemainderKg: payload.bulkRemainderKg,
+        bulkRemainderObservation: payload.bulkRemainderObservation,
+        bulkRemainderId: payload.bulkRemainderId,
+      });
+      syncFromStorage();
+      return result;
+    },
+    [syncFromStorage]
+  );
+
+  const deliverFromCodificado = useCallback(
+    (
+      item: WorkItem,
+      payload: {
+        updatedBy?: string;
+        observation?: string;
+        packagingLote?: string | null;
+        packagingVto?: string | null;
+      }
+    ) => {
+      const result = recordDeliverFromCodificado(item, {
+        completedBy: payload.updatedBy ?? "Codificado",
+        observation: payload.observation,
+        packagingLote: payload.packagingLote,
+        packagingVto: payload.packagingVto,
+      });
+      syncFromStorage();
+      if (!result.already) {
+        void postCompleteWork({
+          item: {
+            ...item,
+            sector: (result.progress.codificadoOriginSector ||
+              item.sector) as WorkItem["sector"],
+            packagingLote: result.progress.packagingLote,
+            packagingVto: result.progress.packagingVto,
+            packagingTotalUnits: result.progress.packagingTotalUnits,
+            packingGroups: result.progress.packingGroups,
+          },
+          finishedQty: result.progress.finishedQty,
+          observation: result.progress.observation,
+          completedBy: payload.updatedBy,
+        }).catch(() => {});
+      }
+      return result;
+    },
+    [syncFromStorage]
+  );
+
   const applyProgressToWorkItems = useCallback(
     <T extends { id: string; status: WorkItemStatus }>(items: T[]) =>
       applyWorkProgressToItems(items),
@@ -425,6 +512,8 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       saveWorkProgress,
       saveWorkPackaging,
       markWorkFinished,
+      sendToCodificado,
+      deliverFromCodificado,
       applyProgressToWorkItems,
       refreshDecisions: syncFromStorage,
       mergeFromServer,
@@ -445,6 +534,8 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       saveWorkProgress,
       saveWorkPackaging,
       markWorkFinished,
+      sendToCodificado,
+      deliverFromCodificado,
       applyProgressToWorkItems,
       syncFromStorage,
       mergeFromServer,

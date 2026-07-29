@@ -4,7 +4,6 @@ import { useState } from "react";
 import { Download, Eye, FileWarning } from "lucide-react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
-import { ConfirmDialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import {
   Drawer,
@@ -16,10 +15,16 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer";
 import { getLatestDocumentByRef } from "../adapters/order-documents-repository";
-import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
+import {
+  isInCodificadoStatus,
+  isWorkTransferredStatus,
+  WORK_TRANSFER,
+} from "../lib/work-transfer-labels";
 import { StatusChip } from "./operational-ui";
 import { PackagingQuantitiesBlock } from "./packaging-quantities-block";
 import { usePreviewSession } from "@/features/os/session/preview-context";
+import { SendToCodificadoDialog } from "./send-to-codificado-dialog";
+import { FinishToQualityDialog } from "./finish-to-quality-dialog";
 
 interface WorkItemDrawerProps {
   item: WorkItem | null;
@@ -30,10 +35,27 @@ interface WorkItemDrawerProps {
   getFinishedQty: (itemId: string) => string;
   getObservation: (itemId: string) => string;
   onSaveProgress: (itemId: string, payload: { finishedQty: string; observation: string }) => void;
-  onMarkFinished: (item: WorkItem, payload: { finishedQty: string; observation: string }) => void;
+  onMarkFinished: (
+    item: WorkItem,
+    payload: {
+      finishedQty: string;
+      observation: string;
+      bulkRemainderKg?: number | null;
+      bulkRemainderObservation?: string | null;
+    }
+  ) => void;
+  onSendToCodificado?: (
+    item: WorkItem,
+    payload: {
+      totalUnits: number;
+      observation: string;
+      bulkRemainderKg?: number | null;
+      bulkRemainderObservation?: string | null;
+    }
+  ) => { already?: boolean } | void;
 }
 
-/** Drawer lateral de trabajo — Elaboración/Envasado: avance, archivo de orden y cierre a Calidad. */
+/** Drawer lateral de trabajo — Elaboración/Envasado: avance, archivo de orden y cierre. */
 export function WorkItemDrawer({
   item,
   open,
@@ -44,14 +66,15 @@ export function WorkItemDrawer({
   getObservation,
   onSaveProgress,
   onMarkFinished,
+  onSendToCodificado,
 }: WorkItemDrawerProps) {
   const { email } = usePreviewSession();
   const [finishedQty, setFinishedQty] = useState("");
   const [observation, setObservation] = useState("");
   const [confirmFinish, setConfirmFinish] = useState(false);
+  const [confirmCodificado, setConfirmCodificado] = useState(false);
   const [loadedItemId, setLoadedItemId] = useState<string | null>(null);
 
-  // Carga el avance guardado al cambiar de trabajo (ajuste de estado durante el render).
   if (item && item.id !== loadedItemId) {
     setLoadedItemId(item.id);
     setFinishedQty(getFinishedQty(item.id));
@@ -70,16 +93,8 @@ export function WorkItemDrawer({
   const missing = Math.max(0, planned - finished);
   const doc = getLatestDocumentByRef(orderRef);
   const transferred = isWorkTransferredStatus(item.status);
-
-  const handleSave = () => {
-    onSaveProgress(item.id, { finishedQty, observation });
-  };
-
-  const handleFinish = () => {
-    onMarkFinished(item, { finishedQty: finishedQty || item.quantity || "", observation });
-    setConfirmFinish(false);
-    onOpenChange(false);
-  };
+  const inCodificado = isInCodificadoStatus(item.status);
+  const showCodificado = !isElaboracion && Boolean(onSendToCodificado);
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -104,7 +119,9 @@ export function WorkItemDrawer({
             </div>
             <div>
               <dt className="text-xs uppercase text-[var(--os-text-muted)]">{responsibleLabel}</dt>
-              <dd className="font-medium">{displayField(isElaboracion ? item.ownerPerson : item.line)}</dd>
+              <dd className="font-medium">
+                {displayField(isElaboracion ? item.ownerPerson : item.line)}
+              </dd>
             </div>
             <div>
               <dt className="text-xs uppercase text-[var(--os-text-muted)]">
@@ -142,8 +159,7 @@ export function WorkItemDrawer({
             ) : (
               <p className="flex items-center gap-2 rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-border)] px-3 py-2 text-xs text-[var(--os-text-muted)]">
                 <FileWarning className="size-3.5" aria-hidden="true" />
-                Sin archivo de {orderLabel} cargado. Subilo desde &quot;Órdenes de{" "}
-                {isElaboracion ? "Elaboración" : "Acondicionamiento"}&quot;.
+                Sin archivo de {orderLabel} cargado.
               </p>
             )}
           </div>
@@ -177,7 +193,11 @@ export function WorkItemDrawer({
             </div>
             <div className="flex items-center justify-between text-xs text-[var(--os-text-muted)]">
               <span>{progressPct}% completado</span>
-              {!isElaboracion && <span>Faltan {missing.toFixed(0)} {unit}</span>}
+              {!isElaboracion && (
+                <span>
+                  Faltan {missing.toFixed(0)} {unit}
+                </span>
+              )}
             </div>
           </div>
 
@@ -191,7 +211,6 @@ export function WorkItemDrawer({
               disabled={transferred}
               onChange={(e) => setObservation(e.target.value)}
               rows={3}
-              placeholder="Diferencias respecto de trabajos anteriores, incidencias, notas para Calidad…"
               className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm disabled:opacity-50"
             />
           </div>
@@ -199,33 +218,88 @@ export function WorkItemDrawer({
           <div>
             <p className="mb-1.5 text-xs uppercase text-[var(--os-text-muted)]">Estado</p>
             <StatusChip status={item.status} transferredInbox={transferred} />
-            {transferred && (
+            {inCodificado ? (
+              <p className="mt-2 text-xs text-[var(--os-teal)]">
+                {WORK_TRANSFER.inCodificado} · {WORK_TRANSFER.nextResponsibleCodificado}
+              </p>
+            ) : null}
+            {transferred && !inCodificado ? (
               <p className="mt-2 text-xs text-[var(--os-teal)]">
                 {WORK_TRANSFER.deliveredToQuality} · {WORK_TRANSFER.nextResponsibleQuality}
               </p>
-            )}
+            ) : null}
           </div>
         </DrawerBody>
 
-        <DrawerFooter>
-          <Button variant="secondary" disabled={transferred} onClick={handleSave}>
+        <DrawerFooter className="flex flex-wrap gap-2">
+          <Button variant="secondary" disabled={transferred} onClick={() => onSaveProgress(item.id, { finishedQty, observation })}>
             Guardar avance
           </Button>
+          {showCodificado ? (
+            <Button
+              variant="secondary"
+              disabled={transferred}
+              onClick={() => setConfirmCodificado(true)}
+              data-testid="send-to-codificado-btn"
+            >
+              {WORK_TRANSFER.sendToCodificadoAction}
+            </Button>
+          ) : null}
           <Button variant="primary" disabled={transferred} onClick={() => setConfirmFinish(true)}>
             Finalizar y enviar a Calidad
           </Button>
         </DrawerFooter>
       </DrawerContent>
 
-      <ConfirmDialog
-        open={confirmFinish}
-        onOpenChange={setConfirmFinish}
-        title="Enviar a Calidad"
-        description={`${displayField(item.product)} pasará a la bandeja de Calidad y ya no vas a poder editar el avance. ¿Confirmás que terminaste este trabajo?`}
-        confirmLabel="Sí, enviar a Calidad"
-        cancelLabel="Cancelar"
-        onConfirm={handleFinish}
-      />
+      {!isElaboracion ? (
+        <FinishToQualityDialog
+          open={confirmFinish}
+          onOpenChange={setConfirmFinish}
+          item={item}
+          finishedQty={finishedQty}
+          observation={observation}
+          onConfirm={(payload) => {
+            onMarkFinished(item, payload);
+            setConfirmFinish(false);
+            onOpenChange(false);
+          }}
+        />
+      ) : (
+        <FinishToQualityDialog
+          open={confirmFinish}
+          onOpenChange={setConfirmFinish}
+          item={item}
+          finishedQty={finishedQty}
+          observation={observation}
+          onConfirm={(payload) => {
+            onMarkFinished(item, {
+              finishedQty: payload.finishedQty,
+              observation: payload.observation,
+            });
+            setConfirmFinish(false);
+            onOpenChange(false);
+          }}
+        />
+      )}
+
+      {showCodificado && onSendToCodificado ? (
+        <SendToCodificadoDialog
+          open={confirmCodificado}
+          onOpenChange={setConfirmCodificado}
+          item={item}
+          defaultTotal={
+            item.packagingTotalUnits != null
+              ? String(item.packagingTotalUnits)
+              : finishedQty || item.quantity || ""
+          }
+          defaultObservation={observation}
+          onConfirm={(payload) => {
+            const result = onSendToCodificado(item, payload);
+            setConfirmCodificado(false);
+            if (!result?.already) onOpenChange(false);
+          }}
+        />
+      ) : null}
     </Drawer>
   );
 }

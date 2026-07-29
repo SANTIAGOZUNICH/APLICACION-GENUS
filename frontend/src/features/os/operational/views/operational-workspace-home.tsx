@@ -10,7 +10,7 @@ import {
 import { MpHubView } from "./mp-hub-view";
 import { ProduccionOperationalView } from "./produccion-operational-view";
 import { ProduccionPanelView } from "./produccion-panel-view";
-import { AsignacionLotesView } from "./asignacion-lotes-view";
+import { CodificadoOperationalView } from "./codificado-operational-view";
 
 /**
  * Home operativa de /mi-trabajo — filtrada por sector.
@@ -26,7 +26,7 @@ export function OperationalWorkspaceHome() {
     case "ELABORACION":
       return <ElaboracionOperationalView />;
     case "CODIFICADO":
-      return <AsignacionLotesView />;
+      return <CodificadoOperationalView />;
     case "CALIDAD":
       return <CalidadOperationalView />;
     case "MATERIA_PRIMA":

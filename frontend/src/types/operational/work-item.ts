@@ -35,6 +35,10 @@ export const WORK_ITEM_STATUSES = [
   "revision",
   "entregado",
   "cancelado",
+  /** Enviado desde Envasado; pendiente en Codificado. */
+  "en_codificado",
+  /** Codificado entregó a Calidad/Producción (alias operativo de pendiente calidad). */
+  "codificado_completo",
 ] as const;
 export type WorkItemStatus = (typeof WORK_ITEM_STATUSES)[number];
 

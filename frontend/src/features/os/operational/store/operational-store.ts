@@ -25,6 +25,17 @@ export interface WorkProgressRecord {
   packagingUnidadesPorCaja?: number | null;
   packingGroups?: PackingGroupRecord[] | null;
   packingMismatchObservation?: string | null;
+  /** Flujo Codificado */
+  sentToCodificadoAt?: string | null;
+  sentToCodificadoBy?: string | null;
+  codificadoOriginSector?: string | null;
+  codificadoObservation?: string | null;
+  viaCodificado?: boolean;
+  deliveredFromCodificadoAt?: string | null;
+  deliveredFromCodificadoBy?: string | null;
+  bulkRemainderKg?: number | null;
+  bulkRemainderObservation?: string | null;
+  bulkRemainderId?: string | null;
 }
 
 export type ProgressMap = Record<string, WorkProgressRecord>;
@@ -153,7 +164,8 @@ export function recordWorkProgress(
     completedAt:
       payload.status === "completo" ||
       payload.status === "revision" ||
-      payload.status === "entregado"
+      payload.status === "entregado" ||
+      payload.status === "codificado_completo"
         ? existing?.completedAt ?? new Date().toISOString()
         : existing?.completedAt,
     packagingLote:
@@ -305,6 +317,152 @@ export function applyWorkProgressToItems<T extends { id: string; status: WorkIte
     };
     return next as T;
   });
+}
+
+/** Envasado → Codificado (sin CompletionEvent / sin Calidad). Idempotente. */
+export function recordSendToCodificado(
+  item: WorkItem,
+  payload: {
+    totalUnits: number;
+    observation?: string;
+    sentBy: string;
+    bulkRemainderKg?: number | null;
+    bulkRemainderObservation?: string | null;
+    bulkRemainderId?: string | null;
+  }
+): { progress: WorkProgressRecord; already: boolean } {
+  const map = readProgressMap();
+  const existing = map[item.id];
+  if (existing?.status === "en_codificado" || existing?.sentToCodificadoAt) {
+    return { progress: existing!, already: true };
+  }
+  const now = new Date().toISOString();
+  const finishedQty =
+    existing?.finishedQty?.trim() ||
+    String(payload.totalUnits) ||
+    item.quantity ||
+    "";
+  const progress: WorkProgressRecord = {
+    ...(existing ?? {
+      itemId: item.id,
+      finishedQty,
+      observation: "",
+      updatedAt: now,
+    }),
+    itemId: item.id,
+    finishedQty,
+    observation: payload.observation?.trim() || existing?.observation || "",
+    status: "en_codificado",
+    updatedAt: now,
+    updatedBy: payload.sentBy,
+    packagingLote: existing?.packagingLote ?? item.packagingLote ?? null,
+    packagingVto: existing?.packagingVto ?? item.packagingVto ?? null,
+    packagingTotalUnits: payload.totalUnits,
+    packagingCajas: existing?.packagingCajas ?? item.packagingCajas ?? null,
+    packagingUnidadesPorCaja:
+      existing?.packagingUnidadesPorCaja ?? item.packagingUnidadesPorCaja ?? null,
+    packingGroups: existing?.packingGroups ?? item.packingGroups ?? null,
+    packingMismatchObservation:
+      existing?.packingMismatchObservation ?? item.packingMismatchObservation ?? null,
+    sentToCodificadoAt: now,
+    sentToCodificadoBy: payload.sentBy,
+    codificadoOriginSector: item.sector,
+    viaCodificado: true,
+    bulkRemainderKg: payload.bulkRemainderKg ?? existing?.bulkRemainderKg ?? null,
+    bulkRemainderObservation:
+      payload.bulkRemainderObservation ?? existing?.bulkRemainderObservation ?? null,
+    bulkRemainderId: payload.bulkRemainderId ?? existing?.bulkRemainderId ?? null,
+  };
+  map[item.id] = progress;
+  writeProgressMap(map);
+  return { progress, already: false };
+}
+
+/** Codificado → Calidad + Producción (una sola CompletionEvent). Idempotente. */
+export function recordDeliverFromCodificado(
+  item: WorkItem,
+  payload: {
+    completedBy: string;
+    observation?: string;
+    packagingLote?: string | null;
+    packagingVto?: string | null;
+  }
+): { progress: WorkProgressRecord; event: CompletionEvent; already: boolean } {
+  const map = readProgressMap();
+  const existing = map[item.id];
+  if (
+    existing?.status === "revision" ||
+    existing?.status === "codificado_completo" ||
+    existing?.deliveredFromCodificadoAt
+  ) {
+    const events = readCompletionEvents();
+    const event =
+      events.find((e) => e.workItemId === item.id) ??
+      workItemToCompletionEvent(item, {
+        finishedQty: existing?.finishedQty || String(existing?.packagingTotalUnits ?? ""),
+        observation: existing?.observation || "",
+        completedBy: existing?.deliveredFromCodificadoBy || payload.completedBy,
+        completedAt: existing?.deliveredFromCodificadoAt || undefined,
+      });
+    return { progress: existing!, event, already: true };
+  }
+
+  const originSector = (existing?.codificadoOriginSector || item.sector) as WorkItem["sector"];
+  const enriched: WorkItem = {
+    ...item,
+    sector: originSector,
+    packagingLote:
+      payload.packagingLote !== undefined
+        ? payload.packagingLote
+        : existing?.packagingLote ?? item.packagingLote ?? null,
+    packagingVto:
+      payload.packagingVto !== undefined
+        ? payload.packagingVto
+        : existing?.packagingVto ?? item.packagingVto ?? null,
+    packagingTotalUnits: existing?.packagingTotalUnits ?? item.packagingTotalUnits ?? null,
+    packingGroups: existing?.packingGroups ?? item.packingGroups ?? null,
+    loteRef:
+      (payload.packagingLote !== undefined
+        ? payload.packagingLote
+        : existing?.packagingLote) || item.loteRef,
+  };
+
+  const finishedQty =
+    existing?.finishedQty ||
+    (enriched.packagingTotalUnits != null ? String(enriched.packagingTotalUnits) : "") ||
+    item.quantity ||
+    "";
+  const observation =
+    [existing?.observation, payload.observation, existing?.codificadoObservation]
+      .filter(Boolean)
+      .join(" · ") || "";
+
+  const { progress, event } = recordWorkCompletion(enriched, {
+    finishedQty,
+    observation,
+    completedBy: payload.completedBy,
+  });
+
+  const now = new Date().toISOString();
+  const next: WorkProgressRecord = {
+    ...progress,
+    packagingLote: enriched.packagingLote,
+    packagingVto: enriched.packagingVto,
+    packagingTotalUnits: enriched.packagingTotalUnits,
+    packingGroups: enriched.packingGroups,
+    viaCodificado: true,
+    codificadoOriginSector: originSector,
+    sentToCodificadoAt: existing?.sentToCodificadoAt ?? null,
+    sentToCodificadoBy: existing?.sentToCodificadoBy ?? null,
+    deliveredFromCodificadoAt: now,
+    deliveredFromCodificadoBy: payload.completedBy,
+    codificadoObservation: payload.observation?.trim() || existing?.codificadoObservation || null,
+    status: "revision",
+  };
+  const map2 = readProgressMap();
+  map2[item.id] = next;
+  writeProgressMap(map2);
+  return { progress: next, event, already: false };
 }
 
 export function clearOperationalDecisions(): void {

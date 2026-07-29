@@ -52,6 +52,18 @@ export const workItemStatusDisplay: Record<WorkItemStatus, WorkItemStatusDisplay
     colorVar: "var(--genus-neutral-500)",
     bgVar: "var(--genus-neutral-100)",
   },
+  en_codificado: {
+    label: "En Codificado",
+    dotClassName: "bg-[var(--genus-info)]",
+    colorVar: "var(--genus-info)",
+    bgVar: "var(--genus-info-soft)",
+  },
+  codificado_completo: {
+    label: "Codificado completo",
+    dotClassName: "bg-[var(--genus-brand-secondary)]",
+    colorVar: "var(--genus-brand-secondary)",
+    bgVar: "var(--genus-brand-secondary-soft)",
+  },
 };
 
 export function resolveWorkItemStatusDisplay(status: WorkItemStatus): WorkItemStatusDisplay {

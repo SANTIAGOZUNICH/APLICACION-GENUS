@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
-import { usePreviewContext } from "@/features/os/session/preview-context";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { personNamesMatch } from "@/lib/operational/display-fields";
 import {
   archiveFromViewApi,
@@ -27,6 +27,10 @@ import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { useOperationalStore } from "../store/operational-store-context";
 import { sortByDeliveryDateNearest } from "../lib/delivery-date";
+import { upsertGranelFromEnvasado } from "../adapters/graneles-repository";
+import { formatBulkRemainderKg } from "../lib/bulk-remainder";
+import { canSendToCodificado } from "../lib/codificado-flow";
+import { WORK_TRANSFER } from "../lib/work-transfer-labels";
 
 interface EnvasadoOperationalViewProps {
   sectorId: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM";
@@ -62,9 +66,11 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     applyProgressToWorkItems,
     saveWorkProgress,
     markWorkFinished,
+    sendToCodificado,
     getFinishedQty,
     getObservation,
   } = useOperationalStore();
+  const { email } = usePreviewSession();
   const { enabled: optionalLineEnabled, toggle: toggleOptionalLine } =
     useOptionalLineToggle(sectorId);
 
@@ -144,11 +150,41 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   );
 
   const handleFinish = useCallback(
-    (item: WorkItem, payload: { finishedQty: string; observation: string }) => {
+    (
+      item: WorkItem,
+      payload: {
+        finishedQty: string;
+        observation: string;
+        bulkRemainderKg?: number | null;
+        bulkRemainderObservation?: string | null;
+      }
+    ) => {
       markWorkFinished(item, {
-        ...payload,
+        finishedQty: payload.finishedQty,
+        observation: payload.observation,
         updatedBy: workspace.context.displayName,
       });
+      if (payload.bulkRemainderKg && payload.bulkRemainderKg > 0) {
+        const granel = upsertGranelFromEnvasado({
+          workItemId: item.id,
+          originSector: sectorId,
+          product: item.product ?? "",
+          client: item.client ?? "",
+          bulkLot: item.loteRef || item.packagingLote || "Sin lote",
+          kg: payload.bulkRemainderKg,
+          reportedBy: workspace.context.displayName,
+          observation: payload.bulkRemainderObservation ?? undefined,
+          actorSector: sectorId,
+        });
+        if (granel.created) {
+          pushNotification({
+            kind: "trabajo_asignado",
+            title: "Sobrante de granel",
+            message: `Ingresaron ${formatBulkRemainderKg(payload.bulkRemainderKg)} kg de sobrante de ${item.product ?? "producto"} — ${item.client ?? "Cliente"}`,
+            sectors: ["DEPOSITO"],
+          });
+        }
+      }
       pushNotification({
         kind: "trabajo_finalizado",
         title: `Trabajo finalizado — ${workspace.sectorLabel}`,
@@ -157,7 +193,79 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       });
       showToast("Trabajo enviado a Calidad.");
     },
-    [markWorkFinished, workspace.context.displayName, workspace.sectorLabel, showToast]
+    [markWorkFinished, workspace.context.displayName, workspace.sectorLabel, showToast, sectorId]
+  );
+
+  const handleSendToCodificado = useCallback(
+    (
+      item: WorkItem,
+      payload: {
+        totalUnits: number;
+        observation: string;
+        bulkRemainderKg?: number | null;
+        bulkRemainderObservation?: string | null;
+      }
+    ) => {
+      const gate = canSendToCodificado(item.status);
+      if (!gate.ok) {
+        showToast(gate.error, "info");
+        return { already: true };
+      }
+      let bulkId: string | null = null;
+      if (payload.bulkRemainderKg && payload.bulkRemainderKg > 0) {
+        const granel = upsertGranelFromEnvasado({
+          workItemId: item.id,
+          originSector: sectorId,
+          product: item.product ?? "",
+          client: item.client ?? "",
+          bulkLot: item.loteRef || item.packagingLote || "Sin lote",
+          kg: payload.bulkRemainderKg,
+          reportedBy: workspace.context.displayName,
+          observation: payload.bulkRemainderObservation ?? undefined,
+          actorSector: sectorId,
+        });
+        bulkId = granel.record.id;
+        if (granel.created) {
+          pushNotification({
+            kind: "trabajo_asignado",
+            title: "Sobrante de granel",
+            message: `Ingresaron ${formatBulkRemainderKg(payload.bulkRemainderKg)} kg de sobrante de ${item.product ?? "producto"} — ${item.client ?? "Cliente"}`,
+            sectors: ["DEPOSITO"],
+          });
+        }
+      }
+      const result = sendToCodificado(item, {
+        totalUnits: payload.totalUnits,
+        observation: payload.observation,
+        updatedBy: workspace.context.displayName || email || "Envasado",
+        bulkRemainderKg: payload.bulkRemainderKg,
+        bulkRemainderObservation: payload.bulkRemainderObservation,
+        bulkRemainderId: bulkId,
+      });
+      if (result.already) {
+        showToast(WORK_TRANSFER.alreadyInCodificado, "info");
+        return { already: true };
+      }
+      pushNotification({
+        kind: "trabajo_asignado",
+        title: "Trabajo en Codificado",
+        message: `${item.product ?? "Producto"} · ${item.client ?? ""} — ${payload.totalUnits} un. desde ${workspace.sectorLabel}`,
+        sectors: ["CODIFICADO"],
+      });
+      showToast("Trabajo enviado a Codificado.");
+      setSelectedItem((prev) =>
+        prev && prev.id === item.id ? { ...prev, status: "en_codificado" } : prev
+      );
+      return { already: false };
+    },
+    [
+      sendToCodificado,
+      workspace.context.displayName,
+      workspace.sectorLabel,
+      showToast,
+      sectorId,
+      email,
+    ]
   );
 
   const handleArchiveFromView = useCallback(
@@ -315,6 +423,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         getObservation={getObservation}
         onSaveProgress={handleSave}
         onMarkFinished={handleFinish}
+        onSendToCodificado={handleSendToCodificado}
       />
     </TwinShell>
   );

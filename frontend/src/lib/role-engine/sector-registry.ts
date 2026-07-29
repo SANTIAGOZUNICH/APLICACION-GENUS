@@ -192,6 +192,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "ingresos_me",
       "salidas_me",
       "inventario_me",
+      "deposito_graneles",
       "avisos",
       "avisos_me",
       "semanas_produccion",
@@ -199,9 +200,9 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     ],
     creamyContext: {
       role: "Copiloto de depósito",
-      topics: ["ingresos ME", "salidas ME", "inventario ME", "avisos", "semanas"],
-      defaultHint: "¿Cargamos un ingreso ME o revisamos el inventario automático?",
-      baseSuggestions: ["Nuevo ingreso ME", "Ver inventario ME", "Ver avisos"],
+      topics: ["ingresos ME", "salidas ME", "inventario ME", "graneles", "avisos", "semanas"],
+      defaultHint: "¿Cargamos un ingreso ME, graneles o revisamos el inventario?",
+      baseSuggestions: ["Nuevo ingreso ME", "Depósito Graneles", "Ver avisos"],
     },
     emptyState: {
       title: "Depósito listo",
