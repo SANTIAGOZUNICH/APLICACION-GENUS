@@ -35,6 +35,9 @@ body {
   --os-scroll-sidebar-thumb-hover: rgb(85 226 216 / 0.62);
   --os-scroll-sidebar-track: rgb(255 255 255 / 0.05);
 
+  /* Controles nativos (select, input date/time, scrollbar fallback) en dark */
+  color-scheme: dark;
+
   position: relative;
   isolation: isolate;
   min-height: 100%;
