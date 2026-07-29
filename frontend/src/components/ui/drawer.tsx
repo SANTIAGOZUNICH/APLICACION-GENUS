@@ -4,6 +4,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import * as React from "react";
 import { cn } from "@/lib/utils/cn";
+import { useDesignPreviewPortalContainer } from "@/lib/utils/use-design-preview-portal-container";
 
 const Drawer = DialogPrimitive.Root;
 const DrawerTrigger = DialogPrimitive.Trigger;
@@ -28,8 +29,10 @@ DrawerOverlay.displayName = "DrawerOverlay";
 const DrawerContent = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { widthClassName?: string }
->(({ className, widthClassName, children, ...props }, ref) => (
-  <DrawerPortal>
+>(({ className, widthClassName, children, ...props }, ref) => {
+  const container = useDesignPreviewPortalContainer();
+  return (
+  <DrawerPortal container={container}>
     <DrawerOverlay />
     <DialogPrimitive.Content
       ref={ref}
@@ -44,7 +47,8 @@ const DrawerContent = React.forwardRef<
       {children}
     </DialogPrimitive.Content>
   </DrawerPortal>
-));
+  );
+});
 DrawerContent.displayName = "DrawerContent";
 
 function DrawerHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {

@@ -568,7 +568,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                   {selected.generatedBy || selected.updatedBy || selected.createdBy}
                 </p>
                 {selected.offersNewVersion ? (
-                  <p className="rounded border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] px-2 py-1 text-xs">
+                  <p className="rounded border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] px-2 py-1 text-xs text-[var(--genus-warning)]">
                     Remito generado inmutable — hay aprobaciones nuevas. Creá una nueva
                     versión.
                   </p>

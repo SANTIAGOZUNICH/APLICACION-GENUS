@@ -586,7 +586,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   return (
     <TwinShell title={`Materias Primas — ${tab}`}>
       {banner && (
-        <div className="mb-4 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm">
+        <div className="mb-4 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm text-[var(--genus-warning)]">
           {banner}
           {!persistence && " · Vista vacía sin persistencia simulada."}
         </div>
@@ -650,7 +650,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         <>
         {stock.some((r) => r.codigoPendiente || isMpInternalCodigo(r.codigo)) ? (
           <div
-            className="mb-3 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm"
+            className="mb-3 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm text-[var(--genus-warning)]"
             data-testid="mp-stock-codigo-pendiente-banner"
           >
             Hay filas de Stock con identidad interna (sin código de proveedor). Completá el
@@ -723,7 +723,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
               (r as MpIngresoRow).status === "BORRADOR" &&
               !(r as MpIngresoRow).stockImpacted
           ) ? (
-            <div className="mb-3 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm">
+            <div className="mb-3 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm text-[var(--genus-warning)]">
               Hay borradores sin afectar Stock (falta Cantidad/Total). Completá y confirmá
               para impactar inventario. Los ingresos sin código de proveedor usan identidad
               interna y aparecen en Stock con advertencia.

@@ -10,6 +10,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { createPortal } from "react-dom";
+import { useDesignPreviewPortalContainer } from "@/lib/utils/use-design-preview-portal-container";
 
 export type ComboboxOption = {
   id: string;
@@ -66,6 +67,7 @@ export function SearchCombobox({
   const [highlight, setHighlight] = useState(0);
   const [pos, setPos] = useState<ListPos | null>(null);
   const [mounted, setMounted] = useState(false);
+  const portalContainer = useDesignPreviewPortalContainer();
 
   useEffect(() => {
     setMounted(true);
@@ -290,7 +292,7 @@ export function SearchCombobox({
           ) : null}
         </div>
       ) : null}
-      {mounted && listbox ? createPortal(listbox, document.body) : null}
+      {mounted && listbox ? createPortal(listbox, portalContainer ?? document.body) : null}
     </div>
   );
 }

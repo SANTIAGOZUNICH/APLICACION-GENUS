@@ -74,7 +74,7 @@ export function MeInventarioView() {
   return (
     <TwinShell title="Inventario ME">
       {banner && (
-        <div className="mb-4 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm">
+        <div className="mb-4 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm text-[var(--genus-warning)]">
           {banner}
         </div>
       )}
