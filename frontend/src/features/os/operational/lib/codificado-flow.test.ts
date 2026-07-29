@@ -11,6 +11,7 @@ import {
   recordSendToCodificado,
   readProgressMap,
   recordWorkCompletion,
+  recordWorkPackaging,
   clearCompletionEvents,
 } from "../store/operational-store";
 import {
@@ -131,6 +132,47 @@ describe("codificado-flow", () => {
     expect(canDeliverFromCodificado("revision").ok).toBe(false);
   });
 
+  it("Codificado entrega con cajas y total finales", () => {
+    const item = envasadoItem({ packagingTotalUnits: 1000 });
+    recordSendToCodificado(item, { totalUnits: 1000, sentBy: "Env" });
+    const groups = [
+      { cajas: 8, unidadesPorCaja: 100 },
+      { cajas: 2, unidadesPorCaja: 50 },
+    ];
+    const first = recordDeliverFromCodificado(
+      { ...item, status: "en_codificado" },
+      {
+        completedBy: "Cod",
+        packagingLote: "L-FINAL",
+        packagingVto: "2027-06-01",
+        packagingTotalUnits: 900,
+        packingGroups: groups,
+      }
+    );
+    expect(first.already).toBe(false);
+    expect(first.progress.packagingTotalUnits).toBe(900);
+    expect(first.progress.packagingLote).toBe("L-FINAL");
+    expect(first.progress.packingGroups).toEqual(groups);
+    expect(first.progress.deliveredFromCodificadoBy).toBe("Cod");
+    expect(first.progress.viaCodificado).toBe(true);
+  });
+
+  it("save packaging no borra viaCodificado / sentBy", () => {
+    const item = envasadoItem();
+    recordSendToCodificado(item, { totalUnits: 50, sentBy: "Env" });
+    recordWorkPackaging(item.id, {
+      packagingLote: "L2",
+      packagingVto: "2028-01-01",
+      packagingTotalUnits: 48,
+      packingGroups: [{ cajas: 4, unidadesPorCaja: 12 }],
+    });
+    const p = readProgressMap()[item.id];
+    expect(p.viaCodificado).toBe(true);
+    expect(p.sentToCodificadoBy).toBe("Env");
+    expect(p.status).toBe("en_codificado");
+    expect(p.packagingLote).toBe("L2");
+  });
+
   it("Premium también puede enviar a Codificado", () => {
     const item = createSectorWorkItem("ENVASADO_PREMIUM", "wi-p", {
       status: "en_curso",
@@ -181,7 +223,7 @@ describe("bulk remainder / graneles", () => {
     expect(listGranelRemainders().length).toBe(1);
   });
 
-  it("editar aplica delta de kg", () => {
+  it("segundo reporte desde Envasado no reescribe kg (una sola vez)", () => {
     upsertGranelFromEnvasado({
       workItemId: "wi-2",
       originSector: "ENVASADO_MASIVO",
@@ -203,8 +245,8 @@ describe("bulk remainder / graneles", () => {
       actorSector: "ENVASADO_MASIVO",
     });
     expect(next.created).toBe(false);
-    expect(next.duplicated).toBe(false);
-    expect(getGranelByWorkItemId("wi-2")?.kgAvailable).toBe(8);
+    expect(next.duplicated).toBe(true);
+    expect(getGranelByWorkItemId("wi-2")?.kgAvailable).toBe(10);
   });
 
   it("Depósito puede crear manual; otro sector no", () => {

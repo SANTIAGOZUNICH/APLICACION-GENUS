@@ -48,6 +48,16 @@ import {
 } from "@/lib/remitos/remitos-client";
 import type { RemitoWorkItemStatus } from "@/lib/remitos/types";
 import { RemitoComposeEditor } from "../components/remito-compose-editor";
+import { CodificadoTracePanel } from "../components/codificado-trace-panel";
+import {
+  Drawer,
+  DrawerBody,
+  DrawerCloseButton,
+  DrawerContent,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
 
 const PRODUCCION_TABS = [
   { id: "rechazados", label: "Rechazados" },
@@ -98,6 +108,7 @@ export function ProduccionOperationalView({
     completionEvents,
     decisionMap,
     getFinishedQty,
+    progressMap,
   } = useOperationalStore();
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
     useOperationalPlan("PRODUCCION");
@@ -112,6 +123,7 @@ export function ProduccionOperationalView({
   const [composeClient, setComposeClient] = useState("");
   const [composeDate, setComposeDate] = useState("");
   const [displayNameInput, setDisplayNameInput] = useState("");
+  const [detailItem, setDetailItem] = useState<QualityItem | null>(null);
   const isNativeEmpty =
     data?.source === "native" && !loading && (data.workItems?.length ?? 0) === 0;
 
@@ -327,6 +339,24 @@ export function ProduccionOperationalView({
             {displayField(getQualityObservation(row.id))}
           </span>
         ),
+      },
+      {
+        key: "detalle",
+        header: "Detalle",
+        render: (row) =>
+          row.kind === "salida" ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => setDetailItem(row)}
+              data-testid={`prod-detail-${workIdFromQuality(row)}`}
+            >
+              Ver
+            </Button>
+          ) : (
+            <span className="text-xs text-[var(--os-text-muted)]">—</span>
+          ),
       },
       {
         key: "remito",
@@ -631,6 +661,38 @@ export function ProduccionOperationalView({
           onGenerateExcel={() => void generateComposeExcel()}
         />
       ) : null}
+
+      <Drawer open={detailItem !== null} onOpenChange={(open) => !open && setDetailItem(null)}>
+        <DrawerContent aria-describedby={undefined}>
+          {detailItem ? (
+            <>
+              <DrawerHeader>
+                <div>
+                  <DrawerTitle>{displayField(detailItem.product)}</DrawerTitle>
+                  <p className="mt-1 text-sm text-[var(--os-text-muted)]">
+                    {displayField(detailItem.client)}
+                  </p>
+                </div>
+                <DrawerCloseButton />
+              </DrawerHeader>
+              <DrawerBody className="space-y-4">
+                <CodificadoTracePanel
+                  workItem={
+                    workItems.find((w) => w.id === workIdFromQuality(detailItem)) ?? null
+                  }
+                  progress={progressMap[workIdFromQuality(detailItem)] ?? null}
+                  fallbackQuantity={detailItem.quantity}
+                />
+              </DrawerBody>
+              <DrawerFooter>
+                <Button variant="secondary" onClick={() => setDetailItem(null)}>
+                  Cerrar
+                </Button>
+              </DrawerFooter>
+            </>
+          ) : null}
+        </DrawerContent>
+      </Drawer>
     </TwinShell>
   );
 }

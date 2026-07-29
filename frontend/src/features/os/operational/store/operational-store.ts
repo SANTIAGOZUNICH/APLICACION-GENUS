@@ -151,6 +151,7 @@ export function recordWorkProgress(
     packagingUnidadesPorCaja?: number | null;
     packingGroups?: PackingGroupRecord[] | null;
     packingMismatchObservation?: string | null;
+    codificadoObservation?: string | null;
   }
 ): WorkProgressRecord {
   const existing = readProgressMap()[itemId];
@@ -196,6 +197,20 @@ export function recordWorkProgress(
       payload.packingMismatchObservation !== undefined
         ? payload.packingMismatchObservation
         : existing?.packingMismatchObservation ?? null,
+    // Preservar trazabilidad Codificado / granel (save packaging no debe borrarlos).
+    sentToCodificadoAt: existing?.sentToCodificadoAt ?? null,
+    sentToCodificadoBy: existing?.sentToCodificadoBy ?? null,
+    codificadoOriginSector: existing?.codificadoOriginSector ?? null,
+    codificadoObservation:
+      payload.codificadoObservation !== undefined
+        ? payload.codificadoObservation
+        : existing?.codificadoObservation ?? null,
+    viaCodificado: existing?.viaCodificado ?? false,
+    deliveredFromCodificadoAt: existing?.deliveredFromCodificadoAt ?? null,
+    deliveredFromCodificadoBy: existing?.deliveredFromCodificadoBy ?? null,
+    bulkRemainderKg: existing?.bulkRemainderKg ?? null,
+    bulkRemainderObservation: existing?.bulkRemainderObservation ?? null,
+    bulkRemainderId: existing?.bulkRemainderId ?? null,
   };
 
   const map = readProgressMap();
@@ -216,6 +231,7 @@ export function recordWorkPackaging(
     packagingUnidadesPorCaja?: number | null;
     packingGroups?: PackingGroupRecord[] | null;
     packingMismatchObservation?: string | null;
+    codificadoObservation?: string | null;
   }
 ): WorkProgressRecord {
   const existing = readProgressMap()[itemId];
@@ -231,6 +247,7 @@ export function recordWorkPackaging(
     packagingUnidadesPorCaja: payload.packagingUnidadesPorCaja,
     packingGroups: payload.packingGroups,
     packingMismatchObservation: payload.packingMismatchObservation,
+    codificadoObservation: payload.codificadoObservation,
   });
 }
 
@@ -386,6 +403,11 @@ export function recordDeliverFromCodificado(
     observation?: string;
     packagingLote?: string | null;
     packagingVto?: string | null;
+    packagingTotalUnits?: number | null;
+    packagingCajas?: number | null;
+    packagingUnidadesPorCaja?: number | null;
+    packingGroups?: PackingGroupRecord[] | null;
+    packingMismatchObservation?: string | null;
   }
 ): { progress: WorkProgressRecord; event: CompletionEvent; already: boolean } {
   const map = readProgressMap();
@@ -408,28 +430,51 @@ export function recordDeliverFromCodificado(
   }
 
   const originSector = (existing?.codificadoOriginSector || item.sector) as WorkItem["sector"];
+  const packagingLote =
+    payload.packagingLote !== undefined
+      ? payload.packagingLote
+      : existing?.packagingLote ?? item.packagingLote ?? null;
+  const packagingVto =
+    payload.packagingVto !== undefined
+      ? payload.packagingVto
+      : existing?.packagingVto ?? item.packagingVto ?? null;
+  const packagingTotalUnits =
+    payload.packagingTotalUnits !== undefined
+      ? payload.packagingTotalUnits
+      : existing?.packagingTotalUnits ?? item.packagingTotalUnits ?? null;
+  const packingGroups =
+    payload.packingGroups !== undefined
+      ? payload.packingGroups
+      : existing?.packingGroups ?? item.packingGroups ?? null;
+  const packagingCajas =
+    payload.packagingCajas !== undefined
+      ? payload.packagingCajas
+      : existing?.packagingCajas ?? item.packagingCajas ?? null;
+  const packagingUnidadesPorCaja =
+    payload.packagingUnidadesPorCaja !== undefined
+      ? payload.packagingUnidadesPorCaja
+      : existing?.packagingUnidadesPorCaja ?? item.packagingUnidadesPorCaja ?? null;
+  const packingMismatchObservation =
+    payload.packingMismatchObservation !== undefined
+      ? payload.packingMismatchObservation
+      : existing?.packingMismatchObservation ?? item.packingMismatchObservation ?? null;
+
   const enriched: WorkItem = {
     ...item,
     sector: originSector,
-    packagingLote:
-      payload.packagingLote !== undefined
-        ? payload.packagingLote
-        : existing?.packagingLote ?? item.packagingLote ?? null,
-    packagingVto:
-      payload.packagingVto !== undefined
-        ? payload.packagingVto
-        : existing?.packagingVto ?? item.packagingVto ?? null,
-    packagingTotalUnits: existing?.packagingTotalUnits ?? item.packagingTotalUnits ?? null,
-    packingGroups: existing?.packingGroups ?? item.packingGroups ?? null,
-    loteRef:
-      (payload.packagingLote !== undefined
-        ? payload.packagingLote
-        : existing?.packagingLote) || item.loteRef,
+    packagingLote,
+    packagingVto,
+    packagingTotalUnits,
+    packagingCajas,
+    packagingUnidadesPorCaja,
+    packingGroups,
+    packingMismatchObservation,
+    loteRef: packagingLote || item.loteRef,
   };
 
   const finishedQty =
+    (packagingTotalUnits != null ? String(packagingTotalUnits) : "") ||
     existing?.finishedQty ||
-    (enriched.packagingTotalUnits != null ? String(enriched.packagingTotalUnits) : "") ||
     item.quantity ||
     "";
   const observation =
@@ -446,10 +491,13 @@ export function recordDeliverFromCodificado(
   const now = new Date().toISOString();
   const next: WorkProgressRecord = {
     ...progress,
-    packagingLote: enriched.packagingLote,
-    packagingVto: enriched.packagingVto,
-    packagingTotalUnits: enriched.packagingTotalUnits,
-    packingGroups: enriched.packingGroups,
+    packagingLote,
+    packagingVto,
+    packagingTotalUnits,
+    packagingCajas,
+    packagingUnidadesPorCaja,
+    packingGroups,
+    packingMismatchObservation,
     viaCodificado: true,
     codificadoOriginSector: originSector,
     sentToCodificadoAt: existing?.sentToCodificadoAt ?? null,
@@ -457,6 +505,9 @@ export function recordDeliverFromCodificado(
     deliveredFromCodificadoAt: now,
     deliveredFromCodificadoBy: payload.completedBy,
     codificadoObservation: payload.observation?.trim() || existing?.codificadoObservation || null,
+    bulkRemainderKg: existing?.bulkRemainderKg ?? null,
+    bulkRemainderObservation: existing?.bulkRemainderObservation ?? null,
+    bulkRemainderId: existing?.bulkRemainderId ?? null,
     status: "revision",
   };
   const map2 = readProgressMap();

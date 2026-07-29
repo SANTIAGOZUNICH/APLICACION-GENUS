@@ -113,10 +113,10 @@ describe("DEPOSITO acceso y navegación", () => {
       "inventario_me",
       "deposito_graneles",
       "avisos",
-      "avisos_me",
       "semanas_produccion",
       "procedimientos",
     ]);
+    expect(home.sidebarItems).not.toContain("avisos_me");
   });
 
   it("semanas solo lectura para DEPOSITO", () => {

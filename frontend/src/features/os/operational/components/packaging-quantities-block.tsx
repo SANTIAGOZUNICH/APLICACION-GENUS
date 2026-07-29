@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   packingGroupsFromLegacy,
@@ -13,17 +13,54 @@ import { useOperationalStore } from "@/features/os/operational/store/operational
 import type { WorkItem } from "@/types/operational/work-item";
 import { PackingGroupsEditor } from "./packing-groups-editor";
 
-/** Bloque LOTE / VTO + Total + Cajas 1/2/3 (envasado). */
+export type PackagingDraft = {
+  packagingLote: string;
+  packagingVto: string;
+  packagingTotalUnits: number | null;
+  packagingCajas: number | null;
+  packagingUnidadesPorCaja: number | null;
+  packingGroups: PackingGroup[];
+  packingMismatchObservation: string;
+  mismatchOk: boolean;
+};
+
+export function packagingDraftFromItem(item: WorkItem): PackagingDraft {
+  const groups = packingGroupsFromLegacy({
+    packingGroups: item.packingGroups,
+    cajas: item.packagingCajas,
+    unidadesPorCaja: item.packagingUnidadesPorCaja,
+  });
+  const summary = summarizePackingGroups(groups);
+  const packagingTotalUnits = item.packagingTotalUnits ?? null;
+  const warn = packingProducedMismatchWarning(packagingTotalUnits, groups);
+  return {
+    packagingLote: item.packagingLote ?? item.loteRef ?? "",
+    packagingVto: item.packagingVto ?? "",
+    packagingTotalUnits,
+    packagingCajas: summary.groups[0]?.cajas ?? item.packagingCajas ?? null,
+    packagingUnidadesPorCaja:
+      summary.groups[0]?.unidadesPorCaja ?? item.packagingUnidadesPorCaja ?? null,
+    packingGroups: groups,
+    packingMismatchObservation: item.packingMismatchObservation ?? "",
+    mismatchOk: warn.ok,
+  };
+}
+
+/** Bloque LOTE / VTO + Total + Cajas 1/2/3 (envasado / codificado). */
 export function PackagingQuantitiesBlock({
   item,
   actorName,
   onSaved,
+  onDraftChange,
+  hideSaveButton = false,
   readOnly = false,
   sector,
 }: {
   item: WorkItem;
   actorName: string;
   onSaved?: (item: WorkItem) => void;
+  onDraftChange?: (draft: PackagingDraft) => void;
+  hideSaveButton?: boolean;
   readOnly?: boolean;
   sector?: WorkItem["sector"];
 }) {
@@ -51,16 +88,36 @@ export function PackagingQuantitiesBlock({
     [produced, groups]
   );
 
+  const draft = useMemo((): PackagingDraft => {
+    const summary = summarizePackingGroups(groups);
+    return {
+      packagingLote: lote,
+      packagingVto: vto,
+      packagingTotalUnits: total === "" ? null : Number(total),
+      packagingCajas: summary.groups[0]?.cajas ?? null,
+      packagingUnidadesPorCaja: summary.groups[0]?.unidadesPorCaja ?? null,
+      packingGroups: groups,
+      packingMismatchObservation: packingObs,
+      mismatchOk: warn.ok,
+    };
+  }, [lote, vto, total, groups, packingObs, warn.ok]);
+
+  useEffect(() => {
+    onDraftChange?.(draft);
+  }, [draft, onDraftChange]);
+
   function save() {
     if (readOnly) return;
     if (!warn.ok && !packingObs.trim()) {
       setMsg("Indicá una observación si producido y embalado no coinciden.");
       return;
     }
-    const summary = summarizePackingGroups(groups);
-    const packagingTotalUnits = total === "" ? null : Number(total);
-    const packagingCajas = summary.groups[0]?.cajas ?? null;
-    const packagingUnidadesPorCaja = summary.groups[0]?.unidadesPorCaja ?? null;
+    const {
+      packagingTotalUnits,
+      packagingCajas,
+      packagingUnidadesPorCaja,
+      packingGroups,
+    } = draft;
 
     // Live Sync: cualquier WorkItem (Drive o manual) — visible en Producción.
     saveWorkPackaging(item.id, {
@@ -71,7 +128,7 @@ export function PackagingQuantitiesBlock({
       packagingTotalUnits,
       packagingCajas,
       packagingUnidadesPorCaja,
-      packingGroups: groups,
+      packingGroups,
       packingMismatchObservation: packingObs,
     });
 
@@ -82,7 +139,7 @@ export function PackagingQuantitiesBlock({
       packagingLote: lote,
       packagingVto: vto,
       packagingTotalUnits,
-      packingGroups: groups,
+      packingGroups,
       packagingCajas,
       packagingUnidadesPorCaja,
       packingMismatchObservation: packingObs,
@@ -95,7 +152,7 @@ export function PackagingQuantitiesBlock({
       packagingTotalUnits,
       packagingCajas,
       packagingUnidadesPorCaja,
-      packingGroups: groups,
+      packingGroups,
       packingMismatchObservation: packingObs.trim() || null,
       loteRef: lote.trim() || item.loteRef,
     };
@@ -152,7 +209,7 @@ export function PackagingQuantitiesBlock({
         testIdPrefix="packaging"
       />
 
-      {!readOnly ? (
+      {!readOnly && !hideSaveButton ? (
         <Button type="button" onClick={save} data-testid="packaging-save">
           Guardar avance
         </Button>

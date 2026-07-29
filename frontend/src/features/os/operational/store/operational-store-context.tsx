@@ -91,6 +91,7 @@ interface OperationalStoreValue {
       packagingUnidadesPorCaja?: number | null;
       packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
       packingMismatchObservation?: string | null;
+      codificadoObservation?: string | null;
     }
   ) => void;
   markWorkFinished: (
@@ -115,6 +116,11 @@ interface OperationalStoreValue {
       observation?: string;
       packagingLote?: string | null;
       packagingVto?: string | null;
+      packagingTotalUnits?: number | null;
+      packagingCajas?: number | null;
+      packagingUnidadesPorCaja?: number | null;
+      packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+      packingMismatchObservation?: string | null;
     }
   ) => { already: boolean; progress: WorkProgressRecord };
   applyProgressToWorkItems: <T extends { id: string; status: WorkItemStatus }>(items: T[]) => T[];
@@ -297,6 +303,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         packagingUnidadesPorCaja?: number | null;
         packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
         packingMismatchObservation?: string | null;
+        codificadoObservation?: string | null;
       }
     ) => {
       const record = recordWorkPackaging(itemId, payload);
@@ -401,6 +408,11 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         observation?: string;
         packagingLote?: string | null;
         packagingVto?: string | null;
+        packagingTotalUnits?: number | null;
+        packagingCajas?: number | null;
+        packagingUnidadesPorCaja?: number | null;
+        packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+        packingMismatchObservation?: string | null;
       }
     ) => {
       const result = recordDeliverFromCodificado(item, {
@@ -408,6 +420,11 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         observation: payload.observation,
         packagingLote: payload.packagingLote,
         packagingVto: payload.packagingVto,
+        packagingTotalUnits: payload.packagingTotalUnits,
+        packagingCajas: payload.packagingCajas,
+        packagingUnidadesPorCaja: payload.packagingUnidadesPorCaja,
+        packingGroups: payload.packingGroups,
+        packingMismatchObservation: payload.packingMismatchObservation,
       });
       syncFromStorage();
       if (!result.already) {
@@ -419,7 +436,10 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
             packagingLote: result.progress.packagingLote,
             packagingVto: result.progress.packagingVto,
             packagingTotalUnits: result.progress.packagingTotalUnits,
+            packagingCajas: result.progress.packagingCajas,
+            packagingUnidadesPorCaja: result.progress.packagingUnidadesPorCaja,
             packingGroups: result.progress.packingGroups,
+            packingMismatchObservation: result.progress.packingMismatchObservation,
           },
           finishedQty: result.progress.finishedQty,
           observation: result.progress.observation,
@@ -477,6 +497,16 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
           record.packingMismatchObservation !== undefined
             ? record.packingMismatchObservation
             : prev?.packingMismatchObservation ?? null,
+        sentToCodificadoAt: prev?.sentToCodificadoAt ?? null,
+        sentToCodificadoBy: prev?.sentToCodificadoBy ?? null,
+        codificadoOriginSector: prev?.codificadoOriginSector ?? null,
+        codificadoObservation: prev?.codificadoObservation ?? null,
+        viaCodificado: prev?.viaCodificado ?? false,
+        deliveredFromCodificadoAt: prev?.deliveredFromCodificadoAt ?? null,
+        deliveredFromCodificadoBy: prev?.deliveredFromCodificadoBy ?? null,
+        bulkRemainderKg: prev?.bulkRemainderKg ?? null,
+        bulkRemainderObservation: prev?.bulkRemainderObservation ?? null,
+        bulkRemainderId: prev?.bulkRemainderId ?? null,
       };
     }
     writeProgressMap(progressRecords);

@@ -86,8 +86,8 @@ export function remitoGapsFromQuality(
     wi?.plannedDate?.trim() ||
     "";
   const lote =
-    item.lote?.trim() ||
     wi?.packagingLote?.trim() ||
+    item.lote?.trim() ||
     wi?.loteRef?.trim() ||
     "";
   const vto = wi?.packagingVto?.trim() || "";
@@ -168,10 +168,11 @@ export function resolveRemitoInputFromQuality(
     wi?.plannedDate?.trim() ||
     new Date().toISOString().slice(0, 10);
   const product = item.product?.trim() || wi?.product?.trim() || "Producto";
+  // Preferir embalaje final (Codificado / Envasado) sobre lote granel del QualityItem.
   const lote =
     overrides?.lote?.trim() ||
-    item.lote?.trim() ||
     wi?.packagingLote?.trim() ||
+    item.lote?.trim() ||
     wi?.loteRef?.trim() ||
     "";
   const vto = overrides?.vto?.trim() || wi?.packagingVto?.trim() || "";

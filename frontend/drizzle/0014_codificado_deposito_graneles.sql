@@ -4,11 +4,21 @@
  * NO APLICAR sin autorización explícita: APPLY_MIGRATION_0014=1
  *
  * - Estados / metadatos de flujo Codificado en work_items (columnas opcionales).
+ * - Embalaje final (lote/VTO/cajas) + trazabilidad de entrega.
  * - Tabla deposito_graneles + auditoría.
  * - Sin DROP/TRUNCATE. Idempotente con IF NOT EXISTS.
  */
 ALTER TABLE "work_items"
   ADD COLUMN IF NOT EXISTS "packaging_total_units" numeric;
+--> statement-breakpoint
+ALTER TABLE "work_items"
+  ADD COLUMN IF NOT EXISTS "packaging_lote" text;
+--> statement-breakpoint
+ALTER TABLE "work_items"
+  ADD COLUMN IF NOT EXISTS "packaging_vto" text;
+--> statement-breakpoint
+ALTER TABLE "work_items"
+  ADD COLUMN IF NOT EXISTS "packing_groups" jsonb;
 --> statement-breakpoint
 ALTER TABLE "work_items"
   ADD COLUMN IF NOT EXISTS "sent_to_codificado_at" timestamptz;
@@ -26,10 +36,16 @@ ALTER TABLE "work_items"
   ADD COLUMN IF NOT EXISTS "delivered_from_codificado_at" timestamptz;
 --> statement-breakpoint
 ALTER TABLE "work_items"
+  ADD COLUMN IF NOT EXISTS "delivered_from_codificado_by" text;
+--> statement-breakpoint
+ALTER TABLE "work_items"
   ADD COLUMN IF NOT EXISTS "codificado_observation" text;
 --> statement-breakpoint
 ALTER TABLE "work_items"
   ADD COLUMN IF NOT EXISTS "bulk_remainder_kg" numeric;
+--> statement-breakpoint
+ALTER TABLE "work_items"
+  ADD COLUMN IF NOT EXISTS "bulk_remainder_observation" text;
 --> statement-breakpoint
 ALTER TABLE "work_items"
   ADD COLUMN IF NOT EXISTS "bulk_remainder_id" text;

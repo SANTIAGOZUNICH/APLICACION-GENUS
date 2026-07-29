@@ -14,18 +14,23 @@ Archivo: `drizzle/0014_codificado_deposito_graneles.sql`
 ## Tablas / columnas
 ### `work_items` (ADD COLUMN IF NOT EXISTS)
 - `packaging_total_units` numeric
+- `packaging_lote` text — lote final (Codificado / Envasado)
+- `packaging_vto` text
+- `packing_groups` jsonb — cajas 1/2/3 + extras `{cajas, unidadesPorCaja}[]`
 - `sent_to_codificado_at` timestamptz
 - `sent_to_codificado_by` text
 - `codificado_origin_sector` text
 - `via_codificado` boolean default false
 - `delivered_from_codificado_at` timestamptz
+- `delivered_from_codificado_by` text
 - `codificado_observation` text
 - `bulk_remainder_kg` numeric
+- `bulk_remainder_observation` text
 - `bulk_remainder_id` text
 
 ### `deposito_graneles` (CREATE IF NOT EXISTS)
 - id, work_item_id, origin_sector, product, client, bulk_lot, kg_available, intake_date, reported_by, observation, location, status, timestamps, annul fields
-- Unique parcial: un sobrante activo por `work_item_id`
+- Unique parcial: un sobrante activo por `work_item_id` (sin duplicados)
 
 ### `deposito_graneles_audit`
 - Auditoría create/update/delta/annul/delete
@@ -34,6 +39,7 @@ Archivo: `drizzle/0014_codificado_deposito_graneles.sql`
 - Aditiva; filas existentes siguen válidas
 - Runtime Preview actual usa **localStorage** (`genus_os_work_progress`, `genus_os_deposito_graneles`) hasta aplicar Neon
 - No toca remitos históricos ni fórmulas
+- Remito lee embalaje final de Codificado vía `packaging_*` / `packing_groups` cuando `via_codificado`
 
 ## Conteos incompatibles esperados
 - 0 (solo columnas nuevas / tablas nuevas)

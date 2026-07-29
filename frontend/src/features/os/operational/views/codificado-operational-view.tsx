@@ -8,6 +8,11 @@ import { usePreviewContext, usePreviewSession } from "@/features/os/session/prev
 import { displayField } from "@/lib/operational/display-fields";
 import { Button } from "@/components/ui/button";
 import { OperationalTabs, StatusChip } from "../components/operational-ui";
+import {
+  PackagingQuantitiesBlock,
+  packagingDraftFromItem,
+  type PackagingDraft,
+} from "../components/packaging-quantities-block";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { useOperationalStore } from "../store/operational-store-context";
@@ -20,7 +25,7 @@ type TabId = "pendientes" | "entregados";
 
 /**
  * Mi trabajo — Codificado: recibe desde Envasado Masivo/Premium,
- * completa Lote/VTO y entrega una sola vez a Calidad + Producción.
+ * informa cantidad/cajas/lote/VTO y entrega una sola vez a Calidad + Producción.
  */
 export function CodificadoOperationalView() {
   const workspace = useRequiredWorkspace();
@@ -44,11 +49,13 @@ export function CodificadoOperationalView() {
 
   const [tab, setTab] = useState<TabId>("pendientes");
   const [selected, setSelected] = useState<WorkItem | null>(null);
-  const [lote, setLote] = useState("");
-  const [vto, setVto] = useState("");
+  const [draft, setDraft] = useState<PackagingDraft | null>(null);
   const [obs, setObs] = useState("");
   const [confirmDeliver, setConfirmDeliver] = useState(false);
   const [missingWarn, setMissingWarn] = useState(false);
+  const [packagingError, setPackagingError] = useState<string | null>(null);
+
+  const actorName = workspace.context.displayName || email || "Codificado";
 
   const allItems = useMemo(() => {
     const masivo = mergeManualWorkItems("ENVASADO_MASIVO", data?.workItems ?? []);
@@ -56,7 +63,6 @@ export function CodificadoOperationalView() {
     const merged = applyProgressToWorkItems(
       applyEffectiveStatus([...masivo, ...premium])
     );
-    // Deduplicate by id
     const byId = new Map<string, WorkItem>();
     for (const item of merged) byId.set(item.id, item);
     return [...byId.values()];
@@ -77,81 +83,128 @@ export function CodificadoOperationalView() {
 
   const list = tab === "pendientes" ? pendientes : entregados;
 
-  const openItem = useCallback(
-    (item: WorkItem) => {
+  const enrichSelected = useCallback(
+    (item: WorkItem): WorkItem => {
       const p = progressMap[item.id];
-      setSelected(item);
-      setLote(p?.packagingLote ?? item.packagingLote ?? item.loteRef ?? "");
-      setVto(p?.packagingVto ?? item.packagingVto ?? "");
-      setObs(p?.codificadoObservation ?? "");
-      setMissingWarn(false);
+      if (!p) return item;
+      return {
+        ...item,
+        packagingLote: p.packagingLote ?? item.packagingLote,
+        packagingVto: p.packagingVto ?? item.packagingVto,
+        packagingTotalUnits: p.packagingTotalUnits ?? item.packagingTotalUnits,
+        packagingCajas: p.packagingCajas ?? item.packagingCajas,
+        packagingUnidadesPorCaja:
+          p.packagingUnidadesPorCaja ?? item.packagingUnidadesPorCaja,
+        packingGroups: p.packingGroups ?? item.packingGroups,
+        packingMismatchObservation:
+          p.packingMismatchObservation ?? item.packingMismatchObservation,
+      };
     },
     [progressMap]
   );
 
+  const openItem = useCallback(
+    (item: WorkItem) => {
+      const enriched = enrichSelected(item);
+      const p = progressMap[item.id];
+      setSelected(enriched);
+      setDraft(packagingDraftFromItem(enriched));
+      setObs(p?.codificadoObservation ?? "");
+      setMissingWarn(false);
+      setPackagingError(null);
+    },
+    [progressMap, enrichSelected]
+  );
+
+  const persistPackaging = useCallback(
+    (extraObs?: string) => {
+      if (!selected || !draft) return false;
+      if (!draft.mismatchOk && !draft.packingMismatchObservation.trim()) {
+        setPackagingError(
+          "Indicá una observación si producido y embalado no coinciden."
+        );
+        return false;
+      }
+      setPackagingError(null);
+      saveWorkPackaging(selected.id, {
+        updatedBy: actorName,
+        sector: "CODIFICADO",
+        packagingLote: draft.packagingLote,
+        packagingVto: draft.packagingVto,
+        packagingTotalUnits: draft.packagingTotalUnits,
+        packagingCajas: draft.packagingCajas,
+        packagingUnidadesPorCaja: draft.packagingUnidadesPorCaja,
+        packingGroups: draft.packingGroups,
+        packingMismatchObservation: draft.packingMismatchObservation,
+        codificadoObservation: extraObs ?? obs,
+      });
+      setSelected({
+        ...selected,
+        packagingLote: draft.packagingLote.trim() || null,
+        packagingVto: draft.packagingVto.trim() || null,
+        packagingTotalUnits: draft.packagingTotalUnits,
+        packagingCajas: draft.packagingCajas,
+        packagingUnidadesPorCaja: draft.packagingUnidadesPorCaja,
+        packingGroups: draft.packingGroups,
+        packingMismatchObservation: draft.packingMismatchObservation.trim() || null,
+        loteRef: draft.packagingLote.trim() || selected.loteRef,
+      });
+      return true;
+    },
+    [selected, draft, saveWorkPackaging, actorName, obs]
+  );
+
   const handleSave = useCallback(() => {
-    if (!selected) return;
-    saveWorkPackaging(selected.id, {
-      updatedBy: workspace.context.displayName || email || "Codificado",
-      sector: "CODIFICADO",
-      packagingLote: lote,
-      packagingVto: vto,
-      packagingTotalUnits:
-        selected.packagingTotalUnits ??
-        progressMap[selected.id]?.packagingTotalUnits ??
-        null,
-      packingGroups: selected.packingGroups ?? progressMap[selected.id]?.packingGroups ?? null,
-    });
-    // Persist codificado observation on progress via packaging + note in observation path
+    if (!persistPackaging()) return;
     showToast("Avance de Codificado guardado.");
-  }, [
-    selected,
-    lote,
-    vto,
-    saveWorkPackaging,
-    workspace.context.displayName,
-    email,
-    progressMap,
-    showToast,
-  ]);
+  }, [persistPackaging, showToast]);
 
   const tryDeliver = useCallback(() => {
-    if (!selected) return;
-    if (!lote.trim() || !vto.trim()) {
+    if (!selected || !draft) return;
+    if (!draft.packagingLote.trim() || !draft.packagingVto.trim()) {
       setMissingWarn(true);
       setConfirmDeliver(true);
       return;
     }
     setMissingWarn(false);
     setConfirmDeliver(true);
-  }, [selected, lote, vto]);
+  }, [selected, draft]);
 
   const confirmDeliverAction = useCallback(() => {
-    if (!selected) return;
+    if (!selected || !draft) return;
     const gate = canDeliverFromCodificado(selected.status);
     if (!gate.ok) {
       showToast(gate.error, "info");
       setConfirmDeliver(false);
       return;
     }
+    if (!draft.mismatchOk && !draft.packingMismatchObservation.trim()) {
+      setPackagingError(
+        "Indicá una observación si producido y embalado no coinciden."
+      );
+      setConfirmDeliver(false);
+      return;
+    }
     const result = deliverFromCodificado(selected, {
-      updatedBy: workspace.context.displayName || email || "Codificado",
+      updatedBy: actorName,
       observation: obs,
-      packagingLote: lote.trim() || null,
-      packagingVto: vto.trim() || null,
+      packagingLote: draft.packagingLote.trim() || null,
+      packagingVto: draft.packagingVto.trim() || null,
+      packagingTotalUnits: draft.packagingTotalUnits,
+      packagingCajas: draft.packagingCajas,
+      packagingUnidadesPorCaja: draft.packagingUnidadesPorCaja,
+      packingGroups: draft.packingGroups,
+      packingMismatchObservation: draft.packingMismatchObservation,
     });
     if (result.already) {
       showToast(WORK_TRANSFER.alreadyDeliveredFromCodificado, "info");
       setConfirmDeliver(false);
       return;
     }
-    const origin = (result.progress.codificadoOriginSector || selected.sector) as
-      | "ENVASADO_MASIVO"
-      | "ENVASADO_PREMIUM";
     pushNotification({
       kind: "trabajo_finalizado",
       title: "Codificado entregó a Calidad",
-      message: `${selected.product ?? "Producto"} · ${selected.client ?? ""} — lote ${lote || "s/d"}`,
+      message: `${selected.product ?? "Producto"} · ${selected.client ?? ""} — lote ${draft.packagingLote || "s/d"}`,
       sectors: ["CALIDAD", "PRODUCCION"],
     });
     pushNotification({
@@ -163,17 +216,8 @@ export function CodificadoOperationalView() {
     showToast("Entregado a Calidad y Producción.");
     setConfirmDeliver(false);
     setSelected(null);
-    void origin;
-  }, [
-    selected,
-    deliverFromCodificado,
-    workspace.context.displayName,
-    email,
-    obs,
-    lote,
-    vto,
-    showToast,
-  ]);
+    setDraft(null);
+  }, [selected, draft, deliverFromCodificado, actorName, obs, showToast]);
 
   return (
     <TwinShell title="Codificado">
@@ -266,7 +310,15 @@ export function CodificadoOperationalView() {
         </div>
       )}
 
-      <Dialog open={Boolean(selected)} onOpenChange={(o) => !o && setSelected(null)}>
+      <Dialog
+        open={Boolean(selected)}
+        onOpenChange={(o) => {
+          if (!o) {
+            setSelected(null);
+            setDraft(null);
+          }
+        }}
+      >
         <DialogContent className="max-h-[85vh] overflow-y-auto overflow-x-hidden">
           {selected ? (
             <>
@@ -279,36 +331,33 @@ export function CodificadoOperationalView() {
                   {displayField(selected.client)}
                 </p>
                 <p>
-                  <span className="text-[var(--os-text-muted)]">Cantidad total · </span>
-                  {progressMap[selected.id]?.packagingTotalUnits ??
-                    selected.packagingTotalUnits ??
-                    "—"}{" "}
-                  un.
-                </p>
-                <p>
                   <span className="text-[var(--os-text-muted)]">Origen · </span>
                   {progressMap[selected.id]?.codificadoOriginSector ?? selected.sector}
                 </p>
-                <label className="block">
-                  <span className="font-medium">Lote</span>
-                  <input
-                    className="mt-1 w-full rounded border px-3 py-2"
-                    value={lote}
-                    disabled={!isInCodificadoStatus(selected.status)}
-                    onChange={(e) => setLote(e.target.value)}
-                    data-testid="codificado-lote"
-                  />
-                </label>
-                <label className="block">
-                  <span className="font-medium">VTO</span>
-                  <input
-                    className="mt-1 w-full rounded border px-3 py-2"
-                    value={vto}
-                    disabled={!isInCodificadoStatus(selected.status)}
-                    onChange={(e) => setVto(e.target.value)}
-                    data-testid="codificado-vto"
-                  />
-                </label>
+                {progressMap[selected.id]?.sentToCodificadoBy ? (
+                  <p>
+                    <span className="text-[var(--os-text-muted)]">Enviado por · </span>
+                    {progressMap[selected.id]?.sentToCodificadoBy}
+                  </p>
+                ) : null}
+                {progressMap[selected.id]?.bulkRemainderKg != null &&
+                (progressMap[selected.id]?.bulkRemainderKg ?? 0) > 0 ? (
+                  <p>
+                    <span className="text-[var(--os-text-muted)]">Sobrante granel · </span>
+                    {progressMap[selected.id]?.bulkRemainderKg} kg
+                  </p>
+                ) : null}
+
+                <PackagingQuantitiesBlock
+                  key={selected.id}
+                  item={selected}
+                  actorName={actorName}
+                  sector="CODIFICADO"
+                  readOnly={!isInCodificadoStatus(selected.status)}
+                  hideSaveButton
+                  onDraftChange={setDraft}
+                />
+
                 <label className="block">
                   <span className="font-medium">Observación de Codificado</span>
                   <textarea
@@ -317,12 +366,18 @@ export function CodificadoOperationalView() {
                     value={obs}
                     disabled={!isInCodificadoStatus(selected.status)}
                     onChange={(e) => setObs(e.target.value)}
+                    data-testid="codificado-obs"
                   />
                 </label>
+                {packagingError ? (
+                  <p role="alert" className="text-xs text-[var(--genus-error)]">
+                    {packagingError}
+                  </p>
+                ) : null}
               </div>
               {isInCodificadoStatus(selected.status) ? (
                 <DialogFooter className="flex flex-wrap gap-2">
-                  <Button variant="secondary" onClick={handleSave}>
+                  <Button variant="secondary" onClick={handleSave} data-testid="codificado-save">
                     Guardar avance
                   </Button>
                   <Button

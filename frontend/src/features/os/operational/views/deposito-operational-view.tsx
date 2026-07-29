@@ -40,7 +40,7 @@ export function DepositoOperationalView() {
         >
           Salidas ME
         </Button>
-        <Button type="button" variant="secondary" onClick={() => navigateSidebar("avisos_me")}>
+        <Button type="button" variant="secondary" onClick={() => navigateSidebar("avisos")}>
           Avisos
         </Button>
         <Button

@@ -48,6 +48,7 @@ import { useOperationalStore } from "../store/operational-store-context";
 import type { QualityItem } from "../types";
 import { canAccessRemitos } from "@/lib/remitos/types";
 import { isPackagingQualityItem } from "@/lib/remitos/from-quality";
+import { CodificadoTracePanel } from "../components/codificado-trace-panel";
 import { FormulasAdminPanel } from "../components/formulas-admin-panel";
 import { LifecycleRowActions } from "../components/lifecycle-row-actions";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
@@ -631,6 +632,30 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                     </dd>
                   </div>
                 </dl>
+
+                {reviewItem.kind === "salida" ? (
+                  <CodificadoTracePanel
+                    workItem={
+                      workItems.find(
+                        (w) =>
+                          w.id === reviewItem.relatedWorkItemId ||
+                          w.id ===
+                            (reviewItem.id.startsWith("qc:")
+                              ? reviewItem.id.slice(3)
+                              : reviewItem.id)
+                      ) ?? null
+                    }
+                    progress={
+                      progressMap[
+                        reviewItem.relatedWorkItemId ??
+                          (reviewItem.id.startsWith("qc:")
+                            ? reviewItem.id.slice(3)
+                            : reviewItem.id)
+                      ] ?? null
+                    }
+                    fallbackQuantity={reviewItem.quantity}
+                  />
+                ) : null}
 
                 <div>
                   <p className="mb-1.5 text-xs uppercase text-[var(--os-text-muted)]">Archivo</p>

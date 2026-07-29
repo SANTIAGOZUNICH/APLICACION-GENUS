@@ -135,28 +135,8 @@ export function upsertGranelFromEnvasado(input: {
   const now = new Date().toISOString();
 
   if (existing) {
-    if (existing.kgAvailable === input.kg) {
-      return { record: existing, created: false, duplicated: true };
-    }
-    const before = existing.kgAvailable;
-    existing.kgAvailable = input.kg;
-    existing.product = input.product || existing.product;
-    existing.client = input.client || existing.client;
-    existing.bulkLot = input.bulkLot || existing.bulkLot;
-    existing.observation = input.observation?.trim() || existing.observation;
-    existing.updatedAt = now;
-    existing.status = input.kg > 0 ? "DISPONIBLE" : "AGOTADO";
-    writeAll(items);
-    pushAudit({
-      granelId: existing.id,
-      action: "delta",
-      actorSector: input.actorSector,
-      actorName: input.reportedBy,
-      beforeKg: before,
-      afterKg: input.kg,
-      reason: "Ajuste sobrante desde Envasado",
-    });
-    return { record: existing, created: false, duplicated: false };
+    // Una sola vez por workItemId: no duplicar ni reescribir desde Envasado.
+    return { record: existing, created: false, duplicated: true };
   }
 
   const record: GranelRemainderRecord = {
