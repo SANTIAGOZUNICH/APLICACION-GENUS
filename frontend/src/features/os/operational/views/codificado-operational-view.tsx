@@ -34,8 +34,13 @@ export function CodificadoOperationalView() {
     getFinishedQty,
   } = useOperationalStore();
 
-  const { data, loading } = useOperationalPlan("ENVASADO_MASIVO", {});
-  const { data: dataPremium } = useOperationalPlan("ENVASADO_PREMIUM", {});
+  const { data, loading, refresh: refreshMasivo } = useOperationalPlan("ENVASADO_MASIVO", {});
+  const { data: dataPremium, refresh: refreshPremium } = useOperationalPlan("ENVASADO_PREMIUM", {});
+
+  const refresh = useCallback(() => {
+    refreshMasivo();
+    refreshPremium();
+  }, [refreshMasivo, refreshPremium]);
 
   const [tab, setTab] = useState<TabId>("pendientes");
   const [selected, setSelected] = useState<WorkItem | null>(null);
@@ -172,11 +177,23 @@ export function CodificadoOperationalView() {
 
   return (
     <TwinShell title="Codificado">
-      <header className="mb-4 space-y-1">
-        <h2 className="text-2xl font-semibold tracking-tight">Mi trabajo</h2>
-        <p className="text-sm text-[var(--os-text-muted)]">
-          Trabajos enviados desde Envasado Masivo y Premium · {workspace.context.displayName}
-        </p>
+      <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h2 className="text-2xl font-semibold tracking-tight">Mi trabajo</h2>
+          <p className="text-sm text-[var(--os-text-muted)]">
+            Trabajos enviados desde Envasado Masivo y Premium · {workspace.context.displayName}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={refresh}
+          disabled={loading}
+          data-testid="codificado-refresh"
+        >
+          Actualizar
+        </Button>
       </header>
 
       <OperationalTabs

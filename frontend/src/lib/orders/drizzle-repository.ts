@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import {
   operationalOrders,
@@ -372,29 +372,52 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     completeCount: number;
   }> {
     const db = getDb();
-    const all = await db.select().from(operationalOrders);
-    let list = all.map(mapOrder);
-    if (filters.type) list = list.filter((o) => o.type === filters.type);
-    const pendingCount = list.filter((o) => PENDING_STATUSES.includes(o.status)).length;
-    const completeCount = list.filter((o) => COMPLETE_STATUSES.includes(o.status)).length;
-    if (filters.tab === "pendientes") {
-      list = list.filter((o) => PENDING_STATUSES.includes(o.status));
-    } else if (filters.tab === "completas") {
-      list = list.filter((o) => COMPLETE_STATUSES.includes(o.status));
+    const conditions = [];
+    if (filters.type) {
+      conditions.push(eq(operationalOrders.type, filters.type));
     }
-    if (filters.status) list = list.filter((o) => o.status === filters.status);
+    if (filters.status) {
+      conditions.push(eq(operationalOrders.status, filters.status));
+    }
     if (filters.assignedSector) {
-      list = list.filter((o) => o.assignedSector === filters.assignedSector);
+      conditions.push(eq(operationalOrders.assignedSector, filters.assignedSector));
     }
     if (filters.unassigned) {
-      list = list.filter((o) => o.assignedSector === "SIN_ASIGNAR");
+      conditions.push(eq(operationalOrders.assignedSector, "SIN_ASIGNAR"));
     }
+    if (filters.tab === "pendientes") {
+      conditions.push(inArray(operationalOrders.status, [...PENDING_STATUSES]));
+    } else if (filters.tab === "completas") {
+      conditions.push(inArray(operationalOrders.status, [...COMPLETE_STATUSES]));
+    }
+    if (filters.createdBy) {
+      conditions.push(eq(operationalOrders.createdBy, filters.createdBy));
+    }
+    if (filters.dateFrom) {
+      conditions.push(sql`${operationalOrders.createdAt}::date >= ${filters.dateFrom}::date`);
+    }
+    if (filters.dateTo) {
+      conditions.push(sql`${operationalOrders.createdAt}::date <= ${filters.dateTo}::date`);
+    }
+
+    const where = conditions.length ? and(...conditions) : undefined;
+    // Cap de seguridad: evita dump ilimitado si faltan filtros.
+    const hardCap = 2_000;
+    const rows = await db
+      .select()
+      .from(operationalOrders)
+      .where(where)
+      .orderBy(desc(operationalOrders.createdAt))
+      .limit(hardCap);
+    let list = rows.map(mapOrder);
+
+    // Conteos sobre el conjunto filtrado en SQL (antes de search/texto).
+    const pendingCount = list.filter((o) => PENDING_STATUSES.includes(o.status)).length;
+    const completeCount = list.filter((o) => COMPLETE_STATUSES.includes(o.status)).length;
+
     if (filters.emptyProduct) list = list.filter((o) => !o.product.trim());
     if (filters.emptyClient) list = list.filter((o) => !o.client.trim());
     if (filters.emptyLot) list = list.filter((o) => !o.lot.trim());
-    if (filters.createdBy) {
-      list = list.filter((o) => o.createdBy === filters.createdBy);
-    }
     if (filters.emptyDraft) {
       list = list.filter(
         (o) =>
@@ -431,12 +454,6 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     }
     if (filters.month) {
       list = list.filter((o) => new Date(o.createdAt).getMonth() + 1 === filters.month);
-    }
-    if (filters.dateFrom) {
-      list = list.filter((o) => o.createdAt.slice(0, 10) >= filters.dateFrom!);
-    }
-    if (filters.dateTo) {
-      list = list.filter((o) => o.createdAt.slice(0, 10) <= filters.dateTo!);
     }
     const sort = filters.sort ?? "fecha_desc";
     list.sort((a, b) => {
@@ -674,16 +691,23 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   async listNotificationsForSector(
     sector: string,
     actorEmail: string,
-    options?: { includeDismissed?: boolean }
+    options?: { includeDismissed?: boolean; allForSector?: boolean }
   ): Promise<OsNotificationRecord[]> {
     const db = getDb();
-    const rows = await db.select().from(osNotifications).orderBy(desc(osNotifications.createdAt));
+    // Filtro por sector en SQL + límite: evita dump completo de os_notifications.
+    const rows = await db
+      .select()
+      .from(osNotifications)
+      .where(sql`${osNotifications.sectors} @> ${JSON.stringify([sector])}::jsonb`)
+      .orderBy(desc(osNotifications.createdAt))
+      .limit(200);
     const tombstones = await db
       .select()
       .from(osNotificationUserTombstones)
       .where(eq(osNotificationUserTombstones.userEmail, actorEmail));
     const tombstoneKeys = new Set(tombstones.map((t) => t.eventKey));
     const includeDismissed = options?.includeDismissed ?? false;
+    const allForSector = options?.allForSector ?? false;
     return rows
       .map((r) => ({
         id: r.id,
@@ -702,6 +726,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
         if (!n.sectors.includes(sector as SectorId)) return false;
         if (n.deletedBy.includes(actorEmail)) return false;
         if (notificationEventKeys(n).some((k) => tombstoneKeys.has(k))) return false;
+        if (allForSector) return true;
         const dismissed = n.dismissedBy.includes(actorEmail);
         return includeDismissed ? dismissed : !dismissed;
       });

@@ -152,25 +152,42 @@ function normalizeMpStockPayload(raw: unknown): MpStockRow {
 }
 
 /**
- * Relee solo MP stock + ingresos desde Neon en cada request.
- * Evita split-brain entre instancias serverless (tabla Stock UI vs Ingresos).
+ * Relee MP stock + ingresos desde Neon.
+ * Deduplica requests concurrentes (sin TTL temporal) para no reintroducir
+ * split-brain entre lambdas tras un ingreso MP.
  */
+let mpRefreshInFlight: Promise<void> | null = null;
+
 export async function refreshMpInventoryFromNeon(
-  repo: MemoryInventoryRepo
+  repo: MemoryInventoryRepo,
+  options?: { force?: boolean }
 ): Promise<void> {
   if (!isDatabaseConfigured()) return;
-  const db = getDb();
-  const [mpStock, mpIngresos] = await Promise.all([
-    db.select().from(invMpStock),
-    db.select().from(invMpIngresos),
-  ]);
-  repo.mpStock = mpStock.map((r) => normalizeMpStockPayload(r.payload));
-  repo.mpIngresos = mpIngresos.map((r) => normalizeMpIngresoPayload(r.payload));
+  if (!options?.force && mpRefreshInFlight) {
+    await mpRefreshInFlight;
+    return;
+  }
+  const run = (async () => {
+    const db = getDb();
+    const [mpStock, mpIngresos] = await Promise.all([
+      db.select().from(invMpStock),
+      db.select().from(invMpIngresos),
+    ]);
+    repo.mpStock = mpStock.map((r) => normalizeMpStockPayload(r.payload));
+    repo.mpIngresos = mpIngresos.map((r) => normalizeMpIngresoPayload(r.payload));
+  })();
+  mpRefreshInFlight = run;
+  try {
+    await run;
+  } finally {
+    if (mpRefreshInFlight === run) mpRefreshInFlight = null;
+  }
 }
 
 export function resetInventoryHydrationFlag() {
   hydrated = false;
   hydratePromise = null;
+  mpRefreshInFlight = null;
 }
 
 /** Persiste un ingreso MP sin wipe-all (idempotente). */

@@ -1,7 +1,7 @@
 /** Ledger stock MP por código — puro + servicio con memoria/Neon. */
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import {
   assertFeatureWritesEnabled,
@@ -507,22 +507,23 @@ export class MpStockLedgerService {
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
-        const rows = await db.select().from(mpStockMovements);
-        return rows
-          .filter((r) => r.idempotencyKey.startsWith(positionKey))
-          .map((r) => ({
-            id: r.id,
-            codigo: r.codigo,
-            kind: r.kind as MpStockMovementKind,
-            quantity: r.quantity,
-            balanceAfter: r.balanceAfter,
-            reason: r.reason,
-            refType: r.refType,
-            refId: r.refId,
-            lote: r.lote,
-            proveedor: r.proveedor,
-            documento: r.documento,
-            actorEmail: r.actorEmail,
+        const rows = await db
+          .select()
+          .from(mpStockMovements)
+          .where(sql`${mpStockMovements.idempotencyKey} like ${`${positionKey}%`}`);
+        return rows.map((r) => ({
+          id: r.id,
+          codigo: r.codigo,
+          kind: r.kind as MpStockMovementKind,
+          quantity: r.quantity,
+          balanceAfter: r.balanceAfter,
+          reason: r.reason,
+          refType: r.refType,
+          refId: r.refId,
+          lote: r.lote,
+          proveedor: r.proveedor,
+          documento: r.documento,
+          actorEmail: r.actorEmail,
             actorSector: r.actorSector,
             idempotencyKey: r.idempotencyKey,
             reversed: r.reversed,

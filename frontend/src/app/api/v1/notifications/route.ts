@@ -13,8 +13,10 @@ export async function GET(request: Request) {
     const actor = resolveOrdersActor(request);
     const url = new URL(request.url);
     const includeDismissed = url.searchParams.get("includeDismissed") === "1";
+    const allForSector = url.searchParams.get("all") === "1";
     const notifications = await getOrdersService().listNotifications(actor, {
       includeDismissed,
+      allForSector,
     });
     return NextResponse.json({ notifications, legallyOperational: true });
   } catch (err) {

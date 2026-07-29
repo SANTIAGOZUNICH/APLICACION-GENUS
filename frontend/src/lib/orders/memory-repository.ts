@@ -348,15 +348,17 @@ export class MemoryOrdersRepository implements OrdersRepository {
   async listNotificationsForSector(
     sector: string,
     actorEmail: string,
-    options?: { includeDismissed?: boolean }
+    options?: { includeDismissed?: boolean; allForSector?: boolean }
   ): Promise<OsNotificationRecord[]> {
     const includeDismissed = options?.includeDismissed ?? false;
+    const allForSector = options?.allForSector ?? false;
     return this.notifications
       .filter((n) => {
         if (!n.sectors.includes(sector as never)) return false;
         const deleted = (n.deletedBy ?? []).includes(actorEmail);
         if (deleted) return false;
         if (this.tombstones.has(`${actorEmail}::id:${n.id}`)) return false;
+        if (allForSector) return true;
         const dismissed = n.dismissedBy.includes(actorEmail);
         return includeDismissed ? dismissed : !dismissed;
       })

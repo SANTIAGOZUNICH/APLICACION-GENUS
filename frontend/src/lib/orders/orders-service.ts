@@ -1576,7 +1576,10 @@ export class OrdersService {
     return order;
   }
 
-  listNotifications(actor: OrdersActor, options?: { includeDismissed?: boolean }) {
+  listNotifications(
+    actor: OrdersActor,
+    options?: { includeDismissed?: boolean; allForSector?: boolean }
+  ) {
     return this.repo.listNotificationsForSector(actor.sector, actor.email, options);
   }
 

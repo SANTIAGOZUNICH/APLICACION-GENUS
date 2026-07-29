@@ -3,8 +3,9 @@
  * Framework-agnóstico para tests (visibility, overlap, backoff).
  */
 
-export const LIVE_SYNC_POLL_BASE_MS = 3_000;
-export const LIVE_SYNC_POLL_BACKOFF_STEPS_MS = [3_000, 5_000, 10_000, 30_000] as const;
+/** Intervalo base elevado para reducir transferencia / carga Preview. */
+export const LIVE_SYNC_POLL_BASE_MS = 8_000;
+export const LIVE_SYNC_POLL_BACKOFF_STEPS_MS = [8_000, 15_000, 30_000, 60_000] as const;
 
 export interface LiveSyncCheckClientResult {
   changed: boolean;

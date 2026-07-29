@@ -71,11 +71,9 @@ export function NotificationBell() {
   const pullServer = useCallback(async () => {
     if (!session) return;
     try {
-      const [active, archived] = await Promise.all([
-        fetchOsNotifications(session, { includeDismissed: false }),
-        fetchOsNotifications(session, { includeDismissed: true }),
-      ]);
-      const mapServer = (list: typeof active, dismissed: boolean): BellItem[] =>
+      // Un solo SELECT (antes: 2 GETs × full table cada 30s).
+      const all = await fetchOsNotifications(session, { allForSector: true });
+      const mapServer = (list: typeof all, dismissed: boolean): BellItem[] =>
         list.map((n) => ({
           id: n.id,
           kind: n.kind as OsNotification["kind"],
@@ -87,6 +85,9 @@ export function NotificationBell() {
           dismissed,
           source: "server" as const,
         }));
+
+      const active = all.filter((n) => !n.dismissedBy.includes(session.email));
+      const archived = all.filter((n) => n.dismissedBy.includes(session.email));
 
       setActiveItems((prev) => {
         const local = prev.filter((p) => p.source !== "server");
@@ -106,10 +107,24 @@ export function NotificationBell() {
       if (cancelled) return;
     };
     void run();
-    const id = window.setInterval(() => void pullServer(), 30000);
+    // 45s: equilibrio transferencia vs demora de avisos nuevos.
+    const POLL_MS = 45_000;
+    const id = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      void pullServer();
+    }, POLL_MS);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void pullServer();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [session, pullServer]);
 
@@ -195,7 +210,13 @@ export function NotificationBell() {
     <div className="relative">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => {
+            const next = !v;
+            if (next) void pullServer();
+            return next;
+          });
+        }}
         className="relative rounded-full p-2 text-[var(--os-text-muted)] transition-colors hover:bg-[var(--os-bg)] hover:text-[var(--os-text)]"
         aria-label={`Notificaciones${unreadCount > 0 ? ` (${unreadCount} sin leer)` : ""}`}
         aria-expanded={open}

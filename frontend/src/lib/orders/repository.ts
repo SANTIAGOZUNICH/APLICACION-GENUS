@@ -77,7 +77,7 @@ export interface OrdersRepository {
   listNotificationsForSector(
     sector: string,
     actorEmail: string,
-    options?: { includeDismissed?: boolean }
+    options?: { includeDismissed?: boolean; allForSector?: boolean }
   ): Promise<OsNotificationRecord[]>;
   markNotificationRead(id: string, actorEmail: string): Promise<void>;
   dismissNotification(id: string, actorEmail: string): Promise<void>;

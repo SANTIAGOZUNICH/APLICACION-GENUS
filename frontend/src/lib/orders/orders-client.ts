@@ -614,10 +614,11 @@ export async function decideProposalApi(
 
 export async function fetchOsNotifications(
   session: OrdersClientSession,
-  options?: { includeDismissed?: boolean }
+  options?: { includeDismissed?: boolean; allForSector?: boolean }
 ): Promise<OsNotificationRecord[]> {
   const params = new URLSearchParams();
   if (options?.includeDismissed) params.set("includeDismissed", "1");
+  if (options?.allForSector) params.set("all", "1");
   const qs = params.toString();
   const res = await fetch(`/api/v1/notifications${qs ? `?${qs}` : ""}`, {
     headers: actorHeaders(session),

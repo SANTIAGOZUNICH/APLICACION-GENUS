@@ -6,6 +6,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
+import { withNeonReadCache, invalidateNeonReadCache } from "@/lib/db/neon-read-cache";
 import {
   formulaImportRuns,
   formulaIngredients,
@@ -27,22 +28,43 @@ import type {
 
 let hydrated = false;
 
+/** TTL warm-instance: evita re-armar el banco si ya está en memoria. */
+const FORMULA_ROWS_CACHE_KEY = "formula:bank:rows";
+const FORMULA_ROWS_TTL_MS = 10 * 60 * 1000;
+
 export function resetFormulaHydrationFlag() {
   hydrated = false;
+  invalidateNeonReadCache(FORMULA_ROWS_CACHE_KEY);
+}
+
+type FormulaBankRows = {
+  products: (typeof formulaProducts.$inferSelect)[];
+  versions: (typeof formulaVersions.$inferSelect)[];
+  ingredients: (typeof formulaIngredients.$inferSelect)[];
+  steps: (typeof formulaProcedureSteps.$inferSelect)[];
+  specs: (typeof formulaSpecifications.$inferSelect)[];
+  runs: (typeof formulaImportRuns.$inferSelect)[];
+};
+
+async function loadFormulaBankRows(): Promise<FormulaBankRows> {
+  return withNeonReadCache(FORMULA_ROWS_CACHE_KEY, FORMULA_ROWS_TTL_MS, async () => {
+    const db = getDb();
+    const [products, versions, ingredients, steps, specs, runs] = await Promise.all([
+      db.select().from(formulaProducts),
+      db.select().from(formulaVersions),
+      db.select().from(formulaIngredients),
+      db.select().from(formulaProcedureSteps),
+      db.select().from(formulaSpecifications),
+      db.select().from(formulaImportRuns),
+    ]);
+    return { products, versions, ingredients, steps, specs, runs };
+  });
 }
 
 export async function hydrateFormulaBankFromNeon(store: MemoryFormulaBank): Promise<void> {
   if (!isDatabaseConfigured() || hydrated) return;
-  const db = getDb();
 
-  const [products, versions, ingredients, steps, specs, runs] = await Promise.all([
-    db.select().from(formulaProducts),
-    db.select().from(formulaVersions),
-    db.select().from(formulaIngredients),
-    db.select().from(formulaProcedureSteps),
-    db.select().from(formulaSpecifications),
-    db.select().from(formulaImportRuns),
-  ]);
+  const { products, versions, ingredients, steps, specs, runs } = await loadFormulaBankRows();
 
   const ingsByVersion = new Map<string, FormulaIngredient[]>();
   for (const row of ingredients) {
@@ -140,6 +162,8 @@ export async function hydrateFormulaBankFromNeon(store: MemoryFormulaBank): Prom
 
 export async function persistFormulaBankSnapshot(store: MemoryFormulaBank): Promise<void> {
   if (!isDatabaseConfigured()) return;
+  invalidateNeonReadCache(FORMULA_ROWS_CACHE_KEY);
+  hydrated = false;
   const db = getDb();
 
   await db.delete(formulaProposals);

@@ -227,6 +227,8 @@ interface SyncStatusBarProps {
   loading?: boolean;
   /** Mensaje diagnóstico de la API (modo demo, permisos, índice Drive). */
   detailMessage?: string | null;
+  /** Actualización manual (poll / work-items). */
+  onRefresh?: () => void;
 }
 
 function buildLabel(): string {
@@ -243,6 +245,7 @@ export function SyncStatusBar({
   liveConnected,
   loading,
   detailMessage,
+  onRefresh,
 }: SyncStatusBarProps) {
   const timeLabel = updatedAgoLabel ?? (lastRefreshAt
     ? lastRefreshAt.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })
@@ -311,6 +314,17 @@ export function SyncStatusBar({
           </>
         )}
         {loading && <span className="text-[var(--os-teal)]">Actualizando…</span>}
+        {onRefresh ? (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-0.5 font-medium text-[var(--os-text)] transition-colors hover:bg-[var(--os-bg)] disabled:opacity-50"
+            data-testid="sync-status-refresh"
+          >
+            Actualizar
+          </button>
+        ) : null}
       </div>
       {showDetail && (
         <p className="rounded-[var(--os-radius-sm)] border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] px-3 py-2 text-xs text-[var(--genus-warning)]">

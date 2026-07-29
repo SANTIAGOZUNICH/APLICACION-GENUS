@@ -99,7 +99,7 @@ export function ProduccionOperationalView({
     decisionMap,
     getFinishedQty,
   } = useOperationalStore();
-  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
     useOperationalPlan("PRODUCCION");
   const [activeTab, setActiveTab] = useState<ProduccionTabId>("elaboracion");
   const [remitoStatusByWork, setRemitoStatusByWork] = useState<
@@ -483,6 +483,7 @@ export function ProduccionOperationalView({
           liveConnected={liveConnected}
           loading={loading}
           detailMessage={data?.source === "native" ? null : data?.message}
+          onRefresh={refresh}
         />
       </header>
 

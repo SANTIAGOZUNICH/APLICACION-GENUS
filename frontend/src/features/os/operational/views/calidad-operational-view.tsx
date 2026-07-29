@@ -96,7 +96,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     annulQualityItem,
     progressMap,
   } = useOperationalStore();
-  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
     useOperationalPlan("CALIDAD");
   const [topTab, setTopTab] = useState<TopTabId>(initialTab);
   const [subTab, setSubTab] = useState<PendingSubTabId>("elaboracion");
@@ -504,6 +504,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
           liveConnected={liveConnected}
           loading={loading}
           detailMessage={data?.source === "native" ? null : data?.message}
+          onRefresh={refresh}
         />
       </header>
 

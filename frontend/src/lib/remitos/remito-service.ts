@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { isFeatureMemoryAllowed } from "@/lib/db/feature-schema";
 import {
@@ -1216,6 +1216,7 @@ export class RemitoService {
   private async loadAll(): Promise<RemitoRecord[]> {
     if (isDatabaseConfigured() && (await isRemitoSchemaReady()) && !isFeatureMemoryAllowed()) {
       try {
+        // Sin caché de listado: remito generado/editado debe verse de inmediato.
         return await this.loadAllFromDb();
       } catch {
         if (!isFeatureMemoryAllowed()) return [];
@@ -1229,11 +1230,49 @@ export class RemitoService {
     return out;
   }
 
+  private mapRemitoRow(
+    r: typeof remitos.$inferSelect,
+    lines: RemitoLine[],
+    versions: RemitoVersionInfo[]
+  ): RemitoRecord {
+    return {
+      id: r.id,
+      remitoNumber: r.remitoNumber,
+      displayName: r.displayName ?? null,
+      clientIdNormalized: r.clientIdNormalized,
+      clientDisplay: r.clientDisplay,
+      deliveryDate: String(r.deliveryDate),
+      status: r.status as RemitoStatus,
+      version: r.version,
+      totalUnits: r.totalUnits,
+      totalCajas: r.totalCajas,
+      totalBultos: r.totalBultos,
+      snapshot: (r.snapshot ?? {}) as Record<string, unknown>,
+      createdBy: r.createdBy,
+      createdBySector: r.createdBySector,
+      updatedBy: r.updatedBy,
+      generatedBy: r.generatedBy,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+      generatedAt: r.generatedAt ? r.generatedAt.toISOString() : null,
+      lines: lines.sort((a, b) => a.sortOrder - b.sortOrder),
+      versions: versions.sort((a, b) => a.version - b.version),
+    };
+  }
+
   private async loadAllFromDb(): Promise<RemitoRecord[]> {
     const db = getDb();
-    const rows = await db.select().from(remitos).orderBy(desc(remitos.updatedAt));
-    const lineRows = await db.select().from(remitoLines);
-    const versionRows = await db.select().from(remitoVersions);
+    const rows = await db.select().from(remitos).orderBy(desc(remitos.updatedAt)).limit(500);
+    if (rows.length === 0) return [];
+    const ids = rows.map((r) => r.id);
+    const lineRows = await db
+      .select()
+      .from(remitoLines)
+      .where(inArray(remitoLines.remitoId, ids));
+    const versionRows = await db
+      .select()
+      .from(remitoVersions)
+      .where(inArray(remitoVersions.remitoId, ids));
     const byRemito = new Map<string, RemitoLine[]>();
     for (const l of lineRows) {
       const list = byRemito.get(l.remitoId) ?? [];
@@ -1255,32 +1294,45 @@ export class RemitoService {
       });
       versionsByRemito.set(v.remitoId, list);
     }
-    return rows.map((r) => ({
-      id: r.id,
-      remitoNumber: r.remitoNumber,
-      displayName: r.displayName ?? null,
-      clientIdNormalized: r.clientIdNormalized,
-      clientDisplay: r.clientDisplay,
-      deliveryDate: String(r.deliveryDate),
-      status: r.status as RemitoStatus,
-      version: r.version,
-      totalUnits: r.totalUnits,
-      totalCajas: r.totalCajas,
-      totalBultos: r.totalBultos,
-      snapshot: (r.snapshot ?? {}) as Record<string, unknown>,
-      createdBy: r.createdBy,
-      createdBySector: r.createdBySector,
-      updatedBy: r.updatedBy,
-      generatedBy: r.generatedBy,
-      createdAt: r.createdAt.toISOString(),
-      updatedAt: r.updatedAt.toISOString(),
-      generatedAt: r.generatedAt ? r.generatedAt.toISOString() : null,
-      lines: (byRemito.get(r.id) ?? []).sort((a, b) => a.sortOrder - b.sortOrder),
-      versions: (versionsByRemito.get(r.id) ?? []).sort((a, b) => a.version - b.version),
+    return rows.map((r) =>
+      this.mapRemitoRow(r, byRemito.get(r.id) ?? [], versionsByRemito.get(r.id) ?? [])
+    );
+  }
+
+  private async loadOneFromDb(id: string): Promise<RemitoRecord | null> {
+    const db = getDb();
+    const rows = await db.select().from(remitos).where(eq(remitos.id, id)).limit(1);
+    const r = rows[0];
+    if (!r) return null;
+    const [lineRows, versionRows] = await Promise.all([
+      db.select().from(remitoLines).where(eq(remitoLines.remitoId, id)),
+      db.select().from(remitoVersions).where(eq(remitoVersions.remitoId, id)),
+    ]);
+    const versions: RemitoVersionInfo[] = versionRows.map((v) => ({
+      id: v.id,
+      version: v.version,
+      motivo: v.motivo ?? null,
+      createdBy: v.createdBy,
+      createdAt: v.createdAt.toISOString(),
+      downloadable: Boolean(v.driveFileIdXlsx || v.driveFileIdPdf),
+      driveFileIdXlsx: v.driveFileIdXlsx,
+      driveFileIdPdf: v.driveFileIdPdf,
     }));
+    return this.mapRemitoRow(
+      r,
+      lineRows.map(hydrateLineFromDb),
+      versions
+    );
   }
 
   private async findById(id: string): Promise<RemitoRecord | null> {
+    if (isDatabaseConfigured() && (await isRemitoSchemaReady()) && !isFeatureMemoryAllowed()) {
+      try {
+        return await this.loadOneFromDb(id);
+      } catch {
+        if (!isFeatureMemoryAllowed()) return null;
+      }
+    }
     const all = await this.loadAll();
     return all.find((r) => r.id === id) ?? null;
   }

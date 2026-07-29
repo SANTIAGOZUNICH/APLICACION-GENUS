@@ -92,7 +92,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       ? { weekStart: calendar.weekStart }
       : { date: calendar.selectedDate };
 
-  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
     useOperationalPlan(sectorId, planOptions);
 
   const session = useMemo(
@@ -327,6 +327,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           liveConnected={liveConnected}
           loading={loading}
           detailMessage={data?.source === "native" ? null : data?.message}
+          onRefresh={refresh}
         />
       </header>
 
@@ -449,7 +450,7 @@ export function ElaboracionOperationalView() {
       ? { weekStart: calendar.weekStart }
       : { date: calendar.selectedDate };
 
-  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
     useOperationalPlan("ELABORACION", planOptions);
 
   const workItems = useMemo(() => {
@@ -518,6 +519,7 @@ export function ElaboracionOperationalView() {
           liveConnected={liveConnected}
           loading={loading}
           detailMessage={data?.source === "native" ? null : data?.message}
+          onRefresh={refresh}
         />
       </header>
 

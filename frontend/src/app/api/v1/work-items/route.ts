@@ -53,14 +53,16 @@ async function listNativeWorkItems(
     );
   }
 
+  // Empujar date/weekStart al SQL (evita descargar todos los publicados).
   const rows = await getPlanningService().listPublishedItems({
     sector,
     ownerPerson,
-    date: null,
-    weekStart: null,
+    date,
+    weekStart,
   });
   let workItems = projectNativeWorkItems(rows);
   workItems = filterWorkItemsForSectorAndPerson(workItems, sector, ownerPerson);
+  // Filtro JS residual solo si el repo no aplicó rango (p.ej. memoria).
   if (date) workItems = filterWorkItemsByDate(workItems, date);
   else if (weekStart) workItems = filterWorkItemsByWeekStart(workItems, weekStart);
 
