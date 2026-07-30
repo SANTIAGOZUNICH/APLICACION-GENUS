@@ -4,13 +4,17 @@ import { useEffect, useState } from "react";
 import { Download, Share2, Tag, ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { MpIngresoRow } from "@/lib/inventory/types";
-import type { MpAprobadoLabelSource } from "@/lib/inventory/mp-aprobado-label";
+import type {
+  MpAprobadoLabelData,
+  MpAprobadoLabelSource,
+} from "@/lib/inventory/mp-aprobado-label";
 import {
   buildMpAprobadoLabelFromIngreso,
   buildMpAprobadoLabelPdfBlob,
   downloadMpAprobadoLabelPdf,
   shareOrOpenMpAprobadoLabelPdf,
 } from "@/lib/inventory/mp-aprobado-label-pdf";
+import { MpAprobadoLabelPreview } from "@/features/os/operational/components/mp-aprobado-label-preview";
 
 type Props = {
   row: MpAprobadoLabelSource | MpIngresoRow;
@@ -34,6 +38,7 @@ export function MpIngresoCrearEtiquetaButton({
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [filename, setFilename] = useState("ETIQUETA-MP.pdf");
   const [blob, setBlob] = useState<Blob | null>(null);
+  const [labelData, setLabelData] = useState<MpAprobadoLabelData | null>(null);
 
   useEffect(() => {
     return () => {
@@ -48,6 +53,7 @@ export function MpIngresoCrearEtiquetaButton({
       const pdfBlob = await buildMpAprobadoLabelPdfBlob(data);
       if (blobUrl) URL.revokeObjectURL(blobUrl);
       const url = URL.createObjectURL(pdfBlob);
+      setLabelData(data);
       setBlob(pdfBlob);
       setBlobUrl(url);
       setFilename(name);
@@ -113,7 +119,7 @@ export function MpIngresoCrearEtiquetaButton({
         </span>
       </Button>
 
-      {open && blobUrl ? (
+      {open && blobUrl && labelData ? (
         <div
           className="fixed inset-0 z-[80] flex items-end justify-center bg-black/55 p-3 sm:items-center"
           role="dialog"
@@ -144,12 +150,8 @@ export function MpIngresoCrearEtiquetaButton({
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 bg-white p-2">
-              <iframe
-                title="Vista previa etiqueta PDF"
-                src={blobUrl}
-                className="h-[min(52vh,360px)] w-full rounded border border-neutral-200 bg-white"
-              />
+            <div className="min-h-0 flex-1 overflow-y-auto bg-neutral-200 p-3">
+              <MpAprobadoLabelPreview data={labelData} />
             </div>
 
             <div className="flex flex-wrap gap-2 border-t border-[var(--os-border)] p-3">
