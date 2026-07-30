@@ -12,12 +12,18 @@ describe("no horizontal scroll — layout contracts", () => {
     const cssPath = join(process.cwd(), "src/design-system/os-preview-tokens.css");
     const css = readFileSync(cssPath, "utf8");
 
-    expect(css).toContain("--os-table-font: 13px");
-    expect(css).toContain("--os-table-font-secondary: 12px");
-    expect(css).toContain("--os-density-pad-x: 0.5rem");
+    expect(css).toContain("--os-density-font-table:");
+    expect(css).toContain("--os-density-page-padding:");
+    expect(css).toContain("--os-density-table-padding-x:");
+    expect(css).toContain("--os-density-action-gap:");
+    expect(css).toContain("--os-table-font: var(--os-density-font-table)");
+    expect(css).toContain("--os-density-pad-x: var(--os-density-table-padding-x)");
     expect(css).toContain(".os-no-x-scroll");
     expect(css).toContain(".os-table-wrap");
     expect(css).toContain(".os-table");
+    expect(css).toContain(".os-table-th");
+    expect(css).toContain(".os-table-td");
+    expect(css).toContain(".os-cell-clamp");
     expect(css).toContain(".os-break");
     expect(css).toMatch(/html,\s*\nbody[\s\S]*max-width:\s*100vw/);
     expect(css).toMatch(/\.design-preview-root[\s\S]*max-width:\s*100%/);

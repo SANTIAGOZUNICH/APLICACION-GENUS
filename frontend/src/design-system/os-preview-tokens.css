@@ -18,14 +18,24 @@ body {
 }
 
 .design-preview-root {
-  --os-table-font: 13px;
-  --os-table-font-secondary: 12px;
-  --os-density-pad-x: 0.5rem;
-  --os-sidebar-width: 16rem;
-  --os-header-height: 3.75rem;
+  /* Densidad adaptable — composición legible al 100% (sin zoom/scale) */
+  --os-density-page-padding: 1.125rem; /* 18px */
+  --os-density-section-gap: 1rem;
+  --os-density-table-padding-x: 0.5rem; /* 8px */
+  --os-density-table-padding-y: 0.5rem; /* 8px → fila ~44–52px */
+  --os-density-row-height: 2.875rem; /* 46px target */
+  --os-density-font-table: 12.75px;
+  --os-density-font-caption: 11.5px;
+  --os-density-font-body-min: 13px;
+  --os-density-action-gap: 0.4rem; /* ~6.5px */
+  --os-table-font: var(--os-density-font-table);
+  --os-table-font-secondary: var(--os-density-font-caption);
+  --os-density-pad-x: var(--os-density-table-padding-x);
+  --os-sidebar-width: 14.5rem; /* compacto, icono+texto legibles */
+  --os-header-height: 3.5rem;
   --os-status-height: 2rem;
-  --os-space-section: 2.5rem;
-  --os-space-block: 1.25rem;
+  --os-space-section: var(--os-density-section-gap);
+  --os-space-block: 1rem;
   --os-rail-width: 3px;
   --os-scroll-size: 8px;
   --os-scroll-thumb: rgb(255 255 255 / 0.16);
@@ -74,6 +84,88 @@ body {
 .os-break {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+/* Celdas densas — sin break-all; clamp 2 líneas + ellipsis */
+.design-preview-root .os-table-th {
+  padding: var(--os-density-table-padding-y) var(--os-density-table-padding-x);
+  font-size: var(--os-density-font-caption);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--os-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.25;
+  vertical-align: middle;
+}
+
+.design-preview-root .os-table-td {
+  padding: var(--os-density-table-padding-y) var(--os-density-table-padding-x);
+  font-size: var(--os-density-font-table);
+  line-height: 1.35;
+  vertical-align: middle;
+  min-width: 0;
+  overflow: hidden;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.design-preview-root .os-cell-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: normal;
+  overflow-wrap: break-word;
+  /* Evita partir letras; solo corta en espacios cuando es posible */
+  hyphens: none;
+  max-width: 100%;
+}
+
+.design-preview-root .os-mono-id {
+  font-family: var(--genus-font-mono, ui-monospace, monospace);
+  font-size: var(--os-density-font-table);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.design-preview-root .os-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--os-density-action-gap);
+}
+
+.design-preview-root .os-page-pad {
+  padding-left: var(--os-density-page-padding);
+  padding-right: var(--os-density-page-padding);
+}
+
+@media (min-width: 640px) {
+  .design-preview-root {
+    --os-density-page-padding: 1.25rem; /* 20px */
+    --os-density-table-padding-x: 0.625rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .design-preview-root {
+    --os-sidebar-width: 14.75rem;
+  }
+}
+
+@media (min-width: 1536px) {
+  .design-preview-root {
+    --os-density-page-padding: 1.5rem;
+    --os-density-table-padding-x: 0.75rem;
+  }
 }
 
 /* Ambient moving lights (CSS only) */

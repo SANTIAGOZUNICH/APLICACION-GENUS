@@ -22,6 +22,7 @@ import { MpCoasPanel } from "@/features/os/operational/components/mp-coas-panel"
 import { MpStockAjusteModal } from "@/features/os/operational/components/mp-stock-ajuste-modal";
 import { MpStockLedgerPanel } from "@/features/os/operational/components/mp-stock-ledger-panel";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
+import { OsClampedText } from "@/features/os/operational/components/os-clamped-text";
 import {
   OperationalTable,
   type OperationalTableColumn,
@@ -53,11 +54,54 @@ import { FormulasAdminPanel } from "@/features/os/operational/components/formula
 
 export type MpHubTab = (typeof MP_TABS)[number];
 
-const STOCK_MOBILE_VISIBLE = new Set(["CÓDIGO", "DESCRIPCIÓN MATERIA PRIMA", "ESTADO STOCK"]);
-const INGRESO_MOBILE_VISIBLE = new Set(["CÓDIGO", "DESCRIPCIÓN MATERIA PRIMA"]);
-const COMPRA_MOBILE_VISIBLE = new Set(["MATERIA PRIMA", "ESTADO"]);
-/** Tablas MP anchas: secundarias solo desde xl; bajo eso → “Más datos”. */
-const COLLAPSE_WIDE = "xl" as const;
+/** Encabezados breves — no cortar a PROD…/PROVE… */
+const STOCK_HEADER_SHORT: Record<string, string> = {
+  CÓDIGO: "Código",
+  PRODUCTO: "Producto",
+  PROVEEDOR: "Proveedor",
+  CLIENTE: "Cliente",
+  "DESCRIPCIÓN MATERIA PRIMA": "Descripción",
+  "CANTIDAD (KG)": "Cantidad",
+  UBICACIÓN: "Ubicación",
+  LOTE: "Lote",
+  VENCIMIENTO: "Vencimiento",
+  "ESTADO STOCK": "Estado stock",
+  "DÍAS AL VENCE": "Días VTO",
+  "ESTADO VENCIMIENTO": "Estado VTO",
+  ORIGEN: "Origen",
+};
+
+/** Siempre visibles (móvil → desktop). */
+const STOCK_ALWAYS = new Set([
+  "CÓDIGO",
+  "DESCRIPCIÓN MATERIA PRIMA",
+  "ESTADO STOCK",
+]);
+/** Esenciales desde ~1024px (1366/1440). */
+const STOCK_FROM_LG = new Set(["PRODUCTO", "CANTIDAD (KG)", "LOTE", "VENCIMIENTO"]);
+/** Secundarias solo desde 2xl (~1536+ / 1920). */
+const STOCK_FROM_2XL = new Set([
+  "PROVEEDOR",
+  "CLIENTE",
+  "UBICACIÓN",
+  "DÍAS AL VENCE",
+  "ESTADO VENCIMIENTO",
+  "ORIGEN",
+]);
+
+const INGRESO_ALWAYS = new Set(["CÓDIGO", "DESCRIPCIÓN MATERIA PRIMA", "CANTIDAD (kg/u)"]);
+const INGRESO_FROM_LG = new Set(["FECHA", "PRODUCTO", "LOTE", "VENCIMIENTO"]);
+const COMPRA_ALWAYS = new Set(["MATERIA PRIMA", "ESTADO"]);
+const COMPRA_FROM_LG = new Set(["CANTIDAD", "PROVEEDOR", "FECHA ENTREGA"]);
+
+function stockCollapse(
+  label: string
+): false | "lg" | "2xl" {
+  if (STOCK_ALWAYS.has(label)) return false;
+  if (STOCK_FROM_LG.has(label)) return "lg";
+  if (STOCK_FROM_2XL.has(label)) return "2xl";
+  return "2xl";
+}
 
 const TAB_TO_RESOURCE = {
   Stock: "mp_stock",
@@ -306,23 +350,32 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       ORIGEN: "origen",
     };
     const k = map[label];
+    const short = STOCK_HEADER_SHORT[label] ?? label;
+    const collapse = stockCollapse(label);
+    const mono = label === "CÓDIGO" || label === "LOTE";
+
     if (label === "CÓDIGO") {
       return {
         key: label,
-        header: label,
+        header: short,
+        headerTitle: label,
         hideOnMobile: false,
+        className: "w-[7.5rem]",
         render: (r) => {
           const pending = Boolean(r.codigoPendiente) || isMpInternalCodigo(r.codigo);
+          const code = displayCell(r.codigo);
           return (
-            <span className="inline-flex flex-col gap-0.5">
-              <span>{displayCell(r.codigo)}</span>
+            <span className="inline-flex min-w-0 flex-col gap-0.5">
+              <OsClampedText fullText={code} mono>
+                {code}
+              </OsClampedText>
               {pending ? (
                 <span
-                  className="w-fit rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900"
+                  className="w-fit rounded bg-[var(--genus-warning-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--genus-warning)]"
                   title="Identidad interna: completar código de proveedor"
                   data-testid={`mp-stock-codigo-pendiente-${r.id}`}
                 >
-                  Sin código de proveedor
+                  Sin código proveedor
                 </span>
               ) : null}
             </span>
@@ -330,11 +383,28 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         },
       };
     }
+
     return {
       key: label,
-      header: label,
-      hideOnMobile: STOCK_MOBILE_VISIBLE.has(label) ? false : COLLAPSE_WIDE,
-      render: (r) => displayCell(r[k]),
+      header: short,
+      headerTitle: label,
+      hideOnMobile: collapse === false ? false : collapse,
+      className:
+        label === "DESCRIPCIÓN MATERIA PRIMA"
+          ? "w-[18%]"
+          : label === "PRODUCTO"
+            ? "w-[14%]"
+            : label === "CANTIDAD (KG)"
+              ? "w-[6.5rem]"
+              : undefined,
+      render: (r) => {
+        const value = displayCell(r[k]);
+        return (
+          <OsClampedText fullText={value} mono={mono}>
+            {value}
+          </OsClampedText>
+        );
+      },
     };
   });
 
@@ -397,29 +467,53 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         VENCIMIENTO: "vencimiento",
       };
       const k = map[label];
+      const short =
+        label === "DESCRIPCIÓN MATERIA PRIMA"
+          ? "Descripción"
+          : label === "CANTIDAD (kg/u)"
+            ? "Cantidad"
+            : label === "INGRESO Nº"
+              ? "Ingreso"
+              : label === "REMITO Nº"
+                ? "Remito"
+                : label.charAt(0) + label.slice(1).toLowerCase();
+      const collapse = INGRESO_ALWAYS.has(label)
+        ? false
+        : INGRESO_FROM_LG.has(label)
+          ? ("lg" as const)
+          : ("2xl" as const);
+      const mono = label === "CÓDIGO" || label === "LOTE" || label === "INGRESO Nº";
       return {
         key: label,
-        header: label,
-        hideOnMobile: INGRESO_MOBILE_VISIBLE.has(label) ? false : COLLAPSE_WIDE,
-        render: (r: MpIngresoRow) => displayCell(r[k]),
+        header: short,
+        headerTitle: label,
+        hideOnMobile: collapse === false ? false : collapse,
+        render: (r: MpIngresoRow) => {
+          const value = displayCell(r[k]);
+          return (
+            <OsClampedText fullText={value} mono={mono}>
+              {value}
+            </OsClampedText>
+          );
+        },
       } as OperationalTableColumn<MpIngresoRow>;
     }),
     {
       key: "status",
-      header: "ESTADO",
+      header: "Estado",
       render: (r) => statusChip(r.status),
     },
     ...(canWrite
       ? [
           {
             key: "acciones",
-            header: "",
+            header: "Acciones",
             render: (r: MpIngresoRow) => {
               const qtyReady =
                 Boolean((r.codigo ?? "").trim()) &&
                 ((r.total != null && r.total > 0) || (r.cantidad != null && r.cantidad > 0));
               return (
-                <div className="flex flex-wrap items-center gap-1">
+                <div className="os-row-actions">
                   {r.status === "BORRADOR" && qtyReady ? (
                     <Button
                       type="button"
@@ -517,11 +611,28 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       NOTA: "nota",
     };
     const k = map[label];
+    const short =
+      label === "MATERIA PRIMA"
+        ? "Materia prima"
+        : label === "FECHA ENTREGA"
+          ? "Entrega"
+          : label === "QUÉ PRODUCCIONES AFECTA"
+            ? "Afecta a"
+            : label.charAt(0) + label.slice(1).toLowerCase();
+    const collapse = COMPRA_ALWAYS.has(label)
+      ? false
+      : COMPRA_FROM_LG.has(label)
+        ? ("lg" as const)
+        : ("2xl" as const);
     return {
       key: label,
-      header: label,
-      hideOnMobile: COMPRA_MOBILE_VISIBLE.has(label) ? false : COLLAPSE_WIDE,
-      render: (r) => displayCell(r[k]),
+      header: short,
+      headerTitle: label,
+      hideOnMobile: collapse === false ? false : collapse,
+      render: (r) => {
+        const value = displayCell(r[k]);
+        return <OsClampedText fullText={value}>{value}</OsClampedText>;
+      },
     };
   });
 

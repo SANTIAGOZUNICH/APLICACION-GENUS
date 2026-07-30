@@ -25,9 +25,8 @@ interface WorkItemProgressTableProps {
   archiveBusyId?: string | null;
 }
 
-const thClass =
-  "px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--os-text-muted)] sm:px-3 sm:py-2.5";
-const tdClass = "min-w-0 px-2 py-2 align-top sm:px-3 sm:py-2.5";
+const thClass = "os-table-th";
+const tdClass = "os-table-td";
 
 /** Tabla operativa — Envasado / Elaboración. La fila abre el drawer de trabajo. */
 export function WorkItemProgressTable({

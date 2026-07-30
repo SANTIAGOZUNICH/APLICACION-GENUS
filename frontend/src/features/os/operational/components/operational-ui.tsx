@@ -63,12 +63,13 @@ export interface OperationalTableColumn<T> {
   className?: string;
   /**
    * Columna secundaria: se oculta bajo el breakpoint y pasa a “Más datos”.
-   * true ≡ collapseBelow "md". Usar "lg"/"xl" en tablas anchas (tablet/laptop).
+   * true ≡ collapseBelow "md".
+   * Usar "lg"/"xl"/"2xl" en tablas anchas (laptop → desktop amplio).
    */
-  hideOnMobile?: boolean | "md" | "lg" | "xl";
+  hideOnMobile?: boolean | "md" | "lg" | "xl" | "2xl";
 }
 
-type CollapseBelow = "md" | "lg" | "xl";
+type CollapseBelow = "md" | "lg" | "xl" | "2xl";
 
 function resolveCollapse(hideOnMobile?: boolean | CollapseBelow): CollapseBelow | null {
   if (!hideOnMobile) return null;
@@ -77,12 +78,14 @@ function resolveCollapse(hideOnMobile?: boolean | CollapseBelow): CollapseBelow 
 }
 
 function hideColClass(bp: CollapseBelow): string {
+  if (bp === "2xl") return "hidden 2xl:table-cell";
   if (bp === "xl") return "hidden xl:table-cell";
   if (bp === "lg") return "hidden lg:table-cell";
   return "hidden md:table-cell";
 }
 
 function moreToggleClass(bp: CollapseBelow): string {
+  if (bp === "2xl") return "2xl:hidden";
   if (bp === "xl") return "xl:hidden";
   if (bp === "lg") return "lg:hidden";
   return "md:hidden";
@@ -109,7 +112,7 @@ export function OperationalTable<T>({
   const hasSecondary = secondaryMeta.length > 0;
   /** Breakpoint más amplio entre secundarias → el chevron se muestra hasta ahí. */
   const expanderBp: CollapseBelow = secondaryMeta.reduce<CollapseBelow>((acc, x) => {
-    const order = { md: 0, lg: 1, xl: 2 } as const;
+    const order = { md: 0, lg: 1, xl: 2, "2xl": 3 } as const;
     return order[x.bp] > order[acc] ? x.bp : acc;
   }, "md");
   const primaryCount = columns.filter((c) => !resolveCollapse(c.hideOnMobile)).length;
@@ -125,11 +128,14 @@ export function OperationalTable<T>({
 
   return (
     <div className="os-table-wrap max-w-full min-w-0 overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)]">
-      <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,13px)]">
+      <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,12.75px)]">
         <thead className="sticky top-0 z-[1]">
           <tr className="border-b border-[var(--os-border)] bg-[var(--os-surface-glass)] backdrop-blur-md">
             {hasSecondary ? (
-              <th className={`w-8 px-1 py-2 ${moreToggleClass(expanderBp)}`} aria-label="Más datos" />
+              <th
+                className={`w-8 px-1 py-[var(--os-density-table-padding-y)] ${moreToggleClass(expanderBp)}`}
+                aria-label="Más datos"
+              />
             ) : null}
             {columns.map((col) => {
               const bp = resolveCollapse(col.hideOnMobile);
@@ -137,9 +143,7 @@ export function OperationalTable<T>({
                 <th
                   key={col.key}
                   title={col.headerTitle ?? col.header}
-                  className={`min-w-0 overflow-hidden px-2 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--os-text-muted)] sm:px-3 sm:py-2.5 ${
-                    bp ? hideColClass(bp) : ""
-                  } ${col.className ?? ""}`}
+                  className={`os-table-th min-w-0 ${bp ? hideColClass(bp) : ""} ${col.className ?? ""}`}
                 >
                   <span className="block truncate">{col.header}</span>
                 </th>
@@ -155,7 +159,9 @@ export function OperationalTable<T>({
               <Fragment key={id}>
                 <tr className="border-b border-[var(--os-border-subtle)] last:border-b-0 transition-colors hover:bg-[var(--os-teal-soft)]/40 hover:shadow-[inset_3px_0_0_0_rgb(18_191_183_/_0.45)]">
                   {hasSecondary ? (
-                    <td className={`w-8 px-1 py-2 align-top ${moreToggleClass(expanderBp)}`}>
+                    <td
+                      className={`w-8 px-1 py-[var(--os-density-table-padding-y)] align-middle ${moreToggleClass(expanderBp)}`}
+                    >
                       <button
                         type="button"
                         className="inline-flex size-7 items-center justify-center rounded text-[var(--os-text-muted)] hover:bg-[var(--os-teal-soft)]/50"
@@ -179,9 +185,7 @@ export function OperationalTable<T>({
                     return (
                       <td
                         key={col.key}
-                        className={`min-w-0 overflow-hidden break-words px-2 py-2 align-top sm:px-3 sm:py-2.5 ${
-                          bp ? hideColClass(bp) : ""
-                        } ${col.className ?? ""}`}
+                        className={`os-table-td ${bp ? hideColClass(bp) : ""} ${col.className ?? ""}`}
                       >
                         {col.render(row)}
                       </td>
@@ -195,15 +199,13 @@ export function OperationalTable<T>({
                       className="bg-[var(--os-surface-glass)] px-3 py-2"
                       data-testid={`os-table-more-panel-${id}`}
                     >
-                      <dl className="grid gap-2 text-[length:var(--os-table-font-secondary,12px)] sm:grid-cols-2">
+                      <dl className="grid gap-2 text-[length:var(--os-table-font-secondary,11.5px)] sm:grid-cols-2">
                         {secondaryMeta.map(({ col }) => (
                           <div key={col.key} className="min-w-0">
                             <dt className="font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
                               {col.headerTitle ?? col.header}
                             </dt>
-                            <dd className="mt-0.5 break-words text-[var(--os-text)]">
-                              {col.render(row)}
-                            </dd>
+                            <dd className="mt-0.5 text-[var(--os-text)]">{col.render(row)}</dd>
                           </div>
                         ))}
                       </dl>

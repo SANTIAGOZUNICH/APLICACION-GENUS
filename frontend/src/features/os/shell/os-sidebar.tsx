@@ -135,25 +135,25 @@ export function OsSidebar({
           "linear-gradient(180deg, var(--os-sidebar-bg) 0%, var(--os-sidebar-bg-2) 100%)",
       }}
     >
-      <div className="shrink-0 px-5 py-5">
-        <div className="flex items-center gap-2.5">
-          <span className="flex size-8 items-center justify-center rounded-[var(--os-radius-sm)] bg-[var(--os-teal-muted)]">
-            <FlaskConical className="size-4 text-[var(--os-teal-glow)]" aria-hidden="true" />
+      <div className="shrink-0 px-4 py-4">
+        <div className="flex items-center gap-2">
+          <span className="flex size-7 items-center justify-center rounded-[var(--os-radius-sm)] bg-[var(--os-teal-muted)]">
+            <FlaskConical className="size-3.5 text-[var(--os-teal-glow)]" aria-hidden="true" />
           </span>
-          <p className="text-sm font-semibold tracking-wide">GENUS OS</p>
+          <p className="text-[13px] font-semibold tracking-wide">GENUS OS</p>
         </div>
       </div>
 
-      <div className="mx-4 shrink-0 rounded-[var(--os-radius-sm)] border border-white/[0.08] bg-white/[0.04] px-3 py-3 backdrop-blur-sm">
+      <div className="mx-3 shrink-0 rounded-[var(--os-radius-sm)] border border-white/[0.08] bg-white/[0.04] px-2.5 py-2 backdrop-blur-sm">
         <div className="flex items-center gap-2">
           <span className="size-2 rounded-full bg-[var(--os-teal)]" aria-hidden="true" />
-          <p className="text-sm font-medium">{sectorLabel}</p>
+          <p className="text-[13px] font-medium">{sectorLabel}</p>
         </div>
       </div>
 
-      <div className="os-scroll-fade os-scroll-fade-sidebar relative mt-4 min-h-0 flex-1">
+      <div className="os-scroll-fade os-scroll-fade-sidebar relative mt-3 min-h-0 flex-1">
         <nav
-          className="os-scroll-sidebar h-full space-y-0.5 overflow-y-scroll overscroll-contain px-3 pb-2"
+          className="os-scroll-sidebar h-full space-y-0.5 overflow-y-scroll overscroll-contain px-2.5 pb-2"
           aria-label="Menú"
         >
           {sidebarItems.map((itemId) => {
@@ -166,7 +166,7 @@ export function OsSidebar({
                 type="button"
                 onClick={() => onNav?.(itemId)}
                 aria-current={active ? "page" : undefined}
-                className={`os-nav-item flex w-full items-center gap-3 rounded-[var(--os-radius-sm)] px-3 py-2.5 text-left text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--os-sidebar-bg)] ${
+                className={`os-nav-item flex w-full items-center gap-2.5 rounded-[var(--os-radius-sm)] px-2.5 py-2 text-left text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--os-sidebar-bg)] ${
                   active
                     ? "bg-[var(--os-teal-muted)] font-medium text-white"
                     : "text-[var(--os-sidebar-muted)] hover:bg-[var(--os-sidebar-hover)] hover:text-white"
@@ -178,7 +178,7 @@ export function OsSidebar({
                   }`}
                   aria-hidden="true"
                 />
-                {label}
+                <span className="min-w-0 truncate">{label}</span>
               </button>
             );
           })}
