@@ -45,12 +45,13 @@ import {
   type MpStockRow,
 } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
-import { usePreviewSession } from "@/features/os/session/preview-context";
+import { MpIngresoHereLabelCopyButton } from "@/features/os/operational/components/mp-ingreso-herelabel-copy-button";
+import { FormulasAdminPanel } from "@/features/os/operational/components/formulas-admin-panel";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
 } from "@/lib/orders/actor";
-import { FormulasAdminPanel } from "@/features/os/operational/components/formulas-admin-panel";
 
 export type MpHubTab = (typeof MP_TABS)[number];
 
@@ -113,6 +114,7 @@ const TAB_TO_RESOURCE = {
 
 export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: MpHubTab }) {
   const { email, sectorId } = usePreviewSession();
+  const { showToast } = usePreviewContext();
   const [tab, setTab] = useState<MpHubTab>(initialTab);
   const canWrite = canWriteInventory(sectorId, TAB_TO_RESOURCE[tab]);
   const [banner, setBanner] = useState<string | null>(null);
@@ -263,11 +265,13 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             proveedor: formDraft.proveedor ?? "",
             cliente: formDraft.cliente ?? "",
             remitoNro: formDraft.remitoNro ?? "",
+            pccMeNro: formDraft.pccMeNro ?? "",
             codigo: formDraft.codigo ?? "",
             producto: formDraft.producto ?? "",
             descripcion: formDraft.descripcion ?? "",
             bultos: parseOptionalNumber(formDraft.bultos),
             cantidad: parseOptionalNumber(formDraft.cantidad),
+            unidad: formDraft.unidad ?? "",
             ubicacion: formDraft.ubicacion ?? "",
             lote: formDraft.lote ?? "",
             vencimiento: formDraft.vencimiento ?? "",
@@ -503,75 +507,79 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       header: "Estado",
       render: (r) => statusChip(r.status),
     },
-    ...(canWrite
-      ? [
-          {
-            key: "acciones",
-            header: "Acciones",
-            render: (r: MpIngresoRow) => {
-              const qtyReady =
-                Boolean((r.codigo ?? "").trim()) &&
-                ((r.total != null && r.total > 0) || (r.cantidad != null && r.cantidad > 0));
-              return (
-                <div className="os-row-actions">
-                  {r.status === "BORRADOR" && qtyReady ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => void confirmIngreso(r)}
-                    >
-                      Confirmar
-                    </Button>
-                  ) : null}
-                  {r.status !== "ANULADO" ? (
-                    <>
-                      <button
-                        type="button"
-                        title="Editar"
-                        onClick={() => {
-                          setFormDraft({
-                            id: r.id,
-                            fecha: r.fecha,
-                            ingresoNro: r.ingresoNro,
-                            proveedor: r.proveedor,
-                            cliente: r.cliente,
-                            remitoNro: r.remitoNro,
-                            codigo: r.codigo,
-                            producto: r.producto ?? "",
-                            descripcion: r.descripcion,
-                            bultos: r.bultos == null ? "" : String(r.bultos),
-                            cantidad: r.cantidad == null ? "" : String(r.cantidad),
-                            ubicacion: r.ubicacion,
-                            lote: r.lote,
-                            vencimiento: r.vencimiento,
-                          });
-                          setFormOpen(true);
-                        }}
-                      >
-                        <Pencil className="size-4" />
-                      </button>
-                      <button
-                        type="button"
-                        title="Borrar"
-                        aria-label="Borrar"
-                        onClick={() =>
-                          setDeleteTarget({
-                            id: r.id,
-                            label: r.descripcion || r.codigo || r.id,
-                          })
-                        }
-                      >
-                        <Trash2 className="size-4 text-red-700" />
-                      </button>
-                    </>
-                  ) : null}
-                </div>
-              );
-            },
-          } as OperationalTableColumn<MpIngresoRow>,
-        ]
-      : []),
+    {
+      key: "acciones",
+      header: "Acciones",
+      className: "w-[14rem]",
+      render: (r: MpIngresoRow) => {
+        const qtyReady =
+          Boolean((r.codigo ?? "").trim()) &&
+          ((r.total != null && r.total > 0) || (r.cantidad != null && r.cantidad > 0));
+        return (
+          <div className="os-row-actions">
+            <MpIngresoHereLabelCopyButton
+              row={r}
+              onCopied={() => showToast("Datos copiados para HereLabel")}
+              onError={(msg) => setBanner(msg)}
+            />
+            {canWrite && r.status === "BORRADOR" && qtyReady ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() => void confirmIngreso(r)}
+              >
+                Confirmar
+              </Button>
+            ) : null}
+            {canWrite && r.status !== "ANULADO" ? (
+              <>
+                <button
+                  type="button"
+                  title="Editar"
+                  onClick={() => {
+                    setFormDraft({
+                      id: r.id,
+                      fecha: r.fecha,
+                      ingresoNro: r.ingresoNro,
+                      proveedor: r.proveedor,
+                      cliente: r.cliente,
+                      remitoNro: r.remitoNro,
+                      pccMeNro: r.pccMeNro ?? "",
+                      codigo: r.codigo,
+                      producto: r.producto ?? "",
+                      descripcion: r.descripcion,
+                      bultos: r.bultos == null ? "" : String(r.bultos),
+                      cantidad: r.cantidad == null ? "" : String(r.cantidad),
+                      unidad: r.unidad ?? "",
+                      ubicacion: r.ubicacion,
+                      lote: r.lote,
+                      vencimiento: r.vencimiento,
+                    });
+                    setFormOpen(true);
+                  }}
+                >
+                  <Pencil className="size-4" />
+                </button>
+                <button
+                  type="button"
+                  title="Borrar"
+                  aria-label="Borrar"
+                  onClick={() =>
+                    setDeleteTarget({
+                      id: r.id,
+                      label: r.descripcion || r.codigo || r.id,
+                    })
+                  }
+                >
+                  <Trash2 className="size-4 text-red-700" />
+                </button>
+              </>
+            ) : null}
+          </div>
+        );
+      },
+    },
   ];
 
   const controlColumns: OperationalTableColumn<MpControlRow>[] = MP_CONTROL_COLUMNS.map((label) => {
@@ -651,8 +659,9 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         ]
       : tab === "Ingresos MP"
         ? [
-            ["fecha", "FECHA"],
+            ["fecha", "FECHA / Ingreso"],
             ["ingresoNro", "INGRESO Nº"],
+            ["pccMeNro", "PCC-ME N.º"],
             ["proveedor", "PROVEEDOR"],
             ["cliente", "CLIENTE"],
             ["remitoNro", "REMITO Nº"],
@@ -660,9 +669,10 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             ["producto", "PRODUCTO"],
             ["descripcion", "DESCRIPCIÓN MATERIA PRIMA"],
             ["bultos", "BULTOS"],
-            ["cantidad", "CANTIDAD (kg/u)"],
+            ["cantidad", "CANTIDAD"],
+            ["unidad", "UNIDAD"],
             ["ubicacion", "UBICACIÓN"],
-            ["lote", "LOTE"],
+            ["lote", "LOTE PROVEEDOR"],
             ["vencimiento", "VENCIMIENTO"],
           ]
         : tab === "Control semanal"
@@ -930,13 +940,36 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                 </label>
               )}
             </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button type="button" variant="secondary" onClick={() => setFormOpen(false)}>
-                Cancelar
-              </Button>
-              <Button type="button" onClick={() => void saveDraft()}>
-                Guardar
-              </Button>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+              {tab === "Ingresos MP" ? (
+                <MpIngresoHereLabelCopyButton
+                  row={{
+                    producto: formDraft.producto,
+                    descripcion: formDraft.descripcion,
+                    pccMeNro: formDraft.pccMeNro,
+                    fecha: formDraft.fecha,
+                    remitoNro: formDraft.remitoNro,
+                    cantidad: formDraft.cantidad,
+                    unidad: formDraft.unidad,
+                    proveedor: formDraft.proveedor,
+                    bultos: formDraft.bultos,
+                    lote: formDraft.lote,
+                  }}
+                  compactOnMobile={false}
+                  onCopied={() => showToast("Datos copiados para HereLabel")}
+                  onError={(msg) => setBanner(msg)}
+                />
+              ) : (
+                <span />
+              )}
+              <div className="flex gap-2">
+                <Button type="button" variant="secondary" onClick={() => setFormOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button type="button" onClick={() => void saveDraft()}>
+                  Guardar
+                </Button>
+              </div>
             </div>
           </div>
         </div>
@@ -1025,6 +1058,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
               ? [
                   { key: "fecha", label: "FECHA" },
                   { key: "ingresoNro", label: "INGRESO Nº" },
+                  { key: "pccMeNro", label: "PCC-ME N.º" },
                   { key: "proveedor", label: "PROVEEDOR" },
                   { key: "cliente", label: "CLIENTE" },
                   { key: "remitoNro", label: "REMITO Nº" },
@@ -1033,6 +1067,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                   { key: "descripcion", label: "DESCRIPCIÓN MATERIA PRIMA" },
                   { key: "bultos", label: "BULTOS" },
                   { key: "cantidad", label: "CANTIDAD (kg/u)" },
+                  { key: "unidad", label: "UNIDAD" },
                   { key: "total", label: "TOTAL", calculated: true },
                   { key: "ubicacion", label: "UBICACIÓN" },
                   { key: "lote", label: "LOTE" },
@@ -1074,8 +1109,10 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           fecha: ["fecha"],
           ingresoNro: ["ingreso", "ingreso n", "ingreso nº"],
           remitoNro: ["remito"],
+          pccMeNro: ["pcc", "pcc-me", "pcc me", "pcc me n"],
           bultos: ["bultos"],
           cantidad: ["cantidad"],
+          unidad: ["unidad"],
           total: ["total"],
           productoElaborar: ["producto", "producto a elaborar"],
           materiaPrima: ["materia prima"],
@@ -1084,7 +1121,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           falta: ["falta"],
           estado: ["estado"],
           observacion: ["observacion", "observación"],
-          unidad: ["unidad"],
           fechaEntrega: ["fecha entrega"],
           produccionesAfecta: ["producciones", "que producciones"],
           nota: ["nota"],
@@ -1118,11 +1154,13 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                   proveedor: m.proveedor ?? "",
                   cliente: m.cliente ?? "",
                   remitoNro: m.remitoNro ?? "",
+                  pccMeNro: m.pccMeNro ?? "",
                   codigo: m.codigo ?? "",
                   producto: m.producto ?? "",
                   descripcion: m.descripcion ?? "",
                   bultos: parseOptionalNumber(m.bultos),
                   cantidad: parseOptionalNumber(m.cantidad),
+                  unidad: m.unidad ?? "",
                   ubicacion: m.ubicacion ?? "",
                   lote: m.lote ?? "",
                   vencimiento: m.vencimiento ?? "",

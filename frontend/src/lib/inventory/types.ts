@@ -170,6 +170,8 @@ export type MpIngresoRow = {
   proveedor: string;
   cliente: string;
   remitoNro: string;
+  /** PCC-ME N.º (opcional, HereLabel / trazabilidad). Persistido en payload JSONB. */
+  pccMeNro?: string;
   codigo: string;
   /** true si codigo es identidad interna INT-MP-{id}. */
   codigoPendiente?: boolean;
@@ -178,6 +180,8 @@ export type MpIngresoRow = {
   descripcion: string;
   bultos: number | null;
   cantidad: number | null;
+  /** Unidad de cantidad (opcional, p.ej. KG). Persistido en payload JSONB. */
+  unidad?: string;
   total: number | null;
   ubicacion: string;
   lote: string;
