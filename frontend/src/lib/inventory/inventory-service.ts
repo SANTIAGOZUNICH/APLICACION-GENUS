@@ -1234,7 +1234,6 @@ export class InventoryService {
       descripcion: input.descripcion ?? existing?.descripcion ?? "",
       bultos,
       cantidad,
-      unidad: input.unidad ?? existing?.unidad ?? "",
       total,
       ubicacion: input.ubicacion ?? existing?.ubicacion ?? "",
       lote: input.lote ?? existing?.lote ?? "",

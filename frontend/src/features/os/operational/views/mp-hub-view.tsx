@@ -45,7 +45,7 @@ import {
   type MpStockRow,
 } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
-import { MpIngresoHereLabelCopyButton } from "@/features/os/operational/components/mp-ingreso-herelabel-copy-button";
+import { MpIngresoCrearEtiquetaButton } from "@/features/os/operational/components/mp-ingreso-crear-etiqueta";
 import { FormulasAdminPanel } from "@/features/os/operational/components/formulas-admin-panel";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import {
@@ -271,7 +271,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             descripcion: formDraft.descripcion ?? "",
             bultos: parseOptionalNumber(formDraft.bultos),
             cantidad: parseOptionalNumber(formDraft.cantidad),
-            unidad: formDraft.unidad ?? "",
             ubicacion: formDraft.ubicacion ?? "",
             lote: formDraft.lote ?? "",
             vencimiento: formDraft.vencimiento ?? "",
@@ -517,9 +516,9 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           ((r.total != null && r.total > 0) || (r.cantidad != null && r.cantidad > 0));
         return (
           <div className="os-row-actions">
-            <MpIngresoHereLabelCopyButton
+            <MpIngresoCrearEtiquetaButton
               row={r}
-              onCopied={() => showToast("Datos copiados para HereLabel")}
+              onToast={(msg) => showToast(msg)}
               onError={(msg) => setBanner(msg)}
             />
             {canWrite && r.status === "BORRADOR" && qtyReady ? (
@@ -551,7 +550,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                       descripcion: r.descripcion,
                       bultos: r.bultos == null ? "" : String(r.bultos),
                       cantidad: r.cantidad == null ? "" : String(r.cantidad),
-                      unidad: r.unidad ?? "",
                       ubicacion: r.ubicacion,
                       lote: r.lote,
                       vencimiento: r.vencimiento,
@@ -670,7 +668,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             ["descripcion", "DESCRIPCIÓN MATERIA PRIMA"],
             ["bultos", "BULTOS"],
             ["cantidad", "CANTIDAD"],
-            ["unidad", "UNIDAD"],
             ["ubicacion", "UBICACIÓN"],
             ["lote", "LOTE PROVEEDOR"],
             ["vencimiento", "VENCIMIENTO"],
@@ -942,21 +939,21 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             </div>
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
               {tab === "Ingresos MP" ? (
-                <MpIngresoHereLabelCopyButton
+                <MpIngresoCrearEtiquetaButton
                   row={{
+                    id: formDraft.id,
                     producto: formDraft.producto,
                     descripcion: formDraft.descripcion,
                     pccMeNro: formDraft.pccMeNro,
                     fecha: formDraft.fecha,
                     remitoNro: formDraft.remitoNro,
                     cantidad: formDraft.cantidad,
-                    unidad: formDraft.unidad,
                     proveedor: formDraft.proveedor,
                     bultos: formDraft.bultos,
                     lote: formDraft.lote,
                   }}
                   compactOnMobile={false}
-                  onCopied={() => showToast("Datos copiados para HereLabel")}
+                  onToast={(msg) => showToast(msg)}
                   onError={(msg) => setBanner(msg)}
                 />
               ) : (
@@ -1066,8 +1063,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                   { key: "producto", label: "PRODUCTO" },
                   { key: "descripcion", label: "DESCRIPCIÓN MATERIA PRIMA" },
                   { key: "bultos", label: "BULTOS" },
-                  { key: "cantidad", label: "CANTIDAD (kg/u)" },
-                  { key: "unidad", label: "UNIDAD" },
+                  { key: "cantidad", label: "CANTIDAD" },
                   { key: "total", label: "TOTAL", calculated: true },
                   { key: "ubicacion", label: "UBICACIÓN" },
                   { key: "lote", label: "LOTE" },
@@ -1112,7 +1108,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           pccMeNro: ["pcc", "pcc-me", "pcc me", "pcc me n"],
           bultos: ["bultos"],
           cantidad: ["cantidad"],
-          unidad: ["unidad"],
           total: ["total"],
           productoElaborar: ["producto", "producto a elaborar"],
           materiaPrima: ["materia prima"],
@@ -1124,6 +1119,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           fechaEntrega: ["fecha entrega"],
           produccionesAfecta: ["producciones", "que producciones"],
           nota: ["nota"],
+          unidad: ["unidad"],
         }}
         ignoreKeys={["total", "falta", "estado", "estadoStock", "diasAlVence", "estadoVencimiento"]}
         onConfirm={async (mapped) => {
@@ -1160,7 +1156,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                   descripcion: m.descripcion ?? "",
                   bultos: parseOptionalNumber(m.bultos),
                   cantidad: parseOptionalNumber(m.cantidad),
-                  unidad: m.unidad ?? "",
                   ubicacion: m.ubicacion ?? "",
                   lote: m.lote ?? "",
                   vencimiento: m.vencimiento ?? "",

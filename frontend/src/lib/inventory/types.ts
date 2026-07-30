@@ -180,8 +180,6 @@ export type MpIngresoRow = {
   descripcion: string;
   bultos: number | null;
   cantidad: number | null;
-  /** Unidad de cantidad (opcional, p.ej. KG). Persistido en payload JSONB. */
-  unidad?: string;
   total: number | null;
   ubicacion: string;
   lote: string;

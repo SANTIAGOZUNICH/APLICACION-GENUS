@@ -112,7 +112,6 @@ function normalizeMpIngresoPayload(raw: unknown): MpIngresoRow {
     descripcion: r.descripcion ?? "",
     bultos: r.bultos ?? null,
     cantidad: r.cantidad ?? null,
-    unidad: r.unidad ?? "",
     total: r.total ?? null,
     ubicacion: r.ubicacion ?? "",
     lote: r.lote ?? "",
