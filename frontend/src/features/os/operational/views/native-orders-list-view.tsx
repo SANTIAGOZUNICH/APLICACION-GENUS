@@ -15,6 +15,11 @@ import { canOrderDocumentAction } from "../lib/order-documents-rbac";
 import { canOrderAction } from "@/lib/orders/rbac";
 import { displayClient, displayProduct, displaySector, statusLabel } from "@/lib/orders/empty-draft";
 import {
+  formatOperationalIdCompact,
+  formatOperationalIdFull,
+} from "@/lib/orders/format-operational-id";
+import { OsClampedText } from "../components/os-clamped-text";
+import {
   createEmptyDraftApi,
   createOrderApi,
   fetchBuiltinTemplates,
@@ -166,22 +171,71 @@ export function NativeOrdersListView({
     {
       key: "orderNumber",
       header: "Número",
-      render: (r) => <span className="font-mono text-xs">{r.orderNumber}</span>,
+      className: "w-[7.5rem]",
+      render: (r) => {
+        const full = formatOperationalIdFull(r.orderNumber);
+        const compact = formatOperationalIdCompact(r.orderNumber);
+        return (
+          <OsClampedText fullText={full} mono>
+            {compact}
+          </OsClampedText>
+        );
+      },
     },
     {
       key: "createdAt",
       header: "Fecha",
+      hideOnMobile: "lg",
       render: (r) => new Date(r.createdAt).toLocaleDateString("es-AR"),
     },
-    { key: "product", header: "Producto", render: (r) => displayProduct(r.product) },
-    { key: "client", header: "Cliente", render: (r) => displayClient(r.client) },
-    { key: "code", header: "Código", hideOnMobile: true, render: (r) => r.code || "—" },
-    { key: "lot", header: "Lote", hideOnMobile: true, render: (r) => r.lot || "—" },
+    {
+      key: "product",
+      header: "Producto",
+      render: (r) => {
+        const v = displayProduct(r.product);
+        return <OsClampedText fullText={v}>{v}</OsClampedText>;
+      },
+    },
+    {
+      key: "client",
+      header: "Cliente",
+      hideOnMobile: "lg",
+      render: (r) => {
+        const v = displayClient(r.client);
+        return <OsClampedText fullText={v}>{v}</OsClampedText>;
+      },
+    },
+    {
+      key: "code",
+      header: "Código",
+      hideOnMobile: "2xl",
+      render: (r) => {
+        const v = r.code || "—";
+        return (
+          <OsClampedText fullText={v} mono>
+            {v}
+          </OsClampedText>
+        );
+      },
+    },
+    {
+      key: "lot",
+      header: "Lote",
+      hideOnMobile: "2xl",
+      render: (r) => {
+        const v = r.lot || "—";
+        return (
+          <OsClampedText fullText={v} mono>
+            {v}
+          </OsClampedText>
+        );
+      },
+    },
     {
       key: "assignedSector",
       header: "Sector",
-      hideOnMobile: true,
-      render: (r) => <span className="text-xs">{displaySector(r.assignedSector)}</span>,
+      hideOnMobile: "2xl",
+      render: (r) => <span className="text-[length:var(--os-density-font-caption)]">{displaySector(r.assignedSector)}</span>,
     },
     {
       key: "status",
@@ -190,10 +244,13 @@ export function NativeOrdersListView({
     },
     {
       key: "updatedAt",
-      header: "Modificación",
+      header: "Modificado",
       headerTitle: "Última modificación",
+      hideOnMobile: "2xl",
       render: (r) => (
-        <span className="text-xs">{new Date(r.updatedAt).toLocaleString("es-AR")}</span>
+        <span className="text-[length:var(--os-density-font-caption)]">
+          {new Date(r.updatedAt).toLocaleString("es-AR")}
+        </span>
       ),
     },
     {

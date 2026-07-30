@@ -39,6 +39,10 @@ import { orderLifecycleActions } from "@/lib/lifecycle/adapters/orders";
 import { LifecycleActionsMenu } from "./lifecycle-actions-menu";
 import { canDeleteEmptyDraft } from "@/lib/orders/empty-draft";
 import { statusLabel } from "@/lib/orders/empty-draft";
+import {
+  formatOperationalIdCompact,
+  formatOperationalIdFull,
+} from "@/lib/orders/format-operational-id";
 import type { OaContent, OeContent, OperationalOrderRecord, OrderContent } from "@/lib/orders/types";
 import { validateDeliver } from "@/lib/orders/validators";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/orders/actor";
@@ -746,8 +750,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           >
             ← Volver al listado
           </button>
-          <h3 className="text-lg font-semibold">
-            {order.orderNumber} · {order.product}
+          <h3 className="text-lg font-semibold" title={formatOperationalIdFull(order.orderNumber)}>
+            {formatOperationalIdCompact(order.orderNumber)} · {order.product}
           </h3>
           <p className="text-xs text-[var(--os-text-muted)]">
             {statusLabel(order.status)} · plantilla v{order.templateVersion} · rev {order.revision} ·

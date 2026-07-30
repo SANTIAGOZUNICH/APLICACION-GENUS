@@ -20,6 +20,12 @@ import { displayCell, multiplyTotal, parseOptionalNumber } from "@/lib/inventory
 import { ME_SALIDA_COLUMNS, type MeMaterial, type MeSalidaRow } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
 import { usePreviewSession } from "@/features/os/session/preview-context";
+import { OsClampedText } from "@/features/os/operational/components/os-clamped-text";
+import {
+  compactOperationalIdsInText,
+  formatOperationalIdCompact,
+  formatOperationalIdFull,
+} from "@/lib/orders/format-operational-id";
 
 const ALIASES: Record<string, string[]> = {
   fecha: ["fecha"],
@@ -149,11 +155,25 @@ export function MeSalidasView() {
       render: (row) => {
         if (label === "COMENTARIOS") {
           const oaTag =
-            row.origen === "OA"
-              ? `Origen automático OA ${row.oaNumber ?? ""}`.trim()
+            row.origen === "OA" && row.oaNumber
+              ? `Origen automático · ${formatOperationalIdCompact(row.oaNumber)}`
               : "";
-          const parts = [oaTag, row.comentarios].filter(Boolean);
-          return displayCell(parts.join(" · ") || null);
+          const parts = [
+            oaTag,
+            compactOperationalIdsInText(row.comentarios ?? ""),
+          ].filter(Boolean);
+          const display = parts.join(" · ") || "—";
+          const fullParts = [
+            row.origen === "OA" && row.oaNumber
+              ? `Origen automático · ${formatOperationalIdFull(row.oaNumber)}`
+              : "",
+            row.comentarios,
+          ].filter(Boolean);
+          return (
+            <OsClampedText fullText={fullParts.join(" · ") || display}>
+              {display}
+            </OsClampedText>
+          );
         }
         if (label === "DESCRIPCIÓN" && row.origen === "OA" && row.codigo) {
           return (

@@ -5,6 +5,10 @@ import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { displayField } from "@/lib/operational/display-fields";
+import {
+  formatOperationalIdCompact,
+  formatOperationalIdFull,
+} from "@/lib/orders/format-operational-id";
 import { SECTOR_LABELS } from "@/types/operational/sector";
 import { Button } from "@/components/ui/button";
 import {
@@ -327,7 +331,14 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
               { key: "client", header: "Cliente", hideOnMobile: "xl" as const, render: (row) => displayField(row.client) },
               { key: "deliveryDate", header: "Fecha de entrega", hideOnMobile: "xl" as const, render: (row) => <DeliveryDateBadge deliveryDate={row.deliveryDate} /> },
               { key: "quantity", header: "Cantidad", hideOnMobile: "xl" as const, render: (row) => displayField(row.quantity) },
-              { key: "oe", header: "OE", hideOnMobile: "xl" as const, render: (row) => <span className="font-mono text-xs">{displayField(row.oe)}</span> },
+              { key: "oe", header: "OE", hideOnMobile: "xl" as const, render: (row) => {
+                const raw = displayField(row.oe);
+                return (
+                  <span className="os-mono-id" title={formatOperationalIdFull(row.oe) || raw}>
+                    {formatOperationalIdCompact(row.oe) || raw}
+                  </span>
+                );
+              } },
             ]
           : [
               {
@@ -345,7 +356,14 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
               { key: "client", header: "Cliente", hideOnMobile: "xl" as const, render: (row) => displayField(row.client) },
               { key: "deliveryDate", header: "Fecha de entrega", hideOnMobile: "xl" as const, render: (row) => <DeliveryDateBadge deliveryDate={row.deliveryDate} /> },
               { key: "quantity", header: "Cantidad", hideOnMobile: "xl" as const, render: (row) => displayField(row.quantity) },
-              { key: "oa", header: "OA", hideOnMobile: "xl" as const, render: (row) => <span className="font-mono text-xs">{displayField(row.oa)}</span> },
+              { key: "oa", header: "OA", hideOnMobile: "xl" as const, render: (row) => {
+                const raw = displayField(row.oa);
+                return (
+                  <span className="os-mono-id" title={formatOperationalIdFull(row.oa) || raw}>
+                    {formatOperationalIdCompact(row.oa) || raw}
+                  </span>
+                );
+              } },
             ];
 
       return [
@@ -395,7 +413,13 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
         key: "ref",
         header: "OE / OA",
         render: (row) => (
-          <span className="font-mono text-xs">{displayField(row.kind === "granel" ? row.oe : row.oa)}</span>
+          <span
+            className="os-mono-id"
+            title={formatOperationalIdFull(row.kind === "granel" ? row.oe : row.oa) || undefined}
+          >
+            {formatOperationalIdCompact(row.kind === "granel" ? row.oe : row.oa) ||
+              displayField(row.kind === "granel" ? row.oe : row.oa)}
+          </span>
         ),
       },
       { key: "status", header: "Estado", render: (row) => <StatusChip status={row.status} /> },

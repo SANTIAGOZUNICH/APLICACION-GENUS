@@ -20,6 +20,7 @@ import {
   subscribeNotifications,
   type OsNotification,
 } from "./notifications-store";
+import { compactOperationalIdsInText } from "@/lib/orders/format-operational-id";
 
 function relativeTime(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -285,7 +286,12 @@ export function NotificationBell() {
                         <p className={`text-sm ${n.read ? "font-normal" : "font-semibold"}`}>
                           {n.title}
                         </p>
-                        <p className="mt-0.5 text-xs text-[var(--os-text-muted)]">{n.message}</p>
+                        <p
+                          className="mt-0.5 text-xs text-[var(--os-text-muted)]"
+                          title={n.message}
+                        >
+                          {compactOperationalIdsInText(n.message)}
+                        </p>
                         <p className="mt-1 text-[10px] text-[var(--os-text-muted)]">
                           {relativeTime(n.createdAt)}
                           {n.source === "server" ? " · servidor" : " · demo"}
