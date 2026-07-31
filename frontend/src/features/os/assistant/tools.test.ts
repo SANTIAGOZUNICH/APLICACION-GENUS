@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { CreamyLocalSnapshot } from "./types";
 import { buildNavActionsFromHelp, createCreamyToolRuntime } from "./tools";
+import { MemoryCreamyMemoryRepository } from "@/lib/creamy-memory/memory-repository";
+import { setCreamyMemoryRepositoryForTests } from "@/lib/creamy-memory/get-creamy-memory-service";
 
 const snapshot: CreamyLocalSnapshot = {
   capturedAt: "2026-07-20T10:00:00.000Z",
@@ -353,5 +355,87 @@ describe("Creamy assistant tools", () => {
       ["mp_ingresos"]
     );
     expect(actions).toEqual([{ sidebarId: "mp_ingresos", label: "IR A INGRESOS MP" }]);
+  });
+});
+
+describe("Creamy memory + orders tools (0015 deferred)", () => {
+  beforeEach(() => {
+    setCreamyMemoryRepositoryForTests(new MemoryCreamyMemoryRepository());
+  });
+
+  it("rememberOperationalFact exige email del actor", async () => {
+    const runtime = createCreamyToolRuntime({ actorSectorId: "ELABORACION", snapshot });
+    const result = await runtime.rememberOperationalFact({
+      client: "Cliente Real",
+      product: "Producto Real",
+      materiaPrimaOriginal: "MP Original",
+      materiaPrimaUtilizada: "MP Usada",
+      motivo: "Motivo real",
+    });
+    expect(result.results).toEqual([]);
+    expect(result.message).toContain("email del actor");
+  });
+
+  it("rememberOperationalFact crea un hecho REPORTADA y searchOperationalMemories lo encuentra", async () => {
+    const runtime = createCreamyToolRuntime({
+      actorSectorId: "ELABORACION",
+      snapshot,
+      actorEmail: "elaboracion@laboratoriogenus.com.ar",
+    });
+    const created = await runtime.rememberOperationalFact({
+      client: "Cliente Real",
+      product: "Producto Real",
+      materiaPrimaOriginal: "MP Original",
+      materiaPrimaUtilizada: "MP Usada",
+      motivo: "Quiebre de stock del proveedor habitual",
+    });
+    expect(created.results).toHaveLength(1);
+    expect(created.results[0]).toMatchObject({ estado: "REPORTADA" });
+
+    const found = await runtime.searchOperationalMemories({ client: "Cliente Real" });
+    expect(found.results).toHaveLength(1);
+    expect(found.results[0]).toMatchObject({ product: "Producto Real", estado: "REPORTADA" });
+  });
+
+  it("rememberOperationalFact rechaza valores TEST_", async () => {
+    const runtime = createCreamyToolRuntime({
+      actorSectorId: "ELABORACION",
+      snapshot,
+      actorEmail: "elaboracion@laboratoriogenus.com.ar",
+    });
+    const result = await runtime.rememberOperationalFact({
+      client: "TEST_CLIENTE",
+      product: "Producto Real",
+      materiaPrimaOriginal: "MP Original",
+      materiaPrimaUtilizada: "MP Usada",
+      motivo: "Motivo real",
+    });
+    expect(result.results).toEqual([]);
+    expect(result.message).toContain("prueba");
+  });
+
+  it("searchOrdersForCreamy y getOrderSummaryForCreamy degradan sin base de datos configurada", async () => {
+    const runtime = createCreamyToolRuntime({
+      actorSectorId: "PRODUCCION",
+      snapshot,
+      actorEmail: "produccion@laboratoriogenus.com.ar",
+    });
+    const orders = await runtime.searchOrdersForCreamy({ query: "OE-1" });
+    expect(orders.results).toEqual([]);
+    expect(orders.message).toBeTruthy();
+
+    const summary = await runtime.getOrderSummaryForCreamy({ ref: "OE-1" });
+    expect(summary.results).toEqual([]);
+    expect(summary.message).toBeTruthy();
+  });
+
+  it("getOrderSummaryForCreamy exige id o ref", async () => {
+    const runtime = createCreamyToolRuntime({
+      actorSectorId: "PRODUCCION",
+      snapshot,
+      actorEmail: "produccion@laboratoriogenus.com.ar",
+    });
+    const result = await runtime.getOrderSummaryForCreamy({});
+    expect(result.message).toContain("id o la referencia");
   });
 });

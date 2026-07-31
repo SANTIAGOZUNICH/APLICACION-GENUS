@@ -49,7 +49,7 @@ describe("assistant chat route validation", () => {
     });
   });
 
-  it("normaliza actorSectorId y recorta historial a 20 mensajes", () => {
+  it("normaliza actorSectorId y recorta historial a 12 mensajes", () => {
     const messages = Array.from({ length: 25 }, (_, index) => ({
       role: index % 2 === 0 ? "user" : "assistant",
       content: `mensaje ${index}`,
@@ -64,7 +64,7 @@ describe("assistant chat route validation", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.actorSectorId).toBe("PRODUCCION");
-      expect(result.value.messages).toHaveLength(20);
+      expect(result.value.messages).toHaveLength(12);
       expect(result.value.messages.at(-1)?.content).toBe("última pregunta");
     }
   });

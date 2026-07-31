@@ -17,12 +17,14 @@ const MINIMIZED_KEY = "genus_os_creamy_panel_minimized";
 
 export type CreamyPanelMode = "closed" | "open" | "minimized";
 
-function welcomeMessage(): CreamyChatMessage {
+function welcomeMessage(displayName?: string | null): CreamyChatMessage {
+  const greeting = displayName?.trim()
+    ? `¡Hola ${displayName.trim().split(/\s+/)[0]}! Soy Creamy.`
+    : "¡Hola! Soy Creamy.";
   return {
     id: "creamy-welcome",
     role: "assistant",
-    content:
-      "¡Hola! Soy Creamy, el asistente de Genus OS. Puedo ayudarte a consultar trabajos, productos, lotes, órdenes, materia prima, entregas y procesos del laboratorio. No apruebo, no elimino ni modifico datos.",
+    content: `${greeting} Puedo orientarte en Genus OS: trabajos, órdenes, MP, remitos y procesos. No apruebo ni modifico datos.`,
     createdAt: new Date().toISOString(),
   };
 }

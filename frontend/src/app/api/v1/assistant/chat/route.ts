@@ -28,12 +28,19 @@ import {
   shouldAttemptFallback,
   type CreamyResolvedProvider,
 } from "@/lib/assistant/creamy-provider";
+import { sanitizeCreamyReply } from "@/lib/creamy-memory/sanitize";
+import { getCreamyMemoryService } from "@/lib/creamy-memory/get-creamy-memory-service";
+import {
+  resolveOrdersActor,
+} from "@/lib/orders/actor";
+import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
+import { findMockUserByEmail } from "@/features/os/auth/lib/mock-preview-users";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_MESSAGE_LENGTH = 4000;
-const MAX_HISTORY_MESSAGES = 20;
+const MAX_HISTORY_MESSAGES = 12;
 const REQUEST_TIMEOUT_MS = 30_000;
 const FORBIDDEN_UI_CONTEXT_KEYS = /password|secret|token|apikey|api_key/i;
 
@@ -187,16 +194,6 @@ function collectSources(toolResults: unknown[]): SourceCitation[] {
   });
 }
 
-function collectUsedTools(toolResults: unknown[]): string[] {
-  return Array.from(
-    new Set(
-      toolResults
-        .map((result) => (result as { toolName?: unknown }).toolName)
-        .filter((toolName): toolName is string => typeof toolName === "string")
-    )
-  );
-}
-
 function collectNavActions(toolResults: unknown[]): CreamyNavAction[] {
   const actions: CreamyNavAction[] = [];
   const seen = new Set<string>();
@@ -299,6 +296,25 @@ async function attemptWithRetries(
 }
 
 export async function POST(request: Request) {
+  let actor;
+  try {
+    actor = resolveOrdersActor(request);
+  } catch (error) {
+    if (error instanceof OrdersValidationError) {
+      return NextResponse.json(
+        { error: "Sesión requerida.", code: "ACTOR_EMAIL_REQUIRED", message: "Sesión requerida." },
+        { status: 401 }
+      );
+    }
+    if (error instanceof OrdersForbiddenError) {
+      return NextResponse.json(
+        { error: "Acceso denegado.", code: "ACTOR_FORBIDDEN", message: "Acceso denegado." },
+        { status: 403 }
+      );
+    }
+    throw error;
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -311,6 +327,19 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: validation.error, code: validation.code, message: validation.error },
       { status: validation.status }
+    );
+  }
+
+  // Sector and email always come from the authenticated session — never from free-form body email.
+  const payload = validation.value;
+  if (payload.actorSectorId !== actor.sector) {
+    return NextResponse.json(
+      {
+        error: "El sector de sesión no coincide con el actor autenticado.",
+        code: "ACTOR_SECTOR_MISMATCH",
+        message: "El sector de sesión no coincide con el actor autenticado.",
+      },
+      { status: 403 }
     );
   }
 
@@ -329,20 +358,46 @@ export async function POST(request: Request) {
   }
 
   const { signal, cleanup } = timeoutSignal(request.signal);
-  const payload = validation.value;
   const messages: ModelMessage[] = payload.messages.map((message) => ({
     role: message.role,
     content: message.content.trim(),
   }));
+
+  const mockUser = findMockUserByEmail(actor.email);
+  let userMemoryHints: string[] = [];
+  try {
+    const memories = await getCreamyMemoryService().listUserMemories(
+      { email: actor.email, sector: actor.sector },
+      actor.email,
+      5
+    );
+    userMemoryHints = memories.map((m) => m.content).filter(Boolean);
+  } catch {
+    userMemoryHints = [];
+  }
+
+  const uiContext = {
+    ...payload.uiContext,
+    email: actor.email,
+  };
+
   const systemPrompt = buildCreamySystemPrompt({
-    actorSectorId: payload.actorSectorId,
+    actor: {
+      email: actor.email,
+      displayName: actor.displayName,
+      sector: actor.sector,
+      sectorLabel: mockUser?.sectorLabel,
+      jobTitle: mockUser?.jobTitle,
+    },
     snapshot: payload.snapshot,
-    uiContext: payload.uiContext,
+    uiContext,
+    userMemoryHints,
   });
   const tools = createCreamyTools({
-    actorSectorId: payload.actorSectorId,
+    actorSectorId: actor.sector,
     snapshot: payload.snapshot,
-    availableNav: payload.uiContext?.availableNav,
+    availableNav: uiContext.availableNav,
+    actorEmail: actor.email,
   });
 
   let activeProvider = resolved;
@@ -359,17 +414,21 @@ export async function POST(request: Request) {
 
     const baseReply =
       result.text.trim() ||
-      "No pude generar una respuesta con la información disponible. Probá reformular la consulta.";
-    const reply = usedFallback
-      ? `${baseReply}\n\n_(Respuesta generada con proveedor alternativo.)_`
-      : baseReply;
+      "No pude responder con la información disponible. Probá reformular.";
+    // Fallback is invisible to the user — never mention provider/model.
+    void usedFallback;
+    const reply = sanitizeCreamyReply(baseReply);
 
     const navActions = collectNavActions(result.toolResults);
+    const safeSources = collectSources(result.toolResults).filter(
+      (source) => !/^TEST_/i.test(source.id) && !/^TEST_/i.test(source.label)
+    );
 
     const response: AssistantChatResponse = {
       reply,
-      sources: collectSources(result.toolResults),
-      usedTools: collectUsedTools(result.toolResults),
+      sources: safeSources,
+      // Never expose internal tool names to the client UI.
+      usedTools: [],
       provider: activeProvider.provider,
       model: activeProvider.model,
       navActions: navActions.length ? navActions : undefined,

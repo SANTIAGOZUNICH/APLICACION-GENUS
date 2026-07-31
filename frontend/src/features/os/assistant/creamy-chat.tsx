@@ -194,7 +194,11 @@ export function CreamyChat({
         const snapshot = buildCreamyLocalSnapshot({ actorSectorId: sectorId, workItems });
         const response = await fetch("/api/v1/assistant/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "x-genus-actor-email": uiContext?.email?.trim() || "",
+            "x-genus-actor-sector": sectorId,
+          },
           signal: controller.signal,
           body: JSON.stringify({
             actorSectorId: sectorId,
@@ -203,7 +207,15 @@ export function CreamyChat({
               content: message.content,
             })),
             snapshot,
-            uiContext,
+            uiContext: uiContext
+              ? {
+                  route: uiContext.route,
+                  tab: uiContext.tab,
+                  moduleName: uiContext.moduleName,
+                  availableNav: uiContext.availableNav,
+                  openItemSummary: uiContext.openItemSummary,
+                }
+              : undefined,
           }),
         });
         const payload = (await response.json().catch(() => ({}))) as Partial<AssistantChatResponse> & {

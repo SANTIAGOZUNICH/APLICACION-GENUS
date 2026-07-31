@@ -24,6 +24,18 @@ import {
 import {
   getFormulaForProduct,
 } from "@/features/os/operational/adapters/formula-repository";
+import { getOrdersService } from "@/lib/orders/get-orders-service";
+import {
+  OrdersForbiddenError,
+  OrdersNotFoundError,
+  OrdersUnavailableError,
+  type OaContent,
+  type OeContent,
+  type OrdersActor,
+} from "@/lib/orders/types";
+import { getCreamyMemoryService } from "@/lib/creamy-memory/get-creamy-memory-service";
+import { isTestLikeValue } from "@/lib/creamy-memory/sanitize";
+import type { CreateOperationalMemoryInput } from "@/lib/creamy-memory/types";
 
 export { isStepCount };
 
@@ -283,6 +295,8 @@ interface RuntimeInput {
   actorSectorId: SectorId;
   snapshot?: CreamyLocalSnapshot;
   availableNav?: string[];
+  /** Email del actor autenticado (uiContext.email). Requerido por tools que tocan Neon (órdenes/memoria). */
+  actorEmail?: string;
 }
 
 interface SearchInput {
@@ -384,6 +398,45 @@ interface ElaborationOrderInput {
   query?: string;
   limit?: number;
 }
+
+interface RememberOperationalFactInput {
+  client: string;
+  product: string;
+  productCode?: string;
+  materiaPrimaOriginal: string;
+  materiaPrimaUtilizada: string;
+  codigoMpOriginal?: string;
+  codigoMpUtilizado?: string;
+  motivo: string;
+  observacion?: string;
+  cantidadOProporcion?: string;
+  relatedOrderRef?: string;
+  relatedOrderId?: string;
+  fecha?: string;
+}
+
+interface SearchOperationalMemoriesInput {
+  client?: string;
+  product?: string;
+  productCode?: string;
+  limit?: number;
+}
+
+interface SearchOrdersForCreamyInput {
+  query?: string;
+  client?: string;
+  product?: string;
+  type?: "OE" | "OA";
+  limit?: number;
+}
+
+interface GetOrderSummaryForCreamyInput {
+  id?: string;
+  ref?: string;
+  includeAnnulled?: boolean;
+}
+
+const MAX_ORDER_TOOL_RESULTS = 5;
 
 function emptyResult<T>(message: string): CreamyToolResult<T> {
   return { results: [], localOnly: true, sources: [], message };
@@ -541,7 +594,7 @@ function deliveryResult(item: CreamyDeliverySummary) {
   };
 }
 
-export function createCreamyToolRuntime({ actorSectorId, snapshot, availableNav }: RuntimeInput) {
+export function createCreamyToolRuntime({ actorSectorId, snapshot, availableNav, actorEmail }: RuntimeInput) {
   const workItems = snapshot?.workItems ?? [];
   const lots = snapshot?.lots ?? [];
   const rawMaterials = snapshot?.rawMaterials ?? [];
@@ -1165,6 +1218,212 @@ export function createCreamyToolRuntime({ actorSectorId, snapshot, availableNav 
         message: results.length ? undefined : "No encontré OEs visibles con esos filtros.",
       };
     },
+
+    async rememberOperationalFact(input: RememberOperationalFactInput): Promise<CreamyToolResult> {
+      if (!actorEmail) {
+        return emptyResult("Falta el email del actor de sesión para registrar un dato operativo.");
+      }
+      const candidates = [input.client, input.product, input.productCode, input.materiaPrimaOriginal, input.materiaPrimaUtilizada];
+      if (candidates.some(isTestLikeValue)) {
+        return emptyResult("No se registran datos operativos con valores de prueba (TEST_).");
+      }
+      try {
+        const service = getCreamyMemoryService();
+        const payload: CreateOperationalMemoryInput = {
+          client: input.client,
+          product: input.product,
+          productCode: input.productCode,
+          materiaPrimaOriginal: input.materiaPrimaOriginal,
+          materiaPrimaUtilizada: input.materiaPrimaUtilizada,
+          codigoMpOriginal: input.codigoMpOriginal,
+          codigoMpUtilizado: input.codigoMpUtilizado,
+          motivo: input.motivo,
+          observacion: input.observacion,
+          cantidadOProporcion: input.cantidadOProporcion,
+          relatedOrderRef: input.relatedOrderRef,
+          relatedOrderId: input.relatedOrderId,
+          fecha: input.fecha,
+        };
+        const { memory, deduped } = await service.createOperationalMemory(
+          { email: actorEmail, sector: actorSectorId },
+          payload
+        );
+        return {
+          results: [{ id: memory.id, estado: memory.estado, deduped }],
+          localOnly: false,
+          sources: [{ type: "help", id: memory.id, label: `Memoria operativa · ${memory.product}` }],
+          message: deduped
+            ? `Ya existía un reporte para esta combinación; actualicé el motivo/observación (estado ${memory.estado}, id ${memory.id}).`
+            : `Registrado como REPORTADA — pendiente de validación por Calidad, Producción o Dirección (id ${memory.id}).`,
+        };
+      } catch (err) {
+        return emptyResult(
+          err instanceof Error ? err.message : "No se pudo registrar el dato operativo en este momento."
+        );
+      }
+    },
+
+    async searchOperationalMemories(input: SearchOperationalMemoriesInput = {}): Promise<CreamyToolResult> {
+      try {
+        const service = getCreamyMemoryService();
+        const limit = clampLimit(input.limit);
+        const memories = await service.searchOperationalMemories(
+          { email: actorEmail ?? "", sector: actorSectorId },
+          { client: input.client, product: input.product, productCode: input.productCode, limit }
+        );
+        const contradictions = service.detectContradictions(memories);
+        const results = memories.map((memory) => ({
+          id: memory.id,
+          client: memory.client,
+          product: memory.product,
+          productCode: memory.productCode,
+          materiaPrimaOriginal: memory.materiaPrimaOriginal,
+          materiaPrimaUtilizada: memory.materiaPrimaUtilizada,
+          motivo: memory.motivo,
+          observacion: memory.observacion,
+          estado: memory.estado,
+          fuente: memory.fuente,
+          informadoPor: memory.informadoPor,
+          fechaLabel: formatDate(memory.fecha),
+        }));
+        return {
+          results,
+          localOnly: false,
+          sources: results.map((r) => ({ type: "help" as const, id: r.id, label: `Memoria operativa · ${r.product}` })),
+          message: results.length
+            ? contradictions.length
+              ? "Hay reportes contradictorios para este cliente/producto (distinta MP utilizada) — verificá con Calidad antes de asumir cuál aplica."
+              : undefined
+            : "No encontré memoria operativa registrada para esos filtros.",
+        };
+      } catch (err) {
+        return emptyResult(
+          err instanceof Error ? err.message : "No se pudo consultar la memoria operativa en este momento."
+        );
+      }
+    },
+
+    async searchOrdersForCreamy(input: SearchOrdersForCreamyInput = {}): Promise<CreamyToolResult> {
+      if (!actorEmail) {
+        return emptyResult("Falta el email del actor de sesión para buscar órdenes.");
+      }
+      try {
+        const ordersService = getOrdersService();
+        const actor: OrdersActor = { email: actorEmail, sector: actorSectorId, displayName: actorEmail };
+        const limit = Math.min(MAX_ORDER_TOOL_RESULTS, clampLimit(input.limit));
+        const { items } = await ordersService.listOrders(
+          {
+            type: input.type,
+            search: input.query,
+            product: input.product,
+            client: input.client,
+            sort: "updated_desc",
+            pageSize: limit,
+          },
+          actor
+        );
+        const filtered = items
+          .filter(
+            (order) =>
+              !isTestLikeValue(order.client) &&
+              !isTestLikeValue(order.product) &&
+              !isTestLikeValue(order.code) &&
+              !isTestLikeValue(order.orderNumber)
+          )
+          .slice(0, limit)
+          .map((order) => ({
+            orderNumber: order.orderNumber,
+            client: order.client,
+            product: order.product,
+            code: order.code,
+            lot: order.lot,
+            status: order.status,
+            dateLabel: formatDate(order.createdAt),
+          }));
+        return {
+          results: filtered,
+          localOnly: false,
+          sources: filtered.map((order) => ({
+            type: "order" as const,
+            id: order.orderNumber,
+            label: `${order.orderNumber} · ${order.product}`,
+          })),
+          message: filtered.length ? undefined : "No encontré órdenes visibles con esos filtros.",
+        };
+      } catch (err) {
+        if (err instanceof OrdersUnavailableError) {
+          return emptyResult("Órdenes no disponibles en este entorno (falta base de datos).");
+        }
+        return emptyResult(err instanceof Error ? err.message : "No pude consultar órdenes en este momento.");
+      }
+    },
+
+    async getOrderSummaryForCreamy(input: GetOrderSummaryForCreamyInput = {}): Promise<CreamyToolResult> {
+      if (!actorEmail) {
+        return emptyResult("Falta el email del actor de sesión para buscar la orden.");
+      }
+      if (!input.id && !input.ref?.trim()) {
+        return emptyResult("Indicá el id o la referencia (ej: OE-123) de la orden.");
+      }
+      try {
+        const ordersService = getOrdersService();
+        const actor: OrdersActor = { email: actorEmail, sector: actorSectorId, displayName: actorEmail };
+        let order = input.id ? await ordersService.getOrder(input.id, actor) : null;
+        if (!order && input.ref?.trim()) {
+          const { items } = await ordersService.listOrders({ search: input.ref.trim(), pageSize: 5 }, actor);
+          order =
+            items.find((o) => normalizeText(o.orderNumber) === normalizeText(input.ref)) ?? items[0] ?? null;
+        }
+        if (!order) return emptyResult("No encontré esa orden o no tenés acceso.");
+        if (
+          isTestLikeValue(order.client) ||
+          isTestLikeValue(order.product) ||
+          isTestLikeValue(order.code) ||
+          isTestLikeValue(order.orderNumber)
+        ) {
+          return emptyResult("Esa orden es de datos de prueba y no está disponible para Creamy.");
+        }
+        if (order.status === "ANULADA" && !input.includeAnnulled) {
+          return emptyResult("Esa orden está anulada. Pedí explícitamente incluir anuladas si la necesitás igual.");
+        }
+        const materials =
+          order.type === "OE"
+            ? ((order.formData as OeContent).materials ?? []).map((m) => ({
+                codigo: m.codigo,
+                materiaPrima: m.materiaPrima,
+              }))
+            : ((order.formData as OaContent).materials ?? []).map((m) => ({
+                codigo: m.codigo,
+                nombreInsumo: m.nombreInsumo,
+              }));
+        const observacion =
+          order.type === "OA" ? (order.formData as OaContent).observaciones?.slice(0, 300) || null : null;
+        return {
+          results: [
+            {
+              orderNumber: order.orderNumber,
+              type: order.type,
+              client: order.client,
+              product: order.product,
+              code: order.code,
+              lot: order.lot,
+              status: order.status,
+              materials: materials.slice(0, 20),
+              observacion,
+            },
+          ],
+          localOnly: false,
+          sources: [{ type: "order", id: order.orderNumber, label: `${order.type} ${order.orderNumber}` }],
+        };
+      } catch (err) {
+        if (err instanceof OrdersUnavailableError) {
+          return emptyResult("Órdenes no disponibles en este entorno (falta base de datos).");
+        }
+        if (err instanceof OrdersNotFoundError) return emptyResult("No encontré esa orden.");
+        if (err instanceof OrdersForbiddenError) return emptyResult("No tenés acceso a esa orden.");
+        return emptyResult(err instanceof Error ? err.message : "No pude consultar la orden en este momento.");
+      }
+    },
   };
 }
 
@@ -1465,6 +1724,76 @@ export function createCreamyTools(input: RuntimeInput): ToolSet {
         additionalProperties: false,
       }),
       execute: (toolInput) => runtime.getElaborationOrder(toolInput),
+    }),
+    rememberOperationalFact: tool({
+      description:
+        "Registra un hecho operativo (ej: sustitución de MP usada en la práctica) como REPORTADA, pendiente de validación por Calidad/Producción/Dirección. Nunca queda auto-validado.",
+      inputSchema: jsonSchema<RememberOperationalFactInput>({
+        type: "object",
+        required: ["client", "product", "materiaPrimaOriginal", "materiaPrimaUtilizada", "motivo"],
+        properties: {
+          client: { type: "string" },
+          product: { type: "string" },
+          productCode: { type: "string" },
+          materiaPrimaOriginal: { type: "string", description: "MP que indica la fórmula/orden original" },
+          materiaPrimaUtilizada: { type: "string", description: "MP realmente utilizada" },
+          codigoMpOriginal: { type: "string" },
+          codigoMpUtilizado: { type: "string" },
+          motivo: { type: "string" },
+          observacion: { type: "string" },
+          cantidadOProporcion: { type: "string" },
+          relatedOrderRef: { type: "string", description: "Ej: OE-123" },
+          relatedOrderId: { type: "string" },
+          fecha: { type: "string", description: "YYYY-MM-DD" },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.rememberOperationalFact(toolInput),
+    }),
+    searchOperationalMemories: tool({
+      description:
+        "Busca memoria operativa compartida (hechos reportados por cualquier sector) por cliente, producto o código. Excluye REVOCADA por default y avisa si hay reportes contradictorios.",
+      inputSchema: jsonSchema<SearchOperationalMemoriesInput>({
+        type: "object",
+        properties: {
+          client: { type: "string" },
+          product: { type: "string" },
+          productCode: { type: "string" },
+          limit: { type: "number", maximum: MAX_TOOL_RESULTS },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.searchOperationalMemories(toolInput),
+    }),
+    searchOrdersForCreamy: tool({
+      description:
+        "Busca órdenes OE/OA persistidas (Neon) por texto, cliente o producto. Devuelve resúmenes cortos (sin fórmulas), máximo 5.",
+      inputSchema: jsonSchema<SearchOrdersForCreamyInput>({
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          client: { type: "string" },
+          product: { type: "string" },
+          type: { type: "string", enum: ["OE", "OA"] },
+          limit: { type: "number", maximum: MAX_ORDER_TOOL_RESULTS },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.searchOrdersForCreamy(toolInput),
+    }),
+    getOrderSummaryForCreamy: tool({
+      description:
+        "Devuelve el resumen de una orden OE/OA persistida por id o referencia (ej: OE-123): materiales (código/nombre, sin porcentajes ni cantidades de fórmula) y una observación corta.",
+      inputSchema: jsonSchema<GetOrderSummaryForCreamyInput>({
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          ref: { type: "string", description: "Ej: OE-123 u OA-45" },
+          includeAnnulled: { type: "boolean" },
+        },
+        additionalProperties: false,
+      }),
+      execute: (toolInput) => runtime.getOrderSummaryForCreamy(toolInput),
     }),
   };
 }
