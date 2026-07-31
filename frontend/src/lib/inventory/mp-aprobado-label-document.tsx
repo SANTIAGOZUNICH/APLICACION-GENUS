@@ -2,17 +2,21 @@ import React from "react";
 import { Document, Image, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
 import {
   MP_LABEL_HEIGHT_PT,
+  MP_LABEL_MARGIN_X_PT,
   MP_LABEL_WIDTH_PT,
+  mmToPt,
   type MpAprobadoLabelData,
 } from "@/lib/inventory/mp-aprobado-label";
 import { LABORATORIO_GENUS_LOGO_THERMAL_DATA_URI } from "@/lib/inventory/laboratorio-genus-logo-thermal-data-uri";
 
 /**
- * PDF de una página — etiqueta APROBADO MATERIA PRIMA.
- * Diseño monocromático alineado al arte aprobado (proporciones 1024×682).
+ * PDF de una página — etiqueta APROBADO MATERIA PRIMA (75×50 mm).
+ * Escala proporcional del diseño 100×67; márgenes L/R = 2 mm (ancho seguro 71 mm).
  */
-const BORDER = 1.6;
-const INNER = 0.7;
+const S = 0.75; // 75/100
+const BORDER = 1.6 * S;
+const INNER = 0.7 * S;
+const MARGIN_Y_PT = mmToPt(1.6);
 
 const styles = StyleSheet.create({
   page: {
@@ -26,7 +30,10 @@ const styles = StyleSheet.create({
   },
   frame: {
     flex: 1,
-    margin: 4,
+    marginLeft: MP_LABEL_MARGIN_X_PT,
+    marginRight: MP_LABEL_MARGIN_X_PT,
+    marginTop: MARGIN_Y_PT,
+    marginBottom: 0,
     borderWidth: BORDER,
     borderColor: "#000000",
     flexDirection: "column",
@@ -34,35 +41,35 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 5,
-    paddingTop: 3,
-    paddingBottom: 2,
-    minHeight: 28,
+    paddingHorizontal: 5 * S,
+    paddingTop: 3 * S,
+    paddingBottom: 2 * S,
+    minHeight: 28 * S,
   },
   logo: {
-    width: 78,
-    height: 28,
+    width: 78 * S,
+    height: 28 * S,
     objectFit: "contain",
   },
   aprobado: {
     flex: 1,
     textAlign: "right",
-    fontSize: 18,
+    fontSize: 18 * S,
     fontFamily: "Helvetica-Bold",
-    letterSpacing: 0.6,
-    paddingLeft: 4,
+    letterSpacing: 0.6 * S,
+    paddingLeft: 4 * S,
   },
   materiaBar: {
     backgroundColor: "#000000",
-    paddingVertical: 3.5,
+    paddingVertical: 3.5 * S,
     alignItems: "center",
     justifyContent: "center",
   },
   materiaText: {
     color: "#ffffff",
-    fontSize: 10,
+    fontSize: 10 * S,
     fontFamily: "Helvetica-Bold",
-    letterSpacing: 1.2,
+    letterSpacing: 1.2 * S,
   },
   grid: {
     flex: 1,
@@ -83,9 +90,9 @@ const styles = StyleSheet.create({
   cell: {
     flexGrow: 1,
     flexBasis: 0,
-    paddingTop: 2,
-    paddingHorizontal: 3,
-    paddingBottom: 2,
+    paddingTop: 2 * S,
+    paddingHorizontal: 3 * S,
+    paddingBottom: 2 * S,
     justifyContent: "flex-start",
   },
   cellBorderRight: {
@@ -93,33 +100,35 @@ const styles = StyleSheet.create({
     borderRightColor: "#000000",
   },
   fieldLabel: {
-    fontSize: 5.5,
+    fontSize: 5.5 * S,
     fontFamily: "Helvetica-Bold",
-    letterSpacing: 0.2,
+    letterSpacing: 0.2 * S,
   },
   fieldValue: {
     flexGrow: 1,
-    fontSize: 11,
+    fontSize: 11 * S,
     fontFamily: "Helvetica-Bold",
     textAlign: "center",
     textTransform: "uppercase",
-    marginTop: 2,
+    marginTop: 2 * S,
   },
   fieldValueSm: {
     flexGrow: 1,
-    fontSize: 9.5,
+    fontSize: 9.5 * S,
     fontFamily: "Helvetica-Bold",
     textAlign: "center",
     textTransform: "uppercase",
-    marginTop: 2,
+    marginTop: 2 * S,
   },
   footerOutside: {
-    marginTop: 2,
-    marginBottom: 1,
+    marginTop: 2 * S,
+    marginBottom: MARGIN_Y_PT * 0.5,
+    marginLeft: MP_LABEL_MARGIN_X_PT,
+    marginRight: MP_LABEL_MARGIN_X_PT,
     textAlign: "center",
-    fontSize: 5.5,
+    fontSize: 5.5 * S,
     fontFamily: "Helvetica",
-    letterSpacing: 0.4,
+    letterSpacing: 0.4 * S,
   },
 });
 

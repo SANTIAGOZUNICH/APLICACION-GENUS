@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Download, Tag, ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { MpIngresoRow } from "@/lib/inventory/types";
@@ -9,12 +9,11 @@ import {
   type MpAprobadoLabelData,
   type MpAprobadoLabelSource,
 } from "@/lib/inventory/mp-aprobado-label";
+import { buildMpAprobadoLabelFromIngreso } from "@/lib/inventory/mp-aprobado-label-pdf";
 import {
-  buildMpAprobadoLabelFromIngreso,
-  buildMpAprobadoLabelPdfBlob,
-  downloadMpAprobadoLabelPdf,
+  downloadMpAprobadoLabelFromApi,
   openHereLabelOfficialPage,
-} from "@/lib/inventory/mp-aprobado-label-pdf";
+} from "@/lib/inventory/mp-aprobado-label-download";
 import { MpAprobadoLabelPreview } from "@/features/os/operational/components/mp-aprobado-label-preview";
 
 type Props = {
@@ -26,6 +25,7 @@ type Props = {
 
 /**
  * Crea la etiqueta PDF APROBADO MATERIA PRIMA y abre vista previa.
+ * Descarga vía API (octet-stream) — no navega al PDF.
  * No muta ingreso ni stock.
  */
 export function MpIngresoCrearEtiquetaButton({
@@ -36,21 +36,15 @@ export function MpIngresoCrearEtiquetaButton({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [filename, setFilename] = useState("ETIQUETA-MP.pdf");
-  const [blob, setBlob] = useState<Blob | null>(null);
   const [labelData, setLabelData] = useState<MpAprobadoLabelData | null>(null);
 
-  useEffect(() => {
-    // no blob URLs retained after closing
-  }, []);
-
-  async function createLabel() {
+  function createLabel() {
     setBusy(true);
     try {
       const { data, filename: name } = buildMpAprobadoLabelFromIngreso(row);
-      const pdfBlob = await buildMpAprobadoLabelPdfBlob(data);
       setLabelData(data);
-      setBlob(pdfBlob);
       setFilename(name);
       setOpen(true);
     } catch {
@@ -61,12 +55,15 @@ export function MpIngresoCrearEtiquetaButton({
   }
 
   async function handleDownload() {
-    if (!blob) return;
+    if (!labelData || downloading) return;
+    setDownloading(true);
     try {
-      await downloadMpAprobadoLabelPdf(blob, filename);
+      await downloadMpAprobadoLabelFromApi(labelData);
       onToast?.("Etiqueta descargada");
     } catch {
       onError?.("No se pudo descargar la etiqueta.");
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -76,6 +73,7 @@ export function MpIngresoCrearEtiquetaButton({
   }
 
   function close() {
+    if (downloading) return;
     setOpen(false);
   }
 
@@ -91,7 +89,7 @@ export function MpIngresoCrearEtiquetaButton({
         disabled={busy}
         onClick={(e) => {
           e.stopPropagation();
-          void createLabel();
+          createLabel();
         }}
         className="shrink-0"
       >
@@ -101,7 +99,7 @@ export function MpIngresoCrearEtiquetaButton({
         </span>
       </Button>
 
-      {open && blob && labelData ? (
+      {open && labelData ? (
         <div
           className="fixed inset-0 z-[80] flex items-end justify-center bg-black/55 p-3 sm:items-center"
           role="dialog"
@@ -127,6 +125,7 @@ export function MpIngresoCrearEtiquetaButton({
                 className="rounded p-1 text-[var(--os-muted)] hover:bg-[var(--os-bg)]"
                 aria-label="Cerrar"
                 onClick={close}
+                disabled={downloading}
               >
                 <X className="size-4" />
               </button>
@@ -145,10 +144,11 @@ export function MpIngresoCrearEtiquetaButton({
                 size="sm"
                 onClick={() => void handleDownload()}
                 data-testid="mp-label-download"
+                disabled={downloading}
                 className="w-full sm:w-auto"
               >
                 <Download className="mr-1.5 size-3.5" aria-hidden />
-                Descargar etiqueta
+                {downloading ? "Descargando…" : "Descargar etiqueta"}
               </Button>
               <Button
                 type="button"

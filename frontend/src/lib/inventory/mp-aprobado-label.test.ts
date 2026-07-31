@@ -3,10 +3,18 @@ import {
   formatLabelCantidad,
   formatLabelDate,
   mapMpIngresoToLabelData,
+  mmToPrinterDots,
   mmToPt,
   mpAprobadoLabelFilename,
+  mpLabelContentDisposition,
   MP_LABEL_HEIGHT_MM,
+  MP_LABEL_HEIGHT_PT,
+  MP_LABEL_MARGIN_X_MM,
+  MP_LABEL_MAX_PRINTABLE_WIDTH_MM,
+  MP_LABEL_PRINTER_DPI,
+  MP_LABEL_SAFE_WIDTH_MM,
   MP_LABEL_WIDTH_MM,
+  MP_LABEL_WIDTH_PT,
   sanitizeLabelCell,
 } from "./mp-aprobado-label";
 import { buildMpAprobadoLabelPdfBuffer } from "./mp-aprobado-label-pdf";
@@ -111,10 +119,28 @@ describe("mp-aprobado-label mapping", () => {
     ).toBe("ETIQUETA-MP-sin-id.pdf");
   });
 
-  it("medidas centralizadas en mm", () => {
-    expect(MP_LABEL_WIDTH_MM).toBe(100);
-    expect(MP_LABEL_HEIGHT_MM).toBe(67);
+  it("medidas SP320 75×50 mm con ancho seguro 71 mm", () => {
+    expect(MP_LABEL_WIDTH_MM).toBe(75);
+    expect(MP_LABEL_HEIGHT_MM).toBe(50);
+    expect(MP_LABEL_SAFE_WIDTH_MM).toBe(71);
+    expect(MP_LABEL_MARGIN_X_MM).toBe(2);
+    expect(MP_LABEL_MAX_PRINTABLE_WIDTH_MM).toBe(72);
+    expect(MP_LABEL_PRINTER_DPI).toBe(203);
     expect(mmToPt(25.4)).toBeCloseTo(72, 5);
+    expect(MP_LABEL_WIDTH_PT).toBeCloseTo(mmToPt(75), 5);
+    expect(MP_LABEL_HEIGHT_PT).toBeCloseTo(mmToPt(50), 5);
+    // ~599×400 dots a 203 dpi; ~576 dots imprimibles en 72 mm
+    expect(mmToPrinterDots(75)).toBeCloseTo(599.41, 0);
+    expect(mmToPrinterDots(50)).toBeCloseTo(399.61, 0);
+    expect(mmToPrinterDots(72)).toBeCloseTo(575.43, 0);
+    expect(mmToPrinterDots(71)).toBeLessThan(mmToPrinterDots(72));
+  });
+
+  it("Content-Disposition attachment con filename* UTF-8", () => {
+    const cd = mpLabelContentDisposition("ETIQUETA-MP-CARBOPOL-940-L240730.pdf");
+    expect(cd).toContain("attachment;");
+    expect(cd).toContain("filename*=UTF-8''ETIQUETA-MP-CARBOPOL-940-L240730.pdf");
+    expect(cd).toMatch(/filename="ETIQUETA-MP-CARBOPOL-940-L240730\.pdf"/);
   });
 
   it("no muta el ingreso de entrada", () => {
@@ -132,7 +158,7 @@ describe("mp-aprobado-label mapping", () => {
 });
 
 describe("mp-aprobado-label PDF", () => {
-  it("genera PDF de una página sin escribir al ingreso", async () => {
+  it("genera PDF 75×50 mm de una página", async () => {
     const data = mapMpIngresoToLabelData({
       id: "test-label-01",
       producto: "CARBOPOL 940",
@@ -147,6 +173,9 @@ describe("mp-aprobado-label PDF", () => {
     const buf = await buildMpAprobadoLabelPdfBuffer(data);
     expect(buf.byteLength).toBeGreaterThan(500);
     expect(buf.subarray(0, 4).toString("ascii")).toBe("%PDF");
+    const text = buf.toString("latin1");
+    // MediaBox en puntos PDF (~212.6 × 141.7)
+    expect(text).toMatch(/MediaBox\s*\[\s*0\s+0\s+212\.?\d*\s+141\.?\d*\s*\]/);
   }, 30000);
 
   it("genera PDF también con campos vacíos", async () => {

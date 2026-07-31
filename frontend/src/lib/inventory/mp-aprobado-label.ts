@@ -1,12 +1,21 @@
 /**
  * Etiqueta térmica “APROBADO MATERIA PRIMA” para HereLabel.
- * Medidas físicas centralizadas — ajustar aquí el tamaño de impresión.
+ * Medidas físicas centralizadas — iDPRT SP320 (203 dpi).
  */
 
 /** Ancho físico de la etiqueta (mm). */
-export const MP_LABEL_WIDTH_MM = 100;
-/** Alto físico de la etiqueta (mm). Ratio ≈ diseño aprobado 1024×682. */
-export const MP_LABEL_HEIGHT_MM = 67;
+export const MP_LABEL_WIDTH_MM = 75;
+/** Alto físico de la etiqueta (mm). Proporción ≈ diseño 100×67. */
+export const MP_LABEL_HEIGHT_MM = 50;
+/**
+ * Ancho seguro de contenido (mm).
+ * Márgenes L/R ≥ 2 mm; máximo imprimible SP320 ≈ 72 mm.
+ */
+export const MP_LABEL_SAFE_WIDTH_MM = 71;
+/** DPI de la iDPRT SP320. */
+export const MP_LABEL_PRINTER_DPI = 203;
+/** Ancho imprimible máximo del hardware (mm). */
+export const MP_LABEL_MAX_PRINTABLE_WIDTH_MM = 72;
 
 const MM_TO_PT = 72 / 25.4;
 
@@ -14,8 +23,21 @@ export function mmToPt(mm: number): number {
   return mm * MM_TO_PT;
 }
 
+/** Puntos físicos (dots) a DPI de impresora. */
+export function mmToPrinterDots(
+  mm: number,
+  dpi: number = MP_LABEL_PRINTER_DPI
+): number {
+  return (mm / 25.4) * dpi;
+}
+
 export const MP_LABEL_WIDTH_PT = mmToPt(MP_LABEL_WIDTH_MM);
 export const MP_LABEL_HEIGHT_PT = mmToPt(MP_LABEL_HEIGHT_MM);
+export const MP_LABEL_SAFE_WIDTH_PT = mmToPt(MP_LABEL_SAFE_WIDTH_MM);
+/** Margen L/R mínimo (mm) → (75 − 71) / 2. */
+export const MP_LABEL_MARGIN_X_MM =
+  (MP_LABEL_WIDTH_MM - MP_LABEL_SAFE_WIDTH_MM) / 2;
+export const MP_LABEL_MARGIN_X_PT = mmToPt(MP_LABEL_MARGIN_X_MM);
 
 export type MpAprobadoLabelSource = {
   id?: string | null;
@@ -129,6 +151,17 @@ export function sanitizeFilenamePart(value: unknown): string {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 40);
+}
+
+/**
+ * Content-Disposition para forzar descarga (Safari iPhone).
+ * Incluye filename* UTF-8 y fallback ASCII.
+ */
+export function mpLabelContentDisposition(filename: string): string {
+  const safe = sanitizeLabelCell(filename) || "ETIQUETA-MP.pdf";
+  const ascii = safe.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_");
+  const encoded = encodeURIComponent(safe);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
 /** Página oficial HereLabel (App Store). No hay deep link documentado para Importar PDF. */

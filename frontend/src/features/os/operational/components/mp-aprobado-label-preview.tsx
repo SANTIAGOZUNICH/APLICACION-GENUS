@@ -9,7 +9,7 @@ import type { MpAprobadoLabelData } from "@/lib/inventory/mp-aprobado-label";
 export function MpAprobadoLabelPreview({ data }: { data: MpAprobadoLabelData }) {
   return (
     <div
-      className="mx-auto w-full max-w-[420px] bg-white p-1.5 text-black"
+      className="mx-auto w-full max-w-[360px] bg-white p-1.5 text-black"
       data-testid="mp-label-html-preview"
     >
       <div className="border-[2.5px] border-black">
