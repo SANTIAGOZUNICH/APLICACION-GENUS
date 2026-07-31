@@ -170,3 +170,16 @@ export const HERELABEL_OFFICIAL_STORE_URL =
 
 export const HERELABEL_IMPORT_INSTRUCTION =
   "En HereLabel elegí Importar PDF y seleccioná la etiqueta recién descargada.";
+
+export const MP_APROBADO_LABEL_MIME = "application/pdf";
+export const MP_APROBADO_LABEL_DOWNLOAD_MIME = "application/octet-stream";
+export const MP_APROBADO_LABEL_DOWNLOAD_PATH =
+  "/api/v1/mp-labels/aprobado/download";
+
+export function buildMpAprobadoLabelFromIngreso(ingreso: MpAprobadoLabelSource): {
+  data: MpAprobadoLabelData;
+  filename: string;
+} {
+  const data = mapMpIngresoToLabelData(ingreso);
+  return { data, filename: mpAprobadoLabelFilename(data) };
+}

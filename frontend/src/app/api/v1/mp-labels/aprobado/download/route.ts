@@ -10,6 +10,7 @@ import {
 import { buildMpAprobadoLabelPdfBuffer } from "@/lib/inventory/mp-aprobado-label-pdf";
 import {
   issueMpLabelDownloadTicket,
+  MpLabelTicketConfigError,
   mpLabelTicketDownloadPath,
   verifyMpLabelDownloadTicket,
 } from "@/lib/inventory/mp-aprobado-label-ticket";
@@ -33,6 +34,12 @@ function pdfAttachmentResponse(buffer: Buffer, filename: string) {
 }
 
 function ticketError(err: unknown): NextResponse {
+  if (err instanceof MpLabelTicketConfigError) {
+    return NextResponse.json(
+      { error: err.message, code: err.code, legallyOperational: false },
+      { status: err.status }
+    );
+  }
   if (err instanceof OrdersValidationError || err instanceof OrdersForbiddenError) {
     return ordersErrorResponse(err);
   }
@@ -123,6 +130,12 @@ export async function POST(request: Request) {
     headers.set("Content-Length", String(buffer.byteLength));
     return new NextResponse(new Uint8Array(buffer), { status: 200, headers });
   } catch (err) {
+    if (err instanceof MpLabelTicketConfigError) {
+      return NextResponse.json(
+        { error: err.message, code: err.code, legallyOperational: false },
+        { status: err.status }
+      );
+    }
     return ordersErrorResponse(err);
   }
 }

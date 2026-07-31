@@ -9,13 +9,13 @@ import {
   type MpAprobadoLabelData,
   type MpAprobadoLabelSource,
 } from "@/lib/inventory/mp-aprobado-label";
-import { buildMpAprobadoLabelFromIngreso } from "@/lib/inventory/mp-aprobado-label-pdf";
+import { buildMpAprobadoLabelFromIngreso } from "@/lib/inventory/mp-aprobado-label";
 import {
   downloadMpAprobadoLabelFromApi,
   isIosDevice,
   openHereLabelOfficialPage,
   prepareMpAprobadoLabelTicket,
-  startMpAprobadoLabelTicketNavigation,
+  startMpAprobadoLabelTicketDownload,
   type MpLabelPreparedTicket,
 } from "@/lib/inventory/mp-aprobado-label-download";
 import { MpAprobadoLabelPreview } from "@/features/os/operational/components/mp-aprobado-label-preview";
@@ -29,7 +29,7 @@ type Props = {
 
 /**
  * Crea la etiqueta PDF APROBADO MATERIA PRIMA y abre vista previa.
- * iOS: prefetch ticket + location.assign en el gesto de Descargar.
+ * iOS: ticket firmado + <a download>/iframe (sin salir de Genus OS).
  * Desktop: Blob PDF longevo.
  * No muta ingreso ni stock.
  */
@@ -79,10 +79,10 @@ export function MpIngresoCrearEtiquetaButton({
   async function handleDownload() {
     if (!labelData || downloading) return;
 
-    // iOS + ticket listo: navegación síncrona en el gesto del usuario.
+    // iOS + ticket listo: <a download> en el gesto del usuario (Genus OS permanece).
     if (isIosDevice() && iosTicket && Date.now() < iosTicket.expiresAt - 5_000) {
       try {
-        const result = startMpAprobadoLabelTicketNavigation(iosTicket);
+        const result = startMpAprobadoLabelTicketDownload(iosTicket);
         onToast?.(result.toast);
       } catch {
         onError?.("No se pudo iniciar la descarga de la etiqueta.");
