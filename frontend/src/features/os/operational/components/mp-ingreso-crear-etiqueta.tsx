@@ -25,7 +25,7 @@ type Props = {
 
 /**
  * Crea la etiqueta PDF APROBADO MATERIA PRIMA y abre vista previa.
- * Descarga vía API (octet-stream) — no navega al PDF.
+ * Descarga vía API — iOS: ticket GET nativo; desktop: Blob PDF longevo.
  * No muta ingreso ni stock.
  */
 export function MpIngresoCrearEtiquetaButton({
@@ -58,10 +58,11 @@ export function MpIngresoCrearEtiquetaButton({
     if (!labelData || downloading) return;
     setDownloading(true);
     try {
-      await downloadMpAprobadoLabelFromApi(labelData);
-      onToast?.("Etiqueta descargada");
+      const result = await downloadMpAprobadoLabelFromApi(labelData);
+      // No afirmar “guardado”: Safari puede mostrar el aviso sin persistir.
+      onToast?.(result.toast);
     } catch {
-      onError?.("No se pudo descargar la etiqueta.");
+      onError?.("No se pudo iniciar la descarga de la etiqueta.");
     } finally {
       setDownloading(false);
     }
