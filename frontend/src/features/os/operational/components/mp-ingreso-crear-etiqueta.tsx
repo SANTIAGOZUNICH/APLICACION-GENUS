@@ -1,22 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, Tag, ExternalLink, X } from "lucide-react";
+import { Download, Tag, ExternalLink, Share, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { MpIngresoRow } from "@/lib/inventory/types";
 import {
   HERELABEL_IMPORT_INSTRUCTION,
+  buildMpAprobadoLabelFromIngreso,
   type MpAprobadoLabelData,
   type MpAprobadoLabelSource,
 } from "@/lib/inventory/mp-aprobado-label";
-import { buildMpAprobadoLabelFromIngreso } from "@/lib/inventory/mp-aprobado-label";
 import {
-  downloadMpAprobadoLabelFromApi,
+  fetchMpAprobadoLabelPdfFile,
   isIosDevice,
   openHereLabelOfficialPage,
-  prepareMpAprobadoLabelTicket,
-  startMpAprobadoLabelTicketDownload,
-  type MpLabelPreparedTicket,
+  saveOrDownloadMpAprobadoLabel,
+  type MpLabelPreparedFile,
 } from "@/lib/inventory/mp-aprobado-label-download";
 import { MpAprobadoLabelPreview } from "@/features/os/operational/components/mp-aprobado-label-preview";
 
@@ -28,9 +27,9 @@ type Props = {
 };
 
 /**
- * Crea la etiqueta PDF APROBADO MATERIA PRIMA y abre vista previa.
- * iOS: ticket firmado + <a download>/iframe (sin salir de Genus OS).
- * Desktop: Blob PDF longevo.
+ * Vista previa + guardar/descargar etiqueta.
+ * iOS: prefetch File + navigator.share (Genus OS permanece).
+ * Desktop: Blob + <a download>.
  * No muta ingreso ni stock.
  */
 export function MpIngresoCrearEtiquetaButton({
@@ -41,20 +40,34 @@ export function MpIngresoCrearEtiquetaButton({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [downloading, setDownloading] = useState(false);
+  const [acting, setActing] = useState(false);
   const [filename, setFilename] = useState("ETIQUETA-MP.pdf");
   const [labelData, setLabelData] = useState<MpAprobadoLabelData | null>(null);
-  const [iosTicket, setIosTicket] = useState<MpLabelPreparedTicket | null>(null);
+  const [prepared, setPrepared] = useState<MpLabelPreparedFile | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [prepareError, setPrepareError] = useState(false);
+  const [ios] = useState(() => isIosDevice());
 
   useEffect(() => {
-    if (!open || !labelData || !isIosDevice()) return;
+    if (!open || !labelData) return;
     let cancelled = false;
-    void prepareMpAprobadoLabelTicket(labelData)
-      .then((ticket) => {
-        if (!cancelled) setIosTicket(ticket);
+    setPreparing(true);
+    setPrepareError(false);
+    setPrepared(null);
+    void fetchMpAprobadoLabelPdfFile(labelData)
+      .then((file) => {
+        if (!cancelled) {
+          setPrepared(file);
+          setFilename(file.filename);
+          setPreparing(false);
+        }
       })
       .catch(() => {
-        if (!cancelled) setIosTicket(null);
+        if (!cancelled) {
+          setPrepared(null);
+          setPreparing(false);
+          setPrepareError(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -67,7 +80,8 @@ export function MpIngresoCrearEtiquetaButton({
       const { data, filename: name } = buildMpAprobadoLabelFromIngreso(row);
       setLabelData(data);
       setFilename(name);
-      setIosTicket(null);
+      setPrepared(null);
+      setPrepareError(false);
       setOpen(true);
     } catch {
       onError?.("No se pudo generar la etiqueta. Reintentá.");
@@ -76,28 +90,24 @@ export function MpIngresoCrearEtiquetaButton({
     }
   }
 
-  async function handleDownload() {
-    if (!labelData || downloading) return;
-
-    // iOS + ticket listo: <a download> en el gesto del usuario (Genus OS permanece).
-    if (isIosDevice() && iosTicket && Date.now() < iosTicket.expiresAt - 5_000) {
-      try {
-        const result = startMpAprobadoLabelTicketDownload(iosTicket);
-        onToast?.(result.toast);
-      } catch {
-        onError?.("No se pudo iniciar la descarga de la etiqueta.");
-      }
-      return;
-    }
-
-    setDownloading(true);
+  async function handleSaveOrDownload() {
+    if (!labelData || acting || preparing || !prepared) return;
+    setActing(true);
     try {
-      const result = await downloadMpAprobadoLabelFromApi(labelData, iosTicket);
+      const result = await saveOrDownloadMpAprobadoLabel(labelData, prepared);
       onToast?.(result.toast);
-    } catch {
-      onError?.("No se pudo iniciar la descarga de la etiqueta.");
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // Usuario canceló la hoja nativa — permanece en el modal.
+        return;
+      }
+      onError?.(
+        ios
+          ? "No se pudo abrir la hoja para guardar la etiqueta."
+          : "No se pudo iniciar la descarga de la etiqueta."
+      );
     } finally {
-      setDownloading(false);
+      setActing(false);
     }
   }
 
@@ -107,10 +117,23 @@ export function MpIngresoCrearEtiquetaButton({
   }
 
   function close() {
-    if (downloading) return;
+    if (acting) return;
     setOpen(false);
-    setIosTicket(null);
+    setPrepared(null);
+    setPreparing(false);
+    setPrepareError(false);
   }
+
+  const primaryDisabled = acting || preparing || !prepared || prepareError;
+  const primaryLabel = preparing
+    ? "Preparando etiqueta…"
+    : acting
+      ? ios
+        ? "Abriendo…"
+        : "Descargando…"
+      : ios
+        ? "Guardar etiqueta"
+        : "Descargar etiqueta";
 
   return (
     <>
@@ -160,7 +183,7 @@ export function MpIngresoCrearEtiquetaButton({
                 className="rounded p-1 text-[var(--os-muted)] hover:bg-[var(--os-bg)]"
                 aria-label="Cerrar"
                 onClick={close}
-                disabled={downloading}
+                disabled={acting}
               >
                 <X className="size-4" />
               </button>
@@ -169,21 +192,32 @@ export function MpIngresoCrearEtiquetaButton({
             <div className="min-h-0 flex-1 overflow-y-auto bg-neutral-200 p-3">
               <MpAprobadoLabelPreview data={labelData} />
               <p className="mt-3 text-center text-[12px] leading-snug text-[var(--os-muted)]">
-                {HERELABEL_IMPORT_INSTRUCTION}
+                {ios
+                  ? "En iPhone: Guardar etiqueta → Guardar en Archivos. Genus OS permanece abierto."
+                  : HERELABEL_IMPORT_INSTRUCTION}
               </p>
+              {prepareError ? (
+                <p className="mt-2 text-center text-[12px] text-red-600">
+                  No se pudo preparar el PDF. Cerrá y volvé a intentar.
+                </p>
+              ) : null}
             </div>
 
             <div className="flex flex-col gap-2 border-t border-[var(--os-border)] p-3 sm:flex-row sm:flex-wrap">
               <Button
                 type="button"
                 size="sm"
-                onClick={() => void handleDownload()}
+                onClick={() => void handleSaveOrDownload()}
                 data-testid="mp-label-download"
-                disabled={downloading}
+                disabled={primaryDisabled}
                 className="w-full sm:w-auto"
               >
-                <Download className="mr-1.5 size-3.5" aria-hidden />
-                {downloading ? "Descargando…" : "Descargar etiqueta"}
+                {ios ? (
+                  <Share className="mr-1.5 size-3.5" aria-hidden />
+                ) : (
+                  <Download className="mr-1.5 size-3.5" aria-hidden />
+                )}
+                {primaryLabel}
               </Button>
               <Button
                 type="button"

@@ -13,19 +13,19 @@ import {
   ACTOR_SECTOR_HEADER,
 } from "@/lib/orders/actor";
 
-/** Mantener <a> / Blob URL vivos (Safari iOS). */
+/** Mantener Blob URL + <a> vivos en desktop. */
 export const MP_LABEL_BLOB_URL_KEEPALIVE_MS = 120_000;
 
 export type MpLabelDownloadResult = {
   filename: string;
-  mode: "blob" | "ticket";
-  toast: "Descarga iniciada";
+  mode: "blob" | "share";
+  /** Mensaje seguro: no afirma que el archivo quedó guardado. */
+  toast: "Descarga iniciada" | "Hoja de compartir abierta";
 };
 
-export type MpLabelPreparedTicket = {
-  downloadUrl: string;
+export type MpLabelPreparedFile = {
+  file: File;
   filename: string;
-  expiresAt: number;
 };
 
 type PendingAnchor = {
@@ -72,21 +72,6 @@ function keepAnchorAlive(anchor: HTMLAnchorElement, blobUrl?: string) {
   pendingAnchors.push(entry);
 }
 
-function getOrCreateDownloadIframe(): HTMLIFrameElement {
-  const existing = document.querySelector<HTMLIFrameElement>(
-    'iframe[data-mp-label-download="1"]'
-  );
-  if (existing) return existing;
-  const iframe = document.createElement("iframe");
-  iframe.setAttribute("data-mp-label-download", "1");
-  iframe.setAttribute("aria-hidden", "true");
-  iframe.tabIndex = -1;
-  iframe.style.cssText =
-    "position:fixed;width:0;height:0;border:0;opacity:0;pointer-events:none;left:0;top:0;";
-  document.body.appendChild(iframe);
-  return iframe;
-}
-
 function actorAuthHeaders(): HeadersInit {
   const session = getCurrentAuthSession();
   const email = session?.user.email?.trim() ?? "";
@@ -101,7 +86,7 @@ function actorAuthHeaders(): HeadersInit {
   };
 }
 
-function labelRequestBody(data: MpAprobadoLabelData, mode?: "ticket") {
+function labelRequestBody(data: MpAprobadoLabelData) {
   const filename = mpAprobadoLabelFilename(data);
   return {
     id: data.sourceId,
@@ -114,7 +99,6 @@ function labelRequestBody(data: MpAprobadoLabelData, mode?: "ticket") {
     bultos: data.bultos,
     lote: data.loteProveedor,
     filename,
-    ...(mode ? { mode } : {}),
   };
 }
 
@@ -125,83 +109,20 @@ export function isIosDevice(): boolean {
   return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
 }
 
-export async function prepareMpAprobadoLabelTicket(
-  data: MpAprobadoLabelData
-): Promise<MpLabelPreparedTicket> {
-  const res = await fetch(MP_APROBADO_LABEL_DOWNLOAD_PATH, {
-    method: "POST",
-    headers: actorAuthHeaders(),
-    body: JSON.stringify(labelRequestBody(data, "ticket")),
-    cache: "no-store",
-  });
-  const json = (await res.json().catch(() => ({}))) as {
-    error?: string;
-    downloadUrl?: string;
-    filename?: string;
-    expiresAt?: number;
-  };
-  if (!res.ok || !json.downloadUrl) {
-    throw new Error(json.error ?? `No se pudo preparar la descarga (${res.status})`);
-  }
-  return {
-    downloadUrl: json.downloadUrl,
-    filename: json.filename || mpAprobadoLabelFilename(data),
-    expiresAt: typeof json.expiresAt === "number" ? json.expiresAt : Date.now() + 60_000,
-  };
-}
-
-function ticketStillValid(
-  ticket: MpLabelPreparedTicket | null | undefined
-): ticket is MpLabelPreparedTicket {
-  if (!ticket?.downloadUrl) return false;
-  return Date.now() < ticket.expiresAt - 5_000;
+export function canUseWebShareFiles(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    typeof navigator.share === "function" &&
+    typeof navigator.canShare === "function"
+  );
 }
 
 /**
- * iOS: descarga same-origin vía <a download> (+ iframe oculto si Safari ignora download).
- * Sin location.assign / location.href / window.open / target=_blank.
+ * Fetch autenticado del PDF (POST bytes). No navega.
  */
-export function startMpAprobadoLabelTicketDownload(
-  ticket: MpLabelPreparedTicket
-): MpLabelDownloadResult {
-  const absoluteUrl = new URL(ticket.downloadUrl, window.location.origin).toString();
-  const filename = ticket.filename.endsWith(".pdf")
-    ? ticket.filename
-    : `${ticket.filename}.pdf`;
-
-  const a = document.createElement("a");
-  a.href = absoluteUrl;
-  a.download = filename;
-  a.rel = "noopener";
-  a.style.display = "none";
-  // sin target — no abre pestaña ni navega el documento principal
-  document.body.appendChild(a);
-  a.click();
-  keepAnchorAlive(a);
-
-  // Fallback: iframe persistente con attachment
-  const iframe = getOrCreateDownloadIframe();
-  iframe.src = absoluteUrl;
-
-  return { filename, mode: "ticket", toast: "Descarga iniciada" };
-}
-
-/** @deprecated alias — preferir startMpAprobadoLabelTicketDownload */
-export const startMpAprobadoLabelTicketNavigation = startMpAprobadoLabelTicketDownload;
-
-export async function downloadMpAprobadoLabelViaTicket(
-  data: MpAprobadoLabelData,
-  prepared?: MpLabelPreparedTicket | null
-): Promise<MpLabelDownloadResult> {
-  const ticket = ticketStillValid(prepared)
-    ? prepared
-    : await prepareMpAprobadoLabelTicket(data);
-  return startMpAprobadoLabelTicketDownload(ticket);
-}
-
-async function downloadMpAprobadoLabelViaBlob(
+export async function fetchMpAprobadoLabelPdfFile(
   data: MpAprobadoLabelData
-): Promise<MpLabelDownloadResult> {
+): Promise<MpLabelPreparedFile> {
   const filename = mpAprobadoLabelFilename(data);
   const res = await fetch(MP_APROBADO_LABEL_DOWNLOAD_PATH, {
     method: "POST",
@@ -234,32 +155,76 @@ async function downloadMpAprobadoLabelViaBlob(
   const cd = res.headers.get("Content-Disposition") ?? "";
   const match = /filename\*=UTF-8''([^;]+)|filename="([^"]+)"/i.exec(cd);
   const rawName = match?.[1] || match?.[2];
-  const resolvedName = rawName ? decodeURIComponent(rawName) : filename;
+  const resolvedName = rawName
+    ? decodeURIComponent(rawName)
+    : filename.endsWith(".pdf")
+      ? filename
+      : `${filename}.pdf`;
 
-  const blob = new Blob([bytes], { type: MP_APROBADO_LABEL_MIME });
-  const url = URL.createObjectURL(blob);
+  const file = new File([bytes], resolvedName, { type: MP_APROBADO_LABEL_MIME });
+  return { file, filename: resolvedName };
+}
+
+/**
+ * iPhone/iPad: hoja nativa Share Sheet sobre Genus OS.
+ * Debe ejecutarse en el gesto del usuario con File ya preparado (sin fetch largo).
+ */
+export async function shareMpAprobadoLabelFile(
+  prepared: MpLabelPreparedFile
+): Promise<MpLabelDownloadResult> {
+  const { file, filename } = prepared;
+  if (!canUseWebShareFiles()) {
+    throw new Error("Este dispositivo no soporta compartir archivos.");
+  }
+  const shareData: ShareData = { files: [file], title: filename };
+  if (!navigator.canShare(shareData)) {
+    throw new Error("No se puede compartir este PDF desde Safari.");
+  }
+  await navigator.share(shareData);
+  return { filename, mode: "share", toast: "Hoja de compartir abierta" };
+}
+
+/**
+ * Desktop / Android compatible: <a download> con Blob.
+ * Sin location.assign, iframe, window.open ni pestaña nueva.
+ */
+export async function downloadMpAprobadoLabelViaBlob(
+  data: MpAprobadoLabelData,
+  prepared?: MpLabelPreparedFile | null
+): Promise<MpLabelDownloadResult> {
+  const ready =
+    prepared ?? (await fetchMpAprobadoLabelPdfFile(data));
+  const { file, filename } = ready;
+  const url = URL.createObjectURL(file);
   const a = document.createElement("a");
   a.href = url;
-  a.download = resolvedName.endsWith(".pdf") ? resolvedName : `${resolvedName}.pdf`;
+  a.download = filename;
   a.rel = "noopener";
   a.style.display = "none";
   document.body.appendChild(a);
   a.click();
   keepAnchorAlive(a, url);
-
-  return { filename: a.download, mode: "blob", toast: "Descarga iniciada" };
+  return { filename, mode: "blob", toast: "Descarga iniciada" };
 }
 
-export async function downloadMpAprobadoLabelFromApi(
+/**
+ * Acción principal según plataforma.
+ * iOS requiere `prepared` listo (prefetch al abrir modal).
+ */
+export async function saveOrDownloadMpAprobadoLabel(
   data: MpAprobadoLabelData,
-  preparedTicket?: MpLabelPreparedTicket | null
+  prepared?: MpLabelPreparedFile | null
 ): Promise<MpLabelDownloadResult> {
   if (isIosDevice()) {
-    return downloadMpAprobadoLabelViaTicket(data, preparedTicket);
+    if (!prepared?.file) {
+      throw new Error("La etiqueta aún se está preparando.");
+    }
+    return shareMpAprobadoLabelFile(prepared);
   }
-  return downloadMpAprobadoLabelViaBlob(data);
+  return downloadMpAprobadoLabelViaBlob(data, prepared);
 }
 
+/** AquíLabel App Store — acción separada (no es la descarga). */
 export function openHereLabelOfficialPage(): void {
   window.open(HERELABEL_OFFICIAL_STORE_URL, "_blank", "noopener,noreferrer");
 }
