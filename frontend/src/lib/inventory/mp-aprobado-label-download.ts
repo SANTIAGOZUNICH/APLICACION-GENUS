@@ -15,7 +15,7 @@ import {
   ACTOR_SECTOR_HEADER,
 } from "@/lib/orders/actor";
 
-/** Mantener Blob URL + <a> vivos (Safari iOS pierde la ref si se revoca demasiado pronto). */
+/** Mantener Blob URL + <a> vivos (Safari pierde la ref si se revoca demasiado pronto). */
 export const MP_LABEL_BLOB_URL_KEEPALIVE_MS = 120_000;
 
 export type MpLabelDownloadResult = {
@@ -23,6 +23,12 @@ export type MpLabelDownloadResult = {
   mode: "blob" | "ticket";
   /** Mensaje seguro: no afirma que el archivo quedó guardado. */
   toast: "Descarga iniciada";
+};
+
+export type MpLabelPreparedTicket = {
+  downloadUrl: string;
+  filename: string;
+  expiresAt: number;
 };
 
 type PendingBlobDownload = {
@@ -103,87 +109,72 @@ export function isIosDevice(): boolean {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent || "";
   if (/iPad|iPhone|iPod/i.test(ua)) return true;
-  // iPadOS 13+ puede reportar MacIntel con touch
   return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
 }
 
 /**
- * Descarga nativa Safari iOS: ticket firmado + navegación same-origin a GET attachment.
- * Evita Blob URL (Safari inicia la descarga visualmente pero no persiste el archivo).
+ * Prepara ticket firmado (llamar al abrir el modal en iOS).
+ * Permite que el click de Descargar navegue en el mismo gesto del usuario.
  */
-async function downloadMpAprobadoLabelViaTicket(
+export async function prepareMpAprobadoLabelTicket(
   data: MpAprobadoLabelData
-): Promise<MpLabelDownloadResult> {
-  // Crear el iframe antes del await para no depender solo del gesto post-fetch.
-  const iframe = document.createElement("iframe");
-  iframe.setAttribute("data-mp-label-download", "1");
-  iframe.setAttribute("aria-hidden", "true");
-  iframe.tabIndex = -1;
-  iframe.style.cssText =
-    "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px;top:0;";
-  document.body.appendChild(iframe);
-
-  const a = document.createElement("a");
-  a.rel = "noopener";
-  a.style.display = "none";
-  document.body.appendChild(a);
-
-  try {
-    const res = await fetch(MP_APROBADO_LABEL_DOWNLOAD_PATH, {
-      method: "POST",
-      headers: actorAuthHeaders(),
-      body: JSON.stringify(labelRequestBody(data, "ticket")),
-      cache: "no-store",
-    });
-    const json = (await res.json().catch(() => ({}))) as {
-      error?: string;
-      downloadUrl?: string;
-      filename?: string;
-    };
-    if (!res.ok || !json.downloadUrl) {
-      throw new Error(json.error ?? `No se pudo preparar la descarga (${res.status})`);
-    }
-
-    const filename = json.filename || mpAprobadoLabelFilename(data);
-    const absoluteUrl = new URL(json.downloadUrl, window.location.origin).toString();
-    const resolvedName = filename.endsWith(".pdf") ? filename : `${filename}.pdf`;
-
-    // Solo navegar el iframe (nunca el frame principal) — Safari descarga por
-    // Content-Disposition: attachment sin reemplazar Genus OS.
-    iframe.name = "mp-label-download-frame";
-    a.target = "mp-label-download-frame";
-    a.href = absoluteUrl;
-    a.download = resolvedName;
-    iframe.src = absoluteUrl;
-    a.click();
-
-    window.setTimeout(() => {
-      try {
-        iframe.remove();
-      } catch {
-        /* ignore */
-      }
-      try {
-        a.remove();
-      } catch {
-        /* ignore */
-      }
-    }, MP_LABEL_BLOB_URL_KEEPALIVE_MS);
-
-    return { filename: resolvedName, mode: "ticket", toast: "Descarga iniciada" };
-  } catch (err) {
-    try {
-      iframe.remove();
-    } catch {
-      /* ignore */
-    }
-    try {
-      a.remove();
-    } catch {
-      /* ignore */
-    }
-    throw err;
+): Promise<MpLabelPreparedTicket> {
+  const res = await fetch(MP_APROBADO_LABEL_DOWNLOAD_PATH, {
+    method: "POST",
+    headers: actorAuthHeaders(),
+    body: JSON.stringify(labelRequestBody(data, "ticket")),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    downloadUrl?: string;
+    filename?: string;
+    expiresAt?: number;
+  };
+  if (!res.ok || !json.downloadUrl) {
+    throw new Error(json.error ?? `No se pudo preparar la descarga (${res.status})`);
   }
+  return {
+    downloadUrl: json.downloadUrl,
+    filename: json.filename || mpAprobadoLabelFilename(data),
+    expiresAt: typeof json.expiresAt === "number" ? json.expiresAt : Date.now() + 60_000,
+  };
+}
+
+function ticketStillValid(ticket: MpLabelPreparedTicket | null | undefined): ticket is MpLabelPreparedTicket {
+  if (!ticket?.downloadUrl) return false;
+  // margen de 5s antes del vencimiento
+  return Date.now() < ticket.expiresAt - 5_000;
+}
+
+/**
+ * iOS: navega same-origin al GET del ticket (attachment PDF).
+ * Debe llamarse desde el handler de click (gesto directo) si el ticket ya está listo.
+ */
+export function startMpAprobadoLabelTicketNavigation(
+  ticket: MpLabelPreparedTicket
+): MpLabelDownloadResult {
+  const absoluteUrl = new URL(ticket.downloadUrl, window.location.origin).toString();
+  const filename = ticket.filename.endsWith(".pdf")
+    ? ticket.filename
+    : `${ticket.filename}.pdf`;
+  // Navegación same-origin: Safari usa el administrador nativo de descargas
+  // gracias a Content-Disposition: attachment (no abre el visor).
+  window.location.assign(absoluteUrl);
+  return { filename, mode: "ticket", toast: "Descarga iniciada" };
+}
+
+/**
+ * Descarga iOS: usa ticket prefetch si está vivo; si no, pide uno y navega.
+ */
+export async function downloadMpAprobadoLabelViaTicket(
+  data: MpAprobadoLabelData,
+  prepared?: MpLabelPreparedTicket | null
+): Promise<MpLabelDownloadResult> {
+  const ticket = ticketStillValid(prepared)
+    ? prepared
+    : await prepareMpAprobadoLabelTicket(data);
+  return startMpAprobadoLabelTicketNavigation(ticket);
 }
 
 /**
@@ -227,7 +218,6 @@ async function downloadMpAprobadoLabelViaBlob(
   const rawName = match?.[1] || match?.[2];
   const resolvedName = rawName ? decodeURIComponent(rawName) : filename;
 
-  // type application/pdf aunque el HTTP haya sido octet-stream
   const blob = new Blob([bytes], { type: MP_APROBADO_LABEL_MIME });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -237,7 +227,6 @@ async function downloadMpAprobadoLabelViaBlob(
   a.style.display = "none";
   document.body.appendChild(a);
   a.click();
-  // NO revoke ni remove inmediato — Safari necesita la ref viva.
   keepBlobDownloadAlive(url, a);
 
   return { filename: a.download, mode: "blob", toast: "Descarga iniciada" };
@@ -245,15 +234,15 @@ async function downloadMpAprobadoLabelViaBlob(
 
 /**
  * Descarga etiqueta:
- * - iOS → ticket firmado + GET nativo (attachment PDF)
+ * - iOS → ticket firmado + location.assign (gesto; preferir ticket prefetch)
  * - resto → Blob PDF con keepalive 120s
- * No usa window.open hacia el PDF.
  */
 export async function downloadMpAprobadoLabelFromApi(
-  data: MpAprobadoLabelData
+  data: MpAprobadoLabelData,
+  preparedTicket?: MpLabelPreparedTicket | null
 ): Promise<MpLabelDownloadResult> {
   if (isIosDevice()) {
-    return downloadMpAprobadoLabelViaTicket(data);
+    return downloadMpAprobadoLabelViaTicket(data, preparedTicket);
   }
   return downloadMpAprobadoLabelViaBlob(data);
 }

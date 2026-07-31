@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Download, Tag, ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { MpIngresoRow } from "@/lib/inventory/types";
@@ -12,7 +12,11 @@ import {
 import { buildMpAprobadoLabelFromIngreso } from "@/lib/inventory/mp-aprobado-label-pdf";
 import {
   downloadMpAprobadoLabelFromApi,
+  isIosDevice,
   openHereLabelOfficialPage,
+  prepareMpAprobadoLabelTicket,
+  startMpAprobadoLabelTicketNavigation,
+  type MpLabelPreparedTicket,
 } from "@/lib/inventory/mp-aprobado-label-download";
 import { MpAprobadoLabelPreview } from "@/features/os/operational/components/mp-aprobado-label-preview";
 
@@ -25,7 +29,8 @@ type Props = {
 
 /**
  * Crea la etiqueta PDF APROBADO MATERIA PRIMA y abre vista previa.
- * Descarga vía API — iOS: ticket GET nativo; desktop: Blob PDF longevo.
+ * iOS: prefetch ticket + location.assign en el gesto de Descargar.
+ * Desktop: Blob PDF longevo.
  * No muta ingreso ni stock.
  */
 export function MpIngresoCrearEtiquetaButton({
@@ -39,6 +44,22 @@ export function MpIngresoCrearEtiquetaButton({
   const [downloading, setDownloading] = useState(false);
   const [filename, setFilename] = useState("ETIQUETA-MP.pdf");
   const [labelData, setLabelData] = useState<MpAprobadoLabelData | null>(null);
+  const [iosTicket, setIosTicket] = useState<MpLabelPreparedTicket | null>(null);
+
+  useEffect(() => {
+    if (!open || !labelData || !isIosDevice()) return;
+    let cancelled = false;
+    void prepareMpAprobadoLabelTicket(labelData)
+      .then((ticket) => {
+        if (!cancelled) setIosTicket(ticket);
+      })
+      .catch(() => {
+        if (!cancelled) setIosTicket(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, labelData]);
 
   function createLabel() {
     setBusy(true);
@@ -46,6 +67,7 @@ export function MpIngresoCrearEtiquetaButton({
       const { data, filename: name } = buildMpAprobadoLabelFromIngreso(row);
       setLabelData(data);
       setFilename(name);
+      setIosTicket(null);
       setOpen(true);
     } catch {
       onError?.("No se pudo generar la etiqueta. Reintentá.");
@@ -56,10 +78,21 @@ export function MpIngresoCrearEtiquetaButton({
 
   async function handleDownload() {
     if (!labelData || downloading) return;
+
+    // iOS + ticket listo: navegación síncrona en el gesto del usuario.
+    if (isIosDevice() && iosTicket && Date.now() < iosTicket.expiresAt - 5_000) {
+      try {
+        const result = startMpAprobadoLabelTicketNavigation(iosTicket);
+        onToast?.(result.toast);
+      } catch {
+        onError?.("No se pudo iniciar la descarga de la etiqueta.");
+      }
+      return;
+    }
+
     setDownloading(true);
     try {
-      const result = await downloadMpAprobadoLabelFromApi(labelData);
-      // No afirmar “guardado”: Safari puede mostrar el aviso sin persistir.
+      const result = await downloadMpAprobadoLabelFromApi(labelData, iosTicket);
       onToast?.(result.toast);
     } catch {
       onError?.("No se pudo iniciar la descarga de la etiqueta.");
@@ -76,6 +109,7 @@ export function MpIngresoCrearEtiquetaButton({
   function close() {
     if (downloading) return;
     setOpen(false);
+    setIosTicket(null);
   }
 
   return (
