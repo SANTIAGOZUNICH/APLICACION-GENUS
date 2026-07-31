@@ -146,9 +146,14 @@ async function downloadMpAprobadoLabelViaTicket(
 
     const filename = json.filename || mpAprobadoLabelFilename(data);
     const absoluteUrl = new URL(json.downloadUrl, window.location.origin).toString();
+    const resolvedName = filename.endsWith(".pdf") ? filename : `${filename}.pdf`;
 
+    // Solo navegar el iframe (nunca el frame principal) — Safari descarga por
+    // Content-Disposition: attachment sin reemplazar Genus OS.
+    iframe.name = "mp-label-download-frame";
+    a.target = "mp-label-download-frame";
     a.href = absoluteUrl;
-    a.download = filename.endsWith(".pdf") ? filename : `${filename}.pdf`;
+    a.download = resolvedName;
     iframe.src = absoluteUrl;
     a.click();
 
@@ -165,7 +170,7 @@ async function downloadMpAprobadoLabelViaTicket(
       }
     }, MP_LABEL_BLOB_URL_KEEPALIVE_MS);
 
-    return { filename: a.download, mode: "ticket", toast: "Descarga iniciada" };
+    return { filename: resolvedName, mode: "ticket", toast: "Descarga iniciada" };
   } catch (err) {
     try {
       iframe.remove();
