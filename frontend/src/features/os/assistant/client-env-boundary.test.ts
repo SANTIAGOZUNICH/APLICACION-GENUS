@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const CLIENT_MODULES = [
   "src/features/os/assistant/creamy-chat.tsx",
   "src/features/os/assistant/build-local-snapshot.ts",
+  "src/features/os/feedback/creamy-companion.tsx",
 ];
 
 describe("Creamy client env boundary", () => {

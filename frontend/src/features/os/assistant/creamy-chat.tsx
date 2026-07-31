@@ -3,12 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { AlertCircle, ExternalLink, RefreshCcw, Send, Sparkles, Square } from "lucide-react";
 import type { SectorId } from "@/types/operational/sector";
+import type { SidebarItemId } from "@/lib/role-engine/types";
 import type { WorkItem } from "@/types/operational/work-item";
 import { buildCreamyLocalSnapshot } from "./build-local-snapshot";
 import { useCreamyChat } from "./creamy-chat-context";
 import type {
   AssistantChatResponse,
   CreamyChatMessage,
+  CreamyNavAction,
+  CreamyUiContext,
   SourceCitation,
 } from "./types";
 
@@ -23,6 +26,7 @@ const DEFAULT_SUGGESTIONS = [
 ];
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const NAV_ACTIONS_RE = /NAV_ACTIONS:\s*(.+?)(?:\n|$)/i;
 
 interface CreamyChatProps {
   sectorId: SectorId;
@@ -30,6 +34,8 @@ interface CreamyChatProps {
   suggestions?: string[];
   lotesSearchEnabled?: boolean;
   onOpenAsignacionLotes?: () => void;
+  onNavigate?: (sidebarId: SidebarItemId) => void;
+  uiContext?: CreamyUiContext;
   compact?: boolean;
   showHeaderActions?: boolean;
 }
@@ -45,6 +51,36 @@ function formatSource(source: SourceCitation): string {
   return source.label || `${source.type}:${source.id}`;
 }
 
+export function parseNavActionsFromReply(content: string): CreamyNavAction[] {
+  const match = NAV_ACTIONS_RE.exec(content);
+  if (!match?.[1]) return [];
+  const actions: CreamyNavAction[] = [];
+  for (const segment of match[1].split(";")) {
+    const [sidebarId, label] = segment.split("|").map((part) => part.trim());
+    if (sidebarId && label) actions.push({ sidebarId, label });
+  }
+  return actions;
+}
+
+export function stripNavActionsLine(content: string): string {
+  return content.replace(/\n?NAV_ACTIONS:\s*.+?(?:\n|$)/i, "").trimEnd();
+}
+
+function mergeNavActions(...groups: Array<CreamyNavAction[] | undefined>): CreamyNavAction[] {
+  const merged: CreamyNavAction[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    if (!group) continue;
+    for (const action of group) {
+      const key = `${action.sidebarId}:${action.label}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(action);
+    }
+  }
+  return merged;
+}
+
 function friendlyError(
   err: unknown,
   payload?: { code?: string; error?: string; message?: string },
@@ -52,31 +88,44 @@ function friendlyError(
 ): string {
   const code = payload?.code || payload?.error;
   if (code === "CREAMY_NOT_CONFIGURED") {
-    return "Creamy no está configurado todavía. Revisá la configuración del asistente antes de volver a intentar.";
+    return "Creamy no está configurado en este entorno.";
   }
-  if (code === "CREAMY_AI_FAILED" || options?.status === 502) {
-    return "El proveedor de IA respondió con un error. Probá de nuevo en unos segundos.";
+  if (code === "CREAMY_AUTH_REJECTED") {
+    return "El proveedor rechazó la credencial.";
+  }
+  if (code === "CREAMY_MODEL_UNAVAILABLE") {
+    return "El modelo configurado no está disponible.";
+  }
+  if (code === "CREAMY_TIMEOUT" || options?.timedOut) {
+    return "La respuesta tardó demasiado.";
+  }
+  if (code === "CREAMY_RATE_LIMIT" || options?.status === 429) {
+    return "Se alcanzó el límite de uso del proveedor. Esperá un momento e intentá de nuevo.";
+  }
+  if (code === "CREAMY_PROVIDER_UNREACHABLE") {
+    return "No pudimos contactar al proveedor. Reintentar.";
   }
   if (code === "CREAMY_ABORTED" || options?.status === 499) {
     return "La respuesta de Creamy fue interrumpida.";
   }
-  if (options?.status === 429 || code === "RATE_LIMIT") {
-    return "Se alcanzó el límite de uso de Creamy. Esperá un momento e intentá otra vez.";
+  if (options?.status === 502 || code === "CREAMY_AI_FAILED") {
+    return "No pudimos contactar al proveedor. Reintentar.";
   }
   if (options?.status === 503) {
-    return "Creamy no está disponible temporalmente. Revisá la configuración o reintentá más tarde.";
-  }
-  if (options?.timedOut) {
-    return "Creamy tardó demasiado en responder. Probá de nuevo en unos segundos.";
+    return "Creamy no está configurado en este entorno.";
   }
   if (err instanceof TypeError) {
-    return "No se pudo conectar con Creamy. Revisá la conexión de red e intentá nuevamente.";
+    return "No pudimos contactar al proveedor. Reintentar.";
   }
-  if (typeof payload?.message === "string" && payload.message.trim()) {
+  // Validation / known client-safe messages only — never surface raw provider text.
+  if (
+    typeof payload?.message === "string" &&
+    payload.message.trim() &&
+    !/models\/|api key|AIza|sk-/i.test(payload.message)
+  ) {
     return payload.message;
   }
-  if (err instanceof Error) return err.message;
-  return "Creamy no pudo responder.";
+  return "No pudimos contactar al proveedor. Reintentar.";
 }
 
 export function CreamyChat({
@@ -85,6 +134,8 @@ export function CreamyChat({
   suggestions,
   lotesSearchEnabled = false,
   onOpenAsignacionLotes,
+  onNavigate,
+  uiContext,
   compact = false,
   showHeaderActions = true,
 }: CreamyChatProps) {
@@ -92,10 +143,11 @@ export function CreamyChat({
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastUserMessage, setLastUserMessage] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const timeoutRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const chips = useMemo(() => suggestions?.length ? suggestions : DEFAULT_SUGGESTIONS, [suggestions]);
+  const chips = useMemo(() => (suggestions?.length ? suggestions : DEFAULT_SUGGESTIONS), [suggestions]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: "end" });
@@ -115,6 +167,8 @@ export function CreamyChat({
     async (text: string) => {
       const content = text.trim();
       if (!content || loading) return;
+
+      setLastUserMessage(content);
 
       const userMessage: CreamyChatMessage = {
         id: makeId("user"),
@@ -149,6 +203,7 @@ export function CreamyChat({
               content: message.content,
             })),
             snapshot,
+            uiContext,
           }),
         });
         const payload = (await response.json().catch(() => ({}))) as Partial<AssistantChatResponse> & {
@@ -162,15 +217,19 @@ export function CreamyChat({
             status: response.status,
           });
         }
+        const replyText = payload.reply || "No pude generar una respuesta.";
+        const parsedNav = parseNavActionsFromReply(replyText);
+        const navActions = mergeNavActions(payload.navActions, parsedNav);
         setMessages((current) => [
           ...current,
           {
             id: makeId("assistant"),
             role: "assistant",
-            content: payload.reply || "No pude generar una respuesta.",
+            content: stripNavActionsLine(replyText),
             createdAt: new Date().toISOString(),
             sources: payload.sources ?? [],
             usedTools: payload.usedTools ?? [],
+            navActions: navActions.length ? navActions : undefined,
           },
         ]);
       } catch (err) {
@@ -189,7 +248,7 @@ export function CreamyChat({
         setLoading(false);
       }
     },
-    [loading, messages, sectorId, setMessages, workItems]
+    [loading, messages, sectorId, setMessages, uiContext, workItems]
   );
 
   const handleSubmit = useCallback(() => {
@@ -206,11 +265,19 @@ export function CreamyChat({
   );
 
   const resetConversation = useCallback(() => {
+    if (!window.confirm("¿Empezar una nueva conversación? Se borrará el historial actual.")) return;
     stop();
     resetSharedConversation();
     setInput("");
     setError(null);
+    setLastUserMessage(null);
   }, [resetSharedConversation, stop]);
+
+  const handleRetry = useCallback(() => {
+    if (!lastUserMessage || loading) return;
+    setError(null);
+    void sendMessage(lastUserMessage);
+  }, [lastUserMessage, loading, sendMessage]);
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-[var(--os-surface)]">
@@ -271,6 +338,20 @@ export function CreamyChat({
                   }`}
                 >
                   <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                  {isAssistant && message.navActions && message.navActions.length > 0 && onNavigate && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {message.navActions.map((action) => (
+                        <button
+                          key={`${action.sidebarId}-${action.label}`}
+                          type="button"
+                          onClick={() => onNavigate(action.sidebarId as SidebarItemId)}
+                          className="rounded-full border border-[var(--os-teal-muted)] bg-[var(--os-teal-soft)] px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--os-teal)] hover:border-[var(--os-teal)]"
+                        >
+                          {action.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {isAssistant && message.sources && message.sources.length > 0 && (
                     <div className="mt-3 rounded-[var(--os-radius-sm)] border border-[var(--os-teal-muted)] bg-[var(--os-teal-soft)] px-3 py-2">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--os-teal)]">
@@ -291,7 +372,7 @@ export function CreamyChat({
           {loading && (
             <div className="flex justify-start">
               <div className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] px-4 py-3 text-sm text-[var(--os-text-muted)] shadow-[var(--os-shadow-sm)]">
-                Creamy está pensando…
+                Pensando…
               </div>
             </div>
           )}
@@ -300,9 +381,22 @@ export function CreamyChat({
       </div>
 
       {error && (
-        <div className="mx-5 mb-3 flex items-start gap-2 rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-3 py-2 text-sm text-[var(--genus-error)]">
+        <div className={`${compact ? "mx-4" : "mx-5"} mb-3 flex items-start gap-2 rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-3 py-2 text-sm text-[var(--genus-error)]`}>
           <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          <p>{error}</p>
+          <div className="min-w-0 flex-1">
+            <p>{error}</p>
+            {lastUserMessage && (
+              <button
+                type="button"
+                onClick={handleRetry}
+                disabled={loading}
+                className="mt-2 inline-flex items-center gap-1 rounded-full border border-[var(--genus-error)]/30 px-2.5 py-1 text-xs font-semibold hover:bg-[var(--genus-error)]/10 disabled:opacity-50"
+              >
+                <RefreshCcw className="size-3" aria-hidden="true" />
+                Reintentar
+              </button>
+            )}
+          </div>
         </div>
       )}
 

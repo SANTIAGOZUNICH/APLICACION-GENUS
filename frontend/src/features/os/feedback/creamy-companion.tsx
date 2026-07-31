@@ -14,6 +14,7 @@ import { canAccessAsignacionLotes } from "@/features/os/operational/lib/asignaci
 import { filterWorkItemsForDate } from "@/features/work/lib/work-items-day-view";
 import { startOfDay } from "@/features/work/lib/calendar";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CreamyUiContext } from "@/features/os/assistant/types";
 
 type CreamyConfigStatus = "checking" | "configured" | "not_configured" | "offline";
 
@@ -25,10 +26,10 @@ interface CreamyStatusPayload {
 
 /** Creamy global — FAB flotante + panel de conversación compartida. */
 export function CreamyCompanion() {
-  const { creamyOpen, closeCreamy, openCreamy, creamyTeaser, applyEffectiveStatus, navigateSidebar } =
+  const { creamyOpen, closeCreamy, openCreamy, creamyTeaser, applyEffectiveStatus, navigateSidebar, activeSidebarId, currentNav } =
     usePreviewContext();
   const { panelMode, openPanel, closePanel, minimizePanel, resetConversation } = useCreamyChat();
-  const { sectorId, ownerPerson } = usePreviewSession();
+  const { sectorId, ownerPerson, email } = usePreviewSession();
   const home = useResolvedHome();
   const { data } = useSectorWorkItems(sectorId, { ownerPerson });
   const [configStatus, setConfigStatus] = useState<CreamyConfigStatus>("checking");
@@ -60,6 +61,29 @@ export function CreamyCompanion() {
   const openAsignacionLotes = useCallback(() => {
     navigateSidebar("asignacion_lotes");
   }, [navigateSidebar]);
+
+  const uiContext = useMemo((): CreamyUiContext => {
+    const ctx: CreamyUiContext = {
+      email,
+      route: currentNav.view,
+      tab: activeSidebarId,
+      moduleName: home.definition.title,
+      availableNav: home.sidebarItems,
+    };
+    if (currentNav.workItemId) {
+      ctx.openItemSummary = `Trabajo ${currentNav.workItemId}`;
+    } else if (currentNav.oeRef) {
+      ctx.openItemSummary = `OE ${currentNav.oeRef}`;
+    } else if (currentNav.oaRef) {
+      ctx.openItemSummary = `OA ${currentNav.oaRef}`;
+    }
+    return ctx;
+  }, [activeSidebarId, currentNav, email, home.definition.title, home.sidebarItems]);
+
+  const handleResetConversation = useCallback(() => {
+    if (!window.confirm("¿Empezar una nueva conversación? Se borrará el historial actual.")) return;
+    resetConversation();
+  }, [resetConversation]);
 
   useEffect(() => {
     if (creamyOpen) openPanel();
@@ -223,7 +247,7 @@ export function CreamyCompanion() {
                 <div className="flex shrink-0 items-center gap-1">
                   <button
                     type="button"
-                    onClick={resetConversation}
+                    onClick={handleResetConversation}
                     className="rounded-full p-2 text-white/80 hover:bg-white/10 hover:text-white"
                     aria-label="Nueva conversación"
                     title="Nueva conversación"
@@ -258,6 +282,8 @@ export function CreamyCompanion() {
                 suggestions={copilot.suggestions}
                 lotesSearchEnabled={canSearchLotes}
                 onOpenAsignacionLotes={openAsignacionLotes}
+                onNavigate={navigateSidebar}
+                uiContext={uiContext}
                 compact
                 showHeaderActions={false}
               />

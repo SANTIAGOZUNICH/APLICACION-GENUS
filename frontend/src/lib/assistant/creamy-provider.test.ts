@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_GEMINI_MODEL,
+  classifyCreamyProviderError,
+  getCreamyAlternateModel,
   isFallbackEnabled,
+  mapCreamyErrorToClient,
   resolveCreamyFallbackProvider,
   resolveCreamyProvider,
   shouldAttemptFallback,
@@ -14,40 +17,40 @@ describe("resolveCreamyProvider", () => {
     const result = resolveCreamyProvider({ GEMINI_API_KEY: "gk-test" });
     expect(result.provider).toBe("gemini");
     expect(result.configured).toBe(true);
-    expect(result.model).toBe("gemini-2.5-flash");
+    expect(result.model).toBe("gemini-2.0-flash");
     expect(result.missingKey).toBeUndefined();
   });
 
-  it("defaults to gemini-2.5-flash when CREAMY_GEMINI_MODEL is unset", () => {
-    expect(DEFAULT_GEMINI_MODEL).toBe("gemini-2.5-flash");
+  it("defaults to gemini-2.0-flash when CREAMY_GEMINI_MODEL is unset", () => {
+    expect(DEFAULT_GEMINI_MODEL).toBe("gemini-2.0-flash");
     const withKey = resolveCreamyProvider({
       CREAMY_AI_PROVIDER: "gemini",
       GEMINI_API_KEY: "gk-test",
     });
-    expect(withKey.model).toBe("gemini-2.5-flash");
+    expect(withKey.model).toBe("gemini-2.0-flash");
 
     const withoutKey = resolveCreamyProvider({ CREAMY_AI_PROVIDER: "gemini" });
-    expect(withoutKey.model).toBe("gemini-2.5-flash");
+    expect(withoutKey.model).toBe("gemini-2.0-flash");
 
     const autoUnconfigured = resolveCreamyProvider({});
-    expect(autoUnconfigured.model).toBe("gemini-2.5-flash");
+    expect(autoUnconfigured.model).toBe("gemini-2.0-flash");
   });
 
   it("CREAMY_GEMINI_MODEL override still wins over the default", () => {
     const result = resolveCreamyProvider({
       GEMINI_API_KEY: "gk-test",
-      CREAMY_GEMINI_MODEL: "gemini-2.0-flash",
+      CREAMY_GEMINI_MODEL: "gemini-2.5-flash",
     });
-    expect(result.model).toBe("gemini-2.0-flash");
+    expect(result.model).toBe("gemini-2.5-flash");
   });
 
-  it("gemini-2.5-flash default supports the Creamy tools flow", () => {
+  it("gemini-2.0-flash default supports the Creamy tools flow", () => {
     const resolved = resolveCreamyProvider({
       CREAMY_AI_PROVIDER: "gemini",
       GEMINI_API_KEY: "gk-test",
     });
     expect(resolved.model).toBe(DEFAULT_GEMINI_MODEL);
-    expect(resolved.model).toBe("gemini-2.5-flash");
+    expect(resolved.model).toBe("gemini-2.0-flash");
 
     const snapshot: CreamyLocalSnapshot = {
       capturedAt: "2026-07-20T10:00:00.000Z",
@@ -194,6 +197,72 @@ describe("resolveCreamyProvider", () => {
   });
 });
 
+describe("getCreamyAlternateModel", () => {
+  it("reads provider-specific fallback env vars", () => {
+    expect(
+      getCreamyAlternateModel("gemini", {
+        CREAMY_GEMINI_MODEL_FALLBACK: "gemini-2.0-flash",
+      })
+    ).toBe("gemini-2.0-flash");
+    expect(
+      getCreamyAlternateModel("openai", {
+        CREAMY_OPENAI_MODEL_FALLBACK: "gpt-4o-mini",
+      })
+    ).toBe("gpt-4o-mini");
+  });
+
+  it("ignores empty or same-as-primary fallback", () => {
+    expect(getCreamyAlternateModel("gemini", { CREAMY_GEMINI_MODEL_FALLBACK: "   " })).toBeNull();
+    expect(
+      getCreamyAlternateModel("gemini", { CREAMY_GEMINI_MODEL_FALLBACK: "gemini-2.0-flash" }, "gemini-2.0-flash")
+    ).toBeNull();
+  });
+
+  it("falls back to DEFAULT when primary is obsolete and no fallback env", () => {
+    expect(getCreamyAlternateModel("gemini", {}, "gemini-2.5-flash")).toBe("gemini-2.0-flash");
+    expect(getCreamyAlternateModel("gemini", {}, "gemini-2.0-flash")).toBeNull();
+  });
+});
+
+describe("classifyCreamyProviderError", () => {
+  it("detects model unavailable", () => {
+    expect(
+      classifyCreamyProviderError(
+        new Error("This model models/gemini-2.5-flash is no longer available to new users")
+      ).kind
+    ).toBe("model_unavailable");
+    expect(classifyCreamyProviderError(new Error("model_not_found")).kind).toBe("model_unavailable");
+  });
+
+  it("detects auth, timeout, rate limit, and network", () => {
+    expect(classifyCreamyProviderError(new Error("API key not valid")).kind).toBe("auth");
+    const timeoutErr = new Error("timed out");
+    timeoutErr.name = "AbortError";
+    expect(classifyCreamyProviderError(timeoutErr).kind).toBe("timeout");
+    expect(classifyCreamyProviderError(new Error("rate limit exceeded")).kind).toBe("rate_limit");
+    expect(classifyCreamyProviderError(new Error("fetch failed ECONNRESET")).kind).toBe("network");
+  });
+});
+
+describe("mapCreamyErrorToClient", () => {
+  it("returns exact Spanish client messages", () => {
+    expect(mapCreamyErrorToClient("not_configured")).toMatchObject({
+      code: "CREAMY_NOT_CONFIGURED",
+      message: "Creamy no está configurado en este entorno.",
+      status: 503,
+    });
+    expect(mapCreamyErrorToClient("model_unavailable")).toMatchObject({
+      code: "CREAMY_MODEL_UNAVAILABLE",
+      message: "El modelo configurado no está disponible.",
+      status: 502,
+    });
+    expect(mapCreamyErrorToClient("rate_limit")).toMatchObject({
+      code: "CREAMY_RATE_LIMIT",
+      status: 429,
+    });
+  });
+});
+
 describe("resolveCreamyFallbackProvider", () => {
   it("returns null when fallback is disabled", () => {
     const result = resolveCreamyFallbackProvider("gemini", {
@@ -261,6 +330,14 @@ describe("shouldAttemptFallback", () => {
   it("returns true for quota/rate limit error message", () => {
     expect(shouldAttemptFallback(new Error("quota exceeded"))).toBe(true);
     expect(shouldAttemptFallback(new Error("RESOURCE_EXHAUSTED"))).toBe(true);
+  });
+
+  it("returns true for model unavailable", () => {
+    expect(
+      shouldAttemptFallback(
+        new Error("This model models/gemini-2.5-flash is no longer available to new users")
+      )
+    ).toBe(true);
   });
 
   it("returns true for AbortError name", () => {

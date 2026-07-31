@@ -5,6 +5,7 @@ import { OPERATIONAL_SECTOR_IDS, SECTOR_LABELS, type SectorId } from "@/types/op
 import type {
   CreamyDeliverySummary,
   CreamyLocalSnapshot,
+  CreamyNavAction,
   CreamyOrderSummary,
   CreamyQualityPendingSummary,
   CreamyRawMaterialSummary,
@@ -31,12 +32,14 @@ const HELP_CATALOG = [
   {
     id: "help-trabajos",
     label: "Ayuda · Trabajos",
-    keywords: ["trabajo", "pendiente", "avance", "terminar", "produccion", "elaboracion", "envasado", "tarea"],
+    keywords: ["trabajo", "pendiente", "avance", "terminar", "produccion", "elaboracion", "envasado", "tarea", "estado"],
     text:
       "Para consultar trabajos, abrí Mi trabajo o Producción → pestaña Trabajos. " +
       "Creamy puede buscar y resumir trabajos, pero no cambia estados ni aprueba decisiones. " +
-      "Podés filtrar por sector, estado (pendiente, en_curso, completo) o fecha.",
+      "Estados posibles: pendiente (aún no iniciado), en_curso (en ejecución), completo (terminado), revision (esperando Calidad), cancelado.",
     navHint: "Menú lateral → Mi trabajo (tu sector) o Producción (global)",
+    sidebarId: "mi_trabajo" as const,
+    navActionLabel: "IR A MI TRABAJO",
   },
   {
     id: "help-eliminar-trabajo",
@@ -150,19 +153,136 @@ const HELP_CATALOG = [
       "Para consultar el lote de un trabajo específico: pedile a Creamy 'lote del trabajo OE-123' o buscá el trabajo. " +
       "La asignación de lotes se registra en la vista Asignación de Lotes.",
     navHint: "Asignación de Lotes → buscar por producto o código",
+    sidebarId: "asignacion_lotes" as const,
+    navActionLabel: "IR A ASIGNACIÓN DE LOTES",
+  },
+  {
+    id: "help-crear-oe",
+    label: "Ayuda · Crear OE",
+    keywords: ["crear oe", "nueva oe", "orden elaboracion", "cargar oe", "orden de elaboracion"],
+    text:
+      "Para crear una OE (Orden de Elaboración): 1) Andá a Producción o al módulo Órdenes de Elaboración. " +
+      "2) Usá el botón para crear/cargar una nueva OE. 3) Completá cliente, producto, cantidad y fechas. " +
+      "Solo Producción y sectores autorizados pueden cargar OE. Creamy no crea órdenes.",
+    navHint: "Menú lateral → Órdenes de Elaboración (Producción / Elaboración)",
+    sidebarId: "ordenes_elaboracion" as const,
+    navActionLabel: "IR A ÓRDENES DE ELABORACIÓN",
+  },
+  {
+    id: "help-enviar-codificado",
+    label: "Ayuda · Enviar a Codificado",
+    keywords: ["codificado", "enviar codificado", "envasado codificado", "pasar a codificado", "terminar envasado"],
+    text:
+      "Desde Envasado (Masivo o Premium), al terminar un trabajo podés enviarlo a Codificado marcándolo como completo. " +
+      "1) Abrí el trabajo en Mi Trabajo. 2) Completá los datos requeridos. 3) Marcá como terminado. " +
+      "Codificado verá el trabajo en su cola para codificar/asignar lotes.",
+    navHint: "Mi Trabajo (Envasado) → abrir trabajo → marcar terminado",
+    sidebarId: "mi_trabajo" as const,
+    navActionLabel: "IR A MI TRABAJO",
+  },
+  {
+    id: "help-remitos",
+    label: "Ayuda · Remitos",
+    keywords: ["remito", "remitos", "despacho", "guia", "entrega cliente", "armar remito"],
+    text:
+      "El módulo Remitos permite armar, revisar y gestionar remitos de despacho a clientes. " +
+      "Desde Calidad/Producción podés ver aprobados listos para remito. Creamy solo orienta; no genera remitos.",
+    navHint: "Menú lateral → Remitos",
+    sidebarId: "remitos" as const,
+    navActionLabel: "IR A REMITOS",
+  },
+  {
+    id: "help-ingresos-mp",
+    label: "Ayuda · Ingresos MP",
+    keywords: ["ingreso mp", "ingresos mp", "registrar mp", "materia prima ingreso", "recepcion mp"],
+    text:
+      "Ingresos MP registra la recepción de materias primas: código, lote, proveedor, cantidad, vencimiento y estado. " +
+      "Flujo: registrar ingreso → control/revisión → APROBADO. Solo Materia Prima y sectores autorizados.",
+    navHint: "Menú lateral → Ingresos MP (Materia Prima / Depósito)",
+    sidebarId: "mp_ingresos" as const,
+    navActionLabel: "IR A INGRESOS MP",
+  },
+  {
+    id: "help-etiqueta-mp",
+    label: "Ayuda · Etiqueta MP / HereLabel",
+    keywords: ["etiqueta mp", "herelabel", "here label", "label mp", "imprimir etiqueta", "aprobado mp"],
+    text:
+      "Después de que un ingreso MP queda APROBADO, podés generar/imprimir la etiqueta térmica (HereLabel) desde Ingresos MP. " +
+      "1) Abrí Ingresos MP. 2) Buscá el ingreso con estado APROBADO. 3) Usá la acción de etiqueta/PDF. Creamy no imprime etiquetas.",
+    navHint: "Ingresos MP → ingreso APROBADO → Etiqueta / HereLabel",
+    sidebarId: "mp_ingresos" as const,
+    navActionLabel: "IR A INGRESOS MP",
+  },
+  {
+    id: "help-sector-nav",
+    label: "Ayuda · Qué puede hacer mi sector",
+    keywords: ["mi sector", "que puedo hacer", "modulos", "navegacion", "menu", "permisos sector"],
+    text:
+      "Cada sector ve módulos distintos en el menú lateral según su rol (RBAC). " +
+      "Pedile a Creamy qué módulos tenés disponibles en availableNav o consultá '¿a dónde voy para…?' " +
+      "Creamy solo recomienda módulos que aparecen en tu navegación autorizada.",
+    navHint: "Revisá el menú lateral de tu sector",
+  },
+  {
+    id: "help-sobrante-granel",
+    label: "Ayuda · Sobrante de granel",
+    keywords: ["sobrante", "granel", "sobrante granel", "deposito graneles", "devolucion granel", "me granel"],
+    text:
+      "El sobrante de granel se registra en Depósito Graneles o Ingresos ME según el tipo de material y flujo interno. " +
+      "1) Identificá el producto/lote y cantidad sobrante. 2) Registralo en Depósito Graneles o Ingresos ME. " +
+      "Consultá con Producción/Depósito si no estás seguro del módulo correcto.",
+    navHint: "Depósito Graneles o Ingresos ME",
+    sidebarId: "deposito_graneles" as const,
+    navActionLabel: "IR A DEPÓSITO GRANELES",
+  },
+  {
+    id: "help-estados-trabajo",
+    label: "Ayuda · Estados de trabajo",
+    keywords: ["estado trabajo", "pendiente", "en curso", "completo", "revision", "cancelado", "status"],
+    text:
+      "Estados de trabajo en Genus OS: pendiente (sin iniciar), en_curso (en ejecución), completo (sector terminó), " +
+      "revision (esperando decisión de Calidad), cancelado (anulado). Creamy puede listar por estado pero no lo cambia.",
+    navHint: "Mi Trabajo o Producción → filtrar por estado",
+    sidebarId: "mi_trabajo" as const,
+    navActionLabel: "IR A MI TRABAJO",
   },
 ] as const;
+
+type HelpCatalogEntry = (typeof HELP_CATALOG)[number];
+
+export function buildNavActionsFromHelp(
+  results: Array<{ sidebarId?: string; navActionLabel?: string; label?: string }>,
+  availableNav?: string[]
+): CreamyNavAction[] {
+  const actions: CreamyNavAction[] = [];
+  const seen = new Set<string>();
+  for (const entry of results) {
+    const sidebarId = entry.sidebarId?.trim();
+    if (!sidebarId) continue;
+    if (availableNav?.length && !availableNav.includes(sidebarId)) continue;
+    if (seen.has(sidebarId)) continue;
+    seen.add(sidebarId);
+    const fallbackLabel = entry.label?.replace(/^Ayuda · /, "").toUpperCase() ?? sidebarId.toUpperCase();
+    actions.push({
+      sidebarId,
+      label: entry.navActionLabel ?? `IR A ${fallbackLabel}`,
+    });
+  }
+  return actions;
+}
 
 export interface CreamyToolResult<T = unknown> {
   results: T[];
   localOnly: boolean;
   sources: SourceCitation[];
   message?: string;
+  navActions?: CreamyNavAction[];
 }
 
 interface RuntimeInput {
   actorSectorId: SectorId;
   snapshot?: CreamyLocalSnapshot;
+  availableNav?: string[];
 }
 
 interface SearchInput {
@@ -421,7 +541,7 @@ function deliveryResult(item: CreamyDeliverySummary) {
   };
 }
 
-export function createCreamyToolRuntime({ actorSectorId, snapshot }: RuntimeInput) {
+export function createCreamyToolRuntime({ actorSectorId, snapshot, availableNav }: RuntimeInput) {
   const workItems = snapshot?.workItems ?? [];
   const lots = snapshot?.lots ?? [];
   const rawMaterials = snapshot?.rawMaterials ?? [];
@@ -789,16 +909,18 @@ export function createCreamyToolRuntime({ actorSectorId, snapshot }: RuntimeInpu
       return searchDeliveriesRuntime(input);
     },
 
-    getApplicationHelp(input: SearchInput = {}): CreamyToolResult {
+    getApplicationHelp(input: SearchInput = {}): CreamyToolResult<HelpCatalogEntry> {
       if (!canCreamyAccessDomain(actorSectorId, "help")) return denied("help");
       const limit = clampLimit(input.limit);
       const results = HELP_CATALOG.filter((entry) =>
         includesQuery([entry.label, entry.text, ...entry.keywords], input.query)
       ).slice(0, limit);
+      const navActions = buildNavActionsFromHelp(results, availableNav);
       return {
         results,
         localOnly: true,
         sources: results.map((entry) => ({ type: "help", id: entry.id, label: entry.label })),
+        navActions: navActions.length ? navActions : undefined,
         message: results.length ? undefined : "No encontré una guía para esa consulta.",
       };
     },

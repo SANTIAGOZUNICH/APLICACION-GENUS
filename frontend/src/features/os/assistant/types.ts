@@ -13,6 +13,7 @@ export interface CreamyChatMessage {
   createdAt: string;
   sources?: SourceCitation[];
   usedTools?: string[];
+  navActions?: CreamyNavAction[];
 }
 
 export type SourceCitationType =
@@ -207,6 +208,22 @@ export interface CreamyLocalSnapshot {
   notes: string[];
 }
 
+export interface CreamyUiContext {
+  email?: string;
+  route?: string;
+  tab?: string;
+  moduleName?: string;
+  /** Sidebar ids visible to the actor sector. */
+  availableNav?: string[];
+  /** Short summary of an open item (work order, remito, etc.). */
+  openItemSummary?: string;
+}
+
+export interface CreamyNavAction {
+  sidebarId: string;
+  label: string;
+}
+
 export interface AssistantApiMessage {
   role: CreamyChatRole;
   content: string;
@@ -216,6 +233,7 @@ export interface AssistantChatRequest {
   messages: AssistantApiMessage[];
   actorSectorId: SectorId;
   snapshot?: CreamyLocalSnapshot;
+  uiContext?: CreamyUiContext;
 }
 
 export interface AssistantChatResponse {
@@ -225,4 +243,5 @@ export interface AssistantChatResponse {
   /** Non-secret provider info for diagnostics. */
   provider?: string;
   model?: string;
+  navActions?: CreamyNavAction[];
 }

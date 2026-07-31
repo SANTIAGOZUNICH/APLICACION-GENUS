@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CreamyLocalSnapshot } from "./types";
-import { createCreamyToolRuntime } from "./tools";
+import { buildNavActionsFromHelp, createCreamyToolRuntime } from "./tools";
 
 const snapshot: CreamyLocalSnapshot = {
   capturedAt: "2026-07-20T10:00:00.000Z",
@@ -328,5 +328,30 @@ describe("Creamy assistant tools", () => {
     expect(withArchived.results).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "del-deleted" })])
     );
+  });
+
+  it("getApplicationHelp incluye navActions filtradas por availableNav", () => {
+    const runtime = createCreamyToolRuntime({
+      actorSectorId: "PRODUCCION",
+      snapshot,
+      availableNav: ["remitos", "ordenes_elaboracion"],
+    });
+    const help = runtime.getApplicationHelp({ query: "remito" });
+    expect(help.navActions).toEqual(
+      expect.arrayContaining([{ sidebarId: "remitos", label: "IR A REMITOS" }])
+    );
+    expect(help.navActions?.some((a) => a.sidebarId === "mp_ingresos")).toBe(false);
+  });
+
+  it("buildNavActionsFromHelp deduplica y filtra por availableNav", () => {
+    const actions = buildNavActionsFromHelp(
+      [
+        { sidebarId: "mp_ingresos", navActionLabel: "IR A INGRESOS MP" },
+        { sidebarId: "mp_ingresos", navActionLabel: "IR A INGRESOS MP" },
+        { sidebarId: "remitos", navActionLabel: "IR A REMITOS" },
+      ],
+      ["mp_ingresos"]
+    );
+    expect(actions).toEqual([{ sidebarId: "mp_ingresos", label: "IR A INGRESOS MP" }]);
   });
 });

@@ -15,9 +15,14 @@ import type {
   AssistantChatRequest,
   AssistantChatResponse,
   CreamyLocalSnapshot,
+  CreamyNavAction,
+  CreamyUiContext,
   SourceCitation,
 } from "@/features/os/assistant/types";
 import {
+  classifyCreamyProviderError,
+  getCreamyAlternateModel,
+  mapCreamyErrorToClient,
   resolveCreamyProvider,
   resolveCreamyFallbackProvider,
   shouldAttemptFallback,
@@ -30,6 +35,7 @@ export const dynamic = "force-dynamic";
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_HISTORY_MESSAGES = 20;
 const REQUEST_TIMEOUT_MS = 30_000;
+const FORBIDDEN_UI_CONTEXT_KEYS = /password|secret|token|apikey|api_key/i;
 
 type ValidationResult =
   | { ok: true; value: AssistantChatRequest }
@@ -51,6 +57,49 @@ function sanitizeMessage(raw: unknown): AssistantApiMessage | null {
     role: record.role,
     content: record.content,
   };
+}
+
+export function sanitizeUiContext(raw: unknown): CreamyUiContext | undefined {
+  if (raw == null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+
+  const record = raw as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (FORBIDDEN_UI_CONTEXT_KEYS.test(key)) return undefined;
+  }
+
+  const ctx: CreamyUiContext = {};
+
+  if (typeof record.email === "string") {
+    const email = record.email.trim().slice(0, 200);
+    if (email) ctx.email = email;
+  }
+  if (typeof record.route === "string") {
+    const route = record.route.trim().slice(0, 200);
+    if (route) ctx.route = route;
+  }
+  if (typeof record.tab === "string") {
+    const tab = record.tab.trim().slice(0, 200);
+    if (tab) ctx.tab = tab;
+  }
+  if (typeof record.moduleName === "string") {
+    const moduleName = record.moduleName.trim().slice(0, 200);
+    if (moduleName) ctx.moduleName = moduleName;
+  }
+  if (typeof record.openItemSummary === "string") {
+    const openItemSummary = record.openItemSummary.trim().slice(0, 500);
+    if (openItemSummary) ctx.openItemSummary = openItemSummary;
+  }
+  if (Array.isArray(record.availableNav)) {
+    const availableNav = record.availableNav
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 50);
+    if (availableNav.length) ctx.availableNav = availableNav;
+  }
+
+  return Object.keys(ctx).length ? ctx : undefined;
 }
 
 export function validateChatRequestBody(raw: unknown): ValidationResult {
@@ -104,6 +153,7 @@ export function validateChatRequestBody(raw: unknown): ValidationResult {
       actorSectorId: body.actorSectorId.trim().toUpperCase() as SectorId,
       messages: sanitized.slice(-MAX_HISTORY_MESSAGES),
       snapshot: body.snapshot as CreamyLocalSnapshot | undefined,
+      uiContext: sanitizeUiContext(body.uiContext),
     },
   };
 }
@@ -147,6 +197,22 @@ function collectUsedTools(toolResults: unknown[]): string[] {
   );
 }
 
+function collectNavActions(toolResults: unknown[]): CreamyNavAction[] {
+  const actions: CreamyNavAction[] = [];
+  const seen = new Set<string>();
+  for (const result of toolResults) {
+    const output = (result as { output?: CreamyToolResult })?.output;
+    if (!Array.isArray(output?.navActions)) continue;
+    for (const action of output.navActions) {
+      const key = `${action.sidebarId}:${action.label}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      actions.push(action);
+    }
+  }
+  return actions;
+}
+
 function buildProviderModel(resolved: CreamyResolvedProvider) {
   if (resolved.provider === "gemini") {
     const apiKey = process.env.GEMINI_API_KEY?.trim();
@@ -159,20 +225,6 @@ function buildProviderModel(resolved: CreamyResolvedProvider) {
   if (!apiKey) throw new Error("OpenAI API key missing at runtime");
   const openai = createOpenAI({ apiKey });
   return openai(resolved.model);
-}
-
-function notConfiguredMessage(mode: string): string {
-  if (mode === "gemini") {
-    return "Falta GEMINI_API_KEY en el servidor. Configurala en Vercel → Settings → Environment Variables.";
-  }
-  if (mode === "openai") {
-    return "Falta CREAMY_OPENAI_API_KEY o OPENAI_API_KEY en el servidor. Configurala en Vercel → Settings → Environment Variables.";
-  }
-  return (
-    "Creamy AI no está configurado. Para activarlo necesitás al menos una de estas variables: " +
-    "GEMINI_API_KEY (proveedor Gemini) o CREAMY_OPENAI_API_KEY / OPENAI_API_KEY (proveedor OpenAI). " +
-    "Configurá CREAMY_AI_PROVIDER=gemini|openai|auto según el proveedor a usar."
-  );
 }
 
 async function callProvider(
@@ -194,6 +246,58 @@ async function callProvider(
   });
 }
 
+function logProviderFailure(provider: string, error: unknown) {
+  const classified = classifyCreamyProviderError(error);
+  console.log(
+    `[Creamy] Provider ${provider} failed (${error instanceof Error ? error.constructor.name : "unknown"}, kind=${classified.kind}) at ${new Date().toISOString()}`
+  );
+}
+
+async function attemptWithRetries(
+  primary: CreamyResolvedProvider,
+  messages: ModelMessage[],
+  systemPrompt: string,
+  tools: ReturnType<typeof createCreamyTools>,
+  signal: AbortSignal
+): Promise<{ result: Awaited<ReturnType<typeof callProvider>>; activeProvider: CreamyResolvedProvider; usedFallback: boolean }> {
+  let activeProvider = primary;
+  let usedFallback = false;
+
+  try {
+    const result = await callProvider(primary, messages, systemPrompt, tools, signal);
+    return { result, activeProvider, usedFallback };
+  } catch (primaryError) {
+    logProviderFailure(primary.provider, primaryError);
+    const classified = classifyCreamyProviderError(primaryError);
+
+    if (classified.kind === "model_unavailable") {
+      const alternateModel = getCreamyAlternateModel(primary.provider, process.env, primary.model);
+      if (alternateModel) {
+        const alternateProvider: CreamyResolvedProvider = { ...primary, model: alternateModel };
+        try {
+          const result = await callProvider(alternateProvider, messages, systemPrompt, tools, signal);
+          return { result, activeProvider: alternateProvider, usedFallback: false };
+        } catch (alternateError) {
+          logProviderFailure(primary.provider, alternateError);
+        }
+      }
+    }
+
+    const fallback = resolveCreamyFallbackProvider(primary.provider);
+    if (fallback && shouldAttemptFallback(primaryError, classified.statusHint)) {
+      console.log(
+        `[Creamy] Attempting cross-provider fallback to ${fallback.provider} at ${new Date().toISOString()}`
+      );
+      activeProvider = fallback;
+      usedFallback = true;
+      const result = await callProvider(fallback, messages, systemPrompt, tools, signal);
+      return { result, activeProvider, usedFallback };
+    }
+
+    throw primaryError;
+  }
+}
+
 export async function POST(request: Request) {
   let body: unknown;
   try {
@@ -211,16 +315,16 @@ export async function POST(request: Request) {
   }
 
   const resolved = resolveCreamyProvider();
-  const providerMode = process.env.CREAMY_AI_PROVIDER?.trim() ?? "auto";
 
   if (!resolved.configured) {
+    const mapped = mapCreamyErrorToClient("not_configured");
     return NextResponse.json(
       {
-        error: "Creamy AI no está configurado.",
-        code: "CREAMY_NOT_CONFIGURED",
-        message: notConfiguredMessage(providerMode),
+        error: mapped.message,
+        code: mapped.code,
+        message: mapped.message,
       },
-      { status: 503 }
+      { status: mapped.status }
     );
   }
 
@@ -233,33 +337,25 @@ export async function POST(request: Request) {
   const systemPrompt = buildCreamySystemPrompt({
     actorSectorId: payload.actorSectorId,
     snapshot: payload.snapshot,
+    uiContext: payload.uiContext,
   });
   const tools = createCreamyTools({
     actorSectorId: payload.actorSectorId,
     snapshot: payload.snapshot,
+    availableNav: payload.uiContext?.availableNav,
   });
 
-  let usedFallback = false;
   let activeProvider = resolved;
 
   try {
-    let result: Awaited<ReturnType<typeof callProvider>>;
-
-    try {
-      result = await callProvider(resolved, messages, systemPrompt, tools, signal);
-    } catch (primaryError) {
-      const fallback = resolveCreamyFallbackProvider(resolved.provider);
-      if (fallback && shouldAttemptFallback(primaryError)) {
-        console.log(
-          `[Creamy] Primary provider ${resolved.provider} failed (${primaryError instanceof Error ? primaryError.constructor.name : "unknown"}), attempting fallback to ${fallback.provider} at ${new Date().toISOString()}`
-        );
-        activeProvider = fallback;
-        usedFallback = true;
-        result = await callProvider(fallback, messages, systemPrompt, tools, signal);
-      } else {
-        throw primaryError;
-      }
-    }
+    const { result, activeProvider: usedProvider, usedFallback } = await attemptWithRetries(
+      resolved,
+      messages,
+      systemPrompt,
+      tools,
+      signal
+    );
+    activeProvider = usedProvider;
 
     const baseReply =
       result.text.trim() ||
@@ -268,31 +364,35 @@ export async function POST(request: Request) {
       ? `${baseReply}\n\n_(Respuesta generada con proveedor alternativo.)_`
       : baseReply;
 
+    const navActions = collectNavActions(result.toolResults);
+
     const response: AssistantChatResponse = {
       reply,
       sources: collectSources(result.toolResults),
       usedTools: collectUsedTools(result.toolResults),
       provider: activeProvider.provider,
       model: activeProvider.model,
+      navActions: navActions.length ? navActions : undefined,
     };
     return NextResponse.json(response);
   } catch (error) {
     if (signal.aborted) {
+      const mapped = mapCreamyErrorToClient("timeout");
       return NextResponse.json(
-        { error: "La respuesta de Creamy fue cancelada o excedió el tiempo máximo.", code: "CREAMY_ABORTED" },
+        { error: mapped.message, code: "CREAMY_ABORTED", message: "La respuesta de Creamy fue cancelada." },
         { status: 499 }
       );
     }
-    console.log(
-      `[Creamy] Provider ${activeProvider.provider} error: ${error instanceof Error ? error.constructor.name : "unknown"} at ${new Date().toISOString()}`
-    );
+    logProviderFailure(activeProvider.provider, error);
+    const classified = classifyCreamyProviderError(error);
+    const mapped = mapCreamyErrorToClient(classified.kind);
     return NextResponse.json(
       {
-        error: "No se pudo consultar Creamy AI.",
-        code: "CREAMY_AI_FAILED",
-        message: error instanceof Error ? error.message : "Error desconocido.",
+        error: mapped.message,
+        code: mapped.code,
+        message: mapped.message,
       },
-      { status: 502 }
+      { status: mapped.status }
     );
   } finally {
     cleanup();

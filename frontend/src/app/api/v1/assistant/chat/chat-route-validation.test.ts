@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateChatRequestBody } from "./route";
+import { validateChatRequestBody, sanitizeUiContext } from "./route";
 
 describe("assistant chat route validation", () => {
   it("rechaza actorSectorId faltante", () => {
@@ -67,5 +67,37 @@ describe("assistant chat route validation", () => {
       expect(result.value.messages).toHaveLength(20);
       expect(result.value.messages.at(-1)?.content).toBe("última pregunta");
     }
+  });
+
+  it("acepta uiContext válido y recorta campos", () => {
+    const result = validateChatRequestBody({
+      actorSectorId: "PRODUCCION",
+      messages: [{ role: "user", content: "Hola" }],
+      uiContext: {
+        email: "prod@example.com",
+        route: "produccion",
+        tab: "remitos",
+        moduleName: "Producción",
+        availableNav: ["remitos", "ordenes_elaboracion"],
+        openItemSummary: "OE-123",
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.uiContext).toMatchObject({
+        email: "prod@example.com",
+        route: "produccion",
+        availableNav: ["remitos", "ordenes_elaboracion"],
+      });
+    }
+  });
+
+  it("rechaza uiContext con claves sensibles", () => {
+    expect(
+      sanitizeUiContext({
+        email: "a@b.com",
+        password: "secret",
+      })
+    ).toBeUndefined();
   });
 });
