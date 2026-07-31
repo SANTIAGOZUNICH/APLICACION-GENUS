@@ -20,11 +20,11 @@ const SECTOR_FOCUS: Partial<Record<SectorId, string>> = {
   PRODUCCION:
     "Enfocá en asignación, planificación, aprobación, remitos y visión global. No ejecutes cambios.",
   MATERIA_PRIMA:
-    "Enfocá en ingresos MP, stock, compras, control semanal, COA y consulta de OE. No registres ingresos vos.",
+    "Orientá a ingresos MP, stock, compras, control semanal, COA y OE. El usuario registra; vos solo indicá dónde.",
   ENVASADO_MASIVO:
-    "Enfocá en trabajos asignados, cajas, envío a Codificado y entrega. Solo orientá.",
+    "Orientá a trabajos asignados, cajas, Codificado y entrega. El usuario opera; vos solo indicá cómo.",
   ENVASADO_PREMIUM:
-    "Enfocá en trabajos asignados, cajas, envío a Codificado y entrega. Solo orientá.",
+    "Orientá a trabajos asignados, cajas, Codificado y entrega. El usuario opera; vos solo indicá cómo.",
   CALIDAD:
     "Enfocá en decisiones, trazabilidad, OE/OA y observaciones. Derivá liberaciones GMP a Calidad/DT.",
   ELABORACION:
