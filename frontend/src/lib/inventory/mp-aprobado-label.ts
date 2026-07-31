@@ -97,9 +97,43 @@ export function mapMpIngresoToLabelData(
   };
 }
 
-/** Nombre de archivo: ETIQUETA-MP-{id-corto}.pdf */
-export function mpAprobadoLabelFilename(sourceId: string): string {
-  const raw = sanitizeLabelCell(sourceId) || "sin-id";
-  const short = raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "sin-id";
-  return `ETIQUETA-MP-${short}.pdf`;
+/** Nombre de archivo: ETIQUETA-MP-{PRODUCTO}-{LOTE}.pdf */
+export function mpAprobadoLabelFilename(data: {
+  producto?: string | null;
+  loteProveedor?: string | null;
+  sourceId?: string | null;
+}): string {
+  const shortId = (() => {
+    const raw = sanitizeLabelCell(data.sourceId) || "sin-id";
+    return raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "sin-id";
+  })();
+
+  const producto = sanitizeFilenamePart(data.producto);
+  const lote = sanitizeFilenamePart(data.loteProveedor);
+
+  if (!producto || !lote) {
+    return `ETIQUETA-MP-${shortId}.pdf`;
+  }
+
+  return `ETIQUETA-MP-${producto}-${lote}.pdf`;
 }
+
+/** Normaliza un segmento de nombre de archivo (sin caracteres inválidos). */
+export function sanitizeFilenamePart(value: unknown): string {
+  const raw = sanitizeLabelCell(value);
+  if (!raw) return "";
+  return raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40);
+}
+
+/** Página oficial HereLabel (App Store). No hay deep link documentado para Importar PDF. */
+export const HERELABEL_OFFICIAL_STORE_URL =
+  "https://apps.apple.com/app/herelabel/id1561322584";
+
+export const HERELABEL_IMPORT_INSTRUCTION =
+  "En HereLabel elegí Importar PDF y seleccioná la etiqueta recién descargada.";

@@ -1,18 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, Share2, Tag, ExternalLink, X } from "lucide-react";
+import { Download, Tag, ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { MpIngresoRow } from "@/lib/inventory/types";
-import type {
-  MpAprobadoLabelData,
-  MpAprobadoLabelSource,
+import {
+  HERELABEL_IMPORT_INSTRUCTION,
+  type MpAprobadoLabelData,
+  type MpAprobadoLabelSource,
 } from "@/lib/inventory/mp-aprobado-label";
 import {
   buildMpAprobadoLabelFromIngreso,
   buildMpAprobadoLabelPdfBlob,
   downloadMpAprobadoLabelPdf,
-  shareOrOpenMpAprobadoLabelPdf,
+  openHereLabelOfficialPage,
 } from "@/lib/inventory/mp-aprobado-label-pdf";
 import { MpAprobadoLabelPreview } from "@/features/os/operational/components/mp-aprobado-label-preview";
 
@@ -35,51 +36,27 @@ export function MpIngresoCrearEtiquetaButton({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [filename, setFilename] = useState("ETIQUETA-MP.pdf");
   const [blob, setBlob] = useState<Blob | null>(null);
   const [labelData, setLabelData] = useState<MpAprobadoLabelData | null>(null);
 
   useEffect(() => {
-    return () => {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-    };
-  }, [blobUrl]);
+    // no blob URLs retained after closing
+  }, []);
 
   async function createLabel() {
     setBusy(true);
     try {
       const { data, filename: name } = buildMpAprobadoLabelFromIngreso(row);
       const pdfBlob = await buildMpAprobadoLabelPdfBlob(data);
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-      const url = URL.createObjectURL(pdfBlob);
       setLabelData(data);
       setBlob(pdfBlob);
-      setBlobUrl(url);
       setFilename(name);
       setOpen(true);
     } catch {
       onError?.("No se pudo generar la etiqueta. Reintentá.");
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function handleShare(mode: "herelabel" | "share") {
-    if (!blob) return;
-    try {
-      const result = await shareOrOpenMpAprobadoLabelPdf(blob, filename);
-      if (mode === "herelabel") {
-        onToast?.(
-          result === "shared"
-            ? "Elegí HereLabel en la hoja de compartir"
-            : "Etiqueta abierta — usá Compartir hacia HereLabel si hace falta"
-        );
-      } else {
-        onToast?.(result === "shared" ? "Compartido" : "Etiqueta abierta");
-      }
-    } catch {
-      onError?.("No se pudo compartir la etiqueta.");
     }
   }
 
@@ -91,6 +68,11 @@ export function MpIngresoCrearEtiquetaButton({
     } catch {
       onError?.("No se pudo descargar la etiqueta.");
     }
+  }
+
+  function handleOpenHereLabel() {
+    onToast?.(HERELABEL_IMPORT_INSTRUCTION);
+    openHereLabelOfficialPage();
   }
 
   function close() {
@@ -119,7 +101,7 @@ export function MpIngresoCrearEtiquetaButton({
         </span>
       </Button>
 
-      {open && blobUrl && labelData ? (
+      {open && blob && labelData ? (
         <div
           className="fixed inset-0 z-[80] flex items-end justify-center bg-black/55 p-3 sm:items-center"
           role="dialog"
@@ -152,37 +134,32 @@ export function MpIngresoCrearEtiquetaButton({
 
             <div className="min-h-0 flex-1 overflow-y-auto bg-neutral-200 p-3">
               <MpAprobadoLabelPreview data={labelData} />
+              <p className="mt-3 text-center text-[12px] leading-snug text-[var(--os-muted)]">
+                {HERELABEL_IMPORT_INSTRUCTION}
+              </p>
             </div>
 
-            <div className="flex flex-wrap gap-2 border-t border-[var(--os-border)] p-3">
+            <div className="flex flex-col gap-2 border-t border-[var(--os-border)] p-3 sm:flex-row sm:flex-wrap">
               <Button
                 type="button"
                 size="sm"
-                onClick={() => void handleShare("herelabel")}
-                data-testid="mp-label-open-herelabel"
-              >
-                <ExternalLink className="mr-1.5 size-3.5" aria-hidden />
-                Abrir en HereLabel
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={() => void handleShare("share")}
-                data-testid="mp-label-share"
-              >
-                <Share2 className="mr-1.5 size-3.5" aria-hidden />
-                Compartir
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
                 onClick={() => void handleDownload()}
                 data-testid="mp-label-download"
+                className="w-full sm:w-auto"
               >
                 <Download className="mr-1.5 size-3.5" aria-hidden />
                 Descargar etiqueta
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={handleOpenHereLabel}
+                data-testid="mp-label-open-herelabel"
+                className="w-full sm:w-auto"
+              >
+                <ExternalLink className="mr-1.5 size-3.5" aria-hidden />
+                Abrir HereLabel para importar
               </Button>
             </div>
           </div>

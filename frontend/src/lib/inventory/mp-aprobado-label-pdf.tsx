@@ -2,6 +2,7 @@ import { pdf, renderToBuffer } from "@react-pdf/renderer";
 import React from "react";
 import { MpAprobadoLabelDocument } from "@/lib/inventory/mp-aprobado-label-document";
 import {
+  HERELABEL_OFFICIAL_STORE_URL,
   mapMpIngresoToLabelData,
   mpAprobadoLabelFilename,
   type MpAprobadoLabelData,
@@ -31,7 +32,7 @@ export function buildMpAprobadoLabelFromIngreso(ingreso: MpAprobadoLabelSource):
   filename: string;
 } {
   const data = mapMpIngresoToLabelData(ingreso);
-  return { data, filename: mpAprobadoLabelFilename(data.sourceId) };
+  return { data, filename: mpAprobadoLabelFilename(data) };
 }
 
 export async function downloadMpAprobadoLabelPdf(
@@ -53,37 +54,9 @@ export async function downloadMpAprobadoLabelPdf(
 }
 
 /**
- * Comparte / abre en apps (HereLabel vía hoja de compartir del SO).
- * Fallback: abre el PDF en una pestaña nueva.
+ * Abre la página oficial de HereLabel (App Store).
+ * No hay deep link documentado hacia “Importar PDF”.
  */
-export async function shareOrOpenMpAprobadoLabelPdf(
-  blob: Blob,
-  filename: string
-): Promise<"shared" | "opened"> {
-  const file = new File([blob], filename, { type: MP_APROBADO_LABEL_MIME });
-  const nav = typeof navigator !== "undefined" ? navigator : null;
-  if (nav && typeof nav.share === "function") {
-    try {
-      const can =
-        typeof nav.canShare !== "function" || nav.canShare({ files: [file] });
-      if (can) {
-        await nav.share({
-          files: [file],
-          title: filename,
-          text: "Etiqueta APROBADO MATERIA PRIMA",
-        });
-        return "shared";
-      }
-    } catch (err) {
-      // AbortError = usuario canceló; no tratar como fallo duro
-      if (err instanceof DOMException && err.name === "AbortError") {
-        return "shared";
-      }
-    }
-  }
-
-  const url = URL.createObjectURL(blob);
-  window.open(url, "_blank", "noopener,noreferrer");
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  return "opened";
+export function openHereLabelOfficialPage(): void {
+  window.open(HERELABEL_OFFICIAL_STORE_URL, "_blank", "noopener,noreferrer");
 }

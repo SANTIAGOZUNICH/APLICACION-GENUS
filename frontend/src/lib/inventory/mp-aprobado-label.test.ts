@@ -85,11 +85,30 @@ describe("mp-aprobado-label mapping", () => {
     ).toBe("CARBOPOL");
   });
 
-  it("nombre de archivo ETIQUETA-MP-{id-corto}.pdf", () => {
-    expect(mpAprobadoLabelFilename("mp-ingreso-00125-extra")).toBe(
-      "ETIQUETA-MP-mp-ingreso-0.pdf"
-    );
-    expect(mpAprobadoLabelFilename("!!!")).toBe("ETIQUETA-MP-sin-id.pdf");
+  it("nombre ETIQUETA-MP-{PRODUCTO}-{LOTE}.pdf con fallback a ID corto", () => {
+    expect(
+      mpAprobadoLabelFilename({
+        producto: "CARBOPOL 940",
+        loteProveedor: "L240730",
+        sourceId: "abc123",
+      })
+    ).toBe("ETIQUETA-MP-CARBOPOL-940-L240730.pdf");
+
+    expect(
+      mpAprobadoLabelFilename({
+        producto: "CARBOPOL",
+        loteProveedor: "",
+        sourceId: "mp-ingreso-00125-extra",
+      })
+    ).toBe("ETIQUETA-MP-mp-ingreso-0.pdf");
+
+    expect(
+      mpAprobadoLabelFilename({
+        producto: "",
+        loteProveedor: "L1",
+        sourceId: "!!!",
+      })
+    ).toBe("ETIQUETA-MP-sin-id.pdf");
   });
 
   it("medidas centralizadas en mm", () => {

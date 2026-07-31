@@ -16,7 +16,7 @@ export function MpAprobadoLabelPreview({ data }: { data: MpAprobadoLabelData }) 
         <div className="flex items-center gap-2 px-2 py-1.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/brand/laboratorio-genus-logo-black.png"
+            src="/brand/laboratorio-genus-logo-thermal.png"
             alt="Laboratorio Genus"
             className="h-8 w-auto object-contain"
           />

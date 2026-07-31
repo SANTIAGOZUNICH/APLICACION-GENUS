@@ -5,7 +5,7 @@ import {
   MP_LABEL_WIDTH_PT,
   type MpAprobadoLabelData,
 } from "@/lib/inventory/mp-aprobado-label";
-import { LABORATORIO_GENUS_LOGO_BLACK_DATA_URI } from "@/lib/inventory/laboratorio-genus-logo-black-data-uri";
+import { LABORATORIO_GENUS_LOGO_THERMAL_DATA_URI } from "@/lib/inventory/laboratorio-genus-logo-thermal-data-uri";
 
 /**
  * PDF de una página — etiqueta APROBADO MATERIA PRIMA.
@@ -40,8 +40,8 @@ const styles = StyleSheet.create({
     minHeight: 28,
   },
   logo: {
-    width: 72,
-    height: 26,
+    width: 78,
+    height: 28,
     objectFit: "contain",
   },
   aprobado: {
@@ -159,7 +159,8 @@ type Props = {
 };
 
 export function MpAprobadoLabelDocument({ data, logoSrc }: Props) {
-  const logo = logoSrc ?? LABORATORIO_GENUS_LOGO_BLACK_DATA_URI;
+  // PNG térmico preprocesado — sin filtros CSS ni transformaciones de color.
+  const logo = logoSrc ?? LABORATORIO_GENUS_LOGO_THERMAL_DATA_URI;
 
   return (
     <Document
