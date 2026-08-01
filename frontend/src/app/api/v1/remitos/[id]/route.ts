@@ -29,7 +29,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(request: Request, ctx: Ctx) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canAccessRemitos(actor.sector)) {
       throw new OrdersForbiddenError("Solo PRODUCCIÓN puede acceder a Remitos.");
     }
@@ -52,7 +52,7 @@ export async function GET(request: Request, ctx: Ctx) {
 
 export async function PATCH(request: Request, ctx: Ctx) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canAccessRemitos(actor.sector)) {
       throw new OrdersForbiddenError("Solo PRODUCCIÓN puede acceder a Remitos.");
     }
@@ -135,7 +135,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
 
 export async function DELETE(request: Request, ctx: Ctx) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canAccessRemitos(actor.sector)) {
       throw new OrdersForbiddenError("Solo PRODUCCIÓN puede acceder a Remitos.");
     }

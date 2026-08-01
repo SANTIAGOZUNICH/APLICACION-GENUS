@@ -49,7 +49,7 @@ export async function GET(request: Request) {
   try {
     const ready = await readyService();
     if ("blocked" in ready) return ready.blocked;
-    const actor = resolveInventoryActor(request);
+    const actor = await resolveInventoryActor(request);
     const { searchParams } = new URL(request.url);
     const resource = searchParams.get("resource") ?? "me_ingresos";
     const data = await listResource(ready.service, actor, resource);
@@ -63,7 +63,7 @@ export async function POST(request: Request) {
   try {
     const ready = await readyService();
     if ("blocked" in ready) return ready.blocked;
-    const actor = resolveInventoryActor(request);
+    const actor = await resolveInventoryActor(request);
     const body = (await request.json()) as {
       action: string;
       resource: string;

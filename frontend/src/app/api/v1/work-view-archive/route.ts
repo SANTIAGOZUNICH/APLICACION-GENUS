@@ -22,7 +22,7 @@ function archiveError(err: unknown) {
 
 export async function GET(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const url = new URL(request.url);
     const sectorRaw = url.searchParams.get("sector")?.trim().toUpperCase() ?? "";
     if (!isWorkViewArchiveSector(sectorRaw)) {
@@ -53,7 +53,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const body = (await request.json()) as {
       action?: string;
       sector?: string;

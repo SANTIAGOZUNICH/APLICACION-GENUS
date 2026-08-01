@@ -23,7 +23,7 @@ function errorResponse(err: unknown) {
 
 export async function GET(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canAccessMetricas(actor.sector)) {
       throw new OrdersForbiddenError(
         "Métricas solo para Envasado Masivo, Premium y Producción."
@@ -64,7 +64,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canAccessMetricas(actor.sector)) {
       throw new OrdersForbiddenError(
         "Métricas solo para Envasado Masivo, Premium y Producción."

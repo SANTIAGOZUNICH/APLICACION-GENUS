@@ -14,7 +14,7 @@ export async function GET(request: Request, ctx: Ctx) {
   if (blocked) return blocked;
   try {
     const { id } = await ctx.params;
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const order = await getOrdersService().getOrder(id, actor);
     return NextResponse.json({ order, legallyOperational: true });
   } catch (err) {
@@ -27,7 +27,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
   if (blocked) return blocked;
   try {
     const { id } = await ctx.params;
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const body = (await request.json()) as PatchOrderInput;
     const order = await getOrdersService().saveProgress(id, body, actor);
     return NextResponse.json({ order, legallyOperational: true });
@@ -41,7 +41,7 @@ export async function DELETE(request: Request, ctx: Ctx) {
   if (blocked) return blocked;
   try {
     const { id } = await ctx.params;
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const result = await getOrdersService().deleteEmptyDraft(id, actor);
     return NextResponse.json({ ...result, legallyOperational: true });
   } catch (err) {

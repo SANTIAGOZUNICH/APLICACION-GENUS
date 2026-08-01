@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const url = new URL(request.url);
     const parentId = url.searchParams.get("parentId");
     const fileId = url.searchParams.get("fileId");
@@ -42,7 +42,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const contentType = request.headers.get("content-type") ?? "";
     const svc = getCoaService();
     const a = { email: actor.email, sector: actor.sector };

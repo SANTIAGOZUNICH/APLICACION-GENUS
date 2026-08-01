@@ -11,7 +11,7 @@ import {
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 
 /** Mantener Blob URL + <a> vivos en desktop. */
 export const MP_LABEL_BLOB_URL_KEEPALIVE_MS = 120_000;
@@ -126,6 +126,7 @@ export async function fetchMpAprobadoLabelPdfFile(
   const filename = mpAprobadoLabelFilename(data);
   const res = await fetch(MP_APROBADO_LABEL_DOWNLOAD_PATH, {
     method: "POST",
+    credentials: "include",
     headers: actorAuthHeaders(),
     body: JSON.stringify(labelRequestBody(data)),
     cache: "no-store",

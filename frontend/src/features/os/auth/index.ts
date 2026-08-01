@@ -8,7 +8,12 @@ export type {
   AuthUser,
   OsAuthSession,
 } from "./contracts";
-export { mockAuthAdapter, MockAuthAdapter } from "./adapters/mock-auth-adapter";
+export {
+  genusAuthAdapter,
+  GenusAuthAdapter,
+  AuthAdapterError,
+} from "./adapters/genus-auth-adapter";
+export { mockAuthAdapter } from "./adapters/mock-auth-adapter";
 export {
   clearAuthSession,
   getAuthSector,

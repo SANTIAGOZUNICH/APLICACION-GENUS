@@ -34,7 +34,6 @@ import {
   resolveOrdersActor,
 } from "@/lib/orders/actor";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
-import { findMockUserByEmail } from "@/features/os/auth/lib/mock-preview-users";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -298,7 +297,7 @@ async function attemptWithRetries(
 export async function POST(request: Request) {
   let actor;
   try {
-    actor = resolveOrdersActor(request);
+    actor = await resolveOrdersActor(request);
   } catch (error) {
     if (error instanceof OrdersValidationError) {
       return NextResponse.json(
@@ -363,7 +362,6 @@ export async function POST(request: Request) {
     content: message.content.trim(),
   }));
 
-  const mockUser = findMockUserByEmail(actor.email);
   let userMemoryHints: string[] = [];
   try {
     const memories = await getCreamyMemoryService().listUserMemories(
@@ -386,8 +384,8 @@ export async function POST(request: Request) {
       email: actor.email,
       displayName: actor.displayName,
       sector: actor.sector,
-      sectorLabel: mockUser?.sectorLabel,
-      jobTitle: mockUser?.jobTitle,
+      sectorLabel: actor.sectorLabel,
+      jobTitle: actor.jobTitle,
     },
     snapshot: payload.snapshot,
     uiContext,

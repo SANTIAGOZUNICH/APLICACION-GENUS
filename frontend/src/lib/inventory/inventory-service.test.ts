@@ -101,7 +101,7 @@ describe("DEPOSITO acceso y navegación", () => {
   it("login deposito está entre los ocho accesos", () => {
     expect(MOCK_PREVIEW_USERS).toHaveLength(8);
     const u = MOCK_PREVIEW_USERS.find((x) => x.email === "deposito@laboratoriogenus.com.ar");
-    expect(u?.password).toBe("deposito123");
+    expect(u).not.toHaveProperty("password");
     expect(u?.sector).toBe("DEPOSITO");
   });
 

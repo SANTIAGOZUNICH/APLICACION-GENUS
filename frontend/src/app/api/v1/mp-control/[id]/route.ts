@@ -11,7 +11,7 @@ type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(request: Request, ctx: Ctx) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
     const control = await getMpControlService().get(
       { email: actor.email, sector: actor.sector },
@@ -26,7 +26,7 @@ export async function GET(request: Request, ctx: Ctx) {
 
 export async function PATCH(request: Request, ctx: Ctx) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
     const body = (await request.json()) as {
       quantityKg?: number | null;
@@ -63,7 +63,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
 
 export async function DELETE(request: Request, ctx: Ctx) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
     await getMpControlService().deleteDraft(
       { email: actor.email, sector: actor.sector },

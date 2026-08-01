@@ -1,44 +1,60 @@
-import { findMockUserByEmail } from "@/features/os/auth/lib/mock-preview-users";
+import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
+import { resolveAuthenticatedActor } from "@/lib/auth/resolve-authenticated-actor";
+import { AuthUnauthorizedError, type AuthActor } from "@/lib/auth/types";
 import type { OrdersActor } from "@/lib/orders/types";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
 import { OPERATIONAL_SECTOR_IDS } from "@/types/operational/sector";
 
-export const ACTOR_EMAIL_HEADER = "x-genus-actor-email";
-export const ACTOR_SECTOR_HEADER = "x-genus-actor-sector";
+/**
+ * Nombres de header históricos, definidos en un módulo client-safe
+ * (@/lib/auth/header-names). IMPORTANTE: código de cliente que solo
+ * necesita estos nombres (para armar headers de fetch) debe importarlos
+ * directamente desde `@/lib/auth/header-names`, NUNCA desde este archivo
+ * — este módulo arrastra el árbol server-only de Genus Auth
+ * (resolveAuthenticatedActor → bcryptjs/node:crypto/drizzle) y no puede
+ * bundlearse en un Client Component.
+ *
+ * En Preview real la identidad SIEMPRE viene de la cookie de sesión
+ * (`genus_session`); estos headers quedan como fuente de identidad SOLO
+ * en modo test (`NODE_ENV==='test'` o `GENUS_AUTH_ALLOW_TEST_HEADERS==='1'`).
+ * Fuera de ese modo, el runtime los IGNORA por completo.
+ */
+export { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER };
 
 function isSectorId(value: string): value is SectorId {
   return (OPERATIONAL_SECTOR_IDS as readonly string[]).includes(value);
 }
 
-export function resolveOrdersActor(request: Request): OrdersActor {
-  const email = request.headers.get(ACTOR_EMAIL_HEADER)?.trim().toLowerCase();
+function toOrdersActor(actor: AuthActor): OrdersActor {
+  if (!isSectorId(actor.sector)) {
+    throw new OrdersForbiddenError("Sector de actor inválido.");
+  }
+  return {
+    userId: actor.userId,
+    email: actor.email,
+    sector: actor.sector,
+    displayName: actor.displayName,
+  };
+}
+
+export async function resolveOrdersActor(request: Request): Promise<OrdersActor> {
+  let actor: AuthActor;
+  try {
+    actor = await resolveAuthenticatedActor(request);
+  } catch (err) {
+    if (err instanceof AuthUnauthorizedError) {
+      throw new OrdersValidationError("Sesión requerida (inicie sesión para continuar).");
+    }
+    throw err;
+  }
+
   const claimedSector = request.headers.get(ACTOR_SECTOR_HEADER)?.trim().toUpperCase();
-
-  if (!email) {
-    throw new OrdersValidationError(
-      "Sesión requerida (header x-genus-actor-email)."
-    );
-  }
-
-  const user = findMockUserByEmail(email);
-  if (!user) {
-    throw new OrdersForbiddenError("Actor no reconocido en accesos demo.");
-  }
-
-  if (claimedSector && claimedSector !== user.sector) {
+  if (claimedSector && claimedSector !== actor.sector) {
     throw new OrdersForbiddenError(
       "El sector de sesión no coincide con el usuario resuelto."
     );
   }
 
-  if (!isSectorId(user.sector)) {
-    throw new OrdersForbiddenError("Sector de actor inválido.");
-  }
-
-  return {
-    email: user.email,
-    sector: user.sector,
-    displayName: user.displayName,
-  };
+  return toOrdersActor(actor);
 }

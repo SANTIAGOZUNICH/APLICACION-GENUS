@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const url = new URL(request.url);
     const codigo = url.searchParams.get("codigo") ?? "";
     const persistenceReady = await isFeatureSchemaReady();
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const body = (await request.json()) as {
       action?: string;
       codigo?: string;

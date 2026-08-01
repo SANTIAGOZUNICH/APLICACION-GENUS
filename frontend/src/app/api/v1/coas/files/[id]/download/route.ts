@@ -16,7 +16,7 @@ type Ctx = { params: Promise<{ id: string }> };
  */
 export async function GET(request: Request, ctx: Ctx) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canViewCoas(actor.sector)) {
       throw new OrdersForbiddenError("Sin acceso a COA'S.");
     }

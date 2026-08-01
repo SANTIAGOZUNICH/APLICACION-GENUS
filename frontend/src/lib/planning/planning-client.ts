@@ -1,7 +1,7 @@
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/planning/actor";
+} from "@/lib/auth/header-names";
 import type {
   CreateWorkItemInput,
   PatchWorkItemInput,
@@ -39,6 +39,7 @@ export async function createPlanningWeek(
 ): Promise<PlanningWeekRecord> {
   const res = await fetch("/api/v1/planning/weeks", {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(actor.email, actor.sector),
     body: JSON.stringify(input),
   });
@@ -52,6 +53,7 @@ export async function listPlanningWeeks(
 ): Promise<PlanningWeekRecord[]> {
   const qs = weekStart ? `?weekStart=${encodeURIComponent(weekStart)}` : "";
   const res = await fetch(`/api/v1/planning/weeks${qs}`, {
+    credentials: "include",
     headers: actorHeaders(actor.email, actor.sector),
   });
   const data = await parseJson(res);
@@ -63,6 +65,7 @@ export async function getPlanningWeek(
   id: string
 ): Promise<{ week: PlanningWeekRecord; items: PlanningWorkItemRecord[] }> {
   const res = await fetch(`/api/v1/planning/weeks/${id}`, {
+    credentials: "include",
     headers: actorHeaders(actor.email, actor.sector),
   });
   return parseJson(res);
@@ -75,6 +78,7 @@ export async function createPlanningItem(
 ): Promise<PlanningWorkItemRecord> {
   const res = await fetch(`/api/v1/planning/weeks/${weekId}/items`, {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(actor.email, actor.sector),
     body: JSON.stringify(input),
   });
@@ -89,6 +93,7 @@ export async function patchPlanningItem(
 ): Promise<PlanningWorkItemRecord> {
   const res = await fetch(`/api/v1/planning/items/${itemId}`, {
     method: "PATCH",
+    credentials: "include",
     headers: actorHeaders(actor.email, actor.sector),
     body: JSON.stringify(input),
   });
@@ -102,6 +107,7 @@ export async function deletePlanningItem(
 ): Promise<void> {
   const res = await fetch(`/api/v1/planning/items/${itemId}`, {
     method: "DELETE",
+    credentials: "include",
     headers: actorHeaders(actor.email, actor.sector),
   });
   await parseJson(res);
@@ -113,6 +119,7 @@ export async function publishPlanningWeek(
 ): Promise<{ week: PlanningWeekRecord; items: PlanningWorkItemRecord[] }> {
   const res = await fetch(`/api/v1/planning/weeks/${weekId}/publish`, {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(actor.email, actor.sector),
   });
   return parseJson(res);

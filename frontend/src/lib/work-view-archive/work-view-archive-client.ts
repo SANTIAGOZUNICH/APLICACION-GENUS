@@ -1,7 +1,7 @@
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type {
   WorkViewArchiveRecord,
@@ -22,6 +22,7 @@ export async function fetchWorkViewArchivesApi(
 ): Promise<{ archives: WorkViewArchiveRecord[]; workItemIds: string[]; schemaPending: boolean }> {
   const qs = new URLSearchParams({ sector });
   const res = await fetch(`/api/v1/work-view-archive?${qs}`, {
+    credentials: "include",
     headers: headers(session),
   });
   const body = (await res.json()) as {
@@ -45,6 +46,7 @@ export async function archiveFromViewApi(
 ): Promise<WorkViewArchiveRecord> {
   const res = await fetch("/api/v1/work-view-archive", {
     method: "POST",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({ action: "archive", sector, workItemId }),
   });
@@ -63,6 +65,7 @@ export async function restoreToViewApi(
 ): Promise<void> {
   const res = await fetch("/api/v1/work-view-archive", {
     method: "POST",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({ action: "restore", sector, workItemId }),
   });

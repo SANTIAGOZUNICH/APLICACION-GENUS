@@ -10,7 +10,7 @@ export async function GET(request: Request) {
   const blocked = ensureOrdersPersistenceReady();
   if (blocked) return blocked;
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const url = new URL(request.url);
     const includeDismissed = url.searchParams.get("includeDismissed") === "1";
     const allForSector = url.searchParams.get("all") === "1";
@@ -28,7 +28,7 @@ export async function PATCH(request: Request) {
   const blocked = ensureOrdersPersistenceReady();
   if (blocked) return blocked;
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const body = (await request.json()) as { action?: string };
     const svc = getOrdersService();
     if (body.action === "dismiss_read") {

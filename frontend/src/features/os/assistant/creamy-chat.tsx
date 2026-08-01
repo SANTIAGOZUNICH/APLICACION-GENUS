@@ -194,10 +194,9 @@ export function CreamyChat({
         const snapshot = buildCreamyLocalSnapshot({ actorSectorId: sectorId, workItems });
         const response = await fetch("/api/v1/assistant/chat", {
           method: "POST",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
-            "x-genus-actor-email": uiContext?.email?.trim() || "",
-            "x-genus-actor-sector": sectorId,
           },
           signal: controller.signal,
           body: JSON.stringify({

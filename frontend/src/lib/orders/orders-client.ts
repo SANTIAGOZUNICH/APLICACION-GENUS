@@ -1,7 +1,7 @@
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import type {
   CreateOrderInput,
   ListOrdersFilters,
@@ -62,6 +62,7 @@ export async function fetchOrderTemplates(
 ): Promise<OrderTemplateRecord[]> {
   const qs = type ? `?type=${type}` : "";
   const res = await fetch(`/api/v1/order-templates${qs}`, {
+    credentials: "include",
     headers: actorHeaders(session),
     cache: "no-store",
   });
@@ -88,6 +89,7 @@ export async function fetchAllOrderTemplates(
   const params = new URLSearchParams({ all: "1" });
   if (type) params.set("type", type);
   const res = await fetch(`/api/v1/order-templates?${params}`, {
+    credentials: "include",
     headers: actorHeaders(session),
     cache: "no-store",
   });
@@ -101,6 +103,7 @@ export async function importSeedTemplatesApi(
 ): Promise<OrderTemplateRecord[]> {
   const res = await fetch("/api/v1/order-templates", {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({ action: "import_seed", type }),
   });
@@ -123,6 +126,7 @@ export async function createTemplateApi(
 ): Promise<OrderTemplateRecord> {
   const res = await fetch("/api/v1/order-templates", {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify(input),
   });
@@ -151,6 +155,7 @@ export async function createOrderFromScratchApi(
 }> {
   const res = await fetch("/api/v1/orders", {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({
       ...input,
@@ -188,6 +193,7 @@ export async function templateActionApi(
 ): Promise<OrderTemplateRecord> {
   const res = await fetch(`/api/v1/order-templates/${id}`, {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({ action, ...extra }),
   });
@@ -200,6 +206,7 @@ export async function fetchTemplateHistoryApi(
   id: string
 ): Promise<{ template: OrderTemplateRecord; versions: OrderTemplateRecord[] }> {
   const res = await fetch(`/api/v1/order-templates/${id}?history=1`, {
+    credentials: "include",
     headers: actorHeaders(session),
     cache: "no-store",
   });
@@ -238,6 +245,7 @@ export async function fetchOrders(
   if (filters.emptyLot) params.set("emptyLot", "1");
   if (filters.createdBy) params.set("createdBy", filters.createdBy);
   const res = await fetch(`/api/v1/orders?${params}`, {
+    credentials: "include",
     headers: actorHeaders(session),
     cache: "no-store",
   });
@@ -250,6 +258,7 @@ export async function createOrderApi(
 ): Promise<OperationalOrderRecord> {
   const res = await fetch("/api/v1/orders", {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify(input),
   });
@@ -262,6 +271,7 @@ export async function fetchOrder(
   id: string
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}`, {
+    credentials: "include",
     headers: actorHeaders(session),
     cache: "no-store",
   });
@@ -276,6 +286,7 @@ export async function saveOrderProgressApi(
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}`, {
     method: "PATCH",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify(input),
   });
@@ -315,6 +326,7 @@ export async function fetchFormulaClientOptionsApi(
   const limit = String(opts?.limit ?? 10);
   const params = new URLSearchParams({ scope: "clients", q, limit });
   const res = await fetch(`/api/v1/formulas/options?${params}`, {
+    credentials: "include",
     headers: actorHeaders(session),
     cache: "no-store",
     signal: opts?.signal,
@@ -349,6 +361,7 @@ export async function fetchFormulaProductOptionsApi(
     limit: String(opts?.limit ?? 10),
   });
   const res = await fetch(`/api/v1/formulas/options?${params}`, {
+    credentials: "include",
     headers: actorHeaders(session),
     cache: "no-store",
     signal: opts?.signal,
@@ -371,6 +384,7 @@ export async function syncFormulaDriveIndexApi(
 ): Promise<{ ok: boolean; entryCount?: number; clientCount?: number }> {
   const res = await fetch("/api/v1/formulas/options", {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({ force: true }),
   });
@@ -419,6 +433,7 @@ export async function resolveFormulaMasterApi(
 }> {
   const res = await fetch("/api/v1/formulas/resolve", {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify(
       driveFileId
@@ -494,6 +509,7 @@ export async function deliverOrderApi(
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}/deliver`, {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({
       confirm: true,
@@ -513,6 +529,7 @@ export async function deleteEmptyDraftApi(
 ): Promise<{ deleted: boolean; orderNumber: string }> {
   const res = await fetch(`/api/v1/orders/${id}`, {
     method: "DELETE",
+    credentials: "include",
     headers: actorHeaders(session),
   });
   return parseJson(res);
@@ -525,6 +542,7 @@ export async function saveAsMasterApi(
 ) {
   const res = await fetch(`/api/v1/orders/${id}/save-as-master`, {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({ changeReason, confirm: true }),
   });
@@ -538,6 +556,7 @@ export async function returnOrderApi(
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}/return`, {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({ reason }),
   });
@@ -551,6 +570,7 @@ export async function reviewOrderApi(
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}/review`, {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({}),
   });
@@ -564,6 +584,7 @@ export async function archiveOrderApi(
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}/archive`, {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({}),
   });
@@ -578,6 +599,7 @@ export async function annulOrderApi(
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}/annul`, {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({ reason }),
   });
@@ -591,6 +613,7 @@ export async function restoreOrderApi(
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}/restore`, {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({}),
   });
@@ -606,6 +629,7 @@ export async function decideProposalApi(
 ) {
   const res = await fetch(`/api/v1/order-templates/proposals/${proposalId}/decide`, {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({ decision, decisionReason }),
   });
@@ -621,6 +645,7 @@ export async function fetchOsNotifications(
   if (options?.allForSector) params.set("all", "1");
   const qs = params.toString();
   const res = await fetch(`/api/v1/notifications${qs ? `?${qs}` : ""}`, {
+    credentials: "include",
     headers: actorHeaders(session),
     cache: "no-store",
   });
@@ -635,6 +660,7 @@ export async function patchOsNotificationApi(
 ): Promise<void> {
   const res = await fetch(`/api/v1/notifications/${id}`, {
     method: "PATCH",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({ action }),
   });
@@ -646,6 +672,7 @@ export async function dismissReadOsNotificationsApi(
 ): Promise<void> {
   const res = await fetch("/api/v1/notifications", {
     method: "PATCH",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({ action: "dismiss_read" }),
   });
@@ -657,6 +684,7 @@ export async function deleteAllOsNotificationsApi(
 ): Promise<{ deleted: number }> {
   const res = await fetch("/api/v1/notifications", {
     method: "PATCH",
+    credentials: "include",
     headers: actorHeaders(session),
     body: JSON.stringify({ action: "delete_all" }),
   });

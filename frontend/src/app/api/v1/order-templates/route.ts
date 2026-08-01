@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   const blocked = ensureOrdersPersistenceReady();
   if (blocked) return blocked;
   try {
-    resolveOrdersActor(request);
+    await resolveOrdersActor(request);
     const url = new URL(request.url);
     const type = url.searchParams.get("type") as OrderDocType | null;
     const all = url.searchParams.get("all") === "1";
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   const blocked = ensureOrdersPersistenceReady();
   if (blocked) return blocked;
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const body = (await request.json()) as CreateTemplateInput & {
       action?: "create" | "import_seed";
     };

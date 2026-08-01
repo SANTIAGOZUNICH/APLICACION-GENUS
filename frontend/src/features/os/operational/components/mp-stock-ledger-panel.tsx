@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 
 type Movement = {
@@ -38,6 +38,7 @@ export function MpStockLedgerPanel({ schemaPending }: { schemaPending: boolean }
     }
     const qs = new URLSearchParams({ codigo: codigo.trim() });
     const res = await fetch(`/api/v1/mp-stock/ledger?${qs}`, {
+      credentials: "include",
       headers: {
         [ACTOR_EMAIL_HEADER]: email ?? "",
         [ACTOR_SECTOR_HEADER]: sectorId,

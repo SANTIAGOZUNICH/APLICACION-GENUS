@@ -25,7 +25,7 @@ const RESOLVE_ALLOWED = [
  */
 export async function POST(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!RESOLVE_ALLOWED.includes(actor.sector)) {
       return NextResponse.json({ error: "Sector no autorizado" }, { status: 403 });
     }

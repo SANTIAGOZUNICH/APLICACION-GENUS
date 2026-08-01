@@ -1,7 +1,7 @@
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type {
   RemitoApprovalInput,
@@ -41,7 +41,7 @@ export async function fetchRemitosApi(
   if (filters.clientId) qs.set("clientId", filters.clientId);
   if (filters.deliveryDate) qs.set("deliveryDate", filters.deliveryDate);
   if (filters.status) qs.set("status", filters.status);
-  const res = await fetch(`/api/v1/remitos?${qs}`, { headers: headers(session) });
+  const res = await fetch(`/api/v1/remitos?${qs}`, { credentials: "include", headers: headers(session) });
   const body = (await res.json()) as {
     remitos?: RemitoRecord[];
     error?: string;
@@ -62,6 +62,7 @@ export async function remitoActionApi(
 ): Promise<RemitoRecord> {
   const res = await fetch(`/api/v1/remitos/${remitoId}`, {
     method: "PATCH",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({ action, ...extra }),
   });
@@ -76,6 +77,7 @@ export async function upsertRemitoDraftApi(
 ): Promise<RemitoUpsertResult> {
   const res = await fetch("/api/v1/remitos", {
     method: "POST",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({ action: "upsert_draft", input }),
   });
@@ -122,6 +124,7 @@ export async function deleteRemitoDraftApi(
 ): Promise<void> {
   const res = await fetch(`/api/v1/remitos/${remitoId}`, {
     method: "DELETE",
+    credentials: "include",
     headers: headers(session),
   });
   const body = (await res.json()) as { deleted?: boolean; error?: string };
@@ -134,6 +137,7 @@ export async function remitoStatusForWorkApi(
 ): Promise<RemitoWorkItemStatus> {
   const res = await fetch("/api/v1/remitos", {
     method: "POST",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({ action: "status_for_work", workItemId }),
   });
@@ -148,6 +152,7 @@ export async function listRemitoVersionsApi(
 ): Promise<RemitoVersionInfo[]> {
   const res = await fetch(`/api/v1/remitos/${remitoId}`, {
     method: "PATCH",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({ action: "list_versions" }),
   });
@@ -165,6 +170,7 @@ export async function fetchRemitoPreviewHtmlApi(
   remitoId: string
 ): Promise<string> {
   const res = await fetch(`/api/v1/remitos/${remitoId}/preview`, {
+    credentials: "include",
     headers: actorHeaders(session),
   });
   const body = (await res.json()) as { html?: string; error?: string };
@@ -202,7 +208,7 @@ export async function downloadRemitoBlobApi(
   opts?: { filename?: string; version?: number }
 ): Promise<RemitoBlobDownload> {
   const url = remitoDownloadUrl(remitoId, format, opts);
-  const res = await fetch(url, { headers: actorHeaders(session) });
+  const res = await fetch(url, { credentials: "include", headers: actorHeaders(session) });
   const ct = res.headers.get("Content-Type") || "";
   if (!res.ok) {
     const body = ct.includes("application/json")

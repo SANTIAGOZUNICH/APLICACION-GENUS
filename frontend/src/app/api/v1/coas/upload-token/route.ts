@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canAdminCoas(actor.sector)) {
       throw new OrdersForbiddenError("Solo MP administra COA'S.");
     }

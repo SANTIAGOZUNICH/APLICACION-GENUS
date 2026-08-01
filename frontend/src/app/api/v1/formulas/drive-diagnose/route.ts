@@ -13,7 +13,7 @@ const ALLOWED = ["CALIDAD", "PRODUCCION", "MATERIA_PRIMA", "DIRECCION"];
  */
 export async function GET(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!ALLOWED.includes(actor.sector)) {
       return NextResponse.json({ error: "Sector no autorizado" }, { status: 403 });
     }

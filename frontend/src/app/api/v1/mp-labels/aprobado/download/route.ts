@@ -82,7 +82,7 @@ export async function GET(request: Request) {
  */
 export async function POST(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canReadInventory(actor.sector, "mp_ingresos")) {
       throw new OrdersForbiddenError("Sin acceso a Ingresos MP.");
     }

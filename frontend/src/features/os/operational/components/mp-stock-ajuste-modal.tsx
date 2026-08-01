@@ -6,7 +6,7 @@ import { ConfirmDialog } from "@/components/ui/dialog";
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 
 type AjusteTipo =
@@ -68,6 +68,7 @@ export function MpStockAjusteModal({
     }
     const res = await fetch("/api/v1/mp-stock/ledger", {
       method: "POST",
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
         [ACTOR_EMAIL_HEADER]: email ?? "",

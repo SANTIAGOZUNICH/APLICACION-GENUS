@@ -1,7 +1,7 @@
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type { FormulaAdminEntry } from "@/lib/formulas/formula-bank-service";
 
@@ -43,6 +43,7 @@ export async function fetchFormulaAdminEntriesApi(
   if (opts?.limit) params.set("limit", String(opts.limit));
   const qs = params.toString();
   const res = await fetch(`/api/v1/formulas/admin${qs ? `?${qs}` : ""}`, {
+    credentials: "include",
     headers: headers(session),
     cache: "no-store",
   });
@@ -60,6 +61,7 @@ export async function mutateFormulaAdminApi(
 ): Promise<{ ok: true; entry?: FormulaAdminEntry; deletedProductId?: string }> {
   const res = await fetch("/api/v1/formulas/admin", {
     method: "POST",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({
       ...input,

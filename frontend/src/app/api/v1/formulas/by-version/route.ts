@@ -16,7 +16,7 @@ export async function GET(request: Request) {
     const blocked = ensureOrdersPersistenceReady();
     if (blocked) return blocked;
 
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const allowed = ["CALIDAD", "PRODUCCION", "MATERIA_PRIMA", "ELABORACION", "DIRECCION"];
     if (!allowed.includes(actor.sector)) {
       return NextResponse.json({ error: "Sector no autorizado" }, { status: 403 });

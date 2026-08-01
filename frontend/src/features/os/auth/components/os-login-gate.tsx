@@ -2,19 +2,38 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { isAuthenticatedPreview } from "../lib/auth-session-helpers";
+import { genusAuthAdapter } from "../adapters/genus-auth-adapter";
 import { OsSignInScreen } from "./os-sign-in-screen";
 
-/** Si ya hay sesión activa, redirige directo a /mi-trabajo en vez de mostrar el login. */
+/** Verifica la cookie de sesión antes de redirigir desde el login. */
 export function OsLoginGate() {
   const router = useRouter();
-  const [authenticated] = useState(() => isAuthenticatedPreview());
+  const [authenticated, setAuthenticated] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void genusAuthAdapter
+      .hydrateSession()
+      .then((session) => {
+        if (active) setAuthenticated(Boolean(session));
+      })
+      .catch(() => {
+        if (active) setAuthenticated(false);
+      })
+      .finally(() => {
+        if (active) setHydrated(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (authenticated) router.replace("/mi-trabajo");
   }, [authenticated, router]);
 
-  if (authenticated) return null;
+  if (!hydrated || authenticated) return null;
 
   return <OsSignInScreen accessPreview />;
 }

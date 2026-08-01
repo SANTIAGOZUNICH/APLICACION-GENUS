@@ -1,7 +1,7 @@
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type {
   AsignacionLote,
@@ -23,7 +23,7 @@ export async function fetchAsignacionLotesApi(
 ): Promise<{ items: AsignacionLote[]; schemaPending: boolean }> {
   const qs = new URLSearchParams();
   if (options.includeArchived) qs.set("includeArchived", "1");
-  const res = await fetch(`/api/v1/asignacion-lotes?${qs}`, { headers: headers(session) });
+  const res = await fetch(`/api/v1/asignacion-lotes?${qs}`, { credentials: "include", headers: headers(session) });
   const body = (await res.json()) as {
     items?: AsignacionLote[];
     error?: string;
@@ -42,6 +42,7 @@ export async function upsertAsignacionLoteApi(
 ): Promise<AsignacionLote> {
   const res = await fetch("/api/v1/asignacion-lotes", {
     method: "POST",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({
       action: "upsert",
@@ -60,6 +61,7 @@ export async function importAsignacionLotesApi(
 ): Promise<AsignacionLoteImportResult> {
   const res = await fetch("/api/v1/asignacion-lotes", {
     method: "POST",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({
       action: "import",
@@ -79,6 +81,7 @@ export async function patchAsignacionLoteApi(
 ): Promise<AsignacionLote> {
   const res = await fetch(`/api/v1/asignacion-lotes/${id}`, {
     method: "PATCH",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({
       lifecycleAction,
@@ -96,6 +99,7 @@ export async function deleteAsignacionLoteApi(
 ): Promise<void> {
   const res = await fetch(`/api/v1/asignacion-lotes/${id}`, {
     method: "DELETE",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({ actorSectorId: session.sector }),
   });

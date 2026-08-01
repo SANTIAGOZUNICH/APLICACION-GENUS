@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const url = new URL(request.url);
     const fileId = url.searchParams.get("fileId") ?? "";
     const versionRaw = url.searchParams.get("version");

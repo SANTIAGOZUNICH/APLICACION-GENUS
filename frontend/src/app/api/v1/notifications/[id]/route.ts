@@ -12,7 +12,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
   const blocked = ensureOrdersPersistenceReady();
   if (blocked) return blocked;
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
     const body = (await request.json()) as { action?: string };
     const svc = getOrdersService();

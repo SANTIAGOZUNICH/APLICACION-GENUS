@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   const blocked = ensureNativePlanningReady();
   if (blocked) return blocked;
   try {
-    resolvePlanningActor(request);
+    await resolvePlanningActor(request);
     const url = new URL(request.url);
     const weekStart = url.searchParams.get("weekStart");
     const weeks = await getPlanningService().listWeeks(weekStart);
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   const blocked = ensureNativePlanningReady();
   if (blocked) return blocked;
   try {
-    const actor = resolvePlanningActor(request);
+    const actor = await resolvePlanningActor(request);
     assertProduccionActor(actor);
     const body = (await request.json()) as { weekStart?: string; label?: string };
     if (!body.weekStart) {

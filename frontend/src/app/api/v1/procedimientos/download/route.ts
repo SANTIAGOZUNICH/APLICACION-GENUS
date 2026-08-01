@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canAccessProcedimientos(actor.sector)) {
       throw new OrdersForbiddenError("Sin acceso a Procedimientos.");
     }

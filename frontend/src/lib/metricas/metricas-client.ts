@@ -1,7 +1,7 @@
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type {
   MetricsListFilters,
@@ -33,7 +33,7 @@ export async function fetchMetricasApi(
   if (filters.responsible) qs.set("responsible", filters.responsible);
   if (filters.sector) qs.set("sector", filters.sector);
   if (filters.onlyDeleted) qs.set("onlyDeleted", "1");
-  const res = await fetch(`/api/v1/metricas?${qs}`, { headers: headers(session) });
+  const res = await fetch(`/api/v1/metricas?${qs}`, { credentials: "include", headers: headers(session) });
   const body = (await res.json()) as {
     metrics?: PackagingMetricRecord[];
     ranking?: MetricsRankingEntry[];
@@ -57,6 +57,7 @@ export async function metricasActionApi(
 ): Promise<unknown> {
   const res = await fetch("/api/v1/metricas", {
     method: "POST",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({ action, ...payload }),
   });

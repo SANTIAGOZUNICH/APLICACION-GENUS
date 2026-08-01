@@ -19,7 +19,7 @@ export function DepositoOperationalView() {
           Responsable:{" "}
           <span className="font-medium text-[var(--os-text)]">{SECTOR_PERSONNEL.DEPOSITO}</span>
           {" · "}
-          Credencial temporal demo (deposito@ / deposito123)
+          Acceso corporativo administrado por Sistemas
         </p>
         <p className="text-sm text-[var(--os-text-muted)]">
           {workspace.context.displayName

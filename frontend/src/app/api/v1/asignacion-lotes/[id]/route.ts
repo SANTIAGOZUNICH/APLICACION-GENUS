@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-function toActor(actor: ReturnType<typeof resolveOrdersActor>) {
+function toActor(actor: Awaited<ReturnType<typeof resolveOrdersActor>>) {
   return {
     email: actor.email,
     sector: actor.sector,
@@ -25,7 +25,7 @@ function assertBodyActorSector(body: { actorSectorId?: string }, actorSector: st
 
 export async function GET(request: Request, ctx: Ctx) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
     const item = getAsignacionLotesService().get(toActor(actor), id);
     if (!item) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
@@ -37,7 +37,7 @@ export async function GET(request: Request, ctx: Ctx) {
 
 export async function PATCH(request: Request, ctx: Ctx) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
     const body = (await request.json()) as {
       lifecycleAction?: "archive" | "restore";
@@ -66,7 +66,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
 
 export async function DELETE(request: Request, ctx: Ctx) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
     const body = (await request.json().catch(() => ({}))) as { actorSectorId?: string };
     assertBodyActorSector(body, actor.sector);

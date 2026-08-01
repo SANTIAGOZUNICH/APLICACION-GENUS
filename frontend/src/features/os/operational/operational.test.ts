@@ -248,7 +248,7 @@ describe("mock users elaboración", () => {
     const calidad = MOCK_PREVIEW_USERS.find((u) => u.email.includes("calidad"));
 
     expect(elaboracion?.displayName).toBe("Elaboración");
-    expect(elaboracion?.password).toBe("elaboracion123");
+    expect(elaboracion).not.toHaveProperty("password");
     expect(elaboracion?.ownerPerson).toBeNull();
     expect(elaboracion?.jobTitle).toContain(SECTOR_PERSONNEL.ELABORACION_ENCARGADO);
     expect(byPerson).toHaveLength(0);

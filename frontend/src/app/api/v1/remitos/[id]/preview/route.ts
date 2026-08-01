@@ -21,7 +21,7 @@ function remitosError(err: unknown) {
 /** Vista previa HTML estilo Excel (desde plantilla XLSX real). */
 export async function GET(request: Request, ctx: Ctx) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canAccessRemitos(actor.sector)) {
       throw new OrdersForbiddenError("Solo PRODUCCIÓN puede acceder a Remitos.");
     }

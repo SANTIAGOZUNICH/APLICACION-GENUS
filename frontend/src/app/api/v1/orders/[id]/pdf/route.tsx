@@ -18,7 +18,7 @@ export async function GET(request: Request, ctx: Ctx) {
   if (blocked) return blocked;
   try {
     const { id } = await ctx.params;
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const order = await getOrdersService().recordDownload(id, actor, "pdf");
     assertBlankSignatures(order);
     const buffer = await renderToBuffer(

@@ -13,7 +13,7 @@ export async function POST(request: Request, ctx: Ctx) {
   if (blocked) return blocked;
   try {
     const { id } = await ctx.params;
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const body = (await request.json().catch(() => ({}))) as { reason?: string };
     const order = await getOrdersService().annul(id, actor, body.reason ?? "");
     return NextResponse.json({ order, legallyOperational: true });

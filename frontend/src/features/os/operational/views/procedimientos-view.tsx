@@ -350,7 +350,10 @@ export function ProcedimientosView() {
 
   async function loadPreview(file: ProcedureFileRecord) {
     const url = procedimientoDownloadUrl(session, file.id, undefined, true);
-    const res = await fetch(url, { headers: procedimientoDownloadHeaders(session) });
+    const res = await fetch(url, {
+      credentials: "include",
+      headers: procedimientoDownloadHeaders(session),
+    });
     if (!res.ok) {
       setError("No se pudo previsualizar el archivo");
       return;
@@ -362,7 +365,10 @@ export function ProcedimientosView() {
 
   async function downloadFile(file: ProcedureFileRecord) {
     const url = procedimientoDownloadUrl(session, file.id);
-    const res = await fetch(url, { headers: procedimientoDownloadHeaders(session) });
+    const res = await fetch(url, {
+      credentials: "include",
+      headers: procedimientoDownloadHeaders(session),
+    });
     if (!res.ok) return;
     const blob = await res.blob();
     const a = document.createElement("a");

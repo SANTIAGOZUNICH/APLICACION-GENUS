@@ -27,7 +27,7 @@ function remitosError(err: unknown) {
 
 export async function GET(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canAccessRemitos(actor.sector)) {
       throw new OrdersForbiddenError("Solo PRODUCCIÓN puede acceder a Remitos.");
     }
@@ -56,7 +56,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canAccessRemitos(actor.sector)) {
       throw new OrdersForbiddenError("Solo PRODUCCIÓN puede acceder a Remitos.");
     }

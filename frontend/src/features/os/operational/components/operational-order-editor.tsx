@@ -45,7 +45,7 @@ import {
 } from "@/lib/orders/format-operational-id";
 import type { OaContent, OeContent, OperationalOrderRecord, OrderContent } from "@/lib/orders/types";
 import { validateDeliver } from "@/lib/orders/validators";
-import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/orders/actor";
+import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
 import {
   applyFormulaResolveToOe,
   formulaIdentityKey,
@@ -693,6 +693,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const downloadPdf = async () => {
     if (!order) return;
     const res = await fetch(orderPdfUrl(order.id), {
+      credentials: "include",
       headers: {
         [ACTOR_EMAIL_HEADER]: session.email,
         [ACTOR_SECTOR_HEADER]: session.sector,

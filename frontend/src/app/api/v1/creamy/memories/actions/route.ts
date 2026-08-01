@@ -37,8 +37,11 @@ function errorResponse(err: unknown) {
   if (err instanceof CreamyMemoryValidationError) {
     return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
   }
-  if (err instanceof OrdersForbiddenError || err instanceof OrdersValidationError) {
+  if (err instanceof OrdersForbiddenError) {
     return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
+  }
+  if (err instanceof OrdersValidationError) {
+    return NextResponse.json({ error: "Sesión requerida.", code: err.code }, { status: 401 });
   }
   console.error("[creamy-memory-actions] error inesperado:", err);
   return NextResponse.json(
@@ -49,11 +52,21 @@ function errorResponse(err: unknown) {
 
 /**
  * Acciones sobre memoria de Creamy (personal y operativa).
- * Auth vía header x-genus-actor-email (mismo patrón que /api/v1/orders — resolveOrdersActor).
+ * Auth vía cookie de sesión Genus Auth (resolveOrdersActor). El header
+ * x-genus-actor-email se ignora fuera de NODE_ENV=test.
  * Toda acción queda auditada en creamy_memory_audit_events (o su equivalente en memoria
  * de proceso mientras la migración 0015 no esté aplicada).
  */
 export async function POST(request: Request) {
+  let ordersActor;
+  try {
+    // Authenticate before validating the requested action so unauthenticated
+    // callers consistently receive 401 and cannot probe action semantics.
+    ordersActor = await resolveOrdersActor(request);
+  } catch (err) {
+    return errorResponse(err);
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -73,7 +86,6 @@ export async function POST(request: Request) {
   }
 
   try {
-    const ordersActor = resolveOrdersActor(request);
     const memoryActor = { email: ordersActor.email, sector: ordersActor.sector };
     const service = getCreamyMemoryService();
     const memoryId = record.memoryId.trim();

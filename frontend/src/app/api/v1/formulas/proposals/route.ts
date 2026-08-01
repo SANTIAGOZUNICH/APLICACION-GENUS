@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 /** Propuesta de nueva versión desde OE (MP propone; Calidad/Producción aprueban). */
 export async function POST(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const bank = await readyFormulaBank();
     const body = (await request.json()) as {
       action: "propose" | "approve" | "reject";

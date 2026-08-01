@@ -1,20 +1,18 @@
 /**
- * @mock-temp Beta Operativa — accesos demo por sector (sin auth real).
- * Un usuario = un sector. Elaboración agrupa ramas Cristian / Nicolás en la vista.
+ * Directorio público de sectores para etiquetas de la interfaz.
+ * La autenticación real se resuelve exclusivamente en el servidor.
  *
- * Login activo de Genus OS: ocho accesos sectoriales de planta
+ * Genus OS tiene ocho accesos sectoriales de planta:
  * (Elaboración, Producción, Envasado Masivo, Envasado Premium, Calidad,
  * Materias Primas, Codificado, Depósito).
  *
- * Credencial DEPOSITO es temporal / demo (@mock-temp) — no es auth productiva.
- * Dirección NO es acceso activo del login.
+ * Dirección no es acceso activo del login.
  */
 
 import { SECTOR_PERSONNEL } from "@/features/os/operational/lib/sector-personnel";
 
-export interface MockPreviewUser {
+export interface PreviewDirectoryUser {
   email: string;
-  password: string;
   sector: string;
   displayName: string;
   role: string;
@@ -26,10 +24,9 @@ export interface MockPreviewUser {
   ownerPerson?: string | null;
 }
 
-export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
+export const MOCK_PREVIEW_USERS: PreviewDirectoryUser[] = [
   {
     email: "elaboracion@laboratoriogenus.com.ar",
-    password: "elaboracion123",
     sector: "ELABORACION",
     displayName: "Elaboración",
     role: "ROL-EL",
@@ -41,7 +38,6 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
   },
   {
     email: "emasivo@laboratoriogenus.com.ar",
-    password: "emasivo123",
     sector: "ENVASADO_MASIVO",
     displayName: SECTOR_PERSONNEL.ENVASADO_MASIVO,
     role: "ROL-OP",
@@ -52,7 +48,6 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
   },
   {
     email: "epremium@laboratoriogenus.com.ar",
-    password: "epremium123",
     sector: "ENVASADO_PREMIUM",
     displayName: SECTOR_PERSONNEL.ENVASADO_PREMIUM,
     role: "ROL-OP",
@@ -63,7 +58,6 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
   },
   {
     email: "calidad@laboratoriogenus.com.ar",
-    password: "calidad123",
     sector: "CALIDAD",
     displayName: SECTOR_PERSONNEL.CALIDAD,
     role: "ROL-CA",
@@ -74,7 +68,6 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
   },
   {
     email: "produccion@laboratoriogenus.com.ar",
-    password: "produccion123",
     sector: "PRODUCCION",
     displayName: SECTOR_PERSONNEL.PRODUCCION,
     role: "ROL-SU",
@@ -85,7 +78,6 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
   },
   {
     email: "mp@laboratoriogenus.com.ar",
-    password: "mp123",
     sector: "MATERIA_PRIMA",
     displayName: SECTOR_PERSONNEL.MATERIA_PRIMA,
     role: "ROL-OP",
@@ -96,7 +88,6 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
   },
   {
     email: "codificado@laboratoriogenus.com.ar",
-    password: "codificado123",
     sector: "CODIFICADO",
     displayName: "Codificado",
     role: "ROL-OP",
@@ -107,7 +98,6 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
   },
   {
     email: "deposito@laboratoriogenus.com.ar",
-    password: "deposito123",
     sector: "DEPOSITO",
     displayName: SECTOR_PERSONNEL.DEPOSITO,
     role: "ROL-OP",
@@ -118,18 +108,9 @@ export const MOCK_PREVIEW_USERS: MockPreviewUser[] = [
   },
 ];
 
-export function findMockUserByEmail(email: string): MockPreviewUser | undefined {
+export function findMockUserByEmail(email: string): PreviewDirectoryUser | undefined {
   const normalized = email.trim().toLowerCase();
   return MOCK_PREVIEW_USERS.find((user) => user.email.toLowerCase() === normalized);
-}
-
-export function validateMockPreviewCredentials(
-  email: string,
-  password: string
-): MockPreviewUser | null {
-  const user = findMockUserByEmail(email);
-  if (!user || user.password !== password) return null;
-  return user;
 }
 
 export const PREVIEW_AUTH_ERROR =

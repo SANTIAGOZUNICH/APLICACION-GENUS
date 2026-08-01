@@ -51,7 +51,7 @@ import { usePreviewContext, usePreviewSession } from "@/features/os/session/prev
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 
 export type MpHubTab = (typeof MP_TABS)[number];
 
@@ -156,6 +156,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     // Probe schema 0005 via ledger (vacío / schemaPending)
     try {
       const probe = await fetch("/api/v1/mp-stock/ledger", {
+        credentials: "include",
         headers: {
           [ACTOR_EMAIL_HEADER]: email ?? "",
           [ACTOR_SECTOR_HEADER]: sectorId,

@@ -115,7 +115,7 @@ export async function POST(request: Request) {
 
   let actor: { email: string; sector: SectorId; displayName?: string };
   try {
-    actor = resolveOrdersActor(request);
+    actor = await resolveOrdersActor(request);
   } catch (err) {
     if (err instanceof OrdersForbiddenError || err instanceof OrdersValidationError) {
       return NextResponse.json(

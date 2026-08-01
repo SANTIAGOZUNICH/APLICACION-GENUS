@@ -3,28 +3,30 @@ import {
   clearAuthSessionStorage,
   readAuthSessionFromStorage,
 } from "./auth-session-storage";
-import { mockAuthAdapter } from "../adapters/mock-auth-adapter";
+import { genusAuthAdapter } from "../adapters/genus-auth-adapter";
 
-/** Sesión preview activa, o null si no hay identidad persistida. */
+/** Caché de presentación de la sesión; la cookie HttpOnly es la autoridad. */
 export function getCurrentAuthSession(): OsAuthSession | null {
   return readAuthSessionFromStorage();
 }
 
-/** Elimina sesión preview de sessionStorage y localStorage. */
+/** Elimina la caché de sesión de sessionStorage y localStorage. */
 export function clearAuthSession(): void {
   clearAuthSessionStorage();
 }
 
-/** True cuando existe sesión contractual en modo preview. */
+/** True cuando existe una caché de sesión contractual. */
 export function isAuthenticatedPreview(): boolean {
   const session = getCurrentAuthSession();
   return session?.status === "preview" && session.mode === "preview";
 }
 
-/** Sector de la sesión preview activa. */
+/** Sector de la caché de sesión activa. */
 export function getAuthSector(): AuthSector | null {
   return getCurrentAuthSession()?.sector ?? null;
 }
 
-/** Adapter preview por defecto — punto único para PR 4.4+. */
-export { mockAuthAdapter };
+/** Adapter de sesión real respaldado por la cookie HttpOnly. */
+export { genusAuthAdapter };
+/** @deprecated Use genusAuthAdapter. */
+export { genusAuthAdapter as mockAuthAdapter };

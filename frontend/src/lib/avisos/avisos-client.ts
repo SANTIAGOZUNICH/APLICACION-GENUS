@@ -1,7 +1,7 @@
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type { AvisoRecord, AvisoTab, CreateAvisoInput } from "@/lib/avisos/types";
 
@@ -19,7 +19,7 @@ export async function fetchAvisosApi(
   q = ""
 ): Promise<{ messages: AvisoRecord[]; schemaPending: boolean }> {
   const qs = new URLSearchParams({ tab, q });
-  const res = await fetch(`/api/v1/avisos?${qs}`, { headers: headers(session) });
+  const res = await fetch(`/api/v1/avisos?${qs}`, { credentials: "include", headers: headers(session) });
   const body = (await res.json()) as {
     messages?: AvisoRecord[];
     error?: string;
@@ -38,6 +38,7 @@ export async function createAvisoApi(
 ): Promise<AvisoRecord> {
   const res = await fetch("/api/v1/avisos", {
     method: "POST",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({ ...input, confirm: true }),
   });
@@ -53,6 +54,7 @@ export async function patchAvisoApi(
 ): Promise<AvisoRecord> {
   const res = await fetch(`/api/v1/avisos/${id}`, {
     method: "PATCH",
+    credentials: "include",
     headers: headers(session),
     body: JSON.stringify({ action }),
   });

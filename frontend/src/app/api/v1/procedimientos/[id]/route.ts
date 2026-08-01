@@ -24,7 +24,7 @@ function errorResponse(err: unknown) {
 
 export async function GET(request: Request, context: RouteContext) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canAccessProcedimientos(actor.sector)) {
       throw new OrdersForbiddenError("Sin acceso a Procedimientos.");
     }

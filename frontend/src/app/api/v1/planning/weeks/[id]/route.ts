@@ -16,7 +16,7 @@ export async function GET(
   const blocked = ensureNativePlanningReady();
   if (blocked) return blocked;
   try {
-    resolvePlanningActor(request);
+    await resolvePlanningActor(request);
     const { id } = await context.params;
     const result = await getPlanningService().getWeek(id);
     return NextResponse.json(result);

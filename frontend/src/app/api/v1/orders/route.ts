@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   const blocked = ensureOrdersPersistenceReady();
   if (blocked) return blocked;
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const url = new URL(request.url);
     const filters: ListOrdersFilters = {
       type: (url.searchParams.get("type") as OrderDocType | null) ?? undefined,
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
   const blocked = ensureOrdersPersistenceReady();
   if (blocked) return blocked;
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const body = (await request.json()) as CreateOrderInput & {
       fromScratch?: boolean;
       alsoCreateMaster?: boolean;

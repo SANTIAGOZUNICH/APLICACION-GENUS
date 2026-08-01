@@ -9,7 +9,7 @@ import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import {
   canAdminCoas,
   canViewCoas,
@@ -88,7 +88,7 @@ export function MpCoasPanel() {
     if (parentId) params.set("parentId", parentId);
     if (listMode === "archived") params.set("includeArchived", "true");
     const qs = params.size ? `?${params}` : "";
-    const res = await fetch(`/api/v1/coa${qs}`, { headers: headers() });
+    const res = await fetch(`/api/v1/coa${qs}`, { credentials: "include", headers: headers() });
     const body = (await res.json()) as {
       folders?: CoaFolderRecord[];
       files?: CoaFileRecord[];
@@ -135,6 +135,7 @@ export function MpCoasPanel() {
       setPdfUrl(null);
     }
     const res = await fetch(`/api/v1/coa?fileId=${encodeURIComponent(f.id)}`, {
+      credentials: "include",
       headers: headers(),
     });
     const body = (await res.json()) as {
@@ -157,7 +158,7 @@ export function MpCoasPanel() {
     if (version != null) qs.set("version", String(version));
     const res = await fetch(
       `/api/v1/coas/files/${encodeURIComponent(fileId)}/preview?${qs}`,
-      { headers: headers() }
+      { credentials: "include", headers: headers() }
     );
     if (!res.ok) {
       const b = (await res.json().catch(() => ({}))) as { error?: string };
@@ -176,7 +177,7 @@ export function MpCoasPanel() {
   }
 
   async function downloadVersion(fileId: string, version?: number) {
-    const res = await fetch(downloadHref(fileId, version), { headers: headers() });
+    const res = await fetch(downloadHref(fileId, version), { credentials: "include", headers: headers() });
     if (!res.ok) {
       const b = (await res.json().catch(() => ({}))) as { error?: string };
       setError(b.error ?? "Descarga falló");
@@ -197,6 +198,7 @@ export function MpCoasPanel() {
     setMenuFileId(null);
     setError(null);
     const res = await fetch(`/api/v1/coa?fileId=${encodeURIComponent(f.id)}`, {
+      credentials: "include",
       headers: headers(),
     });
     const body = (await res.json()) as {
@@ -228,6 +230,7 @@ export function MpCoasPanel() {
     if (!archiveFileTarget) return;
     const r = await fetch("/api/v1/coa", {
       method: "POST",
+      credentials: "include",
       headers: { ...headers(), "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "archive_file",
@@ -249,6 +252,7 @@ export function MpCoasPanel() {
     if (!restoreFileTarget) return;
     const r = await fetch("/api/v1/coa", {
       method: "POST",
+      credentials: "include",
       headers: { ...headers(), "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "restore_file",
@@ -282,6 +286,7 @@ export function MpCoasPanel() {
     setMenuFileId(null);
     const r = await fetch("/api/v1/coa", {
       method: "POST",
+      credentials: "include",
       headers: headers(),
       body: fd,
     });
@@ -316,6 +321,7 @@ export function MpCoasPanel() {
     }
     const r = await fetch("/api/v1/coa", {
       method: "POST",
+      credentials: "include",
       headers: { ...headers(), "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "delete_file",
@@ -350,6 +356,7 @@ export function MpCoasPanel() {
     }
     const r = await fetch("/api/v1/coa", {
       method: "POST",
+      credentials: "include",
       headers: { ...headers(), "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "delete_version",
@@ -377,6 +384,7 @@ export function MpCoasPanel() {
       if (refreshed) await openFile(refreshed);
       else {
         const listRes = await fetch(`/api/v1/coa?fileId=${encodeURIComponent(fileId)}`, {
+          credentials: "include",
           headers: headers(),
         });
         if (listRes.ok) {
@@ -472,6 +480,7 @@ export function MpCoasPanel() {
             onClick={() => {
               void fetch("/api/v1/coa", {
                 method: "POST",
+                credentials: "include",
                 headers: { ...headers(), "Content-Type": "application/json" },
                 body: JSON.stringify({
                   action: "mkdir",
@@ -524,6 +533,7 @@ export function MpCoasPanel() {
                 setError(null);
                 void fetch("/api/v1/coa", {
                   method: "POST",
+                  credentials: "include",
                   headers: headers(),
                   body: fd,
                 }).then(async (r) => {
@@ -895,6 +905,7 @@ export function MpCoasPanel() {
                 onClick={() => {
                   void fetch("/api/v1/coa", {
                     method: "POST",
+                    credentials: "include",
                     headers: { ...headers(), "Content-Type": "application/json" },
                     body: JSON.stringify({
                       action: "rename_folder",
@@ -929,6 +940,7 @@ export function MpCoasPanel() {
           if (!archiveFolderTarget) return;
           void fetch("/api/v1/coa", {
             method: "POST",
+            credentials: "include",
             headers: { ...headers(), "Content-Type": "application/json" },
             body: JSON.stringify({
               action: "archive_folder",
@@ -957,6 +969,7 @@ export function MpCoasPanel() {
           if (!restoreFolderTarget) return;
           void fetch("/api/v1/coa", {
             method: "POST",
+            credentials: "include",
             headers: { ...headers(), "Content-Type": "application/json" },
             body: JSON.stringify({
               action: "restore_folder",
@@ -987,6 +1000,7 @@ export function MpCoasPanel() {
           if (!hardDeleteFolderTarget) return;
           void fetch("/api/v1/coa", {
             method: "POST",
+            credentials: "include",
             headers: { ...headers(), "Content-Type": "application/json" },
             body: JSON.stringify({
               action: "delete_folder",

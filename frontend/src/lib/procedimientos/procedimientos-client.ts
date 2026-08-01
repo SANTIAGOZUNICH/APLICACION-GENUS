@@ -1,7 +1,7 @@
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type {
   ProcedureFileRecord,
@@ -41,6 +41,7 @@ export async function fetchProcedimientosApi(
   if (filters.mimeFilter) qs.set("mimeFilter", filters.mimeFilter);
   if (filters.includeArchived) qs.set("includeArchived", "1");
   const res = await fetch(`/api/v1/procedimientos?${qs}`, {
+    credentials: "include",
     headers: jsonHeaders(session),
   });
   const body = (await res.json()) as {
@@ -65,6 +66,7 @@ export async function searchProcedimientosApi(
   const qs = new URLSearchParams({ q });
   if (mimeFilter) qs.set("mimeFilter", mimeFilter);
   const res = await fetch(`/api/v1/procedimientos?${qs}`, {
+    credentials: "include",
     headers: jsonHeaders(session),
   });
   const body = (await res.json()) as {
@@ -88,6 +90,7 @@ export async function procedimientosActionApi(
 ): Promise<unknown> {
   const res = await fetch("/api/v1/procedimientos", {
     method: "POST",
+    credentials: "include",
     headers: jsonHeaders(session),
     body: JSON.stringify({ action, ...payload }),
   });
@@ -118,6 +121,7 @@ export async function uploadProcedimientoFileApi(
 
   const res = await fetch("/api/v1/procedimientos", {
     method: "POST",
+    credentials: "include",
     headers: actorHeaders(session),
     body: form,
   });
@@ -135,6 +139,7 @@ export async function fetchProcedimientoVersionsApi(
   fileId: string
 ): Promise<{ versions: ProcedureVersionRecord[]; file: ProcedureFileRecord | null; schemaPending: boolean }> {
   const res = await fetch(`/api/v1/procedimientos/${fileId}?versions=1`, {
+    credentials: "include",
     headers: jsonHeaders(session),
   });
   const body = (await res.json()) as {

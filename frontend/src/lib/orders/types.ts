@@ -22,6 +22,7 @@ export type TemplateStatus = "VIGENTE" | "OBSOLETA";
 export type ProposalStatus = "PENDIENTE" | "APROBADA" | "RECHAZADA";
 
 export type OrdersActor = {
+  userId?: string;
   email: string;
   sector: SectorId;
   displayName: string;

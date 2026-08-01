@@ -10,7 +10,7 @@ import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types"
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function toActor(actor: ReturnType<typeof resolveOrdersActor>) {
+function toActor(actor: Awaited<ReturnType<typeof resolveOrdersActor>>) {
   return {
     email: actor.email,
     sector: actor.sector,
@@ -27,7 +27,7 @@ function assertBodyActorSector(body: { actorSectorId?: string }, actorSector: st
 /** Listado de asignaciones (sectores Calidad, Producción, Codificado). */
 export async function GET(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const url = new URL(request.url);
     const includeArchived = url.searchParams.get("includeArchived") === "1";
     const items = getAsignacionLotesService().list(toActor(actor), { includeArchived });
@@ -44,7 +44,7 @@ export async function GET(request: Request) {
 /** Upsert, importación masiva o sync completo. */
 export async function POST(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const body = (await request.json()) as {
       action?: "upsert" | "import" | "sync";
       actorSectorId?: string;

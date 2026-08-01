@@ -20,7 +20,7 @@ export async function PATCH(
   const blocked = ensureNativePlanningReady();
   if (blocked) return blocked;
   try {
-    const actor = resolvePlanningActor(request);
+    const actor = await resolvePlanningActor(request);
     assertProduccionActor(actor);
     const { id } = await context.params;
     const body = (await request.json()) as PatchWorkItemInput;
@@ -44,7 +44,7 @@ export async function DELETE(
   const blocked = ensureNativePlanningReady();
   if (blocked) return blocked;
   try {
-    const actor = resolvePlanningActor(request);
+    const actor = await resolvePlanningActor(request);
     assertProduccionActor(actor);
     const { id } = await context.params;
     const result = await getPlanningService().deleteItem(id, actor);

@@ -43,7 +43,7 @@ function formulaErrorResponse(err: unknown) {
 /** Listado administrativo (metadata; sin ingredientes). */
 export async function GET(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canManageFormulas(actor.sector)) {
       return NextResponse.json({ error: FORMULA_ADMIN_DENIED_MESSAGE, code: "FORBIDDEN" }, { status: 403 });
     }
@@ -70,7 +70,7 @@ export async function GET(request: Request) {
 /** Archivar / restaurar / eliminar definitivamente (con motivo). */
 export async function POST(request: Request) {
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     if (!canManageFormulas(actor.sector)) {
       return NextResponse.json({ error: FORMULA_ADMIN_DENIED_MESSAGE, code: "FORBIDDEN" }, { status: 403 });
     }

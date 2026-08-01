@@ -7,9 +7,9 @@ import { GENUS_COMPANY_NAME } from "../constants";
 import {
   findMockUserByEmail,
   PREVIEW_AUTH_ERROR,
-  type MockPreviewUser,
+  type PreviewDirectoryUser,
 } from "../lib/mock-preview-users";
-import { mockAuthAdapter } from "../lib/auth-session-helpers";
+import { AuthAdapterError, genusAuthAdapter } from "../adapters/genus-auth-adapter";
 import { OsAuthField } from "./os-auth-field";
 import { OsAuthMockBanner } from "./os-auth-mock-banner";
 import { GenusOsLogo } from "./genus-os-logo";
@@ -30,7 +30,7 @@ function isCorporateEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
-function toIdentityPreview(user: MockPreviewUser): OsSignInIdentityPreview {
+function toIdentityPreview(user: PreviewDirectoryUser): OsSignInIdentityPreview {
   return {
     displayName: user.displayName,
     jobTitle: user.jobTitle,
@@ -59,6 +59,8 @@ export function OsSignInScreen({
   const [authError, setAuthError] = useState<string | null>(null);
   const [pendingRedirect, setPendingRedirect] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [localSubmitting, setLocalSubmitting] = useState(false);
+  const submitting = isSubmitting || localSubmitting;
 
   const emailEntered = email.trim().length > 0;
   const matchedUser = useMemo(
@@ -105,12 +107,20 @@ export function OsSignInScreen({
     }
 
     if (accessPreview) {
-      const session = await mockAuthAdapter.signIn(credentials);
-      if (!session) {
-        setAuthError(PREVIEW_AUTH_ERROR);
-        return;
+      if (localSubmitting) return;
+      setLocalSubmitting(true);
+      try {
+        const session = await genusAuthAdapter.signIn(credentials);
+        if (!session) {
+          setAuthError(PREVIEW_AUTH_ERROR);
+          return;
+        }
+        startBootstrap(session.redirectTo);
+      } catch (error) {
+        setAuthError(error instanceof AuthAdapterError ? error.message : PREVIEW_AUTH_ERROR);
+      } finally {
+        setLocalSubmitting(false);
       }
-      startBootstrap(session.redirectTo);
       return;
     }
 
@@ -131,7 +141,7 @@ export function OsSignInScreen({
     }, FADE_MS);
   }, [pendingRedirect, router]);
 
-  const isInteractive = phase === "sign-in" && !isSubmitting;
+  const isInteractive = phase === "sign-in" && !submitting;
   const showBootstrap = phase === "bootstrap" || phase === "redirecting";
   const contentVisible = phase === "sign-in";
 

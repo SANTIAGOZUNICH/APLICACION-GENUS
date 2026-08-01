@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db/client";
-import { findMockUserByEmail } from "@/features/os/auth/lib/mock-preview-users";
+import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
+import { resolveAuthenticatedActor } from "@/lib/auth/resolve-authenticated-actor";
+import { AuthUnauthorizedError, type AuthActor } from "@/lib/auth/types";
 import type { SectorId } from "@/types/operational/sector";
 import type { InventoryActor } from "./inventory-service";
 import {
@@ -8,6 +10,20 @@ import {
   InventoryNotFoundError,
   InventoryValidationError,
 } from "./inventory-service";
+
+/**
+ * Nombres de header históricos, definidos en un módulo client-safe
+ * (@/lib/auth/header-names). IMPORTANTE: código de cliente debe
+ * importarlos directamente desde `@/lib/auth/header-names`, nunca desde
+ * este archivo — este módulo arrastra el árbol server-only de Genus Auth
+ * (y de next/server).
+ *
+ * En Preview real la identidad SIEMPRE viene de la cookie de sesión
+ * (`genus_session`); este header queda como fuente de identidad SOLO en
+ * modo test (`NODE_ENV==='test'` o `GENUS_AUTH_ALLOW_TEST_HEADERS==='1'`).
+ * Fuera de ese modo se IGNORA.
+ */
+export { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER };
 
 export function ensureInventoryPersistenceReady(): NextResponse | null {
   if (isDatabaseConfigured()) return null;
@@ -22,17 +38,23 @@ export function ensureInventoryPersistenceReady(): NextResponse | null {
   );
 }
 
-export function resolveInventoryActor(request: Request): InventoryActor {
-  const email = request.headers.get("x-genus-actor-email")?.trim().toLowerCase() ?? "";
-  const sectorHeader = request.headers.get("x-genus-actor-sector")?.trim() as SectorId | "";
-  if (!email || !sectorHeader) {
-    throw new InventoryForbiddenError("actorSectorId requerido");
+export async function resolveInventoryActor(request: Request): Promise<InventoryActor> {
+  let actor: AuthActor;
+  try {
+    actor = await resolveAuthenticatedActor(request);
+  } catch (err) {
+    if (err instanceof AuthUnauthorizedError) {
+      throw new InventoryForbiddenError("Sesión requerida (inicie sesión para continuar).");
+    }
+    throw err;
   }
-  const user = findMockUserByEmail(email);
-  if (!user || user.sector !== sectorHeader) {
+
+  const claimedSector = request.headers.get(ACTOR_SECTOR_HEADER)?.trim().toUpperCase();
+  if (claimedSector && claimedSector !== actor.sector) {
     throw new InventoryForbiddenError("Actor no autorizado o sector incorrecto.");
   }
-  return { email: user.email, sector: user.sector as SectorId, displayName: user.displayName };
+
+  return { email: actor.email, sector: actor.sector as SectorId, displayName: actor.displayName };
 }
 
 export function inventoryErrorResponse(err: unknown): NextResponse {

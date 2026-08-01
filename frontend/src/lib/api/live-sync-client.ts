@@ -4,7 +4,7 @@ import type { LiveSyncEvent, LiveSyncStatus } from "@/lib/live-sync/types";
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import type { SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
 
@@ -116,6 +116,7 @@ export async function postSaveProgress(payload: {
 }): Promise<void> {
   await fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "save_progress", ...payload }),
   });
@@ -129,6 +130,7 @@ export async function postCompleteWork(payload: {
 }): Promise<void> {
   await fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "complete_work", ...payload }),
   });
@@ -144,6 +146,7 @@ export async function postQualityDecision(payload: {
 }): Promise<void> {
   await fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "quality_decision", ...payload }),
   });
@@ -157,6 +160,7 @@ export async function postQualityAnnul(payload: {
 }): Promise<void> {
   await fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "quality_annul", ...payload }),
   });
@@ -171,6 +175,7 @@ export async function postCancelWork(payload: {
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "cancel_work", ...payload }),
   });
@@ -181,6 +186,7 @@ export async function postDeliverWork(
 ): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "deliver_work", ...payload }),
   });
@@ -192,6 +198,7 @@ export async function postArchiveDelivery(payload: {
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "archive_delivery", ...payload }),
   });
@@ -203,6 +210,7 @@ export async function postRestoreDelivery(payload: {
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "restore_delivery", ...payload }),
   });
@@ -215,6 +223,7 @@ export async function postDeleteDeliveryRecord(payload: {
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "delete_delivery_record", ...payload }),
   });
@@ -227,6 +236,7 @@ export async function postAnnulDelivery(payload: {
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "annul_delivery", ...payload }),
   });
@@ -241,6 +251,7 @@ export async function postRestoreWork(payload: {
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "restore_work", ...payload }),
   });

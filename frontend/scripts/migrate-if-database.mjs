@@ -15,6 +15,9 @@
  * 0015 = Creamy memoria personal/operativa (conversaciones, memorias, evidencia,
  *   auditoría). Aditiva. Gate APPLY_MIGRATION_0015=1. Hasta entonces Creamy usa
  *   un repositorio en memoria de proceso (ver src/lib/creamy-memory).
+ * 0016 = Genus Auth (usuarios/sesiones/auditoría de sesión enterprise por
+ *   sector). Aditiva. Gate APPLY_MIGRATION_0016=1. Hasta entonces el login
+ *   usa un repositorio en memoria de proceso (ver src/lib/auth).
  */
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
@@ -50,6 +53,7 @@ const apply0012 = process.env.APPLY_MIGRATION_0012 === "1";
 const apply0013 = process.env.APPLY_MIGRATION_0013 === "1";
 const apply0014 = process.env.APPLY_MIGRATION_0014 === "1";
 const apply0015 = process.env.APPLY_MIGRATION_0015 === "1";
+const apply0016 = process.env.APPLY_MIGRATION_0016 === "1";
 
 function shouldDeferTag(tag) {
   const t = String(tag ?? "");
@@ -64,6 +68,7 @@ function shouldDeferTag(tag) {
   if (t.startsWith("0013_") && !apply0013) return true;
   if (t.startsWith("0014_") && !apply0014) return true;
   if (t.startsWith("0015_") && !apply0015) return true;
+  if (t.startsWith("0016_") && !apply0016) return true;
   return false;
 }
 
@@ -79,7 +84,8 @@ function prepareMigrationsFolder() {
     apply0012 &&
     apply0013 &&
     apply0014 &&
-    apply0015
+    apply0015 &&
+    apply0016
   ) {
     return migrationsFolder;
   }
@@ -108,6 +114,7 @@ function prepareMigrationsFolder() {
     if (name.startsWith("0013_") && !apply0013) continue;
     if (name.startsWith("0014_") && !apply0014) continue;
     if (name.startsWith("0015_") && !apply0015) continue;
+    if (name.startsWith("0016_") && !apply0016) continue;
     fs.copyFileSync(
       path.join(migrationsFolder, name),
       path.join(tmp, name)
@@ -137,9 +144,10 @@ function prepareMigrationsFolder() {
   if (!apply0013) deferred.push("0013");
   if (!apply0014) deferred.push("0014");
   if (!apply0015) deferred.push("0015");
+  if (!apply0016) deferred.push("0016");
   if (deferred.length) {
     console.log(
-      `[db:migrate] ${deferred.join(" y ")} diferida(s) (APPLY_MIGRATION_0005…0015=1 para aplicar).`
+      `[db:migrate] ${deferred.join(" y ")} diferida(s) (APPLY_MIGRATION_0005…0016=1 para aplicar).`
     );
   }
   return tmp;
@@ -165,7 +173,7 @@ try {
   const db = drizzle(sql);
   await migrate(db, { migrationsFolder: folder });
   console.log(
-    "[db:migrate] OK — migraciones aplicadas (0005–0015 condicionadas)."
+    "[db:migrate] OK — migraciones aplicadas (0005–0016 condicionadas)."
   );
 } catch (err) {
   // Preview puede quedar sin cuota Neon temporalmente; no bloquear el build

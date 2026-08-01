@@ -13,7 +13,7 @@ export async function GET(request: Request, ctx: Ctx) {
   const blocked = ensureOrdersPersistenceReady();
   if (blocked) return blocked;
   try {
-    resolveOrdersActor(request);
+    await resolveOrdersActor(request);
     const { id } = await ctx.params;
     const url = new URL(request.url);
     const history = url.searchParams.get("history") === "1";
@@ -33,7 +33,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
   const blocked = ensureOrdersPersistenceReady();
   if (blocked) return blocked;
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
     const body = (await request.json()) as {
       content?: OrderContent;
@@ -53,7 +53,7 @@ export async function POST(request: Request, ctx: Ctx) {
   const blocked = ensureOrdersPersistenceReady();
   if (blocked) return blocked;
   try {
-    const actor = resolveOrdersActor(request);
+    const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
     const body = (await request.json()) as {
       action: "duplicate" | "new_version" | "obsolete" | "restore";

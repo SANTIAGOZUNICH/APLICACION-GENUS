@@ -12,7 +12,7 @@ import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
-} from "@/lib/orders/actor";
+} from "@/lib/auth/header-names";
 import { resolveFormulaMasterApi } from "@/lib/orders/orders-client";
 import { mpControlLifecycleActions } from "@/lib/lifecycle/adapters/common";
 import type { LifecycleAction } from "@/lib/lifecycle";
@@ -51,6 +51,7 @@ export function MpWeeklyControlPanel() {
 
   const reload = useCallback(async () => {
     const res = await fetch("/api/v1/mp-control", {
+      credentials: "include",
       headers: actorHeaders(session.email, session.sector),
     });
     const body = (await res.json()) as {
@@ -101,6 +102,7 @@ export function MpWeeklyControlPanel() {
       };
       const res = await fetch("/api/v1/mp-control", {
         method: "POST",
+        credentials: "include",
         headers: actorHeaders(session.email, session.sector),
         body: JSON.stringify({
           client: snapshot.client,
@@ -124,6 +126,7 @@ export function MpWeeklyControlPanel() {
     if (!active || !canWrite) return;
     const res = await fetch(`/api/v1/mp-control/${active.id}`, {
       method: "PATCH",
+      credentials: "include",
       headers: actorHeaders(session.email, session.sector),
       body: JSON.stringify(patch),
     });
@@ -166,6 +169,7 @@ export function MpWeeklyControlPanel() {
     if (action === "eliminar") {
       const res = await fetch(`/api/v1/mp-control/${active.id}`, {
         method: "DELETE",
+        credentials: "include",
         headers: actorHeaders(session.email, session.sector),
       });
       const body = (await res.json()) as { error?: string };
@@ -179,6 +183,7 @@ export function MpWeeklyControlPanel() {
     if (!lifecycleAction) throw new Error("Acción no soportada.");
     const res = await fetch(`/api/v1/mp-control/${active.id}`, {
       method: "PATCH",
+      credentials: "include",
       headers: actorHeaders(session.email, session.sector),
       body: JSON.stringify({ lifecycleAction, reason }),
     });
