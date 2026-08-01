@@ -26,6 +26,10 @@ export type OrdersActor = {
   email: string;
   sector: SectorId;
   displayName: string;
+  sectorLabel?: string;
+  jobTitle?: string;
+  roleId?: string;
+  roleLabel?: string;
 };
 
 export type OeMaterialRow = {

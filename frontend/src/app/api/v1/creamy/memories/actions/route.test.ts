@@ -6,9 +6,14 @@ import { MemoryAuthRepository } from "@/lib/auth/memory-repository";
 import { AuthService } from "@/lib/auth/service";
 import { MemoryCreamyMemoryRepository } from "@/lib/creamy-memory/memory-repository";
 import { setCreamyMemoryRepositoryForTests, getCreamyMemoryService } from "@/lib/creamy-memory/get-creamy-memory-service";
+import type { SectorId } from "@/types/operational/sector";
 
 const PRODUCCION = SECTOR_ACCOUNT_DIRECTORY.find((entry) => entry.sector === "PRODUCCION")!;
 const CALIDAD = SECTOR_ACCOUNT_DIRECTORY.find((entry) => entry.sector === "CALIDAD")!;
+
+function memoryActor(entry: { email: string; sector: string }) {
+  return { email: entry.email, sector: entry.sector as SectorId };
+}
 
 function requestFor(body: unknown, token?: string) {
   return new Request("http://localhost/api/v1/creamy/memories/actions", {
@@ -59,7 +64,7 @@ describe("POST /api/v1/creamy/memories/actions", () => {
   it("valida un hecho operativo solo si el actor es Calidad/Producción/Dirección", async () => {
     const service = getCreamyMemoryService();
     const { memory } = await service.createOperationalMemory(
-      { email: PRODUCCION.email, sector: PRODUCCION.sector },
+      memoryActor(PRODUCCION),
       {
         client: "Cliente Real",
         product: "Producto Real",

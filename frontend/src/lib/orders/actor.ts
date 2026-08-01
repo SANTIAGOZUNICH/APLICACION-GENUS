@@ -35,6 +35,10 @@ function toOrdersActor(actor: AuthActor): OrdersActor {
     email: actor.email,
     sector: actor.sector,
     displayName: actor.displayName,
+    sectorLabel: actor.sectorLabel,
+    jobTitle: actor.jobTitle,
+    roleId: actor.roleId,
+    roleLabel: actor.roleLabel,
   };
 }
 
