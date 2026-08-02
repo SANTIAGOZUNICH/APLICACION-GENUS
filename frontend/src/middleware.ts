@@ -9,8 +9,11 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const hasSessionCookie = Boolean(request.cookies.get("genus_session")?.value);
   const isAuthLogin = pathname === "/api/v1/auth/login";
-  const isPublicPage = pathname === "/login";
-  const isHealthCheck = pathname === "/api/v1/creamy/health" || pathname === "/api/health";
+  const isPublicPage = pathname === "/login" || pathname === "/offline";
+  const isHealthCheck =
+    pathname === "/api/v1/creamy/health" ||
+    pathname === "/api/health" ||
+    pathname === "/api/v1/connectivity";
   const isApi = pathname.startsWith("/api/v1/");
 
   if (!isPublicPage && !isAuthLogin && !isHealthCheck && !hasSessionCookie) {

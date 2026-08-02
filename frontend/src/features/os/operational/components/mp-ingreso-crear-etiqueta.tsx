@@ -18,6 +18,7 @@ import {
   type MpLabelPreparedFile,
 } from "@/lib/inventory/mp-aprobado-label-download";
 import { MpAprobadoLabelPreview } from "@/features/os/operational/components/mp-aprobado-label-preview";
+import { beginOperationGuard, endOperationGuard } from "@/lib/pwa/operation-guard";
 
 type Props = {
   row: MpAprobadoLabelSource | MpIngresoRow;
@@ -93,6 +94,7 @@ export function MpIngresoCrearEtiquetaButton({
   async function handleSaveOrDownload() {
     if (!labelData || acting || preparing || !prepared) return;
     setActing(true);
+    const guard = beginOperationGuard("label", "Etiqueta MP");
     try {
       const result = await saveOrDownloadMpAprobadoLabel(labelData, prepared);
       onToast?.(result.toast);
@@ -107,6 +109,7 @@ export function MpIngresoCrearEtiquetaButton({
           : "No se pudo iniciar la descarga de la etiqueta."
       );
     } finally {
+      endOperationGuard(guard);
       setActing(false);
     }
   }

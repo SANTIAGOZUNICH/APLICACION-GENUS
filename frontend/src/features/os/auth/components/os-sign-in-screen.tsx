@@ -18,6 +18,7 @@ import { OsLoginFooter } from "./os-login-footer";
 import { OsOperationalContext } from "./os-operational-context";
 import { OsSessionBootstrapScreen } from "./os-session-bootstrap-screen";
 import { OsSignInIdentityCard } from "./os-sign-in-identity-card";
+import { InstallGenusOsButton } from "@/features/os/pwa/install-genus-os-button";
 import type { OsSignInCredentials, OsSignInIdentityPreview, OsSignInScreenProps } from "../types";
 
 export type { OsSignInCredentials, OsSignInIdentityPreview, OsSignInScreenProps } from "../types";
@@ -322,6 +323,10 @@ export function OsSignInScreen({
                   />
                 </button>
               </form>
+
+              <div className="mt-4">
+                <InstallGenusOsButton variant="login" />
+              </div>
 
               <p className="mt-8 text-center text-xs text-[var(--os-text-muted)]">
                 <a

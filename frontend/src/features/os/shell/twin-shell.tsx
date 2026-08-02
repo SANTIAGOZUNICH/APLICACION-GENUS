@@ -90,7 +90,14 @@ export function TwinShell({
   }, [activeSidebarId, currentNav.view]);
 
   return (
-    <div className="relative flex h-dvh max-h-dvh min-h-0 overflow-hidden bg-transparent">
+    <div
+      className="relative flex h-dvh max-h-dvh min-h-0 overflow-hidden bg-transparent"
+      style={{
+        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingLeft: "env(safe-area-inset-left, 0px)",
+        paddingRight: "env(safe-area-inset-right, 0px)",
+      }}
+    >
       <div className="os-right-rail" aria-hidden="true" />
 
       <div className="hidden min-h-0 shrink-0 md:flex">

@@ -30,6 +30,7 @@ import {
   type RemitoRecord,
   type RemitoTab,
 } from "@/lib/remitos/types";
+import { beginOperationGuard, endOperationGuard } from "@/lib/pwa/operation-guard";
 
 const TABS: { id: RemitoTab; label: string }[] = [
   { id: "borradores", label: "Borradores" },
@@ -212,6 +213,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
   async function submitGenerate() {
     if (!selected) return;
     setBusy(true);
+    const guard = beginOperationGuard("remito", "Generar remito");
     try {
       const remito = await generateRemitoApi(session, selected.id, {
         displayName: displayNameInput,
@@ -222,6 +224,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo generar");
     } finally {
+      endOperationGuard(guard);
       setBusy(false);
     }
   }

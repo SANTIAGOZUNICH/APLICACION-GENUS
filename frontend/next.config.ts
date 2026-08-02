@@ -38,6 +38,21 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA: process.env.VERCEL_GIT_COMMIT_SHA ?? "",
     NEXT_PUBLIC_GENUS_PLANNING_SOURCE: resolvePublicPlanningSource(),
   },
+  async headers() {
+    return [
+      {
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
+      {
+        source: "/offline",
+        headers: [{ key: "Cache-Control", value: "public, max-age=3600" }],
+      },
+    ];
+  },
   async redirects() {
     return [
       {

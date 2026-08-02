@@ -253,7 +253,7 @@ export function OeFormSections({
             Lote N.º.
           </p>
         )}
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3 overflow-x-clip">
           <table className="min-w-full text-xs" data-testid="oe-materials-table">
             <thead>
               <tr className="bg-[var(--os-bg-muted,#f3f3f3)] text-left">

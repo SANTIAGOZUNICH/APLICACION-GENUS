@@ -1,7 +1,7 @@
 import type { InputHTMLAttributes } from "react";
 
 const baseInputClassName =
-  "h-12 w-full rounded-[var(--os-radius-sm)] border bg-[var(--os-surface)] px-4 text-[15px] text-[var(--os-text)] transition-[border-color,box-shadow] duration-[var(--genus-duration-normal,180ms)] placeholder:text-[var(--os-text-muted)]/55 focus-visible:border-[var(--os-teal)] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--os-teal)]/18 disabled:cursor-not-allowed disabled:opacity-60";
+  "h-12 w-full rounded-[var(--os-radius-sm)] border bg-[var(--os-surface)] px-4 text-base text-[var(--os-text)] transition-[border-color,box-shadow] duration-[var(--genus-duration-normal,180ms)] placeholder:text-[var(--os-text-muted)]/55 focus-visible:border-[var(--os-teal)] focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--os-teal)]/18 disabled:cursor-not-allowed disabled:opacity-60";
 
 interface OsAuthFieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;

@@ -121,7 +121,7 @@ export function ExcelPasteDialog({
           </p>
         )}
         {preview.length > 0 && (
-          <div className="overflow-x-auto rounded border border-[var(--os-border)]">
+          <div className="overflow-x-clip rounded border border-[var(--os-border)]">
             <table className="min-w-full text-left text-xs">
               <thead className="bg-[var(--os-bg)]">
                 <tr>

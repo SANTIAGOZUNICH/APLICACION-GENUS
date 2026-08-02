@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { ArrowLeft, ChevronDown, LogOut, Menu } from "lucide-react";
 import { formatTime } from "@/features/work/lib/calendar";
 import { NotificationBell } from "@/features/os/feedback/notification-bell";
+import { InstallGenusOsButton, StandaloneBuildBadge } from "@/features/os/pwa/install-genus-os-button";
 
 interface OsHeaderProps {
   title: string;
@@ -70,7 +71,7 @@ export function OsHeader({
           <button
             type="button"
             onClick={onOpenMenu}
-            className="flex size-9 items-center justify-center rounded-[var(--os-radius-sm)] text-[var(--os-text)] transition-colors hover:bg-[var(--os-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)] md:hidden"
+            className="flex size-11 items-center justify-center rounded-[var(--os-radius-sm)] text-[var(--os-text)] transition-colors hover:bg-[var(--os-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)] md:hidden"
             aria-label="Abrir menú"
           >
             <Menu className="size-5" aria-hidden="true" />
@@ -128,6 +129,10 @@ export function OsHeader({
                     <p className="truncate text-xs text-[var(--os-text-muted)]">{userEmail}</p>
                   </div>
                 )}
+                <InstallGenusOsButton
+                  variant="menu"
+                  onInteract={() => setMenuOpen(false)}
+                />
                 <button
                   type="button"
                   role="menuitem"
@@ -135,7 +140,7 @@ export function OsHeader({
                     setMenuOpen(false);
                     onLogout();
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-[var(--os-text)] transition-colors hover:bg-[var(--os-bg)] focus-visible:outline-none focus-visible:bg-[var(--os-bg)]"
+                  className="flex min-h-11 w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-[var(--os-text)] transition-colors hover:bg-[var(--os-bg)] focus-visible:outline-none focus-visible:bg-[var(--os-bg)]"
                 >
                   <LogOut className="size-3.5 text-[var(--os-text-muted)]" aria-hidden="true" />
                   Cerrar sesión
@@ -166,9 +171,15 @@ export function OsStatusBar({ syncTime }: OsStatusBarProps) {
   return (
     <footer
       className="flex shrink-0 items-center justify-between border-t border-[var(--os-border-subtle)] bg-[var(--os-bg)]/80 px-4 text-[11px] text-[var(--os-text-muted)] backdrop-blur-sm sm:px-6 md:px-8"
-      style={{ height: "var(--os-status-height)" }}
+      style={{
+        height: "calc(var(--os-status-height) + env(safe-area-inset-bottom, 0px))",
+        paddingBottom: "env(safe-area-inset-bottom, 0px)",
+      }}
     >
-      <span>SEMANAS 2026 · Digital Twin</span>
+      <span className="flex items-center gap-2">
+        SEMANAS 2026 · Digital Twin
+        <StandaloneBuildBadge />
+      </span>
       <span>Última sync · {formatTime(time)}</span>
     </footer>
   );

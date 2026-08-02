@@ -448,7 +448,7 @@ export function OaSimpleWizard({
               {editMaterialDetails ? "Ocultar detalles" : "Editar detalles"}
             </Button>
           </div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-clip">
             <table className="min-w-full border-collapse text-sm">
               <thead>
                 <tr className="bg-[var(--os-surface-muted,#e8eef2)] text-left">
