@@ -9,7 +9,10 @@ import {
   resolveCreamyProvider,
   type CreamyResolvedProvider,
 } from "@/lib/assistant/creamy-provider";
-import { ACTOR_EMAIL_HEADER } from "@/lib/planning/actor";
+import {
+  resolveAuthenticatedActor,
+} from "@/lib/auth/resolve-authenticated-actor";
+import { AuthUnauthorizedError } from "@/lib/auth/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,14 +33,18 @@ function buildProviderModel(resolved: CreamyResolvedProvider) {
   return openai(resolved.model);
 }
 
-/** Health ping — no expone secretos ni nombres de env. */
+/** Health ping autenticado — no expone secretos ni nombres de env. */
 export async function GET(request: Request) {
-  const email = request.headers.get(ACTOR_EMAIL_HEADER)?.trim();
-  if (!email) {
-    return NextResponse.json(
-      { error: "Sesión requerida.", code: "ACTOR_EMAIL_REQUIRED" },
-      { status: 401 }
-    );
+  try {
+    await resolveAuthenticatedActor(request);
+  } catch (error) {
+    if (error instanceof AuthUnauthorizedError) {
+      return NextResponse.json(
+        { error: "Sesión requerida.", code: "AUTH_UNAUTHORIZED" },
+        { status: 401 },
+      );
+    }
+    throw error;
   }
 
   const resolved = resolveCreamyProvider();
@@ -76,7 +83,7 @@ export async function GET(request: Request) {
   } catch (error) {
     const classified = classifyCreamyProviderError(error);
     console.log(
-      `[Creamy health] ping failed (${error instanceof Error ? error.constructor.name : "unknown"}, kind=${classified.kind}) at ${new Date().toISOString()}`
+      `[Creamy health] ping failed (${error instanceof Error ? error.constructor.name : "unknown"}, kind=${classified.kind}) at ${new Date().toISOString()}`,
     );
     return NextResponse.json({
       configured: true,

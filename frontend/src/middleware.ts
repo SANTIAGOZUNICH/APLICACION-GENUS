@@ -15,9 +15,7 @@ export function middleware(request: NextRequest) {
     pathname === "/manifest.webmanifest" ||
     pathname === "/manifest.webmanifest/";
   const isHealthCheck =
-    pathname === "/api/v1/creamy/health" ||
-    pathname === "/api/health" ||
-    pathname === "/api/v1/connectivity";
+    pathname === "/api/health" || pathname === "/api/v1/connectivity";
   const isApi = pathname.startsWith("/api/v1/");
 
   if (!isPublicPage && !isAuthLogin && !isHealthCheck && !hasSessionCookie) {
