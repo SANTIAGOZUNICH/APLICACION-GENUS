@@ -77,6 +77,15 @@ self.addEventListener("fetch", (event) => {
   // APIs y datos: red pura, sin cache.
   if (isApiRequest(url)) return;
 
+  // Manifest y el propio SW: dejar pasar a la red (evita romper Vercel Protection / SSO).
+  if (
+    url.pathname === "/manifest.webmanifest" ||
+    url.pathname === "/manifest.webmanifest/" ||
+    url.pathname === "/sw.js"
+  ) {
+    return;
+  }
+
   // Navegación: red primero; offline → pantalla segura.
   if (request.mode === "navigate") {
     event.respondWith(
@@ -108,7 +117,7 @@ self.addEventListener("fetch", (event) => {
         } catch {
           const fallback = await caches.match(request);
           if (fallback) return fallback;
-          throw new Error("offline-static");
+          return Response.error();
         }
       })()
     );
