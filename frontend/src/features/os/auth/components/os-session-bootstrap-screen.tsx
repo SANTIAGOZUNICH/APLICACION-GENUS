@@ -88,7 +88,7 @@ export function OsSessionBootstrapScreen({
           />
         </div>
         <p className="mt-6 text-xs text-[var(--genus-neutral-500)]">
-          Vista previa de acceso · inicialización simulada
+          Vista previa de acceso · iniciando sesión
         </p>
       </div>
     </div>
