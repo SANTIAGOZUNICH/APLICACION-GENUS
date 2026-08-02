@@ -84,7 +84,7 @@ describe("POST /api/v1/creamy/memories/actions", () => {
   it("forget solo permite al propio usuario olvidar su memoria personal", async () => {
     const service = getCreamyMemoryService();
     const memory = await service.upsertUserMemory(
-      { email: PRODUCCION.email, sector: PRODUCCION.sector },
+      memoryActor(PRODUCCION),
       { memoryType: "nota", content: "Dato personal de prueba real" }
     );
 
@@ -102,20 +102,20 @@ describe("POST /api/v1/creamy/memories/actions", () => {
   it("mantiene separadas las memorias personales de Producción y Calidad", async () => {
     const service = getCreamyMemoryService();
     await service.upsertUserMemory(
-      { email: PRODUCCION.email, sector: PRODUCCION.sector },
+      memoryActor(PRODUCCION),
       { memoryType: "nota", content: "Preferencia de Producción" }
     );
     await service.upsertUserMemory(
-      { email: CALIDAD.email, sector: CALIDAD.sector },
+      memoryActor(CALIDAD),
       { memoryType: "nota", content: "Preferencia de Calidad" }
     );
 
     const produccion = await service.listUserMemories(
-      { email: PRODUCCION.email, sector: PRODUCCION.sector },
+      memoryActor(PRODUCCION),
       PRODUCCION.email
     );
     const calidad = await service.listUserMemories(
-      { email: CALIDAD.email, sector: CALIDAD.sector },
+      memoryActor(CALIDAD),
       CALIDAD.email
     );
 
