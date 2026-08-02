@@ -195,7 +195,7 @@ function InstallGuideModal({
         aria-labelledby="install-genus-os-title"
         data-genus-install-modal="true"
       >
-      <div className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4 shadow-[var(--os-shadow-card-hover)]">
+      <div className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[#0b2130] p-4 shadow-[var(--os-shadow-card-hover)]">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
