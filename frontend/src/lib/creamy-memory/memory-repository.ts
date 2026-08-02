@@ -22,12 +22,12 @@ export class MemoryCreamyMemoryRepository implements CreamyMemoryRepository {
   private evidence = new Map<string, CreamyMemoryEvidence>();
   private auditEvents: CreamyMemoryAuditEvent[] = [];
 
-  async findUserMemoryByKey(userEmail: string, normalizedKey: string): Promise<CreamyUserMemory | null> {
-    const email = normalizeEmail(userEmail);
+  async findUserMemoryByKey(owner: { userEmail: string; userId?: string }, normalizedKey: string): Promise<CreamyUserMemory | null> {
+    const email = normalizeEmail(owner.userEmail);
     for (const memory of this.userMemories.values()) {
       if (
         memory.status === "active" &&
-        normalizeEmail(memory.userEmail) === email &&
+        (owner.userId ? memory.userId === owner.userId : normalizeEmail(memory.userEmail) === email) &&
         memory.normalizedKey === normalizedKey
       ) {
         return structuredClone(memory);
@@ -54,10 +54,10 @@ export class MemoryCreamyMemoryRepository implements CreamyMemoryRepository {
     return structuredClone(updated);
   }
 
-  async listUserMemories(userEmail: string): Promise<CreamyUserMemory[]> {
-    const email = normalizeEmail(userEmail);
+  async listUserMemories(owner: { userEmail: string; userId?: string }): Promise<CreamyUserMemory[]> {
+    const email = normalizeEmail(owner.userEmail);
     return [...this.userMemories.values()]
-      .filter((memory) => normalizeEmail(memory.userEmail) === email && memory.status === "active")
+      .filter((memory) => (owner.userId ? memory.userId === owner.userId : normalizeEmail(memory.userEmail) === email) && memory.status === "active")
       .sort((a, b) => (b.updatedAt > a.updatedAt ? 1 : -1))
       .map((memory) => structuredClone(memory));
   }

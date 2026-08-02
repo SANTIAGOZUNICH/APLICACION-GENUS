@@ -209,6 +209,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
       actorSectorId: sectorId,
       decidedBy: workspace.context.displayName,
       observation: calidadObservation,
+      itemSnapshot: reviewItem,
     });
     if (!result.ok) {
       setActionError(result.error);

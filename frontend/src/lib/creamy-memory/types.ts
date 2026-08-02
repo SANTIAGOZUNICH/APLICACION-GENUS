@@ -32,11 +32,14 @@ export type CreamyMemoryEntityType = "user_memory" | "operational_memory";
 export interface CreamyMemoryActor {
   email: string;
   sector: SectorId;
+  /** Stable Genus Auth identity; email remains the 0015 compatibility key. */
+  userId?: string;
 }
 
 export interface CreamyUserMemory {
   id: string;
   userEmail: string;
+  userId?: string | null;
   sector: SectorId;
   memoryType: string;
   content: string;

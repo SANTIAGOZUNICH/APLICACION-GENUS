@@ -17,7 +17,7 @@ import {
   postQualityDecision,
   postSaveProgress,
 } from "@/lib/api/live-sync-client";
-import type { CompletionEvent, QualityDecisionStatus, OperationalOverlay } from "../types";
+import type { CompletionEvent, QualityDecisionStatus, OperationalOverlay, QualityItem } from "../types";
 import {
   gateQualityDecision,
   type QualityDecisionAttempt,
@@ -53,6 +53,8 @@ export type QualityDecisionOptions = {
   decidedByEmail?: string;
   observation?: string;
   changeReason?: string;
+  /** Client snapshot only for server-side approval matching; never authorizes the actor. */
+  itemSnapshot?: QualityItem;
 };
 
 export type QualityAnnulOptions = {
@@ -193,12 +195,20 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       });
       syncFromStorage();
       if (status === "aprobado" || status === "rechazado") {
+        const item = options.itemSnapshot;
         void postQualityDecision({
           itemId,
           status,
           decidedBy: options.decidedBy,
           observation: options.observation,
           actorSectorId: options.actorSectorId,
+          product: item?.product,
+          client: item?.client,
+          plannedDate: item?.deliveryDate ?? null,
+          plannedDateTo: null,
+          lote: item?.lote,
+          quantity: item?.quantity,
+          relatedWorkItemId: item?.relatedWorkItemId,
         }).catch(() => {});
       }
       return { ok: true };

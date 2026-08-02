@@ -86,7 +86,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const memoryActor = { email: ordersActor.email, sector: ordersActor.sector };
+    const memoryActor = { email: ordersActor.email, sector: ordersActor.sector, userId: ordersActor.userId };
     const service = getCreamyMemoryService();
     const memoryId = record.memoryId.trim();
 

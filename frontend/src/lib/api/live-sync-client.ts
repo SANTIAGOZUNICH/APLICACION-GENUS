@@ -141,6 +141,13 @@ export async function postQualityDecision(payload: {
   status: "aprobado" | "rechazado";
   decidedBy?: string;
   observation?: string;
+  product?: string | null;
+  client?: string | null;
+  plannedDate?: string | null;
+  plannedDateTo?: string | null;
+  lote?: string | null;
+  quantity?: string | null;
+  relatedWorkItemId?: string | null;
   /** Sector de la sesión — defensa de acción en el pipeline (no auth server completo). */
   actorSectorId?: string;
 }): Promise<void> {

@@ -10,6 +10,7 @@ import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types"
 import type { WorkItem } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
+import { notifyEnvasadoForApproval } from "@/lib/notifications/approval-envasado-notify";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,6 +45,13 @@ type OperationAction =
       decidedBy?: string;
       observation?: string;
       actorSectorId?: SectorId;
+      product?: string | null;
+      client?: string | null;
+      plannedDate?: string | null;
+      plannedDateTo?: string | null;
+      lote?: string | null;
+      quantity?: string | null;
+      relatedWorkItemId?: string | null;
     }
   | {
       action: "quality_annul";
@@ -113,7 +121,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "JSON inválido.", code: "INVALID_BODY" }, { status: 400 });
   }
 
-  let actor: { email: string; sector: SectorId; displayName?: string };
+  let actor: { email: string; sector: SectorId; displayName?: string; userId?: string };
   try {
     actor = await resolveOrdersActor(request);
   } catch (err) {
@@ -172,6 +180,17 @@ export async function POST(request: Request) {
           decidedBySector: actor.sector,
           decidedByEmail: actor.email,
         });
+        if (body.status === "aprobado" && (actor.sector === "CALIDAD" || actor.sector === "PRODUCCION")) {
+          await notifyEnvasadoForApproval(
+            actor,
+            {
+              itemId: body.itemId, product: body.product, client: body.client,
+              plannedDate: body.plannedDate, plannedDateTo: body.plannedDateTo,
+              lote: body.lote, quantity: body.quantity, relatedWorkItemId: body.relatedWorkItemId,
+            },
+            actor.sector
+          );
+        }
         return NextResponse.json({
           ok: true,
           revision: serverOperationalState.getRevision(),

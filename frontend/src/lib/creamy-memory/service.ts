@@ -57,7 +57,8 @@ export class CreamyMemoryService {
     if (!memoryType) throw new CreamyMemoryValidationError("Falta el tipo de memoria (memoryType).");
 
     const normalizedKey = normalizeMemoryKey(`${memoryType}|${content}`);
-    const existing = await this.repo.findUserMemoryByKey(actor.email, normalizedKey);
+    const owner = { userEmail: actor.email, userId: actor.userId };
+    const existing = await this.repo.findUserMemoryByKey(owner, normalizedKey);
     const now = nowIso();
 
     if (existing) {
@@ -74,6 +75,7 @@ export class CreamyMemoryService {
     const record: CreamyUserMemory = {
       id: randomUUID(),
       userEmail: actor.email,
+      userId: actor.userId ?? null,
       sector: actor.sector,
       memoryType,
       content,
@@ -94,7 +96,8 @@ export class CreamyMemoryService {
       await this.audit("user_memory", targetEmail, "READ_DENIED", actor, {});
       throw new CreamyMemoryForbiddenError("Solo el propio usuario puede leer su memoria personal.");
     }
-    const list = await this.repo.listUserMemories(targetEmail);
+    // targetEmail was authorized above; durable ownership is still session userId when available.
+    const list = await this.repo.listUserMemories({ userEmail: targetEmail, userId: actor.userId });
     return list.slice(0, Math.max(1, Math.min(50, limit)));
   }
 
@@ -103,7 +106,7 @@ export class CreamyMemoryService {
       throw new CreamyMemoryForbiddenError("Solo el propio usuario puede olvidar su memoria personal.");
     }
     const current = await this.repo.getUserMemory(id);
-    if (!current || normalizeEmail(current.userEmail) !== normalizeEmail(targetEmail)) {
+    if (!current || (actor.userId ? current.userId !== actor.userId : normalizeEmail(current.userEmail) !== normalizeEmail(targetEmail))) {
       throw new CreamyMemoryNotFoundError("Memoria personal no encontrada.");
     }
     const updated = await this.repo.updateUserMemory(id, { status: "deleted", updatedAt: nowIso() });
@@ -114,7 +117,7 @@ export class CreamyMemoryService {
   async confirmUserMemory(actor: CreamyMemoryActor, id: string): Promise<CreamyUserMemory> {
     const current = await this.repo.getUserMemory(id);
     if (!current) throw new CreamyMemoryNotFoundError("Memoria personal no encontrada.");
-    if (!canMutateUserMemory(actor.email, current.userEmail)) {
+    if (!canMutateUserMemory(actor.email, current.userEmail) || (actor.userId && current.userId !== actor.userId)) {
       throw new CreamyMemoryForbiddenError("Solo el propio usuario puede confirmar su memoria personal.");
     }
     const updated = await this.repo.updateUserMemory(id, { lastUsedAt: nowIso(), status: "active" });

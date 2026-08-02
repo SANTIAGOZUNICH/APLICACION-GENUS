@@ -53,11 +53,14 @@ export async function resolveOrdersActor(request: Request): Promise<OrdersActor>
     throw err;
   }
 
-  const claimedSector = request.headers.get(ACTOR_SECTOR_HEADER)?.trim().toUpperCase();
-  if (claimedSector && claimedSector !== actor.sector) {
-    throw new OrdersForbiddenError(
-      "El sector de sesión no coincide con el usuario resuelto."
-    );
+  // Legacy test headers must not influence or invalidate a real session.
+  if (process.env.NODE_ENV === "test") {
+    const claimedSector = request.headers.get(ACTOR_SECTOR_HEADER)?.trim().toUpperCase();
+    if (claimedSector && claimedSector !== actor.sector) {
+      throw new OrdersForbiddenError(
+        "El sector de sesión no coincide con el usuario resuelto."
+      );
+    }
   }
 
   return toOrdersActor(actor);

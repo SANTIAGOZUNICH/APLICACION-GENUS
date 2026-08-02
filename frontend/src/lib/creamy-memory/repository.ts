@@ -12,12 +12,12 @@ import type {
  * Drizzle sobre Neon.
  */
 export interface CreamyMemoryRepository {
-  // Memoria personal (aislada por userEmail).
-  findUserMemoryByKey(userEmail: string, normalizedKey: string): Promise<CreamyUserMemory | null>;
+  // Memoria personal: userId cuando 0017 está disponible; email como compatibilidad 0015.
+  findUserMemoryByKey(owner: { userEmail: string; userId?: string }, normalizedKey: string): Promise<CreamyUserMemory | null>;
   getUserMemory(id: string): Promise<CreamyUserMemory | null>;
   insertUserMemory(record: CreamyUserMemory): Promise<CreamyUserMemory>;
   updateUserMemory(id: string, patch: Partial<CreamyUserMemory>): Promise<CreamyUserMemory | null>;
-  listUserMemories(userEmail: string): Promise<CreamyUserMemory[]>;
+  listUserMemories(owner: { userEmail: string; userId?: string }): Promise<CreamyUserMemory[]>;
 
   // Memoria operativa (compartida).
   findOperationalMemoryByKey(normalizedKey: string): Promise<CreamyOperationalMemory | null>;

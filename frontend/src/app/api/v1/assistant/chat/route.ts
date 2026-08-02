@@ -365,7 +365,7 @@ export async function POST(request: Request) {
   let userMemoryHints: string[] = [];
   try {
     const memories = await getCreamyMemoryService().listUserMemories(
-      { email: actor.email, sector: actor.sector },
+      { email: actor.email, sector: actor.sector, userId: actor.userId },
       actor.email,
       5
     );

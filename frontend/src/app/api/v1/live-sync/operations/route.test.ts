@@ -9,6 +9,11 @@ vi.mock("@/lib/api/bff-helpers", () => ({
 }));
 
 const mutateMock = vi.fn();
+const notifyMock = vi.fn();
+
+vi.mock("@/lib/notifications/approval-envasado-notify", () => ({
+  notifyEnvasadoForApproval: (...args: unknown[]) => notifyMock(...args),
+}));
 
 vi.mock("@/lib/live-sync/server-operational-state", () => ({
   serverOperationalState: {
@@ -42,6 +47,7 @@ vi.mock("@/lib/orders/actor", () => ({
 describe("POST /api/v1/live-sync/operations RBAC", () => {
   beforeEach(() => {
     mutateMock.mockReset();
+    notifyMock.mockReset();
   });
 
   async function post(body: Record<string, unknown>, headers: Record<string, string>) {
@@ -121,5 +127,22 @@ describe("POST /api/v1/live-sync/operations RBAC", () => {
     );
     expect(res.status).toBe(200);
     expect(mutateMock).toHaveBeenCalledWith("cancel_work", "w1", expect.any(Object));
+  });
+
+  it("notifica Envasado solo al aprobar", async () => {
+    mutateMock.mockReturnValue({ id: "q1" });
+    const approved = await post(
+      { action: "quality_decision", itemId: "q1", status: "aprobado", actorSectorId: "PRODUCCION", product: "Producto", client: "Cliente", plannedDate: "2026-08-03" },
+      { "x-genus-actor-email": "produccion@laboratoriogenus.com.ar", "x-genus-actor-sector": "PRODUCCION" }
+    );
+    expect(approved.status).toBe(200);
+    expect(notifyMock).toHaveBeenCalledWith(expect.objectContaining({ sector: "PRODUCCION" }), expect.objectContaining({ itemId: "q1" }), "PRODUCCION");
+
+    notifyMock.mockReset();
+    await post(
+      { action: "quality_decision", itemId: "q1", status: "rechazado", actorSectorId: "PRODUCCION" },
+      { "x-genus-actor-email": "produccion@laboratoriogenus.com.ar", "x-genus-actor-sector": "PRODUCCION" }
+    );
+    expect(notifyMock).not.toHaveBeenCalled();
   });
 });
