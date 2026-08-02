@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, ilike, ne } from "drizzle-orm";
+import { and, desc, eq, ilike, isNull, ne, or } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import {
   creamyMemoryAuditEvents,
@@ -53,7 +53,15 @@ function audit(row: typeof creamyMemoryAuditEvents.$inferSelect): CreamyMemoryAu
 export class DrizzleCreamyMemoryRepository implements CreamyMemoryRepository {
   private db() { return getDb(); }
   private owner(owner: { userEmail: string; userId?: string }) {
-    return owner.userId ? eq(creamyUserMemories.userId, owner.userId) : eq(creamyUserMemories.userEmail, owner.userEmail.trim().toLowerCase());
+    const email = owner.userEmail.trim().toLowerCase();
+    // Prefer userId when present on both sides; still allow 0015 rows that only have email.
+    if (owner.userId) {
+      return or(
+        eq(creamyUserMemories.userId, owner.userId),
+        and(isNull(creamyUserMemories.userId), eq(creamyUserMemories.userEmail, email))
+      )!;
+    }
+    return eq(creamyUserMemories.userEmail, email);
   }
   async findUserMemoryByKey(ownerKey: { userEmail: string; userId?: string }, normalizedKey: string) {
     const [row] = await this.db().select().from(creamyUserMemories).where(and(this.owner(ownerKey), eq(creamyUserMemories.normalizedKey, normalizedKey), eq(creamyUserMemories.status, "active"))).limit(1);

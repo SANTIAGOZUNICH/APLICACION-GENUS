@@ -32,6 +32,18 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+/** Ownership: prefer stable userId when both sides have it; else email (0015 legacy rows). */
+function ownsUserMemory(
+  actor: CreamyMemoryActor,
+  memory: Pick<CreamyUserMemory, "userEmail" | "userId">,
+  targetEmail = actor.email
+): boolean {
+  if (actor.userId && memory.userId) {
+    return memory.userId === actor.userId;
+  }
+  return normalizeEmail(memory.userEmail) === normalizeEmail(targetEmail);
+}
+
 export interface CreateOperationalMemoryResult {
   memory: CreamyOperationalMemory;
   deduped: boolean;
@@ -106,7 +118,7 @@ export class CreamyMemoryService {
       throw new CreamyMemoryForbiddenError("Solo el propio usuario puede olvidar su memoria personal.");
     }
     const current = await this.repo.getUserMemory(id);
-    if (!current || (actor.userId ? current.userId !== actor.userId : normalizeEmail(current.userEmail) !== normalizeEmail(targetEmail))) {
+    if (!current || !ownsUserMemory(actor, current, targetEmail)) {
       throw new CreamyMemoryNotFoundError("Memoria personal no encontrada.");
     }
     const updated = await this.repo.updateUserMemory(id, { status: "deleted", updatedAt: nowIso() });
@@ -117,7 +129,7 @@ export class CreamyMemoryService {
   async confirmUserMemory(actor: CreamyMemoryActor, id: string): Promise<CreamyUserMemory> {
     const current = await this.repo.getUserMemory(id);
     if (!current) throw new CreamyMemoryNotFoundError("Memoria personal no encontrada.");
-    if (!canMutateUserMemory(actor.email, current.userEmail) || (actor.userId && current.userId !== actor.userId)) {
+    if (!canMutateUserMemory(actor.email, current.userEmail) || !ownsUserMemory(actor, current)) {
       throw new CreamyMemoryForbiddenError("Solo el propio usuario puede confirmar su memoria personal.");
     }
     const updated = await this.repo.updateUserMemory(id, { lastUsedAt: nowIso(), status: "active" });

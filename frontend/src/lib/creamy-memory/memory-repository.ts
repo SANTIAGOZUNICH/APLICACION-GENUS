@@ -25,11 +25,11 @@ export class MemoryCreamyMemoryRepository implements CreamyMemoryRepository {
   async findUserMemoryByKey(owner: { userEmail: string; userId?: string }, normalizedKey: string): Promise<CreamyUserMemory | null> {
     const email = normalizeEmail(owner.userEmail);
     for (const memory of this.userMemories.values()) {
-      if (
-        memory.status === "active" &&
-        (owner.userId ? memory.userId === owner.userId : normalizeEmail(memory.userEmail) === email) &&
-        memory.normalizedKey === normalizedKey
-      ) {
+      const owns =
+        owner.userId && memory.userId
+          ? memory.userId === owner.userId
+          : normalizeEmail(memory.userEmail) === email;
+      if (memory.status === "active" && owns && memory.normalizedKey === normalizedKey) {
         return structuredClone(memory);
       }
     }
@@ -57,7 +57,13 @@ export class MemoryCreamyMemoryRepository implements CreamyMemoryRepository {
   async listUserMemories(owner: { userEmail: string; userId?: string }): Promise<CreamyUserMemory[]> {
     const email = normalizeEmail(owner.userEmail);
     return [...this.userMemories.values()]
-      .filter((memory) => (owner.userId ? memory.userId === owner.userId : normalizeEmail(memory.userEmail) === email) && memory.status === "active")
+      .filter((memory) => {
+        const owns =
+          owner.userId && memory.userId
+            ? memory.userId === owner.userId
+            : normalizeEmail(memory.userEmail) === email;
+        return owns && memory.status === "active";
+      })
       .sort((a, b) => (b.updatedAt > a.updatedAt ? 1 : -1))
       .map((memory) => structuredClone(memory));
   }
