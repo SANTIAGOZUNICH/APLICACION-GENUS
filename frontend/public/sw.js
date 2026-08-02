@@ -19,7 +19,9 @@ const PRECACHE_URLS = [
   "/icons/icon-512.png",
   "/icons/icon-512-maskable.png",
   "/icons/apple-touch-icon.png",
-  "/brand/laboratorio-genus-logo-official-source.png",
+  "/icons/favicon-32.png",
+  "/icons/favicon-48.png",
+  "/brand/genus-os-app-icon-official.png",
 ];
 
 function isApiRequest(url) {

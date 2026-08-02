@@ -44,12 +44,16 @@ export function OsHeader({
   useEffect(() => {
     if (!menuOpen) return;
     const onPointerDown = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+      const target = event.target as Element | null;
+      if (target?.closest?.("[data-genus-install-modal]")) return;
+      if (menuRef.current && !menuRef.current.contains(target as Node)) {
         setMenuOpen(false);
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenuOpen(false);
+      if (event.key !== "Escape") return;
+      if (document.querySelector("[data-genus-install-modal]")) return;
+      setMenuOpen(false);
     };
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
