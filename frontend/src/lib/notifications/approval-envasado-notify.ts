@@ -36,7 +36,7 @@ type Candidate = {
 };
 
 export type ApprovalEnvasadoFinder = (
-  snapshot: Required<Pick<ApprovalSnapshot, "product" | "client" | "plannedDate">>
+  snapshot: { product: string; client: string; plannedDate: string }
 ) => Promise<Candidate[]>;
 
 const TERMINAL_STATUSES = new Set(["CANCELADO", "ANULADO", "TERMINADO"]);
@@ -52,7 +52,7 @@ export function deterministicApprovalNotificationId(key: string): string {
 }
 
 export function filterApprovalEnvasadoMatches(
-  snapshot: Required<Pick<ApprovalSnapshot, "product" | "client" | "plannedDate">>,
+  snapshot: { product: string; client: string; plannedDate: string },
   rows: Candidate[]
 ): Candidate[] {
   const week = weekStartMonday(snapshot.plannedDate);
@@ -63,7 +63,15 @@ export function filterApprovalEnvasadoMatches(
       normalizeSearchKey(row.client) === client &&
       normalizeSearchKey(row.product) === product &&
       !TERMINAL_STATUSES.has(row.status.toUpperCase()) &&
-      workItemOverlapsWeek(row, week)
+      workItemOverlapsWeek(
+        {
+          plannedDate: row.plannedDate,
+          plannedDateTo: row.plannedDateTo,
+          weekStart: row.weekStart ?? null,
+          weekId: row.weekId ?? null,
+        },
+        week
+      )
   );
 }
 
@@ -166,7 +174,7 @@ async function resolvePlannedDate(snapshot: ApprovalSnapshot): Promise<string | 
 
 /** Best-effort post-approval side effect; never changes the quality decision outcome. */
 export async function notifyEnvasadoForApproval(
-  actor: Pick<OrdersActor, "email" | "sector" | "displayName">,
+  actor: Pick<OrdersActor, "email" | "sector"> & { displayName?: string | null },
   snapshot: ApprovalSnapshot,
   approvalStage: "CALIDAD" | "PRODUCCION",
   finder: ApprovalEnvasadoFinder = findOperationalEnvasadoCandidates

@@ -22,7 +22,16 @@ function operationalKey(row: Pick<typeof creamyOperationalMemories.$inferSelect,
 }
 
 function user(row: typeof creamyUserMemories.$inferSelect): CreamyUserMemory {
-  return { ...row, userId: row.userId, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(), lastUsedAt: iso(row.lastUsedAt), sourceConversationId: row.sourceConversationId };
+  return {
+    ...row,
+    userId: row.userId,
+    sector: row.sector as CreamyUserMemory["sector"],
+    status: row.status as CreamyUserMemory["status"],
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    lastUsedAt: iso(row.lastUsedAt),
+    sourceConversationId: row.sourceConversationId,
+  };
 }
 function operational(row: typeof creamyOperationalMemories.$inferSelect): CreamyOperationalMemory {
   return {
