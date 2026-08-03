@@ -94,7 +94,7 @@ export const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
   deposito_graneles: "Depósito Graneles",
   avisos: "Avisos",
   avisos_me: "Avisos ME",
-  semanas_produccion: "Semanas de Producción",
+  semanas_produccion: "Plan semanal",
   asignar_trabajos: "Asignar trabajos",
   entregados: "Entregados",
   asignacion_lotes: "Asignación de lotes",

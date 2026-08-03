@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { getDb, type GenusDb } from "@/lib/db/client";
 import {
   operationalEvents,
@@ -143,18 +143,31 @@ export class DrizzlePlanningRepository implements PlanningRepository {
 
   async listPublishedItems(filters: {
     sector?: string | null;
+    sectors?: string[] | null;
     ownerPerson?: string | null;
     date?: string | null;
     weekStart?: string | null;
+    limit?: number | null;
   }): Promise<PlanningWorkItemRecord[]> {
     const conditions = [
       eq(workItems.status, "PUBLICADO"),
       eq(planningWeeks.status, "PUBLISHED"),
     ];
 
+    const floorSectors = (filters.sectors ?? []).filter(
+      (s) =>
+        s === "ELABORACION" || s === "ENVASADO_MASIVO" || s === "ENVASADO_PREMIUM"
+    );
     // work_item_sector enum only has floor planning sectors. Other sectors
     // (CODIFICADO/MP/etc.) must not be cast into the enum — that yields 502.
-    if (
+    if (floorSectors.length > 0) {
+      conditions.push(
+        inArray(
+          workItems.sector,
+          floorSectors as Array<"ELABORACION" | "ENVASADO_MASIVO" | "ENVASADO_PREMIUM">
+        )
+      );
+    } else if (
       filters.sector === "ELABORACION" ||
       filters.sector === "ENVASADO_MASIVO" ||
       filters.sector === "ENVASADO_PREMIUM"
@@ -178,14 +191,42 @@ export class DrizzlePlanningRepository implements PlanningRepository {
       );
     }
 
+    const limit =
+      typeof filters.limit === "number" && filters.limit > 0
+        ? Math.min(Math.floor(filters.limit), 500)
+        : 500;
+
     const rows = await this.db
-      .select({ item: workItems })
+      .select({
+        id: workItems.id,
+        planningWeekId: workItems.planningWeekId,
+        plannedDate: workItems.plannedDate,
+        plannedDateTo: workItems.plannedDateTo,
+        client: workItems.client,
+        product: workItems.product,
+        plannedQuantity: workItems.plannedQuantity,
+        unit: workItems.unit,
+        sector: workItems.sector,
+        line: workItems.line,
+        branchOwner: workItems.branchOwner,
+        priority: workItems.priority,
+        notes: workItems.notes,
+        status: workItems.status,
+        publishedAt: workItems.publishedAt,
+        createdBy: workItems.createdBy,
+        source: workItems.source,
+        originRef: workItems.originRef,
+        version: workItems.version,
+        createdAt: workItems.createdAt,
+        updatedAt: workItems.updatedAt,
+      })
       .from(workItems)
       .innerJoin(planningWeeks, eq(workItems.planningWeekId, planningWeeks.id))
       .where(and(...conditions))
-      .orderBy(asc(workItems.plannedDate), asc(workItems.product));
+      .orderBy(asc(workItems.plannedDate), asc(workItems.product))
+      .limit(limit);
 
-    return rows.map((r) => mapItem(r.item));
+    return rows.map((row) => mapItem(row));
   }
 
   async createItem(

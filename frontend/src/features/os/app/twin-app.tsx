@@ -29,6 +29,10 @@ import { DepositoGranelesView } from "@/features/os/operational/views/deposito-g
 import { MeAvisosView } from "@/features/os/operational/views/me-avisos-view";
 import { InternalAvisosView } from "@/features/os/operational/views/internal-avisos-view";
 import { SemanasProduccionView } from "@/features/os/operational/views/semanas-produccion-view";
+import {
+  SharedWeeklyPlanViewForCodificado,
+  SharedWeeklyPlanViewForMateriaPrima,
+} from "@/features/os/operational/views/shared-weekly-plan-view";
 import { MpHubView } from "@/features/os/operational/views/mp-hub-view";
 import { AsignarTrabajosView } from "@/features/os/operational/views/asignar-trabajos-view";
 import { AsignacionLotesView } from "@/features/os/operational/views/asignacion-lotes-view";
@@ -51,6 +55,8 @@ export function TwinRouter() {
     case "mi-trabajo":
       return renderSectorHome(sectorId, SECTOR_VIEW_REGISTRY);
     case "plan-semanal":
+      if (sectorId === "CODIFICADO") return <SharedWeeklyPlanViewForCodificado />;
+      if (sectorId === "MATERIA_PRIMA") return <SharedWeeklyPlanViewForMateriaPrima />;
       return <WireframePlanSemanal />;
     case "consulta":
       return <WireframeConsulta key={currentNav.query ?? "consulta"} initialQuery={currentNav.query} />;
