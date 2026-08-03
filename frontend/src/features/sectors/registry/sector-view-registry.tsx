@@ -23,8 +23,8 @@ export const SECTOR_VIEW_REGISTRY: SectorViewRegistry = {
   "deposito-home": DynamicWorkspaceHome,
   "produccion-home": DynamicWorkspaceHome,
   "direccion-home": DynamicWorkspaceHome,
-  "codificado-home": createPlaceholderView("CODIFICADO"),
-  "materia-prima-home": createPlaceholderView("MATERIA_PRIMA"),
+  "codificado-home": DynamicWorkspaceHome,
+  "materia-prima-home": DynamicWorkspaceHome,
   "comercial-home": createPlaceholderView("COMERCIAL"),
   "sector-placeholder-home": createPlaceholderView("CODIFICADO"),
 };

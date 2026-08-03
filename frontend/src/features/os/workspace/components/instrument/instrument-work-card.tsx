@@ -22,7 +22,7 @@ export function InstrumentWorkCard({
 
   return (
     <article
-      className={`group os-fade-in flex flex-col rounded-[var(--os-radius-sm)] border bg-[var(--os-surface)] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[var(--os-shadow-sm)] ${
+      className={`group os-fade-in flex flex-col rounded-[var(--os-radius-sm)] border bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)] transition-all duration-[var(--genus-duration-hover,140ms)] ease-out hover:-translate-y-0.5 hover:shadow-[var(--os-shadow-card)] motion-reduce:transform-none ${
         isDone
           ? "border-[var(--os-border-subtle)] opacity-75"
           : "border-[var(--os-border)]"

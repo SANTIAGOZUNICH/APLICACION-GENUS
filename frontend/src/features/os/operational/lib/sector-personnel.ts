@@ -6,6 +6,7 @@ export const SECTOR_PERSONNEL = {
   ENVASADO_MASIVO: "Francisco Zapata",
   ENVASADO_PREMIUM: "Belén Ayala",
   DEPOSITO: "Alberto Banini",
+  MATERIA_PRIMA: "Lucas Ferreyra",
   ELABORACION_ENCARGADO: "Santino Gianfilippo",
   ELABORACION_RAMA_CRISTIAN: "Cristian",
   ELABORACION_RAMA_NICOLAS: "Nicolás",

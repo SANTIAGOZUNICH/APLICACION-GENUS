@@ -24,8 +24,8 @@ const ATTENTION_KIND: Record<AttentionKind, BadgeTone> = {
 const TONE_CLASS: Record<BadgeTone, string> = {
   neutral: "border-[var(--os-border)] bg-[var(--os-surface-muted)]/60 text-[var(--os-text-muted)]",
   active: "border-[var(--os-teal)]/20 bg-[var(--os-teal-soft)] text-[var(--os-teal)]",
-  urgent: "border-amber-200 bg-amber-50 text-amber-800",
-  blocked: "border-rose-200 bg-rose-50 text-rose-700",
+  urgent: "border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] text-[var(--genus-warning)]",
+  blocked: "border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] text-[var(--genus-error)]",
   waiting: "border-[var(--os-border)] bg-[var(--os-surface)] text-[var(--os-text-muted)]",
 };
 

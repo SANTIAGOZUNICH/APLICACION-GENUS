@@ -75,13 +75,13 @@ export const genusCardDefinitions: Record<GenusCardType, GenusCardDefinition> = 
   },
   creamy: {
     id: "creamy",
-    name: "Creamy Card",
-    purpose: "Copiloto contextual — integrado al OS, no chatbot flotante.",
+    name: "Creamy Panel Surface",
+    purpose: "Superficie del panel FAB — no tarjeta permanente en sidebar.",
     padding: "var(--genus-space-4)",
     radius: "var(--genus-radius-lg)",
-    shadow: "var(--genus-shadow-sm)",
-    border: "1px solid var(--genus-brand-primary-muted)",
-    background: "linear-gradient(135deg, var(--genus-brand-primary-soft), var(--genus-surface-card))",
+    shadow: "var(--genus-shadow-md)",
+    border: "1px solid var(--genus-border)",
+    background: "var(--genus-surface-glass)",
   },
 };
 

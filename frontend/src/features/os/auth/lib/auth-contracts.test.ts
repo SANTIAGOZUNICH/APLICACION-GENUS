@@ -1,189 +1,121 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { MockAuthAdapter, mapMockUserToSession } from "../adapters/mock-auth-adapter";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  GenusAuthAdapter,
+  mapAuthenticatedUserToSession,
+} from "../adapters/genus-auth-adapter";
 import {
   GENUS_OS_AUTH_SESSION_KEY,
-  GENUS_OS_PREVIEW_USER_KEY,
   clearAuthSessionStorages,
   readAuthSessionFromStorages,
   writeAuthSessionToStorages,
 } from "../lib/auth-session-storage";
-import {
-  clearAuthSession,
-  getAuthSector,
-  getCurrentAuthSession,
-  isAuthenticatedPreview,
-} from "../lib/auth-session-helpers";
-import { MOCK_PREVIEW_USERS } from "../lib/mock-preview-users";
-import type { OsAuthSession } from "../contracts";
+import { MOCK_PREVIEW_USERS } from "./mock-preview-users";
 
-function createMemoryStorage(): Storage {
+function createStorage(): Storage {
   const store = new Map<string, string>();
   return {
-    get length() {
-      return store.size;
-    },
-    clear() {
-      store.clear();
-    },
-    getItem(key: string) {
-      return store.get(key) ?? null;
-    },
-    key(index: number) {
-      return [...store.keys()][index] ?? null;
-    },
-    removeItem(key: string) {
-      store.delete(key);
-    },
-    setItem(key: string, value: string) {
-      store.set(key, value);
-    },
+    get length() { return store.size; },
+    clear() { store.clear(); },
+    getItem(key) { return store.get(key) ?? null; },
+    key(index) { return [...store.keys()][index] ?? null; },
+    removeItem(key) { store.delete(key); },
+    setItem(key, value) { store.set(key, value); },
   };
 }
 
-function installBrowserStorages(sessionStorage: Storage, localStorage: Storage) {
+function installStorage(sessionStorage: Storage, localStorage: Storage) {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: { sessionStorage, localStorage },
   });
 }
 
-describe("Auth contracts — MockAuthAdapter", () => {
+const authenticatedUser = {
+  email: "produccion@laboratoriogenus.com.ar",
+  displayName: "Agustina Zunich",
+  sector: "PRODUCCION",
+  role: "ROL-SU",
+  roleLabel: "Supervisora",
+  sectorLabel: "Producción",
+  jobTitle: "Supervisora de Planta",
+  redirectTo: "/mi-trabajo",
+};
+
+describe("GenusAuthAdapter", () => {
   let sessionStorage: Storage;
   let localStorage: Storage;
-  let adapter: MockAuthAdapter;
 
   beforeEach(() => {
-    sessionStorage = createMemoryStorage();
-    localStorage = createMemoryStorage();
-    installBrowserStorages(sessionStorage, localStorage);
-    adapter = new MockAuthAdapter();
+    sessionStorage = createStorage();
+    localStorage = createStorage();
+    installStorage(sessionStorage, localStorage);
+    vi.stubGlobal("fetch", vi.fn());
   });
 
-  it("autentica credenciales mock válidas y persiste sesión contractual", async () => {
-    const session = await adapter.signIn({
-      email: "produccion@laboratoriogenus.com.ar",
-      password: "produccion123",
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("uses the login endpoint and stores only display cache", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ user: authenticatedUser }), { status: 200 })
+    );
+
+    const session = await new GenusAuthAdapter().signIn({
+      email: authenticatedUser.email,
+      password: "not-a-demo-secret",
       rememberMe: false,
     });
 
-    expect(session).not.toBeNull();
-    expect(session?.status).toBe("preview");
-    expect(session?.mode).toBe("preview");
-    expect(session?.user.displayName).toBe("Agustina Zunich");
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/auth/login",
+      expect.objectContaining({ method: "POST", credentials: "include" })
+    );
     expect(session?.sector.id).toBe("PRODUCCION");
-    expect(session?.role.id).toBe("ROL-SU");
-    expect(session?.redirectTo).toBe("/mi-trabajo");
+    expect(sessionStorage.getItem(GENUS_OS_AUTH_SESSION_KEY)).toBeTruthy();
+  });
 
-    const raw = sessionStorage.getItem(GENUS_OS_AUTH_SESSION_KEY);
-    expect(raw).toBeTruthy();
+  it("clears cached identity when /me returns 401", async () => {
+    writeAuthSessionToStorages(
+      mapAuthenticatedUserToSession(authenticatedUser, true),
+      sessionStorage,
+      localStorage
+    );
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 401 }));
+
+    await expect(new GenusAuthAdapter().hydrateSession()).resolves.toBeNull();
     expect(localStorage.getItem(GENUS_OS_AUTH_SESSION_KEY)).toBeNull();
   });
 
-  it("rechaza credenciales inválidas sin persistir", async () => {
-    const session = await adapter.signIn({
-      email: "produccion@laboratoriogenus.com.ar",
-      password: "wrong",
-      rememberMe: false,
-    });
+  it("clears local cache even if logout request fails", async () => {
+    writeAuthSessionToStorages(
+      mapAuthenticatedUserToSession(authenticatedUser, false),
+      sessionStorage,
+      localStorage
+    );
+    vi.mocked(fetch).mockRejectedValue(new Error("offline"));
 
-    expect(session).toBeNull();
-    expect(sessionStorage.getItem(GENUS_OS_AUTH_SESSION_KEY)).toBeNull();
-  });
-
-  it("usa localStorage cuando remember me está activo", async () => {
-    await adapter.signIn({
-      email: "calidad@laboratoriogenus.com.ar",
-      password: "calidad123",
-      rememberMe: true,
-    });
-
-    expect(localStorage.getItem(GENUS_OS_AUTH_SESSION_KEY)).toBeTruthy();
-    expect(sessionStorage.getItem(GENUS_OS_AUTH_SESSION_KEY)).toBeNull();
-  });
-
-  it("signOut limpia la sesión persistida", async () => {
-    await adapter.signIn({
-      email: "deposito@laboratoriogenus.com.ar",
-      password: "deposito123",
-      rememberMe: false,
-    });
-
-    await adapter.signOut();
-
-    expect(adapter.getSession()).toBeNull();
+    await expect(new GenusAuthAdapter().signOut()).rejects.toThrow("offline");
     expect(sessionStorage.getItem(GENUS_OS_AUTH_SESSION_KEY)).toBeNull();
   });
 });
 
-describe("Auth session storage — migración legacy", () => {
-  let sessionStorage: Storage;
-  let localStorage: Storage;
-
-  beforeEach(() => {
-    sessionStorage = createMemoryStorage();
-    localStorage = createMemoryStorage();
-    installBrowserStorages(sessionStorage, localStorage);
+describe("Auth session storage", () => {
+  it("keeps credential material out of the client directory bundle", () => {
+    const sensitiveField = ["pass", "word"].join("");
+    expect(JSON.stringify(MOCK_PREVIEW_USERS)).not.toContain(sensitiveField);
+    expect(MOCK_PREVIEW_USERS.every((user) => !Object.hasOwn(user, sensitiveField))).toBe(true);
   });
 
-  it("migra genus_os_preview_user al contrato OsAuthSession", () => {
-    sessionStorage.setItem(
-      GENUS_OS_PREVIEW_USER_KEY,
-      JSON.stringify({
-        email: "direccion@laboratoriogenus.com.ar",
-        sector: "DIRECCION",
-        displayName: "Santiago Dirección",
-        role: "ROL-DI",
-        roleLabel: "Dirección",
-        sectorLabel: "Dirección",
-        jobTitle: "Director General",
-        redirectTo: "/mi-trabajo",
-        storedAt: "2026-07-01T10:00:00.000Z",
-      })
+  it("round-trips non-authoritative display data", () => {
+    const sessionStorage = createStorage();
+    const localStorage = createStorage();
+    const session = mapAuthenticatedUserToSession(authenticatedUser, true);
+
+    writeAuthSessionToStorages(session, sessionStorage, localStorage);
+    expect(readAuthSessionFromStorages(sessionStorage, localStorage)?.user.email).toBe(
+      authenticatedUser.email
     );
 
-    const session = readAuthSessionFromStorages(sessionStorage, localStorage);
-
-    expect(session?.status).toBe("preview");
-    expect(session?.user.email).toBe("direccion@laboratoriogenus.com.ar");
-    expect(sessionStorage.getItem(GENUS_OS_AUTH_SESSION_KEY)).toBeTruthy();
-    expect(sessionStorage.getItem(GENUS_OS_PREVIEW_USER_KEY)).toBeNull();
-  });
-});
-
-describe("Auth session helpers", () => {
-  let sessionStorage: Storage;
-  let localStorage: Storage;
-
-  beforeEach(() => {
-    sessionStorage = createMemoryStorage();
-    localStorage = createMemoryStorage();
-    installBrowserStorages(sessionStorage, localStorage);
-  });
-
-  it("expone helpers de sesión preview", () => {
-    const produccionUser = MOCK_PREVIEW_USERS.find((u) => u.sector === "PRODUCCION");
-    expect(produccionUser).toBeDefined();
-    const session: OsAuthSession = mapMockUserToSession(produccionUser!, false);
-    writeAuthSessionToStorages(session, sessionStorage, localStorage);
-
-    expect(isAuthenticatedPreview()).toBe(true);
-    expect(getCurrentAuthSession()?.user.email).toBe(produccionUser!.email);
-    expect(getAuthSector()?.id).toBe("PRODUCCION");
-
-    clearAuthSession();
-
-    expect(isAuthenticatedPreview()).toBe(false);
-    expect(getAuthSector()).toBeNull();
-    expect(getCurrentAuthSession()).toBeNull();
-  });
-
-  it("clearAuthSessionStorages elimina claves canónicas y legacy", () => {
-    sessionStorage.setItem(GENUS_OS_AUTH_SESSION_KEY, "{}");
-    localStorage.setItem(GENUS_OS_PREVIEW_USER_KEY, "{}");
-
     clearAuthSessionStorages(sessionStorage, localStorage);
-
-    expect(sessionStorage.getItem(GENUS_OS_AUTH_SESSION_KEY)).toBeNull();
-    expect(localStorage.getItem(GENUS_OS_PREVIEW_USER_KEY)).toBeNull();
+    expect(readAuthSessionFromStorages(sessionStorage, localStorage)).toBeNull();
   });
 });

@@ -21,7 +21,7 @@ export function OsSignInIdentityCard({ preview, emailEntered }: OsSignInIdentity
   return (
     <section
       aria-label="Identidad del usuario"
-      className="border border-[var(--os-border-subtle)] bg-[var(--os-surface-muted)]/40 px-5 py-4"
+      className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface-glass)] px-5 py-4 shadow-[var(--os-shadow-sm)] backdrop-blur-sm"
     >
       <div className="space-y-1">
         <p className="text-sm font-medium text-[var(--os-text)]">{GENUS_COMPANY_NAME}</p>

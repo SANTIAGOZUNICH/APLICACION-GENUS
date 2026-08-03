@@ -41,16 +41,16 @@ export const genusFormRules = [
 
 export const genusButtonVariants = {
   primary: {
-    bg: "var(--genus-brand-primary)",
+    bg: "var(--genus-brand-action)",
     color: "#FFFFFF",
-    hover: "rgb(31 163 154 / 0.9)",
+    hover: "rgb(23 105 224 / 0.9)",
     border: "transparent",
   },
   secondary: {
-    bg: "var(--genus-surface-card)",
+    bg: "var(--genus-surface-glass-strong)",
     color: "var(--genus-text-primary)",
     hover: "var(--genus-neutral-50)",
-    border: "var(--genus-neutral-200)",
+    border: "var(--genus-border)",
   },
   ghost: {
     bg: "transparent",

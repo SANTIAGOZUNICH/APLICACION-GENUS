@@ -1,0 +1,424 @@
+{
+  "source": "c:\\Users\\Usuario\\Downloads\\REMITO MODELO.xlsx",
+  "sheets": [
+    {
+      "name": "L pepino",
+      "dimensions": "A1:M53",
+      "max_row": 53,
+      "max_column": 13,
+      "merged_cell_ranges": [
+        "A9:B9",
+        "F4:I4",
+        "D47:I47"
+      ],
+      "non_empty_cells_A1_M53": [
+        {
+          "coord": "A1",
+          "row": 1,
+          "col": 1,
+          "col_letter": "A",
+          "value": "|",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "F4",
+          "row": 4,
+          "col": 6,
+          "col_letter": "F",
+          "value": "FECHA",
+          "data_type": "s",
+          "number_format": "mm-dd-yy"
+        },
+        {
+          "coord": "A9",
+          "row": 9,
+          "col": 1,
+          "col_letter": "A",
+          "value": "CLIENTE",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "A23",
+          "row": 23,
+          "col": 1,
+          "col_letter": "A",
+          "value": "TOTAL PRODUCTO",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "C23",
+          "row": 23,
+          "col": 3,
+          "col_letter": "C",
+          "value": "PRODUCTO",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "D23",
+          "row": 23,
+          "col": 4,
+          "col_letter": "D",
+          "value": "CAJAS",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "E23",
+          "row": 23,
+          "col": 5,
+          "col_letter": "E",
+          "value": "X",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "F23",
+          "row": 23,
+          "col": 6,
+          "col_letter": "F",
+          "value": "UNIDADES",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "H23",
+          "row": 23,
+          "col": 8,
+          "col_letter": "H",
+          "value": "CAJAS",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "I23",
+          "row": 23,
+          "col": 9,
+          "col_letter": "I",
+          "value": "X",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "J23",
+          "row": 23,
+          "col": 10,
+          "col_letter": "J",
+          "value": "UNIDADES",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "C24",
+          "row": 24,
+          "col": 3,
+          "col_letter": "C",
+          "value": "L:LOTE VTO: VTO",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "A47",
+          "row": 47,
+          "col": 1,
+          "col_letter": "A",
+          "value": "TOTAL DE TODOS LOS PRODUCTOS",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "C47",
+          "row": 47,
+          "col": 3,
+          "col_letter": "C",
+          "value": "TOTAL BULTOS: ",
+          "data_type": "s",
+          "number_format": "General"
+        },
+        {
+          "coord": "D47",
+          "row": 47,
+          "col": 4,
+          "col_letter": "D",
+          "value": "TOTAL CAJAS",
+          "data_type": "s",
+          "number_format": "General"
+        }
+      ],
+      "column_widths": {
+        "A": 18.5703125,
+        "B": 17.140625,
+        "C": 51.42578125,
+        "D": 7.0,
+        "E": 2.42578125,
+        "F": 10.28515625,
+        "G": 1.42578125,
+        "H": 7.7109375,
+        "I": 4.140625,
+        "J": 10.140625,
+        "K": 2.5703125,
+        "L": 3.7109375,
+        "M": 2.42578125
+      },
+      "non_default_row_heights": {
+        "6": 15.75,
+        "7": 15.0,
+        "9": 25.5,
+        "14": 18.75,
+        "18": 15.75,
+        "22": 7.5,
+        "23": 36.0,
+        "24": 21.95,
+        "25": 21.95,
+        "26": 21.95,
+        "27": 21.95,
+        "28": 21.95,
+        "29": 21.95,
+        "30": 22.5,
+        "31": 15.75,
+        "32": 15.75,
+        "33": 15.75,
+        "34": 15.75,
+        "35": 15.75,
+        "36": 15.75,
+        "37": 15.75,
+        "38": 15.75,
+        "39": 15.75,
+        "40": 15.75,
+        "41": 15.75,
+        "42": 15.75,
+        "43": 15.75,
+        "47": 15.75
+      },
+      "page_setup": {
+        "orientation": "portrait",
+        "fitToPage": true,
+        "fitToWidth": null,
+        "fitToHeight": null,
+        "paperSize": 9,
+        "paperSize_note": "9 = A4 in openpyxl/ECMA-376",
+        "scale": 81,
+        "horizontalCentered": null,
+        "verticalCentered": null,
+        "printArea": null,
+        "pageMargins": {
+          "left": 0.7086614173228347,
+          "right": 0.7086614173228347,
+          "top": 0.7480314960629921,
+          "bottom": 0.7480314960629921,
+          "header": 0.31496062992125984,
+          "footer": 0.31496062992125984
+        }
+      },
+      "images": []
+    }
+  ],
+  "landmark_locations": {
+    "DATE": {
+      "label": {
+        "coord": "F4",
+        "value": "FECHA"
+      },
+      "value_area": "F4:I4 (merged) — date value expected in this merge",
+      "merged_range": "F4:I4"
+    },
+    "CLIENT": {
+      "label": {
+        "coord": "A9",
+        "value": "CLIENTE"
+      },
+      "value_area": "A9:B9 (merged) — client name expected in this merge",
+      "merged_range": "A9:B9"
+    },
+    "product_header_row": {
+      "row": 23,
+      "height": 36.0,
+      "layout": {
+        "A23": "TOTAL PRODUCTO (column header for qty/total of product line)",
+        "C23": "PRODUCTO (product name)",
+        "D23": "CAJAS",
+        "E23": "X",
+        "F23": "UNIDADES",
+        "H23": "CAJAS",
+        "I23": "X",
+        "J23": "UNIDADES"
+      },
+      "note": "Two parallel CAJAS x UNIDADES blocks: D-F and H-J"
+    },
+    "product_block_rows": {
+      "range": "24:46",
+      "rows": [
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46
+      ],
+      "elevated_height_rows": [
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30
+      ],
+      "template_placeholder_row": {
+        "row": 24,
+        "C24": "L:LOTE VTO: VTO — sample L:/VTO pattern inside product name/detail column"
+      },
+      "note": "Template has no filled product data rows; only C24 placeholder. Product lines appear intended for rows 24–46 above bottom totals."
+    },
+    "TOTAL_PRODUCTO": {
+      "header_cell": {
+        "coord": "A23",
+        "value": "TOTAL PRODUCTO"
+      },
+      "data_column": "A",
+      "note": "Label sits on header row; per-line totals expected in column A for each product row (24+)."
+    },
+    "L_VTO": {
+      "sample": {
+        "coord": "C24",
+        "value": "L:LOTE VTO: VTO"
+      },
+      "format_hint": "L:<lote> VTO: <venc> embedded in column C under PRODUCTO",
+      "column": "C",
+      "row": 24
+    },
+    "CAJAS_x_UNIDADES": {
+      "block_1": {
+        "cols": "D:F",
+        "header": {
+          "D23": "CAJAS",
+          "E23": "X",
+          "F23": "UNIDADES"
+        },
+        "meaning": "cajas × unidades (primary)"
+      },
+      "block_2": {
+        "cols": "H:J",
+        "header": {
+          "H23": "CAJAS",
+          "I23": "X",
+          "J23": "UNIDADES"
+        },
+        "meaning": "cajas × unidades (secondary / alternate pack)"
+      },
+      "separator_cols": {
+        "E": "X",
+        "I": "X",
+        "G": "narrow spacer",
+        "K": "narrow"
+      }
+    },
+    "bottom_totals": {
+      "row": 47,
+      "merged": "D47:I47",
+      "cells": {
+        "A47": "TOTAL DE TODOS LOS PRODUCTOS",
+        "C47": "TOTAL BULTOS: ",
+        "D47": "TOTAL CAJAS (extends via merge D47:I47)"
+      }
+    }
+  },
+  "sample_product_row_pattern": {
+    "description": "Template product line layout inferred from header row 23 and placeholder row 24 (no sample numeric product rows present).",
+    "row_span": "24-46 (data slots); tall rows 24-30 look like primary line slots",
+    "columns": {
+      "total": {
+        "col": "A",
+        "header": "TOTAL PRODUCTO",
+        "role": "Per-product total quantity (or weight) for the line"
+      },
+      "product_name": {
+        "col": "C",
+        "header": "PRODUCTO",
+        "role": "Product name; may include or be followed by L:/VTO text in same column"
+      },
+      "lote_vto": {
+        "col": "C",
+        "sample": "L:LOTE VTO: VTO",
+        "role": "Lote and vencimiento text pattern inside product column (not a separate column)"
+      },
+      "cajas_block_1": {
+        "cajas_col": "D",
+        "multiplier_col": "E",
+        "unidades_col": "F",
+        "header": "CAJAS X UNIDADES"
+      },
+      "cajas_block_2": {
+        "cajas_col": "H",
+        "multiplier_col": "I",
+        "unidades_col": "J",
+        "header": "CAJAS X UNIDADES (duplicate block)"
+      },
+      "unused_narrow_cols": [
+        "B",
+        "G",
+        "K",
+        "L",
+        "M"
+      ]
+    },
+    "example_filled_cells_only": [
+      {
+        "row": 24,
+        "cells": [
+          {
+            "col": "C",
+            "value": "L:LOTE VTO: VTO"
+          }
+        ]
+      }
+    ]
+  },
+  "grid_A1_M53": {
+    "A1": "|",
+    "F4": "FECHA",
+    "A9": "CLIENTE",
+    "A23": "TOTAL PRODUCTO",
+    "C23": "PRODUCTO",
+    "D23": "CAJAS",
+    "E23": "X",
+    "F23": "UNIDADES",
+    "H23": "CAJAS",
+    "I23": "X",
+    "J23": "UNIDADES",
+    "C24": "L:LOTE VTO: VTO",
+    "A47": "TOTAL DE TODOS LOS PRODUCTOS",
+    "C47": "TOTAL BULTOS: ",
+    "D47": "TOTAL CAJAS"
+  },
+  "summary": {
+    "sheet_count": 1,
+    "sheet_names": [
+      "L pepino"
+    ],
+    "used_range": "A1:M53",
+    "non_empty_cell_count_A1_M53": 15,
+    "is_mostly_blank_template": true,
+    "merged_count": 3
+  }
+}

@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils/cn";
 
 const alertVariants = cva(
-  "flex gap-3 rounded-lg border p-4 text-sm",
+  "flex gap-3 rounded-[var(--radius-md)] border p-4 text-sm shadow-[var(--shadow-sm)]",
   {
     variants: {
       variant: {

@@ -89,6 +89,35 @@ export const SIDEBAR_ITEM_IDS = [
   "configuracion",
   "produccion",
   "direccion",
+  "ordenes_elaboracion",
+  "ordenes_acondicionamiento",
+  "ordenes",
+  "historial",
+  "pendientes",
+  "aprobados",
+  "rechazados",
+  "stock",
+  "control_mp",
+  "mp_ingresos",
+  "mp_compras",
+  "ingresos_me",
+  "salidas_me",
+  "inventario_me",
+  "deposito_graneles",
+  "avisos",
+  "avisos_me",
+  "semanas_produccion",
+  "asignar_trabajos",
+  "entregados",
+  "asignacion_lotes",
+  "ver_elaboracion",
+  "ver_envasado_masivo",
+  "ver_envasado_premium",
+  "ver_calidad",
+  "ver_materia_prima",
+  "remitos",
+  "procedimientos",
+  "metricas",
 ] as const;
 
 export type SidebarItemId = (typeof SIDEBAR_ITEM_IDS)[number];
@@ -136,6 +165,8 @@ export interface SectorDefinition {
   allowedActions: string[];
   sidebarItems: SidebarItemId[];
   restrictedSidebarItems?: SidebarItemId[];
+  /** Override de label de sidebar por ítem — para reusar un id con copy distinto por sector. */
+  sidebarLabelOverrides?: Partial<Record<SidebarItemId, string>>;
   creamyContext: CreamyContextDefinition;
   emptyState: SectorEmptyState;
   /** Clave del componente Home en el registro de vistas. */
@@ -154,6 +185,7 @@ export interface ResolvedSectorHome {
   workItemSources: WorkItemSourceKey[];
   allowedActions: string[];
   sidebarItems: SidebarItemId[];
+  sidebarLabelOverrides: Partial<Record<SidebarItemId, string>>;
   creamyContext: CreamyContextDefinition;
   emptyState: SectorEmptyState;
   homeViewKey: SectorViewKey;

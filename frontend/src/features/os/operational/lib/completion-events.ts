@@ -1,7 +1,6 @@
 import type { SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
 import type { CompletionEvent, OperationalActivityEntry, QualityItem } from "../types";
-import { formatQuantity } from "./operational-filters";
 import { WORK_TRANSFER } from "./work-transfer-labels";
 
 /** ID estable Calidad ↔ WorkItem — preparado para escritura Sheets. */
@@ -36,6 +35,7 @@ export function workItemToCompletionEvent(
     quantityPlanned: item.quantity,
     unit: item.unit,
     dayLabel: item.dayLabel ?? item.deliveryDate,
+    deliveryDate: item.deliveryDate,
   };
 }
 
@@ -56,6 +56,7 @@ export function completionEventToQualityItem(event: CompletionEvent): QualityIte
     line: event.line,
     quantity: qty,
     dayLabel: event.dayLabel ?? "Hoy",
+    deliveryDate: event.deliveryDate ?? null,
     status: "pendiente",
     relatedWorkItemId: event.workItemId,
     receivedFrom: event.sourceSector,
@@ -89,6 +90,7 @@ export function buildOperationalActivityFeed(input: {
     status: string;
     decidedAt: string;
     decidedBy?: string;
+    decidedBySector?: string;
     observation?: string;
     label?: string;
   }>;
@@ -113,12 +115,20 @@ export function buildOperationalActivityFeed(input: {
 
   for (const d of input.decisions) {
     if (d.status !== "aprobado" && d.status !== "rechazado") continue;
+    const who =
+      d.decidedBySector === "PRODUCCION"
+        ? "Producción"
+        : d.decidedBySector === "CALIDAD"
+          ? "Calidad"
+          : null;
+    const verb = d.status === "aprobado" ? "Aprobado" : "Rechazado";
+    const prefix = who ? `${verb} por ${who}` : verb;
     entries.push({
       id: `qd:${d.itemId}:${d.decidedAt}`,
       at: d.decidedAt,
-      actor: d.decidedBy ?? "Calidad",
+      actor: d.decidedBy ?? who ?? "Calidad",
       type: d.status === "aprobado" ? "quality_approve" : "quality_reject",
-      message: `${d.status === "aprobado" ? "Aprobado" : "Rechazado"}: ${d.label ?? d.itemId}${d.observation ? ` — ${d.observation}` : ""}`,
+      message: `${prefix}: ${d.label ?? d.itemId}${d.observation ? ` — ${d.observation}` : ""}`,
     });
   }
 

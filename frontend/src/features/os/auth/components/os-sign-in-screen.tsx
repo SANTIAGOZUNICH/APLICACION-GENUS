@@ -2,14 +2,14 @@
 
 import { useCallback, useId, useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Lock, Mail } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { GENUS_COMPANY_NAME } from "../constants";
 import {
   findMockUserByEmail,
   PREVIEW_AUTH_ERROR,
-  type MockPreviewUser,
+  type PreviewDirectoryUser,
 } from "../lib/mock-preview-users";
-import { mockAuthAdapter } from "../lib/auth-session-helpers";
+import { AuthAdapterError, genusAuthAdapter } from "../adapters/genus-auth-adapter";
 import { OsAuthField } from "./os-auth-field";
 import { OsAuthMockBanner } from "./os-auth-mock-banner";
 import { GenusOsLogo } from "./genus-os-logo";
@@ -18,6 +18,7 @@ import { OsLoginFooter } from "./os-login-footer";
 import { OsOperationalContext } from "./os-operational-context";
 import { OsSessionBootstrapScreen } from "./os-session-bootstrap-screen";
 import { OsSignInIdentityCard } from "./os-sign-in-identity-card";
+import { InstallGenusOsButton } from "@/features/os/pwa/install-genus-os-button";
 import type { OsSignInCredentials, OsSignInIdentityPreview, OsSignInScreenProps } from "../types";
 
 export type { OsSignInCredentials, OsSignInIdentityPreview, OsSignInScreenProps } from "../types";
@@ -30,7 +31,7 @@ function isCorporateEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 }
 
-function toIdentityPreview(user: MockPreviewUser): OsSignInIdentityPreview {
+function toIdentityPreview(user: PreviewDirectoryUser): OsSignInIdentityPreview {
   return {
     displayName: user.displayName,
     jobTitle: user.jobTitle,
@@ -58,6 +59,9 @@ export function OsSignInScreen({
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; password?: string }>({});
   const [authError, setAuthError] = useState<string | null>(null);
   const [pendingRedirect, setPendingRedirect] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [localSubmitting, setLocalSubmitting] = useState(false);
+  const submitting = isSubmitting || localSubmitting;
 
   const emailEntered = email.trim().length > 0;
   const matchedUser = useMemo(
@@ -104,12 +108,20 @@ export function OsSignInScreen({
     }
 
     if (accessPreview) {
-      const session = await mockAuthAdapter.signIn(credentials);
-      if (!session) {
-        setAuthError(PREVIEW_AUTH_ERROR);
-        return;
+      if (localSubmitting) return;
+      setLocalSubmitting(true);
+      try {
+        const session = await genusAuthAdapter.signIn(credentials);
+        if (!session) {
+          setAuthError(PREVIEW_AUTH_ERROR);
+          return;
+        }
+        startBootstrap(session.redirectTo);
+      } catch (error) {
+        setAuthError(error instanceof AuthAdapterError ? error.message : PREVIEW_AUTH_ERROR);
+      } finally {
+        setLocalSubmitting(false);
       }
-      startBootstrap(session.redirectTo);
       return;
     }
 
@@ -130,60 +142,69 @@ export function OsSignInScreen({
     }, FADE_MS);
   }, [pendingRedirect, router]);
 
-  const isInteractive = phase === "sign-in" && !isSubmitting;
+  const isInteractive = phase === "sign-in" && !submitting;
   const showBootstrap = phase === "bootstrap" || phase === "redirecting";
   const contentVisible = phase === "sign-in";
 
   return (
     <>
-      <div className="flex min-h-dvh flex-col bg-[var(--os-bg)]">
+      <div className="os-login-scene relative flex min-h-dvh flex-col">
         <a
           href="#os-sign-in-form"
-          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-[12px] focus:bg-[var(--os-surface)] focus:px-4 focus:py-2 focus:text-sm"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-[var(--os-radius-sm)] focus:bg-[var(--os-surface)] focus:px-4 focus:py-2 focus:text-sm"
         >
           Saltar al formulario de ingreso
         </a>
 
-        <OsAuthMockBanner />
+        <div className="relative z-[1]">
+          <OsAuthMockBanner />
+        </div>
 
         <div
-          className={`grid min-h-0 flex-1 transition-opacity duration-300 ease-out md:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)] ${
+          className={`relative z-[1] grid min-h-0 flex-1 transition-opacity duration-300 ease-out md:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] ${
             contentVisible ? "opacity-100" : "opacity-0"
           }`}
         >
-          {/* Panel izquierdo — branding + credencial + contexto mínimo */}
-          <aside className="relative hidden overflow-hidden bg-[var(--os-sidebar-bg)] md:flex md:flex-col">
-            <div
-              className="pointer-events-none absolute inset-0"
-              aria-hidden="true"
-              style={{
-                background:
-                  "linear-gradient(165deg, rgb(15 23 42) 0%, rgb(15 35 48) 48%, rgb(15 23 42) 100%)",
-              }}
-            />
+          {/* Panel institucional — desktop */}
+          <aside className="relative hidden overflow-hidden md:flex md:flex-col">
             <GenusOsLogo
-              className="pointer-events-none absolute -bottom-8 -right-6 size-[min(28rem,55vw)] text-[var(--os-sidebar-text)] opacity-[0.055]"
+              className="pointer-events-none absolute -bottom-10 -right-8 size-[min(32rem,58vw)] text-white opacity-[0.05]"
               decorative
             />
 
             <div className="relative flex h-full flex-col px-12 py-14 xl:px-16 xl:py-16">
-              <GenusOsLogo className="size-12 text-[var(--os-teal)]" />
+              <GenusOsLogo className="size-12 text-[var(--os-teal-glow)] drop-shadow-[0_0_18px_rgb(18_191_183_/_0.35)]" />
+              <h1 className="mt-10 max-w-md text-[1.75rem] font-semibold leading-tight tracking-tight text-[var(--os-sidebar-text)] xl:text-[2rem]">
+                El laboratorio, organizado en un solo lugar.
+              </h1>
+              <p className="mt-4 max-w-sm text-[0.9375rem] leading-relaxed text-[var(--os-sidebar-muted)]">
+                Producción, elaboración, envasado, calidad y materias primas trabajando con la
+                misma información.
+              </p>
               <OsInstitutionalCredential />
               <OsOperationalContext />
             </div>
           </aside>
 
-          {/* Formulario */}
+          {/* Formulario — protagonista en móvil */}
           <main
             id="os-sign-in-form"
-            className="flex flex-1 items-center justify-center px-6 py-10 sm:px-10 lg:px-14 lg:py-12"
+            className="relative flex min-w-0 max-w-full flex-1 flex-col items-center justify-center overflow-x-clip px-5 py-8 sm:px-10 lg:px-14 lg:py-12"
           >
-            <div className="w-full max-w-[26.5rem] -translate-y-2">
-              <div className="mb-8 lg:mb-10">
+            <div className="mb-6 flex w-full max-w-[26.5rem] items-center gap-3 md:hidden">
+              <GenusOsLogo className="size-9 text-[var(--os-teal-glow)]" />
+              <div>
+                <p className="text-sm font-semibold text-white">Genus OS</p>
+                <p className="text-[0.6875rem] text-white/65">Manufacturing Operating System</p>
+              </div>
+            </div>
+
+            <div className="os-login-form-panel w-full max-w-[26.5rem] rounded-[var(--os-radius)] px-6 py-8 sm:px-8 sm:py-9">
+              <div className="mb-7 lg:mb-8">
                 <p className="text-[0.6875rem] font-medium uppercase tracking-[0.16em] text-[var(--os-text-muted)]">
                   Vista previa de acceso
                 </p>
-                <h2 className="mt-3 text-[1.75rem] font-semibold tracking-tight text-[var(--os-text)]">
+                <h2 className="mt-3 text-[1.625rem] font-semibold tracking-tight text-[var(--os-text)] sm:text-[1.75rem]">
                   Ingresá al sistema
                 </h2>
                 <p className="mt-3 text-[0.9375rem] leading-relaxed text-[var(--os-text-muted)]">
@@ -192,7 +213,7 @@ export function OsSignInScreen({
                 </p>
               </div>
 
-              <form className="space-y-7" onSubmit={handleSubmit} noValidate>
+              <form className="space-y-6" onSubmit={handleSubmit} noValidate>
                 <OsAuthField
                   label="Email corporativo"
                   htmlFor="os-sign-in-email"
@@ -223,7 +244,7 @@ export function OsSignInScreen({
                 <OsAuthField
                   label="Contraseña"
                   htmlFor="os-sign-in-password"
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   autoComplete="current-password"
                   required
                   placeholder="••••••••"
@@ -238,9 +259,25 @@ export function OsSignInScreen({
                   disabled={!isInteractive}
                   error={fieldErrors.password}
                   leadingIcon={<Lock className="size-[1.125rem]" aria-hidden="true" />}
+                  trailingAction={
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      disabled={!isInteractive}
+                      className="pointer-events-auto rounded p-1 text-[var(--os-text-muted)] transition-colors hover:text-[var(--os-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)]/40"
+                      aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                      aria-pressed={showPassword}
+                    >
+                      {showPassword ? (
+                        <EyeOff className="size-[1.125rem]" aria-hidden="true" />
+                      ) : (
+                        <Eye className="size-[1.125rem]" aria-hidden="true" />
+                      )}
+                    </button>
+                  }
                 />
 
-                <div className="border border-[var(--os-border-subtle)] px-4 py-3.5">
+                <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface-muted)]/50 px-4 py-3.5">
                   <label htmlFor={rememberId} className="flex cursor-pointer items-start gap-3">
                     <input
                       id={rememberId}
@@ -268,7 +305,7 @@ export function OsSignInScreen({
                 {(authError || formError) && (
                   <p
                     role="alert"
-                    className="border border-[var(--genus-error)]/15 bg-[var(--genus-error-soft)] px-4 py-3 text-sm text-[var(--genus-error)]"
+                    className="rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/15 bg-[var(--genus-error-soft)] px-4 py-3 text-sm text-[var(--genus-error)]"
                   >
                     {authError ?? formError}
                   </p>
@@ -277,17 +314,21 @@ export function OsSignInScreen({
                 <button
                   type="submit"
                   disabled={!isInteractive}
-                  className="group flex h-12 w-full items-center justify-center rounded-[12px] bg-[var(--os-teal)] text-[15px] font-semibold text-white transition-colors hover:bg-[var(--os-teal)]/92 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--os-teal)]/25 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="os-btn-motion group flex h-12 w-full items-center justify-center rounded-[var(--os-radius-sm)] bg-[var(--os-action)] text-[15px] font-semibold text-white shadow-[var(--os-shadow-sm)] hover:bg-[var(--os-action)]/92 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--os-action)]/25 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <span>Ingresar a Genus OS</span>
                   <ArrowRight
-                    className="ml-0 size-4 max-w-0 opacity-0 transition-all duration-200 group-hover:ml-2 group-hover:max-w-[1rem] group-hover:opacity-100"
+                    className="ml-0 size-4 max-w-0 opacity-0 transition-all duration-200 group-hover:ml-2 group-hover:max-w-[1rem] group-hover:opacity-100 motion-reduce:transition-none"
                     aria-hidden="true"
                   />
                 </button>
               </form>
 
-              <p className="mt-10 text-center text-xs text-[var(--os-text-muted)]">
+              <div className="mt-4">
+                <InstallGenusOsButton variant="login" />
+              </div>
+
+              <p className="mt-8 text-center text-xs text-[var(--os-text-muted)]">
                 <a
                   href="mailto:sistemas@laboratoriogenus.com.ar"
                   className="underline-offset-2 hover:text-[var(--os-text)] hover:underline"
@@ -299,7 +340,9 @@ export function OsSignInScreen({
           </main>
         </div>
 
-        <OsLoginFooter />
+        <div className="relative z-[1]">
+          <OsLoginFooter />
+        </div>
       </div>
 
       {showBootstrap && (

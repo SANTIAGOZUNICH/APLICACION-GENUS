@@ -8,6 +8,7 @@ import {
   weekStartMonday,
 } from "@/lib/operational/operational-calendar";
 import { displayField } from "@/lib/operational/display-fields";
+import { workItemCoversDate } from "@/lib/operational/work-item-date-range";
 
 interface OperationalWeekBoardProps {
   weekDays: string[];
@@ -33,8 +34,10 @@ export function OperationalWeekBoard({
   const byDate = new Map<string, WorkItem[]>();
   for (const day of weekDays) byDate.set(day, []);
   for (const item of items) {
-    if (!item.plannedDate || !byDate.has(item.plannedDate)) continue;
-    byDate.get(item.plannedDate)!.push(item);
+    for (const day of weekDays) {
+      if (!workItemCoversDate(item, day)) continue;
+      byDate.get(day)!.push(item);
+    }
   }
 
   return (

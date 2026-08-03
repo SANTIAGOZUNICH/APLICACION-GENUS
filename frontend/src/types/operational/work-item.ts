@@ -33,7 +33,12 @@ export const WORK_ITEM_STATUSES = [
   "bloqueado",
   "completo",
   "revision",
+  "entregado",
   "cancelado",
+  /** Enviado desde Envasado; pendiente en Codificado. */
+  "en_codificado",
+  /** Codificado entregó a Calidad/Producción (alias operativo de pendiente calidad). */
+  "codificado_completo",
 ] as const;
 export type WorkItemStatus = (typeof WORK_ITEM_STATUSES)[number];
 
@@ -56,8 +61,13 @@ export interface WorkItem {
   originStage: OriginStage;
   /** Fecha textual legacy del planner (ej. "14 julio"). */
   date: string | null;
-  /** Fecha planificada ISO YYYY-MM-DD (zona BA). */
+  /** Fecha planificada ISO YYYY-MM-DD (zona BA) — inicio del rango asignado. */
   plannedDate: string | null;
+  /**
+   * Fin inclusive del rango planificado (ISO). Si null, el trabajo cubre solo plannedDate.
+   * Un solo workItemId aparece en cada día del rango en Semana; KPIs no se duplican.
+   */
+  plannedDateTo?: string | null;
   /** Celda del encabezado de fecha en SEMANAS (auditoría). */
   dateHeaderSourceRange?: string | null;
   /** Método de resolución temporal del planner. */
@@ -99,6 +109,32 @@ export interface WorkItem {
   /** Avance operativo en vivo (Genus OS — no Sheets). */
   finishedQty?: string | null;
   operationalObservation?: string | null;
+  /** Lote PT asignado en Producción / Envasado (opcional). */
+  packagingLote?: string | null;
+  /** Vencimiento PT (opcional, ISO o texto operativo). */
+  packagingVto?: string | null;
+  /** Total oficial de unidades envasadas (opcional). */
+  packagingTotalUnits?: number | null;
+  /** Cajas cargadas (opcional) — legacy / grupo[0]. */
+  packagingCajas?: number | null;
+  /** Unidades por caja (opcional) — legacy / grupo[0]. */
+  packagingUnidadesPorCaja?: number | null;
+  /**
+   * Combinaciones de cajas (fuente canónica).
+   * Legacy packagingCajas/unidadesPorCaja = packingGroups[0].
+   */
+  packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+  /** Observación si producido ≠ embalado (no bloquea entrega). */
+  packingMismatchObservation?: string | null;
+  /** Historial de avances de cantidades (JSON-serializable). */
+  packagingQtyHistory?: Array<{
+    at: string;
+    by: string;
+    totalUnits: number | null;
+    cajas: number | null;
+    unidadesPorCaja: number | null;
+    packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+  }> | null;
 }
 
 export interface WorkItemsResponse {

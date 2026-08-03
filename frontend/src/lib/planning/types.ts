@@ -53,6 +53,8 @@ export interface PlanningWorkItemRecord {
   id: string;
   planningWeekId: string;
   plannedDate: string;
+  /** Fin inclusive del rango de aparición (null = solo plannedDate). */
+  plannedDateTo?: string | null;
   client: string;
   product: string;
   plannedQuantity: string;
@@ -92,6 +94,8 @@ export interface CreateWeekInput {
 
 export interface CreateWorkItemInput {
   plannedDate: string;
+  /** Fin inclusive opcional del rango de aparición. */
+  plannedDateTo?: string | null;
   client: string;
   product: string;
   plannedQuantity: string;
@@ -101,6 +105,7 @@ export interface CreateWorkItemInput {
   branchOwner?: string | null;
   priority?: PlanningPriority;
   notes?: string | null;
+  originRef?: string | null;
 }
 
 export interface PatchWorkItemInput {

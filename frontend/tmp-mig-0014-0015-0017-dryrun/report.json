@@ -1,0 +1,179 @@
+{
+  "ok": true,
+  "startedAt": "2026-08-02T20:48:10.749Z",
+  "migrations": [
+    "drizzle/0014_codificado_deposito_graneles.sql",
+    "drizzle/0015_creamy_memory.sql",
+    "drizzle/0017_creamy_userid_notif_idempotency.sql"
+  ],
+  "previewUntouched": true,
+  "productionUntouched": true,
+  "steps": [
+    {
+      "step": "preview_readonly_baseline",
+      "ok": true,
+      "note": "0014/0015/0017 should be absent before apply",
+      "has0014cols": 0,
+      "hasCreamy": false,
+      "hasAuth": true
+    },
+    {
+      "step": "apply_0014_codificado_deposito_graneles.sql",
+      "ok": true,
+      "statements": 19
+    },
+    {
+      "step": "apply_0015_creamy_memory.sql",
+      "ok": true,
+      "statements": 18
+    },
+    {
+      "step": "apply_0017_creamy_userid_notif_idempotency.sql",
+      "ok": true,
+      "statements": 2
+    },
+    {
+      "step": "verify_schema_and_formulas",
+      "ok": true,
+      "after": {
+        "tables": [
+          "creamy_conversations",
+          "creamy_memory_audit_events",
+          "creamy_memory_evidence",
+          "creamy_messages",
+          "creamy_operational_memories",
+          "creamy_user_memories",
+          "deposito_graneles",
+          "deposito_graneles_audit",
+          "genus_auth_users",
+          "os_notifications",
+          "work_items"
+        ],
+        "workItemCols0014": [
+          "bulk_remainder_id",
+          "packaging_lote",
+          "sent_to_codificado_at",
+          "via_codificado"
+        ],
+        "creamyUserIdCol": true,
+        "formulas": {
+          "versions": 842,
+          "vigentes": 784
+        }
+      }
+    },
+    {
+      "step": "rerun_idempotent",
+      "ok": true
+    },
+    {
+      "step": "preview_unchanged",
+      "ok": true
+    },
+    {
+      "step": "delete_disposable_branch",
+      "ok": true
+    }
+  ],
+  "previewHostAnon": "ep-polished-recipe-***",
+  "beforePreview": {
+    "tables": [
+      "genus_auth_users",
+      "os_notifications",
+      "work_items"
+    ],
+    "workItemCols0014": [],
+    "creamyUserIdCol": false,
+    "formulas": {
+      "versions": 842,
+      "vigentes": 784
+    }
+  },
+  "neonProjectIdAnon": "morning-***",
+  "neonProjectName": "genus-os-native-previewww",
+  "tempBranch": {
+    "name": "dryrun-0014-15-17-1785703694443",
+    "idAnon": "br-dawn-***"
+  },
+  "tempHostAnon": "ep-muddy-heart-***",
+  "beforeTemp": {
+    "tables": [
+      "genus_auth_users",
+      "os_notifications",
+      "work_items"
+    ],
+    "workItemCols0014": [],
+    "creamyUserIdCol": false,
+    "formulas": {
+      "versions": 842,
+      "vigentes": 784
+    }
+  },
+  "afterApply": {
+    "tables": [
+      "creamy_conversations",
+      "creamy_memory_audit_events",
+      "creamy_memory_evidence",
+      "creamy_messages",
+      "creamy_operational_memories",
+      "creamy_user_memories",
+      "deposito_graneles",
+      "deposito_graneles_audit",
+      "genus_auth_users",
+      "os_notifications",
+      "work_items"
+    ],
+    "workItemCols0014": [
+      "bulk_remainder_id",
+      "packaging_lote",
+      "sent_to_codificado_at",
+      "via_codificado"
+    ],
+    "creamyUserIdCol": true,
+    "formulas": {
+      "versions": 842,
+      "vigentes": 784
+    }
+  },
+  "afterIdempotent": {
+    "tables": [
+      "creamy_conversations",
+      "creamy_memory_audit_events",
+      "creamy_memory_evidence",
+      "creamy_messages",
+      "creamy_operational_memories",
+      "creamy_user_memories",
+      "deposito_graneles",
+      "deposito_graneles_audit",
+      "genus_auth_users",
+      "os_notifications",
+      "work_items"
+    ],
+    "workItemCols0014": [
+      "bulk_remainder_id",
+      "packaging_lote",
+      "sent_to_codificado_at",
+      "via_codificado"
+    ],
+    "creamyUserIdCol": true,
+    "formulas": {
+      "versions": 842,
+      "vigentes": 784
+    }
+  },
+  "afterPreview": {
+    "tables": [
+      "genus_auth_users",
+      "os_notifications",
+      "work_items"
+    ],
+    "workItemCols0014": [],
+    "creamyUserIdCol": false,
+    "formulas": {
+      "versions": 842,
+      "vigentes": 784
+    }
+  },
+  "tempBranchDeleted": true,
+  "finishedAt": "2026-08-02T20:48:36.392Z"
+}

@@ -96,7 +96,7 @@ describe("WorkspaceResolver", () => {
     expect(resolved.subtitle).toBe("Tenés 8 órdenes para trabajar hoy.");
     expect(resolved.context.displayName).toBe("Agustina Zunich");
     expect(resolved.navigation).toContain("mi_trabajo");
-    expect(resolved.navigation).toContain("plan_semanal");
+    expect(resolved.navigation).toContain("asignar_trabajos");
   });
 
   it("resuelve workspace desde OsAuthSession", () => {

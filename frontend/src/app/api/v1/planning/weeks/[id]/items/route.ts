@@ -20,7 +20,7 @@ export async function POST(
   const blocked = ensureNativePlanningReady();
   if (blocked) return blocked;
   try {
-    const actor = resolvePlanningActor(request);
+    const actor = await resolvePlanningActor(request);
     assertProduccionActor(actor);
     const { id } = await context.params;
     const body = (await request.json()) as CreateWorkItemInput;

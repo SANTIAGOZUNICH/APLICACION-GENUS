@@ -1,0 +1,85 @@
+{
+  "pass": true,
+  "hostAnon": "ep-polished-recipe-***",
+  "tag": "TEST_SMOKE_M141517_1785704078128",
+  "results": [
+    {
+      "name": "schema_0014_0015_0017",
+      "ok": true,
+      "deposito": true,
+      "creamy": true,
+      "creamy_uid": true,
+      "via_cod": true
+    },
+    {
+      "name": "formulas_842_784",
+      "ok": true,
+      "versions": 842,
+      "vigentes": 784
+    },
+    {
+      "name": "match_masivo_only",
+      "ok": true,
+      "s1": [
+        "ENVASADO_MASIVO"
+      ]
+    },
+    {
+      "name": "notif_masivo_persisted",
+      "ok": true,
+      "created": true,
+      "premiumLeak": 0
+    },
+    {
+      "name": "match_premium_only",
+      "ok": true,
+      "s2": [
+        "ENVASADO_PREMIUM"
+      ]
+    },
+    {
+      "name": "match_both",
+      "ok": true,
+      "s3": [
+        "ENVASADO_MASIVO",
+        "ENVASADO_PREMIUM"
+      ]
+    },
+    {
+      "name": "no_wrong_client",
+      "ok": true
+    },
+    {
+      "name": "no_wrong_product",
+      "ok": true
+    },
+    {
+      "name": "no_match_empty",
+      "ok": true
+    },
+    {
+      "name": "range_tue_fri_overlap",
+      "ok": true,
+      "s7": [
+        "ENVASADO_MASIVO"
+      ]
+    },
+    {
+      "name": "idempotent_retry",
+      "ok": true,
+      "first": true,
+      "second": false
+    },
+    {
+      "name": "creamy_userid_persisted",
+      "ok": true,
+      "uid": "954bd55a-2b78-42fc-9932-1afb11a0e7d1"
+    },
+    {
+      "name": "cleanup_TEST_zero",
+      "ok": true,
+      "notifs": 0,
+      "mems": 0
+    }
+  ]
+}

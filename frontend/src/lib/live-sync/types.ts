@@ -45,7 +45,7 @@ export interface WorkCompletedEvent extends LiveSyncEventBase {
 export interface QualityDecidedEvent extends LiveSyncEventBase {
   type: "quality.decided";
   itemId: string;
-  status: "aprobado" | "rechazado";
+  status: "aprobado" | "rechazado" | "pendiente";
   notifySectors: SectorId[];
 }
 
@@ -89,6 +89,14 @@ export interface WorkProgressPayload {
   updatedBy?: string;
   completedAt?: string;
   sector?: SectorId;
+  /** Embalaje desde Envasado — fuente para autocompletar remito. */
+  packagingLote?: string | null;
+  packagingVto?: string | null;
+  packagingTotalUnits?: number | null;
+  packagingCajas?: number | null;
+  packagingUnidadesPorCaja?: number | null;
+  packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+  packingMismatchObservation?: string | null;
 }
 
 export interface LiveSyncStatus {

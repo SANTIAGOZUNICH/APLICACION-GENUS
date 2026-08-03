@@ -14,14 +14,14 @@ export const genusLayout = {
     wide: "90rem",
     narrow: "40rem",
   },
-  sidebarWidth: "16rem",
+  sidebarWidth: "14.5rem",
   contextPanelWidth: "20rem",
-  headerHeight: "3.75rem",
+  headerHeight: "3.5rem",
   statusBarHeight: "2rem",
   pagePadding: {
-    desktop: "var(--genus-space-8)",
-    tablet: "var(--genus-space-6)",
-    mobile: "var(--genus-space-4)",
+    desktop: "var(--os-density-page-padding, 1.25rem)",
+    tablet: "var(--os-density-page-padding, 1.125rem)",
+    mobile: "var(--os-density-page-padding, 1rem)",
   },
 } as const;
 

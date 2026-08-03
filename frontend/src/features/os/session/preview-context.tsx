@@ -4,14 +4,17 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
+import { useRouter } from "next/navigation";
 import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
-import { clearAuthSession, getCurrentAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
+import { genusAuthAdapter } from "@/features/os/auth/adapters/genus-auth-adapter";
+import { getCurrentAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
 import { findMockUserByEmail } from "@/features/os/auth/lib/mock-preview-users";
 import { resolveSectorHome } from "@/lib/role-engine";
 import type { SidebarItemId } from "@/lib/role-engine/types";
@@ -67,6 +70,7 @@ interface PreviewContextValue {
   closeCreamy: () => void;
   setCreamyTeaser: (teaser: CreamyTeaser | null) => void;
   dismissToast: () => void;
+  showToast: (message: string, type?: "success" | "info") => void;
 }
 
 const PreviewContext = createContext<PreviewContextValue | null>(null);
@@ -105,6 +109,7 @@ export function PreviewProvider({
   children: ReactNode;
   initialNav?: TwinNavEntry;
 }) {
+  const router = useRouter();
   const [session, setSession] = useState<PreviewSession | null>(null);
   const [navStack, setNavStack] = useState<TwinNavEntry[]>([initialNav]);
   const [simulatedStatuses, setSimulatedStatuses] = useState<Record<string, WorkItemStatus>>({});
@@ -118,6 +123,32 @@ export function PreviewProvider({
     const authSession = readAuthPreviewSession();
     if (authSession) setSession(authSession);
   }, [session]);
+
+  /** La cookie HttpOnly es la autoridad: revalida /me y corrige caché local. */
+  useEffect(() => {
+    let active = true;
+    void genusAuthAdapter
+      .hydrateSession()
+      .then((authSession) => {
+        if (!active) return;
+        if (!authSession) {
+          setSession(null);
+          return;
+        }
+        const mockUser = findMockUserByEmail(authSession.user.email);
+        setSession({
+          sectorId: authSession.sector.id,
+          email: authSession.user.email,
+          ownerPerson: mockUser?.ownerPerson ?? null,
+        });
+      })
+      .catch(() => {
+        /* conservar caché de presentación si /me falla por red */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const currentNav = navStack[navStack.length - 1] ?? initialNav;
 
@@ -146,15 +177,17 @@ export function PreviewProvider({
   );
 
   const logout = useCallback(() => {
-    clearAuthSession();
-    setSession(null);
-    setNavStack([initialNav]);
-    setSimulatedStatuses({});
-    setCreamyOpen(false);
-    setCreamyTeaserState(null);
-    setToast(null);
-    setCompletingIds(new Set());
-  }, [initialNav]);
+    void genusAuthAdapter.signOut().finally(() => {
+      setSession(null);
+      setNavStack([initialNav]);
+      setSimulatedStatuses({});
+      setCreamyOpen(false);
+      setCreamyTeaserState(null);
+      setToast(null);
+      setCompletingIds(new Set());
+      router.replace("/login");
+    });
+  }, [initialNav, router]);
 
   const navigateTo = useCallback((entry: TwinNavEntry) => {
     setNavStack((stack) => {
@@ -251,6 +284,9 @@ export function PreviewProvider({
     setCreamyTeaserState(teaser);
   }, []);
   const dismissToast = useCallback(() => setToast(null), []);
+  const showToast = useCallback((message: string, type: "success" | "info" = "success") => {
+    setToast({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, message, type });
+  }, []);
 
   const value = useMemo<PreviewContextValue>(
     () => ({
@@ -280,6 +316,7 @@ export function PreviewProvider({
       closeCreamy,
       setCreamyTeaser,
       dismissToast,
+      showToast,
     }),
     [
       session,
@@ -308,6 +345,7 @@ export function PreviewProvider({
       closeCreamy,
       setCreamyTeaser,
       dismissToast,
+      showToast,
     ]
   );
 

@@ -93,14 +93,27 @@ export function useOperationalPlan(
     };
   }, []);
 
-  // Native: convergencia por polling corto a /work-items (sin Sheets).
+  // Native: polling a /work-items. 20s; pausa si oculta; refresh inmediato al volver.
   useEffect(() => {
     if (!enabled) return;
     if (getClientPlanningSource() !== "native") return;
+    const POLL_MS = 20_000;
     const id = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
       setTick((v) => v + 1);
-    }, 5000);
-    return () => window.clearInterval(id);
+    }, POLL_MS);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        setTick((v) => v + 1);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [enabled]);
 
   useEffect(() => {

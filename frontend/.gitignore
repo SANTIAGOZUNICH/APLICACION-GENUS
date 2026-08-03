@@ -34,3 +34,28 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# ─── Fórmulas confidenciales (nunca al repo) ───
+*.zip
+!**/testdata/**/*.zip
+**/private-formulas/**
+**/ORDEN\ DE\ ELABORACION*
+**/formulas-import-reports/**
+**/formulas-extract/**
+**/genus-formulas-*/
+**/tmp/private-formulas/**
+
+
+.env.preview.migrate
+
+# Production readiness audit pulls (may contain env material)
+/tmp-prod-readiness/.env*
+/tmp-prod-readiness/*env*.json
+/tmp-prod-readiness/safe-snapshot-*.json
+/tmp-prod-readiness/readonly-local-db.json
+/tmp-prod-readiness/prod-domain-inspect.json
+
+# Neon Production bootstrap secrets
+/tmp-prod-neon-bootstrap/.env*
+/tmp-prod-neon-bootstrap/**/*.local
+/tmp-prod-neon-bootstrap/passwords*

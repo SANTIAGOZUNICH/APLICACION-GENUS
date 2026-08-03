@@ -49,7 +49,7 @@ export function QualityDecisionFocusBlock({
             key={decision.id}
             type="button"
             onClick={() => onDecision(decision.id, decision.label)}
-            className="min-h-[3rem] flex-1 rounded-[12px] border border-[var(--os-border)] bg-[var(--os-surface)] px-6 py-3 text-base font-semibold text-[var(--os-text)] transition-all duration-200 hover:border-[var(--os-teal)]/35 hover:shadow-[var(--os-shadow-sm)] sm:min-h-[3.25rem]"
+            className="min-h-[3rem] flex-1 rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-6 py-3 text-base font-semibold text-[var(--os-text)] transition-all duration-[var(--genus-duration-hover,140ms)] hover:border-[var(--os-teal)]/35 hover:shadow-[var(--os-shadow-sm)] sm:min-h-[3.25rem]"
           >
             {decision.label}
           </button>

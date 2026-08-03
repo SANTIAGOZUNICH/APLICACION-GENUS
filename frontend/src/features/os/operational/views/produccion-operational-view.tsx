@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
-import { usePreviewContext } from "@/features/os/session/preview-context";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { buildProductionOverview } from "@/lib/operational/build-production-overview";
 import { displayField } from "@/lib/operational/display-fields";
 import { SECTOR_LABELS } from "@/types/operational/sector";
@@ -30,6 +30,34 @@ import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-lab
 import { useOperationalStore } from "../store/operational-store-context";
 import type { QualityItem } from "../types";
 import type { WorkItem } from "@/types/operational/work-item";
+import { Button } from "@/components/ui/button";
+import {
+  collectSameClientDateApprovedPackaging,
+  isPackagingQualityItem,
+} from "@/lib/remitos/from-quality";
+import {
+  buildComposeLinesFromQuality,
+  composeLineToApprovalInput,
+  producedVsBoxedWarning,
+  type RemitoComposeLine,
+} from "@/lib/remitos/compose-from-quality";
+import {
+  generateRemitoApi,
+  remitoStatusForWorkApi,
+  upsertRemitoDraftApi,
+} from "@/lib/remitos/remitos-client";
+import type { RemitoWorkItemStatus } from "@/lib/remitos/types";
+import { RemitoComposeEditor } from "../components/remito-compose-editor";
+import { CodificadoTracePanel } from "../components/codificado-trace-panel";
+import {
+  Drawer,
+  DrawerBody,
+  DrawerCloseButton,
+  DrawerContent,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer";
 
 const PRODUCCION_TABS = [
   { id: "rechazados", label: "Rechazados" },
@@ -55,12 +83,24 @@ function sortWorkItemsTransferredFirst(items: WorkItem[]): WorkItem[] {
   });
 }
 
+function workIdFromQuality(item: QualityItem): string {
+  return (
+    item.relatedWorkItemId?.trim() ||
+    (item.id.startsWith("qc:") ? item.id.slice(3) : item.id)
+  );
+}
+
 /** Producción / Supervisión — visión general con actividad cross-sector. */
 export function ProduccionOperationalView({
   onCreateWeek,
 }: ProduccionOperationalViewProps = {}) {
   const workspace = useRequiredWorkspace();
-  const { applyEffectiveStatus } = usePreviewContext();
+  const { applyEffectiveStatus, navigateTo } = usePreviewContext();
+  const { email, sectorId } = usePreviewSession();
+  const session = useMemo(
+    () => ({ email: email ?? "", sector: sectorId }),
+    [email, sectorId]
+  );
   const {
     getQualityStatus,
     getQualityObservation,
@@ -68,10 +108,22 @@ export function ProduccionOperationalView({
     completionEvents,
     decisionMap,
     getFinishedQty,
+    progressMap,
   } = useOperationalStore();
-  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected } =
+  const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
     useOperationalPlan("PRODUCCION");
   const [activeTab, setActiveTab] = useState<ProduccionTabId>("elaboracion");
+  const [remitoStatusByWork, setRemitoStatusByWork] = useState<
+    Record<string, RemitoWorkItemStatus>
+  >({});
+  const [remitoBusy, setRemitoBusy] = useState(false);
+  const [remitoError, setRemitoError] = useState<string | null>(null);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeLines, setComposeLines] = useState<RemitoComposeLine[]>([]);
+  const [composeClient, setComposeClient] = useState("");
+  const [composeDate, setComposeDate] = useState("");
+  const [displayNameInput, setDisplayNameInput] = useState("");
+  const [detailItem, setDetailItem] = useState<QualityItem | null>(null);
   const isNativeEmpty =
     data?.source === "native" && !loading && (data.workItems?.length ?? 0) === 0;
 
@@ -102,6 +154,7 @@ export function ProduccionOperationalView({
           status: d.status,
           decidedAt: d.decidedAt,
           decidedBy: d.decidedBy,
+          decidedBySector: d.decidedBySector,
           observation: d.observation,
           label: qualityLabelById.get(d.itemId) ?? d.itemId,
         })),
@@ -155,6 +208,106 @@ export function ProduccionOperationalView({
     [workItems]
   );
 
+  const refreshRemitoStatuses = useCallback(async () => {
+    if (String(sectorId).toUpperCase() !== "PRODUCCION") return;
+    const packaging = aprobados.filter(isPackagingQualityItem);
+    if (packaging.length === 0) {
+      setRemitoStatusByWork({});
+      return;
+    }
+    const next: Record<string, RemitoWorkItemStatus> = {};
+    await Promise.all(
+      packaging.map(async (item) => {
+        const wid = workIdFromQuality(item);
+        try {
+          next[wid] = await remitoStatusForWorkApi(session, wid);
+        } catch {
+          next[wid] = { status: "none", remitoId: null };
+        }
+      })
+    );
+    setRemitoStatusByWork(next);
+  }, [aprobados, sectorId, session]);
+
+  useEffect(() => {
+    if (activeTab === "aprobados") void refreshRemitoStatuses();
+  }, [activeTab, refreshRemitoStatuses]);
+
+  function handleGenerarRemito(seed: QualityItem) {
+    setRemitoError(null);
+    const built = buildComposeLinesFromQuality(seed, aprobados, workItems);
+    if (built.lines.length === 0) {
+      setRemitoError("No hay productos aptos para remito en este grupo.");
+      return;
+    }
+    setComposeLines(built.lines);
+    setComposeClient(built.clientDisplay);
+    setComposeDate(built.deliveryDate);
+    setDisplayNameInput(built.clientDisplay || seed.client || "Remito");
+    setComposeOpen(true);
+  }
+
+  async function persistComposeLines(): Promise<string> {
+    let remitoId: string | null = null;
+    for (const line of composeLines) {
+      const input = composeLineToApprovalInput(line, composeClient, composeDate);
+      const result = await upsertRemitoDraftApi(session, input);
+      remitoId = result.remito.id;
+    }
+    if (!remitoId) throw new Error("No se pudo crear remito.");
+    return remitoId;
+  }
+
+  async function saveComposeDraft() {
+    setRemitoBusy(true);
+    setRemitoError(null);
+    try {
+      await persistComposeLines();
+      setComposeOpen(false);
+      await refreshRemitoStatuses();
+      navigateTo({ view: "remitos" });
+    } catch (e) {
+      setRemitoError(e instanceof Error ? e.message : "Error al guardar borrador");
+    } finally {
+      setRemitoBusy(false);
+    }
+  }
+
+  async function generateComposeExcel() {
+    const warning = producedVsBoxedWarning(composeLines);
+    if (warning) {
+      const ok = window.confirm(
+        `${warning}\n\n¿Generar el Excel con las cantidades del editor de todas formas?`
+      );
+      if (!ok) return;
+    }
+    setRemitoBusy(true);
+    setRemitoError(null);
+    try {
+      const remitoId = await persistComposeLines();
+      await generateRemitoApi(session, remitoId, { displayName: displayNameInput });
+      setComposeOpen(false);
+      await refreshRemitoStatuses();
+      navigateTo({ view: "remitos" });
+    } catch (e) {
+      setRemitoError(e instanceof Error ? e.message : "No se pudo generar remito");
+    } finally {
+      setRemitoBusy(false);
+    }
+  }
+
+  function cancelCompose() {
+    // Cancelar sin persistir: no borrador, no metadata, no Blob.
+    setComposeOpen(false);
+    setComposeLines([]);
+    setRemitoError(null);
+  }
+
+  function openRemito(status: RemitoWorkItemStatus) {
+    if (!status.remitoId) return;
+    navigateTo({ view: "remitos" });
+  }
+
   const qualityColumns: OperationalTableColumn<QualityItem>[] = useMemo(
     () => [
       {
@@ -187,8 +340,98 @@ export function ProduccionOperationalView({
           </span>
         ),
       },
+      {
+        key: "detalle",
+        header: "Detalle",
+        render: (row) =>
+          row.kind === "salida" ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => setDetailItem(row)}
+              data-testid={`prod-detail-${workIdFromQuality(row)}`}
+            >
+              Ver
+            </Button>
+          ) : (
+            <span className="text-xs text-[var(--os-text-muted)]">—</span>
+          ),
+      },
+      {
+        key: "remito",
+        header: "Remito",
+        render: (row) => {
+          if (!isPackagingQualityItem(row) || row.status !== "aprobado") {
+            return <span className="text-xs text-[var(--os-text-muted)]">—</span>;
+          }
+          const wid = workIdFromQuality(row);
+          const st = remitoStatusByWork[wid] ?? { status: "none" as const, remitoId: null };
+          if (st.status === "draft" && st.remitoId) {
+            return (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={remitoBusy}
+                onClick={() => openRemito(st)}
+                data-testid={`remito-open-draft-${wid}`}
+              >
+                ABRIR BORRADOR DE REMITO
+              </Button>
+            );
+          }
+          if (st.status === "generated" && st.remitoId) {
+            return (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={remitoBusy}
+                onClick={() => openRemito(st)}
+                data-testid={`remito-ver-${wid}`}
+              >
+                VER REMITO
+              </Button>
+            );
+          }
+          return (
+            <div className="flex max-w-[12rem] flex-col gap-1">
+              <Button
+                type="button"
+                size="sm"
+                disabled={remitoBusy}
+                onClick={() => handleGenerarRemito(row)}
+                data-testid={`remito-generar-${wid}`}
+              >
+                GENERAR REMITO
+              </Button>
+              {(() => {
+                const n = collectSameClientDateApprovedPackaging(
+                  row,
+                  aprobados,
+                  workItems
+                ).length;
+                return n > 1 ? (
+                  <span
+                    className="text-[10px] text-[var(--os-text-muted)]"
+                    data-testid={`remito-group-hint-${wid}`}
+                  >
+                    {n} productos agrupados (mismo cliente y fecha)
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-[var(--os-text-muted)]">
+                    Apto para remito
+                  </span>
+                );
+              })()}
+            </div>
+          );
+        },
+      },
     ],
-    [getQualityObservation]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handlers use latest closures
+    [getQualityObservation, remitoBusy, remitoStatusByWork, aprobados, workItems]
   );
 
   const workColumns: OperationalTableColumn<WorkItem>[] = useMemo(
@@ -270,6 +513,7 @@ export function ProduccionOperationalView({
           liveConnected={liveConnected}
           loading={loading}
           detailMessage={data?.source === "native" ? null : data?.message}
+          onRefresh={refresh}
         />
       </header>
 
@@ -297,8 +541,13 @@ export function ProduccionOperationalView({
       )}
 
       {error && (
-        <div className="mb-4 rounded border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+        <div className="mb-4 rounded border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-4 py-3 text-sm text-[var(--genus-error)]">
           {error}
+        </div>
+      )}
+      {remitoError && (
+        <div className="mb-4 rounded border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] px-4 py-3 text-sm text-[var(--genus-warning)]">
+          {remitoError}
         </div>
       )}
 
@@ -311,7 +560,7 @@ export function ProduccionOperationalView({
       <div className="mt-4">
         {activeTab === "rechazados" && (
           <OperationalTable
-            columns={qualityColumns}
+            columns={qualityColumns.filter((c) => c.key !== "remito")}
             rows={rechazados}
             rowKey={(row) => row.id}
             emptyMessage="Sin rechazos registrados."
@@ -330,7 +579,8 @@ export function ProduccionOperationalView({
             {transferidoElaboracion.length > 0 && (
               <p className="mb-3 text-sm text-[var(--os-text-muted)]">
                 {transferidoElaboracion.length} elaboración
-                {transferidoElaboracion.length === 1 ? "" : "es"} {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
+                {transferidoElaboracion.length === 1 ? "" : "es"}{" "}
+                {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
                 {WORK_TRANSFER.pendingReview.toLowerCase()}.
               </p>
             )}
@@ -347,7 +597,8 @@ export function ProduccionOperationalView({
             {transferidoEnvasado.length > 0 && (
               <p className="mb-3 text-sm text-[var(--os-text-muted)]">
                 {transferidoEnvasado.length} envasado
-                {transferidoEnvasado.length === 1 ? "" : "s"} {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
+                {transferidoEnvasado.length === 1 ? "" : "s"}{" "}
+                {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
                 {WORK_TRANSFER.pendingReview.toLowerCase()}.
               </p>
             )}
@@ -361,7 +612,7 @@ export function ProduccionOperationalView({
         )}
         {activeTab === "kpis" && (
           <div className="space-y-4">
-            <div className="rounded-[var(--os-radius-sm)] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            <div className="rounded-[var(--os-radius-sm)] border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] px-4 py-3 text-sm text-[var(--genus-warning)]">
               <strong>KPIs provisorios</strong> — calculados desde datos disponibles (SEMANAS +
               acciones locales). Pendiente conexión a pestaña <strong>DASHBOARD</strong> real en
               PEDIDOS 2026.
@@ -391,6 +642,57 @@ export function ProduccionOperationalView({
           </div>
         )}
       </div>
+
+      {composeOpen ? (
+        <RemitoComposeEditor
+          title="Generar remito"
+          lines={composeLines}
+          onChangeLines={setComposeLines}
+          clientDisplay={composeClient}
+          onClientChange={setComposeClient}
+          deliveryDate={composeDate}
+          onDeliveryDateChange={setComposeDate}
+          displayName={displayNameInput}
+          onDisplayNameChange={setDisplayNameInput}
+          busy={remitoBusy}
+          error={remitoError}
+          onCancel={cancelCompose}
+          onSaveDraft={() => void saveComposeDraft()}
+          onGenerateExcel={() => void generateComposeExcel()}
+        />
+      ) : null}
+
+      <Drawer open={detailItem !== null} onOpenChange={(open) => !open && setDetailItem(null)}>
+        <DrawerContent aria-describedby={undefined}>
+          {detailItem ? (
+            <>
+              <DrawerHeader>
+                <div>
+                  <DrawerTitle>{displayField(detailItem.product)}</DrawerTitle>
+                  <p className="mt-1 text-sm text-[var(--os-text-muted)]">
+                    {displayField(detailItem.client)}
+                  </p>
+                </div>
+                <DrawerCloseButton />
+              </DrawerHeader>
+              <DrawerBody className="space-y-4">
+                <CodificadoTracePanel
+                  workItem={
+                    workItems.find((w) => w.id === workIdFromQuality(detailItem)) ?? null
+                  }
+                  progress={progressMap[workIdFromQuality(detailItem)] ?? null}
+                  fallbackQuantity={detailItem.quantity}
+                />
+              </DrawerBody>
+              <DrawerFooter>
+                <Button variant="secondary" onClick={() => setDetailItem(null)}>
+                  Cerrar
+                </Button>
+              </DrawerFooter>
+            </>
+          ) : null}
+        </DrawerContent>
+      </Drawer>
     </TwinShell>
   );
 }
@@ -398,10 +700,8 @@ export function ProduccionOperationalView({
 function KpiCard({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-4 py-5">
-      <p className="text-xs font-medium uppercase tracking-wide text-[var(--os-text-muted)]">
-        {label}
-      </p>
-      <p className="mt-2 text-3xl font-semibold tabular-nums text-[var(--os-text)]">{value}</p>
+      <p className="text-xs uppercase tracking-wide text-[var(--os-text-muted)]">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
     </div>
   );
 }

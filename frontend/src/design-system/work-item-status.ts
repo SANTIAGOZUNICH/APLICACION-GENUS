@@ -40,11 +40,29 @@ export const workItemStatusDisplay: Record<WorkItemStatus, WorkItemStatusDisplay
     colorVar: "var(--genus-brand-secondary)",
     bgVar: "var(--genus-brand-secondary-soft)",
   },
+  entregado: {
+    label: "Entregado",
+    dotClassName: "bg-[var(--genus-success)]",
+    colorVar: "var(--genus-success)",
+    bgVar: "var(--genus-success-soft)",
+  },
   cancelado: {
     label: "Cancelado",
     dotClassName: "bg-[var(--genus-neutral-400)]",
     colorVar: "var(--genus-neutral-500)",
     bgVar: "var(--genus-neutral-100)",
+  },
+  en_codificado: {
+    label: "En Codificado",
+    dotClassName: "bg-[var(--genus-info)]",
+    colorVar: "var(--genus-info)",
+    bgVar: "var(--genus-info-soft)",
+  },
+  codificado_completo: {
+    label: "Codificado completo",
+    dotClassName: "bg-[var(--genus-brand-secondary)]",
+    colorVar: "var(--genus-brand-secondary)",
+    bgVar: "var(--genus-brand-secondary-soft)",
   },
 };
 

@@ -10,12 +10,12 @@ describe("live-sync-poll-controller", () => {
     vi.useRealTimers();
   });
 
-  it("backoff gradual 3s → 5s → 10s → 30s y reset tras éxito", () => {
-    expect(nextPollDelayMs(3_000, false)).toBe(5_000);
-    expect(nextPollDelayMs(5_000, false)).toBe(10_000);
-    expect(nextPollDelayMs(10_000, false)).toBe(30_000);
-    expect(nextPollDelayMs(30_000, false)).toBe(30_000);
-    expect(nextPollDelayMs(30_000, true)).toBe(LIVE_SYNC_POLL_BASE_MS);
+  it("backoff gradual 8s → 15s → 30s → 60s y reset tras éxito", () => {
+    expect(nextPollDelayMs(8_000, false)).toBe(15_000);
+    expect(nextPollDelayMs(15_000, false)).toBe(30_000);
+    expect(nextPollDelayMs(30_000, false)).toBe(60_000);
+    expect(nextPollDelayMs(60_000, false)).toBe(60_000);
+    expect(nextPollDelayMs(60_000, true)).toBe(LIVE_SYNC_POLL_BASE_MS);
   });
 
   it("evita requests superpuestos", async () => {
@@ -91,7 +91,7 @@ describe("live-sync-poll-controller", () => {
     poll.stop();
   });
 
-  it("error 429 / fallo activa backoff y éxito reinicia a 3s", async () => {
+  it("error 429 / fallo activa backoff y éxito reinicia a 8s", async () => {
     vi.useFakeTimers();
     let mode: "fail" | "ok" = "fail";
     const onChanged = vi.fn();
@@ -111,16 +111,16 @@ describe("live-sync-poll-controller", () => {
 
     poll.start();
     await Promise.resolve();
-    expect(poll.getDelayMs()).toBe(5_000);
+    expect(poll.getDelayMs()).toBe(15_000);
 
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(15_000);
     await Promise.resolve();
-    expect(poll.getDelayMs()).toBe(10_000);
+    expect(poll.getDelayMs()).toBe(30_000);
 
     mode = "ok";
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     await Promise.resolve();
-    expect(poll.getDelayMs()).toBe(3_000);
+    expect(poll.getDelayMs()).toBe(8_000);
     expect(onChanged).toHaveBeenCalledTimes(1);
     poll.stop();
   });

@@ -1,6 +1,25 @@
+import { getCurrentAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
+import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
+import type { LiveSyncEvent, LiveSyncStatus } from "@/lib/live-sync/types";
+import {
+  ACTOR_EMAIL_HEADER,
+  ACTOR_SECTOR_HEADER,
+} from "@/lib/auth/header-names";
 import type { SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
-import type { LiveSyncEvent, LiveSyncStatus } from "@/lib/live-sync/types";
+
+function jsonActorHeaders(): HeadersInit {
+  const session = getCurrentAuthSession();
+  return {
+    "Content-Type": "application/json",
+    ...(session
+      ? {
+          [ACTOR_EMAIL_HEADER]: session.user.email,
+          [ACTOR_SECTOR_HEADER]: session.sector.id,
+        }
+      : {}),
+  };
+}
 
 export async function fetchLiveSyncStatus(): Promise<LiveSyncStatus & { mode?: string }> {
   const response = await fetch("/api/v1/live-sync/status", { cache: "no-store" });
@@ -87,9 +106,17 @@ export async function postSaveProgress(payload: {
   finishedQty: string;
   observation: string;
   updatedBy?: string;
+  packagingLote?: string | null;
+  packagingVto?: string | null;
+  packagingTotalUnits?: number | null;
+  packagingCajas?: number | null;
+  packagingUnidadesPorCaja?: number | null;
+  packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+  packingMismatchObservation?: string | null;
 }): Promise<void> {
   await fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "save_progress", ...payload }),
   });
@@ -103,6 +130,7 @@ export async function postCompleteWork(payload: {
 }): Promise<void> {
   await fetch("/api/v1/live-sync/operations", {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "complete_work", ...payload }),
   });
@@ -113,11 +141,126 @@ export async function postQualityDecision(payload: {
   status: "aprobado" | "rechazado";
   decidedBy?: string;
   observation?: string;
+  product?: string | null;
+  client?: string | null;
+  plannedDate?: string | null;
+  plannedDateTo?: string | null;
+  lote?: string | null;
+  quantity?: string | null;
+  relatedWorkItemId?: string | null;
+  /** Sector de la sesión — defensa de acción en el pipeline (no auth server completo). */
+  actorSectorId?: string;
 }): Promise<void> {
   await fetch("/api/v1/live-sync/operations", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "quality_decision", ...payload }),
+  });
+}
+
+export async function postQualityAnnul(payload: {
+  itemId: string;
+  reason: string;
+  decidedBy?: string;
+  actorSectorId?: string;
+}): Promise<void> {
+  await fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "quality_annul", ...payload }),
+  });
+}
+
+export async function postCancelWork(payload: {
+  itemId: string;
+  reason: string;
+  cancelledBy?: string;
+  sector?: SectorId;
+  actorSectorId: string;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "cancel_work", ...payload }),
+  });
+}
+
+export async function postDeliverWork(
+  payload: DeliveryRecord & { actorSectorId: string }
+): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "deliver_work", ...payload }),
+  });
+}
+
+export async function postArchiveDelivery(payload: {
+  id: string;
+  actorSectorId: string;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "archive_delivery", ...payload }),
+  });
+}
+
+export async function postRestoreDelivery(payload: {
+  id: string;
+  actorSectorId: string;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "restore_delivery", ...payload }),
+  });
+}
+
+export async function postDeleteDeliveryRecord(payload: {
+  id: string;
+  reason: string;
+  actorSectorId: string;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "delete_delivery_record", ...payload }),
+  });
+}
+
+export async function postAnnulDelivery(payload: {
+  id: string;
+  reason: string;
+  actorSectorId: string;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "annul_delivery", ...payload }),
+  });
+}
+
+export async function postRestoreWork(payload: {
+  itemId: string;
+  actorSectorId: SectorId;
+  restoredBy?: string;
+  reason?: string;
+  sector?: SectorId;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "restore_work", ...payload }),
   });
 }
 

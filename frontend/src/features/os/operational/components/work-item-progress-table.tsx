@@ -1,74 +1,46 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
+import { VIEW_ARCHIVE_TOOLTIP } from "@/lib/work-view-archive";
 import {
   formatOperationalDifference,
   plannedQuantityLabel,
 } from "../lib/operational-progress";
 import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { ActionButton, StatusChip } from "./operational-ui";
+import { DeliveryDateBadge } from "./delivery-date-badge";
 
 interface WorkItemProgressTableProps {
   items: WorkItem[];
   variant: "envasado" | "elaboracion";
   getFinishedQty: (itemId: string) => string;
   getObservation: (itemId: string) => string;
-  onSaveProgress: (
-    itemId: string,
-    payload: { finishedQty: string; observation: string }
-  ) => void;
-  onMarkFinished: (
-    item: WorkItem,
-    payload: { finishedQty: string; observation: string }
-  ) => void;
+  onSelectItem: (item: WorkItem) => void;
   emptyMessage?: string;
+  /** Envasado: lista principal vs sub-pestaña Archivados. */
+  listMode?: "active" | "archived";
+  onArchiveFromView?: (item: WorkItem) => void;
+  onRestoreToView?: (item: WorkItem) => void;
+  archiveBusyId?: string | null;
 }
 
-interface RowDraft {
-  finishedQty: string;
-  observation: string;
-}
+const thClass = "os-table-th";
+const tdClass = "os-table-td";
 
-/** Tabla operativa con avance editable — Envasado / Elaboración. */
+/** Tabla operativa — Envasado / Elaboración. La fila abre el drawer de trabajo. */
 export function WorkItemProgressTable({
   items,
   variant,
   getFinishedQty,
   getObservation,
-  onSaveProgress,
-  onMarkFinished,
+  onSelectItem,
   emptyMessage = "Sin registros.",
+  listMode = "active",
+  onArchiveFromView,
+  onRestoreToView,
+  archiveBusyId = null,
 }: WorkItemProgressTableProps) {
-  const [drafts, setDrafts] = useState<Record<string, RowDraft>>({});
-
-  useEffect(() => {
-    setDrafts((prev) => {
-      const next = { ...prev };
-      for (const item of items) {
-        if (!next[item.id]) {
-          next[item.id] = {
-            finishedQty: getFinishedQty(item.id),
-            observation: getObservation(item.id),
-          };
-        }
-      }
-      return next;
-    });
-  }, [items, getFinishedQty, getObservation]);
-
-  const updateDraft = useCallback((itemId: string, patch: Partial<RowDraft>) => {
-    setDrafts((prev) => ({
-      ...prev,
-      [itemId]: {
-        finishedQty: prev[itemId]?.finishedQty ?? "",
-        observation: prev[itemId]?.observation ?? "",
-        ...patch,
-      },
-    }));
-  }, []);
-
   if (items.length === 0) {
     return (
       <p className="rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-border)] px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
@@ -78,90 +50,81 @@ export function WorkItemProgressTable({
   }
 
   return (
-    <div className="overflow-x-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
-      <table className="w-full min-w-[960px] border-collapse text-sm">
+    <div className="os-table-wrap overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
+      <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,13px)]">
         <thead>
           <tr className="border-b border-[var(--os-border)] bg-[var(--os-bg)]">
             {variant === "envasado" && (
-              <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-                Línea
-              </th>
+              <th className={`${thClass} hidden md:table-cell`}>Línea</th>
             )}
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Cliente
+            <th className={`${thClass} hidden sm:table-cell`}>Fecha</th>
+            <th className={`${thClass} hidden md:table-cell`}>Fecha de entrega</th>
+            <th className={`${thClass} hidden md:table-cell`}>Cliente</th>
+            <th className={thClass}>Producto</th>
+            <th className={`${thClass} hidden sm:table-cell`}>
+              {variant === "envasado" ? "Unidades planificadas" : "Kg planificados"}
             </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Producto
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Planificada
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              {variant === "envasado" ? "Terminada" : "Real terminada"}
+            <th className={`${thClass} hidden sm:table-cell`}>
+              {variant === "envasado" ? "Unidades realizadas" : "Kg realizados"}
             </th>
             {variant === "envasado" && (
-              <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-                Diferencia
-              </th>
+              <th className={`${thClass} hidden md:table-cell`}>Diferencia</th>
             )}
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Plazo
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              {variant === "envasado" ? "OA" : "OE"}
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Estado
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Observación
-            </th>
-            <th className="px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-              Acciones
-            </th>
+            <th className={thClass}>Estado</th>
+            <th className={`${thClass} hidden lg:table-cell`}>Observación</th>
+            <th className={thClass}>Acción</th>
           </tr>
         </thead>
         <tbody>
           {items.map((item) => {
-            const draft = drafts[item.id] ?? { finishedQty: "", observation: "" };
             const planned = plannedQuantityLabel(item.quantity, item.unit);
-            const diff = formatOperationalDifference(item.quantity, draft.finishedQty);
-            const ref = variant === "envasado" ? item.oaRef : item.oeRef;
+            const finishedQty = getFinishedQty(item.id);
+            const diff = formatOperationalDifference(item.quantity, finishedQty);
             const isTransferred = isWorkTransferredStatus(item.status);
+            const observation = getObservation(item.id);
+            const busy = archiveBusyId === item.id;
+            const showArchive =
+              variant === "envasado" &&
+              listMode === "active" &&
+              isTransferred &&
+              Boolean(onArchiveFromView);
+            const showRestore =
+              variant === "envasado" &&
+              listMode === "archived" &&
+              Boolean(onRestoreToView);
 
             return (
               <tr
                 key={item.id}
-                className={`border-b border-[var(--os-border-subtle)] last:border-b-0 ${
+                onClick={() => onSelectItem(item)}
+                className={`cursor-pointer border-b border-[var(--os-border-subtle)] last:border-b-0 ${
                   isTransferred
                     ? "border-l-4 border-l-[var(--os-teal)] bg-[var(--os-teal-soft)]/40"
                     : "hover:bg-[var(--os-bg)]/60"
                 }`}
               >
                 {variant === "envasado" && (
-                  <td className="px-3 py-2.5 align-top font-medium">
-                    {displayField(item.line)}
+                  <td className={`${tdClass} hidden font-medium md:table-cell`}>
+                    <span className="os-break">{displayField(item.line)}</span>
                   </td>
                 )}
-                <td className="px-3 py-2.5 align-top">{displayField(item.client)}</td>
-                <td className="px-3 py-2.5 align-top font-medium">
-                  {displayField(item.product)}
+                <td className={`${tdClass} hidden sm:table-cell`}>
+                  <span className="os-break">{displayField(item.dayLabel ?? item.plannedDate)}</span>
                 </td>
-                <td className="px-3 py-2.5 align-top tabular-nums">{planned}</td>
-                <td className="px-3 py-2.5 align-top">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={draft.finishedQty}
-                    onChange={(e) => updateDraft(item.id, { finishedQty: e.target.value })}
-                    placeholder="0"
-                    disabled={isTransferred}
-                    className="w-24 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm tabular-nums disabled:opacity-50"
-                  />
+                <td className={`${tdClass} hidden md:table-cell`}>
+                  <DeliveryDateBadge deliveryDate={item.deliveryDate} />
                 </td>
+                <td className={`${tdClass} hidden md:table-cell`}>
+                  <span className="os-break">{displayField(item.client)}</span>
+                </td>
+                <td className={`${tdClass} font-medium`}>
+                  <span className="os-break">{displayField(item.product)}</span>
+                </td>
+                <td className={`${tdClass} hidden tabular-nums sm:table-cell`}>{planned}</td>
+                <td className={`${tdClass} hidden tabular-nums sm:table-cell`}>{finishedQty || "—"}</td>
                 {variant === "envasado" && (
                   <td
-                    className={`px-3 py-2.5 align-top tabular-nums font-medium ${
+                    className={`${tdClass} hidden tabular-nums font-medium md:table-cell ${
                       diff.startsWith("+")
                         ? "text-emerald-700"
                         : diff.startsWith("-")
@@ -172,71 +135,52 @@ export function WorkItemProgressTable({
                     {diff}
                   </td>
                 )}
-                <td className="px-3 py-2.5 align-top">
-                  {displayField(item.dayLabel ?? item.deliveryDate)}
-                </td>
-                <td className="px-3 py-2.5 align-top font-mono text-xs">
-                  {displayField(ref)}
-                </td>
-                <td className="px-3 py-2.5 align-top">
+                <td className={tdClass}>
                   {isTransferred ? (
                     <div className="space-y-1">
                       <StatusChip status={item.status} />
                       <p className="text-xs font-medium text-[var(--os-teal)]">
                         {WORK_TRANSFER.deliveredToQuality}
                       </p>
-                      <p className="text-xs text-[var(--os-text-muted)]">
-                        {WORK_TRANSFER.nextResponsibleQuality}
-                      </p>
                     </div>
                   ) : (
                     <StatusChip status={item.status} />
                   )}
                 </td>
-                <td className="px-3 py-2.5 align-top">
-                  {isTransferred ? (
-                    <span className="text-xs text-[var(--os-text-muted)]">
-                      {getObservation(item.id) || "—"}
-                    </span>
-                  ) : (
-                    <input
-                      type="text"
-                      value={draft.observation}
-                      onChange={(e) => updateDraft(item.id, { observation: e.target.value })}
-                      placeholder="Observación…"
-                      className="min-w-[140px] rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm"
-                    />
-                  )}
+                <td className={`${tdClass} hidden text-xs text-[var(--os-text-muted)] lg:table-cell`}>
+                  <span className="os-break">{observation || "—"}</span>
                 </td>
-                <td className="px-3 py-2.5 align-top">
-                  {isTransferred ? (
-                    <span className="text-xs font-medium text-[var(--os-teal)]">
-                      {WORK_TRANSFER.deliveredToQuality}
-                    </span>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
+                <td className={tdClass}>
+                  <div className="flex flex-col gap-1.5">
+                    <ActionButton
+                      label={
+                        listMode === "archived"
+                          ? "Ver detalle"
+                          : isTransferred
+                            ? "Ver detalle"
+                            : "Ver / Registrar avance"
+                      }
+                      variant="neutral"
+                      onClick={() => onSelectItem(item)}
+                    />
+                    {showArchive && (
                       <ActionButton
-                        label={WORK_TRANSFER.saveProgressAction}
+                        label="Archivar de mi vista"
                         variant="neutral"
-                        onClick={() =>
-                          onSaveProgress(item.id, {
-                            finishedQty: draft.finishedQty,
-                            observation: draft.observation,
-                          })
-                        }
+                        disabled={busy}
+                        title={VIEW_ARCHIVE_TOOLTIP}
+                        onClick={() => onArchiveFromView?.(item)}
                       />
+                    )}
+                    {showRestore && (
                       <ActionButton
-                        label={WORK_TRANSFER.markFinishedAction}
+                        label="Restaurar a mi vista"
                         variant="approve"
-                        onClick={() =>
-                          onMarkFinished(item, {
-                            finishedQty: draft.finishedQty || item.quantity || "",
-                            observation: draft.observation,
-                          })
-                        }
+                        disabled={busy}
+                        onClick={() => onRestoreToView?.(item)}
                       />
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </td>
               </tr>
             );

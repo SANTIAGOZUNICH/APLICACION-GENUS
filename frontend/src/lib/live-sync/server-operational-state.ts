@@ -8,6 +8,7 @@ import type {
   QualityDecisionStatus,
   QualityItem,
 } from "@/features/os/operational/types";
+import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
 import { operationalEventBus } from "@/lib/live-sync/operational-event-bus";
 import type { WorkProgressPayload } from "@/lib/live-sync/types";
 
@@ -36,6 +37,7 @@ class ServerOperationalState {
   private progress = new Map<string, WorkProgressPayload>();
   private decisions = new Map<string, QualityDecisionRecord>();
   private completions = new Map<string, CompletionEvent>();
+  private deliveries = new Map<string, DeliveryRecord>();
   private revision = 0;
 
   getRevision(): number {
@@ -48,6 +50,7 @@ class ServerOperationalState {
       progress: Object.fromEntries(this.progress),
       decisions: Object.fromEntries(this.decisions),
       completions: [...this.completions.values()],
+      deliveries: [...this.deliveries.values()],
     };
   }
 
@@ -58,16 +61,58 @@ class ServerOperationalState {
       observation: string;
       updatedBy?: string;
       sector?: SectorId;
+      packagingLote?: string | null;
+      packagingVto?: string | null;
+      packagingTotalUnits?: number | null;
+      packagingCajas?: number | null;
+      packagingUnidadesPorCaja?: number | null;
+      packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+      packingMismatchObservation?: string | null;
     }
   ): WorkProgressPayload {
+    const existing = this.progress.get(itemId);
+    const keepStatus =
+      existing?.status === "revision" ||
+      existing?.status === "entregado" ||
+      existing?.status === "completo" ||
+      existing?.status === "cancelado";
     const record: WorkProgressPayload = {
       itemId,
       finishedQty: payload.finishedQty.trim(),
       observation: payload.observation.trim(),
-      status: "en_curso",
+      status: keepStatus ? existing!.status : "en_curso",
       updatedAt: new Date().toISOString(),
       updatedBy: payload.updatedBy,
-      sector: payload.sector,
+      sector: payload.sector ?? existing?.sector,
+      completedAt: existing?.completedAt,
+      packagingLote:
+        payload.packagingLote !== undefined
+          ? payload.packagingLote
+          : existing?.packagingLote ?? null,
+      packagingVto:
+        payload.packagingVto !== undefined
+          ? payload.packagingVto
+          : existing?.packagingVto ?? null,
+      packagingTotalUnits:
+        payload.packagingTotalUnits !== undefined
+          ? payload.packagingTotalUnits
+          : existing?.packagingTotalUnits ?? null,
+      packagingCajas:
+        payload.packagingCajas !== undefined
+          ? payload.packagingCajas
+          : existing?.packagingCajas ?? null,
+      packagingUnidadesPorCaja:
+        payload.packagingUnidadesPorCaja !== undefined
+          ? payload.packagingUnidadesPorCaja
+          : existing?.packagingUnidadesPorCaja ?? null,
+      packingGroups:
+        payload.packingGroups !== undefined
+          ? payload.packingGroups
+          : existing?.packingGroups ?? null,
+      packingMismatchObservation:
+        payload.packingMismatchObservation !== undefined
+          ? payload.packingMismatchObservation
+          : existing?.packingMismatchObservation ?? null,
     };
     this.progress.set(itemId, record);
     this.revision += 1;
@@ -90,6 +135,7 @@ class ServerOperationalState {
     payload: { finishedQty: string; observation: string; completedBy: string }
   ): { progress: WorkProgressPayload; completion: CompletionEvent } {
     const completedAt = new Date().toISOString();
+    const existing = this.progress.get(item.id);
     const progress: WorkProgressPayload = {
       itemId: item.id,
       finishedQty: payload.finishedQty.trim(),
@@ -99,6 +145,18 @@ class ServerOperationalState {
       updatedBy: payload.completedBy,
       completedAt,
       sector: item.sector,
+      packagingLote: item.packagingLote ?? existing?.packagingLote ?? null,
+      packagingVto: item.packagingVto ?? existing?.packagingVto ?? null,
+      packagingTotalUnits:
+        item.packagingTotalUnits ?? existing?.packagingTotalUnits ?? null,
+      packagingCajas: item.packagingCajas ?? existing?.packagingCajas ?? null,
+      packagingUnidadesPorCaja:
+        item.packagingUnidadesPorCaja ?? existing?.packagingUnidadesPorCaja ?? null,
+      packingGroups: item.packingGroups ?? existing?.packingGroups ?? null,
+      packingMismatchObservation:
+        item.packingMismatchObservation ??
+        existing?.packingMismatchObservation ??
+        null,
     };
     this.progress.set(item.id, progress);
 
@@ -141,14 +199,25 @@ class ServerOperationalState {
   decideQuality(
     itemId: string,
     status: QualityDecisionStatus,
-    options?: { decidedBy?: string; observation?: string }
+    options?: {
+      decidedBy?: string;
+      observation?: string;
+      decidedBySector?: string;
+      decidedByEmail?: string;
+      changeReason?: string;
+    }
   ): QualityDecisionRecord {
+    const previous = this.decisions.get(itemId);
     const record: QualityDecisionRecord = {
       itemId,
       status,
       decidedAt: new Date().toISOString(),
       decidedBy: options?.decidedBy,
+      decidedBySector: options?.decidedBySector,
+      decidedByEmail: options?.decidedByEmail,
       observation: options?.observation?.trim() || undefined,
+      previousStatus: previous?.status,
+      changeReason: options?.changeReason?.trim() || undefined,
     };
     this.decisions.set(itemId, record);
     this.revision += 1;
@@ -165,6 +234,267 @@ class ServerOperationalState {
     }
 
     return record;
+  }
+
+  /**
+   * Anula una decisión de calidad: conserva historial (previousStatus + motivo),
+   * vuelve el ítem a pendiente y no crea remito.
+   */
+  annulQualityDecision(
+    itemId: string,
+    options: {
+      reason: string;
+      decidedBy: string;
+      decidedBySector: string;
+      decidedByEmail?: string;
+    }
+  ): QualityDecisionRecord {
+    const previous = this.decisions.get(itemId);
+    if (!previous || (previous.status !== "aprobado" && previous.status !== "rechazado")) {
+      throw new Error("Solo se pueden anular decisiones aprobadas o rechazadas.");
+    }
+    if (!options.reason.trim()) {
+      throw new Error("Motivo obligatorio para anular la decisión.");
+    }
+    const record: QualityDecisionRecord = {
+      itemId,
+      status: "pendiente",
+      decidedAt: new Date().toISOString(),
+      decidedBy: options.decidedBy,
+      decidedBySector: options.decidedBySector,
+      decidedByEmail: options.decidedByEmail,
+      observation: previous.observation,
+      previousStatus: previous.status,
+      changeReason: options.reason.trim(),
+    };
+    this.decisions.set(itemId, record);
+    this.revision += 1;
+    operationalEventBus.publish({
+      type: "quality.decided",
+      revision: this.revision,
+      at: record.decidedAt,
+      itemId,
+      status: "pendiente",
+      notifySectors: NOTIFY_ON_QUALITY,
+    });
+    return record;
+  }
+
+  /**
+   * Restaura un trabajo cancelado → en_curso, si no hay conflicto de estado.
+   */
+  restoreCancelledWork(
+    itemId: string,
+    options: { restoredBy: string; reason?: string; sector?: SectorId }
+  ): WorkProgressPayload {
+    const existing = this.progress.get(itemId);
+    if (!existing || existing.status !== "cancelado") {
+      throw new Error("Solo se restauran trabajos en estado cancelado.");
+    }
+    const record: WorkProgressPayload = {
+      ...existing,
+      status: "en_curso",
+      observation: [
+        existing.observation,
+        options.reason?.trim() ? `Restaurado: ${options.reason.trim()}` : "Restaurado",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      updatedAt: new Date().toISOString(),
+      updatedBy: options.restoredBy,
+      sector: options.sector ?? existing.sector,
+    };
+    this.progress.set(itemId, record);
+    this.revision += 1;
+    operationalEventBus.publish({
+      type: "work.progress",
+      revision: this.revision,
+      at: record.updatedAt,
+      itemId,
+      sector: record.sector ?? "PRODUCCION",
+      status: "en_curso",
+      notifySectors: NOTIFY_ON_PROGRESS,
+    });
+    return record;
+  }
+
+  /**
+   * Cancela un trabajo en el overlay server-side (solo PRODUCCION — validado en route).
+   * No elimina OE/OA ni decisiones de Calidad.
+   */
+  cancelWork(
+    itemId: string,
+    options: { cancelledBy: string; reason: string; sector?: SectorId }
+  ): WorkProgressPayload {
+    const existing = this.progress.get(itemId);
+    const record: WorkProgressPayload = {
+      itemId,
+      finishedQty: existing?.finishedQty ?? "",
+      observation: [existing?.observation, `Cancelado: ${options.reason}`]
+        .filter(Boolean)
+        .join(" · "),
+      status: "cancelado",
+      updatedAt: new Date().toISOString(),
+      updatedBy: options.cancelledBy,
+      sector: options.sector ?? existing?.sector,
+    };
+    this.progress.set(itemId, record);
+    this.revision += 1;
+
+    operationalEventBus.publish({
+      type: "work.progress",
+      revision: this.revision,
+      at: record.updatedAt,
+      itemId,
+      sector: record.sector ?? "PRODUCCION",
+      status: "cancelado",
+      notifySectors: NOTIFY_ON_PROGRESS,
+    });
+
+    return record;
+  }
+
+  deliverWork(record: DeliveryRecord): DeliveryRecord {
+    const now = new Date().toISOString();
+    const existing = [...this.deliveries.values()].find(
+      (d) => d.workItemId === record.workItemId && d.status === "ENTREGADO" && !d.annulledAt
+    );
+    if (existing) {
+      return existing;
+    }
+
+    const next: DeliveryRecord = {
+      ...record,
+      status: "ENTREGADO",
+      archived: record.archived ?? false,
+      updatedAt: record.updatedAt ?? now,
+    };
+    this.deliveries.set(next.id, next);
+
+    const prevProgress = this.progress.get(next.workItemId);
+    this.progress.set(next.workItemId, {
+      itemId: next.workItemId,
+      finishedQty: prevProgress?.finishedQty ?? "",
+      observation: prevProgress?.observation ?? "",
+      status: "entregado",
+      updatedAt: now,
+      updatedBy: next.deliveredBy,
+      completedAt: prevProgress?.completedAt ?? now,
+      sector: next.sourceSector,
+    });
+
+    this.revision += 1;
+
+    operationalEventBus.publish({
+      type: "work.progress",
+      revision: this.revision,
+      at: now,
+      itemId: next.workItemId,
+      sector: next.sourceSector,
+      status: "entregado",
+      notifySectors: ["PRODUCCION", "CALIDAD", "DIRECCION", next.sourceSector],
+    });
+
+    return next;
+  }
+
+  archiveDelivery(id: string, actorName = "Producción"): DeliveryRecord | null {
+    const current = this.deliveries.get(id);
+    if (!current) return null;
+    const now = new Date().toISOString();
+    const next: DeliveryRecord = {
+      ...current,
+      archived: true,
+      archivedAt: now,
+      archivedBy: actorName,
+      updatedAt: now,
+    };
+    this.deliveries.set(id, next);
+    this.revision += 1;
+    return next;
+  }
+
+  restoreDelivery(id: string): DeliveryRecord | null {
+    const current = this.deliveries.get(id);
+    if (!current) return null;
+    const next: DeliveryRecord = {
+      ...current,
+      archived: false,
+      archivedAt: null,
+      archivedBy: null,
+      updatedAt: new Date().toISOString(),
+    };
+    this.deliveries.set(id, next);
+    this.revision += 1;
+    return next;
+  }
+
+  annulDelivery(id: string, reason: string, actorName = "Producción"): DeliveryRecord | null {
+    const current = this.deliveries.get(id);
+    if (!current) return null;
+    if (current.status === "REGISTRO_ELIMINADO") return null;
+    if (current.archived) return null;
+    if (current.status === "ANULADO") return current;
+
+    const now = new Date().toISOString();
+    const next: DeliveryRecord = {
+      ...current,
+      status: "ANULADO",
+      archived: false,
+      annulledAt: now,
+      annulledBy: actorName,
+      annulReason: reason,
+      updatedAt: now,
+    };
+    this.deliveries.set(id, next);
+
+    const prevProgress = this.progress.get(next.workItemId);
+    this.progress.set(next.workItemId, {
+      itemId: next.workItemId,
+      finishedQty: prevProgress?.finishedQty ?? "",
+      observation: prevProgress?.observation ?? "",
+      status: "revision",
+      updatedAt: now,
+      updatedBy: actorName,
+      completedAt: prevProgress?.completedAt,
+      sector: next.sourceSector,
+    });
+
+    this.revision += 1;
+
+    operationalEventBus.publish({
+      type: "work.progress",
+      revision: this.revision,
+      at: now,
+      itemId: next.workItemId,
+      sector: next.sourceSector,
+      status: "revision",
+      notifySectors: ["PRODUCCION", "CALIDAD", "DIRECCION", next.sourceSector],
+    });
+
+    return next;
+  }
+
+  deleteDeliveryRecord(
+    id: string,
+    options?: { reason?: string; actorName?: string }
+  ): DeliveryRecord | null {
+    const current = this.deliveries.get(id);
+    if (!current) return null;
+    if (!current.archived && current.status === "ENTREGADO") return null;
+
+    const now = new Date().toISOString();
+    const deleted: DeliveryRecord = {
+      ...current,
+      status: "REGISTRO_ELIMINADO",
+      deletedAt: now,
+      deletedBy: options?.actorName ?? "Producción",
+      deleteReason: options?.reason ?? "Sin motivo",
+      updatedAt: now,
+    };
+    this.deliveries.delete(id);
+    this.revision += 1;
+    return deleted;
   }
 
   applyToWorkItems<T extends WorkItem>(items: T[]): T[] {

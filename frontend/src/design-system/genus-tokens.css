@@ -1,49 +1,68 @@
 /**
- * Genus OS — CSS custom properties oficiales.
- * Scope: .genus-ds-root (página /design-system y futura app F10+).
+ * Genus OS — INDUSTRIAL GLASS NIGHT
+ * Fuente de verdad visual: --genus-*
+ * Scope: .genus-ds-root / .design-preview-root
+ * Un solo ambiente navy/petróleo/turquesa — sidebar, header y contenido
+ * comparten la misma familia de superficies (--genus-surface-*).
  */
 
 .genus-ds-root,
 .design-preview-root {
-  /* Brand */
-  --genus-brand-primary: #1fa39a;
-  --genus-brand-primary-soft: #e6f7f6;
-  --genus-brand-primary-muted: rgb(31 163 154 / 0.14);
-  --genus-brand-secondary: #0f4c5c;
-  --genus-brand-secondary-soft: #e8f1f3;
+  /* Brand — Industrial Glass (sin cambios de hue, es el único acento) */
+  --genus-brand-primary: #12bfb7;
+  --genus-brand-primary-soft: rgb(18 191 183 / 0.16);
+  --genus-brand-primary-muted: rgb(18 191 183 / 0.14);
+  --genus-brand-primary-glow: #55e2d8;
+  --genus-brand-action: #1a7ae8;
+  --genus-brand-action-soft: rgb(23 105 224 / 0.16);
+  --genus-brand-action-muted: rgb(23 105 224 / 0.14);
+  --genus-brand-secondary: #0b2636;
+  --genus-brand-secondary-soft: rgb(11 38 54 / 0.5);
+  --genus-brand-navy: #0b2636;
+  --genus-brand-navy-dark: #071925;
 
-  /* Neutrals */
-  --genus-neutral-50: #f8fafc;
-  --genus-neutral-100: #f1f5f9;
-  --genus-neutral-200: #e2e8f0;
-  --genus-neutral-300: #cbd5e1;
-  --genus-neutral-400: #94a3b8;
-  --genus-neutral-500: #64748b;
-  --genus-neutral-600: #475569;
-  --genus-neutral-700: #334155;
-  --genus-neutral-800: #1e293b;
-  --genus-neutral-900: #0f172a;
+  /* Neutrals — misma escala, ahora en registro navy oscuro */
+  --genus-neutral-50: #eff7f9;
+  --genus-neutral-100: #d8e6ec;
+  --genus-neutral-200: #a9c0cc;
+  --genus-neutral-300: #7e97a4;
+  --genus-neutral-400: #5c7480;
+  --genus-neutral-500: #465b66;
+  --genus-neutral-600: #34454e;
+  --genus-neutral-700: #253540;
+  --genus-neutral-800: #182631;
+  --genus-neutral-900: #0e1922;
 
-  /* Semantic */
+  /* Semantic — se conserva identidad, contraste e icono; solo en superficies chicas */
   --genus-success: #15803d;
   --genus-success-soft: #ecfdf3;
   --genus-warning: #b45309;
   --genus-warning-soft: #fffbeb;
   --genus-error: #b91c1c;
   --genus-error-soft: #fef2f2;
-  --genus-info: #0369a1;
-  --genus-info-soft: #f0f9ff;
+  --genus-info: #1769e0;
+  --genus-info-soft: #e8f1fc;
 
-  /* Surfaces */
-  --genus-surface-bg: #f4f7fa;
-  --genus-surface-card: #ffffff;
-  --genus-surface-muted: #f8fafc;
-  --genus-surface-sidebar: #0f172a;
+  /* Surfaces — escala de elevación navy, sidebar/header/contenido en el mismo ambiente */
+  --genus-surface-bg: #0a1d29;
+  --genus-surface-card: #0f2634;
+  --genus-surface-glass: rgb(15 38 52 / 0.62);
+  --genus-surface-glass-strong: rgb(15 38 52 / 0.82);
+  --genus-surface-muted: #0d2029;
+  --genus-surface-sidebar: #071925;
+  --genus-surface-sidebar-2: #0b2636;
+  --genus-border: rgb(255 255 255 / 0.1);
+  --genus-border-strong: rgb(255 255 255 / 0.16);
+
+  /* Ambient (background wash — no bloques decorativos) */
+  --genus-ambient-teal: rgb(18 191 183 / 0.11);
+  --genus-ambient-blue: rgb(23 105 224 / 0.08);
 
   /* Text */
-  --genus-text-primary: #0f172a;
-  --genus-text-secondary: #64748b;
-  --genus-text-inverse: #f8fafc;
+  --genus-text-primary: #eaf3f6;
+  --genus-text-secondary: #93a8b4;
+  --genus-text-inverse: #f1f8fa;
+  --genus-text-inverse-muted: rgb(244 248 250 / 0.62);
 
   /* Spacing */
   --genus-space-0: 0;
@@ -59,16 +78,18 @@
   /* Radius */
   --genus-radius-sm: 0.5rem;
   --genus-radius-md: 0.75rem;
-  --genus-radius-lg: 1rem;
-  --genus-radius-xl: 1.125rem;
+  --genus-radius-lg: 0.875rem;
+  --genus-radius-xl: 1rem;
   --genus-radius-full: 9999px;
 
-  /* Shadows */
-  --genus-shadow-xs: 0 1px 2px rgb(15 23 42 / 0.04);
-  --genus-shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 3px rgb(15 23 42 / 0.06);
-  --genus-shadow-md: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 16px rgb(15 23 42 / 0.04);
-  --genus-shadow-lg: 0 2px 4px rgb(15 23 42 / 0.06), 0 8px 24px rgb(15 23 42 / 0.06);
-  --genus-shadow-focus: 0 0 0 3px rgb(31 163 154 / 0.25);
+  /* Shadows — sobre navy: menos "sombra caída", más halo + borde de vidrio */
+  --genus-shadow-xs: 0 1px 2px rgb(0 0 0 / 0.35);
+  --genus-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.32), 0 2px 10px rgb(0 0 0 / 0.35);
+  --genus-shadow-md: 0 1px 2px rgb(0 0 0 / 0.3), 0 10px 28px rgb(0 0 0 / 0.42);
+  --genus-shadow-lg: 0 2px 4px rgb(0 0 0 / 0.32), 0 20px 48px rgb(0 0 0 / 0.5);
+  --genus-shadow-glass: 0 1px 0 rgb(255 255 255 / 0.07) inset, 0 10px 32px rgb(0 0 0 / 0.4);
+  --genus-shadow-focus: 0 0 0 3px rgb(18 191 183 / 0.32);
+  --genus-shadow-focus-action: 0 0 0 3px rgb(23 105 224 / 0.32);
 
   /* Typography sizes */
   --genus-text-heading-xl: 2.25rem;
@@ -84,14 +105,28 @@
   --genus-font-sans: var(--font-inter, "Inter"), system-ui, -apple-system, sans-serif;
   --genus-font-mono: ui-monospace, "JetBrains Mono", monospace;
 
-  /* Motion */
+  /* Motion — Industrial Glass */
   --genus-duration-fast: 120ms;
-  --genus-duration-normal: 200ms;
-  --genus-duration-slow: 320ms;
+  --genus-duration-hover: 140ms;
+  --genus-duration-normal: 180ms;
+  --genus-duration-panel: 220ms;
+  --genus-duration-slow: 280ms;
   --genus-ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --genus-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Z-index scale */
+  --genus-z-base: 0;
+  --genus-z-sticky: 20;
+  --genus-z-header: 40;
+  --genus-z-sidebar: 50;
+  --genus-z-dropdown: 60;
+  --genus-z-overlay: 80;
+  --genus-z-modal: 100;
+  --genus-z-toast: 120;
+  --genus-z-creamy: 140;
 }
 
-/* Utility classes for the design system guide */
+/* Utility classes for the design system guide + shared chrome */
 .genus-ds-heading-xl {
   font-size: var(--genus-text-heading-xl);
   font-weight: 600;
@@ -139,16 +174,26 @@
   justify-content: center;
   padding: 0.625rem 1.25rem;
   border-radius: var(--genus-radius-md);
-  background: var(--genus-brand-primary);
+  background: linear-gradient(135deg, var(--genus-brand-action) 0%, #1a7ae8 78%, #14b8b0 140%);
   color: white;
   font-size: var(--genus-text-body-sm);
   font-weight: 600;
   border: none;
-  transition: opacity var(--genus-duration-fast) var(--genus-ease-default);
+  box-shadow: var(--genus-shadow-sm);
+  transition:
+    transform var(--genus-duration-hover) var(--genus-ease-default),
+    box-shadow var(--genus-duration-hover) var(--genus-ease-default),
+    filter var(--genus-duration-hover) var(--genus-ease-default);
 }
 
 .genus-ds-btn-primary:hover {
-  opacity: 0.9;
+  filter: brightness(1.04);
+  box-shadow: var(--genus-shadow-md);
+  transform: translateY(-1px);
+}
+
+.genus-ds-btn-primary:active {
+  transform: translateY(0) scale(0.98);
 }
 
 .genus-ds-btn-secondary {
@@ -156,17 +201,19 @@
   align-items: center;
   padding: 0.625rem 1.25rem;
   border-radius: var(--genus-radius-md);
-  background: var(--genus-surface-card);
+  background: var(--genus-surface-glass-strong);
   color: var(--genus-text-primary);
   font-size: var(--genus-text-body-sm);
   font-weight: 500;
-  border: 1px solid var(--genus-neutral-200);
-  transition: border-color var(--genus-duration-fast) var(--genus-ease-default);
+  border: 1px solid var(--genus-border);
+  transition:
+    border-color var(--genus-duration-fast) var(--genus-ease-default),
+    background var(--genus-duration-fast) var(--genus-ease-default);
 }
 
 .genus-ds-btn-secondary:hover {
-  border-color: var(--genus-brand-primary);
-  color: var(--genus-brand-primary);
+  border-color: rgb(18 191 183 / 0.45);
+  background: var(--genus-surface-card);
 }
 
 .genus-ds-badge {
@@ -181,10 +228,12 @@
 
 .genus-ds-card {
   border-radius: var(--genus-radius-xl);
-  border: 1px solid var(--genus-neutral-200);
-  background: var(--genus-surface-card);
-  box-shadow: var(--genus-shadow-md);
+  border: 1px solid var(--genus-border);
+  background: var(--genus-surface-glass-strong);
+  box-shadow: var(--genus-shadow-glass);
   padding: var(--genus-space-6);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .genus-ds-section {
@@ -210,5 +259,21 @@
   }
   100% {
     background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .genus-ds-skeleton {
+    animation: none;
+  }
+
+  .genus-ds-btn-primary,
+  .genus-ds-btn-secondary {
+    transition: none;
+  }
+
+  .genus-ds-btn-primary:hover,
+  .genus-ds-btn-primary:active {
+    transform: none;
   }
 }

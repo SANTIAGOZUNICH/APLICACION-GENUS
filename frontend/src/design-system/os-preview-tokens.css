@@ -1,22 +1,362 @@
 /**
- * F9 Digital Twin — tokens de layout + motion.
- * Colores y superficies: --genus-* vía genus-os-bridge.css (--os-* alias).
+ * Industrial Glass — layout + motion + scrollbars + ambient.
+ * Colores: --genus-* vía genus-os-bridge.css.
  */
 
 @import "./genus-tokens.css";
 @import "./genus-os-bridge.css";
 
-.design-preview-root {
-  /* Layout preview-only (no equivalente semántico en genus) */
-  --os-sidebar-width: 16rem;
-  --os-header-height: 3.75rem;
-  --os-status-height: 2rem;
-  --os-space-section: 2.5rem;
-  --os-space-block: 1.25rem;
+html,
+body {
+  max-width: 100vw;
+  overflow-x: clip;
 }
 
-/* F9.6 — microinteracciones del Digital Twin */
+.design-preview-root,
+.design-preview-root * {
+  box-sizing: border-box;
+}
+
+.design-preview-root {
+  /* Densidad adaptable — composición legible al 100% (sin zoom/scale) */
+  --os-density-page-padding: 1.125rem; /* 18px */
+  --os-density-section-gap: 1rem;
+  --os-density-table-padding-x: 0.5rem; /* 8px */
+  --os-density-table-padding-y: 0.5rem; /* 8px → fila ~44–52px */
+  --os-density-row-height: 2.875rem; /* 46px target */
+  --os-density-font-table: 12.75px;
+  --os-density-font-caption: 11.5px;
+  --os-density-font-body-min: 13px;
+  --os-density-action-gap: 0.4rem; /* ~6.5px */
+  --os-table-font: var(--os-density-font-table);
+  --os-table-font-secondary: var(--os-density-font-caption);
+  --os-density-pad-x: var(--os-density-table-padding-x);
+  --os-sidebar-width: 14.5rem; /* compacto, icono+texto legibles */
+  --os-header-height: 3.5rem;
+  --os-status-height: 2rem;
+  --os-space-section: var(--os-density-section-gap);
+  --os-space-block: 1rem;
+  --os-rail-width: 3px;
+  --os-scroll-size: 8px;
+  --os-scroll-thumb: rgb(255 255 255 / 0.16);
+  --os-scroll-thumb-hover: rgb(18 191 183 / 0.62);
+  --os-scroll-track: rgb(255 255 255 / 0.04);
+  --os-scroll-sidebar-thumb: rgb(18 191 183 / 0.38);
+  --os-scroll-sidebar-thumb-hover: rgb(85 226 216 / 0.62);
+  --os-scroll-sidebar-track: rgb(255 255 255 / 0.05);
+
+  /* Controles nativos (select, input date/time, scrollbar fallback) en dark */
+  color-scheme: dark;
+
+  position: relative;
+  isolation: isolate;
+  min-height: 100%;
+  max-width: 100%;
+  overflow-x: clip;
+  color: var(--genus-text-primary);
+  background-color: var(--genus-surface-bg);
+  background-image:
+    radial-gradient(ellipse 70% 55% at 100% 0%, var(--genus-ambient-teal), transparent 55%),
+    radial-gradient(ellipse 55% 45% at 0% 100%, var(--genus-ambient-blue), transparent 50%),
+    linear-gradient(180deg, #0d2230 0%, var(--genus-surface-bg) 42%, #081521 100%);
+  background-attachment: fixed;
+  scrollbar-width: thin;
+  scrollbar-color: var(--os-scroll-thumb) var(--os-scroll-track);
+}
+
+.os-no-x-scroll {
+  overflow-x: clip;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.os-table-wrap {
+  overflow-x: clip;
+  max-width: 100%;
+}
+
+.os-table {
+  width: 100%;
+  max-width: 100%;
+  table-layout: fixed;
+}
+
+.os-break {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Celdas densas — sin break-all; clamp 2 líneas + ellipsis */
+.design-preview-root .os-table-th {
+  padding: var(--os-density-table-padding-y) var(--os-density-table-padding-x);
+  font-size: var(--os-density-font-caption);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--os-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.25;
+  vertical-align: middle;
+}
+
+.design-preview-root .os-table-td {
+  padding: var(--os-density-table-padding-y) var(--os-density-table-padding-x);
+  font-size: var(--os-density-font-table);
+  line-height: 1.35;
+  vertical-align: middle;
+  min-width: 0;
+  overflow: hidden;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.design-preview-root .os-cell-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: normal;
+  overflow-wrap: break-word;
+  /* Evita partir letras; solo corta en espacios cuando es posible */
+  hyphens: none;
+  max-width: 100%;
+}
+
+.design-preview-root .os-mono-id {
+  font-family: var(--genus-font-mono, ui-monospace, monospace);
+  font-size: var(--os-density-font-table);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.design-preview-root .os-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--os-density-action-gap);
+}
+
+.design-preview-root .os-page-pad {
+  padding-left: var(--os-density-page-padding);
+  padding-right: var(--os-density-page-padding);
+}
+
+@media (min-width: 640px) {
+  .design-preview-root {
+    --os-density-page-padding: 1.25rem; /* 20px */
+    --os-density-table-padding-x: 0.625rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .design-preview-root {
+    --os-sidebar-width: 14.75rem;
+  }
+}
+
+@media (min-width: 1536px) {
+  .design-preview-root {
+    --os-density-page-padding: 1.5rem;
+    --os-density-table-padding-x: 0.75rem;
+  }
+}
+
+/* Ambient moving lights (CSS only) */
+.design-preview-root::before {
+  content: "";
+  pointer-events: none;
+  position: fixed;
+  inset: -20% -10%;
+  z-index: var(--genus-z-base);
+  opacity: 1;
+  background:
+    radial-gradient(ellipse 42% 36% at 18% 28%, rgb(18 191 183 / 0.14), transparent 62%),
+    radial-gradient(ellipse 38% 32% at 86% 18%, rgb(23 105 224 / 0.1), transparent 60%),
+    radial-gradient(ellipse 48% 40% at 72% 88%, rgb(18 191 183 / 0.07), transparent 65%);
+  animation: os-ambient-drift 24s var(--genus-ease-default) infinite alternate;
+  will-change: transform;
+}
+
+/* Technical grid + noise — líneas claras sobre navy (mix-blend-mode: screen) */
+.design-preview-root::after {
+  content: "";
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--genus-z-base) + 1);
+  opacity: 0.05;
+  background-image:
+    linear-gradient(rgb(244 248 250 / 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(244 248 250 / 0.05) 1px, transparent 1px),
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size:
+    48px 48px,
+    48px 48px,
+    auto;
+  mix-blend-mode: screen;
+}
+
+/* ========== Scrollbars Industrial Glass ========== */
+.design-preview-root *,
+.design-preview-root {
+  scrollbar-width: thin;
+  scrollbar-color: var(--os-scroll-thumb) var(--os-scroll-track);
+}
+
+.design-preview-root *::-webkit-scrollbar {
+  width: var(--os-scroll-size);
+  height: var(--os-scroll-size);
+}
+
+.design-preview-root *::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.design-preview-root *::-webkit-scrollbar-track {
+  background: var(--os-scroll-track);
+  border-radius: 999px;
+}
+
+.design-preview-root *::-webkit-scrollbar-thumb {
+  background: var(--os-scroll-thumb);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color var(--genus-duration-hover) var(--genus-ease-default);
+}
+
+.design-preview-root *::-webkit-scrollbar-thumb:hover {
+  background: var(--os-scroll-thumb-hover);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.design-preview-root *::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.design-preview-root .os-scroll-main {
+  --os-scroll-thumb: rgb(255 255 255 / 0.16);
+  --os-scroll-thumb-hover: rgb(18 191 183 / 0.58);
+  scrollbar-gutter: stable;
+  overflow-y: scroll;
+}
+
+.design-preview-root .os-scroll-sidebar {
+  --os-scroll-thumb: var(--os-scroll-sidebar-thumb);
+  --os-scroll-thumb-hover: var(--os-scroll-sidebar-thumb-hover);
+  --os-scroll-track: var(--os-scroll-sidebar-track);
+  scrollbar-color: var(--os-scroll-sidebar-thumb) var(--os-scroll-sidebar-track);
+  overflow-y: scroll;
+}
+
+@media (max-width: 767px) {
+  .design-preview-root,
+  .design-preview-root * {
+    scrollbar-width: thin;
+  }
+
+  .design-preview-root *::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+}
+
+/* Scroll fade edges */
+.design-preview-root .os-scroll-fade {
+  position: relative;
+}
+
+.design-preview-root .os-scroll-fade::before,
+.design-preview-root .os-scroll-fade::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  left: 0;
+  right: var(--os-scroll-size);
+  height: 1.25rem;
+  z-index: 2;
+  opacity: 0.85;
+}
+
+.design-preview-root .os-scroll-fade::before {
+  top: 0;
+  background: linear-gradient(180deg, var(--genus-surface-bg) 0%, transparent 100%);
+}
+
+.design-preview-root .os-scroll-fade::after {
+  bottom: 0;
+  background: linear-gradient(0deg, var(--genus-surface-bg) 0%, transparent 100%);
+}
+
+.design-preview-root .os-scroll-fade-sidebar::before {
+  background: linear-gradient(180deg, var(--os-sidebar-bg) 0%, transparent 100%);
+  right: 0;
+}
+
+.design-preview-root .os-scroll-fade-sidebar::after {
+  background: linear-gradient(0deg, var(--os-sidebar-bg-2) 0%, transparent 100%);
+  right: 0;
+}
+
+/* Right tech rail — frames content without eating useful width */
+.design-preview-root .os-right-rail {
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--os-rail-width);
+  z-index: calc(var(--genus-z-header) + 5);
+  background: linear-gradient(
+    180deg,
+    rgb(7 25 37 / 0.72) 0%,
+    rgb(18 191 183 / 0.55) 45%,
+    rgb(23 105 224 / 0.42) 100%
+  );
+  box-shadow:
+    -2px 0 14px rgb(18 191 183 / 0.18),
+    0 0 1px rgb(85 226 216 / 0.5);
+  opacity: 0.95;
+}
+
+@media (max-width: 767px) {
+  .design-preview-root .os-right-rail {
+    display: none;
+  }
+}
+
+/* ========== Motion ========== */
+@keyframes os-ambient-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(2.5%, -1.5%, 0) scale(1.04);
+  }
+}
+
 @keyframes os-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes os-page-enter {
   from {
     opacity: 0;
     transform: translateY(6px);
@@ -30,7 +370,7 @@
 @keyframes os-slide-up {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
@@ -40,20 +380,33 @@
 
 @keyframes os-drawer-in {
   from {
-    transform: translateX(100%);
+    opacity: 0.92;
+    transform: translateX(12px);
   }
   to {
+    opacity: 1;
     transform: translateX(0);
+  }
+}
+
+@keyframes os-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
   }
 }
 
 @keyframes os-pulse-success {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgb(16 185 129 / 0);
+    box-shadow: 0 0 0 0 rgb(18 191 183 / 0);
   }
   50% {
-    box-shadow: 0 0 0 6px rgb(16 185 129 / 0.15);
+    box-shadow: 0 0 0 6px rgb(18 191 183 / 0.12);
   }
 }
 
@@ -68,31 +421,74 @@
 
 @keyframes os-workspace-highlight {
   0% {
-    background-color: rgb(45 212 191 / 0.12);
+    background-color: rgb(18 191 183 / 0.1);
   }
   100% {
     background-color: transparent;
   }
 }
 
+@keyframes os-fab-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 rgb(18 191 183 / 0.18),
+      var(--genus-shadow-md);
+  }
+  50% {
+    box-shadow:
+      0 0 0 10px rgb(18 191 183 / 0),
+      var(--genus-shadow-md);
+  }
+}
+
+@keyframes os-sync-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes os-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .design-preview-root .os-workspace-highlight {
-  animation: os-workspace-highlight 2.5s ease-out both;
+  animation: os-workspace-highlight 2.5s var(--genus-ease-default) both;
 }
 
 .design-preview-root .os-fade-in {
-  animation: os-fade-in 0.35s ease-out both;
+  animation: os-fade-in var(--genus-duration-slow) var(--genus-ease-out) both;
+}
+
+.design-preview-root .os-page-enter {
+  animation: os-page-enter 240ms var(--genus-ease-out) both;
 }
 
 .design-preview-root .os-slide-up {
-  animation: os-slide-up 0.4s ease-out both;
+  animation: os-slide-up var(--genus-duration-panel) var(--genus-ease-out) both;
 }
 
 .design-preview-root .os-drawer {
-  animation: os-drawer-in 0.28s ease-out both;
+  animation: os-drawer-in 220ms var(--genus-ease-out) both;
+}
+
+.design-preview-root .os-modal-in {
+  animation: os-modal-in 220ms var(--genus-ease-out) both;
 }
 
 .design-preview-root .os-pulse-success {
-  animation: os-pulse-success 0.6s ease-out;
+  animation: os-pulse-success 0.6s var(--genus-ease-default);
 }
 
 .design-preview-root .os-skeleton {
@@ -103,5 +499,312 @@
     var(--os-surface-muted) 75%
   );
   background-size: 200% 100%;
-  animation: os-skeleton 1.4s ease-in-out infinite;
+  animation: os-skeleton 1.8s ease-in-out infinite;
+}
+
+.design-preview-root .os-glass-panel {
+  background: var(--genus-surface-glass);
+  border: 1px solid var(--genus-border);
+  border-radius: var(--genus-radius-xl);
+  box-shadow: var(--genus-shadow-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.design-preview-root .os-header-glass {
+  background: rgb(10 29 41 / 0.72);
+  border-bottom: 1px solid var(--genus-border);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.06) inset, 0 4px 18px rgb(0 0 0 / 0.32);
+  transition: box-shadow var(--genus-duration-normal) var(--genus-ease-default);
+}
+
+.design-preview-root .os-header-glass.is-scrolled {
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 8px 24px rgb(0 0 0 / 0.4);
+}
+
+.design-preview-root .os-nav-item {
+  transition:
+    color var(--genus-duration-hover) var(--genus-ease-default),
+    background-color var(--genus-duration-hover) var(--genus-ease-default),
+    box-shadow var(--genus-duration-hover) var(--genus-ease-default),
+    transform var(--genus-duration-hover) var(--genus-ease-default);
+}
+
+.design-preview-root .os-nav-item:hover:not([aria-current="page"]) {
+  transform: translateX(2px);
+}
+
+.design-preview-root .os-nav-item[aria-current="page"] {
+  box-shadow:
+    inset 3px 0 0 0 var(--os-teal),
+    0 0 18px rgb(18 191 183 / 0.12);
+}
+
+.design-preview-root .os-nav-item[aria-current="page"] svg {
+  filter: drop-shadow(0 0 4px rgb(85 226 216 / 0.45));
+}
+
+.design-preview-root .os-card-lift {
+  transition:
+    transform var(--genus-duration-hover) var(--genus-ease-default),
+    box-shadow var(--genus-duration-hover) var(--genus-ease-default),
+    border-color var(--genus-duration-hover) var(--genus-ease-default);
+}
+
+.design-preview-root .os-card-lift:hover {
+  transform: translateY(-1px);
+  border-color: rgb(18 191 183 / 0.28);
+  box-shadow: var(--genus-shadow-md);
+}
+
+.design-preview-root .os-btn-motion {
+  transition:
+    transform var(--genus-duration-fast) var(--genus-ease-default),
+    box-shadow var(--genus-duration-hover) var(--genus-ease-default),
+    filter var(--genus-duration-hover) var(--genus-ease-default);
+}
+
+.design-preview-root .os-btn-motion:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.design-preview-root .os-btn-motion:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.design-preview-root .os-fab-breathe {
+  animation: os-fab-breathe 3.6s var(--genus-ease-default) infinite;
+}
+
+.design-preview-root .os-fab-breathe:hover,
+.design-preview-root .os-fab-breathe:focus-visible {
+  animation: none;
+}
+
+.design-preview-root .os-sync-pulse {
+  animation: os-sync-pulse 1.4s var(--genus-ease-default) infinite;
+}
+
+.design-preview-root .os-stagger > * {
+  animation: os-card-enter 220ms var(--genus-ease-out) both;
+}
+
+.design-preview-root .os-stagger > *:nth-child(1) {
+  animation-delay: 0ms;
+}
+.design-preview-root .os-stagger > *:nth-child(2) {
+  animation-delay: 20ms;
+}
+.design-preview-root .os-stagger > *:nth-child(3) {
+  animation-delay: 40ms;
+}
+.design-preview-root .os-stagger > *:nth-child(4) {
+  animation-delay: 60ms;
+}
+.design-preview-root .os-stagger > *:nth-child(5) {
+  animation-delay: 80ms;
+}
+.design-preview-root .os-stagger > *:nth-child(6) {
+  animation-delay: 100ms;
+}
+.design-preview-root .os-stagger > *:nth-child(n + 7) {
+  animation: none;
+}
+
+/* Login scene */
+.design-preview-root .os-login-scene {
+  position: relative;
+  overflow: hidden;
+  background: var(--os-navy);
+}
+
+.design-preview-root .os-login-scene::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: -15%;
+  background:
+    radial-gradient(ellipse 50% 42% at 22% 30%, rgb(18 191 183 / 0.22), transparent 60%),
+    radial-gradient(ellipse 45% 38% at 82% 20%, rgb(23 105 224 / 0.16), transparent 58%),
+    radial-gradient(ellipse 55% 45% at 60% 90%, rgb(18 191 183 / 0.1), transparent 62%),
+    linear-gradient(165deg, #071925 0%, #0b2636 48%, #0a3d45 100%);
+  animation: os-ambient-drift 26s var(--genus-ease-default) infinite alternate;
+}
+
+.design-preview-root .os-login-scene::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  opacity: 0.06;
+  background-image:
+    linear-gradient(rgb(244 248 250 / 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(244 248 250 / 0.08) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.design-preview-root .os-login-form-panel {
+  background: rgb(15 38 52 / 0.72);
+  border: 1px solid rgb(255 255 255 / 0.1);
+  box-shadow: var(--genus-shadow-lg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/*
+ * Industrial Glass — controles de formulario (scope .design-preview-root).
+ * Portals deben montarse dentro de este root para heredar tokens + color-scheme.
+ * Sin hardcodes claros: evita blanco-sobre-blanco / options nativas ilegibles.
+ */
+.design-preview-root {
+  --ig-control-bg: var(--genus-surface-muted, #122838);
+  --ig-control-fg: var(--genus-text-primary, #f4f8fa);
+  --ig-control-placeholder: var(--genus-text-secondary, #9db0bc);
+  --ig-control-border: var(--genus-border, rgb(255 255 255 / 0.14));
+  --ig-control-border-focus: var(--genus-accent-teal, #12bfb7);
+  --ig-control-option-bg: #0f2634;
+  --ig-control-option-fg: #f4f8fa;
+  --ig-control-disabled-bg: rgb(15 38 52 / 0.55);
+  --ig-control-disabled-fg: rgb(157 176 188 / 0.55);
+  --ig-control-error-border: var(--genus-danger, #e85d5d);
+  --ig-control-selected-bg: rgb(18 191 183 / 0.22);
+  --ig-control-hover-bg: rgb(255 255 255 / 0.06);
+}
+
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select,
+  [role="combobox"],
+  [data-ig-control="true"]
+) {
+  color-scheme: dark;
+  background-color: var(--ig-control-bg);
+  color: var(--ig-control-fg);
+  border-color: var(--ig-control-border);
+  caret-color: var(--ig-control-fg);
+}
+
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select,
+  [role="combobox"]
+)::placeholder {
+  color: var(--ig-control-placeholder);
+  opacity: 1;
+}
+
+.design-preview-root :where(select) option,
+.design-preview-root :where(select) optgroup {
+  background-color: var(--ig-control-option-bg);
+  color: var(--ig-control-option-fg);
+}
+
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select,
+  [role="combobox"]
+):focus-visible,
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select,
+  [role="combobox"]
+):focus {
+  outline: 2px solid var(--ig-control-border-focus);
+  outline-offset: 1px;
+  border-color: var(--ig-control-border-focus);
+}
+
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select,
+  [role="combobox"]
+):disabled,
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select,
+  [role="combobox"]
+)[aria-disabled="true"] {
+  background-color: var(--ig-control-disabled-bg);
+  color: var(--ig-control-disabled-fg);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select
+)[aria-invalid="true"],
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select
+).ig-control-error {
+  border-color: var(--ig-control-error-border);
+}
+
+.design-preview-root :where(input[type="file"]) {
+  color-scheme: dark;
+  color: var(--ig-control-fg);
+}
+
+.design-preview-root :where(input[type="date"]),
+.design-preview-root :where(input[type="time"]),
+.design-preview-root :where(input[type="datetime-local"]) {
+  color-scheme: dark;
+}
+
+/* Listas portal (combobox / menú) — sin fallback #fff */
+.design-preview-root [role="listbox"],
+.design-preview-root [data-radix-popper-content-wrapper],
+.design-preview-root [data-slot="popover-content"],
+.design-preview-root [data-slot="dropdown-menu-content"],
+.design-preview-root [role="menu"],
+.design-preview-root [role="dialog"] {
+  color-scheme: dark;
+  color: var(--ig-control-fg);
+}
+
+.design-preview-root [role="option"][aria-selected="true"],
+.design-preview-root [role="menuitem"][data-highlighted],
+.design-preview-root [role="option"]:hover {
+  background-color: var(--ig-control-selected-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .design-preview-root::before,
+  .design-preview-root .os-login-scene::before {
+    animation: none !important;
+  }
+
+  .design-preview-root .os-workspace-highlight,
+  .design-preview-root .os-fade-in,
+  .design-preview-root .os-page-enter,
+  .design-preview-root .os-slide-up,
+  .design-preview-root .os-drawer,
+  .design-preview-root .os-modal-in,
+  .design-preview-root .os-pulse-success,
+  .design-preview-root .os-skeleton,
+  .design-preview-root .os-fab-breathe,
+  .design-preview-root .os-sync-pulse,
+  .design-preview-root .os-stagger > * {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+
+  .design-preview-root .os-nav-item:hover:not([aria-current="page"]),
+  .design-preview-root .os-card-lift:hover,
+  .design-preview-root .os-btn-motion:hover:not(:disabled),
+  .design-preview-root .os-btn-motion:active:not(:disabled) {
+    transform: none !important;
+  }
 }

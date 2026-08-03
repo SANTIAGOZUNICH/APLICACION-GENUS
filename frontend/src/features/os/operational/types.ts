@@ -16,6 +16,7 @@ export interface QualityItem {
   line: string | null;
   quantity: string | null;
   dayLabel: string;
+  deliveryDate?: string | null;
   status: QualityDecisionStatus;
   relatedWorkItemId: string | null;
   /** Sector que entregó el trabajo — transferencia cross-sector. */
@@ -45,6 +46,7 @@ export interface CompletionEvent {
   quantityPlanned: string | null;
   unit: string | null;
   dayLabel: string | null;
+  deliveryDate?: string | null;
 }
 
 export interface OperationalActivityEntry {
@@ -86,6 +88,13 @@ export interface WorkProgressOverlay {
   updatedBy?: string;
   completedAt?: string;
   sector?: SectorId;
+  packagingLote?: string | null;
+  packagingVto?: string | null;
+  packagingTotalUnits?: number | null;
+  packagingCajas?: number | null;
+  packagingUnidadesPorCaja?: number | null;
+  packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+  packingMismatchObservation?: string | null;
 }
 
 export interface QualityDecisionRecord {
@@ -93,7 +102,13 @@ export interface QualityDecisionRecord {
   status: QualityDecisionStatus;
   decidedAt: string;
   decidedBy?: string;
+  /** CALIDAD | PRODUCCION — para historial diferenciado. */
+  decidedBySector?: SectorId | string;
+  decidedByEmail?: string;
   observation?: string;
+  /** Estado previo si se revirtió/modificó una decisión. */
+  previousStatus?: QualityDecisionStatus;
+  changeReason?: string;
 }
 
 export const OPERATIONAL_POLL_INTERVAL_MS = 0;

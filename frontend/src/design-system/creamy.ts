@@ -1,12 +1,14 @@
 /**
- * Genus OS — Creamy visual identity (sin personaje aún).
- * Copiloto integrado, no chatbot externo.
+ * Genus OS — Creamy (Industrial Glass).
+ * FAB + panel únicamente — sin tarjeta permanente en sidebar.
  */
 
 export const genusCreamy = {
   colors: {
-    cardBg: "linear-gradient(135deg, var(--genus-brand-primary-soft), var(--genus-surface-card))",
-    cardBorder: "var(--genus-brand-primary-muted)",
+    fabBg: "var(--genus-brand-primary)",
+    fabFg: "var(--genus-brand-navy-dark)",
+    panelHeader:
+      "linear-gradient(135deg, var(--genus-brand-navy-dark) 0%, var(--genus-surface-sidebar-2) 55%, #0a3d45 100%)",
     bubbleUser: "var(--genus-neutral-100)",
     bubbleAssistant: "var(--genus-surface-card)",
     accent: "var(--genus-brand-primary)",
@@ -20,11 +22,13 @@ export const genusCreamy = {
     suggestion: "var(--genus-text-caption)",
   },
   components: {
-    card: {
-      name: "Creamy Card",
-      padding: "var(--genus-space-4)",
-      radius: "var(--genus-radius-lg)",
-      description: "Bloque en sidebar o context panel — rol + hint + sugerencias",
+    fab: {
+      name: "Creamy FAB",
+      description: "Único launcher permanente — esquina inferior derecha",
+    },
+    panel: {
+      name: "Creamy Panel",
+      description: "Drawer de conversación — glass chrome + header navy",
     },
     bubble: {
       name: "Creamy Bubble",
@@ -44,7 +48,7 @@ export const genusCreamy = {
     },
   },
   rules: [
-    "Integrada al OS Shell — nunca flotante sobre toda la app",
+    "Solo FAB + panel — sin tarjeta permanente en sidebar",
     "Contexto del sector + workflow — no respuestas genéricas",
     "Sin avatar obligatorio hasta fase de personaje",
     "Sparkles icon como marca temporal",

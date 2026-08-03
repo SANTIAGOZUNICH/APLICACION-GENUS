@@ -1,0 +1,138 @@
+{
+  "ok": true,
+  "base": "https://aplicacion-genus-9e0h3ww1g-santizunich-2879s-projects.vercel.app",
+  "sha": "344c46d",
+  "shareBootstrapStatus": 200,
+  "noSessionOrders401": true,
+  "results": [
+    {
+      "email": "e***@laboratoriogenus.com.ar",
+      "sector": "ELABORACION",
+      "ok": true,
+      "checks": {
+        "badPassword401": true,
+        "login200": true,
+        "me200": true,
+        "sectorOk": true,
+        "emailOk": true,
+        "forgedHeader401": true,
+        "sectorHeaderStatus": 403,
+        "logout200": true,
+        "reuse401": true
+      }
+    },
+    {
+      "email": "c***@laboratoriogenus.com.ar",
+      "sector": "CALIDAD",
+      "ok": true,
+      "checks": {
+        "badPassword401": true,
+        "login200": true,
+        "me200": true,
+        "sectorOk": true,
+        "emailOk": true,
+        "forgedHeader401": true,
+        "sectorHeaderStatus": 403,
+        "logout200": true,
+        "reuse401": true
+      }
+    },
+    {
+      "email": "p***@laboratoriogenus.com.ar",
+      "sector": "PRODUCCION",
+      "ok": true,
+      "checks": {
+        "badPassword401": true,
+        "login200": true,
+        "me200": true,
+        "sectorOk": true,
+        "emailOk": true,
+        "forgedHeader401": true,
+        "sectorHeaderStatus": 403,
+        "logout200": true,
+        "reuse401": true
+      }
+    },
+    {
+      "email": "m***@laboratoriogenus.com.ar",
+      "sector": "MATERIA_PRIMA",
+      "ok": true,
+      "checks": {
+        "badPassword401": true,
+        "login200": true,
+        "me200": true,
+        "sectorOk": true,
+        "emailOk": true,
+        "forgedHeader401": true,
+        "sectorHeaderStatus": 403,
+        "logout200": true,
+        "reuse401": true
+      }
+    },
+    {
+      "email": "d***@laboratoriogenus.com.ar",
+      "sector": "DEPOSITO",
+      "ok": true,
+      "checks": {
+        "badPassword401": true,
+        "login200": true,
+        "me200": true,
+        "sectorOk": true,
+        "emailOk": true,
+        "forgedHeader401": true,
+        "sectorHeaderStatus": 403,
+        "logout200": true,
+        "reuse401": true
+      }
+    },
+    {
+      "email": "e***@laboratoriogenus.com.ar",
+      "sector": "ENVASADO_MASIVO",
+      "ok": true,
+      "checks": {
+        "badPassword401": true,
+        "login200": true,
+        "me200": true,
+        "sectorOk": true,
+        "emailOk": true,
+        "forgedHeader401": true,
+        "sectorHeaderStatus": 403,
+        "logout200": true,
+        "reuse401": true
+      }
+    },
+    {
+      "email": "e***@laboratoriogenus.com.ar",
+      "sector": "ENVASADO_PREMIUM",
+      "ok": true,
+      "checks": {
+        "badPassword401": true,
+        "login200": true,
+        "me200": true,
+        "sectorOk": true,
+        "emailOk": true,
+        "forgedHeader401": true,
+        "sectorHeaderStatus": 403,
+        "logout200": true,
+        "reuse401": true
+      }
+    },
+    {
+      "email": "c***@laboratoriogenus.com.ar",
+      "sector": "CODIFICADO",
+      "ok": true,
+      "checks": {
+        "badPassword401": true,
+        "login200": true,
+        "me200": true,
+        "sectorOk": true,
+        "emailOk": true,
+        "forgedHeader401": true,
+        "sectorHeaderStatus": 403,
+        "logout200": true,
+        "reuse401": true
+      }
+    }
+  ],
+  "redeployVerifiedAt": "2026-08-02T00:21:53.289Z"
+}

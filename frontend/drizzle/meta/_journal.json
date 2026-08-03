@@ -8,6 +8,118 @@
       "when": 1784059939223,
       "tag": "0000_native_planning_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784575800000,
+      "tag": "0001_operational_orders",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784630000000,
+      "tag": "0003_inventory_me_mp",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784640000000,
+      "tag": "0004_formula_bank_and_me_oa",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784740000000,
+      "tag": "0005_avisos_mp_stock_coa",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784900000000,
+      "tag": "0006_remitos_envasado_stock",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785000000000,
+      "tag": "0007_mp_producto_remito_versiones_archivado",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785100000000,
+      "tag": "0008_private_file_storage",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785200000000,
+      "tag": "0009_procedimientos_metricas",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785600000000,
+      "tag": "0010_universal_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785700000000,
+      "tag": "0011_completa_con_pendientes_enum",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785800000000,
+      "tag": "0012_mp_weekly_control_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785900000000,
+      "tag": "0013_notification_user_deletes",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786000000000,
+      "tag": "0014_codificado_deposito_graneles",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1786100000000,
+      "tag": "0015_creamy_memory",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1786200000000,
+      "tag": "0016_genus_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786300000000,
+      "tag": "0017_creamy_userid_notif_idempotency",
+      "breakpoints": true
     }
   ]
 }
