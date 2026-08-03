@@ -48,7 +48,7 @@ export function DepositoOperationalView() {
           variant="secondary"
           onClick={() => navigateSidebar("semanas_produccion")}
         >
-          Semanas de Producción
+          Plan semanal
         </Button>
       </div>
     </TwinShell>

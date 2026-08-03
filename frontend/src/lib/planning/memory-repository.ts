@@ -80,9 +80,11 @@ export class MemoryPlanningRepository implements PlanningRepository {
 
   async listPublishedItems(filters: {
     sector?: string | null;
+    sectors?: string[] | null;
     ownerPerson?: string | null;
     date?: string | null;
     weekStart?: string | null;
+    limit?: number | null;
   }): Promise<PlanningWorkItemRecord[]> {
     const publishedWeekIds = new Set(
       [...this.weeks.values()].filter((w) => w.status === "PUBLISHED").map((w) => w.id)
@@ -90,14 +92,27 @@ export class MemoryPlanningRepository implements PlanningRepository {
     let list = [...this.items.values()].filter(
       (i) => i.status === "PUBLICADO" && publishedWeekIds.has(i.planningWeekId)
     );
-    if (filters.sector && filters.sector !== "PRODUCCION" && filters.sector !== "DIRECCION") {
+    const floorSectors = (filters.sectors ?? []).filter(
+      (s) =>
+        s === "ELABORACION" || s === "ENVASADO_MASIVO" || s === "ENVASADO_PREMIUM"
+    );
+    if (floorSectors.length > 0) {
+      list = list.filter((i) => floorSectors.includes(i.sector));
+    } else if (
+      filters.sector &&
+      filters.sector !== "PRODUCCION" &&
+      filters.sector !== "DIRECCION"
+    ) {
       list = list.filter((i) => i.sector === filters.sector);
     }
     if (filters.ownerPerson) {
       list = list.filter((i) => i.branchOwner === filters.ownerPerson);
     }
     if (filters.date) {
-      list = list.filter((i) => i.plannedDate === filters.date);
+      list = list.filter((i) => {
+        const end = i.plannedDateTo ?? i.plannedDate;
+        return i.plannedDate <= filters.date! && end >= filters.date!;
+      });
     }
     if (filters.weekStart) {
       const week = [...this.weeks.values()].find(
@@ -106,7 +121,14 @@ export class MemoryPlanningRepository implements PlanningRepository {
       if (!week) return [];
       list = list.filter((i) => i.planningWeekId === week.id);
     }
-    return list.map((i) => ({ ...i }));
+    list = list
+      .sort((a, b) => a.plannedDate.localeCompare(b.plannedDate) || a.product.localeCompare(b.product))
+      .map((i) => ({ ...i }));
+    const limit =
+      typeof filters.limit === "number" && filters.limit > 0
+        ? Math.min(Math.floor(filters.limit), 500)
+        : 500;
+    return list.slice(0, limit);
   }
 
   async createItem(

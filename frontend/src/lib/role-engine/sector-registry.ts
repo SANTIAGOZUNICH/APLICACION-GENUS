@@ -221,7 +221,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     visibleEntities: ["insumo", "oe", "lote", "pedido"],
     workItemSources: ["semanas_2026"],
     allowedActions: ["Registrar entrega MP", "Reportar faltante", "Consultar OE"],
-    sidebarItems: ["stock", "mp_ingresos", "control_mp", "mp_compras", "ordenes_elaboracion", "historial", "avisos", "procedimientos"],
+    sidebarItems: ["stock", "mp_ingresos", "control_mp", "mp_compras", "ordenes_elaboracion", "historial", "plan_semanal", "avisos", "procedimientos"],
     creamyContext: {
       role: "Copiloto de materia prima",
       topics: ["stock MP", "ingresos MP", "control semanal", "compras MP"],

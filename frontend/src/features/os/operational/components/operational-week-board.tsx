@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import type { WorkItem } from "@/types/operational/work-item";
+import type { WeeklyPlanItemDto } from "@/lib/planning/weekly-plan-dto";
 import {
   dayOfWeekName,
   formatOperationalLongDate,
@@ -16,6 +18,91 @@ interface OperationalWeekBoardProps {
   selectedDate: string;
   items: WorkItem[];
   onSelectDay: (iso: string) => void;
+  /** operational = Mi trabajo (default). consulta = planes compartidos RO. */
+  mode?: "operational" | "consulta";
+  /** Required when mode=consulta — unique items (not duplicated per day). */
+  consultaItems?: WeeklyPlanItemDto[];
+}
+
+function dtoCoversDate(item: WeeklyPlanItemDto, day: string): boolean {
+  return workItemCoversDate(
+    {
+      plannedDate: item.plannedDate,
+      plannedDateTo: item.plannedDateTo,
+    },
+    day
+  );
+}
+
+function dayRangeLabel(item: WeeklyPlanItemDto): string {
+  if (item.plannedDate === item.plannedDateTo) {
+    return dayOfWeekName(item.plannedDate);
+  }
+  return `${dayOfWeekName(item.plannedDate)} – ${dayOfWeekName(item.plannedDateTo)}`;
+}
+
+function ConsultaCard({ item }: { item: WeeklyPlanItemDto }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className="rounded border border-[var(--os-border)]/70 bg-[var(--os-surface)]/40 p-2 text-left text-xs leading-snug text-[var(--os-text)]">
+      <p className="line-clamp-2 font-medium" title={item.product}>
+        {item.product}
+      </p>
+      <p className="mt-0.5 line-clamp-2 text-[var(--os-text-muted)]" title={item.client}>
+        {item.client}
+      </p>
+      <p className="mt-1 text-[var(--os-text-muted)]">
+        {item.quantity} {item.unit} · {item.sectorLabel}
+      </p>
+      <p className="text-[var(--os-text-muted)]">{dayRangeLabel(item)}</p>
+      <button
+        type="button"
+        className="mt-1 text-[0.65rem] font-medium text-[var(--os-teal)] underline-offset-2 hover:underline"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+      >
+        {open ? "Ocultar detalle" : "Ver detalle"}
+      </button>
+      {open && (
+        <dl className="mt-2 space-y-1 border-t border-[var(--os-border)]/50 pt-2 text-[0.65rem] text-[var(--os-text-muted)]">
+          <div>
+            <dt className="inline font-medium text-[var(--os-text)]">Responsable: </dt>
+            <dd className="inline">{item.responsible || "—"}</dd>
+          </div>
+          <div>
+            <dt className="inline font-medium text-[var(--os-text)]">Estado: </dt>
+            <dd className="inline">{item.statusLabel}</dd>
+          </div>
+          <div>
+            <dt className="inline font-medium text-[var(--os-text)]">Progreso: </dt>
+            <dd className="inline">{item.progressLabel}</dd>
+          </div>
+          {item.deliveryDate && (
+            <div>
+              <dt className="inline font-medium text-[var(--os-text)]">Entrega: </dt>
+              <dd className="inline">{item.deliveryDate}</dd>
+            </div>
+          )}
+          {item.lote && (
+            <div>
+              <dt className="inline font-medium text-[var(--os-text)]">Lote: </dt>
+              <dd className="inline">{item.lote}</dd>
+            </div>
+          )}
+          {item.notes && (
+            <div>
+              <dt className="font-medium text-[var(--os-text)]">Observaciones</dt>
+              <dd className="line-clamp-2" title={item.notes}>
+                {item.notes}
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
+    </li>
+  );
 }
 
 /** Vista Semana operativa — L–V con resalte de Hoy. */
@@ -25,6 +112,8 @@ export function OperationalWeekBoard({
   selectedDate,
   items,
   onSelectDay,
+  mode = "operational",
+  consultaItems = [],
 }: OperationalWeekBoardProps) {
   const weekStart = weekDays[0] ?? weekStartMonday(today);
   const end = weekDays[weekDays.length - 1];
@@ -32,30 +121,48 @@ export function OperationalWeekBoard({
   const endParts = parseIsoDate(end ?? weekStart);
 
   const byDate = new Map<string, WorkItem[]>();
-  for (const day of weekDays) byDate.set(day, []);
-  for (const item of items) {
-    for (const day of weekDays) {
-      if (!workItemCoversDate(item, day)) continue;
-      byDate.get(day)!.push(item);
+  const consultaByDate = new Map<string, WeeklyPlanItemDto[]>();
+  for (const day of weekDays) {
+    byDate.set(day, []);
+    consultaByDate.set(day, []);
+  }
+
+  if (mode === "consulta") {
+    for (const item of consultaItems) {
+      for (const day of weekDays) {
+        if (!dtoCoversDate(item, day)) continue;
+        consultaByDate.get(day)!.push(item);
+      }
+    }
+  } else {
+    for (const item of items) {
+      for (const day of weekDays) {
+        if (!workItemCoversDate(item, day)) continue;
+        byDate.get(day)!.push(item);
+      }
     }
   }
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-4 overflow-x-hidden">
       <header>
         <h3 className="text-lg font-semibold tracking-tight text-[var(--os-text)]">
           Semana · {startParts?.day}/{startParts?.month} – {endParts?.day}/{endParts?.month}
         </h3>
         <p className="text-sm text-[var(--os-text-muted)]">
-          Seleccioná un día para trabajarlo en vista Día.
+          {mode === "consulta"
+            ? "Consulta compartida. Un mismo trabajo puede verse varios días sin duplicar el registro."
+            : "Seleccioná un día para trabajarlo en vista Día."}
         </p>
       </header>
 
-      <div className="grid gap-3 md:grid-cols-5">
+      <div className={`${mode === "consulta" ? "hidden md:grid" : "grid"} gap-3 md:grid-cols-5`}>
         {weekDays.map((day) => {
           const dayItems = byDate.get(day) ?? [];
+          const dayConsulta = consultaByDate.get(day) ?? [];
           const isToday = day === today;
           const isSelected = day === selectedDate;
+          const count = mode === "consulta" ? dayConsulta.length : dayItems.length;
           return (
             <button
               key={day}
@@ -80,8 +187,19 @@ export function OperationalWeekBoard({
               <p className="mb-3 text-xs text-[var(--os-text-muted)]">
                 {formatOperationalLongDate(day)}
               </p>
-              {dayItems.length === 0 ? (
+              {count === 0 ? (
                 <p className="text-xs text-[var(--os-text-muted)]">Sin trabajos</p>
+              ) : mode === "consulta" ? (
+                <ul className="space-y-2">
+                  {dayConsulta.slice(0, 6).map((item) => (
+                    <ConsultaCard key={item.workItemId} item={item} />
+                  ))}
+                  {dayConsulta.length > 6 && (
+                    <li className="text-[0.65rem] text-[var(--os-text-muted)]">
+                      +{dayConsulta.length - 6} más
+                    </li>
+                  )}
+                </ul>
               ) : (
                 <ul className="space-y-2">
                   {dayItems.slice(0, 6).map((item) => (
@@ -108,6 +226,34 @@ export function OperationalWeekBoard({
           );
         })}
       </div>
+
+      {/* Mobile: day cards with expandable secondary info */}
+      {mode === "consulta" && (
+        <div className="space-y-3 md:hidden">
+          {weekDays.map((day) => {
+            const dayConsulta = consultaByDate.get(day) ?? [];
+            return (
+              <section
+                key={`m-${day}`}
+                className="rounded border border-[var(--os-border)] p-3"
+              >
+                <h4 className="text-sm font-semibold">
+                  {dayOfWeekName(day)} · {formatOperationalLongDate(day)}
+                </h4>
+                {dayConsulta.length === 0 ? (
+                  <p className="mt-2 text-xs text-[var(--os-text-muted)]">Sin trabajos</p>
+                ) : (
+                  <ul className="mt-2 space-y-2">
+                    {dayConsulta.map((item) => (
+                      <ConsultaCard key={`${day}-${item.workItemId}`} item={item} />
+                    ))}
+                  </ul>
+                )}
+              </section>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }

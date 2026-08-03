@@ -24,9 +24,12 @@ export interface PlanningRepository {
 
   listPublishedItems(filters: {
     sector?: string | null;
+    /** When set, filter to these floor sectors (preferred over single `sector`). */
+    sectors?: string[] | null;
     ownerPerson?: string | null;
     date?: string | null;
     weekStart?: string | null;
+    limit?: number | null;
   }): Promise<PlanningWorkItemRecord[]>;
 
   createItem(

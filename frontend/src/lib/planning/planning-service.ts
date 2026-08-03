@@ -168,9 +168,11 @@ export class PlanningService {
 
   listPublishedItems(filters: {
     sector?: string | null;
+    sectors?: string[] | null;
     ownerPerson?: string | null;
     date?: string | null;
     weekStart?: string | null;
+    limit?: number | null;
   }) {
     return this.repo.listPublishedItems(filters);
   }

@@ -172,7 +172,7 @@ export function viewTitle(view: TwinView): string {
     "deposito-graneles": "Depósito Graneles",
     avisos: "Avisos",
     "avisos-me": "Avisos ME",
-    "semanas-produccion": "Semanas de Producción",
+    "semanas-produccion": "Plan semanal",
     "asignar-trabajos": "Asignar trabajos",
     entregados: "Entregados",
     "asignacion-lotes": "Asignación de lotes",
