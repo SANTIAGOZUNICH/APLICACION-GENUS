@@ -170,7 +170,9 @@ export function OperationalWeekBoard({
               onClick={() => onSelectDay(day)}
               className={`rounded border px-3 py-3 text-left transition ${
                 isToday
-                  ? "border-emerald-600 bg-emerald-50/70"
+                  ? mode === "consulta"
+                    ? "border-[var(--os-teal)] bg-[var(--os-teal)]/10"
+                    : "border-emerald-600 bg-emerald-50/70"
                   : isSelected
                     ? "border-[var(--os-text)] bg-[var(--os-bg)]"
                     : "border-[var(--os-border)] hover:border-[var(--os-text-muted)]"
@@ -179,7 +181,11 @@ export function OperationalWeekBoard({
               <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="text-sm font-semibold">{dayOfWeekName(day)}</span>
                 {isToday && (
-                  <span className="text-[0.65rem] font-bold uppercase tracking-wide text-emerald-800">
+                  <span
+                    className={`text-[0.65rem] font-bold uppercase tracking-wide ${
+                      mode === "consulta" ? "text-[var(--os-teal)]" : "text-emerald-800"
+                    }`}
+                  >
                     Hoy
                   </span>
                 )}
