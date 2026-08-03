@@ -24,4 +24,9 @@ export {
   recordLifecycleEvent,
   type LifecycleAuditEvent,
 } from "./audit";
+export {
+  normalizeOptionalReason,
+  sanitizeOptionalReason,
+  SIN_MOTIVO_INFORMADO,
+} from "./reason";
 export { deleteBlobsThenMetadata, type BlobSafeResult, type BlobStorageLike } from "./blob-safe";

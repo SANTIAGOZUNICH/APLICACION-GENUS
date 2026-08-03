@@ -22,6 +22,7 @@ import {
   gateQualityDecision,
   type QualityDecisionAttempt,
 } from "../lib/quality-decision-rbac";
+import { normalizeOptionalReason } from "@/lib/lifecycle";
 import {
   applyWorkProgressToItems,
   getEffectiveQualityStatus,
@@ -234,14 +235,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       if (!gate.ok) {
         return gate;
       }
-      const reason = options.reason.trim();
-      if (!reason) {
-        return {
-          ok: false,
-          error: "Motivo obligatorio para anular la decisión.",
-          code: "REASON_REQUIRED",
-        };
-      }
+      const reason = normalizeOptionalReason(options.reason);
 
       const previous = readDecisionMap()[itemId];
       recordQualityDecision(itemId, "pendiente", {

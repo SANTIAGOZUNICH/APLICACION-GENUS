@@ -6,6 +6,7 @@ import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { isFeatureMemoryAllowed } from "@/lib/db/feature-schema";
 import { isSuperadminEmail } from "@/lib/auth/superadmin";
 import { recordLifecycleEvent } from "@/lib/lifecycle/audit";
+import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 import {
   OrdersForbiddenError,
   OrdersNotFoundError,
@@ -364,10 +365,7 @@ export class ProductionPedidosService {
   ): Promise<ProductionPedidoRecord> {
     const a = assertAccess(actor);
     const mode = await assertWrites();
-    const trimmed = reason.trim();
-    if (trimmed.length < 3) {
-      throw new OrdersValidationError("Motivo obligatorio para eliminar el pedido.");
-    }
+    const trimmed = normalizeOptionalReason(reason);
     const now = nowIso();
 
     if (mode === "memory" || useMemory()) {

@@ -56,6 +56,7 @@ import { CodificadoTracePanel } from "../components/codificado-trace-panel";
 import { FormulasAdminPanel } from "../components/formulas-admin-panel";
 import { LifecycleRowActions } from "../components/lifecycle-row-actions";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
+import { normalizeOptionalReason } from "@/lib/lifecycle";
 
 const TOP_TABS = [
   { id: "pendientes", label: "Pendientes" },
@@ -242,14 +243,10 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
       setShowRejectField(true);
       return;
     }
-    if (!rejectReason.trim()) {
-      setRejectError("El motivo de rechazo es obligatorio.");
-      return;
-    }
     const result = rejectQualityItem(reviewItem.id, {
       actorSectorId: sectorId,
       decidedBy: workspace.context.displayName,
-      observation: rejectReason.trim(),
+      observation: normalizeOptionalReason(rejectReason),
     });
     if (!result.ok) {
       setActionError(result.error);
@@ -283,13 +280,8 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
       showToast(QUALITY_DECISION_DENIED_MESSAGE, "info");
       return;
     }
-    const reason = annulReason.trim();
-    if (!reason) {
-      setAnnulError("El motivo es obligatorio.");
-      return;
-    }
     const result = annulQualityItem(annulTarget.id, {
-      reason,
+      reason: annulReason,
       actorSectorId: sectorId,
       actorName: workspace.context.displayName,
       actorEmail: email ?? undefined,
@@ -459,7 +451,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                     syntheticLifecycleItem(
                       "anular",
                       "Anular decisión",
-                      "El trabajo volverá a Pendientes. Indicá el motivo de la anulación."
+                      "El trabajo volverá a Pendientes. El motivo es opcional."
                     ),
                   ]}
                   onPrimary={() => openReview(row)}
@@ -723,7 +715,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                 {canDecide && showRejectField && (
                   <div className="space-y-2">
                     <label htmlFor="reject-reason" className="text-sm font-medium text-[var(--genus-error)]">
-                      Motivo de rechazo (obligatorio)
+                      Motivo de rechazo (opcional)
                     </label>
                     <textarea
                       id="reject-reason"
@@ -733,9 +725,9 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                         if (e.target.value.trim()) setRejectError(null);
                       }}
                       rows={2}
-                      required
                       aria-invalid={Boolean(rejectError)}
                       className="w-full rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/35 bg-[var(--os-surface)] px-3 py-2 text-sm"
+                      placeholder="Si no informás motivo, se registrará “Sin motivo informado”."
                     />
                     {rejectError && (
                       <p role="alert" className="text-xs text-[var(--genus-error)]">
@@ -801,12 +793,12 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
             <DialogTitle>Anular decisión</DialogTitle>
             <DialogDescription>
               {annulTarget
-                ? `${displayField(annulTarget.product)} volverá a Pendientes. Indicá el motivo de la anulación.`
+                ? `${displayField(annulTarget.product)} volverá a Pendientes. El motivo es opcional.`
                 : null}
             </DialogDescription>
           </DialogHeader>
           <label htmlFor="annul-reason" className="block text-sm">
-            Motivo (obligatorio)
+            Motivo (opcional)
             <textarea
               id="annul-reason"
               value={annulReason}
@@ -816,6 +808,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
               }}
               rows={3}
               className="mt-1 w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
+              placeholder="Si no informás motivo, se registrará “Sin motivo informado”."
             />
           </label>
           {annulError ? (

@@ -20,6 +20,7 @@ import {
   type MpWeeklyControlStatus,
 } from "./types";
 import { mpControlLifecycleActions } from "@/lib/lifecycle/adapters/common";
+import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 
 type Mem = { controls: MpWeeklyControl[] };
 const g = globalThis as unknown as { __genusMpControlMem?: Mem };
@@ -317,7 +318,7 @@ export class MpControlService {
   ): Promise<MpWeeklyControl> {
     assertWrite(actor);
     await assertFeatureWritesEnabled();
-    if (!reason.trim()) throw new Error("El motivo de anulación es obligatorio.");
+    const trimmed = normalizeOptionalReason(reason);
     const existing = await this.get(actor, id);
     if (!existing) throw new Error("Control no encontrado.");
     const decision = mpControlLifecycleActions(existing);
@@ -332,12 +333,12 @@ export class MpControlService {
       updatedAt: now,
       lifecycle: {
         ...existing.lifecycle,
-        annulReason: reason.trim(),
+        annulReason: trimmed,
         annulledAt: now,
         annulledBy: actor.email,
       },
     };
-    await this.persist(next, { action: "annul", reason: reason.trim() });
+    await this.persist(next, { action: "annul", reason: trimmed });
     return next;
   }
 

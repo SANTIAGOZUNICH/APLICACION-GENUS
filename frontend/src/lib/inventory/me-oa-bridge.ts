@@ -12,6 +12,7 @@ import {
   InventoryValidationError,
 } from "@/lib/inventory/inventory-service";
 import type { MeSalidaRow } from "@/lib/inventory/types";
+import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 
 export type OaMeShortage = {
   codigo: string;
@@ -209,18 +210,16 @@ export function reverseOaMeSalidas(
   orderId: string,
   reason: string
 ): number {
-  if (!reason.trim()) {
-    throw new InventoryValidationError("Motivo obligatorio para revertir salidas OA.");
-  }
+  const trimmed = normalizeOptionalReason(reason);
   const invActor = toInvActor(actor);
   const salidas = service.listMeSalidasByOaId(orderId).filter((s) => !s.reverted && s.origen === "OA");
   for (const s of salidas) {
     const qty = s.total ?? s.cantidad ?? 0;
     if (s.materialId && qty) {
-      service.applyOaStockDelta(invActor, s.materialId, qty, { allowNegative: true, reason });
+      service.applyOaStockDelta(invActor, s.materialId, qty, { allowNegative: true, reason: trimmed });
       service.syncMeAlertsPublic(invActor, s.materialId);
     }
-    service.markMeSalidaReverted(invActor, s.id, reason);
+    service.markMeSalidaReverted(invActor, s.id, trimmed);
   }
   return salidas.length;
 }

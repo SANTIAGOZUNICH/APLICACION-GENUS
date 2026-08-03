@@ -11,6 +11,7 @@ import type {
 import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
 import { operationalEventBus } from "@/lib/live-sync/operational-event-bus";
 import type { WorkProgressPayload } from "@/lib/live-sync/types";
+import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 
 const NOTIFY_ON_PROGRESS: SectorId[] = [
   "PRODUCCION",
@@ -253,9 +254,7 @@ class ServerOperationalState {
     if (!previous || (previous.status !== "aprobado" && previous.status !== "rechazado")) {
       throw new Error("Solo se pueden anular decisiones aprobadas o rechazadas.");
     }
-    if (!options.reason.trim()) {
-      throw new Error("Motivo obligatorio para anular la decisión.");
-    }
+    const trimmed = normalizeOptionalReason(options.reason);
     const record: QualityDecisionRecord = {
       itemId,
       status: "pendiente",
@@ -265,7 +264,7 @@ class ServerOperationalState {
       decidedByEmail: options.decidedByEmail,
       observation: previous.observation,
       previousStatus: previous.status,
-      changeReason: options.reason.trim(),
+      changeReason: trimmed,
     };
     this.decisions.set(itemId, record);
     this.revision += 1;

@@ -1295,7 +1295,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           <textarea
             value={returnReason}
             onChange={(e) => setReturnReason(e.target.value)}
-            placeholder="Motivo obligatorio"
+            placeholder="Motivo (opcional)"
             className="min-h-24 w-full rounded border px-3 py-2 text-sm"
           />
           <DialogFooter>
@@ -1304,7 +1304,6 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             </Button>
             <Button
               type="button"
-              disabled={!returnReason.trim()}
               onClick={() =>
                 void returnOrderApi(session, orderId, returnReason).then((o) => {
                   setOrder(o);

@@ -115,7 +115,7 @@ describe("formulas/admin API", () => {
     expect(res.status).toBe(403);
   });
 
-  it("POST archive requiere motivo", async () => {
+  it("POST archive acepta motivo vacío (Sin motivo informado)", async () => {
     seedBank();
     const { POST } = await import("@/app/api/v1/formulas/admin/route");
     const res = await POST(
@@ -129,7 +129,10 @@ describe("formulas/admin API", () => {
         body: JSON.stringify({ action: "archive", productId: "p-admin", reason: "" }),
       })
     );
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok?: boolean; entry?: { archived?: boolean } };
+    expect(body.ok).toBe(true);
+    expect(body.entry?.archived).toBe(true);
   });
 
   it("403 cuando body.actorSectorId no coincide con header", async () => {

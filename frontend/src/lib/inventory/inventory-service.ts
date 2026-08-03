@@ -16,6 +16,7 @@ import {
   multiplyTotal,
   parseOptionalNumber,
 } from "./calcs";
+import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 import type { MemoryInventoryRepo, StockAjuste } from "./memory-repo";
 import {
   ME_ALERT_NOTIFY_SECTORS,
@@ -266,20 +267,20 @@ export class InventoryService {
    */
   anularMeIngreso(actor: InventoryActor, id: string, reason: string) {
     this.guard(actor, "me_ingresos", true);
-    if (!reason.trim()) throw new InventoryValidationError("Motivo obligatorio para anular ingreso.");
+    const trimmed = normalizeOptionalReason(reason);
     const existing = this.repo.getMeIngreso(id);
     if (!existing) throw new InventoryNotFoundError("Ingreso ME no encontrado.");
     if (existing.anulado) return existing;
 
     if (existing.materialId && existing.total != null) {
-      this.applyMeStockDelta(existing.materialId, -existing.total, { actor, reason });
+      this.applyMeStockDelta(existing.materialId, -existing.total, { actor, reason: trimmed });
     }
     const now = nowIso();
     const row: MeIngresoRow = {
       ...existing,
       anulado: true,
       anuladoAt: now,
-      anuladoReason: reason.trim(),
+      anuladoReason: trimmed,
       updatedBy: actor.email,
       updatedAt: now,
     };
@@ -291,7 +292,7 @@ export class InventoryService {
       "anular",
       existing as unknown as Record<string, unknown>,
       row as unknown as Record<string, unknown>,
-      reason
+      trimmed
     );
     if (existing.materialId) this.syncMeAlerts(actor, existing.materialId);
     return row;
@@ -386,9 +387,7 @@ export class InventoryService {
    */
   anularMeSalida(actor: InventoryActor, id: string, reason: string) {
     this.guard(actor, "me_salidas", true);
-    if (!reason.trim()) {
-      throw new InventoryValidationError("Motivo obligatorio para anular salida.");
-    }
+    const trimmed = normalizeOptionalReason(reason);
     const existing = this.repo.getMeSalida(id);
     if (!existing) throw new InventoryNotFoundError("Salida ME no encontrada.");
     if (existing.reverted) {
@@ -404,7 +403,7 @@ export class InventoryService {
     ) {
       this.applyMeStockDelta(existing.materialId, Number(qty), {
         actor,
-        reason: `Anulación salida ME: ${reason.trim()}`,
+        reason: `Anulación salida ME: ${trimmed}`,
         allowNegative: true,
       });
       this.syncMeAlerts(actor, existing.materialId);
@@ -415,7 +414,7 @@ export class InventoryService {
       ...existing,
       reverted: true,
       revertedAt: now,
-      revertReason: reason.trim(),
+      revertReason: trimmed,
       updatedBy: actor.email,
       updatedAt: now,
     };
@@ -427,7 +426,7 @@ export class InventoryService {
       "anular",
       existing as unknown as Record<string, unknown>,
       row as unknown as Record<string, unknown>,
-      reason
+      trimmed
     );
     return row;
   }
@@ -1379,7 +1378,7 @@ export class InventoryService {
   /** Anula ingreso: revierte ledger/stock, status ANULADO, conserva la fila. */
   async anularMpIngreso(actor: InventoryActor, id: string, reason: string) {
     this.guard(actor, "mp_ingresos", true);
-    if (!reason.trim()) throw new InventoryValidationError("Motivo obligatorio.");
+    const trimmed = normalizeOptionalReason(reason);
     const existing = this.repo.getMpIngreso(id);
     if (!existing) throw new InventoryNotFoundError("Ingreso MP no encontrado.");
     if (existing.status === "ANULADO") return existing;
@@ -1411,7 +1410,7 @@ export class InventoryService {
       "anular",
       existing as unknown as Record<string, unknown>,
       row as unknown as Record<string, unknown>,
-      reason
+      trimmed
     );
     await this.syncMpIngresoLedger(actor, row, existing, {
       anular: true,

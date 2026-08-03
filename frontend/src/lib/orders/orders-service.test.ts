@@ -337,7 +337,7 @@ describe("operational orders RBAC + lifecycle", () => {
     expect(Object.values(content.signatures).every((s) => s === null)).toBe(true);
   });
 
-  it("anular OE exige motivo, es idempotente y RBAC bloquea sectores no autorizados", async () => {
+  it("anular OE acepta motivo vacío (Sin motivo informado), es idempotente y RBAC bloquea sectores no autorizados", async () => {
     const t = (await service.listTemplates("OE"))[0]!;
     const order = await service.createOrder(
       { type: "OE", templateId: t.id, assignedSector: "ELABORACION" },
@@ -357,11 +357,8 @@ describe("operational orders RBAC + lifecycle", () => {
     await expect(service.annul(order.id, elaboracion, "x")).rejects.toBeInstanceOf(
       OrdersForbiddenError
     );
-    await expect(service.annul(order.id, produccion, "")).rejects.toBeInstanceOf(
-      OrdersValidationError
-    );
 
-    const annulled = await service.annul(order.id, produccion, "Error de carga");
+    const annulled = await service.annul(order.id, produccion, "");
     expect(annulled.status).toBe("ANULADA");
     const again = await service.annul(order.id, produccion, "segundo intento");
     expect(again.status).toBe("ANULADA");

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { LifecycleAction, LifecycleActor, LifecycleEntityKind } from "./policy";
+import { normalizeOptionalReason } from "./reason";
 
 export type LifecycleAuditEvent = {
   id: string;
@@ -8,7 +9,7 @@ export type LifecycleAuditEvent = {
   action: LifecycleAction | string;
   actorEmail: string;
   actorSector: string;
-  reason: string | null;
+  reason: string;
   impactJson: unknown;
   createdAt: string;
 };
@@ -37,7 +38,7 @@ export function recordLifecycleEvent(params: {
     action: params.action,
     actorEmail: params.actor.email,
     actorSector: params.actor.sector,
-    reason: params.reason?.trim() || null,
+    reason: normalizeOptionalReason(params.reason),
     impactJson: params.impact ?? null,
     createdAt: new Date().toISOString(),
   };

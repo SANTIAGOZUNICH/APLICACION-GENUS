@@ -949,13 +949,13 @@ export class RemitoService {
     remito.updatedBy = actor.email;
     remito.updatedAt = new Date().toISOString();
     await this.persistRemito(remito);
-    const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+    const { recordLifecycleEvent, normalizeOptionalReason } = await import("@/lib/lifecycle");
     recordLifecycleEvent({
       entityKind: "remito",
       entityId: remitoId,
       action: "anular",
       actor: { email: actor.email, sector: actor.sector },
-      reason: reason?.trim() || null,
+      reason: normalizeOptionalReason(reason),
     });
     return this.attachVersions(remito);
   }

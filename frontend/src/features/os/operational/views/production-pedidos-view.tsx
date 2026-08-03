@@ -825,13 +825,14 @@ export function ProductionPedidosView() {
             <div className="os-modal-in w-full max-w-md rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-4">
               <h3 className="text-lg font-semibold">¿Eliminar pedido?</h3>
               <p className="mt-1 text-sm text-[var(--os-text-muted)]">
-                La eliminación conserva auditoría. Indicá un motivo (mín. 3 caracteres).
+                La eliminación conserva auditoría. El motivo es opcional; si no lo
+                informás se registrará “Sin motivo informado”.
               </p>
               <textarea
                 className="mt-3 min-h-20 w-full rounded border border-[var(--os-border)] bg-transparent p-2 text-sm"
                 value={deleteReason}
                 onChange={(e) => setDeleteReason(e.target.value)}
-                placeholder="Motivo"
+                placeholder="Motivo (opcional)"
               />
               <div className="mt-3 flex justify-end gap-2">
                 <Button type="button" variant="secondary" onClick={() => setDeleteId(null)}>
@@ -840,7 +841,6 @@ export function ProductionPedidosView() {
                 <Button
                   type="button"
                   variant="destructive"
-                  disabled={deleteReason.trim().length < 3}
                   onClick={() => void confirmDelete()}
                 >
                   Eliminar

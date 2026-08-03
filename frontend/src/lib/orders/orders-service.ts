@@ -41,6 +41,7 @@ import {
   OrdersValidationError,
 } from "@/lib/orders/types";
 import { assertOrderTypeMatch, validateDeliver } from "@/lib/orders/validators";
+import { normalizeOptionalReason } from "@/lib/lifecycle";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -1288,9 +1289,7 @@ export class OrdersService {
       "return",
       actor
     );
-    if (!reason.trim()) {
-      throw new OrdersValidationError("Motivo de devolución obligatorio.");
-    }
+    const trimmed = normalizeOptionalReason(reason);
     const current = await this.requireOrder(id);
     if (current.status !== "COMPLETA") {
       throw new OrdersValidationError("Solo se pueden devolver órdenes completas.");
@@ -1302,7 +1301,7 @@ export class OrdersService {
       version: current.revision,
       snapshot: current,
       event: "return_keep_delivered",
-      reason: reason.trim(),
+      reason: trimmed,
       createdBy: actor.email,
       createdAt: nowIso(),
     });
@@ -1332,7 +1331,7 @@ export class OrdersService {
         getInventoryService(),
         actor,
         id,
-        `Devolución OA: ${reason.trim()}`
+        `Devolución OA: ${trimmed}`
       );
       await persistInventorySnapshot(memoryInventoryRepo);
     }
@@ -1353,12 +1352,12 @@ export class OrdersService {
       eventType: "ORDER_RETURNED",
       actor: actor.email,
       actorSector: actor.sector,
-      metadata: { reason, preservedRevision: current.revision },
+      metadata: { reason: trimmed, preservedRevision: current.revision },
     });
     await notify(this.repo, {
       kind: "order_returned",
       title: "Orden devuelta para corrección",
-      message: `${updated.orderNumber}: ${reason.trim()}`,
+      message: `${updated.orderNumber}: ${trimmed}`,
       sectors: [
         ...(updated.assignedSector !== SIN_ASIGNAR ? [updated.assignedSector] : []),
         "CALIDAD",
@@ -1461,10 +1460,7 @@ export class OrdersService {
   async annul(id: string, actor: OrdersActor, reason: string) {
     const current = await this.requireOrder(id);
     assertCanOrderAction(current.type, "annul", actor);
-    const trimmed = reason?.trim() ?? "";
-    if (!trimmed) {
-      throw new OrdersValidationError("Motivo obligatorio para anular la orden.");
-    }
+    const trimmed = normalizeOptionalReason(reason);
     // Idempotencia: ya anulada → no repetir reversos de stock.
     if (current.status === "ANULADA") {
       return current;

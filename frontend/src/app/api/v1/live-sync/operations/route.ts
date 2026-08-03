@@ -11,6 +11,7 @@ import type { WorkItem } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
 import { notifyEnvasadoForApproval } from "@/lib/notifications/approval-envasado-notify";
+import { normalizeOptionalReason } from "@/lib/lifecycle";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -203,14 +204,9 @@ export async function POST(request: Request) {
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
-        if (!body.reason?.trim()) {
-          return NextResponse.json(
-            { error: "Motivo obligatorio para anular la decisión.", code: "REASON_REQUIRED" },
-            { status: 400 }
-          );
-        }
+        const reason = normalizeOptionalReason(body.reason);
         const record = serverOperationalState.annulQualityDecision(body.itemId, {
-          reason: body.reason.trim(),
+          reason,
           decidedBy: body.decidedBy ?? actor.displayName ?? actor.email,
           decidedBySector: actor.sector,
           decidedByEmail: actor.email,
@@ -227,15 +223,10 @@ export async function POST(request: Request) {
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
-        if (!body.reason?.trim()) {
-          return NextResponse.json(
-            { error: "El motivo de cancelación es obligatorio.", code: "REASON_REQUIRED" },
-            { status: 400 }
-          );
-        }
+        const reason = normalizeOptionalReason(body.reason);
         const record = serverOperationalState.cancelWork(body.itemId, {
           cancelledBy: body.cancelledBy ?? actor.displayName ?? actor.email,
-          reason: body.reason.trim(),
+          reason,
           sector: body.sector ?? actor.sector,
         });
         return NextResponse.json({
@@ -321,15 +312,10 @@ export async function POST(request: Request) {
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
-        if (!body.reason?.trim()) {
-          return NextResponse.json(
-            { error: "El motivo de anulación es obligatorio.", code: "REASON_REQUIRED" },
-            { status: 400 }
-          );
-        }
+        const reason = normalizeOptionalReason(body.reason);
         const record = serverOperationalState.annulDelivery(
           body.id,
-          body.reason.trim(),
+          reason,
           body.actorName ?? actor.displayName ?? actor.email
         );
         if (!record) {
@@ -354,14 +340,9 @@ export async function POST(request: Request) {
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
-        if (!body.reason?.trim()) {
-          return NextResponse.json(
-            { error: "El motivo de eliminación es obligatorio.", code: "REASON_REQUIRED" },
-            { status: 400 }
-          );
-        }
+        const reason = normalizeOptionalReason(body.reason);
         const record = serverOperationalState.deleteDeliveryRecord(body.id, {
-          reason: body.reason.trim(),
+          reason,
           actorName: body.actorName ?? actor.displayName ?? actor.email,
         });
         if (!record) {

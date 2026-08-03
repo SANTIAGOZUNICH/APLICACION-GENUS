@@ -5,6 +5,7 @@ import {
   canArchive,
   canDelete,
   canRestore,
+  normalizeOptionalReason,
   type LifecycleAction,
   type LifecycleDecision,
 } from "@/lib/lifecycle";
@@ -297,7 +298,7 @@ export async function executeAssignedWorkLifecycleAction(input: {
     if (result.action === "cancelar") {
       const response = await postCancelWork({
         itemId: item.id,
-        reason: reason.trim(),
+        reason: normalizeOptionalReason(reason),
         cancelledBy: actorName,
         sector: item.sector,
         actorSectorId,
@@ -319,10 +320,7 @@ export async function executeAssignedWorkLifecycleAction(input: {
   const cancelReason =
     action === "eliminar"
       ? "Eliminado por Producción (pendiente sin avances)."
-      : reason.trim();
-  if (action === "anular" && !cancelReason) {
-    return { ok: false, error: "El motivo de cancelación es obligatorio." };
-  }
+      : normalizeOptionalReason(reason);
   recordWorkProgress(item.id, {
     finishedQty: finishedQty || "",
     observation: `Cancelado: ${cancelReason}`,

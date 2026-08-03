@@ -94,10 +94,13 @@ export type LifecycleEntityState = {
 };
 
 export function requireReasonFor(action: LifecycleAction): boolean {
+  // Ofrece campo de motivo (siempre opcional en UI/API).
   return (
     action === "anular" ||
     action === "eliminar_definitivo" ||
-    action === "eliminar"
+    action === "eliminar" ||
+    action === "archivar" ||
+    action === "restaurar"
   );
 }
 
@@ -136,7 +139,7 @@ export function canDelete(entity: LifecycleEntityState): LifecycleDecision {
         allowed: true,
         requireReason: true,
         requireDoubleConfirm: false,
-        reason: "Tiene avance. Preferí anular/cancelar con motivo.",
+        reason: "Tiene avance. Preferí anular/cancelar (motivo opcional).",
       };
     }
     return {

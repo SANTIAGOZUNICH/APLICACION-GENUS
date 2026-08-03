@@ -20,6 +20,7 @@ import {
   visibleProductLabel,
   type FormulaOption,
 } from "./formula-options";
+import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 
 export class FormulaBankForbiddenError extends Error {
   status = 403;
@@ -655,10 +656,7 @@ export class FormulaBankService {
     actorEmail: string;
     actorSector: string;
   }): FormulaAdminEntry {
-    const reason = input.reason.trim();
-    if (!reason) {
-      throw new FormulaBankValidationError("Motivo obligatorio para archivar la fórmula.");
-    }
+    const reason = normalizeOptionalReason(input.reason);
     const prod = this.store.products.find((p) => p.id === input.productId);
     if (!prod) throw new FormulaBankNotFoundError("Fórmula no encontrada.");
     if (!prod.activeVersionId) {
@@ -684,10 +682,7 @@ export class FormulaBankService {
     actorEmail: string;
     actorSector: string;
   }): FormulaAdminEntry {
-    const reason = input.reason.trim();
-    if (!reason) {
-      throw new FormulaBankValidationError("Motivo obligatorio para restaurar la fórmula.");
-    }
+    const reason = normalizeOptionalReason(input.reason);
     const prod = this.store.products.find((p) => p.id === input.productId);
     if (!prod) throw new FormulaBankNotFoundError("Fórmula no encontrada.");
     if (prod.activeVersionId) {
@@ -731,10 +726,7 @@ export class FormulaBankService {
       versionIds: string[]
     ) => Promise<Array<{ kind: string; id: string; label: string }>>
   ): Promise<{ deletedProductId: string }> {
-    const reason = input.reason.trim();
-    if (!reason) {
-      throw new FormulaBankValidationError("Motivo obligatorio para eliminar la fórmula.");
-    }
+    const reason = normalizeOptionalReason(input.reason);
     const prod = this.store.products.find((p) => p.id === input.productId);
     if (!prod) throw new FormulaBankNotFoundError("Fórmula no encontrada.");
     const versionIds = this.store.versions.filter((v) => v.productId === prod.id).map((v) => v.id);

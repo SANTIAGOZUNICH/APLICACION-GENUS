@@ -439,11 +439,7 @@ export function EntregadosView() {
 
   const executeGuidedDelete = useCallback(() => {
     if (!deleteGuideTarget) return;
-    const reason = deleteReason.trim();
-    if (!reason) {
-      setActionError("El motivo de eliminación es obligatorio.");
-      return;
-    }
+    const reason = deleteReason;
 
     let target = deleteGuideTarget;
 
@@ -861,7 +857,7 @@ export function EntregadosView() {
           <DialogHeader>
             <DialogTitle>Motivo de eliminación</DialogTitle>
             <DialogDescription>
-              Indicá el motivo obligatorio antes de continuar.
+              El motivo es opcional. Si no lo informás, se registrará “Sin motivo informado”.
             </DialogDescription>
           </DialogHeader>
           {deleteGuideTarget && (
@@ -889,7 +885,7 @@ export function EntregadosView() {
             onChange={(e) => setDeleteReason(e.target.value)}
             rows={3}
             className="w-full rounded border border-[var(--os-border)] px-3 py-2 text-sm"
-            placeholder="Motivo de eliminación"
+            placeholder="Motivo de eliminación (opcional)"
           />
           {actionError && <p role="alert" className="text-sm text-[var(--genus-error)]">{actionError}</p>}
           <DialogFooter>
@@ -899,14 +895,9 @@ export function EntregadosView() {
             <Button
               variant="destructive"
               onClick={() => {
-                if (!deleteReason.trim()) {
-                  setActionError("El motivo de eliminación es obligatorio.");
-                  return;
-                }
                 setActionError(null);
                 setDeleteGuideStep("confirm");
               }}
-              disabled={!deleteReason.trim()}
             >
               Continuar
             </Button>

@@ -49,7 +49,7 @@ describe("lifecycle policy", () => {
     expect(d.httpStatusIfDenied).toBe(409);
   });
 
-  it("anular requiere motivo y conserva auditoría", () => {
+  it("anular muestra campo de motivo (opcional) y conserva auditoría", () => {
     const d = canAnnul({
       kind: "oe",
       id: "oe1",
@@ -57,6 +57,7 @@ describe("lifecycle policy", () => {
     });
     expect(d.allowed).toBe(true);
     expect(d.action).toBe("anular");
+    // requireReason=true → UI muestra el campo; el valor puede quedar vacío (Sin motivo informado).
     expect(d.requireReason).toBe(true);
     expect(d.impact?.preservesAudit).toBe(true);
   });

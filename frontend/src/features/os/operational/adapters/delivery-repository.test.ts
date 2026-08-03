@@ -67,7 +67,7 @@ describe("delivery-repository", () => {
     expect(listArchivedDeliveries()).toHaveLength(0);
   });
 
-  it("eliminación definitiva requiere archivado y motivo", () => {
+  it("eliminación definitiva requiere archivado; motivo vacío → Sin motivo informado", () => {
     const delivered = createDelivery();
     expect(delivered.ok).toBe(true);
     if (!delivered.ok) return;
@@ -79,7 +79,7 @@ describe("delivery-repository", () => {
         actorName: "Produccion",
         reason: " ",
       })
-    ).toMatchObject({ ok: false, code: "REASON_REQUIRED" });
+    ).toMatchObject({ ok: false, code: "MUST_ARCHIVE_FIRST" });
 
     expect(
       deleteDeliveryRecord({
@@ -89,6 +89,29 @@ describe("delivery-repository", () => {
         reason: "Error administrativo",
       })
     ).toMatchObject({ ok: false, code: "MUST_ARCHIVE_FIRST" });
+
+    archiveDelivery({
+      id: delivered.record.id,
+      actorSectorId: "PRODUCCION",
+      actorName: "Produccion",
+    });
+    const deletedEmpty = deleteDeliveryRecord({
+      id: delivered.record.id,
+      actorSectorId: "PRODUCCION",
+      actorName: "Produccion",
+      reason: "  ",
+    });
+    expect(deletedEmpty.ok).toBe(true);
+    expect(listDeliveryAudit()[0]).toMatchObject({
+      workItemId: "work-1",
+      deleteReason: "Sin motivo informado",
+    });
+  });
+
+  it("eliminación definitiva con motivo informado", () => {
+    const delivered = createDelivery();
+    expect(delivered.ok).toBe(true);
+    if (!delivered.ok) return;
 
     archiveDelivery({
       id: delivered.record.id,

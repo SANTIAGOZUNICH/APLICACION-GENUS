@@ -5,6 +5,7 @@
 
 import type { SectorId } from "@/types/operational/sector";
 import { gateDeliveryMutation } from "../lib/delivery-rbac";
+import { normalizeOptionalReason } from "@/lib/lifecycle";
 
 const STORAGE_KEY = "genus_os_deliveries";
 const AUDIT_KEY = "genus_os_delivery_audit";
@@ -264,10 +265,7 @@ export function annulDelivery(input: {
   const gate = gateDeliveryMutation(input.actorSectorId);
   if (!gate.ok) return { ok: false, error: gate.error, code: gate.code };
 
-  const reason = input.reason.trim();
-  if (!reason) {
-    return { ok: false, error: "El motivo de anulación es obligatorio.", code: "REASON_REQUIRED" };
-  }
+  const reason = normalizeOptionalReason(input.reason);
 
   const items = readAll();
   const idx = items.findIndex((d) => d.id === input.id);
@@ -309,10 +307,7 @@ export function deleteDeliveryRecord(input: {
   const gate = gateDeliveryMutation(input.actorSectorId);
   if (!gate.ok) return { ok: false, error: gate.error, code: gate.code };
 
-  const reason = input.reason.trim();
-  if (!reason) {
-    return { ok: false, error: "El motivo de eliminación es obligatorio.", code: "REASON_REQUIRED" };
-  }
+  const reason = normalizeOptionalReason(input.reason);
 
   const items = readAll();
   const idx = items.findIndex((d) => d.id === input.id);

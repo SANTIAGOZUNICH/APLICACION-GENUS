@@ -311,10 +311,6 @@ export function MpCoasPanel() {
   async function confirmDeleteFile() {
     if (!deleteFileTarget) return;
     if (deleteConfirmStep === 1) {
-      if (deleteReason.trim().length < 3) {
-        setError("El motivo es obligatorio (mínimo 3 caracteres).");
-        return;
-      }
       setError(null);
       setDeleteConfirmStep(2);
       return;
@@ -346,10 +342,6 @@ export function MpCoasPanel() {
   async function confirmDeleteVersion() {
     if (!deleteVersionTarget) return;
     if (deleteConfirmStep === 1) {
-      if (deleteReason.trim().length < 3) {
-        setError("El motivo es obligatorio (mínimo 3 caracteres).");
-        return;
-      }
       setError(null);
       setDeleteConfirmStep(2);
       return;

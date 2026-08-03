@@ -10,6 +10,7 @@ import {
 import { readyFormulaBank, persistFormulaBankIfConfigured } from "@/lib/formulas/get-formula-bank";
 import { findFormulaUsageRefs } from "@/lib/formulas/formula-usage";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
+import { normalizeOptionalReason } from "@/lib/lifecycle";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -93,10 +94,7 @@ export async function POST(request: Request) {
     if (!productId) {
       return NextResponse.json({ error: "productId es obligatorio.", code: "VALIDATION" }, { status: 400 });
     }
-    const reason = body.reason?.trim() ?? "";
-    if (!reason) {
-      return NextResponse.json({ error: "Motivo obligatorio.", code: "REASON_REQUIRED" }, { status: 400 });
-    }
+    const reason = normalizeOptionalReason(body.reason);
 
     const bank = await readyFormulaBank();
     const actorInput = {

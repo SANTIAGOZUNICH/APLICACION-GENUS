@@ -9,6 +9,7 @@ import type { SectorId } from "@/types/operational/sector";
 import type { OriginStage, WorkItem, WorkItemPriority } from "@/types/operational/work-item";
 import { gateWorkMutation, type WorkMutationAttempt } from "../lib/work-mutation-rbac";
 import { resolveAssignedWorkLifecycleAction } from "../lib/assigned-work-lifecycle";
+import { normalizeOptionalReason } from "@/lib/lifecycle";
 
 const ORIGIN_STAGE_BY_SECTOR: Record<
   "ELABORACION" | "ENVASADO_MASIVO" | "ENVASADO_PREMIUM",
@@ -348,14 +349,7 @@ export function deleteOrCancelManualWorkItem(input: {
   }
 
   // cancelar
-  const reason = (input.cancelReason ?? "").trim();
-  if (!reason) {
-    return {
-      ok: false,
-      error: "El motivo de cancelación es obligatorio.",
-      code: "REASON_REQUIRED",
-    };
-  }
+  const reason = normalizeOptionalReason(input.cancelReason);
 
   const cancelled: WorkItem = {
     ...item,

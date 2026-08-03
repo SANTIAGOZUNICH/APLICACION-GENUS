@@ -19,6 +19,7 @@ import {
 } from "@/lib/formulas/formulas-client";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import { canManageFormulas } from "@/lib/formulas/formula-admin-rbac";
+import { normalizeOptionalReason } from "@/lib/lifecycle";
 
 type PendingAction = {
   action: "archive" | "restore" | "delete";
@@ -155,14 +156,14 @@ export function FormulasAdminPanel({
         : "La fórmula volverá a estar disponible en selectores de OE.";
 
   async function confirmAction() {
-    if (!pending || reason.trim().length < 3) return;
+    if (!pending) return;
     setBusy(true);
     setError(null);
     try {
       await mutateFormulaAdminApi(session, {
         action: pending.action,
         productId: pending.entry.productId,
-        reason: reason.trim(),
+        reason: normalizeOptionalReason(reason),
         actorSectorId: sectorId,
       });
       setPending(null);
@@ -270,12 +271,13 @@ export function FormulasAdminPanel({
             </DialogDescription>
           </DialogHeader>
           <label className="block space-y-1 text-sm">
-            <span>Motivo (obligatorio)</span>
+            <span>Motivo (opcional)</span>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               className="min-h-[80px] w-full rounded border px-2 py-1"
               data-testid="formulas-admin-reason"
+              placeholder="Si no informás motivo, se registrará “Sin motivo informado”."
             />
           </label>
           <DialogFooter>
@@ -285,7 +287,7 @@ export function FormulasAdminPanel({
             <Button
               type="button"
               variant={pending?.action === "delete" ? "destructive" : "primary"}
-              disabled={busy || !reason.trim()}
+              disabled={busy}
               data-testid="formulas-admin-confirm-btn"
               onClick={() => void confirmAction()}
             >

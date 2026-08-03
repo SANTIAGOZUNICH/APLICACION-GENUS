@@ -3,6 +3,7 @@
  * Persistencia Neon diferida vía migración 0014 (no aplicar sin autorización).
  */
 import type { SectorId } from "@/types/operational/sector";
+import { normalizeOptionalReason } from "@/lib/lifecycle";
 
 const STORAGE_KEY = "genus_os_deposito_graneles";
 const AUDIT_KEY = "genus_os_deposito_graneles_audit";
@@ -276,8 +277,7 @@ export function deleteOrAnnulGranel(input: {
   if (!canMutateGraneles(input.actorSector)) {
     return { ok: false, error: "Solo Depósito puede eliminar graneles." };
   }
-  const reason = input.reason.trim();
-  if (!reason) return { ok: false, error: "El motivo es obligatorio." };
+  const reason = normalizeOptionalReason(input.reason);
 
   const items = readAll();
   const idx = items.findIndex((i) => i.id === input.id);

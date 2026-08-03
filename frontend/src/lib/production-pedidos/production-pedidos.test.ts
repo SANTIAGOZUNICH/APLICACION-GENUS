@@ -217,9 +217,28 @@ describe("production pedidos rbac + crud + import idempotency", () => {
     });
     expect(updated.kg).toBe(6);
 
-    await expect(svc.remove(actor, created.id, "x")).rejects.toThrow(/motivo/i);
-    const deleted = await svc.remove(actor, created.id, "Pedido de prueba");
+    const deletedShort = await svc.remove(actor, created.id, "x");
+    expect(deletedShort.deletedAt).toBeTruthy();
+    expect(deletedShort.deleteReason).toBe("x");
+    // recreate for full-reason path
+    const created2 = await svc.create(actor, {
+      op: "001b",
+      q: "100",
+      ml: "30",
+      estado: "INGRESO",
+    });
+    const deleted = await svc.remove(actor, created2.id, "Pedido de prueba");
     expect(deleted.deletedAt).toBeTruthy();
+    expect(deleted.deleteReason).toBe("Pedido de prueba");
+
+    const created3 = await svc.create(actor, {
+      op: "001c",
+      q: "50",
+      ml: "30",
+      estado: "INGRESO",
+    });
+    const deletedEmpty = await svc.remove(actor, created3.id, "   ");
+    expect(deletedEmpty.deleteReason).toBe("Sin motivo informado");
   });
 
   it("import idempotente no duplica", async () => {

@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import {
   FormulaBankConflictError,
   FormulaBankService,
-  FormulaBankValidationError,
   MemoryFormulaBank,
 } from "@/lib/formulas/formula-bank-service";
 import { listActiveFormulaOptions } from "@/lib/formulas/formula-options";
@@ -112,7 +111,7 @@ describe("FormulaBankService admin lifecycle", () => {
     expect(listActiveFormulaOptions(store.products, store.versions)).toHaveLength(1);
   });
 
-  it("requiere motivo para archivar", () => {
+  it("archivar con motivo vacío persiste Sin motivo informado", () => {
     const store = new MemoryFormulaBank();
     const svc = new FormulaBankService(store);
     const pid = randomUUID();
@@ -124,14 +123,14 @@ describe("FormulaBankService admin lifecycle", () => {
         activeVersionId: randomUUID(),
       })
     );
-    expect(() =>
-      svc.archiveFormula({
-        productId: pid,
-        reason: "  ",
-        actorEmail: "a@b.com",
-        actorSector: "CALIDAD",
-      })
-    ).toThrow(FormulaBankValidationError);
+    const entry = svc.archiveFormula({
+      productId: pid,
+      reason: "  ",
+      actorEmail: "a@b.com",
+      actorSector: "CALIDAD",
+    });
+    expect(entry.archived).toBe(true);
+    expect(store.adminAudit[0]?.reason).toBe("Sin motivo informado");
   });
 
   it("delete permanente falla 409 si hay referencias OE", async () => {

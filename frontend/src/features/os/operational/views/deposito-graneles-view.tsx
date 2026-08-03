@@ -410,15 +410,15 @@ export function DepositoGranelesView() {
             <DialogTitle>Eliminar / anular sobrante</DialogTitle>
           </DialogHeader>
           <p className="text-sm">
-            Motivo obligatorio. Los originados en Envasado se anulan con auditoría (no hard-delete
-            inseguro).
+            Motivo opcional. Los originados en Envasado se anulan con auditoría (no hard-delete
+            inseguro). Si no informás motivo, se registrará “Sin motivo informado”.
           </p>
           <textarea
             className="w-full rounded border px-3 py-2 text-sm"
             rows={3}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="Motivo…"
+            placeholder="Motivo (opcional)…"
           />
           <DialogFooter>
             <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
