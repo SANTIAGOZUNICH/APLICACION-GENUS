@@ -162,7 +162,7 @@ export function SearchCombobox({
         id={listId}
         role="listbox"
         data-testid={testId ? `${testId}-list` : undefined}
-        className="fixed z-[200] max-h-56 overflow-y-auto overscroll-contain rounded border border-[var(--os-border)] bg-[var(--os-surface,#fff)] shadow-lg"
+        className="fixed z-[200] max-h-56 overflow-y-auto overscroll-contain rounded border border-[var(--os-border)] bg-[var(--ig-control-option-bg,var(--os-surface))] text-[var(--ig-control-fg,var(--os-text))] shadow-lg color-scheme-dark"
         style={{ top: pos.top, left: pos.left, width: pos.width }}
       >
         {loading ? (
@@ -184,10 +184,10 @@ export function SearchCombobox({
               id={`${listId}-opt-${i}`}
               role="option"
               aria-selected={i === highlight}
-              className={`cursor-pointer px-3 py-2.5 text-sm ${
+              className={`cursor-pointer px-3 py-2.5 text-sm text-[var(--ig-control-fg,var(--os-text))] ${
                 i === highlight
-                  ? "bg-[var(--os-bg-muted,#eef1f4)]"
-                  : "hover:bg-[var(--os-bg-muted,#f5f7fa)]"
+                  ? "bg-[var(--ig-control-selected-bg,rgb(18_191_183_/_0.22))]"
+                  : "hover:bg-[var(--ig-control-hover-bg,rgb(255_255_255_/_0.06))]"
               }`}
               onMouseEnter={() => setHighlight(i)}
               onMouseDown={(e) => {
@@ -255,7 +255,7 @@ export function SearchCombobox({
             type="button"
             tabIndex={-1}
             aria-label="Limpiar"
-            className="absolute right-1 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-[11px] text-[var(--os-text-muted)] hover:bg-[var(--os-bg-muted,#eef1f4)]"
+            className="absolute right-1 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-[11px] text-[var(--os-text-muted)] hover:bg-[var(--ig-control-hover-bg,rgb(255_255_255_/_0.06))]"
             data-testid={testId ? `${testId}-clear` : undefined}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
@@ -271,7 +271,7 @@ export function SearchCombobox({
       </div>
       {error ? (
         <div
-          className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-950"
+          className="rounded border border-[var(--ig-control-error-border,rgb(232_93_93_/_0.7))] bg-[rgb(232_93_93_/_0.12)] px-2 py-1.5 text-[11px] text-[var(--ig-control-fg,var(--os-text))]"
           role="alert"
           data-testid={testId ? `${testId}-error` : undefined}
         >

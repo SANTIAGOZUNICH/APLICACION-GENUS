@@ -653,6 +653,132 @@ body {
   -webkit-backdrop-filter: blur(16px);
 }
 
+/*
+ * Industrial Glass — controles de formulario (scope .design-preview-root).
+ * Portals deben montarse dentro de este root para heredar tokens + color-scheme.
+ * Sin hardcodes claros: evita blanco-sobre-blanco / options nativas ilegibles.
+ */
+.design-preview-root {
+  --ig-control-bg: var(--genus-surface-muted, #122838);
+  --ig-control-fg: var(--genus-text-primary, #f4f8fa);
+  --ig-control-placeholder: var(--genus-text-secondary, #9db0bc);
+  --ig-control-border: var(--genus-border, rgb(255 255 255 / 0.14));
+  --ig-control-border-focus: var(--genus-accent-teal, #12bfb7);
+  --ig-control-option-bg: #0f2634;
+  --ig-control-option-fg: #f4f8fa;
+  --ig-control-disabled-bg: rgb(15 38 52 / 0.55);
+  --ig-control-disabled-fg: rgb(157 176 188 / 0.55);
+  --ig-control-error-border: var(--genus-danger, #e85d5d);
+  --ig-control-selected-bg: rgb(18 191 183 / 0.22);
+  --ig-control-hover-bg: rgb(255 255 255 / 0.06);
+}
+
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select,
+  [role="combobox"],
+  [data-ig-control="true"]
+) {
+  color-scheme: dark;
+  background-color: var(--ig-control-bg);
+  color: var(--ig-control-fg);
+  border-color: var(--ig-control-border);
+  caret-color: var(--ig-control-fg);
+}
+
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select,
+  [role="combobox"]
+)::placeholder {
+  color: var(--ig-control-placeholder);
+  opacity: 1;
+}
+
+.design-preview-root :where(select) option,
+.design-preview-root :where(select) optgroup {
+  background-color: var(--ig-control-option-bg);
+  color: var(--ig-control-option-fg);
+}
+
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select,
+  [role="combobox"]
+):focus-visible,
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select,
+  [role="combobox"]
+):focus {
+  outline: 2px solid var(--ig-control-border-focus);
+  outline-offset: 1px;
+  border-color: var(--ig-control-border-focus);
+}
+
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select,
+  [role="combobox"]
+):disabled,
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select,
+  [role="combobox"]
+)[aria-disabled="true"] {
+  background-color: var(--ig-control-disabled-bg);
+  color: var(--ig-control-disabled-fg);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select
+)[aria-invalid="true"],
+.design-preview-root :where(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
+  select
+).ig-control-error {
+  border-color: var(--ig-control-error-border);
+}
+
+.design-preview-root :where(input[type="file"]) {
+  color-scheme: dark;
+  color: var(--ig-control-fg);
+}
+
+.design-preview-root :where(input[type="date"]),
+.design-preview-root :where(input[type="time"]),
+.design-preview-root :where(input[type="datetime-local"]) {
+  color-scheme: dark;
+}
+
+/* Listas portal (combobox / menú) — sin fallback #fff */
+.design-preview-root [role="listbox"],
+.design-preview-root [data-radix-popper-content-wrapper],
+.design-preview-root [data-slot="popover-content"],
+.design-preview-root [data-slot="dropdown-menu-content"],
+.design-preview-root [role="menu"],
+.design-preview-root [role="dialog"] {
+  color-scheme: dark;
+  color: var(--ig-control-fg);
+}
+
+.design-preview-root [role="option"][aria-selected="true"],
+.design-preview-root [role="menuitem"][data-highlighted],
+.design-preview-root [role="option"]:hover {
+  background-color: var(--ig-control-selected-bg);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .design-preview-root::before,
   .design-preview-root .os-login-scene::before {

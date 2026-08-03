@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
 
 /**
- * En Preview con Neon (DATABASE_URL inyectada), exponer native al cliente
- * salvo override explícito. Production sin DB / con sheets queda sheets.
+ * Con Neon (DATABASE_URL), exponer native al cliente salvo override explícito.
+ * Sin DB queda sheets.
  */
 function resolvePublicPlanningSource(): string {
   const explicit = (
@@ -19,7 +19,7 @@ function resolvePublicPlanningSource(): string {
       process.env.POSTGRES_URL?.trim() ||
       process.env.DATABASE_URL_UNPOOLED?.trim()
   );
-  if (process.env.VERCEL_ENV === "preview" && hasDb) return "native";
+  if (hasDb) return "native";
   return explicit || "sheets";
 }
 

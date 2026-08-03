@@ -20,7 +20,7 @@ function hasDatabaseUrl(): boolean {
 
 /**
  * Preview + Neon Marketplace: si hay DATABASE_URL inyectada y no hay override
- * explícito a sheets, activar native. Production sin Neon queda en sheets.
+ * explícito a sheets, activar native. Production con Neon también usa native.
  * Flag explícito GENUS_PLANNING_SOURCE siempre gana.
  */
 export function getPlanningSource(): PlanningSource {
@@ -29,7 +29,7 @@ export function getPlanningSource(): PlanningSource {
   );
   if (explicit) return explicit;
 
-  if (process.env.VERCEL_ENV === "preview" && hasDatabaseUrl()) {
+  if (hasDatabaseUrl()) {
     return "native";
   }
 

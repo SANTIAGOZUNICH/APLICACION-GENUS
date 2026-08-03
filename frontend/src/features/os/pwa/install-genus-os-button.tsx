@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, Download, Share, X } from "lucide-react";
+import { useDesignPreviewPortalContainer } from "@/lib/utils/use-design-preview-portal-container";
 import {
   INSTALL_LABEL,
   INSTALLED_LABEL,
@@ -30,6 +31,7 @@ export function InstallGenusOsButton({
   className = "",
   onInteract,
 }: InstallGenusOsButtonProps) {
+  const portalContainer = useDesignPreviewPortalContainer();
   const [platform, setPlatform] = useState<InstallPlatformKind>("other");
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [installedEvent, setInstalledEvent] = useState(false);
@@ -142,7 +144,7 @@ export function InstallGenusOsButton({
             onCopyLink={() => void copyLink()}
             onRecheck={recheckInstallability}
           />,
-          document.body,
+          portalContainer ?? document.body,
         )
       : null;
 

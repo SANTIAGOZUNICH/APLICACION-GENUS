@@ -61,9 +61,21 @@ export function ordersErrorResponse(err: unknown): NextResponse {
       { status: 409 }
     );
   }
-  const message = err instanceof Error ? err.message : "Error en órdenes OE/OA.";
+  const raw = err instanceof Error ? err.message : "";
+  const sensitive =
+    /failed query|neon|vercel|postgres|sql|drizzle|stack|ECONN|password|DATABASE_URL|relation "|column "/i.test(
+      raw
+    );
+  if (sensitive || !raw) {
+    console.error("[orders] sanitized server error");
+  } else {
+    console.error(`[orders] ${raw.slice(0, 180)}`);
+  }
   return NextResponse.json(
-    { error: message, code: "ORDERS_FAILED" },
+    {
+      error: "No se pudo completar la operación. Reintentá.",
+      code: "ORDERS_FAILED",
+    },
     { status: 500 }
   );
 }

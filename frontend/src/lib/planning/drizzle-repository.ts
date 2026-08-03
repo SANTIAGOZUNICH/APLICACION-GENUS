@@ -198,11 +198,12 @@ export class DrizzlePlanningRepository implements PlanningRepository {
     input: CreateWorkItemInput & { line: string | null; branchOwner: string | null },
     actor: PlanningActor
   ): Promise<PlanningWorkItemRecord> {
-    const [row] = await this.db
+      const [row] = await this.db
       .insert(workItems)
       .values({
         planningWeekId: week.id,
         plannedDate: input.plannedDate,
+        plannedDateTo: input.plannedDateTo ?? null,
         client: input.client,
         product: input.product,
         plannedQuantity: input.plannedQuantity,
@@ -216,6 +217,7 @@ export class DrizzlePlanningRepository implements PlanningRepository {
         publishedAt: week.status === "PUBLISHED" ? new Date() : null,
         createdBy: actor.email,
         source: "native",
+        originRef: input.originRef ?? null,
       })
       .returning();
     return mapItem(row);

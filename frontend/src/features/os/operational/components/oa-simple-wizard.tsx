@@ -59,8 +59,10 @@ function Field({
 }
 
 function inputClass(readOnly?: boolean) {
-  return `rounded border border-[var(--os-border)] bg-white px-2 py-1.5 text-sm ${
-    readOnly ? "bg-[var(--os-surface-muted,#f3f6f8)] text-[var(--os-text-muted)]" : ""
+  return `rounded border border-[var(--os-border)] bg-[var(--ig-control-bg,var(--os-surface-muted))] px-2 py-1.5 text-sm text-[var(--ig-control-fg,var(--os-text))] ${
+    readOnly
+      ? "bg-[var(--ig-control-disabled-bg,var(--os-surface-muted))] text-[var(--ig-control-disabled-fg,var(--os-text-muted))]"
+      : ""
   }`;
 }
 

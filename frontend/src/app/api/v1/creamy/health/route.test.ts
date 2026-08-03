@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const generateTextMock = vi.fn();
+const resolveAuthenticatedActorMock = vi.fn();
 
 vi.mock("ai", () => ({
   generateText: (...args: unknown[]) => generateTextMock(...args),
@@ -14,27 +15,48 @@ vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: () => (model: string) => ({ provider: "openai", model }),
 }));
 
+vi.mock("@/lib/auth/resolve-authenticated-actor", () => ({
+  resolveAuthenticatedActor: (...args: unknown[]) =>
+    resolveAuthenticatedActorMock(...args),
+}));
+
+vi.mock("@/lib/auth/types", async () => {
+  class AuthUnauthorizedError extends Error {
+    constructor(message = "unauthorized") {
+      super(message);
+      this.name = "AuthUnauthorizedError";
+    }
+  }
+  return { AuthUnauthorizedError };
+});
+
 describe("creamy health route", () => {
   beforeEach(() => {
     generateTextMock.mockReset();
+    resolveAuthenticatedActorMock.mockReset();
+    resolveAuthenticatedActorMock.mockResolvedValue({
+      email: "prod@example.com",
+      sector: "PRODUCCION",
+    });
     vi.unstubAllEnvs();
+    vi.resetModules();
   });
 
-  it("requires x-genus-actor-email", async () => {
+  it("requires authenticated session", async () => {
+    const { AuthUnauthorizedError } = await import("@/lib/auth/types");
+    resolveAuthenticatedActorMock.mockRejectedValue(new AuthUnauthorizedError());
     const { GET } = await import("./route");
     const response = await GET(new Request("http://localhost/api/v1/creamy/health"));
     expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.code).toBe("AUTH_UNAUTHORIZED");
   });
 
   it("returns configured=false when provider is missing", async () => {
     vi.stubEnv("GEMINI_API_KEY", "");
     vi.stubEnv("OPENAI_API_KEY", "");
     const { GET } = await import("./route");
-    const response = await GET(
-      new Request("http://localhost/api/v1/creamy/health", {
-        headers: { "x-genus-actor-email": "prod@example.com" },
-      })
-    );
+    const response = await GET(new Request("http://localhost/api/v1/creamy/health"));
     const body = await response.json();
     expect(body).toEqual({
       configured: false,
@@ -51,11 +73,7 @@ describe("creamy health route", () => {
     generateTextMock.mockResolvedValue({ text: "OK" });
 
     const { GET } = await import("./route");
-    const response = await GET(
-      new Request("http://localhost/api/v1/creamy/health", {
-        headers: { "x-genus-actor-email": "prod@example.com" },
-      })
-    );
+    const response = await GET(new Request("http://localhost/api/v1/creamy/health"));
     const body = await response.json();
     expect(body.configured).toBe(true);
     expect(body.provider).toBe("gemini");
@@ -71,11 +89,7 @@ describe("creamy health route", () => {
     generateTextMock.mockRejectedValue(new Error("model no longer available"));
 
     const { GET } = await import("./route");
-    const response = await GET(
-      new Request("http://localhost/api/v1/creamy/health", {
-        headers: { "x-genus-actor-email": "prod@example.com" },
-      })
-    );
+    const response = await GET(new Request("http://localhost/api/v1/creamy/health"));
     const body = await response.json();
     expect(body.configured).toBe(true);
     expect(body.reachable).toBe(false);

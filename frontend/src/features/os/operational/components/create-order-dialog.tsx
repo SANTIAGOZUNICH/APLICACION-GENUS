@@ -389,7 +389,7 @@ export function CreateOrderDialog({
                 <select
                   value={assignedSector}
                   onChange={(e) => setAssignedSector(e.target.value as SectorId)}
-                  className="w-full rounded border px-3 py-2"
+                  className="w-full rounded border border-[var(--os-border)] bg-[var(--ig-control-bg,var(--os-surface))] px-3 py-2 text-[var(--ig-control-fg,var(--os-text))]"
                   data-testid="create-order-sector"
                 >
                   <option value="ENVASADO_MASIVO">Envasado Masivo</option>
