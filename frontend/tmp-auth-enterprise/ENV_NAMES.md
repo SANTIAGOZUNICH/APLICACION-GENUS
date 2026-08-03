@@ -49,6 +49,7 @@ código, SQL, fixtures de test ni en este repo.
 | `GENUS_AUTH_PASSWORD_MATERIA_PRIMA` | `mp@laboratoriogenus.com.ar` |
 | `GENUS_AUTH_PASSWORD_CODIFICADO` | `codificado@laboratoriogenus.com.ar` |
 | `GENUS_AUTH_PASSWORD_DEPOSITO` | `deposito@laboratoriogenus.com.ar` |
+| `GENUS_SUPERADMIN_EMAIL` | Allowlist (email o lista) para `/administracion/usuarios` |
 
 ## Ya existentes, usados por `cookies.ts` para decidir `Secure`
 
