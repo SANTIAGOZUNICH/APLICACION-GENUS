@@ -41,4 +41,33 @@ export function detectInstallPlatform(
 }
 
 export const INSTALL_LABEL = "Instalar Genus OS";
-export const INSTALLED_LABEL = "Genus OS instalada";
+export const INSTALLED_LABEL = "Genus OS ya está instalada";
+
+export type InstallUiStatus =
+  | "preparing"
+  | "install"
+  | "prompting"
+  | "started"
+  | "cancelled"
+  | "installed"
+  | "unsupported";
+
+export function statusMessageForInstall(status: InstallUiStatus): string | null {
+  switch (status) {
+    case "preparing":
+      return "Preparando instalador…";
+    case "prompting":
+      return "Instalación iniciada — confirmá en el diálogo del navegador.";
+    case "started":
+      return "Instalación iniciada.";
+    case "cancelled":
+      return "Instalación cancelada.";
+    case "installed":
+      return INSTALLED_LABEL;
+    case "unsupported":
+      return "Este navegador no ofrece instalación automática. Usá Chrome/Edge o seguí la guía.";
+    case "install":
+    default:
+      return null;
+  }
+}
