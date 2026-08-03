@@ -152,19 +152,14 @@ export class DrizzlePlanningRepository implements PlanningRepository {
       eq(planningWeeks.status, "PUBLISHED"),
     ];
 
+    // work_item_sector enum only has floor planning sectors. Other sectors
+    // (CODIFICADO/MP/etc.) must not be cast into the enum — that yields 502.
     if (
-      filters.sector &&
-      filters.sector !== "PRODUCCION" &&
-      filters.sector !== "DIRECCION" &&
-      filters.sector !== "CALIDAD" &&
-      filters.sector !== "DEPOSITO"
+      filters.sector === "ELABORACION" ||
+      filters.sector === "ENVASADO_MASIVO" ||
+      filters.sector === "ENVASADO_PREMIUM"
     ) {
-      conditions.push(
-        eq(
-          workItems.sector,
-          filters.sector as "ELABORACION" | "ENVASADO_MASIVO" | "ENVASADO_PREMIUM"
-        )
-      );
+      conditions.push(eq(workItems.sector, filters.sector));
     }
     if (filters.ownerPerson) {
       conditions.push(eq(workItems.branchOwner, filters.ownerPerson));
