@@ -17,6 +17,17 @@ export const MP_LABEL_PRINTER_DPI = 203;
 /** Ancho imprimible máximo del hardware (mm). */
 export const MP_LABEL_MAX_PRINTABLE_WIDTH_MM = 72;
 
+/**
+ * Calibración física de impresión (IMG_5195): el contenido salía alto/izquierda
+ * y cortaba logo, APROBADO y N.º DE BULTOS. Página sigue 75×50 mm.
+ */
+/** Desplazamiento horizontal del contenido (mm) hacia la derecha. */
+export const MP_LABEL_PRINT_OFFSET_X_MM = 1.75;
+/** Desplazamiento vertical del contenido (mm) hacia abajo. */
+export const MP_LABEL_PRINT_OFFSET_Y_MM = 3.5;
+/** Escala proporcional del contenido (94–96 %). */
+export const MP_LABEL_CONTENT_SCALE = 0.95;
+
 const MM_TO_PT = 72 / 25.4;
 
 export function mmToPt(mm: number): number {
@@ -38,6 +49,40 @@ export const MP_LABEL_SAFE_WIDTH_PT = mmToPt(MP_LABEL_SAFE_WIDTH_MM);
 export const MP_LABEL_MARGIN_X_MM =
   (MP_LABEL_WIDTH_MM - MP_LABEL_SAFE_WIDTH_MM) / 2;
 export const MP_LABEL_MARGIN_X_PT = mmToPt(MP_LABEL_MARGIN_X_MM);
+
+/** Origen transformado del contenido (pt) tras offset + escala. */
+export function mpLabelContentOriginPt(): { x: number; y: number } {
+  return {
+    x: mmToPt(MP_LABEL_PRINT_OFFSET_X_MM),
+    y: mmToPt(MP_LABEL_PRINT_OFFSET_Y_MM),
+  };
+}
+
+/**
+ * Bounding box del contenido transformado en coordenadas de página (pt).
+ * Debe caber dentro de [0,0]–[W,H] con margen residual.
+ */
+export function mpLabelTransformedContentBoundsPt(): {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+} {
+  const s = MP_LABEL_CONTENT_SCALE;
+  const ox = mmToPt(MP_LABEL_PRINT_OFFSET_X_MM);
+  const oy = mmToPt(MP_LABEL_PRINT_OFFSET_Y_MM);
+  const mx = MP_LABEL_MARGIN_X_PT;
+  const my = mmToPt(1.8);
+  const footerH = mmToPt(3.2);
+  const frameW = MP_LABEL_SAFE_WIDTH_PT;
+  const frameBottomLocal = MP_LABEL_HEIGHT_PT - footerH + mmToPt(0.8);
+  return {
+    left: ox + mx * s,
+    top: oy + my * s,
+    right: ox + (mx + frameW) * s,
+    bottom: oy + frameBottomLocal * s,
+  };
+}
 
 export type MpAprobadoLabelSource = {
   id?: string | null;

@@ -3,8 +3,11 @@ import { PDFDocument as PdfLibDocument, degrees } from "pdf-lib";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  MP_LABEL_CONTENT_SCALE,
   MP_LABEL_HEIGHT_PT,
   MP_LABEL_MARGIN_X_PT,
+  MP_LABEL_PRINT_OFFSET_X_MM,
+  MP_LABEL_PRINT_OFFSET_Y_MM,
   MP_LABEL_SAFE_WIDTH_PT,
   MP_LABEL_WIDTH_PT,
   mmToPt,
@@ -52,12 +55,12 @@ function drawCell(
   const labelSize = 4.2;
   const valueSize = opts?.valueSize ?? 8.2;
   doc.font("Helvetica-Bold").fontSize(labelSize).fillColor("#000000");
-  doc.text(label, x + 3.5, y + 1.5, { width: w - 5.5, lineBreak: false });
+  doc.text(label, x + 4, y + 2, { width: w - 7, lineBreak: false });
   doc.font("Helvetica-Bold").fontSize(valueSize);
-  const valueTop = y + 8;
-  doc.text((value || " ").toUpperCase(), x + 2.5, valueTop, {
-    width: w - 5,
-    height: h - 10,
+  const valueTop = y + 8.5;
+  doc.text((value || " ").toUpperCase(), x + 3.5, valueTop, {
+    width: w - 7,
+    height: h - 11,
     align: "center",
     ellipsis: true,
   });
@@ -73,21 +76,30 @@ function drawCell(
 
 /**
  * Dibuja el formulario completo dentro de [0,0]–[W,H] sin overflow ni 2ª página.
+ * Aplica calibración de impresión (offset + escala) para adhesivo físico SP320.
  */
 function drawLabel(doc: PDFKit.PDFDocument, data: MpAprobadoLabelData) {
   const W = MP_LABEL_WIDTH_PT;
   const H = MP_LABEL_HEIGHT_PT;
   const mx = MP_LABEL_MARGIN_X_PT;
-  const my = mmToPt(1.5);
+  const my = mmToPt(1.8);
   const footerH = mmToPt(3.2);
   const frameX = mx;
   const frameY = my;
   const frameW = MP_LABEL_SAFE_WIDTH_PT;
-  const frameH = H - my - footerH - mmToPt(0.6);
+  const frameH = H - my - footerH - mmToPt(0.8);
   const border = 1.15;
+  const cellPadX = 4;
+  const ox = mmToPt(MP_LABEL_PRINT_OFFSET_X_MM);
+  const oy = mmToPt(MP_LABEL_PRINT_OFFSET_Y_MM);
+  const scale = MP_LABEL_CONTENT_SCALE;
 
-  // Fondo blanco explícito
+  // Fondo blanco de página completa (sin transformar)
   doc.rect(0, 0, W, H).fill("#ffffff");
+
+  doc.save();
+  doc.translate(ox, oy);
+  doc.scale(scale);
 
   // Marco
   doc.lineWidth(border).strokeColor("#000000");
@@ -104,7 +116,7 @@ function drawLabel(doc: PDFKit.PDFDocument, data: MpAprobadoLabelData) {
   const logoW = mmToPt(26);
   const logoH = mmToPt(8.5);
   if (logo) {
-    doc.image(logo, frameX + 2.5, y + (headerH - logoH) / 2, {
+    doc.image(logo, frameX + cellPadX, y + (headerH - logoH) / 2, {
       width: logoW,
       height: logoH,
       fit: [logoW, logoH],
@@ -217,6 +229,8 @@ function drawLabel(doc: PDFKit.PDFDocument, data: MpAprobadoLabelData) {
       align: "center",
       lineBreak: false,
     });
+
+  doc.restore();
 }
 
 /**

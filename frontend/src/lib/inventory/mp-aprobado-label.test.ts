@@ -7,10 +7,14 @@ import {
   mmToPt,
   mpAprobadoLabelFilename,
   mpLabelContentDisposition,
+  mpLabelTransformedContentBoundsPt,
+  MP_LABEL_CONTENT_SCALE,
   MP_LABEL_HEIGHT_MM,
   MP_LABEL_HEIGHT_PT,
   MP_LABEL_MARGIN_X_MM,
   MP_LABEL_MAX_PRINTABLE_WIDTH_MM,
+  MP_LABEL_PRINT_OFFSET_X_MM,
+  MP_LABEL_PRINT_OFFSET_Y_MM,
   MP_LABEL_PRINTER_DPI,
   MP_LABEL_SAFE_WIDTH_MM,
   MP_LABEL_WIDTH_MM,
@@ -135,6 +139,21 @@ describe("mp-aprobado-label mapping", () => {
     expect(mmToPrinterDots(50)).toBeCloseTo(399.61, 0);
     expect(mmToPrinterDots(72)).toBeCloseTo(575.43, 0);
     expect(mmToPrinterDots(71)).toBeLessThan(mmToPrinterDots(72));
+  });
+
+  it("calibración física offset/escala (IMG_5195) dentro de página", () => {
+    expect(MP_LABEL_PRINT_OFFSET_X_MM).toBeGreaterThanOrEqual(1.5);
+    expect(MP_LABEL_PRINT_OFFSET_X_MM).toBeLessThanOrEqual(2);
+    expect(MP_LABEL_PRINT_OFFSET_Y_MM).toBeGreaterThanOrEqual(3);
+    expect(MP_LABEL_PRINT_OFFSET_Y_MM).toBeLessThanOrEqual(4);
+    expect(MP_LABEL_CONTENT_SCALE).toBeGreaterThanOrEqual(0.94);
+    expect(MP_LABEL_CONTENT_SCALE).toBeLessThanOrEqual(0.96);
+    const b = mpLabelTransformedContentBoundsPt();
+    const edgePad = mmToPt(0.8);
+    expect(b.left).toBeGreaterThanOrEqual(edgePad);
+    expect(b.top).toBeGreaterThanOrEqual(edgePad);
+    expect(b.right).toBeLessThanOrEqual(MP_LABEL_WIDTH_PT - edgePad);
+    expect(b.bottom).toBeLessThanOrEqual(MP_LABEL_HEIGHT_PT - edgePad);
   });
 
   it("Content-Disposition attachment con filename* UTF-8", () => {
