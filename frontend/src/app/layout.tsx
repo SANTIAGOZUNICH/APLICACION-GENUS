@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { Providers } from "@/providers";
 import { siteConfig } from "@/config/site";
+import { DEFERRED_INSTALL_BOOTSTRAP_SCRIPT } from "@/features/os/pwa/deferred-install-bootstrap";
 import "./globals.css";
 
 const inter = Inter({
@@ -51,6 +52,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es-AR" suppressHydrationWarning className={`${inter.variable} h-full`}>
+      <head>
+        <script
+          // Early BIP capture before React hydration — required for one-click install.
+          dangerouslySetInnerHTML={{ __html: DEFERRED_INSTALL_BOOTSTRAP_SCRIPT }}
+        />
+      </head>
       <body className="min-h-dvh antialiased">{/* safe-area shell */}
         <Providers>{children}</Providers>
       </body>

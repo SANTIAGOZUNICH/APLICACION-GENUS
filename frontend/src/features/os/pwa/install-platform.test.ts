@@ -34,7 +34,14 @@ function mockNav(partial: Partial<Navigator> & { userAgent: string; platform?: s
 describe("install-platform", () => {
   it("exposes stable install labels", () => {
     expect(INSTALL_LABEL).toBe("Instalar Genus OS");
-    expect(INSTALLED_LABEL).toBe("Genus OS instalada");
+    expect(INSTALLED_LABEL).toBe("Genus OS ya está instalada");
+  });
+
+  it("maps install UI status messages", async () => {
+    const { statusMessageForInstall } = await import("./install-platform");
+    expect(statusMessageForInstall("cancelled")).toMatch(/cancelada/i);
+    expect(statusMessageForInstall("installed")).toBe("Genus OS ya está instalada");
+    expect(statusMessageForInstall("unsupported")).toMatch(/no ofrece instalación automática/i);
   });
 
   it("detects standalone display-mode", () => {

@@ -5,16 +5,20 @@ import { createPortal } from "react-dom";
 import { Check, Download, Share, X } from "lucide-react";
 import { useDesignPreviewPortalContainer } from "@/lib/utils/use-design-preview-portal-container";
 import {
+  ensureDeferredInstallPromptCapture,
+  hasDeferredInstallPrompt,
+  promptNativeInstall,
+  subscribeDeferredInstallPrompt,
+  wasAppInstalledEventSeen,
+} from "./deferred-install-prompt";
+import {
   INSTALL_LABEL,
   INSTALLED_LABEL,
   detectInstallPlatform,
+  statusMessageForInstall,
   type InstallPlatformKind,
+  type InstallUiStatus,
 } from "./install-platform";
-
-type BeforeInstallPromptEvent = Event & {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
-};
 
 interface InstallGenusOsButtonProps {
   variant?: "menu" | "login" | "inline";
@@ -23,8 +27,8 @@ interface InstallGenusOsButtonProps {
 }
 
 /**
- * Botón siempre visible: “Instalar Genus OS” / “Genus OS instalada”.
- * No se oculta si falta beforeinstallprompt — solo cambia el comportamiento.
+ * Un clic en Chromium/Android con BIP → prompt() nativo inmediato (sin modal).
+ * iOS/Mac Safari: guía corta en el mismo gesto (Apple no expone beforeinstallprompt).
  */
 export function InstallGenusOsButton({
   variant = "menu",
@@ -33,58 +37,48 @@ export function InstallGenusOsButton({
 }: InstallGenusOsButtonProps) {
   const portalContainer = useDesignPreviewPortalContainer();
   const [platform, setPlatform] = useState<InstallPlatformKind>("other");
-  const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
+  const [hasNative, setHasNative] = useState(false);
   const [installedEvent, setInstalledEvent] = useState(false);
-  const [open, setOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [guideHint, setGuideHint] = useState<string | null>(null);
+  const [status, setStatus] = useState<InstallUiStatus>("install");
+  const [promptOnceGuard, setPromptOnceGuard] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    ensureDeferredInstallPromptCapture();
 
-    const refreshPlatform = () => {
-      setPlatform(detectInstallPlatform(window, navigator));
+    const refresh = () => {
+      const nextPlatform = detectInstallPlatform(window, navigator);
+      setPlatform(nextPlatform);
+      setHasNative(hasDeferredInstallPrompt());
+      const seen = wasAppInstalledEventSeen() || nextPlatform === "standalone";
+      setInstalledEvent(seen);
+      if (seen) setStatus("installed");
+      else if (hasDeferredInstallPrompt()) setStatus("install");
+      else if (nextPlatform === "chromium" || nextPlatform === "other") setStatus("preparing");
+      else setStatus("install");
     };
-    refreshPlatform();
 
-    const onBip = (event: Event) => {
-      event.preventDefault();
-      setDeferred(event as BeforeInstallPromptEvent);
-    };
-    const onInstalled = () => {
-      setDeferred(null);
-      setInstalledEvent(true);
-      setOpen(false);
-      refreshPlatform();
-    };
-    const onDisplayChange = () => refreshPlatform();
-
-    window.addEventListener("beforeinstallprompt", onBip);
-    window.addEventListener("appinstalled", onInstalled);
+    refresh();
+    const unsub = subscribeDeferredInstallPrompt(refresh);
     const mq = window.matchMedia("(display-mode: standalone)");
-    mq.addEventListener?.("change", onDisplayChange);
+    mq.addEventListener?.("change", refresh);
 
     return () => {
-      window.removeEventListener("beforeinstallprompt", onBip);
-      window.removeEventListener("appinstalled", onInstalled);
-      mq.removeEventListener?.("change", onDisplayChange);
+      unsub();
+      mq.removeEventListener?.("change", refresh);
     };
   }, []);
 
   const isInstalled = platform === "standalone" || installedEvent;
   const label = isInstalled ? INSTALLED_LABEL : INSTALL_LABEL;
+  const statusText = isInstalled ? null : statusMessageForInstall(status);
 
-  const runNativePrompt = useCallback(async () => {
-    if (!deferred) return;
-    await deferred.prompt();
-    const choice = await deferred.userChoice;
-    setDeferred(null);
-    if (choice.outcome === "accepted") {
-      setInstalledEvent(true);
-    }
-    setOpen(false);
+  const closeGuide = useCallback(() => {
+    setGuideOpen(false);
     onInteract?.();
-  }, [deferred, onInteract]);
+  }, [onInteract]);
 
   const copyLink = useCallback(async () => {
     try {
@@ -96,18 +90,51 @@ export function InstallGenusOsButton({
     }
   }, []);
 
-  const recheckInstallability = useCallback(() => {
-    setPlatform(detectInstallPlatform(window, navigator));
-    if (deferred) {
-      setGuideHint("Listo: este navegador ya puede mostrar el instalador nativo.");
-    } else if (detectInstallPlatform(window, navigator) === "standalone") {
-      setGuideHint("Genus OS ya está instalada en este dispositivo.");
-    } else {
-      setGuideHint(
-        "Todavía no hay instalador nativo. Seguí la guía o probá Chrome/Edge con la Preview abierta unos segundos.",
-      );
+  const runNativePromptOnce = useCallback(async () => {
+    if (promptOnceGuard) return;
+    setPromptOnceGuard(true);
+    setStatus("prompting");
+    try {
+      const outcome = await promptNativeInstall();
+      if (outcome === "accepted") {
+        setInstalledEvent(true);
+        setStatus("started");
+        setStatus("installed");
+      } else if (outcome === "dismissed") {
+        setStatus("cancelled");
+        setPromptOnceGuard(false);
+      } else {
+        setStatus(hasDeferredInstallPrompt() ? "install" : "unsupported");
+        setPromptOnceGuard(false);
+      }
+    } catch {
+      setStatus("unsupported");
+      setPromptOnceGuard(false);
+    } finally {
+      onInteract?.();
     }
-  }, [deferred]);
+  }, [onInteract, promptOnceGuard]);
+
+  const onInstallClick = useCallback(() => {
+    if (isInstalled) return;
+
+    const currentPlatform = detectInstallPlatform(window, navigator);
+    setPlatform(currentPlatform);
+
+    // Chromium/Android: same gesture → native prompt (no intermediate modal).
+    if (hasDeferredInstallPrompt()) {
+      void runNativePromptOnce();
+      return;
+    }
+
+    if (currentPlatform === "ios-safari" || currentPlatform === "ios-other" || currentPlatform === "mac-safari") {
+      setGuideOpen(true);
+      return;
+    }
+
+    // BIP still missing — keep button visible; show clear status (no "Instalar ahora" modal).
+    setStatus(currentPlatform === "chromium" ? "preparing" : "unsupported");
+  }, [isInstalled, runNativePromptOnce]);
 
   const buttonClass = useMemo(() => {
     if (variant === "login") {
@@ -119,44 +146,31 @@ export function InstallGenusOsButton({
     return `flex min-h-11 w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-[var(--os-text)] transition-colors hover:bg-[var(--os-bg)] ${className}`;
   }, [variant, className]);
 
-  const closeModal = useCallback(() => {
-    setOpen(false);
-    onInteract?.();
-  }, [onInteract]);
-
-  const openModal = () => {
-    if (isInstalled) return;
-    setGuideHint(null);
-    setOpen(true);
-    // No cerrar el menú padre aquí: si se desmonta el botón, el modal desaparece.
-  };
-
-  const modal =
-    open && !isInstalled && typeof document !== "undefined"
+  const guide =
+    guideOpen && !isInstalled && typeof document !== "undefined"
       ? createPortal(
-          <InstallGuideModal
+          <InstallGuideSheet
             platform={platform}
-            hasNativePrompt={Boolean(deferred)}
             copied={copied}
-            guideHint={guideHint}
-            onClose={closeModal}
-            onNativeInstall={() => void runNativePrompt()}
+            onClose={closeGuide}
             onCopyLink={() => void copyLink()}
-            onRecheck={recheckInstallability}
           />,
-          portalContainer ?? document.body,
+          portalContainer ?? document.body
         )
       : null;
 
   return (
-    <>
+    <div className={variant === "login" ? "w-full space-y-2" : "w-full"}>
       <button
         type="button"
         role={variant === "menu" ? "menuitem" : undefined}
         className={buttonClass}
         aria-label={label}
+        aria-busy={status === "prompting" || status === "preparing"}
         disabled={isInstalled}
-        onClick={openModal}
+        data-genus-install-has-native={hasNative ? "true" : "false"}
+        data-genus-install-status={status}
+        onClick={onInstallClick}
       >
         {isInstalled ? (
           <Check className="size-3.5 text-[var(--os-teal)]" aria-hidden="true" />
@@ -165,38 +179,36 @@ export function InstallGenusOsButton({
         )}
         {label}
       </button>
-      {modal}
-    </>
+      {statusText && !isInstalled && (
+        <p className="px-1 text-xs text-[var(--os-text-muted)]" aria-live="polite" role="status">
+          {statusText}
+        </p>
+      )}
+      {guide}
+    </div>
   );
 }
 
-function InstallGuideModal({
+/** Guías solo donde no hay prompt nativo (iOS / Safari Mac). Sin botón “Instalar ahora”. */
+function InstallGuideSheet({
   platform,
-  hasNativePrompt,
   copied,
-  guideHint,
   onClose,
-  onNativeInstall,
   onCopyLink,
-  onRecheck,
 }: {
   platform: InstallPlatformKind;
-  hasNativePrompt: boolean;
   copied: boolean;
-  guideHint: string | null;
   onClose: () => void;
-  onNativeInstall: () => void;
   onCopyLink: () => void;
-  onRecheck: () => void;
 }) {
   return (
-      <div
-        className="fixed inset-0 z-[var(--os-z-modal,70)] flex items-end justify-center bg-[var(--os-navy)]/55 p-3 sm:items-center"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="install-genus-os-title"
-        data-genus-install-modal="true"
-      >
+    <div
+      className="fixed inset-0 z-[var(--os-z-modal,70)] flex items-end justify-center bg-[var(--os-navy)]/55 p-3 sm:items-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="install-genus-os-title"
+      data-genus-install-modal="true"
+    >
       <div className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[#0b2130] p-4 shadow-[var(--os-shadow-card-hover)]">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -225,25 +237,29 @@ function InstallGuideModal({
           </button>
         </div>
 
-        <div className="mt-4 space-y-3">
+        <div className="mt-4 space-y-3 text-sm text-[var(--os-text)]">
           {platform === "ios-safari" && (
-            <ol className="space-y-2 text-left text-sm text-[var(--os-text)]">
-              <li className="flex items-center gap-1.5">
-                1. Tocá Compartir <Share className="inline size-3.5" aria-hidden="true" />.
-              </li>
-              <li>2. Elegí “Agregar a pantalla de inicio”.</li>
-              <li>3. Activá “Abrir como app”.</li>
-              <li>4. Tocá Agregar.</li>
-            </ol>
+            <>
+              <p className="text-[var(--os-text-muted)]">
+                En iPhone/iPad Safari no hay instalación automática. Seguí estos pasos:
+              </p>
+              <ol className="space-y-2 text-left">
+                <li className="flex items-center gap-1.5">
+                  1. Tocá <Share className="inline size-3.5" aria-hidden="true" /> Compartir.
+                </li>
+                <li>2. Elegí “Agregar a inicio” / “Agregar a pantalla de inicio”.</li>
+                <li>3. Tocá Agregar.</li>
+              </ol>
+            </>
           )}
 
           {platform === "ios-other" && (
-            <div className="space-y-3 text-sm text-[var(--os-text)]">
-              <p>Para instalar Genus OS, abrilo en Safari.</p>
+            <>
+              <p>Para instalar Genus OS, abrilo en Safari (este navegador no permite agregarlo al inicio).</p>
               <ol className="list-decimal space-y-1 pl-4 text-[var(--os-text-muted)]">
                 <li>Copiá el enlace.</li>
                 <li>Abrí Safari.</li>
-                <li>Pegá el enlace y seguí “Agregar a pantalla de inicio”.</li>
+                <li>Compartir → Agregar a inicio → Agregar.</li>
               </ol>
               <button
                 type="button"
@@ -252,64 +268,17 @@ function InstallGuideModal({
               >
                 {copied ? "Enlace copiado" : "Copiar enlace"}
               </button>
-            </div>
+            </>
           )}
 
           {platform === "mac-safari" && (
-            <div className="space-y-3 text-sm text-[var(--os-text)]">
+            <>
               <p>En Safari de Mac:</p>
               <ol className="list-decimal space-y-1 pl-4">
                 <li>Menú Archivo → Agregar al Dock.</li>
                 <li>Confirmá para abrir Genus OS como app.</li>
               </ol>
-            </div>
-          )}
-
-          {(platform === "chromium" || platform === "other") && (
-            <div className="space-y-3 text-sm text-[var(--os-text)]">
-              {hasNativePrompt ? (
-                <>
-                  <p className="text-[var(--os-text-muted)]">
-                    Instalá Genus OS en este equipo para abrirlo en ventana propia, con la misma sesión
-                    empresarial.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={onNativeInstall}
-                    className="min-h-11 w-full rounded-[var(--os-radius-sm)] bg-[var(--os-teal)] text-sm font-medium text-[var(--os-navy)]"
-                  >
-                    Instalar ahora
-                  </button>
-                </>
-              ) : (
-                <>
-                  <p className="text-[var(--os-text-muted)]">
-                    El instalador nativo todavía no está disponible en este navegador. Podés seguir esta
-                    guía:
-                  </p>
-                  <ol className="list-decimal space-y-1 pl-4">
-                    <li>Usá Chrome o Edge actualizado.</li>
-                    <li>Abrí Genus OS desde la barra de direcciones (no en modo invitado).</li>
-                    <li>
-                      Menú ⋮ → “Instalar Genus OS” / “Aplicaciones” → “Instalar esta página como app”.
-                    </li>
-                  </ol>
-                  <button
-                    type="button"
-                    onClick={onRecheck}
-                    className="min-h-11 w-full rounded-[var(--os-radius-sm)] bg-[var(--os-teal)] text-sm font-medium text-[var(--os-navy)]"
-                  >
-                    Revisar nuevamente
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-
-          {guideHint && (
-            <p className="rounded-[var(--os-radius-sm)] bg-[var(--os-bg)] px-3 py-2 text-xs text-[var(--os-text-muted)]">
-              {guideHint}
-            </p>
+            </>
           )}
 
           <button
@@ -317,7 +286,7 @@ function InstallGuideModal({
             onClick={onClose}
             className="min-h-11 w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] text-sm text-[var(--os-text)]"
           >
-            Cancelar
+            Cerrar
           </button>
         </div>
       </div>
