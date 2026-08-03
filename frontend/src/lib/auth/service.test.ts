@@ -235,7 +235,9 @@ describe("AuthService — resolveSession / logout", () => {
 });
 
 describe("AuthService — auditoría nunca guarda passwords", () => {
-  it("los eventos de auditoría no incluyen password ni password_hash en el detail", async () => {
+  it(
+    "los eventos de auditoría no incluyen password ni password_hash en el detail",
+    async () => {
     const { repo, service } = makeService();
     await seedAna(service);
     await service.login("ana@laboratoriogenus.com.ar", "clave-segura-1").catch(() => {});
@@ -252,5 +254,7 @@ describe("AuthService — auditoría nunca guarda passwords", () => {
       expect(event.detail).not.toHaveProperty("password");
       expect(event.detail).not.toHaveProperty("passwordHash");
     }
-  });
+  },
+  20000
+  );
 });

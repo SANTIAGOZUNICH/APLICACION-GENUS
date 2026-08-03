@@ -16,9 +16,16 @@ export interface AuthRepository {
   insertSession(session: AuthSession): Promise<AuthSession>;
   findSessionByTokenHash(tokenHash: string): Promise<AuthSession | null>;
   revokeSession(id: string, revokedAt: string): Promise<void>;
+  /** Revoca todas las sesiones activas del usuario. Devuelve cuántas se revocaron. */
+  revokeAllSessionsForUser(userId: string, revokedAt: string): Promise<number>;
 
   insertAuditEvent(
     event: Omit<AuthAuditEvent, "id" | "createdAt"> & { id?: string; createdAt?: string }
   ): Promise<AuthAuditEvent>;
-  listAuditEvents(filter?: { eventType?: AuthEventType; emailNormalized?: string }): Promise<AuthAuditEvent[]>;
+  listAuditEvents(filter?: {
+    eventType?: AuthEventType;
+    emailNormalized?: string;
+    userId?: string;
+    limit?: number;
+  }): Promise<AuthAuditEvent[]>;
 }

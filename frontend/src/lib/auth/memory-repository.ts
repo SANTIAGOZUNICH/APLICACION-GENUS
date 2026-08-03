@@ -68,6 +68,16 @@ export class MemoryAuthRepository implements AuthRepository {
     this.sessionsById.set(id, { ...current, revokedAt });
   }
 
+  async revokeAllSessionsForUser(userId: string, revokedAt: string): Promise<number> {
+    let count = 0;
+    for (const [id, session] of this.sessionsById.entries()) {
+      if (session.userId !== userId || session.revokedAt) continue;
+      this.sessionsById.set(id, { ...session, revokedAt });
+      count += 1;
+    }
+    return count;
+  }
+
   async insertAuditEvent(
     event: Omit<AuthAuditEvent, "id" | "createdAt"> & { id?: string; createdAt?: string }
   ): Promise<AuthAuditEvent> {
@@ -86,12 +96,20 @@ export class MemoryAuthRepository implements AuthRepository {
   async listAuditEvents(filter?: {
     eventType?: AuthEventType;
     emailNormalized?: string;
+    userId?: string;
+    limit?: number;
   }): Promise<AuthAuditEvent[]> {
-    return this.auditEvents.filter((event) => {
+    const filtered = this.auditEvents.filter((event) => {
       if (filter?.eventType && event.eventType !== filter.eventType) return false;
-      if (filter?.emailNormalized && event.emailNormalized !== filter.emailNormalized) return false;
+      if (filter?.emailNormalized && event.emailNormalized !== filter.emailNormalized) {
+        return false;
+      }
+      if (filter?.userId && event.userId !== filter.userId) return false;
       return true;
     });
+    const sorted = [...filtered].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    if (filter?.limit && filter.limit > 0) return sorted.slice(0, filter.limit);
+    return sorted;
   }
 
   /** Solo tests: limpia todo el estado en memoria. */

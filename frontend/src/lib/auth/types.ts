@@ -56,7 +56,10 @@ export type AuthEventType =
   | "LOGIN_FAIL"
   | "LOGOUT"
   | "BLOCKED"
-  | "SESSION_EXPIRED";
+  | "SESSION_EXPIRED"
+  | "ADMIN_USER_UPDATE"
+  | "ADMIN_PASSWORD_RESET"
+  | "ADMIN_SESSIONS_REVOKED";
 
 export interface AuthAuditEvent {
   id: string;
@@ -114,6 +117,34 @@ export class AuthRateLimitedError extends Error {
   constructor(message = "Demasiados intentos fallidos. Probá de nuevo en unos minutos.") {
     super(message);
     this.name = "AuthRateLimitedError";
+  }
+}
+
+/** Recurso oculto / no autorizado como superadmin — mapear a 404 en HTTP. */
+export class AuthNotFoundError extends Error {
+  readonly status = 404;
+  readonly code = "AUTH_NOT_FOUND";
+  constructor(message = "No encontrado.") {
+    super(message);
+    this.name = "AuthNotFoundError";
+  }
+}
+
+export class AuthConflictError extends Error {
+  readonly status = 409;
+  readonly code = "AUTH_CONFLICT";
+  constructor(message = "Conflicto de datos.") {
+    super(message);
+    this.name = "AuthConflictError";
+  }
+}
+
+export class AuthValidationError extends Error {
+  readonly status = 400;
+  readonly code = "AUTH_VALIDATION";
+  constructor(message = "Datos inválidos.") {
+    super(message);
+    this.name = "AuthValidationError";
   }
 }
 

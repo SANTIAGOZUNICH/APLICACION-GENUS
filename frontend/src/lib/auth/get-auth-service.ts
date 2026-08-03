@@ -1,11 +1,12 @@
 import "server-only";
 
+import { AuthAdminService, createAuthAdminService } from "@/lib/auth/admin-service";
 import { DrizzleAuthRepository } from "@/lib/auth/drizzle-repository";
 import { MemoryAuthRepository } from "@/lib/auth/memory-repository";
 import type { AuthRepository } from "@/lib/auth/repository";
 import { AuthService, createAuthService } from "@/lib/auth/service";
 
-export { createAuthService };
+export { createAuthService, createAuthAdminService };
 
 let sharedMemoryRepository: MemoryAuthRepository | null = null;
 let sharedNeonRepository: DrizzleAuthRepository | null = null;
@@ -47,6 +48,12 @@ function isNeonBackendEnabled(): boolean {
   );
 }
 
+function resolveAuthRepository(): AuthRepository {
+  if (overrideRepository) return overrideRepository;
+  if (isNeonBackendEnabled()) return getSharedNeonRepository();
+  return getSharedMemoryRepository();
+}
+
 /**
  * Devuelve el servicio de autenticación de Genus Auth.
  *
@@ -65,9 +72,11 @@ function isNeonBackendEnabled(): boolean {
  */
 export function getAuthService(): AuthService {
   if (overrideService) return overrideService;
-  if (overrideRepository) return createAuthService(overrideRepository);
-  if (isNeonBackendEnabled()) return createAuthService(getSharedNeonRepository());
-  return createAuthService(getSharedMemoryRepository());
+  return createAuthService(resolveAuthRepository());
+}
+
+export function getAuthAdminService(): AuthAdminService {
+  return createAuthAdminService(resolveAuthRepository());
 }
 
 /** true recién cuando 0016 esté aplicada y GENUS_AUTH_BACKEND=neon esté activo. */

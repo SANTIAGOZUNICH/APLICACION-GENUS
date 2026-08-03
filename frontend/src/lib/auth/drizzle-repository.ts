@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import type { AuthRepository } from "@/lib/auth/repository";
 import {
@@ -149,6 +149,24 @@ export class DrizzleAuthRepository implements AuthRepository {
       .where(eq(genusAuthSessions.id, id));
   }
 
+  async revokeAllSessionsForUser(userId: string, revokedAt: string): Promise<number> {
+    const db = getDb();
+    const active = await db
+      .select({ id: genusAuthSessions.id })
+      .from(genusAuthSessions)
+      .where(
+        and(eq(genusAuthSessions.userId, userId), isNull(genusAuthSessions.revokedAt))
+      );
+    if (active.length === 0) return 0;
+    await db
+      .update(genusAuthSessions)
+      .set({ revokedAt: new Date(revokedAt) })
+      .where(
+        and(eq(genusAuthSessions.userId, userId), isNull(genusAuthSessions.revokedAt))
+      );
+    return active.length;
+  }
+
   async insertAuditEvent(
     event: Omit<AuthAuditEvent, "id" | "createdAt"> & { id?: string; createdAt?: string }
   ): Promise<AuthAuditEvent> {
@@ -175,16 +193,30 @@ export class DrizzleAuthRepository implements AuthRepository {
   async listAuditEvents(filter?: {
     eventType?: AuthEventType;
     emailNormalized?: string;
+    userId?: string;
+    limit?: number;
   }): Promise<AuthAuditEvent[]> {
     const db = getDb();
-    const rows = filter?.emailNormalized
-      ? await db
-          .select()
-          .from(genusAuthAuditEvents)
-          .where(eq(genusAuthAuditEvents.emailNormalized, filter.emailNormalized))
-          .orderBy(desc(genusAuthAuditEvents.createdAt))
-      : await db.select().from(genusAuthAuditEvents).orderBy(desc(genusAuthAuditEvents.createdAt));
-    return rows
+    let rows;
+    if (filter?.userId) {
+      rows = await db
+        .select()
+        .from(genusAuthAuditEvents)
+        .where(eq(genusAuthAuditEvents.userId, filter.userId))
+        .orderBy(desc(genusAuthAuditEvents.createdAt));
+    } else if (filter?.emailNormalized) {
+      rows = await db
+        .select()
+        .from(genusAuthAuditEvents)
+        .where(eq(genusAuthAuditEvents.emailNormalized, filter.emailNormalized))
+        .orderBy(desc(genusAuthAuditEvents.createdAt));
+    } else {
+      rows = await db
+        .select()
+        .from(genusAuthAuditEvents)
+        .orderBy(desc(genusAuthAuditEvents.createdAt));
+    }
+    const mapped = rows
       .filter((row) => !filter?.eventType || row.eventType === filter.eventType)
       .map((row) => ({
         id: row.id,
@@ -194,5 +226,7 @@ export class DrizzleAuthRepository implements AuthRepository {
         detail: row.detail as Record<string, unknown>,
         createdAt: row.createdAt.toISOString(),
       }));
+    if (filter?.limit && filter.limit > 0) return mapped.slice(0, filter.limit);
+    return mapped;
   }
 }
