@@ -19,6 +19,7 @@ import { OsOperationalContext } from "./os-operational-context";
 import { OsSessionBootstrapScreen } from "./os-session-bootstrap-screen";
 import { OsSignInIdentityCard } from "./os-sign-in-identity-card";
 import { InstallGenusOsButton } from "@/features/os/pwa/install-genus-os-button";
+import { resolveOsDeploymentEnv } from "@/features/os/auth/lib/os-deployment-label";
 import type { OsSignInCredentials, OsSignInIdentityPreview, OsSignInScreenProps } from "../types";
 
 export type { OsSignInCredentials, OsSignInIdentityPreview, OsSignInScreenProps } from "../types";
@@ -50,6 +51,14 @@ export function OsSignInScreen({
   formError = null,
   identityPreview = null,
 }: OsSignInScreenProps) {
+  const deploymentEnv = resolveOsDeploymentEnv();
+  const accessEyebrow =
+    deploymentEnv === "production"
+      ? "Acceso Production"
+      : deploymentEnv === "preview"
+        ? "Vista previa de acceso"
+        : "Acceso local";
+
   const router = useRouter();
   const rememberId = useId();
   const [phase, setPhase] = useState<ScreenPhase>("sign-in");
@@ -202,7 +211,7 @@ export function OsSignInScreen({
             <div className="os-login-form-panel w-full max-w-[26.5rem] rounded-[var(--os-radius)] px-6 py-8 sm:px-8 sm:py-9">
               <div className="mb-7 lg:mb-8">
                 <p className="text-[0.6875rem] font-medium uppercase tracking-[0.16em] text-[var(--os-text-muted)]">
-                  Vista previa de acceso
+                  {accessEyebrow}
                 </p>
                 <h2 className="mt-3 text-[1.625rem] font-semibold tracking-tight text-[var(--os-text)] sm:text-[1.75rem]">
                   Ingresá al sistema
