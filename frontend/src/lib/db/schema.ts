@@ -4,6 +4,7 @@ import {
   check,
   date,
   doublePrecision,
+  index,
   integer,
   jsonb,
   pgEnum,
@@ -853,6 +854,39 @@ export const workViewArchives = pgTable(
       table.workItemId,
       table.actorEmail
     ),
+  ]
+);
+
+/** Pedidos nativos de Producción — migración 0018. No mezclar con OE/OA. */
+export const productionPedidos = pgTable(
+  "production_pedidos",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    op: text("op"),
+    fecha: date("fecha"),
+    nroOc: text("nro_oc"),
+    cliente: text("cliente"),
+    producto: text("producto"),
+    s: text("s"),
+    q: doublePrecision("q"),
+    ml: doublePrecision("ml"),
+    kg: doublePrecision("kg"),
+    estado: text("estado"),
+    createdBy: text("created_by"),
+    createdBySector: text("created_by_sector"),
+    updatedBy: text("updated_by"),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: text("deleted_by"),
+    deleteReason: text("delete_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("production_pedidos_fecha_idx").on(table.fecha),
+    index("production_pedidos_estado_idx").on(table.estado),
+    index("production_pedidos_op_idx").on(table.op),
+    index("production_pedidos_nro_oc_idx").on(table.nroOc),
+    index("production_pedidos_deleted_at_idx").on(table.deletedAt),
   ]
 );
 

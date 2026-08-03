@@ -36,6 +36,7 @@ export type LifecycleEntityKind =
   | "metrica"
   | "lote"
   | "aviso"
+  | "pedido"
   | "formula"
   | "plantilla"
   | "documento";

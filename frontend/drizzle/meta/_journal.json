@@ -120,6 +120,13 @@
       "when": 1786300000000,
       "tag": "0017_creamy_userid_notif_idempotency",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786400000000,
+      "tag": "0018_production_pedidos",
+      "breakpoints": true
     }
   ]
 }

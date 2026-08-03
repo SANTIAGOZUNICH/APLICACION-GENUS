@@ -19,6 +19,7 @@
  *   sector). Aditiva. Gate APPLY_MIGRATION_0016=1. Hasta entonces el login
  *   usa un repositorio en memoria de proceso (ver src/lib/auth).
  * 0017 = Creamy user_id estable. Aditiva. Gate APPLY_MIGRATION_0017=1.
+ * 0018 = Pedidos nativos de Producción. Aditiva. Gate APPLY_MIGRATION_0018=1.
  */
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
@@ -56,6 +57,7 @@ const apply0014 = process.env.APPLY_MIGRATION_0014 === "1";
 const apply0015 = process.env.APPLY_MIGRATION_0015 === "1";
 const apply0016 = process.env.APPLY_MIGRATION_0016 === "1";
 const apply0017 = process.env.APPLY_MIGRATION_0017 === "1";
+const apply0018 = process.env.APPLY_MIGRATION_0018 === "1";
 
 function shouldDeferTag(tag) {
   const t = String(tag ?? "");
@@ -72,6 +74,7 @@ function shouldDeferTag(tag) {
   if (t.startsWith("0015_") && !apply0015) return true;
   if (t.startsWith("0016_") && !apply0016) return true;
   if (t.startsWith("0017_") && !apply0017) return true;
+  if (t.startsWith("0018_") && !apply0018) return true;
   return false;
 }
 
@@ -89,7 +92,8 @@ function prepareMigrationsFolder() {
     apply0014 &&
     apply0015 &&
     apply0016 &&
-    apply0017
+    apply0017 &&
+    apply0018
   ) {
     return migrationsFolder;
   }
@@ -120,6 +124,7 @@ function prepareMigrationsFolder() {
     if (name.startsWith("0015_") && !apply0015) continue;
     if (name.startsWith("0016_") && !apply0016) continue;
     if (name.startsWith("0017_") && !apply0017) continue;
+    if (name.startsWith("0018_") && !apply0018) continue;
     fs.copyFileSync(
       path.join(migrationsFolder, name),
       path.join(tmp, name)
@@ -151,9 +156,10 @@ function prepareMigrationsFolder() {
   if (!apply0015) deferred.push("0015");
   if (!apply0016) deferred.push("0016");
   if (!apply0017) deferred.push("0017");
+  if (!apply0018) deferred.push("0018");
   if (deferred.length) {
     console.log(
-      `[db:migrate] ${deferred.join(" y ")} diferida(s) (APPLY_MIGRATION_0005…0017=1 para aplicar).`
+      `[db:migrate] ${deferred.join(" y ")} diferida(s) (APPLY_MIGRATION_0005…0018=1 para aplicar).`
     );
   }
   return tmp;

@@ -49,6 +49,7 @@ describe("Role Engine — F9.3", () => {
     const produccion = resolveSectorHome("PRODUCCION");
     expect(produccion.sidebarItems).toContain("ordenes_elaboracion");
     expect(produccion.sidebarItems).toContain("ordenes_acondicionamiento");
+    expect(produccion.sidebarItems).toContain("pedidos");
     expect(produccion.sidebarItems).not.toContain("ordenes");
   });
 

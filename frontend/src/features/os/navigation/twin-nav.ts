@@ -37,6 +37,7 @@ export type TwinView =
   | "ver-calidad"
   | "ver-materia-prima"
   | "remitos"
+  | "pedidos"
   | "procedimientos"
   | "metricas"
   | "work-detail"
@@ -89,6 +90,7 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   ver_calidad: "ver-calidad",
   ver_materia_prima: "ver-materia-prima",
   remitos: "remitos",
+  pedidos: "pedidos",
   procedimientos: "procedimientos",
   metricas: "metricas",
 };
@@ -130,6 +132,7 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     "ver-calidad": "ver_calidad",
     "ver-materia-prima": "ver_materia_prima",
     remitos: "remitos",
+    pedidos: "pedidos",
     procedimientos: "procedimientos",
     metricas: "metricas",
   };
@@ -182,6 +185,7 @@ export function viewTitle(view: TwinView): string {
     "ver-calidad": "Calidad",
     "ver-materia-prima": "Materias Primas",
     remitos: "Remitos",
+    pedidos: "Pedidos",
     procedimientos: "Procedimientos",
     metricas: "Métricas",
     "work-detail": "Trabajo",

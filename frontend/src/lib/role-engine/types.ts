@@ -116,6 +116,7 @@ export const SIDEBAR_ITEM_IDS = [
   "ver_calidad",
   "ver_materia_prima",
   "remitos",
+  "pedidos",
   "procedimientos",
   "metricas",
 ] as const;

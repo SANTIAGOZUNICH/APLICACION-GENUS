@@ -38,6 +38,7 @@ import { AsignarTrabajosView } from "@/features/os/operational/views/asignar-tra
 import { AsignacionLotesView } from "@/features/os/operational/views/asignacion-lotes-view";
 import { EntregadosView } from "@/features/os/operational/views/entregados-view";
 import { RemitosView } from "@/features/os/operational/views/remitos-view";
+import { ProductionPedidosView } from "@/features/os/operational/views/production-pedidos-view";
 import { ProcedimientosView } from "@/features/os/operational/views/procedimientos-view";
 import { MetricasView } from "@/features/os/operational/views/metricas-view";
 import {
@@ -139,6 +140,8 @@ export function TwinRouter() {
       return <AsignacionLotesView />;
     case "remitos":
       return <RemitosView />;
+    case "pedidos":
+      return <ProductionPedidosView />;
     case "procedimientos":
       return <ProcedimientosView />;
     case "metricas":

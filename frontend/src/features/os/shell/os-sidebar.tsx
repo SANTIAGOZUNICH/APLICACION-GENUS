@@ -7,6 +7,7 @@ import {
   Calendar,
   CheckCircle2,
   ClipboardCheck,
+  ClipboardList,
   Factory,
   FileText,
   FlaskConical,
@@ -64,6 +65,7 @@ const ICONS = {
   ver_calidad: ShieldCheck,
   ver_materia_prima: Boxes,
   remitos: FileText,
+  pedidos: ClipboardList,
   procedimientos: FolderOpen,
   metricas: BarChart3,
 } as const;
@@ -104,6 +106,7 @@ export const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
   ver_calidad: "Calidad",
   ver_materia_prima: "Materias Primas",
   remitos: "Remitos",
+  pedidos: "Pedidos",
   procedimientos: "Procedimientos",
   metricas: "Métricas",
 };
