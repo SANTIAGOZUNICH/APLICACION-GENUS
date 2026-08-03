@@ -8,6 +8,7 @@ import type {
   ProductionPedidoListFilters,
   ProductionPedidoRecord,
 } from "./types";
+import type { ColumnAssociation, ParseExcelPasteResult } from "./excel-paste";
 
 function headers(session: OrdersClientSession): HeadersInit {
   return {
@@ -15,6 +16,14 @@ function headers(session: OrdersClientSession): HeadersInit {
     [ACTOR_EMAIL_HEADER]: session.email,
     [ACTOR_SECTOR_HEADER]: session.sector,
   };
+}
+
+function publicError(body: { error?: string }, fallback: string): string {
+  const msg = body.error ?? fallback;
+  if (/failed query|sql|syntax|postgres|neon|stack/i.test(msg)) {
+    return "No se pudo completar la operación. Intentá de nuevo.";
+  }
+  return msg;
 }
 
 export async function fetchProductionPedidosApi(
@@ -38,7 +47,7 @@ export async function fetchProductionPedidosApi(
     error?: string;
     schemaPending?: boolean;
   };
-  if (!res.ok) throw new Error(body.error ?? "No se pudieron cargar pedidos");
+  if (!res.ok) throw new Error(publicError(body, "No se pudieron cargar pedidos"));
   return { items: body.items ?? [], schemaPending: Boolean(body.schemaPending) };
 }
 
@@ -53,7 +62,7 @@ export async function createProductionPedidoApi(
     body: JSON.stringify(input),
   });
   const body = (await res.json()) as { item?: ProductionPedidoRecord; error?: string };
-  if (!res.ok) throw new Error(body.error ?? "No se pudo crear el pedido");
+  if (!res.ok) throw new Error(publicError(body, "No se pudo crear el pedido"));
   return body.item!;
 }
 
@@ -69,7 +78,7 @@ export async function updateProductionPedidoApi(
     body: JSON.stringify(input),
   });
   const body = (await res.json()) as { item?: ProductionPedidoRecord; error?: string };
-  if (!res.ok) throw new Error(body.error ?? "No se pudo actualizar el pedido");
+  if (!res.ok) throw new Error(publicError(body, "No se pudo actualizar el pedido"));
   return body.item!;
 }
 
@@ -85,77 +94,66 @@ export async function deleteProductionPedidoApi(
     body: JSON.stringify({ reason }),
   });
   const body = (await res.json()) as { item?: ProductionPedidoRecord; error?: string };
-  if (!res.ok) throw new Error(body.error ?? "No se pudo eliminar el pedido");
+  if (!res.ok) throw new Error(publicError(body, "No se pudo eliminar el pedido"));
   return body.item!;
 }
 
+export type ImportResult = {
+  created: ProductionPedidoRecord[];
+  inserted: number;
+  rejected: number;
+  duplicateWarnings: number;
+  idempotentReplay: boolean;
+};
+
 export async function importProductionPedidosApi(
   session: OrdersClientSession,
-  rows: ProductionPedidoInput[]
-): Promise<{ created: ProductionPedidoRecord[]; skipped: number }> {
+  rows: ProductionPedidoInput[],
+  idempotencyKey: string
+): Promise<ImportResult> {
   const res = await fetch("/api/v1/production-pedidos/import", {
     method: "POST",
     credentials: "include",
     headers: headers(session),
-    body: JSON.stringify({ rows, confirm: true }),
+    body: JSON.stringify({ rows, confirm: true, idempotencyKey }),
   });
-  const body = (await res.json()) as {
-    created?: ProductionPedidoRecord[];
-    skipped?: number;
-    error?: string;
+  const body = (await res.json()) as ImportResult & { error?: string; skipped?: number };
+  if (!res.ok) throw new Error(publicError(body, "No se pudo importar"));
+  return {
+    created: body.created ?? [],
+    inserted: body.inserted ?? body.created?.length ?? 0,
+    rejected: body.rejected ?? body.skipped ?? 0,
+    duplicateWarnings: body.duplicateWarnings ?? 0,
+    idempotentReplay: Boolean(body.idempotentReplay),
   };
-  if (!res.ok) throw new Error(body.error ?? "No se pudo importar");
-  return { created: body.created ?? [], skipped: body.skipped ?? 0 };
 }
 
 export async function previewProductionPedidosPasteApi(
   session: OrdersClientSession,
-  text: string
-): Promise<{
-  rows: Array<{
-    rowIndex: number;
-    op: string | null;
-    fecha: string | null;
-    nroOc: string | null;
-    cliente: string | null;
-    producto: string | null;
-    s: string | null;
-    q: number | null;
-    ml: number | null;
-    kg: number | null;
-    estado: string | null;
-    errors: string[];
-    warnings: string[];
-    valid: boolean;
-  }>;
-  headerDetected: boolean;
-}> {
+  text: string,
+  opts?: { forcePosition?: boolean; fieldSourceOverrides?: Record<string, number> }
+): Promise<ParseExcelPasteResult> {
   const res = await fetch("/api/v1/production-pedidos/paste-preview", {
     method: "POST",
     credentials: "include",
     headers: headers(session),
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({
+      text,
+      forcePosition: opts?.forcePosition,
+      fieldSourceOverrides: opts?.fieldSourceOverrides,
+    }),
   });
-  const body = (await res.json()) as {
-    rows?: Array<{
-      rowIndex: number;
-      op: string | null;
-      fecha: string | null;
-      nroOc: string | null;
-      cliente: string | null;
-      producto: string | null;
-      s: string | null;
-      q: number | null;
-      ml: number | null;
-      kg: number | null;
-      estado: string | null;
-      errors: string[];
-      warnings: string[];
-      valid: boolean;
-    }>;
-    headerDetected?: boolean;
-    error?: string;
+  const body = (await res.json()) as ParseExcelPasteResult & { error?: string };
+  if (!res.ok) throw new Error(publicError(body, "No se pudo parsear el pegado"));
+  return {
+    rows: body.rows ?? [],
+    headerDetected: Boolean(body.headerDetected),
+    mode: body.mode ?? (body.headerDetected ? "by-header" : "by-position"),
+    associations: (body.associations ?? []) as ColumnAssociation[],
+    ignoredHeaders: body.ignoredHeaders ?? [],
+    missingFields: body.missingFields ?? [],
+    validCount: body.validCount ?? (body.rows ?? []).filter((r) => r.valid).length,
+    invalidCount: body.invalidCount ?? 0,
+    summary: body.summary ?? "",
   };
-  if (!res.ok) throw new Error(body.error ?? "No se pudo parsear el pegado");
-  return { rows: body.rows ?? [], headerDetected: Boolean(body.headerDetected) };
 }

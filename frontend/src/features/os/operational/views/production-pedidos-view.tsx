@@ -14,6 +14,8 @@ import {
   updateProductionPedidoApi,
 } from "@/lib/production-pedidos/client";
 import { computeKg, formatKg } from "@/lib/production-pedidos/kg";
+import { coercePedidoFields } from "@/lib/production-pedidos/types";
+import type { ColumnAssociation } from "@/lib/production-pedidos/excel-paste";
 import {
   PRODUCTION_PEDIDO_STATUSES,
   PRODUCTION_PEDIDO_STATUS_LABELS,
@@ -125,6 +127,14 @@ export function ProductionPedidosView() {
   const [pasteText, setPasteText] = useState("");
   const [pasteRows, setPasteRows] = useState<PasteRow[]>([]);
   const [pasteHeader, setPasteHeader] = useState(false);
+  const [pasteMode, setPasteMode] = useState<"by-header" | "by-position">("by-position");
+  const [pasteAssociations, setPasteAssociations] = useState<ColumnAssociation[]>([]);
+  const [pasteSummary, setPasteSummary] = useState("");
+  const [pasteMissing, setPasteMissing] = useState<string[]>([]);
+  const [forcePosition, setForcePosition] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
+  const [importIdempotencyKey, setImportIdempotencyKey] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -186,11 +196,23 @@ export function ProductionPedidosView() {
     }
   }
 
-  async function runPastePreview() {
+  async function runPastePreview(opts?: { forcePosition?: boolean }) {
     try {
-      const preview = await previewProductionPedidosPasteApi(session, pasteText);
+      const force = opts?.forcePosition ?? forcePosition;
+      const preview = await previewProductionPedidosPasteApi(session, pasteText, {
+        forcePosition: force,
+      });
       setPasteRows(preview.rows);
       setPasteHeader(preview.headerDetected);
+      setPasteMode(preview.mode);
+      setPasteAssociations(preview.associations);
+      setPasteSummary(preview.summary);
+      setPasteMissing(preview.missingFields);
+      setForcePosition(force);
+      setImportResult(null);
+      setImportIdempotencyKey(
+        `ped-import-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+      );
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al parsear pegado");
@@ -199,12 +221,17 @@ export function ProductionPedidosView() {
 
   async function confirmImport() {
     const valid = pasteRows.filter((r) => r.valid);
-    if (!valid.length) {
+    if (!valid.length || importing) {
       setError("No hay filas válidas para importar");
       return;
     }
+    const key =
+      importIdempotencyKey ??
+      `ped-import-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    setImporting(true);
+    setImportResult(null);
     try {
-      await importProductionPedidosApi(
+      const result = await importProductionPedidosApi(
         session,
         valid.map((r) => ({
           op: r.op,
@@ -216,14 +243,25 @@ export function ProductionPedidosView() {
           q: r.q,
           ml: r.ml,
           estado: r.estado,
-        }))
+        })),
+        key
+      );
+      setImportResult(
+        `Insertados: ${result.inserted} · Rechazados: ${result.rejected} · Duplicados advertidos: ${result.duplicateWarnings}${
+          result.idempotentReplay ? " · (reintento idempotente)" : ""
+        }`
       );
       setPasteOpen(false);
       setPasteText("");
       setPasteRows([]);
+      setPasteAssociations([]);
+      setError(null);
       void reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo importar");
+      // Conserve pasteText, pasteRows, corrections; keep modal open.
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -231,12 +269,38 @@ export function ProductionPedidosView() {
     setPasteRows((prev) =>
       prev.map((r, i) => {
         if (i !== idx) return r;
-        const next = { ...r, ...patch };
-        const kg = computeKg(next.q, next.ml);
-        return { ...next, kg, valid: (next.errors?.length ?? 0) === 0 };
+        const merged = { ...r, ...patch };
+        const coerced = coercePedidoFields({
+          op: merged.op,
+          fecha: merged.fecha,
+          nroOc: merged.nroOc,
+          cliente: merged.cliente,
+          producto: merged.producto,
+          s: merged.s,
+          q: merged.q,
+          ml: merged.ml,
+          estado: merged.estado,
+        });
+        return {
+          ...merged,
+          op: coerced.op,
+          fecha: coerced.fecha,
+          nroOc: coerced.nroOc,
+          cliente: coerced.cliente,
+          producto: coerced.producto,
+          s: coerced.s,
+          q: coerced.q,
+          ml: coerced.ml,
+          kg: coerced.kg,
+          estado: coerced.estado,
+          errors: coerced.errors,
+          valid: coerced.errors.length === 0,
+        };
       })
     );
   }
+
+  const validPasteCount = pasteRows.filter((r) => r.valid).length;
 
   return (
     <TwinShell title="Pedidos">
@@ -263,11 +327,22 @@ export function ProductionPedidosView() {
               setPasteOpen(true);
               setPasteRows([]);
               setPasteText("");
+              setPasteAssociations([]);
+              setPasteSummary("");
+              setImportResult(null);
+              setForcePosition(false);
+              setError(null);
             }}
           >
             Pegar desde Excel
           </Button>
         </div>
+
+        {importResult && (
+          <div className="rounded border border-[var(--os-teal)]/40 bg-[var(--os-teal)]/10 px-3 py-2 text-sm">
+            {importResult}
+          </div>
+        )}
 
         <div className="grid gap-2 md:grid-cols-3 lg:grid-cols-6">
           <input
@@ -544,29 +619,56 @@ export function ProductionPedidosView() {
             <div className="os-modal-in flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-4">
               <h3 className="mb-2 text-lg font-semibold">Pegar desde Excel</h3>
               <p className="mb-2 text-xs text-[var(--os-text-muted)]">
-                Orden: OP | FECHA | N.º OC | CLIENTE | PRODUCTO | S | Q | ML | ESTADO. Si viene KG, se
-                recalcula.
+                Con encabezados: cada columna se asocia por su título (el orden no importa). Sin
+                encabezados: usá el orden estándar OP | FECHA | N.º OC | CLIENTE | PRODUCTO | S | Q |
+                ML | ESTADO. KG siempre se recalcula.
               </p>
               <textarea
                 className="min-h-28 w-full rounded border border-[var(--os-border)] bg-transparent p-2 font-mono text-xs"
                 value={pasteText}
                 onChange={(e) => setPasteText(e.target.value)}
                 placeholder="Pegá filas aquí…"
+                disabled={importing}
               />
               <div className="mt-2 flex flex-wrap gap-2">
-                <Button type="button" variant="secondary" onClick={() => void runPastePreview()}>
-                  Vista previa
-                </Button>
                 <Button
                   type="button"
-                  disabled={!pasteRows.some((r) => r.valid)}
+                  variant="secondary"
+                  disabled={importing || !pasteText.trim()}
+                  onClick={() => void runPastePreview({ forcePosition: false })}
+                >
+                  Vista previa
+                </Button>
+                {!pasteHeader && pasteRows.length > 0 && pasteMode === "by-position" && (
+                  <span className="self-center text-xs text-amber-200">
+                    Sin encabezados — pegado por orden estándar
+                  </span>
+                )}
+                {pasteHeader && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={importing}
+                    onClick={() => void runPastePreview({ forcePosition: true })}
+                  >
+                    Pegar por orden estándar
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  disabled={importing || validPasteCount < 1}
                   onClick={() => void confirmImport()}
                 >
-                  Confirmar importación
+                  {importing
+                    ? "Importando…"
+                    : validPasteCount > 0
+                      ? `Importar ${validPasteCount} pedido${validPasteCount === 1 ? "" : "s"}`
+                      : "Confirmar importación"}
                 </Button>
                 <Button
                   type="button"
                   variant="secondary"
+                  disabled={importing}
                   onClick={() => {
                     setPasteOpen(false);
                     setPasteRows([]);
@@ -574,10 +676,45 @@ export function ProductionPedidosView() {
                 >
                   Cancelar
                 </Button>
-                {pasteHeader && (
-                  <span className="self-center text-xs text-[var(--os-teal)]">Encabezados detectados</span>
-                )}
               </div>
+              {pasteSummary && (
+                <p className="mt-2 text-xs text-[var(--os-teal)]">{pasteSummary}</p>
+              )}
+              {pasteAssociations.length > 0 && (
+                <div className="mt-3 rounded border border-[var(--os-border)] p-2">
+                  <p className="mb-1 text-sm font-semibold">Asociación de columnas</p>
+                  <ul className="grid gap-1 text-xs sm:grid-cols-2">
+                    {pasteAssociations.map((a) => (
+                      <li key={`${a.sourceIndex}-${a.sourceHeader}`}>
+                        <span className="text-[var(--os-text-muted)]">
+                          “{a.sourceHeader || "(vacío)"}”
+                        </span>{" "}
+                        →{" "}
+                        <span
+                          className={
+                            a.status === "ignored"
+                              ? "text-amber-200"
+                              : a.status === "conflict"
+                                ? "text-amber-300"
+                                : "text-[var(--os-text)]"
+                          }
+                        >
+                          {a.status === "ignored"
+                            ? "No utilizada"
+                            : a.status === "conflict"
+                              ? `${a.label} (conflicto)`
+                              : a.label}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  {pasteMissing.length > 0 && pasteHeader && (
+                    <p className="mt-1 text-xs text-[var(--os-text-muted)]">
+                      Columnas Genus no presentes (quedarán vacías): {pasteMissing.join(", ")}
+                    </p>
+                  )}
+                </div>
+              )}
               {pasteRows.length > 0 && (
                 <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
                   <table className="w-full table-fixed text-left text-xs">
@@ -609,6 +746,7 @@ export function ProductionPedidosView() {
                             <input
                               className="w-full bg-transparent"
                               value={r.op ?? ""}
+                              disabled={importing}
                               onChange={(e) => updatePasteRow(idx, { op: e.target.value || null })}
                             />
                           </td>
@@ -616,6 +754,7 @@ export function ProductionPedidosView() {
                             <input
                               className="w-full bg-transparent"
                               value={r.fecha ?? ""}
+                              disabled={importing}
                               onChange={(e) => updatePasteRow(idx, { fecha: e.target.value || null })}
                             />
                           </td>
@@ -623,6 +762,7 @@ export function ProductionPedidosView() {
                             <input
                               className="w-full bg-transparent"
                               value={r.nroOc ?? ""}
+                              disabled={importing}
                               onChange={(e) => updatePasteRow(idx, { nroOc: e.target.value || null })}
                             />
                           </td>
@@ -632,6 +772,7 @@ export function ProductionPedidosView() {
                             <input
                               className="w-full bg-transparent"
                               value={r.q ?? ""}
+                              disabled={importing}
                               onChange={(e) => {
                                 const q =
                                   e.target.value.trim() === ""
@@ -647,6 +788,7 @@ export function ProductionPedidosView() {
                             <input
                               className="w-full bg-transparent"
                               value={r.ml ?? ""}
+                              disabled={importing}
                               onChange={(e) => {
                                 const ml =
                                   e.target.value.trim() === ""
@@ -662,7 +804,10 @@ export function ProductionPedidosView() {
                             {formatKg(r.kg)}
                           </td>
                           <td className="px-1 py-1">{r.estado}</td>
-                          <td className="px-1 py-1 text-amber-300" title={[...r.errors, ...r.warnings].join("; ")}>
+                          <td
+                            className="px-1 py-1 text-amber-300"
+                            title={[...r.errors, ...r.warnings].join("; ")}
+                          >
                             {r.errors[0] || r.warnings[0] || ""}
                           </td>
                         </tr>

@@ -24,17 +24,33 @@ import {
   type ProductionPedidosActor,
 } from "./types";
 
-type Mem = { rows: ProductionPedidoRecord[] };
+type Mem = {
+  rows: ProductionPedidoRecord[];
+  imports: Map<string, ImportManyResult>;
+};
 const g = globalThis as unknown as { __genusProductionPedidosMem?: Mem };
 
 function mem(): Mem {
-  if (!g.__genusProductionPedidosMem) g.__genusProductionPedidosMem = { rows: [] };
+  if (!g.__genusProductionPedidosMem) {
+    g.__genusProductionPedidosMem = { rows: [], imports: new Map() };
+  }
+  if (!g.__genusProductionPedidosMem.imports) {
+    g.__genusProductionPedidosMem.imports = new Map();
+  }
   return g.__genusProductionPedidosMem;
 }
 
 export function resetProductionPedidosMemoryForTests(): void {
-  g.__genusProductionPedidosMem = { rows: [] };
+  g.__genusProductionPedidosMem = { rows: [], imports: new Map() };
 }
+
+export type ImportManyResult = {
+  created: ProductionPedidoRecord[];
+  inserted: number;
+  rejected: number;
+  duplicateWarnings: number;
+  idempotentReplay: boolean;
+};
 
 let schemaCache: boolean | null = null;
 let schemaCacheAt = 0;
@@ -410,20 +426,163 @@ export class ProductionPedidosService {
 
   async importMany(
     actor: ProductionPedidosActor,
-    inputs: ProductionPedidoInput[]
-  ): Promise<{ created: ProductionPedidoRecord[]; skipped: number }> {
-    assertAccess(actor);
+    inputs: ProductionPedidoInput[],
+    options?: { idempotencyKey?: string | null }
+  ): Promise<ImportManyResult> {
+    const a = assertAccess(actor);
+    const key = options?.idempotencyKey?.trim() || "";
+    if (key) {
+      if (key.length < 8 || key.length > 128) {
+        throw new OrdersValidationError("Clave de importación inválida.");
+      }
+      const cached = mem().imports.get(key);
+      if (cached) return { ...cached, idempotentReplay: true };
+      if (!useMemory() && isDatabaseConfigured()) {
+        try {
+          const db = getDb();
+          const prior = await db.execute(sql`
+            select payload from feature_audit_events
+            where domain = 'production_pedidos'
+              and action = 'import'
+              and idempotency_key = ${key}
+            order by created_at desc
+            limit 1
+          `);
+          const row = (prior.rows as Record<string, unknown>[])[0];
+          if (row?.payload && typeof row.payload === "object") {
+            const payload = row.payload as ImportManyResult;
+            if (Array.isArray(payload.created)) {
+              const replay = { ...payload, idempotentReplay: true };
+              mem().imports.set(key, replay);
+              return replay;
+            }
+          }
+        } catch {
+          /* feature_audit may be absent — continue */
+        }
+      }
+    }
+
+    const mode = await assertWrites();
     const created: ProductionPedidoRecord[] = [];
-    let skipped = 0;
+    let rejected = 0;
+    let duplicateWarnings = 0;
+    const existingKeys = new Set((await this.duplicateKeys(a)).map((k) => k.toLowerCase()));
+
+    const accepted: ProductionPedidoInput[] = [];
     for (const input of inputs) {
-      const fields = coercePedidoFields(input);
+      const fields = coercePedidoFields({ ...input, kg: undefined });
       if (fields.errors.length) {
-        skipped += 1;
+        rejected += 1;
         continue;
       }
-      created.push(await this.create(actor, input));
+      const dk = duplicateKeyFromRecord(fields);
+      if (existingKeys.has(dk) && dk !== "||||") duplicateWarnings += 1;
+      accepted.push({
+        op: fields.op,
+        fecha: fields.fecha,
+        nroOc: fields.nroOc,
+        cliente: fields.cliente,
+        producto: fields.producto,
+        s: fields.s,
+        q: fields.q,
+        ml: fields.ml,
+        estado: fields.estado,
+      });
     }
-    return { created, skipped };
+
+    if (mode === "memory" || useMemory()) {
+      for (const input of accepted) {
+        created.push(await this.create(a, input));
+      }
+    } else if (accepted.length) {
+      const db = getDb();
+      const now = nowIso();
+      await db.transaction(async (tx) => {
+        for (const input of accepted) {
+          const fields = coercePedidoFields({ ...input, kg: undefined });
+          const id = randomUUID();
+          await tx.execute(sql`
+            insert into production_pedidos (
+              id, op, fecha, nro_oc, cliente, producto, s, q, ml, kg, estado,
+              created_by, created_by_sector, updated_by, created_at, updated_at
+            ) values (
+              ${id}::uuid,
+              ${fields.op},
+              ${fields.fecha},
+              ${fields.nroOc},
+              ${fields.cliente},
+              ${fields.producto},
+              ${fields.s},
+              ${fields.q},
+              ${fields.ml},
+              ${fields.kg},
+              ${fields.estado},
+              ${a.email},
+              ${String(a.sector)},
+              ${a.email},
+              ${now}::timestamptz,
+              ${now}::timestamptz
+            )
+          `);
+          created.push(
+            toPublicRecord({
+              id,
+              ...fields,
+              createdBy: a.email,
+              createdBySector: String(a.sector),
+              updatedBy: a.email,
+              deletedAt: null,
+              deletedBy: null,
+              deleteReason: null,
+              createdAt: now,
+              updatedAt: now,
+            })
+          );
+          recordLifecycleEvent({
+            entityKind: "pedido",
+            entityId: id,
+            action: "crear",
+            actor: { email: a.email, sector: a.sector as SectorId },
+            impact: { via: "import" },
+          });
+        }
+        if (key) {
+          await tx
+            .execute(sql`
+            insert into feature_audit_events (
+              id, domain, action, actor_email, actor_sector, entity_id, idempotency_key, payload, created_at
+            ) values (
+              ${randomUUID()}::uuid,
+              'production_pedidos',
+              'import',
+              ${a.email},
+              ${String(a.sector)},
+              null,
+              ${key},
+              ${JSON.stringify({
+                inserted: created.length,
+                rejected,
+                duplicateWarnings,
+                createdIds: created.map((c) => c.id),
+              })}::jsonb,
+              ${now}::timestamptz
+            )
+          `)
+            .catch(() => undefined);
+        }
+      });
+    }
+
+    const result: ImportManyResult = {
+      created,
+      inserted: created.length,
+      rejected,
+      duplicateWarnings,
+      idempotentReplay: false,
+    };
+    if (key) mem().imports.set(key, result);
+    return result;
   }
 
   async duplicateKeys(actor: ProductionPedidosActor): Promise<string[]> {
