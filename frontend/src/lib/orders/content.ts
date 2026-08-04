@@ -147,6 +147,9 @@ export function createEmptyOeContent(overrides?: Partial<OeContent["header"]>): 
       resultado: "",
       fecha: "",
     },
+    deliveryObservation: null,
+    deliveryObservationBy: null,
+    deliveryObservationAt: null,
     signatures: {
       pesada: null,
       limpieza: null,
@@ -300,6 +303,15 @@ export function recomputeOeDerived(content: OeContent): OeContent {
       mermaPct,
       cantidadObtenida,
     },
+    deliveryObservation: content.deliveryObservation?.trim()
+      ? content.deliveryObservation.trim()
+      : null,
+    deliveryObservationBy: content.deliveryObservation?.trim()
+      ? content.deliveryObservationBy ?? null
+      : null,
+    deliveryObservationAt: content.deliveryObservation?.trim()
+      ? content.deliveryObservationAt ?? null
+      : null,
     signatures: {
       pesada: null,
       limpieza: null,
@@ -537,4 +549,45 @@ export function formulaFingerprint(content: OeContent): string {
 export function rendimientoDentroDeRango(rendimientoA: number | null): boolean | null {
   if (rendimientoA == null) return null;
   return rendimientoA >= 95 && rendimientoA <= 101;
+}
+
+/** Texto de observación al completar OE: vacío → null (sin sección vacía). */
+export function sanitizeDeliveryObservation(
+  raw: string | null | undefined
+): string | null {
+  const cleaned = String(raw ?? "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+/**
+ * Aplica observación de entrega a una OE.
+ * Si ya hay una observación persistida, no la sobrescribe.
+ */
+export function mergeOeDeliveryObservation(
+  content: OeContent,
+  observation: string | null | undefined,
+  actorEmail: string,
+  atIso: string
+): OeContent {
+  if (content.deliveryObservation?.trim()) {
+    return content;
+  }
+  const text = sanitizeDeliveryObservation(observation);
+  if (!text) {
+    return {
+      ...content,
+      deliveryObservation: null,
+      deliveryObservationBy: null,
+      deliveryObservationAt: null,
+    };
+  }
+  return {
+    ...content,
+    deliveryObservation: text,
+    deliveryObservationBy: actorEmail,
+    deliveryObservationAt: atIso,
+  };
 }

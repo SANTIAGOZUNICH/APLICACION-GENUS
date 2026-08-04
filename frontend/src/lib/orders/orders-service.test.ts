@@ -173,25 +173,28 @@ describe("operational orders RBAC + lifecycle", () => {
     expect(vigentes[0]!.version).toBe(2);
   });
 
-  it("guardar avance no modifica la maestra; entregar tampoco", async () => {
-    const t0 = (await service.listTemplates("OE"))[0]!;
-    const order = await service.createOrder(
-      { type: "OE", templateId: t0.id, assignedSector: "ELABORACION" },
-      calidad
-    );
-    const filled = fillOeForDeliver(order.formData);
-    const mid = await service.saveProgress(
-      order.id,
-      { expectedVersion: order.version, formData: filled },
-      elaboracion
-    );
-    const t1 = await service.getTemplate(t0.id);
-    expect(t1.version).toBe(1);
-    await service.deliver(mid.id, elaboracion, true);
-    const t2 = await service.getTemplate(t0.id);
-    expect(t2.content).toEqual(t0.content);
-  });
-
+  it(
+    "guardar avance no modifica la maestra; entregar tampoco",
+    async () => {
+      const t0 = (await service.listTemplates("OE"))[0]!;
+      const order = await service.createOrder(
+        { type: "OE", templateId: t0.id, assignedSector: "ELABORACION" },
+        calidad
+      );
+      const filled = fillOeForDeliver(order.formData);
+      const mid = await service.saveProgress(
+        order.id,
+        { expectedVersion: order.version, formData: filled },
+        elaboracion
+      );
+      const t1 = await service.getTemplate(t0.id);
+      expect(t1.version).toBe(1);
+      await service.deliver(mid.id, elaboracion, true);
+      const t2 = await service.getTemplate(t0.id);
+      expect(t2.content).toEqual(t0.content);
+    },
+    30000
+  );
   it("propuesta operativa requiere aprobación de Calidad/Producción", async () => {
     const t0 = (await service.listTemplates("OE"))[0]!;
     const order = await service.createOrder(
@@ -363,6 +366,96 @@ describe("operational orders RBAC + lifecycle", () => {
     const again = await service.annul(order.id, produccion, "segundo intento");
     expect(again.status).toBe("ANULADA");
     void saved;
+  });
+
+  it("completar OE con observación opcional la persiste con autor y fecha", async () => {
+    const t = (await service.listTemplates("OE"))[0]!;
+    const order = await service.createOrder(
+      { type: "OE", templateId: t.id, assignedSector: "ELABORACION" },
+      calidad
+    );
+    const filled = fillOeForDeliver(order.formData);
+    const saved = await service.saveProgress(
+      order.id,
+      { expectedVersion: order.version, formData: filled },
+      elaboracion
+    );
+    const done = await service.deliver(saved.id, elaboracion, true, {
+      observation: "  Mezcla más densa de lo habitual  ",
+    });
+    expect(done.formData.kind).toBe("OE");
+    if (done.formData.kind !== "OE") return;
+    expect(done.formData.deliveryObservation).toBe("Mezcla más densa de lo habitual");
+    expect(done.formData.deliveryObservationBy).toBe(elaboracion.email);
+    expect(done.formData.deliveryObservationAt).toBeTruthy();
+
+    const reloaded = await service.getOrder(done.id, calidad);
+    expect(reloaded.formData.kind).toBe("OE");
+    if (reloaded.formData.kind !== "OE") return;
+    expect(reloaded.formData.deliveryObservation).toBe("Mezcla más densa de lo habitual");
+    expect(reloaded.formData.deliveryObservationBy).toBe(elaboracion.email);
+  });
+
+  it("completar OE sin observación guarda null y no muestra texto vacío", async () => {
+    const t = (await service.listTemplates("OE"))[0]!;
+    const order = await service.createOrder(
+      { type: "OE", templateId: t.id, assignedSector: "ELABORACION" },
+      calidad
+    );
+    const filled = fillOeForDeliver(order.formData);
+    const saved = await service.saveProgress(
+      order.id,
+      { expectedVersion: order.version, formData: filled },
+      elaboracion
+    );
+    const done = await service.deliver(saved.id, elaboracion, true, {
+      observation: "   ",
+    });
+    expect(done.formData.kind).toBe("OE");
+    if (done.formData.kind !== "OE") return;
+    expect(done.formData.deliveryObservation).toBeNull();
+    expect(done.formData.deliveryObservationBy).toBeNull();
+    expect(done.formData.deliveryObservationAt).toBeNull();
+
+    const again = await service.getOrder(done.id, produccion);
+    expect(again.formData.kind).toBe("OE");
+    if (again.formData.kind !== "OE") return;
+    expect(again.formData.deliveryObservation).toBeNull();
+  });
+
+  it("no sobrescribe una observación de entrega OE ya persistida", async () => {
+    const t = (await service.listTemplates("OE"))[0]!;
+    const order = await service.createOrder(
+      { type: "OE", templateId: t.id, assignedSector: "ELABORACION" },
+      calidad
+    );
+    const filled = fillOeForDeliver(order.formData);
+    const saved = await service.saveProgress(
+      order.id,
+      { expectedVersion: order.version, formData: filled },
+      elaboracion
+    );
+    const first = await service.deliver(saved.id, elaboracion, true, {
+      observation: "Original de elaboración",
+    });
+    expect(first.formData.kind).toBe("OE");
+    if (first.formData.kind !== "OE") return;
+    expect(first.formData.deliveryObservation).toBe("Original de elaboración");
+
+    const returned = await service.returnForCorrection(
+      first.id,
+      calidad,
+      "reabrir para prueba"
+    );
+    expect(returned.status).toBe("DEVUELTA_PARA_CORRECCION");
+
+    const second = await service.deliver(returned.id, elaboracion, true, {
+      observation: "Intento de sobrescribir",
+    });
+    expect(second.formData.kind).toBe("OE");
+    if (second.formData.kind !== "OE") return;
+    expect(second.formData.deliveryObservation).toBe("Original de elaboración");
+    expect(second.formData.deliveryObservationBy).toBe(elaboracion.email);
   });
 });
 

@@ -92,6 +92,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const [conflict, setConflict] = useState<OperationalOrderRecord | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [deliverOpen, setDeliverOpen] = useState(false);
+  const [deliverObservation, setDeliverObservation] = useState("");
   const [masterOpen, setMasterOpen] = useState(false);
   const [masterReason, setMasterReason] = useState("");
   const [returnOpen, setReturnOpen] = useState(false);
@@ -654,11 +655,13 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         allowIncomplete: allowIncomplete || missing.length > 0,
         allowNegativeMeStock: meOpts?.allowNegativeMeStock,
         negativeMeStockReason: meOpts?.negativeMeStockReason,
+        observation: order?.type === "OE" ? deliverObservation : null,
       });
       setOrder(updated);
       setForm(updated.formData);
       versionRef.current = updated.version;
       setDeliverOpen(false);
+      setDeliverObservation("");
       setMeShortageOpen(false);
       setMeShortages([]);
       setMeShortageReason("");
@@ -770,6 +773,25 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             Completado: <strong>{order.completionPercentage}%</strong>
             <span className="ml-3 text-xs text-[var(--os-text-muted)]">{saveLabel}</span>
           </p>
+          {form.kind === "OE" && form.deliveryObservation ? (
+            <div
+              className="mt-3 max-w-xl rounded border border-[var(--os-border)] bg-[var(--os-bg)] px-3 py-2"
+              data-testid="oe-delivery-observation"
+            >
+              <p className="text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
+                Observaciones de elaboración
+              </p>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-[var(--os-text)]">
+                {form.deliveryObservation}
+              </p>
+              <p className="mt-1 text-xs text-[var(--os-text-muted)]">
+                {form.deliveryObservationBy || "—"}
+                {form.deliveryObservationAt
+                  ? ` · ${new Date(form.deliveryObservationAt).toLocaleString("es-AR")}`
+                  : ""}
+              </p>
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           {canEdit && (
@@ -1149,8 +1171,14 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={deliverOpen} onOpenChange={setDeliverOpen}>
-        <DialogContent>
+      <Dialog
+        open={deliverOpen}
+        onOpenChange={(open) => {
+          setDeliverOpen(open);
+          if (!open) setDeliverObservation("");
+        }}
+      >
+        <DialogContent className="w-[min(28rem,calc(100vw-24px))] max-w-none">
           <DialogHeader>
             <DialogTitle>Entregar orden</DialogTitle>
             <DialogDescription>
@@ -1166,6 +1194,19 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               ))}
             </ul>
           )}
+          {order.type === "OE" ? (
+            <label className="block min-w-0 space-y-1 text-sm">
+              <span>Observaciones (opcional)</span>
+              <textarea
+                value={deliverObservation}
+                onChange={(e) => setDeliverObservation(e.target.value)}
+                rows={3}
+                className="min-h-20 w-full min-w-0 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
+                placeholder="Podés dejarlo vacío"
+                data-testid="oe-deliver-observation"
+              />
+            </label>
+          ) : null}
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:flex-wrap">
             <Button type="button" variant="secondary" onClick={() => setDeliverOpen(false)}>
               {missingFields.length > 0 ? "Volver a editar" : "Cancelar"}

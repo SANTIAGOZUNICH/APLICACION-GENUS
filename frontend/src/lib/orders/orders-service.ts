@@ -5,6 +5,7 @@ import {
   createEmptyOaContent,
   createEmptyOeContent,
   mergeFormOverrides,
+  mergeOeDeliveryObservation,
   normalizeOrderContent,
   summarizeContentDiff,
 } from "@/lib/orders/content";
@@ -934,6 +935,8 @@ export class OrdersService {
       allowNegativeMeStock?: boolean;
       negativeMeStockReason?: string;
       includeDesechadosMe?: boolean;
+      /** Observación opcional al completar OE (Elaboración). */
+      observation?: string | null;
     }
   ) {
     if (!confirm) {
@@ -993,7 +996,17 @@ export class OrdersService {
 
     const ts = nowIso();
     const status = missing.length > 0 ? "COMPLETA_CON_PENDIENTES" : "COMPLETA";
-    const normalized = normalizeOrderContent(current.formData);
+    let normalized = normalizeOrderContent(current.formData);
+    if (normalized.kind === "OE") {
+      normalized = normalizeOrderContent(
+        mergeOeDeliveryObservation(
+          normalized,
+          opts?.observation,
+          actor.email,
+          ts
+        )
+      );
+    }
     const updated = await this.repo.updateOrderOptimistic(id, current.version, {
       status,
       completedAt: ts,
@@ -1071,6 +1084,10 @@ export class OrdersService {
         pendingFields: missing,
         status,
         meStockNegativeAllowed: Boolean(opts?.allowNegativeMeStock),
+        deliveryObservation:
+          updated.formData.kind === "OE"
+            ? updated.formData.deliveryObservation
+            : null,
       },
     });
     await notify(this.repo, {

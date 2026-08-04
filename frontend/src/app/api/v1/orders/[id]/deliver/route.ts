@@ -20,12 +20,14 @@ export async function POST(request: Request, ctx: Ctx) {
       allowNegativeMeStock?: boolean;
       negativeMeStockReason?: string;
       includeDesechadosMe?: boolean;
+      observation?: string | null;
     };
     const order = await getOrdersService().deliver(id, actor, Boolean(body.confirm), {
       allowIncomplete: Boolean(body.allowIncomplete),
       allowNegativeMeStock: Boolean(body.allowNegativeMeStock),
       negativeMeStockReason: body.negativeMeStockReason,
       includeDesechadosMe: Boolean(body.includeDesechadosMe),
+      observation: body.observation,
     });
     return NextResponse.json({ order, legallyOperational: true });
   } catch (err) {

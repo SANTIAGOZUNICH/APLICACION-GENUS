@@ -106,6 +106,13 @@ export type OeContent = {
     resultado: string;
     fecha: string;
   };
+  /**
+   * Observación opcional al completar/entregar (solo Elaboración).
+   * Vive en form_data JSON — no altera el PDF legal ni observaciones de OA.
+   */
+  deliveryObservation: string | null;
+  deliveryObservationBy: string | null;
+  deliveryObservationAt: string | null;
   /** Firmas físicas — siempre vacías; no se almacenan imágenes. */
   signatures: {
     pesada: null;

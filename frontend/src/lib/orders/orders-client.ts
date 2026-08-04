@@ -505,6 +505,7 @@ export async function deliverOrderApi(
     allowNegativeMeStock?: boolean;
     negativeMeStockReason?: string;
     includeDesechadosMe?: boolean;
+    observation?: string | null;
   }
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}/deliver`, {
@@ -517,6 +518,7 @@ export async function deliverOrderApi(
       allowNegativeMeStock: Boolean(opts?.allowNegativeMeStock),
       negativeMeStockReason: opts?.negativeMeStockReason,
       includeDesechadosMe: Boolean(opts?.includeDesechadosMe),
+      observation: opts?.observation ?? null,
     }),
   });
   const data = await parseJson<{ order: OperationalOrderRecord }>(res);
