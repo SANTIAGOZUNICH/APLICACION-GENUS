@@ -1123,6 +1123,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           unidad: ["unidad"],
         }}
         ignoreKeys={["total", "falta", "estado", "estadoStock", "diasAlVence", "estadoVencimiento"]}
+        onToast={(message) => showToast(message)}
         onConfirm={async (mapped) => {
           for (const m of mapped) {
             setFormDraft(m);

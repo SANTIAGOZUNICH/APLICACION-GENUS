@@ -19,7 +19,7 @@ import {
 import { displayCell, multiplyTotal, parseOptionalNumber } from "@/lib/inventory/calcs";
 import { ME_SALIDA_COLUMNS, type MeMaterial, type MeSalidaRow } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
-import { usePreviewSession } from "@/features/os/session/preview-context";
+import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 import { OsClampedText } from "@/features/os/operational/components/os-clamped-text";
 import {
   compactOperationalIdsInText,
@@ -74,6 +74,7 @@ function emptyForm(): FormState {
 
 export function MeSalidasView() {
   const { sectorId } = usePreviewSession();
+  const { showToast } = usePreviewContext();
   const canWrite = canWriteInventory(sectorId, "me_salidas");
   const [rows, setRows] = useState<MeSalidaRow[]>([]);
   const [materials, setMaterials] = useState<MeMaterial[]>([]);
@@ -512,6 +513,7 @@ export function MeSalidasView() {
         ]}
         fieldAliases={ALIASES}
         ignoreKeys={["total"]}
+        onToast={(message) => showToast(message)}
         onConfirm={async (mapped) => {
           for (const m of mapped) {
             await mutateInventory({

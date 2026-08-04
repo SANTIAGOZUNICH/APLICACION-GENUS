@@ -11,6 +11,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  ExcelImportPreviewDialog,
+  type ExcelImportFieldDef,
+} from "../components/excel-import-preview-dialog";
 import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
 import { usePreviewSession } from "@/features/os/session/preview-context";
@@ -28,10 +32,12 @@ import {
   getAllAsignacionLotes,
   replaceAsignacionLotesCache,
   type AsignacionLote,
+  type AsignacionLoteUpsertInput,
 } from "../adapters/asignacion-lotes-repository";
 import {
   ASIGNACION_LOTES_FIELD_ALIASES,
   buildAsignacionLoteFromMappedRow,
+  formatAsignacionCodigoPreview,
   validateAsignacionLoteRow,
   type AsignacionLoteMappedRow,
 } from "../lib/asignacion-lotes-import";
@@ -39,14 +45,7 @@ import {
   filterAsignacionLotesBySearch,
   normalizeAsignacionSearchText,
 } from "../lib/asignacion-lotes-search";
-import {
-  autoMapColumns,
-  parseGrid,
-  parseNonNegativeNumber,
-  rowToObject,
-  type ColumnMapping,
-  type RowValidationIssue,
-} from "../lib/clipboard-import";
+import { parseNonNegativeNumber } from "../lib/clipboard-import";
 import { formatDateDisplay, parseFlexibleDate } from "../lib/delivery-date";
 import {
   canAccessAsignacionLotes,
@@ -55,18 +54,24 @@ import {
 
 const PAGE_SIZE = 20;
 
-const IMPORT_FIELDS: Array<{ key: keyof AsignacionLoteMappedRow; label: string; required?: boolean }> = [
-  { key: "lote", label: "Lote", required: true },
+const IMPORT_FIELDS: ExcelImportFieldDef[] = [
+  { key: "lote", label: "Lote", required: true, mobilePrimary: true },
   { key: "fecha", label: "Fecha", required: true },
-  { key: "producto", label: "Producto", required: true },
-  { key: "codigo", label: "Código", required: true },
+  { key: "producto", label: "Producto", required: true, mobilePrimary: true },
+  {
+    key: "codigo",
+    label: "Código",
+    mobilePrimary: true,
+    formatDisplay: (value) => formatAsignacionCodigoPreview(value),
+  },
   { key: "marca", label: "Marca" },
-  { key: "cantidades", label: "Cantidades", required: true },
+  { key: "cantidades", label: "Cantidades", required: true, mobilePrimary: true },
   { key: "vto", label: "VTO" },
   { key: "muestras", label: "Muestras" },
   { key: "cjMuestra", label: "CJ muestra" },
   { key: "fechaAnalisis", label: "Fecha análisis" },
   { key: "observaciones", label: "Observaciones" },
+  { key: "cliente", label: "Cliente" },
 ];
 
 type DateField = "fecha" | "vto" | "fechaAnalisis";
@@ -85,13 +90,6 @@ type AsignacionFormState = {
   fechaAnalisis: string;
   observaciones: string;
 };
-
-interface ImportPreviewRow {
-  rowNumber: number;
-  mapped: Partial<AsignacionLoteMappedRow>;
-  issues: RowValidationIssue[];
-  lote: ReturnType<typeof buildAsignacionLoteFromMappedRow>;
-}
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
@@ -206,8 +204,7 @@ export function AsignacionLotesView() {
   const [deleteTarget, setDeleteTarget] = useState<AsignacionLote | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [importText, setImportText] = useState("");
-  const [customMapping, setCustomMapping] = useState<ColumnMapping>({});
+  const [seedImportText, setSeedImportText] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -227,37 +224,6 @@ export function AsignacionLotesView() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  const grid = useMemo(() => parseGrid(importText), [importText]);
-  const autoMapping = useMemo(() => autoMapColumns(grid.headers, ASIGNACION_LOTES_FIELD_ALIASES), [grid.headers]);
-  const mapping = useMemo(() => ({ ...autoMapping, ...customMapping }), [autoMapping, customMapping]);
-  const importPreview = useMemo<ImportPreviewRow[]>(() => {
-    if (!importText.trim()) return [];
-    return grid.rows.map((row, index) => {
-      const rowNumber = grid.hasHeaderRow ? index + 2 : index + 1;
-      const mapped = rowToObject(row, mapping) as Partial<AsignacionLoteMappedRow>;
-      const issues = validateAsignacionLoteRow(mapped, rowNumber);
-      if (
-        mapped.lote?.trim() &&
-        mapped.codigo?.trim() &&
-        findDuplicateAsignacionLote(mapped.lote, mapped.codigo)
-      ) {
-        issues.push({
-          rowIndex: rowNumber,
-          field: "lote",
-          message: "Duplicado por lote + código; no se importará.",
-        });
-      }
-      return {
-        rowNumber,
-        mapped,
-        issues,
-        lote: buildAsignacionLoteFromMappedRow(mapped, workspace.context.displayName),
-      };
-    });
-  }, [grid, importText, mapping, workspace.context.displayName]);
-  const importValidRows = importPreview.filter((row) => row.issues.length === 0);
-  const importIssueRows = importPreview.filter((row) => row.issues.length > 0);
 
   const filtered = useMemo(() => {
     let rows = filterAsignacionLotesBySearch(items, search);
@@ -317,8 +283,8 @@ export function AsignacionLotesView() {
   const saveForm = async (event: FormEvent) => {
     event.preventDefault();
     const cantidades = parseNonNegativeNumber(form.cantidades);
-    if (!form.lote.trim() || !form.fecha.trim() || !form.producto.trim() || !form.codigo.trim()) {
-      setFormError("Completá Lote, Fecha, Producto y Código.");
+    if (!form.lote.trim() || !form.fecha.trim() || !form.producto.trim()) {
+      setFormError("Completá Lote, Fecha y Producto.");
       return;
     }
     if (!parseFlexibleDate(form.fecha)) {
@@ -361,26 +327,22 @@ export function AsignacionLotesView() {
     }
   };
 
-  const handleImportConfirm = async () => {
-    if (importValidRows.length === 0) {
-      showFeedback("No hay filas válidas para importar.");
-      return;
+  const handleImportConfirm = async ({
+    rows,
+  }: {
+    rows: Array<{ payload?: unknown }>;
+  }) => {
+    const payloads = rows
+      .map((row) => row.payload as AsignacionLoteUpsertInput | undefined)
+      .filter((row): row is AsignacionLoteUpsertInput => Boolean(row));
+    if (payloads.length === 0) {
+      throw new Error("No hay filas válidas para importar.");
     }
-    try {
-      const result = await importAsignacionLotesApi(
-        session,
-        importValidRows.map((row) => row.lote)
-      );
-      await refresh();
-      setImportOpen(false);
-      setImportText("");
-      setCustomMapping({});
-      showFeedback(
-        `Importación lista: ${result.imported} cargadas, ${result.skipped} omitidas, ${result.duplicates} duplicadas, ${result.errors.length} errores.`
-      );
-    } catch (err) {
-      showFeedback(err instanceof Error ? err.message : "No se pudo importar.");
-    }
+    const result = await importAsignacionLotesApi(session, payloads);
+    await refresh();
+    showFeedback(
+      `Importación lista: ${result.imported} cargadas, ${result.skipped} omitidas, ${result.duplicates} duplicadas, ${result.errors.length} errores.`
+    );
   };
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -396,8 +358,7 @@ export function AsignacionLotesView() {
       showFeedback("Solo se importa CSV como texto. También podés pegar desde Excel.");
       return;
     }
-    setImportText(await file.text());
-    setCustomMapping({});
+    setSeedImportText(await file.text());
     setImportOpen(true);
   };
 
@@ -433,7 +394,9 @@ export function AsignacionLotesView() {
       key: "codigo",
       header: "Código",
       hideOnMobile: "xl",
-      render: (row) => <span className="font-mono text-xs">{row.codigo}</span>,
+      render: (row) => (
+        <span className="font-mono text-xs">{formatAsignacionCodigoPreview(row.codigo)}</span>
+      ),
     },
     {
       key: "cantidades",
@@ -624,7 +587,7 @@ export function AsignacionLotesView() {
               </Button>
               <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--sidebar-item-hover)]">
                 <Upload className="size-4" aria-hidden="true" />
-                CSV
+                Importar CSV
                 <input className="sr-only" type="file" accept=".csv,text/csv,.xlsx" onChange={handleFileChange} disabled={!canMutate} />
               </label>
               <Button type="button" variant="primary" onClick={startCreate} disabled={!canMutate}>
@@ -698,7 +661,7 @@ export function AsignacionLotesView() {
                 <Field label="Lote*" value={form.lote} onChange={(value) => setForm((f) => ({ ...f, lote: value }))} />
                 <Field label="Fecha*" type="date" value={form.fecha} onChange={(value) => setForm((f) => ({ ...f, fecha: value }))} />
                 <Field label="Producto*" value={form.producto} onChange={(value) => setForm((f) => ({ ...f, producto: value }))} />
-                <Field label="Código*" value={form.codigo} onChange={(value) => setForm((f) => ({ ...f, codigo: value }))} />
+                <Field label="Código" value={form.codigo} onChange={(value) => setForm((f) => ({ ...f, codigo: value }))} />
                 <Field label="Marca" value={form.marca} onChange={(value) => setForm((f) => ({ ...f, marca: value }))} />
                 <Field label="Cantidades*" type="number" min="0" step="any" value={form.cantidades} onChange={(value) => setForm((f) => ({ ...f, cantidades: value }))} />
                 <Field label="VTO" type="date" value={form.vto} onChange={(value) => setForm((f) => ({ ...f, vto: value }))} />
@@ -728,121 +691,39 @@ export function AsignacionLotesView() {
           </DialogContent>
         </Dialog>
 
-        <Dialog open={importOpen} onOpenChange={setImportOpen}>
-          <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Pegar asignaciones desde Excel</DialogTitle>
-              <DialogDescription>Las filas con errores o duplicadas por lote + código se excluyen.</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <textarea
-                value={importText}
-                onChange={(event) => {
-                  setImportText(event.target.value);
-                  setCustomMapping({});
-                }}
-                placeholder="Pegá columnas como Lote, Fecha, Producto, Código, Marca, Cantidades..."
-                rows={8}
-                className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 font-mono text-xs"
-              />
-
-              {grid.headers.length > 0 && (
-                <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] p-3">
-                  <h3 className="mb-2 text-sm font-semibold">Mapeo de columnas</h3>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {IMPORT_FIELDS.map((field) => (
-                      <label key={field.key} className="space-y-1 text-xs font-medium">
-                        {field.label}{field.required ? "*" : ""}
-                        <select
-                          value={mapping[field.key] ?? ""}
-                          onChange={(event) =>
-                            setCustomMapping((current) => ({
-                              ...current,
-                              [field.key]: event.target.value === "" ? null : Number(event.target.value),
-                            }))
-                          }
-                          className="w-full rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1.5"
-                        >
-                          <option value="">Sin mapear</option>
-                          {grid.headers.map((header, index) => (
-                            <option key={`${header}-${index}`} value={index}>
-                              {header}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {importIssueRows.length > 0 && (
-                <div className="rounded-[var(--os-radius-sm)] border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] p-3 text-sm text-[var(--genus-warning)]">
-                  <p className="font-semibold">Filas con errores o duplicados</p>
-                  <ul className="mt-2 list-disc space-y-1 pl-5">
-                    {importIssueRows.slice(0, 12).map((row) => (
-                      <li key={row.rowNumber}>
-                        Fila {row.rowNumber}: {row.issues.map((issue) => issue.message).join(" ")}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              <div className="os-table-wrap overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
-                <table className="os-table w-full max-w-full table-fixed text-[length:var(--os-table-font,13px)]">
-                  <thead className="bg-[var(--os-bg)] text-xs uppercase text-[var(--os-text-muted)]">
-                    <tr>
-                      <th className="px-3 py-2 text-left">Fila</th>
-                      <th className="px-3 py-2 text-left">Lote</th>
-                      <th className="hidden px-3 py-2 text-left md:table-cell">Fecha</th>
-                      <th className="px-3 py-2 text-left">Producto</th>
-                      <th className="hidden px-3 py-2 text-left md:table-cell">Código</th>
-                      <th className="hidden px-3 py-2 text-left sm:table-cell">Cantidades</th>
-                      <th className="px-3 py-2 text-left">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {importPreview.slice(0, 20).map((row) => (
-                      <tr key={row.rowNumber} className="border-t border-[var(--os-border-subtle)]">
-                        <td className="px-3 py-2">{row.rowNumber}</td>
-                        <td className="px-3 py-2 font-mono text-xs">
-                          <span className="os-break">{row.mapped.lote}</span>
-                        </td>
-                        <td className="hidden px-3 py-2 md:table-cell">{row.mapped.fecha}</td>
-                        <td className="px-3 py-2">
-                          <span className="os-break">{row.mapped.producto}</span>
-                        </td>
-                        <td className="hidden px-3 py-2 font-mono text-xs md:table-cell">
-                          <span className="os-break">{row.mapped.codigo}</span>
-                        </td>
-                        <td className="hidden px-3 py-2 tabular-nums sm:table-cell">{row.mapped.cantidades}</td>
-                        <td className="px-3 py-2">
-                          {row.issues.length === 0 ? (
-                            <span className="text-[var(--os-teal)]">Lista</span>
-                          ) : (
-                            <span className="text-amber-700">Excluida</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="text-xs text-[var(--os-text-muted)]">
-                {importValidRows.length} filas válidas de {importPreview.length}. Se excluyen las filas con errores.
-              </p>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="secondary" onClick={() => setImportOpen(false)}>
-                Cancelar
-              </Button>
-              <Button type="button" variant="primary" onClick={handleImportConfirm}>
-                Confirmar importación
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <ExcelImportPreviewDialog
+          open={importOpen}
+          onOpenChange={(open) => {
+            setImportOpen(open);
+            if (!open) setSeedImportText("");
+          }}
+          title="Pegar asignaciones desde Excel"
+          description="Las filas con errores o duplicadas por lote + código se excluyen."
+          fields={IMPORT_FIELDS}
+          fieldAliases={ASIGNACION_LOTES_FIELD_ALIASES}
+          analyzeMode="live"
+          allowColumnRemap
+          initialText={seedImportText}
+          idempotencyPrefix="asignacion-lotes-import"
+          placeholder="Pegá columnas como Lote, Fecha, Producto, Código, Marca, Cantidades..."
+          validateMappedRow={(mapped, { rowNumber }) => {
+            const row = mapped as Partial<AsignacionLoteMappedRow>;
+            const issues = validateAsignacionLoteRow(row, rowNumber);
+            if (row.lote?.trim() && findDuplicateAsignacionLote(row.lote, row.codigo ?? "")) {
+              issues.push({
+                rowIndex: rowNumber,
+                field: "lote",
+                message: "Duplicado por lote + código; no se importará.",
+              });
+            }
+            return {
+              issues,
+              payload: buildAsignacionLoteFromMappedRow(row, workspace.context.displayName),
+            };
+          }}
+          onConfirm={handleImportConfirm}
+          onToast={(message) => showFeedback(message)}
+        />
       </div>
     </TwinShell>
   );

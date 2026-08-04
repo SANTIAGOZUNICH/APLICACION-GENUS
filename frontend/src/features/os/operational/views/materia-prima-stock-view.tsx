@@ -12,6 +12,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  ExcelImportPreviewDialog,
+  type ExcelImportFieldDef,
+} from "../components/excel-import-preview-dialog";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import {
@@ -28,6 +32,7 @@ import {
   upsertMateriaPrima,
   type MateriaPrimaEstado,
   type MateriaPrimaLot,
+  type MateriaPrimaUpsertInput,
 } from "../adapters/materia-prima-repository";
 import {
   MP_FIELD_ALIASES,
@@ -35,14 +40,7 @@ import {
   validateMpRow,
   type MateriaPrimaMappedRow,
 } from "../lib/materia-prima-import";
-import {
-  autoMapColumns,
-  parseGrid,
-  parseNonNegativeNumber,
-  rowToObject,
-  type ColumnMapping,
-  type RowValidationIssue,
-} from "../lib/clipboard-import";
+import { parseNonNegativeNumber } from "../lib/clipboard-import";
 import { formatDateDisplay, parseFlexibleDate } from "../lib/delivery-date";
 
 const ESTADO_FILTERS: Array<{ id: MateriaPrimaEstado | "todos"; label: string }> = [
@@ -53,12 +51,12 @@ const ESTADO_FILTERS: Array<{ id: MateriaPrimaEstado | "todos"; label: string }>
   { id: "agotado", label: "Agotado" },
 ];
 
-const MP_IMPORT_FIELDS: Array<{ key: keyof MateriaPrimaMappedRow; label: string; required?: boolean }> = [
-  { key: "codigo", label: "Código", required: true },
-  { key: "nombre", label: "Nombre", required: true },
-  { key: "lote", label: "Lote", required: true },
+const MP_IMPORT_FIELDS: ExcelImportFieldDef[] = [
+  { key: "codigo", label: "Código", required: true, mobilePrimary: true },
+  { key: "nombre", label: "Nombre", required: true, mobilePrimary: true },
+  { key: "lote", label: "Lote", required: true, mobilePrimary: true },
   { key: "proveedor", label: "Proveedor" },
-  { key: "cantidad", label: "Cantidad", required: true },
+  { key: "cantidad", label: "Cantidad", required: true, mobilePrimary: true },
   { key: "unidad", label: "Unidad", required: true },
   { key: "fechaIngreso", label: "Fecha ingreso" },
   { key: "vencimiento", label: "Fecha vencimiento" },
@@ -80,14 +78,6 @@ type MpFormState = {
   estadoManual: "" | MateriaPrimaEstado;
   observaciones: string;
 };
-
-interface ImportPreviewRow {
-  rowNumber: number;
-  source: string[];
-  mapped: Partial<MateriaPrimaMappedRow>;
-  issues: RowValidationIssue[];
-  mp: ReturnType<typeof buildMpFromMappedRow>;
-}
 
 function emptyForm(): MpFormState {
   return {
@@ -167,32 +157,10 @@ export function MateriaPrimaStockView() {
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MateriaPrimaLot | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [importText, setImportText] = useState("");
-  const [customMapping, setCustomMapping] = useState<ColumnMapping>({});
+  const [seedImportText, setSeedImportText] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const refresh = () => setItems(getAllMateriasPrimas());
-
-  const grid = useMemo(() => parseGrid(importText), [importText]);
-  const autoMapping = useMemo(() => autoMapColumns(grid.headers, MP_FIELD_ALIASES), [grid.headers]);
-  const mapping = useMemo(() => ({ ...autoMapping, ...customMapping }), [autoMapping, customMapping]);
-  const importPreview = useMemo<ImportPreviewRow[]>(() => {
-    if (!importText.trim()) return [];
-    return grid.rows.map((row, index) => {
-      const rowNumber = grid.hasHeaderRow ? index + 2 : index + 1;
-      const mapped = rowToObject(row, mapping) as Partial<MateriaPrimaMappedRow>;
-      const issues = validateMpRow(mapped, rowNumber);
-      return {
-        rowNumber,
-        source: row,
-        mapped,
-        issues,
-        mp: buildMpFromMappedRow(mapped),
-      };
-    });
-  }, [grid, importText, mapping]);
-  const importValidRows = importPreview.filter((row) => row.issues.length === 0);
-  const importIssueRows = importPreview.filter((row) => row.issues.length > 0);
 
   const filtered = useMemo(() => {
     return items.filter((mp) => {
@@ -284,19 +252,19 @@ export function MateriaPrimaStockView() {
     URL.revokeObjectURL(url);
   };
 
-  const handleImportConfirm = () => {
-    if (importValidRows.length === 0) {
-      showFeedback("No hay filas válidas para importar.");
-      return;
+  const handleImportConfirm = async ({
+    rows,
+  }: {
+    rows: Array<{ payload?: unknown }>;
+  }) => {
+    const payloads = rows
+      .map((row) => row.payload as MateriaPrimaUpsertInput | undefined)
+      .filter((row): row is MateriaPrimaUpsertInput => Boolean(row));
+    if (payloads.length === 0) {
+      throw new Error("No hay filas válidas para importar.");
     }
-    const result = importMateriasPrimas(
-      importValidRows.map((row) => row.mp),
-      workspace.context.displayName
-    );
+    const result = importMateriasPrimas(payloads, workspace.context.displayName);
     refresh();
-    setImportOpen(false);
-    setImportText("");
-    setCustomMapping({});
     showFeedback(
       `Importación lista: ${result.imported} nuevas, ${result.updated} actualizadas, ${result.duplicates} duplicadas, ${result.errors.length} errores.`
     );
@@ -315,8 +283,7 @@ export function MateriaPrimaStockView() {
       showFeedback("Solo se importa CSV como texto. También podés pegar desde Excel.");
       return;
     }
-    setImportText(await file.text());
-    setCustomMapping({});
+    setSeedImportText(await file.text());
     setImportOpen(true);
   };
 
@@ -447,7 +414,7 @@ export function MateriaPrimaStockView() {
           </Button>
           <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--sidebar-item-hover)]">
             <Upload className="size-4" aria-hidden="true" />
-            CSV
+            Importar CSV
             <input className="sr-only" type="file" accept=".csv,text/csv,.xlsx" onChange={handleFileChange} />
           </label>
           <Button variant="primary" onClick={startCreate}>
@@ -542,123 +509,32 @@ export function MateriaPrimaStockView() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={importOpen} onOpenChange={setImportOpen}>
-        <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Pegar desde Excel</DialogTitle>
-            <DialogDescription>
-              Pegá una tabla copiada desde Excel/Sheets o cargá un CSV. Revisá el mapeo antes de confirmar.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <textarea
-              value={importText}
-              onChange={(event) => {
-                setImportText(event.target.value);
-                setCustomMapping({});
-              }}
-              placeholder="Pegá acá columnas como Código, Nombre, Lote, Proveedor, Cantidad, Unidad..."
-              rows={8}
-              className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 font-mono text-xs"
-            />
-
-            {grid.headers.length > 0 && (
-              <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] p-3">
-                <h3 className="mb-2 text-sm font-semibold">Mapeo de columnas</h3>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {MP_IMPORT_FIELDS.map((field) => (
-                    <label key={field.key} className="space-y-1 text-xs font-medium">
-                      {field.label}{field.required ? "*" : ""}
-                      <select
-                        value={mapping[field.key] ?? ""}
-                        onChange={(event) =>
-                          setCustomMapping((current) => ({
-                            ...current,
-                            [field.key]: event.target.value === "" ? null : Number(event.target.value),
-                          }))
-                        }
-                        className="w-full rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1.5"
-                      >
-                        <option value="">Sin mapear</option>
-                        {grid.headers.map((header, index) => (
-                          <option key={`${header}-${index}`} value={index}>
-                            {header}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {importIssueRows.length > 0 && (
-              <div className="rounded-[var(--os-radius-sm)] border border-[var(--genus-warning)]/25 bg-[var(--genus-warning-soft)] p-3 text-sm text-[var(--genus-warning)]">
-                <p className="font-semibold">Filas con errores (se excluyen al importar)</p>
-                <ul className="mt-2 list-disc space-y-1 pl-5">
-                  {importIssueRows.slice(0, 12).map((row) => (
-                    <li key={row.rowNumber}>
-                      Fila {row.rowNumber}: {row.issues.map((issue) => issue.message).join(" ")}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <div className="os-table-wrap overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
-              <table className="os-table w-full max-w-full table-fixed text-[length:var(--os-table-font,13px)]">
-                <thead className="bg-[var(--os-bg)] text-xs uppercase text-[var(--os-text-muted)]">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Fila</th>
-                    <th className="px-3 py-2 text-left">Código</th>
-                    <th className="px-3 py-2 text-left">Nombre</th>
-                    <th className="hidden px-3 py-2 text-left md:table-cell">Lote</th>
-                    <th className="hidden px-3 py-2 text-left sm:table-cell">Cantidad</th>
-                    <th className="hidden px-3 py-2 text-left md:table-cell">Unidad</th>
-                    <th className="px-3 py-2 text-left">Estado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {importPreview.slice(0, 20).map((row) => (
-                    <tr key={row.rowNumber} className="border-t border-[var(--os-border-subtle)]">
-                      <td className="px-3 py-2">{row.rowNumber}</td>
-                      <td className="px-3 py-2 font-mono text-xs">
-                        <span className="os-break">{row.mapped.codigo}</span>
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className="os-break">{row.mapped.nombre}</span>
-                      </td>
-                      <td className="hidden px-3 py-2 font-mono text-xs md:table-cell">
-                        <span className="os-break">{row.mapped.lote}</span>
-                      </td>
-                      <td className="hidden px-3 py-2 tabular-nums sm:table-cell">{row.mapped.cantidad}</td>
-                      <td className="hidden px-3 py-2 md:table-cell">{row.mapped.unidad}</td>
-                      <td className="px-3 py-2">
-                        {row.issues.length === 0 ? (
-                          <span className="text-[var(--os-teal)]">Lista</span>
-                        ) : (
-                          <span className="text-amber-700">Excluida</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-xs text-[var(--os-text-muted)]">
-              {importValidRows.length} filas válidas de {importPreview.length}. Se excluyen las filas con errores.
-            </p>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => setImportOpen(false)}>
-              Cancelar
-            </Button>
-            <Button type="button" variant="primary" onClick={handleImportConfirm}>
-              Confirmar importación
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ExcelImportPreviewDialog
+        open={importOpen}
+        onOpenChange={(open) => {
+          setImportOpen(open);
+          if (!open) setSeedImportText("");
+        }}
+        title="Pegar desde Excel"
+        description="Pegá una tabla copiada desde Excel/Sheets o cargá un CSV. Revisá el mapeo antes de confirmar."
+        fields={MP_IMPORT_FIELDS}
+        fieldAliases={MP_FIELD_ALIASES}
+        analyzeMode="live"
+        allowColumnRemap
+        initialText={seedImportText}
+        idempotencyPrefix="materia-prima-import"
+        placeholder="Pegá acá columnas como Código, Nombre, Lote, Proveedor, Cantidad, Unidad..."
+        validateMappedRow={(mapped, { rowNumber }) => {
+          const row = mapped as Partial<MateriaPrimaMappedRow>;
+          const issues = validateMpRow(row, rowNumber);
+          return {
+            issues,
+            payload: buildMpFromMappedRow(row),
+          };
+        }}
+        onConfirm={handleImportConfirm}
+        onToast={(message) => showFeedback(message)}
+      />
     </div>
     </TwinShell>
   );

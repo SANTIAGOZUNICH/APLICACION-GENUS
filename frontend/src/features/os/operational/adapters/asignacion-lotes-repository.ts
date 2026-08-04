@@ -25,7 +25,9 @@ function makeId(): string {
 }
 
 function asString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
 }
 
 function asNumber(value: unknown): number | null {
@@ -237,7 +239,6 @@ export function importAsignacionLotes(
     if (!row.fecha.trim()) errors.push({ rowIndex, field: "fecha", message: "Fecha obligatoria." });
     if (!parseFlexibleDate(row.fecha)) errors.push({ rowIndex, field: "fecha", message: "Fecha inválida." });
     if (!row.producto.trim()) errors.push({ rowIndex, field: "producto", message: "Producto obligatorio." });
-    if (!row.codigo.trim()) errors.push({ rowIndex, field: "codigo", message: "Código obligatorio." });
     if (!Number.isFinite(row.cantidades) || row.cantidades < 0) {
       errors.push({ rowIndex, field: "cantidades", message: "Cantidades debe ser un número mayor o igual a 0." });
     }

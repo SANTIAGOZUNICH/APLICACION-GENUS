@@ -33,7 +33,10 @@ function makeId(): string {
 }
 
 function asString(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
+  if (typeof value === "string") return value.trim();
+  // Never coerce missing código from producto; only stringify if already a scalar.
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
 }
 
 function asNumber(value: unknown): number | null {
@@ -162,8 +165,8 @@ export class AsignacionLotesService {
     const idx = input.id ? items.findIndex((item) => item.id === input.id) : -1;
     const previous = idx >= 0 ? items[idx] : undefined;
 
-    if (!input.lote.trim() || !input.fecha.trim() || !input.producto.trim() || !input.codigo.trim()) {
-      throw new OrdersValidationError("Lote, Fecha, Producto y Código son obligatorios.");
+    if (!input.lote.trim() || !input.fecha.trim() || !input.producto.trim()) {
+      throw new OrdersValidationError("Lote, Fecha y Producto son obligatorios.");
     }
     if (!parseFlexibleDate(input.fecha)) {
       throw new OrdersValidationError("Fecha inválida.");
@@ -185,6 +188,7 @@ export class AsignacionLotesService {
       lote: input.lote.trim(),
       fecha: parseFlexibleDate(input.fecha) ?? input.fecha,
       producto: input.producto.trim(),
+      // Persist empty código as ""; never fall back to producto.
       codigo: input.codigo.trim(),
       marca: input.marca?.trim() ?? previous?.marca ?? "",
       cantidades: input.cantidades,
@@ -267,7 +271,6 @@ export class AsignacionLotesService {
       if (!row.producto.trim()) {
         errors.push({ rowIndex, field: "producto", message: "Producto obligatorio." });
       }
-      if (!row.codigo.trim()) errors.push({ rowIndex, field: "codigo", message: "Código obligatorio." });
       if (!Number.isFinite(row.cantidades) || row.cantidades < 0) {
         errors.push({
           rowIndex,

@@ -5,18 +5,20 @@ import {
 } from "./clipboard-import";
 import { parseFlexibleDate } from "./delivery-date";
 
+/** Aliases de encabezado (solo títulos). El contenido de celdas no se normaliza aquí. */
 export const ASIGNACION_LOTES_FIELD_ALIASES: Record<string, string[]> = {
-  lote: ["lote", "nro lote", "n° lote", "batch"],
-  fecha: ["fecha", "fecha asignacion", "fecha asignación", "fecha lote"],
-  producto: ["producto", "descripcion", "descripción", "nombre producto", "cream", "creamy"],
-  codigo: ["codigo", "código", "cod", "codigo producto", "código producto", "sku"],
-  marca: ["marca", "brand"],
-  cantidades: ["cantidades", "cantidad", "unidades", "kg", "qty"],
-  vto: ["vto", "vencimiento", "fecha vencimiento", "vence"],
-  muestras: ["muestras", "muestra", "sample"],
-  cjMuestra: ["cj muestra", "cj. muestra", "caja muestra", "cajas muestra"],
-  fechaAnalisis: ["fecha analisis", "fecha análisis", "analisis", "análisis"],
+  lote: ["lote", "n° lote", "nº lote", "nro lote", "batch"],
+  fecha: ["fecha", "fecha asignacion", "fecha asignación"],
+  producto: ["producto", "nombre producto", "descripcion", "descripción"],
+  codigo: ["codigo", "código", "cod.", "cod", "codigo producto", "código producto"],
+  marca: ["marca"],
+  cantidades: ["cantidad", "cantidades", "cant."],
+  vto: ["vto", "vencimiento", "fecha vto", "fecha vencimiento"],
+  muestras: ["muestras"],
+  cjMuestra: ["cj muestra", "cajas muestra", "cajas de muestra"],
+  fechaAnalisis: ["fecha analisis", "fecha análisis"],
   observaciones: ["observaciones", "observacion", "observación", "notas", "comentarios"],
+  cliente: ["cliente", "razon social", "razón social"],
 };
 
 export interface AsignacionLoteMappedRow {
@@ -31,6 +33,20 @@ export interface AsignacionLoteMappedRow {
   cjMuestra: string;
   fechaAnalisis: string;
   observaciones: string;
+  cliente: string;
+}
+
+/** Texto de preview cuando el código importado está vacío (no se persiste). */
+export function formatAsignacionCodigoPreview(codigo: string | null | undefined): string {
+  return codigo?.trim() ? codigo.trim() : "Sin código";
+}
+
+/**
+ * Código tal como viene de la celda CÓDIGO (trim extremos).
+ * Vacío → "". Nunca usa PRODUCTO ni genera valores.
+ */
+export function normalizeImportedCodigo(raw: string | null | undefined): string {
+  return typeof raw === "string" ? raw.trim() : "";
 }
 
 export function validateAsignacionLoteRow(
@@ -48,7 +64,7 @@ export function validateAsignacionLoteRow(
   if (!row.producto?.trim()) {
     issues.push({ rowIndex, field: "producto", message: "Producto obligatorio." });
   }
-  if (!row.codigo?.trim()) issues.push({ rowIndex, field: "codigo", message: "Código obligatorio." });
+  // Código opcional: vacío permitido; no se infiere desde PRODUCTO.
   if (cantidades === null) {
     issues.push({
       rowIndex,
@@ -78,7 +94,7 @@ export function buildAsignacionLoteFromMappedRow(
     lote: row.lote?.trim() ?? "",
     fecha: row.fecha?.trim() ? parseFlexibleDate(row.fecha) ?? row.fecha.trim() : "",
     producto: row.producto?.trim() ?? "",
-    codigo: row.codigo?.trim() ?? "",
+    codigo: normalizeImportedCodigo(row.codigo),
     marca: row.marca?.trim() ?? "",
     cantidades: parseNonNegativeNumber(row.cantidades ?? "") ?? 0,
     vto: row.vto?.trim() ? parseFlexibleDate(row.vto) : null,

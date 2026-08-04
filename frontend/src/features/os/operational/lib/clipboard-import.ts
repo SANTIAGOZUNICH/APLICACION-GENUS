@@ -122,25 +122,63 @@ export function normalizeHeaderKey(value: string): string {
     .replace(/^_|_$/g, "");
 }
 
-/** Intenta mapear encabezados a claves de destino usando alias. */
+/** True if header matches alias as whole token (no reverse substring). */
+function headerMatchesAlias(header: string, alias: string): "exact" | "token" | null {
+  if (!header || !alias) return null;
+  if (header === alias) return "exact";
+  // Allow compound headers like fecha_vto ↔ vto, codigo_mp ↔ codigo_mp.
+  // Never match alias.includes(header): that bound "codigo_producto" → "producto".
+  if (
+    alias.length >= 3 &&
+    (header.startsWith(`${alias}_`) ||
+      header.endsWith(`_${alias}`) ||
+      header.includes(`_${alias}_`))
+  ) {
+    return "token";
+  }
+  return null;
+}
+
+/**
+ * Mapea encabezados a campos por alias.
+ * Prioriza coincidencia exacta, luego token compuesto; una columna solo a un campo.
+ * No infiere valores de celdas: solo asocia títulos.
+ */
 export function autoMapColumns(
   headers: string[],
   fieldAliases: Record<string, string[]>
 ): ColumnMapping {
   const mapping: ColumnMapping = {};
+  for (const field of Object.keys(fieldAliases)) mapping[field] = null;
+
   const normalizedHeaders = headers.map(normalizeHeaderKey);
+  type Candidate = { field: string; col: number; score: number };
+  const candidates: Candidate[] = [];
 
   for (const [field, aliases] of Object.entries(fieldAliases)) {
-    mapping[field] = null;
-    const normalizedAliases = aliases.map(normalizeHeaderKey);
-    for (let i = 0; i < normalizedHeaders.length; i++) {
-      const h = normalizedHeaders[i]!;
-      if (normalizedAliases.some((a) => h === a || h.includes(a) || a.includes(h))) {
-        mapping[field] = i;
-        break;
+    const normalizedAliases = aliases.map(normalizeHeaderKey).filter(Boolean);
+    for (let col = 0; col < normalizedHeaders.length; col++) {
+      const h = normalizedHeaders[col]!;
+      let best = 0;
+      for (const alias of normalizedAliases) {
+        const kind = headerMatchesAlias(h, alias);
+        if (kind === "exact") best = Math.max(best, 1000 + alias.length);
+        else if (kind === "token") best = Math.max(best, 100 + alias.length);
       }
+      if (best > 0) candidates.push({ field, col, score: best });
     }
   }
+
+  candidates.sort((a, b) => b.score - a.score || a.col - b.col);
+  const claimedCols = new Set<number>();
+  const claimedFields = new Set<string>();
+  for (const candidate of candidates) {
+    if (claimedCols.has(candidate.col) || claimedFields.has(candidate.field)) continue;
+    mapping[candidate.field] = candidate.col;
+    claimedCols.add(candidate.col);
+    claimedFields.add(candidate.field);
+  }
+
   return mapping;
 }
 

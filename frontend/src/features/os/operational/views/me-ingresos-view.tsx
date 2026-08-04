@@ -16,7 +16,7 @@ import { OperationalTable, type OperationalTableColumn } from "@/features/os/ope
 import { displayCell, multiplyTotal, parseOptionalNumber } from "@/lib/inventory/calcs";
 import { ME_INGRESO_COLUMNS, type MeIngresoRow } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
-import { usePreviewSession } from "@/features/os/session/preview-context";
+import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 
 const ALIASES: Record<string, string[]> = {
   fecha: ["fecha"],
@@ -63,6 +63,7 @@ function emptyForm(): FormState {
 
 export function MeIngresosView() {
   const { sectorId } = usePreviewSession();
+  const { showToast } = usePreviewContext();
   const canWrite = canWriteInventory(sectorId, "me_ingresos");
   const [rows, setRows] = useState<MeIngresoRow[]>([]);
   const [persistence, setPersistence] = useState(true);
@@ -390,6 +391,7 @@ export function MeIngresosView() {
         ]}
         fieldAliases={ALIASES}
         ignoreKeys={["total"]}
+        onToast={(message) => showToast(message)}
         onConfirm={async (mappedRows) => {
           for (const m of mappedRows) {
             await mutateInventory({

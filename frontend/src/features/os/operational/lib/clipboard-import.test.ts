@@ -37,6 +37,31 @@ describe("clipboard-import", () => {
     });
   });
 
+  it("no asocia CÓDIGO a la columna Producto (bug histórico includes reverso)", () => {
+    const mapping = autoMapColumns(["Lote", "Fecha", "Producto", "Código", "Cantidades"], {
+      lote: ["lote"],
+      fecha: ["fecha", "fecha lote"],
+      producto: ["producto", "nombre producto"],
+      codigo: ["codigo", "código", "codigo producto"],
+      cantidades: ["cantidad", "cantidades"],
+    });
+    expect(mapping.lote).toBe(0);
+    expect(mapping.fecha).toBe(1);
+    expect(mapping.producto).toBe(2);
+    expect(mapping.codigo).toBe(3);
+    expect(mapping.cantidades).toBe(4);
+    expect(mapping.codigo).not.toBe(mapping.producto);
+  });
+
+  it("una columna solo puede mapearse a un campo", () => {
+    const mapping = autoMapColumns(["Fecha VTO"], {
+      fecha: ["fecha"],
+      vto: ["vto", "fecha vto"],
+    });
+    expect(mapping.vto).toBe(0);
+    expect(mapping.fecha).toBeNull();
+  });
+
   it("parsea números no negativos con formatos locales", () => {
     expect(parseNonNegativeNumber("1.234,5")).toBe(1234.5);
     expect(parseNonNegativeNumber("12,5")).toBe(12.5);

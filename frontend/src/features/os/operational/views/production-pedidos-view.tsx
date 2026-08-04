@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { Button } from "@/components/ui/button";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
@@ -22,6 +22,10 @@ import {
   type ProductionPedidoInput,
   type ProductionPedidoRecord,
 } from "@/lib/production-pedidos/types";
+import {
+  buildExcelTsv,
+  copyTextToClipboard,
+} from "@/features/os/operational/lib/excel-import-preview-utils";
 
 type Draft = {
   op: string;
@@ -96,7 +100,40 @@ type PasteRow = {
   errors: string[];
   warnings: string[];
   valid: boolean;
+  selected: boolean;
 };
+
+type PasteUndoSnapshot = {
+  rows: PasteRow[];
+};
+
+const PASTE_COPY_HEADERS = [
+  "OP",
+  "FECHA",
+  "N.º OC",
+  "CLIENTE",
+  "PRODUCTO",
+  "S",
+  "Q",
+  "ML",
+  "KG",
+  "ESTADO",
+];
+
+function pasteRowToTsvCells(r: PasteRow): string[] {
+  return [
+    r.op ?? "",
+    r.fecha ?? "",
+    r.nroOc ?? "",
+    r.cliente ?? "",
+    r.producto ?? "",
+    r.s ?? "",
+    r.q == null ? "" : String(r.q),
+    r.ml == null ? "" : String(r.ml),
+    r.kg == null ? "" : String(r.kg),
+    r.estado ?? "",
+  ];
+}
 
 export function ProductionPedidosView() {
   const { email, sectorId } = usePreviewSession();
@@ -136,6 +173,9 @@ export function ProductionPedidosView() {
   const [importResult, setImportResult] = useState<string | null>(null);
   const [importIdempotencyKey, setImportIdempotencyKey] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [confirmRemovePaste, setConfirmRemovePaste] = useState(false);
+  const [pasteUndoStack, setPasteUndoStack] = useState<PasteUndoSnapshot[]>([]);
+  const importLock = useRef(false);
 
   const reload = useCallback(async () => {
     try {
@@ -202,13 +242,20 @@ export function ProductionPedidosView() {
       const preview = await previewProductionPedidosPasteApi(session, pasteText, {
         forcePosition: force,
       });
-      setPasteRows(preview.rows);
+      setPasteRows(
+        preview.rows.map((row) => ({
+          ...row,
+          selected: row.valid,
+        }))
+      );
       setPasteHeader(preview.headerDetected);
       setPasteMode(preview.mode);
       setPasteAssociations(preview.associations);
       setPasteSummary(preview.summary);
       setPasteMissing(preview.missingFields);
       setForcePosition(force);
+      setConfirmRemovePaste(false);
+      setPasteUndoStack([]);
       setImportResult(null);
       setImportIdempotencyKey(
         `ped-import-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -220,20 +267,23 @@ export function ProductionPedidosView() {
   }
 
   async function confirmImport() {
-    const valid = pasteRows.filter((r) => r.valid);
-    if (!valid.length || importing) {
-      setError("No hay filas válidas para importar");
+    if (importing || importLock.current) return;
+    const selectedValid = pasteRows.filter((r) => r.selected && r.valid);
+    if (!selectedValid.length) {
+      setError("No hay filas válidas seleccionadas para importar");
       return;
     }
     const key =
       importIdempotencyKey ??
       `ped-import-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    if (!importIdempotencyKey) setImportIdempotencyKey(key);
+    importLock.current = true;
     setImporting(true);
     setImportResult(null);
     try {
       const result = await importProductionPedidosApi(
         session,
-        valid.map((r) => ({
+        selectedValid.map((r) => ({
           op: r.op,
           fecha: r.fecha,
           nroOc: r.nroOc,
@@ -255,13 +305,16 @@ export function ProductionPedidosView() {
       setPasteText("");
       setPasteRows([]);
       setPasteAssociations([]);
+      setPasteUndoStack([]);
+      setConfirmRemovePaste(false);
       setError(null);
       void reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo importar");
-      // Conserve pasteText, pasteRows, corrections; keep modal open.
+      // Conserve pasteText, pasteRows, corrections and idempotency key; keep modal open.
     } finally {
       setImporting(false);
+      importLock.current = false;
     }
   }
 
@@ -269,6 +322,9 @@ export function ProductionPedidosView() {
     setPasteRows((prev) =>
       prev.map((r, i) => {
         if (i !== idx) return r;
+        if (Object.keys(patch).length === 1 && "selected" in patch) {
+          return { ...r, selected: Boolean(patch.selected) };
+        }
         const merged = { ...r, ...patch };
         const coerced = coercePedidoFields({
           op: merged.op,
@@ -300,7 +356,53 @@ export function ProductionPedidosView() {
     );
   }
 
-  const validPasteCount = pasteRows.filter((r) => r.valid).length;
+  function setAllPasteSelection(value: boolean) {
+    setPasteRows((prev) =>
+      prev.map((row) => ({
+        ...row,
+        selected: value ? row.valid : false,
+      }))
+    );
+  }
+
+  async function copySelectedPasteRows() {
+    const selected = pasteRows.filter((r) => r.selected);
+    if (!selected.length) {
+      setImportResult("No hay filas seleccionadas para copiar.");
+      return;
+    }
+    const ok = await copyTextToClipboard(
+      buildExcelTsv(
+        PASTE_COPY_HEADERS,
+        selected.map((row) => pasteRowToTsvCells(row))
+      )
+    );
+    setImportResult(ok ? `${selected.length} filas copiadas` : "No se pudo copiar al portapapeles.");
+  }
+
+  function confirmRemoveSelectedPaste() {
+    const remaining = pasteRows.filter((r) => !r.selected);
+    setPasteUndoStack((stack) => [...stack, { rows: pasteRows }]);
+    setPasteRows(remaining);
+    setConfirmRemovePaste(false);
+    setImportResult("Filas quitadas del preview. Podés deshacer mientras el modal esté abierto.");
+  }
+
+  function undoPasteRemove() {
+    setPasteUndoStack((stack) => {
+      if (!stack.length) return stack;
+      const previous = stack[stack.length - 1]!;
+      setPasteRows(previous.rows);
+      return stack.slice(0, -1);
+    });
+    setImportResult("Se restauraron las filas quitadas.");
+  }
+
+  const pasteSelectedCount = pasteRows.filter((r) => r.selected).length;
+  const pasteValidCount = pasteRows.filter((r) => r.valid).length;
+  const pasteWarningCount = pasteRows.filter((r) => r.warnings.length > 0).length;
+  const pasteInvalidCount = pasteRows.filter((r) => !r.valid).length;
+  const selectedImportableCount = pasteRows.filter((r) => r.selected && r.valid).length;
 
   return (
     <TwinShell title="Pedidos">
@@ -331,6 +433,8 @@ export function ProductionPedidosView() {
               setPasteSummary("");
               setImportResult(null);
               setForcePosition(false);
+              setConfirmRemovePaste(false);
+              setPasteUndoStack([]);
               setError(null);
             }}
           >
@@ -615,207 +719,422 @@ export function ProductionPedidosView() {
         )}
 
         {pasteOpen && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center bg-[var(--os-navy)]/50 p-4 sm:items-center">
-            <div className="os-modal-in flex max-h-[92dvh] w-full max-w-4xl flex-col overflow-hidden rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-4">
-              <h3 className="mb-2 text-lg font-semibold">Pegar desde Excel</h3>
-              <p className="mb-2 text-xs text-[var(--os-text-muted)]">
-                Con encabezados: cada columna se asocia por su título (el orden no importa). Sin
-                encabezados: usá el orden estándar OP | FECHA | N.º OC | CLIENTE | PRODUCTO | S | Q |
-                ML | ESTADO. KG siempre se recalcula.
-              </p>
-              <textarea
-                className="min-h-28 w-full rounded border border-[var(--os-border)] bg-transparent p-2 font-mono text-xs"
-                value={pasteText}
-                onChange={(e) => setPasteText(e.target.value)}
-                placeholder="Pegá filas aquí…"
-                disabled={importing}
-              />
-              <div className="mt-2 flex flex-wrap gap-2">
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-[var(--os-navy)]/50 p-2 sm:items-center sm:p-4">
+            <div className="os-modal-in flex h-[92vh] w-[96vw] max-w-none flex-col overflow-hidden rounded border border-[var(--os-border)] bg-[var(--os-surface)]">
+              <div className="shrink-0 space-y-2 border-b border-[var(--os-border)] px-4 py-3">
+                <h3 className="text-lg font-semibold">Pegar desde Excel</h3>
+                <p className="text-xs text-[var(--os-text-muted)]">
+                  Con encabezados: cada columna se asocia por su título (el orden no importa). Sin
+                  encabezados: usá el orden estándar OP | FECHA | N.º OC | CLIENTE | PRODUCTO | S | Q |
+                  ML | ESTADO. KG siempre se recalcula.
+                </p>
+                <textarea
+                  className="min-h-24 w-full rounded border border-[var(--os-border)] bg-transparent p-2 font-mono text-xs"
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                  placeholder="Pegá filas aquí…"
+                  disabled={importing}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={importing || !pasteText.trim()}
+                    onClick={() => void runPastePreview({ forcePosition: false })}
+                  >
+                    Vista previa
+                  </Button>
+                  {!pasteHeader && pasteRows.length > 0 && pasteMode === "by-position" && (
+                    <span className="self-center text-xs text-amber-200">
+                      Sin encabezados — pegado por orden estándar
+                    </span>
+                  )}
+                  {pasteHeader && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={importing}
+                      onClick={() => void runPastePreview({ forcePosition: true })}
+                    >
+                      Pegar por orden estándar
+                    </Button>
+                  )}
+                  {pasteRows.length > 0 && (
+                    <p className="text-xs text-[var(--os-text-muted)]">
+                      {pasteSelectedCount} seleccionadas · {pasteValidCount} válidas ·{" "}
+                      {pasteWarningCount} con advertencias · {pasteInvalidCount} inválidas
+                    </p>
+                  )}
+                </div>
+                {pasteSummary && (
+                  <p className="text-xs text-[var(--os-teal)]">{pasteSummary}</p>
+                )}
+                {pasteAssociations.length > 0 && (
+                  <div className="rounded border border-[var(--os-border)] p-2">
+                    <p className="mb-1 text-sm font-semibold">Asociación de columnas</p>
+                    <ul className="grid max-h-24 gap-1 overflow-y-auto text-xs sm:grid-cols-2">
+                      {pasteAssociations.map((a) => (
+                        <li key={`${a.sourceIndex}-${a.sourceHeader}`}>
+                          <span className="text-[var(--os-text-muted)]">
+                            “{a.sourceHeader || "(vacío)"}”
+                          </span>{" "}
+                          →{" "}
+                          <span
+                            className={
+                              a.status === "ignored"
+                                ? "text-amber-200"
+                                : a.status === "conflict"
+                                  ? "text-amber-300"
+                                  : "text-[var(--os-text)]"
+                            }
+                          >
+                            {a.status === "ignored"
+                              ? "No utilizada"
+                              : a.status === "conflict"
+                                ? `${a.label} (conflicto)`
+                                : a.label}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    {pasteMissing.length > 0 && pasteHeader && (
+                      <p className="mt-1 text-xs text-[var(--os-text-muted)]">
+                        Columnas Genus no presentes (quedarán vacías): {pasteMissing.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="z-20 flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--os-border)] bg-[var(--os-surface)] px-4 py-2">
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={importing || !pasteText.trim()}
-                  onClick={() => void runPastePreview({ forcePosition: false })}
+                  size="sm"
+                  disabled={importing || pasteRows.length === 0}
+                  onClick={() => setAllPasteSelection(true)}
                 >
-                  Vista previa
+                  Seleccionar todo
                 </Button>
-                {!pasteHeader && pasteRows.length > 0 && pasteMode === "by-position" && (
-                  <span className="self-center text-xs text-amber-200">
-                    Sin encabezados — pegado por orden estándar
-                  </span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={importing || pasteRows.length === 0}
+                  onClick={() => setAllPasteSelection(false)}
+                >
+                  Deseleccionar
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={importing || pasteSelectedCount === 0}
+                  onClick={() => void copySelectedPasteRows()}
+                >
+                  Copiar seleccionados
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={importing || pasteSelectedCount === 0}
+                  onClick={() => setConfirmRemovePaste(true)}
+                >
+                  Quitar seleccionados
+                </Button>
+                {pasteUndoStack.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={importing}
+                    onClick={undoPasteRemove}
+                  >
+                    Deshacer
+                  </Button>
                 )}
-                {pasteHeader && (
+                <div className="ml-auto flex flex-wrap items-center gap-2">
                   <Button
                     type="button"
                     variant="secondary"
                     disabled={importing}
-                    onClick={() => void runPastePreview({ forcePosition: true })}
+                    onClick={() => {
+                      setPasteOpen(false);
+                      setPasteRows([]);
+                      setPasteUndoStack([]);
+                      setConfirmRemovePaste(false);
+                    }}
                   >
-                    Pegar por orden estándar
+                    Cancelar
                   </Button>
+                  <Button
+                    type="button"
+                    disabled={importing || selectedImportableCount < 1}
+                    onClick={() => void confirmImport()}
+                  >
+                    {importing
+                      ? "Importando…"
+                      : `Importar ${selectedImportableCount} seleccionado${selectedImportableCount === 1 ? "" : "s"}`}
+                  </Button>
+                </div>
+                {confirmRemovePaste && (
+                  <div className="flex w-full flex-wrap items-center gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
+                    <span>¿Quitar {pasteSelectedCount} fila(s) solo de este preview?</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setConfirmRemovePaste(false)}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button type="button" size="sm" onClick={confirmRemoveSelectedPaste}>
+                      Quitar
+                    </Button>
+                  </div>
                 )}
-                <Button
-                  type="button"
-                  disabled={importing || validPasteCount < 1}
-                  onClick={() => void confirmImport()}
-                >
-                  {importing
-                    ? "Importando…"
-                    : validPasteCount > 0
-                      ? `Importar ${validPasteCount} pedido${validPasteCount === 1 ? "" : "s"}`
-                      : "Confirmar importación"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={importing}
-                  onClick={() => {
-                    setPasteOpen(false);
-                    setPasteRows([]);
-                  }}
-                >
-                  Cancelar
-                </Button>
               </div>
-              {pasteSummary && (
-                <p className="mt-2 text-xs text-[var(--os-teal)]">{pasteSummary}</p>
-              )}
-              {pasteAssociations.length > 0 && (
-                <div className="mt-3 rounded border border-[var(--os-border)] p-2">
-                  <p className="mb-1 text-sm font-semibold">Asociación de columnas</p>
-                  <ul className="grid gap-1 text-xs sm:grid-cols-2">
-                    {pasteAssociations.map((a) => (
-                      <li key={`${a.sourceIndex}-${a.sourceHeader}`}>
-                        <span className="text-[var(--os-text-muted)]">
-                          “{a.sourceHeader || "(vacío)"}”
-                        </span>{" "}
-                        →{" "}
-                        <span
-                          className={
-                            a.status === "ignored"
-                              ? "text-amber-200"
-                              : a.status === "conflict"
-                                ? "text-amber-300"
-                                : "text-[var(--os-text)]"
-                          }
-                        >
-                          {a.status === "ignored"
-                            ? "No utilizada"
-                            : a.status === "conflict"
-                              ? `${a.label} (conflicto)`
-                              : a.label}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                  {pasteMissing.length > 0 && pasteHeader && (
-                    <p className="mt-1 text-xs text-[var(--os-text-muted)]">
-                      Columnas Genus no presentes (quedarán vacías): {pasteMissing.join(", ")}
-                    </p>
-                  )}
-                </div>
-              )}
-              {pasteRows.length > 0 && (
-                <div className="mt-3 min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-                  <table className="w-full table-fixed text-left text-xs">
-                    <thead>
-                      <tr>
-                        {["#", "OP", "FECHA", "OC", "CLIENTE", "PROD", "Q", "ML", "KG", "EST", "!"].map(
-                          (h) => (
-                            <th key={h} className="truncate px-1 py-1">
-                              {h}
+
+              <div className="min-h-0 flex-1 overflow-hidden px-2 pb-3 sm:px-4">
+                {pasteRows.length === 0 ? (
+                  <p className="px-2 py-8 text-center text-sm text-[var(--os-text-muted)]">
+                    {pasteText.trim()
+                      ? "Pulsá «Vista previa» para revisar las filas."
+                      : "Pegá datos de Excel para ver la vista previa."}
+                  </p>
+                ) : (
+                  <>
+                    <div className="hidden h-full overflow-auto md:block">
+                      <table className="w-full table-fixed text-left text-xs">
+                        <thead className="sticky top-0 z-10 bg-[var(--os-bg)]">
+                          <tr>
+                            <th className="w-8 px-1 py-1">
+                              <span className="sr-only">Sel</span>
                             </th>
-                          )
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody>
+                            {["#", "OP", "FECHA", "OC", "CLIENTE", "PROD", "Q", "ML", "KG", "EST", "!"].map(
+                              (h) => (
+                                <th key={h} className="truncate px-1 py-1">
+                                  {h}
+                                </th>
+                              )
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pasteRows.map((r, idx) => (
+                            <tr
+                              key={r.rowIndex}
+                              className={
+                                r.errors.length
+                                  ? "bg-amber-500/10"
+                                  : r.warnings.length
+                                    ? "bg-[var(--os-teal)]/5"
+                                    : ""
+                              }
+                            >
+                              <td className="px-1 py-1">
+                                <input
+                                  type="checkbox"
+                                  checked={r.selected}
+                                  disabled={importing}
+                                  onChange={(e) =>
+                                    updatePasteRow(idx, { selected: e.target.checked })
+                                  }
+                                  aria-label={`Seleccionar fila ${r.rowIndex}`}
+                                />
+                              </td>
+                              <td className="px-1 py-1">{r.rowIndex}</td>
+                              <td className="px-1 py-1">
+                                <input
+                                  className="w-full bg-transparent"
+                                  value={r.op ?? ""}
+                                  disabled={importing}
+                                  onChange={(e) => updatePasteRow(idx, { op: e.target.value || null })}
+                                />
+                              </td>
+                              <td className="px-1 py-1">
+                                <input
+                                  className="w-full bg-transparent"
+                                  value={r.fecha ?? ""}
+                                  disabled={importing}
+                                  onChange={(e) =>
+                                    updatePasteRow(idx, { fecha: e.target.value || null })
+                                  }
+                                />
+                              </td>
+                              <td className="px-1 py-1">
+                                <input
+                                  className="w-full bg-transparent"
+                                  value={r.nroOc ?? ""}
+                                  disabled={importing}
+                                  onChange={(e) =>
+                                    updatePasteRow(idx, { nroOc: e.target.value || null })
+                                  }
+                                />
+                              </td>
+                              <td className="truncate px-1 py-1">{r.cliente}</td>
+                              <td className="truncate px-1 py-1">{r.producto}</td>
+                              <td className="px-1 py-1">
+                                <input
+                                  className="w-full bg-transparent"
+                                  value={r.q ?? ""}
+                                  disabled={importing}
+                                  onChange={(e) => {
+                                    const q =
+                                      e.target.value.trim() === ""
+                                        ? null
+                                        : Number(e.target.value.replace(",", "."));
+                                    updatePasteRow(idx, {
+                                      q: q != null && Number.isFinite(q) ? q : null,
+                                    });
+                                  }}
+                                />
+                              </td>
+                              <td className="px-1 py-1">
+                                <input
+                                  className="w-full bg-transparent"
+                                  value={r.ml ?? ""}
+                                  disabled={importing}
+                                  onChange={(e) => {
+                                    const ml =
+                                      e.target.value.trim() === ""
+                                        ? null
+                                        : Number(e.target.value.replace(",", "."));
+                                    updatePasteRow(idx, {
+                                      ml: ml != null && Number.isFinite(ml) ? ml : null,
+                                    });
+                                  }}
+                                />
+                              </td>
+                              <td className="px-1 py-1 font-semibold text-[var(--os-teal)]">
+                                {formatKg(r.kg)}
+                              </td>
+                              <td className="px-1 py-1">{r.estado}</td>
+                              <td
+                                className="px-1 py-1 text-amber-300"
+                                title={[...r.errors, ...r.warnings].join("; ")}
+                              >
+                                {r.errors[0] || r.warnings[0] || ""}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="h-full space-y-2 overflow-y-auto overflow-x-hidden p-1 md:hidden">
                       {pasteRows.map((r, idx) => (
-                        <tr
+                        <article
                           key={r.rowIndex}
-                          className={
-                            r.errors.length
-                              ? "bg-amber-500/10"
-                              : r.warnings.length
-                                ? "bg-[var(--os-teal)]/5"
-                                : ""
-                          }
+                          className="rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-3"
                         >
-                          <td className="px-1 py-1">{r.rowIndex}</td>
-                          <td className="px-1 py-1">
+                          <div className="flex items-start gap-2">
                             <input
-                              className="w-full bg-transparent"
-                              value={r.op ?? ""}
+                              type="checkbox"
+                              className="mt-1"
+                              checked={r.selected}
                               disabled={importing}
-                              onChange={(e) => updatePasteRow(idx, { op: e.target.value || null })}
+                              onChange={(e) =>
+                                updatePasteRow(idx, { selected: e.target.checked })
+                              }
+                              aria-label={`Seleccionar fila ${r.rowIndex}`}
                             />
-                          </td>
-                          <td className="px-1 py-1">
-                            <input
-                              className="w-full bg-transparent"
-                              value={r.fecha ?? ""}
-                              disabled={importing}
-                              onChange={(e) => updatePasteRow(idx, { fecha: e.target.value || null })}
-                            />
-                          </td>
-                          <td className="px-1 py-1">
-                            <input
-                              className="w-full bg-transparent"
-                              value={r.nroOc ?? ""}
-                              disabled={importing}
-                              onChange={(e) => updatePasteRow(idx, { nroOc: e.target.value || null })}
-                            />
-                          </td>
-                          <td className="truncate px-1 py-1">{r.cliente}</td>
-                          <td className="truncate px-1 py-1">{r.producto}</td>
-                          <td className="px-1 py-1">
-                            <input
-                              className="w-full bg-transparent"
-                              value={r.q ?? ""}
-                              disabled={importing}
-                              onChange={(e) => {
-                                const q =
-                                  e.target.value.trim() === ""
-                                    ? null
-                                    : Number(e.target.value.replace(",", "."));
-                                updatePasteRow(idx, {
-                                  q: q != null && Number.isFinite(q) ? q : null,
-                                });
-                              }}
-                            />
-                          </td>
-                          <td className="px-1 py-1">
-                            <input
-                              className="w-full bg-transparent"
-                              value={r.ml ?? ""}
-                              disabled={importing}
-                              onChange={(e) => {
-                                const ml =
-                                  e.target.value.trim() === ""
-                                    ? null
-                                    : Number(e.target.value.replace(",", "."));
-                                updatePasteRow(idx, {
-                                  ml: ml != null && Number.isFinite(ml) ? ml : null,
-                                });
-                              }}
-                            />
-                          </td>
-                          <td className="px-1 py-1 font-semibold text-[var(--os-teal)]">
-                            {formatKg(r.kg)}
-                          </td>
-                          <td className="px-1 py-1">{r.estado}</td>
-                          <td
-                            className="px-1 py-1 text-amber-300"
-                            title={[...r.errors, ...r.warnings].join("; ")}
-                          >
-                            {r.errors[0] || r.warnings[0] || ""}
-                          </td>
-                        </tr>
+                            <div className="min-w-0 flex-1 space-y-2">
+                              <p className="text-xs text-[var(--os-text-muted)]">Fila {r.rowIndex}</p>
+                              <label className="block text-xs font-medium">
+                                OP
+                                <input
+                                  className="mt-0.5 w-full rounded border border-[var(--os-border)] bg-transparent px-2 py-1"
+                                  value={r.op ?? ""}
+                                  disabled={importing}
+                                  onChange={(e) =>
+                                    updatePasteRow(idx, { op: e.target.value || null })
+                                  }
+                                />
+                              </label>
+                              <label className="block text-xs font-medium">
+                                Fecha
+                                <input
+                                  className="mt-0.5 w-full rounded border border-[var(--os-border)] bg-transparent px-2 py-1"
+                                  value={r.fecha ?? ""}
+                                  disabled={importing}
+                                  onChange={(e) =>
+                                    updatePasteRow(idx, { fecha: e.target.value || null })
+                                  }
+                                />
+                              </label>
+                              <label className="block text-xs font-medium">
+                                N.º OC
+                                <input
+                                  className="mt-0.5 w-full rounded border border-[var(--os-border)] bg-transparent px-2 py-1"
+                                  value={r.nroOc ?? ""}
+                                  disabled={importing}
+                                  onChange={(e) =>
+                                    updatePasteRow(idx, { nroOc: e.target.value || null })
+                                  }
+                                />
+                              </label>
+                              <p className="os-break text-sm">
+                                <span className="text-[var(--os-text-muted)]">Cliente: </span>
+                                {r.cliente || "—"}
+                              </p>
+                              <p className="os-break text-sm">
+                                <span className="text-[var(--os-text-muted)]">Producto: </span>
+                                {r.producto || "—"}
+                              </p>
+                              <div className="grid grid-cols-2 gap-2">
+                                <label className="block text-xs font-medium">
+                                  Q
+                                  <input
+                                    className="mt-0.5 w-full rounded border border-[var(--os-border)] bg-transparent px-2 py-1"
+                                    value={r.q ?? ""}
+                                    disabled={importing}
+                                    onChange={(e) => {
+                                      const q =
+                                        e.target.value.trim() === ""
+                                          ? null
+                                          : Number(e.target.value.replace(",", "."));
+                                      updatePasteRow(idx, {
+                                        q: q != null && Number.isFinite(q) ? q : null,
+                                      });
+                                    }}
+                                  />
+                                </label>
+                                <label className="block text-xs font-medium">
+                                  ML
+                                  <input
+                                    className="mt-0.5 w-full rounded border border-[var(--os-border)] bg-transparent px-2 py-1"
+                                    value={r.ml ?? ""}
+                                    disabled={importing}
+                                    onChange={(e) => {
+                                      const ml =
+                                        e.target.value.trim() === ""
+                                          ? null
+                                          : Number(e.target.value.replace(",", "."));
+                                      updatePasteRow(idx, {
+                                        ml: ml != null && Number.isFinite(ml) ? ml : null,
+                                      });
+                                    }}
+                                  />
+                                </label>
+                              </div>
+                              <p className="text-sm font-semibold text-[var(--os-teal)]">
+                                KG: {formatKg(r.kg)}
+                              </p>
+                              {(r.errors[0] || r.warnings[0]) && (
+                                <p className="text-xs text-amber-300">
+                                  {r.errors[0] || r.warnings[0]}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </article>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         )}
