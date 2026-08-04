@@ -39,9 +39,20 @@ import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider
 import { CreateOrderDialog } from "../components/create-order-dialog";
 import { MasterTemplatesPanel } from "../components/master-templates-panel";
 import { OperationalOrderEditor } from "../components/operational-order-editor";
-import { OrderLifecycleRowActions } from "../components/order-lifecycle-row-actions";
+import { OrderLifecycleRowActions, buildOrderLifecycleMenuItems } from "../components/order-lifecycle-row-actions";
 import { TemplateScratchEditor } from "../components/template-scratch-editor";
 import { Button } from "@/components/ui/button";
+import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
+import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
+import {
+  bulkDeleteConfirmMessage,
+  ListSelectionEnterButton,
+  ListSelectionToolbar,
+  useListSelectionMode,
+} from "../components/list-selection-mode";
+import {
+  deleteEmptyDraftApi,
+} from "@/lib/orders/orders-client";
 
 type TabKey = "pendientes" | "completas";
 
@@ -92,6 +103,8 @@ export function NativeOrdersListView({
   const [histOpen, setHistOpen] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [templatesPanelKey, setTemplatesPanelKey] = useState(0);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const canCreate = canOrderAction(type, "create", sectorId);
   const canManageTemplates = canOrderAction(type, "manage_templates", sectorId);
@@ -166,6 +179,20 @@ export function NativeOrdersListView({
   }, [canCreate, canManageTemplates, session, loadTemplates, refreshTick]);
 
   const historicalDocs = useMemo(() => listDocumentsByKind(type), [type, refreshTick]);
+
+  const visibleIds = useMemo(() => items.map((r) => r.id), [items]);
+  const sel = useListSelectionMode(visibleIds);
+  const canBulkMutate = !readOnly && !dbUnavailable;
+
+  const orderDeletableIds = useMemo(() => {
+    return new Set(
+      items
+        .filter((order) =>
+          buildOrderLifecycleMenuItems(order, sectorId).some((item) => item.action === "eliminar")
+        )
+        .map((order) => order.id)
+    );
+  }, [items, sectorId]);
 
   const columns: OperationalTableColumn<OperationalOrderRecord>[] = [
     {
@@ -506,6 +533,20 @@ export function NativeOrdersListView({
           />
           Sin asignar
         </label>
+        {canBulkMutate &&
+          (!sel.active ? (
+            <ListSelectionEnterButton onClick={sel.enter} />
+          ) : (
+            <ListSelectionToolbar
+              selectedCount={sel.selectedCount}
+              onSelectAll={sel.selectAllVisible}
+              onDeselectAll={sel.deselectAll}
+              onDelete={() => setBulkPending(true)}
+              onCancel={sel.cancel}
+              busy={bulkBusy}
+              deleteLabel="Eliminar borradores"
+            />
+          ))}
       </div>
 
       {selectedId ? (
@@ -524,6 +565,11 @@ export function NativeOrdersListView({
             rowKey={(r) => r.id}
             emptyMessage={
               loading ? "Cargando…" : "Sin órdenes para mostrar en esta pestaña."
+            }
+            selection={
+              sel.active
+                ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
+                : undefined
             }
           />
           <div className="flex items-center justify-between text-xs text-[var(--os-text-muted)]">
@@ -648,6 +694,47 @@ export function NativeOrdersListView({
           if (template) setTemplates((prev) => [...prev.filter((t) => t.id !== template.id), template]);
           if (orderId) setSelectedId(orderId);
           setRefreshTick((v) => v + 1);
+        }}
+      />
+
+      <LifecycleConfirmDialog
+        pending={
+          bulkPending
+            ? syntheticLifecycleItem(
+                "eliminar",
+                "Eliminar borradores",
+                bulkDeleteConfirmMessage(sel.selectedCount)
+              )
+            : null
+        }
+        forceReason
+        entityLabel={`${sel.selectedCount} orden(es)`}
+        onClose={() => setBulkPending(false)}
+        onConfirm={async (_reason) => {
+          setBulkBusy(true);
+          let ok = 0;
+          let skipped = 0;
+          let failed = 0;
+          for (const id of sel.selectedIds) {
+            if (!orderDeletableIds.has(id)) {
+              skipped += 1;
+              continue;
+            }
+            try {
+              await deleteEmptyDraftApi(session, id);
+              ok += 1;
+            } catch {
+              failed += 1;
+            }
+          }
+          setBulkPending(false);
+          sel.cancel();
+          setBulkBusy(false);
+          setRefreshTick((v) => v + 1);
+          const parts = [`${ok} eliminada(s)`];
+          if (skipped) parts.push(`${skipped} omitida(s) (no borrador eliminable)`);
+          if (failed) parts.push(`${failed} error(es)`);
+          setError(parts.join(" · "));
         }}
       />
     </div>

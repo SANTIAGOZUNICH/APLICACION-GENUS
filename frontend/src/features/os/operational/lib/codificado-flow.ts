@@ -35,7 +35,10 @@ export function canSendToCodificado(status: WorkItemStatus): CodificadoTransitio
   return { ok: true };
 }
 
-export function canDeliverFromCodificado(status: WorkItemStatus): CodificadoTransitionResult {
+export function canDeliverFromCodificado(
+  status: WorkItemStatus,
+  opts?: { sector?: SectorId | null }
+): CodificadoTransitionResult {
   if (status === WORK_TRANSFER_STATUS || status === WORK_CODIFICADO_DONE_STATUS) {
     return {
       ok: false,
@@ -43,14 +46,21 @@ export function canDeliverFromCodificado(status: WorkItemStatus): CodificadoTran
       error: WORK_TRANSFER.alreadyDeliveredFromCodificado,
     };
   }
-  if (status !== WORK_CODIFICADO_STATUS) {
-    return {
-      ok: false,
-      code: "NOT_IN_CODIFICADO",
-      error: "Solo se pueden entregar trabajos que estén en Codificado.",
-    };
+  if (status === WORK_CODIFICADO_STATUS) {
+    return { ok: true };
   }
-  return { ok: true };
+  // Tareas asignadas directo a Codificado (planificación) arrancan en pendiente/en_curso.
+  if (
+    opts?.sector === "CODIFICADO" &&
+    (status === "pendiente" || status === "en_curso")
+  ) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    code: "NOT_IN_CODIFICADO",
+    error: "Solo se pueden entregar trabajos que estén en Codificado.",
+  };
 }
 
 export function isEnvasadoOriginSector(sector: SectorId | null | undefined): boolean {

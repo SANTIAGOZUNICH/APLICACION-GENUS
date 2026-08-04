@@ -174,14 +174,19 @@ export class MemoryInventoryRepo {
     const l = lote.trim().toLowerCase();
     return (
       this.mpStock.find(
-        (r) => r.descripcion.trim().toLowerCase() === d && r.lote.trim().toLowerCase() === l
+        (r) =>
+          !r.archived &&
+          r.descripcion.trim().toLowerCase() === d &&
+          r.lote.trim().toLowerCase() === l
       ) ?? null
     );
   }
   findMpStockByDescripcion(descripcion: string) {
     const d = descripcion.trim().toLowerCase();
     if (!d) return null;
-    const matches = this.mpStock.filter((r) => r.descripcion.trim().toLowerCase() === d);
+    const matches = this.mpStock.filter(
+      (r) => !r.archived && r.descripcion.trim().toLowerCase() === d
+    );
     if (matches.length === 1) return matches[0];
     return null;
   }
@@ -189,7 +194,11 @@ export class MemoryInventoryRepo {
     const c = codigo.trim().toUpperCase().replace(/\s+/g, " ");
     if (!c) return null;
     return (
-      this.mpStock.find((r) => r.codigo.trim().toUpperCase().replace(/\s+/g, " ") === c) ?? null
+      this.mpStock.find(
+        (r) =>
+          !r.archived &&
+          r.codigo.trim().toUpperCase().replace(/\s+/g, " ") === c
+      ) ?? null
     );
   }
 

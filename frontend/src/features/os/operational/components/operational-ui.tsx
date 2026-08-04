@@ -2,6 +2,10 @@
 
 import { Fragment, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import {
+  SelectionCheckbox,
+  selectedRowClassName,
+} from "@/features/os/operational/components/list-selection-mode";
 import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 
 export interface OperationalTab {
@@ -91,11 +95,19 @@ function moreToggleClass(bp: CollapseBelow): string {
   return "md:hidden";
 }
 
+interface OperationalTableSelection {
+  active: boolean;
+  isSelected: (id: string) => boolean;
+  onToggle: (id: string) => void;
+}
+
 interface OperationalTableProps<T> {
   columns: OperationalTableColumn<T>[];
   rows: T[];
   rowKey: (row: T) => string;
   emptyMessage?: string;
+  /** Modo selección explícito (checkboxes solo si active). */
+  selection?: OperationalTableSelection;
 }
 
 /** Tabla funcional — sin scroll horizontal; secundarios en “Más datos”. */
@@ -104,19 +116,22 @@ export function OperationalTable<T>({
   rows,
   rowKey,
   emptyMessage = "Sin registros.",
+  selection,
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const secondaryMeta = columns
     .map((c) => ({ col: c, bp: resolveCollapse(c.hideOnMobile) }))
     .filter((x): x is { col: OperationalTableColumn<T>; bp: CollapseBelow } => x.bp != null);
   const hasSecondary = secondaryMeta.length > 0;
+  const selectionActive = Boolean(selection?.active);
   /** Breakpoint más amplio entre secundarias → el chevron se muestra hasta ahí. */
   const expanderBp: CollapseBelow = secondaryMeta.reduce<CollapseBelow>((acc, x) => {
     const order = { md: 0, lg: 1, xl: 2, "2xl": 3 } as const;
     return order[x.bp] > order[acc] ? x.bp : acc;
   }, "md");
   const primaryCount = columns.filter((c) => !resolveCollapse(c.hideOnMobile)).length;
-  const visibleColCount = primaryCount + (hasSecondary ? 1 : 0);
+  const visibleColCount =
+    primaryCount + (hasSecondary ? 1 : 0) + (selectionActive ? 1 : 0);
 
   if (rows.length === 0) {
     return (
@@ -131,6 +146,12 @@ export function OperationalTable<T>({
       <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,12.75px)]">
         <thead className="sticky top-0 z-[1]">
           <tr className="border-b border-[var(--os-border)] bg-[var(--os-surface-glass)] backdrop-blur-md">
+            {selectionActive ? (
+              <th
+                className="w-10 px-2 py-[var(--os-density-table-padding-y)]"
+                aria-label="Selección"
+              />
+            ) : null}
             {hasSecondary ? (
               <th
                 className={`w-8 px-1 py-[var(--os-density-table-padding-y)] ${moreToggleClass(expanderBp)}`}
@@ -155,9 +176,21 @@ export function OperationalTable<T>({
           {rows.map((row) => {
             const id = rowKey(row);
             const isOpen = Boolean(expanded[id]);
+            const rowSelected = Boolean(selectionActive && selection?.isSelected(id));
             return (
               <Fragment key={id}>
-                <tr className="border-b border-[var(--os-border-subtle)] last:border-b-0 transition-colors hover:bg-[var(--os-teal-soft)]/40 hover:shadow-[inset_3px_0_0_0_rgb(18_191_183_/_0.45)]">
+                <tr
+                  className={`border-b border-[var(--os-border-subtle)] last:border-b-0 transition-colors hover:bg-[var(--os-teal-soft)]/40 hover:shadow-[inset_3px_0_0_0_rgb(18_191_183_/_0.45)] ${selectedRowClassName(rowSelected)}`}
+                >
+                  {selectionActive && selection ? (
+                    <td className="w-10 px-2 py-[var(--os-density-table-padding-y)] align-middle">
+                      <SelectionCheckbox
+                        checked={rowSelected}
+                        onChange={() => selection.onToggle(id)}
+                        label={`Seleccionar fila ${id}`}
+                      />
+                    </td>
+                  ) : null}
                   {hasSecondary ? (
                     <td
                       className={`w-8 px-1 py-[var(--os-density-table-padding-y)] align-middle ${moreToggleClass(expanderBp)}`}

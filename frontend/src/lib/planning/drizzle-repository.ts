@@ -156,21 +156,26 @@ export class DrizzlePlanningRepository implements PlanningRepository {
 
     const floorSectors = (filters.sectors ?? []).filter(
       (s) =>
-        s === "ELABORACION" || s === "ENVASADO_MASIVO" || s === "ENVASADO_PREMIUM"
+        s === "ELABORACION" ||
+        s === "ENVASADO_MASIVO" ||
+        s === "ENVASADO_PREMIUM" ||
+        s === "CODIFICADO"
     );
-    // work_item_sector enum only has floor planning sectors. Other sectors
-    // (CODIFICADO/MP/etc.) must not be cast into the enum — that yields 502.
+    // Floor planning sectors include CODIFICADO (additive enum after 0019).
     if (floorSectors.length > 0) {
       conditions.push(
         inArray(
           workItems.sector,
-          floorSectors as Array<"ELABORACION" | "ENVASADO_MASIVO" | "ENVASADO_PREMIUM">
+          floorSectors as Array<
+            "ELABORACION" | "ENVASADO_MASIVO" | "ENVASADO_PREMIUM" | "CODIFICADO"
+          >
         )
       );
     } else if (
       filters.sector === "ELABORACION" ||
       filters.sector === "ENVASADO_MASIVO" ||
-      filters.sector === "ENVASADO_PREMIUM"
+      filters.sector === "ENVASADO_PREMIUM" ||
+      filters.sector === "CODIFICADO"
     ) {
       conditions.push(eq(workItems.sector, filters.sector));
     }

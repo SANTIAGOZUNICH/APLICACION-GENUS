@@ -988,7 +988,10 @@ export class InventoryService {
 
   listMpStock(actor: InventoryActor) {
     this.guard(actor, "mp_stock", false);
-    return this.repo.listMpStock().map((r) => this.enrichMpStock(r));
+    return this.repo
+      .listMpStock()
+      .filter((r) => !r.archived)
+      .map((r) => this.enrichMpStock(r));
   }
 
   upsertMpStock(actor: InventoryActor, input: Partial<MpStockRow> & { id?: string }) {
@@ -1019,6 +1022,10 @@ export class InventoryService {
           ? Boolean(input.codigoPendiente)
           : existing?.codigoPendiente,
       productosAsociados: existing?.productosAsociados ?? "",
+      archived: existing?.archived ?? false,
+      archivedAt: existing?.archivedAt ?? null,
+      archivedBy: existing?.archivedBy ?? null,
+      archivedReason: existing?.archivedReason ?? null,
       createdBy: existing?.createdBy ?? actor.email,
       updatedBy: actor.email,
       createdAt: existing?.createdAt ?? now,
@@ -1037,11 +1044,63 @@ export class InventoryService {
     return row;
   }
 
-  deleteMpStock(actor: InventoryActor, _id: string, _reason: string): never {
+  /**
+   * Archivo lógico del saldo MP si no hay ingresos activos ligados.
+   * No hard-delete: conserva historial en JSONB. Con dependencias → error claro.
+   */
+  deleteMpStock(actor: InventoryActor, id: string, reason: string) {
     this.guard(actor, "mp_stock", true);
-    throw new InventoryValidationError(
-      "El saldo de inventario MP no se elimina. Usá un ajuste de stock o anulá el ingreso que lo originó."
+    const existing = this.repo.getMpStock(id);
+    if (!existing) throw new InventoryNotFoundError("Stock MP no encontrado.");
+    if (existing.archived) {
+      return this.enrichMpStock(existing);
+    }
+
+    const linkedIngresos = this.repo
+      .listMpIngresos()
+      .filter((i) => i.stockLotId === id && i.status !== "ANULADO");
+    if (linkedIngresos.length > 0) {
+      const labels = linkedIngresos
+        .map((i) => i.ingresoNro?.trim() || i.id.slice(0, 8))
+        .slice(0, 5)
+        .join(", ");
+      const extra = linkedIngresos.length > 5 ? ` (+${linkedIngresos.length - 5} más)` : "";
+      throw new InventoryValidationError(
+        `No se puede eliminar: vinculado al ingreso ${labels}${extra}. Anulá el ingreso origen o usá Ajuste.`
+      );
+    }
+
+    const linkedControl = this.repo
+      .listMpControl()
+      .filter((c) => c.stockLotId === id && !c.archived);
+    if (linkedControl.length > 0) {
+      throw new InventoryValidationError(
+        "No se puede eliminar: hay control semanal vinculado a este saldo. Archivá o desvinculá el control primero."
+      );
+    }
+
+    const now = nowIso();
+    const archived: MpStockRow = {
+      ...existing,
+      archived: true,
+      archivedAt: now,
+      archivedBy: actor.email,
+      archivedReason: reason.trim() || null,
+      updatedBy: actor.email,
+      updatedAt: now,
+    };
+    const row = this.enrichMpStock(archived);
+    this.repo.upsertMpStock(row);
+    this.audit(
+      actor,
+      "mp_stock",
+      row.id,
+      "archive",
+      existing as unknown as Record<string, unknown>,
+      row as unknown as Record<string, unknown>,
+      reason
     );
+    return row;
   }
 
   adjustMpStock(actor: InventoryActor, id: string, cantidadNueva: number, motivo: string) {

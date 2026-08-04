@@ -26,6 +26,16 @@ import {
   buildExcelTsv,
   copyTextToClipboard,
 } from "@/features/os/operational/lib/excel-import-preview-utils";
+import { LifecycleConfirmDialog } from "@/features/os/operational/components/lifecycle-confirm-dialog";
+import { syntheticLifecycleItem } from "@/features/os/operational/components/lifecycle-synthetic";
+import {
+  bulkDeleteConfirmMessage,
+  ListSelectionEnterButton,
+  ListSelectionToolbar,
+  selectedRowClassName,
+  SelectionCheckbox,
+  useListSelectionMode,
+} from "@/features/os/operational/components/list-selection-mode";
 
 type Draft = {
   op: string;
@@ -159,6 +169,8 @@ export function ProductionPedidosView() {
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteReason, setDeleteReason] = useState("");
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
@@ -199,6 +211,9 @@ export function ProductionPedidosView() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  const visibleIds = useMemo(() => items.map((r) => r.id), [items]);
+  const sel = useListSelectionMode(visibleIds);
 
   function openNew() {
     setEditingId(null);
@@ -421,6 +436,18 @@ export function ProductionPedidosView() {
           <Button type="button" className="os-btn-motion min-h-10" onClick={openNew}>
             Nuevo pedido
           </Button>
+          {!sel.active ? (
+            <ListSelectionEnterButton onClick={sel.enter} />
+          ) : (
+            <ListSelectionToolbar
+              selectedCount={sel.selectedCount}
+              onSelectAll={sel.selectAllVisible}
+              onDeselectAll={sel.deselectAll}
+              onDelete={() => setBulkPending(true)}
+              onCancel={sel.cancel}
+              busy={bulkBusy}
+            />
+          )}
           <Button
             type="button"
             variant="secondary"
@@ -508,6 +535,11 @@ export function ProductionPedidosView() {
           <table className="os-table w-full min-w-0 table-fixed text-left text-sm">
             <thead>
               <tr>
+                {sel.active ? (
+                  <th className="os-table-th w-8 px-2 py-2">
+                    <span className="sr-only">Seleccionar</span>
+                  </th>
+                ) : null}
                 {["OP", "FECHA", "N.º OC", "CLIENTE", "PRODUCTO", "S", "Q", "ML", "KG", "ESTADO", ""].map(
                   (h) => (
                     <th key={h || "actions"} className="os-table-th truncate px-2 py-2">
@@ -519,7 +551,19 @@ export function ProductionPedidosView() {
             </thead>
             <tbody>
               {items.map((r) => (
-                <tr key={r.id} className="border-t border-[var(--os-border)]/60">
+                <tr
+                  key={r.id}
+                  className={`border-t border-[var(--os-border)]/60 ${selectedRowClassName(sel.active && sel.isSelected(r.id))}`}
+                >
+                  {sel.active ? (
+                    <td className="os-table-td px-2 py-2">
+                      <SelectionCheckbox
+                        checked={sel.isSelected(r.id)}
+                        onChange={() => sel.toggle(r.id)}
+                        label={`Seleccionar pedido ${r.op ?? r.id}`}
+                      />
+                    </td>
+                  ) : null}
                   <td className="os-table-td os-mono-id truncate px-2 py-2">{r.op}</td>
                   <td className="os-table-td truncate px-2 py-2">{r.fecha}</td>
                   <td className="os-table-td os-mono-id truncate px-2 py-2">{r.nroOc}</td>
@@ -559,7 +603,7 @@ export function ProductionPedidosView() {
               ))}
               {!items.length && (
                 <tr>
-                  <td colSpan={11} className="px-2 py-6 text-center text-[var(--os-text-muted)]">
+                  <td colSpan={sel.active ? 12 : 11} className="px-2 py-6 text-center text-[var(--os-text-muted)]">
                     Sin pedidos
                   </td>
                 </tr>
@@ -571,7 +615,19 @@ export function ProductionPedidosView() {
         {/* Tablet: compact + más datos */}
         <div className="hidden space-y-2 md:block lg:hidden">
           {items.map((r) => (
-            <div key={r.id} className="os-glass-panel rounded border border-[var(--os-border)] p-3">
+            <div
+              key={r.id}
+              className={`os-glass-panel rounded border border-[var(--os-border)] p-3 ${selectedRowClassName(sel.active && sel.isSelected(r.id))}`}
+            >
+              {sel.active ? (
+                <div className="mb-2">
+                  <SelectionCheckbox
+                    checked={sel.isSelected(r.id)}
+                    onChange={() => sel.toggle(r.id)}
+                    label={`Seleccionar pedido ${r.op ?? r.id}`}
+                  />
+                </div>
+              ) : null}
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate font-semibold">
@@ -623,7 +679,19 @@ export function ProductionPedidosView() {
         {/* Mobile cards */}
         <div className="space-y-2 md:hidden">
           {items.map((r) => (
-            <article key={r.id} className="os-glass-panel rounded border border-[var(--os-border)] p-3">
+            <article
+              key={r.id}
+              className={`os-glass-panel rounded border border-[var(--os-border)] p-3 ${selectedRowClassName(sel.active && sel.isSelected(r.id))}`}
+            >
+              {sel.active ? (
+                <div className="mb-2">
+                  <SelectionCheckbox
+                    checked={sel.isSelected(r.id)}
+                    onChange={() => sel.toggle(r.id)}
+                    label={`Seleccionar pedido ${r.op ?? r.id}`}
+                  />
+                </div>
+              ) : null}
               <header className="mb-2 flex items-center justify-between gap-2">
                 <strong className="truncate">{r.op || "Sin OP"}</strong>
                 <span className="text-xs">
@@ -1168,6 +1236,39 @@ export function ProductionPedidosView() {
             </div>
           </div>
         )}
+
+        <LifecycleConfirmDialog
+          pending={
+            bulkPending
+              ? syntheticLifecycleItem(
+                  "eliminar",
+                  "Eliminar pedidos",
+                  bulkDeleteConfirmMessage(sel.selectedCount)
+                )
+              : null
+          }
+          forceReason
+          entityLabel={`${sel.selectedCount} pedido(s)`}
+          onClose={() => setBulkPending(false)}
+          onConfirm={async (reason) => {
+            setBulkBusy(true);
+            let ok = 0;
+            let failed = 0;
+            for (const id of sel.selectedIds) {
+              try {
+                await deleteProductionPedidoApi(session, id, reason);
+                ok += 1;
+              } catch {
+                failed += 1;
+              }
+            }
+            setBulkPending(false);
+            sel.cancel();
+            setBulkBusy(false);
+            void reload();
+            setImportResult(`${ok} eliminado(s)${failed ? ` · ${failed} error(es)` : ""}`);
+          }}
+        />
       </div>
     </TwinShell>
   );

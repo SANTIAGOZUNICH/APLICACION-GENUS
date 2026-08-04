@@ -28,6 +28,12 @@ import {
   type OperationalTableColumn,
 } from "@/features/os/operational/components/operational-ui";
 import {
+  bulkDeleteConfirmMessage,
+  ListSelectionEnterButton,
+  ListSelectionToolbar,
+  useListSelectionMode,
+} from "@/features/os/operational/components/list-selection-mode";
+import {
   displayCell,
   multiplyTotal,
   parseOptionalNumber,
@@ -132,6 +138,8 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   const [formOpen, setFormOpen] = useState(false);
   const [formDraft, setFormDraft] = useState<Record<string, string>>({});
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [page, setPage] = useState(0);
   const pageSize = 25;
   const formulaSession = useMemo(
@@ -230,6 +238,15 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   }, [tab, stock, ingresos, control, compras, search]);
 
   const pageRows = rows.slice(page * pageSize, page * pageSize + pageSize);
+  const visibleIds = useMemo(() => pageRows.map((r) => r.id), [pageRows]);
+  const sel = useListSelectionMode(visibleIds);
+  const showBulkSelection =
+    canWrite && (tab === "Stock" || tab === "Ingresos MP" || tab === "Compras MP");
+
+  useEffect(() => {
+    sel.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   function openNew() {
     setFormDraft({ fecha: new Date().toISOString().slice(0, 10) });
@@ -750,6 +767,20 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             Registrar ajuste
           </Button>
         ) : null}
+        {showBulkSelection &&
+          (!sel.active ? (
+            <ListSelectionEnterButton onClick={sel.enter} />
+          ) : (
+            <ListSelectionToolbar
+              selectedCount={sel.selectedCount}
+              onSelectAll={sel.selectAllVisible}
+              onDeselectAll={sel.deselectAll}
+              onDelete={() => setBulkPending(true)}
+              onCancel={sel.cancel}
+              busy={bulkBusy}
+              deleteLabel={tab === "Ingresos MP" ? "Anular seleccionados" : "Eliminar seleccionados"}
+            />
+          ))}
         {tab !== "Control semanal" && tab !== "COA'S" ? (
         <input
           className="rounded border px-3 py-1.5 text-sm"
@@ -828,6 +859,11 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           rows={pageRows as MpStockRow[]}
           rowKey={(r) => r.id}
           emptyMessage="Stock MP vacío (sin registros históricos)."
+          selection={
+            sel.active
+              ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
+              : undefined
+          }
         />
         <div className="mt-4">
           <MpStockLedgerPanel key={ledgerKey} schemaPending={schemaPending0005} />
@@ -853,6 +889,11 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             rows={pageRows as MpIngresoRow[]}
             rowKey={(r) => r.id}
             emptyMessage="Sin ingresos MP."
+            selection={
+              sel.active
+                ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
+                : undefined
+            }
           />
         </>
       )}
@@ -867,6 +908,11 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           rows={pageRows as MpCompraRow[]}
           rowKey={(r) => r.id}
           emptyMessage="Sin compras MP."
+          selection={
+            sel.active
+              ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
+              : undefined
+          }
         />
       )}
 
@@ -1029,6 +1075,58 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             reason,
           });
           await reload();
+        }}
+      />
+
+      <LifecycleConfirmDialog
+        pending={
+          bulkPending
+            ? syntheticLifecycleItem(
+                tab === "Ingresos MP" ? "anular" : "eliminar",
+                tab === "Ingresos MP" ? "Anular ingresos MP" : "Eliminar registros",
+                bulkDeleteConfirmMessage(sel.selectedCount)
+              )
+            : null
+        }
+        forceReason
+        entityLabel={`${sel.selectedCount} registro(s)`}
+        onClose={() => setBulkPending(false)}
+        onConfirm={async (reason) => {
+          setBulkBusy(true);
+          let ok = 0;
+          let skipped = 0;
+          let failed = 0;
+          const ingresoById =
+            tab === "Ingresos MP"
+              ? new Map((pageRows as MpIngresoRow[]).map((r) => [r.id, r]))
+              : null;
+          for (const id of sel.selectedIds) {
+            if (tab === "Ingresos MP") {
+              const row = ingresoById?.get(id);
+              if (row?.status === "ANULADO") {
+                skipped += 1;
+                continue;
+              }
+            }
+            try {
+              await mutateInventory({
+                action: tab === "Ingresos MP" ? "anular" : "delete",
+                resource: TAB_TO_RESOURCE[tab],
+                id,
+                reason,
+              });
+              ok += 1;
+            } catch {
+              failed += 1;
+            }
+          }
+          setBulkPending(false);
+          sel.cancel();
+          await reload();
+          setBulkBusy(false);
+          showToast(
+            `${ok} procesado(s)${skipped ? ` · ${skipped} omitido(s)` : ""}${failed ? ` · ${failed} error(es)` : ""}`
+          );
         }}
       />
 

@@ -94,7 +94,10 @@ export class MemoryPlanningRepository implements PlanningRepository {
     );
     const floorSectors = (filters.sectors ?? []).filter(
       (s) =>
-        s === "ELABORACION" || s === "ENVASADO_MASIVO" || s === "ENVASADO_PREMIUM"
+        s === "ELABORACION" ||
+        s === "ENVASADO_MASIVO" ||
+        s === "ENVASADO_PREMIUM" ||
+        s === "CODIFICADO"
     );
     if (floorSectors.length > 0) {
       list = list.filter((i) => floorSectors.includes(i.sector));

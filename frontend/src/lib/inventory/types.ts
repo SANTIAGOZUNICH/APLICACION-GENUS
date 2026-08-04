@@ -157,6 +157,11 @@ export type MpStockRow = {
   codigoPendiente?: boolean;
   /** Productos destino asociados (ingresos CONFIRMADO del mismo código), unidos por " · ". */
   productosAsociados: string;
+  /** Archivo lógico: oculto del listado activo; no hard-delete del historial. */
+  archived?: boolean;
+  archivedAt?: string | null;
+  archivedBy?: string | null;
+  archivedReason?: string | null;
   createdBy: string;
   updatedBy: string;
   createdAt: string;

@@ -16,6 +16,14 @@ import {
   ExcelImportPreviewDialog,
   type ExcelImportFieldDef,
 } from "../components/excel-import-preview-dialog";
+import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
+import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
+import {
+  bulkDeleteConfirmMessage,
+  ListSelectionEnterButton,
+  ListSelectionToolbar,
+  useListSelectionMode,
+} from "../components/list-selection-mode";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import {
@@ -156,6 +164,8 @@ export function MateriaPrimaStockView() {
   const [form, setForm] = useState<MpFormState>(() => emptyForm());
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MateriaPrimaLot | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [seedImportText, setSeedImportText] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -177,6 +187,9 @@ export function MateriaPrimaStockView() {
       );
     });
   }, [items, search, estadoFilter]);
+
+  const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
+  const sel = useListSelectionMode(visibleIds);
 
   const showFeedback = (message: string) => {
     setFeedback(message);
@@ -408,6 +421,18 @@ export function MateriaPrimaStockView() {
           </select>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {!sel.active ? (
+            <ListSelectionEnterButton onClick={sel.enter} />
+          ) : (
+            <ListSelectionToolbar
+              selectedCount={sel.selectedCount}
+              onSelectAll={sel.selectAllVisible}
+              onDeselectAll={sel.deselectAll}
+              onDelete={() => setBulkPending(true)}
+              onCancel={sel.cancel}
+              busy={bulkBusy}
+            />
+          )}
           <Button variant="secondary" onClick={() => setImportOpen(true)}>
             <ClipboardPaste className="size-4" aria-hidden="true" />
             Pegar desde Excel
@@ -433,6 +458,11 @@ export function MateriaPrimaStockView() {
         rows={filtered}
         rowKey={(r) => r.id}
         emptyMessage="Sin materias primas cargadas todavía. Pegá filas desde Excel para empezar."
+        selection={
+          sel.active
+            ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
+            : undefined
+        }
       />
 
       <ConfirmDialog
@@ -448,6 +478,34 @@ export function MateriaPrimaStockView() {
             refresh();
             showFeedback("Materia prima archivada.");
           }
+        }}
+      />
+
+      <LifecycleConfirmDialog
+        pending={
+          bulkPending
+            ? syntheticLifecycleItem(
+                "eliminar",
+                "Eliminar materias primas",
+                bulkDeleteConfirmMessage(sel.selectedCount)
+              )
+            : null
+        }
+        forceReason
+        entityLabel={`${sel.selectedCount} registro(s)`}
+        onClose={() => setBulkPending(false)}
+        onConfirm={async (_reason) => {
+          setBulkBusy(true);
+          let ok = 0;
+          for (const id of sel.selectedIds) {
+            removeMateriaPrima(id, workspace.context.displayName);
+            ok += 1;
+          }
+          setBulkPending(false);
+          sel.cancel();
+          refresh();
+          setBulkBusy(false);
+          showFeedback(`${ok} materia(s) prima archivada(s).`);
         }}
       />
 

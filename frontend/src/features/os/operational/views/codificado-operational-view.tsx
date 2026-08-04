@@ -41,11 +41,13 @@ export function CodificadoOperationalView() {
 
   const { data, loading, refresh: refreshMasivo } = useOperationalPlan("ENVASADO_MASIVO", {});
   const { data: dataPremium, refresh: refreshPremium } = useOperationalPlan("ENVASADO_PREMIUM", {});
+  const { data: dataCodificado, refresh: refreshCodificado } = useOperationalPlan("CODIFICADO", {});
 
   const refresh = useCallback(() => {
     refreshMasivo();
     refreshPremium();
-  }, [refreshMasivo, refreshPremium]);
+    refreshCodificado();
+  }, [refreshMasivo, refreshPremium, refreshCodificado]);
 
   const [tab, setTab] = useState<TabId>("pendientes");
   const [selected, setSelected] = useState<WorkItem | null>(null);
@@ -60,17 +62,37 @@ export function CodificadoOperationalView() {
   const allItems = useMemo(() => {
     const masivo = mergeManualWorkItems("ENVASADO_MASIVO", data?.workItems ?? []);
     const premium = mergeManualWorkItems("ENVASADO_PREMIUM", dataPremium?.workItems ?? []);
+    const assigned = mergeManualWorkItems("CODIFICADO", dataCodificado?.workItems ?? []);
     const merged = applyProgressToWorkItems(
-      applyEffectiveStatus([...masivo, ...premium])
+      applyEffectiveStatus([...masivo, ...premium, ...assigned])
     );
     const byId = new Map<string, WorkItem>();
     for (const item of merged) byId.set(item.id, item);
     return [...byId.values()];
-  }, [data?.workItems, dataPremium?.workItems, applyEffectiveStatus, applyProgressToWorkItems]);
+  }, [
+    data?.workItems,
+    dataPremium?.workItems,
+    dataCodificado?.workItems,
+    applyEffectiveStatus,
+    applyProgressToWorkItems,
+  ]);
 
   const pendientes = useMemo(
-    () => allItems.filter((i) => isInCodificadoStatus(i.status)),
-    [allItems]
+    () =>
+      allItems.filter((i) => {
+        const p = progressMap[i.id];
+        if (p?.viaCodificado && p.deliveredFromCodificadoAt) return false;
+        if (isInCodificadoStatus(i.status)) return true;
+        return (
+          i.sector === "CODIFICADO" &&
+          i.status !== "cancelado" &&
+          i.status !== "completo" &&
+          i.status !== "codificado_completo" &&
+          i.status !== "revision" &&
+          i.status !== "entregado"
+        );
+      }),
+    [allItems, progressMap]
   );
   const entregados = useMemo(
     () =>
@@ -172,7 +194,7 @@ export function CodificadoOperationalView() {
 
   const confirmDeliverAction = useCallback(() => {
     if (!selected || !draft) return;
-    const gate = canDeliverFromCodificado(selected.status);
+    const gate = canDeliverFromCodificado(selected.status, { sector: selected.sector });
     if (!gate.ok) {
       showToast(gate.error, "info");
       setConfirmDeliver(false);

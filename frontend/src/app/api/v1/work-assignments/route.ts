@@ -29,6 +29,7 @@ const SECTORS: PlanningSector[] = [
   "ELABORACION",
   "ENVASADO_MASIVO",
   "ENVASADO_PREMIUM",
+  "CODIFICADO",
 ];
 
 function parseBody(raw: unknown): WorkAssignmentInput {

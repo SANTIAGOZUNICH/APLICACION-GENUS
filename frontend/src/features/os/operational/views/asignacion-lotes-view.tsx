@@ -17,6 +17,12 @@ import {
 } from "../components/excel-import-preview-dialog";
 import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
+import {
+  bulkDeleteConfirmMessage,
+  ListSelectionEnterButton,
+  ListSelectionToolbar,
+  useListSelectionMode,
+} from "../components/list-selection-mode";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
@@ -202,6 +208,8 @@ export function AsignacionLotesView() {
   const [form, setForm] = useState<AsignacionFormState>(() => emptyForm());
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AsignacionLote | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [seedImportText, setSeedImportText] = useState("");
@@ -247,6 +255,8 @@ export function AsignacionLotesView() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const paginated = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const visibleIds = useMemo(() => paginated.map((r) => r.id), [paginated]);
+  const sel = useListSelectionMode(visibleIds);
 
   const showFeedback = (message: string) => {
     setFeedback(message);
@@ -581,6 +591,20 @@ export function AsignacionLotesView() {
               <span className="text-sm text-[var(--os-text-muted)]">{filtered.length} resultado(s)</span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {canMutate &&
+                (!sel.active ? (
+                  <ListSelectionEnterButton onClick={sel.enter} />
+                ) : (
+                  <ListSelectionToolbar
+                    selectedCount={sel.selectedCount}
+                    onSelectAll={sel.selectAllVisible}
+                    onDeselectAll={sel.deselectAll}
+                    onDelete={() => setBulkPending(true)}
+                    onCancel={sel.cancel}
+                    busy={bulkBusy}
+                    deleteLabel="Archivar seleccionados"
+                  />
+                ))}
               <Button type="button" variant="secondary" onClick={() => setImportOpen(true)} disabled={!canMutate}>
                 <ClipboardPaste className="size-4" aria-hidden="true" />
                 Pegar desde Excel
@@ -607,6 +631,11 @@ export function AsignacionLotesView() {
           rows={paginated}
           rowKey={(row) => row.id}
           emptyMessage="Sin asignaciones para los filtros actuales."
+          selection={
+            sel.active
+              ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
+              : undefined
+          }
         />
 
         <div className="flex items-center justify-between text-sm text-[var(--os-text-muted)]">
@@ -647,6 +676,49 @@ export function AsignacionLotesView() {
               showFeedback(err instanceof Error ? err.message : "No se pudo archivar.");
               throw err;
             }
+          }}
+        />
+
+        <LifecycleConfirmDialog
+          pending={
+            bulkPending
+              ? syntheticLifecycleItem(
+                  "archivar",
+                  "Archivar asignaciones",
+                  bulkDeleteConfirmMessage(sel.selectedCount)
+                )
+              : null
+          }
+          forceReason
+          entityLabel={`${sel.selectedCount} asignación(es)`}
+          onClose={() => setBulkPending(false)}
+          onConfirm={async (_reason) => {
+            setBulkBusy(true);
+            let ok = 0;
+            let skipped = 0;
+            let failed = 0;
+            const byId = new Map(paginated.map((r) => [r.id, r]));
+            for (const id of sel.selectedIds) {
+              const row = byId.get(id);
+              if (!row || row.archived) {
+                skipped += 1;
+                continue;
+              }
+              try {
+                await patchAsignacionLoteApi(session, id, "archive");
+                ok += 1;
+              } catch {
+                failed += 1;
+              }
+            }
+            setBulkPending(false);
+            sel.cancel();
+            await refresh();
+            setBulkBusy(false);
+            const parts = [`${ok} archivada(s)`];
+            if (skipped) parts.push(`${skipped} omitida(s)`);
+            if (failed) parts.push(`${failed} error(es)`);
+            showFeedback(parts.join(" · "));
           }}
         />
 

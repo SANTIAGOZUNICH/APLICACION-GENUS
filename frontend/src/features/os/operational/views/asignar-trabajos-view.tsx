@@ -19,6 +19,19 @@ import { OperationalTable, StatusChip, type OperationalTableColumn } from "../co
 import { DeliveryDateBadge } from "../components/delivery-date-badge";
 import { AssignedWorkLifecycleActions } from "../components/assigned-work-lifecycle-actions";
 import {
+  executeAssignedWorkLifecycleAction,
+  resolveAssignedWorkLifecycleAction,
+} from "../lib/assigned-work-lifecycle";
+import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
+import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
+import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
+import {
+  bulkDeleteConfirmMessage,
+  ListSelectionEnterButton,
+  ListSelectionToolbar,
+  useListSelectionMode,
+} from "../components/list-selection-mode";
+import {
   filterByDeliveryDate,
   sortByDeliveryDateNearest,
   todayIso,
@@ -27,7 +40,10 @@ import { useOperationalStore } from "../store/operational-store-context";
 import type { WorkItem } from "@/types/operational/work-item";
 import { getClientPlanningSource } from "@/lib/planning/planning-source";
 
-type AssignableSector = Extract<SectorId, "ELABORACION" | "ENVASADO_MASIVO" | "ENVASADO_PREMIUM">;
+type AssignableSector = Extract<
+  SectorId,
+  "ELABORACION" | "ENVASADO_MASIVO" | "ENVASADO_PREMIUM" | "CODIFICADO"
+>;
 
 const MASIVO_LINES = ["Línea 1", "Línea 2", "Línea 3", "Línea 4"];
 const PREMIUM_LINES = ["Línea 1", "Línea 2"];
@@ -87,6 +103,8 @@ export function AsignarTrabajosView() {
   const [reassigningId, setReassigningId] = useState<string | null>(null);
   const [reassignDelivery, setReassignDelivery] = useState("");
   const [neonItems, setNeonItems] = useState<WorkItem[]>([]);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const idempotencyRef = useRef(newIdempotencyKey());
   const inFlightRef = useRef(false);
 
@@ -122,6 +140,10 @@ export function AsignarTrabajosView() {
     return filterByDeliveryDate(all, filterDelivery || null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick, filterDelivery, neonItems, native]);
+
+  const canBulkMutate = canMutateAssignedWork(session.sectorId) && !native;
+  const visibleIds = useMemo(() => items.map((r) => r.id), [items]);
+  const sel = useListSelectionMode(visibleIds);
 
   const clearFormAfterSuccess = () => {
     setClient("");
@@ -170,7 +192,8 @@ export function AsignarTrabajosView() {
     const payload = {
       sector,
       ownerPerson: sector === "ELABORACION" ? ownerPerson : null,
-      line: sector === "ELABORACION" ? null : line,
+      line:
+        sector === "ELABORACION" || sector === "CODIFICADO" ? null : line,
       client: client.trim(),
       product: product.trim(),
       plannedDate,
@@ -413,7 +436,8 @@ export function AsignarTrabajosView() {
               onChange={(e) => {
                 const next = e.target.value as AssignableSector;
                 setSector(next);
-                setLine(next === "ENVASADO_MASIVO" ? MASIVO_LINES[0] : PREMIUM_LINES[0]);
+                if (next === "ENVASADO_MASIVO") setLine(MASIVO_LINES[0]);
+                else if (next === "ENVASADO_PREMIUM") setLine(PREMIUM_LINES[0]);
               }}
               className={CONTROL_CLASS}
               data-testid="assign-sector"
@@ -421,6 +445,7 @@ export function AsignarTrabajosView() {
               <option value="ELABORACION">Elaboración</option>
               <option value="ENVASADO_MASIVO">Envasado Masivo</option>
               <option value="ENVASADO_PREMIUM">Envasado Premium</option>
+              <option value="CODIFICADO">Codificado</option>
             </select>
           </div>
 
@@ -443,7 +468,7 @@ export function AsignarTrabajosView() {
                 ))}
               </select>
             </div>
-          ) : (
+          ) : sector === "CODIFICADO" ? null : (
             <div className="space-y-1.5">
               <label htmlFor="af-line" className="text-sm font-medium">
                 Línea
@@ -560,7 +585,7 @@ export function AsignarTrabajosView() {
 
           <div className="space-y-1.5">
             <label htmlFor="af-ref" className="text-sm font-medium">
-              {sector === "ELABORACION" ? "OE" : "OA"}
+              {sector === "ELABORACION" ? "OE" : sector === "CODIFICADO" ? "Referencia" : "OA"}
             </label>
             <input
               id="af-ref"
@@ -678,6 +703,20 @@ export function AsignarTrabajosView() {
                 </button>
               )}
               <span className="text-xs text-[var(--os-text-muted)]">{items.length} resultado(s)</span>
+              {canBulkMutate &&
+                (!sel.active ? (
+                  <ListSelectionEnterButton onClick={sel.enter} />
+                ) : (
+                  <ListSelectionToolbar
+                    selectedCount={sel.selectedCount}
+                    onSelectAll={sel.selectAllVisible}
+                    onDeselectAll={sel.deselectAll}
+                    onDelete={() => setBulkPending(true)}
+                    onCancel={sel.cancel}
+                    busy={bulkBusy}
+                    deleteLabel="Eliminar pendientes"
+                  />
+                ))}
             </div>
           </div>
           <OperationalTable
@@ -685,8 +724,73 @@ export function AsignarTrabajosView() {
             rows={items}
             rowKey={(r) => r.id}
             emptyMessage="Todavía no se asignaron trabajos."
+            selection={
+              sel.active
+                ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
+                : undefined
+            }
           />
         </section>
+
+        <LifecycleConfirmDialog
+          pending={
+            bulkPending
+              ? syntheticLifecycleItem(
+                  "eliminar",
+                  "Eliminar trabajos pendientes",
+                  bulkDeleteConfirmMessage(sel.selectedCount)
+                )
+              : null
+          }
+          forceReason
+          entityLabel={`${sel.selectedCount} trabajo(s)`}
+          onClose={() => setBulkPending(false)}
+          onConfirm={async (reason) => {
+            setBulkBusy(true);
+            let ok = 0;
+            let skipped = 0;
+            let failed = 0;
+            const byId = new Map(items.map((r) => [r.id, r]));
+            for (const id of sel.selectedIds) {
+              const item = byId.get(id);
+              if (!item) continue;
+              const decision = resolveAssignedWorkLifecycleAction(
+                { status: item.status, finishedQty: getFinishedQty(item.id) },
+                { hasProgressRecord: getFinishedQty(item.id).trim().length > 0 }
+              );
+              if (decision.action !== "eliminar") {
+                skipped += 1;
+                continue;
+              }
+              try {
+                const result = await executeAssignedWorkLifecycleAction({
+                  action: "eliminar",
+                  item,
+                  actorSectorId: session.sectorId,
+                  actorName: workspace.context.displayName,
+                  finishedQty: getFinishedQty(item.id),
+                  reason,
+                });
+                if (!result.ok) {
+                  failed += 1;
+                } else {
+                  ok += 1;
+                }
+              } catch {
+                failed += 1;
+              }
+            }
+            setBulkPending(false);
+            sel.cancel();
+            setBulkBusy(false);
+            setTick((v) => v + 1);
+            void refreshNeonList();
+            const parts = [`${ok} eliminado(s)`];
+            if (skipped) parts.push(`${skipped} omitido(s) (requieren cancelación con motivo)`);
+            if (failed) parts.push(`${failed} error(es)`);
+            notifyLifecycleChange(parts.join(" · "));
+          }}
+        />
       </div>
     </TwinShell>
   );

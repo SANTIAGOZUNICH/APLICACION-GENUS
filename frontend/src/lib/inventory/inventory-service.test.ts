@@ -564,6 +564,57 @@ describe("Pegado Excel — campos calculados ignorados", () => {
   });
 });
 
+describe("MP Stock — archivo lógico seguro", () => {
+  let svc: InventoryService;
+
+  beforeEach(() => {
+    svc = new InventoryService(new MemoryInventoryRepo());
+  });
+
+  it("bloquea deleteMpStock si hay ingreso activo ligado", async () => {
+    const row = await svc.upsertMpIngreso(mp, {
+      codigo: "ARC-01",
+      descripcion: "A",
+      lote: "L-A",
+      bultos: 1,
+      cantidad: 10,
+      confirm: true,
+    });
+    expect(row.stockLotId).toBeTruthy();
+    expect(() => svc.deleteMpStock(mp, row.stockLotId!, "cleanup")).toThrow(
+      /vinculado al ingreso/i
+    );
+    expect(svc.listMpStock(mp)).toHaveLength(1);
+  });
+
+  it("archiva saldo manual sin ingresos y lo oculta del listado", () => {
+    const lot = svc.upsertMpStock(mp, {
+      codigo: "MAN-1",
+      descripcion: "Manual",
+      cantidadKg: 0,
+      origen: "manual",
+    });
+    const archived = svc.deleteMpStock(mp, lot.id, "sin uso");
+    expect(archived.archived).toBe(true);
+    expect(svc.listMpStock(mp).find((r) => r.id === lot.id)).toBeUndefined();
+  });
+
+  it("permite archivar tras anular el ingreso origen", async () => {
+    const row = await svc.upsertMpIngreso(mp, {
+      codigo: "ARC-02",
+      descripcion: "B",
+      lote: "L-B",
+      bultos: 1,
+      cantidad: 5,
+      confirm: true,
+    });
+    await svc.anularMpIngreso(mp, row.id, "error");
+    const archived = svc.deleteMpStock(mp, row.stockLotId!, "limpieza");
+    expect(archived.archived).toBe(true);
+    expect(svc.listMpStock(mp).find((r) => r.id === row.stockLotId)).toBeUndefined();
+  });
+});
+
 describe("Permisos sectoriales inventario", () => {
   it.each([
     ["DEPOSITO", "me_ingresos", true],

@@ -119,6 +119,20 @@ export function assertSectorAssignment(
     return { line, branchOwner: null };
   }
 
+  if (sector === "CODIFICADO") {
+    if (line) {
+      throw new PlanningValidationError(
+        "line no aplica a Codificado."
+      );
+    }
+    if (branchOwner) {
+      throw new PlanningValidationError(
+        "branchOwner no aplica a Codificado."
+      );
+    }
+    return { line: null, branchOwner: null };
+  }
+
   throw new PlanningValidationError(`Sector inválido: ${sector}`);
 }
 

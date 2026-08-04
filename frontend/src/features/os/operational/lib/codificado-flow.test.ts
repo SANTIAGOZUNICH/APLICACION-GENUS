@@ -132,6 +132,11 @@ describe("codificado-flow", () => {
     expect(canDeliverFromCodificado("revision").ok).toBe(false);
   });
 
+  it("tarea asignada a CODIFICADO (pendiente) puede entregarse", () => {
+    expect(canDeliverFromCodificado("pendiente").ok).toBe(false);
+    expect(canDeliverFromCodificado("pendiente", { sector: "CODIFICADO" }).ok).toBe(true);
+  });
+
   it("Codificado entrega con cajas y total finales", () => {
     const item = envasadoItem({ packagingTotalUnits: 1000 });
     recordSendToCodificado(item, { totalUnits: 1000, sentBy: "Env" });

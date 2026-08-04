@@ -48,6 +48,14 @@ import { getWorkProgress, recordWorkProgress } from "../store/operational-store"
 import type { QualityItem } from "../types";
 import { DeliveryFilesDialog } from "./delivery-files-dialog";
 import { DeliveryLifecycleActions } from "../components/delivery-lifecycle-actions";
+import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
+import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
+import {
+  bulkDeleteConfirmMessage,
+  ListSelectionEnterButton,
+  ListSelectionToolbar,
+  useListSelectionMode,
+} from "../components/list-selection-mode";
 
 type EntregadosTab = "entregados" | "archivados" | "pendientes";
 type TimelinessFilter = "todos" | "en_fecha" | "fuera_fecha";
@@ -180,6 +188,8 @@ export function EntregadosView() {
   const [deleteGuideStep, setDeleteGuideStep] = useState<"explain" | "reason" | "confirm">("explain");
   const [deleteReason, setDeleteReason] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const workItemsById = useMemo(() => {
     if (tick < 0) return new Map<string, WorkItem>();
@@ -265,6 +275,8 @@ export function EntregadosView() {
 
   const pagedDeliveries = filteredDeliveries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const totalPages = Math.max(1, Math.ceil(filteredDeliveries.length / PAGE_SIZE));
+  const visibleIds = useMemo(() => pagedDeliveries.map((r) => r.id), [pagedDeliveries]);
+  const sel = useListSelectionMode(visibleIds);
 
   const periodCount = filteredDeliveries.length;
   const deliveredToday = activeDeliveries.filter((record) => record.actualDeliveredAt.slice(0, 10) === todayIso()).length;
@@ -705,7 +717,21 @@ export function EntregadosView() {
                 <option value="client_asc">Cliente A-Z</option>
               </select>
             </div>
-            <OperationalTable columns={deliveryColumns} rows={pagedDeliveries} rowKey={(record) => record.id} emptyMessage="Sin entregas para los filtros seleccionados." />
+            {canMutate &&
+              (!sel.active ? (
+                <ListSelectionEnterButton onClick={sel.enter} />
+              ) : (
+                <ListSelectionToolbar
+                  selectedCount={sel.selectedCount}
+                  onSelectAll={sel.selectAllVisible}
+                  onDeselectAll={sel.deselectAll}
+                  onDelete={() => setBulkPending(true)}
+                  onCancel={sel.cancel}
+                  busy={bulkBusy}
+                  deleteLabel="Archivar seleccionados"
+                />
+              ))}
+            <OperationalTable columns={deliveryColumns} rows={pagedDeliveries} rowKey={(record) => record.id} emptyMessage="Sin entregas para los filtros seleccionados." selection={sel.active ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle } : undefined} />
             <div className="flex items-center justify-between text-sm text-[var(--os-text-muted)]">
               <span>{filteredDeliveries.length} resultado(s)</span>
               <div className="flex items-center gap-2">
@@ -938,6 +964,41 @@ export function EntregadosView() {
         open={filesRef !== null}
         onOpenChange={(open) => !open && setFilesRef(null)}
         refNumber={filesRef}
+      />
+
+      <LifecycleConfirmDialog
+        pending={
+          bulkPending
+            ? syntheticLifecycleItem(
+                "archivar",
+                "Archivar entregas",
+                bulkDeleteConfirmMessage(sel.selectedCount)
+              )
+            : null
+        }
+        forceReason
+        entityLabel={`${sel.selectedCount} entrega(s)`}
+        onClose={() => setBulkPending(false)}
+        onConfirm={async (_reason) => {
+          setBulkBusy(true);
+          let ok = 0;
+          let failed = 0;
+          const byId = new Map(pagedDeliveries.map((r) => [r.id, r]));
+          for (const id of sel.selectedIds) {
+            const record = byId.get(id);
+            if (!record) continue;
+            try {
+              executeArchive(record);
+              ok += 1;
+            } catch {
+              failed += 1;
+            }
+          }
+          setBulkPending(false);
+          sel.cancel();
+          setBulkBusy(false);
+          showToast(`${ok} archivada(s)${failed ? ` · ${failed} error(es)` : ""}`);
+        }}
       />
     </TwinShell>
   );

@@ -3,7 +3,8 @@ export type PlanningWeekStatus = "DRAFT" | "PUBLISHED";
 export type PlanningSector =
   | "ELABORACION"
   | "ENVASADO_MASIVO"
-  | "ENVASADO_PREMIUM";
+  | "ENVASADO_PREMIUM"
+  | "CODIFICADO";
 
 export type PlanningWorkItemStatus =
   | "BORRADOR"

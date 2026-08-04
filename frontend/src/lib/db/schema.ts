@@ -26,6 +26,7 @@ export const workItemSectorEnum = pgEnum("work_item_sector", [
   "ELABORACION",
   "ENVASADO_MASIVO",
   "ENVASADO_PREMIUM",
+  "CODIFICADO",
 ]);
 
 export const workItemStatusEnum = pgEnum("work_item_status", [

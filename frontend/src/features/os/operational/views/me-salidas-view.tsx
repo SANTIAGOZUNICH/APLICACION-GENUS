@@ -16,6 +16,12 @@ import {
   OperationalTable,
   type OperationalTableColumn,
 } from "@/features/os/operational/components/operational-ui";
+import {
+  bulkDeleteConfirmMessage,
+  ListSelectionEnterButton,
+  ListSelectionToolbar,
+  useListSelectionMode,
+} from "../components/list-selection-mode";
 import { displayCell, multiplyTotal, parseOptionalNumber } from "@/lib/inventory/calcs";
 import { ME_SALIDA_COLUMNS, type MeMaterial, type MeSalidaRow } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
@@ -85,6 +91,8 @@ export function MeSalidasView() {
   const [filterEntregado, setFilterEntregado] = useState<"todos" | "si" | "no">("todos");
   const [form, setForm] = useState<FormState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [page, setPage] = useState(0);
   const pageSize = 20;
@@ -132,6 +140,8 @@ export function MeSalidasView() {
   }, [rows, search, filterControl, filterEntregado]);
 
   const pageRows = filtered.slice(page * pageSize, page * pageSize + pageSize);
+  const visibleIds = useMemo(() => pageRows.map((r) => r.id), [pageRows]);
+  const sel = useListSelectionMode(visibleIds);
 
   const ME_SALIDA_PRIMARY = new Set(["DESCRIPCIÓN", "CONTROL", "ENTREGADO"]);
   const columns: OperationalTableColumn<MeSalidaRow>[] = ME_SALIDA_COLUMNS.map((label) => {
@@ -259,6 +269,19 @@ export function MeSalidasView() {
             <Button type="button" variant="secondary" onClick={() => setPasteOpen(true)}>
               <ClipboardPaste className="mr-1 size-4" /> Pegar desde Excel
             </Button>
+            {!sel.active ? (
+              <ListSelectionEnterButton onClick={sel.enter} />
+            ) : (
+              <ListSelectionToolbar
+                selectedCount={sel.selectedCount}
+                onSelectAll={sel.selectAllVisible}
+                onDeselectAll={sel.deselectAll}
+                onDelete={() => setBulkPending(true)}
+                onCancel={sel.cancel}
+                busy={bulkBusy}
+                deleteLabel="Anular seleccionados"
+              />
+            )}
           </>
         )}
         <input
@@ -366,6 +389,11 @@ export function MeSalidasView() {
         rows={pageRows}
         rowKey={(r) => r.id}
         emptyMessage="Sin salidas ME."
+        selection={
+          sel.active
+            ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
+            : undefined
+        }
       />
 
       <div className="mt-3 flex gap-2 text-sm">
@@ -492,6 +520,53 @@ export function MeSalidasView() {
             reason,
           });
           await reload();
+        }}
+      />
+
+      <LifecycleConfirmDialog
+        pending={
+          bulkPending
+            ? syntheticLifecycleItem(
+                "anular",
+                "Anular salidas ME",
+                bulkDeleteConfirmMessage(sel.selectedCount)
+              )
+            : null
+        }
+        forceReason
+        entityLabel={`${sel.selectedCount} salida(s)`}
+        onClose={() => setBulkPending(false)}
+        onConfirm={async (reason) => {
+          setBulkBusy(true);
+          let ok = 0;
+          let skipped = 0;
+          let failed = 0;
+          const byId = new Map(pageRows.map((r) => [r.id, r]));
+          for (const id of sel.selectedIds) {
+            const row = byId.get(id);
+            if (!row || row.reverted) {
+              skipped += 1;
+              continue;
+            }
+            try {
+              await mutateInventory({
+                action: "delete",
+                resource: "me_salidas",
+                id,
+                reason,
+              });
+              ok += 1;
+            } catch {
+              failed += 1;
+            }
+          }
+          setBulkPending(false);
+          sel.cancel();
+          await reload();
+          setBulkBusy(false);
+          showToast(
+            `${ok} anulada(s)${skipped ? ` · ${skipped} omitida(s)` : ""}${failed ? ` · ${failed} error(es)` : ""}`
+          );
         }}
       />
 
