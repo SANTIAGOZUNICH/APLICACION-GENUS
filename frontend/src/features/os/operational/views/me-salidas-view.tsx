@@ -127,6 +127,7 @@ export function MeSalidasView() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
+      if (r.reverted) return false;
       if (filterControl === "si" && !r.control) return false;
       if (filterControl === "no" && r.control) return false;
       if (filterEntregado === "si" && !r.entregado) return false;
@@ -140,7 +141,7 @@ export function MeSalidasView() {
   }, [rows, search, filterControl, filterEntregado]);
 
   const pageRows = filtered.slice(page * pageSize, page * pageSize + pageSize);
-  const visibleIds = useMemo(() => pageRows.map((r) => r.id), [pageRows]);
+  const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
   const sel = useListSelectionMode(visibleIds);
 
   const ME_SALIDA_PRIMARY = new Set(["DESCRIPCIÓN", "CONTROL", "ENTREGADO"]);
@@ -258,7 +259,7 @@ export function MeSalidasView() {
       )}
       <p className="mb-3 text-xs text-[var(--os-text-muted)]">
         Incluye salidas manuales y salidas automáticas generadas al entregar una OA. Las salidas OA
-        no se editan desde aquí; podés anularlas para revertir el descuento de stock.
+        no se editan desde aquí; podés eliminarlas para revertir el descuento de stock.
       </p>
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {canWrite && (
@@ -279,7 +280,7 @@ export function MeSalidasView() {
                 onDelete={() => setBulkPending(true)}
                 onCancel={sel.cancel}
                 busy={bulkBusy}
-                deleteLabel="Anular seleccionados"
+                deleteLabel="Eliminar seleccionados"
               />
             )}
           </>
@@ -324,7 +325,7 @@ export function MeSalidasView() {
                   render: (row: MeSalidaRow) => {
                     if (row.reverted) {
                       return (
-                        <span className="text-xs text-[var(--os-text-muted)]">Anulada</span>
+                        <span className="text-xs text-[var(--os-text-muted)]">Eliminada</span>
                       );
                     }
                     if (row.origen === "OA") {
@@ -339,7 +340,7 @@ export function MeSalidasView() {
                             })
                           }
                         >
-                          Anular
+                          Eliminar
                         </button>
                       );
                     }
@@ -368,8 +369,8 @@ export function MeSalidasView() {
                       </button>
                       <button
                         type="button"
-                        aria-label="Borrar"
-                        title="Borrar"
+                        aria-label="Eliminar"
+                        title="Eliminar"
                         onClick={() =>
                           setPendingDelete({
                             id: row.id,
@@ -502,23 +503,24 @@ export function MeSalidasView() {
         pending={
           pendingDelete
             ? syntheticLifecycleItem(
-                "anular",
-                "Anular salida ME",
-                "Se revertirá el impacto en stock (si aplica) y la fila quedará marcada como ANULADA."
+                "eliminar",
+                "Eliminar salida ME",
+                "Se revertirá el impacto en stock (si aplica) y la fila dejará de mostrarse en la lista activa."
               )
             : null
         }
-        forceReason
         entityLabel={pendingDelete?.label}
         onClose={() => setPendingDelete(null)}
         onConfirm={async (reason) => {
           if (!pendingDelete) return;
+          const id = pendingDelete.id;
           await mutateInventory({
             action: "delete",
             resource: "me_salidas",
-            id: pendingDelete.id,
+            id,
             reason,
           });
+          setRows((prev) => prev.filter((row) => row.id !== id));
           await reload();
         }}
       />
@@ -527,13 +529,12 @@ export function MeSalidasView() {
         pending={
           bulkPending
             ? syntheticLifecycleItem(
-                "anular",
-                "Anular salidas ME",
+                "eliminar",
+                "Eliminar salidas ME",
                 bulkDeleteConfirmMessage(sel.selectedCount)
               )
             : null
         }
-        forceReason
         entityLabel={`${sel.selectedCount} salida(s)`}
         onClose={() => setBulkPending(false)}
         onConfirm={async (reason) => {
@@ -541,7 +542,8 @@ export function MeSalidasView() {
           let ok = 0;
           let skipped = 0;
           let failed = 0;
-          const byId = new Map(pageRows.map((r) => [r.id, r]));
+          const deletedIds: string[] = [];
+          const byId = new Map(filtered.map((r) => [r.id, r]));
           for (const id of sel.selectedIds) {
             const row = byId.get(id);
             if (!row || row.reverted) {
@@ -556,16 +558,20 @@ export function MeSalidasView() {
                 reason,
               });
               ok += 1;
+              deletedIds.push(id);
             } catch {
               failed += 1;
             }
           }
           setBulkPending(false);
           sel.cancel();
+          if (deletedIds.length > 0) {
+            setRows((prev) => prev.filter((row) => !deletedIds.includes(row.id)));
+          }
           await reload();
           setBulkBusy(false);
           showToast(
-            `${ok} anulada(s)${skipped ? ` · ${skipped} omitida(s)` : ""}${failed ? ` · ${failed} error(es)` : ""}`
+            `${ok} eliminada(s)${skipped ? ` · ${skipped} omitida(s)` : ""}${failed ? ` · ${failed} error(es)` : ""}`
           );
         }}
       />

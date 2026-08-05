@@ -71,12 +71,12 @@ describe("asignacion-lotes API", () => {
     expect(res.status).toBe(403);
   });
 
-  it("archive y restore autorizados vía PATCH", async () => {
+  it("DELETE elimina asignación con motivo opcional", async () => {
     const svc = getAsignacionLotesService();
-    const created = svc.upsert(
+    const created = await svc.upsert(
       { email: "calidad@laboratoriogenus.com.ar", sector: "CALIDAD", displayName: "Calidad" },
       {
-        lote: "L-ARC",
+        lote: "L-DEL",
         fecha: "2026-07-28",
         producto: "Shampoo",
         codigo: "SH-01",
@@ -85,42 +85,29 @@ describe("asignacion-lotes API", () => {
       }
     );
 
-    const { PATCH } = await import("@/app/api/v1/asignacion-lotes/[id]/route");
+    const { DELETE } = await import("@/app/api/v1/asignacion-lotes/[id]/route");
 
-    const archiveRes = await PATCH(
+    const deleteRes = await DELETE(
       new Request(`http://localhost/api/v1/asignacion-lotes/${created.id}`, {
-        method: "PATCH",
+        method: "DELETE",
         headers: calidadHeaders,
         body: JSON.stringify({
-          lifecycleAction: "archive",
           actorSectorId: "CALIDAD",
+          reason: "  ",
         }),
       }),
       { params: Promise.resolve({ id: created.id }) }
     );
-    expect(archiveRes.status).toBe(200);
-    const archived = (await archiveRes.json()) as { item: { archived?: boolean } };
-    expect(archived.item.archived).toBe(true);
-
-    const restoreRes = await PATCH(
-      new Request(`http://localhost/api/v1/asignacion-lotes/${created.id}`, {
-        method: "PATCH",
-        headers: calidadHeaders,
-        body: JSON.stringify({
-          lifecycleAction: "restore",
-          actorSectorId: "CALIDAD",
-        }),
-      }),
-      { params: Promise.resolve({ id: created.id }) }
-    );
-    expect(restoreRes.status).toBe(200);
-    const restored = (await restoreRes.json()) as { item: { archived?: boolean } };
-    expect(restored.item.archived).toBe(false);
+    expect(deleteRes.status).toBe(200);
+    expect(await svc.get(
+      { email: "calidad@laboratoriogenus.com.ar", sector: "CALIDAD", displayName: "Calidad" },
+      created.id
+    )).toBeNull();
   });
 
-  it("403 archive para sector no autorizado", async () => {
+  it("403 DELETE para sector no autorizado", async () => {
     const svc = getAsignacionLotesService();
-    const created = svc.upsert(
+    const created = await svc.upsert(
       { email: "calidad@laboratoriogenus.com.ar", sector: "CALIDAD", displayName: "Calidad" },
       {
         lote: "L-DENY",
@@ -132,12 +119,12 @@ describe("asignacion-lotes API", () => {
       }
     );
 
-    const { PATCH } = await import("@/app/api/v1/asignacion-lotes/[id]/route");
-    const res = await PATCH(
+    const { DELETE } = await import("@/app/api/v1/asignacion-lotes/[id]/route");
+    const res = await DELETE(
       new Request(`http://localhost/api/v1/asignacion-lotes/${created.id}`, {
-        method: "PATCH",
+        method: "DELETE",
         headers: elaboracionHeaders,
-        body: JSON.stringify({ lifecycleAction: "archive", actorSectorId: "ELABORACION" }),
+        body: JSON.stringify({ actorSectorId: "ELABORACION" }),
       }),
       { params: Promise.resolve({ id: created.id }) }
     );

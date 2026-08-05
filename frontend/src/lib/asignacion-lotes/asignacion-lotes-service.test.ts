@@ -3,7 +3,7 @@ import {
   getAsignacionLotesService,
   resetAsignacionLotesMemoryForTests,
 } from "@/lib/asignacion-lotes/asignacion-lotes-service";
-import { OrdersForbiddenError } from "@/lib/orders/types";
+import { OrdersForbiddenError, OrdersNotFoundError } from "@/lib/orders/types";
 
 describe("AsignacionLotesService", () => {
   beforeEach(() => {
@@ -22,9 +22,9 @@ describe("AsignacionLotesService", () => {
     displayName: "Elaboración",
   };
 
-  it("upsert y list para sector autorizado", () => {
+  it("upsert y list para sector autorizado", async () => {
     const svc = getAsignacionLotesService();
-    const item = svc.upsert(calidad, {
+    const item = await svc.upsert(calidad, {
       lote: "L-001",
       fecha: "2026-07-28",
       producto: "Creamy",
@@ -33,13 +33,13 @@ describe("AsignacionLotesService", () => {
       updatedBy: "Calidad",
     });
     expect(item.lote).toBe("L-001");
-    const listed = svc.list(calidad);
+    const listed = await svc.list(calidad);
     expect(listed.some((row) => row.id === item.id)).toBe(true);
   });
 
-  it("rechaza mutación de sector no autorizado", () => {
+  it("rechaza mutación de sector no autorizado", async () => {
     const svc = getAsignacionLotesService();
-    expect(() =>
+    await expect(
       svc.upsert(elaboracion, {
         lote: "L-X",
         fecha: "2026-07-28",
@@ -48,29 +48,49 @@ describe("AsignacionLotesService", () => {
         cantidades: 1,
         updatedBy: "Elab",
       })
-    ).toThrow(OrdersForbiddenError);
+    ).rejects.toThrow(OrdersForbiddenError);
   });
 
-  it("archive y restore", () => {
+  it("delete elimina de listado activo", async () => {
     const svc = getAsignacionLotesService();
-    const item = svc.upsert(calidad, {
-      lote: "L-ARC",
+    const item = await svc.upsert(calidad, {
+      lote: "L-DEL",
       fecha: "2026-07-28",
       producto: "Shampoo",
       codigo: "SH-1",
       cantidades: 10,
       updatedBy: "Calidad",
     });
-    const archived = svc.archive(calidad, item.id);
-    expect(archived.archived).toBe(true);
-    expect(svc.list(calidad).some((row) => row.id === item.id)).toBe(false);
-    const restored = svc.restore(calidad, item.id);
-    expect(restored.archived).toBe(false);
+    await svc.delete(calidad, item.id, "Prueba");
+    expect(await svc.get(calidad, item.id)).toBeNull();
+    expect((await svc.list(calidad)).some((row) => row.id === item.id)).toBe(false);
   });
 
-  it("importa filas con código vacío sin copiar producto", () => {
+  it("delete lanza NotFound si no existe", async () => {
     const svc = getAsignacionLotesService();
-    const result = svc.import(calidad, [
+    await expect(svc.delete(calidad, "missing-id")).rejects.toThrow(OrdersNotFoundError);
+  });
+
+  it("restore filas archivadas legacy", async () => {
+    const svc = getAsignacionLotesService();
+    const item = await svc.upsert(calidad, {
+      lote: "L-ARC",
+      fecha: "2026-07-28",
+      producto: "Shampoo",
+      codigo: "SH-ARC",
+      cantidades: 10,
+      updatedBy: "Calidad",
+      archived: true,
+    });
+    expect((await svc.list(calidad)).some((row) => row.id === item.id)).toBe(false);
+    const restored = await svc.restore(calidad, item.id);
+    expect(restored.archived).toBe(false);
+    expect((await svc.list(calidad)).some((row) => row.id === item.id)).toBe(true);
+  });
+
+  it("importa filas con código vacío sin copiar producto", async () => {
+    const svc = getAsignacionLotesService();
+    const result = await svc.import(calidad, [
       {
         lote: "L-EMPTY",
         fecha: "2026-08-01",
@@ -98,7 +118,7 @@ describe("AsignacionLotesService", () => {
     ]);
     expect(result.imported).toBe(3);
     expect(result.errors).toEqual([]);
-    const listed = svc.list(calidad);
+    const listed = await svc.list(calidad);
     const empty = listed.find((row) => row.lote === "L-EMPTY")!;
     const qsoft = listed.find((row) => row.lote === "L-QSOFT")!;
     const zeros = listed.find((row) => row.lote === "L-ZERO")!;
@@ -107,9 +127,9 @@ describe("AsignacionLotesService", () => {
     expect(qsoft.codigo).toBe("QSOFT");
     expect(zeros.codigo).toBe("000125-A");
 
-    const reloaded = svc.get(calidad, empty.id)!;
+    const reloaded = (await svc.get(calidad, empty.id))!;
     expect(reloaded.codigo).toBe("");
-    const patched = svc.upsert(calidad, {
+    const patched = await svc.upsert(calidad, {
       id: empty.id,
       lote: empty.lote,
       fecha: empty.fecha,

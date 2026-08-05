@@ -76,6 +76,13 @@ function mapItemRow(row: typeof workItems.$inferSelect): PlanningWorkItemRecord 
     branchOwner: row.branchOwner,
     priority: row.priority,
     notes: row.notes,
+    packagingLote: row.packagingLote ?? null,
+    packagingVto: row.packagingVto ?? null,
+    packagingTotalUnits:
+      row.packagingTotalUnits == null ? null : Number(row.packagingTotalUnits),
+    orderId: row.orderId ?? null,
+    orderNumber: row.orderNumber ?? null,
+    deliveryDate: row.deliveryDate ? String(row.deliveryDate) : null,
     status: row.status,
     publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
     createdBy: row.createdBy,
@@ -87,22 +94,10 @@ function mapItemRow(row: typeof workItems.$inferSelect): PlanningWorkItemRecord 
   };
 }
 
+/** Solo observaciones libres — lote/VTO/entrega/OA van en columnas. */
 function composeNotes(input: WorkAssignmentInput): string | null {
-  const parts: string[] = [];
-  if (input.notes?.trim()) parts.push(input.notes.trim());
-  if (input.deliveryDate?.trim()) {
-    parts.push(`Entrega:${input.deliveryDate.trim()}`);
-  }
-  if (input.packagingLote?.trim()) {
-    parts.push(`LOTE:${input.packagingLote.trim()}`);
-  }
-  if (input.packagingVto?.trim()) {
-    parts.push(`VTO:${input.packagingVto.trim()}`);
-  }
-  if (input.orderNumber?.trim()) {
-    parts.push(`REF:${input.orderNumber.trim()}`);
-  }
-  return parts.length ? parts.join(" · ") : null;
+  const text = input.notes?.trim() || "";
+  return text || null;
 }
 
 /**
@@ -344,6 +339,17 @@ export async function assignWorkItemDurable(
           branchOwner: assignment.branchOwner,
           priority: "NORMAL",
           notes,
+          packagingLote: input.packagingLote?.trim() || null,
+          packagingVto: input.packagingVto?.trim() || null,
+          packagingTotalUnits: (() => {
+            const n = Number.parseFloat(
+              String(input.plannedQuantity).replace(/\s/g, "").replace(",", ".")
+            );
+            return Number.isFinite(n) ? n : null;
+          })(),
+          orderId: orderRow?.id ?? null,
+          orderNumber: orderRow?.orderNumber ?? orderNumber,
+          deliveryDate: input.deliveryDate?.trim() || null,
           status: "PUBLICADO",
           publishedAt: now,
           createdBy: actor.email,

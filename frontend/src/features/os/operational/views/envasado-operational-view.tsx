@@ -27,7 +27,7 @@ import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { useOperationalStore } from "../store/operational-store-context";
 import { sortByDeliveryDateNearest } from "../lib/delivery-date";
-import { upsertGranelFromEnvasado } from "../adapters/graneles-repository";
+import { upsertGranelFromEnvasadoApi } from "@/lib/graneles/graneles-client";
 import { formatBulkRemainderKg } from "../lib/bulk-remainder";
 import { canSendToCodificado } from "../lib/codificado-flow";
 import { WORK_TRANSFER } from "../lib/work-transfer-labels";
@@ -150,7 +150,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   );
 
   const handleFinish = useCallback(
-    (
+    async (
       item: WorkItem,
       payload: {
         finishedQty: string;
@@ -165,24 +165,30 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         updatedBy: workspace.context.displayName,
       });
       if (payload.bulkRemainderKg && payload.bulkRemainderKg > 0) {
-        const granel = upsertGranelFromEnvasado({
-          workItemId: item.id,
-          originSector: sectorId,
-          product: item.product ?? "",
-          client: item.client ?? "",
-          bulkLot: item.loteRef || item.packagingLote || "Sin lote",
-          kg: payload.bulkRemainderKg,
-          reportedBy: workspace.context.displayName,
-          observation: payload.bulkRemainderObservation ?? undefined,
-          actorSector: sectorId,
-        });
-        if (granel.created) {
-          pushNotification({
-            kind: "trabajo_asignado",
-            title: "Sobrante de granel",
-            message: `Ingresaron ${formatBulkRemainderKg(payload.bulkRemainderKg)} kg de sobrante de ${item.product ?? "producto"} — ${item.client ?? "Cliente"}`,
-            sectors: ["DEPOSITO"],
+        try {
+          const granel = await upsertGranelFromEnvasadoApi(session, {
+            workItemId: item.id,
+            originSector: sectorId,
+            product: item.product ?? "",
+            client: item.client ?? "",
+            bulkLot: item.loteRef || item.packagingLote || "Sin lote",
+            kg: payload.bulkRemainderKg,
+            reportedBy: workspace.context.displayName,
+            observation: payload.bulkRemainderObservation ?? undefined,
           });
+          if (granel.created) {
+            pushNotification({
+              kind: "trabajo_asignado",
+              title: "Sobrante de granel",
+              message: `Ingresaron ${formatBulkRemainderKg(payload.bulkRemainderKg)} kg de sobrante de ${item.product ?? "producto"} — ${item.client ?? "Cliente"}`,
+              sectors: ["DEPOSITO"],
+            });
+          }
+        } catch (err) {
+          showToast(
+            err instanceof Error ? err.message : "No se pudo registrar el sobrante de granel.",
+            "info"
+          );
         }
       }
       pushNotification({
@@ -193,11 +199,11 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       });
       showToast("Trabajo enviado a Calidad.");
     },
-    [markWorkFinished, workspace.context.displayName, workspace.sectorLabel, showToast, sectorId]
+    [markWorkFinished, workspace.context.displayName, workspace.sectorLabel, showToast, sectorId, session]
   );
 
   const handleSendToCodificado = useCallback(
-    (
+    async (
       item: WorkItem,
       payload: {
         totalUnits: number;
@@ -213,25 +219,31 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       }
       let bulkId: string | null = null;
       if (payload.bulkRemainderKg && payload.bulkRemainderKg > 0) {
-        const granel = upsertGranelFromEnvasado({
-          workItemId: item.id,
-          originSector: sectorId,
-          product: item.product ?? "",
-          client: item.client ?? "",
-          bulkLot: item.loteRef || item.packagingLote || "Sin lote",
-          kg: payload.bulkRemainderKg,
-          reportedBy: workspace.context.displayName,
-          observation: payload.bulkRemainderObservation ?? undefined,
-          actorSector: sectorId,
-        });
-        bulkId = granel.record.id;
-        if (granel.created) {
-          pushNotification({
-            kind: "trabajo_asignado",
-            title: "Sobrante de granel",
-            message: `Ingresaron ${formatBulkRemainderKg(payload.bulkRemainderKg)} kg de sobrante de ${item.product ?? "producto"} — ${item.client ?? "Cliente"}`,
-            sectors: ["DEPOSITO"],
+        try {
+          const granel = await upsertGranelFromEnvasadoApi(session, {
+            workItemId: item.id,
+            originSector: sectorId,
+            product: item.product ?? "",
+            client: item.client ?? "",
+            bulkLot: item.loteRef || item.packagingLote || "Sin lote",
+            kg: payload.bulkRemainderKg,
+            reportedBy: workspace.context.displayName,
+            observation: payload.bulkRemainderObservation ?? undefined,
           });
+          bulkId = granel.record.id;
+          if (granel.created) {
+            pushNotification({
+              kind: "trabajo_asignado",
+              title: "Sobrante de granel",
+              message: `Ingresaron ${formatBulkRemainderKg(payload.bulkRemainderKg)} kg de sobrante de ${item.product ?? "producto"} — ${item.client ?? "Cliente"}`,
+              sectors: ["DEPOSITO"],
+            });
+          }
+        } catch (err) {
+          showToast(
+            err instanceof Error ? err.message : "No se pudo registrar el sobrante de granel.",
+            "info"
+          );
         }
       }
       const result = sendToCodificado(item, {
@@ -265,6 +277,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       showToast,
       sectorId,
       email,
+      session,
     ]
   );
 

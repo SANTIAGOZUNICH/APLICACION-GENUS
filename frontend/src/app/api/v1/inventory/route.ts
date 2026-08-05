@@ -182,7 +182,7 @@ async function mutateResource(
     case "mp_compras:upsert":
       return service.upsertMpCompra(actor, payload as never);
     case "mp_compras:delete":
-      return service.deleteMpCompra(actor, id!);
+      return service.deleteMpCompra(actor, id!, reason ?? "");
     case "mp_compras:link_ingreso":
       return service.linkCompraToIngreso(actor, id!, String(payload.ingresoId));
     default:

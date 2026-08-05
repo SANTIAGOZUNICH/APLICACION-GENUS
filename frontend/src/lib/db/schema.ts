@@ -7,6 +7,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   primaryKey,
@@ -127,6 +128,15 @@ export const workItems = pgTable(
     branchOwner: text("branch_owner"),
     priority: workItemPriorityEnum("priority").notNull().default("NORMAL"),
     notes: text("notes"),
+    /** Embalaje asignado (columnas aditivas 0014) — no viven en notes. */
+    packagingLote: text("packaging_lote"),
+    packagingVto: text("packaging_vto"),
+    packagingTotalUnits: doublePrecision("packaging_total_units"),
+    packingGroups: jsonb("packing_groups"),
+    /** Referencia orden (0020). */
+    orderId: uuid("order_id"),
+    orderNumber: text("order_number"),
+    deliveryDate: date("delivery_date"),
     status: workItemStatusEnum("status").notNull().default("BORRADOR"),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     createdBy: text("created_by").notNull(),
@@ -155,6 +165,7 @@ export const workItems = pgTable(
         (${table.sector} = 'ELABORACION' AND ${table.line} IS NULL AND ${table.branchOwner} IS NOT NULL)
         OR (${table.sector} = 'ENVASADO_MASIVO' AND ${table.branchOwner} IS NULL AND ${table.line} IN ('Línea 1', 'Línea 2', 'Línea 3', 'Línea 4'))
         OR (${table.sector} = 'ENVASADO_PREMIUM' AND ${table.branchOwner} IS NULL AND ${table.line} IN ('Línea 1', 'Línea 2'))
+        OR (${table.sector} = 'CODIFICADO' AND ${table.line} IS NULL AND ${table.branchOwner} IS NULL)
       )`
     ),
   ]
@@ -650,6 +661,37 @@ export const mpStockMovements = pgTable(
   ]
 );
 
+/** Asignación de lotes — migración 0012 (+ deleted_reason en 0020). */
+export const asignacionLotes = pgTable(
+  "asignacion_lotes",
+  {
+    id: text("id").primaryKey(),
+    lote: text("lote").notNull(),
+    fecha: date("fecha").notNull(),
+    producto: text("producto").notNull(),
+    codigo: text("codigo").notNull(),
+    marca: text("marca").notNull().default(""),
+    cantidades: numeric("cantidades").notNull().default("0"),
+    vto: date("vto"),
+    muestras: text("muestras").notNull().default(""),
+    cjMuestra: text("cj_muestra").notNull().default(""),
+    fechaAnalisis: date("fecha_analisis"),
+    observaciones: text("observaciones").notNull().default(""),
+    archived: boolean("archived").notNull().default(false),
+    deletedReason: text("deleted_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: text("created_by").notNull().default(""),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: text("updated_by").notNull().default(""),
+  },
+  (table) => [
+    uniqueIndex("asignacion_lotes_lote_codigo_active_uidx")
+      .on(table.lote, table.codigo)
+      .where(sql`${table.archived} = false`),
+    index("asignacion_lotes_fecha_idx").on(table.fecha),
+  ]
+);
+
 /** COA metadata — binarios en Drive; migración 0005. */
 export const coaFolders = pgTable(
   "coa_folders",
@@ -889,5 +931,53 @@ export const productionPedidos = pgTable(
     index("production_pedidos_nro_oc_idx").on(table.nroOc),
     index("production_pedidos_deleted_at_idx").on(table.deletedAt),
   ]
+);
+
+/** Depósito Graneles — sobrantes de granel; migración 0014. */
+export const depositoGraneles = pgTable(
+  "deposito_graneles",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workItemId: text("work_item_id"),
+    originSector: text("origin_sector"),
+    product: text("product").notNull().default(""),
+    client: text("client").notNull().default(""),
+    bulkLot: text("bulk_lot").notNull().default(""),
+    kgAvailable: numeric("kg_available").notNull().default("0"),
+    intakeDate: date("intake_date").notNull(),
+    reportedBy: text("reported_by").notNull(),
+    observation: text("observation").notNull().default(""),
+    location: text("location").notNull().default(""),
+    status: text("status").notNull().default("DISPONIBLE"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    annulledAt: timestamp("annulled_at", { withTimezone: true }),
+    annulledBy: text("annulled_by"),
+    annulReason: text("annul_reason"),
+  },
+  (table) => [
+    uniqueIndex("deposito_graneles_work_item_active_uidx")
+      .on(table.workItemId)
+      .where(
+        sql`${table.workItemId} is not null and ${table.status} not in ('ANULADO', 'ARCHIVADO')`
+      ),
+    index("deposito_graneles_status_idx").on(table.status),
+  ]
+);
+
+export const depositoGranelesAudit = pgTable(
+  "deposito_graneles_audit",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    granelId: text("granel_id").notNull(),
+    action: text("action").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    actorName: text("actor_name").notNull(),
+    reason: text("reason"),
+    beforeKg: numeric("before_kg"),
+    afterKg: numeric("after_kg"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("deposito_graneles_audit_granel_idx").on(table.granelId)]
 );
 

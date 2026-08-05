@@ -188,9 +188,11 @@ export class InventoryService {
 
   // ─── ME Ingresos ───────────────────────────────────────────
 
-  listMeIngresos(actor: InventoryActor) {
+  listMeIngresos(actor: InventoryActor, options: { includeAnulado?: boolean } = {}) {
     this.guard(actor, "me_ingresos", false);
-    return this.repo.listMeIngresos();
+    const rows = this.repo.listMeIngresos();
+    if (options.includeAnulado) return rows;
+    return rows.filter((row) => !row.anulado);
   }
 
   upsertMeIngreso(
@@ -200,6 +202,9 @@ export class InventoryService {
   ) {
     this.guard(actor, "me_ingresos", true);
     const existing = input.id ? this.repo.getMeIngreso(input.id) : null;
+    if (existing?.anulado) {
+      throw new InventoryValidationError("No se puede editar un ingreso anulado.");
+    }
     const bultos = parseOptionalNumber(input.bultos);
     const cantidad = parseOptionalNumber(input.cantidad);
     const total = multiplyTotal(bultos, cantidad);
@@ -226,6 +231,9 @@ export class InventoryService {
       total,
       ubicacion: input.ubicacion ?? existing?.ubicacion ?? material.ubicacion,
       materialId: material.id,
+      anulado: false,
+      anuladoAt: null,
+      anuladoReason: null,
       createdBy: existing?.createdBy ?? actor.email,
       updatedBy: actor.email,
       createdAt: existing?.createdAt ?? now,
@@ -305,9 +313,11 @@ export class InventoryService {
 
   // ─── ME Salidas ────────────────────────────────────────────
 
-  listMeSalidas(actor: InventoryActor) {
+  listMeSalidas(actor: InventoryActor, options: { includeAnulado?: boolean } = {}) {
     this.guard(actor, "me_salidas", false);
-    return this.repo.listMeSalidas();
+    const rows = this.repo.listMeSalidas();
+    if (options.includeAnulado) return rows;
+    return rows.filter((row) => !row.reverted);
   }
 
   upsertMeSalida(
@@ -550,13 +560,13 @@ export class InventoryService {
     return created;
   }
 
-  /** STOCK = ingresos − salidas OA activas. */
+  /** STOCK = ingresos activos − salidas OA activas (excluye anulados). */
   recalculateMeStock(materialId: string): MeMaterial {
     const mat = this.repo.getMeMaterial(materialId);
     if (!mat) throw new InventoryNotFoundError("Material ME no encontrado.");
     const ingresos = this.repo
       .listMeIngresos()
-      .filter((r) => r.materialId === materialId)
+      .filter((r) => r.materialId === materialId && !r.anulado)
       .reduce((acc, r) => acc + (r.total ?? 0), 0);
     const salidasOa = this.repo
       .listMeSalidas()
@@ -1080,12 +1090,13 @@ export class InventoryService {
     }
 
     const now = nowIso();
+    const trimmed = normalizeOptionalReason(reason);
     const archived: MpStockRow = {
       ...existing,
       archived: true,
       archivedAt: now,
       archivedBy: actor.email,
-      archivedReason: reason.trim() || null,
+      archivedReason: trimmed,
       updatedBy: actor.email,
       updatedAt: now,
     };
@@ -1098,7 +1109,7 @@ export class InventoryService {
       "archive",
       existing as unknown as Record<string, unknown>,
       row as unknown as Record<string, unknown>,
-      reason
+      trimmed
     );
     return row;
   }
@@ -1690,9 +1701,11 @@ export class InventoryService {
 
   // ─── MP Compras ────────────────────────────────────────────
 
-  listMpCompras(actor: InventoryActor) {
+  listMpCompras(actor: InventoryActor, options: { includeCancelada?: boolean } = {}) {
     this.guard(actor, "mp_compras", false);
-    return this.repo.listMpCompras();
+    const rows = this.repo.listMpCompras();
+    if (options.includeCancelada) return rows;
+    return rows.filter((row) => String(row.estado).toLowerCase() !== "cancelada");
   }
 
   upsertMpCompra(actor: InventoryActor, input: Partial<MpCompraRow> & { id?: string }) {
@@ -1757,14 +1770,21 @@ export class InventoryService {
     return updated;
   }
 
-  deleteMpCompra(actor: InventoryActor, id: string) {
+  deleteMpCompra(actor: InventoryActor, id: string, reason?: string) {
     this.guard(actor, "mp_compras", true);
     const existing = this.repo.getMpCompra(id);
     if (!existing) throw new InventoryNotFoundError("Compra no encontrada.");
+    if (String(existing.estado).toLowerCase() === "cancelada") {
+      return existing;
+    }
+    const trimmed = normalizeOptionalReason(reason);
     // No hard delete: marcar Cancelada (anulación operativa).
     const updated: MpCompraRow = {
       ...existing,
       estado: "Cancelada",
+      nota: existing.nota?.trim()
+        ? existing.nota
+        : trimmed,
       updatedBy: actor.email,
       updatedAt: nowIso(),
     };
@@ -1776,7 +1796,7 @@ export class InventoryService {
       "anular",
       existing as unknown as Record<string, unknown>,
       updated as unknown as Record<string, unknown>,
-      "Cancelada desde UI (sin hard delete)"
+      trimmed
     );
     return updated;
   }

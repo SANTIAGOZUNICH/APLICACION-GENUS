@@ -64,7 +64,14 @@ export interface PlanningWorkItemRecord {
   line: string | null;
   branchOwner: string | null;
   priority: PlanningPriority;
+  /** Observaciones libres — NO guardar lote/VTO aquí. */
   notes: string | null;
+  packagingLote?: string | null;
+  packagingVto?: string | null;
+  packagingTotalUnits?: number | null;
+  orderId?: string | null;
+  orderNumber?: string | null;
+  deliveryDate?: string | null;
   status: PlanningWorkItemStatus;
   publishedAt: string | null;
   createdBy: string;

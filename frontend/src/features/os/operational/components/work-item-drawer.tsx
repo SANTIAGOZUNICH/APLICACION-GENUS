@@ -52,7 +52,7 @@ interface WorkItemDrawerProps {
       bulkRemainderKg?: number | null;
       bulkRemainderObservation?: string | null;
     }
-  ) => { already?: boolean } | void;
+  ) => { already?: boolean } | void | Promise<{ already?: boolean } | void>;
 }
 
 /** Drawer lateral de trabajo — Elaboración/Envasado: avance, archivo de orden y cierre. */
@@ -294,9 +294,10 @@ export function WorkItemDrawer({
           }
           defaultObservation={observation}
           onConfirm={(payload) => {
-            const result = onSendToCodificado(item, payload);
-            setConfirmCodificado(false);
-            if (!result?.already) onOpenChange(false);
+            void Promise.resolve(onSendToCodificado(item, payload)).then((result) => {
+              setConfirmCodificado(false);
+              if (!result?.already) onOpenChange(false);
+            });
           }}
         />
       ) : null}

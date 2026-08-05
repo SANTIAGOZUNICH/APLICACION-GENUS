@@ -9,6 +9,9 @@ import type { WorkItem } from "@/types/operational/work-item";
 /** Proyecta filas nativas al contrato WorkItem actual de /mi-trabajo. */
 export function projectNativeWorkItem(item: PlanningWorkItemRecord): WorkItem {
   const weekStart = weekStartMonday(item.plannedDate);
+  const packagingLote = item.packagingLote?.trim() || null;
+  const packagingVto = item.packagingVto?.trim() || null;
+  const orderNumber = item.orderNumber?.trim() || null;
   return {
     id: `native:${item.id}`,
     sector: item.sector,
@@ -38,14 +41,18 @@ export function projectNativeWorkItem(item: PlanningWorkItemRecord): WorkItem {
     unit: item.unit,
     line: item.line,
     lineExpectedInSheet: item.line != null,
-    deliveryDate: null,
+    deliveryDate: item.deliveryDate ?? null,
     status: "pendiente",
     priority: item.priority,
     pedidoRef: null,
-    oeRef: null,
-    oaRef: null,
-    loteRef: null,
+    oeRef: item.sector === "ELABORACION" ? orderNumber : null,
+    oaRef: item.sector !== "ELABORACION" ? orderNumber : null,
+    loteRef: packagingLote,
     notes: item.notes,
+    packagingLote,
+    packagingVto,
+    packagingTotalUnits:
+      item.packagingTotalUnits == null ? null : Number(item.packagingTotalUnits),
     actionLabel:
       item.sector === "ELABORACION" ? "Abrir OE" : "Abrir trabajo",
     href: null,

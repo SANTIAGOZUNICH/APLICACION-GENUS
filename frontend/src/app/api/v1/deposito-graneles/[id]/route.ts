@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { getAsignacionLotesService } from "@/lib/asignacion-lotes/asignacion-lotes-service";
+import { getGranelesService } from "@/lib/graneles/graneles-service";
+import type { UpdateGranelPatch } from "@/lib/graneles/types";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
 import { OrdersForbiddenError } from "@/lib/orders/types";
-import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,9 +28,9 @@ export async function GET(request: Request, ctx: Ctx) {
   try {
     const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
-    const item = await getAsignacionLotesService().get(toActor(actor), id);
-    if (!item) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
-    return NextResponse.json({ item });
+    const record = await getGranelesService().get(toActor(actor), id);
+    if (!record) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
+    return NextResponse.json({ record });
   } catch (err) {
     return ordersErrorResponse(err);
   }
@@ -41,21 +41,17 @@ export async function PATCH(request: Request, ctx: Ctx) {
     const actor = await resolveOrdersActor(request);
     const { id } = await ctx.params;
     const body = (await request.json()) as {
-      lifecycleAction?: "restore";
       actorSectorId?: string;
+      patch?: UpdateGranelPatch;
+      reason?: string;
     };
-
     assertBodyActorSector(body, actor.sector);
 
-    const svc = getAsignacionLotesService();
-    const mpActor = toActor(actor);
-
-    if (body.lifecycleAction === "restore") {
-      const item = await svc.restore(mpActor, id);
-      return NextResponse.json({ item });
-    }
-
-    return NextResponse.json({ error: "lifecycleAction inválida" }, { status: 400 });
+    const record = await getGranelesService().update(toActor(actor), id, {
+      patch: body.patch ?? {},
+      reason: body.reason,
+    });
+    return NextResponse.json({ record });
   } catch (err) {
     return ordersErrorResponse(err);
   }
@@ -71,9 +67,8 @@ export async function DELETE(request: Request, ctx: Ctx) {
     };
     assertBodyActorSector(body, actor.sector);
 
-    const reason = normalizeOptionalReason(body.reason);
-    await getAsignacionLotesService().delete(toActor(actor), id, reason);
-    return NextResponse.json({ ok: true });
+    const result = await getGranelesService().deleteOrAnnul(toActor(actor), id, body.reason);
+    return NextResponse.json({ ok: true, action: result.action, record: result.record });
   } catch (err) {
     return ordersErrorResponse(err);
   }

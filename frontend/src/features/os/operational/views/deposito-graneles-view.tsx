@@ -1,17 +1,25 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { Button } from "@/components/ui/button";
 import { displayField } from "@/lib/operational/display-fields";
 import {
-  createManualGranel,
-  deleteOrAnnulGranel,
-  listGranelRemainders,
-  updateGranel,
-  type GranelRemainderRecord,
-} from "../adapters/graneles-repository";
+  bulkDeleteConfirmMessage,
+  ListSelectionEnterButton,
+  ListSelectionToolbar,
+  SelectionCheckbox,
+  selectedRowClassName,
+  useListSelectionMode,
+} from "../components/list-selection-mode";
+import {
+  createManualGranelApi,
+  deleteOrAnnulGranelApi,
+  fetchGranelesApi,
+  updateGranelApi,
+} from "@/lib/graneles/graneles-client";
+import type { GranelRemainderRecord, GranelStatus } from "@/lib/graneles/types";
 import {
   Dialog,
   DialogContent,
@@ -20,20 +28,30 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+type StatusFilter = "ACTIVOS" | "TODOS" | GranelStatus;
+
 /**
  * Depósito Graneles — sobrantes de granel independientes de MP/ME.
- * Persistencia local (Neon 0014 diferida).
+ * Persistencia Neon (migración 0014) vía API autorizada.
  */
 export function DepositoGranelesView() {
   const { sectorId, email } = usePreviewSession();
   const { showToast } = usePreviewContext();
-  const [tick, setTick] = useState(0);
+  const session = useMemo(() => ({ email, sector: sectorId }), [email, sectorId]);
+  const canEdit = sectorId === "DEPOSITO";
+
+  const [items, setItems] = useState<GranelRemainderRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState("TODOS");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ACTIVOS");
   const [createOpen, setCreateOpen] = useState(false);
   const [edit, setEdit] = useState<GranelRemainderRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<GranelRemainderRecord | null>(null);
+  const [bulkPending, setBulkPending] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const [form, setForm] = useState({
     product: "",
@@ -45,71 +63,86 @@ export function DepositoGranelesView() {
     observation: "",
   });
 
-  const canEdit = sectorId === "DEPOSITO";
-  const items = useMemo(() => {
-    void tick;
-    return listGranelRemainders({ includeAnnulled: true });
-  }, [tick]);
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const filters =
+        statusFilter === "ACTIVOS"
+          ? {}
+          : statusFilter === "TODOS"
+            ? { includeAnnulled: true }
+            : { status: statusFilter };
+      const { items: fetched } = await fetchGranelesApi(session, filters);
+      setItems(fetched);
+      setOffline(false);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "No se pudo cargar Depósito Graneles.", "info");
+      setOffline(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [session, statusFilter, showToast]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
-    return items.filter((i) => {
-      if (statusFilter !== "TODOS" && i.status !== statusFilter) return false;
-      if (!qq) return true;
-      return [i.product, i.client, i.bulkLot, i.reportedBy, i.originSector]
+    if (!qq) return items;
+    return items.filter((i) =>
+      [i.product, i.client, i.bulkLot, i.reportedBy, i.originSector ?? ""]
         .join(" ")
         .toLowerCase()
-        .includes(qq);
-    });
-  }, [items, q, statusFilter]);
+        .includes(qq)
+    );
+  }, [items, q]);
 
-  function refresh() {
-    setTick((t) => t + 1);
-  }
+  const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
+  const sel = useListSelectionMode(visibleIds);
 
-  function submitCreate() {
+  async function submitCreate() {
     const kg = Number.parseFloat(form.kg.replace(",", "."));
     if (!Number.isFinite(kg) || kg < 0) {
-      showToast("Indicá kg válidos.");
+      showToast("Indicá kg válidos.", "info");
       return;
     }
-    const result = createManualGranel({
-      actorSector: sectorId,
-      actorName: email ?? "Depósito",
-      product: form.product,
-      client: form.client,
-      bulkLot: form.bulkLot,
-      kg,
-      intakeDate: form.intakeDate,
-      location: form.location,
-      observation: form.observation,
-      asDraft: !form.product.trim() && !form.client.trim(),
-    });
-    if (!result.ok) {
-      showToast(result.error);
-      return;
+    setBusy(true);
+    try {
+      await createManualGranelApi(session, {
+        product: form.product,
+        client: form.client,
+        bulkLot: form.bulkLot,
+        kg,
+        intakeDate: form.intakeDate,
+        location: form.location,
+        observation: form.observation,
+        asDraft: !form.product.trim() && !form.client.trim(),
+      });
+      setCreateOpen(false);
+      setForm({
+        product: "",
+        client: "",
+        bulkLot: "",
+        kg: "",
+        intakeDate: new Date().toISOString().slice(0, 10),
+        location: "",
+        observation: "",
+      });
+      await refresh();
+      showToast("Sobrante registrado.");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "No se pudo registrar el sobrante.", "info");
+    } finally {
+      setBusy(false);
     }
-    setCreateOpen(false);
-    setForm({
-      product: "",
-      client: "",
-      bulkLot: "",
-      kg: "",
-      intakeDate: new Date().toISOString().slice(0, 10),
-      location: "",
-      observation: "",
-    });
-    refresh();
-    showToast("Sobrante registrado.");
   }
 
-  function submitEdit() {
+  async function submitEdit() {
     if (!edit) return;
-    const result = updateGranel({
-      id: edit.id,
-      actorSector: sectorId,
-      actorName: email ?? "Depósito",
-      patch: {
+    setBusy(true);
+    try {
+      await updateGranelApi(session, edit.id, {
         product: edit.product,
         client: edit.client,
         bulkLot: edit.bulkLot,
@@ -117,33 +150,52 @@ export function DepositoGranelesView() {
         intakeDate: edit.intakeDate,
         location: edit.location,
         observation: edit.observation,
-      },
-    });
-    if (!result.ok) {
-      showToast(result.error);
-      return;
+      });
+      setEdit(null);
+      await refresh();
+      showToast("Sobrante actualizado.");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "No se pudo actualizar.", "info");
+    } finally {
+      setBusy(false);
     }
-    setEdit(null);
-    refresh();
-    showToast("Sobrante actualizado.");
   }
 
-  function submitDelete() {
+  async function submitDelete() {
     if (!deleteTarget) return;
-    const result = deleteOrAnnulGranel({
-      id: deleteTarget.id,
-      actorSector: sectorId,
-      actorName: email ?? "Depósito",
-      reason,
-    });
-    if (!result.ok) {
-      showToast(result.error);
-      return;
+    setBusy(true);
+    try {
+      const result = await deleteOrAnnulGranelApi(session, deleteTarget.id, reason);
+      showToast(result.action === "eliminar" ? "Eliminado." : "Anulado.");
+      setDeleteTarget(null);
+      setReason("");
+      await refresh();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "No se pudo eliminar.", "info");
+    } finally {
+      setBusy(false);
     }
-    showToast(result.action === "eliminar" ? "Eliminado." : "Anulado.");
-    setDeleteTarget(null);
-    setReason("");
-    refresh();
+  }
+
+  async function submitBulkDelete(bulkReason: string) {
+    setBulkBusy(true);
+    let ok = 0;
+    let failed = 0;
+    for (const id of sel.selectedIds) {
+      try {
+        await deleteOrAnnulGranelApi(session, id, bulkReason);
+        ok += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    setBulkPending(false);
+    sel.cancel();
+    setBulkBusy(false);
+    await refresh();
+    const parts = [`${ok} eliminado(s)/anulado(s)`];
+    if (failed) parts.push(`${failed} error(es)`);
+    showToast(parts.join(" · "));
   }
 
   return (
@@ -162,7 +214,11 @@ export function DepositoGranelesView() {
         ) : null}
       </header>
 
-      <div className="mb-3 flex flex-wrap gap-2">
+      <div className="mb-3 rounded-[var(--os-radius-sm)] border border-[var(--os-teal)]/40 bg-[var(--os-teal-soft)]/30 px-4 py-2 text-sm text-[var(--os-text)]">
+        {offline ? "Sin conexión al servidor — reintentá recargar." : "Sincronizado con servidor (Neon)."}
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -171,9 +227,10 @@ export function DepositoGranelesView() {
         />
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
           className="rounded border px-3 py-2 text-sm"
         >
+          <option value="ACTIVOS">Activos (sin anulados/archivados)</option>
           <option value="TODOS">Todos</option>
           <option value="BORRADOR">Borrador</option>
           <option value="DISPONIBLE">Disponible</option>
@@ -181,9 +238,25 @@ export function DepositoGranelesView() {
           <option value="ANULADO">Anulado</option>
           <option value="ARCHIVADO">Archivado</option>
         </select>
+        {canEdit &&
+          (!sel.active ? (
+            <ListSelectionEnterButton onClick={sel.enter} disabled={filtered.length === 0} />
+          ) : (
+            <ListSelectionToolbar
+              selectedCount={sel.selectedCount}
+              onSelectAll={sel.selectAllVisible}
+              onDeselectAll={sel.deselectAll}
+              onDelete={() => setBulkPending(true)}
+              onCancel={sel.cancel}
+              busy={bulkBusy}
+              deleteLabel="Eliminar/anular seleccionados"
+            />
+          ))}
       </div>
 
-      {filtered.length === 0 ? (
+      {loading ? (
+        <p className="text-sm text-[var(--os-text-muted)]">Cargando…</p>
+      ) : filtered.length === 0 ? (
         <p className="text-sm text-[var(--os-text-muted)]">Sin registros de granel.</p>
       ) : (
         <>
@@ -191,19 +264,32 @@ export function DepositoGranelesView() {
             <table className="os-table w-full max-w-full table-fixed text-sm" data-testid="graneles-table">
               <thead>
                 <tr className="text-left text-xs uppercase text-[var(--os-text-muted)]">
-                  <th className="w-[18%] py-2">Producto</th>
-                  <th className="w-[14%] py-2">Cliente</th>
-                  <th className="w-[12%] py-2">Lote granel</th>
-                  <th className="w-[10%] py-2">Kg</th>
-                  <th className="w-[12%] py-2">Ingreso</th>
-                  <th className="w-[12%] py-2">Origen</th>
-                  <th className="w-[10%] py-2">Estado</th>
-                  <th className="w-[12%] py-2">Acciones</th>
+                  {sel.active ? <th className="w-[4%] py-2" /> : null}
+                  <th className="w-[16%] py-2">Producto</th>
+                  <th className="w-[13%] py-2">Cliente</th>
+                  <th className="w-[11%] py-2">Lote granel</th>
+                  <th className="w-[9%] py-2">Kg</th>
+                  <th className="w-[11%] py-2">Ingreso</th>
+                  <th className="w-[11%] py-2">Origen</th>
+                  <th className="w-[9%] py-2">Estado</th>
+                  <th className="w-[16%] py-2">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((row) => (
-                  <tr key={row.id} className="border-t border-[var(--os-border)]">
+                  <tr
+                    key={row.id}
+                    className={`border-t border-[var(--os-border)] ${selectedRowClassName(sel.isSelected(row.id))}`}
+                  >
+                    {sel.active ? (
+                      <td className="py-2">
+                        <SelectionCheckbox
+                          checked={sel.isSelected(row.id)}
+                          onChange={() => sel.toggle(row.id)}
+                          label={`Seleccionar ${row.product || row.id}`}
+                        />
+                      </td>
+                    ) : null}
                     <td className="py-2">
                       <span className="line-clamp-2">{displayField(row.product || "—")}</span>
                     </td>
@@ -306,10 +392,12 @@ export function DepositoGranelesView() {
             ))}
           </div>
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setCreateOpen(false)}>
+            <Button variant="secondary" onClick={() => setCreateOpen(false)} disabled={busy}>
               Cancelar
             </Button>
-            <Button onClick={submitCreate}>Guardar</Button>
+            <Button onClick={() => void submitCreate()} disabled={busy}>
+              Guardar
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -396,10 +484,14 @@ export function DepositoGranelesView() {
             </div>
           ) : null}
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setEdit(null)}>
+            <Button variant="secondary" onClick={() => setEdit(null)} disabled={busy}>
               Cerrar
             </Button>
-            {canEdit ? <Button onClick={submitEdit}>Guardar</Button> : null}
+            {canEdit ? (
+              <Button onClick={() => void submitEdit()} disabled={busy}>
+                Guardar
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -421,10 +513,38 @@ export function DepositoGranelesView() {
             placeholder="Motivo (opcional)…"
           />
           <DialogFooter>
-            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+            <Button variant="secondary" onClick={() => setDeleteTarget(null)} disabled={busy}>
               Cancelar
             </Button>
-            <Button variant="destructive" onClick={submitDelete}>
+            <Button variant="destructive" onClick={() => void submitDelete()} disabled={busy}>
+              Confirmar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkPending} onOpenChange={(o) => !o && setBulkPending(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Eliminar / anular seleccionados</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm">{bulkDeleteConfirmMessage(sel.selectedCount)}</p>
+          <textarea
+            className="w-full rounded border px-3 py-2 text-sm"
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Motivo (opcional)…"
+          />
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setBulkPending(false)} disabled={bulkBusy}>
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void submitBulkDelete(reason)}
+              disabled={bulkBusy}
+            >
               Confirmar
             </Button>
           </DialogFooter>

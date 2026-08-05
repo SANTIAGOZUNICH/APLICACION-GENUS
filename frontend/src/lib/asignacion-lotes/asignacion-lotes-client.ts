@@ -77,7 +77,7 @@ export async function importAsignacionLotesApi(
 export async function patchAsignacionLoteApi(
   session: OrdersClientSession,
   id: string,
-  lifecycleAction: "archive" | "restore"
+  lifecycleAction: "restore"
 ): Promise<AsignacionLote> {
   const res = await fetch(`/api/v1/asignacion-lotes/${id}`, {
     method: "PATCH",
@@ -95,13 +95,14 @@ export async function patchAsignacionLoteApi(
 
 export async function deleteAsignacionLoteApi(
   session: OrdersClientSession,
-  id: string
+  id: string,
+  reason?: string
 ): Promise<void> {
   const res = await fetch(`/api/v1/asignacion-lotes/${id}`, {
     method: "DELETE",
     credentials: "include",
     headers: headers(session),
-    body: JSON.stringify({ actorSectorId: session.sector }),
+    body: JSON.stringify({ actorSectorId: session.sector, reason }),
   });
   const body = (await res.json()) as { error?: string };
   if (!res.ok) throw new Error(body.error ?? "No se pudo eliminar la asignación");

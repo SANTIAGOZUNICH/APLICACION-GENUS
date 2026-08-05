@@ -615,6 +615,74 @@ describe("MP Stock — archivo lógico seguro", () => {
   });
 });
 
+describe("ME ingresos anular — stock", () => {
+  let svc: InventoryService;
+
+  beforeEach(() => {
+    svc = new InventoryService(new MemoryInventoryRepo());
+  });
+
+  it("anula sin motivo, revierte stock una vez y recalculate no lo re-aporta", () => {
+    const row = svc.upsertMeIngreso(deposito, {
+      codigo: "ME-AN-1",
+      descripcionInsumo: "Frasco",
+      bultos: 2,
+      cantidad: 100,
+      proveedor: "Prov",
+    });
+    const before = svc.getMeMaterialById(deposito, row.materialId!);
+    expect(before?.stockActual).toBe(200);
+
+    const first = svc.anularMeIngreso(deposito, row.id, "");
+    expect(first.anulado).toBe(true);
+    expect(first.anuladoReason).toMatch(/sin motivo/i);
+    expect(svc.listMeIngresos(deposito).some((r) => r.id === row.id)).toBe(false);
+
+    const mid = svc.getMeMaterialById(deposito, row.materialId!);
+    expect(mid?.stockActual).toBe(0);
+
+    const second = svc.anularMeIngreso(deposito, row.id, "retry");
+    expect(second.anuladoAt).toBe(first.anuladoAt);
+
+    const recalced = svc.recalculateMeStock(row.materialId!);
+    expect(recalced.stockActual).toBe(0);
+  });
+
+  it("bloquea editar ingreso anulado", () => {
+    const row = svc.upsertMeIngreso(deposito, {
+      codigo: "ME-AN-2",
+      descripcionInsumo: "Tapa",
+      bultos: 1,
+      cantidad: 10,
+    });
+    svc.anularMeIngreso(deposito, row.id, "err");
+    expect(() =>
+      svc.upsertMeIngreso(deposito, { id: row.id, bultos: 9, cantidad: 10 })
+    ).toThrow(/anulado/i);
+  });
+});
+
+describe("MP compras cancelar", () => {
+  let svc: InventoryService;
+
+  beforeEach(() => {
+    svc = new InventoryService(new MemoryInventoryRepo());
+  });
+
+  it("oculta Cancelada y es idempotente con motivo opcional", () => {
+    const created = svc.upsertMpCompra(mp, {
+      materiaPrima: "Glicerina",
+      cantidad: 50,
+      estado: "Cotizando",
+    });
+    const cancelled = svc.deleteMpCompra(mp, created.compra.id, "");
+    expect(cancelled.estado).toBe("Cancelada");
+    expect(svc.listMpCompras(mp).some((r) => r.id === created.compra.id)).toBe(false);
+    const again = svc.deleteMpCompra(mp, created.compra.id, "retry");
+    expect(again.estado).toBe("Cancelada");
+  });
+});
+
 describe("Permisos sectoriales inventario", () => {
   it.each([
     ["DEPOSITO", "me_ingresos", true],

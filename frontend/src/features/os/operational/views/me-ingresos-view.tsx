@@ -112,17 +112,18 @@ export function MeIngresosView() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) =>
-      [r.ingresoNro, r.proveedor, r.cliente, r.remitoNro, r.codigo, r.descripcionInsumo]
+    return rows.filter((r) => {
+      if (r.anulado) return false;
+      if (!q) return true;
+      return [r.ingresoNro, r.proveedor, r.cliente, r.remitoNro, r.codigo, r.descripcionInsumo]
         .join(" ")
         .toLowerCase()
-        .includes(q)
-    );
+        .includes(q);
+    });
   }, [rows, search]);
 
   const pageRows = filtered.slice(page * pageSize, page * pageSize + pageSize);
-  const visibleIds = useMemo(() => pageRows.map((r) => r.id), [pageRows]);
+  const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
   const sel = useListSelectionMode(visibleIds);
 
   const ME_INGRESO_PRIMARY = new Set(["CÓDIGO", "DESCRIPCIÓN INSUMO"]);
@@ -207,7 +208,7 @@ export function MeIngresosView() {
                 onDelete={() => setBulkPending(true)}
                 onCancel={sel.cancel}
                 busy={bulkBusy}
-                deleteLabel="Anular seleccionados"
+                deleteLabel="Eliminar seleccionados"
               />
             )}
           </>
@@ -233,6 +234,8 @@ export function MeIngresosView() {
                   header: "",
                   render: (row: MeIngresoRow) => (
                     <div className="flex flex-wrap gap-1">
+                      {!row.anulado && (
+                        <>
                       <button
                         type="button"
                         aria-label="Editar"
@@ -278,8 +281,8 @@ export function MeIngresosView() {
                       </button>
                       <button
                         type="button"
-                        aria-label="Borrar"
-                        title="Borrar"
+                        aria-label="Eliminar"
+                        title="Eliminar"
                         onClick={() =>
                           setPendingDelete({
                             id: row.id,
@@ -289,6 +292,8 @@ export function MeIngresosView() {
                       >
                         <Trash2 className="size-4 text-red-700" />
                       </button>
+                        </>
+                      )}
                     </div>
                   ),
                 } as OperationalTableColumn<MeIngresoRow>,
@@ -380,23 +385,24 @@ export function MeIngresosView() {
         pending={
           pendingDelete
             ? syntheticLifecycleItem(
-                "anular",
-                "Anular ingreso ME",
-                "Se revertirá el impacto en stock y se conservará el registro anulado."
+                "eliminar",
+                "Eliminar ingreso ME",
+                "Se revertirá el impacto en stock y el registro dejará de mostrarse en la lista activa."
               )
             : null
         }
-        forceReason
         entityLabel={pendingDelete?.label}
         onClose={() => setPendingDelete(null)}
         onConfirm={async (reason) => {
           if (!pendingDelete) return;
+          const id = pendingDelete.id;
           await mutateInventory({
             action: "delete",
             resource: "me_ingresos",
-            id: pendingDelete.id,
+            id,
             reason,
           });
+          setRows((prev) => prev.filter((row) => row.id !== id));
           await reload();
         }}
       />
@@ -405,20 +411,27 @@ export function MeIngresosView() {
         pending={
           bulkPending
             ? syntheticLifecycleItem(
-                "anular",
-                "Anular ingresos ME",
+                "eliminar",
+                "Eliminar ingresos ME",
                 bulkDeleteConfirmMessage(sel.selectedCount)
               )
             : null
         }
-        forceReason
         entityLabel={`${sel.selectedCount} ingreso(s)`}
         onClose={() => setBulkPending(false)}
         onConfirm={async (reason) => {
           setBulkBusy(true);
           let ok = 0;
+          let skipped = 0;
           let failed = 0;
+          const deletedIds: string[] = [];
+          const byId = new Map(filtered.map((r) => [r.id, r]));
           for (const id of sel.selectedIds) {
+            const row = byId.get(id);
+            if (!row || row.anulado) {
+              skipped += 1;
+              continue;
+            }
             try {
               await mutateInventory({
                 action: "delete",
@@ -427,15 +440,21 @@ export function MeIngresosView() {
                 reason,
               });
               ok += 1;
+              deletedIds.push(id);
             } catch {
               failed += 1;
             }
           }
           setBulkPending(false);
           sel.cancel();
+          if (deletedIds.length > 0) {
+            setRows((prev) => prev.filter((row) => !deletedIds.includes(row.id)));
+          }
           await reload();
           setBulkBusy(false);
-          showToast(`${ok} anulado(s)${failed ? ` · ${failed} error(es)` : ""}`);
+          showToast(
+            `${ok} eliminado(s)${skipped ? ` · ${skipped} omitido(s)` : ""}${failed ? ` · ${failed} error(es)` : ""}`
+          );
         }}
       />
 

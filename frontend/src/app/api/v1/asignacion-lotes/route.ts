@@ -3,6 +3,7 @@ import { getAsignacionLotesService } from "@/lib/asignacion-lotes/asignacion-lot
 import type {
   AsignacionLoteUpsertInput,
 } from "@/lib/asignacion-lotes/types";
+import { isDatabaseConfigured } from "@/lib/db/client";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
@@ -30,11 +31,11 @@ export async function GET(request: Request) {
     const actor = await resolveOrdersActor(request);
     const url = new URL(request.url);
     const includeArchived = url.searchParams.get("includeArchived") === "1";
-    const items = getAsignacionLotesService().list(toActor(actor), { includeArchived });
+    const items = await getAsignacionLotesService().list(toActor(actor), { includeArchived });
     return NextResponse.json({
       items,
-      persistenceReady: false,
-      schemaPending: true,
+      persistenceReady: isDatabaseConfigured(),
+      schemaPending: !isDatabaseConfigured(),
     });
   } catch (err) {
     return ordersErrorResponse(err);
@@ -60,13 +61,13 @@ export async function POST(request: Request) {
 
     if (body.action === "import") {
       const rows = body.rows ?? [];
-      const result = svc.import(mpActor, rows);
+      const result = await svc.import(mpActor, rows);
       return NextResponse.json({ result }, { status: 201 });
     }
 
     if (body.action === "sync") {
-      const count = svc.replaceAll(mpActor, body.records ?? []);
-      const items = svc.list(mpActor, { includeArchived: true });
+      const count = await svc.replaceAll(mpActor, body.records ?? []);
+      const items = await svc.list(mpActor, { includeArchived: true });
       return NextResponse.json({ ok: true, count, items });
     }
 
@@ -74,7 +75,7 @@ export async function POST(request: Request) {
       throw new OrdersValidationError("record es obligatorio para upsert.");
     }
 
-    const item = svc.upsert(mpActor, {
+    const item = await svc.upsert(mpActor, {
       ...body.record,
       updatedBy: body.record.updatedBy || actor.displayName,
       createdBy: body.record.createdBy ?? actor.displayName,

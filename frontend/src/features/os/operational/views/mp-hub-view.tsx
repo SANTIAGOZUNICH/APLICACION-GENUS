@@ -232,13 +232,14 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     }
     return compras.filter(
       (r) =>
-        !q ||
-        [r.materiaPrima, r.proveedor, r.estado, r.produccionesAfecta].join(" ").toLowerCase().includes(q)
+        String(r.estado).toLowerCase() !== "cancelada" &&
+        (!q ||
+          [r.materiaPrima, r.proveedor, r.estado, r.produccionesAfecta].join(" ").toLowerCase().includes(q))
     );
   }, [tab, stock, ingresos, control, compras, search]);
 
   const pageRows = rows.slice(page * pageSize, page * pageSize + pageSize);
-  const visibleIds = useMemo(() => pageRows.map((r) => r.id), [pageRows]);
+  const visibleIds = useMemo(() => rows.map((r) => r.id), [rows]);
   const sel = useListSelectionMode(visibleIds);
   const showBulkSelection =
     canWrite && (tab === "Stock" || tab === "Ingresos MP" || tab === "Compras MP");

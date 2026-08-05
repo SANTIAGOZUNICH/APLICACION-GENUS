@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
-import { ClipboardPaste, Download, Pencil, Plus, RotateCcw, Trash2, Upload } from "lucide-react";
+import { ClipboardPaste, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -27,9 +27,9 @@ import { usePreviewSession } from "@/features/os/session/preview-context";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import {
+  deleteAsignacionLoteApi,
   fetchAsignacionLotesApi,
   importAsignacionLotesApi,
-  patchAsignacionLoteApi,
   upsertAsignacionLoteApi,
 } from "@/lib/asignacion-lotes/asignacion-lotes-client";
 import { OperationalTable, type OperationalTableColumn } from "../components/operational-ui";
@@ -210,24 +210,21 @@ export function AsignacionLotesView() {
   const [deleteTarget, setDeleteTarget] = useState<AsignacionLote | null>(null);
   const [bulkPending, setBulkPending] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [showArchived, setShowArchived] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [seedImportText, setSeedImportText] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const { items: allItems } = await fetchAsignacionLotesApi(session, {
-        includeArchived: true,
-      });
+      const { items: allItems } = await fetchAsignacionLotesApi(session);
       replaceAsignacionLotesCache(allItems);
-      setItems(getAllAsignacionLotes({ includeArchived: showArchived }));
+      setItems(getAllAsignacionLotes());
       setOfflineCache(false);
     } catch {
-      setItems(getAllAsignacionLotes({ includeArchived: showArchived }));
+      setItems(getAllAsignacionLotes());
       setOfflineCache(true);
     }
-  }, [session, showArchived]);
+  }, [session]);
 
   useEffect(() => {
     void refresh();
@@ -453,37 +450,15 @@ export function AsignacionLotesView() {
           >
             <Pencil className="size-4" aria-hidden="true" />
           </button>
-          {row.archived ? (
-            <button
-              type="button"
-              disabled={!canMutate}
-              onClick={() => {
-                void (async () => {
-                  try {
-                    await patchAsignacionLoteApi(session, row.id, "restore");
-                    await refresh();
-                    showFeedback("Asignación restaurada.");
-                  } catch (err) {
-                    showFeedback(err instanceof Error ? err.message : "No se pudo restaurar.");
-                  }
-                })();
-              }}
-              aria-label={`Restaurar ${row.lote}`}
-              className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-[var(--os-bg)] hover:text-[var(--os-text)] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <RotateCcw className="size-4" aria-hidden="true" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={!canMutate}
-              onClick={() => setDeleteTarget(row)}
-              aria-label={`Archivar ${row.lote}`}
-              className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-[var(--genus-error-soft)] hover:text-[var(--genus-error)] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <Trash2 className="size-4" aria-hidden="true" />
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={!canMutate}
+            onClick={() => setDeleteTarget(row)}
+            aria-label={`Eliminar ${row.lote}`}
+            className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-[var(--genus-error-soft)] hover:text-[var(--genus-error)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Trash2 className="size-4" aria-hidden="true" />
+          </button>
         </div>
       ),
     },
@@ -516,15 +491,6 @@ export function AsignacionLotesView() {
           {offlineCache
             ? "Sin conexión al servidor — mostrando caché local de este navegador"
             : "Sincronizado con servidor — caché local como respaldo offline"}
-          <label className="ml-4 inline-flex items-center gap-1 text-xs">
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => setShowArchived(e.target.checked)}
-              data-testid="asignacion-lotes-show-archived"
-            />
-            Ver archivados
-          </label>
         </div>
 
         {feedback && (
@@ -602,7 +568,7 @@ export function AsignacionLotesView() {
                     onDelete={() => setBulkPending(true)}
                     onCancel={sel.cancel}
                     busy={bulkBusy}
-                    deleteLabel="Archivar seleccionados"
+                    deleteLabel="Eliminar seleccionados"
                   />
                 ))}
               <Button type="button" variant="secondary" onClick={() => setImportOpen(true)} disabled={!canMutate}>
@@ -656,24 +622,25 @@ export function AsignacionLotesView() {
           pending={
             deleteTarget
               ? syntheticLifecycleItem(
-                  "archivar",
-                  "Archivar asignación",
-                  `Se archivará el lote ${deleteTarget.lote} (${deleteTarget.codigo}).`
+                  "eliminar",
+                  "Eliminar asignación",
+                  `Se eliminará permanentemente el lote ${deleteTarget.lote} (${deleteTarget.codigo}).`
                 )
               : null
           }
-          forceReason
           entityLabel={`${deleteTarget?.lote ?? ""} · ${deleteTarget?.producto ?? ""}`}
           onClose={() => setDeleteTarget(null)}
-          onConfirm={async (_reason) => {
+          onConfirm={async (reason) => {
             if (!deleteTarget) return;
+            const id = deleteTarget.id;
             try {
-              await patchAsignacionLoteApi(session, deleteTarget.id, "archive");
+              await deleteAsignacionLoteApi(session, id, reason);
               setDeleteTarget(null);
+              setItems((prev) => prev.filter((row) => row.id !== id));
               await refresh();
-              showFeedback("Asignación archivada.");
+              showFeedback("Asignación eliminada.");
             } catch (err) {
-              showFeedback(err instanceof Error ? err.message : "No se pudo archivar.");
+              showFeedback(err instanceof Error ? err.message : "No se pudo eliminar.");
               throw err;
             }
           }}
@@ -683,40 +650,39 @@ export function AsignacionLotesView() {
           pending={
             bulkPending
               ? syntheticLifecycleItem(
-                  "archivar",
-                  "Archivar asignaciones",
+                  "eliminar",
+                  "Eliminar asignaciones",
                   bulkDeleteConfirmMessage(sel.selectedCount)
                 )
               : null
           }
-          forceReason
           entityLabel={`${sel.selectedCount} asignación(es)`}
           onClose={() => setBulkPending(false)}
-          onConfirm={async (_reason) => {
+          onConfirm={async (reason) => {
             setBulkBusy(true);
             let ok = 0;
-            let skipped = 0;
             let failed = 0;
+            const deletedIds: string[] = [];
             const byId = new Map(paginated.map((r) => [r.id, r]));
             for (const id of sel.selectedIds) {
               const row = byId.get(id);
-              if (!row || row.archived) {
-                skipped += 1;
-                continue;
-              }
+              if (!row) continue;
               try {
-                await patchAsignacionLoteApi(session, id, "archive");
+                await deleteAsignacionLoteApi(session, id, reason);
                 ok += 1;
+                deletedIds.push(id);
               } catch {
                 failed += 1;
               }
             }
             setBulkPending(false);
             sel.cancel();
+            if (deletedIds.length > 0) {
+              setItems((prev) => prev.filter((row) => !deletedIds.includes(row.id)));
+            }
             await refresh();
             setBulkBusy(false);
-            const parts = [`${ok} archivada(s)`];
-            if (skipped) parts.push(`${skipped} omitida(s)`);
+            const parts = [`${ok} eliminada(s)`];
             if (failed) parts.push(`${failed} error(es)`);
             showFeedback(parts.join(" · "));
           }}
