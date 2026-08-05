@@ -25,6 +25,13 @@ import { PackagingQuantitiesBlock } from "./packaging-quantities-block";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { SendToCodificadoDialog } from "./send-to-codificado-dialog";
 import { FinishToQualityDialog } from "./finish-to-quality-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface WorkItemDrawerProps {
   item: WorkItem | null;
@@ -53,6 +60,10 @@ interface WorkItemDrawerProps {
       bulkRemainderObservation?: string | null;
     }
   ) => { already?: boolean } | void | Promise<{ already?: boolean } | void>;
+  onCancelCodificado?: (
+    item: WorkItem,
+    payload: { reason?: string }
+  ) => Promise<{ ok: boolean } | void> | { ok: boolean } | void;
 }
 
 /** Drawer lateral de trabajo — Elaboración/Envasado: avance, archivo de orden y cierre. */
@@ -67,12 +78,16 @@ export function WorkItemDrawer({
   onSaveProgress,
   onMarkFinished,
   onSendToCodificado,
+  onCancelCodificado,
 }: WorkItemDrawerProps) {
   const { email } = usePreviewSession();
   const [finishedQty, setFinishedQty] = useState("");
   const [observation, setObservation] = useState("");
   const [confirmFinish, setConfirmFinish] = useState(false);
   const [confirmCodificado, setConfirmCodificado] = useState(false);
+  const [confirmCancelCodificado, setConfirmCancelCodificado] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
   const [loadedItemId, setLoadedItemId] = useState<string | null>(null);
 
   if (item && item.id !== loadedItemId) {
@@ -220,7 +235,10 @@ export function WorkItemDrawer({
             <StatusChip status={item.status} transferredInbox={transferred} />
             {inCodificado ? (
               <p className="mt-2 text-xs text-[var(--os-teal)]">
-                {WORK_TRANSFER.inCodificado} · {WORK_TRANSFER.nextResponsibleCodificado}
+                Enviado a Codificado · {WORK_TRANSFER.nextResponsibleCodificado}
+                {item.codificadoRevision && item.codificadoRevision > 1
+                  ? ` · Reenviado (rev. ${item.codificadoRevision})`
+                  : ""}
               </p>
             ) : null}
             {transferred && !inCodificado ? (
@@ -235,14 +253,25 @@ export function WorkItemDrawer({
           <Button variant="secondary" disabled={transferred} onClick={() => onSaveProgress(item.id, { finishedQty, observation })}>
             Guardar avance
           </Button>
-          {showCodificado ? (
+          {showCodificado && !inCodificado ? (
             <Button
               variant="secondary"
               disabled={transferred}
               onClick={() => setConfirmCodificado(true)}
               data-testid="send-to-codificado-btn"
             >
-              {WORK_TRANSFER.sendToCodificadoAction}
+              {item.viaCodificado || item.codificadoCancelledAt
+                ? "Editar y reenviar"
+                : WORK_TRANSFER.sendToCodificadoAction}
+            </Button>
+          ) : null}
+          {showCodificado && inCodificado && onCancelCodificado ? (
+            <Button
+              variant="secondary"
+              onClick={() => setConfirmCancelCodificado(true)}
+              data-testid="cancel-codificado-btn"
+            >
+              Cancelar envío a Codificado
             </Button>
           ) : null}
           <Button variant="primary" disabled={transferred} onClick={() => setConfirmFinish(true)}>
@@ -300,6 +329,57 @@ export function WorkItemDrawer({
             });
           }}
         />
+      ) : null}
+
+      {showCodificado && onCancelCodificado ? (
+        <Dialog open={confirmCancelCodificado} onOpenChange={setConfirmCancelCodificado}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Cancelar envío a Codificado</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-[var(--os-text-muted)]">
+              El trabajo volverá a Envasado para editar y reenviar. Motivo opcional.
+            </p>
+            <label className="mt-3 block text-sm font-medium" htmlFor="cancel-cod-reason">
+              Motivo (opcional)
+            </label>
+            <textarea
+              id="cancel-cod-reason"
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={3}
+              className="mt-1 w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
+            />
+            <DialogFooter className="mt-4 gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => setConfirmCancelCodificado(false)}
+                disabled={cancelBusy}
+              >
+                Volver
+              </Button>
+              <Button
+                variant="primary"
+                disabled={cancelBusy}
+                data-testid="confirm-cancel-codificado"
+                onClick={() => {
+                  setCancelBusy(true);
+                  void Promise.resolve(
+                    onCancelCodificado(item, { reason: cancelReason })
+                  )
+                    .then(() => {
+                      setConfirmCancelCodificado(false);
+                      setCancelReason("");
+                      onOpenChange(false);
+                    })
+                    .finally(() => setCancelBusy(false));
+                }}
+              >
+                Confirmar cancelación
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       ) : null}
     </Drawer>
   );

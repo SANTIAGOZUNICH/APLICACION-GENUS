@@ -30,7 +30,10 @@ import { sortByDeliveryDateNearest } from "../lib/delivery-date";
 import { upsertGranelFromEnvasadoApi } from "@/lib/graneles/graneles-client";
 import { formatBulkRemainderKg } from "../lib/bulk-remainder";
 import { canSendToCodificado } from "../lib/codificado-flow";
-import { WORK_TRANSFER } from "../lib/work-transfer-labels";
+import {
+  WORK_TRANSFER,
+} from "../lib/work-transfer-labels";
+import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
 
 interface EnvasadoOperationalViewProps {
   sectorId: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM";
@@ -246,29 +249,62 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           );
         }
       }
-      const result = sendToCodificado(item, {
-        totalUnits: payload.totalUnits,
-        observation: payload.observation,
-        updatedBy: workspace.context.displayName || email || "Envasado",
-        bulkRemainderKg: payload.bulkRemainderKg,
-        bulkRemainderObservation: payload.bulkRemainderObservation,
-        bulkRemainderId: bulkId,
-      });
-      if (result.already) {
-        showToast(WORK_TRANSFER.alreadyInCodificado, "info");
+
+      try {
+        const server = await postCodificadoHandoff(session, item.id, {
+          action: item.codificadoCancelledAt || item.viaCodificado ? "resend" : "send",
+          totalUnits: payload.totalUnits,
+          observation: payload.observation,
+          packagingLote: item.packagingLote,
+          packagingVto: item.packagingVto,
+          packingGroups: item.packingGroups,
+          bulkRemainderKg: payload.bulkRemainderKg,
+          bulkRemainderObservation: payload.bulkRemainderObservation,
+          bulkRemainderId: bulkId,
+          expectedVersion: item.nativeVersion ?? null,
+          idempotencyKey:
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? crypto.randomUUID()
+              : `send-${item.id}-${Date.now()}`,
+        });
+
+        // Espejo local solo tras confirmación Neon (UX / offline-friendly overlay).
+        const result = sendToCodificado(server.workItem, {
+          totalUnits: payload.totalUnits,
+          observation: payload.observation,
+          updatedBy: workspace.context.displayName || email || "Envasado",
+          bulkRemainderKg: payload.bulkRemainderKg,
+          bulkRemainderObservation: payload.bulkRemainderObservation,
+          bulkRemainderId: bulkId,
+        });
+
+        if (server.replayed || result.already) {
+          showToast(WORK_TRANSFER.alreadyInCodificado, "info");
+          await refresh();
+          return { already: true };
+        }
+        pushNotification({
+          kind: "trabajo_asignado",
+          title: "Trabajo en Codificado",
+          message: `${item.product ?? "Producto"} · ${item.client ?? ""} — ${payload.totalUnits} un. desde ${workspace.sectorLabel}`,
+          sectors: ["CODIFICADO"],
+        });
+        const rev = server.workItem.codificadoRevision ?? 1;
+        showToast(
+          rev > 1
+            ? `Reenviado a Codificado (rev. ${rev}).`
+            : "Trabajo enviado a Codificado."
+        );
+        setSelectedItem(server.workItem);
+        await refresh();
+        return { already: false };
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : "No se pudo enviar a Codificado.",
+          "info"
+        );
         return { already: true };
       }
-      pushNotification({
-        kind: "trabajo_asignado",
-        title: "Trabajo en Codificado",
-        message: `${item.product ?? "Producto"} · ${item.client ?? ""} — ${payload.totalUnits} un. desde ${workspace.sectorLabel}`,
-        sectors: ["CODIFICADO"],
-      });
-      showToast("Trabajo enviado a Codificado.");
-      setSelectedItem((prev) =>
-        prev && prev.id === item.id ? { ...prev, status: "en_codificado" } : prev
-      );
-      return { already: false };
     },
     [
       sendToCodificado,
@@ -278,7 +314,36 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       sectorId,
       email,
       session,
+      refresh,
     ]
+  );
+
+  const handleCancelCodificado = useCallback(
+    async (item: WorkItem, payload: { reason?: string }) => {
+      try {
+        await postCodificadoHandoff(session, item.id, {
+          action: "cancel",
+          reason: payload.reason,
+          expectedVersion: item.nativeVersion ?? null,
+          idempotencyKey:
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? crypto.randomUUID()
+              : `cancel-${item.id}-${Date.now()}`,
+        });
+        showToast("Envío a Codificado cancelado. Podés editar y reenviar.");
+        setSelectedItem(null);
+        setDrawerOpen(false);
+        await refresh();
+        return { ok: true };
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : "No se pudo cancelar el envío.",
+          "info"
+        );
+        return { ok: false };
+      }
+    },
+    [session, showToast, refresh]
   );
 
   const handleArchiveFromView = useCallback(
@@ -438,6 +503,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         onSaveProgress={handleSave}
         onMarkFinished={handleFinish}
         onSendToCodificado={handleSendToCodificado}
+        onCancelCodificado={handleCancelCodificado}
       />
     </TwinShell>
   );

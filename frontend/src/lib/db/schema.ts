@@ -133,6 +133,26 @@ export const workItems = pgTable(
     packagingVto: text("packaging_vto"),
     packagingTotalUnits: doublePrecision("packaging_total_units"),
     packingGroups: jsonb("packing_groups"),
+    /** Flujo Codificado (0014/0021). */
+    sentToCodificadoAt: timestamp("sent_to_codificado_at", { withTimezone: true }),
+    sentToCodificadoBy: text("sent_to_codificado_by"),
+    codificadoOriginSector: text("codificado_origin_sector"),
+    viaCodificado: boolean("via_codificado").notNull().default(false),
+    deliveredFromCodificadoAt: timestamp("delivered_from_codificado_at", {
+      withTimezone: true,
+    }),
+    deliveredFromCodificadoBy: text("delivered_from_codificado_by"),
+    codificadoObservation: text("codificado_observation"),
+    bulkRemainderKg: doublePrecision("bulk_remainder_kg"),
+    bulkRemainderObservation: text("bulk_remainder_observation"),
+    bulkRemainderId: text("bulk_remainder_id"),
+    homeLine: text("home_line"),
+    homeBranchOwner: text("home_branch_owner"),
+    codificadoRevision: integer("codificado_revision").notNull().default(0),
+    codificadoCancelledAt: timestamp("codificado_cancelled_at", { withTimezone: true }),
+    codificadoCancelledBy: text("codificado_cancelled_by"),
+    codificadoCancelReason: text("codificado_cancel_reason"),
+    productionPedidoId: uuid("production_pedido_id"),
     /** Referencia orden (0020). */
     orderId: uuid("order_id"),
     orderNumber: text("order_number"),
@@ -930,6 +950,27 @@ export const productionPedidos = pgTable(
     index("production_pedidos_op_idx").on(table.op),
     index("production_pedidos_nro_oc_idx").on(table.nroOc),
     index("production_pedidos_deleted_at_idx").on(table.deletedAt),
+  ]
+);
+
+/** Auditoría de transiciones de estado de Pedidos nativos (0021). */
+export const productionPedidoStatusEvents = pgTable(
+  "production_pedido_status_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    pedidoId: uuid("pedido_id").notNull(),
+    workItemId: uuid("work_item_id"),
+    fromEstado: text("from_estado"),
+    toEstado: text("to_estado").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    event: text("event").notNull(),
+    motivo: text("motivo"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("production_pedido_status_events_pedido_idx").on(table.pedidoId),
+    index("production_pedido_status_events_work_item_idx").on(table.workItemId),
   ]
 );
 

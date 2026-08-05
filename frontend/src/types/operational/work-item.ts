@@ -135,6 +135,21 @@ export interface WorkItem {
     unidadesPorCaja: number | null;
     packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
   }> | null;
+  /** Flujo Codificado (proyección Neon). */
+  viaCodificado?: boolean;
+  codificadoOriginSector?: SectorId | null;
+  codificadoOriginLabel?: string | null;
+  sentToCodificadoAt?: string | null;
+  sentToCodificadoBy?: string | null;
+  deliveredFromCodificadoAt?: string | null;
+  deliveredFromCodificadoBy?: string | null;
+  codificadoRevision?: number;
+  codificadoCancelledAt?: string | null;
+  bulkRemainderKg?: number | null;
+  bulkRemainderObservation?: string | null;
+  bulkRemainderId?: string | null;
+  nativeVersion?: number;
+  nativeId?: string;
 }
 
 export interface WorkItemsResponse {

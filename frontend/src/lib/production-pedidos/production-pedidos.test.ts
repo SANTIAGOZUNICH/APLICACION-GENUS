@@ -137,7 +137,7 @@ describe("production pedidos paste by header order", () => {
     const { rows, headerDetected } = parseExcelPaste(text);
     expect(headerDetected).toBe(true);
     expect(rows[0]!.kg).toBe(3);
-    expect(rows[0]!.estado).toBe("EN_PROCESO");
+    expect(rows[0]!.estado).toBe("EN_ELABORACION");
   });
 
   it("sin encabezados usa orden estándar", () => {

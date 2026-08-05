@@ -69,6 +69,7 @@ export interface PlanningWorkItemRecord {
   packagingLote?: string | null;
   packagingVto?: string | null;
   packagingTotalUnits?: number | null;
+  packingGroups?: unknown;
   orderId?: string | null;
   orderNumber?: string | null;
   deliveryDate?: string | null;
@@ -80,6 +81,22 @@ export interface PlanningWorkItemRecord {
   version: number;
   createdAt: string;
   updatedAt: string;
+  /** Flujo Codificado durable (0014/0021). */
+  viaCodificado?: boolean;
+  sentToCodificadoAt?: string | null;
+  sentToCodificadoBy?: string | null;
+  codificadoOriginSector?: string | null;
+  deliveredFromCodificadoAt?: string | null;
+  deliveredFromCodificadoBy?: string | null;
+  codificadoObservation?: string | null;
+  bulkRemainderKg?: number | null;
+  bulkRemainderObservation?: string | null;
+  bulkRemainderId?: string | null;
+  homeLine?: string | null;
+  homeBranchOwner?: string | null;
+  codificadoRevision?: number;
+  codificadoCancelledAt?: string | null;
+  productionPedidoId?: string | null;
 }
 
 export interface OperationalEventRecord {

@@ -20,6 +20,7 @@ import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { canDeliverFromCodificado } from "../lib/codificado-flow";
 import { isInCodificadoStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
 
 type TabId = "pendientes" | "entregados";
 
@@ -39,6 +40,10 @@ export function CodificadoOperationalView() {
     getFinishedQty,
   } = useOperationalStore();
 
+  const session = useMemo(
+    () => ({ email: workspace.context.email, sector: "CODIFICADO" as const }),
+    [workspace.context.email]
+  );
   const { data, loading, refresh: refreshMasivo } = useOperationalPlan("ENVASADO_MASIVO", {});
   const { data: dataPremium, refresh: refreshPremium } = useOperationalPlan("ENVASADO_PREMIUM", {});
   const { data: dataCodificado, refresh: refreshCodificado } = useOperationalPlan("CODIFICADO", {});
@@ -81,7 +86,7 @@ export function CodificadoOperationalView() {
     () =>
       allItems.filter((i) => {
         const p = progressMap[i.id];
-        if (p?.viaCodificado && p.deliveredFromCodificadoAt) return false;
+        if (i.deliveredFromCodificadoAt || p?.deliveredFromCodificadoAt) return false;
         if (isInCodificadoStatus(i.status)) return true;
         return (
           i.sector === "CODIFICADO" &&
@@ -98,7 +103,10 @@ export function CodificadoOperationalView() {
     () =>
       allItems.filter((i) => {
         const p = progressMap[i.id];
-        return Boolean(p?.viaCodificado && p.deliveredFromCodificadoAt);
+        return Boolean(
+          i.deliveredFromCodificadoAt ||
+            (p?.viaCodificado && p.deliveredFromCodificadoAt)
+        );
       }),
     [allItems, progressMap]
   );
@@ -192,7 +200,7 @@ export function CodificadoOperationalView() {
     setConfirmDeliver(true);
   }, [selected, draft]);
 
-  const confirmDeliverAction = useCallback(() => {
+  const confirmDeliverAction = useCallback(async () => {
     if (!selected || !draft) return;
     const gate = canDeliverFromCodificado(selected.status, { sector: selected.sector });
     if (!gate.ok) {
@@ -207,39 +215,71 @@ export function CodificadoOperationalView() {
       setConfirmDeliver(false);
       return;
     }
-    const result = deliverFromCodificado(selected, {
-      updatedBy: actorName,
-      observation: obs,
-      packagingLote: draft.packagingLote.trim() || null,
-      packagingVto: draft.packagingVto.trim() || null,
-      packagingTotalUnits: draft.packagingTotalUnits,
-      packagingCajas: draft.packagingCajas,
-      packagingUnidadesPorCaja: draft.packagingUnidadesPorCaja,
-      packingGroups: draft.packingGroups,
-      packingMismatchObservation: draft.packingMismatchObservation,
-    });
-    if (result.already) {
-      showToast(WORK_TRANSFER.alreadyDeliveredFromCodificado, "info");
+    try {
+      const server = await postCodificadoHandoff(session, selected.id, {
+        action: "deliver",
+        observation: obs,
+        packagingLote: draft.packagingLote.trim() || null,
+        packagingVto: draft.packagingVto.trim() || null,
+        packagingTotalUnits: draft.packagingTotalUnits,
+        packingGroups: draft.packingGroups,
+        expectedVersion: selected.nativeVersion ?? null,
+        idempotencyKey:
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `deliver-${selected.id}-${Date.now()}`,
+      });
+      const result = deliverFromCodificado(server.workItem, {
+        updatedBy: actorName,
+        observation: obs,
+        packagingLote: draft.packagingLote.trim() || null,
+        packagingVto: draft.packagingVto.trim() || null,
+        packagingTotalUnits: draft.packagingTotalUnits,
+        packagingCajas: draft.packagingCajas,
+        packagingUnidadesPorCaja: draft.packagingUnidadesPorCaja,
+        packingGroups: draft.packingGroups,
+        packingMismatchObservation: draft.packingMismatchObservation,
+      });
+      if (server.replayed || result.already) {
+        showToast(WORK_TRANSFER.alreadyDeliveredFromCodificado, "info");
+        setConfirmDeliver(false);
+        await refresh();
+        return;
+      }
+      pushNotification({
+        kind: "trabajo_finalizado",
+        title: "Codificado entregó a Calidad",
+        message: `${selected.product ?? "Producto"} · ${selected.client ?? ""} — lote ${draft.packagingLote || "s/d"}`,
+        sectors: ["CALIDAD", "PRODUCCION"],
+      });
+      pushNotification({
+        kind: "trabajo_asignado",
+        title: "Trabajo listo desde Codificado",
+        message: `${selected.product ?? "Producto"} disponible para remito manual en Producción.`,
+        sectors: ["PRODUCCION"],
+      });
+      showToast("Entregado a Calidad y Producción.");
       setConfirmDeliver(false);
-      return;
+      setSelected(null);
+      setDraft(null);
+      await refresh();
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "No se pudo entregar a Calidad.",
+        "info"
+      );
+      setConfirmDeliver(false);
     }
-    pushNotification({
-      kind: "trabajo_finalizado",
-      title: "Codificado entregó a Calidad",
-      message: `${selected.product ?? "Producto"} · ${selected.client ?? ""} — lote ${draft.packagingLote || "s/d"}`,
-      sectors: ["CALIDAD", "PRODUCCION"],
-    });
-    pushNotification({
-      kind: "trabajo_asignado",
-      title: "Trabajo listo desde Codificado",
-      message: `${selected.product ?? "Producto"} disponible para remito manual en Producción.`,
-      sectors: ["PRODUCCION"],
-    });
-    showToast("Entregado a Calidad y Producción.");
-    setConfirmDeliver(false);
-    setSelected(null);
-    setDraft(null);
-  }, [selected, draft, deliverFromCodificado, actorName, obs, showToast]);
+  }, [
+    selected,
+    draft,
+    deliverFromCodificado,
+    actorName,
+    obs,
+    showToast,
+    session,
+    refresh,
+  ]);
 
   return (
     <TwinShell title="Codificado">
@@ -312,9 +352,14 @@ export function CodificadoOperationalView() {
                     </td>
                     <td className="py-2 tabular-nums">{total}</td>
                     <td className="hidden py-2 text-xs lg:table-cell">
-                      {p?.codificadoOriginSector === "ENVASADO_PREMIUM"
-                        ? "Premium"
-                        : "Masivo"}
+                      {item.codificadoOriginLabel ||
+                        (item.codificadoOriginSector === "ENVASADO_PREMIUM"
+                          ? "Envasado Premium"
+                          : item.codificadoOriginSector === "ENVASADO_MASIVO"
+                            ? "Envasado Masivo"
+                            : item.viaCodificado
+                              ? "Envasado"
+                              : "Producción")}
                     </td>
                     <td className="py-2">
                       <StatusChip status={item.status} />

@@ -3,8 +3,9 @@ import { computeKg, formatKg, parseOptionalDecimal } from "./kg";
 
 export const PRODUCTION_PEDIDO_STATUSES = [
   "INGRESO",
-  "EN_PROCESO",
-  "TERMINADO",
+  "EN_ELABORACION",
+  "EN_ENVASADO",
+  "LISTO_PARA_ENTREGAR",
   "ENTREGADO",
 ] as const;
 
@@ -12,8 +13,9 @@ export type ProductionPedidoStatus = (typeof PRODUCTION_PEDIDO_STATUSES)[number]
 
 export const PRODUCTION_PEDIDO_STATUS_LABELS: Record<ProductionPedidoStatus, string> = {
   INGRESO: "INGRESO",
-  EN_PROCESO: "EN PROCESO",
-  TERMINADO: "TERMINADO",
+  EN_ELABORACION: "EN ELABORACIÓN",
+  EN_ENVASADO: "EN ENVASADO",
+  LISTO_PARA_ENTREGAR: "LISTO PARA ENTREGAR",
   ENTREGADO: "ENTREGADO",
 };
 
@@ -85,10 +87,20 @@ export function normalizeStatus(raw: string | null | undefined): ProductionPedid
   if (!t) return null;
   const aliases: Record<string, ProductionPedidoStatus> = {
     INGRESO: "INGRESO",
-    EN_PROCESO: "EN_PROCESO",
-    "EN PROCESO": "EN_PROCESO",
-    ENPROCESO: "EN_PROCESO",
-    TERMINADO: "TERMINADO",
+    EN_ELABORACION: "EN_ELABORACION",
+    "EN ELABORACION": "EN_ELABORACION",
+    "EN ELABORACIÓN": "EN_ELABORACION",
+    ENELABORACION: "EN_ELABORACION",
+    EN_PROCESO: "EN_ELABORACION",
+    "EN PROCESO": "EN_ELABORACION",
+    ENPROCESO: "EN_ELABORACION",
+    EN_ENVASADO: "EN_ENVASADO",
+    "EN ENVASADO": "EN_ENVASADO",
+    ENENVASADO: "EN_ENVASADO",
+    LISTO_PARA_ENTREGAR: "LISTO_PARA_ENTREGAR",
+    "LISTO PARA ENTREGAR": "LISTO_PARA_ENTREGAR",
+    LISTOPARAENTREGAR: "LISTO_PARA_ENTREGAR",
+    TERMINADO: "LISTO_PARA_ENTREGAR",
     ENTREGADO: "ENTREGADO",
   };
   const key = t.replace(/ /g, "_");

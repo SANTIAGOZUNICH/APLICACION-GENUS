@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb, type GenusDb } from "@/lib/db/client";
 import {
   operationalEvents,
@@ -40,36 +40,60 @@ function mapWeek(row: PlanningWeekRow): PlanningWeekRecord {
   };
 }
 
-function mapItem(row: WorkItemRow): PlanningWorkItemRecord {
+function mapItem(row: WorkItemRow | Record<string, unknown>): PlanningWorkItemRecord {
+  const r = row as WorkItemRow;
   return {
-    id: row.id,
-    planningWeekId: row.planningWeekId,
-    plannedDate: String(row.plannedDate),
-    plannedDateTo: row.plannedDateTo ? String(row.plannedDateTo) : null,
-    client: row.client,
-    product: row.product,
-    plannedQuantity: row.plannedQuantity,
-    unit: row.unit,
-    sector: row.sector,
-    line: row.line,
-    branchOwner: row.branchOwner,
-    priority: row.priority,
-    notes: row.notes,
-    packagingLote: row.packagingLote ?? null,
-    packagingVto: row.packagingVto ?? null,
+    id: r.id,
+    planningWeekId: r.planningWeekId,
+    plannedDate: String(r.plannedDate),
+    plannedDateTo: r.plannedDateTo ? String(r.plannedDateTo) : null,
+    client: r.client,
+    product: r.product,
+    plannedQuantity: r.plannedQuantity,
+    unit: r.unit,
+    sector: r.sector,
+    line: r.line,
+    branchOwner: r.branchOwner,
+    priority: r.priority,
+    notes: r.notes,
+    packagingLote: r.packagingLote ?? null,
+    packagingVto: r.packagingVto ?? null,
     packagingTotalUnits:
-      row.packagingTotalUnits == null ? null : Number(row.packagingTotalUnits),
-    orderId: row.orderId ?? null,
-    orderNumber: row.orderNumber ?? null,
-    deliveryDate: row.deliveryDate ? String(row.deliveryDate) : null,
-    status: row.status,
-    publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
-    createdBy: row.createdBy,
-    source: row.source,
-    originRef: row.originRef,
-    version: row.version,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
+      r.packagingTotalUnits == null ? null : Number(r.packagingTotalUnits),
+    packingGroups: r.packingGroups ?? null,
+    orderId: r.orderId ?? null,
+    orderNumber: r.orderNumber ?? null,
+    deliveryDate: r.deliveryDate ? String(r.deliveryDate) : null,
+    status: r.status,
+    publishedAt: r.publishedAt ? r.publishedAt.toISOString() : null,
+    createdBy: r.createdBy,
+    source: r.source,
+    originRef: r.originRef,
+    version: r.version,
+    createdAt: r.createdAt.toISOString(),
+    updatedAt: r.updatedAt.toISOString(),
+    viaCodificado: Boolean(r.viaCodificado),
+    sentToCodificadoAt: r.sentToCodificadoAt
+      ? r.sentToCodificadoAt.toISOString()
+      : null,
+    sentToCodificadoBy: r.sentToCodificadoBy ?? null,
+    codificadoOriginSector: r.codificadoOriginSector ?? null,
+    deliveredFromCodificadoAt: r.deliveredFromCodificadoAt
+      ? r.deliveredFromCodificadoAt.toISOString()
+      : null,
+    deliveredFromCodificadoBy: r.deliveredFromCodificadoBy ?? null,
+    codificadoObservation: r.codificadoObservation ?? null,
+    bulkRemainderKg:
+      r.bulkRemainderKg == null ? null : Number(r.bulkRemainderKg),
+    bulkRemainderObservation: r.bulkRemainderObservation ?? null,
+    bulkRemainderId: r.bulkRemainderId ?? null,
+    homeLine: r.homeLine ?? null,
+    homeBranchOwner: r.homeBranchOwner ?? null,
+    codificadoRevision: Number(r.codificadoRevision ?? 0),
+    codificadoCancelledAt: r.codificadoCancelledAt
+      ? r.codificadoCancelledAt.toISOString()
+      : null,
+    productionPedidoId: r.productionPedidoId ?? null,
   };
 }
 
@@ -169,6 +193,7 @@ export class DrizzlePlanningRepository implements PlanningRepository {
         s === "CODIFICADO"
     );
     // Floor planning sectors include CODIFICADO (additive enum after 0019).
+    // Envasado también ve trabajos enviados a Codificado (mismo ID, origin_sector).
     if (floorSectors.length > 0) {
       conditions.push(
         inArray(
@@ -178,13 +203,30 @@ export class DrizzlePlanningRepository implements PlanningRepository {
           >
         )
       );
+    } else if (filters.sector === "ELABORACION") {
+      conditions.push(eq(workItems.sector, "ELABORACION"));
     } else if (
-      filters.sector === "ELABORACION" ||
       filters.sector === "ENVASADO_MASIVO" ||
-      filters.sector === "ENVASADO_PREMIUM" ||
-      filters.sector === "CODIFICADO"
+      filters.sector === "ENVASADO_PREMIUM"
     ) {
-      conditions.push(eq(workItems.sector, filters.sector));
+      conditions.push(
+        or(
+          eq(workItems.sector, filters.sector),
+          and(
+            eq(workItems.codificadoOriginSector, filters.sector),
+            eq(workItems.viaCodificado, true)
+          )
+        )!
+      );
+    } else if (filters.sector === "CODIFICADO") {
+      // Directos (Producción) + enviados desde Envasado (sector actual CODIFICADO).
+      // Incluye entregados a Calidad (status proyectado); excluye cancelados (vuelven a Envasado).
+      conditions.push(
+        and(
+          eq(workItems.sector, "CODIFICADO"),
+          sql`${workItems.codificadoCancelledAt} IS NULL`
+        )!
+      );
     }
     if (filters.ownerPerson) {
       conditions.push(eq(workItems.branchOwner, filters.ownerPerson));
@@ -238,6 +280,23 @@ export class DrizzlePlanningRepository implements PlanningRepository {
         version: workItems.version,
         createdAt: workItems.createdAt,
         updatedAt: workItems.updatedAt,
+        viaCodificado: workItems.viaCodificado,
+        sentToCodificadoAt: workItems.sentToCodificadoAt,
+        sentToCodificadoBy: workItems.sentToCodificadoBy,
+        codificadoOriginSector: workItems.codificadoOriginSector,
+        deliveredFromCodificadoAt: workItems.deliveredFromCodificadoAt,
+        deliveredFromCodificadoBy: workItems.deliveredFromCodificadoBy,
+        codificadoObservation: workItems.codificadoObservation,
+        bulkRemainderKg: workItems.bulkRemainderKg,
+        bulkRemainderObservation: workItems.bulkRemainderObservation,
+        bulkRemainderId: workItems.bulkRemainderId,
+        homeLine: workItems.homeLine,
+        homeBranchOwner: workItems.homeBranchOwner,
+        codificadoRevision: workItems.codificadoRevision,
+        codificadoCancelledAt: workItems.codificadoCancelledAt,
+        codificadoCancelledBy: workItems.codificadoCancelledBy,
+        codificadoCancelReason: workItems.codificadoCancelReason,
+        productionPedidoId: workItems.productionPedidoId,
       })
       .from(workItems)
       .innerJoin(planningWeeks, eq(workItems.planningWeekId, planningWeeks.id))
