@@ -150,6 +150,9 @@ async function mutateResource(
       );
     case "me_stock:thresholds":
       return service.updateMeThresholds(actor, id!, payload as never);
+    case "me_stock:delete":
+    case "me_inventario:delete":
+      return service.deleteMeMaterial(actor, id!, reason ?? "");
     case "me_avisos:create":
       return service.createManualAlert(actor, payload as never);
     case "me_avisos:patch":

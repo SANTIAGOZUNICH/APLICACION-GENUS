@@ -148,16 +148,19 @@ export function MeAvisosView() {
                 type="button"
                 size="sm"
                 variant="secondary"
+                aria-label="Eliminar"
+                title="Eliminar"
                 onClick={() =>
                   void mutateInventory({
                     action: "patch",
                     resource: "me_avisos",
                     id: r.id,
                     payload: { status: "ARCHIVADO" },
+                    reason: "",
                   }).then(reload)
                 }
               >
-                Archivar
+                Eliminar
               </Button>
             )}
           </div>

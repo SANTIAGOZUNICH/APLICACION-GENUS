@@ -615,6 +615,111 @@ describe("MP Stock — archivo lógico seguro", () => {
   });
 });
 
+describe("ME Stock — eliminar material (archivo lógico)", () => {
+  let svc: InventoryService;
+
+  beforeEach(() => {
+    svc = new InventoryService(new MemoryInventoryRepo());
+  });
+
+  it("elimina material manual sin movimientos: queda archivado y oculto del listado", () => {
+    const mat = svc.resolveMeMaterialByCodigo(deposito, {
+      codigo: "DEL-MANUAL-1",
+      descripcion: "Cajas manuales",
+    });
+    const archived = svc.deleteMeMaterial(deposito, mat.id, "sin uso");
+    expect(archived.archived).toBe(true);
+    expect(archived.archivedReason).toBe("sin uso");
+    expect(svc.listMeMaterials(deposito).find((m) => m.id === mat.id)).toBeUndefined();
+    expect(
+      svc.listMeInventario(deposito).find((r) => r.materialId === mat.id)
+    ).toBeUndefined();
+    // Sigue visible con includeArchived
+    expect(
+      svc.listMeMaterials(deposito, { includeArchived: true }).find((m) => m.id === mat.id)
+    ).toBeTruthy();
+  });
+
+  it("elimina material con ingreso activo: anula el ingreso, stock queda en 0, archivado; idempotente", () => {
+    const ing = svc.upsertMeIngreso(deposito, {
+      codigo: "DEL-ING-1",
+      descripcionInsumo: "Tapas",
+      bultos: 2,
+      cantidad: 50,
+    });
+    const materialId = ing.materialId!;
+    expect(svc.getMeMaterialById(deposito, materialId)?.stockActual).toBe(100);
+
+    const archived = svc.deleteMeMaterial(deposito, materialId, "descontinuado");
+    expect(archived.archived).toBe(true);
+    expect(archived.archivedReason).toBe("descontinuado");
+    expect(archived.stockActual).toBe(0);
+
+    const ingresoAfter = svc
+      .listMeIngresos(deposito, { includeAnulado: true })
+      .find((r) => r.id === ing.id);
+    expect(ingresoAfter?.anulado).toBe(true);
+
+    expect(svc.listMeMaterials(deposito).find((m) => m.id === materialId)).toBeUndefined();
+
+    // Idempotente: segunda llamada no reintenta anular ni cambia archivedAt
+    const second = svc.deleteMeMaterial(deposito, materialId, "otra vez");
+    expect(second.archivedAt).toBe(archived.archivedAt);
+    expect(second.stockActual).toBe(0);
+  });
+
+  it("bloquea eliminar si hay salida OA activa sin revertir", () => {
+    const ing = svc.upsertMeIngreso(deposito, {
+      codigo: "DEL-OA-1",
+      descripcionInsumo: "Frascos",
+      bultos: 1,
+      cantidad: 500,
+    });
+    const materialId = ing.materialId!;
+    const oa = makeOaForSalida(materialId, "DEL-OA-1", "80");
+    applyOaDeliveryToMe(svc, produccion, oa);
+
+    expect(() => svc.deleteMeMaterial(deposito, materialId, "intento")).toThrow(
+      /salida.*OA.*activa/i
+    );
+    expect(svc.listMeMaterials(deposito).find((m) => m.id === materialId)).toBeTruthy();
+
+    // Revertir la salida OA de origen habilita la eliminación.
+    const salida = svc.listMeSalidas(deposito).find((s) => s.origen === "OA" && !s.reverted)!;
+    svc.anularMeSalida(deposito, salida.id, "revertida para eliminar");
+    const archived = svc.deleteMeMaterial(deposito, materialId, "ahora sí");
+    expect(archived.archived).toBe(true);
+  });
+
+  it("PRODUCCION y DEPOSITO pueden eliminar me_stock; CODIFICADO no puede", () => {
+    const codificado = {
+      email: "codificado@laboratoriogenus.com.ar",
+      sector: "CODIFICADO" as SectorId,
+    };
+
+    const ing1 = svc.upsertMeIngreso(deposito, {
+      codigo: "DEL-PERM-1",
+      descripcionInsumo: "Bolsas",
+      bultos: 1,
+      cantidad: 10,
+    });
+    expect(() => svc.deleteMeMaterial(codificado, ing1.materialId!, "no autorizado")).toThrow(
+      InventoryForbiddenError
+    );
+    const archived1 = svc.deleteMeMaterial(produccion, ing1.materialId!, "produccion elimina");
+    expect(archived1.archived).toBe(true);
+
+    const ing2 = svc.upsertMeIngreso(deposito, {
+      codigo: "DEL-PERM-2",
+      descripcionInsumo: "Bolsas 2",
+      bultos: 1,
+      cantidad: 10,
+    });
+    const archived2 = svc.deleteMeMaterial(deposito, ing2.materialId!, "deposito elimina");
+    expect(archived2.archived).toBe(true);
+  });
+});
+
 describe("ME ingresos anular — stock", () => {
   let svc: InventoryService;
 

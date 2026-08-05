@@ -80,6 +80,8 @@ export type InventoryActor = {
   email: string;
   sector: SectorId;
   displayName?: string;
+  /** Superadmin allowlist (GENUS_SUPERADMIN_EMAIL): bypass de escritura sectorial. */
+  isSuperadmin?: boolean;
 };
 
 export type InventoryNotificationPayload = {
@@ -153,6 +155,7 @@ export class InventoryService {
       throw new InventoryForbiddenError("actorSectorId requerido");
     }
     if (write) {
+      if (actor.isSuperadmin) return;
       if (!canWriteInventory(actor.sector, module)) {
         throw new InventoryForbiddenError(`Sector ${actor.sector} no puede escribir ${module}`);
       }
@@ -275,6 +278,15 @@ export class InventoryService {
    */
   anularMeIngreso(actor: InventoryActor, id: string, reason: string) {
     this.guard(actor, "me_ingresos", true);
+    return this.anularMeIngresoInternal(actor, id, reason);
+  }
+
+  /**
+   * Igual que `anularMeIngreso` pero sin re-chequear el guard `me_ingresos`.
+   * Uso interno: cascada de eliminación de material (`deleteMeMaterial`), donde
+   * el permiso ya fue validado contra `me_stock`.
+   */
+  private anularMeIngresoInternal(actor: InventoryActor, id: string, reason: string) {
     const trimmed = normalizeOptionalReason(reason);
     const existing = this.repo.getMeIngreso(id);
     if (!existing) throw new InventoryNotFoundError("Ingreso ME no encontrado.");
@@ -448,9 +460,11 @@ export class InventoryService {
 
   // ─── ME Stock / materiales ─────────────────────────────────
 
-  listMeMaterials(actor: InventoryActor) {
+  listMeMaterials(actor: InventoryActor, options: { includeArchived?: boolean } = {}) {
     this.guard(actor, "me_stock", false);
-    return this.repo.listMeMaterials();
+    const rows = this.repo.listMeMaterials();
+    if (options.includeArchived) return rows;
+    return rows.filter((r) => !r.archived);
   }
 
   updateMeThresholds(
@@ -511,6 +525,74 @@ export class InventoryService {
     return { material: updated, ajuste };
   }
 
+  /**
+   * Archivo lógico de un material ME: anula ingresos activos ligados (revierte
+   * stock una sola vez cada uno), fuerza stock final a 0 si quedan residuos, y
+   * marca el material como archivado. No hard-delete (conserva historial).
+   * Idempotente si ya está archivado. Bloquea si hay salidas OA activas
+   * (sin revertir) — deben revertirse desde su origen antes de eliminar.
+   */
+  deleteMeMaterial(actor: InventoryActor, id: string, reason: string) {
+    this.guard(actor, "me_stock", true);
+    const existing = this.repo.getMeMaterial(id);
+    if (!existing) throw new InventoryNotFoundError("Material ME no encontrado.");
+    if (existing.archived) return existing;
+
+    const unrevertedOaSalidas = this.repo
+      .listMeSalidas()
+      .filter((s) => s.materialId === id && s.origen === "OA" && !s.reverted);
+    if (unrevertedOaSalidas.length > 0) {
+      const labels = unrevertedOaSalidas
+        .map((s) => s.oaNumber?.trim() || s.egresoNro || s.id.slice(0, 8))
+        .slice(0, 5)
+        .join(", ");
+      const extra = unrevertedOaSalidas.length > 5 ? ` (+${unrevertedOaSalidas.length - 5} más)` : "";
+      throw new InventoryValidationError(
+        `No se puede eliminar: hay salida(s) OA activa(s) (${labels}${extra}). Revertí la salida OA de origen primero.`
+      );
+    }
+
+    const trimmed = normalizeOptionalReason(reason);
+
+    const activeIngresos = this.repo
+      .listMeIngresos()
+      .filter((r) => r.materialId === id && !r.anulado);
+    for (const ingreso of activeIngresos) {
+      this.anularMeIngresoInternal(actor, ingreso.id, trimmed);
+    }
+
+    const recalculated = this.recalculateMeStock(id);
+    if (recalculated.stockActual !== 0) {
+      this.applyMeStockDelta(id, -recalculated.stockActual, {
+        allowNegative: true,
+        reason: trimmed,
+        actor,
+      });
+    }
+
+    const now = nowIso();
+    const mat = this.repo.getMeMaterial(id)!;
+    const archived: MeMaterial = {
+      ...mat,
+      archived: true,
+      archivedAt: now,
+      archivedBy: actor.email,
+      archivedReason: trimmed,
+      updatedAt: now,
+    };
+    this.repo.upsertMeMaterial(archived);
+    this.audit(
+      actor,
+      "me_stock",
+      id,
+      "archive",
+      existing as unknown as Record<string, unknown>,
+      archived as unknown as Record<string, unknown>,
+      trimmed
+    );
+    return archived;
+  }
+
   private resolveOrCreateMeMaterial(
     actor: InventoryActor,
     input: {
@@ -528,12 +610,16 @@ export class InventoryService {
     if (input.codigo.trim()) {
       const byCode = this.repo.findMeMaterialByCodigo(input.codigo);
       if (byCode) {
-        // Actualizar cliente/descripcion si venían vacíos
+        // Actualizar cliente/descripcion si venían vacíos; reactivar si estaba archivado.
         const patched: MeMaterial = {
           ...byCode,
           descripcion: byCode.descripcion || input.descripcion.trim() || byCode.descripcion,
           cliente: byCode.cliente || input.cliente?.trim() || byCode.cliente,
           ubicacion: byCode.ubicacion || input.ubicacion,
+          archived: false,
+          archivedAt: null,
+          archivedBy: null,
+          archivedReason: null,
           updatedAt: nowIso(),
         };
         this.repo.upsertMeMaterial(patched);
@@ -578,9 +664,13 @@ export class InventoryService {
     return updated;
   }
 
-  listMeInventario(actor: InventoryActor): MeInventarioViewRow[] {
+  listMeInventario(
+    actor: InventoryActor,
+    options: { includeArchived?: boolean } = {}
+  ): MeInventarioViewRow[] {
     this.guard(actor, "me_stock", false);
-    return this.repo.listMeMaterials().map((m) => {
+    const rows = this.repo.listMeMaterials().filter((m) => options.includeArchived || !m.archived);
+    return rows.map((m) => {
       const fresh = this.recalculateMeStock(m.id);
       return {
         materialId: fresh.id,

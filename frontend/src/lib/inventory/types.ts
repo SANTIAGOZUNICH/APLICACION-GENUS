@@ -78,6 +78,11 @@ export type MeMaterial = {
   responsable: string;
   observacion: string;
   updatedAt: string;
+  /** Archivo lógico: oculto del listado activo; no hard-delete del historial. */
+  archived?: boolean;
+  archivedAt?: string | null;
+  archivedBy?: string | null;
+  archivedReason?: string | null;
 };
 
 /** Fila visible de Inventario ME (5 columnas). */

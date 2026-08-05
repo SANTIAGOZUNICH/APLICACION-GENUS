@@ -3,6 +3,7 @@ import { isDatabaseConfigured } from "@/lib/db/client";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
 import { resolveAuthenticatedActor } from "@/lib/auth/resolve-authenticated-actor";
 import { AuthUnauthorizedError, type AuthActor } from "@/lib/auth/types";
+import { isSuperadminEmail } from "@/lib/auth/superadmin";
 import type { SectorId } from "@/types/operational/sector";
 import type { InventoryActor } from "./inventory-service";
 import {
@@ -54,7 +55,12 @@ export async function resolveInventoryActor(request: Request): Promise<Inventory
     throw new InventoryForbiddenError("Actor no autorizado o sector incorrecto.");
   }
 
-  return { email: actor.email, sector: actor.sector as SectorId, displayName: actor.displayName };
+  return {
+    email: actor.email,
+    sector: actor.sector as SectorId,
+    displayName: actor.displayName,
+    isSuperadmin: isSuperadminEmail(actor.email),
+  };
 }
 
 export function inventoryErrorResponse(err: unknown): NextResponse {

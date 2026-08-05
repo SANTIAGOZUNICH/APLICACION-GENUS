@@ -27,6 +27,9 @@ export const ME_ALERT_NOTIFY_SECTORS: SectorId[] = [
 export function canReadInventory(sector: SectorId | undefined, module: InventoryModule): boolean {
   if (!sector) return false;
   if (module === "semanas_ro") return sector === "DEPOSITO" || sector === "PRODUCCION";
+  if (sector === "DIRECCION" && (module.startsWith("me_") || module.startsWith("mp_"))) {
+    return true;
+  }
   if (module.startsWith("me_")) {
     return (
       sector === "DEPOSITO" ||
@@ -63,6 +66,10 @@ export function canWriteOaMeSalida(sector: SectorId | undefined): boolean {
 export function canWriteInventory(sector: SectorId | undefined, module: InventoryModule): boolean {
   if (!sector) return false;
   if (module === "semanas_ro") return false;
+  /** DIRECCION: acceso de escritura total sobre inventario ME/MP (supervisión). */
+  if (sector === "DIRECCION" && (module.startsWith("me_") || module.startsWith("mp_"))) {
+    return true;
+  }
   if (module === "me_ingresos" || module === "me_salidas") {
     return sector === "DEPOSITO";
   }
