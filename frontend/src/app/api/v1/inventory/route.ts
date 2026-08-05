@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 async function readyService() {
   const blocked = ensureInventoryPersistenceReady();
   if (blocked) return { blocked } as const;
-  await hydrateInventoryFromNeon(memoryInventoryRepo);
+  await hydrateInventoryFromNeon(memoryInventoryRepo, { force: true });
   await refreshMpInventoryFromNeon(memoryInventoryRepo);
   const service = getInventoryService();
   service.onNotify(async (payload) => {

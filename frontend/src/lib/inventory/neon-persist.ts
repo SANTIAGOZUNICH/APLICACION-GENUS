@@ -34,12 +34,15 @@ import type {
 let hydrated = false;
 let hydratePromise: Promise<void> | null = null;
 
-export async function hydrateInventoryFromNeon(repo: MemoryInventoryRepo): Promise<void> {
+export async function hydrateInventoryFromNeon(
+  repo: MemoryInventoryRepo,
+  options: { force?: boolean } = {}
+): Promise<void> {
   if (!isDatabaseConfigured()) return;
-  if (hydrated) return;
+  if (hydrated && !options.force) return;
   if (hydratePromise) {
     await hydratePromise;
-    return;
+    if (hydrated && !options.force) return;
   }
   hydratePromise = (async () => {
     const db = getDb();
@@ -73,7 +76,16 @@ export async function hydrateInventoryFromNeon(repo: MemoryInventoryRepo): Promi
     repo.reset();
     repo.meIngresos = ingresos.map((r) => r.payload as MeIngresoRow);
     repo.meSalidas = salidas.map((r) => r.payload as MeSalidaRow);
-    repo.meMaterials = materials.map((r) => r.payload as MeMaterial);
+    repo.meMaterials = materials.map((r) => {
+      const p = r.payload as MeMaterial;
+      return {
+        ...p,
+        archived: Boolean(p.archived),
+        archivedAt: p.archivedAt ?? null,
+        archivedBy: p.archivedBy ?? null,
+        archivedReason: p.archivedReason ?? null,
+      };
+    });
     repo.meAlerts = alerts.map((r) => r.payload as MeAlert);
     repo.meAlertReads = reads.map((r) => r.payload as MeAlertRead);
     repo.mpStock = mpStock.map((r) => normalizeMpStockPayload(r.payload));
@@ -230,80 +242,79 @@ export async function persistMpStockSnapshot(rows: MpStockRow[]): Promise<void> 
   }
 }
 
+/**
+ * Persiste snapshot sin wipe-and-replace.
+ * Solo upsert por id — soft-delete/archive queda en payload.
+ * Evita que un POST concurrente reinstale o borre filas ajenas.
+ */
 export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promise<void> {
   if (!isDatabaseConfigured()) return;
   const db = getDb();
+  const now = new Date();
 
-  await db.delete(invMeIngresos);
-  await db.delete(invMeSalidas);
-  await db.delete(invMeMaterials);
-  await db.delete(invMeAlerts);
-  await db.delete(invMeAlertReads);
-  await db.delete(invMpStock);
-  await db.delete(invMpIngresos);
-  await db.delete(invMpControl);
-  await db.delete(invMpCompras);
-  await db.delete(invAjustes);
-  await db.delete(invAudit);
+  async function upsertIdPayload(
+    table:
+      | typeof invMeIngresos
+      | typeof invMeSalidas
+      | typeof invMeMaterials
+      | typeof invMeAlerts
+      | typeof invMpStock
+      | typeof invMpIngresos
+      | typeof invMpControl
+      | typeof invMpCompras,
+    rows: Array<{ id: string }>
+  ) {
+    for (const row of rows) {
+      await db
+        .insert(table)
+        .values({ id: row.id, payload: row, updatedAt: now } as never)
+        .onConflictDoUpdate({
+          target: table.id,
+          set: { payload: row as never, updatedAt: now },
+        });
+    }
+  }
 
-  if (repo.meIngresos.length) {
-    await db.insert(invMeIngresos).values(
-      repo.meIngresos.map((r) => ({ id: r.id, payload: r, updatedAt: new Date() }))
-    );
+  await upsertIdPayload(invMeIngresos, repo.meIngresos);
+  await upsertIdPayload(invMeSalidas, repo.meSalidas);
+  await upsertIdPayload(invMeMaterials, repo.meMaterials);
+  await upsertIdPayload(invMeAlerts, repo.meAlerts);
+  await upsertIdPayload(invMpStock, repo.mpStock);
+  await upsertIdPayload(invMpIngresos, repo.mpIngresos);
+  await upsertIdPayload(invMpControl, repo.mpControl);
+  await upsertIdPayload(invMpCompras, repo.mpCompras);
+
+  for (const row of repo.meAlertReads) {
+    await db
+      .insert(invMeAlertReads)
+      .values({
+        alertId: row.alertId,
+        actorEmail: row.actorEmail,
+        payload: row,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [invMeAlertReads.alertId, invMeAlertReads.actorEmail],
+        set: { payload: row, updatedAt: now },
+      });
   }
-  if (repo.meSalidas.length) {
-    await db.insert(invMeSalidas).values(
-      repo.meSalidas.map((r) => ({ id: r.id, payload: r, updatedAt: new Date() }))
-    );
+
+  for (const row of repo.ajustes) {
+    await db
+      .insert(invAjustes)
+      .values({ id: row.id, payload: row, createdAt: new Date(row.createdAt) })
+      .onConflictDoUpdate({
+        target: invAjustes.id,
+        set: { payload: row },
+      });
   }
-  if (repo.meMaterials.length) {
-    await db.insert(invMeMaterials).values(
-      repo.meMaterials.map((r) => ({ id: r.id, payload: r, updatedAt: new Date() }))
-    );
-  }
-  if (repo.meAlerts.length) {
-    await db.insert(invMeAlerts).values(
-      repo.meAlerts.map((r) => ({ id: r.id, payload: r, updatedAt: new Date() }))
-    );
-  }
-  if (repo.meAlertReads.length) {
-    await db.insert(invMeAlertReads).values(
-      repo.meAlertReads.map((r) => ({
-        alertId: r.alertId,
-        actorEmail: r.actorEmail,
-        payload: r,
-        updatedAt: new Date(),
-      }))
-    );
-  }
-  if (repo.mpStock.length) {
-    await db.insert(invMpStock).values(
-      repo.mpStock.map((r) => ({ id: r.id, payload: r, updatedAt: new Date() }))
-    );
-  }
-  if (repo.mpIngresos.length) {
-    await db.insert(invMpIngresos).values(
-      repo.mpIngresos.map((r) => ({ id: r.id, payload: r, updatedAt: new Date() }))
-    );
-  }
-  if (repo.mpControl.length) {
-    await db.insert(invMpControl).values(
-      repo.mpControl.map((r) => ({ id: r.id, payload: r, updatedAt: new Date() }))
-    );
-  }
-  if (repo.mpCompras.length) {
-    await db.insert(invMpCompras).values(
-      repo.mpCompras.map((r) => ({ id: r.id, payload: r, updatedAt: new Date() }))
-    );
-  }
-  if (repo.ajustes.length) {
-    await db.insert(invAjustes).values(
-      repo.ajustes.map((r) => ({ id: r.id, payload: r, createdAt: new Date(r.createdAt) }))
-    );
-  }
-  if (repo.audit.length) {
-    await db.insert(invAudit).values(
-      repo.audit.map((r) => ({ id: r.id, payload: r, createdAt: new Date(r.createdAt) }))
-    );
+  for (const row of repo.audit) {
+    await db
+      .insert(invAudit)
+      .values({ id: row.id, payload: row, createdAt: new Date(row.createdAt) })
+      .onConflictDoUpdate({
+        target: invAudit.id,
+        set: { payload: row },
+      });
   }
 }
