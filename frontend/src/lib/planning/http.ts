@@ -5,6 +5,7 @@ import {
   PlanningConflictError,
   PlanningForbiddenError,
   PlanningNotFoundError,
+  PlanningOaCompatibilityError,
   PlanningValidationError,
 } from "@/lib/planning/types";
 import {
@@ -63,6 +64,18 @@ export function planningErrorResponse(
         operationId: op,
       },
       { status }
+    );
+  }
+  if (err instanceof PlanningOaCompatibilityError) {
+    return NextResponse.json(
+      {
+        error: sanitizePublicErrorMessage(err, err.message),
+        code: err.code,
+        operationId: op,
+        oaMismatch: err.details,
+        canForce: true,
+      },
+      { status: 409 }
     );
   }
   if (err instanceof PlanningConflictError) {

@@ -185,3 +185,21 @@ export class PlanningForbiddenError extends Error {
     this.name = "PlanningForbiddenError";
   }
 }
+
+/** OA existente con datos incompatibles — UI puede forzar vínculo (solo rellena vacíos). */
+export class PlanningOaCompatibilityError extends Error {
+  readonly code = "OA_DATA_MISMATCH";
+  readonly status = 409;
+  constructor(
+    message: string,
+    public readonly details: {
+      orderNumber: string;
+      orderId: string;
+      mismatches: Array<{ field: string; existing: string; incoming: string }>;
+      canForce: true;
+    }
+  ) {
+    super(message);
+    this.name = "PlanningOaCompatibilityError";
+  }
+}
