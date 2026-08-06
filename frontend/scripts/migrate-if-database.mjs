@@ -188,11 +188,19 @@ try {
     "[db:migrate] OK — migraciones aplicadas (0005–0017 condicionadas)."
   );
 } catch (err) {
-  // Preview puede quedar sin cuota Neon temporalmente; no bloquear el build
-  // de UI. Las migraciones gated (p.ej. 0014) nunca se aplican sin flag.
+  // Preview: no bloquear el build de UI por Neon/migrate (cuota, schema drift,
+  // 0019/0020 ungated post-Aug-3, etc.). Production sin DATABASE_URL ya hace skip.
+  // Las migraciones gated (p.ej. 0014) nunca se aplican sin flag.
   if (isTransientNeonQuotaError(err)) {
     console.warn(
       "[db:migrate] Neon cuota/402 — skip migrate; build continúa sin tocar schema."
+    );
+    process.exit(0);
+  }
+  if (process.env.VERCEL_ENV === "preview") {
+    console.warn(
+      "[db:migrate] Preview — migrate falló; build continúa sin tocar schema:",
+      err?.cause?.message ?? err?.message ?? err
     );
     process.exit(0);
   }
