@@ -1,6 +1,7 @@
 import "server-only";
 
 import { AuthAdminService, createAuthAdminService } from "@/lib/auth/admin-service";
+import { SECTOR_ACCOUNT_DIRECTORY } from "@/lib/auth/directory";
 import { DrizzleAuthRepository } from "@/lib/auth/drizzle-repository";
 import { MemoryAuthRepository } from "@/lib/auth/memory-repository";
 import type { AuthRepository } from "@/lib/auth/repository";
@@ -12,16 +13,44 @@ let sharedMemoryRepository: MemoryAuthRepository | null = null;
 let sharedNeonRepository: DrizzleAuthRepository | null = null;
 let overrideRepository: AuthRepository | null = null;
 let overrideService: AuthService | null = null;
+let memorySeedPromise: Promise<void> | null = null;
 
 /** Solo tests: inyectar un repositorio (memoria fresca, spy, etc). Pasar null para volver al default. */
 export function setAuthRepositoryForTests(repository: AuthRepository | null): void {
   overrideRepository = repository;
+  memorySeedPromise = null;
 }
 
 /** Solo tests: inyectar el servicio completo (para stubbing de alto nivel). Pasar null para volver al default. */
 export function setAuthServiceForTests(service: AuthService | null): void {
   overrideService = service;
 }
+
+/**
+ * Contraseñas demo documentadas (docss/32) — solo para backend memoria en Preview
+ * cuando 0016 no está aplicada. Si existe GENUS_AUTH_PASSWORD_*, tiene prioridad.
+ */
+const PREVIEW_MEMORY_DEMO_PASSWORDS: Record<string, string> = {
+  "elaboracion@laboratoriogenus.com.ar": "elaboracion123",
+  "emasivo@laboratoriogenus.com.ar": "emasivo123",
+  "epremium@laboratoriogenus.com.ar": "epremium123",
+  "calidad@laboratoriogenus.com.ar": "calidad123",
+  "produccion@laboratoriogenus.com.ar": "produccion123",
+  "mp@laboratoriogenus.com.ar": "mp123",
+  "codificado@laboratoriogenus.com.ar": "codificado123",
+  "deposito@laboratoriogenus.com.ar": "deposito123",
+};
+
+const PASSWORD_ENV_BY_EMAIL: Record<string, string> = {
+  "elaboracion@laboratoriogenus.com.ar": "GENUS_AUTH_PASSWORD_ELABORACION",
+  "emasivo@laboratoriogenus.com.ar": "GENUS_AUTH_PASSWORD_ENVASADO_MASIVO",
+  "epremium@laboratoriogenus.com.ar": "GENUS_AUTH_PASSWORD_ENVASADO_PREMIUM",
+  "calidad@laboratoriogenus.com.ar": "GENUS_AUTH_PASSWORD_CALIDAD",
+  "produccion@laboratoriogenus.com.ar": "GENUS_AUTH_PASSWORD_PRODUCCION",
+  "mp@laboratoriogenus.com.ar": "GENUS_AUTH_PASSWORD_MATERIA_PRIMA",
+  "codificado@laboratoriogenus.com.ar": "GENUS_AUTH_PASSWORD_CODIFICADO",
+  "deposito@laboratoriogenus.com.ar": "GENUS_AUTH_PASSWORD_DEPOSITO",
+};
 
 function getSharedMemoryRepository(): MemoryAuthRepository {
   if (!sharedMemoryRepository) {
@@ -39,19 +68,47 @@ function getSharedNeonRepository(): DrizzleAuthRepository {
 
 function isNeonBackendEnabled(): boolean {
   if (process.env.GENUS_AUTH_BACKEND === "memory") return false;
-  if (process.env.GENUS_AUTH_BACKEND === "neon") return true;
-  // Preview con Neon + 0016 aplicada: backend durable por defecto.
-  // Production nunca se autoactiva (requiere GENUS_AUTH_BACKEND=neon explícito).
-  return (
-    process.env.VERCEL_ENV === "preview" &&
-    Boolean(process.env.DATABASE_URL?.trim() || process.env.DATABASE_URL_UNPOOLED?.trim())
+  const hasDb = Boolean(
+    process.env.DATABASE_URL?.trim() || process.env.DATABASE_URL_UNPOOLED?.trim()
   );
+  const authSchemaReady = process.env.APPLY_MIGRATION_0016 === "1";
+  if (process.env.GENUS_AUTH_BACKEND === "neon") {
+    // En Preview, sin 0016 el branch Neon suele no tener genus_auth_* → login 500.
+    if (process.env.VERCEL_ENV === "preview" && !authSchemaReady) return false;
+    return true;
+  }
+  // Auto Preview solo con 0016 autorizada + DATABASE_URL.
+  return process.env.VERCEL_ENV === "preview" && authSchemaReady && hasDb;
 }
 
 function resolveAuthRepository(): AuthRepository {
   if (overrideRepository) return overrideRepository;
   if (isNeonBackendEnabled()) return getSharedNeonRepository();
   return getSharedMemoryRepository();
+}
+
+function buildPreviewMemoryPasswords(): Record<string, string> {
+  const out: Record<string, string> = { ...PREVIEW_MEMORY_DEMO_PASSWORDS };
+  for (const [email, envName] of Object.entries(PASSWORD_ENV_BY_EMAIL)) {
+    const fromEnv = process.env[envName]?.trim();
+    if (fromEnv) out[email] = fromEnv;
+  }
+  return out;
+}
+
+async function ensurePreviewMemorySeed(service: AuthService): Promise<void> {
+  if (isNeonBackendEnabled()) return;
+  if (process.env.VERCEL_ENV !== "preview") return;
+  if (!memorySeedPromise) {
+    memorySeedPromise = service
+      .ensureUsersSeeded(buildPreviewMemoryPasswords(), SECTOR_ACCOUNT_DIRECTORY)
+      .then(() => undefined)
+      .catch((err) => {
+        memorySeedPromise = null;
+        console.error("[auth] Preview memory seed falló:", err);
+      });
+  }
+  await memorySeedPromise;
 }
 
 /**
@@ -66,20 +123,26 @@ function resolveAuthRepository(): AuthRepository {
  * - Por defecto: `MemoryAuthRepository` (Map en memoria de proceso,
  *   singleton a nivel de módulo). No es durable — no sobrevive reinicios
  *   ni se comparte entre instancias/regiones de Preview.
- * - `GENUS_AUTH_BACKEND=neon`: usa `DrizzleAuthRepository` sobre Neon.
- *   Solo debe activarse una vez aplicada 0016; de lo contrario, las
- *   queries fallarán por tablas inexistentes.
+ * - Preview sin 0016: siembra cuentas demo documentadas en memoria.
+ * - `GENUS_AUTH_BACKEND=neon` o Preview+APPLY_MIGRATION_0016=1: Neon.
  */
 export function getAuthService(): AuthService {
   if (overrideService) return overrideService;
   return createAuthService(resolveAuthRepository());
 }
 
+/** Auth service listo para login (siembra memoria Preview si corresponde). */
+export async function getAuthServiceReady(): Promise<AuthService> {
+  const service = getAuthService();
+  await ensurePreviewMemorySeed(service);
+  return service;
+}
+
 export function getAuthAdminService(): AuthAdminService {
   return createAuthAdminService(resolveAuthRepository());
 }
 
-/** true recién cuando 0016 esté aplicada y GENUS_AUTH_BACKEND=neon esté activo. */
+/** true recién cuando 0016 esté aplicada y el backend Neon esté activo. */
 export function isAuthBackendDurable(): boolean {
   return isNeonBackendEnabled();
 }
