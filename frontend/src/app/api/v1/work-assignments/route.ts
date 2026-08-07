@@ -11,10 +11,7 @@ import {
 } from "@/lib/planning/http";
 import type { PlanningSector } from "@/lib/planning/types";
 import { PlanningValidationError } from "@/lib/planning/types";
-import {
-  logSanitizedError,
-  sanitizePublicErrorMessage,
-} from "@/lib/planning/sanitize-public-error";
+import { logSanitizedError } from "@/lib/planning/sanitize-public-error";
 import {
   assignWorkItemDurable,
   type WorkAssignmentInput,
@@ -76,7 +73,14 @@ function parseBody(raw: unknown): WorkAssignmentInput {
       body.packagingLote != null ? String(body.packagingLote) : null,
     packagingVto:
       body.packagingVto != null ? String(body.packagingVto) : null,
+    productCode:
+      body.productCode != null
+        ? String(body.productCode)
+        : body.code != null
+          ? String(body.code)
+          : null,
     idempotencyKey,
+    forceLink: body.forceLink === true || body.force_link === true,
   };
 }
 
@@ -87,6 +91,62 @@ export async function GET(request: Request) {
   try {
     const actor = await resolvePlanningActor(request);
     assertProduccionActor(actor);
+
+    const url = new URL(request.url);
+    const oaLookup = url.searchParams.get("oaNumber") ?? url.searchParams.get("oa");
+    if (oaLookup) {
+      const { normalizeOaOrderNumber, isValidOaOrderNumber } = await import(
+        "@/lib/planning/oa-assign-helpers"
+      );
+      const { getDb } = await import("@/lib/db/client");
+      const { operationalOrders } = await import("@/lib/db/schema");
+      const { eq } = await import("drizzle-orm");
+      const normalized = normalizeOaOrderNumber(oaLookup);
+      if (!normalized || !isValidOaOrderNumber(normalized)) {
+        return NextResponse.json({
+          operationId,
+          exists: false,
+          valid: false,
+          orderNumber: normalized || null,
+          message: "Número de OA inválido. Formato: OA-YYYY-######",
+        });
+      }
+      const db = getDb();
+      const [row] = await db
+        .select({
+          id: operationalOrders.id,
+          orderNumber: operationalOrders.orderNumber,
+          product: operationalOrders.product,
+          client: operationalOrders.client,
+          lot: operationalOrders.lot,
+          status: operationalOrders.status,
+          linkedWorkItemId: operationalOrders.linkedWorkItemId,
+        })
+        .from(operationalOrders)
+        .where(eq(operationalOrders.orderNumber, normalized))
+        .limit(1);
+      if (!row) {
+        return NextResponse.json({
+          operationId,
+          exists: false,
+          valid: true,
+          orderNumber: normalized,
+          message: "OA nueva: se creará al asignar el trabajo.",
+        });
+      }
+      return NextResponse.json({
+        operationId,
+        exists: true,
+        valid: true,
+        orderNumber: row.orderNumber,
+        order: row,
+        alreadyLinked: Boolean(row.linkedWorkItemId?.trim()),
+        message: row.linkedWorkItemId?.trim()
+          ? "OA existente: ya tiene un trabajo vinculado (1 trabajo = 1 OA)."
+          : "OA existente: se vinculará al trabajo.",
+      });
+    }
+
     const items = await getPlanningService().listPublishedItems({
       sector: "PRODUCCION",
     });
@@ -139,6 +199,8 @@ export async function POST(request: Request) {
         item: result.item,
         workItem: projectNativeWorkItem(result.item),
         order: result.order,
+        oaCreated: Boolean(result.order?.created),
+        oaLinked: Boolean(result.order && !result.order.created),
       },
       { status: result.replayed ? 200 : 201 }
     );

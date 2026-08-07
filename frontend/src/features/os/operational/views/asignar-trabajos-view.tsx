@@ -66,13 +66,24 @@ function mapUserFacingError(status: number, code: string | undefined, offline: b
   if (status === 403 || code === "FORBIDDEN") {
     return "No tenés permiso para asignar trabajos.";
   }
+  if (code === "OA_DATA_MISMATCH") {
+    return "La OA ya existe con datos distintos. Revisá antes de continuar.";
+  }
   if (status === 409 || code === "VERSION_CONFLICT") {
-    return "Esta orden ya tiene un trabajo asignado.";
+    return "Esta OA ya tiene un trabajo asignado (1 trabajo = 1 OA).";
   }
   if (status >= 500 || code === "PLANNING_FAILED" || code === "DATABASE_UNAVAILABLE") {
     return "No se pudo completar la operación. Reintentá.";
   }
   return "No se pudo completar la asignación. Reintentá.";
+}
+
+function isPackagingAssignSector(sector: AssignableSector): boolean {
+  return (
+    sector === "ENVASADO_MASIVO" ||
+    sector === "ENVASADO_PREMIUM" ||
+    sector === "CODIFICADO"
+  );
 }
 
 /** Producción crea y asigna trabajos — persistencia Neon cuando planning=native. */
@@ -105,6 +116,8 @@ export function AsignarTrabajosView() {
   const [neonItems, setNeonItems] = useState<WorkItem[]>([]);
   const [bulkPending, setBulkPending] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [oaHint, setOaHint] = useState<string | null>(null);
+  const [oaForceConfirm, setOaForceConfirm] = useState<string | null>(null);
   const idempotencyRef = useRef(newIdempotencyKey());
   const inFlightRef = useRef(false);
 
@@ -122,8 +135,39 @@ export function AsignarTrabajosView() {
 
   useEffect(() => {
     ensureDeliveryDatesMigrated();
-    void refreshNeonList();
+    const t = window.setTimeout(() => {
+      void refreshNeonList();
+    }, 0);
+    return () => window.clearTimeout(t);
   }, [refreshNeonList]);
+
+  useEffect(() => {
+    if (!native || !isPackagingAssignSector(sector)) {
+      const t = window.setTimeout(() => setOaHint(null), 0);
+      return () => window.clearTimeout(t);
+    }
+    const raw = orderRef.trim();
+    if (!raw) {
+      const t = window.setTimeout(() => setOaHint(null), 0);
+      return () => window.clearTimeout(t);
+    }
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/v1/work-assignments?oaNumber=${encodeURIComponent(raw)}`,
+            { credentials: "include" }
+          );
+          if (!res.ok) return;
+          const data = (await res.json()) as { message?: string };
+          setOaHint(data.message ?? null);
+        } catch {
+          /* hint best-effort */
+        }
+      })();
+    }, 350);
+    return () => window.clearTimeout(handle);
+  }, [orderRef, sector, native]);
 
   const unit = sector === "ELABORACION" ? "kg" : "un.";
   const lineOptions = sector === "ENVASADO_MASIVO" ? MASIVO_LINES : PREMIUM_LINES;
@@ -156,10 +200,11 @@ export function AsignarTrabajosView() {
     idempotencyRef.current = newIdempotencyKey();
   };
 
-  const submitAssignment = async () => {
+  const submitAssignment = async (opts?: { forceLink?: boolean }) => {
     if (inFlightRef.current || submitting) return;
     setErrorMsg(null);
     setFeedback(null);
+    setOaForceConfirm(null);
 
     if (!client.trim() || !product.trim() || !quantity.trim()) {
       setErrorMsg("Completá cliente, producto y cantidad.");
@@ -206,6 +251,7 @@ export function AsignarTrabajosView() {
       packagingLote: sector === "ELABORACION" ? null : packagingLote.trim() || null,
       packagingVto: sector === "ELABORACION" ? null : packagingVto.trim() || null,
       idempotencyKey: idempotencyRef.current,
+      forceLink: Boolean(opts?.forceLink),
     };
 
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;
@@ -235,6 +281,10 @@ export function AsignarTrabajosView() {
         ok?: boolean;
         replayed?: boolean;
         workItem?: WorkItem;
+        oaCreated?: boolean;
+        oaLinked?: boolean;
+        order?: { orderNumber?: string };
+        canForce?: boolean;
       } = {};
       try {
         data = (await res.json()) as typeof data;
@@ -243,6 +293,14 @@ export function AsignarTrabajosView() {
       }
 
       if (!res.ok || !data.ok) {
+        if (data.code === "OA_DATA_MISMATCH" && data.canForce !== false) {
+          setFeedback(null);
+          setOaForceConfirm(
+            data.error ??
+              "La OA ya existe con otros datos. Podés vincular igual: solo se completarán campos vacíos."
+          );
+          return;
+        }
         const msg =
           (data.error &&
           !/failed query|neon|vercel|sql|postgres|stack/i.test(data.error)
@@ -261,12 +319,20 @@ export function AsignarTrabajosView() {
       });
 
       setErrorMsg(null);
+      const oaPart = data.order?.orderNumber
+        ? data.oaCreated
+          ? ` OA ${data.order.orderNumber} creada.`
+          : data.oaLinked
+            ? ` OA ${data.order.orderNumber} vinculada.`
+            : ""
+        : "";
       setFeedback(
         data.replayed
           ? "Asignación ya confirmada en Neon (sin duplicar)."
-          : "Trabajo asignado y confirmado en Neon."
+          : `Trabajo asignado y confirmado en Neon.${oaPart}`
       );
       clearFormAfterSuccess();
+      setOaHint(null);
       await refreshNeonList();
       setTick((v) => v + 1);
       window.setTimeout(() => setFeedback(null), 4000);
@@ -585,16 +651,34 @@ export function AsignarTrabajosView() {
 
           <div className="space-y-1.5">
             <label htmlFor="af-ref" className="text-sm font-medium">
-              {sector === "ELABORACION" ? "OE" : sector === "CODIFICADO" ? "Referencia" : "OA"}
+              {sector === "ELABORACION"
+                ? "Número de OE"
+                : "Número de Orden de Acondicionamiento"}
             </label>
             <input
               id="af-ref"
               value={orderRef}
               disabled={submitting}
               onChange={(e) => setOrderRef(e.target.value)}
-              placeholder="Opcional"
+              placeholder={
+                sector === "ELABORACION"
+                  ? "Opcional — OE existente"
+                  : "Ej. OA-2026-000145"
+              }
               className={CONTROL_CLASS}
+              data-testid="assign-oa-number"
             />
+            {isPackagingAssignSector(sector) ? (
+              <p className="text-xs text-[var(--os-text-muted)]">
+                Podés ingresar una OA existente o un número nuevo. Si no existe, se
+                creará automáticamente (1 trabajo = 1 OA).
+              </p>
+            ) : null}
+            {oaHint ? (
+              <p className="text-xs text-[var(--os-teal)]" data-testid="assign-oa-hint">
+                {oaHint}
+              </p>
+            ) : null}
           </div>
 
           {sector !== "ELABORACION" ? (
@@ -653,6 +737,38 @@ export function AsignarTrabajosView() {
             >
               {submitting ? "Asignando…" : "Asignar trabajo"}
             </Button>
+            {oaForceConfirm ? (
+              <div
+                className="w-full rounded border border-[var(--genus-warning)]/40 bg-[var(--genus-warning-soft,#fff8e6)] px-3 py-2 text-sm"
+                role="alert"
+                data-testid="assign-oa-force"
+              >
+                <p className="mb-2 text-[var(--genus-warning,#b45309)]">{oaForceConfirm}</p>
+                <p className="mb-2 text-xs text-[var(--os-text-muted)]">
+                  Al continuar solo se completarán campos vacíos de la OA; no se
+                  sobrescriben producto, cliente, lote o VTO ya cargados.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="primary"
+                    disabled={submitting}
+                    onClick={() => void submitAssignment({ forceLink: true })}
+                    data-testid="assign-oa-force-confirm"
+                  >
+                    Vincular igual
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={submitting}
+                    onClick={() => setOaForceConfirm(null)}
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              </div>
+            ) : null}
             {errorMsg ? (
               <>
                 <span className="text-sm text-[var(--genus-danger,#e85d5d)]" role="alert" data-testid="assign-error">
@@ -669,7 +785,7 @@ export function AsignarTrabajosView() {
                 </Button>
               </>
             ) : null}
-            {feedback && !errorMsg ? (
+            {feedback && !errorMsg && !oaForceConfirm ? (
               <span className="text-sm text-[var(--genus-success)]" data-testid="assign-feedback">
                 {feedback}
               </span>

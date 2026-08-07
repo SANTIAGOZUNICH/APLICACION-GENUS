@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { buildSetCookieHeader } from "@/lib/auth/cookies";
-import { getAuthService } from "@/lib/auth/get-auth-service";
+import { getAuthServiceReady } from "@/lib/auth/get-auth-service";
 import { authErrorResponse } from "@/lib/auth/http";
 import { SESSION_TTL_SECONDS } from "@/lib/auth/constants";
 import { AuthInvalidCredentialsError } from "@/lib/auth/types";
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   const password = typeof body.password === "string" ? body.password : "";
 
   try {
-    const { user, token } = await getAuthService().login(email, password, {
+    const { user, token } = await (await getAuthServiceReady()).login(email, password, {
       userAgent: request.headers.get("user-agent"),
       ipHash: hashIp(request),
       rememberMe: Boolean(body.rememberMe),
