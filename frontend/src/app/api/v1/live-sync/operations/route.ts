@@ -25,6 +25,7 @@ import {
   restoreCancelledWorkDurable,
   restoreDeliveryDurable,
   saveWorkProgressDurable,
+  toClientDeliveryRecord,
 } from "@/lib/planning/work-item-progress-repository";
 
 export const runtime = "nodejs";
@@ -326,7 +327,9 @@ export async function POST(request: Request) {
         }
         const nativeDeliveryWorkId = nativeIdFromItemId(body.workItemId);
         const record = nativeDeliveryWorkId
-          ? await deliverWorkDurable({ ...body, workItemId: nativeDeliveryWorkId })
+          ? toClientDeliveryRecord(
+              await deliverWorkDurable({ ...body, workItemId: nativeDeliveryWorkId })
+            )
           : serverOperationalState.deliverWork(body);
         return NextResponse.json({
           ok: true,
@@ -340,15 +343,16 @@ export async function POST(request: Request) {
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
-        const record =
-          (await archiveDeliveryDurable(
-            body.id,
-            body.actorName ?? actor.displayName ?? actor.email
-          )) ??
-          serverOperationalState.archiveDelivery(
-            body.id,
-            body.actorName ?? actor.displayName ?? actor.email
-          );
+        const nativeArchived = await archiveDeliveryDurable(
+          body.id,
+          body.actorName ?? actor.displayName ?? actor.email
+        );
+        const record = nativeArchived
+          ? toClientDeliveryRecord(nativeArchived)
+          : serverOperationalState.archiveDelivery(
+              body.id,
+              body.actorName ?? actor.displayName ?? actor.email
+            );
         if (!record) {
           return NextResponse.json(
             { error: "Entrega no encontrada.", code: "NOT_FOUND" },
@@ -367,9 +371,10 @@ export async function POST(request: Request) {
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
-        const record =
-          (await restoreDeliveryDurable(body.id)) ??
-          serverOperationalState.restoreDelivery(body.id);
+        const nativeRestored = await restoreDeliveryDurable(body.id);
+        const record = nativeRestored
+          ? toClientDeliveryRecord(nativeRestored)
+          : serverOperationalState.restoreDelivery(body.id);
         if (!record) {
           return NextResponse.json(
             { error: "Entrega no encontrada.", code: "NOT_FOUND" },
@@ -389,17 +394,18 @@ export async function POST(request: Request) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
         const reason = normalizeOptionalReason(body.reason);
-        const record =
-          (await annulDeliveryDurable(
-            body.id,
-            reason,
-            body.actorName ?? actor.displayName ?? actor.email
-          )) ??
-          serverOperationalState.annulDelivery(
-            body.id,
-            reason,
-            body.actorName ?? actor.displayName ?? actor.email
-          );
+        const nativeAnnulled = await annulDeliveryDurable(
+          body.id,
+          reason,
+          body.actorName ?? actor.displayName ?? actor.email
+        );
+        const record = nativeAnnulled
+          ? toClientDeliveryRecord(nativeAnnulled)
+          : serverOperationalState.annulDelivery(
+              body.id,
+              reason,
+              body.actorName ?? actor.displayName ?? actor.email
+            );
         if (!record) {
           return NextResponse.json(
             {
@@ -423,15 +429,16 @@ export async function POST(request: Request) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
         const reason = normalizeOptionalReason(body.reason);
-        const record =
-          (await deleteDeliveryRecordDurable(body.id, {
-            reason,
-            actorName: body.actorName ?? actor.displayName ?? actor.email,
-          })) ??
-          serverOperationalState.deleteDeliveryRecord(body.id, {
-            reason,
-            actorName: body.actorName ?? actor.displayName ?? actor.email,
-          });
+        const nativeDeleted = await deleteDeliveryRecordDurable(body.id, {
+          reason,
+          actorName: body.actorName ?? actor.displayName ?? actor.email,
+        });
+        const record = nativeDeleted
+          ? toClientDeliveryRecord(nativeDeleted)
+          : serverOperationalState.deleteDeliveryRecord(body.id, {
+              reason,
+              actorName: body.actorName ?? actor.displayName ?? actor.email,
+            });
         if (!record) {
           return NextResponse.json(
             {

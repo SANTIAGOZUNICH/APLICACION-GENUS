@@ -397,6 +397,47 @@ export async function listDeliveriesDurable(filter?: { includeDeleted?: boolean 
   return rows;
 }
 
+/**
+ * work_item_deliveries.work_item_id se guarda como uuid crudo (ver
+ * deliverWorkDurable — nativeIdFromItemId ya le sacó el prefijo antes de
+ * insertar). El cliente indexa work items por `native:<uuid>` (WorkItem.id),
+ * así que hay que reponer el prefijo acá para que workItemsById.get(...)
+ * matchee en la vista de Entregados.
+ */
+export function toClientDeliveryRecord(row: typeof workItemDeliveries.$inferSelect) {
+  return {
+    id: row.id,
+    workItemId: `${NATIVE_PREFIX}${row.workItemId}`,
+    qualityItemId: row.qualityItemId,
+    product: row.product,
+    codigo: row.codigo,
+    client: row.client,
+    lote: row.lote,
+    sourceSector: row.sourceSector,
+    quantity: row.quantity,
+    unit: row.unit,
+    plannedDeliveryDate: row.plannedDeliveryDate,
+    actualDeliveredAt: row.actualDeliveredAt.toISOString(),
+    remito: row.remito,
+    receivedBy: row.receivedBy,
+    observations: row.observations,
+    status: row.status,
+    deliveredBy: row.deliveredBy,
+    deliveredBySector: row.deliveredBySector,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    archived: row.archived,
+    archivedAt: row.archivedAt ? row.archivedAt.toISOString() : null,
+    archivedBy: row.archivedBy,
+    annulledAt: row.annulledAt ? row.annulledAt.toISOString() : null,
+    annulledBy: row.annulledBy,
+    annulReason: row.annulReason,
+    deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
+    deletedBy: row.deletedBy,
+    deleteReason: row.deleteReason,
+  };
+}
+
 /** Cola de Calidad nativa: work items enviados a revisión, decisión pendiente. */
 export async function listQualityQueueDurable() {
   const db = getDb();
