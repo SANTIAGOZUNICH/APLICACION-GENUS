@@ -4,6 +4,11 @@ import { and, desc, eq, ne, or } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { operationalEvents, workItemDeliveries, workItems } from "@/lib/db/schema";
 import type { SectorId } from "@/types/operational/sector";
+import {
+  canActOnWorkItemSector,
+  WORK_PROGRESS_DENIED_MESSAGE,
+} from "@/features/os/operational/lib/work-progress-rbac";
+import { OrdersForbiddenError } from "@/lib/orders/types";
 
 /**
  * Fuente de verdad durable del avance operativo (0023) — reemplaza el overlay
@@ -46,14 +51,26 @@ const KEEP_STATUS_ON_PROGRESS: ReadonlySet<string> = new Set([
   "cancelado",
 ]);
 
-export async function saveWorkProgressDurable(id: string, input: SaveProgressInput) {
+/**
+ * @param actorSector Sector autenticado del actor (server-resolved, nunca el
+ * `body.sector` que manda el cliente) — debe coincidir con el sector actual
+ * del work item o ser PRODUCCION/DIRECCION. Ver work-progress-rbac.ts.
+ */
+export async function saveWorkProgressDurable(
+  id: string,
+  input: SaveProgressInput,
+  actorSector: SectorId | string
+) {
   const db = getDb();
   const [existing] = await db
-    .select({ operationalStatus: workItems.operationalStatus })
+    .select({ operationalStatus: workItems.operationalStatus, sector: workItems.sector })
     .from(workItems)
     .where(eq(workItems.id, id))
     .limit(1);
   if (!existing) throw new Error("Work item no encontrado.");
+  if (!canActOnWorkItemSector(actorSector, existing.sector)) {
+    throw new OrdersForbiddenError(WORK_PROGRESS_DENIED_MESSAGE);
+  }
 
   const nextStatus = KEEP_STATUS_ON_PROGRESS.has(existing.operationalStatus)
     ? existing.operationalStatus
@@ -166,8 +183,23 @@ export interface CompleteWorkInput {
   completedBy: string;
 }
 
-export async function completeWorkDurable(id: string, input: CompleteWorkInput) {
+/** @param actorSector Ver saveWorkProgressDurable — mismo criterio de RBAC. */
+export async function completeWorkDurable(
+  id: string,
+  input: CompleteWorkInput,
+  actorSector: SectorId | string
+) {
   const db = getDb();
+  const [existing] = await db
+    .select({ sector: workItems.sector })
+    .from(workItems)
+    .where(eq(workItems.id, id))
+    .limit(1);
+  if (!existing) throw new Error("Work item no encontrado.");
+  if (!canActOnWorkItemSector(actorSector, existing.sector)) {
+    throw new OrdersForbiddenError(WORK_PROGRESS_DENIED_MESSAGE);
+  }
+
   const now = new Date();
   const [row] = await db
     .update(workItems)

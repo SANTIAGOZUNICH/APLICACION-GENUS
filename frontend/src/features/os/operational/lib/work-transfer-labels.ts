@@ -43,7 +43,7 @@ export function isWorkTransferredStatus(status: string): boolean {
   );
 }
 
-/** Pendiente en bandeja de Codificado. */
+/** Pendiente en bandeja de Codificado — solo cubre el flujo vía handoff desde Envasado. */
 export function isInCodificadoStatus(status: string): boolean {
   return status === WORK_CODIFICADO_STATUS;
 }
@@ -51,4 +51,35 @@ export function isInCodificadoStatus(status: string): boolean {
 /** Ya llegó a Calidad (directo o vía Codificado). */
 export function isPendingQualityStatus(status: string): boolean {
   return status === WORK_TRANSFER_STATUS || status === WORK_CODIFICADO_DONE_STATUS;
+}
+
+/**
+ * Editable en Codificado — cubre las DOS formas en que un trabajo llega ahí
+ * (Producción → Codificado directo, y Producción → Envasado → Codificado).
+ * `isInCodificadoStatus` sola solo reconoce el segundo caso (status
+ * "en_codificado", que solo existe tras un handoff); un trabajo asignado
+ * directo nunca pasa por ese status — se queda en "pendiente"/"en_curso" con
+ * `sector: "CODIFICADO"` — así que gatear la edición únicamente con
+ * `isInCodificadoStatus` bloqueaba guardar/completar en ese caso (bug: la
+ * lista de "Pendientes" ya usaba este mismo criterio ampliado, pero el
+ * diálogo de detalle no). Debe reflejar exactamente los mismos criterios que
+ * `canDeliverFromCodificado` (codificado-flow.ts) usa para permitir entregar.
+ */
+export function canEditInCodificado(item: {
+  status: string;
+  sector: string;
+  viaCodificado?: boolean;
+  deliveredFromCodificadoAt?: string | null;
+}): boolean {
+  if (item.deliveredFromCodificadoAt) return false;
+  if (isInCodificadoStatus(item.status)) return true;
+  return (
+    item.sector === "CODIFICADO" &&
+    !item.viaCodificado &&
+    item.status !== "cancelado" &&
+    item.status !== "completo" &&
+    item.status !== WORK_CODIFICADO_DONE_STATUS &&
+    item.status !== WORK_TRANSFER_STATUS &&
+    item.status !== "entregado"
+  );
 }
