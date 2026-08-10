@@ -104,6 +104,8 @@ interface OperationalStoreValue {
       packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
       packingMismatchObservation?: string | null;
       codificadoObservation?: string | null;
+      /** Unidades producidas pero no entregables (PARTE A). */
+      sampleUnits?: number | null;
     }
   ) => Promise<void>;
   /** Resuelve cuando el servidor confirmó persistencia; rechaza si falló (dato local no se pierde). */
@@ -338,6 +340,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
         packingMismatchObservation?: string | null;
         codificadoObservation?: string | null;
+        sampleUnits?: number | null;
       }
     ): Promise<void> => {
       const record = recordWorkPackaging(itemId, payload);
@@ -355,6 +358,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         packagingUnidadesPorCaja: record.packagingUnidadesPorCaja,
         packingGroups: record.packingGroups,
         packingMismatchObservation: record.packingMismatchObservation,
+        sampleUnits: record.sampleUnits,
       });
     },
     [syncFromStorage]

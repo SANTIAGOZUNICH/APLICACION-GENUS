@@ -128,6 +128,7 @@ export function CodificadoOperationalView() {
         packingGroups: p.packingGroups ?? item.packingGroups,
         packingMismatchObservation:
           p.packingMismatchObservation ?? item.packingMismatchObservation,
+        sampleUnits: p.sampleUnits ?? item.sampleUnits,
       };
     },
     [progressMap]
@@ -170,6 +171,7 @@ export function CodificadoOperationalView() {
         packingGroups: draft.packingGroups,
         packingMismatchObservation: draft.packingMismatchObservation,
         codificadoObservation: extraObs ?? obs,
+        sampleUnits: draft.sampleUnits,
       }).catch((err) => {
         showToast(
           err instanceof Error
@@ -188,6 +190,7 @@ export function CodificadoOperationalView() {
         packingGroups: draft.packingGroups,
         packingMismatchObservation: draft.packingMismatchObservation.trim() || null,
         loteRef: draft.packagingLote.trim() || selected.loteRef,
+        sampleUnits: draft.sampleUnits,
       });
       return true;
     },
@@ -233,6 +236,7 @@ export function CodificadoOperationalView() {
         packagingVto: draft.packagingVto.trim() || null,
         packagingTotalUnits: draft.packagingTotalUnits,
         packingGroups: draft.packingGroups,
+        sampleUnits: draft.sampleUnits,
         expectedVersion: selected.nativeVersion ?? null,
         idempotencyKey:
           typeof crypto !== "undefined" && "randomUUID" in crypto

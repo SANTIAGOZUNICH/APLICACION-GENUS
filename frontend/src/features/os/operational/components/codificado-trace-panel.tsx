@@ -1,6 +1,7 @@
 "use client";
 
 import { displayField } from "@/lib/operational/display-fields";
+import { Button } from "@/components/ui/button";
 import {
   packingGroupsFromLegacy,
   summarizePackingGroups,
@@ -14,10 +15,13 @@ export function CodificadoTracePanel({
   workItem,
   progress,
   fallbackQuantity,
+  onCorrectLoteVto,
 }: {
   workItem?: WorkItem | null;
   progress?: WorkProgressRecord | null;
   fallbackQuantity?: string | null;
+  /** Solo Producción la pasa — habilita el botón "Corregir lote/VTO" (PARTE A). */
+  onCorrectLoteVto?: () => void;
 }) {
   const total =
     progress?.packagingTotalUnits ??
@@ -38,6 +42,10 @@ export function CodificadoTracePanel({
   const summary = summarizePackingGroups(groups);
   const viaCodificado = Boolean(progress?.viaCodificado);
   const bulkKg = progress?.bulkRemainderKg;
+  const sampleUnits = workItem?.sampleUnits ?? null;
+  const deliverableUnits = workItem?.deliverableUnits ?? null;
+  const packagingClosedAt = workItem?.packagingClosedAt ?? null;
+  const packagingClosedBy = workItem?.packagingClosedBy ?? null;
 
   return (
     <div
@@ -74,6 +82,18 @@ export function CodificadoTracePanel({
         </div>
       </dl>
 
+      {onCorrectLoteVto ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="tertiary"
+          onClick={onCorrectLoteVto}
+          data-testid="trace-correct-lote-vto"
+        >
+          Corregir lote/VTO
+        </Button>
+      ) : null}
+
       <div>
         <p className="mb-1 text-xs uppercase text-[var(--os-text-muted)]">Detalle de cajas</p>
         {summary.groups.length === 0 ? (
@@ -93,6 +113,36 @@ export function CodificadoTracePanel({
           </ul>
         )}
       </div>
+
+      {sampleUnits != null || deliverableUnits != null ? (
+        <div className="border-t border-[var(--os-border)] pt-3">
+          <p className="mb-1 text-xs uppercase text-[var(--os-text-muted)]">
+            Cierre físico de acondicionamiento
+          </p>
+          <dl className="grid grid-cols-2 gap-3">
+            <div>
+              <dt className="text-xs uppercase text-[var(--os-text-muted)]">Muestras</dt>
+              <dd className="font-medium tabular-nums" data-testid="trace-samples">
+                {sampleUnits != null ? `${sampleUnits} un.` : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase text-[var(--os-text-muted)]">
+                Entregable (remito)
+              </dt>
+              <dd className="font-medium tabular-nums" data-testid="trace-deliverable">
+                {deliverableUnits != null ? `${deliverableUnits} un.` : "—"}
+              </dd>
+            </div>
+          </dl>
+          {packagingClosedAt ? (
+            <p className="mt-1 text-xs text-[var(--os-text-muted)]">
+              Cerrado por {displayField(packagingClosedBy)} ·{" "}
+              {new Date(packagingClosedAt).toLocaleString("es-AR")}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {viaCodificado ? (
         <dl className="grid grid-cols-1 gap-2 border-t border-[var(--os-border)] pt-3 sm:grid-cols-2">
