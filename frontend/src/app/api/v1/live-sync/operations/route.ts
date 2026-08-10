@@ -26,6 +26,7 @@ import {
   restoreDeliveryDurable,
   saveWorkProgressDurable,
   toClientDeliveryRecord,
+  updateWorkItemLoteVtoDurable,
 } from "@/lib/planning/work-item-progress-repository";
 
 export const runtime = "nodejs";
@@ -46,6 +47,7 @@ type OperationAction =
       packagingUnidadesPorCaja?: number | null;
       packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
       packingMismatchObservation?: string | null;
+      sampleUnits?: number | null;
     }
   | {
       action: "complete_work";
@@ -90,6 +92,15 @@ type OperationAction =
       reason?: string;
       restoredBy?: string;
       sector?: SectorId;
+      actorSectorId?: SectorId;
+    }
+  | {
+      action: "update_lote_vto";
+      itemId: string;
+      packagingLote?: string | null;
+      packagingVto?: string | null;
+      reason: string;
+      updatedBy?: string;
       actorSectorId?: SectorId;
     }
   | (DeliveryRecord & {
@@ -165,6 +176,7 @@ export async function POST(request: Request) {
             packagingTotalUnits: body.packagingTotalUnits,
             packingGroups: body.packingGroups,
             packingMismatchObservation: body.packingMismatchObservation,
+            sampleUnits: body.sampleUnits,
           });
           return NextResponse.json({ ok: true, revision: row.version, record: row });
         }
@@ -318,6 +330,28 @@ export async function POST(request: Request) {
           revision: serverOperationalState.getRevision(),
           record,
         });
+      }
+      case "update_lote_vto": {
+        assertBodySectorMatches(body.actorSectorId, actor.sector);
+        const gate = validateWorkMutationActor(actor.sector);
+        if (!gate.ok) {
+          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
+        }
+        const nativeLoteVtoId = nativeIdFromItemId(body.itemId);
+        if (!nativeLoteVtoId) {
+          return NextResponse.json(
+            { error: "Corrección de Lote/VTO no disponible para este trabajo.", code: "NOT_NATIVE" },
+            { status: 400 }
+          );
+        }
+        const row = await updateWorkItemLoteVtoDurable(nativeLoteVtoId, {
+          packagingLote: body.packagingLote,
+          packagingVto: body.packagingVto,
+          reason: body.reason,
+          updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
+          updatedBySector: actor.sector,
+        });
+        return NextResponse.json({ ok: true, revision: row.version, record: row });
       }
       case "deliver_work": {
         assertBodySectorMatches(body.actorSectorId, actor.sector);

@@ -129,6 +129,10 @@ export function projectNativeWorkItem(item: PlanningWorkItemRecord): WorkItem {
       item.packingGroups as Array<{ cajas?: number; unidadesPorCaja?: number }> | null
     )[0]?.unidadesPorCaja ?? null,
     packingMismatchObservation: item.packingMismatchObservation ?? null,
+    sampleUnits: item.sampleUnits ?? null,
+    deliverableUnits: item.deliverableUnits ?? null,
+    packagingClosedAt: item.packagingClosedAt ?? null,
+    packagingClosedBy: item.packagingClosedBy ?? null,
     actionLabel:
       item.sector === "ELABORACION" ? "Abrir OE" : "Abrir trabajo",
     href: null,

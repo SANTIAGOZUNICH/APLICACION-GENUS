@@ -35,6 +35,8 @@ export async function postCodificadoHandoff(
     packagingVto?: string | null;
     packagingTotalUnits?: number | null;
     packingGroups?: unknown;
+    /** Unidades producidas pero no entregables (PARTE A — distribución/cierre). */
+    sampleUnits?: number | null;
     bulkRemainderKg?: number | null;
     bulkRemainderObservation?: string | null;
     bulkRemainderId?: string | null;
