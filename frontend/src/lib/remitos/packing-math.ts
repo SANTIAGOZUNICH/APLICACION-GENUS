@@ -1,3 +1,5 @@
+import { parseArInteger } from "@/lib/utils/ar-number-parsing";
+
 /**
  * Embalaje multi-caja compartido: Envasado entrega + remito compose/Excel.
  * packingGroups es la fuente canónica; cajas/unidadesPorCaja legacy = grupo[0].
@@ -13,12 +15,15 @@ export type PackingSummary = {
   groups: PackingGroup[];
 };
 
-/** Entero ≥ 0; vacío → 0. Rechaza decimales/negativos al normalizar. */
+/**
+ * Entero ≥ 0; vacío → 0. Punto = separador de miles (parseArInteger), no
+ * decimal — "1.500" cajas son mil quinientas, no una coma cinco.
+ */
 export function parseNonNegInt(raw: string | number | null | undefined): number {
   if (raw === "" || raw == null) return 0;
-  const n = typeof raw === "number" ? raw : Number(String(raw).replace(",", "."));
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.floor(n);
+  const parsed = parseArInteger(raw);
+  if (!parsed.ok || parsed.value == null || parsed.value < 0) return 0;
+  return parsed.value;
 }
 
 export function normalizePackingGroups(

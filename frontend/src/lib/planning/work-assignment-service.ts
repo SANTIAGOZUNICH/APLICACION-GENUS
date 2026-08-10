@@ -10,6 +10,7 @@ import {
   workItems,
 } from "@/lib/db/schema";
 import { weekStartMonday } from "@/lib/operational/operational-calendar";
+import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
 import type { PlanningActor, PlanningSector, PlanningWorkItemRecord } from "@/lib/planning/types";
 import {
   PlanningConflictError,
@@ -23,6 +24,11 @@ import {
   normalizeLine,
 } from "@/lib/planning/validators";
 import { logSanitizedError } from "@/lib/planning/sanitize-public-error";
+import { ensureOaForAssignment } from "@/lib/planning/ensure-oa-on-assign";
+import {
+  isPackagingOaSector,
+  normalizeOaOrderNumber,
+} from "@/lib/planning/oa-assign-helpers";
 
 export type WorkAssignmentInput = {
   sector: PlanningSector;
@@ -36,13 +42,20 @@ export type WorkAssignmentInput = {
   line?: string | null;
   branchOwner?: string | null;
   notes?: string | null;
-  /** OE/OA número (ej. OE-2026-000123). Opcional. */
+  /** OE/OA número (ej. OA-2026-000145). Opcional. */
   orderNumber?: string | null;
   orderId?: string | null;
   packagingLote?: string | null;
   packagingVto?: string | null;
+  /** Código de producto (opcional; se copia a la OA). */
+  productCode?: string | null;
   /** Cliente debe reenviar la misma key en reintentos. */
   idempotencyKey: string;
+  /**
+   * Si true y la OA existe con datos distintos, se vincula igual
+   * rellenando solo campos vacíos (no sobrescribe confirmados).
+   */
+  forceLink?: boolean;
 };
 
 export type WorkAssignmentResult = {
@@ -53,6 +66,9 @@ export type WorkAssignmentResult = {
     orderNumber: string;
     assignedSector: string;
     linkedWorkItemId: string | null;
+    created?: boolean;
+    linked?: boolean;
+    filledEmptyFields?: string[];
   } | null;
   operationId: string;
 };
@@ -102,7 +118,8 @@ function composeNotes(input: WorkAssignmentInput): string | null {
 
 /**
  * Asigna un trabajo publicado en Neon de forma atómica e idempotente.
- * Causa raíz previa: UI escribía solo localStorage y reportaba éxito sin Neon.
+ * Para Envasado Masivo/Premium/Codificado: si hay número de OA y no existe,
+ * la crea automáticamente con ese mismo número dentro de la misma transacción.
  */
 export async function assignWorkItemDurable(
   input: WorkAssignmentInput,
@@ -142,8 +159,10 @@ export async function assignWorkItemDurable(
   const weekStart = weekStartMonday(plannedDate);
   const originRef = idempotencyOriginRef(key);
   const notes = composeNotes(input);
-  const orderNumber = input.orderNumber?.trim() || null;
+  const orderNumberRaw = input.orderNumber?.trim() || null;
   const orderId = input.orderId?.trim() || null;
+  const forceLink = Boolean(input.forceLink);
+  const productCode = input.productCode?.trim() || "";
 
   const db = getDb();
 
@@ -157,7 +176,21 @@ export async function assignWorkItemDurable(
 
       if (existing) {
         let orderMeta: WorkAssignmentResult["order"] = null;
-        if (existing.id) {
+        if (existing.orderId) {
+          const [linked] = await tx
+            .select({
+              id: operationalOrders.id,
+              orderNumber: operationalOrders.orderNumber,
+              assignedSector: operationalOrders.assignedSector,
+              linkedWorkItemId: operationalOrders.linkedWorkItemId,
+            })
+            .from(operationalOrders)
+            .where(eq(operationalOrders.id, existing.orderId))
+            .limit(1);
+          if (linked) {
+            orderMeta = { ...linked, created: false, linked: true };
+          }
+        } else if (existing.id) {
           const [linked] = await tx
             .select({
               id: operationalOrders.id,
@@ -168,7 +201,9 @@ export async function assignWorkItemDurable(
             .from(operationalOrders)
             .where(eq(operationalOrders.linkedWorkItemId, existing.id))
             .limit(1);
-          if (linked) orderMeta = linked;
+          if (linked) {
+            orderMeta = { ...linked, created: false, linked: true };
+          }
         }
         return {
           item: mapItemRow(existing),
@@ -250,9 +285,60 @@ export async function assignWorkItemDurable(
         assignedSector: string;
         linkedWorkItemId: string | null;
         type: string;
+        created?: boolean;
+        linked?: boolean;
+        filledEmptyFields?: string[];
       } | null = null;
 
-      if (orderId || orderNumber) {
+      // Envasado Masivo / Premium / Codificado: auto-crear o vincular OA.
+      if (isPackagingOaSector(input.sector) && (orderNumberRaw || orderId)) {
+        let numberForEnsure = orderNumberRaw;
+        if (orderId && !numberForEnsure) {
+          const [byId] = await tx
+            .select({ orderNumber: operationalOrders.orderNumber })
+            .from(operationalOrders)
+            .where(eq(operationalOrders.id, orderId))
+            .limit(1);
+          numberForEnsure = byId?.orderNumber ?? null;
+        }
+        if (!numberForEnsure) {
+          throw new PlanningValidationError("No se encontró la OA indicada.");
+        }
+
+        const ensured = await ensureOaForAssignment(tx, {
+          orderNumberRaw: numberForEnsure,
+          sector: input.sector,
+          product: input.product.trim(),
+          client: input.client.trim(),
+          lot: input.packagingLote?.trim() || "",
+          vto: input.packagingVto?.trim() || "",
+          code: productCode,
+          quantity: input.plannedQuantity.trim(),
+          notes,
+          assignmentDate: plannedDate,
+          forceLink,
+          actorEmail: actor.email,
+          actorSector: actor.sector,
+        });
+
+        orderRow = {
+          id: ensured.id,
+          orderNumber: ensured.orderNumber,
+          assignedSector: ensured.assignedSector,
+          linkedWorkItemId: ensured.linkedWorkItemId,
+          type: "OA",
+          created: ensured.created,
+          linked: ensured.linked,
+          filledEmptyFields: ensured.filledEmptyFields,
+        };
+      } else if (orderId || orderNumberRaw) {
+        // Elaboración (OE) u otros: lookup obligatorio, sin auto-crear.
+        const lookupNumber = orderNumberRaw
+          ? input.sector === "ELABORACION"
+            ? orderNumberRaw.trim().toUpperCase().replace(/\s+/g, "")
+            : normalizeOaOrderNumber(orderNumberRaw)
+          : null;
+
         const [found] = orderId
           ? await tx
               .select({
@@ -274,7 +360,7 @@ export async function assignWorkItemDurable(
                 type: operationalOrders.type,
               })
               .from(operationalOrders)
-              .where(eq(operationalOrders.orderNumber, orderNumber!))
+              .where(eq(operationalOrders.orderNumber, lookupNumber!))
               .limit(1);
 
         if (!found) {
@@ -283,10 +369,7 @@ export async function assignWorkItemDurable(
           );
         }
 
-        if (
-          found.linkedWorkItemId &&
-          found.linkedWorkItemId.trim() !== ""
-        ) {
+        if (found.linkedWorkItemId && found.linkedWorkItemId.trim() !== "") {
           throw new PlanningConflictError(
             "Esta orden ya tiene un trabajo asignado.",
             {
@@ -321,7 +404,7 @@ export async function assignWorkItemDurable(
           );
         }
 
-        orderRow = found;
+        orderRow = { ...found, created: false, linked: true };
       }
 
       const [inserted] = await tx
@@ -333,7 +416,9 @@ export async function assignWorkItemDurable(
           client: input.client.trim(),
           product: input.product.trim(),
           plannedQuantity: input.plannedQuantity.trim(),
-          unit: (input.unit ?? (input.sector === "ELABORACION" ? "kg" : "un.")).trim() || "KG",
+          unit:
+            (input.unit ?? (input.sector === "ELABORACION" ? "kg" : "un.")).trim() ||
+            "KG",
           sector: input.sector,
           line: assignment.line,
           branchOwner: assignment.branchOwner,
@@ -342,13 +427,14 @@ export async function assignWorkItemDurable(
           packagingLote: input.packagingLote?.trim() || null,
           packagingVto: input.packagingVto?.trim() || null,
           packagingTotalUnits: (() => {
-            const n = Number.parseFloat(
-              String(input.plannedQuantity).replace(/\s/g, "").replace(",", ".")
-            );
-            return Number.isFinite(n) ? n : null;
+            const unit = input.unit ?? (input.sector === "ELABORACION" ? "kg" : "un.");
+            const parsed = isIntegerUnit(unit)
+              ? parseArInteger(input.plannedQuantity)
+              : parseArDecimal(input.plannedQuantity);
+            return parsed.ok ? parsed.value : null;
           })(),
           orderId: orderRow?.id ?? null,
-          orderNumber: orderRow?.orderNumber ?? orderNumber,
+          orderNumber: orderRow?.orderNumber ?? orderNumberRaw,
           deliveryDate: input.deliveryDate?.trim() || null,
           status: "PUBLICADO",
           publishedAt: now,
@@ -394,10 +480,15 @@ export async function assignWorkItemDurable(
           updatedOrder.assignedSector !== input.sector
         ) {
           throw new PlanningValidationError(
-            "No se pudo confirmar la coherencia OE ↔ trabajo. Reintentá."
+            "No se pudo confirmar la coherencia OA/OE ↔ trabajo. Reintentá."
           );
         }
-        orderMeta = updatedOrder;
+        orderMeta = {
+          ...updatedOrder,
+          created: Boolean(orderRow.created),
+          linked: !orderRow.created,
+          filledEmptyFields: orderRow.filledEmptyFields ?? [],
+        };
       }
 
       await tx.insert(operationalEvents).values({
@@ -408,7 +499,7 @@ export async function assignWorkItemDurable(
         toStatus: "PUBLICADO",
         actorEmail: actor.email,
         actorSector: actor.sector,
-        note: `operationId=${operationId}`,
+        note: `operationId=${operationId};oa=${orderMeta?.orderNumber ?? "none"};oaCreated=${orderMeta?.created ?? false}`,
       });
 
       const [confirmed] = await tx
