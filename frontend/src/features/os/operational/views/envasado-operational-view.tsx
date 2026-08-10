@@ -277,6 +277,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           packagingLote: item.packagingLote,
           packagingVto: item.packagingVto,
           packingGroups: item.packingGroups,
+          sampleUnits: item.sampleUnits,
           bulkRemainderKg: payload.bulkRemainderKg,
           bulkRemainderObservation: payload.bulkRemainderObservation,
           bulkRemainderId: bulkId,

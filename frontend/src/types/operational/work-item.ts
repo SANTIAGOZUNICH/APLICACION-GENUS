@@ -126,6 +126,16 @@ export interface WorkItem {
   packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
   /** Observación si producido ≠ embalado (no bloquea entrega). */
   packingMismatchObservation?: string | null;
+  /**
+   * Cierre físico de acondicionamiento (0024 — PARTE A). Unidades
+   * producidas pero no entregables comercialmente. null = no informado
+   * (histórico o todavía no cerrado) — nunca se infiere como 0.
+   */
+  sampleUnits?: number | null;
+  /** SUM(packingGroups) al momento del cierre — lo que va al remito, no finishedQty/packagingTotalUnits. */
+  deliverableUnits?: number | null;
+  packagingClosedAt?: string | null;
+  packagingClosedBy?: string | null;
   /** Historial de avances de cantidades (JSON-serializable). */
   packagingQtyHistory?: Array<{
     at: string;

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  computePackagingClose,
   packingGroupsFromLegacy,
   packingProducedMismatchWarning,
   summarizePackingGroups,
@@ -22,6 +23,8 @@ export type PackagingDraft = {
   packingGroups: PackingGroup[];
   packingMismatchObservation: string;
   mismatchOk: boolean;
+  /** Unidades producidas pero no entregables (PARTE A). null = no informado. */
+  sampleUnits: number | null;
 };
 
 export function packagingDraftFromItem(item: WorkItem): PackagingDraft {
@@ -43,6 +46,7 @@ export function packagingDraftFromItem(item: WorkItem): PackagingDraft {
     packingGroups: groups,
     packingMismatchObservation: item.packingMismatchObservation ?? "",
     mismatchOk: warn.ok,
+    sampleUnits: item.sampleUnits ?? null,
   };
 }
 
@@ -65,8 +69,11 @@ export function PackagingQuantitiesBlock({
   sector?: WorkItem["sector"];
 }) {
   const { saveWorkPackaging } = useOperationalStore();
-  const [lote, setLote] = useState(item.packagingLote ?? item.loteRef ?? "");
-  const [vto, setVto] = useState(item.packagingVto ?? "");
+  // Lote/VTO: fuente única = Producción (PARTE A). Envasado/Codificado los
+  // leen del item, nunca los editan acá — ver lote-vto-correction.ts para
+  // el único mecanismo autorizado de corrección.
+  const lote = item.packagingLote ?? item.loteRef ?? "";
+  const vto = item.packagingVto ?? "";
   const [total, setTotal] = useState(
     item.packagingTotalUnits != null ? String(item.packagingTotalUnits) : ""
   );
@@ -80,6 +87,9 @@ export function PackagingQuantitiesBlock({
   const [packingObs, setPackingObs] = useState(
     item.packingMismatchObservation ?? ""
   );
+  const [sampleUnitsInput, setSampleUnitsInput] = useState(
+    item.sampleUnits != null ? String(item.sampleUnits) : ""
+  );
   const [msg, setMsg] = useState<string | null>(null);
   const [msgTone, setMsgTone] = useState<"ok" | "error" | "pending">("ok");
   const [saving, setSaving] = useState(false);
@@ -88,6 +98,12 @@ export function PackagingQuantitiesBlock({
   const warn = useMemo(
     () => packingProducedMismatchWarning(produced, groups),
     [produced, groups]
+  );
+  const sampleUnits =
+    sampleUnitsInput.trim() === "" ? null : Math.max(0, Math.floor(Number(sampleUnitsInput)));
+  const close = useMemo(
+    () => computePackagingClose({ finishedQty: produced, sampleUnits, groups }),
+    [produced, sampleUnits, groups]
   );
 
   const draft = useMemo((): PackagingDraft => {
@@ -101,8 +117,9 @@ export function PackagingQuantitiesBlock({
       packingGroups: groups,
       packingMismatchObservation: packingObs,
       mismatchOk: warn.ok,
+      sampleUnits,
     };
-  }, [lote, vto, total, groups, packingObs, warn.ok]);
+  }, [lote, vto, total, groups, packingObs, warn.ok, sampleUnits]);
 
   useEffect(() => {
     onDraftChange?.(draft);
@@ -121,6 +138,7 @@ export function PackagingQuantitiesBlock({
       packagingUnidadesPorCaja,
       packingGroups,
     } = draft;
+    const sampleUnitsToSave = sampleUnits;
 
     setSaving(true);
     setMsgTone("pending");
@@ -139,6 +157,7 @@ export function PackagingQuantitiesBlock({
         packagingUnidadesPorCaja,
         packingGroups,
         packingMismatchObservation: packingObs,
+        sampleUnits: sampleUnitsToSave,
       });
 
       // Compat: si es trabajo manual (localStorage legacy, modo sheets), también
@@ -165,6 +184,7 @@ export function PackagingQuantitiesBlock({
         packingGroups,
         packingMismatchObservation: packingObs.trim() || null,
         loteRef: lote.trim() || item.loteRef,
+        sampleUnits: sampleUnitsToSave,
       };
       setMsgTone("ok");
       setMsg("Avance guardado.");
@@ -187,27 +207,22 @@ export function PackagingQuantitiesBlock({
       data-testid="packaging-quantities-block"
     >
       <div className="grid gap-2 sm:grid-cols-2">
-        <label className="text-xs">
-          LOTE
-          <input
-            className="mt-1 w-full rounded border px-2 py-1.5"
-            value={lote}
-            disabled={readOnly}
-            onChange={(e) => setLote(e.target.value)}
-            data-testid="packaging-lote"
-          />
-        </label>
-        <label className="text-xs">
-          VTO
-          <input
-            className="mt-1 w-full rounded border px-2 py-1.5"
-            value={vto}
-            disabled={readOnly}
-            onChange={(e) => setVto(e.target.value)}
-            data-testid="packaging-vto"
-          />
-        </label>
+        <div className="text-xs">
+          <span className="block text-[var(--os-text-muted)]">LOTE</span>
+          <p className="mt-1 rounded border border-transparent bg-[var(--os-surface-muted,#f8fafc)] px-2 py-1.5 font-medium" data-testid="packaging-lote">
+            {lote || "—"}
+          </p>
+        </div>
+        <div className="text-xs">
+          <span className="block text-[var(--os-text-muted)]">VTO</span>
+          <p className="mt-1 rounded border border-transparent bg-[var(--os-surface-muted,#f8fafc)] px-2 py-1.5 font-medium" data-testid="packaging-vto">
+            {vto || "—"}
+          </p>
+        </div>
       </div>
+      <p className="text-[11px] text-[var(--os-text-muted)]">
+        Lote y VTO los define Producción al asignar el trabajo. Si hay que corregirlos, pedile a Producción que use &ldquo;Corregir lote/VTO&rdquo;.
+      </p>
       <label className="block text-xs">
         Total de unidades producidas:{" "}
         <input
@@ -219,16 +234,63 @@ export function PackagingQuantitiesBlock({
         />
       </label>
 
-      <PackingGroupsEditor
-        groups={groups}
-        onChange={setGroups}
-        producedUnits={produced}
-        packingObservation={packingObs}
-        onPackingObservationChange={setPackingObs}
-        readOnly={readOnly}
-        requireObservationOnMismatch
-        testIdPrefix="packaging"
-      />
+      <div className="space-y-2 rounded border border-[var(--os-border)] p-3">
+        <p className="text-xs font-semibold uppercase text-[var(--os-text-muted)]">
+          Distribución final
+        </p>
+        <PackingGroupsEditor
+          groups={groups}
+          onChange={setGroups}
+          producedUnits={produced}
+          packingObservation={packingObs}
+          onPackingObservationChange={setPackingObs}
+          readOnly={readOnly}
+          showSummary={false}
+          requireObservationOnMismatch
+          testIdPrefix="packaging"
+        />
+
+        <label className="block text-xs">
+          Muestras (unidades producidas, no entregables)
+          <input
+            type="number"
+            min={0}
+            step={1}
+            className="mt-1 w-28 rounded border px-2 py-1"
+            value={sampleUnitsInput}
+            disabled={readOnly}
+            onChange={(e) => setSampleUnitsInput(e.target.value)}
+            data-testid="packaging-sample-units"
+          />
+        </label>
+
+        <div
+          className="rounded border border-[var(--os-border)] bg-[var(--os-surface-muted,#f8fafc)] p-3 text-xs"
+          data-testid="packaging-close-summary"
+        >
+          <ul className="space-y-0.5 text-[var(--os-text-muted)]">
+            <li>Cantidad final: {close.canValidate ? produced : "—"}</li>
+            <li>En cajas: {close.enCajas}</li>
+            <li>Muestras: {close.muestras}</li>
+            <li className="font-medium text-[var(--os-text,#111)]">
+              Diferencia: {close.canValidate ? close.diferencia : "—"}
+            </li>
+          </ul>
+          {close.canValidate ? (
+            <p
+              className={close.isValid ? "mt-2 font-medium text-emerald-700" : "mt-2 font-medium text-amber-800"}
+              role={close.isValid ? undefined : "alert"}
+              data-testid="packaging-close-indicator"
+            >
+              {close.isValid
+                ? "✓ Distribución correcta"
+                : close.diferencia > 0
+                  ? `Faltan distribuir ${close.diferencia} unidad(es).`
+                  : `La distribución supera la cantidad final por ${Math.abs(close.diferencia)} unidad(es).`}
+            </p>
+          ) : null}
+        </div>
+      </div>
 
       {!readOnly && !hideSaveButton ? (
         <Button type="button" onClick={save} disabled={saving} data-testid="packaging-save">

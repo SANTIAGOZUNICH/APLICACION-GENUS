@@ -10,6 +10,7 @@ import {
   workItems,
 } from "@/lib/db/schema";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
+import { computePackagingClose, normalizePackingGroups } from "@/lib/remitos/packing-math";
 import type { PlanningActor, PlanningSector, PlanningWorkItemRecord } from "@/lib/planning/types";
 import {
   PlanningConflictError,
@@ -18,15 +19,56 @@ import {
   PlanningValidationError,
 } from "@/lib/planning/types";
 
+/**
+ * Valida el cierre físico (PARTE A) antes de dejar avanzar un handoff.
+ * Excepción ya autorizada en el sistema existente (no se inventa una
+ * nueva): si hay una observación de embalaje, se documenta el mismatch y
+ * se permite continuar — mismo criterio que packaging-quantities-block.tsx
+ * ya aplicaba para el guardado intermedio (requireObservationOnMismatch).
+ */
+function assertPackagingCloseOrExplained(params: {
+  finishedQty: number | null | undefined;
+  sampleUnits: number | null | undefined;
+  packingGroups: unknown;
+  observation: string | null | undefined;
+}): ReturnType<typeof computePackagingClose> {
+  const groups = normalizePackingGroups(
+    (params.packingGroups as Array<{ cajas?: number; unidadesPorCaja?: number }>) ?? []
+  );
+  const close = computePackagingClose({
+    finishedQty: params.finishedQty,
+    sampleUnits: params.sampleUnits,
+    groups,
+  });
+  if (close.canValidate && !close.isValid && !params.observation?.trim()) {
+    const faltan = close.diferencia;
+    throw new PlanningValidationError(
+      faltan > 0
+        ? `La distribución no coincide con la cantidad final: faltan distribuir ${faltan} unidad(es) (cajas + muestras = ${close.totalAcondicionado}, esperado ${params.finishedQty}). Indicá una observación si es una excepción justificada.`
+        : `La distribución supera la cantidad final por ${Math.abs(faltan)} unidad(es) (cajas + muestras = ${close.totalAcondicionado}, esperado ${params.finishedQty}). Indicá una observación si es una excepción justificada.`
+    );
+  }
+  return close;
+}
+
 export type CodificadoOriginSector = "ENVASADO_MASIVO" | "ENVASADO_PREMIUM";
 
 export type HandoffCodificadoInput = {
   workItemId: string;
   totalUnits: number;
   observation?: string | null;
+  /**
+   * @deprecated Lote/VTO ya no son editables desde Envasado/Codificado —
+   * la fuente única es lo que Producción cargó al asignar. Se ignoran acá
+   * a propósito (ver PARTE A: "Lote y VTO — fuente única"); el campo queda
+   * tipado por compat con clientes viejos pero el server nunca lo aplica.
+   */
   packagingLote?: string | null;
+  /** @deprecated ver packagingLote. */
   packagingVto?: string | null;
   packingGroups?: unknown;
+  /** Unidades producidas pero no entregables (PARTE A). null = no informado. */
+  sampleUnits?: number | null;
   bulkRemainderKg?: number | null;
   bulkRemainderObservation?: string | null;
   bulkRemainderId?: string | null;
@@ -102,6 +144,33 @@ function mapItem(row: typeof workItems.$inferSelect): PlanningWorkItemRecord {
       ? row.codificadoCancelledAt.toISOString()
       : null,
     productionPedidoId: row.productionPedidoId ?? null,
+    // Avance operativo durable (0023) — faltaba en este mapper local desde
+    // esa fase; sin esto la respuesta de send/deliver no reflejaba el
+    // estado real hasta el próximo GET /work-items.
+    operationalStatus: row.operationalStatus ?? "pendiente",
+    finishedQty: row.finishedQty ?? null,
+    operationalObservation: row.operationalObservation ?? null,
+    packingMismatchObservation: row.packingMismatchObservation ?? null,
+    progressUpdatedAt: row.progressUpdatedAt ? row.progressUpdatedAt.toISOString() : null,
+    progressUpdatedBy: row.progressUpdatedBy ?? null,
+    completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+    completedBy: row.completedBy ?? null,
+    operationalCancelledAt: row.operationalCancelledAt
+      ? row.operationalCancelledAt.toISOString()
+      : null,
+    operationalCancelledBy: row.operationalCancelledBy ?? null,
+    operationalCancelReason: row.operationalCancelReason ?? null,
+    qualityStatus: row.qualityStatus ?? "pendiente",
+    qualityDecidedAt: row.qualityDecidedAt ? row.qualityDecidedAt.toISOString() : null,
+    qualityDecidedBy: row.qualityDecidedBy ?? null,
+    qualityDecidedBySector: row.qualityDecidedBySector ?? null,
+    qualityObservation: row.qualityObservation ?? null,
+    qualityChangeReason: row.qualityChangeReason ?? null,
+    // Cierre físico de acondicionamiento (0024 — PARTE A).
+    sampleUnits: row.sampleUnits ?? null,
+    deliverableUnits: row.deliverableUnits == null ? null : Number(row.deliverableUnits),
+    packagingClosedAt: row.packagingClosedAt ? row.packagingClosedAt.toISOString() : null,
+    packagingClosedBy: row.packagingClosedBy ?? null,
   };
 }
 
@@ -296,6 +365,22 @@ export async function handoffToCodificadoDurable(
       ? Number(row.codificadoRevision ?? 0) + 1
       : Math.max(1, Number(row.codificadoRevision ?? 0) || 1);
 
+    const nextPackingGroups =
+      input.packingGroups != null ? input.packingGroups : row.packingGroups;
+    const nextSampleUnits = input.sampleUnits !== undefined ? input.sampleUnits : row.sampleUnits;
+    const nextObservation = input.observation?.trim() || row.codificadoObservation || null;
+    // La observación que justifica un mismatch puede venir del campo general
+    // (codificadoObservation) o de la observación específica de embalaje ya
+    // guardada por PackagingQuantitiesBlock (packingMismatchObservation) —
+    // misma excepción ya autorizada, dos campos de origen distintos.
+    const close = assertPackagingCloseOrExplained({
+      finishedQty: input.totalUnits,
+      sampleUnits: nextSampleUnits,
+      packingGroups: nextPackingGroups,
+      observation: nextObservation || row.packingMismatchObservation,
+    });
+    const closedByName = actor.displayName || actor.email;
+
     const [updated] = await tx
       .update(workItems)
       .set({
@@ -309,12 +394,16 @@ export async function handoffToCodificadoDurable(
         sentToCodificadoAt: now,
         sentToCodificadoBy: actor.displayName || actor.email,
         packagingTotalUnits: input.totalUnits,
-        packagingLote: input.packagingLote?.trim() || row.packagingLote,
-        packagingVto: input.packagingVto?.trim() || row.packagingVto,
-        packingGroups:
-          input.packingGroups != null ? input.packingGroups : row.packingGroups,
-        codificadoObservation:
-          input.observation?.trim() || row.codificadoObservation || null,
+        // Lote/VTO: fuente única = Producción. Nunca se sobrescriben desde
+        // Envasado/Codificado (PARTE A) — se ignora cualquier valor entrante.
+        packagingLote: row.packagingLote,
+        packagingVto: row.packagingVto,
+        packingGroups: nextPackingGroups,
+        sampleUnits: nextSampleUnits,
+        deliverableUnits: close.canValidate ? close.enCajas : null,
+        packagingClosedAt: close.canValidate ? now : row.packagingClosedAt,
+        packagingClosedBy: close.canValidate ? closedByName : row.packagingClosedBy,
+        codificadoObservation: nextObservation,
         bulkRemainderKg:
           input.bulkRemainderKg != null
             ? input.bulkRemainderKg
@@ -518,10 +607,14 @@ export async function deliverFromCodificadoDurable(
   input: {
     workItemId: string;
     observation?: string | null;
+    /** @deprecated ver HandoffCodificadoInput.packagingLote — ignorado a propósito. */
     packagingLote?: string | null;
+    /** @deprecated ver HandoffCodificadoInput.packagingVto — ignorado a propósito. */
     packagingVto?: string | null;
     packagingTotalUnits?: number | null;
     packingGroups?: unknown;
+    /** Unidades producidas pero no entregables (PARTE A). null = no informado. */
+    sampleUnits?: number | null;
     expectedVersion?: number | null;
     idempotencyKey: string;
   },
@@ -582,21 +675,33 @@ export async function deliverFromCodificadoDurable(
 
     const now = new Date();
     const deliveredByName = actor.displayName || actor.email;
+    const nextTotalUnits =
+      input.packagingTotalUnits != null ? input.packagingTotalUnits : row.packagingTotalUnits;
+    const nextPackingGroups =
+      input.packingGroups != null ? input.packingGroups : row.packingGroups;
+    const nextSampleUnits = input.sampleUnits !== undefined ? input.sampleUnits : row.sampleUnits;
+    const nextObservation = input.observation?.trim() || row.codificadoObservation || null;
+    const close = assertPackagingCloseOrExplained({
+      finishedQty: nextTotalUnits != null ? Number(nextTotalUnits) : null,
+      sampleUnits: nextSampleUnits,
+      packingGroups: nextPackingGroups,
+      observation: nextObservation || row.packingMismatchObservation,
+    });
     const [updated] = await tx
       .update(workItems)
       .set({
         deliveredFromCodificadoAt: now,
         deliveredFromCodificadoBy: deliveredByName,
-        packagingLote: input.packagingLote?.trim() || row.packagingLote,
-        packagingVto: input.packagingVto?.trim() || row.packagingVto,
-        packagingTotalUnits:
-          input.packagingTotalUnits != null
-            ? input.packagingTotalUnits
-            : row.packagingTotalUnits,
-        packingGroups:
-          input.packingGroups != null ? input.packingGroups : row.packingGroups,
-        codificadoObservation:
-          input.observation?.trim() || row.codificadoObservation,
+        // Lote/VTO: fuente única = Producción (PARTE A) — nunca sobrescritos acá.
+        packagingLote: row.packagingLote,
+        packagingVto: row.packagingVto,
+        packagingTotalUnits: nextTotalUnits,
+        packingGroups: nextPackingGroups,
+        sampleUnits: nextSampleUnits,
+        deliverableUnits: close.canValidate ? close.enCajas : row.deliverableUnits,
+        packagingClosedAt: close.canValidate ? now : row.packagingClosedAt,
+        packagingClosedBy: close.canValidate ? deliveredByName : row.packagingClosedBy,
+        codificadoObservation: nextObservation,
         // Marca el work item como "completado, pendiente de revisión" en la
         // MISMA transacción — antes esto dependía de un POST secundario
         // fire-and-forget (postCompleteWork) desde el cliente; si fallaba,

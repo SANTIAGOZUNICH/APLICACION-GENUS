@@ -58,6 +58,19 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { correctWorkItemLoteVto } from "../lib/lote-vto-correction";
+import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
+
+const CONTROL_CLASS =
+  "w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--ig-control-bg,var(--os-surface))] px-3 py-2 text-sm text-[var(--ig-control-fg,var(--os-text))]";
 
 const PRODUCCION_TABS = [
   { id: "rechazados", label: "Rechazados" },
@@ -124,6 +137,23 @@ export function ProduccionOperationalView({
   const [composeDate, setComposeDate] = useState("");
   const [displayNameInput, setDisplayNameInput] = useState("");
   const [detailItem, setDetailItem] = useState<QualityItem | null>(null);
+  const [loteVtoTarget, setLoteVtoTarget] = useState<WorkItem | null>(null);
+  const [loteVtoLote, setLoteVtoLote] = useState("");
+  const [loteVtoVto, setLoteVtoVto] = useState("");
+  const [loteVtoReason, setLoteVtoReason] = useState("");
+  const [loteVtoBusy, setLoteVtoBusy] = useState(false);
+  const [loteVtoError, setLoteVtoError] = useState<string | null>(null);
+  const [reportPreset, setReportPreset] = useState<"7d" | "this_month" | "last_month" | "custom">(
+    "this_month"
+  );
+  const [reportFrom, setReportFrom] = useState("");
+  const [reportTo, setReportTo] = useState("");
+  const [reportClient, setReportClient] = useState("");
+  const [reportProduct, setReportProduct] = useState("");
+  const [reportSector, setReportSector] = useState("");
+  const [reportEmployee, setReportEmployee] = useState("");
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
   const isNativeEmpty =
     data?.source === "native" && !loading && (data.workItems?.length ?? 0) === 0;
 
@@ -232,6 +262,106 @@ export function ProduccionOperationalView({
   useEffect(() => {
     if (activeTab === "aprobados") void refreshRemitoStatuses();
   }, [activeTab, refreshRemitoStatuses]);
+
+  const openLoteVtoCorrection = useCallback((item: WorkItem) => {
+    setLoteVtoTarget(item);
+    setLoteVtoLote(item.packagingLote ?? item.loteRef ?? "");
+    setLoteVtoVto(item.packagingVto ?? "");
+    setLoteVtoReason("");
+    setLoteVtoError(null);
+  }, []);
+
+  const submitLoteVtoCorrection = useCallback(async () => {
+    if (!loteVtoTarget) return;
+    setLoteVtoBusy(true);
+    setLoteVtoError(null);
+    const result = await correctWorkItemLoteVto({
+      itemId: loteVtoTarget.id,
+      packagingLote: loteVtoLote,
+      packagingVto: loteVtoVto,
+      reason: loteVtoReason,
+      actorSectorId: sectorId,
+      updatedBy: workspace.context.displayName || email || "Producción",
+    });
+    setLoteVtoBusy(false);
+    if (!result.ok) {
+      setLoteVtoError(result.error);
+      return;
+    }
+    setLoteVtoTarget(null);
+    await refresh();
+  }, [
+    loteVtoTarget,
+    loteVtoLote,
+    loteVtoVto,
+    loteVtoReason,
+    sectorId,
+    workspace.context.displayName,
+    email,
+    refresh,
+  ]);
+
+  function presetRange(preset: "7d" | "this_month" | "last_month"): { from: string; to: string } {
+    const now = new Date();
+    const toIso = (d: Date) => d.toISOString().slice(0, 10);
+    if (preset === "7d") {
+      const from = new Date(now);
+      from.setDate(from.getDate() - 6);
+      return { from: toIso(from), to: toIso(now) };
+    }
+    if (preset === "this_month") {
+      const from = new Date(now.getFullYear(), now.getMonth(), 1);
+      const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      return { from: toIso(from), to: toIso(to) };
+    }
+    const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const to = new Date(now.getFullYear(), now.getMonth(), 0);
+    return { from: toIso(from), to: toIso(to) };
+  }
+
+  const resolvedReportRange = useMemo(() => {
+    if (reportPreset === "custom") return { from: reportFrom, to: reportTo };
+    return presetRange(reportPreset);
+  }, [reportPreset, reportFrom, reportTo]);
+
+  const exportManagementReport = useCallback(async () => {
+    const { from, to } = resolvedReportRange;
+    if (!from || !to) {
+      setReportError("Elegí un rango de fechas.");
+      return;
+    }
+    setReportBusy(true);
+    setReportError(null);
+    try {
+      const params = new URLSearchParams({ from, to });
+      if (reportClient.trim()) params.set("client", reportClient.trim());
+      if (reportProduct.trim()) params.set("product", reportProduct.trim());
+      if (reportSector.trim()) params.set("sector", reportSector.trim());
+      if (reportEmployee.trim()) params.set("employee", reportEmployee.trim());
+      const res = await fetch(`/api/v1/reports/management-export?${params.toString()}`, {
+        credentials: "include",
+        headers: { [ACTOR_EMAIL_HEADER]: session.email, [ACTOR_SECTOR_HEADER]: session.sector },
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "No se pudo generar el reporte.");
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") ?? "";
+      const match = /filename="([^"]+)"/.exec(disposition);
+      const fileName = match?.[1] ?? "GENUS_OS_REPORTE.xlsx";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : "No se pudo generar el reporte.");
+    } finally {
+      setReportBusy(false);
+    }
+  }, [resolvedReportRange, reportClient, reportProduct, reportSector, reportEmployee, session]);
 
   function handleGenerarRemito(seed: QualityItem) {
     setRemitoError(null);
@@ -639,6 +769,115 @@ export function ProduccionOperationalView({
                   />
                 ))}
             </div>
+
+            {(sectorId === "PRODUCCION" || sectorId === "DIRECCION") && (
+              <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] p-4 text-sm">
+                <p className="mb-3 font-semibold">Reporte gerencial (.xlsx)</p>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <label className="text-xs">
+                    Período
+                    <select
+                      className={CONTROL_CLASS}
+                      value={reportPreset}
+                      onChange={(e) => setReportPreset(e.target.value as typeof reportPreset)}
+                      data-testid="report-preset"
+                    >
+                      <option value="7d">Últimos 7 días</option>
+                      <option value="this_month">Este mes</option>
+                      <option value="last_month">Mes pasado</option>
+                      <option value="custom">Personalizado</option>
+                    </select>
+                  </label>
+                  {reportPreset === "custom" ? (
+                    <>
+                      <label className="text-xs">
+                        Desde
+                        <input
+                          type="date"
+                          className={CONTROL_CLASS}
+                          value={reportFrom}
+                          onChange={(e) => setReportFrom(e.target.value)}
+                          data-testid="report-from"
+                        />
+                      </label>
+                      <label className="text-xs">
+                        Hasta
+                        <input
+                          type="date"
+                          className={CONTROL_CLASS}
+                          value={reportTo}
+                          onChange={(e) => setReportTo(e.target.value)}
+                          data-testid="report-to"
+                        />
+                      </label>
+                    </>
+                  ) : (
+                    <div className="text-xs text-[var(--os-text-muted)] self-end pb-2">
+                      {resolvedReportRange.from} a {resolvedReportRange.to}
+                    </div>
+                  )}
+                  <label className="text-xs">
+                    Cliente (opcional)
+                    <input
+                      className={CONTROL_CLASS}
+                      value={reportClient}
+                      onChange={(e) => setReportClient(e.target.value)}
+                      data-testid="report-client"
+                    />
+                  </label>
+                  <label className="text-xs">
+                    Producto (opcional)
+                    <input
+                      className={CONTROL_CLASS}
+                      value={reportProduct}
+                      onChange={(e) => setReportProduct(e.target.value)}
+                      data-testid="report-product"
+                    />
+                  </label>
+                  <label className="text-xs">
+                    Sector (opcional)
+                    <select
+                      className={CONTROL_CLASS}
+                      value={reportSector}
+                      onChange={(e) => setReportSector(e.target.value)}
+                      data-testid="report-sector"
+                    >
+                      <option value="">Todos</option>
+                      {Object.entries(SECTOR_LABELS).map(([id, label]) => (
+                        <option key={id} value={id}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs">
+                    Empleado (opcional)
+                    <input
+                      className={CONTROL_CLASS}
+                      value={reportEmployee}
+                      onChange={(e) => setReportEmployee(e.target.value)}
+                      placeholder="email"
+                      data-testid="report-employee"
+                    />
+                  </label>
+                </div>
+                {reportError ? (
+                  <p role="alert" className="mt-2 text-xs text-[var(--genus-error,#b91c1c)]">
+                    {reportError}
+                  </p>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="primary"
+                  className="mt-3"
+                  onClick={() => void exportManagementReport()}
+                  disabled={reportBusy}
+                  data-testid="export-management-report"
+                >
+                  {reportBusy ? "Generando…" : "Exportar reporte"}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -682,6 +921,10 @@ export function ProduccionOperationalView({
                   }
                   progress={progressMap[workIdFromQuality(detailItem)] ?? null}
                   fallbackQuantity={detailItem.quantity}
+                  onCorrectLoteVto={(() => {
+                    const wi = workItems.find((w) => w.id === workIdFromQuality(detailItem));
+                    return wi ? () => openLoteVtoCorrection(wi) : undefined;
+                  })()}
                 />
               </DrawerBody>
               <DrawerFooter>
@@ -693,6 +936,69 @@ export function ProduccionOperationalView({
           ) : null}
         </DrawerContent>
       </Drawer>
+
+      <Dialog open={loteVtoTarget !== null} onOpenChange={(open) => !open && setLoteVtoTarget(null)}>
+        <DialogContent data-testid="correct-lote-vto-dialog">
+          <DialogHeader>
+            <DialogTitle>Corregir lote/VTO</DialogTitle>
+            <DialogDescription>
+              Único punto autorizado para cambiar Lote/VTO después de asignar el trabajo.
+              Envasado y Codificado leen este valor de solo lectura — el cambio queda
+              auditado (valor anterior, nuevo, quién y cuándo).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <label className="block">
+              <span className="text-sm font-medium">Lote</span>
+              <input
+                type="text"
+                value={loteVtoLote}
+                onChange={(e) => setLoteVtoLote(e.target.value)}
+                className="mt-1 w-full rounded border border-[var(--os-border)] px-3 py-2"
+                data-testid="correct-lote-input"
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium">VTO</span>
+              <input
+                type="text"
+                value={loteVtoVto}
+                onChange={(e) => setLoteVtoVto(e.target.value)}
+                className="mt-1 w-full rounded border border-[var(--os-border)] px-3 py-2"
+                data-testid="correct-vto-input"
+              />
+            </label>
+            <label className="block">
+              <span className="text-sm font-medium">Motivo *</span>
+              <textarea
+                value={loteVtoReason}
+                onChange={(e) => setLoteVtoReason(e.target.value)}
+                rows={2}
+                className="mt-1 w-full rounded border border-[var(--os-border)] px-3 py-2"
+                data-testid="correct-reason-input"
+              />
+            </label>
+            {loteVtoError ? (
+              <p role="alert" className="text-sm text-[var(--genus-error,#b91c1c)]">
+                {loteVtoError}
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setLoteVtoTarget(null)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => void submitLoteVtoCorrection()}
+              disabled={loteVtoBusy}
+              data-testid="correct-lote-vto-submit"
+            >
+              {loteVtoBusy ? "Guardando…" : "Guardar corrección"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </TwinShell>
   );
 }

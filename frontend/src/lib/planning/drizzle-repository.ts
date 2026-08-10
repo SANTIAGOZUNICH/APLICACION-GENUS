@@ -104,6 +104,10 @@ const WORK_ITEM_SELECT_COLUMNS = {
   qualityDecidedBySector: workItems.qualityDecidedBySector,
   qualityObservation: workItems.qualityObservation,
   qualityChangeReason: workItems.qualityChangeReason,
+  sampleUnits: workItems.sampleUnits,
+  deliverableUnits: workItems.deliverableUnits,
+  packagingClosedAt: workItems.packagingClosedAt,
+  packagingClosedBy: workItems.packagingClosedBy,
 } as const;
 
 function mapItem(row: WorkItemRow | Record<string, unknown>): PlanningWorkItemRecord {
@@ -179,6 +183,10 @@ function mapItem(row: WorkItemRow | Record<string, unknown>): PlanningWorkItemRe
     qualityDecidedBySector: r.qualityDecidedBySector ?? null,
     qualityObservation: r.qualityObservation ?? null,
     qualityChangeReason: r.qualityChangeReason ?? null,
+    sampleUnits: r.sampleUnits ?? null,
+    deliverableUnits: r.deliverableUnits == null ? null : Number(r.deliverableUnits),
+    packagingClosedAt: r.packagingClosedAt ? r.packagingClosedAt.toISOString() : null,
+    packagingClosedBy: r.packagingClosedBy ?? null,
   };
 }
 

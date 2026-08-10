@@ -191,3 +191,60 @@ export function ensureMinPackingSlots(
   while (next.length < min) next.push({ cajas: 0, unidadesPorCaja: 0 });
   return next;
 }
+
+/**
+ * Cierre físico de acondicionamiento (Envasado/Codificado) — 0024.
+ *
+ * Regla encontrada en el sistema existente: NO hay concepto de "unidades
+ * sueltas" en ningún lugar del código (buscado explícitamente antes de
+ * implementar esto). La ecuación real, confirmada por
+ * packingProducedMismatchWarning/packingGroups ya existentes, es:
+ *
+ *   enCajas (SUM cajas × unidadesPorCaja)  +  muestras  =  cantidad final
+ *
+ * "Entregable" = enCajas exclusivamente (las muestras nunca se consideran
+ * unidades entregadas — ver PARTE A del pedido). No se inventa una tercera
+ * categoría "sueltas": si algún día existe, debe agregarse como concepto
+ * nuevo y explícito, no inferirse acá.
+ */
+export type PackagingCloseInput = {
+  /** Cantidad final acondicionada (packagingTotalUnits / finishedQty). */
+  finishedQty: number | null | undefined;
+  /** Unidades producidas pero no entregables comercialmente. null = no informado. */
+  sampleUnits: number | null | undefined;
+  groups: PackingGroup[];
+};
+
+export type PackagingCloseSummary = {
+  totalCajas: number;
+  /** Unidades en cajas — esto es lo "entregable". */
+  enCajas: number;
+  muestras: number;
+  /** enCajas + muestras. */
+  totalAcondicionado: number;
+  /** finishedQty - totalAcondicionado. 0 = correcto. */
+  diferencia: number;
+  /** true solo si finishedQty es un número válido y diferencia === 0. */
+  isValid: boolean;
+  /** false si finishedQty falta — no se puede validar todavía. */
+  canValidate: boolean;
+};
+
+export function computePackagingClose(input: PackagingCloseInput): PackagingCloseSummary {
+  const { totalCajas, totalEmbalado: enCajas } = summarizePackingGroups(input.groups);
+  const muestras = input.sampleUnits != null && Number.isFinite(input.sampleUnits)
+    ? Math.max(0, Math.floor(input.sampleUnits))
+    : 0;
+  const totalAcondicionado = enCajas + muestras;
+  const canValidate = input.finishedQty != null && Number.isFinite(input.finishedQty);
+  const diferencia = canValidate ? Number(input.finishedQty) - totalAcondicionado : 0;
+  return {
+    totalCajas,
+    enCajas,
+    muestras,
+    totalAcondicionado,
+    diferencia,
+    isValid: canValidate && diferencia === 0,
+    canValidate,
+  };
+}

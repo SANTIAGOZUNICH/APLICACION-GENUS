@@ -162,6 +162,13 @@
       "when": 1786800000000,
       "tag": "0023_work_item_progress_neon",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1786900000000,
+      "tag": "0024_packaging_close",
+      "breakpoints": true
     }
   ]
 }

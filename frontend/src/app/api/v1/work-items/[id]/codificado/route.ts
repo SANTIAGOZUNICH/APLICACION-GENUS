@@ -55,6 +55,8 @@ export async function POST(
           packagingVto:
             body.packagingVto != null ? String(body.packagingVto) : null,
           packingGroups: body.packingGroups ?? null,
+          sampleUnits:
+            body.sampleUnits != null ? Number(body.sampleUnits) : null,
           bulkRemainderKg:
             body.bulkRemainderKg != null ? Number(body.bulkRemainderKg) : null,
           bulkRemainderObservation:
@@ -112,6 +114,8 @@ export async function POST(
               ? Number(body.packagingTotalUnits)
               : null,
           packingGroups: body.packingGroups ?? null,
+          sampleUnits:
+            body.sampleUnits != null ? Number(body.sampleUnits) : null,
           expectedVersion,
           idempotencyKey,
         },

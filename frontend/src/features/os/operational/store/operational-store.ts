@@ -25,6 +25,8 @@ export interface WorkProgressRecord {
   packagingUnidadesPorCaja?: number | null;
   packingGroups?: PackingGroupRecord[] | null;
   packingMismatchObservation?: string | null;
+  /** Unidades producidas pero no entregables (PARTE A). */
+  sampleUnits?: number | null;
   /** Flujo Codificado */
   sentToCodificadoAt?: string | null;
   sentToCodificadoBy?: string | null;
@@ -152,6 +154,7 @@ export function recordWorkProgress(
     packingGroups?: PackingGroupRecord[] | null;
     packingMismatchObservation?: string | null;
     codificadoObservation?: string | null;
+    sampleUnits?: number | null;
   }
 ): WorkProgressRecord {
   const existing = readProgressMap()[itemId];
@@ -197,6 +200,8 @@ export function recordWorkProgress(
       payload.packingMismatchObservation !== undefined
         ? payload.packingMismatchObservation
         : existing?.packingMismatchObservation ?? null,
+    sampleUnits:
+      payload.sampleUnits !== undefined ? payload.sampleUnits : existing?.sampleUnits ?? null,
     // Preservar trazabilidad Codificado / granel (save packaging no debe borrarlos).
     sentToCodificadoAt: existing?.sentToCodificadoAt ?? null,
     sentToCodificadoBy: existing?.sentToCodificadoBy ?? null,
@@ -232,6 +237,7 @@ export function recordWorkPackaging(
     packingGroups?: PackingGroupRecord[] | null;
     packingMismatchObservation?: string | null;
     codificadoObservation?: string | null;
+    sampleUnits?: number | null;
   }
 ): WorkProgressRecord {
   const existing = readProgressMap()[itemId];
@@ -248,6 +254,7 @@ export function recordWorkPackaging(
     packingGroups: payload.packingGroups,
     packingMismatchObservation: payload.packingMismatchObservation,
     codificadoObservation: payload.codificadoObservation,
+    sampleUnits: payload.sampleUnits,
   });
 }
 

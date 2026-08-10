@@ -2,7 +2,7 @@ import "server-only";
 
 import { and, desc, eq, ne, or } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { workItemDeliveries, workItems } from "@/lib/db/schema";
+import { operationalEvents, workItemDeliveries, workItems } from "@/lib/db/schema";
 import type { SectorId } from "@/types/operational/sector";
 
 /**
@@ -24,11 +24,20 @@ export interface SaveProgressInput {
   observation: string;
   updatedBy: string;
   sector?: SectorId;
+  /**
+   * @deprecated Lote/VTO ya no son editables desde Envasado/Codificado —
+   * ver PARTE A "Lote y VTO — fuente única". saveWorkProgressDurable
+   * ignora estos campos a propósito; solo Producción los cambia (ver
+   * updateWorkItemLoteVtoDurable).
+   */
   packagingLote?: string | null;
+  /** @deprecated ver packagingLote. */
   packagingVto?: string | null;
   packagingTotalUnits?: number | null;
   packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
   packingMismatchObservation?: string | null;
+  /** Unidades producidas pero no entregables (PARTE A). null = no informado. */
+  sampleUnits?: number | null;
 }
 
 const KEEP_STATUS_ON_PROGRESS: ReadonlySet<string> = new Set([
@@ -58,13 +67,15 @@ export async function saveWorkProgressDurable(id: string, input: SaveProgressInp
     progressUpdatedBy: input.updatedBy,
     updatedAt: new Date(),
   };
-  if (input.packagingLote !== undefined) patch.packagingLote = input.packagingLote;
-  if (input.packagingVto !== undefined) patch.packagingVto = input.packagingVto;
+  // Lote/VTO: fuente única = Producción (PARTE A). Guardar avance desde
+  // Envasado/Codificado nunca sobreescribe estos campos, aunque el cliente
+  // los envíe — se ignoran a propósito (ver updateWorkItemLoteVtoDurable).
   if (input.packagingTotalUnits !== undefined)
     patch.packagingTotalUnits = input.packagingTotalUnits;
   if (input.packingGroups !== undefined) patch.packingGroups = input.packingGroups;
   if (input.packingMismatchObservation !== undefined)
     patch.packingMismatchObservation = input.packingMismatchObservation;
+  if (input.sampleUnits !== undefined) patch.sampleUnits = input.sampleUnits;
 
   const [row] = await db
     .update(workItems)
@@ -72,6 +83,81 @@ export async function saveWorkProgressDurable(id: string, input: SaveProgressInp
     .where(eq(workItems.id, id))
     .returning();
   return row;
+}
+
+export interface UpdateLoteVtoInput {
+  packagingLote?: string | null;
+  packagingVto?: string | null;
+  reason: string;
+  updatedBy: string;
+  updatedBySector: SectorId | string;
+}
+
+/**
+ * Corrección de Lote/VTO por Producción (PARTE A — fuente única). Envasado/
+ * Codificado nunca llaman esto; solo lo expone la ruta gateada a PRODUCCION.
+ * Cada corrección queda auditada en operational_events con valor anterior,
+ * nuevo, actor y motivo — todos los sectores leen el mismo valor tras esto.
+ */
+export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLoteVtoInput) {
+  const reason = input.reason?.trim();
+  if (!reason) {
+    throw new Error("El motivo es obligatorio para corregir Lote/VTO.");
+  }
+  const nextLote =
+    input.packagingLote !== undefined ? input.packagingLote?.trim() || null : undefined;
+  const nextVto =
+    input.packagingVto !== undefined ? input.packagingVto?.trim() || null : undefined;
+  if (nextLote === undefined && nextVto === undefined) {
+    throw new Error("No hay cambios de Lote/VTO para guardar.");
+  }
+
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        packagingLote: workItems.packagingLote,
+        packagingVto: workItems.packagingVto,
+        planningWeekId: workItems.planningWeekId,
+      })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!existing) throw new Error("Work item no encontrado.");
+
+    if (
+      (nextLote === undefined || nextLote === existing.packagingLote) &&
+      (nextVto === undefined || nextVto === existing.packagingVto)
+    ) {
+      throw new Error("El valor indicado es igual al actual — no hay corrección para aplicar.");
+    }
+
+    const patch: Partial<typeof workItems.$inferInsert> = { updatedAt: new Date() };
+    if (nextLote !== undefined) patch.packagingLote = nextLote;
+    if (nextVto !== undefined) patch.packagingVto = nextVto;
+
+    const [row] = await tx.update(workItems).set(patch).where(eq(workItems.id, id)).returning();
+    if (!row) throw new Error("No se pudo actualizar Lote/VTO.");
+
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: existing.planningWeekId,
+      type: "LOTE_VTO_CORRECTED",
+      fromStatus: JSON.stringify({
+        lote: existing.packagingLote ?? null,
+        vto: existing.packagingVto ?? null,
+      }),
+      toStatus: JSON.stringify({
+        lote: row.packagingLote ?? null,
+        vto: row.packagingVto ?? null,
+      }),
+      actorEmail: input.updatedBy,
+      actorSector: String(input.updatedBySector),
+      note: reason,
+    });
+
+    return row;
+  });
 }
 
 export interface CompleteWorkInput {

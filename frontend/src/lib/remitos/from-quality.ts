@@ -176,8 +176,13 @@ export function resolveRemitoInputFromQuality(
     wi?.loteRef?.trim() ||
     "";
   const vto = overrides?.vto?.trim() || wi?.packagingVto?.trim() || "";
+  // Remito = entregable, nunca lo producido: si hay cierre físico (PARTE A),
+  // deliverableUnits ya excluye muestras (packagingTotalUnits/finishedQty
+  // incluyen todo lo producido, muestras incluidas — ver AUDIT_TRAZABILIDAD
+  // y computePackagingClose en packing-math.ts).
   const totalUnits =
     overrides?.totalUnits ??
+    wi?.deliverableUnits ??
     wi?.packagingTotalUnits ??
     (parseQty(item.quantity) ||
       parseQty(wi?.finishedQty) ||

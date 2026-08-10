@@ -70,6 +70,11 @@ export interface PlanningWorkItemRecord {
   packagingVto?: string | null;
   packagingTotalUnits?: number | null;
   packingGroups?: unknown;
+  /** Cierre físico de acondicionamiento (0024). */
+  sampleUnits?: number | null;
+  deliverableUnits?: number | null;
+  packagingClosedAt?: string | null;
+  packagingClosedBy?: string | null;
   orderId?: string | null;
   orderNumber?: string | null;
   deliveryDate?: string | null;

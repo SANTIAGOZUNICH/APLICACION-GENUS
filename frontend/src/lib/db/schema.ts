@@ -133,6 +133,19 @@ export const workItems = pgTable(
     packagingVto: text("packaging_vto"),
     packagingTotalUnits: doublePrecision("packaging_total_units"),
     packingGroups: jsonb("packing_groups"),
+    /**
+     * Cierre físico de acondicionamiento (0024). packingGroups sigue siendo
+     * la fuente canónica de la distribución en cajas — no se duplica en una
+     * tabla nueva (ver decisión documentada en el informe de esta fase).
+     * sampleUnits/deliverableUnits/packagingClosedAt/By son nullable sin
+     * default: un trabajo histórico sin cierre registrado es "desconocido",
+     * nunca "0" — no se infiere retroactivamente.
+     */
+    sampleUnits: integer("sample_units"),
+    /** Snapshot al cerrar: SUM(packingGroups) en ese momento — ver AUDIT_TRAZABILIDAD. */
+    deliverableUnits: doublePrecision("deliverable_units"),
+    packagingClosedAt: timestamp("packaging_closed_at", { withTimezone: true }),
+    packagingClosedBy: text("packaging_closed_by"),
     /** Flujo Codificado (0014/0021). */
     sentToCodificadoAt: timestamp("sent_to_codificado_at", { withTimezone: true }),
     sentToCodificadoBy: text("sent_to_codificado_by"),

@@ -116,6 +116,8 @@ export async function postSaveProgress(payload: {
   packagingUnidadesPorCaja?: number | null;
   packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
   packingMismatchObservation?: string | null;
+  /** Unidades producidas pero no entregables (PARTE A). */
+  sampleUnits?: number | null;
 }): Promise<void> {
   const response = await fetch("/api/v1/live-sync/operations", {
     method: "POST",
@@ -295,6 +297,27 @@ export async function postRestoreWork(payload: {
     credentials: "include",
     headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "restore_work", ...payload }),
+  });
+}
+
+/**
+ * Corrección de Lote/VTO por Producción (PARTE A — fuente única). Solo
+ * PRODUCCION puede llamar esto (gate server-side); Envasado/Codificado
+ * quedan de solo lectura sobre estos campos.
+ */
+export async function postUpdateLoteVto(payload: {
+  itemId: string;
+  packagingLote?: string | null;
+  packagingVto?: string | null;
+  reason: string;
+  updatedBy?: string;
+  actorSectorId: SectorId;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "update_lote_vto", ...payload }),
   });
 }
 
