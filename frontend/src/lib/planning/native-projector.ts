@@ -179,3 +179,64 @@ export function projectNativeWorkItems(
 ): WorkItem[] {
   return items.map(projectNativeWorkItem);
 }
+
+const QUALITY_STATUSES: ReadonlySet<string> = new Set(["pendiente", "aprobado", "rechazado"]);
+
+/**
+ * Proyecta un work item completado (completedAt IS NOT NULL) a la forma
+ * QualityItem que consume CalidadOperationalView — cola de Calidad nativa
+ * (pendientes/aprobados/rechazados), sourced 100% de Neon (quality_status,
+ * quality_observation, quality_decided_at/by/sector — 0023).
+ */
+export function projectQualityItem(item: PlanningWorkItemRecord): {
+  id: string;
+  kind: "granel" | "salida";
+  lote: string | null;
+  product: string;
+  client: string;
+  oe: string | null;
+  oa: string | null;
+  line: string | null;
+  quantity: string | null;
+  dayLabel: string;
+  deliveryDate: string | null;
+  status: "pendiente" | "aprobado" | "rechazado";
+  relatedWorkItemId: string;
+  receivedFrom: SectorId | null;
+  completedAt: string | null;
+  completedBy: string | null;
+  observation: string | null;
+} {
+  const orderNumber = item.orderNumber?.trim() || null;
+  const packagingLote = item.packagingLote?.trim() || null;
+  const id = `native:${item.id}`;
+  const status = QUALITY_STATUSES.has(item.qualityStatus ?? "")
+    ? (item.qualityStatus as "pendiente" | "aprobado" | "rechazado")
+    : "pendiente";
+
+  return {
+    id,
+    kind: item.sector === "ELABORACION" ? "granel" : "salida",
+    lote: packagingLote,
+    product: item.product,
+    client: item.client,
+    oe: item.sector === "ELABORACION" ? orderNumber : null,
+    oa: item.sector !== "ELABORACION" ? orderNumber : null,
+    line: item.line,
+    quantity: item.finishedQty ?? item.plannedQuantity,
+    dayLabel: dayOfWeekName(item.plannedDate) ?? "—",
+    deliveryDate: item.deliveryDate ?? null,
+    status,
+    relatedWorkItemId: id,
+    receivedFrom: (item.sector as SectorId) ?? null,
+    completedAt: item.completedAt ?? null,
+    completedBy: item.completedBy ?? null,
+    observation: item.qualityObservation ?? item.operationalObservation ?? null,
+  };
+}
+
+export function projectQualityItems(
+  items: PlanningWorkItemRecord[]
+): ReturnType<typeof projectQualityItem>[] {
+  return items.map(projectQualityItem);
+}

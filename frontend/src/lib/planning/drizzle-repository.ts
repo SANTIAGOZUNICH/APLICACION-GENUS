@@ -40,6 +40,72 @@ function mapWeek(row: PlanningWeekRow): PlanningWeekRecord {
   };
 }
 
+/** Columnas completas de work_items — compartidas entre listPublishedItems y listCompletedItems para no divergir el SELECT explícito (ver AUDIT_TRAZABILIDAD, "campos que no se seleccionan"). */
+const WORK_ITEM_SELECT_COLUMNS = {
+  id: workItems.id,
+  planningWeekId: workItems.planningWeekId,
+  plannedDate: workItems.plannedDate,
+  plannedDateTo: workItems.plannedDateTo,
+  client: workItems.client,
+  product: workItems.product,
+  plannedQuantity: workItems.plannedQuantity,
+  unit: workItems.unit,
+  sector: workItems.sector,
+  line: workItems.line,
+  branchOwner: workItems.branchOwner,
+  priority: workItems.priority,
+  notes: workItems.notes,
+  packagingLote: workItems.packagingLote,
+  packagingVto: workItems.packagingVto,
+  packagingTotalUnits: workItems.packagingTotalUnits,
+  packingGroups: workItems.packingGroups,
+  orderId: workItems.orderId,
+  orderNumber: workItems.orderNumber,
+  deliveryDate: workItems.deliveryDate,
+  status: workItems.status,
+  publishedAt: workItems.publishedAt,
+  createdBy: workItems.createdBy,
+  source: workItems.source,
+  originRef: workItems.originRef,
+  version: workItems.version,
+  createdAt: workItems.createdAt,
+  updatedAt: workItems.updatedAt,
+  viaCodificado: workItems.viaCodificado,
+  sentToCodificadoAt: workItems.sentToCodificadoAt,
+  sentToCodificadoBy: workItems.sentToCodificadoBy,
+  codificadoOriginSector: workItems.codificadoOriginSector,
+  deliveredFromCodificadoAt: workItems.deliveredFromCodificadoAt,
+  deliveredFromCodificadoBy: workItems.deliveredFromCodificadoBy,
+  codificadoObservation: workItems.codificadoObservation,
+  bulkRemainderKg: workItems.bulkRemainderKg,
+  bulkRemainderObservation: workItems.bulkRemainderObservation,
+  bulkRemainderId: workItems.bulkRemainderId,
+  homeLine: workItems.homeLine,
+  homeBranchOwner: workItems.homeBranchOwner,
+  codificadoRevision: workItems.codificadoRevision,
+  codificadoCancelledAt: workItems.codificadoCancelledAt,
+  codificadoCancelledBy: workItems.codificadoCancelledBy,
+  codificadoCancelReason: workItems.codificadoCancelReason,
+  productionPedidoId: workItems.productionPedidoId,
+  operationalStatus: workItems.operationalStatus,
+  finishedQty: workItems.finishedQty,
+  operationalObservation: workItems.operationalObservation,
+  packingMismatchObservation: workItems.packingMismatchObservation,
+  progressUpdatedAt: workItems.progressUpdatedAt,
+  progressUpdatedBy: workItems.progressUpdatedBy,
+  completedAt: workItems.completedAt,
+  completedBy: workItems.completedBy,
+  operationalCancelledAt: workItems.operationalCancelledAt,
+  operationalCancelledBy: workItems.operationalCancelledBy,
+  operationalCancelReason: workItems.operationalCancelReason,
+  qualityStatus: workItems.qualityStatus,
+  qualityDecidedAt: workItems.qualityDecidedAt,
+  qualityDecidedBy: workItems.qualityDecidedBy,
+  qualityDecidedBySector: workItems.qualityDecidedBySector,
+  qualityObservation: workItems.qualityObservation,
+  qualityChangeReason: workItems.qualityChangeReason,
+} as const;
+
 function mapItem(row: WorkItemRow | Record<string, unknown>): PlanningWorkItemRecord {
   const r = row as WorkItemRow;
   return {
@@ -270,74 +336,41 @@ export class DrizzlePlanningRepository implements PlanningRepository {
         : 500;
 
     const rows = await this.db
-      .select({
-        id: workItems.id,
-        planningWeekId: workItems.planningWeekId,
-        plannedDate: workItems.plannedDate,
-        plannedDateTo: workItems.plannedDateTo,
-        client: workItems.client,
-        product: workItems.product,
-        plannedQuantity: workItems.plannedQuantity,
-        unit: workItems.unit,
-        sector: workItems.sector,
-        line: workItems.line,
-        branchOwner: workItems.branchOwner,
-        priority: workItems.priority,
-        notes: workItems.notes,
-        packagingLote: workItems.packagingLote,
-        packagingVto: workItems.packagingVto,
-        packagingTotalUnits: workItems.packagingTotalUnits,
-        packingGroups: workItems.packingGroups,
-        orderId: workItems.orderId,
-        orderNumber: workItems.orderNumber,
-        deliveryDate: workItems.deliveryDate,
-        status: workItems.status,
-        publishedAt: workItems.publishedAt,
-        createdBy: workItems.createdBy,
-        source: workItems.source,
-        originRef: workItems.originRef,
-        version: workItems.version,
-        createdAt: workItems.createdAt,
-        updatedAt: workItems.updatedAt,
-        viaCodificado: workItems.viaCodificado,
-        sentToCodificadoAt: workItems.sentToCodificadoAt,
-        sentToCodificadoBy: workItems.sentToCodificadoBy,
-        codificadoOriginSector: workItems.codificadoOriginSector,
-        deliveredFromCodificadoAt: workItems.deliveredFromCodificadoAt,
-        deliveredFromCodificadoBy: workItems.deliveredFromCodificadoBy,
-        codificadoObservation: workItems.codificadoObservation,
-        bulkRemainderKg: workItems.bulkRemainderKg,
-        bulkRemainderObservation: workItems.bulkRemainderObservation,
-        bulkRemainderId: workItems.bulkRemainderId,
-        homeLine: workItems.homeLine,
-        homeBranchOwner: workItems.homeBranchOwner,
-        codificadoRevision: workItems.codificadoRevision,
-        codificadoCancelledAt: workItems.codificadoCancelledAt,
-        codificadoCancelledBy: workItems.codificadoCancelledBy,
-        codificadoCancelReason: workItems.codificadoCancelReason,
-        productionPedidoId: workItems.productionPedidoId,
-        operationalStatus: workItems.operationalStatus,
-        finishedQty: workItems.finishedQty,
-        operationalObservation: workItems.operationalObservation,
-        packingMismatchObservation: workItems.packingMismatchObservation,
-        progressUpdatedAt: workItems.progressUpdatedAt,
-        progressUpdatedBy: workItems.progressUpdatedBy,
-        completedAt: workItems.completedAt,
-        completedBy: workItems.completedBy,
-        operationalCancelledAt: workItems.operationalCancelledAt,
-        operationalCancelledBy: workItems.operationalCancelledBy,
-        operationalCancelReason: workItems.operationalCancelReason,
-        qualityStatus: workItems.qualityStatus,
-        qualityDecidedAt: workItems.qualityDecidedAt,
-        qualityDecidedBy: workItems.qualityDecidedBy,
-        qualityDecidedBySector: workItems.qualityDecidedBySector,
-        qualityObservation: workItems.qualityObservation,
-        qualityChangeReason: workItems.qualityChangeReason,
-      })
+      .select(WORK_ITEM_SELECT_COLUMNS)
       .from(workItems)
       .innerJoin(planningWeeks, eq(workItems.planningWeekId, planningWeeks.id))
       .where(and(...conditions))
       .orderBy(asc(workItems.plannedDate), asc(workItems.product))
+      .limit(limit);
+
+    return rows.map((row) => mapItem(row));
+  }
+
+  /**
+   * Trabajos que ya pasaron por completeWork/deliverFromCodificado en algún
+   * momento (completed_at IS NOT NULL) — cola de Calidad nativa: pendientes,
+   * aprobados y rechazados, sin importar el sector que los produjo. Filtrar
+   * por estado de calidad (pendiente/aprobado/rechazado) queda del lado del
+   * caller, igual que hace hoy CalidadOperationalView con qualityItems.
+   */
+  async listCompletedItems(filters: { limit?: number | null }): Promise<PlanningWorkItemRecord[]> {
+    const limit =
+      typeof filters.limit === "number" && filters.limit > 0
+        ? Math.min(Math.floor(filters.limit), 1000)
+        : 500;
+
+    const rows = await this.db
+      .select(WORK_ITEM_SELECT_COLUMNS)
+      .from(workItems)
+      .innerJoin(planningWeeks, eq(workItems.planningWeekId, planningWeeks.id))
+      .where(
+        and(
+          eq(workItems.status, "PUBLICADO"),
+          eq(planningWeeks.status, "PUBLISHED"),
+          sql`${workItems.completedAt} IS NOT NULL`
+        )
+      )
+      .orderBy(desc(workItems.completedAt))
       .limit(limit);
 
     return rows.map((row) => mapItem(row));
