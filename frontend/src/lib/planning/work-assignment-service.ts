@@ -118,8 +118,9 @@ function composeNotes(input: WorkAssignmentInput): string | null {
 
 /**
  * Asigna un trabajo publicado en Neon de forma atómica e idempotente.
- * Para Envasado Masivo/Premium/Codificado: si hay número de OA y no existe,
- * la crea automáticamente con ese mismo número dentro de la misma transacción.
+ * Regla: 1 trabajo = 1 OA. Para Envasado Masivo/Premium/Codificado: si hay
+ * número de OA y no existe, la crea automáticamente con ese mismo número
+ * dentro de la misma transacción.
  */
 export async function assignWorkItemDurable(
   input: WorkAssignmentInput,
@@ -468,6 +469,10 @@ export async function assignWorkItemDurable(
             linkedWorkItemId: operationalOrders.linkedWorkItemId,
           });
 
+        // 1 trabajo = 1 OA/OE: la actualización condicional de arriba (WHERE
+        // linkedWorkItemId IS NULL) es la que hace cumplir la regla ante una
+        // carrera — si no devolvió fila, otra transacción ya vinculó esta
+        // orden primero.
         if (!updatedOrder) {
           throw new PlanningConflictError(
             "Esta orden ya tiene un trabajo asignado.",

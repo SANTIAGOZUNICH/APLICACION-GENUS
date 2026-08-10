@@ -1,5 +1,6 @@
 /**
  * Dentro de la transacción de asignación: buscar o crear OA con número exacto.
+ * Regla: 1 trabajo = 1 OA (no reutilizar OA ya vinculada).
  */
 import "server-only";
 
@@ -180,9 +181,10 @@ export async function ensureOaForAssignment(
         `La referencia ${orderNumber} no es una Orden de Acondicionamiento (OA).`
       );
     }
+    // 1 OA = 1 trabajo: no reutilizar si ya está vinculada.
     if (found.linkedWorkItemId && found.linkedWorkItemId.trim() !== "") {
       throw new PlanningConflictError(
-        "Esta orden ya tiene un trabajo asignado.",
+        "Esta OA ya tiene un trabajo asignado. Cada trabajo requiere su propia OA.",
         stubConflictItem(input, found.linkedWorkItemId)
       );
     }
@@ -366,7 +368,7 @@ export async function ensureOaForAssignment(
     const msg = err instanceof Error ? err.message : String(err);
     if (/unique|duplicate|operational_orders_number/i.test(msg)) {
       throw new PlanningConflictError(
-        `La ${orderNumber} ya fue creada por otra operación. Reintentá la asignación.`,
+        `La ${orderNumber} ya fue creada por otra operación. Cada trabajo requiere su propia OA. Reintentá.`,
         stubConflictItem(input, orderNumber)
       );
     }

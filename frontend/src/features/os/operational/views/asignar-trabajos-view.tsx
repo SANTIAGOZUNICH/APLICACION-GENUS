@@ -70,7 +70,7 @@ function mapUserFacingError(status: number, code: string | undefined, offline: b
     return "La OA ya existe con datos distintos. Revisá antes de continuar.";
   }
   if (status === 409 || code === "VERSION_CONFLICT") {
-    return "Esta orden ya tiene un trabajo asignado.";
+    return "Esta OA ya tiene un trabajo asignado (1 trabajo = 1 OA).";
   }
   if (status >= 500 || code === "PLANNING_FAILED" || code === "DATABASE_UNAVAILABLE") {
     return "No se pudo completar la operación. Reintentá.";
@@ -672,14 +672,11 @@ export function AsignarTrabajosView() {
             {isPackagingAssignSector(sector) ? (
               <p className="text-xs text-[var(--os-text-muted)]">
                 Podés seleccionar una OA existente o ingresar un número nuevo. Si no
-                existe, se creará automáticamente.
+                existe, se creará automáticamente (1 trabajo = 1 OA).
               </p>
             ) : null}
             {oaHint ? (
-              <p
-                className="text-xs text-[var(--os-teal)]"
-                data-testid="assign-oa-hint"
-              >
+              <p className="text-xs text-[var(--os-teal)]" data-testid="assign-oa-hint">
                 {oaHint}
               </p>
             ) : null}

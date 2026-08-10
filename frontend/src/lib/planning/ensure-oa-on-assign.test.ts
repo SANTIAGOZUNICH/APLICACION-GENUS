@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Tests del flujo ensure-OA con un fake tx que simula Neon.
- * Cubren create/link/compat/force sin depender de DATABASE_URL.
+ * Cubren create/link/compat/force sin depender de DATABASE_URL, y la regla
+ * de negocio 1 trabajo = 1 OA (rechazo de reutilización + no interferencia
+ * entre números de OA distintos).
  */
 
 type FakeOrder = {
@@ -188,7 +190,7 @@ vi.mock("@/lib/db/schema", () => {
   };
 });
 
-describe("ensureOaForAssignment (fake tx)", () => {
+describe("ensureOaForAssignment — 1 trabajo = 1 OA (fake tx)", () => {
   let ensureOaForAssignment: typeof import("@/lib/planning/ensure-oa-on-assign").ensureOaForAssignment;
 
   beforeEach(async () => {
@@ -265,7 +267,7 @@ describe("ensureOaForAssignment (fake tx)", () => {
     expect(fd.header.productCode).toBe("CF-01");
   });
 
-  it("6) vincula OA existente sin duplicarla", async () => {
+  it("6) vincula OA existente sin duplicarla (misma asignación)", async () => {
     const { tx, orders } = createFakeDb();
     await ensureOaForAssignment(tx, baseInput);
     expect(orders.size).toBe(1);
@@ -277,6 +279,32 @@ describe("ensureOaForAssignment (fake tx)", () => {
     expect(second.created).toBe(false);
     expect(second.linked).toBe(true);
     expect(orders.size).toBe(1);
+  });
+
+  it("rechaza reutilizar OA ya vinculada a otro trabajo (1 trabajo = 1 OA)", async () => {
+    const { tx, orders } = createFakeDb();
+    await ensureOaForAssignment(tx, baseInput);
+    const oa = [...orders.values()][0]!;
+    oa.linkedWorkItemId = "work-other-already-linked";
+    await expect(ensureOaForAssignment(tx, baseInput)).rejects.toMatchObject({
+      name: "PlanningConflictError",
+      code: "VERSION_CONFLICT",
+    });
+  });
+
+  it("otra asignación con otro número de OA crea su propia OA (no interfiere)", async () => {
+    const { tx, orders } = createFakeDb();
+    await ensureOaForAssignment(tx, baseInput);
+    await ensureOaForAssignment(tx, {
+      ...baseInput,
+      orderNumberRaw: "OA-2026-000146",
+      lot: "L-901",
+    });
+    expect(orders.size).toBe(2);
+    expect([...orders.values()].map((o) => o.orderNumber).sort()).toEqual([
+      "OA-2026-000145",
+      "OA-2026-000146",
+    ]);
   });
 
   it("7/8) conflicto de lote incompatible; force rellena solo vacíos", async () => {
