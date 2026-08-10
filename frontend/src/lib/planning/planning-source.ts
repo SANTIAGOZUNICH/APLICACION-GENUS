@@ -36,10 +36,20 @@ export function getPlanningSource(): PlanningSource {
   return "sheets";
 }
 
+/**
+ * En cliente no hay DATABASE_URL — la única forma confiable de saber el modo
+ * real es leerlo de lo que el servidor ya resolvió. RootLayout (server
+ * component) estampa `data-genus-planning-source` en <html> con
+ * getPlanningSource(); acá solo lo leemos. NEXT_PUBLIC_GENUS_PLANNING_SOURCE
+ * queda como fallback explícito para SSR/tests sin DOM.
+ */
 export function getClientPlanningSource(): PlanningSource {
+  if (typeof document !== "undefined") {
+    const fromDom = parseSource(document.documentElement.dataset.genusPlanningSource);
+    if (fromDom) return fromDom;
+  }
   const explicit = parseSource(process.env.NEXT_PUBLIC_GENUS_PLANNING_SOURCE);
   if (explicit) return explicit;
-  // En cliente, el valor se materializa vía next.config env en build Preview.
   return "sheets";
 }
 
