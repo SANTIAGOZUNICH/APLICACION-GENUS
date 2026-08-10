@@ -42,3 +42,52 @@ describe("from-quality packingGroups", () => {
     expect(input?.vto).toBe("30/07/2028");
   });
 });
+
+describe("from-quality — remito usa deliverableUnits, no packagingTotalUnits (PARTE A)", () => {
+  const baseItem = {
+    id: "qc:w2",
+    kind: "salida",
+    status: "aprobado",
+    product: "CREMA",
+    client: "TEST_CLIENTE",
+    relatedWorkItemId: "w2",
+    deliveryDate: "2026-07-30",
+    lote: null,
+    oe: null,
+    oa: null,
+    line: null,
+    quantity: "1002",
+    dayLabel: "Hoy",
+  } as QualityItem;
+
+  it("prefiere deliverableUnits (excluye muestras) sobre packagingTotalUnits (incluye muestras)", () => {
+    const wi = {
+      id: "w2",
+      packagingLote: "ABC123",
+      packagingVto: "10/2028",
+      packagingTotalUnits: 1002,
+      sampleUnits: 2,
+      deliverableUnits: 1000,
+      packingGroups: [
+        { cajas: 10, unidadesPorCaja: 25 },
+        { cajas: 15, unidadesPorCaja: 50 },
+      ],
+    } as WorkItem;
+    const input = resolveRemitoInputFromQuality(baseItem, [wi]);
+    expect(input?.totalUnits).toBe(1000);
+  });
+
+  it("sin cierre físico (deliverableUnits null), cae a packagingTotalUnits — compat histórica", () => {
+    const wi = {
+      id: "w2",
+      packagingLote: "ABC123",
+      packagingVto: "10/2028",
+      packagingTotalUnits: 1002,
+      sampleUnits: null,
+      deliverableUnits: null,
+      packingGroups: [{ cajas: 10, unidadesPorCaja: 25 }],
+    } as WorkItem;
+    const input = resolveRemitoInputFromQuality(baseItem, [wi]);
+    expect(input?.totalUnits).toBe(1002);
+  });
+});
