@@ -1,5 +1,8 @@
 import { getCurrentAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
-import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
+import type {
+  DeliveryMutationResult,
+  DeliveryRecord,
+} from "@/features/os/operational/adapters/delivery-repository";
 import type { LiveSyncEvent, LiveSyncStatus } from "@/lib/live-sync/types";
 import {
   ACTOR_EMAIL_HEADER,
@@ -114,12 +117,18 @@ export async function postSaveProgress(payload: {
   packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
   packingMismatchObservation?: string | null;
 }): Promise<void> {
-  await fetch("/api/v1/live-sync/operations", {
+  const response = await fetch("/api/v1/live-sync/operations", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "save_progress", ...payload }),
   });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(
+      (body as { error?: string } | null)?.error ?? "No se pudo guardar el avance en el servidor."
+    );
+  }
 }
 
 export async function postCompleteWork(payload: {
@@ -128,12 +137,18 @@ export async function postCompleteWork(payload: {
   observation: string;
   completedBy?: string;
 }): Promise<void> {
-  await fetch("/api/v1/live-sync/operations", {
+  const response = await fetch("/api/v1/live-sync/operations", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "complete_work", ...payload }),
   });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(
+      (body as { error?: string } | null)?.error ?? "No se pudo confirmar el trabajo en el servidor."
+    );
+  }
 }
 
 export async function postQualityDecision(payload: {
@@ -151,12 +166,18 @@ export async function postQualityDecision(payload: {
   /** Sector de la sesión — defensa de acción en el pipeline (no auth server completo). */
   actorSectorId?: string;
 }): Promise<void> {
-  await fetch("/api/v1/live-sync/operations", {
+  const response = await fetch("/api/v1/live-sync/operations", {
     method: "POST",
     credentials: "include",
     headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "quality_decision", ...payload }),
   });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(
+      (body as { error?: string } | null)?.error ?? "No se pudo registrar la decisión en el servidor."
+    );
+  }
 }
 
 export async function postQualityAnnul(payload: {
@@ -165,12 +186,18 @@ export async function postQualityAnnul(payload: {
   decidedBy?: string;
   actorSectorId?: string;
 }): Promise<void> {
-  await fetch("/api/v1/live-sync/operations", {
+  const response = await fetch("/api/v1/live-sync/operations", {
     method: "POST",
     credentials: "include",
     headers: jsonActorHeaders(),
     body: JSON.stringify({ action: "quality_annul", ...payload }),
   });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(
+      (body as { error?: string } | null)?.error ?? "No se pudo anular la decisión en el servidor."
+    );
+  }
 }
 
 export async function postCancelWork(payload: {
@@ -188,65 +215,72 @@ export async function postCancelWork(payload: {
   });
 }
 
-export async function postDeliverWork(
+/**
+ * Las 5 funciones de entregas devuelven DeliveryMutationResult (parseado,
+ * no un Response crudo) — antes el caller ni siquiera chequeaba el status
+ * (fire-and-forget), así que un 4xx/5xx quedaba invisible y la UI local
+ * (localStorage) mostraba la mutación como si hubiese funcionado.
+ */
+async function postDeliveryAction(
+  action: string,
+  payload: object
+): Promise<DeliveryMutationResult> {
+  let response: globalThis.Response;
+  try {
+    response = await fetch("/api/v1/live-sync/operations", {
+      method: "POST",
+      credentials: "include",
+      headers: jsonActorHeaders(),
+      body: JSON.stringify({ action, ...payload }),
+    });
+  } catch {
+    return { ok: false, error: "Sin conexión con el servidor. Reintentá." };
+  }
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.ok) {
+    return {
+      ok: false,
+      error: (data as { error?: string } | null)?.error ?? "La entrega no se pudo guardar en el servidor.",
+      code: (data as { code?: string } | null)?.code,
+    };
+  }
+  return { ok: true, record: data.record as DeliveryRecord };
+}
+
+export function postDeliverWork(
   payload: DeliveryRecord & { actorSectorId: string }
-): Promise<Response> {
-  return fetch("/api/v1/live-sync/operations", {
-    method: "POST",
-    credentials: "include",
-    headers: jsonActorHeaders(),
-    body: JSON.stringify({ action: "deliver_work", ...payload }),
-  });
+): Promise<DeliveryMutationResult> {
+  return postDeliveryAction("deliver_work", payload);
 }
 
-export async function postArchiveDelivery(payload: {
+export function postArchiveDelivery(payload: {
   id: string;
   actorSectorId: string;
-}): Promise<Response> {
-  return fetch("/api/v1/live-sync/operations", {
-    method: "POST",
-    credentials: "include",
-    headers: jsonActorHeaders(),
-    body: JSON.stringify({ action: "archive_delivery", ...payload }),
-  });
+}): Promise<DeliveryMutationResult> {
+  return postDeliveryAction("archive_delivery", payload);
 }
 
-export async function postRestoreDelivery(payload: {
+export function postRestoreDelivery(payload: {
   id: string;
   actorSectorId: string;
-}): Promise<Response> {
-  return fetch("/api/v1/live-sync/operations", {
-    method: "POST",
-    credentials: "include",
-    headers: jsonActorHeaders(),
-    body: JSON.stringify({ action: "restore_delivery", ...payload }),
-  });
+}): Promise<DeliveryMutationResult> {
+  return postDeliveryAction("restore_delivery", payload);
 }
 
-export async function postDeleteDeliveryRecord(payload: {
+export function postDeleteDeliveryRecord(payload: {
   id: string;
   reason: string;
   actorSectorId: string;
-}): Promise<Response> {
-  return fetch("/api/v1/live-sync/operations", {
-    method: "POST",
-    credentials: "include",
-    headers: jsonActorHeaders(),
-    body: JSON.stringify({ action: "delete_delivery_record", ...payload }),
-  });
+}): Promise<DeliveryMutationResult> {
+  return postDeliveryAction("delete_delivery_record", payload);
 }
 
-export async function postAnnulDelivery(payload: {
+export function postAnnulDelivery(payload: {
   id: string;
   reason: string;
   actorSectorId: string;
-}): Promise<Response> {
-  return fetch("/api/v1/live-sync/operations", {
-    method: "POST",
-    credentials: "include",
-    headers: jsonActorHeaders(),
-    body: JSON.stringify({ action: "annul_delivery", ...payload }),
-  });
+}): Promise<DeliveryMutationResult> {
+  return postDeliveryAction("annul_delivery", payload);
 }
 
 export async function postRestoreWork(payload: {

@@ -264,12 +264,14 @@ describe("InventoryService ME/MP", () => {
   it("varios ingresos con mismo Ingreso Nº", () => {
     svc.upsertMeIngreso(deposito, {
       ingresoNro: "R-1",
+      codigo: "TAP-R1",
       descripcionInsumo: "Tapas",
       bultos: 1,
       cantidad: 10,
     });
     svc.upsertMeIngreso(deposito, {
       ingresoNro: "R-1",
+      codigo: "ETI-R1",
       descripcionInsumo: "Etiquetas",
       bultos: 2,
       cantidad: 5,
@@ -310,6 +312,7 @@ describe("InventoryService ME/MP", () => {
 
   it("aviso al cruzar mínimo sin duplicar; notifica 8 sectores; dismiss no borra aviso", () => {
     const ing = svc.upsertMeIngreso(deposito, {
+      codigo: "CAJ-ALERT",
       descripcionInsumo: "Cajas",
       bultos: 1,
       cantidad: 1000,
@@ -348,6 +351,7 @@ describe("InventoryService ME/MP", () => {
 
   it("ajuste inventario ME solo DEPOSITO/PRODUCCION", () => {
     const ing = svc.upsertMeIngreso(deposito, {
+      codigo: "AJ-01",
       descripcionInsumo: "X",
       bultos: 1,
       cantidad: 10,

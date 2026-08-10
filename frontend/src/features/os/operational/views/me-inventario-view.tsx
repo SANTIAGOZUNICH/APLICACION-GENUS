@@ -94,6 +94,7 @@ export function MeInventarioView() {
   const columns: OperationalTableColumn<MeInventarioViewRow>[] = ME_INVENTARIO_COLUMNS.map(
     (label) => {
       const map: Record<string, keyof MeInventarioViewRow> = {
+        CÓDIGO: "codigo",
         CLIENTE: "cliente",
         INSUMO: "insumo",
         BULTOS: "bultosDisplay",
@@ -117,8 +118,9 @@ export function MeInventarioView() {
         </div>
       )}
       <p className="mb-3 text-xs text-[var(--os-text-muted)]">
-        Stock actual = Ingresos ME − cantidad utilizada en OA entregadas. Las salidas manuales no
-        descuentan. El código se usa internamente para conciliar (búsqueda incluida).
+        Stock actual = Ingresos ME − cantidad utilizada en OA entregadas, agrupado únicamente por
+        CÓDIGO. Las salidas manuales no descuentan. Productos con el mismo nombre y distinto código
+        son independientes.
       </p>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <input

@@ -198,7 +198,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     });
   }, [progressMap]);
 
-  const handleApprove = useCallback(() => {
+  const handleApprove = useCallback(async () => {
     if (!reviewItem) return;
     if (!canDecideQuality(sectorId)) {
       setActionError(QUALITY_DECISION_DENIED_MESSAGE);
@@ -206,7 +206,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
       setConfirmApprove(false);
       return;
     }
-    const result = approveQualityItem(reviewItem.id, {
+    const result = await approveQualityItem(reviewItem.id, {
       actorSectorId: sectorId,
       decidedBy: workspace.context.displayName,
       observation: calidadObservation,
@@ -232,7 +232,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     showToast,
   ]);
 
-  const handleReject = useCallback(() => {
+  const handleReject = useCallback(async () => {
     if (!reviewItem) return;
     if (!canDecideQuality(sectorId)) {
       setActionError(QUALITY_DECISION_DENIED_MESSAGE);
@@ -243,7 +243,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
       setShowRejectField(true);
       return;
     }
-    const result = rejectQualityItem(reviewItem.id, {
+    const result = await rejectQualityItem(reviewItem.id, {
       actorSectorId: sectorId,
       decidedBy: workspace.context.displayName,
       observation: normalizeOptionalReason(rejectReason),
@@ -273,14 +273,14 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     setAnnulError(null);
   }, []);
 
-  const handleAnnul = useCallback(() => {
+  const handleAnnul = useCallback(async () => {
     if (!annulTarget) return;
     if (!canDecideQuality(sectorId)) {
       setAnnulError(QUALITY_DECISION_DENIED_MESSAGE);
       showToast(QUALITY_DECISION_DENIED_MESSAGE, "info");
       return;
     }
-    const result = annulQualityItem(annulTarget.id, {
+    const result = await annulQualityItem(annulTarget.id, {
       reason: annulReason,
       actorSectorId: sectorId,
       actorName: workspace.context.displayName,
@@ -462,7 +462,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                     if (!canDecideQuality(sectorId)) {
                       throw new Error(QUALITY_DECISION_DENIED_MESSAGE);
                     }
-                    const result = annulQualityItem(row.id, {
+                    const result = await annulQualityItem(row.id, {
                       reason,
                       actorSectorId: sectorId,
                       actorName: workspace.context.displayName,

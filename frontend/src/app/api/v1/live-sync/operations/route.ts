@@ -12,6 +12,21 @@ import type { SectorId } from "@/types/operational/sector";
 import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
 import { notifyEnvasadoForApproval } from "@/lib/notifications/approval-envasado-notify";
 import { normalizeOptionalReason } from "@/lib/lifecycle";
+import {
+  annulDeliveryDurable,
+  annulQualityDecisionDurable,
+  archiveDeliveryDurable,
+  cancelWorkDurable,
+  completeWorkDurable,
+  decideQualityDurable,
+  deleteDeliveryRecordDurable,
+  deliverWorkDurable,
+  nativeIdFromItemId,
+  restoreCancelledWorkDurable,
+  restoreDeliveryDurable,
+  saveWorkProgressDurable,
+  toClientDeliveryRecord,
+} from "@/lib/planning/work-item-progress-repository";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -138,6 +153,21 @@ export async function POST(request: Request) {
   try {
     switch (body.action) {
       case "save_progress": {
+        const nativeId = nativeIdFromItemId(body.itemId);
+        if (nativeId) {
+          const row = await saveWorkProgressDurable(nativeId, {
+            finishedQty: body.finishedQty,
+            observation: body.observation,
+            updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
+            sector: body.sector ?? actor.sector,
+            packagingLote: body.packagingLote,
+            packagingVto: body.packagingVto,
+            packagingTotalUnits: body.packagingTotalUnits,
+            packingGroups: body.packingGroups,
+            packingMismatchObservation: body.packingMismatchObservation,
+          });
+          return NextResponse.json({ ok: true, revision: row.version, record: row });
+        }
         const record = serverOperationalState.saveProgress(body.itemId, {
           finishedQty: body.finishedQty,
           observation: body.observation,
@@ -158,6 +188,15 @@ export async function POST(request: Request) {
         });
       }
       case "complete_work": {
+        const nativeId = nativeIdFromItemId(body.item.id);
+        if (nativeId) {
+          const row = await completeWorkDurable(nativeId, {
+            finishedQty: body.finishedQty,
+            observation: body.observation,
+            completedBy: body.completedBy ?? actor.displayName ?? actor.email,
+          });
+          return NextResponse.json({ ok: true, revision: row.version, progress: row });
+        }
         const result = serverOperationalState.completeWork(body.item, {
           finishedQty: body.finishedQty,
           observation: body.observation,
@@ -175,12 +214,20 @@ export async function POST(request: Request) {
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
-        const record = serverOperationalState.decideQuality(body.itemId, body.status, {
-          decidedBy: body.decidedBy ?? actor.displayName ?? actor.email,
-          observation: body.observation,
-          decidedBySector: actor.sector,
-          decidedByEmail: actor.email,
-        });
+        const nativeQualityId = nativeIdFromItemId(body.itemId);
+        const record = nativeQualityId
+          ? await decideQualityDurable(nativeQualityId, body.status, {
+              decidedBy: body.decidedBy ?? actor.displayName ?? actor.email,
+              observation: body.observation,
+              decidedBySector: actor.sector,
+              decidedByEmail: actor.email,
+            })
+          : serverOperationalState.decideQuality(body.itemId, body.status, {
+              decidedBy: body.decidedBy ?? actor.displayName ?? actor.email,
+              observation: body.observation,
+              decidedBySector: actor.sector,
+              decidedByEmail: actor.email,
+            });
         if (body.status === "aprobado" && (actor.sector === "CALIDAD" || actor.sector === "PRODUCCION")) {
           await notifyEnvasadoForApproval(
             actor,
@@ -205,12 +252,20 @@ export async function POST(request: Request) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
         const reason = normalizeOptionalReason(body.reason);
-        const record = serverOperationalState.annulQualityDecision(body.itemId, {
-          reason,
-          decidedBy: body.decidedBy ?? actor.displayName ?? actor.email,
-          decidedBySector: actor.sector,
-          decidedByEmail: actor.email,
-        });
+        const nativeAnnulId = nativeIdFromItemId(body.itemId);
+        const record = nativeAnnulId
+          ? await annulQualityDecisionDurable(nativeAnnulId, {
+              reason,
+              decidedBy: body.decidedBy ?? actor.displayName ?? actor.email,
+              decidedBySector: actor.sector,
+              decidedByEmail: actor.email,
+            })
+          : serverOperationalState.annulQualityDecision(body.itemId, {
+              reason,
+              decidedBy: body.decidedBy ?? actor.displayName ?? actor.email,
+              decidedBySector: actor.sector,
+              decidedByEmail: actor.email,
+            });
         return NextResponse.json({
           ok: true,
           revision: serverOperationalState.getRevision(),
@@ -224,11 +279,17 @@ export async function POST(request: Request) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
         const reason = normalizeOptionalReason(body.reason);
-        const record = serverOperationalState.cancelWork(body.itemId, {
-          cancelledBy: body.cancelledBy ?? actor.displayName ?? actor.email,
-          reason,
-          sector: body.sector ?? actor.sector,
-        });
+        const nativeCancelId = nativeIdFromItemId(body.itemId);
+        const record = nativeCancelId
+          ? await cancelWorkDurable(nativeCancelId, {
+              cancelledBy: body.cancelledBy ?? actor.displayName ?? actor.email,
+              reason,
+            })
+          : serverOperationalState.cancelWork(body.itemId, {
+              cancelledBy: body.cancelledBy ?? actor.displayName ?? actor.email,
+              reason,
+              sector: body.sector ?? actor.sector,
+            });
         return NextResponse.json({
           ok: true,
           revision: serverOperationalState.getRevision(),
@@ -241,11 +302,17 @@ export async function POST(request: Request) {
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
-        const record = serverOperationalState.restoreCancelledWork(body.itemId, {
-          restoredBy: body.restoredBy ?? actor.displayName ?? actor.email,
-          reason: body.reason,
-          sector: body.sector ?? actor.sector,
-        });
+        const nativeRestoreId = nativeIdFromItemId(body.itemId);
+        const record = nativeRestoreId
+          ? await restoreCancelledWorkDurable(nativeRestoreId, {
+              restoredBy: body.restoredBy ?? actor.displayName ?? actor.email,
+              reason: body.reason,
+            })
+          : serverOperationalState.restoreCancelledWork(body.itemId, {
+              restoredBy: body.restoredBy ?? actor.displayName ?? actor.email,
+              reason: body.reason,
+              sector: body.sector ?? actor.sector,
+            });
         return NextResponse.json({
           ok: true,
           revision: serverOperationalState.getRevision(),
@@ -258,7 +325,12 @@ export async function POST(request: Request) {
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
-        const record = serverOperationalState.deliverWork(body);
+        const nativeDeliveryWorkId = nativeIdFromItemId(body.workItemId);
+        const record = nativeDeliveryWorkId
+          ? toClientDeliveryRecord(
+              await deliverWorkDurable({ ...body, workItemId: nativeDeliveryWorkId })
+            )
+          : serverOperationalState.deliverWork(body);
         return NextResponse.json({
           ok: true,
           revision: serverOperationalState.getRevision(),
@@ -271,10 +343,16 @@ export async function POST(request: Request) {
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
-        const record = serverOperationalState.archiveDelivery(
+        const nativeArchived = await archiveDeliveryDurable(
           body.id,
           body.actorName ?? actor.displayName ?? actor.email
         );
+        const record = nativeArchived
+          ? toClientDeliveryRecord(nativeArchived)
+          : serverOperationalState.archiveDelivery(
+              body.id,
+              body.actorName ?? actor.displayName ?? actor.email
+            );
         if (!record) {
           return NextResponse.json(
             { error: "Entrega no encontrada.", code: "NOT_FOUND" },
@@ -293,7 +371,10 @@ export async function POST(request: Request) {
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
-        const record = serverOperationalState.restoreDelivery(body.id);
+        const nativeRestored = await restoreDeliveryDurable(body.id);
+        const record = nativeRestored
+          ? toClientDeliveryRecord(nativeRestored)
+          : serverOperationalState.restoreDelivery(body.id);
         if (!record) {
           return NextResponse.json(
             { error: "Entrega no encontrada.", code: "NOT_FOUND" },
@@ -313,11 +394,18 @@ export async function POST(request: Request) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
         const reason = normalizeOptionalReason(body.reason);
-        const record = serverOperationalState.annulDelivery(
+        const nativeAnnulled = await annulDeliveryDurable(
           body.id,
           reason,
           body.actorName ?? actor.displayName ?? actor.email
         );
+        const record = nativeAnnulled
+          ? toClientDeliveryRecord(nativeAnnulled)
+          : serverOperationalState.annulDelivery(
+              body.id,
+              reason,
+              body.actorName ?? actor.displayName ?? actor.email
+            );
         if (!record) {
           return NextResponse.json(
             {
@@ -341,10 +429,16 @@ export async function POST(request: Request) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
         const reason = normalizeOptionalReason(body.reason);
-        const record = serverOperationalState.deleteDeliveryRecord(body.id, {
+        const nativeDeleted = await deleteDeliveryRecordDurable(body.id, {
           reason,
           actorName: body.actorName ?? actor.displayName ?? actor.email,
         });
+        const record = nativeDeleted
+          ? toClientDeliveryRecord(nativeDeleted)
+          : serverOperationalState.deleteDeliveryRecord(body.id, {
+              reason,
+              actorName: body.actorName ?? actor.displayName ?? actor.email,
+            });
         if (!record) {
           return NextResponse.json(
             {

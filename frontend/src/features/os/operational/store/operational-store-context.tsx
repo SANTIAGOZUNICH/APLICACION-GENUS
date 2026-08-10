@@ -72,16 +72,25 @@ interface OperationalStoreValue {
   revision: number;
   getQualityStatus: (itemId: string, seedStatus: QualityDecisionStatus) => QualityDecisionStatus;
   getQualityObservation: (itemId: string) => string;
-  approveQualityItem: (itemId: string, options: QualityDecisionOptions) => QualityDecisionAttempt;
-  rejectQualityItem: (itemId: string, options: QualityDecisionOptions) => QualityDecisionAttempt;
-  annulQualityItem: (itemId: string, options: QualityAnnulOptions) => QualityDecisionAttempt;
+  /** Resuelve cuando el servidor confirmó la decisión; ok:false si falló (dato local no se pierde). */
+  approveQualityItem: (
+    itemId: string,
+    options: QualityDecisionOptions
+  ) => Promise<QualityDecisionAttempt>;
+  rejectQualityItem: (
+    itemId: string,
+    options: QualityDecisionOptions
+  ) => Promise<QualityDecisionAttempt>;
+  annulQualityItem: (itemId: string, options: QualityAnnulOptions) => Promise<QualityDecisionAttempt>;
   getWorkStatus: (itemId: string, seedStatus: WorkItemStatus) => WorkItemStatus;
   getFinishedQty: (itemId: string) => string;
   getObservation: (itemId: string) => string;
+  /** Resuelve cuando el servidor confirmó persistencia; rechaza si falló (dato local no se pierde). */
   saveWorkProgress: (
     itemId: string,
     payload: { finishedQty: string; observation: string; updatedBy?: string; sector?: SectorId }
-  ) => void;
+  ) => Promise<void>;
+  /** Resuelve cuando el servidor confirmó persistencia; rechaza si falló (dato local no se pierde). */
   saveWorkPackaging: (
     itemId: string,
     payload: {
@@ -96,11 +105,12 @@ interface OperationalStoreValue {
       packingMismatchObservation?: string | null;
       codificadoObservation?: string | null;
     }
-  ) => void;
+  ) => Promise<void>;
+  /** Resuelve cuando el servidor confirmó persistencia; rechaza si falló (dato local no se pierde). */
   markWorkFinished: (
     item: WorkItem,
     payload: { finishedQty: string; observation: string; updatedBy?: string }
-  ) => void;
+  ) => Promise<void>;
   sendToCodificado: (
     item: WorkItem,
     payload: {
@@ -177,11 +187,11 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
   );
 
   const applyQualityDecision = useCallback(
-    (
+    async (
       itemId: string,
       status: QualityDecisionStatus,
       options: QualityDecisionOptions
-    ): QualityDecisionAttempt => {
+    ): Promise<QualityDecisionAttempt> => {
       const gate = gateQualityDecision(options.actorSectorId);
       if (!gate.ok) {
         return gate;
@@ -197,20 +207,31 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       syncFromStorage();
       if (status === "aprobado" || status === "rechazado") {
         const item = options.itemSnapshot;
-        void postQualityDecision({
-          itemId,
-          status,
-          decidedBy: options.decidedBy,
-          observation: options.observation,
-          actorSectorId: options.actorSectorId,
-          product: item?.product,
-          client: item?.client,
-          plannedDate: item?.deliveryDate ?? null,
-          plannedDateTo: null,
-          lote: item?.lote,
-          quantity: item?.quantity,
-          relatedWorkItemId: item?.relatedWorkItemId,
-        }).catch(() => {});
+        try {
+          await postQualityDecision({
+            itemId,
+            status,
+            decidedBy: options.decidedBy,
+            observation: options.observation,
+            actorSectorId: options.actorSectorId,
+            product: item?.product,
+            client: item?.client,
+            plannedDate: item?.deliveryDate ?? null,
+            plannedDateTo: null,
+            lote: item?.lote,
+            quantity: item?.quantity,
+            relatedWorkItemId: item?.relatedWorkItemId,
+          });
+        } catch (err) {
+          return {
+            ok: false,
+            error:
+              err instanceof Error
+                ? err.message
+                : "No se pudo registrar la decisión en el servidor.",
+            code: "SERVER_ERROR",
+          };
+        }
       }
       return { ok: true };
     },
@@ -230,7 +251,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
   );
 
   const annulQualityItem = useCallback(
-    (itemId: string, options: QualityAnnulOptions): QualityDecisionAttempt => {
+    async (itemId: string, options: QualityAnnulOptions): Promise<QualityDecisionAttempt> => {
       const gate = gateQualityDecision(options.actorSectorId);
       if (!gate.ok) {
         return gate;
@@ -246,12 +267,21 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         changeReason: reason,
       });
       syncFromStorage();
-      void postQualityAnnul({
-        itemId,
-        reason,
-        decidedBy: options.actorName,
-        actorSectorId: options.actorSectorId,
-      }).catch(() => {});
+      try {
+        await postQualityAnnul({
+          itemId,
+          reason,
+          decidedBy: options.actorName,
+          actorSectorId: options.actorSectorId,
+        });
+      } catch (err) {
+        return {
+          ok: false,
+          error:
+            err instanceof Error ? err.message : "No se pudo anular la decisión en el servidor.",
+          code: "SERVER_ERROR",
+        };
+      }
       return { ok: true };
     },
     [syncFromStorage]
@@ -277,19 +307,19 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     (
       itemId: string,
       payload: { finishedQty: string; observation: string; updatedBy?: string; sector?: SectorId }
-    ) => {
+    ): Promise<void> => {
       recordWorkProgress(itemId, {
         ...payload,
         status: "en_curso",
       });
       syncFromStorage();
-      void postSaveProgress({
+      return postSaveProgress({
         itemId,
         sector: payload.sector,
         finishedQty: payload.finishedQty,
         observation: payload.observation,
         updatedBy: payload.updatedBy,
-      }).catch(() => {});
+      });
     },
     [syncFromStorage]
   );
@@ -309,10 +339,10 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         packingMismatchObservation?: string | null;
         codificadoObservation?: string | null;
       }
-    ) => {
+    ): Promise<void> => {
       const record = recordWorkPackaging(itemId, payload);
       syncFromStorage();
-      void postSaveProgress({
+      return postSaveProgress({
         itemId,
         sector: payload.sector,
         finishedQty: record.finishedQty,
@@ -325,7 +355,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         packagingUnidadesPorCaja: record.packagingUnidadesPorCaja,
         packingGroups: record.packingGroups,
         packingMismatchObservation: record.packingMismatchObservation,
-      }).catch(() => {});
+      });
     },
     [syncFromStorage]
   );
@@ -334,7 +364,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     (
       item: WorkItem,
       payload: { finishedQty: string; observation: string; updatedBy?: string }
-    ) => {
+    ): Promise<void> => {
       const prior = readProgressMap()[item.id];
       const enriched: WorkItem = {
         ...item,
@@ -368,12 +398,12 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         packingMismatchObservation: enriched.packingMismatchObservation,
       });
       syncFromStorage();
-      void postCompleteWork({
+      return postCompleteWork({
         item: enriched,
         finishedQty: payload.finishedQty,
         observation: payload.observation,
         completedBy: payload.updatedBy,
-      }).catch(() => {});
+      });
     },
     [syncFromStorage]
   );
@@ -419,6 +449,14 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         packingMismatchObservation?: string | null;
       }
     ) => {
+      // Nota: completedAt/operationalStatus/finishedQty ya quedan persistidos
+      // de forma atómica por deliverFromCodificadoDurable (misma transacción
+      // que packagingLote/Vto/etc — ver codificado-handoff-service.ts). Antes
+      // había acá un POST secundario fire-and-forget (postCompleteWork) que
+      // era la única forma en que el work item quedaba visible para la cola
+      // de Calidad; si fallaba en silencio, la entrega quedaba "hecha" pero
+      // invisible para Calidad. Se eliminó — la transacción del handoff ya
+      // cubre esto, esto queda solo como espejo local optimista (UI).
       const result = recordDeliverFromCodificado(item, {
         completedBy: payload.updatedBy ?? "Codificado",
         observation: payload.observation,
@@ -431,25 +469,6 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         packingMismatchObservation: payload.packingMismatchObservation,
       });
       syncFromStorage();
-      if (!result.already) {
-        void postCompleteWork({
-          item: {
-            ...item,
-            sector: (result.progress.codificadoOriginSector ||
-              item.sector) as WorkItem["sector"],
-            packagingLote: result.progress.packagingLote,
-            packagingVto: result.progress.packagingVto,
-            packagingTotalUnits: result.progress.packagingTotalUnits,
-            packagingCajas: result.progress.packagingCajas,
-            packagingUnidadesPorCaja: result.progress.packagingUnidadesPorCaja,
-            packingGroups: result.progress.packingGroups,
-            packingMismatchObservation: result.progress.packingMismatchObservation,
-          },
-          finishedQty: result.progress.finishedQty,
-          observation: result.progress.observation,
-          completedBy: payload.updatedBy,
-        }).catch(() => {});
-      }
       return result;
     },
     [syncFromStorage]

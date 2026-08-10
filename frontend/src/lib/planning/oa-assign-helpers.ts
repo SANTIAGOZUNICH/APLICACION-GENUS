@@ -5,7 +5,7 @@
 
 export const OA_NUMBER_PATTERN = /^OA-\d{4}-\d{1,8}$/;
 
-/** trim + uppercase; elimina espacios internos. */
+/** trim + uppercase; colapsa espacios internos. */
 export function normalizeOaOrderNumber(raw: string | null | undefined): string {
   if (raw == null) return "";
   return String(raw).trim().replace(/\s+/g, "").toUpperCase();
@@ -15,6 +15,7 @@ export function isValidOaOrderNumber(normalized: string): boolean {
   return OA_NUMBER_PATTERN.test(normalized);
 }
 
+/** Extrae año y secuencia numérica de OA-YYYY-######. */
 export function parseOaOrderNumber(
   normalized: string
 ): { year: number; seq: number } | null {

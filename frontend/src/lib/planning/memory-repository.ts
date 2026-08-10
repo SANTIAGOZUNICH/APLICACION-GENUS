@@ -134,6 +134,26 @@ export class MemoryPlanningRepository implements PlanningRepository {
     return list.slice(0, limit);
   }
 
+  async listCompletedItems(filters: { limit?: number | null }): Promise<PlanningWorkItemRecord[]> {
+    const publishedWeekIds = new Set(
+      [...this.weeks.values()].filter((w) => w.status === "PUBLISHED").map((w) => w.id)
+    );
+    const limit =
+      typeof filters.limit === "number" && filters.limit > 0
+        ? Math.min(Math.floor(filters.limit), 1000)
+        : 500;
+    return [...this.items.values()]
+      .filter(
+        (i) =>
+          i.status === "PUBLICADO" &&
+          publishedWeekIds.has(i.planningWeekId) &&
+          Boolean(i.completedAt)
+      )
+      .sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? ""))
+      .map((i) => ({ ...i }))
+      .slice(0, limit);
+  }
+
   async createItem(
     week: PlanningWeekRecord,
     input: CreateWorkItemInput & { line: string | null; branchOwner: string | null },

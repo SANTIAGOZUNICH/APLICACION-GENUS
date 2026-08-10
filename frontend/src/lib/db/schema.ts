@@ -169,6 +169,34 @@ export const workItems = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /**
+     * Avance operativo durable (0023) — reemplaza el overlay en memoria de
+     * server-operational-state.ts. Vocabulario propio (WORK_ITEM_STATUSES en
+     * types/operational/work-item.ts), independiente del status de asignación
+     * de arriba: éste versiona el ciclo de vida del work item como plan; el de
+     * abajo versiona el avance real reportado por el sector ejecutor.
+     */
+    operationalStatus: text("operational_status").notNull().default("pendiente"),
+    /** Cantidad realizada declarada por el sector (texto — mismo formato que plannedQuantity). */
+    finishedQty: text("finished_qty"),
+    /** Observación de avance libre (distinta de notes = nota de asignación original). */
+    operationalObservation: text("operational_observation"),
+    /** Observación obligatoria cuando cantidad producida != total embalado (packingGroups). */
+    packingMismatchObservation: text("packing_mismatch_observation"),
+    progressUpdatedAt: timestamp("progress_updated_at", { withTimezone: true }),
+    progressUpdatedBy: text("progress_updated_by"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    completedBy: text("completed_by"),
+    operationalCancelledAt: timestamp("operational_cancelled_at", { withTimezone: true }),
+    operationalCancelledBy: text("operational_cancelled_by"),
+    operationalCancelReason: text("operational_cancel_reason"),
+    /** Decisión de Calidad sobre este work item (pendiente/aprobado/rechazado). */
+    qualityStatus: text("quality_status").notNull().default("pendiente"),
+    qualityDecidedAt: timestamp("quality_decided_at", { withTimezone: true }),
+    qualityDecidedBy: text("quality_decided_by"),
+    qualityDecidedBySector: text("quality_decided_by_sector"),
+    qualityObservation: text("quality_observation"),
+    qualityChangeReason: text("quality_change_reason"),
   },
   (table) => [
     check(
@@ -188,6 +216,62 @@ export const workItems = pgTable(
         OR (${table.sector} = 'CODIFICADO' AND ${table.line} IS NULL AND ${table.branchOwner} IS NULL)
       )`
     ),
+    check(
+      "work_items_operational_status_values",
+      sql`${table.operationalStatus} IN ('pendiente', 'en_curso', 'bloqueado', 'completo', 'revision', 'entregado', 'cancelado')`
+    ),
+    check(
+      "work_items_quality_status_values",
+      sql`${table.qualityStatus} IN ('pendiente', 'aprobado', 'rechazado')`
+    ),
+  ]
+);
+
+export const workItemDeliveryStatusEnum = pgEnum("work_item_delivery_status", [
+  "ENTREGADO",
+  "ANULADO",
+  "REGISTRO_ELIMINADO",
+]);
+
+/** Entregas operativas (0023) — reemplaza delivery-repository.ts (localStorage). */
+export const workItemDeliveries = pgTable(
+  "work_item_deliveries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workItemId: uuid("work_item_id")
+      .notNull()
+      .references(() => workItems.id, { onDelete: "cascade" }),
+    qualityItemId: text("quality_item_id"),
+    product: text("product").notNull(),
+    codigo: text("codigo"),
+    client: text("client"),
+    lote: text("lote"),
+    sourceSector: text("source_sector").notNull(),
+    quantity: text("quantity"),
+    unit: text("unit"),
+    plannedDeliveryDate: date("planned_delivery_date"),
+    actualDeliveredAt: timestamp("actual_delivered_at", { withTimezone: true }).notNull(),
+    remito: text("remito"),
+    receivedBy: text("received_by"),
+    observations: text("observations"),
+    status: workItemDeliveryStatusEnum("status").notNull().default("ENTREGADO"),
+    deliveredBy: text("delivered_by").notNull(),
+    deliveredBySector: text("delivered_by_sector").notNull(),
+    archived: boolean("archived").notNull().default(false),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    archivedBy: text("archived_by"),
+    annulledAt: timestamp("annulled_at", { withTimezone: true }),
+    annulledBy: text("annulled_by"),
+    annulReason: text("annul_reason"),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: text("deleted_by"),
+    deleteReason: text("delete_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("work_item_deliveries_work_item_idx").on(table.workItemId),
+    index("work_item_deliveries_status_idx").on(table.status),
   ]
 );
 

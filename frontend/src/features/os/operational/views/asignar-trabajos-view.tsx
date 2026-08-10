@@ -141,6 +141,7 @@ export function AsignarTrabajosView() {
     return () => window.clearTimeout(t);
   }, [refreshNeonList]);
 
+  // Lookup OA al escribir número (solo sectores de acondicionamiento).
   useEffect(() => {
     if (!native || !isPackagingAssignSector(sector)) {
       const t = window.setTimeout(() => setOaHint(null), 0);
@@ -670,8 +671,8 @@ export function AsignarTrabajosView() {
             />
             {isPackagingAssignSector(sector) ? (
               <p className="text-xs text-[var(--os-text-muted)]">
-                Podés ingresar una OA existente o un número nuevo. Si no existe, se
-                creará automáticamente (1 trabajo = 1 OA).
+                Podés seleccionar una OA existente o ingresar un número nuevo. Si no
+                existe, se creará automáticamente (1 trabajo = 1 OA).
               </p>
             ) : null}
             {oaHint ? (

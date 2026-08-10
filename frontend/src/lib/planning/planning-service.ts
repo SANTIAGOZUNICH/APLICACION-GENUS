@@ -176,6 +176,10 @@ export class PlanningService {
   }) {
     return this.repo.listPublishedItems(filters);
   }
+
+  listCompletedItems(filters: { limit?: number | null }) {
+    return this.repo.listCompletedItems(filters);
+  }
 }
 
 export function createPlanningService(repo: PlanningRepository) {

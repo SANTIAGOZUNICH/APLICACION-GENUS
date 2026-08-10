@@ -63,7 +63,10 @@ export type MeSalidaRow = {
 
 export type MeMaterial = {
   id: string;
-  /** Código funcional único por material (no UUID). */
+  /**
+   * Código funcional único por material (clave de inventario).
+   * Normalizado: trim + colapso de espacios + mayúsculas.
+   */
   codigo: string;
   descripcion: string;
   cliente: string;
@@ -85,7 +88,7 @@ export type MeMaterial = {
   archivedReason?: string | null;
 };
 
-/** Fila visible de Inventario ME (5 columnas). */
+/** Fila visible de Inventario ME (una fila por CÓDIGO). */
 export type MeInventarioViewRow = {
   materialId: string;
   codigo: string;
@@ -98,6 +101,7 @@ export type MeInventarioViewRow = {
 };
 
 export const ME_INVENTARIO_COLUMNS = [
+  "CÓDIGO",
   "CLIENTE",
   "INSUMO",
   "BULTOS",

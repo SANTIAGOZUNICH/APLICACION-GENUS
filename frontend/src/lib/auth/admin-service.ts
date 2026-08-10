@@ -3,6 +3,8 @@ import "server-only";
 import { normalizeEmail } from "@/lib/auth/directory";
 import { hashPassword } from "@/lib/auth/password";
 import type { AuthRepository } from "@/lib/auth/repository";
+import { invalidateNeonReadCache } from "@/lib/db/neon-read-cache";
+import { SESSION_CACHE_PREFIX } from "@/lib/auth/service";
 import {
   countActiveSuperadmins,
   isSuperadminEmail,
@@ -153,6 +155,7 @@ export class AuthAdminService {
 
     if (patch.status && patch.status !== "ACTIVO") {
       const revoked = await this.repo.revokeAllSessionsForUser(userId, nowIso());
+      invalidateNeonReadCache(SESSION_CACHE_PREFIX);
       await this.repo.insertAuditEvent({
         eventType: "ADMIN_SESSIONS_REVOKED",
         emailNormalized: updated.emailNormalized,
@@ -206,6 +209,7 @@ export class AuthAdminService {
       updatedAt: nowIso(),
     });
     const sessionsRevoked = await this.repo.revokeAllSessionsForUser(userId, nowIso());
+    invalidateNeonReadCache(SESSION_CACHE_PREFIX);
 
     await this.repo.insertAuditEvent({
       eventType: "ADMIN_PASSWORD_RESET",
@@ -233,6 +237,7 @@ export class AuthAdminService {
     if (!reason) throw new AuthValidationError("Motivo obligatorio.");
 
     const sessionsRevoked = await this.repo.revokeAllSessionsForUser(userId, nowIso());
+    invalidateNeonReadCache(SESSION_CACHE_PREFIX);
     await this.repo.insertAuditEvent({
       eventType: "ADMIN_SESSIONS_REVOKED",
       emailNormalized: user.emailNormalized,

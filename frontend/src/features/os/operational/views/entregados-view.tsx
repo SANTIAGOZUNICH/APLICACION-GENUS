@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   ConfirmDialog,
@@ -30,18 +30,8 @@ import {
 import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-adapter";
 import { getAllAsignacionLotes } from "../adapters/asignacion-lotes-repository";
 import { listAllManualWorkItems } from "../adapters/manual-work-items-repository";
-import {
-  annulDelivery,
-  archiveDelivery,
-  deleteDeliveryRecord,
-  deliverWork,
-  getDeliveryByWorkItemId,
-  listActiveDeliveries,
-  listArchivedDeliveries,
-  restoreDelivery,
-  type DeliveryRecord,
-} from "../adapters/delivery-repository";
-import { canMutateDeliveries } from "../lib/delivery-rbac";
+import type { DeliveryRecord } from "../adapters/delivery-repository";
+import { canMutateDeliveries, gateDeliveryMutation } from "../lib/delivery-rbac";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { useOperationalStore } from "../store/operational-store-context";
 import { getWorkProgress, recordWorkProgress } from "../store/operational-store";
@@ -162,6 +152,8 @@ export function EntregadosView() {
 
   const [tab, setTab] = useState<EntregadosTab>("entregados");
   const [tick, setTick] = useState(0);
+  const [deliveries, setDeliveries] = useState<DeliveryRecord[]>([]);
+  const [deliveriesLoading, setDeliveriesLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [product, setProduct] = useState("");
   const [client, setClient] = useState("");
@@ -216,23 +208,64 @@ export function EntregadosView() {
     return applyQualityDecisionsToItems(seed, getQualityStatus);
   }, [calidad.data?.qualityItems, getQualityStatus]);
 
+  // Entregados — fuente de verdad: Neon (work_item_deliveries), no localStorage.
+  // Sobrevive refresh, logout/login, otra PC, cold start y nuevo deployment.
+  const fetchDeliveries = useCallback(async (): Promise<DeliveryRecord[]> => {
+    const res = await fetch("/api/v1/deliveries", { credentials: "include", cache: "no-store" });
+    const data = (await res.json().catch(() => null)) as { deliveries?: DeliveryRecord[] } | null;
+    return data?.deliveries ?? [];
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchDeliveries()
+      .then((rows) => {
+        if (!cancelled) setDeliveries(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setDeliveries([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDeliveriesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchDeliveries, tick]);
+
+  const deliveryByWorkItemId = useMemo(() => {
+    const map = new Map<string, DeliveryRecord>();
+    for (const record of deliveries) {
+      if (record.status === "ENTREGADO" && !record.annulledAt) {
+        map.set(record.workItemId, record);
+      }
+    }
+    return map;
+  }, [deliveries]);
+
   const pendingApproved = useMemo(() => {
     if (tick < 0) return [];
     return qualityItems
       .filter((item) => item.status === "aprobado" && item.relatedWorkItemId)
-      .filter((item) => !getDeliveryByWorkItemId(item.relatedWorkItemId!))
+      .filter((item) => !deliveryByWorkItemId.has(item.relatedWorkItemId!))
       .sort((a, b) => (a.deliveryDate ?? "").localeCompare(b.deliveryDate ?? ""));
-  }, [qualityItems, tick]);
+  }, [qualityItems, tick, deliveryByWorkItemId]);
 
-  const activeDeliveries = useMemo(() => {
-    if (tick < 0) return [];
-    return listActiveDeliveries();
-  }, [tick]);
+  const activeDeliveries = useMemo(
+    () =>
+      deliveries
+        .filter((d) => d.status === "ENTREGADO" && !d.archived)
+        .sort((a, b) => b.actualDeliveredAt.localeCompare(a.actualDeliveredAt)),
+    [deliveries]
+  );
 
-  const archivedDeliveries = useMemo(() => {
-    if (tick < 0) return [];
-    return listArchivedDeliveries();
-  }, [tick]);
+  const archivedDeliveries = useMemo(
+    () =>
+      deliveries
+        .filter((d) => d.status === "ENTREGADO" && d.archived)
+        .sort((a, b) => (b.archivedAt ?? "").localeCompare(a.archivedAt ?? "")),
+    [deliveries]
+  );
 
   const filteredDeliveries = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -308,15 +341,21 @@ export function EntregadosView() {
     };
   }, [deliveryTarget, lotsByLote, workItemsById]);
 
-  const confirmDelivery = useCallback(() => {
+  const confirmDelivery = useCallback(async () => {
     if (!deliveryTarget || !deliveryTarget.relatedWorkItemId || !selectedPendingMeta) return;
     if (!form.actualDeliveredAt) {
       setActionError("La fecha y hora real de entrega son obligatorias.");
       return;
     }
-    const result = deliverWork({
-      actorSectorId: sectorId,
-      actorName: workspace.context.displayName,
+    const gate = gateDeliveryMutation(sectorId);
+    if (!gate.ok) {
+      setActionError(gate.error);
+      showToast(gate.error, "info");
+      return;
+    }
+    const now = new Date().toISOString();
+    const result = await postDeliverWork({
+      id: (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `delivery-${Date.now()}`),
       workItemId: deliveryTarget.relatedWorkItemId,
       qualityItemId: deliveryTarget.id,
       product: selectedPendingMeta.product,
@@ -331,6 +370,12 @@ export function EntregadosView() {
       remito: form.remito,
       receivedBy: form.receivedBy,
       observations: form.observations,
+      status: "ENTREGADO",
+      deliveredBy: workspace.context.displayName,
+      deliveredBySector: sectorId,
+      createdAt: now,
+      updatedAt: now,
+      actorSectorId: sectorId,
     });
     if (!result.ok) {
       setActionError(result.error);
@@ -351,51 +396,43 @@ export function EntregadosView() {
       message: `${result.record.product} · ${result.record.client ?? "Sin cliente"} fue marcado como entregado.`,
       sectors: Array.from(new Set(["PRODUCCION", result.record.sourceSector])),
     });
-    void postDeliverWork({ ...result.record, actorSectorId: sectorId }).catch(() => {});
     setDeliveryTarget(null);
     setTick((value) => value + 1);
     showToast("Entrega confirmada.");
   }, [deliveryTarget, form, refreshDecisions, sectorId, selectedPendingMeta, showToast, workspace.context.displayName]);
 
-  const executeArchive = useCallback((record: DeliveryRecord) => {
-    const result = archiveDelivery({ id: record.id, actorSectorId: sectorId, actorName: workspace.context.displayName });
+  const executeArchive = useCallback(async (record: DeliveryRecord) => {
+    const result = await postArchiveDelivery({ id: record.id, actorSectorId: sectorId });
     if (!result.ok) {
       showToast(result.error, "info");
       throw new Error(result.error);
     }
-    void postArchiveDelivery({ id: record.id, actorSectorId: sectorId }).catch(() => {});
     setTick((value) => value + 1);
     showToast("Entrega archivada.");
-  }, [sectorId, showToast, workspace.context.displayName]);
+  }, [sectorId, showToast]);
 
-  const executeRestore = useCallback((record: DeliveryRecord) => {
-    const result = restoreDelivery({ id: record.id, actorSectorId: sectorId, actorName: workspace.context.displayName });
+  const executeRestore = useCallback(async (record: DeliveryRecord) => {
+    const result = await postRestoreDelivery({ id: record.id, actorSectorId: sectorId });
     if (!result.ok) {
       showToast(result.error, "info");
       throw new Error(result.error);
     }
-    void postRestoreDelivery({ id: record.id, actorSectorId: sectorId }).catch(() => {});
     setTick((value) => value + 1);
     showToast("Entrega restaurada.");
-  }, [sectorId, showToast, workspace.context.displayName]);
+  }, [sectorId, showToast]);
 
   const handleDeliveryLifecycle = useCallback(
     async (record: DeliveryRecord, action: LifecycleAction, reason: string) => {
       if (action === "archivar") {
-        executeArchive(record);
+        await executeArchive(record);
         return;
       }
       if (action === "restaurar") {
-        executeRestore(record);
+        await executeRestore(record);
         return;
       }
       if (action === "anular") {
-        const result = annulDelivery({
-          id: record.id,
-          actorSectorId: sectorId,
-          actorName: workspace.context.displayName,
-          reason,
-        });
+        const result = await postAnnulDelivery({ id: record.id, reason, actorSectorId: sectorId });
         if (!result.ok) {
           showToast(result.error, "info");
           throw new Error(result.error);
@@ -408,7 +445,6 @@ export function EntregadosView() {
           updatedBy: workspace.context.displayName,
         });
         refreshDecisions();
-        void postAnnulDelivery({ id: record.id, reason, actorSectorId: sectorId }).catch(() => {});
         setTick((value) => value + 1);
         showToast("Entrega anulada. El trabajo vuelve a pendientes de entrega.");
       }
@@ -418,21 +454,15 @@ export function EntregadosView() {
 
   const executeHardDelete = useCallback(
     async (record: DeliveryRecord, reason: string) => {
-      const result = deleteDeliveryRecord({
-        id: record.id,
-        actorSectorId: sectorId,
-        actorName: workspace.context.displayName,
-        reason,
-      });
+      const result = await postDeleteDeliveryRecord({ id: record.id, reason, actorSectorId: sectorId });
       if (!result.ok) {
         showToast(result.error, "info");
         throw new Error(result.error);
       }
-      void postDeleteDeliveryRecord({ id: record.id, reason, actorSectorId: sectorId }).catch(() => {});
       setTick((value) => value + 1);
       showToast("Entrega eliminada definitivamente. Queda auditoría REGISTRO_ELIMINADO.");
     },
-    [sectorId, showToast, workspace.context.displayName]
+    [sectorId, showToast]
   );
 
   const closeDeleteGuide = useCallback(() => {
@@ -449,50 +479,32 @@ export function EntregadosView() {
     setDeleteGuideStep(record.archived ? "reason" : "explain");
   }, []);
 
-  const executeGuidedDelete = useCallback(() => {
+  const executeGuidedDelete = useCallback(async () => {
     if (!deleteGuideTarget) return;
     const reason = deleteReason;
 
     let target = deleteGuideTarget;
 
     if (!target.archived && target.status === "ENTREGADO") {
-      const archiveResult = archiveDelivery({
-        id: target.id,
-        actorSectorId: sectorId,
-        actorName: workspace.context.displayName,
-      });
+      const archiveResult = await postArchiveDelivery({ id: target.id, actorSectorId: sectorId });
       if (!archiveResult.ok) {
         setActionError(archiveResult.error);
         showToast(archiveResult.error, "info");
         return;
       }
-      void postArchiveDelivery({ id: target.id, actorSectorId: sectorId }).catch(() => {});
       target = archiveResult.record;
     }
 
-    const result = deleteDeliveryRecord({
-      id: target.id,
-      actorSectorId: sectorId,
-      actorName: workspace.context.displayName,
-      reason,
-    });
+    const result = await postDeleteDeliveryRecord({ id: target.id, reason, actorSectorId: sectorId });
     if (!result.ok) {
       setActionError(result.error);
       showToast(result.error, "info");
       return;
     }
-    void postDeleteDeliveryRecord({ id: target.id, reason, actorSectorId: sectorId }).catch(() => {});
     closeDeleteGuide();
     setTick((value) => value + 1);
     showToast("Entrega eliminada definitivamente. Queda auditoría REGISTRO_ELIMINADO.");
-  }, [
-    closeDeleteGuide,
-    deleteGuideTarget,
-    deleteReason,
-    sectorId,
-    showToast,
-    workspace.context.displayName,
-  ]);
+  }, [closeDeleteGuide, deleteGuideTarget, deleteReason, sectorId, showToast]);
 
   const deliveryColumns: OperationalTableColumn<DeliveryRecord>[] = [
     { key: "actual", header: "Entregado", render: (record) => formatDateTime(record.actualDeliveredAt) },
@@ -731,7 +743,7 @@ export function EntregadosView() {
                   deleteLabel="Archivar seleccionados"
                 />
               ))}
-            <OperationalTable columns={deliveryColumns} rows={pagedDeliveries} rowKey={(record) => record.id} emptyMessage="Sin entregas para los filtros seleccionados." selection={sel.active ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle } : undefined} />
+            <OperationalTable columns={deliveryColumns} rows={pagedDeliveries} rowKey={(record) => record.id} emptyMessage={deliveriesLoading ? "Cargando entregas..." : "Sin entregas para los filtros seleccionados."} selection={sel.active ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle } : undefined} />
             <div className="flex items-center justify-between text-sm text-[var(--os-text-muted)]">
               <span>{filteredDeliveries.length} resultado(s)</span>
               <div className="flex items-center gap-2">
@@ -744,7 +756,7 @@ export function EntregadosView() {
         )}
 
         {tab === "archivados" && (
-          <OperationalTable columns={archivedColumns} rows={archivedDeliveries} rowKey={(record) => record.id} emptyMessage="No hay entregas archivadas." />
+          <OperationalTable columns={archivedColumns} rows={archivedDeliveries} rowKey={(record) => record.id} emptyMessage={deliveriesLoading ? "Cargando entregas..." : "No hay entregas archivadas."} />
         )}
 
         {tab === "pendientes" && (
@@ -861,8 +873,9 @@ export function EntregadosView() {
               variant="secondary"
               onClick={() => {
                 if (deleteGuideTarget) {
-                  executeArchive(deleteGuideTarget);
-                  closeDeleteGuide();
+                  void executeArchive(deleteGuideTarget)
+                    .then(closeDeleteGuide)
+                    .catch(() => {});
                 }
               }}
             >
@@ -988,7 +1001,7 @@ export function EntregadosView() {
             const record = byId.get(id);
             if (!record) continue;
             try {
-              executeArchive(record);
+              await executeArchive(record);
               ok += 1;
             } catch {
               failed += 1;

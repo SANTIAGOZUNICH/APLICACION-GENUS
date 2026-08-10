@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import { Providers } from "@/providers";
 import { siteConfig } from "@/config/site";
 import { DEFERRED_INSTALL_BOOTSTRAP_SCRIPT } from "@/features/os/pwa/deferred-install-bootstrap";
+import { getPlanningSource } from "@/lib/planning/planning-source";
 import "./globals.css";
 
 const inter = Inter({
@@ -50,8 +51,17 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Fuente de verdad del modo de planificación resuelta server-side — el
+  // cliente la lee desde el DOM en vez de adivinar por env var de build
+  // (evitaba que Preview quedara en "sheets" si faltaba la var pública).
+  const planningSource = getPlanningSource();
   return (
-    <html lang="es-AR" suppressHydrationWarning className={`${inter.variable} h-full`}>
+    <html
+      lang="es-AR"
+      suppressHydrationWarning
+      className={`${inter.variable} h-full`}
+      data-genus-planning-source={planningSource}
+    >
       <head>
         <script
           // Early BIP capture before React hydration — required for one-click install.

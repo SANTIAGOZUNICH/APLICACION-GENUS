@@ -43,7 +43,8 @@ export type QualityDecisionAttempt =
       code:
         | "QUALITY_DECISION_FORBIDDEN"
         | "QUALITY_DECISION_MISSING_ACTOR"
-        | "REASON_REQUIRED";
+        | "REASON_REQUIRED"
+        | "SERVER_ERROR";
     };
 
 /** Valida el sector actor antes de persistir o enviar una decisión. */

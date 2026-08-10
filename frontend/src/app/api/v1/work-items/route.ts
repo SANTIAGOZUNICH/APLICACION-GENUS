@@ -10,7 +10,10 @@ import {
 } from "@/lib/operational/work-item-filters";
 import { workItemsService } from "@/lib/operational/work-items.service";
 import { getPlanningService } from "@/lib/planning/get-planning-service";
-import { projectNativeWorkItems } from "@/lib/planning/native-projector";
+import {
+  projectNativeWorkItems,
+  projectQualityItems,
+} from "@/lib/planning/native-projector";
 import { getPlanningSource } from "@/lib/planning/planning-source";
 import { CURRENT_SECTOR_OPTIONS, type CurrentSectorId } from "@/types/operational/sector";
 import type { SectorId } from "@/types/operational/sector";
@@ -66,13 +69,24 @@ async function listNativeWorkItems(
   if (date) workItems = filterWorkItemsByDate(workItems, date);
   else if (weekStart) workItems = filterWorkItemsByWeekStart(workItems, weekStart);
 
+  // Calidad: cola nativa completa (pendientes/aprobados/rechazados), no
+  // depende del sector/rango pedido — necesita ver todo lo completado por
+  // cualquier sector productivo, ver AUDIT_TRAZABILIDAD (Calidad en modo
+  // nativo devolvía qualityItems: [] siempre).
+  const qualityItems =
+    sector === "CALIDAD"
+      ? projectQualityItems(await getPlanningService().listCompletedItems({ limit: 500 }))
+      : [];
+
   const emptyMessage = date
     ? "Hoy no hay trabajos publicados."
     : weekStart
       ? "Esta semana no hay trabajos publicados."
       : sector === "PRODUCCION" || sector === "DIRECCION"
         ? "Todavía no hay una planificación publicada."
-        : "Producción todavía no publicó una planificación.";
+        : sector === "CALIDAD"
+          ? "Todavía no hay trabajos para revisar."
+          : "Producción todavía no publicó una planificación.";
 
   return NextResponse.json({
     sector,
@@ -80,9 +94,16 @@ async function listNativeWorkItems(
     source: "native" as const,
     scannedAt: new Date().toISOString(),
     workItems,
-    qualityItems: [],
+    qualityItems,
     counts: countMiTrabajoSections(workItems),
-    message: workItems.length === 0 ? emptyMessage : undefined,
+    message:
+      sector === "CALIDAD"
+        ? qualityItems.length === 0
+          ? emptyMessage
+          : undefined
+        : workItems.length === 0
+          ? emptyMessage
+          : undefined,
     planningSource: "native",
   });
 }

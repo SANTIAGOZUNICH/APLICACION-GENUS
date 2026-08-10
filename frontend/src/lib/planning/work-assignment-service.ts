@@ -10,6 +10,7 @@ import {
   workItems,
 } from "@/lib/db/schema";
 import { weekStartMonday } from "@/lib/operational/operational-calendar";
+import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
 import type { PlanningActor, PlanningSector, PlanningWorkItemRecord } from "@/lib/planning/types";
 import {
   PlanningConflictError,
@@ -46,9 +47,14 @@ export type WorkAssignmentInput = {
   orderId?: string | null;
   packagingLote?: string | null;
   packagingVto?: string | null;
+  /** Código de producto (opcional; se copia a la OA). */
   productCode?: string | null;
+  /** Cliente debe reenviar la misma key en reintentos. */
   idempotencyKey: string;
-  /** Vincular OA existente con mismatch: solo rellena vacíos. */
+  /**
+   * Si true y la OA existe con datos distintos, se vincula igual
+   * rellenando solo campos vacíos (no sobrescribe confirmados).
+   */
   forceLink?: boolean;
 };
 
@@ -104,6 +110,7 @@ function mapItemRow(row: typeof workItems.$inferSelect): PlanningWorkItemRecord 
   };
 }
 
+/** Solo observaciones libres — lote/VTO/entrega/OA van en columnas. */
 function composeNotes(input: WorkAssignmentInput): string | null {
   const text = input.notes?.trim() || "";
   return text || null;
@@ -111,8 +118,9 @@ function composeNotes(input: WorkAssignmentInput): string | null {
 
 /**
  * Asigna un trabajo publicado en Neon de forma atómica e idempotente.
- * Regla: 1 trabajo = 1 OA. Para Masivo/Premium/Codificado, si el número de OA
- * no existe se crea automáticamente con ese mismo número.
+ * Regla: 1 trabajo = 1 OA. Para Envasado Masivo/Premium/Codificado: si hay
+ * número de OA y no existe, la crea automáticamente con ese mismo número
+ * dentro de la misma transacción.
  */
 export async function assignWorkItemDurable(
   input: WorkAssignmentInput,
@@ -180,7 +188,9 @@ export async function assignWorkItemDurable(
             .from(operationalOrders)
             .where(eq(operationalOrders.id, existing.orderId))
             .limit(1);
-          if (linked) orderMeta = { ...linked, created: false, linked: true };
+          if (linked) {
+            orderMeta = { ...linked, created: false, linked: true };
+          }
         } else if (existing.id) {
           const [linked] = await tx
             .select({
@@ -192,7 +202,9 @@ export async function assignWorkItemDurable(
             .from(operationalOrders)
             .where(eq(operationalOrders.linkedWorkItemId, existing.id))
             .limit(1);
-          if (linked) orderMeta = { ...linked, created: false, linked: true };
+          if (linked) {
+            orderMeta = { ...linked, created: false, linked: true };
+          }
         }
         return {
           item: mapItemRow(existing),
@@ -279,7 +291,7 @@ export async function assignWorkItemDurable(
         filledEmptyFields?: string[];
       } | null = null;
 
-      // Masivo / Premium / Codificado: auto-crear o vincular OA (1:1).
+      // Envasado Masivo / Premium / Codificado: auto-crear o vincular OA.
       if (isPackagingOaSector(input.sector) && (orderNumberRaw || orderId)) {
         let numberForEnsure = orderNumberRaw;
         if (orderId && !numberForEnsure) {
@@ -321,7 +333,7 @@ export async function assignWorkItemDurable(
           filledEmptyFields: ensured.filledEmptyFields,
         };
       } else if (orderId || orderNumberRaw) {
-        // Elaboración (OE): lookup obligatorio, sin auto-crear.
+        // Elaboración (OE) u otros: lookup obligatorio, sin auto-crear.
         const lookupNumber = orderNumberRaw
           ? input.sector === "ELABORACION"
             ? orderNumberRaw.trim().toUpperCase().replace(/\s+/g, "")
@@ -396,7 +408,6 @@ export async function assignWorkItemDurable(
         orderRow = { ...found, created: false, linked: true };
       }
 
-      // Un trabajo no puede apuntar a más de una OA: un solo orderId por insert.
       const [inserted] = await tx
         .insert(workItems)
         .values({
@@ -417,10 +428,11 @@ export async function assignWorkItemDurable(
           packagingLote: input.packagingLote?.trim() || null,
           packagingVto: input.packagingVto?.trim() || null,
           packagingTotalUnits: (() => {
-            const n = Number.parseFloat(
-              String(input.plannedQuantity).replace(/\s/g, "").replace(",", ".")
-            );
-            return Number.isFinite(n) ? n : null;
+            const unit = input.unit ?? (input.sector === "ELABORACION" ? "kg" : "un.");
+            const parsed = isIntegerUnit(unit)
+              ? parseArInteger(input.plannedQuantity)
+              : parseArDecimal(input.plannedQuantity);
+            return parsed.ok ? parsed.value : null;
           })(),
           orderId: orderRow?.id ?? null,
           orderNumber: orderRow?.orderNumber ?? orderNumberRaw,
@@ -457,9 +469,13 @@ export async function assignWorkItemDurable(
             linkedWorkItemId: operationalOrders.linkedWorkItemId,
           });
 
+        // 1 trabajo = 1 OA/OE: la actualización condicional de arriba (WHERE
+        // linkedWorkItemId IS NULL) es la que hace cumplir la regla ante una
+        // carrera — si no devolvió fila, otra transacción ya vinculó esta
+        // orden primero.
         if (!updatedOrder) {
           throw new PlanningConflictError(
-            "Esta OA ya tiene un trabajo asignado. Cada trabajo requiere su propia OA.",
+            "Esta orden ya tiene un trabajo asignado.",
             mapItemRow(inserted)
           );
         }

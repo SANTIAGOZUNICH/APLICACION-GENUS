@@ -10,6 +10,7 @@ import type { OriginStage, WorkItem, WorkItemPriority } from "@/types/operationa
 import { gateWorkMutation, type WorkMutationAttempt } from "../lib/work-mutation-rbac";
 import { resolveAssignedWorkLifecycleAction } from "../lib/assigned-work-lifecycle";
 import { normalizeOptionalReason } from "@/lib/lifecycle";
+import { getClientPlanningSource } from "@/lib/planning/planning-source";
 
 const ORIGIN_STAGE_BY_SECTOR: Record<
   "ELABORACION" | "ENVASADO_MASIVO" | "ENVASADO_PREMIUM",
@@ -69,6 +70,10 @@ export interface ManualWorkItemMeta {
 
 function readAll(): WorkItem[] {
   if (typeof window === "undefined") return [];
+  // Neon nativo es la única fuente de verdad de trabajos (estabilización
+  // 2026-08). localStorage deja de leerse acá — dejamos los datos viejos
+  // en el navegador sin tocar (no se borran), simplemente no se consideran.
+  if (getClientPlanningSource() === "native") return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) as WorkItem[]) : [];

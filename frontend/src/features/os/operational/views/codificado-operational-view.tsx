@@ -156,7 +156,10 @@ export function CodificadoOperationalView() {
         return false;
       }
       setPackagingError(null);
-      saveWorkPackaging(selected.id, {
+      // No bloqueamos la UI en el resultado del servidor acá (persistPackaging
+      // es síncrono por diseño para la validación de mismatch), pero un fallo
+      // ya no queda mudo: se avisa apenas se resuelve el POST.
+      void saveWorkPackaging(selected.id, {
         updatedBy: actorName,
         sector: "CODIFICADO",
         packagingLote: draft.packagingLote,
@@ -167,6 +170,13 @@ export function CodificadoOperationalView() {
         packingGroups: draft.packingGroups,
         packingMismatchObservation: draft.packingMismatchObservation,
         codificadoObservation: extraObs ?? obs,
+      }).catch((err) => {
+        showToast(
+          err instanceof Error
+            ? `No se guardó en el servidor: ${err.message} — reintentá.`
+            : "No se guardó en el servidor. Reintentá.",
+          "info"
+        );
       });
       setSelected({
         ...selected,
@@ -181,7 +191,7 @@ export function CodificadoOperationalView() {
       });
       return true;
     },
-    [selected, draft, saveWorkPackaging, actorName, obs]
+    [selected, draft, saveWorkPackaging, actorName, obs, showToast]
   );
 
   const handleSave = useCallback(() => {

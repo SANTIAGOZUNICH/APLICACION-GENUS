@@ -97,6 +97,24 @@ export interface PlanningWorkItemRecord {
   codificadoRevision?: number;
   codificadoCancelledAt?: string | null;
   productionPedidoId?: string | null;
+  /** Avance operativo durable (0023) — reemplaza overlay en memoria. */
+  operationalStatus?: string;
+  finishedQty?: string | null;
+  operationalObservation?: string | null;
+  packingMismatchObservation?: string | null;
+  progressUpdatedAt?: string | null;
+  progressUpdatedBy?: string | null;
+  completedAt?: string | null;
+  completedBy?: string | null;
+  operationalCancelledAt?: string | null;
+  operationalCancelledBy?: string | null;
+  operationalCancelReason?: string | null;
+  qualityStatus?: string;
+  qualityDecidedAt?: string | null;
+  qualityDecidedBy?: string | null;
+  qualityDecidedBySector?: string | null;
+  qualityObservation?: string | null;
+  qualityChangeReason?: string | null;
 }
 
 export interface OperationalEventRecord {

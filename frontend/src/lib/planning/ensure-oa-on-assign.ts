@@ -19,6 +19,7 @@ import {
   normalizeOrderContent,
 } from "@/lib/orders/content";
 import type { OaContent } from "@/lib/orders/types";
+import { parseArInteger } from "@/lib/utils/ar-number-parsing";
 import {
   PlanningConflictError,
   PlanningOaCompatibilityError,
@@ -101,8 +102,7 @@ function existingSnapshot(row: {
   formData: unknown;
 }): OaCompatSnapshot {
   const fd = row.formData as OaContent | null;
-  const header =
-    fd && typeof fd === "object" && fd.kind === "OA" ? fd.header : null;
+  const header = fd && typeof fd === "object" && fd.kind === "OA" ? fd.header : null;
   return {
     product: row.product ?? "",
     client: row.client ?? "",
@@ -131,7 +131,8 @@ async function bumpSequenceIfNeeded(tx: Tx, year: number, seq: number) {
 
 /**
  * Resuelve OA por número exacto: crea BORRADOR si no existe; si existe valida
- * compatibilidad. No vincula al work item todavía (se setea después del insert).
+ * compatibilidad y opcionalmente rellena vacíos (forceLink).
+ * No vincula al work item todavía (linkedWorkItemId se setea después del insert).
  */
 export async function ensureOaForAssignment(
   tx: Tx,
@@ -210,27 +211,17 @@ export async function ensureOaForAssignment(
     const nextCode = fills.code ?? found.code;
 
     let nextForm = found.formData as OaContent;
-    if (
-      nextForm &&
-      typeof nextForm === "object" &&
-      nextForm.kind === "OA" &&
-      nextForm.header
-    ) {
+    if (nextForm && typeof nextForm === "object" && nextForm.kind === "OA" && nextForm.header) {
       nextForm = {
         ...nextForm,
         header: {
           ...nextForm.header,
           productName:
-            nextForm.header.productName ||
-            fills.product ||
-            nextForm.header.productName,
-          client:
-            nextForm.header.client || fills.client || nextForm.header.client,
+            nextForm.header.productName || fills.product || nextForm.header.productName,
+          client: nextForm.header.client || fills.client || nextForm.header.client,
           lot: nextForm.header.lot || fills.lot || nextForm.header.lot,
           productCode:
-            nextForm.header.productCode ||
-            fills.code ||
-            nextForm.header.productCode,
+            nextForm.header.productCode || fills.code || nextForm.header.productCode,
           vto: nextForm.header.vto || fills.vto || nextForm.header.vto,
         },
       };
@@ -286,6 +277,7 @@ export async function ensureOaForAssignment(
     };
   }
 
+  // Crear OA con el número exacto indicado.
   const parsed = parseOaOrderNumber(orderNumber);
   if (!parsed) {
     throw new PlanningValidationError("Número de OA inválido.");
@@ -304,16 +296,19 @@ export async function ensureOaForAssignment(
     })
   ) as OaContent;
 
+  // Observación de trazabilidad en observaciones iniciales de la OA.
   if (input.notes?.trim()) {
     content.observaciones = input.notes.trim();
   }
   if (input.quantity.trim()) {
-    const n = Number.parseFloat(
-      input.quantity.replace(/\s/g, "").replace(",", ".")
-    );
     content.rendimientos = {
       ...content.rendimientos,
-      produccionTeoricaUnidades: Number.isFinite(n) ? n : null,
+      // OA solo aplica a sectores de envasado/codificado — cantidad siempre
+      // en unidades (enteras), nunca kg. "1.500" = mil quinientas unidades.
+      produccionTeoricaUnidades: (() => {
+        const parsed = parseArInteger(input.quantity);
+        return parsed.ok ? parsed.value : null;
+      })(),
     };
   }
 
@@ -369,6 +364,7 @@ export async function ensureOaForAssignment(
       updatedAt: now,
     });
   } catch (err) {
+    // Carrera: otro proceso insertó el mismo número.
     const msg = err instanceof Error ? err.message : String(err);
     if (/unique|duplicate|operational_orders_number/i.test(msg)) {
       throw new PlanningConflictError(
@@ -381,22 +377,24 @@ export async function ensureOaForAssignment(
 
   await bumpSequenceIfNeeded(tx, parsed.year, parsed.seq);
 
+  const orderSnapshot = {
+    id: orderId,
+    orderNumber,
+    type: "OA" as const,
+    status: "BORRADOR",
+    product: incoming.product,
+    client: incoming.client,
+    code: incoming.code,
+    lot: incoming.lot,
+    assignedSector: input.sector,
+    createdAt: ts,
+  };
+
   await tx.insert(orderVersions).values({
     id: randomUUID(),
     orderId,
     version: 1,
-    snapshot: {
-      id: orderId,
-      orderNumber,
-      type: "OA",
-      status: "BORRADOR",
-      product: incoming.product,
-      client: incoming.client,
-      code: incoming.code,
-      lot: incoming.lot,
-      assignedSector: input.sector,
-      createdAt: ts,
-    },
+    snapshot: orderSnapshot,
     event: "create",
     reason: "Creada automáticamente desde Asignar trabajo",
     createdBy: input.actorEmail,

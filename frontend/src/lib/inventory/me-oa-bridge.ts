@@ -173,6 +173,7 @@ export function applyOaDeliveryToMe(
       codigo: line.codigo,
       descripcion: line.material,
       cliente: line.cliente,
+      // Solo pasar materialId si el bridge lo tiene; el servicio lo ignora si el código no coincide.
       materialId: line.materialId,
     });
 

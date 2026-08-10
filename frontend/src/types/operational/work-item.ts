@@ -150,6 +150,21 @@ export interface WorkItem {
   bulkRemainderId?: string | null;
   nativeVersion?: number;
   nativeId?: string;
+  /** Datos de finalización (0023 — durable en Neon). */
+  completedAt?: string | null;
+  completedBy?: string | null;
+  progressUpdatedAt?: string | null;
+  progressUpdatedBy?: string | null;
+  operationalCancelledAt?: string | null;
+  operationalCancelledBy?: string | null;
+  operationalCancelReason?: string | null;
+  /** Decisión de Calidad (0023 — durable en Neon). */
+  qualityStatus?: "pendiente" | "aprobado" | "rechazado";
+  qualityDecidedAt?: string | null;
+  qualityDecidedBy?: string | null;
+  qualityDecidedBySector?: string | null;
+  qualityObservation?: string | null;
+  qualityChangeReason?: string | null;
 }
 
 export interface WorkItemsResponse {

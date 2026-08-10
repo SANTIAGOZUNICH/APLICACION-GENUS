@@ -3,10 +3,27 @@ import {
   resolveWeekId,
   weekStartMonday,
 } from "@/lib/operational/operational-calendar";
+import { normalizePackingGroups } from "@/lib/remitos/packing-math";
 import type { PlanningWorkItemRecord } from "@/lib/planning/types";
 import type { SectorId } from "@/types/operational/sector";
 import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
 
+const VALID_OPERATIONAL_STATUSES: ReadonlySet<string> = new Set([
+  "pendiente",
+  "en_curso",
+  "bloqueado",
+  "completo",
+  "revision",
+  "entregado",
+  "cancelado",
+]);
+
+/**
+ * El flujo Codificado (rutas fijas por columnas work_items) manda sobre el
+ * avance operativo genérico cuando aplica; fuera de esas transiciones, el
+ * status real es el que declaró el sector ejecutor (operational_status,
+ * durable en Neon — 0023), no un valor fijo.
+ */
 function resolveProjectedStatus(item: PlanningWorkItemRecord): WorkItemStatus {
   if (item.deliveredFromCodificadoAt) return "codificado_completo";
   if (
@@ -17,15 +34,19 @@ function resolveProjectedStatus(item: PlanningWorkItemRecord): WorkItemStatus {
   ) {
     return "en_codificado";
   }
-  // Asignación directa a Codificado (sin handoff Envasado).
+  // Asignación directa a Codificado (sin handoff Envasado): respeta avance propio.
   if (item.sector === "CODIFICADO" && !item.viaCodificado) {
-    return "pendiente";
+    return VALID_OPERATIONAL_STATUSES.has(item.operationalStatus ?? "")
+      ? (item.operationalStatus as WorkItemStatus)
+      : "pendiente";
   }
-  // Cancelado: de vuelta en Envasado editable.
+  // Cancelado desde Codificado: de vuelta en Envasado editable.
   if (item.codificadoCancelledAt && item.sector !== "CODIFICADO") {
     return "pendiente";
   }
-  return "pendiente";
+  return VALID_OPERATIONAL_STATUSES.has(item.operationalStatus ?? "")
+    ? (item.operationalStatus as WorkItemStatus)
+    : "pendiente";
 }
 
 function originLabel(sector: string | null | undefined): string | null {
@@ -100,6 +121,14 @@ export function projectNativeWorkItem(item: PlanningWorkItemRecord): WorkItem {
     packagingTotalUnits:
       item.packagingTotalUnits == null ? null : Number(item.packagingTotalUnits),
     packingGroups: (item.packingGroups as WorkItem["packingGroups"]) ?? null,
+    // Legacy: cajas/unidadesPorCaja = grupo[0] de packingGroups (fuente canónica).
+    packagingCajas: normalizePackingGroups(
+      item.packingGroups as Array<{ cajas?: number; unidadesPorCaja?: number }> | null
+    )[0]?.cajas ?? null,
+    packagingUnidadesPorCaja: normalizePackingGroups(
+      item.packingGroups as Array<{ cajas?: number; unidadesPorCaja?: number }> | null
+    )[0]?.unidadesPorCaja ?? null,
+    packingMismatchObservation: item.packingMismatchObservation ?? null,
     actionLabel:
       item.sector === "ELABORACION" ? "Abrir OE" : "Abrir trabajo",
     href: null,
@@ -110,8 +139,24 @@ export function projectNativeWorkItem(item: PlanningWorkItemRecord): WorkItem {
     blockedBy: null,
     unblocks: null,
     finishedQty:
-      item.packagingTotalUnits != null ? String(item.packagingTotalUnits) : null,
-    operationalObservation: item.codificadoObservation ?? item.notes,
+      item.finishedQty ??
+      (item.packagingTotalUnits != null ? String(item.packagingTotalUnits) : null),
+    operationalObservation:
+      item.operationalObservation ?? item.codificadoObservation ?? item.notes,
+    completedAt: item.completedAt ?? null,
+    completedBy: item.completedBy ?? null,
+    progressUpdatedAt: item.progressUpdatedAt ?? null,
+    progressUpdatedBy: item.progressUpdatedBy ?? null,
+    operationalCancelledAt: item.operationalCancelledAt ?? null,
+    operationalCancelledBy: item.operationalCancelledBy ?? null,
+    operationalCancelReason: item.operationalCancelReason ?? null,
+    qualityStatus:
+      (item.qualityStatus as WorkItem["qualityStatus"]) ?? "pendiente",
+    qualityDecidedAt: item.qualityDecidedAt ?? null,
+    qualityDecidedBy: item.qualityDecidedBy ?? null,
+    qualityDecidedBySector: item.qualityDecidedBySector ?? null,
+    qualityObservation: item.qualityObservation ?? null,
+    qualityChangeReason: item.qualityChangeReason ?? null,
     codificadoOriginSector: originSector,
     codificadoOriginLabel: origin,
     sentToCodificadoAt: item.sentToCodificadoAt ?? null,
@@ -133,4 +178,65 @@ export function projectNativeWorkItems(
   items: PlanningWorkItemRecord[]
 ): WorkItem[] {
   return items.map(projectNativeWorkItem);
+}
+
+const QUALITY_STATUSES: ReadonlySet<string> = new Set(["pendiente", "aprobado", "rechazado"]);
+
+/**
+ * Proyecta un work item completado (completedAt IS NOT NULL) a la forma
+ * QualityItem que consume CalidadOperationalView — cola de Calidad nativa
+ * (pendientes/aprobados/rechazados), sourced 100% de Neon (quality_status,
+ * quality_observation, quality_decided_at/by/sector — 0023).
+ */
+export function projectQualityItem(item: PlanningWorkItemRecord): {
+  id: string;
+  kind: "granel" | "salida";
+  lote: string | null;
+  product: string;
+  client: string;
+  oe: string | null;
+  oa: string | null;
+  line: string | null;
+  quantity: string | null;
+  dayLabel: string;
+  deliveryDate: string | null;
+  status: "pendiente" | "aprobado" | "rechazado";
+  relatedWorkItemId: string;
+  receivedFrom: SectorId | null;
+  completedAt: string | null;
+  completedBy: string | null;
+  observation: string | null;
+} {
+  const orderNumber = item.orderNumber?.trim() || null;
+  const packagingLote = item.packagingLote?.trim() || null;
+  const id = `native:${item.id}`;
+  const status = QUALITY_STATUSES.has(item.qualityStatus ?? "")
+    ? (item.qualityStatus as "pendiente" | "aprobado" | "rechazado")
+    : "pendiente";
+
+  return {
+    id,
+    kind: item.sector === "ELABORACION" ? "granel" : "salida",
+    lote: packagingLote,
+    product: item.product,
+    client: item.client,
+    oe: item.sector === "ELABORACION" ? orderNumber : null,
+    oa: item.sector !== "ELABORACION" ? orderNumber : null,
+    line: item.line,
+    quantity: item.finishedQty ?? item.plannedQuantity,
+    dayLabel: dayOfWeekName(item.plannedDate) ?? "—",
+    deliveryDate: item.deliveryDate ?? null,
+    status,
+    relatedWorkItemId: id,
+    receivedFrom: (item.sector as SectorId) ?? null,
+    completedAt: item.completedAt ?? null,
+    completedBy: item.completedBy ?? null,
+    observation: item.qualityObservation ?? item.operationalObservation ?? null,
+  };
+}
+
+export function projectQualityItems(
+  items: PlanningWorkItemRecord[]
+): ReturnType<typeof projectQualityItem>[] {
+  return items.map(projectQualityItem);
 }

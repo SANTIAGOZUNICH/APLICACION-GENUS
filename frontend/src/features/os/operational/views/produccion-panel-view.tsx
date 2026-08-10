@@ -12,7 +12,7 @@ import { isWorkTransferredStatus } from "../lib/work-transfer-labels";
 import { getFormulaForProduct } from "../adapters/formula-repository";
 import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { getTotalStockByCodigo } from "../adapters/materia-prima-repository";
-import { getDeliveryByWorkItemId } from "../adapters/delivery-repository";
+import type { DeliveryRecord } from "../adapters/delivery-repository";
 import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-adapter";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { OperationalTable, StatusChip, type OperationalTableColumn } from "../components/operational-ui";
@@ -83,6 +83,29 @@ export function ProduccionPanelView() {
   const canMutateWorks = canMutateAssignedWork(sectorId);
   const { getQualityStatus, getFinishedQty, refreshDecisions } = useOperationalStore();
   const [panelTick, setPanelTick] = useState(0);
+  const [deliveredWorkItemIds, setDeliveredWorkItemIds] = useState<Set<string>>(new Set());
+
+  // Neon (work_item_deliveries), no localStorage — ver AUDIT_TRAZABILIDAD.
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/v1/deliveries", { credentials: "include", cache: "no-store" })
+      .then((res) => res.json())
+      .then((data: { deliveries?: DeliveryRecord[] }) => {
+        if (cancelled) return;
+        const ids = new Set(
+          (data.deliveries ?? [])
+            .filter((d) => d.status === "ENTREGADO" && !d.annulledAt)
+            .map((d) => d.workItemId)
+        );
+        setDeliveredWorkItemIds(ids);
+      })
+      .catch(() => {
+        if (!cancelled) setDeliveredWorkItemIds(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [panelTick]);
 
   const elaboracion = useOperationalPlan("ELABORACION");
   const masivo = useOperationalPlan("ENVASADO_MASIVO");
@@ -105,7 +128,7 @@ export function ProduccionPanelView() {
   const qualityWithDecisions = applyQualityDecisionsToItems(qualityItems, getQualityStatus);
   const aprobadosItems = qualityWithDecisions.filter((q) => q.status === "aprobado");
   const pendientesEntrega = aprobadosItems.filter(
-    (q) => q.relatedWorkItemId && !getDeliveryByWorkItemId(q.relatedWorkItemId)
+    (q) => q.relatedWorkItemId && !deliveredWorkItemIds.has(q.relatedWorkItemId)
   );
   const aprobados = aprobadosItems.length;
   const rechazados = qualityItems.filter((q) => getQualityStatus(q.id, q.status) === "rechazado").length;

@@ -192,9 +192,10 @@ describe("codificado-flow", () => {
 });
 
 describe("bulk remainder / graneles", () => {
-  it("parsea coma/punto y rechaza negativos; vacío/0 = null", () => {
+  it("parsea coma/punto y rechaza negativos; vacío (no informado) != 0 (confirmado sin sobrante)", () => {
     expect(parseBulkRemainderKg("")).toEqual({ ok: true, kg: null });
-    expect(parseBulkRemainderKg("0")).toEqual({ ok: true, kg: null });
+    // "0" tipeado explícitamente se preserva — no colapsa a null (H, AUDIT_TRAZABILIDAD).
+    expect(parseBulkRemainderKg("0")).toEqual({ ok: true, kg: 0 });
     expect(parseBulkRemainderKg("12,5")).toEqual({ ok: true, kg: 12.5 });
     expect(parseBulkRemainderKg("12.5").ok && (parseBulkRemainderKg("12.5") as { kg: number }).kg).toBe(
       12.5
