@@ -18,7 +18,7 @@ import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { useOperationalStore } from "../store/operational-store-context";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { canDeliverFromCodificado } from "../lib/codificado-flow";
-import { isInCodificadoStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
+import { canEditInCodificado, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
 
@@ -86,16 +86,12 @@ export function CodificadoOperationalView() {
     () =>
       allItems.filter((i) => {
         const p = progressMap[i.id];
-        if (i.deliveredFromCodificadoAt || p?.deliveredFromCodificadoAt) return false;
-        if (isInCodificadoStatus(i.status)) return true;
-        return (
-          i.sector === "CODIFICADO" &&
-          i.status !== "cancelado" &&
-          i.status !== "completo" &&
-          i.status !== "codificado_completo" &&
-          i.status !== "revision" &&
-          i.status !== "entregado"
-        );
+        return canEditInCodificado({
+          status: i.status,
+          sector: i.sector,
+          viaCodificado: i.viaCodificado,
+          deliveredFromCodificadoAt: i.deliveredFromCodificadoAt ?? p?.deliveredFromCodificadoAt,
+        });
       }),
     [allItems, progressMap]
   );
@@ -112,6 +108,17 @@ export function CodificadoOperationalView() {
   );
 
   const list = tab === "pendientes" ? pendientes : entregados;
+
+  const selectedEditable = useMemo(() => {
+    if (!selected) return false;
+    const p = progressMap[selected.id];
+    return canEditInCodificado({
+      status: selected.status,
+      sector: selected.sector,
+      viaCodificado: selected.viaCodificado,
+      deliveredFromCodificadoAt: selected.deliveredFromCodificadoAt ?? p?.deliveredFromCodificadoAt,
+    });
+  }, [selected, progressMap]);
 
   const enrichSelected = useCallback(
     (item: WorkItem): WorkItem => {
@@ -319,7 +326,13 @@ export function CodificadoOperationalView() {
       <OperationalTabs
         tabs={[
           { id: "pendientes", label: "Pendientes", count: pendientes.length },
-          { id: "entregados", label: "Entregados", count: entregados.length },
+          // "Entregado a Calidad" (no "Entregados" a secas): esto es Codificado
+          // cerrando su parte y notificando a Calidad/Producción — nada llegó
+          // todavía al cliente final. Con la etiqueta genérica "Entregados",
+          // que coincide con el nombre de la pantalla real de entregas, un
+          // trabajo recién finalizado por Codificado parecía "ya entregado"
+          // sin que Producción hubiera ejecutado la entrega real (BUG 3).
+          { id: "entregados", label: WORK_TRANSFER.deliveredToQuality, count: entregados.length },
         ]}
         activeId={tab}
         onChange={(id) => setTab(id as TabId)}
@@ -434,7 +447,7 @@ export function CodificadoOperationalView() {
                   item={selected}
                   actorName={actorName}
                   sector="CODIFICADO"
-                  readOnly={!isInCodificadoStatus(selected.status)}
+                  readOnly={!selectedEditable}
                   hideSaveButton
                   onDraftChange={setDraft}
                 />
@@ -445,7 +458,7 @@ export function CodificadoOperationalView() {
                     className="mt-1 w-full rounded border px-3 py-2"
                     rows={2}
                     value={obs}
-                    disabled={!isInCodificadoStatus(selected.status)}
+                    disabled={!selectedEditable}
                     onChange={(e) => setObs(e.target.value)}
                     data-testid="codificado-obs"
                   />
@@ -456,7 +469,7 @@ export function CodificadoOperationalView() {
                   </p>
                 ) : null}
               </div>
-              {isInCodificadoStatus(selected.status) ? (
+              {selectedEditable ? (
                 <DialogFooter className="flex flex-wrap gap-2">
                   <Button variant="secondary" onClick={handleSave} data-testid="codificado-save">
                     Guardar avance

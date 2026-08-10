@@ -6,11 +6,21 @@ import {
   workItemOverlapsWeek,
 } from "@/lib/operational/work-item-date-range";
 
-/** Sectores que alimentan la vista agregada de Producción (cross-sector). */
+/**
+ * Sectores que alimentan la vista agregada de Producción (cross-sector).
+ * CODIFICADO faltaba acá: cualquier trabajo asignado directo a Codificado
+ * (Producción → Codificado) o enviado desde Envasado quedaba con
+ * `sector = "CODIFICADO"` en Neon de forma permanente (no vuelve a
+ * Envasado ni pasa a otro valor al completarse), así que sin esta entrada
+ * el work item entero desaparecía de todo lo que Producción arma a partir
+ * de esta vista — el detalle de Codificado, el conteo de "esperando
+ * Calidad", etc. — aunque estuviera correctamente persistido en Postgres.
+ */
 export const PRODUCTION_AGGREGATE_SECTOR_IDS = [
   "ENVASADO_MASIVO",
   "ENVASADO_PREMIUM",
   "ELABORACION",
+  "CODIFICADO",
   "CALIDAD",
 ] as const satisfies readonly SectorId[];
 

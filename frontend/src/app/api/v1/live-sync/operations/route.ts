@@ -166,18 +166,22 @@ export async function POST(request: Request) {
       case "save_progress": {
         const nativeId = nativeIdFromItemId(body.itemId);
         if (nativeId) {
-          const row = await saveWorkProgressDurable(nativeId, {
-            finishedQty: body.finishedQty,
-            observation: body.observation,
-            updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
-            sector: body.sector ?? actor.sector,
-            packagingLote: body.packagingLote,
-            packagingVto: body.packagingVto,
-            packagingTotalUnits: body.packagingTotalUnits,
-            packingGroups: body.packingGroups,
-            packingMismatchObservation: body.packingMismatchObservation,
-            sampleUnits: body.sampleUnits,
-          });
+          const row = await saveWorkProgressDurable(
+            nativeId,
+            {
+              finishedQty: body.finishedQty,
+              observation: body.observation,
+              updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
+              sector: body.sector ?? actor.sector,
+              packagingLote: body.packagingLote,
+              packagingVto: body.packagingVto,
+              packagingTotalUnits: body.packagingTotalUnits,
+              packingGroups: body.packingGroups,
+              packingMismatchObservation: body.packingMismatchObservation,
+              sampleUnits: body.sampleUnits,
+            },
+            actor.sector
+          );
           return NextResponse.json({ ok: true, revision: row.version, record: row });
         }
         const record = serverOperationalState.saveProgress(body.itemId, {
@@ -202,11 +206,15 @@ export async function POST(request: Request) {
       case "complete_work": {
         const nativeId = nativeIdFromItemId(body.item.id);
         if (nativeId) {
-          const row = await completeWorkDurable(nativeId, {
-            finishedQty: body.finishedQty,
-            observation: body.observation,
-            completedBy: body.completedBy ?? actor.displayName ?? actor.email,
-          });
+          const row = await completeWorkDurable(
+            nativeId,
+            {
+              finishedQty: body.finishedQty,
+              observation: body.observation,
+              completedBy: body.completedBy ?? actor.displayName ?? actor.email,
+            },
+            actor.sector
+          );
           return NextResponse.json({ ok: true, revision: row.version, progress: row });
         }
         const result = serverOperationalState.completeWork(body.item, {
