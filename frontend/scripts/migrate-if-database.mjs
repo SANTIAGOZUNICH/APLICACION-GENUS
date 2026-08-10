@@ -110,11 +110,20 @@ function prepareMigrationsFolder() {
 
   const journalPath = path.join(migrationsFolder, "meta", "_journal.json");
   const journal = JSON.parse(fs.readFileSync(journalPath, "utf8"));
+  // Reindexar en secuencia: si se difieren 0005–0018 y quedan 0019/0020
+  // ungated, los idx originales (18, 19) dejan huecos y Drizzle/Neon Preview
+  // fallan el migrate (build ~10s). Siempre compactar idx al filtrar.
+  const filteredEntries = (journal.entries ?? [])
+    .filter((e) => !shouldDeferTag(e.tag))
+    .map((e, idx) => ({ ...e, idx }));
   const filtered = {
     ...journal,
-    entries: (journal.entries ?? []).filter((e) => !shouldDeferTag(e.tag)),
+    entries: filteredEntries,
   };
-  if (filtered.entries.length === (journal.entries ?? []).length) {
+  if (
+    filteredEntries.length === (journal.entries ?? []).length &&
+    filteredEntries.every((e, i) => e.idx === i)
+  ) {
     return migrationsFolder;
   }
 
@@ -197,14 +206,21 @@ try {
   const db = drizzle(sql);
   await migrate(db, { migrationsFolder: folder });
   console.log(
-    "[db:migrate] OK — migraciones aplicadas (0005–0017 condicionadas)."
+    "[db:migrate] OK — migraciones aplicadas (0005–0018 condicionadas)."
   );
 } catch (err) {
-  // Preview puede quedar sin cuota Neon temporalmente; no bloquear el build
-  // de UI. Las migraciones gated (p.ej. 0014) nunca se aplican sin flag.
+  // Preview/cuota: no bloquear el build de UI. 0019/0020 ungated u otros
+  // errores de schema en branch Neon no deben tumbar el deploy.
   if (isTransientNeonQuotaError(err)) {
     console.warn(
       "[db:migrate] Neon cuota/402 — skip migrate; build continúa sin tocar schema."
+    );
+    process.exit(0);
+  }
+  if (process.env.VERCEL_ENV === "preview") {
+    console.warn(
+      "[db:migrate] Preview — migrate falló; build continúa sin tocar schema:",
+      err?.cause?.message ?? err?.message ?? err
     );
     process.exit(0);
   }

@@ -1,5 +1,6 @@
 /**
  * Normalización y compatibilidad de números OA para asignación de trabajos.
+ * Regla: 1 trabajo asignado = 1 OA.
  */
 
 export const OA_NUMBER_PATTERN = /^OA-\d{4}-\d{1,8}$/;

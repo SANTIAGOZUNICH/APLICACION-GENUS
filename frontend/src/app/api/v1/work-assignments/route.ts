@@ -11,9 +11,7 @@ import {
 } from "@/lib/planning/http";
 import type { PlanningSector } from "@/lib/planning/types";
 import { PlanningValidationError } from "@/lib/planning/types";
-import {
-  logSanitizedError,
-} from "@/lib/planning/sanitize-public-error";
+import { logSanitizedError } from "@/lib/planning/sanitize-public-error";
 import {
   assignWorkItemDurable,
   type WorkAssignmentInput,
@@ -144,7 +142,7 @@ export async function GET(request: Request) {
         order: row,
         alreadyLinked: Boolean(row.linkedWorkItemId?.trim()),
         message: row.linkedWorkItemId?.trim()
-          ? "OA existente: ya tiene un trabajo vinculado."
+          ? "OA existente: ya tiene un trabajo vinculado (1 trabajo = 1 OA)."
           : "OA existente: se vinculará al trabajo.",
       });
     }
