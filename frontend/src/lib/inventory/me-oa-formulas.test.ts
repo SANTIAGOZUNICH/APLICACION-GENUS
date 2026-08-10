@@ -92,6 +92,7 @@ describe("Inventario ME automático (OA)", () => {
   it("sidebar incluye Inventario ME y columnas exactas", () => {
     expect(resolveSectorHome("DEPOSITO").sidebarItems).toContain("inventario_me");
     expect([...ME_INVENTARIO_COLUMNS]).toEqual([
+      "CÓDIGO",
       "CLIENTE",
       "INSUMO",
       "BULTOS",

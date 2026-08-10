@@ -17,6 +17,11 @@ import {
   parseOptionalNumber,
 } from "./calcs";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
+import { ME_CODIGO_REQUIRED_MSG, normalizeMeCodigo } from "./me-codigo";
+import {
+  rebuildMeInventarioByCodigo,
+  type MeInventarioRebuildReport,
+} from "./me-inventario-rebuild";
 import type { MemoryInventoryRepo, StockAjuste } from "./memory-repo";
 import {
   ME_ALERT_NOTIFY_SECTORS,
@@ -212,9 +217,14 @@ export class InventoryService {
     const cantidad = parseOptionalNumber(input.cantidad);
     const total = multiplyTotal(bultos, cantidad);
     const now = nowIso();
+    const codigo = normalizeMeCodigo(input.codigo ?? existing?.codigo ?? "");
+    if (!codigo) {
+      throw new InventoryValidationError(ME_CODIGO_REQUIRED_MSG);
+    }
+    // Identidad solo por código (materialId es hint si coincide; no agrupa por nombre).
     const material = this.resolveOrCreateMeMaterial(actor, {
       materialId: input.materialId ?? existing?.materialId ?? null,
-      codigo: input.codigo ?? existing?.codigo ?? "",
+      codigo,
       descripcion: input.descripcionInsumo ?? existing?.descripcionInsumo ?? "",
       ubicacion: input.ubicacion ?? existing?.ubicacion ?? "",
       cliente: input.cliente ?? existing?.cliente ?? "",
@@ -227,7 +237,7 @@ export class InventoryService {
       proveedor: input.proveedor ?? existing?.proveedor ?? "",
       cliente: input.cliente ?? existing?.cliente ?? "",
       remitoNro: input.remitoNro ?? existing?.remitoNro ?? "",
-      codigo: input.codigo ?? existing?.codigo ?? material.codigo,
+      codigo,
       descripcionInsumo: input.descripcionInsumo ?? existing?.descripcionInsumo ?? material.descripcion,
       bultos,
       cantidad,
@@ -350,9 +360,18 @@ export class InventoryService {
     const origen = input.origen ?? existing?.origen ?? "MANUAL";
 
     let materialId = input.materialId ?? existing?.materialId ?? null;
-    const codigo = (input.codigo ?? existing?.codigo ?? "").trim();
-    if (!materialId && codigo) {
-      materialId = this.repo.findMeMaterialByCodigo(codigo)?.id ?? null;
+    const codigo = normalizeMeCodigo(input.codigo ?? existing?.codigo ?? "");
+    if (codigo) {
+      const byCode = this.repo.findMeMaterialByCodigo(codigo);
+      // Código gana sobre materialId: evita acumular stocks de códigos distintos en un id.
+      if (byCode) {
+        materialId = byCode.id;
+      } else if (materialId) {
+        const byId = this.repo.getMeMaterial(materialId);
+        if (byId && normalizeMeCodigo(byId.codigo) !== codigo) {
+          materialId = null;
+        }
+      }
     }
 
     const row: MeSalidaRow = {
@@ -603,32 +622,41 @@ export class InventoryService {
       cliente?: string;
     }
   ): MeMaterial {
-    if (input.materialId) {
-      const existing = this.repo.getMeMaterial(input.materialId);
-      if (existing) return existing;
+    const codigo = normalizeMeCodigo(input.codigo);
+    if (!codigo) {
+      throw new InventoryValidationError(ME_CODIGO_REQUIRED_MSG);
     }
-    if (input.codigo.trim()) {
-      const byCode = this.repo.findMeMaterialByCodigo(input.codigo);
-      if (byCode) {
-        // Actualizar cliente/descripcion si venían vacíos; reactivar si estaba archivado.
-        const patched: MeMaterial = {
-          ...byCode,
-          descripcion: byCode.descripcion || input.descripcion.trim() || byCode.descripcion,
-          cliente: byCode.cliente || input.cliente?.trim() || byCode.cliente,
-          ubicacion: byCode.ubicacion || input.ubicacion,
-          archived: false,
-          archivedAt: null,
-          archivedBy: null,
-          archivedReason: null,
-          updatedAt: nowIso(),
-        };
+
+    // materialId solo se acepta si su código normalizado coincide (nunca agrupar por nombre).
+    if (input.materialId) {
+      const byId = this.repo.getMeMaterial(input.materialId);
+      if (byId && normalizeMeCodigo(byId.codigo) === codigo) {
+        const patched = this.patchMeMaterialIdentity(byId, {
+          codigo,
+          descripcion: input.descripcion,
+          ubicacion: input.ubicacion,
+          cliente: input.cliente,
+        });
         this.repo.upsertMeMaterial(patched);
         return patched;
       }
     }
+
+    const byCode = this.repo.findMeMaterialByCodigo(codigo);
+    if (byCode) {
+      const patched = this.patchMeMaterialIdentity(byCode, {
+        codigo,
+        descripcion: input.descripcion,
+        ubicacion: input.ubicacion,
+        cliente: input.cliente,
+      });
+      this.repo.upsertMeMaterial(patched);
+      return patched;
+    }
+
     const created: MeMaterial = {
       id: randomUUID(),
-      codigo: input.codigo.trim(),
+      codigo,
       descripcion: input.descripcion.trim() || "Sin descripción",
       cliente: input.cliente?.trim() ?? "",
       ubicacion: input.ubicacion,
@@ -646,22 +674,101 @@ export class InventoryService {
     return created;
   }
 
-  /** STOCK = ingresos activos − salidas OA activas (excluye anulados). */
+  /** Actualiza metadatos sin cambiar stock; reactiva archivados; fuerza código normalizado. */
+  private patchMeMaterialIdentity(
+    base: MeMaterial,
+    input: {
+      codigo: string;
+      descripcion: string;
+      ubicacion: string;
+      cliente?: string;
+    }
+  ): MeMaterial {
+    return {
+      ...base,
+      codigo: input.codigo,
+      descripcion: base.descripcion || input.descripcion.trim() || base.descripcion,
+      cliente: base.cliente || input.cliente?.trim() || base.cliente,
+      ubicacion: base.ubicacion || input.ubicacion,
+      archived: false,
+      archivedAt: null,
+      archivedBy: null,
+      archivedReason: null,
+      updatedAt: nowIso(),
+    };
+  }
+
+  /** STOCK = ingresos activos − salidas OA activas (excluye anulados), por CÓDIGO. */
   recalculateMeStock(materialId: string): MeMaterial {
     const mat = this.repo.getMeMaterial(materialId);
     if (!mat) throw new InventoryNotFoundError("Material ME no encontrado.");
+    const codigo = normalizeMeCodigo(mat.codigo);
+    if (!codigo) {
+      const updated: MeMaterial = { ...mat, stockActual: 0, updatedAt: nowIso() };
+      this.repo.upsertMeMaterial(updated);
+      return updated;
+    }
+    // Siempre por código: evita sumar movimientos de otros códigos colgados del mismo materialId.
     const ingresos = this.repo
       .listMeIngresos()
-      .filter((r) => r.materialId === materialId && !r.anulado)
+      .filter((r) => !r.anulado && normalizeMeCodigo(r.codigo) === codigo)
       .reduce((acc, r) => acc + (r.total ?? 0), 0);
     const salidasOa = this.repo
       .listMeSalidas()
-      .filter((r) => r.materialId === materialId && r.origen === "OA" && !r.reverted)
+      .filter(
+        (r) =>
+          r.origen === "OA" &&
+          !r.reverted &&
+          normalizeMeCodigo(r.codigo) === codigo
+      )
       .reduce((acc, r) => acc + (r.total ?? r.cantidad ?? 0), 0);
     const stockActual = Number((ingresos - salidasOa).toFixed(6));
-    const updated: MeMaterial = { ...mat, stockActual, updatedAt: nowIso() };
+    const updated: MeMaterial = { ...mat, codigo, stockActual, updatedAt: nowIso() };
     this.repo.upsertMeMaterial(updated);
     return updated;
+  }
+
+  /**
+   * Reconstruye inventario ME desde movimientos históricos, agrupando solo por CÓDIGO.
+   * Idempotente. No borra movimientos ni auditoría.
+   */
+  rebuildMeInventario(
+    actor: InventoryActor,
+    options: { dryRun?: boolean } = {}
+  ): MeInventarioRebuildReport {
+    this.guard(actor, "me_stock", true);
+    const report = rebuildMeInventarioByCodigo(this.repo, {
+      dryRun: options.dryRun,
+      actorEmail: actor.email,
+    });
+    if (!options.dryRun) {
+      this.audit(
+        actor,
+        "me_stock",
+        "rebuild-by-codigo",
+        "rebuild",
+        null,
+        {
+          materialsCreated: report.materialsCreated,
+          materialsUpdated: report.materialsUpdated,
+          materialsUnchanged: report.materialsUnchanged,
+          relinkedIngresos: report.relinkedIngresos,
+          relinkedSalidas: report.relinkedSalidas,
+          archived: report.archivedMaterials.length,
+          skipped: report.skippedMovements.length,
+          stocks: report.stocks.map((s) => ({
+            codigo: s.codigo,
+            stockActual: s.stockActual,
+            action: s.action,
+          })),
+        }
+      );
+      // Re-sincronizar avisos de materiales activos con código.
+      for (const s of report.stocks) {
+        this.syncMeAlerts(actor, s.materialId);
+      }
+    }
+    return report;
   }
 
   listMeInventario(
@@ -669,20 +776,34 @@ export class InventoryService {
     options: { includeArchived?: boolean } = {}
   ): MeInventarioViewRow[] {
     this.guard(actor, "me_stock", false);
-    const rows = this.repo.listMeMaterials().filter((m) => options.includeArchived || !m.archived);
-    return rows.map((m) => {
-      const fresh = this.recalculateMeStock(m.id);
-      return {
-        materialId: fresh.id,
-        codigo: fresh.codigo,
-        cliente: fresh.cliente,
-        insumo: fresh.descripcion,
-        bultosDisplay: formatMeBultosDisplay(fresh.stockActual, fresh.cantidadPorBulto),
-        cantidadTotal: fresh.stockActual,
-        ubicacion: fresh.ubicacion,
-        updatedAt: fresh.updatedAt,
-      };
-    });
+    const rows = this.repo
+      .listMeMaterials()
+      .filter((m) => options.includeArchived || !m.archived)
+      .filter((m) => normalizeMeCodigo(m.codigo).length > 0);
+    // Una fila por código normalizado (defensa ante duplicados residuales).
+    const byCodigo = new Map<string, MeMaterial>();
+    for (const m of rows) {
+      const c = normalizeMeCodigo(m.codigo);
+      const prev = byCodigo.get(c);
+      if (!prev || m.id.localeCompare(prev.id) < 0) {
+        byCodigo.set(c, m);
+      }
+    }
+    return [...byCodigo.values()]
+      .map((m) => {
+        const fresh = this.recalculateMeStock(m.id);
+        return {
+          materialId: fresh.id,
+          codigo: normalizeMeCodigo(fresh.codigo) || fresh.codigo,
+          cliente: fresh.cliente,
+          insumo: fresh.descripcion,
+          bultosDisplay: formatMeBultosDisplay(fresh.stockActual, fresh.cantidadPorBulto),
+          cantidadTotal: fresh.stockActual,
+          ubicacion: fresh.ubicacion,
+          updatedAt: fresh.updatedAt,
+        };
+      })
+      .sort((a, b) => a.codigo.localeCompare(b.codigo, "es"));
   }
 
   getMeMaterialById(actor: InventoryActor, id: string) {
@@ -746,6 +867,10 @@ export class InventoryService {
     if (!canWriteOaMeSalida(actor.sector)) {
       throw new InventoryForbiddenError("Sector no puede generar salidas ME desde OA.");
     }
+    const codigo = normalizeMeCodigo(input.codigo);
+    if (!codigo) {
+      throw new InventoryValidationError(ME_CODIGO_REQUIRED_MSG);
+    }
     // Bypass guard me_salidas (solo DEPOSITO CRUD manual); OA es automática.
     const existing = this.repo.listMeSalidas().find((s) => s.idempotencyKey === input.idempotencyKey);
     const now = nowIso();
@@ -763,7 +888,7 @@ export class InventoryService {
       entregado: true,
       comentarios: `Origen automático · OA ${input.oaNumber} · id ${input.oaId}`,
       materialId: input.materialId,
-      codigo: input.codigo,
+      codigo,
       unidad: input.unidad,
       origen: "OA",
       oaId: input.oaId,

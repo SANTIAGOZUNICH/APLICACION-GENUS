@@ -152,6 +152,10 @@ export function MeIngresosView() {
 
   async function saveForm() {
     if (!form || !canWrite) return;
+    if (!form.codigo.trim()) {
+      setBanner("El código es obligatorio. Cada producto se identifica solo por su código.");
+      return;
+    }
     try {
       await mutateInventory({
         action: "upsert",
@@ -478,7 +482,13 @@ export function MeIngresosView() {
         ignoreKeys={["total"]}
         onToast={(message) => showToast(message)}
         onConfirm={async (mappedRows) => {
+          let ok = 0;
+          let skipped = 0;
           for (const m of mappedRows) {
+            if (!(m.codigo ?? "").trim()) {
+              skipped += 1;
+              continue;
+            }
             await mutateInventory({
               action: "upsert",
               resource: "me_ingresos",
@@ -495,6 +505,12 @@ export function MeIngresosView() {
                 ubicacion: m.ubicacion ?? "",
               },
             });
+            ok += 1;
+          }
+          if (skipped) {
+            showToast(
+              `${ok} importado(s) · ${skipped} omitido(s) sin código (el código es obligatorio)`
+            );
           }
           await reload();
         }}

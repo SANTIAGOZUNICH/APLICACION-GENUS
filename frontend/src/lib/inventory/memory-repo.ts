@@ -2,6 +2,7 @@
  * Repositorio en memoria para inventario ME/MP (tests y demo sin Neon).
  */
 
+import { normalizeMeCodigo } from "./me-codigo";
 import type {
   InventoryAudit,
   MeAlert,
@@ -123,9 +124,11 @@ export class MemoryInventoryRepo {
     return this.meMaterials.find((r) => r.id === id) ?? null;
   }
   findMeMaterialByCodigo(codigo: string) {
-    const c = codigo.trim().toLowerCase();
+    const c = normalizeMeCodigo(codigo);
     if (!c) return null;
-    return this.meMaterials.find((m) => m.codigo.trim().toLowerCase() === c) ?? null;
+    // Preferir fila activa si hay duplicados históricos del mismo código.
+    const matches = this.meMaterials.filter((m) => normalizeMeCodigo(m.codigo) === c);
+    return matches.find((m) => !m.archived) ?? matches[0] ?? null;
   }
 
   upsertMeAlert(row: MeAlert) {
