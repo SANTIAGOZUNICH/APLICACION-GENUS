@@ -59,3 +59,5 @@ next-env.d.ts
 /tmp-prod-neon-bootstrap/.env*
 /tmp-prod-neon-bootstrap/**/*.local
 /tmp-prod-neon-bootstrap/passwords*
+.vercel
+.env*
