@@ -28,7 +28,7 @@ import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { useOperationalStore } from "../store/operational-store-context";
 import { sortByDeliveryDateNearest } from "../lib/delivery-date";
 import { upsertGranelFromEnvasadoApi } from "@/lib/graneles/graneles-client";
-import { formatBulkRemainderKg } from "../lib/bulk-remainder";
+import { formatBulkRemainderKg, hasRegistrableBulkRemainder } from "../lib/bulk-remainder";
 import { canSendToCodificado } from "../lib/codificado-flow";
 import {
   WORK_TRANSFER,
@@ -141,13 +141,22 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   );
 
   const handleSave = useCallback(
-    (itemId: string, payload: { finishedQty: string; observation: string }) => {
-      saveWorkProgress(itemId, {
-        ...payload,
-        updatedBy: workspace.context.displayName,
-        sector: sectorId,
-      });
-      showToast("Avance guardado.");
+    async (itemId: string, payload: { finishedQty: string; observation: string }) => {
+      try {
+        await saveWorkProgress(itemId, {
+          ...payload,
+          updatedBy: workspace.context.displayName,
+          sector: sectorId,
+        });
+        showToast("Avance guardado.");
+      } catch (err) {
+        showToast(
+          err instanceof Error
+            ? `No se guardó: ${err.message} — reintentá.`
+            : "No se pudo guardar en el servidor. Reintentá.",
+          "info"
+        );
+      }
     },
     [saveWorkProgress, workspace.context.displayName, sectorId, showToast]
   );
@@ -162,12 +171,22 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         bulkRemainderObservation?: string | null;
       }
     ) => {
-      markWorkFinished(item, {
-        finishedQty: payload.finishedQty,
-        observation: payload.observation,
-        updatedBy: workspace.context.displayName,
-      });
-      if (payload.bulkRemainderKg && payload.bulkRemainderKg > 0) {
+      try {
+        await markWorkFinished(item, {
+          finishedQty: payload.finishedQty,
+          observation: payload.observation,
+          updatedBy: workspace.context.displayName,
+        });
+      } catch (err) {
+        showToast(
+          err instanceof Error
+            ? `No se guardó: ${err.message} — reintentá.`
+            : "No se pudo guardar en el servidor. Reintentá.",
+          "info"
+        );
+        return;
+      }
+      if (hasRegistrableBulkRemainder(payload.bulkRemainderKg)) {
         try {
           const granel = await upsertGranelFromEnvasadoApi(session, {
             workItemId: item.id,
@@ -221,7 +240,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         return { already: true };
       }
       let bulkId: string | null = null;
-      if (payload.bulkRemainderKg && payload.bulkRemainderKg > 0) {
+      if (hasRegistrableBulkRemainder(payload.bulkRemainderKg)) {
         try {
           const granel = await upsertGranelFromEnvasadoApi(session, {
             workItemId: item.id,
@@ -549,26 +568,45 @@ export function ElaboracionOperationalView() {
   );
 
   const handleSave = useCallback(
-    (itemId: string, payload: { finishedQty: string; observation: string }) => {
+    async (itemId: string, payload: { finishedQty: string; observation: string }) => {
       const item = workItems.find((w) => w.id === itemId);
       const rama = item?.ownerPerson?.trim() || "Elaboración";
-      saveWorkProgress(itemId, {
-        ...payload,
-        updatedBy: rama,
-        sector: "ELABORACION",
-      });
-      showToast("Avance guardado.");
+      try {
+        await saveWorkProgress(itemId, {
+          ...payload,
+          updatedBy: rama,
+          sector: "ELABORACION",
+        });
+        showToast("Avance guardado.");
+      } catch (err) {
+        showToast(
+          err instanceof Error
+            ? `No se guardó: ${err.message} — reintentá.`
+            : "No se pudo guardar en el servidor. Reintentá.",
+          "info"
+        );
+      }
     },
     [saveWorkProgress, workItems, showToast]
   );
 
   const handleFinish = useCallback(
-    (item: WorkItem, payload: { finishedQty: string; observation: string }) => {
+    async (item: WorkItem, payload: { finishedQty: string; observation: string }) => {
       const rama = item.ownerPerson?.trim() || "Elaboración";
-      markWorkFinished(item, {
-        ...payload,
-        updatedBy: rama,
-      });
+      try {
+        await markWorkFinished(item, {
+          ...payload,
+          updatedBy: rama,
+        });
+      } catch (err) {
+        showToast(
+          err instanceof Error
+            ? `No se guardó: ${err.message} — reintentá.`
+            : "No se pudo guardar en el servidor. Reintentá.",
+          "info"
+        );
+        return;
+      }
       pushNotification({
         kind: "trabajo_finalizado",
         title: "Trabajo finalizado — Elaboración",
