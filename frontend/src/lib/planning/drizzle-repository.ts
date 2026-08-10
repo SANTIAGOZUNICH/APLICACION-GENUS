@@ -94,6 +94,25 @@ function mapItem(row: WorkItemRow | Record<string, unknown>): PlanningWorkItemRe
       ? r.codificadoCancelledAt.toISOString()
       : null,
     productionPedidoId: r.productionPedidoId ?? null,
+    operationalStatus: r.operationalStatus ?? "pendiente",
+    finishedQty: r.finishedQty ?? null,
+    operationalObservation: r.operationalObservation ?? null,
+    packingMismatchObservation: r.packingMismatchObservation ?? null,
+    progressUpdatedAt: r.progressUpdatedAt ? r.progressUpdatedAt.toISOString() : null,
+    progressUpdatedBy: r.progressUpdatedBy ?? null,
+    completedAt: r.completedAt ? r.completedAt.toISOString() : null,
+    completedBy: r.completedBy ?? null,
+    operationalCancelledAt: r.operationalCancelledAt
+      ? r.operationalCancelledAt.toISOString()
+      : null,
+    operationalCancelledBy: r.operationalCancelledBy ?? null,
+    operationalCancelReason: r.operationalCancelReason ?? null,
+    qualityStatus: r.qualityStatus ?? "pendiente",
+    qualityDecidedAt: r.qualityDecidedAt ? r.qualityDecidedAt.toISOString() : null,
+    qualityDecidedBy: r.qualityDecidedBy ?? null,
+    qualityDecidedBySector: r.qualityDecidedBySector ?? null,
+    qualityObservation: r.qualityObservation ?? null,
+    qualityChangeReason: r.qualityChangeReason ?? null,
   };
 }
 
@@ -297,6 +316,23 @@ export class DrizzlePlanningRepository implements PlanningRepository {
         codificadoCancelledBy: workItems.codificadoCancelledBy,
         codificadoCancelReason: workItems.codificadoCancelReason,
         productionPedidoId: workItems.productionPedidoId,
+        operationalStatus: workItems.operationalStatus,
+        finishedQty: workItems.finishedQty,
+        operationalObservation: workItems.operationalObservation,
+        packingMismatchObservation: workItems.packingMismatchObservation,
+        progressUpdatedAt: workItems.progressUpdatedAt,
+        progressUpdatedBy: workItems.progressUpdatedBy,
+        completedAt: workItems.completedAt,
+        completedBy: workItems.completedBy,
+        operationalCancelledAt: workItems.operationalCancelledAt,
+        operationalCancelledBy: workItems.operationalCancelledBy,
+        operationalCancelReason: workItems.operationalCancelReason,
+        qualityStatus: workItems.qualityStatus,
+        qualityDecidedAt: workItems.qualityDecidedAt,
+        qualityDecidedBy: workItems.qualityDecidedBy,
+        qualityDecidedBySector: workItems.qualityDecidedBySector,
+        qualityObservation: workItems.qualityObservation,
+        qualityChangeReason: workItems.qualityChangeReason,
       })
       .from(workItems)
       .innerJoin(planningWeeks, eq(workItems.planningWeekId, planningWeeks.id))

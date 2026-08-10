@@ -97,6 +97,24 @@ export interface PlanningWorkItemRecord {
   codificadoRevision?: number;
   codificadoCancelledAt?: string | null;
   productionPedidoId?: string | null;
+  /** Avance operativo durable (0023) — reemplaza overlay en memoria. */
+  operationalStatus?: string;
+  finishedQty?: string | null;
+  operationalObservation?: string | null;
+  packingMismatchObservation?: string | null;
+  progressUpdatedAt?: string | null;
+  progressUpdatedBy?: string | null;
+  completedAt?: string | null;
+  completedBy?: string | null;
+  operationalCancelledAt?: string | null;
+  operationalCancelledBy?: string | null;
+  operationalCancelReason?: string | null;
+  qualityStatus?: string;
+  qualityDecidedAt?: string | null;
+  qualityDecidedBy?: string | null;
+  qualityDecidedBySector?: string | null;
+  qualityObservation?: string | null;
+  qualityChangeReason?: string | null;
 }
 
 export interface OperationalEventRecord {
@@ -183,5 +201,23 @@ export class PlanningForbiddenError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PlanningForbiddenError";
+  }
+}
+
+/** OA existente con datos incompatibles — UI puede forzar vínculo (solo rellena vacíos). */
+export class PlanningOaCompatibilityError extends Error {
+  readonly code = "OA_DATA_MISMATCH";
+  readonly status = 409;
+  constructor(
+    message: string,
+    public readonly details: {
+      orderNumber: string;
+      orderId: string;
+      mismatches: Array<{ field: string; existing: string; incoming: string }>;
+      canForce: true;
+    }
+  ) {
+    super(message);
+    this.name = "PlanningOaCompatibilityError";
   }
 }

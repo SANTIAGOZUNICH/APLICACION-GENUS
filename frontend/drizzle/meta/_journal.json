@@ -141,6 +141,28 @@
       "when": 1786600000000,
       "tag": "0020_work_item_assign_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786650000000,
+      "tag": "0021_codificado_handoff_pedidos",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786700000000,
+      "tag": "0022_me_materials_codigo_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0023_work_item_progress_neon",
+      "breakpoints": true
     }
   ]
 }
+
