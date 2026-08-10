@@ -5,6 +5,43 @@
 
 import type { SectorId } from "@/types/operational/sector";
 
+/**
+ * Vocabulario de estado "lifecycle" — mezcla deliberada de dominios: OE/OA
+ * usan mayúsculas en español (ARCHIVADA/ANULADA para "orden", femenino;
+ * ARCHIVADO/ANULADO para otras entidades, masculino), work items nativos
+ * usan minúsculas ("cancelado", "pendiente", ver WORK_ITEM_STATUSES en
+ * types/operational/work-item.ts). No es un bug de casing — son entidades
+ * de dominios distintos con vocabularios reales distintos que comparten
+ * este motor de política. Lo que sí era un riesgo real (AUDIT_TRAZABILIDAD,
+ * J): cada función repetía la lista de literales por separado, así que
+ * agregar una variante en un lugar y olvidarla en otro pasaba desapercibido
+ * hasta que alguien lo pisaba en producción. Centralizado acá una sola vez;
+ * el comportamiento (qué literales cuentan como qué) no cambió.
+ */
+const ARCHIVED_STATUSES: ReadonlySet<string> = new Set(["ARCHIVADA", "ARCHIVADO"]);
+const ANNULLED_STATUSES: ReadonlySet<string> = new Set(["ANULADA", "ANULADO", "cancelado"]);
+const DELETED_STATUSES: ReadonlySet<string> = new Set(["REGISTRO_ELIMINADO"]);
+/** Solo canDelete trata "pendiente" como equivalente a borrador — ver nota en esa función. */
+const DRAFT_STATUSES: ReadonlySet<string> = new Set(["BORRADOR"]);
+const DRAFT_STATUSES_INCLUDING_PENDIENTE: ReadonlySet<string> = new Set(["BORRADOR", "pendiente"]);
+
+function isArchivedStatus(status: string, archived?: boolean): boolean {
+  return Boolean(archived) || ARCHIVED_STATUSES.has(status);
+}
+
+function isAnnulledStatus(status: string): boolean {
+  return ANNULLED_STATUSES.has(status);
+}
+
+function isDeletedStatus(status: string, deleted?: boolean): boolean {
+  return Boolean(deleted) || DELETED_STATUSES.has(status);
+}
+
+function isDraftStatus(status: string, isDraft?: boolean, includePendiente = false): boolean {
+  if (isDraft) return true;
+  return includePendiente ? DRAFT_STATUSES_INCLUDING_PENDIENTE.has(status) : DRAFT_STATUSES.has(status);
+}
+
 export type LifecycleAction =
   | "eliminar"
   | "anular"
@@ -105,17 +142,13 @@ export function requireReasonFor(action: LifecycleAction): boolean {
 }
 
 export function canDelete(entity: LifecycleEntityState): LifecycleDecision {
-  if (entity.deleted || entity.status === "REGISTRO_ELIMINADO") {
+  if (isDeletedStatus(entity.status, entity.deleted)) {
     return block("Ya fue eliminado.");
   }
-  if (entity.archived || entity.status === "ARCHIVADA" || entity.status === "ARCHIVADO") {
+  if (isArchivedStatus(entity.status, entity.archived)) {
     return block("Está archivado. Restaurá antes o usá eliminar definitivo si aplica.");
   }
-  if (
-    entity.status === "ANULADA" ||
-    entity.status === "ANULADO" ||
-    entity.status === "cancelado"
-  ) {
+  if (isAnnulledStatus(entity.status)) {
     return block("Está anulado. No se elimina el historial legal.");
   }
 
@@ -132,7 +165,7 @@ export function canDelete(entity: LifecycleEntityState): LifecycleDecision {
     };
   }
 
-  if (entity.isDraft || entity.status === "BORRADOR" || entity.status === "pendiente") {
+  if (isDraftStatus(entity.status, entity.isDraft, true)) {
     if (entity.hasProgress) {
       return {
         action: "anular",
@@ -168,7 +201,7 @@ export function canDelete(entity: LifecycleEntityState): LifecycleDecision {
 }
 
 export function canAnnul(entity: LifecycleEntityState): LifecycleDecision {
-  if (entity.isDraft || entity.status === "BORRADOR") {
+  if (isDraftStatus(entity.status, entity.isDraft)) {
     return {
       action: "eliminar",
       allowed: true,
@@ -177,14 +210,10 @@ export function canAnnul(entity: LifecycleEntityState): LifecycleDecision {
       reason: "Es borrador: preferí Eliminar.",
     };
   }
-  if (
-    entity.status === "ANULADA" ||
-    entity.status === "ANULADO" ||
-    entity.status === "cancelado"
-  ) {
+  if (isAnnulledStatus(entity.status)) {
     return block("Ya está anulado (idempotente).");
   }
-  if (entity.deleted || entity.status === "REGISTRO_ELIMINADO") {
+  if (isDeletedStatus(entity.status, entity.deleted)) {
     return block("Registro eliminado — no se anula.");
   }
   return {
@@ -204,13 +233,13 @@ export function canAnnul(entity: LifecycleEntityState): LifecycleDecision {
 }
 
 export function canArchive(entity: LifecycleEntityState): LifecycleDecision {
-  if (entity.archived || entity.status === "ARCHIVADA" || entity.status === "ARCHIVADO") {
+  if (isArchivedStatus(entity.status, entity.archived)) {
     return block("Ya está archivado.");
   }
-  if (entity.deleted || entity.status === "REGISTRO_ELIMINADO") {
+  if (isDeletedStatus(entity.status, entity.deleted)) {
     return block("Eliminado — no se archiva.");
   }
-  if (entity.isDraft || entity.status === "BORRADOR") {
+  if (isDraftStatus(entity.status, entity.isDraft)) {
     return {
       action: "eliminar",
       allowed: true,
@@ -235,14 +264,10 @@ export function canArchive(entity: LifecycleEntityState): LifecycleDecision {
 }
 
 export function canRestore(entity: LifecycleEntityState): LifecycleDecision {
-  const archived =
-    entity.archived ||
-    entity.status === "ARCHIVADA" ||
-    entity.status === "ARCHIVADO";
-  if (!archived) {
+  if (!isArchivedStatus(entity.status, entity.archived)) {
     return block("Solo se restauran registros archivados.");
   }
-  if (entity.deleted || entity.status === "REGISTRO_ELIMINADO") {
+  if (isDeletedStatus(entity.status, entity.deleted)) {
     return block("Eliminado definitivamente — no se restaura.");
   }
   return {
@@ -267,7 +292,7 @@ export function canHardDelete(entity: LifecycleEntityState): LifecycleDecision {
       httpStatusIfDenied: 409,
     };
   }
-  if (!(entity.archived || entity.status === "ARCHIVADA" || entity.status === "ARCHIVADO")) {
+  if (!isArchivedStatus(entity.status, entity.archived)) {
     return block("Eliminar definitivo solo desde Archivados, cuando sea seguro.");
   }
   return {
@@ -311,7 +336,7 @@ export function referencedBy(
 export function resolvePrimaryLifecycleAction(
   entity: LifecycleEntityState
 ): LifecycleDecision {
-  if (entity.archived || entity.status === "ARCHIVADA" || entity.status === "ARCHIVADO") {
+  if (isArchivedStatus(entity.status, entity.archived)) {
     return canRestore(entity);
   }
   const del = canDelete(entity);
@@ -327,16 +352,9 @@ export function matchesVisibilityFilter(
   filter: LifecycleVisibilityFilter,
   entity: Pick<LifecycleEntityState, "status" | "archived" | "deleted">
 ): boolean {
-  const archived =
-    Boolean(entity.archived) ||
-    entity.status === "ARCHIVADA" ||
-    entity.status === "ARCHIVADO";
-  const annulled =
-    entity.status === "ANULADA" ||
-    entity.status === "ANULADO" ||
-    entity.status === "cancelado" ||
-    entity.status === "REGISTRO_ELIMINADO";
-  const deleted = Boolean(entity.deleted) || entity.status === "REGISTRO_ELIMINADO";
+  const archived = isArchivedStatus(entity.status, entity.archived);
+  const annulled = isAnnulledStatus(entity.status) || isDeletedStatus(entity.status);
+  const deleted = isDeletedStatus(entity.status, entity.deleted);
 
   switch (filter) {
     case "todos":
