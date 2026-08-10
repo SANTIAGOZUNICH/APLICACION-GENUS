@@ -81,6 +81,8 @@ export function PackagingQuantitiesBlock({
     item.packingMismatchObservation ?? ""
   );
   const [msg, setMsg] = useState<string | null>(null);
+  const [msgTone, setMsgTone] = useState<"ok" | "error" | "pending">("ok");
+  const [saving, setSaving] = useState(false);
 
   const produced = total === "" ? null : Number(total);
   const warn = useMemo(
@@ -106,9 +108,10 @@ export function PackagingQuantitiesBlock({
     onDraftChange?.(draft);
   }, [draft, onDraftChange]);
 
-  function save() {
-    if (readOnly) return;
+  async function save() {
+    if (readOnly || saving) return;
     if (!warn.ok && !packingObs.trim()) {
+      setMsgTone("error");
       setMsg("Indicá una observación si producido y embalado no coinciden.");
       return;
     }
@@ -119,45 +122,63 @@ export function PackagingQuantitiesBlock({
       packingGroups,
     } = draft;
 
-    // Live Sync: cualquier WorkItem (Drive o manual) — visible en Producción.
-    saveWorkPackaging(item.id, {
-      updatedBy: actorName,
-      sector: sector ?? item.sector,
-      packagingLote: lote,
-      packagingVto: vto,
-      packagingTotalUnits,
-      packagingCajas,
-      packagingUnidadesPorCaja,
-      packingGroups,
-      packingMismatchObservation: packingObs,
-    });
+    setSaving(true);
+    setMsgTone("pending");
+    setMsg("Guardando…");
+    try {
+      // Fuente de verdad: Neon. No se marca "Guardado" hasta que el
+      // servidor confirme — antes esto era fire-and-forget y la UI mentía
+      // si el POST fallaba (ver AUDIT_TRAZABILIDAD, P0-4/L).
+      await saveWorkPackaging(item.id, {
+        updatedBy: actorName,
+        sector: sector ?? item.sector,
+        packagingLote: lote,
+        packagingVto: vto,
+        packagingTotalUnits,
+        packagingCajas,
+        packagingUnidadesPorCaja,
+        packingGroups,
+        packingMismatchObservation: packingObs,
+      });
 
-    // Compat: si es trabajo manual, también actualizar el store local.
-    const updatedManual = updateManualWorkItemPackaging({
-      id: item.id,
-      actorName,
-      packagingLote: lote,
-      packagingVto: vto,
-      packagingTotalUnits,
-      packingGroups,
-      packagingCajas,
-      packagingUnidadesPorCaja,
-      packingMismatchObservation: packingObs,
-    });
+      // Compat: si es trabajo manual (localStorage legacy, modo sheets), también
+      // actualizar el store local. No-op en modo nativo (Neon).
+      const updatedManual = updateManualWorkItemPackaging({
+        id: item.id,
+        actorName,
+        packagingLote: lote,
+        packagingVto: vto,
+        packagingTotalUnits,
+        packingGroups,
+        packagingCajas,
+        packagingUnidadesPorCaja,
+        packingMismatchObservation: packingObs,
+      });
 
-    const next: WorkItem = {
-      ...(updatedManual ?? item),
-      packagingLote: lote.trim() || null,
-      packagingVto: vto.trim() || null,
-      packagingTotalUnits,
-      packagingCajas,
-      packagingUnidadesPorCaja,
-      packingGroups,
-      packingMismatchObservation: packingObs.trim() || null,
-      loteRef: lote.trim() || item.loteRef,
-    };
-    setMsg("Avance guardado.");
-    onSaved?.(next);
+      const next: WorkItem = {
+        ...(updatedManual ?? item),
+        packagingLote: lote.trim() || null,
+        packagingVto: vto.trim() || null,
+        packagingTotalUnits,
+        packagingCajas,
+        packagingUnidadesPorCaja,
+        packingGroups,
+        packingMismatchObservation: packingObs.trim() || null,
+        loteRef: lote.trim() || item.loteRef,
+      };
+      setMsgTone("ok");
+      setMsg("Avance guardado.");
+      onSaved?.(next);
+    } catch (err) {
+      setMsgTone("error");
+      setMsg(
+        err instanceof Error
+          ? `No se guardó: ${err.message} — lo tipeado se conserva, reintentá.`
+          : "No se pudo guardar en el servidor. Lo tipeado se conserva — reintentá."
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -210,11 +231,24 @@ export function PackagingQuantitiesBlock({
       />
 
       {!readOnly && !hideSaveButton ? (
-        <Button type="button" onClick={save} data-testid="packaging-save">
-          Guardar avance
+        <Button type="button" onClick={save} disabled={saving} data-testid="packaging-save">
+          {saving ? "Guardando…" : "Guardar avance"}
         </Button>
       ) : null}
-      {msg ? <p className="text-xs text-emerald-700">{msg}</p> : null}
+      {msg ? (
+        <p
+          className={
+            msgTone === "error"
+              ? "text-xs text-[var(--genus-error)]"
+              : msgTone === "pending"
+                ? "text-xs text-[var(--os-text-muted)]"
+                : "text-xs text-emerald-700"
+          }
+          role={msgTone === "error" ? "alert" : undefined}
+        >
+          {msg}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -78,10 +78,12 @@ interface OperationalStoreValue {
   getWorkStatus: (itemId: string, seedStatus: WorkItemStatus) => WorkItemStatus;
   getFinishedQty: (itemId: string) => string;
   getObservation: (itemId: string) => string;
+  /** Resuelve cuando el servidor confirmó persistencia; rechaza si falló (dato local no se pierde). */
   saveWorkProgress: (
     itemId: string,
     payload: { finishedQty: string; observation: string; updatedBy?: string; sector?: SectorId }
-  ) => void;
+  ) => Promise<void>;
+  /** Resuelve cuando el servidor confirmó persistencia; rechaza si falló (dato local no se pierde). */
   saveWorkPackaging: (
     itemId: string,
     payload: {
@@ -96,11 +98,12 @@ interface OperationalStoreValue {
       packingMismatchObservation?: string | null;
       codificadoObservation?: string | null;
     }
-  ) => void;
+  ) => Promise<void>;
+  /** Resuelve cuando el servidor confirmó persistencia; rechaza si falló (dato local no se pierde). */
   markWorkFinished: (
     item: WorkItem,
     payload: { finishedQty: string; observation: string; updatedBy?: string }
-  ) => void;
+  ) => Promise<void>;
   sendToCodificado: (
     item: WorkItem,
     payload: {
@@ -277,19 +280,19 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     (
       itemId: string,
       payload: { finishedQty: string; observation: string; updatedBy?: string; sector?: SectorId }
-    ) => {
+    ): Promise<void> => {
       recordWorkProgress(itemId, {
         ...payload,
         status: "en_curso",
       });
       syncFromStorage();
-      void postSaveProgress({
+      return postSaveProgress({
         itemId,
         sector: payload.sector,
         finishedQty: payload.finishedQty,
         observation: payload.observation,
         updatedBy: payload.updatedBy,
-      }).catch(() => {});
+      });
     },
     [syncFromStorage]
   );
@@ -309,10 +312,10 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         packingMismatchObservation?: string | null;
         codificadoObservation?: string | null;
       }
-    ) => {
+    ): Promise<void> => {
       const record = recordWorkPackaging(itemId, payload);
       syncFromStorage();
-      void postSaveProgress({
+      return postSaveProgress({
         itemId,
         sector: payload.sector,
         finishedQty: record.finishedQty,
@@ -325,7 +328,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         packagingUnidadesPorCaja: record.packagingUnidadesPorCaja,
         packingGroups: record.packingGroups,
         packingMismatchObservation: record.packingMismatchObservation,
-      }).catch(() => {});
+      });
     },
     [syncFromStorage]
   );
@@ -334,7 +337,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
     (
       item: WorkItem,
       payload: { finishedQty: string; observation: string; updatedBy?: string }
-    ) => {
+    ): Promise<void> => {
       const prior = readProgressMap()[item.id];
       const enriched: WorkItem = {
         ...item,
@@ -368,12 +371,12 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         packingMismatchObservation: enriched.packingMismatchObservation,
       });
       syncFromStorage();
-      void postCompleteWork({
+      return postCompleteWork({
         item: enriched,
         finishedQty: payload.finishedQty,
         observation: payload.observation,
         completedBy: payload.updatedBy,
-      }).catch(() => {});
+      });
     },
     [syncFromStorage]
   );

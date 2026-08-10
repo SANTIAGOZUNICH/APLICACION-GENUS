@@ -114,12 +114,18 @@ export async function postSaveProgress(payload: {
   packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
   packingMismatchObservation?: string | null;
 }): Promise<void> {
-  await fetch("/api/v1/live-sync/operations", {
+  const response = await fetch("/api/v1/live-sync/operations", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "save_progress", ...payload }),
   });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(
+      (body as { error?: string } | null)?.error ?? "No se pudo guardar el avance en el servidor."
+    );
+  }
 }
 
 export async function postCompleteWork(payload: {
@@ -128,12 +134,18 @@ export async function postCompleteWork(payload: {
   observation: string;
   completedBy?: string;
 }): Promise<void> {
-  await fetch("/api/v1/live-sync/operations", {
+  const response = await fetch("/api/v1/live-sync/operations", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "complete_work", ...payload }),
   });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(
+      (body as { error?: string } | null)?.error ?? "No se pudo confirmar el trabajo en el servidor."
+    );
+  }
 }
 
 export async function postQualityDecision(payload: {
