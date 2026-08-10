@@ -101,6 +101,17 @@ export function useLiveSync(options: UseLiveSyncOptions): UseLiveSyncResult {
       })
       .catch(() => {});
 
+    if (nativePlanning) {
+      // Nativo: fuente de verdad es Neon vía /work-items (poll en
+      // useOperationalPlan). Antes acá se abría además una conexión SSE por
+      // sector — con 4 sectores montados a la vez (panel de Producción) eso
+      // eran 4 streams por pestaña, cada uno reconectando cada ~300s por el
+      // límite de duración de función serverless. No aporta nada que el poll
+      // no cubra ya, así que se elimina en vez de multiplicarse.
+      setConnected(true);
+      return () => {};
+    }
+
     const disconnect = connectLiveSyncStream(
       sector,
       (event: LiveSyncEvent) => {
@@ -118,13 +129,6 @@ export function useLiveSync(options: UseLiveSyncOptions): UseLiveSyncResult {
       },
       () => setConnected(false)
     );
-
-    if (nativePlanning) {
-      setConnected(true);
-      return () => {
-        disconnect();
-      };
-    }
 
     const poll = createLiveSyncPollController({
       isVisible: () =>

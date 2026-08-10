@@ -10,6 +10,7 @@ import { normalizeEmail, SECTOR_ACCOUNT_DIRECTORY, type SectorAccountDirectoryEn
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import type { AuthRepository } from "@/lib/auth/repository";
 import { createOpaqueToken, hashToken } from "@/lib/auth/session-token";
+import { getNeonReadCache, invalidateNeonReadCache, setNeonReadCache } from "@/lib/db/neon-read-cache";
 import {
   AuthBlockedError,
   AuthInvalidCredentialsError,
@@ -24,6 +25,18 @@ import {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+/** TTL corto: acota staleness de revocación/expiración a una ventana chica. */
+const SESSION_RESOLVE_CACHE_TTL_MS = 10_000;
+
+/** Prefijo compartido con admin-service.ts: revocar en bloque (reset password,
+ *  bloqueo de usuario) invalida TODO el caché de sesión por este prefijo,
+ *  ya que esas operaciones no conocen el tokenHash de las sesiones activas. */
+export const SESSION_CACHE_PREFIX = "auth:session:";
+
+function sessionCacheKey(tokenHash: string): string {
+  return `${SESSION_CACHE_PREFIX}${tokenHash}`;
 }
 
 interface RateLimitEntry {
@@ -108,16 +121,33 @@ export class AuthService {
   async logout(token: string | null | undefined): Promise<void> {
     if (!token) return;
     const tokenHash = hashToken(token);
+    invalidateNeonReadCache(sessionCacheKey(tokenHash));
     const session = await this.repo.findSessionByTokenHash(tokenHash);
     if (!session || session.revokedAt) return;
     await this.repo.revokeSession(session.id, nowIso());
     await this.audit("LOGOUT", null, session.userId, {});
   }
 
-  /** Resuelve un actor autenticado a partir del token de cookie. null si no hay sesión válida. */
+  /**
+   * Resuelve un actor autenticado a partir del token de cookie. null si no
+   * hay sesión válida. Cacheado por instancia (TTL corto) — el connectivity
+   * monitor del cliente golpea /auth/me cada ~8s por pestaña; sin esto cada
+   * poll disparaba 2 SELECT a Neon (sesión + usuario) sin motivo, uno de los
+   * mayores consumidores de cuota identificados en la auditoría.
+   */
   async resolveSession(token: string | null | undefined): Promise<AuthActor | null> {
     if (!token) return null;
     const tokenHash = hashToken(token);
+    const cacheKey = sessionCacheKey(tokenHash);
+    const cached = getNeonReadCache<AuthActor | null>(cacheKey);
+    if (cached !== null) return cached;
+
+    const resolved = await this.resolveSessionUncached(tokenHash);
+    setNeonReadCache(cacheKey, resolved, SESSION_RESOLVE_CACHE_TTL_MS);
+    return resolved;
+  }
+
+  private async resolveSessionUncached(tokenHash: string): Promise<AuthActor | null> {
     const session = await this.repo.findSessionByTokenHash(tokenHash);
     if (!session) return null;
     if (session.revokedAt) return null;
