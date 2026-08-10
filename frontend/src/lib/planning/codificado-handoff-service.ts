@@ -581,11 +581,12 @@ export async function deliverFromCodificadoDurable(
     }
 
     const now = new Date();
+    const deliveredByName = actor.displayName || actor.email;
     const [updated] = await tx
       .update(workItems)
       .set({
         deliveredFromCodificadoAt: now,
-        deliveredFromCodificadoBy: actor.displayName || actor.email,
+        deliveredFromCodificadoBy: deliveredByName,
         packagingLote: input.packagingLote?.trim() || row.packagingLote,
         packagingVto: input.packagingVto?.trim() || row.packagingVto,
         packagingTotalUnits:
@@ -596,6 +597,22 @@ export async function deliverFromCodificadoDurable(
           input.packingGroups != null ? input.packingGroups : row.packingGroups,
         codificadoObservation:
           input.observation?.trim() || row.codificadoObservation,
+        // Marca el work item como "completado, pendiente de revisión" en la
+        // MISMA transacción — antes esto dependía de un POST secundario
+        // fire-and-forget (postCompleteWork) desde el cliente; si fallaba,
+        // el handoff quedaba "entregado" pero invisible para la cola de
+        // Calidad (listCompletedItems filtra por completed_at IS NOT NULL).
+        completedAt: row.completedAt ?? now,
+        completedBy: row.completedBy ?? deliveredByName,
+        operationalStatus:
+          row.operationalStatus === "entregado" || row.operationalStatus === "cancelado"
+            ? row.operationalStatus
+            : "revision",
+        finishedQty:
+          input.packagingTotalUnits != null
+            ? String(input.packagingTotalUnits)
+            : row.finishedQty,
+        operationalObservation: input.observation?.trim() || row.operationalObservation,
         version: Number(row.version) + 1,
         updatedAt: now,
       })
