@@ -1,4 +1,5 @@
 import type { SidebarItemId } from "@/lib/role-engine/types";
+import type { SectorId } from "@/types/operational/sector";
 
 /** Vistas navegables del Digital Twin F9.6. */
 export type TwinView =
@@ -34,6 +35,7 @@ export type TwinView =
   | "ver-elaboracion"
   | "ver-envasado-masivo"
   | "ver-envasado-premium"
+  | "ver-codificado"
   | "ver-calidad"
   | "ver-materia-prima"
   | "remitos"
@@ -182,6 +184,7 @@ export function viewTitle(view: TwinView): string {
     "ver-elaboracion": "Elaboración",
     "ver-envasado-masivo": "Envasado Masivo",
     "ver-envasado-premium": "Envasado Premium",
+    "ver-codificado": "Codificado",
     "ver-calidad": "Calidad",
     "ver-materia-prima": "Materias Primas",
     remitos: "Remitos",
@@ -194,4 +197,20 @@ export function viewTitle(view: TwinView): string {
     "client-detail": "Cliente",
   };
   return titles[view];
+}
+
+/**
+ * Sectores cuyo historial de trabajos finalizados debe consultar el actor.
+ * PRODUCCION debe ver el historial de todo lo que asigna, incluido
+ * CODIFICADO (directo o vía Envasado) — se omitía acá igual que en el panel
+ * general, dejando el historial de Codificado invisible para Producción.
+ */
+export function historialSectorsForActor(sectorId: SectorId): SectorId[] {
+  if (sectorId === "PRODUCCION") {
+    return ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO"];
+  }
+  if (sectorId === "MATERIA_PRIMA") {
+    return ["ELABORACION"];
+  }
+  return [sectorId];
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
+import { historialSectorsForActor } from "@/features/os/navigation/twin-nav";
 import { SECTOR_VIEW_REGISTRY } from "@/features/sectors/registry/sector-view-registry";
 import { renderSectorHome } from "@/lib/role-engine";
 import {
@@ -45,6 +46,7 @@ import {
   ElaboracionOperationalView,
   EnvasadoOperationalView,
 } from "@/features/os/operational/views/envasado-operational-view";
+import { CodificadoOperationalView } from "@/features/os/operational/views/codificado-operational-view";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 
 /** Router del Digital Twin — navegación entre Home, utilidades y detalle. */
@@ -90,17 +92,7 @@ export function TwinRouter() {
         </TwinShell>
       );
     case "historial":
-      return (
-        <HistorialView
-          sectors={
-            sectorId === "PRODUCCION"
-              ? ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM"]
-              : sectorId === "MATERIA_PRIMA"
-                ? ["ELABORACION"]
-                : [sectorId]
-          }
-        />
-      );
+      return <HistorialView sectors={historialSectorsForActor(sectorId)} />;
     case "pendientes":
       return <CalidadOperationalView initialTab="pendientes" />;
     case "aprobados":
@@ -152,6 +144,8 @@ export function TwinRouter() {
       return <EnvasadoOperationalView sectorId="ENVASADO_MASIVO" />;
     case "ver-envasado-premium":
       return <EnvasadoOperationalView sectorId="ENVASADO_PREMIUM" />;
+    case "ver-codificado":
+      return <CodificadoOperationalView />;
     case "ver-calidad":
       return <CalidadOperationalView />;
     case "ver-materia-prima":

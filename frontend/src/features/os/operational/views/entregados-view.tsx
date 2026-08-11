@@ -65,7 +65,7 @@ const TABS = [
 ] as const;
 
 const PAGE_SIZE = 20;
-const PRODUCING_SECTORS: SectorId[] = ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM"];
+export const PRODUCING_SECTORS: SectorId[] = ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO"];
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);

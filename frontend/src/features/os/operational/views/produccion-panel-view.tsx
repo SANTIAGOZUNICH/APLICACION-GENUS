@@ -22,7 +22,12 @@ import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider
 import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
 import { FormulasAdminPanel } from "../components/formulas-admin-panel";
 
-const PRODUCING_SECTORS = ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM"] as const;
+// Sectores cuyos trabajos deben verse en el panel general de Producción.
+// CODIFICADO faltaba acá: este panel arma su propia lista llamando a
+// useOperationalPlan(sector) por cada sector — es independiente del filtro
+// PRODUCTION_AGGREGATE_SECTOR_IDS (work-item-filters.ts), así que agregar
+// CODIFICADO ahí no alcanza para que aparezca en esta pantalla real.
+export const PRODUCING_SECTORS = ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO"] as const;
 
 interface SectorSummary {
   sector: (typeof PRODUCING_SECTORS)[number];
@@ -110,18 +115,20 @@ export function ProduccionPanelView() {
   const elaboracion = useOperationalPlan("ELABORACION");
   const masivo = useOperationalPlan("ENVASADO_MASIVO");
   const premium = useOperationalPlan("ENVASADO_PREMIUM");
+  const codificado = useOperationalPlan("CODIFICADO");
   const calidad = useOperationalPlan("CALIDAD");
 
   const bySector: Record<(typeof PRODUCING_SECTORS)[number], WorkItem[]> = {
     ELABORACION: mergeManualWorkItems("ELABORACION", elaboracion.data?.workItems ?? []),
     ENVASADO_MASIVO: mergeManualWorkItems("ENVASADO_MASIVO", masivo.data?.workItems ?? []),
     ENVASADO_PREMIUM: mergeManualWorkItems("ENVASADO_PREMIUM", premium.data?.workItems ?? []),
+    CODIFICADO: mergeManualWorkItems("CODIFICADO", codificado.data?.workItems ?? []),
   };
 
   const allActiveItems = useMemo(
     () => PRODUCING_SECTORS.flatMap((s) => bySector[s]),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [elaboracion.data, masivo.data, premium.data, panelTick]
+    [elaboracion.data, masivo.data, premium.data, codificado.data, panelTick]
   );
 
   const qualityItems = calidad.data?.qualityItems ?? [];
@@ -240,10 +247,14 @@ export function ProduccionPanelView() {
       : []),
   ];
 
-  const sectorViewMap: Record<string, "ver-elaboracion" | "ver-envasado-masivo" | "ver-envasado-premium" | "ver-calidad"> = {
+  const sectorViewMap: Record<
+    string,
+    "ver-elaboracion" | "ver-envasado-masivo" | "ver-envasado-premium" | "ver-codificado" | "ver-calidad"
+  > = {
     ELABORACION: "ver-elaboracion",
     ENVASADO_MASIVO: "ver-envasado-masivo",
     ENVASADO_PREMIUM: "ver-envasado-premium",
+    CODIFICADO: "ver-codificado",
     CALIDAD: "ver-calidad",
   };
 
