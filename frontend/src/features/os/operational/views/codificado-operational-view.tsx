@@ -17,7 +17,7 @@ import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { useOperationalStore } from "../store/operational-store-context";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
-import { canDeliverFromCodificado } from "../lib/codificado-flow";
+import { canDeliverFromCodificado, canReopenCodificadoDelivery } from "../lib/codificado-flow";
 import { canEditInCodificado, codificadoOriginLabel, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
@@ -125,13 +125,17 @@ export function CodificadoOperationalView() {
   const selectedDeliveredAt = selected
     ? (selected.deliveredFromCodificadoAt ?? progressMap[selected.id]?.deliveredFromCodificadoAt ?? null)
     : null;
-  // Distinto de "no editable" en general (p.ej. cancelado): esto habilita
-  // "Rehacer entrega" solo cuando realmente hay una entrega para deshacer.
+  // Misma decisión que el servidor (reopenCodificadoDeliveryDurable) — acá
+  // no sabemos si ya hay una entrega real a cliente (hasActiveClientDelivery
+  // no viaja en WorkItem), así que esto es una habilitación optimista: el
+  // servidor es la autoridad final y devuelve el motivo exacto si rechaza.
   const canReopen =
     Boolean(selected) &&
-    !selectedEditable &&
-    Boolean(selectedDeliveredAt) &&
-    selected!.sector === "CODIFICADO";
+    canReopenCodificadoDelivery({
+      sector: selected?.sector,
+      deliveredFromCodificadoAt: selectedDeliveredAt,
+      qualityStatus: selected?.qualityStatus,
+    }).ok;
 
   const enrichSelected = useCallback(
     (item: WorkItem): WorkItem => {

@@ -63,6 +63,60 @@ export function canDeliverFromCodificado(
   };
 }
 
+export interface CodificadoReopenCheckInput {
+  sector: SectorId | string | null | undefined;
+  deliveredFromCodificadoAt?: string | null;
+  codificadoCancelledAt?: string | null;
+  qualityStatus?: string | null;
+  /** Ya existe una entrega real a cliente en work_item_deliveries. */
+  hasActiveClientDelivery?: boolean;
+}
+
+/**
+ * "Rehacer entrega" — misma decisión que usa reopenCodificadoDeliveryDurable
+ * (server) y el botón "Rehacer entrega" (UI), extraída acá para poder
+ * testearla sin DB. Bloquea explícitamente (no auto-corrige nada en
+ * silencio) si Calidad ya decidió o si ya hay una entrega real a cliente.
+ */
+export function canReopenCodificadoDelivery(
+  input: CodificadoReopenCheckInput
+): CodificadoTransitionResult {
+  if (input.sector !== "CODIFICADO") {
+    return { ok: false, code: "NOT_IN_CODIFICADO", error: "El trabajo no está en Codificado." };
+  }
+  if (!input.deliveredFromCodificadoAt) {
+    return {
+      ok: false,
+      code: "NOT_DELIVERED",
+      error: "Este trabajo no fue entregado — no hay nada que rehacer.",
+    };
+  }
+  if (input.codificadoCancelledAt) {
+    return {
+      ok: false,
+      code: "HANDOFF_CANCELLED",
+      error: "El envío a Codificado fue cancelado.",
+    };
+  }
+  if (input.qualityStatus && input.qualityStatus !== "pendiente") {
+    return {
+      ok: false,
+      code: "QUALITY_DECIDED",
+      error:
+        "Calidad ya tomó una decisión sobre este trabajo (aprobado/rechazado). Pedile a Calidad que anule su decisión antes de rehacer la entrega.",
+    };
+  }
+  if (input.hasActiveClientDelivery) {
+    return {
+      ok: false,
+      code: "ALREADY_DELIVERED_TO_CLIENT",
+      error:
+        "Ya existe una entrega real a cliente para este trabajo — no se puede rehacer la entrega de Codificado.",
+    };
+  }
+  return { ok: true };
+}
+
 export function isEnvasadoOriginSector(sector: SectorId | null | undefined): boolean {
   return Boolean(sector && ENVASADO_ORIGINS.has(sector));
 }

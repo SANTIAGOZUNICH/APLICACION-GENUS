@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import {
   canDeliverFromCodificado,
+  canReopenCodificadoDelivery,
   canSendToCodificado,
   resolveTotalUnitsForCodificado,
 } from "./codificado-flow";
@@ -188,6 +189,62 @@ describe("codificado-flow", () => {
       sentBy: "Prem",
     });
     expect(progress.codificadoOriginSector).toBe("ENVASADO_PREMIUM");
+  });
+});
+
+describe("canReopenCodificadoDelivery — Rehacer entrega", () => {
+  const deliveredItem = {
+    sector: "CODIFICADO",
+    deliveredFromCodificadoAt: "2026-08-10T16:20:00.000Z",
+    codificadoCancelledAt: null,
+    qualityStatus: "pendiente",
+    hasActiveClientDelivery: false,
+  };
+
+  it("permite rehacer un trabajo entregado, en Codificado, con Calidad pendiente y sin entrega real", () => {
+    expect(canReopenCodificadoDelivery(deliveredItem).ok).toBe(true);
+  });
+
+  it("bloquea si el trabajo no está en sector CODIFICADO", () => {
+    const result = canReopenCodificadoDelivery({ ...deliveredItem, sector: "ENVASADO_MASIVO" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("NOT_IN_CODIFICADO");
+  });
+
+  it("bloquea si nunca fue entregado (no hay nada que rehacer)", () => {
+    const result = canReopenCodificadoDelivery({ ...deliveredItem, deliveredFromCodificadoAt: null });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("NOT_DELIVERED");
+  });
+
+  it("bloquea si el envío a Codificado fue cancelado", () => {
+    const result = canReopenCodificadoDelivery({
+      ...deliveredItem,
+      codificadoCancelledAt: "2026-08-10T18:00:00.000Z",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("HANDOFF_CANCELLED");
+  });
+
+  it("bloquea si Calidad ya aprobó — no se auto-corrige la decisión en silencio", () => {
+    const result = canReopenCodificadoDelivery({ ...deliveredItem, qualityStatus: "aprobado" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("QUALITY_DECIDED");
+      expect(result.error).toMatch(/anule su decisión/i);
+    }
+  });
+
+  it("bloquea si Calidad ya rechazó", () => {
+    const result = canReopenCodificadoDelivery({ ...deliveredItem, qualityStatus: "rechazado" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("QUALITY_DECIDED");
+  });
+
+  it("bloquea si ya existe una entrega real a cliente en work_item_deliveries", () => {
+    const result = canReopenCodificadoDelivery({ ...deliveredItem, hasActiveClientDelivery: true });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("ALREADY_DELIVERED_TO_CLIENT");
   });
 });
 

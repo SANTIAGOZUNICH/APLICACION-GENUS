@@ -11,6 +11,7 @@ import {
   workItems,
 } from "@/lib/db/schema";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
+import { canReopenCodificadoDelivery } from "@/features/os/operational/lib/codificado-flow";
 import { computePackagingClose, normalizePackingGroups } from "@/lib/remitos/packing-math";
 import type { PlanningActor, PlanningSector, PlanningWorkItemRecord } from "@/lib/planning/types";
 import {
@@ -813,17 +814,6 @@ export async function reopenCodificadoDeliveryDurable(
       .where(eq(workItems.id, id))
       .limit(1);
     if (!row) throw new PlanningNotFoundError("Trabajo no encontrado.");
-    if (row.sector !== "CODIFICADO") {
-      throw new PlanningValidationError("El trabajo no está en Codificado.");
-    }
-    if (!row.deliveredFromCodificadoAt) {
-      throw new PlanningValidationError(
-        "Este trabajo no fue entregado — no hay nada que rehacer."
-      );
-    }
-    if (row.codificadoCancelledAt) {
-      throw new PlanningValidationError("El envío a Codificado fue cancelado.");
-    }
     if (
       input.expectedVersion != null &&
       Number(input.expectedVersion) !== Number(row.version)
@@ -831,11 +821,6 @@ export async function reopenCodificadoDeliveryDurable(
       throw new PlanningConflictError(
         "El trabajo cambió. Recargá e intentá de nuevo.",
         mapItem(row)
-      );
-    }
-    if (row.qualityStatus && row.qualityStatus !== "pendiente") {
-      throw new PlanningValidationError(
-        "Calidad ya tomó una decisión sobre este trabajo (aprobado/rechazado). Pedile a Calidad que anule su decisión antes de rehacer la entrega."
       );
     }
     const [activeDelivery] = await tx
@@ -849,9 +834,20 @@ export async function reopenCodificadoDeliveryDurable(
         )
       )
       .limit(1);
-    if (activeDelivery) {
+    const eligibility = canReopenCodificadoDelivery({
+      sector: row.sector,
+      deliveredFromCodificadoAt: row.deliveredFromCodificadoAt
+        ? row.deliveredFromCodificadoAt.toISOString()
+        : null,
+      codificadoCancelledAt: row.codificadoCancelledAt
+        ? row.codificadoCancelledAt.toISOString()
+        : null,
+      qualityStatus: row.qualityStatus,
+      hasActiveClientDelivery: Boolean(activeDelivery),
+    });
+    if (!eligibility.ok || !row.deliveredFromCodificadoAt) {
       throw new PlanningValidationError(
-        "Ya existe una entrega real a cliente para este trabajo — no se puede rehacer la entrega de Codificado."
+        !eligibility.ok ? eligibility.error : "Este trabajo no fue entregado — no hay nada que rehacer."
       );
     }
 
