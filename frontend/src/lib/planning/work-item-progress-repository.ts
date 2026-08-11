@@ -177,6 +177,99 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
   });
 }
 
+export interface UpdateWorkItemPlanningInput {
+  client?: string | null;
+  product?: string | null;
+  plannedQuantity?: string | null;
+  unit?: string | null;
+  deliveryDate?: string | null;
+  notes?: string | null;
+  reason?: string | null;
+  updatedBy: string;
+  updatedBySector: SectorId | string;
+}
+
+const PLANNING_EDITABLE_KEYS = [
+  "client",
+  "product",
+  "plannedQuantity",
+  "unit",
+  "deliveryDate",
+  "notes",
+] as const;
+
+/**
+ * Edición de campos de planificación por Producción sobre un trabajo ya
+ * asignado (product/client/cantidad/fecha de entrega/observaciones). Toca
+ * SOLO estas columnas — nunca finishedQty, packingGroups, sampleUnits,
+ * deliverableUnits, operationalStatus, ni ningún campo de Codificado/
+ * Calidad, así que no puede pisar avance ya informado por otro sector.
+ * Lote/VTO siguen su propio mecanismo (updateWorkItemLoteVtoDurable) — no
+ * se duplican acá. El caller (ruta) ya validó que el actor es PRODUCCION.
+ */
+export async function updateWorkItemPlanningDurable(
+  id: string,
+  input: UpdateWorkItemPlanningInput
+) {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        client: workItems.client,
+        product: workItems.product,
+        plannedQuantity: workItems.plannedQuantity,
+        unit: workItems.unit,
+        deliveryDate: workItems.deliveryDate,
+        notes: workItems.notes,
+        planningWeekId: workItems.planningWeekId,
+      })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!existing) throw new Error("Work item no encontrado.");
+
+    const before: Record<string, unknown> = {};
+    const after: Record<string, unknown> = {};
+    const patch: Partial<typeof workItems.$inferInsert> = { updatedAt: new Date() };
+
+    for (const key of PLANNING_EDITABLE_KEYS) {
+      const incoming = input[key];
+      if (incoming === undefined) continue;
+      const nextValue =
+        key === "deliveryDate"
+          ? incoming?.trim() || null
+          : typeof incoming === "string"
+            ? incoming.trim() || null
+            : incoming;
+      const currentValue = existing[key];
+      if (nextValue === currentValue) continue;
+      before[key] = currentValue ?? null;
+      after[key] = nextValue ?? null;
+      (patch as Record<string, unknown>)[key] = nextValue;
+    }
+
+    if (Object.keys(after).length === 0) {
+      throw new Error("No hay cambios para guardar.");
+    }
+
+    const [row] = await tx.update(workItems).set(patch).where(eq(workItems.id, id)).returning();
+    if (!row) throw new Error("No se pudo actualizar el trabajo.");
+
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: existing.planningWeekId,
+      type: "PLANNING_FIELDS_CORRECTED",
+      fromStatus: JSON.stringify(before),
+      toStatus: JSON.stringify(after),
+      actorEmail: input.updatedBy,
+      actorSector: String(input.updatedBySector),
+      note: input.reason?.trim() || null,
+    });
+
+    return row;
+  });
+}
+
 export interface CompleteWorkInput {
   finishedQty: string;
   observation: string;

@@ -7,6 +7,7 @@ import {
   operationalEvents,
   productionPedidos,
   productionPedidoStatusEvents,
+  workItemDeliveries,
   workItems,
 } from "@/lib/db/schema";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
@@ -741,6 +742,152 @@ export async function deliverFromCodificadoDurable(
       updated.productionPedidoId,
       actor
     );
+
+    return { item: mapItem(updated), replayed: false, operationId };
+  });
+}
+
+export type ReopenCodificadoDeliveryInput = {
+  workItemId: string;
+  reason?: string | null;
+  expectedVersion?: number | null;
+  idempotencyKey: string;
+};
+
+/**
+ * "Rehacer entrega" — deshace la entrega a Calidad hecha por Codificado y
+ * deja el trabajo editable de nuevo, SIN mover el sector (a diferencia de
+ * cancelCodificadoHandoffDurable/WITHDRAW_CODIFICADO_DELIVERY, que expulsa
+ * el trabajo de vuelta a Envasado). No borra cajas, muestras, lote/VTO, OA
+ * ni observaciones — solo limpia las marcas de entrega y completado.
+ *
+ * Bloqueada explícitamente (no auto-corrige, no borra en silencio) si:
+ *  - Calidad ya tomó una decisión (aprobado/rechazado) — hay que anularla
+ *    primero desde Calidad (annulQualityDecisionDurable), a propósito: no
+ *    existe ningún vínculo automático entre qualityStatus y este flujo, y
+ *    resetearlo acá sin que Calidad lo sepa sería silencioso.
+ *  - ya existe una entrega real a cliente en work_item_deliveries.
+ */
+export async function reopenCodificadoDeliveryDurable(
+  input: ReopenCodificadoDeliveryInput,
+  actor: PlanningActor,
+  operationId: string = randomUUID()
+): Promise<{ item: PlanningWorkItemRecord; replayed: boolean; operationId: string }> {
+  const sector = String(actor.sector ?? "").toUpperCase();
+  if (sector !== "CODIFICADO" && sector !== "PRODUCCION" && sector !== "DIRECCION") {
+    throw new PlanningForbiddenError("Solo Codificado puede rehacer su propia entrega.");
+  }
+  const id = normalizeWorkItemId(input.workItemId);
+  if (!id) throw new PlanningValidationError("workItemId requerido.");
+  const key = input.idempotencyKey?.trim();
+  if (!key || key.length < 8) {
+    throw new PlanningValidationError("idempotencyKey inválida.");
+  }
+  const reason = normalizeOptionalReason(input.reason);
+
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const idemRef = `codificado:reopen:${key}`;
+    const [prior] = await tx
+      .select()
+      .from(operationalEvents)
+      .where(
+        and(
+          eq(operationalEvents.type, "REOPENED_CODIFICADO_DELIVERY"),
+          eq(operationalEvents.note, idemRef)
+        )
+      )
+      .limit(1);
+    if (prior?.workItemId) {
+      const [existing] = await tx
+        .select()
+        .from(workItems)
+        .where(eq(workItems.id, prior.workItemId))
+        .limit(1);
+      if (existing) return { item: mapItem(existing), replayed: true, operationId };
+    }
+
+    const [row] = await tx
+      .select()
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!row) throw new PlanningNotFoundError("Trabajo no encontrado.");
+    if (row.sector !== "CODIFICADO") {
+      throw new PlanningValidationError("El trabajo no está en Codificado.");
+    }
+    if (!row.deliveredFromCodificadoAt) {
+      throw new PlanningValidationError(
+        "Este trabajo no fue entregado — no hay nada que rehacer."
+      );
+    }
+    if (row.codificadoCancelledAt) {
+      throw new PlanningValidationError("El envío a Codificado fue cancelado.");
+    }
+    if (
+      input.expectedVersion != null &&
+      Number(input.expectedVersion) !== Number(row.version)
+    ) {
+      throw new PlanningConflictError(
+        "El trabajo cambió. Recargá e intentá de nuevo.",
+        mapItem(row)
+      );
+    }
+    if (row.qualityStatus && row.qualityStatus !== "pendiente") {
+      throw new PlanningValidationError(
+        "Calidad ya tomó una decisión sobre este trabajo (aprobado/rechazado). Pedile a Calidad que anule su decisión antes de rehacer la entrega."
+      );
+    }
+    const [activeDelivery] = await tx
+      .select()
+      .from(workItemDeliveries)
+      .where(
+        and(
+          eq(workItemDeliveries.workItemId, id),
+          eq(workItemDeliveries.status, "ENTREGADO"),
+          eq(workItemDeliveries.archived, false)
+        )
+      )
+      .limit(1);
+    if (activeDelivery) {
+      throw new PlanningValidationError(
+        "Ya existe una entrega real a cliente para este trabajo — no se puede rehacer la entrega de Codificado."
+      );
+    }
+
+    const now = new Date();
+    const prevDeliveredAt = row.deliveredFromCodificadoAt.toISOString();
+    const prevDeliveredBy = row.deliveredFromCodificadoBy ?? "?";
+
+    const [updated] = await tx
+      .update(workItems)
+      .set({
+        deliveredFromCodificadoAt: null,
+        deliveredFromCodificadoBy: null,
+        // completedAt gatea la cola de Calidad (listCompletedItems) — se
+        // limpia junto con deliveredFromCodificadoAt para que el trabajo
+        // deje de mostrarse ahí mientras Codificado lo vuelve a editar;
+        // deliverFromCodificadoDurable lo vuelve a fijar en la re-entrega.
+        completedAt: null,
+        completedBy: null,
+        operationalStatus:
+          row.operationalStatus === "revision" ? "en_curso" : row.operationalStatus,
+        version: Number(row.version) + 1,
+        updatedAt: now,
+      })
+      .where(eq(workItems.id, id))
+      .returning();
+
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: row.planningWeekId,
+      type: "REOPENED_CODIFICADO_DELIVERY",
+      fromStatus: "PENDIENTE_CALIDAD",
+      toStatus: "EN_CODIFICADO",
+      actorEmail: actor.email,
+      actorSector: actor.sector,
+      note: `${idemRef} | entrega anterior ${prevDeliveredAt} por ${prevDeliveredBy}${reason ? ` | motivo: ${reason}` : ""}`,
+    });
 
     return { item: mapItem(updated), replayed: false, operationId };
   });

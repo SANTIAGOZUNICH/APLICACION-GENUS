@@ -21,6 +21,7 @@ import type { LifecycleAction } from "@/lib/lifecycle";
 import { SECTOR_LABELS, type SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
+import { PRODUCTION_MANAGED_SECTORS } from "@/lib/operational/production-managed-sectors";
 import {
   OperationalTable,
   OperationalTabs,
@@ -65,7 +66,7 @@ const TABS = [
 ] as const;
 
 const PAGE_SIZE = 20;
-export const PRODUCING_SECTORS: SectorId[] = ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO"];
+export const PRODUCING_SECTORS: SectorId[] = [...PRODUCTION_MANAGED_SECTORS];
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);

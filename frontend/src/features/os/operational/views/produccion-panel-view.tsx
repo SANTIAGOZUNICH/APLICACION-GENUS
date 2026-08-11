@@ -21,13 +21,12 @@ import { Button } from "@/components/ui/button";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
 import { FormulasAdminPanel } from "../components/formulas-admin-panel";
+import { PRODUCTION_MANAGED_SECTORS } from "@/lib/operational/production-managed-sectors";
 
-// Sectores cuyos trabajos deben verse en el panel general de Producción.
-// CODIFICADO faltaba acá: este panel arma su propia lista llamando a
-// useOperationalPlan(sector) por cada sector — es independiente del filtro
-// PRODUCTION_AGGREGATE_SECTOR_IDS (work-item-filters.ts), así que agregar
-// CODIFICADO ahí no alcanza para que aparezca en esta pantalla real.
-export const PRODUCING_SECTORS = ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO"] as const;
+// Sectores cuyos trabajos deben verse en el panel general de Producción —
+// derivado de la única definición central (production-managed-sectors.ts)
+// en vez de repetir el array acá.
+export const PRODUCING_SECTORS = PRODUCTION_MANAGED_SECTORS;
 
 interface SectorSummary {
   sector: (typeof PRODUCING_SECTORS)[number];

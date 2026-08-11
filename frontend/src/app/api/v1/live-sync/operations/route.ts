@@ -27,6 +27,7 @@ import {
   saveWorkProgressDurable,
   toClientDeliveryRecord,
   updateWorkItemLoteVtoDurable,
+  updateWorkItemPlanningDurable,
 } from "@/lib/planning/work-item-progress-repository";
 
 export const runtime = "nodejs";
@@ -100,6 +101,19 @@ type OperationAction =
       packagingLote?: string | null;
       packagingVto?: string | null;
       reason: string;
+      updatedBy?: string;
+      actorSectorId?: SectorId;
+    }
+  | {
+      action: "edit_assignment";
+      itemId: string;
+      client?: string | null;
+      product?: string | null;
+      plannedQuantity?: string | null;
+      unit?: string | null;
+      deliveryDate?: string | null;
+      notes?: string | null;
+      reason?: string | null;
       updatedBy?: string;
       actorSectorId?: SectorId;
     }
@@ -355,6 +369,32 @@ export async function POST(request: Request) {
         const row = await updateWorkItemLoteVtoDurable(nativeLoteVtoId, {
           packagingLote: body.packagingLote,
           packagingVto: body.packagingVto,
+          reason: body.reason,
+          updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
+          updatedBySector: actor.sector,
+        });
+        return NextResponse.json({ ok: true, revision: row.version, record: row });
+      }
+      case "edit_assignment": {
+        assertBodySectorMatches(body.actorSectorId, actor.sector);
+        const gate = validateWorkMutationActor(actor.sector);
+        if (!gate.ok) {
+          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
+        }
+        const nativePlanningId = nativeIdFromItemId(body.itemId);
+        if (!nativePlanningId) {
+          return NextResponse.json(
+            { error: "Edición no disponible para este trabajo.", code: "NOT_NATIVE" },
+            { status: 400 }
+          );
+        }
+        const row = await updateWorkItemPlanningDurable(nativePlanningId, {
+          client: body.client,
+          product: body.product,
+          plannedQuantity: body.plannedQuantity,
+          unit: body.unit,
+          deliveryDate: body.deliveryDate,
+          notes: body.notes,
           reason: body.reason,
           updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
           updatedBySector: actor.sector,

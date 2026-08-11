@@ -1,5 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { canEditInCodificado, isInCodificadoStatus } from "./work-transfer-labels";
+import { canEditInCodificado, codificadoOriginLabel, isInCodificadoStatus } from "./work-transfer-labels";
+
+describe("codificadoOriginLabel", () => {
+  it("asignación directa (sin codificadoOriginSector, sin viaCodificado)", () => {
+    expect(codificadoOriginLabel({})).toBe("Asignación directa de Producción");
+  });
+
+  it("handoff desde Envasado Premium", () => {
+    expect(codificadoOriginLabel({ codificadoOriginSector: "ENVASADO_PREMIUM" })).toBe(
+      "Envasado Premium"
+    );
+  });
+
+  it("handoff desde Envasado Masivo", () => {
+    expect(codificadoOriginLabel({ codificadoOriginSector: "ENVASADO_MASIVO" })).toBe(
+      "Envasado Masivo"
+    );
+  });
+
+  it("viaCodificado sin sector de origen específico cae a 'Envasado' genérico", () => {
+    expect(codificadoOriginLabel({ viaCodificado: true })).toBe("Envasado");
+  });
+
+  it("respeta un codificadoOriginLabel explícito si viene provisto", () => {
+    expect(codificadoOriginLabel({ codificadoOriginLabel: "Custom" })).toBe("Custom");
+  });
+});
 
 describe("canEditInCodificado — bug: asignación directa Producción → Codificado no editable", () => {
   it("permite editar un trabajo asignado DIRECTO a Codificado (pendiente/en_curso, sector=CODIFICADO, sin viaCodificado)", () => {
