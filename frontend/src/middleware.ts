@@ -3,10 +3,34 @@ import {
   isLegacyOsRedirectEnabled,
   LEGACY_TO_OS_REDIRECTS,
 } from "@/lib/config/os-convergence";
+import {
+  getCanonicalProductionHost,
+  shouldRedirectToCanonicalHost,
+} from "@/lib/config/canonical-host";
 
 /** Fase 3.11 — redirects 302 opt-in legacy → OS (Strangler Fig). Default: off. */
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const isApi = pathname.startsWith("/api/v1/");
+
+  // Dominio canónico único en Production — ver canonical-host.ts. Corre
+  // ANTES que todo lo demás: la cookie de sesión es host-only, así que un
+  // link/bookmark a otro alias de Vercel del mismo deployment deja al login
+  // "aparentemente correcto" pero expulsa al usuario en la siguiente
+  // navegación (la cookie nunca llega en el host equivocado).
+  if (
+    shouldRedirectToCanonicalHost({
+      vercelEnv: process.env.VERCEL_ENV,
+      hostname: request.nextUrl.hostname,
+      isApiRequest: isApi,
+    })
+  ) {
+    const canonicalUrl = request.nextUrl.clone();
+    canonicalUrl.hostname = getCanonicalProductionHost();
+    canonicalUrl.port = "";
+    return NextResponse.redirect(canonicalUrl, 308);
+  }
+
   const hasSessionCookie = Boolean(request.cookies.get("genus_session")?.value);
   const isAuthLogin = pathname === "/api/v1/auth/login";
   const isPublicPage =
@@ -16,7 +40,6 @@ export function middleware(request: NextRequest) {
     pathname === "/manifest.webmanifest/";
   const isHealthCheck =
     pathname === "/api/health" || pathname === "/api/v1/connectivity";
-  const isApi = pathname.startsWith("/api/v1/");
 
   if (!isPublicPage && !isAuthLogin && !isHealthCheck && !hasSessionCookie) {
     if (isApi) {
