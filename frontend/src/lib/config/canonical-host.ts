@@ -50,3 +50,46 @@ export function shouldRedirectToCanonicalHost(input: CanonicalHostCheckInput): b
   const canonical = input.canonicalHost ?? getCanonicalProductionHost();
   return input.hostname !== canonical;
 }
+
+/**
+ * Dominio canónico por-deployment en Preview.
+ *
+ * Bug real (2026-08-12, "Sesión vencida" constante en PR #74 Preview):
+ * Vercel expone SIEMPRE dos hostnames válidos para el mismo deployment de
+ * Preview — el propio, único por build (VERCEL_URL, ej.
+ * aplicacion-genus-p3rf1lm04-<team>.vercel.app) y el alias de rama, estable
+ * entre pushes (VERCEL_BRANCH_URL / el link que postea el check de GitHub,
+ * ej. aplicacion-genus-git-<branch>-<team>.vercel.app). Confirmado contra
+ * la API de Vercel (get_deployment) para el deployment real de este PR:
+ * ambos hostnames resuelven al mismo build. La cookie de sesión es
+ * host-only (ver cookies.ts) — si el login ocurre en un hostname y una
+ * navegación/pestaña posterior usa el otro (link distinto, pestaña vieja,
+ * bookmark), esa request llega sin cookie y el middleware (que solo
+ * verifica presencia) responde 401/redirect como sesión vencida, aunque la
+ * sesión siga siendo válida en el otro hostname. Mismo patrón que el bug de
+ * Production (ver comentario arriba), pero Preview no tenía ninguna
+ * protección análoga.
+ *
+ * Fix: redirect 308 al hostname propio del deployment (VERCEL_URL — always
+ * on para cualquier deployment de Vercel, a diferencia de VERCEL_BRANCH_URL
+ * que puede faltar) ANTES de toda otra lógica, solo en Preview y solo para
+ * páginas (mismo criterio que el canónico de Production: las fetches de la
+ * SPA son same-origin relativas, así que alcanza con canonicalizar la
+ * navegación de página).
+ */
+export interface PreviewCanonicalHostCheckInput {
+  vercelEnv: string | undefined;
+  hostname: string;
+  isApiRequest: boolean;
+  deploymentHost: string | undefined;
+}
+
+export function shouldRedirectToCanonicalPreviewHost(
+  input: PreviewCanonicalHostCheckInput
+): boolean {
+  if (input.vercelEnv !== "preview") return false;
+  if (input.isApiRequest) return false;
+  const deploymentHost = input.deploymentHost?.trim();
+  if (!deploymentHost) return false;
+  return input.hostname !== deploymentHost;
+}
