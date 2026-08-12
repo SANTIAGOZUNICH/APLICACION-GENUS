@@ -35,7 +35,11 @@ export function packagingDraftFromItem(item: WorkItem): PackagingDraft {
   });
   const summary = summarizePackingGroups(groups);
   const packagingTotalUnits = item.packagingTotalUnits ?? null;
-  const warn = packingProducedMismatchWarning(packagingTotalUnits, groups);
+  const warn = packingProducedMismatchWarning(
+    packagingTotalUnits,
+    groups,
+    item.sampleUnits ?? 0
+  );
   return {
     packagingLote: item.packagingLote ?? item.loteRef ?? "",
     packagingVto: item.packagingVto ?? "",
@@ -95,12 +99,13 @@ export function PackagingQuantitiesBlock({
   const [saving, setSaving] = useState(false);
 
   const produced = total === "" ? null : Number(total);
-  const warn = useMemo(
-    () => packingProducedMismatchWarning(produced, groups),
-    [produced, groups]
-  );
   const sampleUnits =
     sampleUnitsInput.trim() === "" ? null : Math.max(0, Math.floor(Number(sampleUnitsInput)));
+  // El balance compara NETO (producido − muestras) vs embalado, no el bruto.
+  const warn = useMemo(
+    () => packingProducedMismatchWarning(produced, groups, sampleUnits ?? 0),
+    [produced, groups, sampleUnits]
+  );
   const close = useMemo(
     () => computePackagingClose({ finishedQty: produced, sampleUnits, groups }),
     [produced, sampleUnits, groups]
@@ -242,6 +247,7 @@ export function PackagingQuantitiesBlock({
           groups={groups}
           onChange={setGroups}
           producedUnits={produced}
+          sampleUnits={sampleUnits}
           packingObservation={packingObs}
           onPackingObservationChange={setPackingObs}
           readOnly={readOnly}
@@ -269,24 +275,25 @@ export function PackagingQuantitiesBlock({
           data-testid="packaging-close-summary"
         >
           <ul className="space-y-0.5 text-[var(--os-text-muted)]">
-            <li>Cantidad final: {close.canValidate ? produced : "—"}</li>
-            <li>En cajas: {close.enCajas}</li>
+            <li>Cantidad final: {close.canValidate ? close.finishedUnits : "—"}</li>
             <li>Muestras: {close.muestras}</li>
+            <li>A embalar: {close.canValidate ? close.deliverableUnits : "—"}</li>
+            <li>Embalado: {close.packedUnits}</li>
             <li className="font-medium text-[var(--os-text,#111)]">
-              Diferencia: {close.canValidate ? close.diferencia : "—"}
+              Diferencia: {close.canValidate ? close.difference : "—"}
             </li>
           </ul>
           {close.canValidate ? (
             <p
-              className={close.isValid ? "mt-2 font-medium text-emerald-700" : "mt-2 font-medium text-amber-800"}
-              role={close.isValid ? undefined : "alert"}
+              className={close.isBalanced ? "mt-2 font-medium text-emerald-700" : "mt-2 font-medium text-amber-800"}
+              role={close.isBalanced ? undefined : "alert"}
               data-testid="packaging-close-indicator"
             >
-              {close.isValid
-                ? "✓ Distribución correcta"
-                : close.diferencia > 0
-                  ? `Faltan distribuir ${close.diferencia} unidad(es).`
-                  : `La distribución supera la cantidad final por ${Math.abs(close.diferencia)} unidad(es).`}
+              {close.isBalanced
+                ? "✓ Puede entregar"
+                : close.difference > 0
+                  ? `Faltan embalar ${close.difference} unidad(es).`
+                  : `Lo embalado supera lo entregable por ${Math.abs(close.difference)} unidad(es).`}
             </p>
           ) : null}
         </div>
