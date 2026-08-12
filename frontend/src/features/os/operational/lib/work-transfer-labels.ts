@@ -65,6 +65,24 @@ export function isPendingQualityStatus(status: string): boolean {
  * diálogo de detalle no). Debe reflejar exactamente los mismos criterios que
  * `canDeliverFromCodificado` (codificado-flow.ts) usa para permitir entregar.
  */
+/**
+ * Etiqueta de procedencia legible para un trabajo en Codificado — cubre las
+ * dos formas en que llega (asignación directa de Producción, o handoff
+ * desde Envasado Masivo/Premium). Mismo criterio para la lista y el
+ * detalle en codificado-operational-view.tsx.
+ */
+export function codificadoOriginLabel(item: {
+  codificadoOriginLabel?: string | null;
+  codificadoOriginSector?: string | null;
+  viaCodificado?: boolean;
+}): string {
+  if (item.codificadoOriginLabel) return item.codificadoOriginLabel;
+  if (item.codificadoOriginSector === "ENVASADO_PREMIUM") return "Envasado Premium";
+  if (item.codificadoOriginSector === "ENVASADO_MASIVO") return "Envasado Masivo";
+  if (item.viaCodificado) return "Envasado";
+  return "Asignación directa de Producción";
+}
+
 export function canEditInCodificado(item: {
   status: string;
   sector: string;

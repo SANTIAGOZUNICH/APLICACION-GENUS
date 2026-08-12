@@ -1,26 +1,19 @@
 import type { WorkItem } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 import { personNamesMatch } from "@/lib/operational/display-fields";
+import { PRODUCTION_MANAGED_SECTORS } from "@/lib/operational/production-managed-sectors";
 import {
   workItemCoversDate,
   workItemOverlapsWeek,
 } from "@/lib/operational/work-item-date-range";
 
 /**
- * Sectores que alimentan la vista agregada de Producción (cross-sector).
- * CODIFICADO faltaba acá: cualquier trabajo asignado directo a Codificado
- * (Producción → Codificado) o enviado desde Envasado quedaba con
- * `sector = "CODIFICADO"` en Neon de forma permanente (no vuelve a
- * Envasado ni pasa a otro valor al completarse), así que sin esta entrada
- * el work item entero desaparecía de todo lo que Producción arma a partir
- * de esta vista — el detalle de Codificado, el conteo de "esperando
- * Calidad", etc. — aunque estuviera correctamente persistido en Postgres.
+ * Sectores que alimentan la vista agregada de Producción (cross-sector):
+ * todos los sectores que Producción gestiona (production-managed-sectors.ts)
+ * más CALIDAD (Producción también necesita ver "esperando Calidad").
  */
 export const PRODUCTION_AGGREGATE_SECTOR_IDS = [
-  "ENVASADO_MASIVO",
-  "ENVASADO_PREMIUM",
-  "ELABORACION",
-  "CODIFICADO",
+  ...PRODUCTION_MANAGED_SECTORS,
   "CALIDAD",
 ] as const satisfies readonly SectorId[];
 

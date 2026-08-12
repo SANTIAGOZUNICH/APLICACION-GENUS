@@ -17,8 +17,8 @@ import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { useOperationalStore } from "../store/operational-store-context";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
-import { canDeliverFromCodificado } from "../lib/codificado-flow";
-import { canEditInCodificado, WORK_TRANSFER } from "../lib/work-transfer-labels";
+import { canDeliverFromCodificado, canReopenCodificadoDelivery } from "../lib/codificado-flow";
+import { canEditInCodificado, codificadoOriginLabel, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
 
@@ -61,6 +61,8 @@ export function CodificadoOperationalView() {
   const [confirmDeliver, setConfirmDeliver] = useState(false);
   const [missingWarn, setMissingWarn] = useState(false);
   const [packagingError, setPackagingError] = useState<string | null>(null);
+  const [confirmReopen, setConfirmReopen] = useState(false);
+  const [reopenBusy, setReopenBusy] = useState(false);
 
   const actorName = workspace.context.displayName || email || "Codificado";
 
@@ -119,6 +121,21 @@ export function CodificadoOperationalView() {
       deliveredFromCodificadoAt: selected.deliveredFromCodificadoAt ?? p?.deliveredFromCodificadoAt,
     });
   }, [selected, progressMap]);
+
+  const selectedDeliveredAt = selected
+    ? (selected.deliveredFromCodificadoAt ?? progressMap[selected.id]?.deliveredFromCodificadoAt ?? null)
+    : null;
+  // Misma decisión que el servidor (reopenCodificadoDeliveryDurable) — acá
+  // no sabemos si ya hay una entrega real a cliente (hasActiveClientDelivery
+  // no viaja en WorkItem), así que esto es una habilitación optimista: el
+  // servidor es la autoridad final y devuelve el motivo exacto si rechaza.
+  const canReopen =
+    Boolean(selected) &&
+    canReopenCodificadoDelivery({
+      sector: selected?.sector,
+      deliveredFromCodificadoAt: selectedDeliveredAt,
+      qualityStatus: selected?.qualityStatus,
+    }).ok;
 
   const enrichSelected = useCallback(
     (item: WorkItem): WorkItem => {
@@ -302,13 +319,40 @@ export function CodificadoOperationalView() {
     refresh,
   ]);
 
+  const confirmReopenAction = useCallback(async () => {
+    if (!selected) return;
+    setReopenBusy(true);
+    try {
+      await postCodificadoHandoff(session, selected.id, {
+        action: "reopen_delivery",
+        expectedVersion: selected.nativeVersion ?? null,
+        idempotencyKey:
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `reopen-${selected.id}-${Date.now()}`,
+      });
+      showToast("Entrega rehecha — el trabajo volvió a estar editable en Codificado.");
+      setConfirmReopen(false);
+      setSelected(null);
+      setDraft(null);
+      await refresh();
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "No se pudo rehacer la entrega.",
+        "info"
+      );
+    } finally {
+      setReopenBusy(false);
+    }
+  }, [selected, session, showToast, refresh]);
+
   return (
     <TwinShell title="Codificado">
       <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight">Mi trabajo</h2>
           <p className="text-sm text-[var(--os-text-muted)]">
-            Trabajos enviados desde Envasado Masivo y Premium · {workspace.context.displayName}
+            Asignación directa de Producción o enviados desde Envasado · {workspace.context.displayName}
           </p>
         </div>
         <Button
@@ -379,14 +423,7 @@ export function CodificadoOperationalView() {
                     </td>
                     <td className="py-2 tabular-nums">{total}</td>
                     <td className="hidden py-2 text-xs lg:table-cell">
-                      {item.codificadoOriginLabel ||
-                        (item.codificadoOriginSector === "ENVASADO_PREMIUM"
-                          ? "Envasado Premium"
-                          : item.codificadoOriginSector === "ENVASADO_MASIVO"
-                            ? "Envasado Masivo"
-                            : item.viaCodificado
-                              ? "Envasado"
-                              : "Producción")}
+                      {codificadoOriginLabel(item)}
                     </td>
                     <td className="py-2">
                       <StatusChip status={item.status} />
@@ -426,7 +463,7 @@ export function CodificadoOperationalView() {
                 </p>
                 <p>
                   <span className="text-[var(--os-text-muted)]">Origen · </span>
-                  {progressMap[selected.id]?.codificadoOriginSector ?? selected.sector}
+                  {codificadoOriginLabel(selected)}
                 </p>
                 {progressMap[selected.id]?.sentToCodificadoBy ? (
                   <p>
@@ -440,6 +477,21 @@ export function CodificadoOperationalView() {
                     <span className="text-[var(--os-text-muted)]">Sobrante granel · </span>
                     {progressMap[selected.id]?.bulkRemainderKg} kg
                   </p>
+                ) : null}
+                {selectedDeliveredAt ? (
+                  <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-bg)] px-3 py-2 text-xs">
+                    <p className="font-medium text-[var(--os-text)]">
+                      Entregado a Calidad · {new Date(selectedDeliveredAt).toLocaleString("es-AR")}
+                    </p>
+                    {selected.deliveredFromCodificadoBy ? (
+                      <p className="text-[var(--os-text-muted)]">
+                        Por {selected.deliveredFromCodificadoBy}
+                      </p>
+                    ) : null}
+                    <p className="mt-1 text-[var(--os-text-muted)]">
+                      Los datos de abajo son los que se entregaron — de solo lectura.
+                    </p>
+                  </div>
                 ) : null}
 
                 <PackagingQuantitiesBlock
@@ -482,6 +534,16 @@ export function CodificadoOperationalView() {
                     {WORK_TRANSFER.deliverFromCodificadoAction}
                   </Button>
                 </DialogFooter>
+              ) : canReopen ? (
+                <DialogFooter>
+                  <Button
+                    variant="primary"
+                    onClick={() => setConfirmReopen(true)}
+                    data-testid="codificado-reopen"
+                  >
+                    Rehacer entrega
+                  </Button>
+                </DialogFooter>
               ) : null}
             </>
           ) : null}
@@ -504,6 +566,29 @@ export function CodificadoOperationalView() {
             </Button>
             <Button variant="primary" onClick={confirmDeliverAction}>
               Confirmar entrega
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmReopen} onOpenChange={setConfirmReopen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rehacer entrega</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm">
+            Este trabajo ya fue entregado.
+            <br />
+            <br />
+            Si rehacés la entrega, volverá a estar editable en Codificado y deberá entregarse
+            nuevamente.
+          </p>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setConfirmReopen(false)} disabled={reopenBusy}>
+              Cancelar
+            </Button>
+            <Button variant="primary" onClick={() => void confirmReopenAction()} disabled={reopenBusy}>
+              {reopenBusy ? "Rehaciendo…" : "Rehacer entrega"}
             </Button>
           </DialogFooter>
         </DialogContent>

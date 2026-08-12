@@ -18,6 +18,7 @@ import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { OperationalTable, StatusChip, type OperationalTableColumn } from "../components/operational-ui";
 import { DeliveryDateBadge } from "../components/delivery-date-badge";
 import { AssignedWorkLifecycleActions } from "../components/assigned-work-lifecycle-actions";
+import { EditAssignmentDialog } from "../components/edit-assignment-dialog";
 import {
   executeAssignedWorkLifecycleAction,
   resolveAssignedWorkLifecycleAction,
@@ -118,6 +119,7 @@ export function AsignarTrabajosView() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [oaHint, setOaHint] = useState<string | null>(null);
   const [oaForceConfirm, setOaForceConfirm] = useState<string | null>(null);
+  const [editingItem, setEditingItem] = useState<WorkItem | null>(null);
   const idempotencyRef = useRef(newIdempotencyKey());
   const inFlightRef = useRef(false);
 
@@ -416,9 +418,7 @@ export function AsignarTrabajosView() {
       key: "acciones",
       header: "Acción",
       render: (r) =>
-        native ? (
-          <span className="text-xs text-[var(--os-text-muted)]">Confirmado Neon</span>
-        ) : reassigningId === r.id ? (
+        reassigningId === r.id ? (
           <div className="flex flex-wrap items-center gap-1.5">
             <input
               type="date"
@@ -453,16 +453,26 @@ export function AsignarTrabajosView() {
           </div>
         ) : (
           <div className="os-row-actions">
-            <button
-              type="button"
-              className="text-xs font-medium text-[var(--os-teal)] hover:underline"
-              onClick={() => {
-                setReassigningId(r.id);
-                setReassignDelivery(r.deliveryDate ?? r.plannedDate ?? todayIso());
-              }}
-            >
-              Editar entrega
-            </button>
+            {native ? (
+              <button
+                type="button"
+                className="text-xs font-medium text-[var(--os-teal)] hover:underline"
+                onClick={() => setEditingItem(r as WorkItem)}
+              >
+                Editar
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="text-xs font-medium text-[var(--os-teal)] hover:underline"
+                onClick={() => {
+                  setReassigningId(r.id);
+                  setReassignDelivery(r.deliveryDate ?? r.plannedDate ?? todayIso());
+                }}
+              >
+                Editar entrega
+              </button>
+            )}
             <AssignedWorkLifecycleActions
               item={r}
               actorSectorId={session.sectorId}
@@ -848,6 +858,18 @@ export function AsignarTrabajosView() {
             }
           />
         </section>
+
+        <EditAssignmentDialog
+          key={editingItem?.id ?? "closed"}
+          item={editingItem}
+          actorSectorId={session.sectorId}
+          actorName={workspace.context.displayName}
+          onClose={() => setEditingItem(null)}
+          onSaved={(message) => {
+            setEditingItem(null);
+            notifyLifecycleChange(message);
+          }}
+        />
 
         <LifecycleConfirmDialog
           pending={

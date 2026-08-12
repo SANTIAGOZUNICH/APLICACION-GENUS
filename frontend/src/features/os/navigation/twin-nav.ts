@@ -1,5 +1,6 @@
 import type { SidebarItemId } from "@/lib/role-engine/types";
 import type { SectorId } from "@/types/operational/sector";
+import { PRODUCTION_MANAGED_SECTORS } from "@/lib/operational/production-managed-sectors";
 
 /** Vistas navegables del Digital Twin F9.6. */
 export type TwinView =
@@ -89,6 +90,7 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   ver_elaboracion: "ver-elaboracion",
   ver_envasado_masivo: "ver-envasado-masivo",
   ver_envasado_premium: "ver-envasado-premium",
+  ver_codificado: "ver-codificado",
   ver_calidad: "ver-calidad",
   ver_materia_prima: "ver-materia-prima",
   remitos: "remitos",
@@ -131,6 +133,7 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     "ver-elaboracion": "ver_elaboracion",
     "ver-envasado-masivo": "ver_envasado_masivo",
     "ver-envasado-premium": "ver_envasado_premium",
+    "ver-codificado": "ver_codificado",
     "ver-calidad": "ver_calidad",
     "ver-materia-prima": "ver_materia_prima",
     remitos: "remitos",
@@ -207,7 +210,7 @@ export function viewTitle(view: TwinView): string {
  */
 export function historialSectorsForActor(sectorId: SectorId): SectorId[] {
   if (sectorId === "PRODUCCION") {
-    return ["ELABORACION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO"];
+    return [...PRODUCTION_MANAGED_SECTORS];
   }
   if (sectorId === "MATERIA_PRIMA") {
     return ["ELABORACION"];

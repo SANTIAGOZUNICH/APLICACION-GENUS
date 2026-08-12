@@ -30,7 +30,18 @@ export function setAuthServiceForTests(service: AuthService | null): void {
  * Contraseñas demo documentadas (docss/32) — solo para backend memoria en Preview
  * cuando 0016 no está aplicada. Si existe GENUS_AUTH_PASSWORD_*, tiene prioridad.
  */
-const PREVIEW_MEMORY_DEMO_PASSWORDS: Record<string, string> = {
+/**
+ * Exportadas (no solo internas) para poder testear en directory-parity.test.ts
+ * que cubren exactamente los mismos emails que SECTOR_ACCOUNT_DIRECTORY — el
+ * incidente de Codificado sin poder loguearse en Preview fue justamente una
+ * cuenta creada en un lugar (directory.ts) pero sin contraseña sembrada
+ * porque GENUS_AUTH_PASSWORD_CODIFICADO faltaba al correr el seed; este test
+ * no puede detectar ESO (es un dato faltante en Neon, no un bug de código),
+ * pero si en el futuro se agrega un sector nuevo y alguien olvida agregarlo
+ * acá o en seed-genus-auth.mjs, esto lo va a marcar en CI antes de llegar a
+ * Preview.
+ */
+export const PREVIEW_MEMORY_DEMO_PASSWORDS: Record<string, string> = {
   "elaboracion@laboratoriogenus.com.ar": "elaboracion123",
   "emasivo@laboratoriogenus.com.ar": "emasivo123",
   "epremium@laboratoriogenus.com.ar": "epremium123",
@@ -41,7 +52,7 @@ const PREVIEW_MEMORY_DEMO_PASSWORDS: Record<string, string> = {
   "deposito@laboratoriogenus.com.ar": "deposito123",
 };
 
-const PASSWORD_ENV_BY_EMAIL: Record<string, string> = {
+export const PASSWORD_ENV_BY_EMAIL: Record<string, string> = {
   "elaboracion@laboratoriogenus.com.ar": "GENUS_AUTH_PASSWORD_ELABORACION",
   "emasivo@laboratoriogenus.com.ar": "GENUS_AUTH_PASSWORD_ENVASADO_MASIVO",
   "epremium@laboratoriogenus.com.ar": "GENUS_AUTH_PASSWORD_ENVASADO_PREMIUM",

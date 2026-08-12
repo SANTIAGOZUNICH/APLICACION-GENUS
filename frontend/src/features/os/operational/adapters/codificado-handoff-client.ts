@@ -1,7 +1,7 @@
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
 import type { WorkItem } from "@/types/operational/work-item";
 
-export type CodificadoHandoffAction = "send" | "resend" | "cancel" | "deliver";
+export type CodificadoHandoffAction = "send" | "resend" | "cancel" | "deliver" | "reopen_delivery";
 
 export type CodificadoHandoffResult = {
   ok: true;

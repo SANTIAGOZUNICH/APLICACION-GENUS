@@ -5,6 +5,7 @@ import {
   cancelCodificadoHandoffDurable,
   deliverFromCodificadoDurable,
   handoffToCodificadoDurable,
+  reopenCodificadoDeliveryDurable,
 } from "@/lib/planning/codificado-handoff-service";
 import {
   ensureNativePlanningReady,
@@ -16,7 +17,7 @@ import { PlanningValidationError } from "@/lib/planning/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Action = "send" | "cancel" | "deliver" | "resend";
+type Action = "send" | "cancel" | "deliver" | "resend" | "reopen_delivery";
 
 export async function POST(
   request: Request,
@@ -130,8 +131,27 @@ export async function POST(
       });
     }
 
+    if (action === "reopen_delivery") {
+      const result = await reopenCodificadoDeliveryDurable(
+        {
+          workItemId: id,
+          reason: body.reason != null ? String(body.reason) : null,
+          expectedVersion,
+          idempotencyKey,
+        },
+        actor
+      );
+      return NextResponse.json({
+        ok: true,
+        replayed: result.replayed,
+        operationId: result.operationId,
+        workItem: projectNativeWorkItem(result.item),
+        item: result.item,
+      });
+    }
+
     throw new PlanningValidationError(
-      "action inválida (send|resend|cancel|deliver)."
+      "action inválida (send|resend|cancel|deliver|reopen_delivery)."
     );
   } catch (err) {
     return planningErrorResponse(err);

@@ -321,6 +321,31 @@ export async function postUpdateLoteVto(payload: {
   });
 }
 
+/**
+ * Edición de campos de planificación (producto/cliente/cantidad/fecha de
+ * entrega/observaciones) sobre un trabajo ya asignado. Solo PRODUCCION
+ * (gate server-side); nunca toca avance/ejecución de otro sector.
+ */
+export async function postEditAssignment(payload: {
+  itemId: string;
+  client?: string | null;
+  product?: string | null;
+  plannedQuantity?: string | null;
+  unit?: string | null;
+  deliveryDate?: string | null;
+  notes?: string | null;
+  reason?: string | null;
+  updatedBy?: string;
+  actorSectorId: SectorId;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "edit_assignment", ...payload }),
+  });
+}
+
 /** Segundos transcurridos desde una marca ISO — para indicador "Actualizado hace X s". */
 export function secondsSince(iso: string | null | undefined): number | null {
   if (!iso) return null;

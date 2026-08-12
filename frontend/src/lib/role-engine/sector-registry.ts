@@ -296,6 +296,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "ver_elaboracion",
       "ver_envasado_masivo",
       "ver_envasado_premium",
+      "ver_codificado",
       "ver_calidad",
       "ver_materia_prima",
       "remitos",

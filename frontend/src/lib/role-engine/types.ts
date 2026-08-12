@@ -113,6 +113,7 @@ export const SIDEBAR_ITEM_IDS = [
   "ver_elaboracion",
   "ver_envasado_masivo",
   "ver_envasado_premium",
+  "ver_codificado",
   "ver_calidad",
   "ver_materia_prima",
   "remitos",
