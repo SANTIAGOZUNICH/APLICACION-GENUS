@@ -1,8 +1,6 @@
 import type { AsignacionLoteUpsertInput } from "../adapters/asignacion-lotes-repository";
-import {
-  parseNonNegativeNumber,
-  type RowValidationIssue,
-} from "./clipboard-import";
+import { parseNonNegativeNumber } from "./clipboard-import";
+import type { ExcelPreviewIssue } from "./excel-import-preview-utils";
 import { parseFlexibleDate } from "./delivery-date";
 
 /** Aliases de encabezado (solo títulos). El contenido de celdas no se normaliza aquí. */
@@ -49,38 +47,39 @@ export function normalizeImportedCodigo(raw: string | null | undefined): string 
   return typeof raw === "string" ? raw.trim() : "";
 }
 
+/**
+ * Carga flexible (celdas vacías permitidas): ningún campo bloquea la
+ * importación de la fila por estar vacío — lote/fecha/producto/cantidades
+ * quedan como null/"" igual que código, que ya era opcional. Solo se
+ * advierte cuando el dato SÍ está presente pero tiene un formato inválido
+ * (fecha/VTO no parseable) o cuando la fila entera está vacía (lo cubre
+ * `excel-import-preview-dialog.tsx`'s `emptyIssueCheck`, no acá). La
+ * validación de "obligatorio para tal acción" (ej. entregar sin VTO) queda
+ * para el momento en que esa acción se ejecuta, no en la carga.
+ */
 export function validateAsignacionLoteRow(
   row: Partial<AsignacionLoteMappedRow>,
   rowIndex = 1
-): RowValidationIssue[] {
-  const issues: RowValidationIssue[] = [];
-  const cantidades = parseNonNegativeNumber(row.cantidades ?? "");
+): ExcelPreviewIssue[] {
+  const issues: ExcelPreviewIssue[] = [];
 
-  if (!row.lote?.trim()) issues.push({ rowIndex, field: "lote", message: "Lote obligatorio." });
-  if (!row.fecha?.trim()) issues.push({ rowIndex, field: "fecha", message: "Fecha obligatoria." });
   if (row.fecha?.trim() && !parseFlexibleDate(row.fecha)) {
-    issues.push({ rowIndex, field: "fecha", message: "Fecha inválida." });
-  }
-  if (!row.producto?.trim()) {
-    issues.push({ rowIndex, field: "producto", message: "Producto obligatorio." });
-  }
-  // Código opcional: vacío permitido; no se infiere desde PRODUCTO.
-  if (cantidades === null) {
-    issues.push({
-      rowIndex,
-      field: "cantidades",
-      message: "Cantidades obligatoria, numérica y mayor o igual a 0.",
-    });
+    issues.push({ rowIndex, field: "fecha", message: "Fecha inválida.", severity: "warning" });
   }
 
   const vto = row.vto?.trim();
   if (vto && !parseFlexibleDate(vto)) {
-    issues.push({ rowIndex, field: "vto", message: "VTO inválido." });
+    issues.push({ rowIndex, field: "vto", message: "VTO inválido.", severity: "warning" });
   }
 
   const fechaAnalisis = row.fechaAnalisis?.trim();
   if (fechaAnalisis && !parseFlexibleDate(fechaAnalisis)) {
-    issues.push({ rowIndex, field: "fechaAnalisis", message: "Fecha análisis inválida." });
+    issues.push({
+      rowIndex,
+      field: "fechaAnalisis",
+      message: "Fecha análisis inválida.",
+      severity: "warning",
+    });
   }
 
   return issues;
@@ -92,7 +91,7 @@ export function buildAsignacionLoteFromMappedRow(
 ): AsignacionLoteUpsertInput {
   return {
     lote: row.lote?.trim() ?? "",
-    fecha: row.fecha?.trim() ? parseFlexibleDate(row.fecha) ?? row.fecha.trim() : "",
+    fecha: row.fecha?.trim() ? parseFlexibleDate(row.fecha) ?? row.fecha.trim() : null,
     producto: row.producto?.trim() ?? "",
     codigo: normalizeImportedCodigo(row.codigo),
     marca: row.marca?.trim() ?? "",

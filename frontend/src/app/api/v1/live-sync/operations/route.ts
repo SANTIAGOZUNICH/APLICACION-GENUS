@@ -7,6 +7,7 @@ import { validateWorkMutationActor } from "@/features/os/operational/lib/work-mu
 import { validateDeliveryMutationActor } from "@/features/os/operational/lib/delivery-rbac";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
+import { PlanningValidationError } from "@/lib/planning/types";
 import type { WorkItem } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
@@ -25,6 +26,7 @@ import {
   nativeIdFromItemId,
   restoreCancelledWorkDurable,
   restoreDeliveryDurable,
+  reworkWorkItemDurable,
   saveWorkProgressDurable,
   toClientDeliveryRecord,
   updateWorkItemLoteVtoDurable,
@@ -78,6 +80,13 @@ type OperationAction =
       itemId: string;
       reason: string;
       decidedBy?: string;
+      actorSectorId?: SectorId;
+    }
+  | {
+      action: "rework_work";
+      itemId: string;
+      reason?: string | null;
+      requestedBy?: string;
       actorSectorId?: SectorId;
     }
   | {
@@ -313,6 +322,36 @@ export async function POST(request: Request) {
           revision: serverOperationalState.getRevision(),
           record,
         });
+      }
+      case "rework_work": {
+        assertBodySectorMatches(body.actorSectorId, actor.sector);
+        // Mismo conjunto de actores que Aprobar/Rechazar (CALIDAD/PRODUCCION)
+        // — Rehacer es una tercera decisión sobre el mismo work item, no una
+        // mutación de asignación (no reutiliza validateWorkMutationActor).
+        const gate = validateQualityDecisionActor(actor.sector);
+        if (!gate.ok) {
+          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
+        }
+        const nativeReworkId = nativeIdFromItemId(body.itemId);
+        if (!nativeReworkId) {
+          return NextResponse.json(
+            { error: "Rehacer no disponible para este trabajo.", code: "NOT_NATIVE" },
+            { status: 400 }
+          );
+        }
+        try {
+          const row = await reworkWorkItemDurable(nativeReworkId, {
+            requestedBy: body.requestedBy ?? actor.displayName ?? actor.email,
+            requestedBySector: actor.sector,
+            reason: body.reason,
+          });
+          return NextResponse.json({ ok: true, revision: row.version, record: row });
+        } catch (error) {
+          if (error instanceof PlanningValidationError) {
+            return NextResponse.json({ error: error.message, code: "REWORK_NOT_ALLOWED" }, { status: 409 });
+          }
+          throw error;
+        }
       }
       case "cancel_work": {
         assertBodySectorMatches(body.actorSectorId, actor.sector);

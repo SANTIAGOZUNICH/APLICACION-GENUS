@@ -326,6 +326,20 @@ export async function postUpdateLoteVto(payload: {
  * entrega/observaciones) sobre un trabajo ya asignado. Solo PRODUCCION
  * (gate server-side); nunca toca avance/ejecución de otro sector.
  */
+export async function postReworkWork(payload: {
+  itemId: string;
+  reason?: string | null;
+  requestedBy?: string;
+  actorSectorId: SectorId;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "rework_work", ...payload }),
+  });
+}
+
 export async function postDeleteWork(payload: {
   itemId: string;
   reason?: string | null;

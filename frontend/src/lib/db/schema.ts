@@ -219,6 +219,18 @@ export const workItems = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deletedBy: text("deleted_by"),
     deleteReason: text("delete_reason"),
+    /**
+     * Rehacer (0027) — Calidad o Producción devuelve el trabajo al sector
+     * que lo envió (sector no cambia; solo se reabre). Distinto de
+     * qualityStatus='rechazado': no es una decisión formal, es "corregí
+     * esto y volvé a enviarlo". Se limpia (vuelve a null) cuando el sector
+     * completa/entrega de nuevo — ver completeWorkDurable/
+     * deliverFromCodificadoDurable.
+     */
+    reworkRequestedAt: timestamp("rework_requested_at", { withTimezone: true }),
+    reworkRequestedBy: text("rework_requested_by"),
+    reworkRequestedBySector: text("rework_requested_by_sector"),
+    reworkReason: text("rework_reason"),
   },
   (table) => [
     check(
@@ -793,7 +805,12 @@ export const asignacionLotes = pgTable(
   {
     id: text("id").primaryKey(),
     lote: text("lote").notNull(),
-    fecha: date("fecha").notNull(),
+    /**
+     * Nullable (0026) — carga flexible desde Excel/clipboard: una fila sin
+     * fecha se importa igual, nunca se infiere. Antes NOT NULL bloqueaba
+     * cualquier importación masiva con esa celda vacía.
+     */
+    fecha: date("fecha"),
     producto: text("producto").notNull(),
     codigo: text("codigo").notNull(),
     marca: text("marca").notNull().default(""),

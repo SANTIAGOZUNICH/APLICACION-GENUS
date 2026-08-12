@@ -120,6 +120,11 @@ export interface PlanningWorkItemRecord {
   qualityDecidedBySector?: string | null;
   qualityObservation?: string | null;
   qualityChangeReason?: string | null;
+  /** Rehacer (0027). */
+  reworkRequestedAt?: string | null;
+  reworkRequestedBy?: string | null;
+  reworkRequestedBySector?: string | null;
+  reworkReason?: string | null;
 }
 
 export interface OperationalEventRecord {

@@ -108,6 +108,10 @@ const WORK_ITEM_SELECT_COLUMNS = {
   deliverableUnits: workItems.deliverableUnits,
   packagingClosedAt: workItems.packagingClosedAt,
   packagingClosedBy: workItems.packagingClosedBy,
+  reworkRequestedAt: workItems.reworkRequestedAt,
+  reworkRequestedBy: workItems.reworkRequestedBy,
+  reworkRequestedBySector: workItems.reworkRequestedBySector,
+  reworkReason: workItems.reworkReason,
 } as const;
 
 function mapItem(row: WorkItemRow | Record<string, unknown>): PlanningWorkItemRecord {
@@ -187,6 +191,10 @@ function mapItem(row: WorkItemRow | Record<string, unknown>): PlanningWorkItemRe
     deliverableUnits: r.deliverableUnits == null ? null : Number(r.deliverableUnits),
     packagingClosedAt: r.packagingClosedAt ? r.packagingClosedAt.toISOString() : null,
     packagingClosedBy: r.packagingClosedBy ?? null,
+    reworkRequestedAt: r.reworkRequestedAt ? r.reworkRequestedAt.toISOString() : null,
+    reworkRequestedBy: r.reworkRequestedBy ?? null,
+    reworkRequestedBySector: r.reworkRequestedBySector ?? null,
+    reworkReason: r.reworkReason ?? null,
   };
 }
 

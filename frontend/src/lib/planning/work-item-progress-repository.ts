@@ -9,6 +9,8 @@ import {
   WORK_PROGRESS_DENIED_MESSAGE,
 } from "@/features/os/operational/lib/work-progress-rbac";
 import { OrdersForbiddenError } from "@/lib/orders/types";
+import { PlanningValidationError } from "@/lib/planning/types";
+import { canRequestRework } from "@/features/os/operational/lib/rework-flow";
 
 /**
  * Fuente de verdad durable del avance operativo (0023) — reemplaza el overlay
@@ -374,6 +376,11 @@ export async function completeWorkDurable(
       progressUpdatedAt: now,
       progressUpdatedBy: input.completedBy,
       updatedAt: now,
+      // Reenvío tras un Rehacer: se resuelve el pedido, ya no queda "pendiente".
+      reworkRequestedAt: null,
+      reworkRequestedBy: null,
+      reworkRequestedBySector: null,
+      reworkReason: null,
     })
     .where(eq(workItems.id, id))
     .returning();
@@ -439,6 +446,106 @@ export async function annulQualityDecisionDurable(
     throw new Error("Solo se pueden anular decisiones aprobadas o rechazadas.");
   }
   return row;
+}
+
+export interface ReworkWorkItemInput {
+  requestedBy: string;
+  requestedBySector: SectorId | string;
+  reason?: string | null;
+}
+
+/**
+ * "Rehacer" — Calidad o Producción (RBAC: quality-decision-rbac.ts, mismo
+ * conjunto que Aprobar/Rechazar) devuelve el work item al sector que lo
+ * envió. El sector NO cambia — solo se reabre: se limpia completedAt (sale
+ * de la cola de Calidad, listCompletedItems filtra por completedAt IS NOT
+ * NULL) y, si venía de una entrega de Codificado, también
+ * deliveredFromCodificadoAt (sale de "codificado_completo" en
+ * resolveProjectedStatus). OA/lote/VTO/packingGroups/historial quedan
+ * intactos — no se toca ninguna de esas columnas. Idempotente en el sentido
+ * de que reintentar sobre un item ya reabierto simplemente vuelve a fallar
+ * la validación de canRequestRework (completedAt ya es null).
+ */
+export async function reworkWorkItemDurable(id: string, input: ReworkWorkItemInput) {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({
+        sector: workItems.sector,
+        planningWeekId: workItems.planningWeekId,
+        operationalStatus: workItems.operationalStatus,
+        completedAt: workItems.completedAt,
+        qualityStatus: workItems.qualityStatus,
+        deliveredFromCodificadoAt: workItems.deliveredFromCodificadoAt,
+        deletedAt: workItems.deletedAt,
+      })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!row) throw new Error("Work item no encontrado.");
+    if (row.deletedAt) {
+      throw new PlanningValidationError("Este trabajo fue borrado por Producción.");
+    }
+
+    const [activeDelivery] = await tx
+      .select({ id: workItemDeliveries.id })
+      .from(workItemDeliveries)
+      .where(
+        and(
+          eq(workItemDeliveries.workItemId, id),
+          eq(workItemDeliveries.status, "ENTREGADO"),
+          eq(workItemDeliveries.archived, false)
+        )
+      )
+      .limit(1);
+
+    const eligibility = canRequestRework({
+      completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+      qualityStatus: row.qualityStatus,
+      hasActiveClientDelivery: Boolean(activeDelivery),
+    });
+    if (!eligibility.ok) {
+      throw new PlanningValidationError(eligibility.error);
+    }
+
+    const now = new Date();
+    const reason = input.reason?.trim() || null;
+    const patch: Partial<typeof workItems.$inferInsert> = {
+      operationalStatus: "en_curso",
+      completedAt: null,
+      completedBy: null,
+      reworkRequestedAt: now,
+      reworkRequestedBy: input.requestedBy,
+      reworkRequestedBySector: String(input.requestedBySector),
+      reworkReason: reason,
+      progressUpdatedAt: now,
+      progressUpdatedBy: input.requestedBy,
+      updatedAt: now,
+    };
+    if (row.deliveredFromCodificadoAt) {
+      patch.deliveredFromCodificadoAt = null;
+      patch.deliveredFromCodificadoBy = null;
+    }
+    const [updated] = await tx
+      .update(workItems)
+      .set(patch)
+      .where(eq(workItems.id, id))
+      .returning();
+    if (!updated) throw new Error("No se pudo procesar el Rehacer.");
+
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: row.planningWeekId,
+      type: "REWORK_REQUESTED",
+      fromStatus: row.operationalStatus,
+      toStatus: "en_curso",
+      actorEmail: input.requestedBy,
+      actorSector: String(input.requestedBySector),
+      note: reason,
+    });
+
+    return updated;
+  });
 }
 
 export async function restoreCancelledWorkDurable(

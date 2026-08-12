@@ -3,7 +3,8 @@
 export interface AsignacionLote {
   id: string;
   lote: string;
-  fecha: string;
+  /** null = no informada al pegar/importar (carga flexible) — nunca se infiere. */
+  fecha: string | null;
   producto: string;
   codigo: string;
   marca: string;
@@ -22,8 +23,9 @@ export interface AsignacionLote {
 
 export type AsignacionLoteUpsertInput = {
   id?: string;
+  /** Carga flexible (import masivo): puede venir "" — solo el alta manual exige estos 3. */
   lote: string;
-  fecha: string;
+  fecha: string | null;
   producto: string;
   codigo: string;
   marca?: string;

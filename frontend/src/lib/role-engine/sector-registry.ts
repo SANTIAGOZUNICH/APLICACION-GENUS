@@ -285,11 +285,14 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Asignar trabajo",
       "Reasignar trabajo",
     ],
+    // "ordenes_acondicionamiento" (pestaña independiente de OA) queda fuera
+    // a propósito para Producción — la infraestructura de OA (auto-creación
+    // 1 trabajo = 1 OA, /oa/[id], uso desde Envasado/Codificado/remitos)
+    // sigue intacta; solo se retira el listado independiente de este menú.
     sidebarItems: [
       "mi_trabajo",
       "pedidos",
       "ordenes_elaboracion",
-      "ordenes_acondicionamiento",
       "asignar_trabajos",
       "entregados",
       "asignacion_lotes",

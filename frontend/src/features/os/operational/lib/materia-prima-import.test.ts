@@ -34,14 +34,14 @@ describe("materia-prima-import", () => {
     storage.set(MP_STORAGE_KEY, "[]");
   });
 
-  it("valida campos obligatorios, cantidad y fechas", () => {
+  it("carga flexible: nombre/lote/cantidad/unidad vacíos no bloquean — código sí (identidad de inventario)", () => {
     expect(
       validateMpRow(
         {
           codigo: "",
           nombre: "Glicerina",
           lote: "",
-          cantidad: "-1",
+          cantidad: "",
           unidad: "",
           vencimiento: "mal",
         },
@@ -49,15 +49,17 @@ describe("materia-prima-import", () => {
       )
     ).toEqual([
       { rowIndex: 4, field: "codigo", message: "Código obligatorio." },
-      { rowIndex: 4, field: "lote", message: "Lote obligatorio." },
-      {
-        rowIndex: 4,
-        field: "cantidad",
-        message: "Cantidad obligatoria, numérica y mayor o igual a 0.",
-      },
-      { rowIndex: 4, field: "unidad", message: "Unidad obligatoria." },
       { rowIndex: 4, field: "vencimiento", message: "Fecha vencimiento inválida." },
     ]);
+  });
+
+  it("caso obligatorio: código presente, todo lo demás vacío → sin issues bloqueantes", () => {
+    expect(validateMpRow({ codigo: "MP-1" }, 1)).toEqual([]);
+    const built = buildMpFromMappedRow({ codigo: "MP-1" });
+    expect(built.codigo).toBe("MP-1");
+    expect(built.nombre).toBe("");
+    expect(built.lote).toBe("");
+    expect(built.cantidad).toBe(0);
   });
 
   it("construye input normalizado desde una fila mapeada", () => {
@@ -137,5 +139,26 @@ describe("materia-prima-import", () => {
     expect(second).toMatchObject({ imported: 0, updated: 1, duplicates: 1, errors: [] });
     expect(getAllMateriasPrimas()).toHaveLength(1);
     expect(getAllMateriasPrimas()[0]?.stock).toBe(15);
+  });
+
+  it("carga flexible: importa filas con nombre/lote/cantidad/unidad vacíos (solo código presente)", () => {
+    const result = importMateriasPrimas(
+      [{ codigo: "MP-EMPTY", nombre: "", lote: "", cantidad: undefined, stock: undefined, unidad: "" }],
+      "Test"
+    );
+    expect(result).toMatchObject({ imported: 1, updated: 0, duplicates: 0, errors: [] });
+    const row = getAllMateriasPrimas().find((r) => r.codigo === "MP-EMPTY")!;
+    expect(row).toBeDefined();
+    expect(row.nombre).toBe("");
+    expect(row.stock).toBe(0);
+  });
+
+  it("sigue exigiendo código — sin código la fila se rechaza (identidad de inventario)", () => {
+    const result = importMateriasPrimas(
+      [{ codigo: "", nombre: "Sin código", lote: "L-1", cantidad: 5, stock: 5, unidad: "kg" }],
+      "Test"
+    );
+    expect(result.imported).toBe(0);
+    expect(result.errors).toEqual([{ rowIndex: 1, field: "codigo", message: "Código obligatorio." }]);
   });
 });
