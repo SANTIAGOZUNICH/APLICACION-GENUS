@@ -120,7 +120,83 @@ describe("computePackagingClose — caso del enunciado (1002 = 1000 en cajas + 2
   });
 });
 
-describe("resolveWorkItemDeliverableUnits — fuente única de la cantidad entregable", () => {
+describe("computePackagingClose — semántica canónica (muestras vs total embalado)", () => {
+  const packed1000 = [
+    { cajas: 10, unidadesPorCaja: 25 }, // 250
+    { cajas: 15, unidadesPorCaja: 50 }, // 750
+  ];
+  const packed975 = [{ cajas: 39, unidadesPorCaja: 25 }]; // 975
+
+  it("Caso A — 1002 finished, 2 muestras, 1000 embalado → difference 0, balanceado", () => {
+    const close = computePackagingClose({ finishedQty: 1002, sampleUnits: 2, groups: packed1000 });
+    expect(close.finishedUnits).toBe(1002);
+    expect(close.sampleUnits).toBe(2);
+    expect(close.deliverableUnits).toBe(1000);
+    expect(close.packedUnits).toBe(1000);
+    expect(close.difference).toBe(0);
+    expect(close.isBalanced).toBe(true);
+  });
+
+  it("Caso B — 1000 finished, 0 muestras, 1000 embalado → difference 0, balanceado", () => {
+    const close = computePackagingClose({ finishedQty: 1000, sampleUnits: 0, groups: packed1000 });
+    expect(close.deliverableUnits).toBe(1000);
+    expect(close.packedUnits).toBe(1000);
+    expect(close.difference).toBe(0);
+    expect(close.isBalanced).toBe(true);
+  });
+
+  it("Caso C — 1002 finished, 2 muestras, 975 embalado → deliverable 1000, difference 25, no balanceado", () => {
+    const close = computePackagingClose({ finishedQty: 1002, sampleUnits: 2, groups: packed975 });
+    expect(close.deliverableUnits).toBe(1000);
+    expect(close.packedUnits).toBe(975);
+    expect(close.difference).toBe(25);
+    expect(close.isBalanced).toBe(false);
+  });
+
+  it("Caso D — no doble descuento: 1002 finished − 2 muestras = 1000 (nunca 998)", () => {
+    const close = computePackagingClose({ finishedQty: 1002, sampleUnits: 2, groups: packed1000 });
+    expect(close.deliverableUnits).toBe(1000);
+    expect(close.deliverableUnits).not.toBe(998);
+    // finishedUnits sigue siendo el BRUTO (no se auto-descuenta).
+    expect(close.finishedUnits).toBe(1002);
+  });
+
+  it("Caso E — sampleUnits 0 se mantiene como 0 (no null, no NaN)", () => {
+    const close = computePackagingClose({ finishedQty: 1000, sampleUnits: 0, groups: packed1000 });
+    expect(close.sampleUnits).toBe(0);
+    expect(Number.isNaN(close.sampleUnits)).toBe(false);
+    expect(close.sampleUnits).not.toBeNull();
+  });
+});
+
+describe("packingProducedMismatchWarning — sensible a muestras (regla neto vs embalado)", () => {
+  const packed1000 = [
+    { cajas: 10, unidadesPorCaja: 25 },
+    { cajas: 15, unidadesPorCaja: 50 },
+  ];
+
+  it("1002 producido con 2 muestras y 1000 embalado → SIN mismatch (permite entregar)", () => {
+    const w = packingProducedMismatchWarning(1002, packed1000, 2);
+    expect(w.ok).toBe(true);
+    expect(w.message).toBeNull();
+  });
+
+  it("mismo escenario SIN informar muestras → sí marca mismatch (demuestra que la corrección importa)", () => {
+    const w = packingProducedMismatchWarning(1002, packed1000, 0);
+    expect(w.ok).toBe(false);
+    expect(w.calculated).toBe(1000);
+    expect(w.message).toMatch(/no coincide/);
+  });
+
+  it("muestras insuficientes para cerrar la brecha → sigue marcando mismatch", () => {
+    // 1002 − 1 muestra = 1001 entregables ≠ 1000 embalado.
+    const w = packingProducedMismatchWarning(1002, packed1000, 1);
+    expect(w.ok).toBe(false);
+    expect(w.calculated).toBe(1000);
+  });
+});
+
+describe("resolveWorkItemDeliverableUnits — fuente única de la cantidad entregable YA PERSISTIDA", () => {
   it("prefiere deliverableUnits (excluye muestras) sobre packagingTotalUnits", () => {
     expect(
       resolveWorkItemDeliverableUnits({ deliverableUnits: 1000, packagingTotalUnits: 1002 })
@@ -142,5 +218,16 @@ describe("resolveWorkItemDeliverableUnits — fuente única de la cantidad entre
   it("ignora valores no finitos y nunca devuelve negativo", () => {
     expect(resolveWorkItemDeliverableUnits({ deliverableUnits: Number.NaN, packagingTotalUnits: 500 })).toBe(500);
     expect(resolveWorkItemDeliverableUnits({ deliverableUnits: -10, packagingTotalUnits: null })).toBe(0);
+  });
+
+  it("no vuelve a restar muestras — si deliverableUnits ya es 1000, usa 1000 (nunca 998)", () => {
+    // Caso obligatorio: finished=1002, samples=2, deliverableUnits ya
+    // persistido como 1000 tras el cierre. resolveWorkItemDeliverableUnits
+    // NO tiene acceso a sampleUnits acá a propósito — lee el neto ya
+    // calculado una sola vez por computePackagingClose, nunca vuelve a
+    // restar sobre un valor que ya es neto.
+    expect(
+      resolveWorkItemDeliverableUnits({ deliverableUnits: 1000, packagingTotalUnits: 1002 })
+    ).toBe(1000);
   });
 });
