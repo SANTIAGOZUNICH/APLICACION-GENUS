@@ -13,6 +13,8 @@ type Props = {
   groups: PackingGroup[];
   onChange: (groups: PackingGroup[]) => void;
   producedUnits?: number | null;
+  /** Muestras (no entregables). Se restan del producido para el balance. */
+  sampleUnits?: number | null;
   packingObservation?: string;
   onPackingObservationChange?: (v: string) => void;
   readOnly?: boolean;
@@ -29,6 +31,7 @@ export function PackingGroupsEditor({
   groups,
   onChange,
   producedUnits,
+  sampleUnits = 0,
   packingObservation = "",
   onPackingObservationChange,
   readOnly = false,
@@ -38,7 +41,7 @@ export function PackingGroupsEditor({
 }: Props) {
   const slots = ensureMinPackingSlots(groups, 3);
   const summary = summarizePackingGroups(slots);
-  const warn = packingProducedMismatchWarning(producedUnits, slots);
+  const warn = packingProducedMismatchWarning(producedUnits, slots, sampleUnits ?? 0);
   const needsObs = !warn.ok && requireObservationOnMismatch;
 
   function updateAt(index: number, patch: Partial<PackingGroup>) {
