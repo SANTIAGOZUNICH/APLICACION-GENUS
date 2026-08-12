@@ -84,47 +84,41 @@ export function CodificadoOperationalView() {
     applyProgressToWorkItems,
   ]);
 
+  // deliveredFromCodificadoAt viene siempre fresco del server para items
+  // nativos (native-projector.ts) — nunca se completa con progressMap acá.
+  // Un fallback `?? progressMap[...]` reintroducía la misma clase de bug que
+  // applyWorkProgressToItems: un cache local desactualizado (ej. de antes de
+  // "Rehacer entrega") ganándole al `null` fresco y correcto del server.
   const pendientes = useMemo(
     () =>
-      allItems.filter((i) => {
-        const p = progressMap[i.id];
-        return canEditInCodificado({
+      allItems.filter((i) =>
+        canEditInCodificado({
           status: i.status,
           sector: i.sector,
           viaCodificado: i.viaCodificado,
-          deliveredFromCodificadoAt: i.deliveredFromCodificadoAt ?? p?.deliveredFromCodificadoAt,
-        });
-      }),
-    [allItems, progressMap]
+          deliveredFromCodificadoAt: i.deliveredFromCodificadoAt,
+        })
+      ),
+    [allItems]
   );
   const entregados = useMemo(
-    () =>
-      allItems.filter((i) => {
-        const p = progressMap[i.id];
-        return Boolean(
-          i.deliveredFromCodificadoAt ||
-            (p?.viaCodificado && p.deliveredFromCodificadoAt)
-        );
-      }),
-    [allItems, progressMap]
+    () => allItems.filter((i) => Boolean(i.deliveredFromCodificadoAt)),
+    [allItems]
   );
 
   const list = tab === "pendientes" ? pendientes : entregados;
 
   const selectedEditable = useMemo(() => {
     if (!selected) return false;
-    const p = progressMap[selected.id];
     return canEditInCodificado({
       status: selected.status,
       sector: selected.sector,
       viaCodificado: selected.viaCodificado,
-      deliveredFromCodificadoAt: selected.deliveredFromCodificadoAt ?? p?.deliveredFromCodificadoAt,
+      deliveredFromCodificadoAt: selected.deliveredFromCodificadoAt,
     });
-  }, [selected, progressMap]);
+  }, [selected]);
 
-  const selectedDeliveredAt = selected
-    ? (selected.deliveredFromCodificadoAt ?? progressMap[selected.id]?.deliveredFromCodificadoAt ?? null)
-    : null;
+  const selectedDeliveredAt = selected?.deliveredFromCodificadoAt ?? null;
   // Misma decisión que el servidor (reopenCodificadoDeliveryDurable) — acá
   // no sabemos si ya hay una entrega real a cliente (hasActiveClientDelivery
   // no viaja en WorkItem), así que esto es una habilitación optimista: el

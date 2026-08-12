@@ -22,6 +22,7 @@ import {
   remitoStatusForWorkApi,
   upsertRemitoDraftApi,
 } from "@/lib/remitos/remitos-client";
+import { resolveWorkItemDeliverableUnits } from "@/lib/remitos/packing-math";
 import { canAccessRemitos } from "@/lib/remitos/types";
 import type { RemitoWorkItemStatus } from "@/lib/remitos/types";
 import { RemitoComposeEditor } from "./remito-compose-editor";
@@ -128,8 +129,8 @@ export function useRemitoAprobadosActions(opts: {
               ? String(wi.packagingUnidadesPorCaja)
               : "",
           totalUnits:
-            wi?.packagingTotalUnits != null
-              ? String(wi.packagingTotalUnits)
+            resolveWorkItemDeliverableUnits(wi) != null
+              ? String(resolveWorkItemDeliverableUnits(wi))
               : seed.quantity?.replace(/[^\d.,]/g, "") || "",
         },
       });

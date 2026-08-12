@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb, type GenusDb } from "@/lib/db/client";
 import {
   operationalEvents,
@@ -276,6 +276,10 @@ export class DrizzlePlanningRepository implements PlanningRepository {
     const conditions = [
       eq(workItems.status, "PUBLICADO"),
       eq(planningWeeks.status, "PUBLISHED"),
+      // Borrado por Producción (0025) — tombstone, nunca visible en vistas
+      // operativas activas. work_item_deliveries/operational_events/OA
+      // siguen intactos; solo se excluye de esta consulta.
+      isNull(workItems.deletedAt),
     ];
 
     const floorSectors = (filters.sectors ?? []).filter(
@@ -375,6 +379,7 @@ export class DrizzlePlanningRepository implements PlanningRepository {
         and(
           eq(workItems.status, "PUBLICADO"),
           eq(planningWeeks.status, "PUBLISHED"),
+          isNull(workItems.deletedAt),
           sql`${workItems.completedAt} IS NOT NULL`
         )
       )

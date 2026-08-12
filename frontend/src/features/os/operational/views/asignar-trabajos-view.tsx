@@ -26,6 +26,7 @@ import {
 import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
 import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
+import { postDeleteWork } from "@/lib/api/live-sync-client";
 import {
   bulkDeleteConfirmMessage,
   ListSelectionEnterButton,
@@ -120,6 +121,7 @@ export function AsignarTrabajosView() {
   const [oaHint, setOaHint] = useState<string | null>(null);
   const [oaForceConfirm, setOaForceConfirm] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<WorkItem | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<WorkItem | null>(null);
   const idempotencyRef = useRef(newIdempotencyKey());
   const inFlightRef = useRef(false);
 
@@ -454,13 +456,24 @@ export function AsignarTrabajosView() {
         ) : (
           <div className="os-row-actions">
             {native ? (
-              <button
-                type="button"
-                className="text-xs font-medium text-[var(--os-teal)] hover:underline"
-                onClick={() => setEditingItem(r as WorkItem)}
-              >
-                Editar
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="text-xs font-medium text-[var(--os-teal)] hover:underline"
+                  onClick={() => setEditingItem(r as WorkItem)}
+                >
+                  Editar
+                </button>
+                {canMutateAssignedWork(session.sectorId) ? (
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-[var(--genus-error,#b91c1c)] hover:underline"
+                    onClick={() => setDeleteTarget(r as WorkItem)}
+                  >
+                    Borrar
+                  </button>
+                ) : null}
+              </>
             ) : (
               <button
                 type="button"
@@ -868,6 +881,47 @@ export function AsignarTrabajosView() {
           onSaved={(message) => {
             setEditingItem(null);
             notifyLifecycleChange(message);
+          }}
+        />
+
+        <LifecycleConfirmDialog
+          pending={
+            deleteTarget
+              ? syntheticLifecycleItem(
+                  "eliminar",
+                  "Borrar trabajo",
+                  [
+                    deleteTarget.status !== "pendiente"
+                      ? "Este trabajo contiene actividad registrada. La información quedará conservada en auditoría."
+                      : null,
+                    "Esta acción quitará el trabajo del flujo operativo.",
+                  ]
+                    .filter(Boolean)
+                    .join(" "),
+                )
+              : null
+          }
+          forceReason
+          entityLabel={
+            deleteTarget
+              ? `Producto: ${deleteTarget.product ?? "—"} · Cliente: ${deleteTarget.client ?? "—"} · Lote: ${deleteTarget.packagingLote || deleteTarget.loteRef || "—"}`
+              : undefined
+          }
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={async (reason) => {
+            if (!deleteTarget) return;
+            const response = await postDeleteWork({
+              itemId: deleteTarget.id,
+              reason,
+              deletedBy: workspace.context.displayName,
+              actorSectorId: session.sectorId,
+            });
+            if (!response.ok) {
+              const body = (await response.json().catch(() => ({}))) as { error?: string };
+              throw new Error(body.error ?? "No se pudo borrar el trabajo.");
+            }
+            setDeleteTarget(null);
+            notifyLifecycleChange("Trabajo borrado. Se quitó del flujo operativo.");
           }}
         />
 

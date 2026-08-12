@@ -210,6 +210,15 @@ export const workItems = pgTable(
     qualityDecidedBySector: text("quality_decided_by_sector"),
     qualityObservation: text("quality_observation"),
     qualityChangeReason: text("quality_change_reason"),
+    /**
+     * Borrado por Producción (0025) — siempre tombstone, nunca DELETE físico:
+     * preserva OA, packing_groups, muestras, decisiones de Calidad,
+     * operational_events y work_item_deliveries intactos (la fila nunca se
+     * destruye). Las vistas operativas activas excluyen deletedAt IS NOT NULL.
+     */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: text("deleted_by"),
+    deleteReason: text("delete_reason"),
   },
   (table) => [
     check(

@@ -230,6 +230,29 @@ export type PackagingCloseSummary = {
   canValidate: boolean;
 };
 
+/**
+ * Cantidad entregable de un work item ya cerrado — fuente única reutilizada
+ * por remito (from-quality.ts), su editor de composición
+ * (compose-from-quality.ts) y "marcar como entregado" (entregados-view.tsx).
+ * deliverableUnits (excluye muestras, PARTE A) es la fuente de verdad
+ * cuando existe cierre físico; packagingTotalUnits (incluye muestras) es
+ * compat histórica para trabajos sin cierre.
+ */
+export function resolveWorkItemDeliverableUnits(
+  wi:
+    | { deliverableUnits?: number | null; packagingTotalUnits?: number | null }
+    | null
+    | undefined
+): number | null {
+  if (wi?.deliverableUnits != null && Number.isFinite(wi.deliverableUnits)) {
+    return Math.max(0, Number(wi.deliverableUnits));
+  }
+  if (wi?.packagingTotalUnits != null && Number.isFinite(wi.packagingTotalUnits)) {
+    return Math.max(0, Number(wi.packagingTotalUnits));
+  }
+  return null;
+}
+
 export function computePackagingClose(input: PackagingCloseInput): PackagingCloseSummary {
   const { totalCajas, totalEmbalado: enCajas } = summarizePackingGroups(input.groups);
   const muestras = input.sampleUnits != null && Number.isFinite(input.sampleUnits)

@@ -169,6 +169,13 @@
       "when": 1786900000000,
       "tag": "0024_packaging_close",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1787000000000,
+      "tag": "0025_work_item_soft_delete",
+      "breakpoints": true
     }
   ]
 }

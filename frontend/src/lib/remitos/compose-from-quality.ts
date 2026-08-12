@@ -8,6 +8,7 @@ import {
   resolveRemitoInputFromQuality,
 } from "@/lib/remitos/from-quality";
 import { lineTotalCajas, lineTotalUnitsFromCajas } from "@/lib/remitos/line-qty";
+import { resolveWorkItemDeliverableUnits } from "@/lib/remitos/packing-math";
 import type { RemitoApprovalInput, RemitoCajaCombo, RemitoLine } from "@/lib/remitos/types";
 
 export type RemitoComposeLine = RemitoLine & {
@@ -28,6 +29,13 @@ function workIdFromQuality(item: QualityItem): string {
   );
 }
 
+/**
+ * Cantidad entregable esperada para la advertencia de mismatch del editor de
+ * remito. Usa deliverableUnits (excluye muestras) cuando hay cierre físico
+ * — no packagingTotalUnits/finishedQty, que incluyen muestras y disparaban
+ * una advertencia falsa cada vez que el trabajo tenía muestras (la
+ * distribución en cajas, correcta, sumaba menos que lo "producido").
+ */
 export function producedUnitsFromQuality(
   item: QualityItem,
   workItems: WorkItem[]
@@ -37,9 +45,8 @@ export function producedUnitsFromQuality(
     workItems.find((w) => w.id === wid) ??
     workItems.find((w) => w.id === item.relatedWorkItemId) ??
     null;
-  if (wi?.packagingTotalUnits != null && Number.isFinite(wi.packagingTotalUnits)) {
-    return Math.max(0, Number(wi.packagingTotalUnits));
-  }
+  const deliverable = resolveWorkItemDeliverableUnits(wi);
+  if (deliverable != null) return deliverable;
   const fromFinished = parseQty(wi?.finishedQty);
   if (fromFinished > 0) return fromFinished;
   const fromQty = parseQty(item.quantity) || parseQty(wi?.quantity);

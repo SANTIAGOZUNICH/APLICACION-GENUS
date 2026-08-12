@@ -20,6 +20,7 @@ import {
   completeWorkDurable,
   decideQualityDurable,
   deleteDeliveryRecordDurable,
+  deleteWorkItemDurable,
   deliverWorkDurable,
   nativeIdFromItemId,
   restoreCancelledWorkDurable,
@@ -115,6 +116,13 @@ type OperationAction =
       notes?: string | null;
       reason?: string | null;
       updatedBy?: string;
+      actorSectorId?: SectorId;
+    }
+  | {
+      action: "delete_work";
+      itemId: string;
+      reason?: string | null;
+      deletedBy?: string;
       actorSectorId?: SectorId;
     }
   | (DeliveryRecord & {
@@ -398,6 +406,25 @@ export async function POST(request: Request) {
           reason: body.reason,
           updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
           updatedBySector: actor.sector,
+        });
+        return NextResponse.json({ ok: true, revision: row.version, record: row });
+      }
+      case "delete_work": {
+        assertBodySectorMatches(body.actorSectorId, actor.sector);
+        const gate = validateWorkMutationActor(actor.sector);
+        if (!gate.ok) {
+          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
+        }
+        const nativeDeleteId = nativeIdFromItemId(body.itemId);
+        if (!nativeDeleteId) {
+          return NextResponse.json(
+            { error: "Borrado no disponible para este trabajo.", code: "NOT_NATIVE" },
+            { status: 400 }
+          );
+        }
+        const row = await deleteWorkItemDurable(nativeDeleteId, {
+          reason: body.reason,
+          deletedBy: body.deletedBy ?? actor.displayName ?? actor.email,
         });
         return NextResponse.json({ ok: true, revision: row.version, record: row });
       }

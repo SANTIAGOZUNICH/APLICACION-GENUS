@@ -17,7 +17,7 @@ import {
   restoreManualWorkItem,
 } from "../adapters/manual-work-items-repository";
 import { recordWorkProgress } from "../store/operational-store";
-import { postCancelWork, postRestoreWork } from "@/lib/api/live-sync-client";
+import { postCancelWork, postDeleteWork, postRestoreWork } from "@/lib/api/live-sync-client";
 
 export type AssignedWorkLifecycleAction =
   | "eliminar"
@@ -262,11 +262,22 @@ export async function executeAssignedWorkLifecycleAction(input: {
 
   if (action === "archivar") {
     if (!isManual) {
-      return {
-        ok: false,
-        error:
-          "Los trabajos de planilla finalizados no se archivan aquí. Usá Historial o el flujo de Entregados si corresponde.",
-      };
+      // Producción borra (soft delete/tombstone, 0025) — no hay "archivar"
+      // real para trabajos nativos, así que esta decisión de lifecycle
+      // (mostrada para completo/entregado/en Codificado/etc.) se resuelve
+      // borrando: preserva OA/packing/muestras/decisiones/eventos/entregas,
+      // solo lo quita de las vistas operativas activas.
+      const response = await postDeleteWork({
+        itemId: item.id,
+        reason: normalizeOptionalReason(reason),
+        deletedBy: actorName,
+        actorSectorId,
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        return { ok: false, error: body.error ?? "No se pudo borrar el trabajo." };
+      }
+      return { ok: true, message: "Trabajo borrado. Se quitó del flujo operativo." };
     }
     const meta = getManualWorkItemMeta(item.id);
     if (meta?.archived) {

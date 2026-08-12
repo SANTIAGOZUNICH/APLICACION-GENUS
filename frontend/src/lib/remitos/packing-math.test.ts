@@ -4,6 +4,7 @@ import {
   packingGroupsToRemitoSlots,
   packingProducedMismatchWarning,
   remitoSlotsToPackingGroups,
+  resolveWorkItemDeliverableUnits,
   summarizePackingGroups,
 } from "./packing-math";
 
@@ -116,5 +117,30 @@ describe("computePackagingClose — caso del enunciado (1002 = 1000 en cajas + 2
     expect(close.totalAcondicionado).toBe(5);
     expect(close.diferencia).toBe(95);
     expect(close.isValid).toBe(false);
+  });
+});
+
+describe("resolveWorkItemDeliverableUnits — fuente única de la cantidad entregable", () => {
+  it("prefiere deliverableUnits (excluye muestras) sobre packagingTotalUnits", () => {
+    expect(
+      resolveWorkItemDeliverableUnits({ deliverableUnits: 1000, packagingTotalUnits: 1002 })
+    ).toBe(1000);
+  });
+
+  it("cae a packagingTotalUnits si no hay cierre físico (deliverableUnits null) — compat histórica", () => {
+    expect(
+      resolveWorkItemDeliverableUnits({ deliverableUnits: null, packagingTotalUnits: 1002 })
+    ).toBe(1002);
+  });
+
+  it("null si no hay ningún dato de cierre", () => {
+    expect(resolveWorkItemDeliverableUnits({ deliverableUnits: null, packagingTotalUnits: null })).toBeNull();
+    expect(resolveWorkItemDeliverableUnits(null)).toBeNull();
+    expect(resolveWorkItemDeliverableUnits(undefined)).toBeNull();
+  });
+
+  it("ignora valores no finitos y nunca devuelve negativo", () => {
+    expect(resolveWorkItemDeliverableUnits({ deliverableUnits: Number.NaN, packagingTotalUnits: 500 })).toBe(500);
+    expect(resolveWorkItemDeliverableUnits({ deliverableUnits: -10, packagingTotalUnits: null })).toBe(0);
   });
 });

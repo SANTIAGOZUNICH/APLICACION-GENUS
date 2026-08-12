@@ -270,6 +270,75 @@ export async function updateWorkItemPlanningDurable(
   });
 }
 
+export interface DeleteWorkItemInput {
+  reason?: string | null;
+  deletedBy: string;
+}
+
+/**
+ * Borrado de un trabajo por Producción (0025) — SIEMPRE soft delete/tombstone,
+ * nunca DELETE físico: la fila de work_items nunca se destruye, así que OA
+ * (operational_orders.linkedWorkItemId), packingGroups, muestras, decisiones
+ * de Calidad, operational_events y work_item_deliveries quedan intactos y
+ * reconstruibles. Reutilizar el DELETE físico existente (DrizzleRepository.
+ * deleteItem) sería inseguro acá: work_item_deliveries tiene FK ON DELETE
+ * CASCADE sobre work_item_id (ver schema.ts) y borraría el historial de
+ * entregas real. Idempotente: si ya estaba borrado, devuelve la fila sin
+ * volver a escribir el evento. El caller (ruta) ya validó que el actor es
+ * PRODUCCION — no hay chequeo adicional de sector acá porque el check
+ * constraint work_items_sector_assignment garantiza que sector es siempre
+ * uno de los 4 que Producción gestiona.
+ */
+export async function deleteWorkItemDurable(id: string, input: DeleteWorkItemInput) {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        deletedAt: workItems.deletedAt,
+        sector: workItems.sector,
+        product: workItems.product,
+        client: workItems.client,
+        operationalStatus: workItems.operationalStatus,
+        planningWeekId: workItems.planningWeekId,
+      })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!existing) throw new Error("Work item no encontrado.");
+    if (existing.deletedAt) {
+      const [row] = await tx.select().from(workItems).where(eq(workItems.id, id)).limit(1);
+      return row!;
+    }
+
+    const now = new Date();
+    const reason = input.reason?.trim() || "Sin motivo informado";
+    const [row] = await tx
+      .update(workItems)
+      .set({
+        deletedAt: now,
+        deletedBy: input.deletedBy,
+        deleteReason: reason,
+        updatedAt: now,
+      })
+      .where(eq(workItems.id, id))
+      .returning();
+    if (!row) throw new Error("No se pudo borrar el trabajo.");
+
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: existing.planningWeekId,
+      type: "WORK_ITEM_DELETED_BY_PRODUCCION",
+      fromStatus: existing.operationalStatus,
+      toStatus: existing.operationalStatus,
+      actorEmail: input.deletedBy,
+      actorSector: "PRODUCCION",
+      note: `sector=${existing.sector} · producto=${existing.product} · cliente=${existing.client} · motivo=${reason}`,
+    });
+
+    return row;
+  });
+}
+
 export interface CompleteWorkInput {
   finishedQty: string;
   observation: string;

@@ -22,6 +22,7 @@ import { SECTOR_LABELS, type SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
 import { PRODUCTION_MANAGED_SECTORS } from "@/lib/operational/production-managed-sectors";
+import { resolveWorkItemDeliverableUnits } from "@/lib/remitos/packing-math";
 import {
   OperationalTable,
   OperationalTabs,
@@ -150,6 +151,7 @@ export function EntregadosView() {
   const elaboracion = useOperationalPlan("ELABORACION");
   const masivo = useOperationalPlan("ENVASADO_MASIVO");
   const premium = useOperationalPlan("ENVASADO_PREMIUM");
+  const codificado = useOperationalPlan("CODIFICADO");
 
   const [tab, setTab] = useState<EntregadosTab>("entregados");
   const [tick, setTick] = useState(0);
@@ -190,10 +192,17 @@ export function EntregadosView() {
       ...(elaboracion.data?.workItems ?? []),
       ...(masivo.data?.workItems ?? []),
       ...(premium.data?.workItems ?? []),
+      ...(codificado.data?.workItems ?? []),
       ...listAllManualWorkItems(),
     ];
     return new Map(items.map((item) => [item.id, item]));
-  }, [elaboracion.data?.workItems, masivo.data?.workItems, premium.data?.workItems, tick]);
+  }, [
+    elaboracion.data?.workItems,
+    masivo.data?.workItems,
+    premium.data?.workItems,
+    codificado.data?.workItems,
+    tick,
+  ]);
 
   const lotsByLote = useMemo(() => {
     if (tick < 0) return new Map<string, ReturnType<typeof getAllAsignacionLotes>[number]>();
@@ -327,6 +336,10 @@ export function EntregadosView() {
     const work = deliveryTarget.relatedWorkItemId ? workItemsById.get(deliveryTarget.relatedWorkItemId) : null;
     const lot = deliveryTarget.lote ? lotsByLote.get(deliveryTarget.lote) : undefined;
     const quantityParts = splitQuantity(deliveryTarget.quantity, work?.unit);
+    // Entregable al cliente = deliverableUnits (excluye muestras, PARTE A)
+    // cuando hubo cierre físico; si no, cae a la cantidad histórica del
+    // ítem de Calidad (compat). Nunca la cantidad producida cruda.
+    const deliverable = resolveWorkItemDeliverableUnits(work);
     return {
       work,
       lot,
@@ -335,7 +348,7 @@ export function EntregadosView() {
       client: deliveryTarget.client || work?.client || null,
       lote: deliveryTarget.lote ?? work?.loteRef ?? null,
       sourceSector: deliveryTarget.receivedFrom ?? work?.sector ?? "ELABORACION",
-      quantity: quantityParts.quantity ?? work?.quantity ?? null,
+      quantity: deliverable != null ? String(deliverable) : quantityParts.quantity ?? work?.quantity ?? null,
       unit: quantityParts.unit ?? work?.unit ?? null,
       plannedDeliveryDate: work?.deliveryDate ?? deliveryTarget.deliveryDate ?? work?.plannedDate ?? null,
       ref: getQualityRef(deliveryTarget) ?? workRef(work),

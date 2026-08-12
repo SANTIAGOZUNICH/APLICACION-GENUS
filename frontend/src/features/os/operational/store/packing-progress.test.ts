@@ -64,4 +64,34 @@ describe("work progress packing overlay", () => {
       { cajas: 11, unidadesPorCaja: 32 },
     ]);
   });
+
+  it("un work item nativo (native:<uuid>) nunca se pisa con el cache local — status fresco del server gana siempre", () => {
+    // Regresión: un dispositivo que envió el trabajo a Codificado cacheaba
+    // status:"en_codificado" localmente y ese cache nunca se invalidaba —
+    // el trabajo quedaba mostrando "En Codificado" para siempre en ese
+    // dispositivo aunque Codificado ya lo hubiera entregado a Calidad.
+    recordWorkPackaging("native:wi-2", {
+      updatedBy: "envasado",
+      packagingLote: "STALE-LOTE",
+      packagingVto: "01/01/2020",
+      packagingTotalUnits: 100,
+    });
+
+    const fresh: WorkItem[] = [
+      {
+        id: "native:wi-2",
+        sector: "CODIFICADO",
+        status: "codificado_completo",
+        product: "CREMA TEST",
+        client: "TEST_CLIENTE",
+        packagingLote: "LOTE-FRESCO",
+        packagingTotalUnits: 1000,
+      } as WorkItem,
+    ];
+
+    const next = applyWorkProgressToItems(fresh);
+    expect(next[0]?.status).toBe("codificado_completo");
+    expect(next[0]?.packagingLote).toBe("LOTE-FRESCO");
+    expect(next[0]?.packagingTotalUnits).toBe(1000);
+  });
 });

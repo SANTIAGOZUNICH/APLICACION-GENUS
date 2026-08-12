@@ -5,6 +5,7 @@ import { normalizeClientId } from "@/lib/remitos/grouping";
 import {
   packingGroupsFromLegacy,
   packingGroupsToRemitoSlots,
+  resolveWorkItemDeliverableUnits,
 } from "@/lib/remitos/packing-math";
 import type { RemitoApprovalInput } from "@/lib/remitos/types";
 import type { QualityItem } from "@/features/os/operational/types";
@@ -182,8 +183,7 @@ export function resolveRemitoInputFromQuality(
   // y computePackagingClose en packing-math.ts).
   const totalUnits =
     overrides?.totalUnits ??
-    wi?.deliverableUnits ??
-    wi?.packagingTotalUnits ??
+    resolveWorkItemDeliverableUnits(wi) ??
     (parseQty(item.quantity) ||
       parseQty(wi?.finishedQty) ||
       parseQty(wi?.quantity) ||
