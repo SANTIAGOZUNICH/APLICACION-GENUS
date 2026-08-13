@@ -1,8 +1,8 @@
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
 import { resolveAuthenticatedActor } from "@/lib/auth/resolve-authenticated-actor";
-import { AuthUnauthorizedError, type AuthActor } from "@/lib/auth/types";
+import type { AuthActor } from "@/lib/auth/types";
 import type { PlanningActor } from "@/lib/planning/types";
-import { PlanningForbiddenError, PlanningValidationError } from "@/lib/planning/types";
+import { PlanningForbiddenError } from "@/lib/planning/types";
 
 /**
  * Nombres de header históricos, definidos en un módulo client-safe
@@ -26,15 +26,10 @@ function toPlanningActor(actor: AuthActor): PlanningActor {
 }
 
 export async function resolvePlanningActor(request: Request): Promise<PlanningActor> {
-  let actor: AuthActor;
-  try {
-    actor = await resolveAuthenticatedActor(request);
-  } catch (err) {
-    if (err instanceof AuthUnauthorizedError) {
-      throw new PlanningValidationError("Sesión requerida (inicie sesión para continuar).");
-    }
-    throw err;
-  }
+  // AuthUnauthorizedError (401 = no autenticado) se propaga sin envolver —
+  // planningErrorResponse la mapea a 401 explícitamente por tipo (no por
+  // texto del mensaje).
+  const actor: AuthActor = await resolveAuthenticatedActor(request);
 
   const claimedSector = request.headers.get(ACTOR_SECTOR_HEADER)?.trim().toUpperCase();
   if (claimedSector && claimedSector !== actor.sector) {

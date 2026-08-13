@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db/client";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
+import { AuthUnauthorizedError } from "@/lib/auth/types";
 import {
   listDeliveriesDurable,
   toClientDeliveryRecord,
@@ -24,6 +25,9 @@ export async function GET(request: Request) {
   try {
     await resolveOrdersActor(request);
   } catch (err) {
+    if (err instanceof AuthUnauthorizedError) {
+      return NextResponse.json({ error: err.message, code: err.code }, { status: 401 });
+    }
     if (err instanceof OrdersForbiddenError || err instanceof OrdersValidationError) {
       return NextResponse.json(
         { error: err.message, code: "ACTOR_FORBIDDEN" },

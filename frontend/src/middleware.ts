@@ -6,6 +6,7 @@ import {
 import {
   getCanonicalProductionHost,
   shouldRedirectToCanonicalHost,
+  shouldRedirectToCanonicalPreviewHost,
 } from "@/lib/config/canonical-host";
 
 /** Fase 3.11 — redirects 302 opt-in legacy → OS (Strangler Fig). Default: off. */
@@ -27,6 +28,24 @@ export function middleware(request: NextRequest) {
   ) {
     const canonicalUrl = request.nextUrl.clone();
     canonicalUrl.hostname = getCanonicalProductionHost();
+    canonicalUrl.port = "";
+    return NextResponse.redirect(canonicalUrl, 308);
+  }
+
+  // Preview: cada deployment tiene dos hostnames válidos (propio + alias de
+  // rama) — ver canonical-host.ts. Sin esto, saltar entre ambos con una
+  // sesión válida se ve como "Sesión vencida" (cookie host-only ausente en
+  // el hostname "equivocado").
+  if (
+    shouldRedirectToCanonicalPreviewHost({
+      vercelEnv: process.env.VERCEL_ENV,
+      hostname: request.nextUrl.hostname,
+      isApiRequest: isApi,
+      deploymentHost: process.env.VERCEL_URL,
+    })
+  ) {
+    const canonicalUrl = request.nextUrl.clone();
+    canonicalUrl.hostname = process.env.VERCEL_URL!;
     canonicalUrl.port = "";
     return NextResponse.redirect(canonicalUrl, 308);
   }

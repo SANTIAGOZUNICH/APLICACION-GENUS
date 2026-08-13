@@ -6,6 +6,7 @@ import {
   writeAuthSessionToStorage,
 } from "../lib/auth-session-storage";
 import type { SectorId } from "@/types/operational/sector";
+import { resolveSessionAuthoritatively } from "@/lib/auth/session-authority";
 
 interface AuthenticatedUser {
   email: string;
@@ -113,18 +114,19 @@ export class GenusAuthAdapter implements AuthAdapter {
   }
 
   async hydrateSession(rememberMe = this.getSession()?.rememberMe ?? false): Promise<OsAuthSession | null> {
-    const response = await fetch("/api/v1/auth/me", { credentials: "include" });
-    if (response.status === 401) {
+    // Autoritativo (session-authority.ts): un único 401 no alcanza — se
+    // reconfirma antes de tratar la sesión como vencida. "unknown" (red/500)
+    // nunca limpia el estado local sin evidencia real.
+    const result = await resolveSessionAuthoritatively();
+    if (result.status === "invalid") {
       clearAuthSessionStorage();
       return null;
     }
-
-    const payload = await readResponse(response);
-    if (!response.ok || !isAuthenticatedUser(payload.user)) {
-      throw new AuthAdapterError(payload.message || "No pudimos verificar la sesión.");
+    if (result.status === "unknown") {
+      throw new AuthAdapterError("No pudimos verificar la sesión.");
     }
 
-    const session = mapAuthenticatedUserToSession(payload.user, rememberMe);
+    const session = mapAuthenticatedUserToSession(result.user, rememberMe);
     writeAuthSessionToStorage(session);
     return session;
   }

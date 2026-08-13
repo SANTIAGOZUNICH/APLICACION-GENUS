@@ -20,6 +20,7 @@ import {
   OrdersForbiddenError,
   OrdersValidationError,
 } from "@/lib/orders/types";
+import { AuthUnauthorizedError } from "@/lib/auth/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,7 +41,11 @@ function ticketError(err: unknown): NextResponse {
       { status: err.status }
     );
   }
-  if (err instanceof OrdersValidationError || err instanceof OrdersForbiddenError) {
+  if (
+    err instanceof AuthUnauthorizedError ||
+    err instanceof OrdersValidationError ||
+    err instanceof OrdersForbiddenError
+  ) {
     return ordersErrorResponse(err);
   }
   if (err instanceof Error) {
