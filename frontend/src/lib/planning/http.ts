@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db/client";
+import { AuthUnauthorizedError } from "@/lib/auth/types";
 import { isNativePlanningEnabled } from "@/lib/planning/planning-source";
 import {
   PlanningConflictError,
@@ -40,22 +41,20 @@ export function planningErrorResponse(
   operationId?: string
 ): NextResponse {
   const op = operationId ?? "n/a";
+  // 401 = no autenticado, verificado por tipo (no por texto del mensaje —
+  // el sniffing por regex podía coincidir con mensajes de negocio
+  // legítimos que mencionaran "sesión" sin ser un problema de auth).
+  if (err instanceof AuthUnauthorizedError) {
+    return NextResponse.json(
+      { error: err.message, code: err.code, operationId: op },
+      { status: err.status }
+    );
+  }
   if (
     err instanceof PlanningValidationError ||
     err instanceof PlanningNotFoundError ||
     err instanceof PlanningForbiddenError
   ) {
-    const isSession = /sesi[oó]n|inicie sesi|iniciar sesi/i.test(err.message);
-    if (isSession) {
-      return NextResponse.json(
-        {
-          error: "Sesión vencida. Volvé a iniciar sesión.",
-          code: "UNAUTHORIZED",
-          operationId: op,
-        },
-        { status: 401 }
-      );
-    }
     const status = err instanceof PlanningForbiddenError ? 403 : err.status;
     return NextResponse.json(
       {

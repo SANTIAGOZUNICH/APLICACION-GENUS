@@ -33,7 +33,8 @@ import { getCreamyMemoryService } from "@/lib/creamy-memory/get-creamy-memory-se
 import {
   resolveOrdersActor,
 } from "@/lib/orders/actor";
-import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
+import { OrdersForbiddenError } from "@/lib/orders/types";
+import { AuthUnauthorizedError } from "@/lib/auth/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -299,7 +300,7 @@ export async function POST(request: Request) {
   try {
     actor = await resolveOrdersActor(request);
   } catch (error) {
-    if (error instanceof OrdersValidationError) {
+    if (error instanceof AuthUnauthorizedError) {
       return NextResponse.json(
         { error: "Sesión requerida.", code: "ACTOR_EMAIL_REQUIRED", message: "Sesión requerida." },
         { status: 401 }

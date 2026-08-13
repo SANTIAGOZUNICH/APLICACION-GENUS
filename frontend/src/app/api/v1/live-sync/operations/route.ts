@@ -7,6 +7,7 @@ import { validateWorkMutationActor } from "@/features/os/operational/lib/work-mu
 import { validateDeliveryMutationActor } from "@/features/os/operational/lib/delivery-rbac";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
+import { AuthUnauthorizedError } from "@/lib/auth/types";
 import { PlanningValidationError } from "@/lib/planning/types";
 import type { WorkItem } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
@@ -183,6 +184,9 @@ export async function POST(request: Request) {
   try {
     actor = await resolveOrdersActor(request);
   } catch (err) {
+    if (err instanceof AuthUnauthorizedError) {
+      return NextResponse.json({ error: err.message, code: err.code }, { status: 401 });
+    }
     if (err instanceof OrdersForbiddenError || err instanceof OrdersValidationError) {
       return NextResponse.json(
         { error: err.message, code: "ACTOR_FORBIDDEN" },

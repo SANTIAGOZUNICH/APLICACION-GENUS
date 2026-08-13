@@ -4,8 +4,9 @@ import { SECTOR_ACCOUNT_DIRECTORY } from "@/lib/auth/directory";
 import { setAuthRepositoryForTests } from "@/lib/auth/get-auth-service";
 import { MemoryAuthRepository } from "@/lib/auth/memory-repository";
 import { AuthService } from "@/lib/auth/service";
+import { AuthUnauthorizedError } from "@/lib/auth/types";
 import { resolveOrdersActor } from "@/lib/orders/actor";
-import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
+import { OrdersForbiddenError } from "@/lib/orders/types";
 
 const ANA = SECTOR_ACCOUNT_DIRECTORY[0]; // ELABORACION
 
@@ -42,17 +43,17 @@ describe("resolveOrdersActor", () => {
     });
   });
 
-  it("sin sesión lanza OrdersValidationError (401-ish)", async () => {
+  it("sin sesión lanza AuthUnauthorizedError (401 real, no 400)", async () => {
     vi.stubEnv("NODE_ENV", "production");
-    await expect(resolveOrdersActor(requestWithCookie(null))).rejects.toBeInstanceOf(
-      OrdersValidationError
-    );
+    const err = await resolveOrdersActor(requestWithCookie(null)).catch((e) => e);
+    expect(err).toBeInstanceOf(AuthUnauthorizedError);
+    expect(err.status).toBe(401);
   });
 
   it("un header x-genus-actor-email forjado NO autentica fuera de modo test", async () => {
     vi.stubEnv("NODE_ENV", "production");
     const request = requestWithCookie(null, { "x-genus-actor-email": ANA.email });
-    await expect(resolveOrdersActor(request)).rejects.toBeInstanceOf(OrdersValidationError);
+    await expect(resolveOrdersActor(request)).rejects.toBeInstanceOf(AuthUnauthorizedError);
   });
 
   it("un x-genus-actor-sector que no coincide con la sesión lanza OrdersForbiddenError", async () => {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveOrdersActor } from "@/lib/orders/actor";
-import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
+import { OrdersForbiddenError } from "@/lib/orders/types";
+import { AuthUnauthorizedError } from "@/lib/auth/types";
 import { getCreamyMemoryService } from "@/lib/creamy-memory/get-creamy-memory-service";
 import {
   CreamyMemoryForbiddenError,
@@ -40,7 +41,7 @@ function errorResponse(err: unknown) {
   if (err instanceof OrdersForbiddenError) {
     return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
   }
-  if (err instanceof OrdersValidationError) {
+  if (err instanceof AuthUnauthorizedError) {
     return NextResponse.json({ error: "Sesión requerida.", code: err.code }, { status: 401 });
   }
   console.error("[creamy-memory-actions] error inesperado:", err);

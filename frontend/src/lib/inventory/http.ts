@@ -40,15 +40,11 @@ export function ensureInventoryPersistenceReady(): NextResponse | null {
 }
 
 export async function resolveInventoryActor(request: Request): Promise<InventoryActor> {
-  let actor: AuthActor;
-  try {
-    actor = await resolveAuthenticatedActor(request);
-  } catch (err) {
-    if (err instanceof AuthUnauthorizedError) {
-      throw new InventoryForbiddenError("Sesión requerida (inicie sesión para continuar).");
-    }
-    throw err;
-  }
+  // AuthUnauthorizedError (401 = no autenticado) se propaga sin envolver —
+  // inventoryErrorResponse la mapea a 401. Antes se convertía en
+  // InventoryForbiddenError (403), que significa "autenticado sin permiso":
+  // semánticas distintas, no intercambiables.
+  const actor: AuthActor = await resolveAuthenticatedActor(request);
 
   const claimedSector = request.headers.get(ACTOR_SECTOR_HEADER)?.trim().toUpperCase();
   if (claimedSector && claimedSector !== actor.sector) {
@@ -64,6 +60,11 @@ export async function resolveInventoryActor(request: Request): Promise<Inventory
 }
 
 export function inventoryErrorResponse(err: unknown): NextResponse {
+  // 401 = no autenticado. Distinto de InventoryForbiddenError (403 =
+  // autenticado sin permiso) — no mezclar las dos semánticas.
+  if (err instanceof AuthUnauthorizedError) {
+    return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
+  }
   if (
     err instanceof InventoryForbiddenError ||
     err instanceof InventoryValidationError ||
