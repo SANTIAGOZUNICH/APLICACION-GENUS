@@ -133,4 +133,14 @@ describe("resolveAuthenticatedActor", () => {
       AuthUnauthorizedError
     );
   });
+
+  it("un error real del repositorio (DB caída) NUNCA se convierte en 401 — se propaga tal cual para mapear a 5xx", async () => {
+    const { token } = await service.login(ANA.email, "clave-segura-1");
+    const dbFailure = new Error("connection terminated unexpectedly");
+    vi.spyOn(repo, "findSessionByTokenHash").mockRejectedValueOnce(dbFailure);
+
+    const caught = await resolveAuthenticatedActor(requestWithCookie(token)).catch((e) => e);
+    expect(caught).toBe(dbFailure);
+    expect(caught).not.toBeInstanceOf(AuthUnauthorizedError);
+  });
 });
