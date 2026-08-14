@@ -5,7 +5,7 @@ import { normalizeClientId } from "@/lib/remitos/grouping";
 import {
   packingGroupsFromLegacy,
   packingGroupsToRemitoSlots,
-  resolveWorkItemDeliverableUnits,
+  resolveWorkItemPackedUnits,
 } from "@/lib/remitos/packing-math";
 import type { RemitoApprovalInput } from "@/lib/remitos/types";
 import type { QualityItem } from "@/features/os/operational/types";
@@ -177,13 +177,16 @@ export function resolveRemitoInputFromQuality(
     wi?.loteRef?.trim() ||
     "";
   const vto = overrides?.vto?.trim() || wi?.packagingVto?.trim() || "";
-  // Remito = entregable, nunca lo producido: si hay cierre físico (PARTE A),
-  // deliverableUnits ya excluye muestras (packagingTotalUnits/finishedQty
-  // incluyen todo lo producido, muestras incluidas — ver AUDIT_TRAZABILIDAD
-  // y computePackagingClose en packing-math.ts).
+  // Regla definitiva: el remito muestra ÚNICAMENTE lo físicamente embalado
+  // (packedUnits = SUM(cajas × unidadesPorCaja)), nunca lo producido ni
+  // producido-menos-muestras. Muestras es metadata interna, no participa
+  // acá. resolveWorkItemPackedUnits calcula fresco desde packingGroups
+  // cuando existen; si no (trabajo histórico sin cierre), cae al fallback
+  // seguro existente (deliverableUnits persistido → packagingTotalUnits
+  // bruto) — nunca se inventa un dato.
   const totalUnits =
     overrides?.totalUnits ??
-    resolveWorkItemDeliverableUnits(wi) ??
+    resolveWorkItemPackedUnits(wi) ??
     (parseQty(item.quantity) ||
       parseQty(wi?.finishedQty) ||
       parseQty(wi?.quantity) ||

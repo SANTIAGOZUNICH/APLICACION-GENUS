@@ -5,9 +5,13 @@
  * datasets controlados (ver analytics.test.ts — caso Trabajo A/B/C).
  *
  * Reglas que este archivo respeta a propósito (ver informe de la fase):
- *  - "Entregable" = deliverableUnits (excluye muestras) cuando existe cierre
- *    físico (PARTE A); si no, cae a finishedQty/packagingTotalUnits — un
- *    trabajo histórico sin cierre no es "0 muestras", es "sin dato".
+ *  - "Entregable"/"acondicionado" = deliverableUnits (packedUnits real,
+ *    embalado en cajas — regla definitiva de muestras-como-metadata, ver
+ *    packing-math.ts) cuando existe cierre físico; si no, cae a
+ *    finishedQty/packagingTotalUnits — un trabajo histórico sin cierre no
+ *    es "0 muestras", es "sin dato". Muestras (sampleUnits) es metadata
+ *    interna que se reporta aparte (columna "muestras"/hoja MUESTRAS) pero
+ *    NUNCA se resta de estas cantidades.
  *  - "Tiempo efectivo de trabajo" NO se calcula: no existe un timestamp de
  *    inicio real (progressUpdatedAt se sobreescribe en cada guardado, no es
  *    un registro histórico). Lo que sí es real y se reporta es el lead time

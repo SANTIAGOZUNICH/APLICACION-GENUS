@@ -43,11 +43,18 @@ function assertPackagingCloseOrExplained(params: {
     groups,
   });
   if (close.canValidate && !close.isValid && !params.observation?.trim()) {
+    // Regla definitiva: muestras es metadata, no compensa la diferencia
+    // entre producido y embalado — si hay muestras, hay que documentarlas
+    // en la observación igual que cualquier otra diferencia real.
     const faltan = close.diferencia;
+    const muestrasNote =
+      close.sampleUnits > 0
+        ? ` (hay ${close.sampleUnits} muestra(s) registrada(s) — no se descuentan de lo producido, no compensan esta diferencia)`
+        : "";
     throw new PlanningValidationError(
       faltan > 0
-        ? `La distribución no coincide con la cantidad final: faltan distribuir ${faltan} unidad(es) (cajas + muestras = ${close.totalAcondicionado}, esperado ${params.finishedQty}). Indicá una observación si es una excepción justificada.`
-        : `La distribución supera la cantidad final por ${Math.abs(faltan)} unidad(es) (cajas + muestras = ${close.totalAcondicionado}, esperado ${params.finishedQty}). Indicá una observación si es una excepción justificada.`
+        ? `La distribución no coincide con la cantidad producida: faltan distribuir ${faltan} unidad(es) en cajas (embalado: ${close.packedUnits}, producido: ${params.finishedQty})${muestrasNote}. Indicá una observación si es una excepción justificada.`
+        : `La distribución supera la cantidad producida por ${Math.abs(faltan)} unidad(es) (embalado: ${close.packedUnits}, producido: ${params.finishedQty}). Indicá una observación si es una excepción justificada.`
     );
   }
   return close;

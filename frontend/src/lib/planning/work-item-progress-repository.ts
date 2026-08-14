@@ -11,7 +11,7 @@ import {
 import { OrdersForbiddenError } from "@/lib/orders/types";
 import { PlanningValidationError } from "@/lib/planning/types";
 import { canRequestRework } from "@/features/os/operational/lib/rework-flow";
-import { resolveDirectCompleteDeliverableUnits, type PackingGroup } from "@/lib/remitos/packing-math";
+import { resolveDirectCompletePackedUnits, type PackingGroup } from "@/lib/remitos/packing-math";
 import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
 
 /**
@@ -352,14 +352,16 @@ export interface CompleteWorkInput {
 /**
  * @param actorSector Ver saveWorkProgressDurable — mismo criterio de RBAC.
  *
- * Cierre de packaging al completar directo (sin pasar por Codificado):
- * si el trabajo ya tiene packingGroups reales (cargados vía
+ * Cierre de packaging al completar directo (sin pasar por Codificado): si
+ * el trabajo ya tiene packingGroups reales (cargados vía
  * PackagingQuantitiesBlock, ej. el drawer de Envasado), esta función debe
- * calcular y persistir deliverableUnits/packagingClosedAt igual que
+ * calcular y persistir packedUnits/packagingClosedAt igual que
  * handoffToCodificadoDurable — si no, entregas/remito caen al bruto
- * (packagingTotalUnits, incluye muestras) para estos trabajos. Si NO hay
- * packingGroups (trabajo sin distribución de cajas, ej. Elaboración),
- * deliverableUnits se deja sin tocar — nunca se infiere.
+ * (packagingTotalUnits) para estos trabajos. Si NO hay packingGroups
+ * (trabajo sin distribución de cajas, ej. Elaboración), el campo se deja
+ * sin tocar — nunca se infiere. La columna en DB se sigue llamando
+ * `deliverableUnits` (histórica) pero ahora siempre guarda packedUnits —
+ * nunca producido menos muestras (regla definitiva: muestras es metadata).
  */
 export async function completeWorkDurable(
   id: string,
@@ -389,14 +391,14 @@ export async function completeWorkDurable(
     const parsed = isIntegerUnit(existing.unit)
       ? parseArInteger(input.finishedQty)
       : parseArDecimal(input.finishedQty);
-    const deliverableUnits = resolveDirectCompleteDeliverableUnits({
+    const packedUnits = resolveDirectCompletePackedUnits({
       packingGroups: existing.packingGroups as PackingGroup[] | null,
       sampleUnits: existing.sampleUnits,
       finishedQty: parsed.ok ? parsed.value : null,
     });
     const closePatch =
-      deliverableUnits != null
-        ? { deliverableUnits, packagingClosedAt: now, packagingClosedBy: input.completedBy }
+      packedUnits != null
+        ? { deliverableUnits: packedUnits, packagingClosedAt: now, packagingClosedBy: input.completedBy }
         : null;
 
     const [row] = await tx
