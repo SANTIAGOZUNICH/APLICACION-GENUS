@@ -113,6 +113,30 @@ describe("operational-store", () => {
     expect(getEffectiveWorkStatus("wi-1", "pendiente")).toBe("revision");
   });
 
+  it("un decisionMap/progressMap local huérfano nunca pisa un item nativo (Neon es la fuente de verdad)", () => {
+    // Simula el caso encontrado en la auditoría: un POST a Neon que falla
+    // DESPUÉS de que el escritor optimista ya grabó localStorage. Para un
+    // item nativo (id "native:<uuid>"), seedStatus (lo que diga Neon) debe
+    // ganar siempre, sin importar qué haya quedado en el mapa local.
+    recordQualityDecision("native:wi-100", "aprobado", { decidedBy: "Lucía" });
+    expect(getEffectiveQualityStatus("native:wi-100", "pendiente")).toBe("pendiente");
+    expect(getEffectiveQualityStatus("native:wi-100", "rechazado")).toBe("rechazado");
+
+    recordWorkProgress("native:wi-100", {
+      finishedQty: "999",
+      observation: "local viejo",
+      status: "revision",
+    });
+    expect(getEffectiveWorkStatus("native:wi-100", "pendiente")).toBe("pendiente");
+    expect(getEffectiveWorkStatus("native:wi-100", "entregado")).toBe("entregado");
+
+    // Un item legacy (sin prefijo native:) sigue usando el mapa local como
+    // siempre — este fix no cambia ese comportamiento.
+    expect(getEffectiveQualityStatus("q-legacy-1", "pendiente")).toBe("pendiente");
+    recordQualityDecision("q-legacy-1", "aprobado", { decidedBy: "Lucía" });
+    expect(getEffectiveQualityStatus("q-legacy-1", "pendiente")).toBe("aprobado");
+  });
+
   it("recordWorkCompletion transfiere trabajo a Calidad", () => {
     const item = mockWorkItemsForSector("ENVASADO_MASIVO")[0]!;
     const { event } = recordWorkCompletion(item, {

@@ -304,6 +304,33 @@ export function resolveWorkItemDeliverableUnits(
  * hace acá una sola vez; nunca se debe volver a restar muestras a un valor
  * que ya es neto (evita el doble descuento: 1002 − 2 = 1000, no 998).
  */
+/**
+ * Cierre de packaging al completar un trabajo DIRECTO (sin pasar por
+ * Codificado — ej. "Completar trabajo" de Envasado) — mismo criterio de
+ * computePackagingClose que handoffToCodificadoDurable/
+ * deliverFromCodificadoDurable, para que work_item_deliveries/remito no
+ * caigan al bruto (packagingTotalUnits, incluye muestras) en este camino.
+ *
+ * Solo se aplica si el trabajo YA tiene packingGroups reales (cargados vía
+ * PackagingQuantitiesBlock antes de completar) — si no hay packingGroups
+ * (ej. Elaboración, o un producto sin distribución de cajas), devuelve
+ * `null`: nunca se infiere un cierre que no existe.
+ */
+export function resolveDirectCompleteDeliverableUnits(input: {
+  packingGroups: PackingGroup[] | null | undefined;
+  sampleUnits: number | null | undefined;
+  finishedQty: number | null;
+}): number | null {
+  const hasPacking = Array.isArray(input.packingGroups) && input.packingGroups.length > 0;
+  if (!hasPacking) return null;
+  const close = computePackagingClose({
+    finishedQty: input.finishedQty,
+    sampleUnits: input.sampleUnits,
+    groups: input.packingGroups!,
+  });
+  return close.canValidate ? close.enCajas : null;
+}
+
 export function computePackagingClose(input: PackagingCloseInput): PackagingCloseSummary {
   const { totalCajas, totalEmbalado: packedUnits } = summarizePackingGroups(input.groups);
   const sampleUnits =

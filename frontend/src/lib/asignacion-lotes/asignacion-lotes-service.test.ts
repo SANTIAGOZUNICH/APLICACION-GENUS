@@ -144,6 +144,33 @@ describe("AsignacionLotesService", () => {
     expect(patched.marca).toBe("Genus");
   });
 
+  it("editar sin código no borra un código ya cargado (partial update no clobbering)", async () => {
+    const svc = getAsignacionLotesService();
+    const created = await svc.upsert(calidad, {
+      lote: "L-CODIGO",
+      fecha: "2026-08-01",
+      producto: "CREMA X",
+      codigo: "CR-999",
+      cantidades: 10,
+      updatedBy: "Calidad",
+    });
+    expect(created.codigo).toBe("CR-999");
+
+    // Simula un caller que edita otro campo (ej. cantidades) sin repasar el
+    // código — antes esto lo pisaba a "" silenciosamente.
+    const patched = await svc.upsert(calidad, {
+      id: created.id,
+      lote: created.lote,
+      fecha: created.fecha!,
+      producto: created.producto,
+      codigo: "",
+      cantidades: 25,
+      updatedBy: "Calidad",
+    });
+    expect(patched.codigo).toBe("CR-999");
+    expect(patched.cantidades).toBe(25);
+  });
+
   describe("carga flexible desde Excel (import) — celdas vacías permitidas", () => {
     it("importa una fila con lote/fecha/cantidades vacíos — no la rechaza ni inventa datos", async () => {
       const svc = getAsignacionLotesService();

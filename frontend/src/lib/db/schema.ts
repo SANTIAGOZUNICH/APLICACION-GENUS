@@ -280,6 +280,14 @@ export const workItemDeliveries = pgTable(
     codigo: text("codigo"),
     client: text("client"),
     lote: text("lote"),
+    /** Snapshot histórico — 0028. El work_item vive y su VTO puede corregirse
+     * después (ver updateWorkItemLoteVtoDurable); esta entrega ya se hizo con
+     * el VTO vigente en ese momento, así que se congela acá, no se relee. */
+    vto: text("vto"),
+    /** Snapshot histórico — 0028. Referencia OA/OE al momento de la entrega. */
+    orderNumber: text("order_number"),
+    /** Snapshot histórico — 0028. Distribución de cajas al momento de la entrega. */
+    packingGroups: jsonb("packing_groups"),
     sourceSector: text("source_sector").notNull(),
     quantity: text("quantity"),
     unit: text("unit"),

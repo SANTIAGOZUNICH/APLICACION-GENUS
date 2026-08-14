@@ -46,7 +46,7 @@ describe("GranelesService", () => {
     await expect(svc.list(calidad)).rejects.toThrow(OrdersForbiddenError);
   });
 
-  it("upsertFromEnvasado es idempotente por workItemId", async () => {
+  it("upsertFromEnvasado: reintento IDÉNTICO no duplica ni toca el registro", async () => {
     const svc = getGranelesService();
     const a = await svc.upsertFromEnvasado(envasado, {
       workItemId: "wi-1",
@@ -54,25 +54,78 @@ describe("GranelesService", () => {
       product: "Crema",
       client: "Cliente A",
       bulkLot: "L-1",
-      kg: 12.5,
+      kg: 3.2,
       reportedBy: "Op",
     });
     expect(a.created).toBe(true);
     expect(a.duplicated).toBe(false);
+    expect(a.updated).toBe(false);
+    expect(a.record.kgAvailable).toBe(3.2);
 
+    // Doble click / retry de red con el mismo payload — debe quedar
+    // exactamente UN registro/movimiento, no dos.
     const b = await svc.upsertFromEnvasado(envasado, {
       workItemId: "wi-1",
       originSector: "ENVASADO_MASIVO",
       product: "Crema",
       client: "Cliente A",
       bulkLot: "L-1",
-      kg: 999,
+      kg: 3.2,
       reportedBy: "Op",
     });
     expect(b.created).toBe(false);
     expect(b.duplicated).toBe(true);
-    expect(b.record.kgAvailable).toBe(12.5);
+    expect(b.updated).toBe(false);
+    expect(b.record.kgAvailable).toBe(3.2);
     expect(b.record.id).toBe(a.record.id);
+
+    const listed = await svc.list(deposito);
+    expect(listed.filter((row) => row.workItemId === "wi-1")).toHaveLength(1);
+  });
+
+  it("upsertFromEnvasado: una CORRECCIÓN (kg distinto) actualiza el registro en vez de descartarla en silencio", async () => {
+    // Bug real encontrado en la auditoría: Envasado reenvía con un kg
+    // corregido (4.5kg -> 3.2kg) y el saldo de Depósito quedaba pegado al
+    // primer valor para siempre, sin aviso — ver informe.
+    const svc = getGranelesService();
+    const a = await svc.upsertFromEnvasado(envasado, {
+      workItemId: "wi-1",
+      originSector: "ENVASADO_MASIVO",
+      product: "Crema",
+      client: "Cliente A",
+      bulkLot: "L-1",
+      kg: 4.5,
+      reportedBy: "Op",
+    });
+    expect(a.record.kgAvailable).toBe(4.5);
+
+    const corrected = await svc.upsertFromEnvasado(envasado, {
+      workItemId: "wi-1",
+      originSector: "ENVASADO_MASIVO",
+      product: "Crema",
+      client: "Cliente A",
+      bulkLot: "L-1",
+      kg: 3.2,
+      reportedBy: "Op",
+    });
+    expect(corrected.created).toBe(false);
+    expect(corrected.duplicated).toBe(false);
+    expect(corrected.updated).toBe(true);
+    expect(corrected.record.id).toBe(a.record.id);
+    expect(corrected.record.kgAvailable).toBe(3.2);
+
+    // El saldo real en Depósito refleja la corrección — no queda un
+    // segundo registro ni el valor viejo.
+    const listed = await svc.list(deposito);
+    const matching = listed.filter((row) => row.workItemId === "wi-1");
+    expect(matching).toHaveLength(1);
+    expect(matching[0]!.kgAvailable).toBe(3.2);
+
+    const audit = await svc.listAudit(deposito, a.record.id);
+    const delta = audit.find((entry) => entry.action === "delta");
+    expect(delta).toBeTruthy();
+    expect(delta?.beforeKg).toBe(4.5);
+    expect(delta?.afterKg).toBe(3.2);
   });
 
   it("deleteOrAnnul: manual borrador hace hard delete", async () => {

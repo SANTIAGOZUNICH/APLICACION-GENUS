@@ -276,7 +276,18 @@ export class GranelesService {
     return record;
   }
 
-  /** Upsert idempotente por workItemId (Envasado → sobrante). No reescribe si ya existe activo. */
+  /**
+   * Upsert idempotente por workItemId (Envasado → sobrante).
+   *
+   * - Sin registro activo previo: crea.
+   * - Registro activo previo con los MISMOS valores (kg/lote/observación):
+   *   reintento genuino (doble click, retry de red) — no toca nada.
+   * - Registro activo previo con valores DISTINTOS: corrección (Envasado
+   *   reenvía con el kg real, ej. 4.5kg → 3.2kg) — actualiza el registro
+   *   existente y deja auditoría, en vez de descartar la corrección en
+   *   silencio (el saldo visible en Depósito quedaba desincronizado del
+   *   work item ya corregido, sin ningún aviso).
+   */
   async upsertFromEnvasado(
     actor: GranelesActor,
     input: UpsertGranelFromEnvasadoInput
@@ -288,12 +299,56 @@ export class GranelesService {
     if (!Number.isFinite(input.kg) || input.kg <= 0) {
       throw new OrdersValidationError("Kg de sobrante debe ser mayor a 0.");
     }
+    const nextBulkLot = input.bulkLot || "Sin lote";
+    const nextObservation = input.observation?.trim() ?? "";
 
     const existing = isNeonBacked()
       ? await findActiveByWorkItemNeon(input.workItemId)
       : findActiveByWorkItemMem(input.workItemId);
+
     if (existing) {
-      return { record: existing, created: false, duplicated: true };
+      const sameKg = Math.abs(existing.kgAvailable - input.kg) < 0.001;
+      const sameLot = existing.bulkLot === nextBulkLot;
+      const sameObs = existing.observation === nextObservation;
+      if (sameKg && sameLot && sameObs) {
+        return { record: existing, created: false, duplicated: true, updated: false };
+      }
+
+      const beforeKg = existing.kgAvailable;
+      const now = new Date().toISOString();
+      const next: GranelRemainderRecord = {
+        ...existing,
+        bulkLot: nextBulkLot,
+        kgAvailable: input.kg,
+        observation: nextObservation,
+        updatedAt: now,
+      };
+      if (isNeonBacked()) {
+        const db = getDb();
+        await db
+          .update(depositoGraneles)
+          .set({
+            bulkLot: next.bulkLot,
+            kgAvailable: String(next.kgAvailable),
+            observation: next.observation,
+            updatedAt: new Date(now),
+          })
+          .where(eq(depositoGraneles.id, existing.id));
+      } else {
+        const items = mem().items;
+        const idx = items.findIndex((item) => item.id === existing.id);
+        if (idx >= 0) items[idx] = next;
+      }
+      await writeAudit({
+        granelId: existing.id,
+        action: sameKg ? "update" : "delta",
+        actorSector: actor.sector,
+        actorName: input.reportedBy,
+        reason: "Corrección de sobrante desde Envasado (reenvío con datos distintos).",
+        beforeKg,
+        afterKg: next.kgAvailable,
+      });
+      return { record: next, created: false, duplicated: false, updated: true };
     }
 
     const now = new Date().toISOString();
@@ -303,11 +358,11 @@ export class GranelesService {
       originSector: input.originSector,
       product: input.product,
       client: input.client,
-      bulkLot: input.bulkLot || "Sin lote",
+      bulkLot: nextBulkLot,
       kgAvailable: input.kg,
       intakeDate: now.slice(0, 10),
       reportedBy: input.reportedBy,
-      observation: input.observation?.trim() ?? "",
+      observation: nextObservation,
       location: "",
       status: "DISPONIBLE",
       createdAt: now,
@@ -317,12 +372,28 @@ export class GranelesService {
       annulReason: null,
     };
 
-    if (isNeonBacked()) {
-      const db = getDb();
-      await db.insert(depositoGraneles).values(domainToInsert(record));
-    } else {
-      mem().items.unshift(record);
+    try {
+      if (isNeonBacked()) {
+        const db = getDb();
+        await db.insert(depositoGraneles).values(domainToInsert(record));
+      } else {
+        mem().items.unshift(record);
+      }
+    } catch (err) {
+      // Carrera: dos requests concurrentes para el mismo workItemId — el
+      // índice único parcial (deposito_graneles_work_item_active_uidx)
+      // rechaza el segundo insert. Devolver el registro real en vez de
+      // dejar pasar un 500 genérico al usuario.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/unique|duplicate/i.test(msg)) {
+        const raced = isNeonBacked()
+          ? await findActiveByWorkItemNeon(input.workItemId)
+          : findActiveByWorkItemMem(input.workItemId);
+        if (raced) return { record: raced, created: false, duplicated: true, updated: false };
+      }
+      throw err;
     }
+
     await writeAudit({
       granelId: record.id,
       action: "create",
@@ -332,7 +403,7 @@ export class GranelesService {
       beforeKg: null,
       afterKg: record.kgAvailable,
     });
-    return { record, created: true, duplicated: false };
+    return { record, created: true, duplicated: false, updated: false };
   }
 
   async update(actor: GranelesActor, id: string, input: UpdateGranelInput): Promise<GranelRemainderRecord> {

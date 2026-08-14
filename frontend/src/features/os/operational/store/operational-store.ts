@@ -132,6 +132,12 @@ export function getEffectiveQualityStatus(
   itemId: string,
   seedStatus: QualityDecisionStatus
 ): QualityDecisionStatus {
+  // Los work items nativos (Neon) nunca deben quedar "pisados" por un
+  // decisionMap local desactualizado o huérfano (ej. un POST a Neon que
+  // falló después de que el decisionMap ya se escribió de forma optimista
+  // — ver applyWorkProgressToItems, mismo criterio). Neon es la única
+  // fuente de verdad para estos items; seedStatus ya viene de ahí.
+  if (itemId.startsWith("native:")) return seedStatus;
   return readDecisionMap()[itemId]?.status ?? seedStatus;
 }
 
@@ -294,6 +300,9 @@ export function getEffectiveWorkStatus(
   itemId: string,
   seedStatus: WorkItemStatus
 ): WorkItemStatus {
+  // Mismo criterio que getEffectiveQualityStatus/applyWorkProgressToItems:
+  // los items nativos nunca quedan pisados por un progressMap local huérfano.
+  if (itemId.startsWith("native:")) return seedStatus;
   return readProgressMap()[itemId]?.status ?? seedStatus;
 }
 

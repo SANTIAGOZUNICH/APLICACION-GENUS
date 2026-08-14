@@ -11,6 +11,8 @@ import {
 import { OrdersForbiddenError } from "@/lib/orders/types";
 import { PlanningValidationError } from "@/lib/planning/types";
 import { canRequestRework } from "@/features/os/operational/lib/rework-flow";
+import { resolveDirectCompleteDeliverableUnits, type PackingGroup } from "@/lib/remitos/packing-math";
+import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
 
 /**
  * Fuente de verdad durable del avance operativo (0023) — reemplaza el overlay
@@ -347,45 +349,93 @@ export interface CompleteWorkInput {
   completedBy: string;
 }
 
-/** @param actorSector Ver saveWorkProgressDurable — mismo criterio de RBAC. */
+/**
+ * @param actorSector Ver saveWorkProgressDurable — mismo criterio de RBAC.
+ *
+ * Cierre de packaging al completar directo (sin pasar por Codificado):
+ * si el trabajo ya tiene packingGroups reales (cargados vía
+ * PackagingQuantitiesBlock, ej. el drawer de Envasado), esta función debe
+ * calcular y persistir deliverableUnits/packagingClosedAt igual que
+ * handoffToCodificadoDurable — si no, entregas/remito caen al bruto
+ * (packagingTotalUnits, incluye muestras) para estos trabajos. Si NO hay
+ * packingGroups (trabajo sin distribución de cajas, ej. Elaboración),
+ * deliverableUnits se deja sin tocar — nunca se infiere.
+ */
 export async function completeWorkDurable(
   id: string,
   input: CompleteWorkInput,
   actorSector: SectorId | string
 ) {
   const db = getDb();
-  const [existing] = await db
-    .select({ sector: workItems.sector })
-    .from(workItems)
-    .where(eq(workItems.id, id))
-    .limit(1);
-  if (!existing) throw new Error("Work item no encontrado.");
-  if (!canActOnWorkItemSector(actorSector, existing.sector)) {
-    throw new OrdersForbiddenError(WORK_PROGRESS_DENIED_MESSAGE);
-  }
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        sector: workItems.sector,
+        unit: workItems.unit,
+        packingGroups: workItems.packingGroups,
+        sampleUnits: workItems.sampleUnits,
+        planningWeekId: workItems.planningWeekId,
+        operationalStatus: workItems.operationalStatus,
+      })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!existing) throw new Error("Work item no encontrado.");
+    if (!canActOnWorkItemSector(actorSector, existing.sector)) {
+      throw new OrdersForbiddenError(WORK_PROGRESS_DENIED_MESSAGE);
+    }
 
-  const now = new Date();
-  const [row] = await db
-    .update(workItems)
-    .set({
-      operationalStatus: "revision",
-      finishedQty: input.finishedQty.trim(),
-      operationalObservation: input.observation.trim(),
-      completedAt: now,
-      completedBy: input.completedBy,
-      progressUpdatedAt: now,
-      progressUpdatedBy: input.completedBy,
-      updatedAt: now,
-      // Reenvío tras un Rehacer: se resuelve el pedido, ya no queda "pendiente".
-      reworkRequestedAt: null,
-      reworkRequestedBy: null,
-      reworkRequestedBySector: null,
-      reworkReason: null,
-    })
-    .where(eq(workItems.id, id))
-    .returning();
-  if (!row) throw new Error("Work item no encontrado.");
-  return row;
+    const now = new Date();
+    const parsed = isIntegerUnit(existing.unit)
+      ? parseArInteger(input.finishedQty)
+      : parseArDecimal(input.finishedQty);
+    const deliverableUnits = resolveDirectCompleteDeliverableUnits({
+      packingGroups: existing.packingGroups as PackingGroup[] | null,
+      sampleUnits: existing.sampleUnits,
+      finishedQty: parsed.ok ? parsed.value : null,
+    });
+    const closePatch =
+      deliverableUnits != null
+        ? { deliverableUnits, packagingClosedAt: now, packagingClosedBy: input.completedBy }
+        : null;
+
+    const [row] = await tx
+      .update(workItems)
+      .set({
+        operationalStatus: "revision",
+        finishedQty: input.finishedQty.trim(),
+        operationalObservation: input.observation.trim(),
+        completedAt: now,
+        completedBy: input.completedBy,
+        progressUpdatedAt: now,
+        progressUpdatedBy: input.completedBy,
+        updatedAt: now,
+        // Reenvío tras un Rehacer: se resuelve el pedido, ya no queda "pendiente".
+        reworkRequestedAt: null,
+        reworkRequestedBy: null,
+        reworkRequestedBySector: null,
+        reworkReason: null,
+        ...(closePatch ?? {}),
+      })
+      .where(eq(workItems.id, id))
+      .returning();
+    if (!row) throw new Error("Work item no encontrado.");
+
+    // Trazabilidad de quién/cuándo completó — todas las demás mutaciones de
+    // este archivo dejan un operational_events; a esta le faltaba.
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: existing.planningWeekId,
+      type: "WORK_ITEM_COMPLETED",
+      fromStatus: existing.operationalStatus,
+      toStatus: "revision",
+      actorEmail: input.completedBy,
+      actorSector: String(actorSector),
+      note: `finishedQty=${input.finishedQty.trim()}`,
+    });
+
+    return row;
+  });
 }
 
 export interface QualityDecisionInput {
@@ -628,7 +678,16 @@ export interface DeliverWorkInput {
   deliveredBySector: SectorId;
 }
 
-/** Idempotente: si ya hay una entrega activa (ENTREGADO, no archivada) para el work item, la devuelve. */
+/**
+ * Idempotente: si ya hay una entrega activa (ENTREGADO, no archivada) para
+ * el work item, la devuelve.
+ *
+ * vto/orderNumber/packingGroups se leen directo del work_item en este mismo
+ * momento (no se piden al caller) — es un snapshot histórico (0028): el
+ * work_item sigue siendo editable después (ej. corrección de VTO), pero la
+ * entrega ya confirmada debe conservar exactamente lo que existía cuando se
+ * entregó, no lo que el work_item diga más tarde.
+ */
 export async function deliverWorkDurable(input: DeliverWorkInput) {
   const db = getDb();
   return db.transaction(async (tx) => {
@@ -645,6 +704,16 @@ export async function deliverWorkDurable(input: DeliverWorkInput) {
       .limit(1);
     if (existingActive) return existingActive;
 
+    const [workItemRow] = await tx
+      .select({
+        packagingVto: workItems.packagingVto,
+        orderNumber: workItems.orderNumber,
+        packingGroups: workItems.packingGroups,
+      })
+      .from(workItems)
+      .where(eq(workItems.id, input.workItemId))
+      .limit(1);
+
     const [row] = await tx
       .insert(workItemDeliveries)
       .values({
@@ -654,6 +723,9 @@ export async function deliverWorkDurable(input: DeliverWorkInput) {
         codigo: input.codigo,
         client: input.client,
         lote: input.lote,
+        vto: workItemRow?.packagingVto ?? null,
+        orderNumber: workItemRow?.orderNumber ?? null,
+        packingGroups: workItemRow?.packingGroups ?? null,
         sourceSector: input.sourceSector,
         quantity: input.quantity,
         unit: input.unit,

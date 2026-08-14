@@ -157,6 +157,7 @@ export function EntregadosView() {
   const [tick, setTick] = useState(0);
   const [deliveries, setDeliveries] = useState<DeliveryRecord[]>([]);
   const [deliveriesLoading, setDeliveriesLoading] = useState(true);
+  const [deliveriesError, setDeliveriesError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [product, setProduct] = useState("");
   const [client, setClient] = useState("");
@@ -222,18 +223,33 @@ export function EntregadosView() {
   // Sobrevive refresh, logout/login, otra PC, cold start y nuevo deployment.
   const fetchDeliveries = useCallback(async (): Promise<DeliveryRecord[]> => {
     const res = await fetch("/api/v1/deliveries", { credentials: "include", cache: "no-store" });
+    if (!res.ok) {
+      throw new Error(`No se pudieron cargar las entregas (HTTP ${res.status}).`);
+    }
     const data = (await res.json().catch(() => null)) as { deliveries?: DeliveryRecord[] } | null;
-    return data?.deliveries ?? [];
+    if (!data) {
+      throw new Error("Respuesta inválida del servidor al cargar entregas.");
+    }
+    return data.deliveries ?? [];
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    setDeliveriesError(null);
     void fetchDeliveries()
       .then((rows) => {
         if (!cancelled) setDeliveries(rows);
       })
-      .catch(() => {
-        if (!cancelled) setDeliveries([]);
+      .catch((err) => {
+        if (cancelled) return;
+        // No colapsar a "sin entregas" — una falla real de red/servidor no
+        // es lo mismo que "todavía no hay entregas" (ver auditoría de
+        // integridad operativa: un error silencioso acá puede hacer creer
+        // a Producción que nada se entregó cuando en realidad no se pudo
+        // consultar Neon).
+        setDeliveriesError(
+          err instanceof Error ? err.message : "No se pudieron cargar las entregas."
+        );
       })
       .finally(() => {
         if (!cancelled) setDeliveriesLoading(false);
@@ -757,7 +773,29 @@ export function EntregadosView() {
                   deleteLabel="Archivar seleccionados"
                 />
               ))}
-            <OperationalTable columns={deliveryColumns} rows={pagedDeliveries} rowKey={(record) => record.id} emptyMessage={deliveriesLoading ? "Cargando entregas..." : "Sin entregas para los filtros seleccionados."} selection={sel.active ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle } : undefined} />
+            {deliveriesError ? (
+              <p
+                role="alert"
+                data-testid="deliveries-error-banner"
+                className="rounded border border-[var(--genus-error,#b91c1c)] bg-[var(--genus-error-bg,#fef2f2)] px-3 py-2 text-sm text-[var(--genus-error,#b91c1c)]"
+              >
+                {deliveriesError} No se muestran entregas hasta reintentar — no significa que no
+                haya entregas registradas.
+              </p>
+            ) : null}
+            <OperationalTable
+              columns={deliveryColumns}
+              rows={pagedDeliveries}
+              rowKey={(record) => record.id}
+              emptyMessage={
+                deliveriesLoading
+                  ? "Cargando entregas..."
+                  : deliveriesError
+                    ? "No se pudo verificar — ver error arriba."
+                    : "Sin entregas para los filtros seleccionados."
+              }
+              selection={sel.active ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle } : undefined}
+            />
             <div className="flex items-center justify-between text-sm text-[var(--os-text-muted)]">
               <span>{filteredDeliveries.length} resultado(s)</span>
               <div className="flex items-center gap-2">

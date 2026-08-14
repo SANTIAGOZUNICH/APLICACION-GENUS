@@ -369,7 +369,7 @@ export async function handoffToCodificadoDurable(
 
     const nextPackingGroups =
       input.packingGroups != null ? input.packingGroups : row.packingGroups;
-    const nextSampleUnits = input.sampleUnits !== undefined ? input.sampleUnits : row.sampleUnits;
+    const nextSampleUnits = input.sampleUnits != null ? input.sampleUnits : row.sampleUnits;
     const nextObservation = input.observation?.trim() || row.codificadoObservation || null;
     // La observación que justifica un mismatch puede venir del campo general
     // (codificadoObservation) o de la observación específica de embalaje ya
@@ -681,7 +681,7 @@ export async function deliverFromCodificadoDurable(
       input.packagingTotalUnits != null ? input.packagingTotalUnits : row.packagingTotalUnits;
     const nextPackingGroups =
       input.packingGroups != null ? input.packingGroups : row.packingGroups;
-    const nextSampleUnits = input.sampleUnits !== undefined ? input.sampleUnits : row.sampleUnits;
+    const nextSampleUnits = input.sampleUnits != null ? input.sampleUnits : row.sampleUnits;
     const nextObservation = input.observation?.trim() || row.codificadoObservation || null;
     const close = assertPackagingCloseOrExplained({
       finishedQty: nextTotalUnits != null ? Number(nextTotalUnits) : null,

@@ -4,6 +4,7 @@ import {
   packingGroupsToRemitoSlots,
   packingProducedMismatchWarning,
   remitoSlotsToPackingGroups,
+  resolveDirectCompleteDeliverableUnits,
   resolveWorkItemDeliverableUnits,
   summarizePackingGroups,
 } from "./packing-math";
@@ -306,5 +307,51 @@ describe("resolveWorkItemDeliverableUnits — fuente única de la cantidad entre
     expect(
       resolveWorkItemDeliverableUnits({ deliverableUnits: 1000, packagingTotalUnits: 1002 })
     ).toBe(1000);
+  });
+});
+
+describe("resolveDirectCompleteDeliverableUnits — cierre al 'Completar trabajo' directo (sin Codificado)", () => {
+  it("caso 2883/3/2880: calcula deliverableUnits=2880 igual que el handoff a Codificado", () => {
+    // Bug real encontrado en la auditoría: un trabajo de Envasado que se
+    // completa DIRECTO a Calidad (sin pasar por Codificado) pero que ya
+    // tiene packingGroups/sampleUnits cargados (vía PackagingQuantitiesBlock
+    // en el drawer) nunca calculaba deliverableUnits — entregas/remito
+    // caían al bruto (packagingTotalUnits, con muestras incluidas).
+    const result = resolveDirectCompleteDeliverableUnits({
+      packingGroups: [
+        { cajas: 28, unidadesPorCaja: 102 },
+        { cajas: 1, unidadesPorCaja: 24 },
+      ],
+      sampleUnits: 3,
+      finishedQty: 2883,
+    });
+    expect(result).toBe(2880);
+  });
+
+  it("sin packingGroups (ej. Elaboración): no infiere un cierre — devuelve null", () => {
+    expect(
+      resolveDirectCompleteDeliverableUnits({
+        packingGroups: null,
+        sampleUnits: null,
+        finishedQty: 500,
+      })
+    ).toBeNull();
+    expect(
+      resolveDirectCompleteDeliverableUnits({
+        packingGroups: [],
+        sampleUnits: null,
+        finishedQty: 500,
+      })
+    ).toBeNull();
+  });
+
+  it("sin finishedQty válido: no puede validar, devuelve null aunque haya packingGroups", () => {
+    expect(
+      resolveDirectCompleteDeliverableUnits({
+        packingGroups: [{ cajas: 10, unidadesPorCaja: 25 }],
+        sampleUnits: 0,
+        finishedQty: null,
+      })
+    ).toBeNull();
   });
 });

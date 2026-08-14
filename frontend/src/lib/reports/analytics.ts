@@ -18,6 +18,7 @@
  *  - Unidades/hora excluye divisiones por 0/NaN/Infinity.
  */
 import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
+import { resolveWorkItemDeliverableUnits } from "@/lib/remitos/packing-math";
 import type {
   CalidadRow,
   ClienteRow,
@@ -48,10 +49,12 @@ function effectiveUnits(row: WorkItemReportRow): number | null {
       : parseArDecimal(row.finishedQty);
     if (parsed.ok && parsed.value != null) return parsed.value;
   }
-  if (row.packagingTotalUnits != null && Number.isFinite(row.packagingTotalUnits)) {
-    return row.packagingTotalUnits;
-  }
-  return null;
+  // Último fallback (packagingTotalUnits) delegado a la fuente única
+  // compartida con remito/Entregados — mismo criterio en todo el sistema.
+  return resolveWorkItemDeliverableUnits({
+    deliverableUnits: null,
+    packagingTotalUnits: row.packagingTotalUnits,
+  });
 }
 
 function acondicionadoUnits(row: WorkItemReportRow): number | null {
