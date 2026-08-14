@@ -9,6 +9,8 @@ import {
   WORK_PROGRESS_DENIED_MESSAGE,
 } from "@/features/os/operational/lib/work-progress-rbac";
 import { OrdersForbiddenError } from "@/lib/orders/types";
+import { PlanningValidationError } from "@/lib/planning/types";
+import { canRequestRework } from "@/features/os/operational/lib/rework-flow";
 
 /**
  * Fuente de verdad durable del avance operativo (0023) — reemplaza el overlay
@@ -270,6 +272,75 @@ export async function updateWorkItemPlanningDurable(
   });
 }
 
+export interface DeleteWorkItemInput {
+  reason?: string | null;
+  deletedBy: string;
+}
+
+/**
+ * Borrado de un trabajo por Producción (0025) — SIEMPRE soft delete/tombstone,
+ * nunca DELETE físico: la fila de work_items nunca se destruye, así que OA
+ * (operational_orders.linkedWorkItemId), packingGroups, muestras, decisiones
+ * de Calidad, operational_events y work_item_deliveries quedan intactos y
+ * reconstruibles. Reutilizar el DELETE físico existente (DrizzleRepository.
+ * deleteItem) sería inseguro acá: work_item_deliveries tiene FK ON DELETE
+ * CASCADE sobre work_item_id (ver schema.ts) y borraría el historial de
+ * entregas real. Idempotente: si ya estaba borrado, devuelve la fila sin
+ * volver a escribir el evento. El caller (ruta) ya validó que el actor es
+ * PRODUCCION — no hay chequeo adicional de sector acá porque el check
+ * constraint work_items_sector_assignment garantiza que sector es siempre
+ * uno de los 4 que Producción gestiona.
+ */
+export async function deleteWorkItemDurable(id: string, input: DeleteWorkItemInput) {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        deletedAt: workItems.deletedAt,
+        sector: workItems.sector,
+        product: workItems.product,
+        client: workItems.client,
+        operationalStatus: workItems.operationalStatus,
+        planningWeekId: workItems.planningWeekId,
+      })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!existing) throw new Error("Work item no encontrado.");
+    if (existing.deletedAt) {
+      const [row] = await tx.select().from(workItems).where(eq(workItems.id, id)).limit(1);
+      return row!;
+    }
+
+    const now = new Date();
+    const reason = input.reason?.trim() || "Sin motivo informado";
+    const [row] = await tx
+      .update(workItems)
+      .set({
+        deletedAt: now,
+        deletedBy: input.deletedBy,
+        deleteReason: reason,
+        updatedAt: now,
+      })
+      .where(eq(workItems.id, id))
+      .returning();
+    if (!row) throw new Error("No se pudo borrar el trabajo.");
+
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: existing.planningWeekId,
+      type: "WORK_ITEM_DELETED_BY_PRODUCCION",
+      fromStatus: existing.operationalStatus,
+      toStatus: existing.operationalStatus,
+      actorEmail: input.deletedBy,
+      actorSector: "PRODUCCION",
+      note: `sector=${existing.sector} · producto=${existing.product} · cliente=${existing.client} · motivo=${reason}`,
+    });
+
+    return row;
+  });
+}
+
 export interface CompleteWorkInput {
   finishedQty: string;
   observation: string;
@@ -305,6 +376,11 @@ export async function completeWorkDurable(
       progressUpdatedAt: now,
       progressUpdatedBy: input.completedBy,
       updatedAt: now,
+      // Reenvío tras un Rehacer: se resuelve el pedido, ya no queda "pendiente".
+      reworkRequestedAt: null,
+      reworkRequestedBy: null,
+      reworkRequestedBySector: null,
+      reworkReason: null,
     })
     .where(eq(workItems.id, id))
     .returning();
@@ -370,6 +446,106 @@ export async function annulQualityDecisionDurable(
     throw new Error("Solo se pueden anular decisiones aprobadas o rechazadas.");
   }
   return row;
+}
+
+export interface ReworkWorkItemInput {
+  requestedBy: string;
+  requestedBySector: SectorId | string;
+  reason?: string | null;
+}
+
+/**
+ * "Rehacer" — Calidad o Producción (RBAC: quality-decision-rbac.ts, mismo
+ * conjunto que Aprobar/Rechazar) devuelve el work item al sector que lo
+ * envió. El sector NO cambia — solo se reabre: se limpia completedAt (sale
+ * de la cola de Calidad, listCompletedItems filtra por completedAt IS NOT
+ * NULL) y, si venía de una entrega de Codificado, también
+ * deliveredFromCodificadoAt (sale de "codificado_completo" en
+ * resolveProjectedStatus). OA/lote/VTO/packingGroups/historial quedan
+ * intactos — no se toca ninguna de esas columnas. Idempotente en el sentido
+ * de que reintentar sobre un item ya reabierto simplemente vuelve a fallar
+ * la validación de canRequestRework (completedAt ya es null).
+ */
+export async function reworkWorkItemDurable(id: string, input: ReworkWorkItemInput) {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({
+        sector: workItems.sector,
+        planningWeekId: workItems.planningWeekId,
+        operationalStatus: workItems.operationalStatus,
+        completedAt: workItems.completedAt,
+        qualityStatus: workItems.qualityStatus,
+        deliveredFromCodificadoAt: workItems.deliveredFromCodificadoAt,
+        deletedAt: workItems.deletedAt,
+      })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!row) throw new Error("Work item no encontrado.");
+    if (row.deletedAt) {
+      throw new PlanningValidationError("Este trabajo fue borrado por Producción.");
+    }
+
+    const [activeDelivery] = await tx
+      .select({ id: workItemDeliveries.id })
+      .from(workItemDeliveries)
+      .where(
+        and(
+          eq(workItemDeliveries.workItemId, id),
+          eq(workItemDeliveries.status, "ENTREGADO"),
+          eq(workItemDeliveries.archived, false)
+        )
+      )
+      .limit(1);
+
+    const eligibility = canRequestRework({
+      completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+      qualityStatus: row.qualityStatus,
+      hasActiveClientDelivery: Boolean(activeDelivery),
+    });
+    if (!eligibility.ok) {
+      throw new PlanningValidationError(eligibility.error);
+    }
+
+    const now = new Date();
+    const reason = input.reason?.trim() || null;
+    const patch: Partial<typeof workItems.$inferInsert> = {
+      operationalStatus: "en_curso",
+      completedAt: null,
+      completedBy: null,
+      reworkRequestedAt: now,
+      reworkRequestedBy: input.requestedBy,
+      reworkRequestedBySector: String(input.requestedBySector),
+      reworkReason: reason,
+      progressUpdatedAt: now,
+      progressUpdatedBy: input.requestedBy,
+      updatedAt: now,
+    };
+    if (row.deliveredFromCodificadoAt) {
+      patch.deliveredFromCodificadoAt = null;
+      patch.deliveredFromCodificadoBy = null;
+    }
+    const [updated] = await tx
+      .update(workItems)
+      .set(patch)
+      .where(eq(workItems.id, id))
+      .returning();
+    if (!updated) throw new Error("No se pudo procesar el Rehacer.");
+
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: row.planningWeekId,
+      type: "REWORK_REQUESTED",
+      fromStatus: row.operationalStatus,
+      toStatus: "en_curso",
+      actorEmail: input.requestedBy,
+      actorSector: String(input.requestedBySector),
+      note: reason,
+    });
+
+    return updated;
+  });
 }
 
 export async function restoreCancelledWorkDurable(

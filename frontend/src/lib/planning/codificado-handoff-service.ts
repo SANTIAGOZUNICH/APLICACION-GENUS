@@ -720,6 +720,11 @@ export async function deliverFromCodificadoDurable(
             ? String(input.packagingTotalUnits)
             : row.finishedQty,
         operationalObservation: input.observation?.trim() || row.operationalObservation,
+        // Reenvío tras un Rehacer: se resuelve el pedido, ya no queda "pendiente".
+        reworkRequestedAt: null,
+        reworkRequestedBy: null,
+        reworkRequestedBySector: null,
+        reworkReason: null,
         version: Number(row.version) + 1,
         updatedAt: now,
       })

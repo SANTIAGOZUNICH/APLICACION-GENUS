@@ -57,7 +57,7 @@ export interface CreamyWorkItemSummary {
 export interface CreamyLotSummary {
   id: string;
   lote: string;
-  fecha: string;
+  fecha: string | null;
   producto: string;
   codigo: string;
   marca: string;

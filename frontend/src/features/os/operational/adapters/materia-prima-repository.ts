@@ -348,15 +348,12 @@ export function importMateriasPrimas(
   rows.forEach((row, index) => {
     const rowIndex = index + 1;
     const key = duplicateKey(row.codigo, row.lote);
-    const quantity = row.cantidad ?? row.stock;
+    const rawQuantity = row.cantidad ?? row.stock;
+    const quantity = Number.isFinite(rawQuantity) && (rawQuantity as number) >= 0 ? rawQuantity : 0;
 
+    // Carga flexible — código es la única excepción técnica (identidad del
+    // inventario), igual criterio que validateMpRow en asignacion-lotes-import.ts.
     if (!row.codigo.trim()) errors.push({ rowIndex, field: "codigo", message: "Código obligatorio." });
-    if (!row.nombre.trim()) errors.push({ rowIndex, field: "nombre", message: "Nombre obligatorio." });
-    if (!row.lote.trim()) errors.push({ rowIndex, field: "lote", message: "Lote obligatorio." });
-    if (quantity === undefined || !Number.isFinite(quantity) || quantity < 0) {
-      errors.push({ rowIndex, field: "cantidad", message: "Cantidad debe ser un número mayor o igual a 0." });
-    }
-    if (!row.unidad.trim()) errors.push({ rowIndex, field: "unidad", message: "Unidad obligatoria." });
     if (errors.some((error) => error.rowIndex === rowIndex)) return;
 
     const duplicate = findDuplicate(row.codigo, row.lote);

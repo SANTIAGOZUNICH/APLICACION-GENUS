@@ -10,7 +10,7 @@
  * Preview DB (ver scripts/_smoke_management_report_dataset.mjs), igual que
  * el resto de los servicios de esta fase.
  */
-import { and, gte, lte } from "drizzle-orm";
+import { and, gte, isNull, lte } from "drizzle-orm";
 import type { NeonDatabase } from "drizzle-orm/neon-serverless";
 import * as schema from "@/lib/db/schema";
 import type {
@@ -40,7 +40,11 @@ export async function fetchWorkItemRows(
     .where(
       and(
         gte(schema.workItems.plannedDate, filters.from),
-        lte(schema.workItems.plannedDate, filters.to)
+        lte(schema.workItems.plannedDate, filters.to),
+        // Borrado por Producción (0025) — no contamina indicadores
+        // operativos. Las entregas históricas (work_item_deliveries) son
+        // una tabla aparte y NO se filtran por esto — ver fetchDeliveryRows.
+        isNull(schema.workItems.deletedAt)
       )
     );
 

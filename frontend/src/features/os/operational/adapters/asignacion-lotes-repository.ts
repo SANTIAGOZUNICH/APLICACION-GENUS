@@ -137,7 +137,7 @@ export function replaceAsignacionLotesCache(items: AsignacionLote[]): void {
 export function getAllAsignacionLotes(options: { includeArchived?: boolean } = {}): AsignacionLote[] {
   return [...readAll()]
     .filter((item) => options.includeArchived || !item.archived)
-    .sort((a, b) => b.fecha.localeCompare(a.fecha) || a.lote.localeCompare(b.lote, "es"));
+    .sort((a, b) => (b.fecha ?? "").localeCompare(a.fecha ?? "") || a.lote.localeCompare(b.lote, "es"));
 }
 
 export function findDuplicateAsignacionLote(
@@ -165,7 +165,7 @@ export function upsertAsignacionLote(input: AsignacionLoteUpsertInput): Asignaci
   const record: AsignacionLote = {
     id: previous?.id ?? input.id ?? makeId(),
     lote: input.lote.trim(),
-    fecha: parseFlexibleDate(input.fecha) ?? input.fecha,
+    fecha: input.fecha?.trim() ? (parseFlexibleDate(input.fecha) ?? input.fecha.trim()) : null,
     producto: input.producto.trim(),
     codigo: input.codigo.trim(),
     marca: input.marca?.trim() ?? previous?.marca ?? "",
@@ -235,12 +235,9 @@ export function importAsignacionLotes(
   rows.forEach((row, index) => {
     const rowIndex = index + 1;
     const key = duplicateKey(row.lote, row.codigo);
-    if (!row.lote.trim()) errors.push({ rowIndex, field: "lote", message: "Lote obligatorio." });
-    if (!row.fecha.trim()) errors.push({ rowIndex, field: "fecha", message: "Fecha obligatoria." });
-    if (!parseFlexibleDate(row.fecha)) errors.push({ rowIndex, field: "fecha", message: "Fecha inválida." });
-    if (!row.producto.trim()) errors.push({ rowIndex, field: "producto", message: "Producto obligatorio." });
-    if (!Number.isFinite(row.cantidades) || row.cantidades < 0) {
-      errors.push({ rowIndex, field: "cantidades", message: "Cantidades debe ser un número mayor o igual a 0." });
+    // Carga flexible — igual criterio que asignacion-lotes-service.ts#import.
+    if (row.fecha?.trim() && !parseFlexibleDate(row.fecha)) {
+      errors.push({ rowIndex, field: "fecha", message: "Fecha inválida." });
     }
     if (errors.some((error) => error.rowIndex === rowIndex)) {
       skipped += 1;

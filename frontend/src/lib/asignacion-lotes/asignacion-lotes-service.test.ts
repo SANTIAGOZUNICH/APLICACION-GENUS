@@ -3,7 +3,7 @@ import {
   getAsignacionLotesService,
   resetAsignacionLotesMemoryForTests,
 } from "@/lib/asignacion-lotes/asignacion-lotes-service";
-import { OrdersForbiddenError, OrdersNotFoundError } from "@/lib/orders/types";
+import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from "@/lib/orders/types";
 
 describe("AsignacionLotesService", () => {
   beforeEach(() => {
@@ -142,5 +142,95 @@ describe("AsignacionLotesService", () => {
     expect(patched.codigo).toBe("");
     expect(patched.cantidades).toBe(9);
     expect(patched.marca).toBe("Genus");
+  });
+
+  describe("carga flexible desde Excel (import) — celdas vacías permitidas", () => {
+    it("importa una fila con lote/fecha/cantidades vacíos — no la rechaza ni inventa datos", async () => {
+      const svc = getAsignacionLotesService();
+      const result = await svc.import(calidad, [
+        {
+          lote: "",
+          fecha: null,
+          producto: "Producto A",
+          codigo: "",
+          cantidades: 0,
+          updatedBy: "Calidad",
+        },
+      ]);
+      expect(result.imported).toBe(1);
+      expect(result.skipped).toBe(0);
+      expect(result.errors).toEqual([]);
+      const listed = await svc.list(calidad);
+      const row = listed.find((r) => r.producto === "Producto A")!;
+      expect(row).toBeDefined();
+      expect(row.lote).toBe("");
+      expect(row.fecha).toBeNull();
+      expect(row.cantidades).toBe(0);
+    });
+
+    it("caso obligatorio: filas mixtas (completa/parcial/vacía) importan todas, ninguna bloquea a las demás", async () => {
+      const svc = getAsignacionLotesService();
+      const result = await svc.import(calidad, [
+        {
+          lote: "",
+          fecha: null,
+          producto: "Shampoo X",
+          codigo: "SH-001",
+          cantidades: 1000,
+          updatedBy: "Calidad",
+        },
+        {
+          lote: "L-100",
+          fecha: null,
+          producto: "Crema Y",
+          codigo: "",
+          cantidades: 500,
+          updatedBy: "Calidad",
+        },
+        {
+          lote: "",
+          fecha: null,
+          producto: "Serum Z",
+          codigo: "SZ-200",
+          cantidades: 0,
+          vto: "2027-12-01",
+          updatedBy: "Calidad",
+        },
+      ]);
+      expect(result.imported).toBe(3);
+      expect(result.skipped).toBe(0);
+      expect(result.errors).toEqual([]);
+    });
+
+    it("fecha con formato inválido SÍ se rechaza (no es una celda vacía, es un dato corrupto)", async () => {
+      const svc = getAsignacionLotesService();
+      const result = await svc.import(calidad, [
+        {
+          lote: "L-BAD",
+          fecha: "no-es-fecha",
+          producto: "X",
+          codigo: "",
+          cantidades: 1,
+          updatedBy: "Calidad",
+        },
+      ]);
+      expect(result.imported).toBe(0);
+      expect(result.skipped).toBe(1);
+      expect(result.errors).toEqual([{ rowIndex: 1, field: "fecha", message: "Fecha inválida." }]);
+    });
+
+    it("el alta MANUAL (upsert, no import) sigue exigiendo lote/fecha/producto — la flexibilización es solo para import masivo", async () => {
+      const svc = getAsignacionLotesService();
+      await expect(
+        svc.upsert(calidad, {
+          lote: "",
+          fecha: null,
+          producto: "X",
+          codigo: "",
+          cantidades: 1,
+          updatedBy: "Calidad",
+        })
+      ).rejects.toThrow(OrdersValidationError);
+    });
   });
 });

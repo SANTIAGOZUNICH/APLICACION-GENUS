@@ -20,12 +20,22 @@ import { DeliveryDateBadge } from "../components/delivery-date-badge";
 import { AssignedWorkLifecycleActions } from "../components/assigned-work-lifecycle-actions";
 import { EditAssignmentDialog } from "../components/edit-assignment-dialog";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   executeAssignedWorkLifecycleAction,
   resolveAssignedWorkLifecycleAction,
 } from "../lib/assigned-work-lifecycle";
 import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
 import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
+import { postDeleteWork, postReworkWork } from "@/lib/api/live-sync-client";
+import { canRequestRework } from "../lib/rework-flow";
 import {
   bulkDeleteConfirmMessage,
   ListSelectionEnterButton,
@@ -120,6 +130,11 @@ export function AsignarTrabajosView() {
   const [oaHint, setOaHint] = useState<string | null>(null);
   const [oaForceConfirm, setOaForceConfirm] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<WorkItem | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<WorkItem | null>(null);
+  const [reworkTarget, setReworkTarget] = useState<WorkItem | null>(null);
+  const [reworkReason, setReworkReason] = useState("");
+  const [reworkBusy, setReworkBusy] = useState(false);
+  const [reworkError, setReworkError] = useState<string | null>(null);
   const idempotencyRef = useRef(newIdempotencyKey());
   const inFlightRef = useRef(false);
 
@@ -454,13 +469,41 @@ export function AsignarTrabajosView() {
         ) : (
           <div className="os-row-actions">
             {native ? (
-              <button
-                type="button"
-                className="text-xs font-medium text-[var(--os-teal)] hover:underline"
-                onClick={() => setEditingItem(r as WorkItem)}
-              >
-                Editar
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="text-xs font-medium text-[var(--os-teal)] hover:underline"
+                  onClick={() => setEditingItem(r as WorkItem)}
+                >
+                  Editar
+                </button>
+                {canMutateAssignedWork(session.sectorId) ? (
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-[var(--genus-error,#b91c1c)] hover:underline"
+                    onClick={() => setDeleteTarget(r as WorkItem)}
+                  >
+                    Borrar
+                  </button>
+                ) : null}
+                {canMutateAssignedWork(session.sectorId) &&
+                canRequestRework({
+                  completedAt: (r as WorkItem).completedAt,
+                  qualityStatus: (r as WorkItem).qualityStatus,
+                }).ok ? (
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-[var(--os-teal)] hover:underline"
+                    onClick={() => {
+                      setReworkTarget(r as WorkItem);
+                      setReworkReason("");
+                      setReworkError(null);
+                    }}
+                  >
+                    Rehacer
+                  </button>
+                ) : null}
+              </>
             ) : (
               <button
                 type="button"
@@ -870,6 +913,112 @@ export function AsignarTrabajosView() {
             notifyLifecycleChange(message);
           }}
         />
+
+        <LifecycleConfirmDialog
+          pending={
+            deleteTarget
+              ? syntheticLifecycleItem(
+                  "eliminar",
+                  "Borrar trabajo",
+                  [
+                    deleteTarget.status !== "pendiente"
+                      ? "Este trabajo contiene actividad registrada. La información quedará conservada en auditoría."
+                      : null,
+                    "Esta acción quitará el trabajo del flujo operativo.",
+                  ]
+                    .filter(Boolean)
+                    .join(" "),
+                )
+              : null
+          }
+          forceReason
+          entityLabel={
+            deleteTarget
+              ? `Producto: ${deleteTarget.product ?? "—"} · Cliente: ${deleteTarget.client ?? "—"} · Lote: ${deleteTarget.packagingLote || deleteTarget.loteRef || "—"}`
+              : undefined
+          }
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={async (reason) => {
+            if (!deleteTarget) return;
+            const response = await postDeleteWork({
+              itemId: deleteTarget.id,
+              reason,
+              deletedBy: workspace.context.displayName,
+              actorSectorId: session.sectorId,
+            });
+            if (!response.ok) {
+              const body = (await response.json().catch(() => ({}))) as { error?: string };
+              throw new Error(body.error ?? "No se pudo borrar el trabajo.");
+            }
+            setDeleteTarget(null);
+            notifyLifecycleChange("Trabajo borrado. Se quitó del flujo operativo.");
+          }}
+        />
+
+        <Dialog open={reworkTarget !== null} onOpenChange={(open) => !open && setReworkTarget(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Rehacer trabajo</DialogTitle>
+              <DialogDescription asChild>
+                <div className="space-y-2 text-sm text-[var(--os-text-muted)]">
+                  <p>
+                    Producto: {reworkTarget?.product ?? "—"} · Cliente: {reworkTarget?.client ?? "—"} ·
+                    Lote: {reworkTarget?.packagingLote || reworkTarget?.loteRef || "—"}
+                  </p>
+                  <p>
+                    El trabajo vuelve editable a {reworkTarget ? SECTOR_LABELS[reworkTarget.sector] : "su sector"} —
+                    conserva OA, lote, VTO y el resto del historial. Deberá completarse y enviarse de nuevo.
+                  </p>
+                </div>
+              </DialogDescription>
+            </DialogHeader>
+            <label className="block text-sm">
+              Motivo (opcional)
+              <textarea
+                value={reworkReason}
+                onChange={(e) => setReworkReason(e.target.value)}
+                rows={3}
+                className="mt-1 w-full rounded border border-[var(--os-border)] px-3 py-2 text-sm"
+                placeholder="Si no informás motivo, se registrará “Sin motivo informado”."
+              />
+            </label>
+            {reworkError && (
+              <p role="alert" className="text-sm text-[var(--genus-error)]">
+                {reworkError}
+              </p>
+            )}
+            <DialogFooter>
+              <Button variant="secondary" onClick={() => setReworkTarget(null)} disabled={reworkBusy}>
+                Cancelar
+              </Button>
+              <Button
+                variant="primary"
+                disabled={reworkBusy}
+                onClick={async () => {
+                  if (!reworkTarget) return;
+                  setReworkBusy(true);
+                  setReworkError(null);
+                  const response = await postReworkWork({
+                    itemId: reworkTarget.id,
+                    reason: reworkReason,
+                    requestedBy: workspace.context.displayName,
+                    actorSectorId: session.sectorId,
+                  });
+                  setReworkBusy(false);
+                  if (!response.ok) {
+                    const body = (await response.json().catch(() => ({}))) as { error?: string };
+                    setReworkError(body.error ?? "No se pudo procesar el Rehacer.");
+                    return;
+                  }
+                  setReworkTarget(null);
+                  notifyLifecycleChange("Rehacer solicitado. El trabajo volvió editable.");
+                }}
+              >
+                {reworkBusy ? "Rehaciendo…" : "Confirmar Rehacer"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <LifecycleConfirmDialog
           pending={

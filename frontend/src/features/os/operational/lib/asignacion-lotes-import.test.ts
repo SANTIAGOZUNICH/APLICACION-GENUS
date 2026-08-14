@@ -166,3 +166,74 @@ describe("asignacion-lotes import Excel paste", () => {
     expect(buildAsignacionLoteFromMappedRow(rows[0]!, "x").codigo).toBe("");
   });
 });
+
+/**
+ * Carga flexible (celdas vacías permitidas) — caso obligatorio del pedido:
+ * ninguna celda vacía bloquea la importación de la fila, salvo formato
+ * realmente inválido en un dato SÍ presente. No se inventan valores.
+ */
+describe("asignacion-lotes import — celdas vacías permitidas (carga flexible)", () => {
+  it("caso 13: Lote y VTO vacíos, resto presente → sin issues bloqueantes", () => {
+    const row = {
+      producto: "Shampoo X",
+      codigo: "SH-001",
+      cliente: "Cliente A",
+      cantidades: "1000",
+      lote: "",
+      vto: "",
+    };
+    expect(validateAsignacionLoteRow(row, 1)).toEqual([]);
+    const built = buildAsignacionLoteFromMappedRow(row, "Calidad");
+    expect(built.lote).toBe("");
+    expect(built.vto).toBeNull();
+    expect(built.producto).toBe("Shampoo X");
+    expect(built.codigo).toBe("SH-001");
+  });
+
+  it("caso 14: fila con solamente Producto (todo lo demás vacío) → se acepta, nada se inventa", () => {
+    const row = { producto: "Producto A" };
+    expect(validateAsignacionLoteRow(row, 1)).toEqual([]);
+    const built = buildAsignacionLoteFromMappedRow(row, "Calidad");
+    expect(built.producto).toBe("Producto A");
+    expect(built.lote).toBe("");
+    expect(built.fecha).toBeNull();
+    expect(built.codigo).toBe("");
+    expect(built.cantidades).toBe(0);
+    expect(built.vto).toBeNull();
+  });
+
+  it("caso 15: filas mixtas (completa / parcial / con celdas vacías) — ninguna bloquea a las demás", () => {
+    const tsv = [
+      "Producto\tCódigo\tCliente\tCantidad\tLote\tVTO",
+      "Shampoo X\tSH-001\tCliente A\t1000\t\t",
+      "Crema Y\t\tCliente B\t500\tL-100\t",
+      "Serum Z\tSZ-200\t\t\t\t12/2027",
+    ].join("\n");
+    const { rows } = mapPaste(tsv);
+    expect(rows).toHaveLength(3);
+    for (const [index, row] of rows.entries()) {
+      expect(validateAsignacionLoteRow(row, index + 1)).toEqual([]);
+    }
+    const built = rows.map((row) => buildAsignacionLoteFromMappedRow(row, "Calidad"));
+    expect(built[0]!.lote).toBe("");
+    expect(built[1]!.codigo).toBe("");
+    expect(built[2]!.lote).toBe("");
+    expect(built[2]!.fecha).toBeNull();
+    expect(built[2]!.cantidades).toBe(0);
+  });
+
+  it("fecha vacía persiste como null (no como string vacío) — nunca se inventa la fecha de hoy", () => {
+    const built = buildAsignacionLoteFromMappedRow(
+      { producto: "X", lote: "L-1", fecha: "" },
+      "Calidad"
+    );
+    expect(built.fecha).toBeNull();
+  });
+
+  it("fecha presente pero con formato inválido SÍ advierte (no bloquea, severidad warning)", () => {
+    const issues = validateAsignacionLoteRow({ producto: "X", fecha: "no-es-una-fecha" }, 1);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.field).toBe("fecha");
+    expect(issues[0]!.severity).toBe("warning");
+  });
+});

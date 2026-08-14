@@ -305,11 +305,25 @@ export function getWorkObservation(itemId: string): string {
   return readProgressMap()[itemId]?.observation ?? "";
 }
 
+/**
+ * Los work items nativos (Neon, id "native:<uuid>") ya llegan con
+ * status/packaging frescos y autoritativos desde el server
+ * (native-projector.ts resuelve status/deliveredFromCodificadoAt/etc en
+ * cada fetch) — nunca deben pisarse con este cache local de progreso, que
+ * es por dispositivo, sin expiración ni reconciliación. Pisar el status
+ * fresco con uno cacheado era la causa raíz de que un work item quedara
+ * mostrando "En Codificado" para siempre en el dispositivo que lo envió
+ * (aunque Codificado ya lo hubiera entregado a Calidad), y de que un
+ * trabajo "Rehecho" en Codificado desapareciera de Pendientes en el
+ * dispositivo de Codificado. El overlay solo tiene sentido para trabajos
+ * manuales/legacy (id sin prefijo native:) sin persistencia propia en Neon.
+ */
 export function applyWorkProgressToItems<T extends { id: string; status: WorkItemStatus }>(
   items: T[]
 ): T[] {
   const progress = readProgressMap();
   return items.map((item) => {
+    if (item.id.startsWith("native:")) return item;
     const saved = progress[item.id];
     if (!saved) return item;
     const prev = item as T & {

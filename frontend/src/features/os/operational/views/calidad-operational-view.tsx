@@ -57,6 +57,7 @@ import { FormulasAdminPanel } from "../components/formulas-admin-panel";
 import { LifecycleRowActions } from "../components/lifecycle-row-actions";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
 import { normalizeOptionalReason } from "@/lib/lifecycle";
+import { postReworkWork } from "@/lib/api/live-sync-client";
 
 const TOP_TABS = [
   { id: "pendientes", label: "Pendientes" },
@@ -113,6 +114,9 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
   const [rejectError, setRejectError] = useState<string | null>(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [showReworkField, setShowReworkField] = useState(false);
+  const [reworkReason, setReworkReason] = useState("");
+  const [reworkBusy, setReworkBusy] = useState(false);
   const [annulTarget, setAnnulTarget] = useState<QualityItem | null>(null);
   const [annulReason, setAnnulReason] = useState("");
   const [annulError, setAnnulError] = useState<string | null>(null);
@@ -173,6 +177,8 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
       setShowRejectField(false);
       setRejectError(null);
       setActionError(null);
+      setShowReworkField(false);
+      setReworkReason("");
     },
     [getQualityObservation]
   );
@@ -266,6 +272,47 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     notifyOrigin,
     showToast,
   ]);
+
+  /**
+   * Rehacer — tercera decisión, distinta de Rechazar: devuelve el trabajo al
+   * sector que lo envió (reviewItem.receivedFrom / relatedWorkItemId, ver
+   * native-projector.ts#projectQualityItem), editable, sin tocar OA/lote/
+   * VTO/historial. Reutiliza el mismo RBAC que Aprobar/Rechazar
+   * (quality-decision-rbac.ts) en el servidor.
+   */
+  const handleRework = useCallback(async () => {
+    if (!reviewItem?.relatedWorkItemId) return;
+    if (!canDecideQuality(sectorId)) {
+      setActionError(QUALITY_DECISION_DENIED_MESSAGE);
+      showToast(QUALITY_DECISION_DENIED_MESSAGE, "info");
+      return;
+    }
+    if (!showReworkField) {
+      setShowReworkField(true);
+      return;
+    }
+    setReworkBusy(true);
+    setActionError(null);
+    const response = await postReworkWork({
+      itemId: reviewItem.relatedWorkItemId,
+      reason: normalizeOptionalReason(reworkReason),
+      requestedBy: workspace.context.displayName,
+      actorSectorId: sectorId,
+    });
+    setReworkBusy(false);
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      const message = body.error ?? "No se pudo procesar el Rehacer.";
+      setActionError(message);
+      showToast(message, "info");
+      return;
+    }
+    showToast(
+      `Rehacer solicitado — vuelve a ${reviewItem.receivedFrom ? SECTOR_LABELS[reviewItem.receivedFrom] : "su sector"}.`
+    );
+    setReviewItem(null);
+    await refresh();
+  }, [reviewItem, sectorId, showReworkField, reworkReason, workspace.context.displayName, showToast, refresh]);
 
   const openAnnul = useCallback((item: QualityItem) => {
     setAnnulTarget(item);
@@ -737,6 +784,27 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                   </div>
                 )}
 
+                {canDecide && showReworkField && (
+                  <div className="space-y-2">
+                    <label htmlFor="rework-reason" className="text-sm font-medium text-[var(--os-text)]">
+                      Motivo del Rehacer (opcional)
+                    </label>
+                    <textarea
+                      id="rework-reason"
+                      value={reworkReason}
+                      onChange={(e) => setReworkReason(e.target.value)}
+                      rows={2}
+                      className="w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
+                      placeholder="Ej: corregir codificación de VTO en cajas. Si no informás motivo, se registrará “Sin motivo informado”."
+                    />
+                    <p className="text-xs text-[var(--os-text-muted)]">
+                      El trabajo vuelve editable a{" "}
+                      {reviewItem.receivedFrom ? SECTOR_LABELS[reviewItem.receivedFrom] : "su sector"} —
+                      conserva OA, lote, VTO y el resto del historial.
+                    </p>
+                  </div>
+                )}
+
                 {actionError && (
                   <p role="alert" className="text-sm text-[var(--genus-error)]">
                     {actionError}
@@ -745,13 +813,20 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
               </DrawerBody>
               {canDecide ? (
                 <DrawerFooter>
-                  <Button variant="destructive" onClick={handleReject}>
+                  <Button variant="destructive" onClick={handleReject} disabled={showReworkField}>
                     {showRejectField ? "Confirmar rechazo" : "Rechazar"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => void handleRework()}
+                    disabled={showRejectField || reworkBusy}
+                  >
+                    {reworkBusy ? "Rehaciendo…" : showReworkField ? "Confirmar Rehacer" : "Rehacer"}
                   </Button>
                   <Button
                     variant="primary"
                     onClick={() => setConfirmApprove(true)}
-                    disabled={showRejectField}
+                    disabled={showRejectField || showReworkField}
                   >
                     Aprobar
                   </Button>

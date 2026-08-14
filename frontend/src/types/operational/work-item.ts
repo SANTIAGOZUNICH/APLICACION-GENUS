@@ -175,6 +175,16 @@ export interface WorkItem {
   qualityDecidedBySector?: string | null;
   qualityObservation?: string | null;
   qualityChangeReason?: string | null;
+  /**
+   * Rehacer (0027) — Calidad o Producción devuelve el trabajo al sector que
+   * lo envió, editable, conservando OA/lote/VTO/historial. Distinto de
+   * Rechazar: no es una decisión formal de Calidad. Se limpia cuando el
+   * sector vuelve a completar/entregar (completeWorkDurable/deliverFromCodificadoDurable).
+   */
+  reworkRequestedAt?: string | null;
+  reworkRequestedBy?: string | null;
+  reworkRequestedBySector?: string | null;
+  reworkReason?: string | null;
 }
 
 export interface WorkItemsResponse {

@@ -8,6 +8,7 @@ import { validateDeliveryMutationActor } from "@/features/os/operational/lib/del
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
 import { AuthUnauthorizedError } from "@/lib/auth/types";
+import { PlanningValidationError } from "@/lib/planning/types";
 import type { WorkItem } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
@@ -21,10 +22,12 @@ import {
   completeWorkDurable,
   decideQualityDurable,
   deleteDeliveryRecordDurable,
+  deleteWorkItemDurable,
   deliverWorkDurable,
   nativeIdFromItemId,
   restoreCancelledWorkDurable,
   restoreDeliveryDurable,
+  reworkWorkItemDurable,
   saveWorkProgressDurable,
   toClientDeliveryRecord,
   updateWorkItemLoteVtoDurable,
@@ -81,6 +84,13 @@ type OperationAction =
       actorSectorId?: SectorId;
     }
   | {
+      action: "rework_work";
+      itemId: string;
+      reason?: string | null;
+      requestedBy?: string;
+      actorSectorId?: SectorId;
+    }
+  | {
       action: "cancel_work";
       itemId: string;
       reason: string;
@@ -116,6 +126,13 @@ type OperationAction =
       notes?: string | null;
       reason?: string | null;
       updatedBy?: string;
+      actorSectorId?: SectorId;
+    }
+  | {
+      action: "delete_work";
+      itemId: string;
+      reason?: string | null;
+      deletedBy?: string;
       actorSectorId?: SectorId;
     }
   | (DeliveryRecord & {
@@ -310,6 +327,36 @@ export async function POST(request: Request) {
           record,
         });
       }
+      case "rework_work": {
+        assertBodySectorMatches(body.actorSectorId, actor.sector);
+        // Mismo conjunto de actores que Aprobar/Rechazar (CALIDAD/PRODUCCION)
+        // — Rehacer es una tercera decisión sobre el mismo work item, no una
+        // mutación de asignación (no reutiliza validateWorkMutationActor).
+        const gate = validateQualityDecisionActor(actor.sector);
+        if (!gate.ok) {
+          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
+        }
+        const nativeReworkId = nativeIdFromItemId(body.itemId);
+        if (!nativeReworkId) {
+          return NextResponse.json(
+            { error: "Rehacer no disponible para este trabajo.", code: "NOT_NATIVE" },
+            { status: 400 }
+          );
+        }
+        try {
+          const row = await reworkWorkItemDurable(nativeReworkId, {
+            requestedBy: body.requestedBy ?? actor.displayName ?? actor.email,
+            requestedBySector: actor.sector,
+            reason: body.reason,
+          });
+          return NextResponse.json({ ok: true, revision: row.version, record: row });
+        } catch (error) {
+          if (error instanceof PlanningValidationError) {
+            return NextResponse.json({ error: error.message, code: "REWORK_NOT_ALLOWED" }, { status: 409 });
+          }
+          throw error;
+        }
+      }
       case "cancel_work": {
         assertBodySectorMatches(body.actorSectorId, actor.sector);
         const gate = validateWorkMutationActor(actor.sector);
@@ -402,6 +449,25 @@ export async function POST(request: Request) {
           reason: body.reason,
           updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
           updatedBySector: actor.sector,
+        });
+        return NextResponse.json({ ok: true, revision: row.version, record: row });
+      }
+      case "delete_work": {
+        assertBodySectorMatches(body.actorSectorId, actor.sector);
+        const gate = validateWorkMutationActor(actor.sector);
+        if (!gate.ok) {
+          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
+        }
+        const nativeDeleteId = nativeIdFromItemId(body.itemId);
+        if (!nativeDeleteId) {
+          return NextResponse.json(
+            { error: "Borrado no disponible para este trabajo.", code: "NOT_NATIVE" },
+            { status: 400 }
+          );
+        }
+        const row = await deleteWorkItemDurable(nativeDeleteId, {
+          reason: body.reason,
+          deletedBy: body.deletedBy ?? actor.displayName ?? actor.email,
         });
         return NextResponse.json({ ok: true, revision: row.version, record: row });
       }

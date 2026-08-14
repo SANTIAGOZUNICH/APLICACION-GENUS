@@ -48,24 +48,21 @@ function normalizeEstadoManual(raw: string): MateriaPrimaEstadoManual | null {
   return null;
 }
 
+/**
+ * Carga flexible: nombre/lote/cantidad/unidad no bloquean la fila por estar
+ * vacíos. `codigo` es la excepción técnica indispensable (regla del
+ * sistema: "la identidad del inventario es el código, no similitud de
+ * nombres") — sin código no hay a qué stock/material vincular la fila, así
+ * que sigue siendo obligatorio, igual criterio que ME Ingresos
+ * (inventory-service.ts#upsertMeIngreso).
+ */
 export function validateMpRow(
   row: Partial<MateriaPrimaMappedRow>,
   rowIndex = 1
 ): RowValidationIssue[] {
   const issues: RowValidationIssue[] = [];
-  const cantidad = parseNonNegativeNumber(row.cantidad ?? "");
 
   if (!row.codigo?.trim()) issues.push({ rowIndex, field: "codigo", message: "Código obligatorio." });
-  if (!row.nombre?.trim()) issues.push({ rowIndex, field: "nombre", message: "Nombre obligatorio." });
-  if (!row.lote?.trim()) issues.push({ rowIndex, field: "lote", message: "Lote obligatorio." });
-  if (cantidad === null) {
-    issues.push({
-      rowIndex,
-      field: "cantidad",
-      message: "Cantidad obligatoria, numérica y mayor o igual a 0.",
-    });
-  }
-  if (!row.unidad?.trim()) issues.push({ rowIndex, field: "unidad", message: "Unidad obligatoria." });
 
   const fechaIngreso = row.fechaIngreso?.trim();
   if (fechaIngreso && !parseFlexibleDate(fechaIngreso)) {

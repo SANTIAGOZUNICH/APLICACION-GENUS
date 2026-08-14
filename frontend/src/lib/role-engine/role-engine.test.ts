@@ -41,14 +41,16 @@ describe("Role Engine — F9.3", () => {
     expect(home.sidebarItems).toContain("ordenes_elaboracion");
   });
 
-  it("Calidad y Producción exponen OE/OA en el menú lateral", () => {
+  it("Calidad expone OE/OA en el menú lateral", () => {
     const calidad = resolveSectorHome("CALIDAD");
     expect(calidad.sidebarItems).toContain("ordenes_elaboracion");
     expect(calidad.sidebarItems).toContain("ordenes_acondicionamiento");
+  });
 
+  it("Producción expone OE pero NO la pestaña independiente de OA — la infraestructura de OA sigue activa vía asignación de trabajos", () => {
     const produccion = resolveSectorHome("PRODUCCION");
     expect(produccion.sidebarItems).toContain("ordenes_elaboracion");
-    expect(produccion.sidebarItems).toContain("ordenes_acondicionamiento");
+    expect(produccion.sidebarItems).not.toContain("ordenes_acondicionamiento");
     expect(produccion.sidebarItems).toContain("pedidos");
     expect(produccion.sidebarItems).not.toContain("ordenes");
   });

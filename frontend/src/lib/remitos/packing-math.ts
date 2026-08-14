@@ -116,24 +116,41 @@ export function remitoSlotsToPackingGroups(input: {
   return groups;
 }
 
+/**
+ * ¿Coincide lo embalado con lo que DEBE embalarse?
+ *
+ * La cantidad que debe quedar en cajas es la ENTREGABLE (neto comercial),
+ * es decir producido − muestras — NO el bruto producido. Las muestras se
+ * producen pero no se embalan para el cliente (ver computePackagingClose).
+ *
+ * `sampleUnits` es opcional (default 0) para conservar la semántica legacy
+ * de los callers que no manejan muestras (remito). Delega en
+ * `computePackagingClose` para que exista UNA sola regla de balance.
+ */
 export function packingProducedMismatchWarning(
   producedUnits: number | null | undefined,
-  groups: PackingGroup[]
+  groups: PackingGroup[],
+  sampleUnits: number | null | undefined = 0
 ): { ok: boolean; calculated: number; message: string | null } {
-  const { totalEmbalado } = summarizePackingGroups(groups);
-  if (producedUnits == null || !Number.isFinite(producedUnits) || producedUnits <= 0) {
-    return { ok: true, calculated: totalEmbalado, message: null };
+  const close = computePackagingClose({
+    finishedQty: producedUnits,
+    sampleUnits,
+    groups,
+  });
+  const packed = close.packedUnits;
+  if (producedUnits == null || !Number.isFinite(producedUnits) || Number(producedUnits) <= 0) {
+    return { ok: true, calculated: packed, message: null };
   }
-  if (totalEmbalado === 0) {
+  if (packed === 0) {
     return { ok: true, calculated: 0, message: null };
   }
-  if (Number(producedUnits) === totalEmbalado) {
-    return { ok: true, calculated: totalEmbalado, message: null };
+  if (close.isBalanced) {
+    return { ok: true, calculated: packed, message: null };
   }
   return {
     ok: false,
-    calculated: totalEmbalado,
-    message: `Total producido (${producedUnits}) no coincide con total embalado (${totalEmbalado}). No se corrige automáticamente.`,
+    calculated: packed,
+    message: `Unidades a embalar (${close.deliverableUnits}) no coinciden con total embalado (${packed}). No se corrige automáticamente.`,
   };
 }
 
@@ -217,34 +234,102 @@ export type PackagingCloseInput = {
 
 export type PackagingCloseSummary = {
   totalCajas: number;
-  /** Unidades en cajas — esto es lo "entregable". */
+
+  // ── Semántica canónica (fix muestras vs total embalado) ──
+  /** Bruto producido/acondicionado (0 si no informado). */
+  finishedUnits: number;
+  /** Muestras: producidas pero NO entregables al cliente (>= 0). */
+  sampleUnits: number;
+  /** Neto comercial = finishedUnits - sampleUnits. */
+  deliverableUnits: number;
+  /** Unidades efectivamente dentro de cajas = SUM(cajas × unidadesPorCaja). */
+  packedUnits: number;
+  /** deliverableUnits - packedUnits. 0 = correcto. */
+  difference: number;
+  /** true solo si finishedQty es válido y difference === 0. */
+  isBalanced: boolean;
+
+  // ── Alias legacy (compat con callers/tests existentes) ──
+  /** = packedUnits. */
   enCajas: number;
+  /** = sampleUnits. */
   muestras: number;
-  /** enCajas + muestras. */
+  /** = packedUnits + sampleUnits. */
   totalAcondicionado: number;
-  /** finishedQty - totalAcondicionado. 0 = correcto. */
+  /** = difference. */
   diferencia: number;
-  /** true solo si finishedQty es un número válido y diferencia === 0. */
+  /** = isBalanced. */
   isValid: boolean;
   /** false si finishedQty falta — no se puede validar todavía. */
   canValidate: boolean;
 };
 
+/**
+ * Cantidad entregable de un work item ya cerrado (persistida) — fuente
+ * única reutilizada por remito (from-quality.ts), su editor de composición
+ * (compose-from-quality.ts) y "marcar como entregado" (entregados-view.tsx).
+ * deliverableUnits (excluye muestras, PARTE A) es la fuente de verdad
+ * cuando existe cierre físico; packagingTotalUnits (incluye muestras) es
+ * compat histórica para trabajos sin cierre. No confundir con
+ * computePackagingClose de abajo: esa calcula el cierre EN EL MOMENTO de
+ * cerrar (Envasado/Codificado); esta lee el valor ya persistido más tarde
+ * (remito/Entregados) — nunca vuelve a restar muestras (evita doble
+ * descuento: si deliverableUnits ya es 1000, se usa 1000, no 1000-2).
+ */
+export function resolveWorkItemDeliverableUnits(
+  wi:
+    | { deliverableUnits?: number | null; packagingTotalUnits?: number | null }
+    | null
+    | undefined
+): number | null {
+  if (wi?.deliverableUnits != null && Number.isFinite(wi.deliverableUnits)) {
+    return Math.max(0, Number(wi.deliverableUnits));
+  }
+  if (wi?.packagingTotalUnits != null && Number.isFinite(wi.packagingTotalUnits)) {
+    return Math.max(0, Number(wi.packagingTotalUnits));
+  }
+  return null;
+}
+
+/**
+ * ÚNICA fuente de verdad del cierre de acondicionamiento. Envasado Masivo,
+ * Premium y Codificado deben usar EXACTAMENTE esta regla:
+ *
+ *   deliverableUnits = finishedUnits - sampleUnits
+ *   packedUnits      = SUM(cajas × unidadesPorCaja)
+ *   difference       = deliverableUnits - packedUnits      (NO finished - packed)
+ *   isBalanced       = difference === 0
+ *
+ * `finishedQty` es SIEMPRE el bruto acondicionado. La resta de muestras se
+ * hace acá una sola vez; nunca se debe volver a restar muestras a un valor
+ * que ya es neto (evita el doble descuento: 1002 − 2 = 1000, no 998).
+ */
 export function computePackagingClose(input: PackagingCloseInput): PackagingCloseSummary {
-  const { totalCajas, totalEmbalado: enCajas } = summarizePackingGroups(input.groups);
-  const muestras = input.sampleUnits != null && Number.isFinite(input.sampleUnits)
-    ? Math.max(0, Math.floor(input.sampleUnits))
-    : 0;
-  const totalAcondicionado = enCajas + muestras;
+  const { totalCajas, totalEmbalado: packedUnits } = summarizePackingGroups(input.groups);
+  const sampleUnits =
+    input.sampleUnits != null && Number.isFinite(input.sampleUnits)
+      ? Math.max(0, Math.floor(input.sampleUnits))
+      : 0;
   const canValidate = input.finishedQty != null && Number.isFinite(input.finishedQty);
-  const diferencia = canValidate ? Number(input.finishedQty) - totalAcondicionado : 0;
+  const finishedUnits = canValidate ? Number(input.finishedQty) : 0;
+  const deliverableUnits = canValidate ? finishedUnits - sampleUnits : 0;
+  const difference = canValidate ? deliverableUnits - packedUnits : 0;
+  const isBalanced = canValidate && difference === 0;
+  const totalAcondicionado = packedUnits + sampleUnits;
   return {
     totalCajas,
-    enCajas,
-    muestras,
+    finishedUnits,
+    sampleUnits,
+    deliverableUnits,
+    packedUnits,
+    difference,
+    isBalanced,
+    // Alias legacy
+    enCajas: packedUnits,
+    muestras: sampleUnits,
     totalAcondicionado,
-    diferencia,
-    isValid: canValidate && diferencia === 0,
+    diferencia: difference,
+    isValid: isBalanced,
     canValidate,
   };
 }

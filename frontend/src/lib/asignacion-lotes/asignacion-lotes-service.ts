@@ -196,7 +196,7 @@ async function findDuplicateNeon(
 
 function sortItems(items: AsignacionLote[]): AsignacionLote[] {
   return [...items].sort(
-    (a, b) => b.fecha.localeCompare(a.fecha) || a.lote.localeCompare(b.lote, "es")
+    (a, b) => (b.fecha ?? "").localeCompare(a.fecha ?? "") || a.lote.localeCompare(b.lote, "es")
   );
 }
 
@@ -235,14 +235,17 @@ export class AsignacionLotesService {
 
   async upsert(actor: AsignacionLotesActor, input: AsignacionLoteUpsertInput): Promise<AsignacionLote> {
     assertMutate(actor);
-    const now = new Date().toISOString();
     const previous = input.id
       ? useNeon()
         ? await this.get(actor, input.id)
         : mem().find((item) => item.id === input.id)
       : undefined;
 
-    if (!input.lote.trim() || !input.fecha.trim() || !input.producto.trim()) {
+    // Alta/edición manual (un solo registro, no import masivo): estos 3
+    // siguen siendo obligatorios — la carga flexible es solo para
+    // copiar/pegar desde Excel (ver import() más abajo, que llama
+    // writeRecord directo sin pasar por acá).
+    if (!input.lote.trim() || !input.fecha?.trim() || !input.producto.trim()) {
       throw new OrdersValidationError("Lote, Fecha y Producto son obligatorios.");
     }
     if (!parseFlexibleDate(input.fecha)) {
@@ -261,15 +264,29 @@ export class AsignacionLotesService {
       );
     }
 
+    return this.writeRecord(actor, input, previous);
+  }
+
+  /**
+   * Inserta/actualiza sin exigir campos — reutilizado por upsert() (que ya
+   * validó lote/fecha/producto antes de llegar acá) e import() (carga
+   * flexible: celdas vacías se persisten como ""/null, nunca se inventan).
+   */
+  private async writeRecord(
+    actor: AsignacionLotesActor,
+    input: AsignacionLoteUpsertInput,
+    previous: AsignacionLote | null | undefined
+  ): Promise<AsignacionLote> {
+    const now = new Date().toISOString();
     const updatedBy = input.updatedBy.trim() || actor.displayName;
     const record: AsignacionLote = {
       id: previous?.id ?? input.id ?? makeId(),
       lote: input.lote.trim(),
-      fecha: parseFlexibleDate(input.fecha) ?? input.fecha,
+      fecha: input.fecha?.trim() ? (parseFlexibleDate(input.fecha) ?? input.fecha.trim()) : null,
       producto: input.producto.trim(),
       codigo: input.codigo.trim(),
       marca: input.marca?.trim() ?? previous?.marca ?? "",
-      cantidades: input.cantidades,
+      cantidades: Number.isFinite(input.cantidades) && input.cantidades >= 0 ? input.cantidades : 0,
       vto: input.vto ?? previous?.vto ?? null,
       muestras: input.muestras?.trim() ?? previous?.muestras ?? "",
       cjMuestra: input.cjMuestra?.trim() ?? previous?.cjMuestra ?? "",
@@ -387,24 +404,15 @@ export class AsignacionLotesService {
     const errors: AsignacionLoteImportResult["errors"] = [];
     const seen = new Set<string>();
 
+    // Carga flexible: ningún campo bloquea la fila por estar vacío — solo
+    // se rechaza si el dato SÍ vino y tiene formato inválido (fecha
+    // ilegible). Celdas vacías se persisten como ""/null en writeRecord.
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
       const rowIndex = index + 1;
       const key = duplicateKey(row.lote, row.codigo);
-      if (!row.lote.trim()) errors.push({ rowIndex, field: "lote", message: "Lote obligatorio." });
-      if (!row.fecha.trim()) errors.push({ rowIndex, field: "fecha", message: "Fecha obligatoria." });
-      if (!parseFlexibleDate(row.fecha)) {
+      if (row.fecha?.trim() && !parseFlexibleDate(row.fecha)) {
         errors.push({ rowIndex, field: "fecha", message: "Fecha inválida." });
-      }
-      if (!row.producto.trim()) {
-        errors.push({ rowIndex, field: "producto", message: "Producto obligatorio." });
-      }
-      if (!Number.isFinite(row.cantidades) || row.cantidades < 0) {
-        errors.push({
-          rowIndex,
-          field: "cantidades",
-          message: "Cantidades debe ser un número mayor o igual a 0.",
-        });
       }
       if (errors.some((error) => error.rowIndex === rowIndex)) {
         skipped += 1;
@@ -420,11 +428,15 @@ export class AsignacionLotesService {
         continue;
       }
 
-      await this.upsert(actor, {
-        ...row,
-        updatedBy: row.updatedBy || actor.displayName,
-        createdBy: row.createdBy ?? actor.displayName,
-      });
+      await this.writeRecord(
+        actor,
+        {
+          ...row,
+          updatedBy: row.updatedBy || actor.displayName,
+          createdBy: row.createdBy ?? actor.displayName,
+        },
+        undefined
+      );
       imported += 1;
       seen.add(key);
     }

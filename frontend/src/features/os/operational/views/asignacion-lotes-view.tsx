@@ -120,7 +120,7 @@ function emptyForm(): AsignacionFormState {
 function formFromAsignacion(item: AsignacionLote): AsignacionFormState {
   return {
     lote: item.lote,
-    fecha: item.fecha,
+    fecha: item.fecha ?? "",
     producto: item.producto,
     codigo: item.codigo,
     marca: item.marca,
@@ -150,7 +150,7 @@ function toCsv(rows: AsignacionLote[]): string {
   const lines = rows.map((row) =>
     [
       row.lote,
-      row.fecha,
+      row.fecha ?? "",
       row.producto,
       row.codigo,
       row.marca,
@@ -168,12 +168,14 @@ function toCsv(rows: AsignacionLote[]): string {
 }
 
 function sortAsignaciones(rows: AsignacionLote[], sort: SortKey): AsignacionLote[] {
+  const fecha = (item: AsignacionLote) => item.fecha ?? "";
   return [...rows].sort((a, b) => {
-    if (sort === "fecha_asc") return a.fecha.localeCompare(b.fecha) || a.lote.localeCompare(b.lote, "es");
-    if (sort === "producto_asc") return a.producto.localeCompare(b.producto, "es") || a.fecha.localeCompare(b.fecha);
+    if (sort === "fecha_asc") return fecha(a).localeCompare(fecha(b)) || a.lote.localeCompare(b.lote, "es");
+    if (sort === "producto_asc")
+      return a.producto.localeCompare(b.producto, "es") || fecha(a).localeCompare(fecha(b));
     if (sort === "lote_asc") return a.lote.localeCompare(b.lote, "es") || a.codigo.localeCompare(b.codigo, "es");
     if (sort === "codigo_asc") return a.codigo.localeCompare(b.codigo, "es") || a.lote.localeCompare(b.lote, "es");
-    return b.fecha.localeCompare(a.fecha) || a.lote.localeCompare(b.lote, "es");
+    return fecha(b).localeCompare(fecha(a)) || a.lote.localeCompare(b.lote, "es");
   });
 }
 
