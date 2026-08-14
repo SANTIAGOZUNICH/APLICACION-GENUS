@@ -251,7 +251,6 @@ export function PackagingQuantitiesBlock({
           packingObservation={packingObs}
           onPackingObservationChange={setPackingObs}
           readOnly={readOnly}
-          showSummary={false}
           requireObservationOnMismatch
           testIdPrefix="packaging"
         />

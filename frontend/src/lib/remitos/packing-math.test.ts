@@ -196,6 +196,83 @@ describe("packingProducedMismatchWarning — sensible a muestras (regla neto vs 
   });
 });
 
+describe("computePackagingClose — caso reportado en captura (2883/3 muestras/28×102+1×24=2880)", () => {
+  const groups2880 = [
+    { cajas: 28, unidadesPorCaja: 102 }, // 2856
+    { cajas: 1, unidadesPorCaja: 24 }, // 24
+  ];
+
+  it("Caso 1 (real de la captura) — Produced 2883, Samples 3, Packed 2880 → Deliverable 2880, Difference 0, Balanced true", () => {
+    const close = computePackagingClose({ finishedQty: 2883, sampleUnits: 3, groups: groups2880 });
+    expect(close.finishedUnits).toBe(2883);
+    expect(close.sampleUnits).toBe(3);
+    expect(close.packedUnits).toBe(2880);
+    expect(close.deliverableUnits).toBe(2880);
+    expect(close.difference).toBe(0);
+    expect(close.isBalanced).toBe(true);
+  });
+
+  it("Caso 1 — el warning de mismatch (mismo helper) tampoco dispara — misma fuente, sin contradicción posible", () => {
+    const w = packingProducedMismatchWarning(2883, groups2880, 3);
+    expect(w.ok).toBe(true);
+    expect(w.message).toBeNull();
+  });
+
+  it("Caso 2 (regresión previa) — Produced 1002, Samples 2, Packed 1000 → Difference 0", () => {
+    const close = computePackagingClose({
+      finishedQty: 1002,
+      sampleUnits: 2,
+      groups: [
+        { cajas: 10, unidadesPorCaja: 25 },
+        { cajas: 15, unidadesPorCaja: 50 },
+      ],
+    });
+    expect(close.difference).toBe(0);
+    expect(close.isBalanced).toBe(true);
+  });
+
+  it("Caso 3 (sin muestras) — Produced 1000, Samples 0, Packed 1000 → Difference 0", () => {
+    const close = computePackagingClose({
+      finishedQty: 1000,
+      sampleUnits: 0,
+      groups: [{ cajas: 10, unidadesPorCaja: 100 }],
+    });
+    expect(close.difference).toBe(0);
+    expect(close.isBalanced).toBe(true);
+  });
+
+  it("Caso 4 (diferencia real, faltante) — Produced 2883, Samples 3, Packed 2879 → Deliverable 2880, Difference 1, mismatch real", () => {
+    const groups2879 = [
+      { cajas: 28, unidadesPorCaja: 102 }, // 2856
+      { cajas: 1, unidadesPorCaja: 23 }, // 23 (una menos que el caso balanceado)
+    ];
+    const close = computePackagingClose({ finishedQty: 2883, sampleUnits: 3, groups: groups2879 });
+    expect(close.deliverableUnits).toBe(2880);
+    expect(close.packedUnits).toBe(2879);
+    expect(close.difference).toBe(1);
+    expect(close.isBalanced).toBe(false);
+
+    const w = packingProducedMismatchWarning(2883, groups2879, 3);
+    expect(w.ok).toBe(false);
+    expect(w.message).toMatch(/no coincide/);
+  });
+
+  it("Caso 5 (diferencia real, exceso) — Produced 2883, Samples 3, Packed 2881 → Difference -1, mismatch real", () => {
+    const groups2881 = [
+      { cajas: 28, unidadesPorCaja: 102 }, // 2856
+      { cajas: 1, unidadesPorCaja: 25 }, // 25 (una más que el caso balanceado)
+    ];
+    const close = computePackagingClose({ finishedQty: 2883, sampleUnits: 3, groups: groups2881 });
+    expect(close.deliverableUnits).toBe(2880);
+    expect(close.packedUnits).toBe(2881);
+    expect(close.difference).toBe(-1);
+    expect(close.isBalanced).toBe(false);
+
+    const w = packingProducedMismatchWarning(2883, groups2881, 3);
+    expect(w.ok).toBe(false);
+  });
+});
+
 describe("resolveWorkItemDeliverableUnits — fuente única de la cantidad entregable YA PERSISTIDA", () => {
   it("prefiere deliverableUnits (excluye muestras) sobre packagingTotalUnits", () => {
     expect(

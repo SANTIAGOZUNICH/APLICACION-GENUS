@@ -5,7 +5,6 @@ import {
   ensureMinPackingSlots,
   packingProducedMismatchWarning,
   parseNonNegInt,
-  summarizePackingGroups,
   type PackingGroup,
 } from "@/lib/remitos/packing-math";
 
@@ -18,7 +17,6 @@ type Props = {
   packingObservation?: string;
   onPackingObservationChange?: (v: string) => void;
   readOnly?: boolean;
-  showSummary?: boolean;
   /** Si true, exige observación cuando hay mismatch (UI only; no bloquea). */
   requireObservationOnMismatch?: boolean;
   testIdPrefix?: string;
@@ -35,12 +33,10 @@ export function PackingGroupsEditor({
   packingObservation = "",
   onPackingObservationChange,
   readOnly = false,
-  showSummary = true,
   requireObservationOnMismatch = false,
   testIdPrefix = "packing",
 }: Props) {
   const slots = ensureMinPackingSlots(groups, 3);
-  const summary = summarizePackingGroups(slots);
   const warn = packingProducedMismatchWarning(producedUnits, slots, sampleUnits ?? 0);
   const needsObs = !warn.ok && requireObservationOnMismatch;
 
@@ -134,25 +130,6 @@ export function PackingGroupsEditor({
         >
           + Agregar otro tipo de caja
         </Button>
-      ) : null}
-
-      {showSummary ? (
-        <div
-          className="rounded border border-[var(--os-border)] bg-[var(--os-surface-muted,#f8fafc)] p-3 text-sm"
-          data-testid={`${testIdPrefix}-summary`}
-        >
-          <p className="mb-1 font-medium">RESUMEN DE EMBALAJE</p>
-          <ul className="space-y-0.5 text-xs text-[var(--os-text-muted)]">
-            <li>
-              Total producido:{" "}
-              {producedUnits != null && Number.isFinite(producedUnits)
-                ? producedUnits
-                : "—"}
-            </li>
-            <li>Total de cajas: {summary.totalCajas}</li>
-            <li>Total embalado: {summary.totalEmbalado} unidades</li>
-          </ul>
-        </div>
       ) : null}
 
       {!warn.ok && warn.message ? (
