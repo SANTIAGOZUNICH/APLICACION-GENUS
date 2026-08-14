@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db/client";
 import { SchemaPendingError, schemaPendingResponse } from "@/lib/db/feature-schema";
+import { AuthUnauthorizedError } from "@/lib/auth/types";
 import {
   MeStockShortageError,
   OrdersConflictError,
@@ -26,6 +27,15 @@ export function ensureOrdersPersistenceReady(): NextResponse | null {
 }
 
 export function ordersErrorResponse(err: unknown): NextResponse {
+  // 401 = no autenticado (cookie ausente/inválida/vencida). Distinto de
+  // OrdersValidationError (400, request inválida) y OrdersForbiddenError
+  // (403, autenticado sin permiso) — no mezclar las tres semánticas.
+  if (err instanceof AuthUnauthorizedError) {
+    return NextResponse.json(
+      { error: err.message, code: err.code, legallyOperational: false },
+      { status: err.status }
+    );
+  }
   if (err instanceof SchemaPendingError) {
     return NextResponse.json(schemaPendingResponse(), { status: 503 });
   }

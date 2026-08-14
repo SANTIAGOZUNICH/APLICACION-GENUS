@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { AuthUnauthorizedError } from "@/lib/auth/types";
 import {
   assertProduccionActor,
   resolvePlanningActor,
@@ -11,7 +10,6 @@ import {
 } from "@/lib/planning/http";
 import type { PlanningSector } from "@/lib/planning/types";
 import { PlanningValidationError } from "@/lib/planning/types";
-import { logSanitizedError } from "@/lib/planning/sanitize-public-error";
 import {
   assignWorkItemDurable,
   type WorkAssignmentInput,
@@ -156,16 +154,7 @@ export async function GET(request: Request) {
       items,
     });
   } catch (err) {
-    if (err instanceof AuthUnauthorizedError) {
-      return NextResponse.json(
-        {
-          error: "Sesión vencida. Volvé a iniciar sesión.",
-          code: "UNAUTHORIZED",
-          operationId,
-        },
-        { status: 401 }
-      );
-    }
+    // AuthUnauthorizedError (401 real) también la mapea planningErrorResponse.
     return planningErrorResponse(err, operationId);
   }
 }
@@ -205,17 +194,7 @@ export async function POST(request: Request) {
       { status: result.replayed ? 200 : 201 }
     );
   } catch (err) {
-    if (err instanceof AuthUnauthorizedError) {
-      logSanitizedError(operationId, "work-assignments", err);
-      return NextResponse.json(
-        {
-          error: "Sesión vencida. Volvé a iniciar sesión.",
-          code: "UNAUTHORIZED",
-          operationId,
-        },
-        { status: 401 }
-      );
-    }
+    // AuthUnauthorizedError (401 real) también la mapea planningErrorResponse.
     return planningErrorResponse(err, operationId);
   }
 }

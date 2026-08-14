@@ -1,8 +1,8 @@
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
 import { resolveAuthenticatedActor } from "@/lib/auth/resolve-authenticated-actor";
-import { AuthUnauthorizedError, type AuthActor } from "@/lib/auth/types";
+import type { AuthActor } from "@/lib/auth/types";
 import type { OrdersActor } from "@/lib/orders/types";
-import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
+import { OrdersForbiddenError } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
 import { OPERATIONAL_SECTOR_IDS } from "@/types/operational/sector";
 
@@ -43,15 +43,11 @@ function toOrdersActor(actor: AuthActor): OrdersActor {
 }
 
 export async function resolveOrdersActor(request: Request): Promise<OrdersActor> {
-  let actor: AuthActor;
-  try {
-    actor = await resolveAuthenticatedActor(request);
-  } catch (err) {
-    if (err instanceof AuthUnauthorizedError) {
-      throw new OrdersValidationError("Sesión requerida (inicie sesión para continuar).");
-    }
-    throw err;
-  }
+  // AuthUnauthorizedError (401 = no autenticado) se propaga sin envolver —
+  // ordersErrorResponse la mapea a 401. No confundir con OrdersValidationError
+  // (400 = request inválida) ni OrdersForbiddenError (403 = autenticado sin
+  // permiso): son semánticas HTTP distintas, ver auth/types.ts.
+  const actor: AuthActor = await resolveAuthenticatedActor(request);
 
   // Legacy test headers must not influence or invalidate a real session.
   if (process.env.NODE_ENV === "test") {

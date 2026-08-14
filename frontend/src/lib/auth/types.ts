@@ -148,6 +148,23 @@ export class AuthValidationError extends Error {
   }
 }
 
+/**
+ * Backend de sesión durable no disponible en un entorno multi-instancia
+ * (Vercel). Nunca debe resolverse cayendo en silencio a memoria de
+ * proceso — eso rompe la autenticación de forma intermitente según qué
+ * instancia serverless atienda cada request. Ver get-auth-service.ts.
+ */
+export class AuthBackendUnavailableError extends Error {
+  readonly status = 503;
+  readonly code = "AUTH_BACKEND_UNAVAILABLE";
+  constructor(
+    message = "Backend de sesión durable no disponible. Configuración incompleta."
+  ) {
+    super(message);
+    this.name = "AuthBackendUnavailableError";
+  }
+}
+
 export function toPublicAuthUser(user: AuthUser): PublicAuthUser {
   const { passwordHash: _passwordHash, ...publicUser } = user;
   return publicUser;

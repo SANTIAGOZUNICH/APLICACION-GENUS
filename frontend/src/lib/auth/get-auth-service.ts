@@ -6,6 +6,7 @@ import { DrizzleAuthRepository } from "@/lib/auth/drizzle-repository";
 import { MemoryAuthRepository } from "@/lib/auth/memory-repository";
 import type { AuthRepository } from "@/lib/auth/repository";
 import { AuthService, createAuthService } from "@/lib/auth/service";
+import { AuthBackendUnavailableError } from "@/lib/auth/types";
 
 export { createAuthService, createAuthAdminService };
 
@@ -77,24 +78,74 @@ function getSharedNeonRepository(): DrizzleAuthRepository {
   return sharedNeonRepository;
 }
 
+function hasDbConfigured(): boolean {
+  return Boolean(process.env.DATABASE_URL?.trim() || process.env.DATABASE_URL_UNPOOLED?.trim());
+}
+
+function isMigration0016Ready(): boolean {
+  return process.env.APPLY_MIGRATION_0016 === "1";
+}
+
+/**
+ * Bug real (auditoría de "Sesión vencida" intermitente): esta función
+ * gateaba el auto-enable de Neon a `VERCEL_ENV==="preview"` explícitamente
+ * — el caso "sin GENUS_AUTH_BACKEND=neon pero con DATABASE_URL + 0016
+ * aplicada" NUNCA activaba Neon en Production (VERCEL_ENV==="production"),
+ * cayendo en MemoryAuthRepository sin ningún error visible. Una sesión en
+ * un Map de proceso no es válida en un entorno serverless multi-instancia
+ * — cada instancia ve su propia memoria, así que la MISMA sesión aparece
+ * "vencida" en cualquier instancia que no sea la que hizo el login.
+ *
+ * Ahora el auto-enable no depende de VERCEL_ENV: cualquier entorno con
+ * DATABASE_URL + 0016 aplicada usa Neon, sea Preview o Production. La
+ * salvedad de Preview (evitar login 500 si el branch de Neon todavía no
+ * tiene las tablas genus_auth_*) se preserva SOLO para el caso
+ * GENUS_AUTH_BACKEND=neon explícito sin 0016 lista.
+ */
 function isNeonBackendEnabled(): boolean {
   if (process.env.GENUS_AUTH_BACKEND === "memory") return false;
-  const hasDb = Boolean(
-    process.env.DATABASE_URL?.trim() || process.env.DATABASE_URL_UNPOOLED?.trim()
-  );
-  const authSchemaReady = process.env.APPLY_MIGRATION_0016 === "1";
+  const hasDb = hasDbConfigured();
+  const authSchemaReady = isMigration0016Ready();
   if (process.env.GENUS_AUTH_BACKEND === "neon") {
-    // En Preview, sin 0016 el branch Neon suele no tener genus_auth_* → login 500.
     if (process.env.VERCEL_ENV === "preview" && !authSchemaReady) return false;
     return true;
   }
-  // Auto Preview solo con 0016 autorizada + DATABASE_URL.
-  return process.env.VERCEL_ENV === "preview" && authSchemaReady && hasDb;
+  return hasDb && authSchemaReady;
 }
 
+/** true en Production real de Vercel — nunca en Preview ni dev local. */
+function isProductionDeployment(): boolean {
+  return process.env.VERCEL_ENV === "production";
+}
+
+/**
+ * INVARIANTE: en Production, una sesión válida jamás puede depender de
+ * memoria de proceso — Vercel corre múltiples instancias serverless en
+ * paralelo, cada una con su propio Map; una sesión creada en la instancia
+ * A no existe para la instancia B. Si Neon no está listo en Production,
+ * fail closed (lanza AuthBackendUnavailableError → 503) en vez de caer en
+ * silencio a memoria: un 503 ruidoso en cada request de auth es
+ * infinitamente preferible a sesiones que funcionan "a veces" según qué
+ * instancia atienda la request.
+ *
+ * Preview y desarrollo local NO quedan afectados — el modo demo de Preview
+ * sin migración 0016 aplicada (cuentas sembradas en memoria,
+ * ensurePreviewMemorySeed) es un comportamiento documentado e
+ * intencional, no el defecto que corrige este fix. Memoria explícita
+ * (GENUS_AUTH_BACKEND=memory) tampoco dispara el fail-closed en ningún
+ * entorno — es una elección deliberada del operador, no un fallback.
+ */
 function resolveAuthRepository(): AuthRepository {
   if (overrideRepository) return overrideRepository;
   if (isNeonBackendEnabled()) return getSharedNeonRepository();
+  const explicitMemory = process.env.GENUS_AUTH_BACKEND === "memory";
+  if (isProductionDeployment() && !explicitMemory) {
+    throw new AuthBackendUnavailableError(
+      "Backend de sesión durable no disponible en Production (falta DATABASE_URL, APPLY_MIGRATION_0016, o GENUS_AUTH_BACKEND). " +
+        "Una sesión no puede depender de memoria de proceso en un entorno serverless multi-instancia. " +
+        "Configurá GENUS_AUTH_BACKEND=memory explícitamente si esto es intencional."
+    );
+  }
   return getSharedMemoryRepository();
 }
 
@@ -131,11 +182,14 @@ async function ensurePreviewMemorySeed(service: AuthService): Promise<void> {
  * scripts/migrate-if-database.mjs).
  *
  * Backend:
- * - Por defecto: `MemoryAuthRepository` (Map en memoria de proceso,
- *   singleton a nivel de módulo). No es durable — no sobrevive reinicios
- *   ni se comparte entre instancias/regiones de Preview.
- * - Preview sin 0016: siembra cuentas demo documentadas en memoria.
- * - `GENUS_AUTH_BACKEND=neon` o Preview+APPLY_MIGRATION_0016=1: Neon.
+ * - `DATABASE_URL` + `APPLY_MIGRATION_0016=1` (o `GENUS_AUTH_BACKEND=neon`
+ *   explícito): Neon, en cualquier entorno — Preview o Production.
+ * - Preview sin 0016 lista: `MemoryAuthRepository` (Map en memoria de
+ *   proceso), sembrado con cuentas demo documentadas — modo demo
+ *   intencional, no durable, no compartido entre instancias.
+ * - Production sin Neon listo: **fail closed** — `AuthBackendUnavailableError`
+ *   (503), nunca memoria en silencio (ver `resolveAuthRepository`).
+ * - Local (sin `VERCEL`): `MemoryAuthRepository`, sin sembrar por defecto.
  */
 export function getAuthService(): AuthService {
   if (overrideService) return overrideService;

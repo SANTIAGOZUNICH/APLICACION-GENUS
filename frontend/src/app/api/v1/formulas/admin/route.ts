@@ -10,12 +10,16 @@ import {
 import { readyFormulaBank, persistFormulaBankIfConfigured } from "@/lib/formulas/get-formula-bank";
 import { findFormulaUsageRefs } from "@/lib/formulas/formula-usage";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
+import { AuthUnauthorizedError } from "@/lib/auth/types";
 import { normalizeOptionalReason } from "@/lib/lifecycle";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function formulaErrorResponse(err: unknown) {
+  if (err instanceof AuthUnauthorizedError) {
+    return NextResponse.json({ error: err.message, code: err.code }, { status: 401 });
+  }
   if (err instanceof FormulaBankForbiddenError) {
     return NextResponse.json({ error: err.message, code: err.code }, { status: 403 });
   }

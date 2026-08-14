@@ -3,6 +3,8 @@
  * Combina navigator.onLine + ping real a /api/v1/connectivity (+ auth/me opcional).
  */
 
+import { resolveSessionAuthoritatively } from "@/lib/auth/session-authority";
+
 export type ConnectionStatus =
   | "CONNECTED"
   | "RECONNECTING"
@@ -61,17 +63,11 @@ async function checkSessionIfNeeded(): Promise<boolean> {
   if (typeof window === "undefined") return true;
   const path = window.location.pathname;
   if (path.startsWith("/login") || path.startsWith("/offline")) return true;
-  try {
-    const res = await fetch("/api/v1/auth/me", {
-      method: "GET",
-      cache: "no-store",
-      credentials: "include",
-    });
-    if (res.status === 401) return false;
-    return true;
-  } catch {
-    return true; // no confundir red con sesión
-  }
+  // Autoritativo: un único 401 no alcanza (ver session-authority.ts) — solo
+  // "invalid" (confirmado dos veces) cuenta como sesión realmente vencida;
+  // "unknown" (red/500) nunca se confunde con sesión inválida.
+  const result = await resolveSessionAuthoritatively();
+  return result.status !== "invalid";
 }
 
 async function tick() {

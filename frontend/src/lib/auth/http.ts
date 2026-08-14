@@ -2,6 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import {
+  AuthBackendUnavailableError,
   AuthBlockedError,
   AuthConflictError,
   AuthInvalidCredentialsError,
@@ -22,7 +23,8 @@ export function authErrorResponse(err: unknown): NextResponse {
     err instanceof AuthBlockedError ||
     err instanceof AuthRateLimitedError ||
     err instanceof AuthConflictError ||
-    err instanceof AuthValidationError
+    err instanceof AuthValidationError ||
+    err instanceof AuthBackendUnavailableError
   ) {
     return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
   }
