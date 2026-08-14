@@ -75,8 +75,8 @@ describe("compose remito summary", () => {
   });
 });
 
-describe("producedUnitsFromQuality — no advertencia falsa por muestras (CASO OBLIGATORIO)", () => {
-  it("usa deliverableUnits (1000), no packagingTotalUnits (1002), para comparar contra la distribución en cajas", () => {
+describe("producedUnitsFromQuality — devuelve el BRUTO, muestras ya no evita el aviso de mismatch (regla definitiva)", () => {
+  it("Caso C del pedido — 1002 producido, 2 muestras, 1000 embalado: producedUnitsFromQuality=1002 (bruto), remito=1000 (embalado), Y SÍ hay advertencia", () => {
     const item = {
       id: "qc:w3",
       kind: "salida",
@@ -103,15 +103,51 @@ describe("producedUnitsFromQuality — no advertencia falsa por muestras (CASO O
       ],
     } as WorkItem;
 
-    expect(producedUnitsFromQuality(item, [wi])).toBe(1000);
+    // producedUnitsFromQuality = bruto real (packagingTotalUnits, ya que
+    // finishedQty no está seteado en este fixture) — NUNCA un valor
+    // neteado de muestras.
+    expect(producedUnitsFromQuality(item, [wi])).toBe(1002);
 
     const built = buildComposeLinesFromQuality(item, [item], [wi]);
     expect(built.lines).toHaveLength(1);
+    // El remito (totalUnits) sigue mostrando lo EMBALADO real: 1000.
     expect(built.lines[0]!.totalUnits).toBe(1000);
-    expect(built.lines[0]!.producedUnits).toBe(1000);
-    // La suma de cajas (250 + 750 = 1000) coincide con lo entregable — sin
-    // advertencia falsa de mismatch por incluir las 2 muestras.
-    expect(producedVsBoxedWarning(built.lines)).toBeNull();
+    expect(built.lines[0]!.producedUnits).toBe(1002);
+    // Regla definitiva: producido (1002) ≠ embalado (1000) SÍ genera
+    // advertencia — las 2 muestras ya no la explican ni la ocultan.
+    expect(producedVsBoxedWarning(built.lines)).toBe(
+      "Advertencia: el total producido es 1002, pero el detalle de cajas suma 1000 unidades."
+    );
     expect(remitoComposeSummary(built.lines).totalUnidades).toBe(1000);
+  });
+
+  it("cuando producido = embalado exactamente, no hay advertencia (aunque haya muestras registradas)", () => {
+    const item = {
+      id: "qc:w4",
+      kind: "salida",
+      status: "aprobado",
+      product: "CREMA",
+      client: "TEST_CLIENTE",
+      relatedWorkItemId: "w4",
+      deliveryDate: "2026-07-30",
+      lote: null,
+      oe: null,
+      oa: null,
+      line: null,
+      quantity: "2883",
+      dayLabel: "Hoy",
+    } as QualityItem;
+    const wi = {
+      id: "w4",
+      packagingTotalUnits: 2883,
+      sampleUnits: 3,
+      deliverableUnits: 2883,
+      packingGroups: [{ cajas: 1, unidadesPorCaja: 2883 }],
+    } as WorkItem;
+
+    expect(producedUnitsFromQuality(item, [wi])).toBe(2883);
+    const built = buildComposeLinesFromQuality(item, [item], [wi]);
+    expect(built.lines[0]!.totalUnits).toBe(2883);
+    expect(producedVsBoxedWarning(built.lines)).toBeNull();
   });
 });

@@ -134,37 +134,33 @@ export function RemitoComposeEditor({
                     </p>
                   </div>
 
+                  {/*
+                    Producto/Lote/VTO ya vienen cargados desde Calidad/work
+                    item (buildComposeLinesFromQuality) — nunca son texto
+                    libre nuevo en este editor. Antes había inputs editables
+                    duplicados debajo de este mismo dato de solo lectura, que
+                    permitían retipear (con errores) un valor que ya estaba
+                    bien persistido, sin ninguna reconciliación al guardar.
+                    Ver auditoría de integridad operativa — "no reingresar
+                    datos que ya existen".
+                  */}
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <label className="block">
                       Producto
                       <input
-                        className="mt-0.5 w-full rounded border border-[var(--os-border)] px-2 py-1"
+                        className="mt-0.5 w-full rounded border border-[var(--os-border)] bg-[var(--os-surface-muted,#f8fafc)] px-2 py-1"
                         value={l.product}
-                        onChange={(e) => updateLine(idx, { product: e.target.value })}
+                        readOnly
+                        data-testid={`remito-compose-product-${idx}`}
                       />
                     </label>
                     <label className="block">
                       Lote / VTO
                       <input
-                        className="mt-0.5 w-full rounded border border-[var(--os-border)] px-2 py-1"
+                        className="mt-0.5 w-full rounded border border-[var(--os-border)] bg-[var(--os-surface-muted,#f8fafc)] px-2 py-1"
                         value={formatLoteVtoCell(l.lote, l.vto)}
                         readOnly
-                      />
-                    </label>
-                    <label className="block">
-                      Lote
-                      <input
-                        className="mt-0.5 w-full rounded border border-[var(--os-border)] px-2 py-1"
-                        value={l.lote}
-                        onChange={(e) => updateLine(idx, { lote: e.target.value })}
-                      />
-                    </label>
-                    <label className="block">
-                      VTO
-                      <input
-                        className="mt-0.5 w-full rounded border border-[var(--os-border)] px-2 py-1"
-                        value={l.vto}
-                        onChange={(e) => updateLine(idx, { vto: e.target.value })}
+                        data-testid={`remito-compose-lote-vto-${idx}`}
                       />
                     </label>
                   </div>

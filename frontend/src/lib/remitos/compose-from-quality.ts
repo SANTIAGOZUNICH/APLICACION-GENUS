@@ -8,7 +8,6 @@ import {
   resolveRemitoInputFromQuality,
 } from "@/lib/remitos/from-quality";
 import { lineTotalCajas, lineTotalUnitsFromCajas } from "@/lib/remitos/line-qty";
-import { resolveWorkItemDeliverableUnits } from "@/lib/remitos/packing-math";
 import type { RemitoApprovalInput, RemitoCajaCombo, RemitoLine } from "@/lib/remitos/types";
 
 export type RemitoComposeLine = RemitoLine & {
@@ -30,11 +29,15 @@ function workIdFromQuality(item: QualityItem): string {
 }
 
 /**
- * Cantidad entregable esperada para la advertencia de mismatch del editor de
- * remito. Usa deliverableUnits (excluye muestras) cuando hay cierre físico
- * — no packagingTotalUnits/finishedQty, que incluyen muestras y disparaban
- * una advertencia falsa cada vez que el trabajo tenía muestras (la
- * distribución en cajas, correcta, sumaba menos que lo "producido").
+ * Cantidad PRODUCIDA (bruta) para la advertencia de mismatch del editor de
+ * remito — se compara contra lo boxed (lineTotalUnitsFromCajas).
+ *
+ * Regla definitiva: muestras es metadata interna, nunca explica ni
+ * compensa una diferencia entre producido y embalado — esta función debe
+ * devolver siempre el bruto real (finishedQty / packagingTotalUnits),
+ * nunca un valor ya neteado de muestras. (Antes usaba deliverableUnits
+ * para evitar a propósito un "falso" mismatch cuando había muestras; ese
+ * comportamiento quedó cancelado — ahora esa diferencia SÍ debe avisar.)
  */
 export function producedUnitsFromQuality(
   item: QualityItem,
@@ -45,10 +48,15 @@ export function producedUnitsFromQuality(
     workItems.find((w) => w.id === wid) ??
     workItems.find((w) => w.id === item.relatedWorkItemId) ??
     null;
-  const deliverable = resolveWorkItemDeliverableUnits(wi);
-  if (deliverable != null) return deliverable;
   const fromFinished = parseQty(wi?.finishedQty);
   if (fromFinished > 0) return fromFinished;
+  if (
+    wi?.packagingTotalUnits != null &&
+    Number.isFinite(wi.packagingTotalUnits) &&
+    wi.packagingTotalUnits > 0
+  ) {
+    return wi.packagingTotalUnits;
+  }
   const fromQty = parseQty(item.quantity) || parseQty(wi?.quantity);
   return fromQty > 0 ? fromQty : 0;
 }

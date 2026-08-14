@@ -95,7 +95,10 @@ export type ListGranelesFilters = {
 export type UpsertGranelResult = {
   record: GranelRemainderRecord;
   created: boolean;
+  /** true solo si el reintento fue idéntico al registro activo (kg/lote/observación) — no se tocó nada. */
   duplicated: boolean;
+  /** true si ya existía un registro activo y este llamado corrigió kg/lote/observación (ej. Envasado reenvía con un valor distinto). */
+  updated: boolean;
 };
 
 export type DeleteOrAnnulResult = {

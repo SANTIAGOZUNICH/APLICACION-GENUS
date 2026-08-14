@@ -14,67 +14,23 @@ afterEach(() => {
 });
 
 /**
- * Regresión end-to-end del caso reportado en Preview (captura de pantalla):
- * en la MISMA pantalla de cierre de Codificado/Envasado aparecían dos
- * resultados contradictorios — la advertencia naranja de PackingGroupsEditor
- * ("Total producido (1002) no coincide con total embalado (1000)") y el
- * resumen de abajo ("Diferencia: 0 · Distribución correcta") — porque el
- * warning no restaba muestras y el resumen sí. Este test monta el
- * componente completo tal como lo ve Codificado, con el item YA cargado
- * con 1002 producidas / 2 muestras / 10×25+15×50 embaladas, y verifica que
- * AMBOS bloques (el warning y el resumen) concuerden: sin advertencia, sin
- * observación obligatoria, "✓ Puede entregar".
+ * Regla definitiva de muestras (ver auditoría de integridad operativa,
+ * corrección sobre PR #76): sampleUnits es METADATA INTERNA únicamente.
+ * NO suma, NO resta, NO participa de la diferencia producido-vs-embalado.
+ *
+ *   difference = finishedUnits - packedUnits   (bruto, SIN restar muestras)
+ *
+ * Estos tests verifican exactamente los 3 casos obligatorios del pedido,
+ * sobre el bloque interno de Envasado/Codificado (donde "Muestras" SÍ
+ * puede aparecer como dato informativo — es una vista operativa interna,
+ * no el remito).
  */
-describe("PackagingQuantitiesBlock — caso 1002 producidas / 2 muestras / 1000 embaladas", () => {
-  it("no muestra advertencia de mismatch y el resumen dice Diferencia 0 / Puede entregar", () => {
+describe("PackagingQuantitiesBlock — Caso A: 2883 producidas / 3 muestras / 2880 embaladas → diferencia 3 (las muestras NO la compensan)", () => {
+  it("muestra advertencia de mismatch y exige observación — diferencia real es 3, no 0", () => {
     const item = createTestWorkItem({
-      id: "wi-1002",
+      id: "wi-caso-a",
       sector: "CODIFICADO",
-      product: "CREMA TEST",
-      packagingTotalUnits: 1002,
-      sampleUnits: 2,
-      packingGroups: [
-        { cajas: 10, unidadesPorCaja: 25 },
-        { cajas: 15, unidadesPorCaja: 50 },
-      ],
-    });
-
-    render(
-      <OperationalStoreProvider>
-        <PackagingQuantitiesBlock item={item} actorName="Codificado" />
-      </OperationalStoreProvider>
-    );
-
-    // Sin advertencia naranja de mismatch ni observación forzada.
-    expect(screen.queryByTestId("packaging-mismatch")).toBeNull();
-    expect(screen.queryByText(/no coinciden con total embalado/)).toBeNull();
-    expect(screen.queryByText(/requerida para documentar la diferencia/)).toBeNull();
-
-    // El resumen de cierre coincide con el mismo resultado (mismo
-    // computePackagingClose, sin contradicción entre bloques).
-    expect(screen.getByTestId("packaging-close-indicator").textContent).toMatch(/Puede entregar/);
-    const summary = screen.getByTestId("packaging-close-summary").textContent ?? "";
-    expect(summary).toMatch(/Cantidad final:\s*1002/);
-    expect(summary).toMatch(/Muestras:\s*2/);
-    expect(summary).toMatch(/A embalar:\s*1000/);
-    expect(summary).toMatch(/Embalado:\s*1000/);
-    expect(summary).toMatch(/Diferencia:\s*0/);
-  });
-});
-
-/**
- * Regresión con los números EXACTOS de la captura reportada de nuevo por el
- * usuario (2883 producidas / 3 muestras / 28×102 + 1×24 = 2880 en cajas).
- * Prueba, con el componente completo, que es matemáticamente imposible que
- * coexistan la advertencia naranja y "Distribución correcta": ambas
- * derivan del mismo computePackagingClose.
- */
-describe("PackagingQuantitiesBlock — caso captura (2883 producidas / 3 muestras / 2880 embaladas)", () => {
-  it("2883/3/2880 (28×102 + 1×24) → sin advertencia, sin observación obligatoria, Diferencia 0, Puede entregar", () => {
-    const item = createTestWorkItem({
-      id: "wi-2883",
-      sector: "CODIFICADO",
-      product: "CREMA TEST 2883",
+      product: "CREMA CASO A",
       packagingTotalUnits: 2883,
       sampleUnits: 3,
       packingGroups: [
@@ -89,29 +45,58 @@ describe("PackagingQuantitiesBlock — caso captura (2883 producidas / 3 muestra
       </OperationalStoreProvider>
     );
 
-    expect(screen.queryByTestId("packaging-mismatch")).toBeNull();
-    expect(screen.queryByText(/no coinciden con total embalado/)).toBeNull();
-    expect(screen.queryByText(/requerida para documentar la diferencia/)).toBeNull();
+    expect(screen.getByTestId("packaging-mismatch")).toBeTruthy();
+    expect(screen.getByText(/requerida para documentar la diferencia/)).toBeTruthy();
 
-    expect(screen.getByTestId("packaging-close-indicator").textContent).toMatch(/Puede entregar/);
     const summary = screen.getByTestId("packaging-close-summary").textContent ?? "";
     expect(summary).toMatch(/Cantidad final:\s*2883/);
-    expect(summary).toMatch(/Muestras:\s*3/);
-    expect(summary).toMatch(/A embalar:\s*2880/);
+    expect(summary).toMatch(/Muestras.*:\s*3/);
     expect(summary).toMatch(/Embalado:\s*2880/);
-    expect(summary).toMatch(/Diferencia:\s*0/);
+    expect(summary).toMatch(/Diferencia.*:\s*3/);
+    expect(screen.getByTestId("packaging-close-indicator").textContent).not.toMatch(/Puede entregar/);
   });
+});
 
-  it("2883/3/2879 (mismatch real, falta 1 unidad) → SÍ muestra advertencia y exige observación", () => {
+describe("PackagingQuantitiesBlock — Caso B: 2883 producidas / 3 muestras / 2883 embaladas → diferencia 0", () => {
+  it("sin advertencia, Diferencia 0, Puede entregar — las muestras siguen registradas como metadata", () => {
     const item = createTestWorkItem({
-      id: "wi-2883-mismatch",
+      id: "wi-caso-b",
       sector: "CODIFICADO",
-      product: "CREMA TEST 2883 MISMATCH",
+      product: "CREMA CASO B",
       packagingTotalUnits: 2883,
       sampleUnits: 3,
+      packingGroups: [{ cajas: 1, unidadesPorCaja: 2883 }],
+    });
+
+    render(
+      <OperationalStoreProvider>
+        <PackagingQuantitiesBlock item={item} actorName="Codificado" />
+      </OperationalStoreProvider>
+    );
+
+    expect(screen.queryByTestId("packaging-mismatch")).toBeNull();
+    expect(screen.queryByText(/requerida para documentar la diferencia/)).toBeNull();
+    expect(screen.getByTestId("packaging-close-indicator").textContent).toMatch(/Puede entregar/);
+
+    const summary = screen.getByTestId("packaging-close-summary").textContent ?? "";
+    expect(summary).toMatch(/Cantidad final:\s*2883/);
+    expect(summary).toMatch(/Muestras.*:\s*3/);
+    expect(summary).toMatch(/Embalado:\s*2883/);
+    expect(summary).toMatch(/Diferencia.*:\s*0/);
+  });
+});
+
+describe("PackagingQuantitiesBlock — Caso C: 1002 producidas / 2 muestras / 1000 embaladas → diferencia 2, NUNCA 0", () => {
+  it("la diferencia real es 2 (no 0) — antes el cálculo neto la escondía", () => {
+    const item = createTestWorkItem({
+      id: "wi-caso-c",
+      sector: "CODIFICADO",
+      product: "CREMA CASO C",
+      packagingTotalUnits: 1002,
+      sampleUnits: 2,
       packingGroups: [
-        { cajas: 28, unidadesPorCaja: 102 },
-        { cajas: 1, unidadesPorCaja: 23 },
+        { cajas: 10, unidadesPorCaja: 25 },
+        { cajas: 15, unidadesPorCaja: 50 },
       ],
     });
 
@@ -122,8 +107,31 @@ describe("PackagingQuantitiesBlock — caso captura (2883 producidas / 3 muestra
     );
 
     expect(screen.getByTestId("packaging-mismatch")).toBeTruthy();
-    expect(screen.getByText(/requerida para documentar la diferencia/)).toBeTruthy();
     const summary = screen.getByTestId("packaging-close-summary").textContent ?? "";
-    expect(summary).toMatch(/Diferencia:\s*1/);
+    expect(summary).toMatch(/Embalado:\s*1000/);
+    expect(summary).toMatch(/Diferencia.*:\s*2/);
+    expect(summary).not.toMatch(/Diferencia.*:\s*0/);
+  });
+});
+
+describe("PackagingQuantitiesBlock — 'A embalar' (deliverableUnits neto) ya no existe en la UI", () => {
+  it("el resumen no muestra ninguna cantidad 'a embalar' derivada de restar muestras", () => {
+    const item = createTestWorkItem({
+      id: "wi-no-a-embalar",
+      sector: "CODIFICADO",
+      product: "CREMA X",
+      packagingTotalUnits: 2883,
+      sampleUnits: 3,
+      packingGroups: [{ cajas: 1, unidadesPorCaja: 2883 }],
+    });
+
+    render(
+      <OperationalStoreProvider>
+        <PackagingQuantitiesBlock item={item} actorName="Codificado" />
+      </OperationalStoreProvider>
+    );
+
+    const summary = screen.getByTestId("packaging-close-summary").textContent ?? "";
+    expect(summary).not.toMatch(/A embalar/);
   });
 });

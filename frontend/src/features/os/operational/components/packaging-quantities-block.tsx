@@ -275,11 +275,16 @@ export function PackagingQuantitiesBlock({
         >
           <ul className="space-y-0.5 text-[var(--os-text-muted)]">
             <li>Cantidad final: {close.canValidate ? close.finishedUnits : "—"}</li>
-            <li>Muestras: {close.muestras}</li>
-            <li>A embalar: {close.canValidate ? close.deliverableUnits : "—"}</li>
+            {/*
+              Muestras es metadata interna únicamente (regla definitiva) —
+              se muestra acá porque esta es una vista operativa interna
+              (Envasado/Codificado), nunca en el remito. No participa de
+              Diferencia ni de ningún otro cálculo de esta pantalla.
+            */}
+            <li>Muestras (informativo, no afecta el cálculo): {close.muestras}</li>
             <li>Embalado: {close.packedUnits}</li>
             <li className="font-medium text-[var(--os-text,#111)]">
-              Diferencia: {close.canValidate ? close.difference : "—"}
+              Diferencia (producido − embalado): {close.canValidate ? close.difference : "—"}
             </li>
           </ul>
           {close.canValidate ? (
@@ -291,8 +296,8 @@ export function PackagingQuantitiesBlock({
               {close.isBalanced
                 ? "✓ Puede entregar"
                 : close.difference > 0
-                  ? `Faltan embalar ${close.difference} unidad(es).`
-                  : `Lo embalado supera lo entregable por ${Math.abs(close.difference)} unidad(es).`}
+                  ? `Faltan embalar ${close.difference} unidad(es) (las muestras no compensan esta diferencia).`
+                  : `Lo embalado supera lo producido por ${Math.abs(close.difference)} unidad(es).`}
             </p>
           ) : null}
         </div>

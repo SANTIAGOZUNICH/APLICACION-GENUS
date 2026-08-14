@@ -281,10 +281,15 @@ export class AsignacionLotesService {
     const updatedBy = input.updatedBy.trim() || actor.displayName;
     const record: AsignacionLote = {
       id: previous?.id ?? input.id ?? makeId(),
-      lote: input.lote.trim(),
-      fecha: input.fecha?.trim() ? (parseFlexibleDate(input.fecha) ?? input.fecha.trim()) : null,
-      producto: input.producto.trim(),
-      codigo: input.codigo.trim(),
+      // Carga flexible (import): una celda vacía en una edición sobre un
+      // registro existente NO debe borrar el valor ya cargado — solo un
+      // alta nueva (sin previous) persiste "" para un campo vacío.
+      lote: input.lote.trim() || previous?.lote || "",
+      fecha: input.fecha?.trim()
+        ? (parseFlexibleDate(input.fecha) ?? input.fecha.trim())
+        : previous?.fecha ?? null,
+      producto: input.producto.trim() || previous?.producto || "",
+      codigo: input.codigo.trim() || previous?.codigo || "",
       marca: input.marca?.trim() ?? previous?.marca ?? "",
       cantidades: Number.isFinite(input.cantidades) && input.cantidades >= 0 ? input.cantidades : 0,
       vto: input.vto ?? previous?.vto ?? null,

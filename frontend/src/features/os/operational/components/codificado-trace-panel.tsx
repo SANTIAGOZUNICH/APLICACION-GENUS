@@ -121,14 +121,16 @@ export function CodificadoTracePanel({
           </p>
           <dl className="grid grid-cols-2 gap-3">
             <div>
-              <dt className="text-xs uppercase text-[var(--os-text-muted)]">Muestras</dt>
+              <dt className="text-xs uppercase text-[var(--os-text-muted)]">
+                Muestras (informativo, no afecta el remito)
+              </dt>
               <dd className="font-medium tabular-nums" data-testid="trace-samples">
                 {sampleUnits != null ? `${sampleUnits} un.` : "—"}
               </dd>
             </div>
             <div>
               <dt className="text-xs uppercase text-[var(--os-text-muted)]">
-                Entregable (remito)
+                Embalado (remito)
               </dt>
               <dd className="font-medium tabular-nums" data-testid="trace-deliverable">
                 {deliverableUnits != null ? `${deliverableUnits} un.` : "—"}

@@ -12,23 +12,19 @@ afterEach(() => {
 });
 
 /**
- * Regresión del caso reportado en Preview: la pantalla de cierre de
- * Envasado/Codificado mostraba a la vez "Total producido (1002) no
- * coincide con total embalado (1000)" (advertencia naranja, de ESTE
- * componente) y, más abajo, "Diferencia: 0 · Distribución correcta" (del
- * resumen de PackagingQuantitiesBlock) — dos resultados contradictorios en
- * la misma pantalla porque el warning de acá no restaba muestras. Este
- * test cubre exactamente el componente/condición que genera ese mensaje
- * (`warn`/`needsObs`, líneas de renderizado del `data-testid="packaging-mismatch"`
- * y de "Observación de embalaje (requerida...)").
+ * Regla definitiva de muestras (auditoría de integridad operativa,
+ * corrección sobre PR #76): sampleUnits es metadata interna únicamente,
+ * NUNCA compensa una diferencia entre producido y embalado. El warning de
+ * este componente (`packingProducedMismatchWarning`) compara producido
+ * BRUTO vs embalado — informar muestras ya no lo desactiva.
  */
-describe("PackingGroupsEditor — advertencia de mismatch (caso 1002/2 muestras/1000 embalado)", () => {
+describe("PackingGroupsEditor — advertencia de mismatch (regla definitiva, muestras no compensa)", () => {
   const groups1000 = [
     { cajas: 10, unidadesPorCaja: 25 },
     { cajas: 15, unidadesPorCaja: 50 },
   ];
 
-  it("con muestras informadas (2), NO muestra advertencia naranja ni exige observación", () => {
+  it("1002 producido / 1000 embalado, CON 2 muestras informadas → SIGUE advirtiendo (las muestras no la compensan)", () => {
     render(
       <PackingGroupsEditor
         groups={groups1000}
@@ -39,16 +35,11 @@ describe("PackingGroupsEditor — advertencia de mismatch (caso 1002/2 muestras/
         testIdPrefix="packaging"
       />
     );
-    expect(screen.queryByTestId("packaging-mismatch")).toBeNull();
-    expect(screen.queryByText(/no coinciden con total embalado/)).toBeNull();
-    expect(screen.queryByText(/requerida para documentar la diferencia/)).toBeNull();
+    expect(screen.getByTestId("packaging-mismatch")).toBeTruthy();
+    expect(screen.getByText(/requerida para documentar la diferencia/)).toBeTruthy();
   });
 
-  it("MISMO caso pero sin pasar sampleUnits (regresión del bug real) — sigue sin advertir, porque producedUnits ya sería el neto en ese flujo", () => {
-    // Nota: esto documenta que si algún caller pasara el NETO (1000) como
-    // producedUnits sin muestras, tampoco hay mismatch — el bug real no
-    // era "sampleUnits ausente en general", sino un caller que pasaba el
-    // BRUTO (1002) sin muestras. Ver el próximo test.
+  it("1000 producido (bruto) / 1000 embalado → sin advertencia", () => {
     render(
       <PackingGroupsEditor
         groups={groups1000}
@@ -60,7 +51,7 @@ describe("PackingGroupsEditor — advertencia de mismatch (caso 1002/2 muestras/
     expect(screen.queryByTestId("packaging-mismatch")).toBeNull();
   });
 
-  it("BUG REAL reproducido: bruto (1002) sin informar muestras → SÍ advierte (demuestra por qué sampleUnits es obligatorio pasarlo)", () => {
+  it("1002 producido sin informar muestras → advierte igual que informándolas (el parámetro ya no cambia el resultado)", () => {
     render(
       <PackingGroupsEditor
         groups={groups1000}
@@ -74,7 +65,7 @@ describe("PackingGroupsEditor — advertencia de mismatch (caso 1002/2 muestras/
     expect(screen.getByText(/requerida para documentar la diferencia/)).toBeTruthy();
   });
 
-  it("con muestras=2 el mensaje de guardado no queda bloqueado (needsObs=false)", () => {
+  it("con muestras=2 y mismatch real, la observación sigue siendo exigida (needsObs=true) — no queda bloqueado el guardado silenciosamente", () => {
     render(
       <PackingGroupsEditor
         groups={groups1000}
@@ -85,6 +76,6 @@ describe("PackingGroupsEditor — advertencia de mismatch (caso 1002/2 muestras/
         testIdPrefix="packaging"
       />
     );
-    expect(screen.queryByTestId("packaging-observation")).toBeNull();
+    expect(screen.getByTestId("packaging-observation")).toBeTruthy();
   });
 });

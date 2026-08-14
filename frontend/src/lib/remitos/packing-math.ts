@@ -117,15 +117,18 @@ export function remitoSlotsToPackingGroups(input: {
 }
 
 /**
- * ¿Coincide lo embalado con lo que DEBE embalarse?
+ * ¿Coincide lo embalado con lo PRODUCIDO?
  *
- * La cantidad que debe quedar en cajas es la ENTREGABLE (neto comercial),
- * es decir producido − muestras — NO el bruto producido. Las muestras se
- * producen pero no se embalan para el cliente (ver computePackagingClose).
+ * Regla definitiva: las muestras son metadata interna únicamente y NO
+ * participan de esta comparación. La cantidad que debe quedar en cajas es
+ * el bruto producido (finishedQty) — no se le resta nada. Si hay muestras,
+ * la diferencia entre producido y embalado NO se explica/absorbe
+ * automáticamente por ellas: queda como diferencia real que requiere
+ * observación (ver computePackagingClose y assertPackagingCloseOrExplained).
  *
- * `sampleUnits` es opcional (default 0) para conservar la semántica legacy
- * de los callers que no manejan muestras (remito). Delega en
- * `computePackagingClose` para que exista UNA sola regla de balance.
+ * `sampleUnits` se sigue aceptando (y se pasa a computePackagingClose, que
+ * lo conserva como metadata en el resultado) únicamente por compatibilidad
+ * de firma con los callers existentes — ya no afecta `ok`/`message` acá.
  */
 export function packingProducedMismatchWarning(
   producedUnits: number | null | undefined,
@@ -150,7 +153,7 @@ export function packingProducedMismatchWarning(
   return {
     ok: false,
     calculated: packed,
-    message: `Unidades a embalar (${close.deliverableUnits}) no coinciden con total embalado (${packed}). No se corrige automáticamente.`,
+    message: `Total producido (${close.finishedUnits}) no coincide con total embalado (${packed}). No se corrige automáticamente.`,
   };
 }
 
@@ -210,24 +213,27 @@ export function ensureMinPackingSlots(
 }
 
 /**
- * Cierre físico de acondicionamiento (Envasado/Codificado) — 0024.
+ * Cierre físico de acondicionamiento (Envasado/Codificado) — 0024, regla
+ * definitiva revisada (ver auditoría de integridad operativa, "muestras
+ * como metadata"):
  *
- * Regla encontrada en el sistema existente: NO hay concepto de "unidades
- * sueltas" en ningún lugar del código (buscado explícitamente antes de
- * implementar esto). La ecuación real, confirmada por
- * packingProducedMismatchWarning/packingGroups ya existentes, es:
+ *   packedUnits = SUM(cajas × unidadesPorCaja)
+ *   difference  = finishedUnits - packedUnits      (bruto, SIN restar muestras)
+ *   isBalanced  = difference === 0
  *
- *   enCajas (SUM cajas × unidadesPorCaja)  +  muestras  =  cantidad final
- *
- * "Entregable" = enCajas exclusivamente (las muestras nunca se consideran
- * unidades entregadas — ver PARTE A del pedido). No se inventa una tercera
- * categoría "sueltas": si algún día existe, debe agregarse como concepto
- * nuevo y explícito, no inferirse acá.
+ * MUESTRAS ES SOLO METADATA INTERNA. `sampleUnits` se recibe, se valida y
+ * se conserva en el resultado (`sampleUnits`/`muestras`) para que quede
+ * registrado cuántas muestras hubo, pero NO suma, NO resta, y NO participa
+ * de `difference`/`isBalanced`/`deliverableUnits`/`packedUnits`. Si un
+ * trabajo produjo 2883, tomó 3 muestras y embaló 2880, la diferencia es 3
+ * — las muestras NO explican ni compensan ese faltante; si es una
+ * excepción real hay que documentarla con una observación (ver
+ * assertPackagingCloseOrExplained), no restarla silenciosamente.
  */
 export type PackagingCloseInput = {
   /** Cantidad final acondicionada (packagingTotalUnits / finishedQty). */
   finishedQty: number | null | undefined;
-  /** Unidades producidas pero no entregables comercialmente. null = no informado. */
+  /** Muestras — SOLO metadata interna, no participa de ningún cálculo. null = no informado. */
   sampleUnits: number | null | undefined;
   groups: PackingGroup[];
 };
@@ -235,16 +241,21 @@ export type PackagingCloseInput = {
 export type PackagingCloseSummary = {
   totalCajas: number;
 
-  // ── Semántica canónica (fix muestras vs total embalado) ──
   /** Bruto producido/acondicionado (0 si no informado). */
   finishedUnits: number;
-  /** Muestras: producidas pero NO entregables al cliente (>= 0). */
+  /** Muestras — metadata interna únicamente, no afecta ningún otro campo de este resultado. */
   sampleUnits: number;
-  /** Neto comercial = finishedUnits - sampleUnits. */
+  /**
+   * @deprecated La semántica "entregable = producido - muestras" quedó
+   * cancelada. Se conserva el campo por compatibilidad histórica (algunos
+   * consumidores todavía lo leen), pero ahora vale lo mismo que
+   * `packedUnits` — NUNCA se recalcula restando muestras. Preferí
+   * `packedUnits` directamente en código nuevo.
+   */
   deliverableUnits: number;
-  /** Unidades efectivamente dentro de cajas = SUM(cajas × unidadesPorCaja). */
+  /** Unidades efectivamente dentro de cajas = SUM(cajas × unidadesPorCaja). Fuente real para remito/entregas. */
   packedUnits: number;
-  /** deliverableUnits - packedUnits. 0 = correcto. */
+  /** finishedUnits - packedUnits (bruto, sin restar muestras). 0 = correcto. */
   difference: number;
   /** true solo si finishedQty es válido y difference === 0. */
   isBalanced: boolean;
@@ -252,9 +263,9 @@ export type PackagingCloseSummary = {
   // ── Alias legacy (compat con callers/tests existentes) ──
   /** = packedUnits. */
   enCajas: number;
-  /** = sampleUnits. */
+  /** = sampleUnits (metadata). */
   muestras: number;
-  /** = packedUnits + sampleUnits. */
+  /** = packedUnits + sampleUnits. Informativo únicamente — no se usa para decidir balance. */
   totalAcondicionado: number;
   /** = difference. */
   diferencia: number;
@@ -265,16 +276,17 @@ export type PackagingCloseSummary = {
 };
 
 /**
- * Cantidad entregable de un work item ya cerrado (persistida) — fuente
- * única reutilizada por remito (from-quality.ts), su editor de composición
+ * Cantidad embalada de un work item ya cerrado (persistida) — fuente única
+ * reutilizada por remito (from-quality.ts), su editor de composición
  * (compose-from-quality.ts) y "marcar como entregado" (entregados-view.tsx).
- * deliverableUnits (excluye muestras, PARTE A) es la fuente de verdad
- * cuando existe cierre físico; packagingTotalUnits (incluye muestras) es
- * compat histórica para trabajos sin cierre. No confundir con
- * computePackagingClose de abajo: esa calcula el cierre EN EL MOMENTO de
- * cerrar (Envasado/Codificado); esta lee el valor ya persistido más tarde
- * (remito/Entregados) — nunca vuelve a restar muestras (evita doble
- * descuento: si deliverableUnits ya es 1000, se usa 1000, no 1000-2).
+ *
+ * Regla definitiva: la fuente real es SIEMPRE lo físicamente embalado
+ * (packedUnits), nunca un cálculo que reste muestras. `deliverableUnits`
+ * (columna histórica en work_items) ya se persiste como packedUnits desde
+ * que se cierra el packaging (ver computePackagingClose), así que seguir
+ * leyéndola acá es correcto — el nombre de la columna quedó desactualizado
+ * pero el valor que contiene es el correcto. `packagingTotalUnits` (bruto)
+ * es compat histórica solo para trabajos sin cierre físico registrado.
  */
 export function resolveWorkItemDeliverableUnits(
   wi:
@@ -292,18 +304,63 @@ export function resolveWorkItemDeliverableUnits(
 }
 
 /**
- * ÚNICA fuente de verdad del cierre de acondicionamiento. Envasado Masivo,
- * Premium y Codificado deben usar EXACTAMENTE esta regla:
+ * Cantidad embalada de un work item ya cerrado, calculada FRESCA desde
+ * packingGroups (la distribución real de cajas persistida) en vez de leer
+ * la columna snapshot `deliverableUnits`. Preferí esta función sobre
+ * `resolveWorkItemDeliverableUnits` en código nuevo — es la lectura más
+ * literal de "packedUnits = SUM(boxCount × unitsPerBox)" y no depende de
+ * que el cierre haya escrito correctamente la columna snapshot.
  *
- *   deliverableUnits = finishedUnits - sampleUnits
- *   packedUnits      = SUM(cajas × unidadesPorCaja)
- *   difference       = deliverableUnits - packedUnits      (NO finished - packed)
- *   isBalanced       = difference === 0
- *
- * `finishedQty` es SIEMPRE el bruto acondicionado. La resta de muestras se
- * hace acá una sola vez; nunca se debe volver a restar muestras a un valor
- * que ya es neto (evita el doble descuento: 1002 − 2 = 1000, no 998).
+ * Si no hay packingGroups reales, cae al mismo fallback seguro que ya
+ * existía (`resolveWorkItemDeliverableUnits`: deliverableUnits persistido
+ * → packagingTotalUnits bruto) — nunca se inventa un dato para un trabajo
+ * histórico sin distribución de cajas registrada.
  */
+export function resolveWorkItemPackedUnits(
+  wi:
+    | {
+        packingGroups?: PackingGroup[] | null;
+        deliverableUnits?: number | null;
+        packagingTotalUnits?: number | null;
+      }
+    | null
+    | undefined
+): number | null {
+  if (wi?.packingGroups && wi.packingGroups.length > 0) {
+    return summarizePackingGroups(wi.packingGroups).totalEmbalado;
+  }
+  return resolveWorkItemDeliverableUnits(wi);
+}
+
+/**
+ * Cierre de packaging al completar un trabajo DIRECTO (sin pasar por
+ * Codificado — ej. "Completar trabajo" de Envasado) — mismo criterio de
+ * computePackagingClose que handoffToCodificadoDurable/
+ * deliverFromCodificadoDurable, para que work_item_deliveries/remito no
+ * caigan al bruto (packagingTotalUnits) en este camino.
+ *
+ * Devuelve `packedUnits` (lo físicamente embalado) — nunca
+ * finishedQty - sampleUnits. Solo se aplica si el trabajo YA tiene
+ * packingGroups reales (cargados vía PackagingQuantitiesBlock antes de
+ * completar) — si no hay packingGroups (ej. Elaboración, o un producto sin
+ * distribución de cajas), devuelve `null`: nunca se infiere un cierre que
+ * no existe.
+ */
+export function resolveDirectCompletePackedUnits(input: {
+  packingGroups: PackingGroup[] | null | undefined;
+  sampleUnits: number | null | undefined;
+  finishedQty: number | null;
+}): number | null {
+  const hasPacking = Array.isArray(input.packingGroups) && input.packingGroups.length > 0;
+  if (!hasPacking) return null;
+  const close = computePackagingClose({
+    finishedQty: input.finishedQty,
+    sampleUnits: input.sampleUnits,
+    groups: input.packingGroups!,
+  });
+  return close.canValidate ? close.packedUnits : null;
+}
+
 export function computePackagingClose(input: PackagingCloseInput): PackagingCloseSummary {
   const { totalCajas, totalEmbalado: packedUnits } = summarizePackingGroups(input.groups);
   const sampleUnits =
@@ -312,15 +369,16 @@ export function computePackagingClose(input: PackagingCloseInput): PackagingClos
       : 0;
   const canValidate = input.finishedQty != null && Number.isFinite(input.finishedQty);
   const finishedUnits = canValidate ? Number(input.finishedQty) : 0;
-  const deliverableUnits = canValidate ? finishedUnits - sampleUnits : 0;
-  const difference = canValidate ? deliverableUnits - packedUnits : 0;
+  // Regla definitiva: muestras es metadata, NO participa del balance.
+  const difference = canValidate ? finishedUnits - packedUnits : 0;
   const isBalanced = canValidate && difference === 0;
   const totalAcondicionado = packedUnits + sampleUnits;
   return {
     totalCajas,
     finishedUnits,
     sampleUnits,
-    deliverableUnits,
+    // deprecated: ya no se resta muestras — vale lo mismo que packedUnits.
+    deliverableUnits: packedUnits,
     packedUnits,
     difference,
     isBalanced,

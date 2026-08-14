@@ -43,7 +43,7 @@ describe("from-quality packingGroups", () => {
   });
 });
 
-describe("from-quality — remito usa deliverableUnits, no packagingTotalUnits (PARTE A)", () => {
+describe("from-quality — remito usa packedUnits real (SUM cajas×unidades), nunca producido ni producido-menos-muestras", () => {
   const baseItem = {
     id: "qc:w2",
     kind: "salida",
@@ -60,7 +60,7 @@ describe("from-quality — remito usa deliverableUnits, no packagingTotalUnits (
     dayLabel: "Hoy",
   } as QualityItem;
 
-  it("prefiere deliverableUnits (excluye muestras) sobre packagingTotalUnits (incluye muestras)", () => {
+  it("Caso C del pedido — 1002 producido, 2 muestras, 1000 embalado → remito = 1000 (el embalado real, no 1002 ni un neto)", () => {
     const wi = {
       id: "w2",
       packagingLote: "ABC123",
@@ -77,7 +77,7 @@ describe("from-quality — remito usa deliverableUnits, no packagingTotalUnits (
     expect(input?.totalUnits).toBe(1000);
   });
 
-  it("sin cierre físico (deliverableUnits null), cae a packagingTotalUnits — compat histórica", () => {
+  it("sin packingGroups (trabajo histórico sin cierre físico), cae a deliverableUnits/packagingTotalUnits — compat histórica, nunca inventa un dato", () => {
     const wi = {
       id: "w2",
       packagingLote: "ABC123",
@@ -85,7 +85,7 @@ describe("from-quality — remito usa deliverableUnits, no packagingTotalUnits (
       packagingTotalUnits: 1002,
       sampleUnits: null,
       deliverableUnits: null,
-      packingGroups: [{ cajas: 10, unidadesPorCaja: 25 }],
+      packingGroups: null,
     } as WorkItem;
     const input = resolveRemitoInputFromQuality(baseItem, [wi]);
     expect(input?.totalUnits).toBe(1002);
