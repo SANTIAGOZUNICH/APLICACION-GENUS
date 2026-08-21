@@ -405,6 +405,8 @@ export type ListOrdersFilters = {
 export type PatchOrderInput = {
   expectedVersion: number;
   formData: OrderContent;
+  /** Reasignación explícita; si se omite, conserva el sector actual. */
+  assignedSector?: OrderAssignedSector;
   lot?: string;
   client?: string;
   code?: string;

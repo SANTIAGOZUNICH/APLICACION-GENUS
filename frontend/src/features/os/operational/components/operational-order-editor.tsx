@@ -43,7 +43,13 @@ import {
   formatOperationalIdCompact,
   formatOperationalIdFull,
 } from "@/lib/orders/format-operational-id";
-import type { OaContent, OeContent, OperationalOrderRecord, OrderContent } from "@/lib/orders/types";
+import type {
+  OaContent,
+  OeContent,
+  OperationalOrderRecord,
+  OrderAssignedSector,
+  OrderContent,
+} from "@/lib/orders/types";
 import { validateDeliver } from "@/lib/orders/validators";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
 import {
@@ -86,6 +92,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const formRef = useRef<OrderContent | null>(null);
   formRef.current = form;
   const [oaSimple, setOaSimple] = useState<OaSimpleForm | null>(null);
+  const oaAssignedSectorRef = useRef<OrderAssignedSector | undefined>(undefined);
+  const persistedOaAssignedSectorRef = useRef<OrderAssignedSector | undefined>(undefined);
   const [oaMode, setOaMode] = useState<OaEditorMode>("simple");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -139,6 +147,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       setOrder(o);
       setForm(o.formData);
       if (o.formData.kind === "OA") {
+        oaAssignedSectorRef.current = o.assignedSector;
+        persistedOaAssignedSectorRef.current = o.assignedSector;
         setOaSimple(
           initOaSimpleFormFromLegal(o.formData, {
             sector:
@@ -151,6 +161,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         );
         setOaMode("simple");
       } else {
+        oaAssignedSectorRef.current = undefined;
+        persistedOaAssignedSectorRef.current = undefined;
         setOaSimple(null);
       }
       versionRef.current = o.version;
@@ -254,6 +266,11 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         const updated = await saveOrderProgressApi(session, orderId, {
           expectedVersion,
           formData: nextForm,
+          ...(nextForm.kind === "OA" &&
+            oaAssignedSectorRef.current !== undefined &&
+            oaAssignedSectorRef.current !== persistedOaAssignedSectorRef.current
+            ? { assignedSector: oaAssignedSectorRef.current }
+            : {}),
           formulaProductId: formulaSnapshotRef.current.formulaProductId,
           formulaVersionId: formulaSnapshotRef.current.formulaVersionId,
           formulaVersionHash: formulaSnapshotRef.current.formulaVersionHash,
@@ -267,17 +284,17 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         };
         if (updated.formData.kind === "OA") {
           const oaForm = updated.formData;
-          setOaSimple((prev) =>
-            prev
-              ? prev
-              : initOaSimpleFormFromLegal(oaForm, {
-                  sector:
-                    updated.assignedSector === "ENVASADO_PREMIUM"
-                      ? "ENVASADO_PREMIUM"
-                      : updated.assignedSector === "ENVASADO_MASIVO"
-                        ? "ENVASADO_MASIVO"
-                        : "",
-                })
+          oaAssignedSectorRef.current = updated.assignedSector;
+          persistedOaAssignedSectorRef.current = updated.assignedSector;
+          setOaSimple(
+            initOaSimpleFormFromLegal(oaForm, {
+              sector:
+                updated.assignedSector === "ENVASADO_PREMIUM"
+                  ? "ENVASADO_PREMIUM"
+                  : updated.assignedSector === "ENVASADO_MASIVO"
+                    ? "ENVASADO_MASIVO"
+                    : "",
+            })
           );
         }
         versionRef.current = updated.version;
@@ -597,6 +614,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const updateOaSimple = (nextSimple: OaSimpleForm) => {
     if (!canEdit && sectorId !== "CODIFICADO") return;
     if (!canEdit && !canOrderAction("OA", "edit_codificado", sectorId)) return;
+    oaAssignedSectorRef.current = nextSimple.sector || "SIN_ASIGNAR";
     setOaSimple(nextSimple);
     const legal = mapOASimpleFormToLegalDocument(
       nextSimple,
@@ -963,6 +981,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               setOrder(conflict);
               setForm(conflict.formData);
               if (conflict.formData.kind === "OA") {
+                oaAssignedSectorRef.current = conflict.assignedSector;
+                persistedOaAssignedSectorRef.current = conflict.assignedSector;
                 setOaSimple(
                   initOaSimpleFormFromLegal(conflict.formData, {
                     sector:

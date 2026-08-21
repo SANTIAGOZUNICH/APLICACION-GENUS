@@ -503,6 +503,9 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     if (patch.client !== undefined) setValues.client = patch.client;
     if (patch.code !== undefined) setValues.code = patch.code;
     if (patch.product !== undefined) setValues.product = patch.product;
+    if (patch.assignedSector !== undefined) {
+      setValues.assignedSector = patch.assignedSector;
+    }
     if (patch.updatedBy !== undefined) setValues.updatedBy = patch.updatedBy;
     if (patch.formulaProductId !== undefined) {
       setValues.formulaProductId = patch.formulaProductId;

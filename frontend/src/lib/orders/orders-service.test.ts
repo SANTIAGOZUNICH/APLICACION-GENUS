@@ -144,6 +144,77 @@ describe("operational orders RBAC + lifecycle", () => {
     ).rejects.toBeInstanceOf(OrdersForbiddenError);
   });
 
+  it("persiste assignedSector de OA, permite desasignar y conserva si se omite", async () => {
+    const template = (await service.listTemplates("OA"))[0]!;
+
+    const premiumOrder = await service.createOrder(
+      { type: "OA", templateId: template.id, assignedSector: "SIN_ASIGNAR" },
+      calidad
+    );
+    const premiumSaved = await service.saveProgress(
+      premiumOrder.id,
+      {
+        expectedVersion: premiumOrder.version,
+        formData: premiumOrder.formData,
+        assignedSector: "ENVASADO_PREMIUM",
+      },
+      calidad
+    );
+    expect(premiumSaved.assignedSector).toBe("ENVASADO_PREMIUM");
+    expect((await service.getOrder(premiumOrder.id, calidad)).assignedSector).toBe(
+      "ENVASADO_PREMIUM"
+    );
+
+    const masivoOrder = await service.createOrder(
+      { type: "OA", templateId: template.id, assignedSector: "SIN_ASIGNAR" },
+      calidad
+    );
+    const masivoSaved = await service.saveProgress(
+      masivoOrder.id,
+      {
+        expectedVersion: masivoOrder.version,
+        formData: masivoOrder.formData,
+        assignedSector: "ENVASADO_MASIVO",
+      },
+      calidad
+    );
+    expect((await service.getOrder(masivoOrder.id, calidad)).assignedSector).toBe(
+      "ENVASADO_MASIVO"
+    );
+
+    const unassigned = await service.saveProgress(
+      premiumSaved.id,
+      {
+        expectedVersion: premiumSaved.version,
+        formData: premiumSaved.formData,
+        assignedSector: "SIN_ASIGNAR",
+      },
+      calidad
+    );
+    expect((await service.getOrder(unassigned.id, calidad)).assignedSector).toBe(
+      "SIN_ASIGNAR"
+    );
+
+    const unchanged = await service.saveProgress(
+      masivoSaved.id,
+      { expectedVersion: masivoSaved.version, formData: masivoSaved.formData },
+      calidad
+    );
+    expect(unchanged.assignedSector).toBe("ENVASADO_MASIVO");
+
+    await expect(
+      service.saveProgress(
+        unchanged.id,
+        {
+          expectedVersion: unchanged.version,
+          formData: unchanged.formData,
+          assignedSector: "SECTOR_INVALIDO" as never,
+        },
+        calidad
+      )
+    ).rejects.toBeInstanceOf(OrdersValidationError);
+  });
+
   it("plantilla maestra carga y la orden conserva snapshot; cambiar maestra no altera órdenes", async () => {
     const templates = await service.listTemplates("OE");
     const order = await service.createOrder(
@@ -366,6 +437,27 @@ describe("operational orders RBAC + lifecycle", () => {
     const again = await service.annul(order.id, produccion, "segundo intento");
     expect(again.status).toBe("ANULADA");
     void saved;
+  });
+
+  it("anula un borrador no vacío conservando trazabilidad", async () => {
+    const order = await service.createEmptyDraft(
+      {
+        type: "OA",
+        product: "SERUM CAPIXYL",
+        client: "SC BEAUTY",
+        lot: "G26080",
+        assignedSector: "SIN_ASIGNAR",
+      },
+      calidad
+    );
+    expect(order.order.status).toBe("BORRADOR");
+    const annulled = await service.annul(
+      order.order.id,
+      calidad,
+      "Duplicado generado durante carga piloto. Registro válido: OA-2026-000015."
+    );
+    expect(annulled.status).toBe("ANULADA");
+    expect((await service.getOrder(annulled.id, calidad)).status).toBe("ANULADA");
   });
 
   it("completar OE con observación opcional la persiste con autor y fecha", async () => {

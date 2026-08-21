@@ -762,6 +762,12 @@ export class OrdersService {
       throw new OrdersForbiddenError("La orden está anulada.");
     }
 
+    const assignedSector = input.assignedSector ?? current.assignedSector;
+    if (input.assignedSector !== undefined) {
+      assertCanOrderAction(current.type, "assign_sector", actor);
+      this.assertAssignedSectorAllowed(current.type, actor, assignedSector);
+    }
+
     const ownCodificadoDraft =
       actor.sector === "CODIFICADO" &&
       current.type === "OA" &&
@@ -863,6 +869,7 @@ export class OrdersService {
       client: headerClient,
       code: headerCode,
       product: headerProduct,
+      ...(input.assignedSector !== undefined ? { assignedSector } : {}),
       updatedBy: actor.email,
       ...(input.formulaProductId !== undefined
         ? { formulaProductId: input.formulaProductId }
@@ -895,6 +902,12 @@ export class OrdersService {
         version: updated.version,
         formulaChanged,
         templateUnchanged: true,
+        ...(input.assignedSector !== undefined
+          ? {
+              previousAssignedSector: current.assignedSector,
+              assignedSector: updated.assignedSector,
+            }
+          : {}),
       },
     });
     // Sin notificación en autoguardado.
@@ -1482,7 +1495,7 @@ export class OrdersService {
     if (current.status === "ANULADA") {
       return current;
     }
-    if (current.status === "BORRADOR") {
+    if (current.status === "BORRADOR" && isEmptyDraftOrder(current)) {
       throw new OrdersValidationError(
         "Los borradores se eliminan; no se anulan. Usá eliminar borrador vacío."
       );
