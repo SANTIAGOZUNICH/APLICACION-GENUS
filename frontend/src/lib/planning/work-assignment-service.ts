@@ -7,6 +7,8 @@ import {
   operationalEvents,
   operationalOrders,
   planningWeeks,
+  productionPedidos,
+  productionPedidoStatusEvents,
   workItems,
 } from "@/lib/db/schema";
 import { weekStartMonday } from "@/lib/operational/operational-calendar";
@@ -49,6 +51,8 @@ export type WorkAssignmentInput = {
   packagingVto?: string | null;
   /** Código de producto (opcional; se copia a la OA). */
   productCode?: string | null;
+  /** FK a production_pedidos — origina el trabajo desde un Pedido real (opcional). */
+  productionPedidoId?: string | null;
   /** Cliente debe reenviar la misma key en reintentos. */
   idempotencyKey: string;
   /**
@@ -98,6 +102,7 @@ function mapItemRow(row: typeof workItems.$inferSelect): PlanningWorkItemRecord 
       row.packagingTotalUnits == null ? null : Number(row.packagingTotalUnits),
     orderId: row.orderId ?? null,
     orderNumber: row.orderNumber ?? null,
+    productionPedidoId: row.productionPedidoId ?? null,
     deliveryDate: row.deliveryDate ? String(row.deliveryDate) : null,
     status: row.status,
     publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
@@ -114,6 +119,84 @@ function mapItemRow(row: typeof workItems.$inferSelect): PlanningWorkItemRecord 
 function composeNotes(input: WorkAssignmentInput): string | null {
   const text = input.notes?.trim() || "";
   return text || null;
+}
+
+/**
+ * Transacción Drizzle (tipado flexible, mismo patrón que ensure-oa-on-assign.ts).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Tx = any;
+
+/**
+ * Orden monótono de estados de Pedido — solo se usa para no retroceder al
+ * asignar un trabajo. No confundir con el estado del work item (otra
+ * máquina de estados). "EN_PROCESO"/"TERMINADO" son alias legacy que el
+ * CHECK constraint de production_pedidos todavía admite en lectura.
+ */
+const PEDIDO_STATUS_RANK: Record<string, number> = {
+  INGRESO: 0,
+  EN_ELABORACION: 1,
+  EN_PROCESO: 1,
+  EN_ENVASADO: 2,
+  EN_CODIFICADO: 3,
+  LISTO_PARA_ENTREGAR: 4,
+  TERMINADO: 4,
+  ENTREGADO: 5,
+};
+
+/**
+ * EN_CODIFICADO (migración 0029) es un estado real y distinto — Codificado
+ * ya no reusa EN_ENVASADO. Esto es independiente de
+ * touchPedidoEnEnvasado/touchPedidoListoParaEntregar en
+ * codificado-handoff-service.ts, que señalan el handoff Envasado→Codificado
+ * (no la asignación) y siguen sin cambios.
+ */
+function targetPedidoStatusForSector(
+  sector: PlanningWorkItemRecord["sector"]
+): "EN_ELABORACION" | "EN_ENVASADO" | "EN_CODIFICADO" | null {
+  if (sector === "ELABORACION") return "EN_ELABORACION";
+  if (sector === "ENVASADO_MASIVO" || sector === "ENVASADO_PREMIUM") return "EN_ENVASADO";
+  if (sector === "CODIFICADO") return "EN_CODIFICADO";
+  return null;
+}
+
+/**
+ * Al asignar un trabajo con Pedido vinculado, hace avanzar el estado del
+ * Pedido según el sector asignado — nunca retrocede (un Pedido con varios
+ * work items siempre refleja la fase más avanzada real) y nunca duplica
+ * (no-op si ya está en ese estado o más adelante). Reusa
+ * production_pedido_status_events para la auditoría — mismo patrón que
+ * touchPedidoEnEnvasado/touchPedidoListoParaEntregar.
+ */
+async function touchPedidoOnAssign(
+  tx: Tx,
+  workItemId: string,
+  pedido: { id: string; estado: string | null },
+  actor: PlanningActor,
+  sector: PlanningWorkItemRecord["sector"]
+): Promise<void> {
+  const target = targetPedidoStatusForSector(sector);
+  if (!target) return;
+  const from = pedido.estado;
+  const fromRank = PEDIDO_STATUS_RANK[from ?? "INGRESO"] ?? 0;
+  const targetRank = PEDIDO_STATUS_RANK[target];
+  if (fromRank >= targetRank) return;
+
+  await tx
+    .update(productionPedidos)
+    .set({ estado: target, updatedBy: actor.email, updatedAt: new Date() })
+    .where(eq(productionPedidos.id, pedido.id));
+
+  await tx.insert(productionPedidoStatusEvents).values({
+    pedidoId: pedido.id,
+    workItemId,
+    fromEstado: from,
+    toEstado: target,
+    actorEmail: actor.email,
+    actorSector: actor.sector,
+    event: "WORK_ITEM_ASSIGNED",
+    motivo: null,
+  });
 }
 
 /**
@@ -164,6 +247,7 @@ export async function assignWorkItemDurable(
   const orderId = input.orderId?.trim() || null;
   const forceLink = Boolean(input.forceLink);
   const productCode = input.productCode?.trim() || "";
+  const productionPedidoId = input.productionPedidoId?.trim() || null;
 
   const db = getDb();
 
@@ -212,6 +296,24 @@ export async function assignWorkItemDurable(
           order: orderMeta,
           operationId,
         };
+      }
+
+      let pedidoSnapshot: { id: string; estado: string | null } | null = null;
+      if (productionPedidoId) {
+        const [foundPedido] = await tx
+          .select({ id: productionPedidos.id, estado: productionPedidos.estado })
+          .from(productionPedidos)
+          .where(
+            and(
+              eq(productionPedidos.id, productionPedidoId),
+              sql`${productionPedidos.deletedAt} IS NULL`
+            )
+          )
+          .limit(1);
+        if (!foundPedido) {
+          throw new PlanningValidationError("Pedido no encontrado.");
+        }
+        pedidoSnapshot = foundPedido;
       }
 
       let [week] = await tx
@@ -436,6 +538,7 @@ export async function assignWorkItemDurable(
           })(),
           orderId: orderRow?.id ?? null,
           orderNumber: orderRow?.orderNumber ?? orderNumberRaw,
+          productionPedidoId,
           deliveryDate: input.deliveryDate?.trim() || null,
           status: "PUBLICADO",
           publishedAt: now,
@@ -506,6 +609,10 @@ export async function assignWorkItemDurable(
         actorSector: actor.sector,
         note: `operationId=${operationId};oa=${orderMeta?.orderNumber ?? "none"};oaCreated=${orderMeta?.created ?? false}`,
       });
+
+      if (pedidoSnapshot) {
+        await touchPedidoOnAssign(tx, inserted.id, pedidoSnapshot, actor, input.sector);
+      }
 
       const [confirmed] = await tx
         .select()

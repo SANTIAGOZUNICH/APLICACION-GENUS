@@ -50,6 +50,7 @@ import {
 import { useOperationalStore } from "../store/operational-store-context";
 import type { WorkItem } from "@/types/operational/work-item";
 import { getClientPlanningSource } from "@/lib/planning/planning-source";
+import type { ProductionPedidoRecord } from "@/lib/production-pedidos/types";
 
 type AssignableSector = Extract<
   SectorId,
@@ -129,6 +130,11 @@ export function AsignarTrabajosView() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [oaHint, setOaHint] = useState<string | null>(null);
   const [oaForceConfirm, setOaForceConfirm] = useState<string | null>(null);
+  const [pedidoQuery, setPedidoQuery] = useState("");
+  const [pedidoResults, setPedidoResults] = useState<ProductionPedidoRecord[]>([]);
+  const [pedidoSearching, setPedidoSearching] = useState(false);
+  const [pedidoSearched, setPedidoSearched] = useState(false);
+  const [selectedPedido, setSelectedPedido] = useState<ProductionPedidoRecord | null>(null);
   const [editingItem, setEditingItem] = useState<WorkItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WorkItem | null>(null);
   const [reworkTarget, setReworkTarget] = useState<WorkItem | null>(null);
@@ -187,6 +193,61 @@ export function AsignarTrabajosView() {
     return () => window.clearTimeout(handle);
   }, [orderRef, sector, native]);
 
+  // Búsqueda de Pedido por N° (OP) — autocompleta Cliente/Producto/kg sin
+  // cargar todos los pedidos al cliente (backend ya filtra con ilike).
+  useEffect(() => {
+    if (!native || selectedPedido) return;
+    const q = pedidoQuery.trim();
+    if (!q) {
+      const t = window.setTimeout(() => {
+        setPedidoResults([]);
+        setPedidoSearched(false);
+      }, 0);
+      return () => window.clearTimeout(t);
+    }
+    const handle = window.setTimeout(() => {
+      setPedidoSearching(true);
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/v1/production-pedidos?op=${encodeURIComponent(q)}`,
+            { credentials: "include" }
+          );
+          if (!res.ok) {
+            setPedidoResults([]);
+            return;
+          }
+          const data = (await res.json()) as { items?: ProductionPedidoRecord[] };
+          setPedidoResults(Array.isArray(data.items) ? data.items.slice(0, 8) : []);
+        } catch {
+          setPedidoResults([]);
+        } finally {
+          setPedidoSearching(false);
+          setPedidoSearched(true);
+        }
+      })();
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [pedidoQuery, native, selectedPedido]);
+
+  const selectPedido = (p: ProductionPedidoRecord) => {
+    setSelectedPedido(p);
+    setPedidoQuery(p.op ?? "");
+    setPedidoResults([]);
+    setClient(p.cliente ?? "");
+    setProduct(p.producto ?? "");
+    if (sector === "ELABORACION" && !quantity.trim() && p.kg != null) {
+      setQuantity(p.kgDisplay || String(p.kg));
+    }
+  };
+
+  const clearPedido = () => {
+    setSelectedPedido(null);
+    setPedidoQuery("");
+    setPedidoResults([]);
+    setPedidoSearched(false);
+  };
+
   const unit = sector === "ELABORACION" ? "kg" : "un.";
   const lineOptions = sector === "ENVASADO_MASIVO" ? MASIVO_LINES : PREMIUM_LINES;
 
@@ -215,6 +276,7 @@ export function AsignarTrabajosView() {
     setNotes("");
     setPackagingLote("");
     setPackagingVto("");
+    clearPedido();
     idempotencyRef.current = newIdempotencyKey();
   };
 
@@ -268,6 +330,7 @@ export function AsignarTrabajosView() {
       notes: notes.trim() || null,
       packagingLote: sector === "ELABORACION" ? null : packagingLote.trim() || null,
       packagingVto: sector === "ELABORACION" ? null : packagingVto.trim() || null,
+      productionPedidoId: selectedPedido?.id ?? null,
       idempotencyKey: idempotencyRef.current,
       forceLink: Boolean(opts?.forceLink),
     };
@@ -545,6 +608,77 @@ export function AsignarTrabajosView() {
           className="grid grid-cols-1 gap-4 rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-5 sm:grid-cols-2 lg:grid-cols-3"
           aria-busy={submitting}
         >
+          <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
+            <label htmlFor="af-pedido" className="text-sm font-medium">
+              N° de Pedido
+            </label>
+            {selectedPedido ? (
+              <div className="flex flex-wrap items-center gap-2 rounded-[var(--os-radius-sm)] border border-[var(--os-teal)]/40 bg-[var(--os-teal)]/5 px-3 py-2 text-sm">
+                <span className="font-medium">Pedido {selectedPedido.op || "—"}</span>
+                <span className="text-[var(--os-text-muted)]">
+                  {selectedPedido.cliente ?? "—"} · {selectedPedido.producto ?? "—"}
+                  {selectedPedido.kgDisplay ? ` · ${selectedPedido.kgDisplay} kg` : ""}
+                </span>
+                <button
+                  type="button"
+                  className="ml-auto text-xs text-[var(--os-teal)] hover:underline"
+                  onClick={clearPedido}
+                  disabled={submitting}
+                  data-testid="assign-pedido-clear"
+                >
+                  Quitar pedido
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <input
+                  id="af-pedido"
+                  value={pedidoQuery}
+                  disabled={submitting}
+                  onChange={(e) => setPedidoQuery(e.target.value)}
+                  placeholder="Buscar por N° de Pedido (OP)…"
+                  className={CONTROL_CLASS}
+                  autoComplete="off"
+                  data-testid="assign-pedido-search"
+                />
+                {pedidoQuery.trim() && pedidoResults.length > 0 ? (
+                  <ul
+                    className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-md"
+                    data-testid="assign-pedido-results"
+                  >
+                    {pedidoResults.map((p) => (
+                      <li key={p.id}>
+                        <button
+                          type="button"
+                          className="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--os-teal)]/10"
+                          onClick={() => selectPedido(p)}
+                        >
+                          <span className="font-medium">{p.op || "—"}</span>{" "}
+                          <span className="text-[var(--os-text-muted)]">
+                            {p.cliente ?? "—"} · {p.producto ?? "—"}
+                            {p.kgDisplay ? ` · ${p.kgDisplay} kg` : ""}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            )}
+            {pedidoSearching ? (
+              <p className="text-xs text-[var(--os-text-muted)]">Buscando…</p>
+            ) : pedidoQuery.trim() && pedidoSearched && pedidoResults.length === 0 && !selectedPedido ? (
+              <p className="text-xs text-[var(--os-text-muted)]" data-testid="assign-pedido-not-found">
+                Pedido no encontrado. Podés completar los datos manualmente.
+              </p>
+            ) : (
+              <p className="text-xs text-[var(--os-text-muted)]">
+                Opcional — autocompleta Cliente/Producto
+                {sector === "ELABORACION" ? "/Cantidad (kg)" : ""}. Todo sigue siendo editable.
+              </p>
+            )}
+          </div>
+
           <div className="space-y-1.5">
             <label htmlFor="af-sector" className="text-sm font-medium">
               Asignar a
@@ -558,6 +692,14 @@ export function AsignarTrabajosView() {
                 setSector(next);
                 if (next === "ENVASADO_MASIVO") setLine(MASIVO_LINES[0]);
                 else if (next === "ENVASADO_PREMIUM") setLine(PREMIUM_LINES[0]);
+                if (
+                  next === "ELABORACION" &&
+                  selectedPedido &&
+                  !quantity.trim() &&
+                  selectedPedido.kg != null
+                ) {
+                  setQuantity(selectedPedido.kgDisplay || String(selectedPedido.kg));
+                }
               }}
               className={CONTROL_CLASS}
               data-testid="assign-sector"
@@ -611,7 +753,7 @@ export function AsignarTrabajosView() {
 
           <div className="space-y-1.5">
             <label htmlFor="af-client" className="text-sm font-medium">
-              Cliente
+              Cliente {selectedPedido ? <span className="text-[var(--os-teal)]">(desde pedido)</span> : null}
             </label>
             <input
               id="af-client"
@@ -625,7 +767,7 @@ export function AsignarTrabajosView() {
 
           <div className="space-y-1.5">
             <label htmlFor="af-product" className="text-sm font-medium">
-              Producto
+              Producto {selectedPedido ? <span className="text-[var(--os-teal)]">(desde pedido)</span> : null}
             </label>
             <input
               id="af-product"

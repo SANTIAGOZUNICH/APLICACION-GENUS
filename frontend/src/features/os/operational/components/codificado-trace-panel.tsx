@@ -41,11 +41,27 @@ export function CodificadoTracePanel({
   });
   const summary = summarizePackingGroups(groups);
   const viaCodificado = Boolean(progress?.viaCodificado);
-  const bulkKg = progress?.bulkRemainderKg;
+  // progress viene de un overlay client-side (localStorage) que nunca se
+  // completa para trabajos nativos — sin fallback a workItem (Neon, siempre
+  // fresco) estos campos quedaban invisibles para Calidad/Producción aunque
+  // estuvieran correctamente persistidos (mismo fix aplicado en PR #78).
+  const bulkKg = progress?.bulkRemainderKg ?? workItem?.bulkRemainderKg ?? null;
+  const bulkObservation =
+    progress?.bulkRemainderObservation ?? workItem?.bulkRemainderObservation ?? null;
   const sampleUnits = workItem?.sampleUnits ?? null;
   const deliverableUnits = workItem?.deliverableUnits ?? null;
   const packagingClosedAt = workItem?.packagingClosedAt ?? null;
   const packagingClosedBy = workItem?.packagingClosedBy ?? null;
+  // Datos siempre desde workItem (Neon) — nunca inventados, "—" si no existen.
+  const pedidoOp = workItem?.pedidoOp ?? null;
+  const plannedQuantity =
+    workItem?.quantity != null && workItem.quantity !== ""
+      ? `${workItem.quantity} ${workItem?.unit ?? ""}`.trim()
+      : null;
+  const orderRef = workItem?.oeRef ?? workItem?.oaRef ?? null;
+  const orderRefLabel = workItem?.oeRef ? "OE" : "OA";
+  const plannedDate = workItem?.plannedDate ?? null;
+  const reworkReason = workItem?.reworkRequestedAt ? (workItem?.reworkReason ?? "Sin motivo informado") : null;
 
   return (
     <div
@@ -57,7 +73,31 @@ export function CodificadoTracePanel({
       </p>
       <dl className="grid grid-cols-2 gap-3">
         <div>
-          <dt className="text-xs uppercase text-[var(--os-text-muted)]">Cantidad total</dt>
+          <dt className="text-xs uppercase text-[var(--os-text-muted)]">N° de Pedido</dt>
+          <dd className="font-medium" data-testid="trace-pedido">
+            {displayField(pedidoOp)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase text-[var(--os-text-muted)]">Cantidad asignada</dt>
+          <dd className="font-medium tabular-nums" data-testid="trace-planned-quantity">
+            {displayField(plannedQuantity)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase text-[var(--os-text-muted)]">N° de {orderRefLabel}</dt>
+          <dd className="font-mono font-medium" data-testid="trace-order-ref">
+            {displayField(orderRef)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase text-[var(--os-text-muted)]">Fecha de producción</dt>
+          <dd className="font-medium" data-testid="trace-planned-date">
+            {displayField(plannedDate)}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase text-[var(--os-text-muted)]">Cantidad total (final)</dt>
           <dd className="font-medium tabular-nums" data-testid="trace-total">
             {total != null && total !== "" ? `${total} un.` : "—"}
           </dd>
@@ -81,6 +121,16 @@ export function CodificadoTracePanel({
           </dd>
         </div>
       </dl>
+
+      {reworkReason ? (
+        <p
+          className="rounded border border-[var(--genus-warning,#b45309)]/30 bg-[var(--genus-warning-soft,#fff8e6)] px-2 py-1.5 text-xs"
+          data-testid="trace-rework"
+        >
+          <span className="font-medium text-[var(--genus-warning,#b45309)]">Rehacer: </span>
+          {reworkReason}
+        </p>
+      ) : null}
 
       {onCorrectLoteVto ? (
         <Button
@@ -146,6 +196,13 @@ export function CodificadoTracePanel({
         </div>
       ) : null}
 
+      {bulkObservation ? (
+        <p className="text-xs text-[var(--os-text-muted)]" data-testid="trace-bulk-observation">
+          <span className="font-medium text-[var(--os-text)]">Obs. sobrante: </span>
+          {bulkObservation}
+        </p>
+      ) : null}
+
       {viaCodificado ? (
         <dl className="grid grid-cols-1 gap-2 border-t border-[var(--os-border)] pt-3 sm:grid-cols-2">
           <div>
@@ -153,7 +210,7 @@ export function CodificadoTracePanel({
               Enviado desde Envasado
             </dt>
             <dd className="font-medium" data-testid="trace-sent-by">
-              {displayField(progress?.sentToCodificadoBy)}
+              {displayField(progress?.sentToCodificadoBy ?? workItem?.sentToCodificadoBy)}
               {progress?.codificadoOriginSector ? (
                 <span className="mt-0.5 block text-xs text-[var(--os-text-muted)]">
                   {SECTOR_LABELS[
@@ -168,15 +225,17 @@ export function CodificadoTracePanel({
               Entregado desde Codificado
             </dt>
             <dd className="font-medium" data-testid="trace-delivered-by">
-              {displayField(progress?.deliveredFromCodificadoBy)}
+              {displayField(progress?.deliveredFromCodificadoBy ?? workItem?.deliveredFromCodificadoBy)}
             </dd>
           </div>
-          {progress?.codificadoObservation ? (
+          {(progress?.codificadoObservation ?? workItem?.operationalObservation) ? (
             <div className="sm:col-span-2">
               <dt className="text-xs uppercase text-[var(--os-text-muted)]">
                 Obs. Codificado
               </dt>
-              <dd className="text-sm">{progress.codificadoObservation}</dd>
+              <dd className="text-sm">
+                {progress?.codificadoObservation ?? workItem?.operationalObservation}
+              </dd>
             </div>
           ) : null}
         </dl>

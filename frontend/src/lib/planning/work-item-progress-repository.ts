@@ -1,8 +1,8 @@
 import "server-only";
 
-import { and, desc, eq, ne, or } from "drizzle-orm";
+import { and, desc, eq, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { operationalEvents, workItemDeliveries, workItems } from "@/lib/db/schema";
+import { operationalEvents, operationalOrders, workItemDeliveries, workItems } from "@/lib/db/schema";
 import type { SectorId } from "@/types/operational/sector";
 import {
   canActOnWorkItemSector,
@@ -13,6 +13,8 @@ import { PlanningValidationError } from "@/lib/planning/types";
 import { canRequestRework } from "@/features/os/operational/lib/rework-flow";
 import { resolveDirectCompletePackedUnits, type PackingGroup } from "@/lib/remitos/packing-math";
 import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
+import { addDaysIso, weekStartMonday } from "@/lib/operational/operational-calendar";
+import { normalizeOaOrderNumber } from "@/lib/planning/oa-assign-helpers";
 
 /**
  * Fuente de verdad durable del avance operativo (0023) — reemplaza el overlay
@@ -181,12 +183,141 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
   });
 }
 
+export interface UpdateOrderRefInput {
+  /** Número de OE (Elaboración) u OA (resto) — debe existir ya, nunca se auto-crea acá. */
+  orderNumberRaw: string;
+  reason: string;
+  updatedBy: string;
+  updatedBySector: SectorId | string;
+}
+
+/**
+ * Corrección de la OA/OE vinculada a un trabajo ya asignado (PARTE B). A
+ * diferencia de ensureOaForAssignment (asignación inicial), esta función
+ * NUNCA crea una orden nueva — exige que la OA/OE de destino ya exista,
+ * para no generar documentos legales nuevos desde un flujo de edición.
+ * Mantiene "1 trabajo = 1 OA": desvincula la orden anterior (si había) y
+ * vincula la nueva de forma atómica, con el mismo guard de carrera
+ * (WHERE linkedWorkItemId IS NULL) que usa la asignación inicial.
+ */
+export async function updateWorkItemOrderRefDurable(id: string, input: UpdateOrderRefInput) {
+  const reason = input.reason?.trim();
+  if (!reason) {
+    throw new PlanningValidationError("El motivo es obligatorio para corregir la OA/OE.");
+  }
+
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        sector: workItems.sector,
+        orderId: workItems.orderId,
+        orderNumber: workItems.orderNumber,
+        planningWeekId: workItems.planningWeekId,
+      })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!existing) throw new Error("Work item no encontrado.");
+
+    const isElaboracion = existing.sector === "ELABORACION";
+    const normalized = isElaboracion
+      ? input.orderNumberRaw.trim().toUpperCase().replace(/\s+/g, "")
+      : normalizeOaOrderNumber(input.orderNumberRaw);
+    if (!normalized) {
+      throw new PlanningValidationError(
+        isElaboracion ? "Indicá el número de OE." : "Número de OA inválido."
+      );
+    }
+    if (normalized === existing.orderNumber) {
+      throw new Error("El número indicado es igual al actual — no hay corrección para aplicar.");
+    }
+
+    const [target] = await tx
+      .select({
+        id: operationalOrders.id,
+        orderNumber: operationalOrders.orderNumber,
+        type: operationalOrders.type,
+        linkedWorkItemId: operationalOrders.linkedWorkItemId,
+      })
+      .from(operationalOrders)
+      .where(eq(operationalOrders.orderNumber, normalized))
+      .limit(1);
+    if (!target) {
+      throw new PlanningValidationError(
+        `No se encontró la ${isElaboracion ? "OE" : "OA"} ${normalized}. Debe existir antes de vincularla — esta corrección no crea órdenes nuevas.`
+      );
+    }
+    const expectedType = isElaboracion ? "OE" : "OA";
+    if (target.type !== expectedType) {
+      throw new PlanningValidationError(`La referencia debe ser una ${expectedType}.`);
+    }
+    if (target.linkedWorkItemId && target.linkedWorkItemId !== id) {
+      throw new Error(
+        "Conflicto: esta orden ya tiene un trabajo asignado. Cada trabajo requiere su propia OA/OE."
+      );
+    }
+
+    if (existing.orderId && existing.orderId !== target.id) {
+      await tx
+        .update(operationalOrders)
+        .set({ linkedWorkItemId: null, updatedAt: new Date(), version: sql`${operationalOrders.version} + 1` })
+        .where(
+          and(eq(operationalOrders.id, existing.orderId), eq(operationalOrders.linkedWorkItemId, id))
+        );
+    }
+
+    const [linked] = await tx
+      .update(operationalOrders)
+      .set({
+        linkedWorkItemId: id,
+        updatedBy: input.updatedBy,
+        updatedAt: new Date(),
+        version: sql`${operationalOrders.version} + 1`,
+      })
+      .where(
+        and(
+          eq(operationalOrders.id, target.id),
+          sql`(${operationalOrders.linkedWorkItemId} IS NULL OR ${operationalOrders.linkedWorkItemId} = ${id})`
+        )
+      )
+      .returning({ id: operationalOrders.id });
+    if (!linked) {
+      throw new Error(
+        "Conflicto: esta orden ya tiene un trabajo asignado. Cada trabajo requiere su propia OA/OE. Reintentá."
+      );
+    }
+
+    const [row] = await tx
+      .update(workItems)
+      .set({ orderId: target.id, orderNumber: target.orderNumber, updatedAt: new Date() })
+      .where(eq(workItems.id, id))
+      .returning();
+    if (!row) throw new Error("No se pudo actualizar la referencia de OA/OE.");
+
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: existing.planningWeekId,
+      type: "ORDER_REF_CORRECTED",
+      fromStatus: JSON.stringify({ orderNumber: existing.orderNumber ?? null }),
+      toStatus: JSON.stringify({ orderNumber: target.orderNumber }),
+      actorEmail: input.updatedBy,
+      actorSector: String(input.updatedBySector),
+      note: reason,
+    });
+
+    return row;
+  });
+}
+
 export interface UpdateWorkItemPlanningInput {
   client?: string | null;
   product?: string | null;
   plannedQuantity?: string | null;
   unit?: string | null;
   deliveryDate?: string | null;
+  /** Fecha de producción — debe mantenerse dentro de la semana ya publicada. */
+  plannedDate?: string | null;
   notes?: string | null;
   reason?: string | null;
   updatedBy: string;
@@ -226,6 +357,8 @@ export async function updateWorkItemPlanningDurable(
         deliveryDate: workItems.deliveryDate,
         notes: workItems.notes,
         planningWeekId: workItems.planningWeekId,
+        plannedDate: workItems.plannedDate,
+        plannedDateTo: workItems.plannedDateTo,
       })
       .from(workItems)
       .where(eq(workItems.id, id))
@@ -235,6 +368,30 @@ export async function updateWorkItemPlanningDurable(
     const before: Record<string, unknown> = {};
     const after: Record<string, unknown> = {};
     const patch: Partial<typeof workItems.$inferInsert> = { updatedAt: new Date() };
+
+    if (input.plannedDate !== undefined) {
+      const nextDate = input.plannedDate?.trim() || null;
+      if (!nextDate || !/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
+        throw new PlanningValidationError("Fecha de producción inválida.");
+      }
+      const weekStart = weekStartMonday(String(existing.plannedDate));
+      const weekEnd = addDaysIso(weekStart, 6);
+      if (nextDate < weekStart || nextDate > weekEnd) {
+        throw new PlanningValidationError(
+          `La fecha de producción debe mantenerse dentro de la semana ya planificada (${weekStart} a ${weekEnd}). Para moverlo a otra semana, reasigná el trabajo.`
+        );
+      }
+      const currentFrom = String(existing.plannedDate);
+      const currentTo = existing.plannedDateTo ? String(existing.plannedDateTo) : currentFrom;
+      if (nextDate !== currentFrom || nextDate !== currentTo) {
+        before.plannedDate = currentFrom;
+        before.plannedDateTo = existing.plannedDateTo ?? null;
+        after.plannedDate = nextDate;
+        after.plannedDateTo = null;
+        patch.plannedDate = nextDate;
+        patch.plannedDateTo = null;
+      }
+    }
 
     for (const key of PLANNING_EDITABLE_KEYS) {
       const incoming = input[key];

@@ -112,6 +112,7 @@ export function projectNativeWorkItem(item: PlanningWorkItemRecord): WorkItem {
     status,
     priority: item.priority,
     pedidoRef: item.productionPedidoId ?? null,
+    pedidoOp: item.pedidoOp ?? null,
     oeRef: item.sector === "ELABORACION" ? orderNumber : null,
     oaRef: item.sector !== "ELABORACION" ? orderNumber : null,
     loteRef: packagingLote,
