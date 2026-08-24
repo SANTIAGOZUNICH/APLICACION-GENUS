@@ -77,6 +77,8 @@ function parseBody(raw: unknown): WorkAssignmentInput {
         : body.code != null
           ? String(body.code)
           : null,
+    productionPedidoId:
+      body.productionPedidoId != null ? String(body.productionPedidoId).trim() || null : null,
     idempotencyKey,
     forceLink: body.forceLink === true || body.force_link === true,
   };

@@ -123,6 +123,7 @@ type OperationAction =
       plannedQuantity?: string | null;
       unit?: string | null;
       deliveryDate?: string | null;
+      plannedDate?: string | null;
       notes?: string | null;
       reason?: string | null;
       updatedBy?: string;
@@ -445,6 +446,7 @@ export async function POST(request: Request) {
           plannedQuantity: body.plannedQuantity,
           unit: body.unit,
           deliveryDate: body.deliveryDate,
+          plannedDate: body.plannedDate,
           notes: body.notes,
           reason: body.reason,
           updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,

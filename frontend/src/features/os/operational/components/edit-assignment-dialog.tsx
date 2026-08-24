@@ -50,6 +50,7 @@ export function EditAssignmentDialog({
   const [product, setProduct] = useState(() => item?.product ?? "");
   const [quantity, setQuantity] = useState(() => item?.quantity ?? "");
   const [deliveryDate, setDeliveryDate] = useState(() => item?.deliveryDate ?? "");
+  const [plannedDate, setPlannedDate] = useState(() => item?.plannedDate ?? "");
   const [notes, setNotes] = useState(() => item?.notes ?? "");
   const [lote, setLote] = useState(() => item?.packagingLote ?? item?.loteRef ?? "");
   const [vto, setVto] = useState(() => item?.packagingVto ?? "");
@@ -66,6 +67,7 @@ export function EditAssignmentDialog({
     product.trim() !== (item.product ?? "") ||
     quantity.trim() !== (item.quantity ?? "") ||
     deliveryDate !== (item.deliveryDate ?? "") ||
+    plannedDate !== (item.plannedDate ?? "") ||
     notes.trim() !== (item.notes ?? "");
   const loteVtoChanged =
     showLoteVto &&
@@ -107,6 +109,7 @@ export function EditAssignmentDialog({
         product: product.trim(),
         plannedQuantity: quantity.trim(),
         deliveryDate: deliveryDate || null,
+        plannedDate: plannedDate || null,
         notes: notes.trim() || null,
         reason,
         actorSectorId,
@@ -184,6 +187,22 @@ export function EditAssignmentDialog({
                 className={CONTROL_CLASS}
                 disabled={busy}
               />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium" htmlFor="edit-planned-date">
+                Fecha de producción
+              </label>
+              <input
+                id="edit-planned-date"
+                type="date"
+                value={plannedDate}
+                onChange={(e) => setPlannedDate(e.target.value)}
+                className={CONTROL_CLASS}
+                disabled={busy}
+              />
+              <p className="text-xs text-[var(--os-text-muted)]">
+                Debe mantenerse dentro de la semana ya planificada.
+              </p>
             </div>
           </div>
           <div className="space-y-1.5">

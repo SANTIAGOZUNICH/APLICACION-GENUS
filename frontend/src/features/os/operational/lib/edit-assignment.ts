@@ -18,6 +18,7 @@ export async function editWorkItemAssignment(input: {
   plannedQuantity?: string | null;
   unit?: string | null;
   deliveryDate?: string | null;
+  plannedDate?: string | null;
   notes?: string | null;
   reason?: string | null;
   actorSectorId: SectorId;
@@ -32,6 +33,7 @@ export async function editWorkItemAssignment(input: {
       plannedQuantity: input.plannedQuantity,
       unit: input.unit,
       deliveryDate: input.deliveryDate,
+      plannedDate: input.plannedDate,
       notes: input.notes,
       reason: input.reason,
       updatedBy: input.updatedBy,

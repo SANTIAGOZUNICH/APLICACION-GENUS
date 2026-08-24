@@ -13,6 +13,7 @@ import { PlanningValidationError } from "@/lib/planning/types";
 import { canRequestRework } from "@/features/os/operational/lib/rework-flow";
 import { resolveDirectCompletePackedUnits, type PackingGroup } from "@/lib/remitos/packing-math";
 import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
+import { addDaysIso, weekStartMonday } from "@/lib/operational/operational-calendar";
 
 /**
  * Fuente de verdad durable del avance operativo (0023) — reemplaza el overlay
@@ -187,6 +188,8 @@ export interface UpdateWorkItemPlanningInput {
   plannedQuantity?: string | null;
   unit?: string | null;
   deliveryDate?: string | null;
+  /** Fecha de producción — debe mantenerse dentro de la semana ya publicada. */
+  plannedDate?: string | null;
   notes?: string | null;
   reason?: string | null;
   updatedBy: string;
@@ -226,6 +229,8 @@ export async function updateWorkItemPlanningDurable(
         deliveryDate: workItems.deliveryDate,
         notes: workItems.notes,
         planningWeekId: workItems.planningWeekId,
+        plannedDate: workItems.plannedDate,
+        plannedDateTo: workItems.plannedDateTo,
       })
       .from(workItems)
       .where(eq(workItems.id, id))
@@ -235,6 +240,30 @@ export async function updateWorkItemPlanningDurable(
     const before: Record<string, unknown> = {};
     const after: Record<string, unknown> = {};
     const patch: Partial<typeof workItems.$inferInsert> = { updatedAt: new Date() };
+
+    if (input.plannedDate !== undefined) {
+      const nextDate = input.plannedDate?.trim() || null;
+      if (!nextDate || !/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
+        throw new PlanningValidationError("Fecha de producción inválida.");
+      }
+      const weekStart = weekStartMonday(String(existing.plannedDate));
+      const weekEnd = addDaysIso(weekStart, 6);
+      if (nextDate < weekStart || nextDate > weekEnd) {
+        throw new PlanningValidationError(
+          `La fecha de producción debe mantenerse dentro de la semana ya planificada (${weekStart} a ${weekEnd}). Para moverlo a otra semana, reasigná el trabajo.`
+        );
+      }
+      const currentFrom = String(existing.plannedDate);
+      const currentTo = existing.plannedDateTo ? String(existing.plannedDateTo) : currentFrom;
+      if (nextDate !== currentFrom || nextDate !== currentTo) {
+        before.plannedDate = currentFrom;
+        before.plannedDateTo = existing.plannedDateTo ?? null;
+        after.plannedDate = nextDate;
+        after.plannedDateTo = null;
+        patch.plannedDate = nextDate;
+        patch.plannedDateTo = null;
+      }
+    }
 
     for (const key of PLANNING_EDITABLE_KEYS) {
       const incoming = input[key];

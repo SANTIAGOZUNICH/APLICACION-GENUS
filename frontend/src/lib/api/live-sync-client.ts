@@ -361,6 +361,7 @@ export async function postEditAssignment(payload: {
   plannedQuantity?: string | null;
   unit?: string | null;
   deliveryDate?: string | null;
+  plannedDate?: string | null;
   notes?: string | null;
   reason?: string | null;
   updatedBy?: string;
