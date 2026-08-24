@@ -504,6 +504,17 @@ export interface CompleteWorkInput {
   finishedQty: string;
   observation: string;
   completedBy: string;
+  /**
+   * Sobrante de granel (0026) — el registro en depósito ya se creó por su
+   * propio camino idempotente (graneles-service.ts, upsertFromEnvasado);
+   * esto solo enlaza el work item con ese registro, igual que ya hace
+   * handoffToCodificadoDurable para el camino Envasado→Codificado. Antes de
+   * este fix, el camino de "Entregar a Calidad" directo (sin Codificado)
+   * nunca lo persistía acá — el sobrante quedaba invisible en el work item.
+   */
+  bulkRemainderKg?: number | null;
+  bulkRemainderObservation?: string | null;
+  bulkRemainderId?: string | null;
 }
 
 /**
@@ -558,24 +569,30 @@ export async function completeWorkDurable(
         ? { deliverableUnits: packedUnits, packagingClosedAt: now, packagingClosedBy: input.completedBy }
         : null;
 
+    const patch: Partial<typeof workItems.$inferInsert> = {
+      operationalStatus: "revision",
+      finishedQty: input.finishedQty.trim(),
+      operationalObservation: input.observation.trim(),
+      completedAt: now,
+      completedBy: input.completedBy,
+      progressUpdatedAt: now,
+      progressUpdatedBy: input.completedBy,
+      updatedAt: now,
+      // Reenvío tras un Rehacer: se resuelve el pedido, ya no queda "pendiente".
+      reworkRequestedAt: null,
+      reworkRequestedBy: null,
+      reworkRequestedBySector: null,
+      reworkReason: null,
+      ...(closePatch ?? {}),
+    };
+    if (input.bulkRemainderKg !== undefined) patch.bulkRemainderKg = input.bulkRemainderKg;
+    if (input.bulkRemainderObservation !== undefined)
+      patch.bulkRemainderObservation = input.bulkRemainderObservation;
+    if (input.bulkRemainderId !== undefined) patch.bulkRemainderId = input.bulkRemainderId;
+
     const [row] = await tx
       .update(workItems)
-      .set({
-        operationalStatus: "revision",
-        finishedQty: input.finishedQty.trim(),
-        operationalObservation: input.observation.trim(),
-        completedAt: now,
-        completedBy: input.completedBy,
-        progressUpdatedAt: now,
-        progressUpdatedBy: input.completedBy,
-        updatedAt: now,
-        // Reenvío tras un Rehacer: se resuelve el pedido, ya no queda "pendiente".
-        reworkRequestedAt: null,
-        reworkRequestedBy: null,
-        reworkRequestedBySector: null,
-        reworkReason: null,
-        ...(closePatch ?? {}),
-      })
+      .set(patch)
       .where(eq(workItems.id, id))
       .returning();
     if (!row) throw new Error("Work item no encontrado.");

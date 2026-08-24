@@ -23,6 +23,8 @@ interface WorkItemProgressTableProps {
   onArchiveFromView?: (item: WorkItem) => void;
   onRestoreToView?: (item: WorkItem) => void;
   archiveBusyId?: string | null;
+  /** Agrega columnas Lote/VTO/OA — usado por Pendientes, donde esos datos son parte de lo mínimo a mostrar. */
+  showPackagingColumns?: boolean;
 }
 
 const thClass = "os-table-th";
@@ -40,6 +42,7 @@ export function WorkItemProgressTable({
   onArchiveFromView,
   onRestoreToView,
   archiveBusyId = null,
+  showPackagingColumns = false,
 }: WorkItemProgressTableProps) {
   if (items.length === 0) {
     return (
@@ -69,6 +72,13 @@ export function WorkItemProgressTable({
             </th>
             {variant === "envasado" && (
               <th className={`${thClass} hidden md:table-cell`}>Diferencia</th>
+            )}
+            {showPackagingColumns && (
+              <>
+                <th className={`${thClass} hidden lg:table-cell`}>Lote</th>
+                <th className={`${thClass} hidden lg:table-cell`}>VTO</th>
+                <th className={`${thClass} hidden lg:table-cell`}>OA</th>
+              </>
             )}
             <th className={thClass}>Estado</th>
             <th className={`${thClass} hidden lg:table-cell`}>Observación</th>
@@ -135,6 +145,21 @@ export function WorkItemProgressTable({
                     {diff}
                   </td>
                 )}
+                {showPackagingColumns && (
+                  <>
+                    <td className={`${tdClass} hidden lg:table-cell`}>
+                      <span className="os-break">
+                        {displayField(item.packagingLote ?? item.loteRef)}
+                      </span>
+                    </td>
+                    <td className={`${tdClass} hidden lg:table-cell`}>
+                      <span className="os-break">{displayField(item.packagingVto)}</span>
+                    </td>
+                    <td className={`${tdClass} hidden lg:table-cell`}>
+                      <span className="os-break">{displayField(item.oaRef)}</span>
+                    </td>
+                  </>
+                )}
                 <td className={tdClass}>
                   {isTransferred ? (
                     <div className="space-y-1">
@@ -148,6 +173,11 @@ export function WorkItemProgressTable({
                   )}
                 </td>
                 <td className={`${tdClass} hidden text-xs text-[var(--os-text-muted)] lg:table-cell`}>
+                  {item.reworkRequestedAt ? (
+                    <p className="mb-1 font-medium text-[var(--genus-warning,#b45309)]">
+                      Rehacer: {item.reworkReason || "Sin motivo informado"}
+                    </p>
+                  ) : null}
                   <span className="os-break">{observation || "—"}</span>
                 </td>
                 <td className={tdClass}>

@@ -17,10 +17,12 @@ afterEach(() => {
  * fresco); `progress` es un overlay client-side (localStorage) que nunca
  * se completa para trabajos nativos, así que estos tests montan el panel
  * SIN progress — reproduce exactamente lo que ve Calidad/Producción tras
- * un F5 en otra PC.
+ * un F5 en otra PC. Combina los tests de PR #77 (N° de Pedido/OA/fecha de
+ * producción/Rehacer) y PR #78 (packingGroups/muestras/sobrante) — ambos
+ * PR extendieron este mismo panel compartido de forma independiente.
  */
 describe("CodificadoTracePanel — información completa hacia Calidad/Producción", () => {
-  it("Caso 8: N° de Pedido / Cantidad asignada / OA / Fecha de producción se ven sin overlay local", () => {
+  it("N° de Pedido / Cantidad asignada / OA / Fecha de producción se ven sin overlay local", () => {
     const item = createTestWorkItem({
       id: "wi-full",
       sector: "ENVASADO_MASIVO",
@@ -52,7 +54,7 @@ describe("CodificadoTracePanel — información completa hacia Calidad/Producci�
     expect(screen.getByTestId("trace-order-ref").textContent).toBe(placeholder);
   });
 
-  it("packingGroups completo — muestra la distribución real de cajas, no solo el total", () => {
+  it("Caso 6: packingGroups completo — muestra la distribución real de cajas, no solo el total", () => {
     const item = createTestWorkItem({
       id: "wi-packing",
       sector: "CODIFICADO",
@@ -70,7 +72,7 @@ describe("CodificadoTracePanel — información completa hacia Calidad/Producci�
     expect(cajas).toMatch(/Embalado:\s*1100/);
   });
 
-  it("sampleUnits es informativo — 'Muestras: 3' visible pero ningún total cambia", () => {
+  it("Caso 7: sampleUnits es informativo — se ve 'Muestras: 3' pero no cambia ningún total", () => {
     const item = createTestWorkItem({
       id: "wi-samples",
       sector: "CODIFICADO",
@@ -82,10 +84,11 @@ describe("CodificadoTracePanel — información completa hacia Calidad/Producci�
     render(<CodificadoTracePanel workItem={item} />);
 
     expect(screen.getByTestId("trace-samples").textContent).toMatch(/^3 un\./);
+    // El total embalado/entregable no cambia por las muestras — sigue en 2880.
     expect(screen.getByTestId("trace-deliverable").textContent).toMatch(/^2880 un\./);
   });
 
-  it("sobrante de granel — kg y observación se ven desde workItem solo (sin overlay local)", () => {
+  it("Caso 8: sobrante de granel — kg y observación se ven desde workItem solo (bug corregido: antes dependía de un overlay local nunca poblado)", () => {
     const item = createTestWorkItem({
       id: "wi-bulk",
       sector: "CODIFICADO",
@@ -99,6 +102,13 @@ describe("CodificadoTracePanel — información completa hacia Calidad/Producci�
     expect(screen.getByTestId("trace-bulk-observation").textContent).toMatch(
       /Sobrante del lote L-900, guardado en tambor 4/
     );
+  });
+
+  it("sin sobrante, no rompe ni inventa datos — muestra '—'", () => {
+    const item = createTestWorkItem({ id: "wi-no-bulk", sector: "CODIFICADO" });
+    render(<CodificadoTracePanel workItem={item} />);
+    expect(screen.getByTestId("trace-bulk").textContent).toBe("—");
+    expect(screen.queryByTestId("trace-bulk-observation")).toBeNull();
   });
 
   it("motivo de Rehacer visible cuando corresponde", () => {

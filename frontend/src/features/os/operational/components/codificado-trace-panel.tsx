@@ -43,11 +43,17 @@ export function CodificadoTracePanel({
   const viaCodificado = Boolean(progress?.viaCodificado);
   // progress viene de un overlay client-side (localStorage) que nunca se
   // completa para trabajos nativos — sin fallback a workItem (Neon, siempre
-  // fresco) estos campos quedaban invisibles para Calidad/Producción aunque
-  // estuvieran correctamente persistidos (mismo fix aplicado en PR #78).
+  // fresco), estos campos quedaban invisibles para Calidad/Producción aunque
+  // estuvieran correctamente persistidos (mismo fix aplicado en paralelo por
+  // PR #77 y PR #78 — unificado acá al integrar).
   const bulkKg = progress?.bulkRemainderKg ?? workItem?.bulkRemainderKg ?? null;
   const bulkObservation =
     progress?.bulkRemainderObservation ?? workItem?.bulkRemainderObservation ?? null;
+  const sentToCodificadoBy = progress?.sentToCodificadoBy ?? workItem?.sentToCodificadoBy ?? null;
+  const deliveredFromCodificadoBy =
+    progress?.deliveredFromCodificadoBy ?? workItem?.deliveredFromCodificadoBy ?? null;
+  const codificadoObservation =
+    progress?.codificadoObservation ?? workItem?.operationalObservation ?? null;
   const sampleUnits = workItem?.sampleUnits ?? null;
   const deliverableUnits = workItem?.deliverableUnits ?? null;
   const packagingClosedAt = workItem?.packagingClosedAt ?? null;
@@ -210,7 +216,7 @@ export function CodificadoTracePanel({
               Enviado desde Envasado
             </dt>
             <dd className="font-medium" data-testid="trace-sent-by">
-              {displayField(progress?.sentToCodificadoBy ?? workItem?.sentToCodificadoBy)}
+              {displayField(sentToCodificadoBy)}
               {progress?.codificadoOriginSector ? (
                 <span className="mt-0.5 block text-xs text-[var(--os-text-muted)]">
                   {SECTOR_LABELS[
@@ -225,17 +231,15 @@ export function CodificadoTracePanel({
               Entregado desde Codificado
             </dt>
             <dd className="font-medium" data-testid="trace-delivered-by">
-              {displayField(progress?.deliveredFromCodificadoBy ?? workItem?.deliveredFromCodificadoBy)}
+              {displayField(deliveredFromCodificadoBy)}
             </dd>
           </div>
-          {(progress?.codificadoObservation ?? workItem?.operationalObservation) ? (
+          {codificadoObservation ? (
             <div className="sm:col-span-2">
               <dt className="text-xs uppercase text-[var(--os-text-muted)]">
                 Obs. Codificado
               </dt>
-              <dd className="text-sm">
-                {progress?.codificadoObservation ?? workItem?.operationalObservation}
-              </dd>
+              <dd className="text-sm">{codificadoObservation}</dd>
             </div>
           ) : null}
         </dl>

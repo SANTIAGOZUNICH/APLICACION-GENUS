@@ -37,6 +37,24 @@ export function useOperationalCalendar() {
     setViewMode("day");
   }, []);
 
+  /**
+   * Exactamente ±1 semana desde weekStart (lunes) — nunca ±1 día, nunca
+   * cambia de viewMode. addDaysIso es UTC-safe (ver operational-calendar.ts),
+   * así que el rango no depende de timezone.
+   */
+  const goPrevWeek = useCallback(() => {
+    setSelectedDate((d) => addDaysIso(weekStartMonday(d), -7));
+  }, []);
+
+  const goNextWeek = useCallback(() => {
+    setSelectedDate((d) => addDaysIso(weekStartMonday(d), 7));
+  }, []);
+
+  /** "Hoy"/"Semana actual" en modo Semana — vuelve a la semana de hoy sin resetear a vista Día. */
+  const goToCurrentWeek = useCallback(() => {
+    setSelectedDate(todayInBuenosAires());
+  }, []);
+
   const selectDay = useCallback((iso: string) => {
     setSelectedDate(iso);
     setViewMode("day");
@@ -58,6 +76,9 @@ export function useOperationalCalendar() {
     goToday,
     goPrevDay,
     goNextDay,
+    goPrevWeek,
+    goNextWeek,
+    goToCurrentWeek,
     selectDay,
   };
 }
