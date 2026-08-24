@@ -138,6 +138,9 @@ export async function postCompleteWork(payload: {
   finishedQty: string;
   observation: string;
   completedBy?: string;
+  bulkRemainderKg?: number | null;
+  bulkRemainderObservation?: string | null;
+  bulkRemainderId?: string | null;
 }): Promise<void> {
   const response = await fetch("/api/v1/live-sync/operations", {
     method: "POST",

@@ -22,6 +22,8 @@ interface OperationalWeekBoardProps {
   mode?: "operational" | "consulta";
   /** Required when mode=consulta — unique items (not duplicated per day). */
   consultaItems?: WeeklyPlanItemDto[];
+  /** Oculta el título "Semana · dd/mm – dd/mm" propio — usado cuando el padre ya muestra un encabezado (ej. grilla de líneas simultáneas). */
+  hideHeader?: boolean;
 }
 
 function dtoCoversDate(item: WeeklyPlanItemDto, day: string): boolean {
@@ -114,6 +116,7 @@ export function OperationalWeekBoard({
   onSelectDay,
   mode = "operational",
   consultaItems = [],
+  hideHeader = false,
 }: OperationalWeekBoardProps) {
   const weekStart = weekDays[0] ?? weekStartMonday(today);
   const end = weekDays[weekDays.length - 1];
@@ -145,16 +148,18 @@ export function OperationalWeekBoard({
 
   return (
     <section className="space-y-4 overflow-x-hidden">
-      <header>
-        <h3 className="text-lg font-semibold tracking-tight text-[var(--os-text)]">
-          Semana · {startParts?.day}/{startParts?.month} – {endParts?.day}/{endParts?.month}
-        </h3>
-        <p className="text-sm text-[var(--os-text-muted)]">
-          {mode === "consulta"
-            ? "Consulta compartida. Un mismo trabajo puede verse varios días sin duplicar el registro."
-            : "Seleccioná un día para trabajarlo en vista Día."}
-        </p>
-      </header>
+      {!hideHeader && (
+        <header>
+          <h3 className="text-lg font-semibold tracking-tight text-[var(--os-text)]">
+            Semana · {startParts?.day}/{startParts?.month} – {endParts?.day}/{endParts?.month}
+          </h3>
+          <p className="text-sm text-[var(--os-text-muted)]">
+            {mode === "consulta"
+              ? "Consulta compartida. Un mismo trabajo puede verse varios días sin duplicar el registro."
+              : "Seleccioná un día para trabajarlo en vista Día."}
+          </p>
+        </header>
+      )}
 
       <div className={`${mode === "consulta" ? "hidden md:grid" : "grid"} gap-3 md:grid-cols-5`}>
         {weekDays.map((day) => {

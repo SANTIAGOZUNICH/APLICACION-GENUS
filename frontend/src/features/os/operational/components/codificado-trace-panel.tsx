@@ -41,7 +41,18 @@ export function CodificadoTracePanel({
   });
   const summary = summarizePackingGroups(groups);
   const viaCodificado = Boolean(progress?.viaCodificado);
-  const bulkKg = progress?.bulkRemainderKg;
+  // progress viene de un overlay client-side (localStorage) que nunca se
+  // completa para trabajos nativos — sin fallback a workItem (Neon, siempre
+  // fresco), estos campos quedaban invisibles para Calidad/Producción aunque
+  // estuvieran correctamente persistidos.
+  const bulkKg = progress?.bulkRemainderKg ?? workItem?.bulkRemainderKg ?? null;
+  const bulkObservation =
+    progress?.bulkRemainderObservation ?? workItem?.bulkRemainderObservation ?? null;
+  const sentToCodificadoBy = progress?.sentToCodificadoBy ?? workItem?.sentToCodificadoBy ?? null;
+  const deliveredFromCodificadoBy =
+    progress?.deliveredFromCodificadoBy ?? workItem?.deliveredFromCodificadoBy ?? null;
+  const codificadoObservation =
+    progress?.codificadoObservation ?? workItem?.operationalObservation ?? null;
   const sampleUnits = workItem?.sampleUnits ?? null;
   const deliverableUnits = workItem?.deliverableUnits ?? null;
   const packagingClosedAt = workItem?.packagingClosedAt ?? null;
@@ -81,6 +92,13 @@ export function CodificadoTracePanel({
           </dd>
         </div>
       </dl>
+
+      {bulkObservation ? (
+        <p className="text-xs text-[var(--os-text-muted)]" data-testid="trace-bulk-observation">
+          <span className="font-medium text-[var(--os-text)]">Obs. sobrante: </span>
+          {bulkObservation}
+        </p>
+      ) : null}
 
       {onCorrectLoteVto ? (
         <Button
@@ -153,7 +171,7 @@ export function CodificadoTracePanel({
               Enviado desde Envasado
             </dt>
             <dd className="font-medium" data-testid="trace-sent-by">
-              {displayField(progress?.sentToCodificadoBy)}
+              {displayField(sentToCodificadoBy)}
               {progress?.codificadoOriginSector ? (
                 <span className="mt-0.5 block text-xs text-[var(--os-text-muted)]">
                   {SECTOR_LABELS[
@@ -168,15 +186,15 @@ export function CodificadoTracePanel({
               Entregado desde Codificado
             </dt>
             <dd className="font-medium" data-testid="trace-delivered-by">
-              {displayField(progress?.deliveredFromCodificadoBy)}
+              {displayField(deliveredFromCodificadoBy)}
             </dd>
           </div>
-          {progress?.codificadoObservation ? (
+          {codificadoObservation ? (
             <div className="sm:col-span-2">
               <dt className="text-xs uppercase text-[var(--os-text-muted)]">
                 Obs. Codificado
               </dt>
-              <dd className="text-sm">{progress.codificadoObservation}</dd>
+              <dd className="text-sm">{codificadoObservation}</dd>
             </div>
           ) : null}
         </dl>

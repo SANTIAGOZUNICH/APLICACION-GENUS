@@ -38,4 +38,29 @@ describe("operational-calendar Buenos Aires", () => {
     ]);
     expect(dayOfWeekName("2026-07-14")).toBe("Martes");
   });
+
+  /**
+   * Casos 4/5 obligatorios — goPrevWeek/goNextWeek (use-operational-calendar.ts)
+   * se implementan como addDaysIso(weekStartMonday(d), ±7); esto prueba
+   * exactamente esa aritmética con el ejemplo del pedido (24/08 → 31/08 →
+   * 07/09 → vuelta a 31/08), exactamente ±1 semana, sin saltar meses.
+   */
+  it("navega exactamente ±1 semana (ejemplo del pedido: 24/08 → 31/08 → 07/09 → 31/08)", () => {
+    const week1 = weekStartMonday("2026-08-24");
+    expect(week1).toBe("2026-08-24");
+
+    const week2 = weekStartMonday(addDaysIso(week1, 7));
+    expect(week2).toBe("2026-08-31");
+
+    const week3 = weekStartMonday(addDaysIso(week2, 7));
+    expect(week3).toBe("2026-09-07");
+
+    const back = weekStartMonday(addDaysIso(week3, -7));
+    expect(back).toBe("2026-08-31");
+  });
+
+  it("nunca salta más de una semana, incluso cruzando fin de mes/año", () => {
+    expect(weekStartMonday(addDaysIso(weekStartMonday("2026-12-28"), 7))).toBe("2027-01-04");
+    expect(weekStartMonday(addDaysIso(weekStartMonday("2027-01-04"), -7))).toBe("2026-12-28");
+  });
 });

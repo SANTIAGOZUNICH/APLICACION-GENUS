@@ -77,4 +77,51 @@ describe("projectNativeWorkItem · Codificado handoff", () => {
     expect(wi.status).toBe("codificado_completo");
     expect(wi.codificadoOriginLabel).toBe("Envasado Premium");
   });
+
+  /**
+   * Caso 9 obligatorio — handoff Envasado→Codificado→Calidad conserva
+   * lote/VTO/OA/packingGroups/muestras/sobrante/observaciones. La escritura
+   * (codificado-handoff-service.ts) ya se auditó y no se tocó en este
+   * bloque; esto prueba la proyección Neon→WorkItem que Calidad y
+   * Producción efectivamente leen (native-projector.ts, mismo camino para
+   * ambos sectores) — que ningún campo se recorta al pasar por acá.
+   */
+  it("entrega desde Codificado preserva TODA la trazabilidad para Calidad y Producción", () => {
+    const wi = projectNativeWorkItem(
+      base({
+        sector: "CODIFICADO",
+        line: null,
+        viaCodificado: true,
+        codificadoOriginSector: "ENVASADO_MASIVO",
+        sentToCodificadoAt: "2026-08-03T15:00:00.000Z",
+        sentToCodificadoBy: "Operario Masivo",
+        deliveredFromCodificadoAt: "2026-08-03T18:00:00.000Z",
+        deliveredFromCodificadoBy: "Codificador",
+        codificadoObservation: "Cerrado sin novedades",
+        packagingLote: "L-900",
+        packagingVto: "2027-06-01",
+        orderNumber: "OA-2026-000145",
+        packingGroups: [
+          { cajas: 10, unidadesPorCaja: 100 },
+          { cajas: 2, unidadesPorCaja: 50 },
+        ],
+        sampleUnits: 3,
+        deliverableUnits: 1100,
+        bulkRemainderKg: 3.2,
+        bulkRemainderObservation: "Sobrante guardado en tambor 4",
+      })
+    );
+    expect(wi.packagingLote).toBe("L-900");
+    expect(wi.packagingVto).toBe("2027-06-01");
+    expect(wi.oaRef).toBe("OA-2026-000145");
+    expect(wi.packingGroups).toEqual([
+      { cajas: 10, unidadesPorCaja: 100 },
+      { cajas: 2, unidadesPorCaja: 50 },
+    ]);
+    expect(wi.sampleUnits).toBe(3);
+    expect(wi.deliverableUnits).toBe(1100);
+    expect(wi.bulkRemainderKg).toBe(3.2);
+    expect(wi.bulkRemainderObservation).toBe("Sobrante guardado en tambor 4");
+    expect(wi.operationalObservation).toBe("Cerrado sin novedades");
+  });
 });

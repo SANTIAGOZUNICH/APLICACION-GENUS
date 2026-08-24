@@ -60,6 +60,9 @@ type OperationAction =
       finishedQty: string;
       observation: string;
       completedBy?: string;
+      bulkRemainderKg?: number | null;
+      bulkRemainderObservation?: string | null;
+      bulkRemainderId?: string | null;
     }
   | {
       action: "quality_decision";
@@ -247,6 +250,9 @@ export async function POST(request: Request) {
               finishedQty: body.finishedQty,
               observation: body.observation,
               completedBy: body.completedBy ?? actor.displayName ?? actor.email,
+              bulkRemainderKg: body.bulkRemainderKg,
+              bulkRemainderObservation: body.bulkRemainderObservation,
+              bulkRemainderId: body.bulkRemainderId,
             },
             actor.sector
           );

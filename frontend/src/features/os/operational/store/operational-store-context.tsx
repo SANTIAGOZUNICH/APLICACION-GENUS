@@ -111,7 +111,14 @@ interface OperationalStoreValue {
   /** Resuelve cuando el servidor confirmó persistencia; rechaza si falló (dato local no se pierde). */
   markWorkFinished: (
     item: WorkItem,
-    payload: { finishedQty: string; observation: string; updatedBy?: string }
+    payload: {
+      finishedQty: string;
+      observation: string;
+      updatedBy?: string;
+      bulkRemainderKg?: number | null;
+      bulkRemainderObservation?: string | null;
+      bulkRemainderId?: string | null;
+    }
   ) => Promise<void>;
   sendToCodificado: (
     item: WorkItem,
@@ -367,7 +374,14 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
   const markWorkFinished = useCallback(
     (
       item: WorkItem,
-      payload: { finishedQty: string; observation: string; updatedBy?: string }
+      payload: {
+        finishedQty: string;
+        observation: string;
+        updatedBy?: string;
+        bulkRemainderKg?: number | null;
+        bulkRemainderObservation?: string | null;
+        bulkRemainderId?: string | null;
+      }
     ): Promise<void> => {
       const prior = readProgressMap()[item.id];
       const enriched: WorkItem = {
@@ -407,6 +421,9 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         finishedQty: payload.finishedQty,
         observation: payload.observation,
         completedBy: payload.updatedBy,
+        bulkRemainderKg: payload.bulkRemainderKg,
+        bulkRemainderObservation: payload.bulkRemainderObservation,
+        bulkRemainderId: payload.bulkRemainderId,
       });
     },
     [syncFromStorage]

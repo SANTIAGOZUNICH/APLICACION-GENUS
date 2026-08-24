@@ -33,6 +33,7 @@ import { canSendToCodificado } from "../lib/codificado-flow";
 import {
   WORK_TRANSFER,
 } from "../lib/work-transfer-labels";
+import { isEnvasadoWorkPending } from "../lib/envasado-pending";
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
 
 interface EnvasadoOperationalViewProps {
@@ -82,6 +83,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   const [listTab, setListTab] = useState<EnvasadoListTab>("activos");
   const [archivedIds, setArchivedIds] = useState<string[]>([]);
   const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
+  const [topTab, setTopTab] = useState<"semanas" | "pendientes">("semanas");
 
   const availableLines: LineBucket[] = useMemo(() => {
     const base: LineBucket[] = sectorId === "ENVASADO_MASIVO" ? ["1", "2", "3"] : ["1"];
@@ -97,6 +99,16 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
 
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
     useOperationalPlan(sectorId, planOptions);
+
+  // Pendientes: fuente Neon sin recorte por día/semana (mismo patrón que
+  // Codificado en codificado-operational-view.tsx) — necesita ver TODO lo
+  // activo del sector, no solo lo que cae en el rango que esté mirando en
+  // Semanas.
+  const {
+    data: dataPendientes,
+    loading: loadingPendientes,
+    refresh: refreshPendientes,
+  } = useOperationalPlan(sectorId, {});
 
   const session = useMemo(
     () => ({ email: workspace.context.email, sector: sectorId }),
@@ -121,6 +133,15 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     const base = applyEffectiveStatus(mergeManualWorkItems(sectorId, data?.workItems ?? []));
     return sortByDeliveryDateNearest(applyProgressToWorkItems(base));
   }, [data?.workItems, sectorId, applyEffectiveStatus, applyProgressToWorkItems]);
+
+  const pendientesItems = useMemo(() => {
+    const base = applyEffectiveStatus(
+      mergeManualWorkItems(sectorId, dataPendientes?.workItems ?? [])
+    );
+    return sortByDeliveryDateNearest(applyProgressToWorkItems(base)).filter(
+      isEnvasadoWorkPending
+    );
+  }, [dataPendientes?.workItems, sectorId, applyEffectiveStatus, applyProgressToWorkItems]);
 
   const itemsForActiveLine = useMemo(
     () => workItems.filter((item) => (resolveLineBucket(item.line) ?? "1") === activeLine),
@@ -171,21 +192,12 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         bulkRemainderObservation?: string | null;
       }
     ) => {
-      try {
-        await markWorkFinished(item, {
-          finishedQty: payload.finishedQty,
-          observation: payload.observation,
-          updatedBy: workspace.context.displayName,
-        });
-      } catch (err) {
-        showToast(
-          err instanceof Error
-            ? `No se guardó: ${err.message} — reintentá.`
-            : "No se pudo guardar en el servidor. Reintentá.",
-          "info"
-        );
-        return;
-      }
+      // El sobrante se registra en Depósito ANTES de completar, para poder
+      // enlazar su id al work item en el mismo llamado a completar (evita
+      // que "Entregar a Calidad" directo deje bulkRemainderKg/Id sin
+      // persistir en el work item, a diferencia de "Enviar a Codificado"
+      // que ya los enlazaba).
+      let bulkId: string | null = null;
       if (hasRegistrableBulkRemainder(payload.bulkRemainderKg)) {
         try {
           const granel = await upsertGranelFromEnvasadoApi(session, {
@@ -198,6 +210,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
             reportedBy: workspace.context.displayName,
             observation: payload.bulkRemainderObservation ?? undefined,
           });
+          bulkId = granel.record.id;
           if (granel.created) {
             pushNotification({
               kind: "trabajo_asignado",
@@ -212,6 +225,24 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
             "info"
           );
         }
+      }
+      try {
+        await markWorkFinished(item, {
+          finishedQty: payload.finishedQty,
+          observation: payload.observation,
+          updatedBy: workspace.context.displayName,
+          bulkRemainderKg: payload.bulkRemainderKg,
+          bulkRemainderObservation: payload.bulkRemainderObservation,
+          bulkRemainderId: bulkId,
+        });
+      } catch (err) {
+        showToast(
+          err instanceof Error
+            ? `No se guardó: ${err.message} — reintentá.`
+            : "No se pudo guardar en el servidor. Reintentá.",
+          "info"
+        );
+        return;
       }
       pushNotification({
         kind: "trabajo_finalizado",
@@ -301,6 +332,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         if (server.replayed || result.already) {
           showToast(WORK_TRANSFER.alreadyInCodificado, "info");
           await refresh();
+          await refreshPendientes();
           return { already: true };
         }
         pushNotification({
@@ -317,6 +349,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         );
         setSelectedItem(server.workItem);
         await refresh();
+        await refreshPendientes();
         return { already: false };
       } catch (err) {
         showToast(
@@ -335,6 +368,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       email,
       session,
       refresh,
+      refreshPendientes,
     ]
   );
 
@@ -354,6 +388,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         setSelectedItem(null);
         setDrawerOpen(false);
         await refresh();
+        await refreshPendientes();
         return { ok: true };
       } catch (err) {
         showToast(
@@ -363,7 +398,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         return { ok: false };
       }
     },
-    [session, showToast, refresh]
+    [session, showToast, refresh, refreshPendientes]
   );
 
   const handleArchiveFromView = useCallback(
@@ -429,87 +464,147 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         />
       </header>
 
-      <OperationalDayNav
-        selectedDate={calendar.selectedDate}
-        today={calendar.today}
-        viewMode={calendar.viewMode}
-        onPrev={calendar.goPrevDay}
-        onNext={calendar.goNextDay}
-        onToday={calendar.goToday}
-        onViewMode={calendar.setViewMode}
-      />
-
-      {error && (
-        <div className="mb-4 rounded border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-4 py-3 text-sm text-[var(--genus-error)]">
-          {error}
-        </div>
-      )}
-
-      {loading && !data && <div className="os-skeleton h-48 rounded-[var(--os-radius)]" />}
-
-      {!loading && calendar.viewMode === "week" && (
-        <OperationalWeekBoard
-          weekDays={calendar.weekDays}
-          today={calendar.today}
-          selectedDate={calendar.selectedDate}
-          items={excludeArchivedFromView(
-            sortByDeliveryDateNearest(itemsForActiveLine),
-            archivedIds
-          )}
-          onSelectDay={calendar.selectDay}
+      <div className="mb-4">
+        <OperationalTabs
+          tabs={[
+            { id: "semanas", label: "Semanas" },
+            { id: "pendientes", label: "Pendientes", count: pendientesItems.length },
+          ]}
+          activeId={topTab}
+          onChange={(id) => setTopTab(id as "semanas" | "pendientes")}
         />
-      )}
+      </div>
 
-      {!loading && calendar.viewMode === "day" && (
+      {topTab === "pendientes" ? (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <OperationalTabs
-              tabs={lineTabs}
-              activeId={activeLine}
-              onChange={(id) => setActiveLine(id as LineBucket)}
-            />
-            <label className="flex items-center gap-2 text-xs text-[var(--os-text-muted)]">
-              <input
-                type="checkbox"
-                checked={optionalLineEnabled}
-                onChange={toggleOptionalLine}
-                className="size-4 accent-[var(--os-teal)]"
-              />
-              Línea opcional activa
-            </label>
-          </div>
-
-          <OperationalTabs
-            tabs={listTabs}
-            activeId={listTab}
-            onChange={(id) => setListTab(id as EnvasadoListTab)}
-          />
-
+          {loadingPendientes && !dataPendientes && (
+            <div className="os-skeleton h-48 rounded-[var(--os-radius)]" />
+          )}
           <WorkItemProgressTable
-            items={visibleItems}
+            items={pendientesItems}
             variant="envasado"
-            listMode={listTab === "archivados" ? "archived" : "active"}
+            showPackagingColumns
             getFinishedQty={getFinishedQty}
             getObservation={getObservation}
             onSelectItem={(item) => {
               setSelectedItem(item);
               setDrawerOpen(true);
             }}
-            onArchiveFromView={handleArchiveFromView}
-            onRestoreToView={handleRestoreToView}
-            archiveBusyId={archiveBusyId}
-            emptyMessage={
-              listTab === "archivados"
-                ? "No hay trabajos archivados de tu vista en esta línea."
-                : data?.source === "native"
-                  ? nativeEmptyPlanMessage({
-                      date: calendar.selectedDate,
-                      sector: sectorId,
-                    })
-                  : (data?.message ?? "No hay trabajos planificados para este día.")
-            }
+            emptyMessage="No hay trabajos pendientes en este sector."
           />
         </div>
+      ) : (
+        <>
+          <OperationalDayNav
+            selectedDate={calendar.selectedDate}
+            today={calendar.today}
+            viewMode={calendar.viewMode}
+            onPrev={calendar.goPrevDay}
+            onNext={calendar.goNextDay}
+            onPrevWeek={calendar.goPrevWeek}
+            onNextWeek={calendar.goNextWeek}
+            onToday={calendar.goToday}
+            onViewMode={calendar.setViewMode}
+          />
+
+          {error && (
+            <div className="mb-4 rounded border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-4 py-3 text-sm text-[var(--genus-error)]">
+              {error}
+            </div>
+          )}
+
+          {loading && !data && <div className="os-skeleton h-48 rounded-[var(--os-radius)]" />}
+
+          {!loading && calendar.viewMode === "week" && (
+            <div
+              className={`grid gap-4 ${
+                availableLines.length >= 3
+                  ? "lg:grid-cols-2 xl:grid-cols-3"
+                  : availableLines.length === 2
+                    ? "lg:grid-cols-2"
+                    : ""
+              }`}
+            >
+              {availableLines.map((bucket) => (
+                <section
+                  key={bucket}
+                  className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-3"
+                >
+                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
+                    {LINE_TAB_LABELS[bucket]}
+                  </h4>
+                  <OperationalWeekBoard
+                    weekDays={calendar.weekDays}
+                    today={calendar.today}
+                    selectedDate={calendar.selectedDate}
+                    items={excludeArchivedFromView(
+                      sortByDeliveryDateNearest(
+                        workItems.filter(
+                          (item) => (resolveLineBucket(item.line) ?? "1") === bucket
+                        )
+                      ),
+                      archivedIds
+                    )}
+                    onSelectDay={calendar.selectDay}
+                    hideHeader
+                  />
+                </section>
+              ))}
+            </div>
+          )}
+
+          {!loading && calendar.viewMode === "day" && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <OperationalTabs
+                  tabs={lineTabs}
+                  activeId={activeLine}
+                  onChange={(id) => setActiveLine(id as LineBucket)}
+                />
+                <label className="flex items-center gap-2 text-xs text-[var(--os-text-muted)]">
+                  <input
+                    type="checkbox"
+                    checked={optionalLineEnabled}
+                    onChange={toggleOptionalLine}
+                    className="size-4 accent-[var(--os-teal)]"
+                  />
+                  Línea opcional activa
+                </label>
+              </div>
+
+              <OperationalTabs
+                tabs={listTabs}
+                activeId={listTab}
+                onChange={(id) => setListTab(id as EnvasadoListTab)}
+              />
+
+              <WorkItemProgressTable
+                items={visibleItems}
+                variant="envasado"
+                listMode={listTab === "archivados" ? "archived" : "active"}
+                getFinishedQty={getFinishedQty}
+                getObservation={getObservation}
+                onSelectItem={(item) => {
+                  setSelectedItem(item);
+                  setDrawerOpen(true);
+                }}
+                onArchiveFromView={handleArchiveFromView}
+                onRestoreToView={handleRestoreToView}
+                archiveBusyId={archiveBusyId}
+                emptyMessage={
+                  listTab === "archivados"
+                    ? "No hay trabajos archivados de tu vista en esta línea."
+                    : data?.source === "native"
+                      ? nativeEmptyPlanMessage({
+                          date: calendar.selectedDate,
+                          sector: sectorId,
+                        })
+                      : (data?.message ?? "No hay trabajos planificados para este día.")
+                }
+              />
+            </div>
+          )}
+        </>
       )}
 
       <WorkItemDrawer
@@ -647,6 +742,8 @@ export function ElaboracionOperationalView() {
         viewMode={calendar.viewMode}
         onPrev={calendar.goPrevDay}
         onNext={calendar.goNextDay}
+        onPrevWeek={calendar.goPrevWeek}
+        onNextWeek={calendar.goNextWeek}
         onToday={calendar.goToday}
         onViewMode={calendar.setViewMode}
       />
