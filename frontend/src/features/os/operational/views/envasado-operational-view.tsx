@@ -504,6 +504,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
             onPrevWeek={calendar.goPrevWeek}
             onNextWeek={calendar.goNextWeek}
             onToday={calendar.goToday}
+            onTodayWeek={calendar.goToCurrentWeek}
             onViewMode={calendar.setViewMode}
           />
 
@@ -516,40 +517,37 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           {loading && !data && <div className="os-skeleton h-48 rounded-[var(--os-radius)]" />}
 
           {!loading && calendar.viewMode === "week" && (
-            <div
-              className={`grid gap-4 ${
-                availableLines.length >= 3
-                  ? "lg:grid-cols-2 xl:grid-cols-3"
-                  : availableLines.length === 2
-                    ? "lg:grid-cols-2"
-                    : ""
-              }`}
-            >
-              {availableLines.map((bucket) => (
-                <section
-                  key={bucket}
-                  className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-3"
-                >
-                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-                    {LINE_TAB_LABELS[bucket]}
-                  </h4>
-                  <OperationalWeekBoard
-                    weekDays={calendar.weekDays}
-                    today={calendar.today}
-                    selectedDate={calendar.selectedDate}
-                    items={excludeArchivedFromView(
-                      sortByDeliveryDateNearest(
-                        workItems.filter(
-                          (item) => (resolveLineBucket(item.line) ?? "1") === bucket
-                        )
-                      ),
-                      archivedIds
-                    )}
-                    onSelectDay={calendar.selectDay}
-                    hideHeader
-                  />
-                </section>
-              ))}
+            <div className="space-y-6">
+              {availableLines.map((bucket) => {
+                const lineItems = excludeArchivedFromView(
+                  sortByDeliveryDateNearest(
+                    workItems.filter((item) => (resolveLineBucket(item.line) ?? "1") === bucket)
+                  ),
+                  archivedIds
+                );
+                return (
+                  <section
+                    key={bucket}
+                    className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4"
+                  >
+                    <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--os-text)]">
+                      {LINE_TAB_LABELS[bucket]}
+                      <span className="rounded-full bg-[var(--os-bg)] px-2 py-0.5 text-xs font-normal normal-case text-[var(--os-text-muted)]">
+                        {lineItems.length} trabajo{lineItems.length === 1 ? "" : "s"}
+                      </span>
+                    </h4>
+                    <OperationalWeekBoard
+                      weekDays={calendar.weekDays}
+                      today={calendar.today}
+                      selectedDate={calendar.selectedDate}
+                      items={lineItems}
+                      onSelectDay={calendar.selectDay}
+                      hideHeader
+                      richCards
+                    />
+                  </section>
+                );
+              })}
             </div>
           )}
 

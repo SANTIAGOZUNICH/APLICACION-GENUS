@@ -11,6 +11,8 @@ import {
 } from "@/lib/operational/operational-calendar";
 import { displayField } from "@/lib/operational/display-fields";
 import { workItemCoversDate } from "@/lib/operational/work-item-date-range";
+import { StatusChip } from "./operational-ui";
+import { DeliveryDateBadge } from "./delivery-date-badge";
 
 interface OperationalWeekBoardProps {
   weekDays: string[];
@@ -24,6 +26,13 @@ interface OperationalWeekBoardProps {
   consultaItems?: WeeklyPlanItemDto[];
   /** Oculta el título "Semana · dd/mm – dd/mm" propio — usado cuando el padre ya muestra un encabezado (ej. grilla de líneas simultáneas). */
   hideHeader?: boolean;
+  /**
+   * Tarjetas más grandes y con más datos por trabajo (Producto/Cliente/
+   * Cantidad + Lote/VTO/OA/Entrega/Estado) — opt-in, solo mode="operational".
+   * Default false: no cambia nada para los llamadores existentes
+   * (Elaboración, consulta).
+   */
+  richCards?: boolean;
 }
 
 function dtoCoversDate(item: WeeklyPlanItemDto, day: string): boolean {
@@ -107,6 +116,42 @@ function ConsultaCard({ item }: { item: WeeklyPlanItemDto }) {
   );
 }
 
+/**
+ * Tarjeta enriquecida de un trabajo — jerarquía Producto > Cliente >
+ * Cantidad, luego datos secundarios compactos (Lote/VTO/OA, sin repetir la
+ * fecha de producción: ya la da la columna del día). Estado como chip.
+ */
+function WorkItemRichCard({ item }: { item: WorkItem }) {
+  const secondary = [
+    item.packagingLote ? `Lote ${item.packagingLote}` : null,
+    item.packagingVto ? `VTO ${item.packagingVto}` : null,
+    item.oaRef ?? item.oeRef ?? null,
+  ].filter(Boolean);
+
+  return (
+    <li className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] p-2.5 text-xs leading-snug text-[var(--os-text)] shadow-sm">
+      <p className="line-clamp-2 text-sm font-semibold" title={item.product ?? ""}>
+        {displayField(item.product)}
+      </p>
+      <p className="mt-0.5 line-clamp-1 text-[var(--os-text-muted)]" title={item.client ?? ""}>
+        {displayField(item.client)}
+      </p>
+      <p className="mt-1 font-medium tabular-nums text-[var(--os-teal)]">
+        {displayField(item.quantity)} {item.unit ?? ""}
+      </p>
+      {secondary.length > 0 && (
+        <p className="mt-1.5 truncate text-[0.7rem] text-[var(--os-text-muted)]" title={secondary.join(" · ")}>
+          {secondary.join(" · ")}
+        </p>
+      )}
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        <StatusChip status={item.status} />
+        {item.deliveryDate ? <DeliveryDateBadge deliveryDate={item.deliveryDate} /> : null}
+      </div>
+    </li>
+  );
+}
+
 /** Vista Semana operativa — L–V con resalte de Hoy. */
 export function OperationalWeekBoard({
   weekDays,
@@ -117,6 +162,7 @@ export function OperationalWeekBoard({
   mode = "operational",
   consultaItems = [],
   hideHeader = false,
+  richCards = false,
 }: OperationalWeekBoardProps) {
   const weekStart = weekDays[0] ?? weekStartMonday(today);
   const end = weekDays[weekDays.length - 1];
@@ -208,6 +254,17 @@ export function OperationalWeekBoard({
                   {dayConsulta.length > 6 && (
                     <li className="text-[0.65rem] text-[var(--os-text-muted)]">
                       +{dayConsulta.length - 6} más
+                    </li>
+                  )}
+                </ul>
+              ) : richCards ? (
+                <ul className="space-y-2">
+                  {dayItems.slice(0, 5).map((item) => (
+                    <WorkItemRichCard key={item.id} item={item} />
+                  ))}
+                  {dayItems.length > 5 && (
+                    <li className="text-[0.7rem] font-medium text-[var(--os-text-muted)]">
+                      +{dayItems.length - 5} más
                     </li>
                   )}
                 </ul>

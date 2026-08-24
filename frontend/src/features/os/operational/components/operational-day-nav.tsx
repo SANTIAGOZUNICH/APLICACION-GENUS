@@ -20,6 +20,8 @@ interface OperationalDayNavProps {
   onPrevWeek?: () => void;
   onNextWeek?: () => void;
   onToday: () => void;
+  /** "Hoy"/"Semana actual" en modo Semana — vuelve a la semana de hoy sin resetear a vista Día. Si se omite, cae a onToday (día). */
+  onTodayWeek?: () => void;
   onViewMode: (mode: TemporalViewMode) => void;
 }
 
@@ -39,14 +41,14 @@ export function OperationalDayNav({
   onPrevWeek,
   onNextWeek,
   onToday,
+  onTodayWeek,
   onViewMode,
 }: OperationalDayNavProps) {
   const isWeek = viewMode === "week" && onPrevWeek && onNextWeek;
   const prev = addDaysIso(selectedDate, -1);
   const next = addDaysIso(selectedDate, 1);
-  const isToday = selectedDate === today;
-
   const weekStart = weekStartMonday(selectedDate);
+  const isToday = isWeek ? weekStart === weekStartMonday(today) : selectedDate === today;
   const weekEnd = addDaysIso(weekStart, 6);
   const weekStartParts = parseIsoDate(weekStart);
   const weekEndParts = parseIsoDate(weekEnd);
@@ -93,14 +95,14 @@ export function OperationalDayNav({
 
         <button
           type="button"
-          onClick={onToday}
+          onClick={isWeek ? (onTodayWeek ?? onToday) : onToday}
           className={`rounded px-3 py-1.5 font-semibold ${
             isToday
               ? "bg-emerald-700 text-white"
               : "border border-[var(--os-border)] text-[var(--os-text)] hover:bg-[var(--os-bg)]"
           }`}
         >
-          Hoy
+          {isWeek ? "Semana actual" : "Hoy"}
         </button>
 
         <span className="min-w-[10rem] text-center font-medium text-[var(--os-text)]">
