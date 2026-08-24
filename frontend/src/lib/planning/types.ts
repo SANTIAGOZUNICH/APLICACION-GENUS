@@ -102,6 +102,8 @@ export interface PlanningWorkItemRecord {
   codificadoRevision?: number;
   codificadoCancelledAt?: string | null;
   productionPedidoId?: string | null;
+  /** N° de Pedido legible (production_pedidos.op) — resuelto vía JOIN en drizzle-repository.ts. */
+  pedidoOp?: string | null;
   /** Avance operativo durable (0023) — reemplaza overlay en memoria. */
   operationalStatus?: string;
   finishedQty?: string | null;

@@ -5,6 +5,7 @@ import { getDb, type GenusDb } from "@/lib/db/client";
 import {
   operationalEvents,
   planningWeeks,
+  productionPedidos,
   workItems,
   type PlanningWeekRow,
   type WorkItemRow,
@@ -112,6 +113,8 @@ const WORK_ITEM_SELECT_COLUMNS = {
   reworkRequestedBy: workItems.reworkRequestedBy,
   reworkRequestedBySector: workItems.reworkRequestedBySector,
   reworkReason: workItems.reworkReason,
+  /** N° de Pedido legible (production_pedidos.op) — via LEFT JOIN, ver listPublishedItems/listCompletedItems. */
+  pedidoOp: productionPedidos.op,
 } as const;
 
 function mapItem(row: WorkItemRow | Record<string, unknown>): PlanningWorkItemRecord {
@@ -195,6 +198,7 @@ function mapItem(row: WorkItemRow | Record<string, unknown>): PlanningWorkItemRe
     reworkRequestedBy: r.reworkRequestedBy ?? null,
     reworkRequestedBySector: r.reworkRequestedBySector ?? null,
     reworkReason: r.reworkReason ?? null,
+    pedidoOp: (row as Record<string, unknown>).pedidoOp as string | null | undefined ?? null,
   };
 }
 
@@ -359,6 +363,7 @@ export class DrizzlePlanningRepository implements PlanningRepository {
       .select(WORK_ITEM_SELECT_COLUMNS)
       .from(workItems)
       .innerJoin(planningWeeks, eq(workItems.planningWeekId, planningWeeks.id))
+      .leftJoin(productionPedidos, eq(workItems.productionPedidoId, productionPedidos.id))
       .where(and(...conditions))
       .orderBy(asc(workItems.plannedDate), asc(workItems.product))
       .limit(limit);
@@ -383,6 +388,7 @@ export class DrizzlePlanningRepository implements PlanningRepository {
       .select(WORK_ITEM_SELECT_COLUMNS)
       .from(workItems)
       .innerJoin(planningWeeks, eq(workItems.planningWeekId, planningWeeks.id))
+      .leftJoin(productionPedidos, eq(workItems.productionPedidoId, productionPedidos.id))
       .where(
         and(
           eq(workItems.status, "PUBLICADO"),

@@ -138,28 +138,25 @@ const PEDIDO_STATUS_RANK: Record<string, number> = {
   EN_ELABORACION: 1,
   EN_PROCESO: 1,
   EN_ENVASADO: 2,
-  LISTO_PARA_ENTREGAR: 3,
-  TERMINADO: 3,
-  ENTREGADO: 4,
+  EN_CODIFICADO: 3,
+  LISTO_PARA_ENTREGAR: 4,
+  TERMINADO: 4,
+  ENTREGADO: 5,
 };
 
 /**
- * No existe "EN_CODIFICADO" en production_pedidos (el CHECK constraint no lo
- * admite) — Codificado es, para el Pedido, la continuación del mismo tramo
- * de envasado, así que reusa EN_ENVASADO (mismo criterio que
- * touchPedidoEnEnvasado en codificado-handoff-service.ts).
+ * EN_CODIFICADO (migración 0029) es un estado real y distinto — Codificado
+ * ya no reusa EN_ENVASADO. Esto es independiente de
+ * touchPedidoEnEnvasado/touchPedidoListoParaEntregar en
+ * codificado-handoff-service.ts, que señalan el handoff Envasado→Codificado
+ * (no la asignación) y siguen sin cambios.
  */
 function targetPedidoStatusForSector(
   sector: PlanningWorkItemRecord["sector"]
-): "EN_ELABORACION" | "EN_ENVASADO" | null {
+): "EN_ELABORACION" | "EN_ENVASADO" | "EN_CODIFICADO" | null {
   if (sector === "ELABORACION") return "EN_ELABORACION";
-  if (
-    sector === "ENVASADO_MASIVO" ||
-    sector === "ENVASADO_PREMIUM" ||
-    sector === "CODIFICADO"
-  ) {
-    return "EN_ENVASADO";
-  }
+  if (sector === "ENVASADO_MASIVO" || sector === "ENVASADO_PREMIUM") return "EN_ENVASADO";
+  if (sector === "CODIFICADO") return "EN_CODIFICADO";
   return null;
 }
 

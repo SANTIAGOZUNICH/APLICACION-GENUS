@@ -268,7 +268,7 @@ describe("assignWorkItemDurable — origen Pedido (fake tx)", () => {
     expect(fakeDbHandle.productionPedidos.get("pedido-1")!.estado).toBe("EN_ENVASADO");
   });
 
-  it("3) Codificado con Pedido → pedido pasa a EN_ENVASADO (no existe EN_CODIFICADO)", async () => {
+  it("3) Codificado con Pedido → pedido pasa a EN_CODIFICADO (estado real y distinto, migración 0029)", async () => {
     seedPedido("INGRESO");
     await assignWorkItemDurable(
       {
@@ -282,7 +282,42 @@ describe("assignWorkItemDurable — origen Pedido (fake tx)", () => {
       },
       actor
     );
-    expect(fakeDbHandle.productionPedidos.get("pedido-1")!.estado).toBe("EN_ENVASADO");
+    expect(fakeDbHandle.productionPedidos.get("pedido-1")!.estado).toBe("EN_CODIFICADO");
+  });
+
+  it("3b) Codificado sobre un pedido ya EN_ENVASADO avanza a EN_CODIFICADO (no retrocede, no se queda igual)", async () => {
+    seedPedido("EN_ENVASADO");
+    await assignWorkItemDurable(
+      {
+        sector: "CODIFICADO",
+        client: "Cliente C2",
+        product: "Loción",
+        plannedQuantity: "100",
+        plannedDate: "2026-08-24",
+        productionPedidoId: "pedido-1",
+        idempotencyKey: "idem-codificado-000002",
+      },
+      actor
+    );
+    expect(fakeDbHandle.productionPedidos.get("pedido-1")!.estado).toBe("EN_CODIFICADO");
+  });
+
+  it("3c) Envasado sobre un pedido ya EN_CODIFICADO NO retrocede a EN_ENVASADO", async () => {
+    seedPedido("EN_CODIFICADO");
+    await assignWorkItemDurable(
+      {
+        sector: "ENVASADO_MASIVO",
+        client: "Cliente C3",
+        product: "Loción — reenvasado",
+        plannedQuantity: "50",
+        plannedDate: "2026-08-24",
+        line: "Línea 1",
+        productionPedidoId: "pedido-1",
+        idempotencyKey: "idem-codificado-000003",
+      },
+      actor
+    );
+    expect(fakeDbHandle.productionPedidos.get("pedido-1")!.estado).toBe("EN_CODIFICADO");
   });
 
   it("4) Elaboración con Pedido → pedido pasa a EN_ELABORACION", async () => {

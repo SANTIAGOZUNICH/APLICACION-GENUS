@@ -13,6 +13,7 @@ import type { SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
 import { editWorkItemAssignment } from "../lib/edit-assignment";
 import { correctWorkItemLoteVto } from "../lib/lote-vto-correction";
+import { correctWorkItemOrderRef } from "../lib/order-ref-correction";
 
 const CONTROL_CLASS =
   "w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--ig-control-bg,var(--os-surface))] px-3 py-2 text-sm text-[var(--ig-control-fg,var(--os-text))]";
@@ -54,6 +55,7 @@ export function EditAssignmentDialog({
   const [notes, setNotes] = useState(() => item?.notes ?? "");
   const [lote, setLote] = useState(() => item?.packagingLote ?? item?.loteRef ?? "");
   const [vto, setVto] = useState(() => item?.packagingVto ?? "");
+  const [orderRef, setOrderRef] = useState(() => item?.oeRef ?? item?.oaRef ?? "");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +63,7 @@ export function EditAssignmentDialog({
   if (!item) return null;
 
   const showLoteVto = item.sector !== "ELABORACION";
+  const orderRefLabel = item.sector === "ELABORACION" ? "OE" : "OA";
 
   const planningChanged =
     client.trim() !== (item.client ?? "") ||
@@ -73,9 +76,10 @@ export function EditAssignmentDialog({
     showLoteVto &&
     (lote.trim() !== (item.packagingLote ?? item.loteRef ?? "") ||
       vto.trim() !== (item.packagingVto ?? ""));
+  const orderRefChanged = orderRef.trim() !== (item.oeRef ?? item.oaRef ?? "");
 
   const handleSave = async () => {
-    if (!planningChanged && !loteVtoChanged) {
+    if (!planningChanged && !loteVtoChanged && !orderRefChanged) {
       onClose();
       return;
     }
@@ -98,6 +102,21 @@ export function EditAssignmentDialog({
       if (!loteResult.ok) {
         setBusy(false);
         setError(loteResult.error);
+        return;
+      }
+    }
+
+    if (orderRefChanged) {
+      const orderResult = await correctWorkItemOrderRef({
+        itemId: item.id,
+        orderNumberRaw: orderRef,
+        reason,
+        actorSectorId,
+        updatedBy: actorName,
+      });
+      if (!orderResult.ok) {
+        setBusy(false);
+        setError(orderResult.error);
         return;
       }
     }
@@ -255,6 +274,23 @@ export function EditAssignmentDialog({
               </p>
             </div>
           ) : null}
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium" htmlFor="edit-order-ref">
+              N° de {orderRefLabel}
+            </label>
+            <input
+              id="edit-order-ref"
+              value={orderRef}
+              onChange={(e) => setOrderRef(e.target.value)}
+              placeholder={`Ej. ${orderRefLabel}-2026-000145`}
+              className={CONTROL_CLASS}
+              disabled={busy}
+            />
+            <p className="text-xs text-[var(--os-text-muted)]">
+              Debe ser una {orderRefLabel} existente — esta corrección no crea órdenes nuevas.
+            </p>
+          </div>
 
           <div className="space-y-1.5">
             <label className="text-sm font-medium" htmlFor="edit-reason">

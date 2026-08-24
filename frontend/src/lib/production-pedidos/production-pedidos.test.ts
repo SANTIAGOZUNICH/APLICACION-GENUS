@@ -6,11 +6,41 @@ import {
   resolveHeaderField,
   splitCols,
 } from "./excel-paste";
-import { canAccessProductionPedidos, coercePedidoFields, normalizeFecha } from "./types";
+import {
+  canAccessProductionPedidos,
+  coercePedidoFields,
+  normalizeFecha,
+  normalizeStatus,
+  PRODUCTION_PEDIDO_STATUS_LABELS,
+  PRODUCTION_PEDIDO_STATUSES,
+} from "./types";
 import {
   getProductionPedidosService,
   resetProductionPedidosMemoryForTests,
 } from "./service";
+
+describe("EN_CODIFICADO — estado real y distinto (migración 0029)", () => {
+  it("normaliza variantes de EN_CODIFICADO", () => {
+    expect(normalizeStatus("EN_CODIFICADO")).toBe("EN_CODIFICADO");
+    expect(normalizeStatus("EN CODIFICADO")).toBe("EN_CODIFICADO");
+    expect(normalizeStatus("en codificado")).toBe("EN_CODIFICADO");
+  });
+
+  it("está en la lista oficial de estados, entre EN_ENVASADO y LISTO_PARA_ENTREGAR", () => {
+    const idxEnvasado = PRODUCTION_PEDIDO_STATUSES.indexOf("EN_ENVASADO");
+    const idxCodificado = PRODUCTION_PEDIDO_STATUSES.indexOf("EN_CODIFICADO");
+    const idxListo = PRODUCTION_PEDIDO_STATUSES.indexOf("LISTO_PARA_ENTREGAR");
+    expect(idxCodificado).toBeGreaterThan(idxEnvasado);
+    expect(idxCodificado).toBeLessThan(idxListo);
+  });
+
+  it("tiene etiqueta propia, distinta de EN_ENVASADO", () => {
+    expect(PRODUCTION_PEDIDO_STATUS_LABELS.EN_CODIFICADO).toBe("EN CODIFICADO");
+    expect(PRODUCTION_PEDIDO_STATUS_LABELS.EN_CODIFICADO).not.toBe(
+      PRODUCTION_PEDIDO_STATUS_LABELS.EN_ENVASADO
+    );
+  });
+});
 
 describe("production pedidos kg", () => {
   it("Q=100 ML=30 → KG=3", () => {

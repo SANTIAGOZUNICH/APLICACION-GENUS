@@ -31,6 +31,7 @@ import {
   saveWorkProgressDurable,
   toClientDeliveryRecord,
   updateWorkItemLoteVtoDurable,
+  updateWorkItemOrderRefDurable,
   updateWorkItemPlanningDurable,
 } from "@/lib/planning/work-item-progress-repository";
 
@@ -111,6 +112,14 @@ type OperationAction =
       itemId: string;
       packagingLote?: string | null;
       packagingVto?: string | null;
+      reason: string;
+      updatedBy?: string;
+      actorSectorId?: SectorId;
+    }
+  | {
+      action: "update_order_ref";
+      itemId: string;
+      orderNumberRaw: string;
       reason: string;
       updatedBy?: string;
       actorSectorId?: SectorId;
@@ -421,6 +430,27 @@ export async function POST(request: Request) {
         const row = await updateWorkItemLoteVtoDurable(nativeLoteVtoId, {
           packagingLote: body.packagingLote,
           packagingVto: body.packagingVto,
+          reason: body.reason,
+          updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
+          updatedBySector: actor.sector,
+        });
+        return NextResponse.json({ ok: true, revision: row.version, record: row });
+      }
+      case "update_order_ref": {
+        assertBodySectorMatches(body.actorSectorId, actor.sector);
+        const gate = validateWorkMutationActor(actor.sector);
+        if (!gate.ok) {
+          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
+        }
+        const nativeOrderRefId = nativeIdFromItemId(body.itemId);
+        if (!nativeOrderRefId) {
+          return NextResponse.json(
+            { error: "Corrección de OA/OE no disponible para este trabajo.", code: "NOT_NATIVE" },
+            { status: 400 }
+          );
+        }
+        const row = await updateWorkItemOrderRefDurable(nativeOrderRefId, {
+          orderNumberRaw: body.orderNumberRaw,
           reason: body.reason,
           updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
           updatedBySector: actor.sector,

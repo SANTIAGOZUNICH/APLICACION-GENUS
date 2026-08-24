@@ -321,6 +321,21 @@ export async function postUpdateLoteVto(payload: {
   });
 }
 
+export async function postUpdateOrderRef(payload: {
+  itemId: string;
+  orderNumberRaw: string;
+  reason: string;
+  updatedBy?: string;
+  actorSectorId: SectorId;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "update_order_ref", ...payload }),
+  });
+}
+
 /**
  * Edición de campos de planificación (producto/cliente/cantidad/fecha de
  * entrega/observaciones) sobre un trabajo ya asignado. Solo PRODUCCION

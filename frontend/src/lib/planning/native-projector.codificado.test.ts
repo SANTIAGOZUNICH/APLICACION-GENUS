@@ -77,4 +77,20 @@ describe("projectNativeWorkItem · Codificado handoff", () => {
     expect(wi.status).toBe("codificado_completo");
     expect(wi.codificadoOriginLabel).toBe("Envasado Premium");
   });
+
+  it("proyecta pedidoOp (N° de Pedido legible) cuando el work item tiene Pedido vinculado", () => {
+    const wi = projectNativeWorkItem(
+      base({
+        productionPedidoId: "33333333-3333-3333-3333-333333333333",
+        pedidoOp: "OP-4521",
+      })
+    );
+    expect(wi.pedidoRef).toBe("33333333-3333-3333-3333-333333333333");
+    expect(wi.pedidoOp).toBe("OP-4521");
+  });
+
+  it("pedidoOp es null cuando no hay Pedido vinculado — nunca se inventa", () => {
+    const wi = projectNativeWorkItem(base({}));
+    expect(wi.pedidoOp).toBeNull();
+  });
 });

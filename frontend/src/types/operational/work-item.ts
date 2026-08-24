@@ -94,6 +94,8 @@ export interface WorkItem {
   status: WorkItemStatus;
   priority: WorkItemPriority | null;
   pedidoRef: string | null;
+  /** N° de Pedido legible (production_pedidos.op) — solo work items nativos con Pedido vinculado. */
+  pedidoOp?: string | null;
   oeRef: string | null;
   oaRef: string | null;
   loteRef: string | null;
