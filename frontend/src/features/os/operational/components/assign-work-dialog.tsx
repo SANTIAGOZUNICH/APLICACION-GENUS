@@ -343,23 +343,27 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
 
   return (
     <Dialog open onOpenChange={(open) => !open && !submitting && onClose()}>
-      <DialogContent className="max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>Asignar trabajo — {SECTOR_LABELS[sector]}</DialogTitle>
-          <DialogDescription>
-            Creá y asigná un trabajo con fecha de entrega. El guardado se confirma en Neon antes de
-            mostrar éxito; doble clic o reintento reutilizan la misma clave de idempotencia.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="flex max-h-[85vh] w-full max-w-3xl flex-col gap-0 overflow-hidden p-0">
+        <div className="shrink-0 space-y-1.5 border-b border-[var(--os-border)] px-6 py-4">
+          <DialogHeader>
+            <DialogTitle>Asignar trabajo — {SECTOR_LABELS[sector]}</DialogTitle>
+            <DialogDescription>
+              Creá y asigná un trabajo con fecha de entrega. El guardado se confirma en Neon antes de
+              mostrar éxito; doble clic o reintento reutilizan la misma clave de idempotencia.
+            </DialogDescription>
+          </DialogHeader>
+        </div>
 
         <form
           onSubmit={(e) => {
             e.preventDefault();
             void submitAssignment();
           }}
-          className="grid grid-cols-1 gap-4 sm:grid-cols-2"
+          className="flex min-h-0 flex-1 flex-col"
           aria-busy={submitting}
         >
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4" data-testid="assign-scroll-area">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div
             className="space-y-1.5 rounded-[var(--os-radius)] border-2 border-[var(--os-teal)]/50 bg-[var(--os-teal)]/5 p-3 sm:col-span-2"
             data-testid="assign-pedido-section"
@@ -705,8 +709,10 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
               {feedback}
             </span>
           ) : null}
+        </div>
+        </div>
 
-          <DialogFooter className="sm:col-span-2">
+          <DialogFooter className="shrink-0 border-t border-[var(--os-border)] px-6 py-4">
             <Button type="button" variant="secondary" disabled={submitting} onClick={onClose}>
               Cancelar
             </Button>

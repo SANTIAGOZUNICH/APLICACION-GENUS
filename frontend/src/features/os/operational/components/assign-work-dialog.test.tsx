@@ -211,4 +211,17 @@ describe("AssignWorkDialog — sector preseleccionado y fijo por sector", () => 
     expect((screen.getByTestId("assign-pedido-search") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText(/^Cliente/) as HTMLInputElement).value).toBe("");
   });
+
+  it("scroll interno: el contenido central es scrolleable, header/footer quedan fuera del área de scroll", () => {
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    const scrollArea = screen.getByTestId("assign-scroll-area");
+    expect(scrollArea.className).toContain("overflow-y-auto");
+    // N° de Pedido (arriba del scroll) y el botón Asignar (footer fijo) están
+    // ambos presentes en el DOM al mismo tiempo — no hace falta scrollear
+    // para que React los monte, la limitación real es solo visual (CSS).
+    expect(screen.getByTestId("assign-pedido-section")).toBeTruthy();
+    expect(screen.getByTestId("assign-submit")).toBeTruthy();
+    // El botón Asignar vive fuera del contenedor scrolleable (footer fijo).
+    expect(scrollArea.contains(screen.getByTestId("assign-submit"))).toBe(false);
+  });
 });
