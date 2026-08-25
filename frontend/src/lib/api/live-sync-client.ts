@@ -340,6 +340,26 @@ export async function postUpdateOrderRef(payload: {
 }
 
 /**
+ * Reprograma un trabajo (drag & drop en Semanas) — solo plannedDate/line.
+ * Solo PRODUCCION (gate server-side); nunca toca lote/VTO/OA/cantidad/
+ * producto/cliente/packing/muestras/sobrante/observaciones.
+ */
+export async function postRescheduleWork(payload: {
+  itemId: string;
+  plannedDate: string;
+  line?: string | null;
+  updatedBy?: string;
+  actorSectorId: SectorId;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "reschedule_work", ...payload }),
+  });
+}
+
+/**
  * Edición de campos de planificación (producto/cliente/cantidad/fecha de
  * entrega/observaciones) sobre un trabajo ya asignado. Solo PRODUCCION
  * (gate server-side); nunca toca avance/ejecución de otro sector.

@@ -21,6 +21,7 @@ import { canDeliverFromCodificado, canReopenCodificadoDelivery } from "../lib/co
 import { canEditInCodificado, codificadoOriginLabel, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
+import { AssignWorkDialog } from "../components/assign-work-dialog";
 
 type TabId = "pendientes" | "entregados";
 
@@ -31,7 +32,7 @@ type TabId = "pendientes" | "entregados";
 export function CodificadoOperationalView() {
   const workspace = useRequiredWorkspace();
   const { applyEffectiveStatus, showToast } = usePreviewContext();
-  const { email } = usePreviewSession();
+  const { email, sectorId: actorSectorId } = usePreviewSession();
   const {
     applyProgressToWorkItems,
     progressMap,
@@ -39,6 +40,8 @@ export function CodificadoOperationalView() {
     saveWorkPackaging,
     getFinishedQty,
   } = useOperationalStore();
+  const canAssignWork = actorSectorId === "PRODUCCION" || actorSectorId === "DIRECCION";
+  const [showAssignDialog, setShowAssignDialog] = useState(false);
 
   const session = useMemo(
     () => ({ email: workspace.context.email, sector: "CODIFICADO" as const }),
@@ -349,17 +352,37 @@ export function CodificadoOperationalView() {
             Asignación directa de Producción o enviados desde Envasado · {workspace.context.displayName}
           </p>
         </div>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={refresh}
-          disabled={loading}
-          data-testid="codificado-refresh"
-        >
-          Actualizar
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {canAssignWork ? (
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => setShowAssignDialog(true)}
+              data-testid="open-assign-work-dialog"
+            >
+              + Asignar trabajo
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={refresh}
+            disabled={loading}
+            data-testid="codificado-refresh"
+          >
+            Actualizar
+          </Button>
+        </div>
       </header>
+
+      {showAssignDialog ? (
+        <AssignWorkDialog
+          sector="CODIFICADO"
+          onClose={() => setShowAssignDialog(false)}
+          onAssigned={() => refresh()}
+        />
+      ) : null}
 
       <OperationalTabs
         tabs={[

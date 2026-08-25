@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
 import type { WorkItem } from "@/types/operational/work-item";
 import type { WeeklyPlanItemDto } from "@/lib/planning/weekly-plan-dto";
 import {
@@ -11,8 +13,20 @@ import {
 } from "@/lib/operational/operational-calendar";
 import { displayField } from "@/lib/operational/display-fields";
 import { workItemCoversDate } from "@/lib/operational/work-item-date-range";
+import { isWorkItemReschedulable } from "../lib/work-transfer-labels";
 import { StatusChip } from "./operational-ui";
 import { DeliveryDateBadge } from "./delivery-date-badge";
+
+/** Id del día destino codificado en el droppable — `${zone}::${day}`. */
+export function weekBoardDropId(zone: string, day: string): string {
+  return `${zone}::${day}`;
+}
+
+export function parseWeekBoardDropId(id: string): { zone: string; day: string } | null {
+  const idx = id.indexOf("::");
+  if (idx < 0) return null;
+  return { zone: id.slice(0, idx), day: id.slice(idx + 2) };
+}
 
 interface OperationalWeekBoardProps {
   weekDays: string[];
@@ -33,6 +47,54 @@ interface OperationalWeekBoardProps {
    * (Elaboración, consulta).
    */
   richCards?: boolean;
+  /**
+   * Habilita drag & drop de replanificación (solo Producción) — opt-in,
+   * default false: no cambia nada para los llamadores existentes. El padre
+   * debe envolver todas las instancias que comparten un drop (ej. las 3
+   * líneas de Envasado) en un único DndContext y manejar onDragEnd.
+   */
+  draggable?: boolean;
+  /**
+   * Identidad de esta grilla dentro del DndContext compartido del padre —
+   * para Envasado, el bucket de línea ("1"/"2"/"3"/"opcional"); para
+   * Elaboración/Codificado, un id fijo (no hay línea que cambiar).
+   */
+  dropZoneId?: string;
+}
+
+/** Envuelve una tarjeta con drag & drop — no-op visual si `disabled`. */
+function DraggableCard({
+  id,
+  disabled,
+  children,
+}: {
+  id: string;
+  disabled: boolean;
+  children: ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id,
+    disabled,
+  });
+  const style: CSSProperties = transform
+    ? {
+        transform: CSS.Translate.toString(transform),
+        zIndex: 20,
+        position: "relative",
+        opacity: isDragging ? 0.85 : 1,
+      }
+    : {};
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...(disabled ? {} : { ...attributes, ...listeners })}
+      className={disabled ? undefined : "cursor-grab touch-none active:cursor-grabbing"}
+      data-testid="week-board-draggable-card"
+    >
+      {children}
+    </div>
+  );
 }
 
 function dtoCoversDate(item: WeeklyPlanItemDto, day: string): boolean {
@@ -152,6 +214,156 @@ function WorkItemRichCard({ item }: { item: WorkItem }) {
   );
 }
 
+interface WeekBoardDayCellProps {
+  day: string;
+  dayItems: WorkItem[];
+  dayConsulta: WeeklyPlanItemDto[];
+  isToday: boolean;
+  isSelected: boolean;
+  mode: "operational" | "consulta";
+  richCards: boolean;
+  draggable: boolean;
+  dropZoneId: string;
+  onSelectDay: (iso: string) => void;
+}
+
+function WeekBoardDayCell({
+  day,
+  dayItems,
+  dayConsulta,
+  isToday,
+  isSelected,
+  mode,
+  richCards,
+  draggable,
+  dropZoneId,
+  onSelectDay,
+}: WeekBoardDayCellProps) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: weekBoardDropId(dropZoneId, day),
+    disabled: !draggable,
+  });
+  const count = mode === "consulta" ? dayConsulta.length : dayItems.length;
+
+  const className = `rounded border px-3 py-3 text-left transition ${
+    isToday
+      ? mode === "consulta"
+        ? "border-[var(--os-teal)] bg-[var(--os-teal)]/10"
+        : "border-emerald-600 bg-emerald-50/70"
+      : isSelected
+        ? "border-[var(--os-text)] bg-[var(--os-bg)]"
+        : "border-[var(--os-border)] hover:border-[var(--os-text-muted)]"
+  } ${draggable && isOver ? "ring-2 ring-[var(--os-teal)] ring-offset-1" : ""}`;
+
+  const body = (
+    <>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-sm font-semibold">{dayOfWeekName(day)}</span>
+        {isToday && (
+          <span
+            className={`text-[0.65rem] font-bold uppercase tracking-wide ${
+              mode === "consulta" ? "text-[var(--os-teal)]" : "text-emerald-800"
+            }`}
+          >
+            Hoy
+          </span>
+        )}
+      </div>
+      <p className="mb-3 text-xs text-[var(--os-text-muted)]">{formatOperationalLongDate(day)}</p>
+      {count === 0 ? (
+        <p className="text-xs text-[var(--os-text-muted)]" data-testid="week-board-empty-day">
+          {draggable ? "Sin trabajos — soltá acá para mover" : "Sin trabajos"}
+        </p>
+      ) : mode === "consulta" ? (
+        <ul className="space-y-2">
+          {dayConsulta.slice(0, 6).map((item) => (
+            <ConsultaCard key={item.workItemId} item={item} />
+          ))}
+          {dayConsulta.length > 6 && (
+            <li className="text-[0.65rem] text-[var(--os-text-muted)]">+{dayConsulta.length - 6} más</li>
+          )}
+        </ul>
+      ) : richCards ? (
+        <ul className="space-y-2">
+          {dayItems.slice(0, 5).map((item) =>
+            draggable ? (
+              <DraggableCard
+                key={item.id}
+                id={item.id}
+                disabled={!isWorkItemReschedulable(item.status)}
+              >
+                <WorkItemRichCard item={item} />
+              </DraggableCard>
+            ) : (
+              <WorkItemRichCard key={item.id} item={item} />
+            )
+          )}
+          {dayItems.length > 5 && (
+            <li className="text-[0.7rem] font-medium text-[var(--os-text-muted)]">
+              +{dayItems.length - 5} más
+            </li>
+          )}
+        </ul>
+      ) : (
+        <ul className="space-y-2">
+          {dayItems.slice(0, 6).map((item) => {
+            const compact = (
+              <li key={item.id} className="text-xs leading-snug text-[var(--os-text)]">
+                <span className="font-medium">{displayField(item.line ?? item.ownerPerson)}</span>
+                <br />
+                {displayField(item.product ?? item.client)}
+                <br />
+                <span className="text-[var(--os-text-muted)]">{displayField(item.quantity)}</span>
+              </li>
+            );
+            return draggable ? (
+              <DraggableCard
+                key={item.id}
+                id={item.id}
+                disabled={!isWorkItemReschedulable(item.status)}
+              >
+                {compact}
+              </DraggableCard>
+            ) : (
+              compact
+            );
+          })}
+          {dayItems.length > 6 && (
+            <li className="text-[0.65rem] text-[var(--os-text-muted)]">+{dayItems.length - 6} más</li>
+          )}
+        </ul>
+      )}
+    </>
+  );
+
+  if (!draggable) {
+    return (
+      <button type="button" onClick={() => onSelectDay(day)} className={className}>
+        {body}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelectDay(day)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelectDay(day);
+        }
+      }}
+      className={className}
+      data-testid={`week-board-daycell-${weekBoardDropId(dropZoneId, day)}`}
+    >
+      {body}
+    </div>
+  );
+}
+
 /** Vista Semana operativa — L–V con resalte de Hoy. */
 export function OperationalWeekBoard({
   weekDays,
@@ -163,6 +375,8 @@ export function OperationalWeekBoard({
   consultaItems = [],
   hideHeader = false,
   richCards = false,
+  draggable = false,
+  dropZoneId = "default",
 }: OperationalWeekBoardProps) {
   const weekStart = weekDays[0] ?? weekStartMonday(today);
   const end = weekDays[weekDays.length - 1];
@@ -208,91 +422,21 @@ export function OperationalWeekBoard({
       )}
 
       <div className={`${mode === "consulta" ? "hidden md:grid" : "grid"} gap-3 md:grid-cols-5`}>
-        {weekDays.map((day) => {
-          const dayItems = byDate.get(day) ?? [];
-          const dayConsulta = consultaByDate.get(day) ?? [];
-          const isToday = day === today;
-          const isSelected = day === selectedDate;
-          const count = mode === "consulta" ? dayConsulta.length : dayItems.length;
-          return (
-            <button
-              key={day}
-              type="button"
-              onClick={() => onSelectDay(day)}
-              className={`rounded border px-3 py-3 text-left transition ${
-                isToday
-                  ? mode === "consulta"
-                    ? "border-[var(--os-teal)] bg-[var(--os-teal)]/10"
-                    : "border-emerald-600 bg-emerald-50/70"
-                  : isSelected
-                    ? "border-[var(--os-text)] bg-[var(--os-bg)]"
-                    : "border-[var(--os-border)] hover:border-[var(--os-text-muted)]"
-              }`}
-            >
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-sm font-semibold">{dayOfWeekName(day)}</span>
-                {isToday && (
-                  <span
-                    className={`text-[0.65rem] font-bold uppercase tracking-wide ${
-                      mode === "consulta" ? "text-[var(--os-teal)]" : "text-emerald-800"
-                    }`}
-                  >
-                    Hoy
-                  </span>
-                )}
-              </div>
-              <p className="mb-3 text-xs text-[var(--os-text-muted)]">
-                {formatOperationalLongDate(day)}
-              </p>
-              {count === 0 ? (
-                <p className="text-xs text-[var(--os-text-muted)]">Sin trabajos</p>
-              ) : mode === "consulta" ? (
-                <ul className="space-y-2">
-                  {dayConsulta.slice(0, 6).map((item) => (
-                    <ConsultaCard key={item.workItemId} item={item} />
-                  ))}
-                  {dayConsulta.length > 6 && (
-                    <li className="text-[0.65rem] text-[var(--os-text-muted)]">
-                      +{dayConsulta.length - 6} más
-                    </li>
-                  )}
-                </ul>
-              ) : richCards ? (
-                <ul className="space-y-2">
-                  {dayItems.slice(0, 5).map((item) => (
-                    <WorkItemRichCard key={item.id} item={item} />
-                  ))}
-                  {dayItems.length > 5 && (
-                    <li className="text-[0.7rem] font-medium text-[var(--os-text-muted)]">
-                      +{dayItems.length - 5} más
-                    </li>
-                  )}
-                </ul>
-              ) : (
-                <ul className="space-y-2">
-                  {dayItems.slice(0, 6).map((item) => (
-                    <li key={item.id} className="text-xs leading-snug text-[var(--os-text)]">
-                      <span className="font-medium">
-                        {displayField(item.line ?? item.ownerPerson)}
-                      </span>
-                      <br />
-                      {displayField(item.product ?? item.client)}
-                      <br />
-                      <span className="text-[var(--os-text-muted)]">
-                        {displayField(item.quantity)}
-                      </span>
-                    </li>
-                  ))}
-                  {dayItems.length > 6 && (
-                    <li className="text-[0.65rem] text-[var(--os-text-muted)]">
-                      +{dayItems.length - 6} más
-                    </li>
-                  )}
-                </ul>
-              )}
-            </button>
-          );
-        })}
+        {weekDays.map((day) => (
+          <WeekBoardDayCell
+            key={day}
+            day={day}
+            dayItems={byDate.get(day) ?? []}
+            dayConsulta={consultaByDate.get(day) ?? []}
+            isToday={day === today}
+            isSelected={day === selectedDate}
+            mode={mode}
+            richCards={richCards}
+            draggable={draggable}
+            dropZoneId={dropZoneId}
+            onSelectDay={onSelectDay}
+          />
+        ))}
       </div>
 
       {/* Mobile: day cards with expandable secondary info */}

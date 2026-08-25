@@ -35,7 +35,6 @@ import {
   SharedWeeklyPlanViewForMateriaPrima,
 } from "@/features/os/operational/views/shared-weekly-plan-view";
 import { MpHubView } from "@/features/os/operational/views/mp-hub-view";
-import { AsignarTrabajosView } from "@/features/os/operational/views/asignar-trabajos-view";
 import { AsignacionLotesView } from "@/features/os/operational/views/asignacion-lotes-view";
 import { EntregadosView } from "@/features/os/operational/views/entregados-view";
 import { RemitosView } from "@/features/os/operational/views/remitos-view";
@@ -124,8 +123,6 @@ export function TwinRouter() {
     case "semanas-produccion":
       return <SemanasProduccionView />;
 
-    case "asignar-trabajos":
-      return <AsignarTrabajosView />;
     case "entregados":
       return <EntregadosView />;
     case "asignacion-lotes":

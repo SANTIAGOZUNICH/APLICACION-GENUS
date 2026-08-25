@@ -5,7 +5,12 @@
 
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { OperationalWeekBoard } from "./operational-week-board";
+import { DndContext } from "@dnd-kit/core";
+import {
+  OperationalWeekBoard,
+  parseWeekBoardDropId,
+  weekBoardDropId,
+} from "./operational-week-board";
 import { createTestWorkItem } from "@/lib/__fixtures__/work-item.factory";
 
 afterEach(() => {
@@ -124,5 +129,102 @@ describe("OperationalWeekBoard — richCards (Envasado Semanas)", () => {
 
     expect(screen.getByText("Producto Lunes")).toBeTruthy();
     expect(screen.getByText("Producto Miércoles")).toBeTruthy();
+  });
+});
+
+describe("weekBoardDropId / parseWeekBoardDropId — codificación del id de drop", () => {
+  it("hace round-trip zona::día", () => {
+    const id = weekBoardDropId("2", "2026-08-26");
+    expect(id).toBe("2::2026-08-26");
+    expect(parseWeekBoardDropId(id)).toEqual({ zone: "2", day: "2026-08-26" });
+  });
+
+  it("devuelve null para un id sin separador", () => {
+    expect(parseWeekBoardDropId("sin-separador")).toBeNull();
+  });
+});
+
+/**
+ * Bloque 4 — drag & drop de replanificación (solo Producción, opt-in vía
+ * `draggable`). Las tarjetas movibles quedan draggable; una entregada/
+ * enviada a Calidad/Codificado no. La grilla por defecto (draggable=false,
+ * usada por Elaboración/consulta hoy) no cambia — ya cubierto arriba.
+ */
+describe("OperationalWeekBoard — draggable (drag & drop de Producción)", () => {
+  it("con draggable=false (default) las tarjetas no se envuelven en el wrapper draggable", () => {
+    const item = createTestWorkItem({ id: "wi-nodrag", sector: "ENVASADO_MASIVO", plannedDate: "2026-08-24", status: "pendiente" });
+    render(
+      <OperationalWeekBoard
+        weekDays={weekDays}
+        today="2026-08-24"
+        selectedDate="2026-08-24"
+        items={[item]}
+        onSelectDay={() => {}}
+        richCards
+      />
+    );
+    expect(screen.queryByTestId("week-board-draggable-card")).toBeNull();
+  });
+
+  it("con draggable=true, una tarjeta pendiente queda arrastrable (cursor-grab)", () => {
+    const item = createTestWorkItem({ id: "wi-drag-1", sector: "ENVASADO_MASIVO", plannedDate: "2026-08-24", status: "pendiente" });
+    render(
+      <DndContext onDragEnd={() => {}}>
+        <OperationalWeekBoard
+          weekDays={weekDays}
+          today="2026-08-24"
+          selectedDate="2026-08-24"
+          items={[item]}
+          onSelectDay={() => {}}
+          richCards
+          draggable
+          dropZoneId="1"
+        />
+      </DndContext>
+    );
+    const wrapper = screen.getByTestId("week-board-draggable-card");
+    expect(wrapper.className).toContain("cursor-grab");
+  });
+
+  it("10) un trabajo entregado NO queda arrastrable aunque draggable=true", () => {
+    const item = createTestWorkItem({ id: "wi-entregado", sector: "ENVASADO_MASIVO", plannedDate: "2026-08-24", status: "entregado" });
+    render(
+      <DndContext onDragEnd={() => {}}>
+        <OperationalWeekBoard
+          weekDays={weekDays}
+          today="2026-08-24"
+          selectedDate="2026-08-24"
+          items={[item]}
+          onSelectDay={() => {}}
+          richCards
+          draggable
+          dropZoneId="1"
+        />
+      </DndContext>
+    );
+    const wrapper = screen.getByTestId("week-board-draggable-card");
+    expect(wrapper.className).not.toContain("cursor-grab");
+  });
+
+  it("con draggable=true, el día sigue siendo clickeable (onSelectDay)", () => {
+    let clicked: string | null = null;
+    render(
+      <DndContext onDragEnd={() => {}}>
+        <OperationalWeekBoard
+          weekDays={weekDays}
+          today="2026-08-24"
+          selectedDate="2026-08-24"
+          items={[]}
+          onSelectDay={(day) => {
+            clicked = day;
+          }}
+          draggable
+          dropZoneId="1"
+        />
+      </DndContext>
+    );
+    const cell = screen.getByTestId(`week-board-daycell-${weekBoardDropId("1", "2026-08-26")}`);
+    cell.click();
+    expect(clicked).toBe("2026-08-26");
   });
 });

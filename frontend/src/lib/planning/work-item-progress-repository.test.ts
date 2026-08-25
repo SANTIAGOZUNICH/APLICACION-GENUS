@@ -134,6 +134,9 @@ vi.mock("@/lib/db/schema", () => {
     "sector",
     "orderId",
     "orderNumber",
+    "line",
+    "operationalStatus",
+    "deletedAt",
   ];
   const orderCols = ["id", "orderNumber", "type", "linkedWorkItemId", "version"];
   const table = (name: string, cols: string[]) => {
@@ -306,5 +309,150 @@ describe("updateWorkItemOrderRefDurable — corrección de OA/OE post-asignació
         ...actorArgs,
       })
     ).rejects.toMatchObject({ name: "PlanningValidationError" });
+  });
+});
+
+describe("rescheduleWorkItemDurable — drag & drop de planificación (fake tx)", () => {
+  let rescheduleWorkItemDurable: typeof import("./work-item-progress-repository").rescheduleWorkItemDurable;
+
+  const actorArgs = { updatedBy: "produccion@laboratoriogenus.com.ar", updatedBySector: "PRODUCCION" as const };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ rescheduleWorkItemDurable } = await import("./work-item-progress-repository"));
+    fakeDbHandle.workItems.set("wi-drag", {
+      id: "wi-drag",
+      client: "Cliente Envasado",
+      product: "Shampoo TCL",
+      plannedQuantity: "500",
+      unit: "un.",
+      plannedDate: "2026-08-24",
+      plannedDateTo: null,
+      line: "Línea 1",
+      sector: "ENVASADO_MASIVO",
+      operationalStatus: "pendiente",
+      deletedAt: null,
+      planningWeekId: "week-1",
+      packagingLote: "L-900",
+      packagingVto: "2027-06-01",
+      orderNumber: "OA-2026-000145",
+    });
+  });
+
+  it("5) drag entre días: actualiza solo plannedDate", async () => {
+    const row = await rescheduleWorkItemDurable("wi-drag", { plannedDate: "2026-08-26", ...actorArgs });
+    expect(row.plannedDate).toBe("2026-08-26");
+    expect(row.plannedDateTo).toBeNull();
+    expect(row.line).toBe("Línea 1");
+  });
+
+  it("6) drag entre líneas: actualiza solo line, misma fecha", async () => {
+    const row = await rescheduleWorkItemDurable("wi-drag", {
+      plannedDate: "2026-08-24",
+      line: "Línea 2",
+      ...actorArgs,
+    });
+    expect(row.line).toBe("Línea 2");
+    expect(row.plannedDate).toBe("2026-08-24");
+  });
+
+  it("7) drag día + línea: actualiza ambos atómicamente", async () => {
+    const row = await rescheduleWorkItemDurable("wi-drag", {
+      plannedDate: "2026-08-27",
+      line: "Línea 3",
+      ...actorArgs,
+    });
+    expect(row.plannedDate).toBe("2026-08-27");
+    expect(row.line).toBe("Línea 3");
+  });
+
+  it("11) partial patch: mover no modifica lote/VTO/OA/cantidad/producto/cliente", async () => {
+    const row = await rescheduleWorkItemDurable("wi-drag", { plannedDate: "2026-08-28", ...actorArgs });
+    expect(row.packagingLote).toBe("L-900");
+    expect(row.packagingVto).toBe("2027-06-01");
+    expect(row.orderNumber).toBe("OA-2026-000145");
+    expect(row.plannedQuantity).toBe("500");
+    expect(row.product).toBe("Shampoo TCL");
+    expect(row.client).toBe("Cliente Envasado");
+  });
+
+  it("12) genera evento WORK_ITEM_RESCHEDULED con before/after correctos", async () => {
+    await rescheduleWorkItemDurable("wi-drag", {
+      plannedDate: "2026-08-26",
+      line: "Línea 2",
+      ...actorArgs,
+    });
+    const event = fakeDbHandle.operationalEvents[0] as {
+      type: string;
+      fromStatus: string;
+      toStatus: string;
+      actorSector: string;
+    };
+    expect(event.type).toBe("WORK_ITEM_RESCHEDULED");
+    expect(JSON.parse(event.fromStatus)).toMatchObject({ plannedDate: "2026-08-24", line: "Línea 1" });
+    expect(JSON.parse(event.toStatus)).toMatchObject({ plannedDate: "2026-08-26", line: "Línea 2" });
+    expect(event.actorSector).toBe("PRODUCCION");
+  });
+
+  it("10) estado terminal — entregado no se puede mover", async () => {
+    fakeDbHandle.workItems.get("wi-drag")!.operationalStatus = "entregado";
+    await expect(
+      rescheduleWorkItemDurable("wi-drag", { plannedDate: "2026-08-26", ...actorArgs })
+    ).rejects.toMatchObject({ name: "PlanningValidationError" });
+    expect(fakeDbHandle.workItems.get("wi-drag")!.plannedDate).toBe("2026-08-24");
+    expect(fakeDbHandle.operationalEvents).toHaveLength(0);
+  });
+
+  it("10b) estado terminal — enviado a Codificado (en_codificado) no se puede mover", async () => {
+    fakeDbHandle.workItems.get("wi-drag")!.operationalStatus = "en_codificado";
+    await expect(
+      rescheduleWorkItemDurable("wi-drag", { plannedDate: "2026-08-26", ...actorArgs })
+    ).rejects.toMatchObject({ name: "PlanningValidationError" });
+  });
+
+  it("10c) cancelado no se puede mover", async () => {
+    fakeDbHandle.workItems.get("wi-drag")!.operationalStatus = "cancelado";
+    await expect(
+      rescheduleWorkItemDurable("wi-drag", { plannedDate: "2026-08-26", ...actorArgs })
+    ).rejects.toMatchObject({ name: "PlanningValidationError" });
+  });
+
+  it("borrado (soft delete) no se puede mover", async () => {
+    fakeDbHandle.workItems.get("wi-drag")!.deletedAt = "2026-08-20T10:00:00.000Z";
+    await expect(
+      rescheduleWorkItemDurable("wi-drag", { plannedDate: "2026-08-26", ...actorArgs })
+    ).rejects.toMatchObject({ name: "PlanningValidationError" });
+  });
+
+  it("pendiente/en_curso/bloqueado sí se pueden mover", async () => {
+    for (const status of ["pendiente", "en_curso", "bloqueado"]) {
+      fakeDbHandle.workItems.get("wi-drag")!.operationalStatus = status;
+      fakeDbHandle.workItems.get("wi-drag")!.plannedDate = "2026-08-24";
+      const row = await rescheduleWorkItemDurable("wi-drag", { plannedDate: "2026-08-26", ...actorArgs });
+      expect(row.plannedDate).toBe("2026-08-26");
+    }
+  });
+
+  it("Elaboración/Codificado: line=null limpia la línea (no aplica línea)", async () => {
+    fakeDbHandle.workItems.set("wi-elab", {
+      id: "wi-elab",
+      plannedDate: "2026-08-24",
+      plannedDateTo: null,
+      line: null,
+      sector: "ELABORACION",
+      operationalStatus: "pendiente",
+      deletedAt: null,
+      planningWeekId: "week-1",
+    });
+    const row = await rescheduleWorkItemDurable("wi-elab", { plannedDate: "2026-08-25", ...actorArgs });
+    expect(row.plannedDate).toBe("2026-08-25");
+    expect(row.line).toBeNull();
+  });
+
+  it("sin cambios reales — rechaza (mismo día, misma línea)", async () => {
+    await expect(
+      rescheduleWorkItemDurable("wi-drag", { plannedDate: "2026-08-24", line: "Línea 1", ...actorArgs })
+    ).rejects.toThrow(/No hay cambios/);
   });
 });

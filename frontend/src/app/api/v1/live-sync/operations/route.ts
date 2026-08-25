@@ -27,6 +27,7 @@ import {
   nativeIdFromItemId,
   restoreCancelledWorkDurable,
   restoreDeliveryDurable,
+  rescheduleWorkItemDurable,
   reworkWorkItemDurable,
   saveWorkProgressDurable,
   toClientDeliveryRecord,
@@ -146,6 +147,14 @@ type OperationAction =
       itemId: string;
       reason?: string | null;
       deletedBy?: string;
+      actorSectorId?: SectorId;
+    }
+  | {
+      action: "reschedule_work";
+      itemId: string;
+      plannedDate: string;
+      line?: string | null;
+      updatedBy?: string;
       actorSectorId?: SectorId;
     }
   | (DeliveryRecord & {
@@ -485,6 +494,27 @@ export async function POST(request: Request) {
           plannedDate: body.plannedDate,
           notes: body.notes,
           reason: body.reason,
+          updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
+          updatedBySector: actor.sector,
+        });
+        return NextResponse.json({ ok: true, revision: row.version, record: row });
+      }
+      case "reschedule_work": {
+        assertBodySectorMatches(body.actorSectorId, actor.sector);
+        const gate = validateWorkMutationActor(actor.sector);
+        if (!gate.ok) {
+          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
+        }
+        const nativeRescheduleId = nativeIdFromItemId(body.itemId);
+        if (!nativeRescheduleId) {
+          return NextResponse.json(
+            { error: "Replanificación no disponible para este trabajo.", code: "NOT_NATIVE" },
+            { status: 400 }
+          );
+        }
+        const row = await rescheduleWorkItemDurable(nativeRescheduleId, {
+          plannedDate: body.plannedDate,
+          line: body.line,
           updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
           updatedBySector: actor.sector,
         });

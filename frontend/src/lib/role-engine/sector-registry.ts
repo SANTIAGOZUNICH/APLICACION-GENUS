@@ -293,7 +293,6 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "mi_trabajo",
       "pedidos",
       "ordenes_elaboracion",
-      "asignar_trabajos",
       "entregados",
       "asignacion_lotes",
       "ver_elaboracion",

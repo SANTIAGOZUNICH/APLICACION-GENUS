@@ -83,6 +83,17 @@ export function codificadoOriginLabel(item: {
   return "Asignación directa de Producción";
 }
 
+/**
+ * Movible por drag & drop de planificación (Producción) — un trabajo ya
+ * transferido (isWorkTransferredStatus), entregado, cancelado o borrado ya
+ * representa un hecho operativo terminado y no puede replanificarse.
+ */
+export function isWorkItemReschedulable(status: string, deletedAt?: string | null): boolean {
+  if (deletedAt) return false;
+  if (status === "entregado" || status === "cancelado") return false;
+  return !isWorkTransferredStatus(status);
+}
+
 export function canEditInCodificado(item: {
   status: string;
   sector: string;

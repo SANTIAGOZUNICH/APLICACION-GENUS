@@ -129,6 +129,40 @@ describe("POST /api/v1/live-sync/operations RBAC", () => {
     expect(mutateMock).toHaveBeenCalledWith("cancel_work", "w1", expect.any(Object));
   });
 
+  it("9) 403 reschedule_work si el actor no es PRODUCCION (Envasado no puede replanificar)", async () => {
+    const res = await post(
+      {
+        action: "reschedule_work",
+        itemId: "native:w1",
+        plannedDate: "2026-08-26",
+        actorSectorId: "ENVASADO_MASIVO",
+      },
+      {
+        "x-genus-actor-email": "envasado@laboratoriogenus.com.ar",
+        "x-genus-actor-sector": "ENVASADO_MASIVO",
+      }
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("reschedule_work con actor PRODUCCION pasa el gate RBAC (400 NOT_NATIVE para item no-nativo, no 403)", async () => {
+    const res = await post(
+      {
+        action: "reschedule_work",
+        itemId: "w1",
+        plannedDate: "2026-08-26",
+        actorSectorId: "PRODUCCION",
+      },
+      {
+        "x-genus-actor-email": "produccion@laboratoriogenus.com.ar",
+        "x-genus-actor-sector": "PRODUCCION",
+      }
+    );
+    const body = (await res.json()) as { code?: string };
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("NOT_NATIVE");
+  });
+
   it("notifica Envasado solo al aprobar", async () => {
     mutateMock.mockReturnValue({ id: "q1" });
     const approved = await post(

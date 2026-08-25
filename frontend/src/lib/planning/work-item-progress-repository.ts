@@ -11,6 +11,7 @@ import {
 import { OrdersForbiddenError } from "@/lib/orders/types";
 import { PlanningValidationError } from "@/lib/planning/types";
 import { canRequestRework } from "@/features/os/operational/lib/rework-flow";
+import { isWorkItemReschedulable } from "@/features/os/operational/lib/work-transfer-labels";
 import { resolveDirectCompletePackedUnits, type PackingGroup } from "@/lib/remitos/packing-math";
 import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
 import { addDaysIso, weekStartMonday } from "@/lib/operational/operational-calendar";
@@ -425,6 +426,106 @@ export async function updateWorkItemPlanningDurable(
       actorEmail: input.updatedBy,
       actorSector: String(input.updatedBySector),
       note: input.reason?.trim() || null,
+    });
+
+    return row;
+  });
+}
+
+export interface RescheduleWorkItemInput {
+  /** Nueva fecha de producción (día destino del drop). Requerida. */
+  plannedDate: string;
+  /**
+   * Nueva línea (solo Envasado Masivo/Premium). `undefined` = no tocar la
+   * línea actual (drag solo entre días); `null` = limpiar línea (Elaboración/
+   * Codificado, que no usan línea).
+   */
+  line?: string | null;
+  updatedBy: string;
+  updatedBySector: SectorId | string;
+}
+
+/**
+ * Reprograma un trabajo por drag & drop en la vista Semanas (Producción) —
+ * PARTIAL PATCH: toca únicamente plannedDate/line, nunca lote/VTO/OA/
+ * cantidad/producto/cliente/packing/muestras/sobrante/observaciones. No
+ * reutiliza updateWorkItemPlanningDurable porque esa función restringe
+ * plannedDate a la semana ya publicada (regla pensada para correcciones
+ * puntuales) y no acepta `line` — acá el drag es justamente la forma de
+ * moverse entre días/líneas de la semana visible, así que no aplica esa
+ * restricción. El caller (ruta) ya validó que el actor es PRODUCCION.
+ */
+export async function rescheduleWorkItemDurable(id: string, input: RescheduleWorkItemInput) {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        plannedDate: workItems.plannedDate,
+        plannedDateTo: workItems.plannedDateTo,
+        line: workItems.line,
+        sector: workItems.sector,
+        operationalStatus: workItems.operationalStatus,
+        deletedAt: workItems.deletedAt,
+        planningWeekId: workItems.planningWeekId,
+      })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!existing) throw new Error("Work item no encontrado.");
+    if (existing.deletedAt) {
+      throw new PlanningValidationError("Este trabajo fue borrado y no puede replanificarse.");
+    }
+    if (!isWorkItemReschedulable(existing.operationalStatus, null)) {
+      throw new PlanningValidationError(
+        "Este trabajo ya avanzó (entregado, enviado a Calidad/Codificado o cancelado) y no puede moverse."
+      );
+    }
+
+    const nextDate = input.plannedDate.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
+      throw new PlanningValidationError("Fecha de producción inválida.");
+    }
+
+    const before: Record<string, unknown> = {};
+    const after: Record<string, unknown> = {};
+    const patch: Partial<typeof workItems.$inferInsert> = { updatedAt: new Date() };
+
+    const currentFrom = String(existing.plannedDate);
+    const currentTo = existing.plannedDateTo ? String(existing.plannedDateTo) : currentFrom;
+    if (nextDate !== currentFrom || nextDate !== currentTo) {
+      before.plannedDate = currentFrom;
+      before.plannedDateTo = existing.plannedDateTo ?? null;
+      after.plannedDate = nextDate;
+      after.plannedDateTo = null;
+      patch.plannedDate = nextDate;
+      patch.plannedDateTo = null;
+    }
+
+    if (input.line !== undefined) {
+      const nextLine = input.line?.trim() || null;
+      if (nextLine !== (existing.line ?? null)) {
+        before.line = existing.line ?? null;
+        after.line = nextLine;
+        patch.line = nextLine;
+      }
+    }
+
+    if (Object.keys(after).length === 0) {
+      throw new Error("No hay cambios para guardar.");
+    }
+
+    const [row] = await tx.update(workItems).set(patch).where(eq(workItems.id, id)).returning();
+    if (!row) throw new Error("No se pudo reprogramar el trabajo.");
+
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: existing.planningWeekId,
+      type: "WORK_ITEM_RESCHEDULED",
+      fromStatus: JSON.stringify(before),
+      toStatus: JSON.stringify(after),
+      actorEmail: input.updatedBy,
+      actorSector: String(input.updatedBySector),
+      note: null,
     });
 
     return row;

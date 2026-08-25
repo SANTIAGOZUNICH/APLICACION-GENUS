@@ -1,5 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { canEditInCodificado, codificadoOriginLabel, isInCodificadoStatus } from "./work-transfer-labels";
+import {
+  canEditInCodificado,
+  codificadoOriginLabel,
+  isInCodificadoStatus,
+  isWorkItemReschedulable,
+} from "./work-transfer-labels";
+
+describe("isWorkItemReschedulable — qué puede moverse por drag & drop", () => {
+  it("pendiente/en_curso/bloqueado sí se pueden mover", () => {
+    expect(isWorkItemReschedulable("pendiente")).toBe(true);
+    expect(isWorkItemReschedulable("en_curso")).toBe(true);
+    expect(isWorkItemReschedulable("bloqueado")).toBe(true);
+  });
+
+  it("completado/enviado a Calidad/en Codificado/entregado desde Codificado no se pueden mover", () => {
+    expect(isWorkItemReschedulable("completo")).toBe(false);
+    expect(isWorkItemReschedulable("revision")).toBe(false);
+    expect(isWorkItemReschedulable("en_codificado")).toBe(false);
+    expect(isWorkItemReschedulable("codificado_completo")).toBe(false);
+  });
+
+  it("entregado y cancelado no se pueden mover", () => {
+    expect(isWorkItemReschedulable("entregado")).toBe(false);
+    expect(isWorkItemReschedulable("cancelado")).toBe(false);
+  });
+
+  it("borrado (soft delete) no se puede mover aunque el status sea movible", () => {
+    expect(isWorkItemReschedulable("pendiente", "2026-08-20T10:00:00.000Z")).toBe(false);
+  });
+});
 
 describe("codificadoOriginLabel", () => {
   it("asignación directa (sin codificadoOriginSector, sin viaCodificado)", () => {

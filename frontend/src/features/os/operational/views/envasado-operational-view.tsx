@@ -1,8 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import type { WorkItem } from "@/types/operational/work-item";
+import type { SectorId } from "@/types/operational/sector";
+import { Button } from "@/components/ui/button";
 import { TwinShell } from "@/features/os/shell/twin-shell";
+import { AssignWorkDialog } from "../components/assign-work-dialog";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { personNamesMatch } from "@/lib/operational/display-fields";
@@ -17,7 +21,7 @@ import { WorkItemProgressTable } from "../components/work-item-progress-table";
 import { WorkItemDrawer } from "../components/work-item-drawer";
 import { SyncStatusBar, OperationalTabs } from "../components/operational-ui";
 import { OperationalDayNav } from "../components/operational-day-nav";
-import { OperationalWeekBoard } from "../components/operational-week-board";
+import { OperationalWeekBoard, parseWeekBoardDropId } from "../components/operational-week-board";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { useOperationalCalendar } from "../hooks/use-operational-calendar";
 import { nativeDayEmptyMessage, nativeEmptyPlanMessage } from "../lib/native-empty-copy";
@@ -35,6 +39,12 @@ import {
 } from "../lib/work-transfer-labels";
 import { isEnvasadoWorkPending } from "../lib/envasado-pending";
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
+import { postRescheduleWork } from "@/lib/api/live-sync-client";
+
+/** Sensor de drag & drop — umbral de distancia para no interferir con el click normal de "seleccionar día". */
+function useWeekBoardDndSensors() {
+  return useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+}
 
 interface EnvasadoOperationalViewProps {
   sectorId: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM";
@@ -74,9 +84,11 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     getFinishedQty,
     getObservation,
   } = useOperationalStore();
-  const { email } = usePreviewSession();
+  const { email, sectorId: actorSectorId } = usePreviewSession();
   const { enabled: optionalLineEnabled, toggle: toggleOptionalLine } =
     useOptionalLineToggle(sectorId);
+  /** Solo Producción/Dirección asignan trabajo desde acá — Envasado ve el mismo componente sin el botón. */
+  const canAssignWork = actorSectorId === "PRODUCCION" || actorSectorId === "DIRECCION";
 
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -84,6 +96,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   const [archivedIds, setArchivedIds] = useState<string[]>([]);
   const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
   const [topTab, setTopTab] = useState<"semanas" | "pendientes">("semanas");
+  const [showAssignDialog, setShowAssignDialog] = useState(false);
 
   const availableLines: LineBucket[] = useMemo(() => {
     const base: LineBucket[] = sectorId === "ENVASADO_MASIVO" ? ["1", "2", "3"] : ["1"];
@@ -438,6 +451,45 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     label: LINE_TAB_LABELS[bucket],
   }));
 
+  const dndSensors = useWeekBoardDndSensors();
+
+  const handleDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || !canAssignWork) return;
+      const target = parseWeekBoardDropId(String(over.id));
+      if (!target) return;
+      const itemId = String(active.id);
+      const item = workItems.find((w) => w.id === itemId);
+      if (!item) return;
+      const newLine = LINE_TAB_LABELS[target.zone as LineBucket] ?? null;
+      const sameDay = item.plannedDate === target.day;
+      const sameLine = (resolveLineBucket(item.line) ?? "1") === target.zone;
+      if (sameDay && sameLine) return;
+
+      try {
+        const res = await postRescheduleWork({
+          itemId,
+          plannedDate: target.day,
+          line: newLine,
+          updatedBy: workspace.context.displayName,
+          actorSectorId: actorSectorId as SectorId,
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          showToast(body.error ?? "No se pudo mover el trabajo. Reintentá.", "info");
+          return;
+        }
+        showToast("Planificación actualizada.");
+        void refresh();
+        void refreshPendientes();
+      } catch {
+        showToast("No se pudo mover el trabajo. Reintentá.", "info");
+      }
+    },
+    [canAssignWork, workItems, workspace.context.displayName, actorSectorId, showToast, refresh, refreshPendientes]
+  );
+
   const listTabs = [
     { id: "activos", label: "Activos" },
     { id: "archivados", label: "Archivados", count: archivedCountForLine },
@@ -464,7 +516,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         />
       </header>
 
-      <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <OperationalTabs
           tabs={[
             { id: "semanas", label: "Semanas" },
@@ -473,7 +525,28 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           activeId={topTab}
           onChange={(id) => setTopTab(id as "semanas" | "pendientes")}
         />
+        {canAssignWork ? (
+          <Button
+            type="button"
+            variant="primary"
+            onClick={() => setShowAssignDialog(true)}
+            data-testid="open-assign-work-dialog"
+          >
+            + Asignar trabajo
+          </Button>
+        ) : null}
       </div>
+
+      {showAssignDialog ? (
+        <AssignWorkDialog
+          sector={sectorId}
+          onClose={() => setShowAssignDialog(false)}
+          onAssigned={() => {
+            void refresh();
+            void refreshPendientes();
+          }}
+        />
+      ) : null}
 
       {topTab === "pendientes" ? (
         <div className="space-y-4">
@@ -517,38 +590,47 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           {loading && !data && <div className="os-skeleton h-48 rounded-[var(--os-radius)]" />}
 
           {!loading && calendar.viewMode === "week" && (
-            <div className="space-y-6">
-              {availableLines.map((bucket) => {
-                const lineItems = excludeArchivedFromView(
-                  sortByDeliveryDateNearest(
-                    workItems.filter((item) => (resolveLineBucket(item.line) ?? "1") === bucket)
-                  ),
-                  archivedIds
-                );
-                return (
-                  <section
-                    key={bucket}
-                    className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4"
-                  >
-                    <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--os-text)]">
-                      {LINE_TAB_LABELS[bucket]}
-                      <span className="rounded-full bg-[var(--os-bg)] px-2 py-0.5 text-xs font-normal normal-case text-[var(--os-text-muted)]">
-                        {lineItems.length} trabajo{lineItems.length === 1 ? "" : "s"}
-                      </span>
-                    </h4>
-                    <OperationalWeekBoard
-                      weekDays={calendar.weekDays}
-                      today={calendar.today}
-                      selectedDate={calendar.selectedDate}
-                      items={lineItems}
-                      onSelectDay={calendar.selectDay}
-                      hideHeader
-                      richCards
-                    />
-                  </section>
-                );
-              })}
-            </div>
+            <DndContext sensors={dndSensors} onDragEnd={(e) => void handleDragEnd(e)}>
+              {canAssignWork && (
+                <p className="mb-3 text-xs text-[var(--os-text-muted)]" data-testid="dnd-hint">
+                  Arrastrá una tarjeta a otro día o línea para replanificarla.
+                </p>
+              )}
+              <div className="space-y-6">
+                {availableLines.map((bucket) => {
+                  const lineItems = excludeArchivedFromView(
+                    sortByDeliveryDateNearest(
+                      workItems.filter((item) => (resolveLineBucket(item.line) ?? "1") === bucket)
+                    ),
+                    archivedIds
+                  );
+                  return (
+                    <section
+                      key={bucket}
+                      className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4"
+                    >
+                      <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--os-text)]">
+                        {LINE_TAB_LABELS[bucket]}
+                        <span className="rounded-full bg-[var(--os-bg)] px-2 py-0.5 text-xs font-normal normal-case text-[var(--os-text-muted)]">
+                          {lineItems.length} trabajo{lineItems.length === 1 ? "" : "s"}
+                        </span>
+                      </h4>
+                      <OperationalWeekBoard
+                        weekDays={calendar.weekDays}
+                        today={calendar.today}
+                        selectedDate={calendar.selectedDate}
+                        items={lineItems}
+                        onSelectDay={calendar.selectDay}
+                        hideHeader
+                        richCards
+                        draggable={canAssignWork}
+                        dropZoneId={bucket}
+                      />
+                    </section>
+                  );
+                })}
+              </div>
+            </DndContext>
           )}
 
           {!loading && calendar.viewMode === "day" && (
@@ -625,6 +707,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
 /** Elaboración — sector único con ramas Cristian / Nicolás separadas. */
 export function ElaboracionOperationalView() {
   const { applyEffectiveStatus, showToast } = usePreviewContext();
+  const { sectorId: actorSectorId } = usePreviewSession();
   const calendar = useOperationalCalendar();
   const {
     applyProgressToWorkItems,
@@ -633,9 +716,11 @@ export function ElaboracionOperationalView() {
     getFinishedQty,
     getObservation,
   } = useOperationalStore();
+  const canAssignWork = actorSectorId === "PRODUCCION" || actorSectorId === "DIRECCION";
 
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [showAssignDialog, setShowAssignDialog] = useState(false);
 
   const planOptions =
     calendar.viewMode === "week"
@@ -712,10 +797,55 @@ export function ElaboracionOperationalView() {
     [markWorkFinished, showToast]
   );
 
+  const dndSensors = useWeekBoardDndSensors();
+
+  const handleDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || !canAssignWork) return;
+      const target = parseWeekBoardDropId(String(over.id));
+      if (!target) return;
+      const itemId = String(active.id);
+      const item = workItems.find((w) => w.id === itemId);
+      if (!item || item.plannedDate === target.day) return;
+
+      try {
+        const res = await postRescheduleWork({
+          itemId,
+          plannedDate: target.day,
+          updatedBy: item.ownerPerson?.trim() || "Elaboración",
+          actorSectorId: actorSectorId as SectorId,
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          showToast(body.error ?? "No se pudo mover el trabajo. Reintentá.", "info");
+          return;
+        }
+        showToast("Planificación actualizada.");
+        void refresh();
+      } catch {
+        showToast("No se pudo mover el trabajo. Reintentá.", "info");
+      }
+    },
+    [canAssignWork, workItems, actorSectorId, showToast, refresh]
+  );
+
   return (
     <TwinShell title="Elaboración">
       <header className="mb-4 space-y-2">
-        <h2 className="text-2xl font-semibold tracking-tight">Elaboración</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-2xl font-semibold tracking-tight">Elaboración</h2>
+          {canAssignWork ? (
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => setShowAssignDialog(true)}
+              data-testid="open-assign-work-dialog"
+            >
+              + Asignar trabajo
+            </Button>
+          ) : null}
+        </div>
         <p className="text-sm text-[var(--os-text-muted)]">
           Encargado:{" "}
           <span className="font-medium text-[var(--os-text)]">
@@ -723,6 +853,13 @@ export function ElaboracionOperationalView() {
           </span>
         </p>
         <p className="text-base font-medium text-[var(--os-text)]">{calendar.heading}</p>
+        {showAssignDialog ? (
+          <AssignWorkDialog
+            sector="ELABORACION"
+            onClose={() => setShowAssignDialog(false)}
+            onAssigned={() => void refresh()}
+          />
+        ) : null}
         <SyncStatusBar
           source={data?.source ?? "demo"}
           lastRefreshAt={lastRefreshAt}
@@ -755,13 +892,22 @@ export function ElaboracionOperationalView() {
       {loading && !data && <div className="os-skeleton h-40 rounded-[var(--os-radius)]" />}
 
       {!loading && calendar.viewMode === "week" && (
-        <OperationalWeekBoard
-          weekDays={calendar.weekDays}
-          today={calendar.today}
-          selectedDate={calendar.selectedDate}
-          items={workItems}
-          onSelectDay={calendar.selectDay}
-        />
+        <DndContext sensors={dndSensors} onDragEnd={(e) => void handleDragEnd(e)}>
+          {canAssignWork && (
+            <p className="mb-3 text-xs text-[var(--os-text-muted)]" data-testid="dnd-hint">
+              Arrastrá una tarjeta a otro día para replanificarla.
+            </p>
+          )}
+          <OperationalWeekBoard
+            weekDays={calendar.weekDays}
+            today={calendar.today}
+            selectedDate={calendar.selectedDate}
+            items={workItems}
+            onSelectDay={calendar.selectDay}
+            draggable={canAssignWork}
+            dropZoneId="elaboracion"
+          />
+        </DndContext>
       )}
 
       {!loading && calendar.viewMode === "day" && (
