@@ -106,6 +106,7 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
   const [pedidoResults, setPedidoResults] = useState<ProductionPedidoRecord[]>([]);
   const [pedidoSearching, setPedidoSearching] = useState(false);
   const [pedidoSearched, setPedidoSearched] = useState(false);
+  const [pedidoSearchError, setPedidoSearchError] = useState<string | null>(null);
   const [selectedPedido, setSelectedPedido] = useState<ProductionPedidoRecord | null>(null);
   const idempotencyRef = useRef(newIdempotencyKey());
   const inFlightRef = useRef(false);
@@ -146,11 +147,13 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
       const t = window.setTimeout(() => {
         setPedidoResults([]);
         setPedidoSearched(false);
+        setPedidoSearchError(null);
       }, 0);
       return () => window.clearTimeout(t);
     }
     const handle = window.setTimeout(() => {
       setPedidoSearching(true);
+      setPedidoSearchError(null);
       void (async () => {
         try {
           const res = await fetch(`/api/v1/production-pedidos?op=${encodeURIComponent(q)}`, {
@@ -158,12 +161,18 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
           });
           if (!res.ok) {
             setPedidoResults([]);
+            setPedidoSearchError(
+              res.status === 401
+                ? "Sesión vencida. Volvé a iniciar sesión para buscar pedidos."
+                : "No se pudo buscar el pedido. Reintentá."
+            );
             return;
           }
           const data = (await res.json()) as { items?: ProductionPedidoRecord[] };
           setPedidoResults(Array.isArray(data.items) ? data.items.slice(0, 8) : []);
         } catch {
           setPedidoResults([]);
+          setPedidoSearchError("No se pudo buscar el pedido. Revisá tu conexión y reintentá.");
         } finally {
           setPedidoSearching(false);
           setPedidoSearched(true);
@@ -189,6 +198,7 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
     setPedidoQuery("");
     setPedidoResults([]);
     setPedidoSearched(false);
+    setPedidoSearchError(null);
   };
 
   const unit = sector === "ELABORACION" ? "kg" : "un.";
@@ -350,8 +360,11 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
           className="grid grid-cols-1 gap-4 sm:grid-cols-2"
           aria-busy={submitting}
         >
-          <div className="space-y-1.5 sm:col-span-2">
-            <label htmlFor="af-pedido" className="text-sm font-medium">
+          <div
+            className="space-y-1.5 rounded-[var(--os-radius)] border-2 border-[var(--os-teal)]/50 bg-[var(--os-teal)]/5 p-3 sm:col-span-2"
+            data-testid="assign-pedido-section"
+          >
+            <label htmlFor="af-pedido" className="text-sm font-semibold uppercase tracking-wide text-[var(--os-text)]">
               N° de Pedido
             </label>
             {selectedPedido ? (
@@ -409,6 +422,10 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
             )}
             {pedidoSearching ? (
               <p className="text-xs text-[var(--os-text-muted)]">Buscando…</p>
+            ) : pedidoSearchError ? (
+              <p className="text-xs text-[var(--genus-danger,#e85d5d)]" role="alert" data-testid="assign-pedido-search-error">
+                {pedidoSearchError}
+              </p>
             ) : pedidoQuery.trim() && pedidoSearched && pedidoResults.length === 0 && !selectedPedido ? (
               <p className="text-xs text-[var(--os-text-muted)]" data-testid="assign-pedido-not-found">
                 Pedido no encontrado. Podés completar los datos manualmente.

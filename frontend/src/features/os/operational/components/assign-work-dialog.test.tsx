@@ -34,13 +34,17 @@ describe("AssignWorkDialog — sector preseleccionado y fijo por sector", () => 
     delete document.documentElement.dataset.genusPlanningSource;
   });
 
-  it("1) Envasado Masivo: abre con el sector fijo, sin selector editable", () => {
+  it("1) Envasado Masivo: abre con el sector fijo, sin selector editable, y N° de Pedido visible como primer campo", () => {
     render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
     expect(screen.getByText("Asignar trabajo — Envasado Masivo")).toBeTruthy();
     expect(screen.getByTestId("assign-sector-locked").textContent).toBe("Envasado Masivo");
     expect(screen.queryByTestId("assign-sector")).toBeNull();
     // Envasado sí tiene selector de Línea.
     expect(screen.getByLabelText("Línea")).toBeTruthy();
+    // N° de Pedido es el primer campo visible del form (sección destacada).
+    const section = screen.getByTestId("assign-pedido-section");
+    expect(section.textContent).toContain("N° de Pedido");
+    expect(screen.getByTestId("assign-pedido-search")).toBeTruthy();
   });
 
   it("2) Envasado Premium: abre con el sector fijo", () => {
@@ -118,5 +122,93 @@ describe("AssignWorkDialog — sector preseleccionado y fijo por sector", () => 
       expect(onAssigned).toHaveBeenCalledWith(expect.objectContaining({ id: "native:wi-1" }));
     });
     expect(capturedBody).toMatchObject({ sector: "ENVASADO_PREMIUM", client: "Cliente X", product: "Producto Y" });
+  });
+
+  it("6) editable: cambiar manualmente Cliente/Producto después de autocompletar y el payload usa los valores editados", async () => {
+    const user = userEvent.setup();
+    let capturedBody: Record<string, unknown> | null = null;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/api/v1/production-pedidos")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ items: [{ id: "p1", op: "OP-4521", cliente: "Cliente Pedido", producto: "Producto Pedido" }] }),
+            { status: 200 }
+          )
+        );
+      }
+      if (u.includes("/api/v1/work-assignments") && init?.method === "POST") {
+        capturedBody = JSON.parse(String(init.body));
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, workItem: { id: "native:wi-2" } }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByTestId("assign-pedido-search"), "4521");
+    await waitFor(() => expect(screen.getByTestId("assign-pedido-results")).toBeTruthy());
+    await user.click(screen.getByText(/OP-4521/));
+
+    const clientInput = screen.getByLabelText(/^Cliente/) as HTMLInputElement;
+    const productInput = screen.getByLabelText(/^Producto/) as HTMLInputElement;
+    expect(clientInput.disabled).toBe(false);
+    expect(productInput.disabled).toBe(false);
+    await user.clear(clientInput);
+    await user.type(clientInput, "Cliente Editado a Mano");
+    await user.clear(productInput);
+    await user.type(productInput, "Producto Editado a Mano");
+    await user.type(screen.getByLabelText(/^Cantidad/), "50");
+
+    await user.click(screen.getByTestId("assign-submit"));
+    await waitFor(() => expect(capturedBody).not.toBeNull());
+    expect(capturedBody).toMatchObject({
+      client: "Cliente Editado a Mano",
+      product: "Producto Editado a Mano",
+      productionPedidoId: "p1",
+    });
+  });
+
+  it("un error real del servidor (500) se muestra visible y NO se confunde con 'Pedido no encontrado'", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes("/api/v1/production-pedidos")) {
+        return Promise.resolve(new Response(JSON.stringify({ error: "DB down" }), { status: 500 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByTestId("assign-pedido-search"), "4521");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("assign-pedido-search-error")).toBeTruthy();
+    });
+    expect(screen.queryByTestId("assign-pedido-not-found")).toBeNull();
+  });
+
+  it("9) reset: cerrar (desmontar) y volver a abrir (montar) no conserva un pedido viejo", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes("/api/v1/production-pedidos")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ items: [{ id: "p1", op: "OP-4521", cliente: "Cliente Viejo", producto: "Producto Viejo" }] }), {
+            status: 200,
+          })
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+
+    const { unmount } = render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByTestId("assign-pedido-search"), "4521");
+    await waitFor(() => expect(screen.getByTestId("assign-pedido-results")).toBeTruthy());
+    await user.click(screen.getByText(/OP-4521/));
+    expect(screen.getByText(/Pedido OP-4521/)).toBeTruthy();
+    unmount();
+
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    expect(screen.queryByText(/Pedido OP-4521/)).toBeNull();
+    expect((screen.getByTestId("assign-pedido-search") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText(/^Cliente/) as HTMLInputElement).value).toBe("");
   });
 });
