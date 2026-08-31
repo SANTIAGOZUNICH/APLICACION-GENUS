@@ -96,7 +96,8 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   const [archivedIds, setArchivedIds] = useState<string[]>([]);
   const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
   const [topTab, setTopTab] = useState<"semanas" | "pendientes">("semanas");
-  const [showAssignDialog, setShowAssignDialog] = useState(false);
+  /** null = cerrado. {} = botón general (sin preselección). {line,plannedDate} = botón "+" de una celda. */
+  const [assignSlot, setAssignSlot] = useState<{ line?: string; plannedDate?: string } | null>(null);
 
   const availableLines: LineBucket[] = useMemo(() => {
     const base: LineBucket[] = sectorId === "ENVASADO_MASIVO" ? ["1", "2", "3"] : ["1"];
@@ -529,7 +530,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           <Button
             type="button"
             variant="primary"
-            onClick={() => setShowAssignDialog(true)}
+            onClick={() => setAssignSlot({})}
             data-testid="open-assign-work-dialog"
           >
             + Asignar trabajo
@@ -537,10 +538,12 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         ) : null}
       </div>
 
-      {showAssignDialog ? (
+      {assignSlot ? (
         <AssignWorkDialog
           sector={sectorId}
-          onClose={() => setShowAssignDialog(false)}
+          initialLine={assignSlot.line}
+          initialPlannedDate={assignSlot.plannedDate}
+          onClose={() => setAssignSlot(null)}
           onAssigned={() => {
             void refresh();
             void refreshPendientes();
@@ -625,6 +628,10 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
                         richCards
                         draggable={canAssignWork}
                         dropZoneId={bucket}
+                        canCreate={canAssignWork}
+                        onCreateSlot={(day, zone) =>
+                          setAssignSlot({ line: LINE_TAB_LABELS[zone as LineBucket], plannedDate: day })
+                        }
                       />
                     </section>
                   );
@@ -720,7 +727,8 @@ export function ElaboracionOperationalView() {
 
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [showAssignDialog, setShowAssignDialog] = useState(false);
+  /** null = cerrado. {} = botón general. {plannedDate} = botón "+" de un día (Elaboración no tiene línea). */
+  const [assignSlot, setAssignSlot] = useState<{ plannedDate?: string } | null>(null);
 
   const planOptions =
     calendar.viewMode === "week"
@@ -839,7 +847,7 @@ export function ElaboracionOperationalView() {
             <Button
               type="button"
               variant="primary"
-              onClick={() => setShowAssignDialog(true)}
+              onClick={() => setAssignSlot({})}
               data-testid="open-assign-work-dialog"
             >
               + Asignar trabajo
@@ -853,10 +861,11 @@ export function ElaboracionOperationalView() {
           </span>
         </p>
         <p className="text-base font-medium text-[var(--os-text)]">{calendar.heading}</p>
-        {showAssignDialog ? (
+        {assignSlot ? (
           <AssignWorkDialog
             sector="ELABORACION"
-            onClose={() => setShowAssignDialog(false)}
+            initialPlannedDate={assignSlot.plannedDate}
+            onClose={() => setAssignSlot(null)}
             onAssigned={() => void refresh()}
           />
         ) : null}
@@ -906,6 +915,8 @@ export function ElaboracionOperationalView() {
             onSelectDay={calendar.selectDay}
             draggable={canAssignWork}
             dropZoneId="elaboracion"
+            canCreate={canAssignWork}
+            onCreateSlot={(day) => setAssignSlot({ plannedDate: day })}
           />
         </DndContext>
       )}

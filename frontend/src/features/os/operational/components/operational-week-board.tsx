@@ -60,6 +60,14 @@ interface OperationalWeekBoardProps {
    * Elaboración/Codificado, un id fijo (no hay línea que cambiar).
    */
   dropZoneId?: string;
+  /**
+   * Habilita el botón "+" de asignación directa por celda día/línea — solo
+   * Producción/Dirección (mismo gate que `draggable`). Default false: no
+   * cambia nada para los llamadores existentes.
+   */
+  canCreate?: boolean;
+  /** Se dispara al clickear "+" en una celda — recibe el día ISO y el `dropZoneId` de esa grilla. */
+  onCreateSlot?: (day: string, zone: string) => void;
 }
 
 /** Envuelve una tarjeta con drag & drop — no-op visual si `disabled`. */
@@ -224,7 +232,9 @@ interface WeekBoardDayCellProps {
   richCards: boolean;
   draggable: boolean;
   dropZoneId: string;
+  canCreate: boolean;
   onSelectDay: (iso: string) => void;
+  onCreateSlot?: (day: string, zone: string) => void;
 }
 
 function WeekBoardDayCell({
@@ -237,7 +247,9 @@ function WeekBoardDayCell({
   richCards,
   draggable,
   dropZoneId,
+  canCreate,
   onSelectDay,
+  onCreateSlot,
 }: WeekBoardDayCellProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: weekBoardDropId(dropZoneId, day),
@@ -333,10 +345,24 @@ function WeekBoardDayCell({
           )}
         </ul>
       )}
+      {canCreate && mode !== "consulta" && onCreateSlot ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCreateSlot(day, dropZoneId);
+          }}
+          className="mt-2 flex w-full items-center justify-center rounded border border-dashed border-[var(--os-teal)]/50 py-1 text-sm font-semibold text-[var(--os-teal)] transition hover:border-[var(--os-teal)] hover:bg-[var(--os-teal)]/10"
+          aria-label={`Asignar trabajo — ${dayOfWeekName(day)}`}
+          data-testid={`week-board-create-${weekBoardDropId(dropZoneId, day)}`}
+        >
+          +
+        </button>
+      ) : null}
     </>
   );
 
-  if (!draggable) {
+  if (!draggable && !canCreate) {
     return (
       <button type="button" onClick={() => onSelectDay(day)} className={className}>
         {body}
@@ -377,6 +403,8 @@ export function OperationalWeekBoard({
   richCards = false,
   draggable = false,
   dropZoneId = "default",
+  canCreate = false,
+  onCreateSlot,
 }: OperationalWeekBoardProps) {
   const weekStart = weekDays[0] ?? weekStartMonday(today);
   const end = weekDays[weekDays.length - 1];
@@ -434,7 +462,9 @@ export function OperationalWeekBoard({
             richCards={richCards}
             draggable={draggable}
             dropZoneId={dropZoneId}
+            canCreate={canCreate}
             onSelectDay={onSelectDay}
+            onCreateSlot={onCreateSlot}
           />
         ))}
       </div>

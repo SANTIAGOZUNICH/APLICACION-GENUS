@@ -144,6 +144,11 @@ function matchesFilters(r: ProductionPedidoRecord, f: ProductionPedidoListFilter
   }
   if (f.fechaFrom && (r.fecha ?? "") < f.fechaFrom) return false;
   if (f.fechaTo && (r.fecha ?? "") > f.fechaTo) return false;
+  if (f.search) {
+    const needle = f.search.trim().toLowerCase();
+    const haystack = [r.op, r.cliente, r.producto].map((v) => (v ?? "").toLowerCase());
+    if (!haystack.some((v) => v.includes(needle))) return false;
+  }
   return true;
 }
 
@@ -203,6 +208,7 @@ export class ProductionPedidosService {
     const fechaFrom = filters.fechaFrom || null;
     const fechaTo = filters.fechaTo || null;
     const includeDeleted = Boolean(filters.includeDeleted);
+    const search = filters.search?.trim() || null;
 
     const result = await db.execute(sql`
       select * from production_pedidos
@@ -214,6 +220,12 @@ export class ProductionPedidosService {
         and (${estado}::text is null or estado = ${estado})
         and (${fechaFrom}::text is null or fecha >= ${fechaFrom}::date)
         and (${fechaTo}::text is null or fecha <= ${fechaTo}::date)
+        and (
+          ${search}::text is null
+          or op ilike '%' || ${search} || '%'
+          or cliente ilike '%' || ${search} || '%'
+          or producto ilike '%' || ${search} || '%'
+        )
       order by fecha desc nulls last, created_at desc
       limit 2000
     `);

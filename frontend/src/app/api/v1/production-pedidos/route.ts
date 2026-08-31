@@ -21,6 +21,7 @@ export async function GET(request: Request) {
         estado: url.searchParams.get("estado") ?? undefined,
         fechaFrom: url.searchParams.get("fechaFrom") ?? undefined,
         fechaTo: url.searchParams.get("fechaTo") ?? undefined,
+        search: url.searchParams.get("search") ?? undefined,
       }
     );
     return NextResponse.json({

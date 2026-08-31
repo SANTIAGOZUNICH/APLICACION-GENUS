@@ -4,7 +4,8 @@
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DndContext } from "@dnd-kit/core";
 import {
   OperationalWeekBoard,
@@ -226,5 +227,108 @@ describe("OperationalWeekBoard — draggable (drag & drop de Producción)", () =
     const cell = screen.getByTestId(`week-board-daycell-${weekBoardDropId("1", "2026-08-26")}`);
     cell.click();
     expect(clicked).toBe("2026-08-26");
+  });
+});
+
+/**
+ * Bloque 1 — botón "+" de asignación directa por celda día/línea. Investigado:
+ * una celda ya acepta múltiples trabajos (dayItems es un array, sin límite
+ * de a 1) — así que el "+" se muestra siempre que canCreate, no solo cuando
+ * la celda está vacía.
+ */
+describe("OperationalWeekBoard — botón + de asignación directa por celda", () => {
+  it("1) canCreate=false (default): no se muestra ningún +", () => {
+    render(
+      <OperationalWeekBoard
+        weekDays={weekDays}
+        today="2026-08-24"
+        selectedDate="2026-08-24"
+        items={[]}
+        onSelectDay={() => {}}
+      />
+    );
+    expect(screen.queryByTestId(`week-board-create-${weekBoardDropId("default", "2026-08-26")}`)).toBeNull();
+  });
+
+  it("2) Envasado (rol sin permiso): con canCreate=false el + no aparece aunque draggable=true", () => {
+    render(
+      <DndContext onDragEnd={() => {}}>
+        <OperationalWeekBoard
+          weekDays={weekDays}
+          today="2026-08-24"
+          selectedDate="2026-08-24"
+          items={[]}
+          onSelectDay={() => {}}
+          draggable
+          canCreate={false}
+          dropZoneId="1"
+        />
+      </DndContext>
+    );
+    expect(screen.queryByTestId(`week-board-create-${weekBoardDropId("1", "2026-08-26")}`)).toBeNull();
+  });
+
+  it("Producción (canCreate=true): el + aparece en una celda vacía Y en una con trabajos (acepta múltiples)", () => {
+    const item = createTestWorkItem({
+      id: "wi-existing",
+      sector: "ENVASADO_MASIVO",
+      plannedDate: "2026-08-24",
+      status: "pendiente",
+    });
+    render(
+      <OperationalWeekBoard
+        weekDays={weekDays}
+        today="2026-08-24"
+        selectedDate="2026-08-24"
+        items={[item]}
+        onSelectDay={() => {}}
+        richCards
+        canCreate
+        dropZoneId="1"
+        onCreateSlot={() => {}}
+      />
+    );
+    // Día con trabajo (24) y día vacío (25) — ambos con +.
+    expect(screen.getByTestId(`week-board-create-${weekBoardDropId("1", "2026-08-24")}`)).toBeTruthy();
+    expect(screen.getByTestId(`week-board-create-${weekBoardDropId("1", "2026-08-25")}`)).toBeTruthy();
+  });
+
+  it("3/4) click en + de Miércoles·Línea 2 dispara onCreateSlot con day=2026-08-26 y zone='2', sin disparar onSelectDay", async () => {
+    const user = userEvent.setup();
+    const onCreateSlot = vi.fn();
+    const onSelectDay = vi.fn();
+    render(
+      <OperationalWeekBoard
+        weekDays={weekDays}
+        today="2026-08-24"
+        selectedDate="2026-08-24"
+        items={[]}
+        onSelectDay={onSelectDay}
+        canCreate
+        dropZoneId="2"
+        onCreateSlot={onCreateSlot}
+      />
+    );
+    const plusButton = screen.getByTestId(`week-board-create-${weekBoardDropId("2", "2026-08-26")}`);
+    await user.click(plusButton);
+    expect(onCreateSlot).toHaveBeenCalledWith("2026-08-26", "2");
+    expect(onSelectDay).not.toHaveBeenCalled();
+  });
+
+  it("modo consulta: nunca muestra + aunque canCreate=true (no aplica a planes compartidos RO)", () => {
+    render(
+      <OperationalWeekBoard
+        weekDays={weekDays}
+        today="2026-08-24"
+        selectedDate="2026-08-24"
+        items={[]}
+        onSelectDay={() => {}}
+        mode="consulta"
+        consultaItems={[]}
+        canCreate
+        dropZoneId="1"
+      />
+    );
+    expect(screen.queryByTestId(`week-board-create-${weekBoardDropId("1", "2026-08-26")}`)).toBeNull();
   });
 });

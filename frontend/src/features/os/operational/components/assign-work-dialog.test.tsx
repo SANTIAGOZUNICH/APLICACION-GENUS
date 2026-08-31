@@ -224,4 +224,129 @@ describe("AssignWorkDialog — sector preseleccionado y fijo por sector", () => 
     // El botón Asignar vive fuera del contenedor scrolleable (footer fijo).
     expect(scrollArea.contains(screen.getByTestId("assign-submit"))).toBe(false);
   });
+
+  it("3/4/5) preselección desde el botón + de una celda: fecha, línea y sector vienen del día/línea de origen", () => {
+    render(
+      <AssignWorkDialog
+        sector="ENVASADO_MASIVO"
+        onClose={() => {}}
+        initialLine="Línea 2"
+        initialPlannedDate="2026-08-26"
+      />
+    );
+    expect(screen.getByText("Asignar trabajo — Envasado Masivo")).toBeTruthy();
+    expect((screen.getByLabelText("Línea") as HTMLSelectElement).value).toBe("Línea 2");
+    expect((screen.getByLabelText(/^Desde/) as HTMLInputElement).value).toBe("2026-08-26");
+    expect((screen.getByLabelText(/^Hasta/) as HTMLInputElement).value).toBe("2026-08-26");
+    // Sigue editable — no se bloquea el control.
+    expect((screen.getByLabelText("Línea") as HTMLSelectElement).disabled).toBe(false);
+    expect((screen.getByLabelText(/^Desde/) as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("sin preselección, usa los defaults de siempre (hoy, primera línea)", () => {
+    render(<AssignWorkDialog sector="ENVASADO_PREMIUM" onClose={() => {}} />);
+    expect((screen.getByLabelText("Línea") as HTMLSelectElement).value).toBe("Línea 1");
+  });
+
+  it("7) búsqueda por Cliente: 'TCL' encuentra pedidos de TCL (usa el parámetro search combinado)", async () => {
+    const user = userEvent.setup();
+    let capturedUrl = "";
+    fetchMock.mockImplementation((url: string) => {
+      capturedUrl = String(url);
+      if (String(url).includes("/api/v1/production-pedidos")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              items: [
+                { id: "p1", op: "OP-4521", cliente: "TCL", producto: "Shampoo Anticaspa", q: 5000, estado: "INGRESO" },
+                { id: "p2", op: "OP-9999", cliente: "TCL", producto: "Acondicionador", q: 3000, estado: "INGRESO" },
+              ],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    });
+
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByTestId("assign-pedido-search"), "TCL");
+
+    await waitFor(() => expect(screen.getByTestId("assign-pedido-results")).toBeTruthy());
+    expect(capturedUrl).toContain("/api/v1/production-pedidos?search=TCL");
+    expect(screen.getByText(/OP-4521/)).toBeTruthy();
+    expect(screen.getByText(/OP-9999/)).toBeTruthy();
+  });
+
+  it("8) búsqueda por Producto: 'Shampoo' encuentra el pedido correspondiente", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes("/api/v1/production-pedidos")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              items: [{ id: "p1", op: "OP-4521", cliente: "TCL", producto: "Shampoo Anticaspa", q: 5000 }],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    });
+
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByTestId("assign-pedido-search"), "Shampoo");
+    await waitFor(() => expect(screen.getByTestId("assign-pedido-results")).toBeTruthy());
+    expect(screen.getByText(/OP-4521/)).toBeTruthy();
+  });
+
+  it("9) Cantidad se autocompleta desde q del pedido para Envasado/Codificado (no inventa si no hay dato)", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes("/api/v1/production-pedidos")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              items: [{ id: "p1", op: "OP-4521", cliente: "TCL", producto: "Shampoo Anticaspa", q: 5000 }],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    });
+
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByTestId("assign-pedido-search"), "4521");
+    await waitFor(() => expect(screen.getByTestId("assign-pedido-results")).toBeTruthy());
+    await user.click(screen.getByText(/OP-4521/));
+
+    expect((screen.getByLabelText(/^Cantidad/) as HTMLInputElement).value).toBe("5000");
+  });
+
+  it("pedido sin cantidad (q null): Cantidad queda vacía y editable, no se inventa", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes("/api/v1/production-pedidos")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              items: [{ id: "p1", op: "OP-4600", cliente: "Sin Cantidad SA", producto: "Producto X", q: null }],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+    });
+
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByTestId("assign-pedido-search"), "4600");
+    await waitFor(() => expect(screen.getByTestId("assign-pedido-results")).toBeTruthy());
+    await user.click(screen.getByText(/OP-4600/));
+
+    const qtyInput = screen.getByLabelText(/^Cantidad/) as HTMLInputElement;
+    expect(qtyInput.value).toBe("");
+    expect(qtyInput.disabled).toBe(false);
+  });
 });

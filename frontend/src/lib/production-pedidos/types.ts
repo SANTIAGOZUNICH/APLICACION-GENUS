@@ -81,6 +81,13 @@ export type ProductionPedidoListFilters = {
   fechaFrom?: string;
   fechaTo?: string;
   includeDeleted?: boolean;
+  /**
+   * Búsqueda combinada de un único input — matchea si CUALQUIERA de
+   * op/cliente/producto contiene el término (OR), a diferencia de
+   * op/cliente/producto arriba que son filtros AND independientes.
+   * Usado por el buscador único del modal Asignar trabajo.
+   */
+  search?: string;
 };
 
 export function normalizeStatus(raw: string | null | undefined): ProductionPedidoStatus | null {

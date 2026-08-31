@@ -61,11 +61,27 @@ function isPackagingAssignSector(sector: AssignableSector): boolean {
   return sector === "ENVASADO_MASIVO" || sector === "ENVASADO_PREMIUM" || sector === "CODIFICADO";
 }
 
+/** Cantidad relevante para el sector actual — kg (Elaboración) o unidades (resto). Nunca inventa si falta el dato. */
+function pedidoQuantityLabel(p: ProductionPedidoRecord, sector: AssignableSector): string | null {
+  if (sector === "ELABORACION") {
+    return p.kgDisplay ? `${p.kgDisplay} kg` : null;
+  }
+  return p.q != null ? `${p.q} u.` : null;
+}
+
 interface AssignWorkDialogProps {
   /** Sector fijo para esta asignación — el mismo sector desde el que se abrió el diálogo. */
   sector: AssignableSector;
   onClose: () => void;
   onAssigned?: (workItem: WorkItem) => void;
+  /**
+   * Preselección al abrir desde el botón "+" de una celda día/línea de la
+   * grilla Semanas — el valor inicial es exactamente el lugar desde donde
+   * se abrió, pero sigue siendo editable (no se bloquea el control).
+   */
+  initialLine?: string;
+  /** Idem — fecha de producción (Desde/Hasta) preseleccionada desde la celda. */
+  initialPlannedDate?: string;
 }
 
 /**
@@ -80,17 +96,23 @@ interface AssignWorkDialogProps {
  * (no reusar la misma instancia entre aperturas) para que el formulario
  * arranque limpio cada vez.
  */
-export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDialogProps) {
+export function AssignWorkDialog({
+  sector,
+  onClose,
+  onAssigned,
+  initialLine,
+  initialPlannedDate,
+}: AssignWorkDialogProps) {
   const native = getClientPlanningSource() === "native";
 
   const [ownerPerson, setOwnerPerson] = useState<string>(ELABORACION_RAMAS[0]);
   const [line, setLine] = useState<string>(
-    sector === "ENVASADO_MASIVO" ? MASIVO_LINES[0] : PREMIUM_LINES[0]
+    initialLine || (sector === "ENVASADO_MASIVO" ? MASIVO_LINES[0] : PREMIUM_LINES[0])
   );
   const [client, setClient] = useState("");
   const [product, setProduct] = useState("");
-  const [plannedDate, setPlannedDate] = useState(todayIso());
-  const [plannedDateTo, setPlannedDateTo] = useState(todayIso());
+  const [plannedDate, setPlannedDate] = useState(initialPlannedDate || todayIso());
+  const [plannedDateTo, setPlannedDateTo] = useState(initialPlannedDate || todayIso());
   const [deliveryDate, setDeliveryDate] = useState(todayIso());
   const [quantity, setQuantity] = useState("");
   const [orderRef, setOrderRef] = useState("");
@@ -156,7 +178,7 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
       setPedidoSearchError(null);
       void (async () => {
         try {
-          const res = await fetch(`/api/v1/production-pedidos?op=${encodeURIComponent(q)}`, {
+          const res = await fetch(`/api/v1/production-pedidos?search=${encodeURIComponent(q)}`, {
             credentials: "include",
           });
           if (!res.ok) {
@@ -188,8 +210,14 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
     setPedidoResults([]);
     setClient(p.cliente ?? "");
     setProduct(p.producto ?? "");
-    if (sector === "ELABORACION" && !quantity.trim() && p.kg != null) {
-      setQuantity(p.kgDisplay || String(p.kg));
+    if (quantity.trim()) return;
+    if (sector === "ELABORACION") {
+      // kg = (q × ml) / 1000, ya calculado server-side — nunca se inventa si faltan datos.
+      if (p.kg != null) setQuantity(p.kgDisplay || String(p.kg));
+    } else if (p.q != null) {
+      // "q" es el campo real de "Cantidad"/"Cantidad Unidades" del pedido (excel-paste.ts) —
+      // para Envasado/Codificado es directamente la cantidad de unidades, sin conversión.
+      setQuantity(String(p.q));
     }
   };
 
@@ -376,7 +404,10 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
                 <span className="font-medium">Pedido {selectedPedido.op || "—"}</span>
                 <span className="text-[var(--os-text-muted)]">
                   {selectedPedido.cliente ?? "—"} · {selectedPedido.producto ?? "—"}
-                  {selectedPedido.kgDisplay ? ` · ${selectedPedido.kgDisplay} kg` : ""}
+                  {pedidoQuantityLabel(selectedPedido, sector)
+                    ? ` · ${pedidoQuantityLabel(selectedPedido, sector)}`
+                    : ""}
+                  {selectedPedido.estado ? ` · ${selectedPedido.estado}` : ""}
                 </span>
                 <button
                   type="button"
@@ -395,7 +426,7 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
                   value={pedidoQuery}
                   disabled={submitting}
                   onChange={(e) => setPedidoQuery(e.target.value)}
-                  placeholder="Buscar por N° de Pedido (OP)…"
+                  placeholder="Buscar por N° de Pedido, cliente o producto…"
                   className={CONTROL_CLASS}
                   autoComplete="off"
                   data-testid="assign-pedido-search"
@@ -415,7 +446,8 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
                           <span className="font-medium">{p.op || "—"}</span>{" "}
                           <span className="text-[var(--os-text-muted)]">
                             {p.cliente ?? "—"} · {p.producto ?? "—"}
-                            {p.kgDisplay ? ` · ${p.kgDisplay} kg` : ""}
+                            {pedidoQuantityLabel(p, sector) ? ` · ${pedidoQuantityLabel(p, sector)}` : ""}
+                            {p.estado ? ` · ${p.estado}` : ""}
                           </span>
                         </button>
                       </li>
@@ -436,8 +468,8 @@ export function AssignWorkDialog({ sector, onClose, onAssigned }: AssignWorkDial
               </p>
             ) : (
               <p className="text-xs text-[var(--os-text-muted)]">
-                Opcional — autocompleta Cliente/Producto
-                {sector === "ELABORACION" ? "/Cantidad (kg)" : ""}. Todo sigue siendo editable.
+                Opcional — autocompleta Cliente/Producto/Cantidad
+                {sector === "ELABORACION" ? " (kg)" : ""}. Todo sigue siendo editable.
               </p>
             )}
           </div>

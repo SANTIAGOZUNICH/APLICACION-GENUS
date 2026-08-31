@@ -297,4 +297,25 @@ describe("production pedidos rbac + crud + import idempotency", () => {
     const svc = getProductionPedidosService();
     await expect(svc.list({ email: "x", sector: "CODIFICADO" })).rejects.toThrow(/PRODUCCIÓN/i);
   });
+
+  it("7/8) búsqueda combinada (search): encuentra por N° de Pedido, Cliente o Producto con un solo término", async () => {
+    resetProductionPedidosMemoryForTests();
+    const svc = getProductionPedidosService();
+    const actor = { email: "produccion@test", sector: "PRODUCCION" as const };
+    await svc.create(actor, { op: "OP-4521", cliente: "TCL", producto: "Shampoo Anticaspa", q: "5000" });
+    await svc.create(actor, { op: "OP-4522", cliente: "Belleza Total", producto: "Crema Base", q: "2000" });
+    await svc.create(actor, { op: "OP-9999", cliente: "TCL", producto: "Acondicionador", q: "3000" });
+
+    const byNumero = await svc.list(actor, { search: "OP-4521" });
+    expect(byNumero.items.map((i) => i.op)).toEqual(["OP-4521"]);
+
+    const byCliente = await svc.list(actor, { search: "TCL" });
+    expect(byCliente.items.map((i) => i.op).sort()).toEqual(["OP-4521", "OP-9999"]);
+
+    const byProducto = await svc.list(actor, { search: "Shampoo" });
+    expect(byProducto.items.map((i) => i.op)).toEqual(["OP-4521"]);
+
+    const noMatch = await svc.list(actor, { search: "no-existe-xyz" });
+    expect(noMatch.items).toEqual([]);
+  });
 });
