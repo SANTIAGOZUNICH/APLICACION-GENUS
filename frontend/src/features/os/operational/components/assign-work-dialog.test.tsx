@@ -350,3 +350,204 @@ describe("AssignWorkDialog — sector preseleccionado y fijo por sector", () => 
     expect(qtyInput.disabled).toBe(false);
   });
 });
+
+/**
+ * DECISIÓN_FUNCIONAL (PR #81, tercera vuelta) — al seleccionar un N° de
+ * Pedido, el campo OA/OE se autocompleta como "{PREFIJO}-{AÑO}-{NÚMERO}"
+ * (OA para Envasado Masivo/Premium/Codificado, OE para Elaboración), con el
+ * año tomado de la fecha de producción/asignación del formulario (Desde),
+ * nunca hardcodeado ni de `new Date()`. El campo sigue 100% editable, y una
+ * edición manual nunca se pisa al cambiar de pedido.
+ */
+describe("AssignWorkDialog — autocompletar OA/OE desde N° de Pedido", () => {
+  beforeEach(() => {
+    document.documentElement.dataset.genusPlanningSource = "native";
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    delete document.documentElement.dataset.genusPlanningSource;
+  });
+
+  function mockPedidoSearch(items: Array<Record<string, unknown>>) {
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/api/v1/production-pedidos")) {
+        return Promise.resolve(new Response(JSON.stringify({ items }), { status: 200 }));
+      }
+      if (u.includes("/api/v1/work-assignments") && init?.method === "POST") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, workItem: { id: "native:wi-oa" } }), { status: 200 })
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+  }
+
+  async function pickPedido(user: ReturnType<typeof userEvent.setup>, op: string) {
+    const search = screen.getByTestId("assign-pedido-search") as HTMLInputElement;
+    await user.clear(search);
+    await user.type(search, op.replace(/\D/g, "").slice(-4) || op);
+    await waitFor(() => expect(screen.getByTestId("assign-pedido-results")).toBeTruthy());
+    await user.click(screen.getByText(new RegExp(op.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))));
+  }
+
+  it("1) Envasado Masivo/Premium/Codificado: Pedido OP-4521 autocompleta OA-{año}-4521", async () => {
+    for (const sector of ["ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO"] as const) {
+      mockPedidoSearch([{ id: "p1", op: "OP-4521", cliente: "Cliente", producto: "Producto" }]);
+      const user = userEvent.setup();
+      const { unmount } = render(
+        <AssignWorkDialog sector={sector} onClose={() => {}} initialPlannedDate="2026-08-03" />
+      );
+      await pickPedido(user, "OP-4521");
+      expect((screen.getByLabelText(/Orden de Acondicionamiento/) as HTMLInputElement).value).toBe(
+        "OA-2026-4521"
+      );
+      unmount();
+    }
+  });
+
+  it("2) Elaboración: Pedido OP-4521 autocompleta OE-{año}-4521", async () => {
+    mockPedidoSearch([{ id: "p1", op: "OP-4521", cliente: "Cliente", producto: "Producto", kg: 10 }]);
+    const user = userEvent.setup();
+    render(<AssignWorkDialog sector="ELABORACION" onClose={() => {}} initialPlannedDate="2026-08-03" />);
+    await pickPedido(user, "OP-4521");
+    expect((screen.getByLabelText(/Número de OE/) as HTMLInputElement).value).toBe("OE-2026-4521");
+  });
+
+  it("3) año correcto: se toma de la fecha de producción del formulario, NO de 2026 hardcodeado", async () => {
+    mockPedidoSearch([{ id: "p1", op: "OP-4521", cliente: "Cliente", producto: "Producto" }]);
+    const user = userEvent.setup();
+    render(
+      <AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} initialPlannedDate="2027-01-15" />
+    );
+    await pickPedido(user, "OP-4521");
+    expect((screen.getByLabelText(/Orden de Acondicionamiento/) as HTMLInputElement).value).toBe(
+      "OA-2027-4521"
+    );
+  });
+
+  it("4) cambiar de pedido sin editar a mano actualiza el OA autogenerado al nuevo pedido", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u.includes("/api/v1/production-pedidos")) {
+        const items = u.includes("9999")
+          ? [{ id: "p2", op: "OP-9999", cliente: "Cliente 2", producto: "Producto 2" }]
+          : [{ id: "p1", op: "OP-4521", cliente: "Cliente 1", producto: "Producto 1" }];
+        return Promise.resolve(new Response(JSON.stringify({ items }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+    const user = userEvent.setup();
+    render(
+      <AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} initialPlannedDate="2026-08-03" />
+    );
+    await pickPedido(user, "OP-4521");
+    expect((screen.getByLabelText(/Orden de Acondicionamiento/) as HTMLInputElement).value).toBe(
+      "OA-2026-4521"
+    );
+
+    await user.click(screen.getByTestId("assign-pedido-clear"));
+    await pickPedido(user, "OP-9999");
+    expect((screen.getByLabelText(/Orden de Acondicionamiento/) as HTMLInputElement).value).toBe(
+      "OA-2026-9999"
+    );
+  });
+
+  it("5) si el usuario ya editó el OA a mano, cambiar de pedido NO lo pisa", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u.includes("/api/v1/production-pedidos")) {
+        const items = u.includes("9999")
+          ? [{ id: "p2", op: "OP-9999", cliente: "Cliente 2", producto: "Producto 2" }]
+          : [{ id: "p1", op: "OP-4521", cliente: "Cliente 1", producto: "Producto 1" }];
+        return Promise.resolve(new Response(JSON.stringify({ items }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+    const user = userEvent.setup();
+    render(
+      <AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} initialPlannedDate="2026-08-03" />
+    );
+    await pickPedido(user, "OP-4521");
+    const oaInput = screen.getByLabelText(/Orden de Acondicionamiento/) as HTMLInputElement;
+    expect(oaInput.value).toBe("OA-2026-4521");
+
+    await user.clear(oaInput);
+    await user.type(oaInput, "OA-2026-000999");
+
+    await user.click(screen.getByTestId("assign-pedido-clear"));
+    await pickPedido(user, "OP-9999");
+    expect((screen.getByLabelText(/Orden de Acondicionamiento/) as HTMLInputElement).value).toBe(
+      "OA-2026-000999"
+    );
+  });
+
+  it("6) el valor finalmente confirmado (autogenerado, sin editar) se persiste tal cual en el payload de asignación", async () => {
+    mockPedidoSearch([{ id: "p1", op: "OP-4521", cliente: "Cliente", producto: "Producto" }]);
+    let capturedBody: Record<string, unknown> | null = null;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/api/v1/production-pedidos")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ items: [{ id: "p1", op: "OP-4521", cliente: "Cliente", producto: "Producto" }] }),
+            { status: 200 }
+          )
+        );
+      }
+      if (u.includes("/api/v1/work-assignments") && init?.method === "POST") {
+        capturedBody = JSON.parse(String(init.body));
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, workItem: { id: "native:wi-oa" } }), { status: 200 })
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+
+    const user = userEvent.setup();
+    render(
+      <AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} initialPlannedDate="2026-08-03" />
+    );
+    await pickPedido(user, "OP-4521");
+    await user.type(screen.getByLabelText(/^Cantidad/), "100");
+    await user.click(screen.getByTestId("assign-submit"));
+
+    await waitFor(() => expect(capturedBody).not.toBeNull());
+    expect(capturedBody).toMatchObject({ orderNumber: "OA-2026-4521" });
+  });
+
+  it("7) sin pedido seleccionado, el campo OA/OE queda vacío y editable — no se inventa un valor, ni se rompe la asignación manual existente", async () => {
+    const user = userEvent.setup();
+    let capturedBody: Record<string, unknown> | null = null;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/api/v1/work-assignments") && init?.method === "POST") {
+        capturedBody = JSON.parse(String(init.body));
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true, workItem: { id: "native:wi-manual" } }), { status: 200 })
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+
+    render(
+      <AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} initialPlannedDate="2026-08-03" />
+    );
+    const oaInput = screen.getByLabelText(/Orden de Acondicionamiento/) as HTMLInputElement;
+    expect(oaInput.value).toBe("");
+
+    await user.type(screen.getByLabelText(/^Cliente/), "Cliente Manual");
+    await user.type(screen.getByLabelText(/^Producto/), "Producto Manual");
+    await user.type(screen.getByLabelText(/^Cantidad/), "10");
+    await user.type(oaInput, "OA-2026-000777");
+    await user.click(screen.getByTestId("assign-submit"));
+
+    await waitFor(() => expect(capturedBody).not.toBeNull());
+    expect(capturedBody).toMatchObject({ orderNumber: "OA-2026-000777", productionPedidoId: null });
+  });
+});

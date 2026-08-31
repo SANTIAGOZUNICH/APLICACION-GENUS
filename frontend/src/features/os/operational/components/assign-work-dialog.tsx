@@ -18,6 +18,7 @@ import type { WorkItem } from "@/types/operational/work-item";
 import { getClientPlanningSource } from "@/lib/planning/planning-source";
 import type { ProductionPedidoRecord } from "@/lib/production-pedidos/types";
 import { todayIso } from "../lib/delivery-date";
+import { buildAutoOrderRef } from "../lib/pedido-order-ref";
 
 export type AssignableSector = Extract<
   SectorId,
@@ -130,6 +131,13 @@ export function AssignWorkDialog({
   const [pedidoSearched, setPedidoSearched] = useState(false);
   const [pedidoSearchError, setPedidoSearchError] = useState<string | null>(null);
   const [selectedPedido, setSelectedPedido] = useState<ProductionPedidoRecord | null>(null);
+  /**
+   * Último OA/OE que autocompletamos nosotros (no lo que el usuario tipeó).
+   * Sirve para distinguir "el campo sigue igual a como lo dejó el
+   * autocompletado" (seguro actualizar en el próximo cambio de pedido) de
+   * "el usuario ya lo editó a mano" (nunca se pisa).
+   */
+  const [autoOrderRef, setAutoOrderRef] = useState<string | null>(null);
   const idempotencyRef = useRef(newIdempotencyKey());
   const inFlightRef = useRef(false);
 
@@ -210,15 +218,25 @@ export function AssignWorkDialog({
     setPedidoResults([]);
     setClient(p.cliente ?? "");
     setProduct(p.producto ?? "");
-    if (quantity.trim()) return;
-    if (sector === "ELABORACION") {
-      // kg = (q × ml) / 1000, ya calculado server-side — nunca se inventa si faltan datos.
-      if (p.kg != null) setQuantity(p.kgDisplay || String(p.kg));
-    } else if (p.q != null) {
-      // "q" es el campo real de "Cantidad"/"Cantidad Unidades" del pedido (excel-paste.ts) —
-      // para Envasado/Codificado es directamente la cantidad de unidades, sin conversión.
-      setQuantity(String(p.q));
+    if (!quantity.trim()) {
+      if (sector === "ELABORACION") {
+        // kg = (q × ml) / 1000, ya calculado server-side — nunca se inventa si faltan datos.
+        if (p.kg != null) setQuantity(p.kgDisplay || String(p.kg));
+      } else if (p.q != null) {
+        // "q" es el campo real de "Cantidad"/"Cantidad Unidades" del pedido (excel-paste.ts) —
+        // para Envasado/Codificado es directamente la cantidad de unidades, sin conversión.
+        setQuantity(String(p.q));
+      }
     }
+    // OA/OE autocompletado desde el pedido — nunca pisa un valor que el
+    // usuario ya haya escrito a mano (solo se aplica si el campo está vacío
+    // o si todavía es exactamente lo que el autocompletado dejó la última
+    // vez, ver pedido-order-ref.ts).
+    const nextAutoRef = buildAutoOrderRef(sector, p.op, plannedDate);
+    if (nextAutoRef && (orderRef.trim() === "" || orderRef === autoOrderRef)) {
+      setOrderRef(nextAutoRef);
+    }
+    setAutoOrderRef(nextAutoRef);
   };
 
   const clearPedido = () => {
