@@ -6,6 +6,9 @@ import {
   ACTOR_SECTOR_HEADER,
 } from "@/lib/auth/header-names";
 import { usePreviewSession } from "@/features/os/session/preview-context";
+import { SortSelect } from "./sort-select";
+import { useSortPreference } from "../lib/use-sort-preference";
+import { applySort, compareDates, compareNumbers, type SortOption } from "@/lib/sorting/sort-contract";
 
 type Movement = {
   id: string;
@@ -20,6 +23,16 @@ type Movement = {
   actorEmail: string;
 };
 
+export const MP_LEDGER_SORT_OPTIONS: SortOption<Movement>[] = [
+  { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.createdAt, b.createdAt, "desc") },
+  { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.createdAt, b.createdAt, "asc") },
+  { key: "cantidad_desc", label: "Cantidad mayor a menor", compare: (a, b) => compareNumbers(a.quantity, b.quantity, "desc") },
+  { key: "cantidad_asc", label: "Cantidad menor a mayor", compare: (a, b) => compareNumbers(a.quantity, b.quantity, "asc") },
+  { key: "saldo_desc", label: "Saldo mayor a menor", compare: (a, b) => compareNumbers(a.balanceAfter, b.balanceAfter, "desc") },
+  { key: "saldo_asc", label: "Saldo menor a mayor", compare: (a, b) => compareNumbers(a.balanceAfter, b.balanceAfter, "asc") },
+];
+const MP_LEDGER_SORT_KEYS = MP_LEDGER_SORT_OPTIONS.map((o) => o.key);
+
 export function MpStockLedgerPanel({ schemaPending }: { schemaPending: boolean }) {
   const { email, sectorId } = usePreviewSession();
   const [codigo, setCodigo] = useState("");
@@ -29,6 +42,8 @@ export function MpStockLedgerPanel({ schemaPending }: { schemaPending: boolean }
   const [rows, setRows] = useState<Movement[]>([]);
   const [balance, setBalance] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sort, setSort] = useSortPreference("mp-stock-ledger", "fecha_desc", MP_LEDGER_SORT_KEYS);
+  const sortedRows = applySort(rows, MP_LEDGER_SORT_OPTIONS, sort);
 
   const load = useCallback(async () => {
     if (!codigo.trim()) {
@@ -106,6 +121,7 @@ export function MpStockLedgerPanel({ schemaPending }: { schemaPending: boolean }
           value={to}
           onChange={(e) => setTo(e.target.value)}
         />
+        <SortSelect value={sort} onChange={setSort} options={MP_LEDGER_SORT_OPTIONS} testId="mp-ledger-sort" />
       </div>
       {balance != null ? (
         <p className="text-xs">
@@ -125,7 +141,7 @@ export function MpStockLedgerPanel({ schemaPending }: { schemaPending: boolean }
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {sortedRows.map((r) => (
             <tr key={r.id} className="border-b">
               <td className="p-1">{new Date(r.createdAt).toLocaleString("es-AR")}</td>
               <td className="p-1">{r.kind}</td>

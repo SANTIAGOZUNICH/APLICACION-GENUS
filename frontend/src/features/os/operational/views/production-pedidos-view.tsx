@@ -36,6 +36,30 @@ import {
   SelectionCheckbox,
   useListSelectionMode,
 } from "@/features/os/operational/components/list-selection-mode";
+import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
+import {
+  applySort,
+  compareDates,
+  compareNumbers,
+  compareNumericField,
+  compareStrings,
+  type SortOption,
+} from "@/lib/sorting/sort-contract";
+
+export const PEDIDOS_SORT_OPTIONS: SortOption<ProductionPedidoRecord>[] = [
+  { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.fecha, b.fecha, "desc") },
+  { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.fecha, b.fecha, "asc") },
+  { key: "op_asc", label: "N° de Pedido menor a mayor", compare: (a, b) => compareNumericField(a.op, b.op, "asc") },
+  { key: "op_desc", label: "N° de Pedido mayor a menor", compare: (a, b) => compareNumericField(a.op, b.op, "desc") },
+  { key: "cliente_asc", label: "Cliente A-Z", compare: (a, b) => compareStrings(a.cliente, b.cliente, "asc") },
+  { key: "cliente_desc", label: "Cliente Z-A", compare: (a, b) => compareStrings(a.cliente, b.cliente, "desc") },
+  { key: "producto_asc", label: "Producto A-Z", compare: (a, b) => compareStrings(a.producto, b.producto, "asc") },
+  { key: "producto_desc", label: "Producto Z-A", compare: (a, b) => compareStrings(a.producto, b.producto, "desc") },
+  { key: "cantidad_desc", label: "Cantidad mayor a menor", compare: (a, b) => compareNumbers(a.q, b.q, "desc") },
+  { key: "cantidad_asc", label: "Cantidad menor a mayor", compare: (a, b) => compareNumbers(a.q, b.q, "asc") },
+];
+const PEDIDOS_SORT_KEYS = PEDIDOS_SORT_OPTIONS.map((o) => o.key);
 
 type Draft = {
   op: string;
@@ -212,7 +236,15 @@ export function ProductionPedidosView() {
     void reload();
   }, [reload]);
 
-  const visibleIds = useMemo(() => items.map((r) => r.id), [items]);
+  const [sortKey, setSortKey] = useSortPreference("produccion-pedidos", "fecha_desc", PEDIDOS_SORT_KEYS);
+  // Se ordena SIEMPRE sobre el array completo ya traído del servidor (esta
+  // pantalla no pagina) — nunca sobre una porción visible.
+  const sortedItems = useMemo(
+    () => applySort(items, PEDIDOS_SORT_OPTIONS, sortKey),
+    [items, sortKey]
+  );
+
+  const visibleIds = useMemo(() => sortedItems.map((r) => r.id), [sortedItems]);
   const sel = useListSelectionMode(visibleIds);
 
   function openNew() {
@@ -528,6 +560,12 @@ export function ProductionPedidosView() {
               aria-label="Fecha hasta"
             />
           </div>
+          <SortSelect
+            value={sortKey}
+            onChange={setSortKey}
+            options={PEDIDOS_SORT_OPTIONS}
+            testId="pedidos-sort"
+          />
         </div>
 
         {/* Desktop table */}
@@ -550,7 +588,7 @@ export function ProductionPedidosView() {
               </tr>
             </thead>
             <tbody>
-              {items.map((r) => (
+              {sortedItems.map((r) => (
                 <tr
                   key={r.id}
                   className={`border-t border-[var(--os-border)]/60 ${selectedRowClassName(sel.active && sel.isSelected(r.id))}`}
@@ -614,7 +652,7 @@ export function ProductionPedidosView() {
 
         {/* Tablet: compact + más datos */}
         <div className="hidden space-y-2 md:block lg:hidden">
-          {items.map((r) => (
+          {sortedItems.map((r) => (
             <div
               key={r.id}
               className={`os-glass-panel rounded border border-[var(--os-border)] p-3 ${selectedRowClassName(sel.active && sel.isSelected(r.id))}`}
@@ -678,7 +716,7 @@ export function ProductionPedidosView() {
 
         {/* Mobile cards */}
         <div className="space-y-2 md:hidden">
-          {items.map((r) => (
+          {sortedItems.map((r) => (
             <article
               key={r.id}
               className={`os-glass-panel rounded border border-[var(--os-border)] p-3 ${selectedRowClassName(sel.active && sel.isSelected(r.id))}`}

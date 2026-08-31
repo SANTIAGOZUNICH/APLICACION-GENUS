@@ -27,6 +27,18 @@ import {
 } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
 import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
+import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
+import { applySort, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
+
+export const ME_INVENTARIO_SORT_OPTIONS: SortOption<MeInventarioViewRow>[] = [
+  { key: "codigo_asc", label: "Código A-Z", compare: (a, b) => compareStrings(a.codigo, b.codigo, "asc") },
+  { key: "cliente_asc", label: "Cliente A-Z", compare: (a, b) => compareStrings(a.cliente, b.cliente, "asc") },
+  { key: "insumo_asc", label: "Insumo A-Z", compare: (a, b) => compareStrings(a.insumo, b.insumo, "asc") },
+  { key: "cantidad_desc", label: "Cantidad mayor a menor", compare: (a, b) => compareNumbers(a.cantidadTotal, b.cantidadTotal, "desc") },
+  { key: "cantidad_asc", label: "Cantidad menor a mayor", compare: (a, b) => compareNumbers(a.cantidadTotal, b.cantidadTotal, "asc") },
+];
+const ME_INVENTARIO_SORT_KEYS = ME_INVENTARIO_SORT_OPTIONS.map((o) => o.key);
 
 const DELETE_DESCRIPTION =
   "Se eliminará el material del inventario operativo. Si había ingresos asociados se anulan y el stock se recalcula. Motivo (opcional).";
@@ -66,13 +78,14 @@ export function MeInventarioView() {
     };
   }, [reload]);
 
+  const [sort, setSort] = useSortPreference("me-inventario", "codigo_asc", ME_INVENTARIO_SORT_KEYS);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) =>
-      [r.cliente, r.insumo, r.codigo, r.ubicacion].join(" ").toLowerCase().includes(q)
-    );
-  }, [rows, search]);
+    const base = !q
+      ? rows
+      : rows.filter((r) => [r.cliente, r.insumo, r.codigo, r.ubicacion].join(" ").toLowerCase().includes(q));
+    return applySort(base, ME_INVENTARIO_SORT_OPTIONS, sort);
+  }, [rows, search, sort]);
 
   const visibleIds = useMemo(() => filtered.map((r) => r.materialId), [filtered]);
   const sel = useListSelectionMode(visibleIds);
@@ -129,6 +142,7 @@ export function MeInventarioView() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        <SortSelect value={sort} onChange={setSort} options={ME_INVENTARIO_SORT_OPTIONS} testId="me-inventario-sort" />
         {canWrite &&
           (!sel.active ? (
             <ListSelectionEnterButton onClick={sel.enter} />

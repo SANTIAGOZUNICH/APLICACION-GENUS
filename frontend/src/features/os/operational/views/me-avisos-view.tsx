@@ -18,6 +18,18 @@ import { canWriteInventory } from "@/lib/inventory/rbac";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { ME_ALERT_NOTIFY_SECTORS } from "@/lib/inventory/rbac";
+import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
+import { applySort, compareDates, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
+
+export const ME_AVISOS_SORT_OPTIONS: SortOption<MeAlert>[] = [
+  { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.createdAt, b.createdAt, "desc") },
+  { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.createdAt, b.createdAt, "asc") },
+  { key: "stock_asc", label: "Stock actual menor a mayor", compare: (a, b) => compareNumbers(a.stockActual, b.stockActual, "asc") },
+  { key: "stock_desc", label: "Stock actual mayor a menor", compare: (a, b) => compareNumbers(a.stockActual, b.stockActual, "desc") },
+  { key: "material_asc", label: "Material A-Z", compare: (a, b) => compareStrings(a.materialDescripcion, b.materialDescripcion, "asc") },
+];
+const ME_AVISOS_SORT_KEYS = ME_AVISOS_SORT_OPTIONS.map((o) => o.key);
 
 export function MeAvisosView() {
   const { sectorId } = usePreviewSession();
@@ -28,6 +40,8 @@ export function MeAvisosView() {
   const [banner, setBanner] = useState<string | null>(null);
   const [materialId, setMaterialId] = useState("");
   const [obs, setObs] = useState("");
+  const [sort, setSort] = useSortPreference("me-avisos", "fecha_desc", ME_AVISOS_SORT_KEYS);
+  const sortedAlerts = applySort(alerts, ME_AVISOS_SORT_OPTIONS, sort);
 
   const reload = useCallback(async () => {
     const [a, m] = await Promise.all([
@@ -234,9 +248,12 @@ export function MeAvisosView() {
           </Button>
         </div>
       )}
+      <div className="mb-3">
+        <SortSelect value={sort} onChange={setSort} options={ME_AVISOS_SORT_OPTIONS} testId="me-avisos-sort" />
+      </div>
       <OperationalTable
         columns={columns}
-        rows={alerts}
+        rows={sortedAlerts}
         rowKey={(r) => r.id}
         emptyMessage="Sin avisos. Se generan al cruzar umbrales de stock ME."
       />

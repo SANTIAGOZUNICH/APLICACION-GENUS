@@ -21,6 +21,9 @@ import {
   type CancelledOrDeletedRow,
 } from "../adapters/manual-work-items-repository";
 import { AssignedWorkLifecycleActions } from "../components/assigned-work-lifecycle-actions";
+import { SortSelect } from "../components/sort-select";
+import { useSortPreference } from "../lib/use-sort-preference";
+import { applySort, compareDates, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
 
 interface HistorialRow {
   id: string;
@@ -48,6 +51,21 @@ interface HistorialViewProps {
   title?: string;
 }
 
+export const HISTORIAL_FINALIZADOS_SORT_OPTIONS: SortOption<HistorialRow>[] = [
+  { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.fecha, b.fecha, "desc") },
+  { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.fecha, b.fecha, "asc") },
+  { key: "producto_asc", label: "Producto A-Z", compare: (a, b) => compareStrings(a.producto, b.producto, "asc") },
+  { key: "cliente_asc", label: "Cliente A-Z", compare: (a, b) => compareStrings(a.cliente, b.cliente, "asc") },
+];
+const HISTORIAL_FINALIZADOS_SORT_KEYS = HISTORIAL_FINALIZADOS_SORT_OPTIONS.map((o) => o.key);
+
+export const HISTORIAL_CANCELADOS_SORT_OPTIONS: SortOption<CancelledOrDeletedRow>[] = [
+  { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.at, b.at, "desc") },
+  { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.at, b.at, "asc") },
+  { key: "producto_asc", label: "Producto A-Z", compare: (a, b) => compareStrings(a.item.product, b.item.product, "asc") },
+];
+const HISTORIAL_CANCELADOS_SORT_KEYS = HISTORIAL_CANCELADOS_SORT_OPTIONS.map((o) => o.key);
+
 /** Historial de trabajos finalizados por sector — cruza eventos de cierre con decisión de Calidad. */
 export function HistorialView({ sectors, title = "Historial" }: HistorialViewProps) {
   const workspace = useRequiredWorkspace();
@@ -64,39 +82,58 @@ export function HistorialView({ sectors, title = "Historial" }: HistorialViewPro
     window.setTimeout(() => setFeedback(null), 4000);
   }, []);
 
+  const [finalizadosSort, setFinalizadosSort] = useSortPreference(
+    "historial-finalizados",
+    "fecha_desc",
+    HISTORIAL_FINALIZADOS_SORT_KEYS
+  );
+  const [canceladosSort, setCanceladosSort] = useSortPreference(
+    "historial-cancelados",
+    "fecha_desc",
+    HISTORIAL_CANCELADOS_SORT_KEYS
+  );
+
   const finalizadosRows = useMemo<HistorialRow[]>(() => {
     if (tick < 0) return [];
     const qualityItems = calidadData?.qualityItems ?? [];
     const events = completionEvents.filter((e) => sectors.includes(e.sourceSector));
 
-    return events
-      .map((event) => {
-        const qualityItem = qualityItems.find((q) => q.relatedWorkItemId === event.workItemId);
-        const estado = qualityItem
-          ? getQualityStatus(qualityItem.id, qualityItem.status)
-          : "pendiente";
-        const observacionCalidad = qualityItem ? getQualityObservation(qualityItem.id) : "";
+    const rows = events.map((event) => {
+      const qualityItem = qualityItems.find((q) => q.relatedWorkItemId === event.workItemId);
+      const estado = qualityItem
+        ? getQualityStatus(qualityItem.id, qualityItem.status)
+        : "pendiente";
+      const observacionCalidad = qualityItem ? getQualityObservation(qualityItem.id) : "";
 
-        return {
-          id: event.id,
-          fecha: event.completedAt,
-          sector: event.sourceSector,
-          cliente: event.client,
-          producto: event.product,
-          cantidad: [event.finishedQty, event.unit ?? ""].filter(Boolean).join(" "),
-          estado,
-          observacionSector: event.observation,
-          observacionCalidad,
-          decididoPor: event.completedBy,
-        } satisfies HistorialRow;
-      })
-      .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
-  }, [completionEvents, calidadData?.qualityItems, sectors, getQualityStatus, getQualityObservation, tick]);
+      return {
+        id: event.id,
+        fecha: event.completedAt,
+        sector: event.sourceSector,
+        cliente: event.client,
+        producto: event.product,
+        cantidad: [event.finishedQty, event.unit ?? ""].filter(Boolean).join(" "),
+        estado,
+        observacionSector: event.observation,
+        observacionCalidad,
+        decididoPor: event.completedBy,
+      } satisfies HistorialRow;
+    });
+    return applySort(rows, HISTORIAL_FINALIZADOS_SORT_OPTIONS, finalizadosSort);
+  }, [
+    completionEvents,
+    calidadData?.qualityItems,
+    sectors,
+    getQualityStatus,
+    getQualityObservation,
+    tick,
+    finalizadosSort,
+  ]);
 
   const canceladosRows = useMemo<CancelledOrDeletedRow[]>(() => {
     if (tick < 0) return [];
-    return listCancelledAndDeletedManualWorks().filter((row) => sectors.includes(row.item.sector));
-  }, [sectors, tick]);
+    const rows = listCancelledAndDeletedManualWorks().filter((row) => sectors.includes(row.item.sector));
+    return applySort(rows, HISTORIAL_CANCELADOS_SORT_OPTIONS, canceladosSort);
+  }, [sectors, tick, canceladosSort]);
 
   const canRestore = workspace.context.sectorId === "PRODUCCION";
 
@@ -238,16 +275,34 @@ export function HistorialView({ sectors, title = "Historial" }: HistorialViewPro
         <OperationalTabs tabs={tabs} activeId={tab} onChange={(id) => setTab(id as HistorialTab)} />
 
         {tab === "finalizados" && (
-          <OperationalTable
-            columns={finalizadosColumns}
-            rows={finalizadosRows}
-            rowKey={(r) => r.id}
-            emptyMessage="Todavía no hay trabajos finalizados en el historial."
-          />
+          <>
+            <div className="flex justify-end">
+              <SortSelect
+                value={finalizadosSort}
+                onChange={setFinalizadosSort}
+                options={HISTORIAL_FINALIZADOS_SORT_OPTIONS}
+                testId="historial-finalizados-sort"
+              />
+            </div>
+            <OperationalTable
+              columns={finalizadosColumns}
+              rows={finalizadosRows}
+              rowKey={(r) => r.id}
+              emptyMessage="Todavía no hay trabajos finalizados en el historial."
+            />
+          </>
         )}
 
         {tab === "cancelados" && (
           <div className="space-y-3">
+            <div className="flex justify-end">
+              <SortSelect
+                value={canceladosSort}
+                onChange={setCanceladosSort}
+                options={HISTORIAL_CANCELADOS_SORT_OPTIONS}
+                testId="historial-cancelados-sort"
+              />
+            </div>
             <p className="text-sm text-[var(--os-text-muted)]">
               <strong className="font-medium text-[var(--os-text)]">Cancelados</strong> son trabajos que
               tenían avance y se dieron de baja con motivo.{" "}

@@ -16,6 +16,19 @@ import {
   type PackagingMetricRecord,
 } from "@/lib/metricas/types";
 import { SECTOR_LABELS } from "@/types/operational/sector";
+import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
+import { applySort, compareDates, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
+
+export const METRICAS_SORT_OPTIONS: SortOption<PackagingMetricRecord>[] = [
+  { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.metricDate, b.metricDate, "desc") },
+  { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.metricDate, b.metricDate, "asc") },
+  { key: "producto_asc", label: "Producto A-Z", compare: (a, b) => compareStrings(a.product, b.product, "asc") },
+  { key: "unidades_desc", label: "Unidades mayor a menor", compare: (a, b) => compareNumbers(a.units, b.units, "desc") },
+  { key: "unidades_asc", label: "Unidades menor a mayor", compare: (a, b) => compareNumbers(a.units, b.units, "asc") },
+  { key: "responsable_asc", label: "Responsable A-Z", compare: (a, b) => compareStrings(a.responsibleDisplay, b.responsibleDisplay, "asc") },
+];
+const METRICAS_SORT_KEYS = METRICAS_SORT_OPTIONS.map((o) => o.key);
 
 export function MetricasView() {
   const { email, sectorId } = usePreviewSession();
@@ -48,6 +61,8 @@ export function MetricasView() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmDeleteLabel, setConfirmDeleteLabel] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [sort, setSort] = useSortPreference("metricas", "fecha_desc", METRICAS_SORT_KEYS);
+  const sortedMetrics = useMemo(() => applySort(metrics, METRICAS_SORT_OPTIONS, sort), [metrics, sort]);
 
   const reload = useCallback(async () => {
     try {
@@ -293,6 +308,7 @@ export function MetricasView() {
             placeholder="Responsable"
             className="rounded border px-2 py-1 text-sm"
           />
+          <SortSelect value={sort} onChange={setSort} options={METRICAS_SORT_OPTIONS} testId="metricas-sort" />
         </div>
 
         <div className="os-table-wrap overflow-x-clip rounded border">
@@ -310,7 +326,7 @@ export function MetricasView() {
               </tr>
             </thead>
             <tbody>
-              {metrics.map((m) => (
+              {sortedMetrics.map((m) => (
                 <tr key={m.id} className="border-t">
                   <td className="px-3 py-2">{m.metricDate}</td>
                   {isProdAdmin ? (

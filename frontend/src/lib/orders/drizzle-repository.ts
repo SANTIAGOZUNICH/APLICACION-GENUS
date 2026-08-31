@@ -13,6 +13,7 @@ import {
 } from "@/lib/db/schema";
 import type { OrdersRepository } from "@/lib/orders/repository";
 import { notificationEventKeys } from "@/lib/orders/notification-event-keys";
+import { compareDates, compareNumericField, compareStrings } from "@/lib/sorting/sort-contract";
 import { seedTemplateRecords } from "@/lib/orders/seed-templates";
 import type {
   ListOrdersFilters,
@@ -459,17 +460,20 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     list.sort((a, b) => {
       switch (sort) {
         case "fecha_asc":
-          return a.createdAt.localeCompare(b.createdAt);
+          return compareDates(a.createdAt, b.createdAt, "asc");
         case "producto":
-          return a.product.localeCompare(b.product);
+          return compareStrings(a.product, b.product, "asc");
         case "numero":
-          return a.orderNumber.localeCompare(b.orderNumber);
+          // Numérico, no lexicográfico — "OA-2026-4521" (sin padding, ver
+          // pedido-order-ref.ts) y "OA-2026-000145" (histórico, con
+          // padding) deben ordenar por el número real, no por caracteres.
+          return compareNumericField(a.orderNumber, b.orderNumber, "asc");
         case "entrega_desc":
-          return (b.completedAt ?? "").localeCompare(a.completedAt ?? "");
+          return compareDates(a.completedAt, b.completedAt, "desc");
         case "updated_desc":
-          return b.updatedAt.localeCompare(a.updatedAt);
+          return compareDates(a.updatedAt, b.updatedAt, "desc");
         default:
-          return b.createdAt.localeCompare(a.createdAt);
+          return compareDates(a.createdAt, b.createdAt, "desc");
       }
     });
     const total = list.length;

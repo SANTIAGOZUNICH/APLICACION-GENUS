@@ -33,6 +33,16 @@ import {
   upsertAsignacionLoteApi,
 } from "@/lib/asignacion-lotes/asignacion-lotes-client";
 import { OperationalTable, type OperationalTableColumn } from "../components/operational-ui";
+import { SortSelect } from "../components/sort-select";
+import { useSortPreference } from "../lib/use-sort-preference";
+import {
+  applySort,
+  compareDates,
+  compareNumbers,
+  compareStrings,
+  compareVtoNearest,
+  type SortOption,
+} from "@/lib/sorting/sort-contract";
 import {
   findDuplicateAsignacionLote,
   getAllAsignacionLotes,
@@ -81,7 +91,6 @@ const IMPORT_FIELDS: ExcelImportFieldDef[] = [
 ];
 
 type DateField = "fecha" | "vto" | "fechaAnalisis";
-type SortKey = "fecha_desc" | "fecha_asc" | "producto_asc" | "lote_asc" | "codigo_asc";
 
 type AsignacionFormState = {
   lote: string;
@@ -167,17 +176,54 @@ function toCsv(rows: AsignacionLote[]): string {
   return [header.join(","), ...lines].join("\n");
 }
 
-function sortAsignaciones(rows: AsignacionLote[], sort: SortKey): AsignacionLote[] {
-  const fecha = (item: AsignacionLote) => item.fecha ?? "";
-  return [...rows].sort((a, b) => {
-    if (sort === "fecha_asc") return fecha(a).localeCompare(fecha(b)) || a.lote.localeCompare(b.lote, "es");
-    if (sort === "producto_asc")
-      return a.producto.localeCompare(b.producto, "es") || fecha(a).localeCompare(fecha(b));
-    if (sort === "lote_asc") return a.lote.localeCompare(b.lote, "es") || a.codigo.localeCompare(b.codigo, "es");
-    if (sort === "codigo_asc") return a.codigo.localeCompare(b.codigo, "es") || a.lote.localeCompare(b.lote, "es");
-    return fecha(b).localeCompare(fecha(a)) || a.lote.localeCompare(b.lote, "es");
-  });
-}
+export const ASIGNACION_LOTES_SORT_OPTIONS: SortOption<AsignacionLote>[] = [
+  {
+    key: "fecha_desc",
+    label: "Fecha más reciente",
+    compare: (a, b) => compareDates(a.fecha, b.fecha, "desc") || compareStrings(a.lote, b.lote, "asc"),
+  },
+  {
+    key: "fecha_asc",
+    label: "Fecha más antigua",
+    compare: (a, b) => compareDates(a.fecha, b.fecha, "asc") || compareStrings(a.lote, b.lote, "asc"),
+  },
+  {
+    key: "producto_asc",
+    label: "Producto A-Z",
+    compare: (a, b) => compareStrings(a.producto, b.producto, "asc") || compareDates(a.fecha, b.fecha, "desc"),
+  },
+  {
+    key: "producto_desc",
+    label: "Producto Z-A",
+    compare: (a, b) => compareStrings(a.producto, b.producto, "desc"),
+  },
+  {
+    key: "lote_asc",
+    label: "Lote A-Z",
+    compare: (a, b) => compareStrings(a.lote, b.lote, "asc") || compareStrings(a.codigo, b.codigo, "asc"),
+  },
+  {
+    key: "codigo_asc",
+    label: "Código A-Z",
+    compare: (a, b) => compareStrings(a.codigo, b.codigo, "asc") || compareStrings(a.lote, b.lote, "asc"),
+  },
+  {
+    key: "cantidad_desc",
+    label: "Cantidad mayor a menor",
+    compare: (a, b) => compareNumbers(a.cantidades, b.cantidades, "desc"),
+  },
+  {
+    key: "cantidad_asc",
+    label: "Cantidad menor a mayor",
+    compare: (a, b) => compareNumbers(a.cantidades, b.cantidades, "asc"),
+  },
+  {
+    key: "vto_asc",
+    label: "VTO más próximo",
+    compare: (a, b) => compareVtoNearest(a.vto, b.vto),
+  },
+];
+const ASIGNACION_LOTES_SORT_KEYS = ASIGNACION_LOTES_SORT_OPTIONS.map((o) => o.key);
 
 function dateForField(item: AsignacionLote, field: DateField): string | null {
   return field === "fecha" ? item.fecha : item[field];
@@ -203,7 +249,7 @@ export function AsignacionLotesView() {
   const [month, setMonth] = useState("");
   const [year, setYear] = useState("");
   const [dateField, setDateField] = useState<DateField>("fecha");
-  const [sort, setSort] = useState<SortKey>("fecha_desc");
+  const [sort, setSort] = useSortPreference("asignacion-lotes", "fecha_desc", ASIGNACION_LOTES_SORT_KEYS);
   const [page, setPage] = useState(1);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<AsignacionLote | null>(null);
@@ -248,7 +294,7 @@ export function AsignacionLotesView() {
       if (year && selectedDate?.slice(0, 4) !== year) return false;
       return true;
     });
-    return sortAsignaciones(rows, sort);
+    return applySort(rows, ASIGNACION_LOTES_SORT_OPTIONS, sort);
   }, [items, search, producto, codigo, lote, marca, month, year, dateField, sort]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -539,20 +585,13 @@ export function AsignacionLotesView() {
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <label className="space-y-1 text-xs font-medium">
-                Orden
-                <select
-                  value={sort}
-                  onChange={(event) => setSort(event.target.value as SortKey)}
-                  className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
-                >
-                  <option value="fecha_desc">Fecha más reciente</option>
-                  <option value="fecha_asc">Fecha más antigua</option>
-                  <option value="producto_asc">Producto A-Z</option>
-                  <option value="lote_asc">Lote A-Z</option>
-                  <option value="codigo_asc">Código A-Z</option>
-                </select>
-              </label>
+              <SortSelect
+                value={sort}
+                onChange={setSort}
+                options={ASIGNACION_LOTES_SORT_OPTIONS}
+                label="Orden"
+                testId="asignacion-lotes-sort"
+              />
               <Button type="button" variant="secondary" onClick={clearFilters}>
                 Limpiar filtros
               </Button>

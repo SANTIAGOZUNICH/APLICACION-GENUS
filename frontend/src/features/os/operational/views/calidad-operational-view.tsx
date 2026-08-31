@@ -58,6 +58,71 @@ import { LifecycleRowActions } from "../components/lifecycle-row-actions";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
 import { normalizeOptionalReason } from "@/lib/lifecycle";
 import { postReworkWork } from "@/lib/api/live-sync-client";
+import { SortSelect } from "../components/sort-select";
+import { useSortPreference } from "../lib/use-sort-preference";
+import {
+  applySort,
+  compareDates,
+  compareNumericField,
+  compareStrings,
+  type SortOption,
+} from "@/lib/sorting/sort-contract";
+
+/**
+ * Aprobados/Rechazados son un archivo histórico de decisiones ya tomadas —
+ * sin límite de crecimiento y, hasta ahora, sin ningún ordenamiento
+ * seleccionable (usaban sortReceivedFirst, la misma heurística de
+ * prioridad de cola pensada para Pendientes, que no tiene sentido en un
+ * archivo ya resuelto). Default: más recientes primero (fecha de decisión).
+ */
+export const CALIDAD_DECISION_SORT_OPTIONS: SortOption<QualityItem>[] = [
+  {
+    key: "completado_desc",
+    label: "Más recientes",
+    compare: (a, b) => compareDates(a.completedAt, b.completedAt, "desc"),
+  },
+  {
+    key: "completado_asc",
+    label: "Más antiguos",
+    compare: (a, b) => compareDates(a.completedAt, b.completedAt, "asc"),
+  },
+  {
+    key: "producto_asc",
+    label: "Producto A-Z",
+    compare: (a, b) => compareStrings(a.product, b.product, "asc"),
+  },
+  {
+    key: "producto_desc",
+    label: "Producto Z-A",
+    compare: (a, b) => compareStrings(a.product, b.product, "desc"),
+  },
+  {
+    key: "cliente_asc",
+    label: "Cliente A-Z",
+    compare: (a, b) => compareStrings(a.client, b.client, "asc"),
+  },
+  {
+    key: "cliente_desc",
+    label: "Cliente Z-A",
+    compare: (a, b) => compareStrings(a.client, b.client, "desc"),
+  },
+  {
+    key: "cantidad_desc",
+    label: "Cantidad mayor a menor",
+    compare: (a, b) => compareNumericField(a.quantity, b.quantity, "desc"),
+  },
+  {
+    key: "cantidad_asc",
+    label: "Cantidad menor a mayor",
+    compare: (a, b) => compareNumericField(a.quantity, b.quantity, "asc"),
+  },
+  {
+    key: "entrega_asc",
+    label: "Entrega más próxima",
+    compare: (a, b) => compareDates(a.deliveryDate, b.deliveryDate, "asc"),
+  },
+];
+const CALIDAD_DECISION_SORT_KEYS = CALIDAD_DECISION_SORT_OPTIONS.map((o) => o.key);
 
 const TOP_TABS = [
   { id: "pendientes", label: "Pendientes" },
@@ -146,13 +211,33 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     [qualityItems]
   );
 
+  const [aprobadosSort, setAprobadosSort] = useSortPreference(
+    "calidad-aprobados",
+    "completado_desc",
+    CALIDAD_DECISION_SORT_KEYS
+  );
+  const [rechazadosSort, setRechazadosSort] = useSortPreference(
+    "calidad-rechazados",
+    "completado_desc",
+    CALIDAD_DECISION_SORT_KEYS
+  );
   const aprobados = useMemo(
-    () => sortReceivedFirst(filterQualityByStatus(qualityItems, "aprobado")),
-    [qualityItems]
+    () =>
+      applySort(
+        filterQualityByStatus(qualityItems, "aprobado"),
+        CALIDAD_DECISION_SORT_OPTIONS,
+        aprobadosSort
+      ),
+    [qualityItems, aprobadosSort]
   );
   const rechazados = useMemo(
-    () => sortReceivedFirst(filterQualityByStatus(qualityItems, "rechazado")),
-    [qualityItems]
+    () =>
+      applySort(
+        filterQualityByStatus(qualityItems, "rechazado"),
+        CALIDAD_DECISION_SORT_OPTIONS,
+        rechazadosSort
+      ),
+    [qualityItems, rechazadosSort]
   );
 
   const workItems = useMemo(() => data?.workItems ?? [], [data?.workItems]);
@@ -636,6 +721,14 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                 Envasados aprobados: usá GENERAR REMITO para agrupar por cliente y fecha.
               </p>
             ) : null}
+            <div className="mb-2 flex justify-end">
+              <SortSelect
+                value={aprobadosSort}
+                onChange={setAprobadosSort}
+                options={CALIDAD_DECISION_SORT_OPTIONS}
+                testId="calidad-aprobados-sort"
+              />
+            </div>
             <OperationalTable
               columns={decidedColumns}
               rows={aprobados}
@@ -647,12 +740,22 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
         )}
 
         {topTab === "rechazados" && (
-          <OperationalTable
-            columns={decidedColumns}
-            rows={rechazados}
-            rowKey={(row) => row.id}
-            emptyMessage="Todavía no hay trabajos rechazados."
-          />
+          <>
+            <div className="mb-2 flex justify-end">
+              <SortSelect
+                value={rechazadosSort}
+                onChange={setRechazadosSort}
+                options={CALIDAD_DECISION_SORT_OPTIONS}
+                testId="calidad-rechazados-sort"
+              />
+            </div>
+            <OperationalTable
+              columns={decidedColumns}
+              rows={rechazados}
+              rowKey={(row) => row.id}
+              emptyMessage="Todavía no hay trabajos rechazados."
+            />
+          </>
         )}
       </div>
 

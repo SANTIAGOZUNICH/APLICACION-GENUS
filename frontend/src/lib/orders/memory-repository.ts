@@ -12,6 +12,7 @@ import type {
   TemplateChangeProposalRecord,
 } from "@/lib/orders/types";
 import { COMPLETE_STATUSES, PENDING_STATUSES } from "@/lib/orders/types";
+import { compareDates, compareNumericField, compareStrings } from "@/lib/sorting/sort-contract";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -233,18 +234,19 @@ export class MemoryOrdersRepository implements OrdersRepository {
     list.sort((a, b) => {
       switch (sort) {
         case "fecha_asc":
-          return a.createdAt.localeCompare(b.createdAt);
+          return compareDates(a.createdAt, b.createdAt, "asc");
         case "producto":
-          return a.product.localeCompare(b.product);
+          return compareStrings(a.product, b.product, "asc");
         case "numero":
-          return a.orderNumber.localeCompare(b.orderNumber);
+          // Numérico, no lexicográfico — ver mismo fix en drizzle-repository.ts.
+          return compareNumericField(a.orderNumber, b.orderNumber, "asc");
         case "entrega_desc":
-          return (b.completedAt ?? "").localeCompare(a.completedAt ?? "");
+          return compareDates(a.completedAt, b.completedAt, "desc");
         case "updated_desc":
-          return b.updatedAt.localeCompare(a.updatedAt);
+          return compareDates(a.updatedAt, b.updatedAt, "desc");
         case "fecha_desc":
         default:
-          return b.createdAt.localeCompare(a.createdAt);
+          return compareDates(a.createdAt, b.createdAt, "desc");
       }
     });
 

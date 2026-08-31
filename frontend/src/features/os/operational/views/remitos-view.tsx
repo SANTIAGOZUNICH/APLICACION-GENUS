@@ -31,12 +31,71 @@ import {
   type RemitoTab,
 } from "@/lib/remitos/types";
 import { beginOperationGuard, endOperationGuard } from "@/lib/pwa/operation-guard";
+import { SortSelect } from "../components/sort-select";
+import { useSortPreference } from "../lib/use-sort-preference";
+import {
+  applySort,
+  compareDates,
+  compareNumbers,
+  compareNumericField,
+  compareStrings,
+  type SortOption,
+} from "@/lib/sorting/sort-contract";
 
 const TABS: { id: RemitoTab; label: string }[] = [
   { id: "borradores", label: "Borradores" },
   { id: "generados", label: "Generados" },
   { id: "anulados", label: "Anulados" },
 ];
+
+export const REMITOS_SORT_OPTIONS: SortOption<RemitoRecord>[] = [
+  {
+    key: "fecha_desc",
+    label: "Más recientes",
+    compare: (a, b) => compareDates(a.deliveryDate, b.deliveryDate, "desc"),
+  },
+  {
+    key: "fecha_asc",
+    label: "Más antiguos",
+    compare: (a, b) => compareDates(a.deliveryDate, b.deliveryDate, "asc"),
+  },
+  {
+    key: "numero_asc",
+    label: "N° menor a mayor",
+    compare: (a, b) => compareNumericField(a.remitoNumber, b.remitoNumber, "asc"),
+  },
+  {
+    key: "numero_desc",
+    label: "N° mayor a menor",
+    compare: (a, b) => compareNumericField(a.remitoNumber, b.remitoNumber, "desc"),
+  },
+  {
+    key: "cliente_asc",
+    label: "Cliente A-Z",
+    compare: (a, b) => compareStrings(a.clientDisplay, b.clientDisplay, "asc"),
+  },
+  {
+    key: "cliente_desc",
+    label: "Cliente Z-A",
+    compare: (a, b) => compareStrings(a.clientDisplay, b.clientDisplay, "desc"),
+  },
+  {
+    key: "unidades_desc",
+    label: "Cantidad mayor a menor",
+    compare: (a, b) => compareNumbers(a.totalUnits, b.totalUnits, "desc"),
+  },
+  {
+    key: "unidades_asc",
+    label: "Cantidad menor a mayor",
+    compare: (a, b) => compareNumbers(a.totalUnits, b.totalUnits, "asc"),
+  },
+  {
+    key: "modificado_desc",
+    label: "Última modificación",
+    compare: (a, b) => compareDates(a.updatedAt, b.updatedAt, "desc"),
+  },
+];
+const REMITOS_SORT_KEYS = REMITOS_SORT_OPTIONS.map((o) => o.key);
 
 function normalizeDraftLine(l: RemitoLine): RemitoLine {
   return {
@@ -112,7 +171,13 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
     return clientFolders.find((f) => f.key === clientFolderKey) ?? null;
   }, [clientFolderKey, clientFolders]);
 
-  const folderRemitos = activeFolder?.remitos ?? items;
+  const [sortKey, setSortKey] = useSortPreference("remitos", "fecha_desc", REMITOS_SORT_KEYS);
+  // Se ordena sobre el array COMPLETO de remitos del tab/carpeta activa —
+  // esta pantalla no pagina, así que no hay riesgo de ordenar solo lo visible.
+  const folderRemitos = useMemo(
+    () => applySort(activeFolder?.remitos ?? items, REMITOS_SORT_OPTIONS, sortKey),
+    [activeFolder, items, sortKey]
+  );
 
   const reload = useCallback(async () => {
     if (!allowed) return;
@@ -400,13 +465,22 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
               data-testid="remitos-client-search"
             />
           ) : (
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Nombre, n°, producto, lote, vto, fecha…"
-              className="ml-auto min-w-0 w-full basis-full rounded border border-[var(--os-border)] px-2 py-1.5 text-sm sm:w-auto sm:min-w-[12rem] sm:basis-auto"
-              data-testid="remitos-search"
-            />
+            <>
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Nombre, n°, producto, lote, vto, fecha…"
+                className="ml-auto min-w-0 w-full basis-full rounded border border-[var(--os-border)] px-2 py-1.5 text-sm sm:w-auto sm:min-w-[12rem] sm:basis-auto"
+                data-testid="remitos-search"
+              />
+              <SortSelect
+                value={sortKey}
+                onChange={setSortKey}
+                options={REMITOS_SORT_OPTIONS}
+                testId="remitos-sort"
+                className="w-full sm:w-auto"
+              />
+            </>
           )}
         </div>
 

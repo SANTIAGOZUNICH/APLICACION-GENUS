@@ -58,6 +58,46 @@ import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
 } from "@/lib/auth/header-names";
+import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
+import {
+  applySort,
+  compareDates,
+  compareNumbers,
+  compareStrings,
+  compareVtoNearest,
+  type SortOption,
+} from "@/lib/sorting/sort-contract";
+
+export const MP_STOCK_SORT_OPTIONS: SortOption<MpStockRow>[] = [
+  { key: "codigo_asc", label: "Código A-Z", compare: (a, b) => compareStrings(a.codigo, b.codigo, "asc") },
+  { key: "descripcion_asc", label: "Descripción A-Z", compare: (a, b) => compareStrings(a.descripcion, b.descripcion, "asc") },
+  { key: "cantidad_desc", label: "Cantidad mayor a menor", compare: (a, b) => compareNumbers(a.cantidadKg, b.cantidadKg, "desc") },
+  { key: "cantidad_asc", label: "Cantidad menor a mayor", compare: (a, b) => compareNumbers(a.cantidadKg, b.cantidadKg, "asc") },
+  { key: "vto_asc", label: "VTO más próximo", compare: (a, b) => compareVtoNearest(a.vencimiento, b.vencimiento) },
+];
+const MP_STOCK_SORT_KEYS = MP_STOCK_SORT_OPTIONS.map((o) => o.key);
+
+export const MP_INGRESO_SORT_OPTIONS: SortOption<MpIngresoRow>[] = [
+  { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.fecha, b.fecha, "desc") },
+  { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.fecha, b.fecha, "asc") },
+  { key: "codigo_asc", label: "Código A-Z", compare: (a, b) => compareStrings(a.codigo, b.codigo, "asc") },
+  { key: "proveedor_asc", label: "Proveedor A-Z", compare: (a, b) => compareStrings(a.proveedor, b.proveedor, "asc") },
+  { key: "total_desc", label: "Total mayor a menor", compare: (a, b) => compareNumbers(a.total, b.total, "desc") },
+  { key: "total_asc", label: "Total menor a mayor", compare: (a, b) => compareNumbers(a.total, b.total, "asc") },
+  { key: "vto_asc", label: "VTO más próximo", compare: (a, b) => compareVtoNearest(a.vencimiento, b.vencimiento) },
+];
+const MP_INGRESO_SORT_KEYS = MP_INGRESO_SORT_OPTIONS.map((o) => o.key);
+
+export const MP_COMPRA_SORT_OPTIONS: SortOption<MpCompraRow>[] = [
+  { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.fecha, b.fecha, "desc") },
+  { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.fecha, b.fecha, "asc") },
+  { key: "entrega_asc", label: "Entrega más próxima", compare: (a, b) => compareDates(a.fechaEntrega, b.fechaEntrega, "asc") },
+  { key: "materia_asc", label: "Materia prima A-Z", compare: (a, b) => compareStrings(a.materiaPrima, b.materiaPrima, "asc") },
+  { key: "cantidad_desc", label: "Cantidad mayor a menor", compare: (a, b) => compareNumbers(a.cantidad, b.cantidad, "desc") },
+  { key: "cantidad_asc", label: "Cantidad menor a mayor", compare: (a, b) => compareNumbers(a.cantidad, b.cantidad, "asc") },
+];
+const MP_COMPRA_SORT_KEYS = MP_COMPRA_SORT_OPTIONS.map((o) => o.key);
 
 export type MpHubTab = (typeof MP_TABS)[number];
 
@@ -142,6 +182,9 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   const [bulkBusy, setBulkBusy] = useState(false);
   const [page, setPage] = useState(0);
   const pageSize = 25;
+  const [stockSort, setStockSort] = useSortPreference("mp-hub-stock", "codigo_asc", MP_STOCK_SORT_KEYS);
+  const [ingresoSort, setIngresoSort] = useSortPreference("mp-hub-ingresos", "fecha_desc", MP_INGRESO_SORT_KEYS);
+  const [compraSort, setCompraSort] = useSortPreference("mp-hub-compras", "fecha_desc", MP_COMPRA_SORT_KEYS);
   const formulaSession = useMemo(
     () => ({ email: email ?? "", sector: sectorId }),
     [email, sectorId]
@@ -198,7 +241,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (tab === "Stock") {
-      return stock.filter(
+      const filtered = stock.filter(
         (r) =>
           !q ||
           [r.descripcion, r.proveedor, r.cliente, r.lote, r.ubicacion, r.codigo, r.productosAsociados]
@@ -206,9 +249,10 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             .toLowerCase()
             .includes(q)
       );
+      return applySort(filtered, MP_STOCK_SORT_OPTIONS, stockSort);
     }
     if (tab === "Ingresos MP") {
-      return ingresos.filter((r) => {
+      const filtered = ingresos.filter((r) => {
         const status = r.status ?? "BORRADOR";
         const statusVisible =
           status !== "ANULADO" ||
@@ -221,6 +265,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           .toLowerCase()
           .includes(q);
       });
+      return applySort(filtered, MP_INGRESO_SORT_OPTIONS, ingresoSort);
     }
     if (tab === "Control semanal") {
       return control.filter(
@@ -230,13 +275,14 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             [r.productoElaborar, r.materiaPrima, r.estado].join(" ").toLowerCase().includes(q))
       );
     }
-    return compras.filter(
+    const filteredCompras = compras.filter(
       (r) =>
         String(r.estado).toLowerCase() !== "cancelada" &&
         (!q ||
           [r.materiaPrima, r.proveedor, r.estado, r.produccionesAfecta].join(" ").toLowerCase().includes(q))
     );
-  }, [tab, stock, ingresos, control, compras, search]);
+    return applySort(filteredCompras, MP_COMPRA_SORT_OPTIONS, compraSort);
+  }, [tab, stock, ingresos, control, compras, search, stockSort, ingresoSort, compraSort]);
 
   const pageRows = rows.slice(page * pageSize, page * pageSize + pageSize);
   const visibleIds = useMemo(() => rows.map((r) => r.id), [rows]);
@@ -792,6 +838,39 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             setPage(0);
           }}
         />
+        ) : null}
+        {tab === "Stock" ? (
+          <SortSelect
+            value={stockSort}
+            onChange={(key) => {
+              setStockSort(key);
+              setPage(0);
+            }}
+            options={MP_STOCK_SORT_OPTIONS}
+            testId="mp-stock-sort"
+          />
+        ) : null}
+        {tab === "Ingresos MP" ? (
+          <SortSelect
+            value={ingresoSort}
+            onChange={(key) => {
+              setIngresoSort(key);
+              setPage(0);
+            }}
+            options={MP_INGRESO_SORT_OPTIONS}
+            testId="mp-ingresos-sort"
+          />
+        ) : null}
+        {tab === "Compras MP" ? (
+          <SortSelect
+            value={compraSort}
+            onChange={(key) => {
+              setCompraSort(key);
+              setPage(0);
+            }}
+            options={MP_COMPRA_SORT_OPTIONS}
+            testId="mp-compras-sort"
+          />
         ) : null}
       </div>
 

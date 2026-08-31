@@ -27,8 +27,28 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { SortSelect } from "../components/sort-select";
+import { useSortPreference } from "../lib/use-sort-preference";
+import {
+  applySort,
+  compareDates,
+  compareNumbers,
+  compareStrings,
+  type SortOption,
+} from "@/lib/sorting/sort-contract";
 
 type StatusFilter = "ACTIVOS" | "TODOS" | GranelStatus;
+
+export const GRANELES_SORT_OPTIONS: SortOption<GranelRemainderRecord>[] = [
+  { key: "ingreso_desc", label: "Más recientes", compare: (a, b) => compareDates(a.intakeDate, b.intakeDate, "desc") },
+  { key: "ingreso_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.intakeDate, b.intakeDate, "asc") },
+  { key: "producto_asc", label: "Producto A-Z", compare: (a, b) => compareStrings(a.product, b.product, "asc") },
+  { key: "producto_desc", label: "Producto Z-A", compare: (a, b) => compareStrings(a.product, b.product, "desc") },
+  { key: "cliente_asc", label: "Cliente A-Z", compare: (a, b) => compareStrings(a.client, b.client, "asc") },
+  { key: "kg_desc", label: "Kg mayor a menor", compare: (a, b) => compareNumbers(a.kgAvailable, b.kgAvailable, "desc") },
+  { key: "kg_asc", label: "Kg menor a mayor", compare: (a, b) => compareNumbers(a.kgAvailable, b.kgAvailable, "asc") },
+];
+const GRANELES_SORT_KEYS = GRANELES_SORT_OPTIONS.map((o) => o.key);
 
 /**
  * Depósito Graneles — sobrantes de granel independientes de MP/ME.
@@ -87,16 +107,19 @@ export function DepositoGranelesView() {
     void refresh();
   }, [refresh]);
 
+  const [sort, setSort] = useSortPreference("deposito-graneles", "ingreso_desc", GRANELES_SORT_KEYS);
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
-    if (!qq) return items;
-    return items.filter((i) =>
-      [i.product, i.client, i.bulkLot, i.reportedBy, i.originSector ?? ""]
-        .join(" ")
-        .toLowerCase()
-        .includes(qq)
-    );
-  }, [items, q]);
+    const base = !qq
+      ? items
+      : items.filter((i) =>
+          [i.product, i.client, i.bulkLot, i.reportedBy, i.originSector ?? ""]
+            .join(" ")
+            .toLowerCase()
+            .includes(qq)
+        );
+    return applySort(base, GRANELES_SORT_OPTIONS, sort);
+  }, [items, q, sort]);
 
   const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
   const sel = useListSelectionMode(visibleIds);
@@ -238,6 +261,7 @@ export function DepositoGranelesView() {
           <option value="ANULADO">Anulado</option>
           <option value="ARCHIVADO">Archivado</option>
         </select>
+        <SortSelect value={sort} onChange={setSort} options={GRANELES_SORT_OPTIONS} testId="graneles-sort" />
         {canEdit &&
           (!sel.active ? (
             <ListSelectionEnterButton onClick={sel.enter} disabled={filtered.length === 0} />

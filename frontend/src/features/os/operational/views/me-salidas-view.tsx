@@ -32,6 +32,19 @@ import {
   formatOperationalIdCompact,
   formatOperationalIdFull,
 } from "@/lib/orders/format-operational-id";
+import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
+import { applySort, compareDates, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
+
+export const ME_SALIDA_SORT_OPTIONS: SortOption<MeSalidaRow>[] = [
+  { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.fecha, b.fecha, "desc") },
+  { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.fecha, b.fecha, "asc") },
+  { key: "codigo_asc", label: "Código A-Z", compare: (a, b) => compareStrings(a.codigo, b.codigo, "asc") },
+  { key: "cliente_asc", label: "Cliente A-Z", compare: (a, b) => compareStrings(a.cliente, b.cliente, "asc") },
+  { key: "total_desc", label: "Total mayor a menor", compare: (a, b) => compareNumbers(a.total, b.total, "desc") },
+  { key: "total_asc", label: "Total menor a mayor", compare: (a, b) => compareNumbers(a.total, b.total, "asc") },
+];
+const ME_SALIDA_SORT_KEYS = ME_SALIDA_SORT_OPTIONS.map((o) => o.key);
 
 const ALIASES: Record<string, string[]> = {
   fecha: ["fecha"],
@@ -124,9 +137,10 @@ export function MeSalidasView() {
     };
   }, [reload]);
 
+  const [sort, setSort] = useSortPreference("me-salidas", "fecha_desc", ME_SALIDA_SORT_KEYS);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
+    const base = rows.filter((r) => {
       if (r.reverted) return false;
       if (filterControl === "si" && !r.control) return false;
       if (filterControl === "no" && r.control) return false;
@@ -138,7 +152,8 @@ export function MeSalidasView() {
         .toLowerCase()
         .includes(q);
     });
-  }, [rows, search, filterControl, filterEntregado]);
+    return applySort(base, ME_SALIDA_SORT_OPTIONS, sort);
+  }, [rows, search, filterControl, filterEntregado, sort]);
 
   const pageRows = filtered.slice(page * pageSize, page * pageSize + pageSize);
   const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
@@ -293,6 +308,15 @@ export function MeSalidasView() {
             setSearch(e.target.value);
             setPage(0);
           }}
+        />
+        <SortSelect
+          value={sort}
+          onChange={(key) => {
+            setSort(key);
+            setPage(0);
+          }}
+          options={ME_SALIDA_SORT_OPTIONS}
+          testId="me-salidas-sort"
         />
         <select
           className="rounded border px-2 py-1.5 text-sm"

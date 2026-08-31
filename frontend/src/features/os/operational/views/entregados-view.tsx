@@ -48,10 +48,56 @@ import {
   ListSelectionToolbar,
   useListSelectionMode,
 } from "../components/list-selection-mode";
+import { SortSelect } from "../components/sort-select";
+import { useSortPreference } from "../lib/use-sort-preference";
+import { applySort, compareDates, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
 
 type EntregadosTab = "entregados" | "archivados" | "pendientes";
 type TimelinessFilter = "todos" | "en_fecha" | "fuera_fecha";
-type SortKey = "actual_desc" | "actual_asc" | "planned_asc" | "product_asc" | "client_asc";
+
+export const ENTREGADOS_SORT_OPTIONS: SortOption<DeliveryRecord>[] = [
+  {
+    key: "actual_desc",
+    label: "Más recientes",
+    compare: (a, b) => compareDates(a.actualDeliveredAt, b.actualDeliveredAt, "desc"),
+  },
+  {
+    key: "actual_asc",
+    label: "Más antiguas",
+    compare: (a, b) => compareDates(a.actualDeliveredAt, b.actualDeliveredAt, "asc"),
+  },
+  {
+    key: "planned_asc",
+    label: "Plan más próximo",
+    compare: (a, b) => compareDates(a.plannedDeliveryDate, b.plannedDeliveryDate, "asc"),
+  },
+  {
+    key: "planned_desc",
+    label: "Plan más lejano",
+    compare: (a, b) => compareDates(a.plannedDeliveryDate, b.plannedDeliveryDate, "desc"),
+  },
+  {
+    key: "product_asc",
+    label: "Producto A-Z",
+    compare: (a, b) => compareStrings(a.product, b.product, "asc"),
+  },
+  {
+    key: "product_desc",
+    label: "Producto Z-A",
+    compare: (a, b) => compareStrings(a.product, b.product, "desc"),
+  },
+  {
+    key: "client_asc",
+    label: "Cliente A-Z",
+    compare: (a, b) => compareStrings(a.client, b.client, "asc"),
+  },
+  {
+    key: "client_desc",
+    label: "Cliente Z-A",
+    compare: (a, b) => compareStrings(a.client, b.client, "desc"),
+  },
+];
+const ENTREGADOS_SORT_KEYS = ENTREGADOS_SORT_OPTIONS.map((o) => o.key);
 
 interface DeliveryForm {
   actualDeliveredAt: string;
@@ -169,7 +215,7 @@ export function EntregadosView() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [timeliness, setTimeliness] = useState<TimelinessFilter>("todos");
-  const [sort, setSort] = useState<SortKey>("actual_desc");
+  const [sort, setSort] = useSortPreference("entregados", "actual_desc", ENTREGADOS_SORT_KEYS);
   const [page, setPage] = useState(1);
   const [deliveryTarget, setDeliveryTarget] = useState<QualityItem | null>(null);
   const [form, setForm] = useState<DeliveryForm>({
@@ -295,7 +341,7 @@ export function EntregadosView() {
 
   const filteredDeliveries = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return activeDeliveries
+    const filtered = activeDeliveries
       .filter((record) => {
         if (q) {
           const haystack = [
@@ -322,14 +368,10 @@ export function EntregadosView() {
         if (timeliness === "en_fecha" && isLateDelivery(record)) return false;
         if (timeliness === "fuera_fecha" && !isLateDelivery(record)) return false;
         return true;
-      })
-      .sort((a, b) => {
-        if (sort === "actual_asc") return a.actualDeliveredAt.localeCompare(b.actualDeliveredAt);
-        if (sort === "planned_asc") return (a.plannedDeliveryDate ?? "").localeCompare(b.plannedDeliveryDate ?? "");
-        if (sort === "product_asc") return a.product.localeCompare(b.product, "es");
-        if (sort === "client_asc") return (a.client ?? "").localeCompare(b.client ?? "", "es");
-        return b.actualDeliveredAt.localeCompare(a.actualDeliveredAt);
       });
+    // Ordenar SIEMPRE sobre el array filtrado COMPLETO, antes del slice de
+    // paginación de más abajo (pagedDeliveries) — nunca sobre la página visible.
+    return applySort(filtered, ENTREGADOS_SORT_OPTIONS, sort);
   }, [activeDeliveries, client, codigo, fromDate, lote, month, product, search, sector, sort, timeliness, toDate, year]);
 
   const pagedDeliveries = filteredDeliveries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -753,13 +795,15 @@ export function EntregadosView() {
                 <option value="en_fecha">En fecha</option>
                 <option value="fuera_fecha">Fuera de fecha</option>
               </select>
-              <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} className="rounded border border-[var(--os-border)] px-3 py-2 text-sm">
-                <option value="actual_desc">Más recientes</option>
-                <option value="actual_asc">Más antiguas</option>
-                <option value="planned_asc">Plan más próximo</option>
-                <option value="product_asc">Producto A-Z</option>
-                <option value="client_asc">Cliente A-Z</option>
-              </select>
+              <SortSelect
+                value={sort}
+                onChange={(key) => {
+                  setSort(key);
+                  setPage(1);
+                }}
+                options={ENTREGADOS_SORT_OPTIONS}
+                testId="entregados-sort"
+              />
             </div>
             {canMutate &&
               (!sel.active ? (
