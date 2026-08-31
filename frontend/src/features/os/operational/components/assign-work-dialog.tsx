@@ -47,10 +47,13 @@ function mapUserFacingError(status: number, code: string | undefined, offline: b
     return "No tenés permiso para asignar trabajos.";
   }
   if (code === "OA_DATA_MISMATCH") {
-    return "La OA ya existe con datos distintos. Revisá antes de continuar.";
+    // Mismo código para OA y OE (ensureOaForAssignment/ensureOeForAssignment) —
+    // el mensaje real y específico ya viene en data.error casi siempre; esto
+    // es solo el fallback genérico si por algún motivo no vino.
+    return "La OA/OE ya existe con datos distintos. Revisá antes de continuar.";
   }
   if (status === 409 || code === "VERSION_CONFLICT") {
-    return "Esta OA ya tiene un trabajo asignado (1 trabajo = 1 OA).";
+    return "Esta OA/OE ya tiene un trabajo asignado (1 trabajo = 1 OA/OE).";
   }
   if (status >= 500 || code === "PLANNING_FAILED" || code === "DATABASE_UNAVAILABLE") {
     return "No se pudo completar la operación. Reintentá.";
@@ -249,6 +252,8 @@ export function AssignWorkDialog({
 
   const unit = sector === "ELABORACION" ? "kg" : "un.";
   const lineOptions = sector === "ENVASADO_MASIVO" ? MASIVO_LINES : PREMIUM_LINES;
+  /** Etiqueta del documento asociado — OA para acondicionamiento, OE para Elaboración. */
+  const docLabel = sector === "ELABORACION" ? "OE" : "OA";
 
   const submitAssignment = async (opts?: { forceLink?: boolean }) => {
     if (inFlightRef.current || submitting) return;
@@ -362,11 +367,14 @@ export function AssignWorkDialog({
       });
 
       setErrorMsg(null);
+      // "oaCreated"/"oaLinked" son genéricos (OA u OE, ver ensureOaForAssignment/
+      // ensureOeForAssignment) — el mensaje usa docLabel según el sector,
+      // igual que la etiqueta del campo más abajo, para no decir "OA" en Elaboración.
       const oaPart = data.order?.orderNumber
         ? data.oaCreated
-          ? ` OA ${data.order.orderNumber} creada.`
+          ? ` ${docLabel} ${data.order.orderNumber} creada.`
           : data.oaLinked
-            ? ` OA ${data.order.orderNumber} vinculada.`
+            ? ` ${docLabel} ${data.order.orderNumber} vinculada.`
             : ""
         : "";
       setFeedback(
@@ -645,16 +653,14 @@ export function AssignWorkDialog({
               value={orderRef}
               disabled={submitting}
               onChange={(e) => setOrderRef(e.target.value)}
-              placeholder={sector === "ELABORACION" ? "Opcional — OE existente" : "Ej. OA-2026-000145"}
+              placeholder={sector === "ELABORACION" ? "Opcional — Ej. OE-2026-000145" : "Ej. OA-2026-000145"}
               className={CONTROL_CLASS}
               data-testid="assign-oa-number"
             />
-            {isPackagingAssignSector(sector) ? (
-              <p className="text-xs text-[var(--os-text-muted)]">
-                Podés seleccionar una OA existente o ingresar un número nuevo. Si no existe, se creará
-                automáticamente (1 trabajo = 1 OA).
-              </p>
-            ) : null}
+            <p className="text-xs text-[var(--os-text-muted)]">
+              Podés seleccionar una {docLabel} existente o ingresar un número nuevo. Si no existe, se
+              creará automáticamente (1 trabajo = 1 {docLabel}).
+            </p>
             {oaHint ? (
               <p className="text-xs text-[var(--os-teal)]" data-testid="assign-oa-hint">
                 {oaHint}
@@ -717,8 +723,8 @@ export function AssignWorkDialog({
             >
               <p className="mb-2 text-[var(--genus-warning,#b45309)]">{oaForceConfirm}</p>
               <p className="mb-2 text-xs text-[var(--os-text-muted)]">
-                Al continuar solo se completarán campos vacíos de la OA; no se sobrescriben producto,
-                cliente, lote o VTO ya cargados.
+                Al continuar solo se completarán campos vacíos de la {docLabel}; no se sobrescriben
+                producto, cliente{sector === "ELABORACION" ? "" : " ni lote/VTO"} ya cargados.
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button

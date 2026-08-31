@@ -27,6 +27,7 @@ import {
 } from "@/lib/planning/validators";
 import { logSanitizedError } from "@/lib/planning/sanitize-public-error";
 import { ensureOaForAssignment } from "@/lib/planning/ensure-oa-on-assign";
+import { ensureOeForAssignment } from "@/lib/planning/ensure-oe-on-assign";
 import {
   isPackagingOaSector,
   normalizeOaOrderNumber,
@@ -434,8 +435,52 @@ export async function assignWorkItemDurable(
           linked: ensured.linked,
           filledEmptyFields: ensured.filledEmptyFields,
         };
+      } else if (input.sector === "ELABORACION" && (orderNumberRaw || orderId)) {
+        // Elaboración: auto-crear o vincular OE (mismo patrón que OA arriba
+        // — antes esta rama caía en el lookup obligatorio de más abajo, que
+        // hacía fallar la asignación si el OE autogenerado desde el N° de
+        // Pedido todavía no existía).
+        let numberForEnsure = orderNumberRaw;
+        if (orderId && !numberForEnsure) {
+          const [byId] = await tx
+            .select({ orderNumber: operationalOrders.orderNumber })
+            .from(operationalOrders)
+            .where(eq(operationalOrders.id, orderId))
+            .limit(1);
+          numberForEnsure = byId?.orderNumber ?? null;
+        }
+        if (!numberForEnsure) {
+          throw new PlanningValidationError("No se encontró la OE indicada.");
+        }
+
+        const ensured = await ensureOeForAssignment(tx, {
+          orderNumberRaw: numberForEnsure,
+          sector: "ELABORACION",
+          product: input.product.trim(),
+          client: input.client.trim(),
+          lot: input.packagingLote?.trim() || "",
+          code: productCode,
+          quantity: input.plannedQuantity.trim(),
+          notes,
+          assignmentDate: plannedDate,
+          forceLink,
+          actorEmail: actor.email,
+          actorSector: actor.sector,
+        });
+
+        orderRow = {
+          id: ensured.id,
+          orderNumber: ensured.orderNumber,
+          assignedSector: ensured.assignedSector,
+          linkedWorkItemId: ensured.linkedWorkItemId,
+          type: "OE",
+          created: ensured.created,
+          linked: ensured.linked,
+          filledEmptyFields: ensured.filledEmptyFields,
+        };
       } else if (orderId || orderNumberRaw) {
-        // Elaboración (OE) u otros: lookup obligatorio, sin auto-crear.
+        // Otros casos residuales (ningún sector asignable actual llega
+        // acá): lookup obligatorio, sin auto-crear.
         const lookupNumber = orderNumberRaw
           ? input.sector === "ELABORACION"
             ? orderNumberRaw.trim().toUpperCase().replace(/\s+/g, "")
