@@ -552,4 +552,155 @@ describe("reworkWorkItemDurable — Rehacer preserva lote/VTO/packing/cantidad/O
       reworkWorkItemDurable("wi-rehacer", { reason: "Motivo", ...actorArgs })
     ).rejects.toMatchObject({ name: "PlanningValidationError" });
   });
+
+  it("E) Rehacer preserva un Lote/VTO que Envasado/Codificado completó (no solo el que cargó Producción)", async () => {
+    // A diferencia del resto de estos tests, acá el lote NO lo cargó
+    // Producción al asignar — lo completó Envasado/Codificado después, vía
+    // "Guardar avance" (saveWorkProgressDurable, ver el describe de más
+    // abajo). Rehacer debe preservarlo exactamente igual.
+    fakeDbHandle.workItems.get("wi-rehacer")!.packagingLote = "L26099";
+    fakeDbHandle.workItems.get("wi-rehacer")!.packagingVto = "2028-08";
+    await reworkWorkItemDurable("wi-rehacer", { reason: "Motivo", ...actorArgs });
+    const persisted = fakeDbHandle.workItems.get("wi-rehacer")!;
+    expect(persisted.packagingLote).toBe("L26099");
+    expect(persisted.packagingVto).toBe("2028-08");
+  });
+});
+
+/**
+ * DECISIÓN_FUNCIONAL (PR #81, segunda vuelta) — Envasado/Codificado pueden
+ * completar Lote/VTO cuando Producción los dejó vacíos ("fill-once"), pero
+ * nunca sobreescribir un valor ya cargado. Este es el punto de entrada
+ * PRINCIPAL: "Guardar avance" (PackagingQuantitiesBlock → saveWorkPackaging
+ * → save_progress → saveWorkProgressDurable), disponible tanto en el drawer
+ * compartido de Envasado como en la vista dedicada de Codificado.
+ */
+describe("saveWorkProgressDurable — Lote/VTO fill-once (fake tx)", () => {
+  let saveWorkProgressDurable: typeof import("./work-item-progress-repository").saveWorkProgressDurable;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ saveWorkProgressDurable } = await import("./work-item-progress-repository"));
+    fakeDbHandle.workItems.set("wi-progress", {
+      id: "wi-progress",
+      sector: "ENVASADO_MASIVO",
+      operationalStatus: "en_curso",
+      planningWeekId: "week-1",
+      packagingLote: null,
+      packagingVto: null,
+      packingGroups: null,
+    });
+  });
+
+  it("B) Producción dejó Lote/VTO vacíos — Envasado los completa al Guardar avance, y quedan persistidos en el MISMO work item", async () => {
+    const row = await saveWorkProgressDurable(
+      "wi-progress",
+      {
+        finishedQty: "500",
+        observation: "",
+        updatedBy: "envasado@laboratoriogenus.com.ar",
+        packagingLote: "L26099",
+        packagingVto: "2028-08",
+      },
+      "ENVASADO_MASIVO"
+    );
+    expect(row!.packagingLote).toBe("L26099");
+    expect(row!.packagingVto).toBe("2028-08");
+
+    // Segunda lectura real — independiente del valor de retorno de la transacción.
+    const persisted = fakeDbHandle.workItems.get("wi-progress")!;
+    expect(persisted.packagingLote).toBe("L26099");
+    expect(persisted.packagingVto).toBe("2028-08");
+
+    const event = fakeDbHandle.operationalEvents.find(
+      (e) => (e as { type?: string }).type === "LOTE_VTO_FILLED"
+    );
+    expect(event).toBeTruthy();
+  });
+
+  it("A) Producción ya cargó Lote/VTO — Guardar avance NUNCA los sobreescribe, aunque el cliente mande otro valor", async () => {
+    fakeDbHandle.workItems.get("wi-progress")!.packagingLote = "L26099";
+    fakeDbHandle.workItems.get("wi-progress")!.packagingVto = "2028-08";
+
+    const row = await saveWorkProgressDurable(
+      "wi-progress",
+      {
+        finishedQty: "500",
+        observation: "",
+        updatedBy: "envasado@laboratoriogenus.com.ar",
+        packagingLote: "L-OTRO-VALOR",
+        packagingVto: "2030-01",
+      },
+      "ENVASADO_MASIVO"
+    );
+    expect(row!.packagingLote).toBe("L26099");
+    expect(row!.packagingVto).toBe("2028-08");
+    expect(fakeDbHandle.workItems.get("wi-progress")!.packagingLote).toBe("L26099");
+    expect(
+      fakeDbHandle.operationalEvents.some((e) => (e as { type?: string }).type === "LOTE_VTO_FILLED")
+    ).toBe(false);
+  });
+
+  it("C) Codificado también puede completarlos vía Guardar avance", async () => {
+    fakeDbHandle.workItems.get("wi-progress")!.sector = "CODIFICADO";
+    const row = await saveWorkProgressDurable(
+      "wi-progress",
+      {
+        finishedQty: "500",
+        observation: "",
+        updatedBy: "codificado@laboratoriogenus.com.ar",
+        packagingLote: "L26099",
+        packagingVto: "2028-08",
+      },
+      "CODIFICADO"
+    );
+    expect(row!.packagingLote).toBe("L26099");
+    expect(row!.packagingVto).toBe("2028-08");
+  });
+
+  it("D) actualizar packingGroups no borra un Lote/VTO ya cargado", async () => {
+    fakeDbHandle.workItems.get("wi-progress")!.packagingLote = "L26099";
+    fakeDbHandle.workItems.get("wi-progress")!.packagingVto = "2028-08";
+
+    const row = await saveWorkProgressDurable(
+      "wi-progress",
+      {
+        finishedQty: "500",
+        observation: "",
+        updatedBy: "envasado@laboratoriogenus.com.ar",
+        packingGroups: [{ cajas: 2, unidadesPorCaja: 250 }],
+      },
+      "ENVASADO_MASIVO"
+    );
+    expect(row!.packagingLote).toBe("L26099");
+    expect(row!.packagingVto).toBe("2028-08");
+    expect(row!.packingGroups).toEqual([{ cajas: 2, unidadesPorCaja: 250 }]);
+  });
+
+  it("F) cambio de estado sin mandar Lote/VTO — no los clobberea (quedan en null, no se inventan)", async () => {
+    const row = await saveWorkProgressDurable(
+      "wi-progress",
+      { finishedQty: "500", observation: "avance", updatedBy: "envasado@laboratoriogenus.com.ar" },
+      "ENVASADO_MASIVO"
+    );
+    expect(row!.packagingLote).toBeNull();
+    expect(row!.packagingVto).toBeNull();
+  });
+
+  it("RBAC: un sector ajeno al work item no puede completar Lote/VTO (mismo gate que el resto del avance)", async () => {
+    await expect(
+      saveWorkProgressDurable(
+        "wi-progress",
+        {
+          finishedQty: "500",
+          observation: "",
+          updatedBy: "codificado@laboratoriogenus.com.ar",
+          packagingLote: "L26099",
+        },
+        "CODIFICADO"
+      )
+    ).rejects.toThrow();
+    expect(fakeDbHandle.workItems.get("wi-progress")!.packagingLote).toBeNull();
+  });
 });

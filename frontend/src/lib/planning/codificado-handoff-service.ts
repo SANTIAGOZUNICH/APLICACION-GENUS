@@ -67,13 +67,16 @@ export type HandoffCodificadoInput = {
   totalUnits: number;
   observation?: string | null;
   /**
-   * @deprecated Lote/VTO ya no son editables desde Envasado/Codificado —
-   * la fuente única es lo que Producción cargó al asignar. Se ignoran acá
-   * a propósito (ver PARTE A: "Lote y VTO — fuente única"); el campo queda
-   * tipado por compat con clientes viejos pero el server nunca lo aplica.
+   * Handoff Envasado→Codificado es un cambio de estado, no un punto de
+   * carga de datos: nunca escribe Lote/VTO, ni para completarlos ni para
+   * corregirlos — siempre preserva el valor ya persistido en la fila (sea
+   * el que cargó Producción o el que Envasado/Codificado ya haya
+   * completado antes vía "Guardar avance", ver saveWorkProgressDurable).
+   * El campo queda tipado por compat con clientes viejos pero el server
+   * nunca lo aplica acá.
    */
   packagingLote?: string | null;
-  /** @deprecated ver packagingLote. */
+  /** ver packagingLote. */
   packagingVto?: string | null;
   packingGroups?: unknown;
   /** Unidades producidas pero no entregables (PARTE A). null = no informado. */
@@ -390,6 +393,16 @@ export async function handoffToCodificadoDurable(
     });
     const closedByName = actor.displayName || actor.email;
 
+    // Lote/VTO "fill-once": si ya hay un valor persistido, se preserva tal
+    // cual (nunca se sobreescribe). Si está vacío, Envasado puede
+    // completarlo en el momento de enviar a Codificado — se persiste en el
+    // MISMO work item, sin depender de haber pasado antes por "Guardar
+    // avance".
+    const filledLote =
+      !row.packagingLote && input.packagingLote?.trim() ? input.packagingLote.trim() : null;
+    const filledVto =
+      !row.packagingVto && input.packagingVto?.trim() ? input.packagingVto.trim() : null;
+
     const [updated] = await tx
       .update(workItems)
       .set({
@@ -403,10 +416,8 @@ export async function handoffToCodificadoDurable(
         sentToCodificadoAt: now,
         sentToCodificadoBy: actor.displayName || actor.email,
         packagingTotalUnits: input.totalUnits,
-        // Lote/VTO: fuente única = Producción. Nunca se sobrescriben desde
-        // Envasado/Codificado (PARTE A) — se ignora cualquier valor entrante.
-        packagingLote: row.packagingLote,
-        packagingVto: row.packagingVto,
+        packagingLote: filledLote ?? row.packagingLote,
+        packagingVto: filledVto ?? row.packagingVto,
         packingGroups: nextPackingGroups,
         sampleUnits: nextSampleUnits,
         deliverableUnits: close.canValidate ? close.enCajas : null,
@@ -442,6 +453,25 @@ export async function handoffToCodificadoDurable(
       actorSector: actor.sector,
       note: idemRef,
     });
+
+    if (filledLote || filledVto) {
+      await tx.insert(operationalEvents).values({
+        workItemId: id,
+        planningWeekId: row.planningWeekId,
+        type: "LOTE_VTO_FILLED",
+        fromStatus: JSON.stringify({
+          lote: row.packagingLote ?? null,
+          vto: row.packagingVto ?? null,
+        }),
+        toStatus: JSON.stringify({
+          lote: updated.packagingLote ?? null,
+          vto: updated.packagingVto ?? null,
+        }),
+        actorEmail: actor.email,
+        actorSector: actor.sector,
+        note: "Completado por Envasado al enviar a Codificado — Producción no lo había cargado.",
+      });
+    }
 
     await touchPedidoEnEnvasado(
       tx as unknown as ReturnType<typeof getDb>,
@@ -616,9 +646,9 @@ export async function deliverFromCodificadoDurable(
   input: {
     workItemId: string;
     observation?: string | null;
-    /** @deprecated ver HandoffCodificadoInput.packagingLote — ignorado a propósito. */
+    /** ver HandoffCodificadoInput.packagingLote — mismo contrato "fill-once". */
     packagingLote?: string | null;
-    /** @deprecated ver HandoffCodificadoInput.packagingVto — ignorado a propósito. */
+    /** ver HandoffCodificadoInput.packagingVto. */
     packagingVto?: string | null;
     packagingTotalUnits?: number | null;
     packingGroups?: unknown;
@@ -696,14 +726,22 @@ export async function deliverFromCodificadoDurable(
       packingGroups: nextPackingGroups,
       observation: nextObservation || row.packingMismatchObservation,
     });
+    // Lote/VTO "fill-once": si ya hay un valor persistido, se preserva tal
+    // cual (nunca se sobreescribe acá). Si está vacío, Codificado puede
+    // completarlo en el momento de entregar — se persiste en el MISMO work
+    // item, sin depender de que haya pasado antes por "Guardar avance".
+    const filledLote =
+      !row.packagingLote && input.packagingLote?.trim() ? input.packagingLote.trim() : null;
+    const filledVto =
+      !row.packagingVto && input.packagingVto?.trim() ? input.packagingVto.trim() : null;
+
     const [updated] = await tx
       .update(workItems)
       .set({
         deliveredFromCodificadoAt: now,
         deliveredFromCodificadoBy: deliveredByName,
-        // Lote/VTO: fuente única = Producción (PARTE A) — nunca sobrescritos acá.
-        packagingLote: row.packagingLote,
-        packagingVto: row.packagingVto,
+        packagingLote: filledLote ?? row.packagingLote,
+        packagingVto: filledVto ?? row.packagingVto,
         packagingTotalUnits: nextTotalUnits,
         packingGroups: nextPackingGroups,
         sampleUnits: nextSampleUnits,
@@ -748,6 +786,25 @@ export async function deliverFromCodificadoDurable(
       actorSector: actor.sector,
       note: idemRef,
     });
+
+    if (filledLote || filledVto) {
+      await tx.insert(operationalEvents).values({
+        workItemId: id,
+        planningWeekId: row.planningWeekId,
+        type: "LOTE_VTO_FILLED",
+        fromStatus: JSON.stringify({
+          lote: row.packagingLote ?? null,
+          vto: row.packagingVto ?? null,
+        }),
+        toStatus: JSON.stringify({
+          lote: updated.packagingLote ?? null,
+          vto: updated.packagingVto ?? null,
+        }),
+        actorEmail: actor.email,
+        actorSector: actor.sector,
+        note: "Completado por Codificado al entregar a Calidad — Producción no lo había cargado.",
+      });
+    }
 
     await touchPedidoListoParaEntregar(
       tx as unknown as ReturnType<typeof getDb>,

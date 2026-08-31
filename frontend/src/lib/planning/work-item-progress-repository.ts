@@ -37,13 +37,15 @@ export interface SaveProgressInput {
   updatedBy: string;
   sector?: SectorId;
   /**
-   * @deprecated Lote/VTO ya no son editables desde Envasado/Codificado —
-   * ver PARTE A "Lote y VTO — fuente única". saveWorkProgressDurable
-   * ignora estos campos a propósito; solo Producción los cambia (ver
-   * updateWorkItemLoteVtoDurable).
+   * "Fill-once": Envasado/Codificado pueden completar Lote/VTO acá SOLO si
+   * Producción los dejó vacíos. Si ya existe un valor, saveWorkProgressDurable
+   * lo preserva tal cual y este campo se ignora en silencio — nunca hay
+   * sobreescritura desde acá. Para corregir un valor ya cargado, el único
+   * camino sigue siendo updateWorkItemLoteVtoDurable (Producción, con motivo
+   * auditado).
    */
   packagingLote?: string | null;
-  /** @deprecated ver packagingLote. */
+  /** ver packagingLote. */
   packagingVto?: string | null;
   packagingTotalUnits?: number | null;
   packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
@@ -69,44 +71,80 @@ export async function saveWorkProgressDurable(
   actorSector: SectorId | string
 ) {
   const db = getDb();
-  const [existing] = await db
-    .select({ operationalStatus: workItems.operationalStatus, sector: workItems.sector })
-    .from(workItems)
-    .where(eq(workItems.id, id))
-    .limit(1);
-  if (!existing) throw new Error("Work item no encontrado.");
-  if (!canActOnWorkItemSector(actorSector, existing.sector)) {
-    throw new OrdersForbiddenError(WORK_PROGRESS_DENIED_MESSAGE);
-  }
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        operationalStatus: workItems.operationalStatus,
+        sector: workItems.sector,
+        planningWeekId: workItems.planningWeekId,
+        packagingLote: workItems.packagingLote,
+        packagingVto: workItems.packagingVto,
+      })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!existing) throw new Error("Work item no encontrado.");
+    if (!canActOnWorkItemSector(actorSector, existing.sector)) {
+      throw new OrdersForbiddenError(WORK_PROGRESS_DENIED_MESSAGE);
+    }
 
-  const nextStatus = KEEP_STATUS_ON_PROGRESS.has(existing.operationalStatus)
-    ? existing.operationalStatus
-    : "en_curso";
+    const nextStatus = KEEP_STATUS_ON_PROGRESS.has(existing.operationalStatus)
+      ? existing.operationalStatus
+      : "en_curso";
 
-  const patch: Partial<typeof workItems.$inferInsert> = {
-    operationalStatus: nextStatus,
-    finishedQty: input.finishedQty.trim(),
-    operationalObservation: input.observation.trim(),
-    progressUpdatedAt: new Date(),
-    progressUpdatedBy: input.updatedBy,
-    updatedAt: new Date(),
-  };
-  // Lote/VTO: fuente única = Producción (PARTE A). Guardar avance desde
-  // Envasado/Codificado nunca sobreescribe estos campos, aunque el cliente
-  // los envíe — se ignoran a propósito (ver updateWorkItemLoteVtoDurable).
-  if (input.packagingTotalUnits !== undefined)
-    patch.packagingTotalUnits = input.packagingTotalUnits;
-  if (input.packingGroups !== undefined) patch.packingGroups = input.packingGroups;
-  if (input.packingMismatchObservation !== undefined)
-    patch.packingMismatchObservation = input.packingMismatchObservation;
-  if (input.sampleUnits !== undefined) patch.sampleUnits = input.sampleUnits;
+    const patch: Partial<typeof workItems.$inferInsert> = {
+      operationalStatus: nextStatus,
+      finishedQty: input.finishedQty.trim(),
+      operationalObservation: input.observation.trim(),
+      progressUpdatedAt: new Date(),
+      progressUpdatedBy: input.updatedBy,
+      updatedAt: new Date(),
+    };
+    if (input.packagingTotalUnits !== undefined)
+      patch.packagingTotalUnits = input.packagingTotalUnits;
+    if (input.packingGroups !== undefined) patch.packingGroups = input.packingGroups;
+    if (input.packingMismatchObservation !== undefined)
+      patch.packingMismatchObservation = input.packingMismatchObservation;
+    if (input.sampleUnits !== undefined) patch.sampleUnits = input.sampleUnits;
 
-  const [row] = await db
-    .update(workItems)
-    .set(patch)
-    .where(eq(workItems.id, id))
-    .returning();
-  return row;
+    // Lote/VTO "fill-once": si Producción ya cargó un valor, se preserva tal
+    // cual acá — jamás se sobreescribe desde Envasado/Codificado (para
+    // corregir un valor existente, ver updateWorkItemLoteVtoDurable). Si
+    // está vacío, Envasado/Codificado puede completarlo — se persiste de
+    // inmediato en el MISMO work item, no en una copia paralela.
+    const filledLote =
+      !existing.packagingLote && input.packagingLote?.trim()
+        ? input.packagingLote.trim()
+        : null;
+    const filledVto =
+      !existing.packagingVto && input.packagingVto?.trim() ? input.packagingVto.trim() : null;
+    if (filledLote) patch.packagingLote = filledLote;
+    if (filledVto) patch.packagingVto = filledVto;
+
+    const [row] = await tx.update(workItems).set(patch).where(eq(workItems.id, id)).returning();
+    if (!row) throw new Error("No se pudo guardar el avance.");
+
+    if (filledLote || filledVto) {
+      await tx.insert(operationalEvents).values({
+        workItemId: id,
+        planningWeekId: existing.planningWeekId,
+        type: "LOTE_VTO_FILLED",
+        fromStatus: JSON.stringify({
+          lote: existing.packagingLote ?? null,
+          vto: existing.packagingVto ?? null,
+        }),
+        toStatus: JSON.stringify({
+          lote: row.packagingLote ?? null,
+          vto: row.packagingVto ?? null,
+        }),
+        actorEmail: input.updatedBy,
+        actorSector: String(actorSector),
+        note: "Completado por Envasado/Codificado — Producción no lo había cargado.",
+      });
+    }
+
+    return row;
+  });
 }
 
 export interface UpdateLoteVtoInput {

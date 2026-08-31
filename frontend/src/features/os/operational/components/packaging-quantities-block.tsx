@@ -73,11 +73,15 @@ export function PackagingQuantitiesBlock({
   sector?: WorkItem["sector"];
 }) {
   const { saveWorkPackaging } = useOperationalStore();
-  // Lote/VTO: fuente única = Producción (PARTE A). Envasado/Codificado los
-  // leen del item, nunca los editan acá — ver lote-vto-correction.ts para
-  // el único mecanismo autorizado de corrección.
-  const lote = item.packagingLote ?? item.loteRef ?? "";
-  const vto = item.packagingVto ?? "";
+  // Lote/VTO "fill-once": si Producción ya cargó un valor, queda fijo acá —
+  // de solo lectura, y para corregirlo hay que usar "Corregir lote/VTO"
+  // (lote-vto-correction.ts, solo Producción). Si está vacío, Envasado/
+  // Codificado puede completarlo una única vez; una vez guardado, pasa a
+  // ser de solo lectura también para este sector.
+  const loteLocked = Boolean((item.packagingLote ?? item.loteRef ?? "").trim());
+  const vtoLocked = Boolean((item.packagingVto ?? "").trim());
+  const [lote, setLote] = useState(item.packagingLote ?? item.loteRef ?? "");
+  const [vto, setVto] = useState(item.packagingVto ?? "");
   const [total, setTotal] = useState(
     item.packagingTotalUnits != null ? String(item.packagingTotalUnits) : ""
   );
@@ -214,19 +218,43 @@ export function PackagingQuantitiesBlock({
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="text-xs">
           <span className="block text-[var(--os-text-muted)]">LOTE</span>
-          <p className="mt-1 rounded border border-transparent bg-[var(--os-surface-muted,#f8fafc)] px-2 py-1.5 font-medium" data-testid="packaging-lote">
-            {lote || "—"}
-          </p>
+          {loteLocked ? (
+            <p className="mt-1 rounded border border-transparent bg-[var(--os-surface-muted,#f8fafc)] px-2 py-1.5 font-medium" data-testid="packaging-lote">
+              {lote || "—"}
+            </p>
+          ) : (
+            <input
+              className="mt-1 w-full rounded border px-2 py-1.5 font-medium"
+              value={lote}
+              disabled={readOnly}
+              onChange={(e) => setLote(e.target.value)}
+              placeholder="Cargar Lote"
+              data-testid="packaging-lote-input"
+            />
+          )}
         </div>
         <div className="text-xs">
           <span className="block text-[var(--os-text-muted)]">VTO</span>
-          <p className="mt-1 rounded border border-transparent bg-[var(--os-surface-muted,#f8fafc)] px-2 py-1.5 font-medium" data-testid="packaging-vto">
-            {vto || "—"}
-          </p>
+          {vtoLocked ? (
+            <p className="mt-1 rounded border border-transparent bg-[var(--os-surface-muted,#f8fafc)] px-2 py-1.5 font-medium" data-testid="packaging-vto">
+              {vto || "—"}
+            </p>
+          ) : (
+            <input
+              className="mt-1 w-full rounded border px-2 py-1.5 font-medium"
+              value={vto}
+              disabled={readOnly}
+              onChange={(e) => setVto(e.target.value)}
+              placeholder="Cargar VTO"
+              data-testid="packaging-vto-input"
+            />
+          )}
         </div>
       </div>
       <p className="text-[11px] text-[var(--os-text-muted)]">
-        Lote y VTO los define Producción al asignar el trabajo. Si hay que corregirlos, pedile a Producción que use &ldquo;Corregir lote/VTO&rdquo;.
+        {loteLocked && vtoLocked
+          ? "Lote y VTO los definió Producción al asignar el trabajo. Si hay que corregirlos, pedile a Producción que use “Corregir lote/VTO”."
+          : "Producción no cargó Lote y/o VTO al asignar — completalos acá si los tenés. Una vez guardados, para corregirlos hay que pedirle a Producción que use “Corregir lote/VTO”."}
       </p>
       <label className="block text-xs">
         Total de unidades producidas:{" "}

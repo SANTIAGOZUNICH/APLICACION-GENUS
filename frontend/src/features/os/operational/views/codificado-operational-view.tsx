@@ -574,7 +574,7 @@ export function CodificadoOperationalView() {
           </DialogHeader>
           <p className="text-sm">
             {missingWarn
-              ? "Falta Lote y/o VTO. Podés continuar igual; se registrará en auditoría."
+              ? "Falta Lote y/o VTO. Podés cargarlos arriba antes de entregar, o continuar igual — quedará registrado en auditoría."
               : "Se enviará una única finalización a Calidad y se notificará a Producción. No se genera remito."}
           </p>
           <DialogFooter>
