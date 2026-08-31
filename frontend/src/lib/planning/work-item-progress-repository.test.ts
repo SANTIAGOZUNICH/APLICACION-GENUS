@@ -13,6 +13,7 @@ type FakeRow = Record<string, unknown> & { id: string };
 function createFakeDb() {
   const workItems = new Map<string, FakeRow>();
   const operationalOrders = new Map<string, FakeRow>();
+  const workItemDeliveries = new Map<string, FakeRow>();
   const operationalEvents: Record<string, unknown>[] = [];
 
   function matchCond(row: Record<string, unknown>, cond: unknown): boolean {
@@ -27,7 +28,9 @@ function createFakeDb() {
   }
 
   function tableFor(name: string): Map<string, FakeRow> {
-    return name === "operationalOrders" ? operationalOrders : workItems;
+    if (name === "operationalOrders") return operationalOrders;
+    if (name === "workItemDeliveries") return workItemDeliveries;
+    return workItems;
   }
 
   const tx = {
@@ -93,7 +96,7 @@ function createFakeDb() {
     },
   };
 
-  return { tx, workItems, operationalOrders, operationalEvents };
+  return { tx, workItems, operationalOrders, workItemDeliveries, operationalEvents };
 }
 
 let fakeDbHandle: ReturnType<typeof createFakeDb>;
@@ -139,6 +142,7 @@ vi.mock("@/lib/db/schema", () => {
     "deletedAt",
   ];
   const orderCols = ["id", "orderNumber", "type", "linkedWorkItemId", "version"];
+  const deliveryCols = ["id", "workItemId", "status", "archived"];
   const table = (name: string, cols: string[]) => {
     const t: Record<string, unknown> = { __name: name };
     for (const c of cols) t[c] = { name: c };
@@ -146,7 +150,7 @@ vi.mock("@/lib/db/schema", () => {
   };
   return {
     workItems: table("workItems", workItemCols),
-    workItemDeliveries: table("workItemDeliveries", []),
+    workItemDeliveries: table("workItemDeliveries", deliveryCols),
     operationalEvents: table("operationalEvents", []),
     operationalOrders: table("operationalOrders", orderCols),
   };
@@ -454,5 +458,98 @@ describe("rescheduleWorkItemDurable — drag & drop de planificación (fake tx)"
     await expect(
       rescheduleWorkItemDurable("wi-drag", { plannedDate: "2026-08-24", line: "Línea 1", ...actorArgs })
     ).rejects.toThrow(/No hay cambios/);
+  });
+});
+
+/**
+ * AUDIT_TRAZABILIDAD_PROPAGACION — Caso 6 obligatorio: Rehacer (Calidad →
+ * sector origen) nunca debe resetear lote/VTO/packingGroups/cantidad/OA ni
+ * muestras/sobrante — solo cambia status y registra el motivo. Esto ya
+ * estaba implementado correctamente (reworkWorkItemDurable solo escribe las
+ * columnas de estado operativo, completado, rework y progreso), pero no
+ * tenía cobertura de test — este bloque prueba el round-trip escritura
+ * seguida de lectura independiente ("segunda lectura real") contra el fake
+ * tx, no solo el valor de retorno de la propia transacción.
+ */
+describe("reworkWorkItemDurable — Rehacer preserva lote/VTO/packing/cantidad/OA (fake tx)", () => {
+  let reworkWorkItemDurable: typeof import("./work-item-progress-repository").reworkWorkItemDurable;
+
+  const actorArgs = { requestedBy: "calidad@laboratoriogenus.com.ar", requestedBySector: "CALIDAD" as const };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ reworkWorkItemDurable } = await import("./work-item-progress-repository"));
+    fakeDbHandle.workItems.set("wi-rehacer", {
+      id: "wi-rehacer",
+      sector: "CODIFICADO",
+      planningWeekId: "week-1",
+      operationalStatus: "completado",
+      completedAt: new Date("2026-08-03T18:00:00.000Z"),
+      completedBy: "Codificador",
+      qualityStatus: "pendiente",
+      deliveredFromCodificadoAt: new Date("2026-08-03T18:05:00.000Z"),
+      deliveredFromCodificadoBy: "Codificador",
+      deletedAt: null,
+      packagingLote: "L-900",
+      packagingVto: "2027-06-01",
+      orderNumber: "OA-2026-000145",
+      plannedQuantity: "1200",
+      product: "Producto Test",
+      client: "Cliente Test",
+      packingGroups: [
+        { cajas: 10, unidadesPorCaja: 100 },
+        { cajas: 2, unidadesPorCaja: 50 },
+      ],
+      sampleUnits: 3,
+      bulkRemainderKg: 3.2,
+    });
+  });
+
+  it("6) Rehacer reabre el trabajo (limpia completedAt/entrega) sin tocar lote/VTO/OA/packing/cantidad — confirmado con una segunda lectura independiente", async () => {
+    const returned = await reworkWorkItemDurable("wi-rehacer", {
+      reason: "Faltó ajustar el precinto",
+      ...actorArgs,
+    });
+    expect(returned.operationalStatus).toBe("en_curso");
+    expect(returned.completedAt).toBeNull();
+    expect(returned.deliveredFromCodificadoAt).toBeNull();
+    expect(returned.reworkReason).toBe("Faltó ajustar el precinto");
+
+    // Segunda lectura real — independiente del valor de retorno de la propia
+    // transacción, contra el estado persistido en la fila.
+    const persisted = fakeDbHandle.workItems.get("wi-rehacer")!;
+    expect(persisted.packagingLote).toBe("L-900");
+    expect(persisted.packagingVto).toBe("2027-06-01");
+    expect(persisted.orderNumber).toBe("OA-2026-000145");
+    expect(persisted.plannedQuantity).toBe("1200");
+    expect(persisted.packingGroups).toEqual([
+      { cajas: 10, unidadesPorCaja: 100 },
+      { cajas: 2, unidadesPorCaja: 50 },
+    ]);
+    expect(persisted.sampleUnits).toBe(3);
+    expect(persisted.bulkRemainderKg).toBe(3.2);
+  });
+
+  it("rechaza Rehacer si el trabajo no está completado (nada que rehacer)", async () => {
+    fakeDbHandle.workItems.get("wi-rehacer")!.completedAt = null;
+    fakeDbHandle.workItems.get("wi-rehacer")!.operationalStatus = "en_curso";
+    await expect(
+      reworkWorkItemDurable("wi-rehacer", { reason: "Motivo", ...actorArgs })
+    ).rejects.toMatchObject({ name: "PlanningValidationError" });
+    // Sin cambios — la fila sigue como estaba.
+    expect(fakeDbHandle.workItems.get("wi-rehacer")!.packagingLote).toBe("L-900");
+  });
+
+  it("rechaza Rehacer si hay una entrega activa al cliente (ENTREGADO, no archivada)", async () => {
+    fakeDbHandle.workItemDeliveries.set("dlv-1", {
+      id: "dlv-1",
+      workItemId: "wi-rehacer",
+      status: "ENTREGADO",
+      archived: false,
+    });
+    await expect(
+      reworkWorkItemDurable("wi-rehacer", { reason: "Motivo", ...actorArgs })
+    ).rejects.toMatchObject({ name: "PlanningValidationError" });
   });
 });

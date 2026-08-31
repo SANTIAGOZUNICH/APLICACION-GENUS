@@ -215,13 +215,30 @@ export function projectQualityItem(item: PlanningWorkItemRecord): {
   completedAt: string | null;
   completedBy: string | null;
   observation: string | null;
+  vto: string | null;
+  packingGroups: WorkItem["packingGroups"];
+  packedUnits: number | null;
+  sampleUnits: number | null;
+  bulkRemainderKg: number | null;
+  bulkRemainderObservation: string | null;
+  plannedQuantity: string | null;
+  finishedQty: string | null;
+  productionPedidoId: string | null;
+  pedidoOp: string | null;
+  codificadoOriginSector: SectorId | null;
+  codificadoOriginLabel: string | null;
+  packagingClosedAt: string | null;
+  packagingClosedBy: string | null;
+  reworkReason: string | null;
 } {
   const orderNumber = item.orderNumber?.trim() || null;
   const packagingLote = item.packagingLote?.trim() || null;
+  const packagingVto = item.packagingVto?.trim() || null;
   const id = `native:${item.id}`;
   const status = QUALITY_STATUSES.has(item.qualityStatus ?? "")
     ? (item.qualityStatus as "pendiente" | "aprobado" | "rechazado")
     : "pendiente";
+  const codificadoOriginSector = (item.codificadoOriginSector ?? null) as SectorId | null;
 
   return {
     id,
@@ -241,6 +258,24 @@ export function projectQualityItem(item: PlanningWorkItemRecord): {
     completedAt: item.completedAt ?? null,
     completedBy: item.completedBy ?? null,
     observation: item.qualityObservation ?? item.operationalObservation ?? null,
+    // Campos agregados (ver AUDIT_TRAZABILIDAD_PROPAGACION) — nunca inventados,
+    // cada uno viaja directo desde la misma fila de Neon que ya lee este projector.
+    vto: packagingVto,
+    packingGroups: (item.packingGroups as WorkItem["packingGroups"]) ?? null,
+    packedUnits: item.deliverableUnits ?? null,
+    sampleUnits: item.sampleUnits ?? null,
+    bulkRemainderKg: item.bulkRemainderKg ?? null,
+    bulkRemainderObservation: item.bulkRemainderObservation ?? null,
+    plannedQuantity: item.plannedQuantity ?? null,
+    finishedQty: item.finishedQty ?? null,
+    productionPedidoId: item.productionPedidoId ?? null,
+    pedidoOp: item.pedidoOp ?? null,
+    codificadoOriginSector,
+    codificadoOriginLabel:
+      item.viaCodificado && codificadoOriginSector ? originLabel(codificadoOriginSector) : null,
+    packagingClosedAt: item.packagingClosedAt ?? null,
+    packagingClosedBy: item.packagingClosedBy ?? null,
+    reworkReason: item.reworkReason ?? null,
   };
 }
 

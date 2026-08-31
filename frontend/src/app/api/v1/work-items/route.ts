@@ -56,27 +56,49 @@ async function listNativeWorkItems(
     );
   }
 
-  // Empujar date/weekStart al SQL (evita descargar todos los publicados).
-  const rows = await getPlanningService().listPublishedItems({
-    sector,
-    ownerPerson,
-    date,
-    weekStart,
-  });
-  let workItems = projectNativeWorkItems(rows);
-  workItems = filterWorkItemsForSectorAndPerson(workItems, sector, ownerPerson);
-  // Filtro JS residual solo si el repo no aplicó rango (p.ej. memoria).
-  if (date) workItems = filterWorkItemsByDate(workItems, date);
-  else if (weekStart) workItems = filterWorkItemsByWeekStart(workItems, weekStart);
-
   // Calidad: cola nativa completa (pendientes/aprobados/rechazados), no
   // depende del sector/rango pedido — necesita ver todo lo completado por
   // cualquier sector productivo, ver AUDIT_TRAZABILIDAD (Calidad en modo
   // nativo devolvía qualityItems: [] siempre).
-  const qualityItems =
-    sector === "CALIDAD"
-      ? projectQualityItems(await getPlanningService().listCompletedItems({ limit: 500 }))
-      : [];
+  //
+  // IMPORTANTE (ver AUDIT_TRAZABILIDAD_PROPAGACION): "CALIDAD" nunca es un
+  // valor real de work_items.sector (CHECK constraint solo admite
+  // ELABORACION/ENVASADO_MASIVO/ENVASADO_PREMIUM/CODIFICADO) — antes
+  // `workItems` para este sector salía de listPublishedItems({sector:
+  // "CALIDAD", ...}), que no matchea ningún caso de su propio filtro y caía
+  // en un fallback SIN condición de sector, ordenado por plannedDate ASC y
+  // limitado a 500 filas. En una base con más de 500 trabajos publicados
+  // históricos, un trabajo recién completado podía quedar fuera de ese
+  // array (los 500 más VIEJOS ganan el límite). Consumidores que buscan el
+  // WorkItem completo por id en ese array — CodificadoTracePanel (detalle
+  // de Calidad) y remitoGapsFromQuality/resolveWorkItem (remito) — hacían
+  // ese find() en silencio, no encontraban el item, y mostraban Lote/VTO/
+  // packingGroups/muestras/sobrante vacíos aunque el dato existiera intacto
+  // en Neon. Fix: para CALIDAD, workItems y qualityItems salen de la MISMA
+  // consulta (listCompletedItems, completedAt IS NOT NULL, ordenada por
+  // completedAt DESC — nunca trunca lo recién completado), así que ambos
+  // arrays están siempre en sync y nunca pueden desincronizarse entre sí.
+  let workItems;
+  let qualityItems: ReturnType<typeof projectQualityItems>;
+  if (sector === "CALIDAD") {
+    const completedRows = await getPlanningService().listCompletedItems({ limit: 500 });
+    workItems = projectNativeWorkItems(completedRows);
+    qualityItems = projectQualityItems(completedRows);
+  } else {
+    // Empujar date/weekStart al SQL (evita descargar todos los publicados).
+    const rows = await getPlanningService().listPublishedItems({
+      sector,
+      ownerPerson,
+      date,
+      weekStart,
+    });
+    workItems = projectNativeWorkItems(rows);
+    workItems = filterWorkItemsForSectorAndPerson(workItems, sector, ownerPerson);
+    // Filtro JS residual solo si el repo no aplicó rango (p.ej. memoria).
+    if (date) workItems = filterWorkItemsByDate(workItems, date);
+    else if (weekStart) workItems = filterWorkItemsByWeekStart(workItems, weekStart);
+    qualityItems = [];
+  }
 
   const emptyMessage = date
     ? "Hoy no hay trabajos publicados."

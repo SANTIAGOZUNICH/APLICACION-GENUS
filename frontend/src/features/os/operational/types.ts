@@ -24,6 +24,32 @@ export interface QualityItem {
   completedAt?: string | null;
   completedBy?: string | null;
   observation?: string | null;
+  /**
+   * Campos agregados para que el DTO de Calidad sea autosuficiente — antes
+   * solo `lote` viajaba acá y VTO/packing/muestras/sobrante/pedido quedaban
+   * disponibles ÚNICAMENTE si un consumidor volvía a buscar el WorkItem
+   * completo en un array aparte (ver AUDIT_TRAZABILIDAD_PROPAGACION: ese
+   * segundo array podía no traer el item en bases de datos grandes). Todos
+   * opcionales — nunca se inventa un valor que no exista en Neon.
+   */
+  vto?: string | null;
+  packingGroups?: WorkItem["packingGroups"];
+  /** SUM(packingGroups) al cerrar — mismo valor que WorkItem.deliverableUnits. */
+  packedUnits?: number | null;
+  sampleUnits?: number | null;
+  bulkRemainderKg?: number | null;
+  bulkRemainderObservation?: string | null;
+  /** Cantidad asignada originalmente (Producción) — nunca la pisa la cantidad final. */
+  plannedQuantity?: string | null;
+  /** Cantidad final declarada por el sector ejecutor, sin fallback a plannedQuantity. */
+  finishedQty?: string | null;
+  productionPedidoId?: string | null;
+  pedidoOp?: string | null;
+  codificadoOriginSector?: SectorId | null;
+  codificadoOriginLabel?: string | null;
+  packagingClosedAt?: string | null;
+  packagingClosedBy?: string | null;
+  reworkReason?: string | null;
 }
 
 /** Registro de transferencia de trabajo — demo localStorage; futuro POST Sheets. */
