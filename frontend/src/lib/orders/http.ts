@@ -39,6 +39,12 @@ export function ordersErrorResponse(err: unknown): NextResponse {
   if (err instanceof SchemaPendingError) {
     return NextResponse.json(schemaPendingResponse(), { status: 503 });
   }
+  if (err instanceof AuthUnauthorizedError) {
+    return NextResponse.json(
+      { error: err.message, code: err.code, legallyOperational: false },
+      { status: err.status }
+    );
+  }
   if (err instanceof MeStockShortageError) {
     return NextResponse.json(
       {
