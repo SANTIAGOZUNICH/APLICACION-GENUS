@@ -6,6 +6,7 @@ import { MemoryAuthRepository } from "@/lib/auth/memory-repository";
 import { AuthService } from "@/lib/auth/service";
 import { AuthUnauthorizedError } from "@/lib/auth/types";
 import { resolveOrdersActor } from "@/lib/orders/actor";
+import { ordersErrorResponse } from "@/lib/orders/http";
 import { OrdersForbiddenError } from "@/lib/orders/types";
 
 const ANA = SECTOR_ACCOUNT_DIRECTORY[0]; // ELABORACION
@@ -60,5 +61,32 @@ describe("resolveOrdersActor", () => {
     const { token } = await service.login(ANA.email, "clave-segura-1");
     const request = requestWithCookie(token, { "x-genus-actor-sector": "CALIDAD" });
     await expect(resolveOrdersActor(request)).rejects.toBeInstanceOf(OrdersForbiddenError);
+  });
+
+  it("ordersErrorResponse mapea sesión inválida a HTTP 401 (no 400)", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    let caught: unknown;
+    try {
+      await resolveOrdersActor(requestWithCookie(null));
+    } catch (err) {
+      caught = err;
+    }
+    const response = ordersErrorResponse(caught);
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.code).toBe("AUTH_UNAUTHORIZED");
+  });
+
+  it("ordersErrorResponse mapea sector incorrecto a HTTP 403 (autenticado, sin permiso)", async () => {
+    const { token } = await service.login(ANA.email, "clave-segura-1");
+    const request = requestWithCookie(token, { "x-genus-actor-sector": "CALIDAD" });
+    let caught: unknown;
+    try {
+      await resolveOrdersActor(request);
+    } catch (err) {
+      caught = err;
+    }
+    const response = ordersErrorResponse(caught);
+    expect(response.status).toBe(403);
   });
 });
