@@ -119,6 +119,7 @@ export const SIDEBAR_ITEM_IDS = [
   "pedidos",
   "procedimientos",
   "metricas",
+  "expedicion",
 ] as const;
 
 export type SidebarItemId = (typeof SIDEBAR_ITEM_IDS)[number];
