@@ -42,6 +42,7 @@ export type TwinView =
   | "pedidos"
   | "procedimientos"
   | "metricas"
+  | "expedicion"
   | "work-detail"
   | "oa-detail"
   | "oe-detail"
@@ -95,6 +96,7 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   pedidos: "pedidos",
   procedimientos: "procedimientos",
   metricas: "metricas",
+  expedicion: "expedicion",
 };
 
 export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
@@ -137,6 +139,7 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     pedidos: "pedidos",
     procedimientos: "procedimientos",
     metricas: "metricas",
+    expedicion: "expedicion",
   };
   return map[view];
 }
@@ -190,6 +193,7 @@ export function viewTitle(view: TwinView): string {
     pedidos: "Pedidos",
     procedimientos: "Procedimientos",
     metricas: "Métricas",
+    expedicion: "Expedición",
     "work-detail": "Trabajo",
     "oa-detail": "Orden de Acondicionamiento",
     "oe-detail": "Orden de Elaboración",

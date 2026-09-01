@@ -115,6 +115,7 @@ describe("DEPOSITO acceso y navegación", () => {
       "avisos",
       "semanas_produccion",
       "procedimientos",
+      "expedicion",
     ]);
     expect(home.sidebarItems).not.toContain("avisos_me");
   });
