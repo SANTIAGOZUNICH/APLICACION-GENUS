@@ -77,7 +77,11 @@ export function sha256Hex(bytes: Buffer | Uint8Array): string {
 
 function genusFileStorageEnabled(): boolean {
   const mode = (process.env.GENUS_FILE_STORAGE ?? "vercel_blob").trim().toLowerCase();
-  return mode === "vercel_blob" || mode === "vercel_blob_private";
+  // "blob" es un alias real usado en Production (visto en diagnóstico —
+  // GENUS_FILE_STORAGE="blob" ahí) — antes no coincidía con ningún caso y
+  // deshabilitaba TODO el almacenamiento privado (OIDC y token incluidos)
+  // sin que ninguno de los dos llegara siquiera a evaluarse.
+  return mode === "vercel_blob" || mode === "vercel_blob_private" || mode === "blob";
 }
 
 function storeId(): string | null {
@@ -92,13 +96,19 @@ function rwToken(): string | null {
   return process.env.BLOB_READ_WRITE_TOKEN?.trim() || null;
 }
 
-/** OIDC usable: store conectado + token runtime, o store en Vercel (token inyectado). */
+/**
+ * OIDC usable: requiere storeId + VERCEL_OIDC_TOKEN reales, ambos presentes
+ * — nunca se asume disponible solo por correr en Vercel (`VERCEL==="1"`).
+ * Esa suposición asumía que el token siempre se inyecta en runtime cuando
+ * en realidad depende de que "OIDC Federation" esté genuinamente habilitado
+ * para ese environment específico (Production/Preview pueden diferir) —
+ * confirmado en producción: `VERCEL==="1"` sostenido pero
+ * VERCEL_OIDC_TOKEN ausente en 3+ redeploys. El falso positivo resultante
+ * hacía que authMode reportara "OIDC" y luego la llamada real a
+ * @vercel/blob fallara igual, en vez de caer correctamente al token.
+ */
 export function hasOidcBlobAuth(): boolean {
-  if (!storeId()) return false;
-  if (oidcToken()) return true;
-  // En deployments Vercel el OIDC se inyecta en runtime aunque el health
-  // a veces se evalúe antes de materializar VERCEL_OIDC_TOKEN en el proceso.
-  return process.env.VERCEL === "1";
+  return Boolean(storeId()) && Boolean(oidcToken());
 }
 
 export function hasLegacyBlobTokenAuth(): boolean {

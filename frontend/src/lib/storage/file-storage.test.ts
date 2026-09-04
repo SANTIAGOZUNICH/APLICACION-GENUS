@@ -57,14 +57,39 @@ describe("file-storage OIDC / config", () => {
     expect(auth.token).toBeUndefined();
   });
 
-  it("OIDC en Vercel con store y sin token explícito (runtime)", async () => {
+  /**
+   * Regresión: antes, `VERCEL==="1"` + BLOB_STORE_ID solo alcanzaban para
+   * que hasOidcBlobAuth() asumiera OIDC disponible, sin exigir un
+   * VERCEL_OIDC_TOKEN real — falso positivo. Confirmado en producción:
+   * correr en Vercel (VERCEL==="1") NO garantiza que VERCEL_OIDC_TOKEN
+   * llegue al runtime (depende de que OIDC Federation esté realmente
+   * habilitado para ese environment). Sin el token real, debe caer a NONE
+   * (o a TOKEN si hay un BLOB_READ_WRITE_TOKEN real — ver test siguiente),
+   * nunca reportar OIDC sin haber verificado el token.
+   */
+  it("estar en Vercel (VERCEL=1) con store pero SIN VERCEL_OIDC_TOKEN real → NONE, nunca un falso OIDC", async () => {
     process.env.BLOB_STORE_ID = "store_preview";
     process.env.VERCEL = "1";
-    const { getBlobAuthMode, isPrivateFileStorageConfigured } = await import(
+    const { getBlobAuthMode, isPrivateFileStorageConfigured, hasOidcBlobAuth } = await import(
       "./file-storage"
     );
+    expect(hasOidcBlobAuth()).toBe(false);
+    expect(isPrivateFileStorageConfigured()).toBe(false);
+    expect(getBlobAuthMode()).toBe("NONE");
+  });
+
+  it("estar en Vercel (VERCEL=1) con store + token real (sin OIDC) → TOKEN, no un falso OIDC", async () => {
+    // Reproduce el caso real de Production: BLOB_STORE_ID + BLOB_READ_WRITE_TOKEN
+    // presentes, VERCEL_OIDC_TOKEN ausente, corriendo en Vercel.
+    process.env.BLOB_STORE_ID = "store_prod";
+    process.env.VERCEL = "1";
+    process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_prod";
+    const { getBlobAuthMode, isPrivateFileStorageConfigured, hasOidcBlobAuth, resolveBlobAuthOptions } =
+      await import("./file-storage");
+    expect(hasOidcBlobAuth()).toBe(false);
     expect(isPrivateFileStorageConfigured()).toBe(true);
-    expect(getBlobAuthMode()).toBe("OIDC");
+    expect(getBlobAuthMode()).toBe("TOKEN");
+    expect(resolveBlobAuthOptions()).toEqual({ token: "vercel_blob_rw_prod" });
   });
 
   it("Token legacy BLOB_READ_WRITE_TOKEN como fallback local", async () => {
@@ -124,6 +149,31 @@ describe("file-storage OIDC / config", () => {
     expect(isPrivateFileStorageConfigured()).toBe(false);
     expect(getBlobAuthMode()).toBe("NONE");
     expect(() => resolveBlobAuthOptions()).toThrow(FILE_STORAGE_NOT_CONFIGURED);
+  });
+
+  /**
+   * Regresión real: Production tenía GENUS_FILE_STORAGE="blob" (no
+   * "vercel_blob"/"vercel_blob_private") — genusFileStorageEnabled()
+   * devolvía false y getBlobAuthMode() cortaba a "NONE" en la primera
+   * línea, SIN llegar a evaluar ni OIDC ni el token, aunque ambos podían
+   * estar perfectamente configurados. "blob" es un alias legítimo, no un
+   * valor inválido.
+   */
+  it('GENUS_FILE_STORAGE="blob" (alias real visto en Production) habilita igual que "vercel_blob"', async () => {
+    process.env.GENUS_FILE_STORAGE = "blob";
+    process.env.BLOB_READ_WRITE_TOKEN = "vercel_blob_rw_test";
+    const { getBlobAuthMode, isPrivateFileStorageConfigured } = await import("./file-storage");
+    expect(isPrivateFileStorageConfigured()).toBe(true);
+    expect(getBlobAuthMode()).toBe("TOKEN");
+  });
+
+  it('GENUS_FILE_STORAGE="blob" también habilita OIDC cuando hay credenciales OIDC reales', async () => {
+    process.env.GENUS_FILE_STORAGE = "blob";
+    process.env.BLOB_STORE_ID = "store_test_oidc";
+    process.env.VERCEL_OIDC_TOKEN = "oidc.jwt.test";
+    const { getBlobAuthMode, isPrivateFileStorageConfigured } = await import("./file-storage");
+    expect(isPrivateFileStorageConfigured()).toBe(true);
+    expect(getBlobAuthMode()).toBe("OIDC");
   });
 
   it("solo BLOB_STORE_ID sin OIDC ni Vercel no alcanza", async () => {
