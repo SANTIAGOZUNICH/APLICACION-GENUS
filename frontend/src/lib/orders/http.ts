@@ -78,14 +78,19 @@ export function ordersErrorResponse(err: unknown): NextResponse {
     );
   if (sensitive || !raw) {
     console.error("[orders] sanitized server error");
-  } else {
-    console.error(`[orders] ${raw.slice(0, 180)}`);
+    return NextResponse.json(
+      {
+        error: "No se pudo completar la operación. Reintentá.",
+        code: "ORDERS_FAILED",
+      },
+      { status: 500 }
+    );
   }
-  return NextResponse.json(
-    {
-      error: "No se pudo completar la operación. Reintentá.",
-      code: "ORDERS_FAILED",
-    },
-    { status: 500 }
-  );
+  // Mensaje no sensible (ej. "Almacenamiento privado de archivos no
+  // configurado.") — antes se sanitizaba igual que uno con datos internos,
+  // dejando a la UI sin nada real que mostrar. El chequeo `sensitive` de
+  // arriba ya filtra lo que no debe salir; lo que pasa ese filtro es seguro
+  // de exponer tal cual.
+  console.error(`[orders] ${raw.slice(0, 180)}`);
+  return NextResponse.json({ error: raw, code: "ORDERS_FAILED" }, { status: 500 });
 }
