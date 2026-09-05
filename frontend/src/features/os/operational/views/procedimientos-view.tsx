@@ -620,6 +620,29 @@ export function ProcedimientosView() {
                   Progreso: {uploadProgress.done}/{uploadProgress.total}
                 </p>
               )}
+              {folderPreview.uploads.length > 0 && (
+                <ul className="mb-3 max-h-48 space-y-1 overflow-auto text-sm" data-testid="procedimientos-upload-list">
+                  {folderPreview.uploads.map((u, i) => (
+                    <li key={`${u.relativePath}-${i}`} className="flex items-start justify-between gap-2">
+                      <span className="min-w-0 flex-1 truncate">{u.relativePath}</span>
+                      {u.status === "done" && <span className="shrink-0 text-[var(--genus-success)]">✓ Subido</span>}
+                      {u.status === "uploading" && <span className="shrink-0 text-muted-foreground">Subiendo…</span>}
+                      {u.status === "pending" && <span className="shrink-0 text-muted-foreground">Pendiente</span>}
+                      {u.status === "error" && (
+                        <span className="shrink-0 text-right text-[var(--genus-error)]" data-testid="procedimientos-upload-error">
+                          {u.error || "Error"}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {!busy && folderPreview.uploads.some((u) => u.status === "error") && (
+                <p className="mb-3 rounded border border-[var(--genus-error)]/30 bg-[var(--genus-error-soft)] px-2 py-1.5 text-sm text-[var(--genus-error)]">
+                  {folderPreview.uploads.filter((u) => u.status === "error").length} de{" "}
+                  {folderPreview.uploads.length} archivo(s) no se pudieron subir. Ver detalle arriba.
+                </p>
+              )}
               <div className="flex justify-end gap-2">
                 <Button variant="secondary" onClick={() => setFolderPreview(null)} disabled={busy}>
                   Cancelar
