@@ -12,6 +12,7 @@ import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from
 import type { SectorId } from "@/types/operational/sector";
 import {
   assertPrivateFileStorageConfigured,
+  createClientUploadToken,
   getFileStorage,
   procedureStorageKey,
   STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
@@ -562,6 +563,227 @@ export class ProcedimientosService {
     }
 
     await audit(actor, "upload", "file", fileId, { name: params.fileName });
+    return file;
+  }
+
+  /**
+   * Paso 1 de la subida directa cliente→Blob (archivos que excederían el
+   * límite de payload de la función serverless, ~4.5MB): valida acceso y
+   * datos declarados, resuelve fileId/versión, y emite un token de un solo
+   * uso para que el cliente suba los bytes directo a Blob sin pasar por
+   * nuestro servidor. Ver createClientUploadToken().
+   */
+  async prepareBlobUpload(
+    actor: ProcedureActor,
+    params: {
+      folderId: string;
+      fileName: string;
+      mimeType: string;
+      sizeBytes: number;
+      mode?: VersionUploadMode;
+      existingFileId?: string;
+    }
+  ): Promise<{ fileId: string; version: number; storageKey: string; token: string }> {
+    assertAccess(actor);
+    await assertProcedureMetricsWritesEnabled();
+    if (!isFeatureMemoryAllowed()) assertPrivateFileStorageConfigured();
+
+    validateProcedureUpload({
+      fileName: params.fileName,
+      mimeType: params.mimeType,
+      sizeBytes: params.sizeBytes,
+    });
+
+    const folder = await this.getFolder(params.folderId);
+    if (!folder || folder.status === "deleted") {
+      throw new OrdersNotFoundError("Carpeta no encontrada.");
+    }
+
+    let fileId: string;
+    let version: number;
+    if (params.mode === "new_version" && params.existingFileId) {
+      const existing = await this.getFile(params.existingFileId);
+      if (!existing) throw new OrdersNotFoundError("Archivo no encontrado.");
+      assertMutate(actor, existing.createdBy);
+      fileId = existing.id;
+      version = existing.currentVersion + 1;
+    } else {
+      fileId = randomUUID();
+      version = 1;
+    }
+
+    const storageKey = procedureStorageKey({
+      folderId: params.folderId,
+      fileId,
+      version,
+      fileName: params.fileName,
+    });
+    const token = await createClientUploadToken({
+      storageKey,
+      contentType: params.mimeType,
+      maximumSizeInBytes: params.sizeBytes,
+    });
+
+    return { fileId, version, storageKey, token };
+  }
+
+  /**
+   * Paso 2 de la subida directa cliente→Blob: los bytes ya están en Blob
+   * (subidos por el cliente con el token de prepareBlobUpload); acá solo se
+   * persisten los metadatos en Neon, igual que upload() pero sin volver a
+   * escribir el blob. Se reverifica contra el storage real (metadata()) para
+   * no confiar ciegamente en los tamaños/valores que declara el cliente.
+   */
+  async completeBlobUpload(
+    actor: ProcedureActor,
+    params: {
+      folderId: string;
+      fileId: string;
+      version: number;
+      fileName: string;
+      mimeType: string;
+      storageKey: string;
+      sizeBytes: number;
+      sha256: string;
+      relativePath?: string;
+      mode?: VersionUploadMode;
+      existingFileId?: string;
+      changeReason?: string;
+    }
+  ): Promise<ProcedureFileRecord> {
+    assertAccess(actor);
+    await assertProcedureMetricsWritesEnabled();
+    if (!isFeatureMemoryAllowed()) assertPrivateFileStorageConfigured();
+
+    const storage = getFileStorage();
+    const meta = await storage.metadata(params.storageKey);
+    if (!meta || meta.sizeBytes !== params.sizeBytes) {
+      throw new OrdersValidationError("El archivo subido no coincide con lo esperado.");
+    }
+
+    const folder = await this.getFolder(params.folderId);
+    if (!folder || folder.status === "deleted") {
+      throw new OrdersNotFoundError("Carpeta no encontrada.");
+    }
+
+    const now = nowIso();
+    const relPath = params.relativePath
+      ? joinRelativePath(folder.relativePath.replace(/^\//, ""), params.fileName)
+      : params.fileName;
+
+    if (params.mode === "new_version" && params.existingFileId) {
+      const existing = await this.getFile(params.existingFileId);
+      if (!existing) throw new OrdersNotFoundError("Archivo no encontrado.");
+      assertMutate(actor, existing.createdBy);
+      const fileId = existing.id;
+
+      const version: ProcedureVersionRecord = {
+        id: randomUUID(),
+        fileId,
+        version: params.version,
+        storageProvider: STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
+        storageKey: params.storageKey,
+        originalName: params.fileName,
+        displayName: existing.displayName,
+        mime: params.mimeType,
+        sizeBytes: params.sizeBytes,
+        sha256: params.sha256,
+        changeReason: params.changeReason ?? null,
+        isCurrent: true,
+        createdBy: actor.email,
+        createdBySector: actor.sector,
+        createdAt: now,
+      };
+
+      const updated: ProcedureFileRecord = {
+        ...existing,
+        mime: params.mimeType,
+        sizeBytes: params.sizeBytes,
+        sha256: params.sha256,
+        currentVersion: params.version,
+        updatedBy: actor.email,
+        updatedAt: now,
+      };
+
+      if (isDatabaseConfigured() && (await isProcedureMetricsSchemaReady())) {
+        const db = getDb();
+        await db.execute(sql`update procedure_file_versions set is_current = false where file_id = ${fileId}::uuid`);
+        await db.execute(sql`
+          insert into procedure_file_versions (id, file_id, version, storage_provider, storage_key, original_name, display_name, mime, size_bytes, sha256, change_reason, is_current, created_by, created_by_sector, created_at)
+          values (${version.id}::uuid, ${fileId}::uuid, ${params.version}, ${version.storageProvider}, ${params.storageKey}, ${params.fileName}, ${existing.displayName}, ${params.mimeType}, ${params.sizeBytes}, ${params.sha256}, ${params.changeReason ?? null}, true, ${actor.email}, ${actor.sector}, ${now}::timestamptz)
+        `);
+        await db.execute(sql`
+          update procedure_files set mime = ${params.mimeType}, size_bytes = ${params.sizeBytes}, sha256 = ${params.sha256}, current_version = ${params.version}, updated_by = ${actor.email}, updated_at = ${now}::timestamptz
+          where id = ${fileId}::uuid
+        `);
+      } else if (isFeatureMemoryAllowed()) {
+        const m = mem();
+        m.versions.forEach((v) => {
+          if (v.fileId === fileId) v.isCurrent = false;
+        });
+        m.versions.push(version);
+        const idx = m.files.findIndex((f) => f.id === fileId);
+        if (idx >= 0) m.files[idx] = updated;
+      }
+
+      await audit(actor, "new_version", "file", fileId, { version: params.version, direct: true });
+      return updated;
+    }
+
+    const fileId = params.fileId;
+    const file: ProcedureFileRecord = {
+      id: fileId,
+      folderId: params.folderId,
+      displayName: params.fileName,
+      relativePath: relPath,
+      mime: params.mimeType,
+      sizeBytes: params.sizeBytes,
+      sha256: params.sha256,
+      currentVersion: 1,
+      status: "active",
+      createdBy: actor.email,
+      createdBySector: actor.sector,
+      updatedBy: actor.email,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      deletedAt: null,
+    };
+
+    const version: ProcedureVersionRecord = {
+      id: randomUUID(),
+      fileId,
+      version: 1,
+      storageProvider: STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
+      storageKey: params.storageKey,
+      originalName: params.fileName,
+      displayName: params.fileName,
+      mime: params.mimeType,
+      sizeBytes: params.sizeBytes,
+      sha256: params.sha256,
+      changeReason: null,
+      isCurrent: true,
+      createdBy: actor.email,
+      createdBySector: actor.sector,
+      createdAt: now,
+    };
+
+    if (isDatabaseConfigured() && (await isProcedureMetricsSchemaReady())) {
+      const db = getDb();
+      await db.execute(sql`
+        insert into procedure_files (id, folder_id, display_name, relative_path, mime, size_bytes, sha256, current_version, status, created_by, created_by_sector, updated_by, created_at, updated_at)
+        values (${fileId}::uuid, ${params.folderId}::uuid, ${params.fileName}, ${relPath}, ${params.mimeType}, ${params.sizeBytes}, ${params.sha256}, 1, 'active', ${actor.email}, ${actor.sector}, ${actor.email}, ${now}::timestamptz, ${now}::timestamptz)
+      `);
+      await db.execute(sql`
+        insert into procedure_file_versions (id, file_id, version, storage_provider, storage_key, original_name, display_name, mime, size_bytes, sha256, is_current, created_by, created_by_sector, created_at)
+        values (${version.id}::uuid, ${fileId}::uuid, 1, ${version.storageProvider}, ${params.storageKey}, ${params.fileName}, ${params.fileName}, ${params.mimeType}, ${params.sizeBytes}, ${params.sha256}, true, ${actor.email}, ${actor.sector}, ${now}::timestamptz)
+      `);
+    } else if (isFeatureMemoryAllowed()) {
+      mem().files.push(file);
+      mem().versions.push(version);
+    }
+
+    await audit(actor, "upload", "file", fileId, { name: params.fileName, direct: true });
     return file;
   }
 

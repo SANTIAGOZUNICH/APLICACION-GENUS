@@ -94,7 +94,35 @@ export async function POST(request: Request) {
       displayName?: string;
       segments?: unknown[];
       path?: string;
+      version?: number;
+      fileName?: string;
+      mimeType?: string;
+      storageKey?: string;
+      sizeBytes?: number;
+      sha256?: string;
+      relativePath?: string;
+      mode?: string;
+      existingFileId?: string;
+      changeReason?: string;
     };
+
+    if (body.action === "complete_blob_upload") {
+      const record = await svc.completeBlobUpload(a, {
+        folderId: String(body.folderId ?? ""),
+        fileId: String(body.fileId ?? ""),
+        version: Number(body.version ?? 1),
+        fileName: String(body.fileName ?? ""),
+        mimeType: String(body.mimeType ?? "application/octet-stream"),
+        storageKey: String(body.storageKey ?? ""),
+        sizeBytes: Number(body.sizeBytes ?? 0),
+        sha256: String(body.sha256 ?? ""),
+        relativePath: body.relativePath,
+        mode: body.mode ? (body.mode as VersionUploadMode) : undefined,
+        existingFileId: body.existingFileId,
+        changeReason: body.changeReason,
+      });
+      return NextResponse.json({ file: record }, { status: 201 });
+    }
 
     if (body.action === "mkdir") {
       const folder = await svc.createFolder(a, String(body.name ?? ""), body.parentId ?? null);

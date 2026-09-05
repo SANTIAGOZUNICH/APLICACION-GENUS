@@ -99,6 +99,94 @@ export async function procedimientosActionApi(
   return body;
 }
 
+/**
+ * Por encima de esto, el archivo va directo cliente→Blob (bypassa el
+ * límite de payload de las funciones serverless de Vercel, ~4.5MB, que corta
+ * el upload ANTES de que nuestro código corra — confirmado en Production con
+ * FUNCTION_PAYLOAD_TOO_LARGE al subir 6MB por el camino multipart de
+ * siempre). Margen de seguridad bajo 4.5MB para el overhead de
+ * multipart/form-data + headers.
+ */
+const DIRECT_BLOB_UPLOAD_THRESHOLD_BYTES = 4 * 1024 * 1024;
+
+async function uploadProcedimientoFileDirectToBlob(
+  session: OrdersClientSession,
+  params: {
+    folderId: string;
+    file: File;
+    relativePath?: string;
+    mode?: VersionUploadMode;
+    existingFileId?: string;
+    changeReason?: string;
+  }
+): Promise<{ file: ProcedureFileRecord; schemaPending?: boolean }> {
+  const { put } = await import("@vercel/blob/client");
+
+  const tokenRes = await fetch("/api/v1/procedimientos/blob-upload-token", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonHeaders(session),
+    body: JSON.stringify({
+      folderId: params.folderId,
+      fileName: params.file.name,
+      mimeType: params.file.type || "application/octet-stream",
+      sizeBytes: params.file.size,
+      mode: params.mode,
+      existingFileId: params.existingFileId,
+    }),
+  });
+  const tokenBody = (await tokenRes.json()) as {
+    fileId?: string;
+    version?: number;
+    storageKey?: string;
+    token?: string;
+    error?: string;
+  };
+  if (!tokenRes.ok || !tokenBody.token || !tokenBody.storageKey) {
+    throw new Error(tokenBody.error ?? "Error al preparar la subida");
+  }
+
+  const bytes = await params.file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const sha256 = Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  await put(tokenBody.storageKey, params.file, {
+    access: "private",
+    token: tokenBody.token,
+    contentType: params.file.type || "application/octet-stream",
+  });
+
+  const res = await fetch("/api/v1/procedimientos", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonHeaders(session),
+    body: JSON.stringify({
+      action: "complete_blob_upload",
+      folderId: params.folderId,
+      fileId: tokenBody.fileId,
+      version: tokenBody.version,
+      fileName: params.file.name,
+      mimeType: params.file.type || "application/octet-stream",
+      storageKey: tokenBody.storageKey,
+      sizeBytes: params.file.size,
+      sha256,
+      relativePath: params.relativePath,
+      mode: params.mode,
+      existingFileId: params.existingFileId,
+      changeReason: params.changeReason,
+    }),
+  });
+  const body = (await res.json()) as {
+    file?: ProcedureFileRecord;
+    error?: string;
+    schemaPending?: boolean;
+  };
+  if (!res.ok) throw new Error(body.error ?? "Error al subir archivo");
+  return { file: body.file!, schemaPending: body.schemaPending };
+}
+
 export async function uploadProcedimientoFileApi(
   session: OrdersClientSession,
   params: {
@@ -110,6 +198,10 @@ export async function uploadProcedimientoFileApi(
     changeReason?: string;
   }
 ): Promise<{ file: ProcedureFileRecord; schemaPending?: boolean }> {
+  if (params.file.size > DIRECT_BLOB_UPLOAD_THRESHOLD_BYTES) {
+    return uploadProcedimientoFileDirectToBlob(session, params);
+  }
+
   const form = new FormData();
   form.set("action", "upload");
   form.set("folderId", params.folderId);

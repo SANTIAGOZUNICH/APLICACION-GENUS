@@ -13,6 +13,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { del, get, head, put } from "@vercel/blob";
+import { generateClientTokenFromReadWriteToken } from "@vercel/blob/client";
 
 export const STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE = "VERCEL_BLOB_PRIVATE" as const;
 export type StorageProvider = typeof STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE;
@@ -174,6 +175,31 @@ export function resolveBlobAuthOptions(): BlobAuthOptions {
     return { token };
   }
   throw new Error(FILE_STORAGE_NOT_CONFIGURED);
+}
+
+/**
+ * Token de subida directa cliente→Blob (bypassa el límite de payload de las
+ * funciones serverless de Vercel, ~4.5MB, que corta cualquier archivo mayor
+ * ANTES de que nuestro código llegue a ejecutarse — confirmado en Production
+ * con `FUNCTION_PAYLOAD_TOO_LARGE` al subir un archivo de 6MB por el camino
+ * multipart/form-data de siempre). El cliente sube los bytes directo a Blob
+ * con este token de un solo uso; nuestro servidor nunca ve el archivo.
+ */
+export async function createClientUploadToken(params: {
+  storageKey: string;
+  contentType: string;
+  maximumSizeInBytes: number;
+}): Promise<string> {
+  const auth = resolveBlobAuthOptions();
+  return generateClientTokenFromReadWriteToken({
+    pathname: params.storageKey,
+    allowedContentTypes: [params.contentType],
+    maximumSizeInBytes: params.maximumSizeInBytes > 0 ? params.maximumSizeInBytes : undefined,
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    validUntil: Date.now() + 15 * 60 * 1000,
+    ...auth,
+  });
 }
 
 /** Sanitiza el último segmento del pathname. */
