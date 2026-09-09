@@ -40,9 +40,14 @@ describe("buildOrderLifecycleMenuItems — botón Eliminar OA", () => {
     expect(items.some((i) => i.action === "eliminar_definitivo")).toBe(false);
   });
 
-  it("no aparece para una OA ya ANULADA", () => {
+  it("también aparece para una OA ANULADA — Calidad puede eliminar cualquier OA (regla nueva)", () => {
     const items = buildOrderLifecycleMenuItems({ ...baseOa, status: "ANULADA" }, "CALIDAD");
-    expect(items.some((i) => i.action === "eliminar_definitivo")).toBe(false);
+    expect(items.some((i) => i.action === "eliminar_definitivo")).toBe(true);
+  });
+
+  it("también aparece para una OA COMPLETA — no se restringe por completitud (regla nueva)", () => {
+    const items = buildOrderLifecycleMenuItems({ ...baseOa, status: "COMPLETA" }, "CALIDAD");
+    expect(items.some((i) => i.action === "eliminar_definitivo")).toBe(true);
   });
 
   it("el impacto muestra lote/producto/cliente para la confirmación", () => {

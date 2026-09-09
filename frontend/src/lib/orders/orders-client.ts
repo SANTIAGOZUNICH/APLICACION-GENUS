@@ -244,6 +244,7 @@ export async function fetchOrders(
   if (filters.emptyClient) params.set("emptyClient", "1");
   if (filters.emptyLot) params.set("emptyLot", "1");
   if (filters.createdBy) params.set("createdBy", filters.createdBy);
+  if (filters.includeDeleted) params.set("includeDeleted", "1");
   const res = await fetch(`/api/v1/orders?${params}`, {
     credentials: "include",
     headers: actorHeaders(session),

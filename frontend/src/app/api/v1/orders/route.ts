@@ -43,6 +43,7 @@ export async function GET(request: Request) {
       emptyClient: url.searchParams.get("emptyClient") === "1" ? true : undefined,
       emptyLot: url.searchParams.get("emptyLot") === "1" ? true : undefined,
       createdBy: url.searchParams.get("createdBy") ?? undefined,
+      includeDeleted: url.searchParams.get("includeDeleted") === "1" ? true : undefined,
     };
     const result = await getOrdersService().listOrders(filters, actor);
     return NextResponse.json({ ...result, legallyOperational: true });
