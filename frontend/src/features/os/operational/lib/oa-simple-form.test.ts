@@ -199,6 +199,9 @@ describe("OA carga simple → documento legal", () => {
       updatedBy: "t",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      deletedAt: null,
+      deletedBy: null,
+      deleteReason: null,
     } satisfies OperationalOrderRecord);
   });
 

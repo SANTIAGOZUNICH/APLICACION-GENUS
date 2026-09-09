@@ -484,6 +484,9 @@ export function CreateOrderDialog({
                 updatedBy: "preview",
                 createdAt: previewModel.createdAt,
                 updatedAt: previewModel.updatedAt,
+                deletedAt: null,
+                deletedBy: null,
+                deleteReason: null,
               }}
             />
           )}

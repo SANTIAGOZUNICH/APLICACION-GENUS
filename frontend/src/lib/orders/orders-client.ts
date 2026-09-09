@@ -609,6 +609,21 @@ export async function annulOrderApi(
   return data.order;
 }
 
+export async function deleteOaApi(
+  session: OrdersClientSession,
+  id: string,
+  reason: string
+): Promise<OperationalOrderRecord> {
+  const res = await fetch(`/api/v1/orders/${id}/delete-oa`, {
+    method: "POST",
+    credentials: "include",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ reason }),
+  });
+  const data = await parseJson<{ order: OperationalOrderRecord }>(res);
+  return data.order;
+}
+
 export async function restoreOrderApi(
   session: OrdersClientSession,
   id: string

@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import type { LifecycleAction } from "@/lib/lifecycle";
 import { orderLifecycleActions } from "@/lib/lifecycle/adapters/orders";
-import { canOrderAction } from "@/lib/orders/rbac";
+import { canDeleteOa, canOrderAction } from "@/lib/orders/rbac";
 import type { OperationalOrderRecord } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
@@ -11,13 +11,14 @@ import {
   annulOrderApi,
   archiveOrderApi,
   deleteEmptyDraftApi,
+  deleteOaApi,
   restoreOrderApi,
 } from "@/lib/orders/orders-client";
 import type { LifecycleMenuItem } from "./lifecycle-actions-menu";
 import { LifecycleRowActions } from "./lifecycle-row-actions";
 
 function buildOrderLifecycleMenuItems(
-  order: Pick<OperationalOrderRecord, "id" | "type" | "status">,
+  order: Pick<OperationalOrderRecord, "id" | "type" | "status" | "lot" | "product" | "client">,
   sectorId: SectorId
 ): LifecycleMenuItem[] {
   const decisions = orderLifecycleActions(order);
@@ -58,6 +59,31 @@ function buildOrderLifecycleMenuItems(
       action: "restaurar",
       label: "Restaurar",
       decision: decisions.restaurar,
+    });
+  }
+  // Eliminar OA — acción propia (no usa el motor de policy.ts genérico ni
+  // canOrderAction): la validación real (relaciones activas, ANULADA, motivo
+  // obligatorio) la hace OrdersService.deleteOa() en el servidor. Este gate
+  // de sector es solo conveniencia visual.
+  if (order.type === "OA" && order.status !== "ANULADA" && canDeleteOa(sectorId)) {
+    items.push({
+      action: "eliminar_definitivo",
+      label: "Eliminar OA",
+      requireReasonMandatory: true,
+      decision: {
+        action: "eliminar_definitivo",
+        allowed: true,
+        requireReason: true,
+        requireDoubleConfirm: true,
+        reason:
+          "El servidor va a bloquear la eliminación si esta OA tiene un trabajo, entrega o decisión de Calidad vinculada.",
+      },
+      impact: {
+        summary: `Lote: ${order.lot || "—"} · Producto: ${order.product || "—"} · Cliente: ${order.client || "—"}`,
+        preservesAudit: true,
+        references: [],
+        warnings: [],
+      },
     });
   }
 
@@ -107,6 +133,11 @@ export function OrderLifecycleRowActions({
       }
       if (action === "restaurar") {
         await restoreOrderApi(session, order.id);
+        onChanged?.();
+        return;
+      }
+      if (action === "eliminar_definitivo") {
+        await deleteOaApi(session, order.id, reason);
         onChanged?.();
       }
     } catch (e) {

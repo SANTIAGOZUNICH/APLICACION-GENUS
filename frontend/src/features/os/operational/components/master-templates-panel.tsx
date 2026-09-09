@@ -375,6 +375,9 @@ export function MasterTemplatesPanel({
                 updatedBy: "preview",
                 createdAt: preview.createdAt,
                 updatedAt: preview.updatedAt,
+                deletedAt: null,
+                deletedBy: null,
+                deleteReason: null,
               }}
             />
           )}

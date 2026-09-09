@@ -349,6 +349,9 @@ describe("OA completa según Word", () => {
       updatedBy: "t",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      deletedAt: null,
+      deletedBy: null,
+      deleteReason: null,
     });
   });
 

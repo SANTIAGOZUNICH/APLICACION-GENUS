@@ -307,6 +307,22 @@ export type OperationalOrderRecord = {
   updatedBy: string;
   createdAt: string;
   updatedAt: string;
+  /** Borrado (tombstone) — nunca DELETE físico. Ver deleteOa() en orders-service.ts. */
+  deletedAt: string | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
+};
+
+/**
+ * Relaciones activas de una OA con otras entidades — usado por deleteOa()
+ * para bloquear el borrado si dejaría trazabilidad rota. Ninguna de estas
+ * relaciones es FK real en el schema (soft-references por id/orderNumber),
+ * así que se resuelven con una consulta explícita, no con el ORM.
+ */
+export type OaReferenceSummary = {
+  activeWorkItemCount: number;
+  activeDeliveryCount: number;
+  hasQualityDecision: boolean;
 };
 
 export type OrderVersionRecord = {
@@ -391,6 +407,8 @@ export type ListOrdersFilters = {
   unassigned?: boolean;
   createdBy?: string;
   emptyDraft?: boolean;
+  /** Por defecto las OA/OE eliminadas (deletedAt) se excluyen. */
+  includeDeleted?: boolean;
   sort?:
     | "fecha_desc"
     | "fecha_asc"

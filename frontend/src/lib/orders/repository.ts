@@ -1,6 +1,7 @@
 import type {
   CreateOrderInput,
   ListOrdersFilters,
+  OaReferenceSummary,
   OperationalOrderRecord,
   OrderAuditEventRecord,
   OrderContent,
@@ -42,6 +43,11 @@ export interface OrdersRepository {
   insertOrder(order: OperationalOrderRecord): Promise<OperationalOrderRecord>;
   getOrder(id: string): Promise<OperationalOrderRecord | null>;
   deleteOrder(id: string): Promise<boolean>;
+  /** Relaciones activas (work items / entregas / decisión de Calidad) de una OA. */
+  findOaReferences(order: {
+    id: string;
+    orderNumber: string;
+  }): Promise<OaReferenceSummary>;
   listOrders(filters: ListOrdersFilters): Promise<{
     items: OperationalOrderRecord[];
     total: number;

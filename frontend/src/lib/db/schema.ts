@@ -407,6 +407,15 @@ export const operationalOrders = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    /**
+     * Borrado (0030) — mismo patrón tombstone que work_items (0025): nunca
+     * DELETE físico, siempre marca deleted_at/deleted_by/delete_reason. Las
+     * vistas activas excluyen deleted_at IS NOT NULL; order_versions y
+     * order_audit_events quedan intactos (no dependen de esta columna).
+     */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: text("deleted_by"),
+    deleteReason: text("delete_reason"),
   },
   (table) => [uniqueIndex("operational_orders_number_uidx").on(table.orderNumber)]
 );

@@ -94,6 +94,9 @@ function makeOaForSalida(materialId: string, codigo: string, usados: string): Op
     updatedBy: produccion.email,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    deletedAt: null,
+    deletedBy: null,
+    deleteReason: null,
   };
 }
 
