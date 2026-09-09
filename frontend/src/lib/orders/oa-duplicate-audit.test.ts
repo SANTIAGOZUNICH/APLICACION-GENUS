@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyOaDuplicate,
   fieldCompletenessScore,
+  groupOaByLot,
   groupOaByLotProduct,
   normalizeForDuplicateMatch,
   pickKeeper,
@@ -66,7 +67,53 @@ describe("groupOaByLotProduct — criterio de duplicado", () => {
     expect(groups.size).toBe(2);
     for (const list of groups.values()) expect(list).toHaveLength(1);
   });
+});
 
+/**
+ * Segunda pasada de auditoría (pedida explícitamente): agrupar por LOTE
+ * solamente, sin exigir coincidencia exacta de producto, porque el nombre
+ * de producto puede variar en texto (talle/tamaño agregado o faltante)
+ * entre dos altas de la misma producción. classifyOaDuplicate() sigue
+ * aplicando cliente/código/pedido como controles de seguridad — un lote
+ * compartido por clientes o productos genuinamente distintos no se asume
+ * duplicado a ciegas solo por agrupar así.
+ */
+describe("groupOaByLot — agrupación solo por lote (segunda pasada)", () => {
+  it("agrupa por lote normalizado, sin exigir coincidencia de producto", () => {
+    const groups = groupOaByLot([
+      { lot: "g26042", product: "CREMA FACIAL" },
+      { lot: "G26042", product: "CREMA FACIAL 50ml" },
+    ]);
+    expect(groups.size).toBe(1);
+    expect([...groups.values()][0]).toHaveLength(2);
+  });
+
+  it("lotes distintos nunca se agrupan, aunque el producto sea igual", () => {
+    const groups = groupOaByLot([
+      { lot: "G26080", product: "SERUM CAPIXYL" },
+      { lot: "G26099", product: "SERUM CAPIXYL" },
+    ]);
+    expect(groups.size).toBe(2);
+  });
+
+  it("un lote compartido por clientes distintos sigue cayendo en CONFLICTO vía classifyOaDuplicate (no se asume duplicado a ciegas)", () => {
+    const keeper = candidate({ orderNumber: "OA-1", lot: "G26073", product: "SERUM", client: "CAV", status: "COMPLETA" });
+    const other = candidate({
+      orderNumber: "OA-2",
+      lot: "G26073",
+      product: "AGUA MICELAR",
+      client: "ABRAZO AL ALMA",
+      status: "COMPLETA",
+    });
+    const groups = groupOaByLot([keeper, other]);
+    expect(groups.size).toBe(1);
+    const { classification, reason } = classifyOaDuplicate(keeper, other);
+    expect(classification).toBe("CONFLICTO");
+    expect(reason).toMatch(/control de seguridad/);
+  });
+});
+
+describe("groupOaByLotProduct — casos borde", () => {
   it("dos OA con lote vacío NO agrupan aunque compartan producto (bug real corregido en la corrida sobre Production)", () => {
     const groups = groupOaByLotProduct([
       { lot: "", product: "AFTER SHAVE GEL 1LT" },

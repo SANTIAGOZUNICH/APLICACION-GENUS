@@ -109,6 +109,26 @@ export function groupOaByLotProduct<T extends { lot: string; product: string }>(
 }
 
 /**
+ * Agrupa por LOTE solamente (sin exigir coincidencia de producto) — criterio
+ * más amplio, pedido explícitamente para una segunda pasada de auditoría
+ * después de que la primera (lote+producto) resultara demasiado estricta
+ * (nombres de producto con variaciones de texto entre dos altas de la misma
+ * producción). classifyOaDuplicate() sigue aplicando cliente/código/pedido
+ * como controles de seguridad antes de proponer ELIMINAR_SEGURO, así que un
+ * mismo lote con cliente/código distinto igual cae en CONFLICTO.
+ */
+export function groupOaByLot<T extends { lot: string }>(orders: T[]): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const o of orders) {
+    const lotNorm = normalizeForDuplicateMatch(o.lot);
+    if (!lotNorm) continue;
+    if (!groups.has(lotNorm)) groups.set(lotNorm, []);
+    groups.get(lotNorm)!.push(o);
+  }
+  return groups;
+}
+
+/**
  * Elige el "keeper" candidato dentro de un grupo duplicado: mayor tier
  * (COMPLETA > INCOMPLETA), luego mayor fieldScore, luego más reciente.
  */
