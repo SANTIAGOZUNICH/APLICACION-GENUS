@@ -3,6 +3,7 @@ import type { OrdersRepository } from "@/lib/orders/repository";
 import { seedTemplateRecords } from "@/lib/orders/seed-templates";
 import type {
   ListOrdersFilters,
+  OaReferenceSummary,
   OperationalOrderRecord,
   OrderAuditEventRecord,
   OrderDocType,
@@ -43,6 +44,8 @@ export class MemoryOrdersRepository implements OrdersRepository {
   notifications: OsNotificationRecord[] = [];
   /** Test tombstones: `${email}::${eventKey}` */
   tombstones = new Set<string>();
+  /** Test-only: relaciones simuladas por orderId para findOaReferences(). */
+  oaReferences = new Map<string, OaReferenceSummary>();
   sequences = new Map<string, number>();
 
   constructor(seed = true) {
@@ -169,6 +172,17 @@ export class MemoryOrdersRepository implements OrdersRepository {
     return existed;
   }
 
+  /** Sin datos reales de work_items en memoria: usa lo que el test sembró en oaReferences (default: sin relaciones). */
+  async findOaReferences(order: { id: string; orderNumber: string }): Promise<OaReferenceSummary> {
+    return (
+      this.oaReferences.get(order.id) ?? {
+        activeWorkItemCount: 0,
+        activeDeliveryCount: 0,
+        hasQualityDecision: false,
+      }
+    );
+  }
+
   async listOrders(filters: ListOrdersFilters): Promise<{
     items: OperationalOrderRecord[];
     total: number;
@@ -176,6 +190,7 @@ export class MemoryOrdersRepository implements OrdersRepository {
     completeCount: number;
   }> {
     let list = [...this.orders.values()];
+    if (!filters.includeDeleted) list = list.filter((o) => !o.deletedAt);
     if (filters.type) list = list.filter((o) => o.type === filters.type);
     const pendingCount = list.filter((o) => PENDING_STATUSES.includes(o.status)).length;
     const completeCount = list.filter((o) => COMPLETE_STATUSES.includes(o.status)).length;

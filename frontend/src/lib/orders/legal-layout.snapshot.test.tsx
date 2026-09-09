@@ -37,6 +37,9 @@ function sampleOrder(
     updatedBy: "test",
     createdAt: "2026-07-20T12:00:00.000Z",
     updatedAt: "2026-07-20T12:00:00.000Z",
+    deletedAt: null,
+    deletedBy: null,
+    deleteReason: null,
   };
 }
 

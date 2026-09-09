@@ -77,6 +77,9 @@ function makeOaOrder(partial: {
     updatedBy: emasivo.email,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    deletedAt: null,
+    deletedBy: null,
+    deleteReason: null,
   };
 }
 

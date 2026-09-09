@@ -85,6 +85,7 @@ export function LifecycleConfirmDialog({
   const showReason =
     forceReason || Boolean(pending?.decision.requireReason);
   const needDouble = Boolean(pending?.decision.requireDoubleConfirm);
+  const reasonMandatory = Boolean(pending?.requireReasonMandatory);
 
   const reset = () => {
     setReason("");
@@ -105,6 +106,10 @@ export function LifecycleConfirmDialog({
     if (!pending || busy) return;
     if (needDouble && !confirm2) {
       setError("Confirmá nuevamente la eliminación definitiva.");
+      return;
+    }
+    if (reasonMandatory && !reason.trim()) {
+      setError("El motivo es obligatorio.");
       return;
     }
     setBusy(true);
@@ -171,18 +176,21 @@ export function LifecycleConfirmDialog({
         </DialogHeader>
         {showReason && (
           <label className="block min-w-0 text-sm">
-            Motivo (opcional)
+            {reasonMandatory ? "Motivo" : "Motivo (opcional)"}
             <textarea
               className="mt-1 w-full min-w-0 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
               rows={3}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="Podés dejarlo vacío"
+              placeholder={reasonMandatory ? "Requerido" : "Podés dejarlo vacío"}
               disabled={busy}
+              required={reasonMandatory}
               data-testid="lifecycle-confirm-reason"
             />
             <span className="mt-1 block text-xs text-[var(--muted-foreground)]">
-              Si no informás motivo, se registrará “Sin motivo informado”.
+              {reasonMandatory
+                ? "Explicá por qué se elimina — quedará en la auditoría."
+                : "Si no informás motivo, se registrará “Sin motivo informado”."}
             </span>
           </label>
         )}

@@ -43,6 +43,9 @@ function makeOrder(overrides: Partial<OperationalOrderRecord>): OperationalOrder
     updatedBy: "test@genus",
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
+    deletedBy: null,
+    deleteReason: null,
     ...overrides,
   };
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import {
   operationalOrders,
@@ -10,6 +10,8 @@ import {
   osNotifications,
   osNotificationUserTombstones,
   templateChangeProposals,
+  workItemDeliveries,
+  workItems,
 } from "@/lib/db/schema";
 import type { OrdersRepository } from "@/lib/orders/repository";
 import { notificationEventKeys } from "@/lib/orders/notification-event-keys";
@@ -17,6 +19,7 @@ import { compareDates, compareNumericField, compareStrings } from "@/lib/sorting
 import { seedTemplateRecords } from "@/lib/orders/seed-templates";
 import type {
   ListOrdersFilters,
+  OaReferenceSummary,
   OperationalOrderRecord,
   OrderAuditEventRecord,
   OrderContent,
@@ -88,6 +91,9 @@ function mapOrder(row: typeof operationalOrders.$inferSelect): OperationalOrderR
     updatedBy: row.updatedBy,
     createdAt: toIso(row.createdAt)!,
     updatedAt: toIso(row.updatedAt)!,
+    deletedAt: toIso(row.deletedAt),
+    deletedBy: row.deletedBy ?? null,
+    deleteReason: row.deleteReason ?? null,
   };
 }
 
@@ -366,6 +372,52 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     return deleted.length > 0;
   }
 
+  /**
+   * Relaciones activas de una OA — ninguna es FK real (ver comentario en
+   * schema.ts), así que se resuelven por id/orderNumber explícitamente.
+   * work_items: por order_id O order_number, excluyendo tombstones propios
+   * (deleted_at). work_item_deliveries: por order_number (snapshot
+   * histórico), excluyendo REGISTRO_ELIMINADO. Decisión de Calidad: se
+   * considera "activa" si algún work item vinculado tiene quality_status
+   * distinto de "pendiente".
+   */
+  async findOaReferences(order: {
+    id: string;
+    orderNumber: string;
+  }): Promise<OaReferenceSummary> {
+    const db = getDb();
+    const linkedWorkItems = await db
+      .select({
+        id: workItems.id,
+        qualityStatus: workItems.qualityStatus,
+      })
+      .from(workItems)
+      .where(
+        and(
+          isNull(workItems.deletedAt),
+          or(eq(workItems.orderId, order.id), eq(workItems.orderNumber, order.orderNumber))
+        )
+      );
+
+    const deliveries = await db
+      .select({ id: workItemDeliveries.id })
+      .from(workItemDeliveries)
+      .where(
+        and(
+          eq(workItemDeliveries.orderNumber, order.orderNumber),
+          sql`${workItemDeliveries.status} <> 'REGISTRO_ELIMINADO'`
+        )
+      );
+
+    return {
+      activeWorkItemCount: linkedWorkItems.length,
+      activeDeliveryCount: deliveries.length,
+      hasQualityDecision: linkedWorkItems.some(
+        (w) => w.qualityStatus && w.qualityStatus !== "pendiente"
+      ),
+    };
+  }
+
   async listOrders(filters: ListOrdersFilters): Promise<{
     items: OperationalOrderRecord[];
     total: number;
@@ -374,6 +426,9 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }> {
     const db = getDb();
     const conditions = [];
+    if (!filters.includeDeleted) {
+      conditions.push(isNull(operationalOrders.deletedAt));
+    }
     if (filters.type) {
       conditions.push(eq(operationalOrders.type, filters.type));
     }
@@ -526,6 +581,11 @@ export class DrizzleOrdersRepository implements OrdersRepository {
       setValues.reviewedAt = patch.reviewedAt ? new Date(patch.reviewedAt) : null;
     }
     if (patch.reviewedBy !== undefined) setValues.reviewedBy = patch.reviewedBy;
+    if (patch.deletedAt !== undefined) {
+      setValues.deletedAt = patch.deletedAt ? new Date(patch.deletedAt) : null;
+    }
+    if (patch.deletedBy !== undefined) setValues.deletedBy = patch.deletedBy;
+    if (patch.deleteReason !== undefined) setValues.deleteReason = patch.deleteReason;
 
     const rows = await db
       .update(operationalOrders)

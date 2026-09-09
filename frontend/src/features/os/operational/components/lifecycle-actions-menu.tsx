@@ -11,6 +11,12 @@ export type LifecycleMenuItem = {
   label: string;
   decision: LifecycleDecision;
   impact?: DeletionImpact;
+  /**
+   * Motivo realmente obligatorio (no solo mostrado) — por defecto el motivo
+   * de lifecycle es siempre opcional (ver LifecycleConfirmDialog). Úsalo
+   * únicamente cuando el dominio lo exige de verdad (ej. eliminar OA).
+   */
+  requireReasonMandatory?: boolean;
 };
 
 type Props = {

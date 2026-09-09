@@ -215,3 +215,18 @@ export function canApproveMasterVersion(sectorId: SectorId | null | undefined): 
     sectorId === "CALIDAD" || sectorId === "PRODUCCION" || sectorId === "DIRECCION"
   );
 }
+
+/**
+ * Sectores autorizados a eliminar una OA (tombstone, ver deleteOa() en
+ * orders-service.ts). Mismo conjunto que ya administra OA/OE hoy
+ * (TEMPLATE_MANAGERS: archivar/anular/delete_draft) — no se amplía a
+ * ningún sector operativo nuevo. Deliberadamente separado de OrderAction/
+ * canOrderAction para no ampliar el alcance de "delete_draft" ni de
+ * TEMPLATE_MANAGERS (que también aplican a OE) a esta acción, que es
+ * exclusiva de OA.
+ */
+export const OA_DELETE_SECTORS: readonly SectorId[] = ["CALIDAD", "PRODUCCION", "DIRECCION"];
+
+export function canDeleteOa(sectorId: SectorId | null | undefined): boolean {
+  return Boolean(sectorId) && OA_DELETE_SECTORS.includes(sectorId as SectorId);
+}

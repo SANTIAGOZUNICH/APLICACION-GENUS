@@ -10,7 +10,13 @@ import {
   summarizeContentDiff,
 } from "@/lib/orders/content";
 import type { OrdersRepository } from "@/lib/orders/repository";
-import { assertCanAccessAssignedOrder, assertCanOrderAction, canOrderAction } from "@/lib/orders/rbac";
+import {
+  assertCanAccessAssignedOrder,
+  assertCanOrderAction,
+  canDeleteOa,
+  canOrderAction,
+  ORDERS_DENIED_MESSAGE,
+} from "@/lib/orders/rbac";
 import { applyElaboracionMaterialPatch, assertAjusteValid, didFormulaChange } from "@/lib/orders/oe-ajuste";
 import { seedTemplateRecords } from "@/lib/orders/seed-templates";
 import {
@@ -42,7 +48,7 @@ import {
   OrdersValidationError,
 } from "@/lib/orders/types";
 import { assertOrderTypeMatch, validateDeliver } from "@/lib/orders/validators";
-import { normalizeOptionalReason } from "@/lib/lifecycle";
+import { normalizeOptionalReason, sanitizeOptionalReason } from "@/lib/lifecycle";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -669,6 +675,9 @@ export class OrdersService {
       updatedBy: args.actor.email,
       createdAt: ts,
       updatedAt: ts,
+      deletedAt: null,
+      deletedBy: null,
+      deleteReason: null,
     };
     const saved = await this.repo.insertOrder(order);
     await this.repo.insertOrderVersion({
@@ -1572,6 +1581,99 @@ export class OrdersService {
       ],
       href: null,
       orderId: id,
+    });
+    return updated;
+  }
+
+  /**
+   * Elimina una OA (soft-delete/tombstone — nunca DELETE físico, ver
+   * migración 0030). Distinto de deleteEmptyDraft: esto cubre cualquier OA
+   * viva (borrador o confirmada), no solo borradores vacíos, pero exige
+   * motivo obligatorio y bloquea si la OA tiene trabajos, entregas o
+   * decisiones de Calidad activas vinculadas — "no alcanza con ocultar el
+   * botón": esta validación es la autoridad real, el RBAC de UI es solo
+   * conveniencia visual.
+   */
+  async deleteOa(id: string, actor: OrdersActor, reason: string) {
+    const current = await this.requireOrder(id);
+    if (current.type !== "OA") {
+      throw new OrdersValidationError("Esta acción solo aplica a OA.");
+    }
+    if (!canDeleteOa(actor.sector)) {
+      throw new OrdersForbiddenError(ORDERS_DENIED_MESSAGE);
+    }
+    // A diferencia del resto de lifecycle (motivo siempre opcional, ver
+    // normalizeOptionalReason), acá el motivo es realmente obligatorio —
+    // hay que validar el crudo ANTES de normalizar, porque
+    // normalizeOptionalReason() rellena con "Sin motivo informado" cuando
+    // viene vacío y eso enmascararía la falta de motivo real.
+    if (!sanitizeOptionalReason(reason)) {
+      throw new OrdersValidationError("El motivo es obligatorio para eliminar una OA.");
+    }
+    const trimmed = normalizeOptionalReason(reason);
+    if (current.deletedAt) {
+      return current; // idempotente
+    }
+    if (current.status === "ANULADA") {
+      throw new OrdersValidationError(
+        "Una OA anulada no se elimina; ya está fuera de operación y conserva su historial legal."
+      );
+    }
+
+    const refs = await this.repo.findOaReferences({
+      id: current.id,
+      orderNumber: current.orderNumber,
+    });
+    if (refs.activeWorkItemCount > 0) {
+      throw new OrdersConflictError(
+        "No se puede eliminar esta OA porque está vinculada a un trabajo activo.",
+        current
+      );
+    }
+    if (refs.activeDeliveryCount > 0) {
+      throw new OrdersConflictError(
+        "No se puede eliminar esta OA porque tiene entregas registradas.",
+        current
+      );
+    }
+    if (refs.hasQualityDecision) {
+      throw new OrdersConflictError(
+        "No se puede eliminar esta OA porque ya tiene una decisión de Calidad registrada.",
+        current
+      );
+    }
+
+    const updated = await this.repo.updateOrderOptimistic(id, current.version, {
+      deletedAt: nowIso(),
+      deletedBy: actor.email,
+      deleteReason: trimmed,
+      updatedBy: actor.email,
+    });
+    if (!updated) {
+      const fresh = await this.repo.getOrder(id);
+      throw new OrdersConflictError("Conflicto al eliminar.", fresh!);
+    }
+    await this.repo.appendAudit({
+      orderId: id,
+      eventType: "ORDER_OA_DELETED",
+      actor: actor.email,
+      actorSector: actor.sector,
+      metadata: {
+        reason: trimmed,
+        orderNumber: current.orderNumber,
+        lot: current.lot,
+        product: current.product,
+        client: current.client,
+        previousStatus: current.status,
+      },
+    });
+    const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+    recordLifecycleEvent({
+      entityKind: "oa",
+      entityId: id,
+      action: "eliminar",
+      actor: { email: actor.email, sector: actor.sector },
+      reason: trimmed,
     });
     return updated;
   }
