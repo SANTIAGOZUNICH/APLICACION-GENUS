@@ -62,10 +62,13 @@ function buildOrderLifecycleMenuItems(
     });
   }
   // Eliminar OA — acción propia (no usa el motor de policy.ts genérico ni
-  // canOrderAction): la validación real (relaciones activas, ANULADA, motivo
-  // obligatorio) la hace OrdersService.deleteOa() en el servidor. Este gate
-  // de sector es solo conveniencia visual.
-  if (order.type === "OA" && order.status !== "ANULADA" && canDeleteOa(sectorId)) {
+  // canOrderAction): la autoridad real (RBAC + motivo obligatorio) la hace
+  // OrdersService.deleteOa() en el servidor. Este gate de sector es solo
+  // conveniencia visual. Disponible para CUALQUIER OA que Calidad/
+  // Producción/Dirección elijan (completa, con lote/VTO, vinculada a un
+  // trabajo, etc.) — es soft-delete, nunca borra el work_item/pedido/
+  // remito/entrega/historial de Calidad vinculados.
+  if (order.type === "OA" && canDeleteOa(sectorId)) {
     items.push({
       action: "eliminar_definitivo",
       label: "Eliminar OA",
@@ -75,8 +78,7 @@ function buildOrderLifecycleMenuItems(
         allowed: true,
         requireReason: true,
         requireDoubleConfirm: true,
-        reason:
-          "El servidor va a bloquear la eliminación si esta OA tiene un trabajo, entrega o decisión de Calidad vinculada.",
+        reason: "Esta acción quitará la OA de las vistas operativas, pero conservará su historial para auditoría.",
       },
       impact: {
         summary: `Lote: ${order.lot || "—"} · Producto: ${order.product || "—"} · Cliente: ${order.client || "—"}`,

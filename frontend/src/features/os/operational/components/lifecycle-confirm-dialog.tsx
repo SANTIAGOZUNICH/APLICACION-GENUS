@@ -22,16 +22,21 @@ export function confirmLabelForAction(action: LifecycleAction): string {
       return "Confirmar anulación";
     case "archivar":
       return "Confirmar archivado";
-    case "eliminar_definitivo":
-      return "Confirmar eliminación definitiva";
     case "restaurar":
       return "Confirmar restauración";
     case "descartar_bandeja":
       return "Confirmar descarte";
     case "eliminar":
+    case "eliminar_definitivo":
     default:
       return "Confirmar eliminación";
   }
+}
+
+/** Texto del botón de confirmar — distinto del título solo para eliminar_definitivo ("Eliminar OA"). */
+export function submitLabelForAction(item: LifecycleMenuItem): string {
+  if (item.action === "eliminar_definitivo") return item.label || "Eliminar OA";
+  return confirmLabelForAction(item.action);
 }
 
 function busyLabelForAction(action: LifecycleAction): string {
@@ -176,7 +181,7 @@ export function LifecycleConfirmDialog({
         </DialogHeader>
         {showReason && (
           <label className="block min-w-0 text-sm">
-            {reasonMandatory ? "Motivo" : "Motivo (opcional)"}
+            {reasonMandatory ? "Motivo de eliminación (obligatorio)" : "Motivo (opcional)"}
             <textarea
               className="mt-1 w-full min-w-0 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm"
               rows={3}
@@ -245,7 +250,7 @@ export function LifecycleConfirmDialog({
             {busy && pending
               ? busyLabelForAction(pending.action)
               : pending
-                ? confirmLabelForAction(pending.action)
+                ? submitLabelForAction(pending)
                 : "Confirmar"}
           </Button>
         </DialogFooter>

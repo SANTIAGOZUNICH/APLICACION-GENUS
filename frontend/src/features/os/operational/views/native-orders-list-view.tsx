@@ -12,7 +12,7 @@ import {
 } from "../components/operational-ui";
 import { listDocumentsByKind } from "../adapters/order-documents-repository";
 import { canOrderDocumentAction } from "../lib/order-documents-rbac";
-import { canOrderAction } from "@/lib/orders/rbac";
+import { canDeleteOa, canOrderAction } from "@/lib/orders/rbac";
 import { displayClient, displayProduct, displaySector, statusLabel } from "@/lib/orders/empty-draft";
 import {
   formatOperationalIdCompact,
@@ -87,6 +87,7 @@ export function NativeOrdersListView({
   const [sort, setSort] = useState("updated_desc");
   const [emptyDraftOnly, setEmptyDraftOnly] = useState(false);
   const [unassignedOnly, setUnassignedOnly] = useState(false);
+  const [showDeleted, setShowDeleted] = useState(false);
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<OperationalOrderRecord[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
@@ -109,6 +110,7 @@ export function NativeOrdersListView({
   const canCreate = canOrderAction(type, "create", sectorId);
   const canManageTemplates = canOrderAction(type, "manage_templates", sectorId);
   const canUploadHistorical = canOrderDocumentAction(type, "upload", sectorId);
+  const canViewDeleted = type === "OA" && canDeleteOa(sectorId);
 
   const loadTemplates = useCallback(async () => {
     if (!session.email) return;
@@ -147,6 +149,7 @@ export function NativeOrdersListView({
         pageSize: 25,
         emptyDraft: emptyDraftOnly || undefined,
         unassigned: unassignedOnly || undefined,
+        includeDeleted: canViewDeleted && showDeleted ? true : undefined,
       });
       setItems(result.items);
       setPendingCount(result.pendingCount);
@@ -167,7 +170,22 @@ export function NativeOrdersListView({
     } finally {
       setLoading(false);
     }
-  }, [session, type, tab, search, status, oaSector, year, month, sort, page, emptyDraftOnly, unassignedOnly]);
+  }, [
+    session,
+    type,
+    tab,
+    search,
+    status,
+    oaSector,
+    year,
+    month,
+    sort,
+    page,
+    emptyDraftOnly,
+    unassignedOnly,
+    canViewDeleted,
+    showDeleted,
+  ]);
 
   useEffect(() => {
     void load();
@@ -267,7 +285,12 @@ export function NativeOrdersListView({
     {
       key: "status",
       header: "Estado",
-      render: (r) => <StatusChip status={statusLabel(r.status)} />,
+      render: (r) =>
+        r.deletedAt ? (
+          <StatusChip status="ELIMINADA" />
+        ) : (
+          <StatusChip status={statusLabel(r.status)} />
+        ),
     },
     {
       key: "updatedAt",
@@ -533,6 +556,20 @@ export function NativeOrdersListView({
           />
           Sin asignar
         </label>
+        {canViewDeleted && (
+          <label className="flex items-center gap-2 self-end pb-2 text-xs">
+            <input
+              type="checkbox"
+              checked={showDeleted}
+              onChange={(e) => {
+                setShowDeleted(e.target.checked);
+                setPage(1);
+              }}
+              data-testid="filter-show-deleted"
+            />
+            Ver eliminadas
+          </label>
+        )}
         {canBulkMutate &&
           (!sel.active ? (
             <ListSelectionEnterButton onClick={sel.enter} />

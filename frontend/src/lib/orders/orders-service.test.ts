@@ -545,51 +545,81 @@ describe("deleteOa — eliminación manual de OA (soft-delete/tombstone)", () =>
     expect((event?.metadata as { reason?: string })?.reason).toBe("Duplicado de prueba");
   });
 
-  it("OA vinculada a un trabajo activo → bloqueo correcto (test obligatorio #6)", async () => {
+  // REGLA NUEVA (reemplaza los bloqueos anteriores): Calidad puede eliminar
+  // CUALQUIER OA que elija — vacía, completa, con lote/VTO, con cantidad/
+  // operarios, vinculada a un trabajo, entregada, con decisión de Calidad,
+  // anulada — sin que el servidor la rechace por contenido ni relaciones.
+  // El soft-delete nunca toca el work_item/pedido/remito/entrega/historial
+  // de Calidad vinculados: la OA simplemente deja de listarse activa.
+
+  it("Calidad elimina una OA vacía (test obligatorio #1)", async () => {
+    const oa = await makeOa();
+    const deleted = await service.deleteOa(oa.id, calidad, "Duplicada — se conserva OA-2026-000150");
+    expect(deleted.deletedAt).not.toBeNull();
+  });
+
+  it("Calidad elimina una OA COMPLETA, con lote/VTO/cantidad/operarios cargados (test obligatorio #2, #4, #5)", async () => {
+    const oa = await makeOa();
+    const withData = {
+      ...(await repo.getOrder(oa.id))!,
+      status: "COMPLETA" as const,
+      lot: "G26080",
+      client: "SC Beauty",
+      product: "SERUM CAPIXYL",
+      formData: {
+        ...oa.formData,
+        header: { ...oa.formData.header, vto: "08/2028" },
+        rendimientos: { ...oa.formData.rendimientos, cantidadUnidades: 1000 },
+        envasado: { ...oa.formData.envasado, operarios: "Belén, Joaquín" },
+      },
+    };
+    repo.orders.set(oa.id, withData);
+
+    const deleted = await service.deleteOa(oa.id, calidad, "Duplicada de otra OA completa");
+    expect(deleted.deletedAt).not.toBeNull();
+    expect(deleted.status).toBe("COMPLETA"); // el status original no cambia, solo se marca eliminada
+    expect(deleted.lot).toBe("G26080");
+  });
+
+  it("Calidad elimina una OA vinculada a un trabajo activo, con entregas y decisión de Calidad, sin bloquear — no rompe la integridad de esas relaciones (test obligatorio #3, #10)", async () => {
     const oa = await makeOa();
     repo.oaReferences.set(oa.id, {
       activeWorkItemCount: 1,
-      activeDeliveryCount: 0,
-      hasQualityDecision: false,
-    });
-    await expect(service.deleteOa(oa.id, calidad, "Duplicado")).rejects.toBeInstanceOf(
-      OrdersConflictError
-    );
-    const stillThere = await repo.getOrder(oa.id);
-    expect(stillThere?.deletedAt).toBeNull();
-  });
-
-  it("OA con entregas registradas → bloqueo correcto (test obligatorio #6)", async () => {
-    const oa = await makeOa();
-    repo.oaReferences.set(oa.id, {
-      activeWorkItemCount: 0,
-      activeDeliveryCount: 1,
-      hasQualityDecision: false,
-    });
-    await expect(service.deleteOa(oa.id, calidad, "Duplicado")).rejects.toBeInstanceOf(
-      OrdersConflictError
-    );
-  });
-
-  it("OA con decisión de Calidad ya registrada → bloqueo correcto", async () => {
-    const oa = await makeOa();
-    repo.oaReferences.set(oa.id, {
-      activeWorkItemCount: 0,
-      activeDeliveryCount: 0,
+      activeDeliveryCount: 2,
       hasQualityDecision: true,
     });
-    await expect(service.deleteOa(oa.id, calidad, "Duplicado")).rejects.toBeInstanceOf(
-      OrdersConflictError
-    );
+
+    const deleted = await service.deleteOa(oa.id, calidad, "Duplicada — se conserva la otra OA del mismo lote");
+    expect(deleted.deletedAt).not.toBeNull();
+
+    // La referencia (work_item/entrega/decisión) queda documentada en el
+    // audit trail, no bloqueada ni alterada — deleteOa() nunca escribe en
+    // esas tablas, solo marca deletedAt en la propia OA.
+    const event = repo.audits.find((a) => a.orderId === oa.id && a.eventType === "ORDER_OA_DELETED");
+    const metadata = event?.metadata as {
+      hadActiveWorkItems?: number;
+      hadActiveDeliveries?: number;
+      hadQualityDecision?: boolean;
+    };
+    expect(metadata?.hadActiveWorkItems).toBe(1);
+    expect(metadata?.hadActiveDeliveries).toBe(2);
+    expect(metadata?.hadQualityDecision).toBe(true);
   });
 
-  it("una OA ANULADA no se elimina (ya está fuera de operación con su propio historial legal)", async () => {
+  it("Calidad elimina una OA ANULADA — el soft-delete no destruye nada, solo la retira del listado activo", async () => {
     const oa = await makeOa();
     const withStatus = { ...(await repo.getOrder(oa.id))!, status: "ANULADA" as const };
     repo.orders.set(oa.id, withStatus);
-    await expect(service.deleteOa(oa.id, calidad, "Duplicado")).rejects.toBeInstanceOf(
-      OrdersValidationError
-    );
+    const deleted = await service.deleteOa(oa.id, calidad, "Duplicada, ya estaba anulada");
+    expect(deleted.deletedAt).not.toBeNull();
+    expect(deleted.status).toBe("ANULADA");
+  });
+
+  it("Producción y Dirección conservan el mismo permiso que Calidad", async () => {
+    const oaProd = await makeOa();
+    await expect(service.deleteOa(oaProd.id, produccion, "Motivo")).resolves.toMatchObject({
+      deletedAt: expect.any(String),
+    });
   });
 
   it("es idempotente: eliminar una OA ya eliminada no falla ni la vuelve a auditar", async () => {
@@ -600,6 +630,30 @@ describe("deleteOa — eliminación manual de OA (soft-delete/tombstone)", () =>
     expect(result.deletedAt).not.toBeNull();
     const auditCountAfterSecond = repo.audits.filter((a) => a.orderId === oa.id).length;
     expect(auditCountAfterSecond).toBe(auditCountAfterFirst);
+  });
+
+  it("una OA eliminada deja de aparecer en el listado normal, pero sigue existiendo en la DB para auditoría (test obligatorio #8, #9)", async () => {
+    const oa = await makeOa();
+    await service.deleteOa(oa.id, calidad, "Duplicada de prueba");
+
+    const normalList = await service.listOrders({ type: "OA" }, calidad);
+    expect(normalList.items.map((o) => o.id)).not.toContain(oa.id);
+
+    const stillInDb = await repo.getOrder(oa.id);
+    expect(stillInDb).not.toBeNull();
+    expect(stillInDb?.deletedAt).not.toBeNull();
+    expect(stillInDb?.deleteReason).toBe("Duplicada de prueba");
+  });
+
+  it("Ver eliminadas (includeDeleted) solo funciona para sectores con permiso de eliminar OA — otros sectores se ignoran en silencio", async () => {
+    const oa = await makeOa();
+    await service.deleteOa(oa.id, calidad, "Duplicada de prueba");
+
+    const asCalidad = await service.listOrders({ type: "OA", includeDeleted: true }, calidad);
+    expect(asCalidad.items.map((o) => o.id)).toContain(oa.id);
+
+    const asMasivo = await service.listOrders({ type: "OA", includeDeleted: true }, masivo);
+    expect(asMasivo.items.map((o) => o.id)).not.toContain(oa.id);
   });
 
   it("no aplica a OE — deleteOa es exclusivo de OA", async () => {

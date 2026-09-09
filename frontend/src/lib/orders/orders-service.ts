@@ -735,6 +735,13 @@ export class OrdersService {
     const type = filters.type;
     if (type) assertCanOrderAction(type, "view", actor);
     const scoped = { ...filters };
+    // Ver eliminadas/archivadas (historial) queda restringido a los mismos
+    // sectores que pueden eliminar OA — para el resto, se ignora en
+    // silencio (se comporta como si no se hubiera pedido) en vez de
+    // rechazar todo el listado.
+    if (scoped.includeDeleted && !canDeleteOa(actor.sector)) {
+      scoped.includeDeleted = false;
+    }
     if (actor.sector === "ENVASADO_MASIVO" || actor.sector === "ENVASADO_PREMIUM") {
       scoped.type = "OA";
       scoped.assignedSector = actor.sector;
@@ -1587,12 +1594,17 @@ export class OrdersService {
 
   /**
    * Elimina una OA (soft-delete/tombstone — nunca DELETE físico, ver
-   * migración 0030). Distinto de deleteEmptyDraft: esto cubre cualquier OA
-   * viva (borrador o confirmada), no solo borradores vacíos, pero exige
-   * motivo obligatorio y bloquea si la OA tiene trabajos, entregas o
-   * decisiones de Calidad activas vinculadas — "no alcanza con ocultar el
-   * botón": esta validación es la autoridad real, el RBAC de UI es solo
-   * conveniencia visual.
+   * migración 0030). Distinto de deleteEmptyDraft: esto cubre CUALQUIER OA
+   * viva que Calidad/Producción/Dirección elijan — completa, con lote/VTO,
+   * con operarios, vinculada a un trabajo, creada hace tiempo, lo que sea —
+   * exige únicamente motivo obligatorio. Es soft-delete puro (deletedAt/
+   * deletedBy/deleteReason): nunca borra ni modifica el work_item, pedido,
+   * remito, entrega o historial de Calidad vinculados — esos quedan
+   * exactamente como estaban, la OA simplemente deja de aparecer en las
+   * vistas operativas normales (repo.listOrders excluye deletedAt por
+   * defecto) y sigue accesible para auditoría/historial vía includeDeleted.
+   * "No alcanza con ocultar el botón": esta validación (RBAC + motivo) es
+   * la autoridad real, el RBAC de UI es solo conveniencia visual.
    */
   async deleteOa(id: string, actor: OrdersActor, reason: string) {
     const current = await this.requireOrder(id);
@@ -1614,34 +1626,13 @@ export class OrdersService {
     if (current.deletedAt) {
       return current; // idempotente
     }
-    if (current.status === "ANULADA") {
-      throw new OrdersValidationError(
-        "Una OA anulada no se elimina; ya está fuera de operación y conserva su historial legal."
-      );
-    }
 
+    // Solo informativo para el audit trail — nunca bloquea. Deja constancia
+    // de qué relaciones tenía la OA al momento de eliminarla, sin tocarlas.
     const refs = await this.repo.findOaReferences({
       id: current.id,
       orderNumber: current.orderNumber,
     });
-    if (refs.activeWorkItemCount > 0) {
-      throw new OrdersConflictError(
-        "No se puede eliminar esta OA porque está vinculada a un trabajo activo.",
-        current
-      );
-    }
-    if (refs.activeDeliveryCount > 0) {
-      throw new OrdersConflictError(
-        "No se puede eliminar esta OA porque tiene entregas registradas.",
-        current
-      );
-    }
-    if (refs.hasQualityDecision) {
-      throw new OrdersConflictError(
-        "No se puede eliminar esta OA porque ya tiene una decisión de Calidad registrada.",
-        current
-      );
-    }
 
     const updated = await this.repo.updateOrderOptimistic(id, current.version, {
       deletedAt: nowIso(),
@@ -1665,6 +1656,9 @@ export class OrdersService {
         product: current.product,
         client: current.client,
         previousStatus: current.status,
+        hadActiveWorkItems: refs.activeWorkItemCount,
+        hadActiveDeliveries: refs.activeDeliveryCount,
+        hadQualityDecision: refs.hasQualityDecision,
       },
     });
     const { recordLifecycleEvent } = await import("@/lib/lifecycle");
