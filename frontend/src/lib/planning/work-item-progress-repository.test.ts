@@ -27,9 +27,12 @@ function createFakeDb() {
     return true;
   }
 
+  const productionPedidos = new Map<string, FakeRow>();
+
   function tableFor(name: string): Map<string, FakeRow> {
     if (name === "operationalOrders") return operationalOrders;
     if (name === "workItemDeliveries") return workItemDeliveries;
+    if (name === "productionPedidos") return productionPedidos;
     return workItems;
   }
 
@@ -86,8 +89,22 @@ function createFakeDb() {
     insert(table: { __name: string }) {
       return {
         values(row: Record<string, unknown>) {
-          if (table.__name === "operationalEvents") operationalEvents.push(row);
-          return Promise.resolve();
+          if (table.__name === "operationalEvents") {
+            operationalEvents.push(row);
+            return Promise.resolve();
+          }
+          const target = tableFor(table.__name);
+          const id = (row.id as string | undefined) ?? `${table.__name}-${target.size + 1}`;
+          const stored = { ...row, id };
+          target.set(id, stored);
+          return {
+            returning() {
+              return Promise.resolve([{ ...stored }]);
+            },
+            then(resolve: (v: undefined) => unknown) {
+              return Promise.resolve(resolve(undefined));
+            },
+          };
         },
       };
     },
@@ -96,7 +113,7 @@ function createFakeDb() {
     },
   };
 
-  return { tx, workItems, operationalOrders, workItemDeliveries, operationalEvents };
+  return { tx, workItems, operationalOrders, workItemDeliveries, operationalEvents, productionPedidos };
 }
 
 let fakeDbHandle: ReturnType<typeof createFakeDb>;
@@ -140,9 +157,53 @@ vi.mock("@/lib/db/schema", () => {
     "line",
     "operationalStatus",
     "deletedAt",
+    "packagingLote",
+    "packagingVto",
+    "packagingTotalUnits",
+    "packingGroups",
+    "packingMismatchObservation",
+    "sampleUnits",
+    "deliverableUnits",
+    "bulkRemainderKg",
+    "bulkRemainderObservation",
+    "productionPedidoId",
+    "finishedQty",
+    "version",
   ];
   const orderCols = ["id", "orderNumber", "type", "linkedWorkItemId", "version"];
-  const deliveryCols = ["id", "workItemId", "status", "archived"];
+  const deliveryCols = [
+    "id",
+    "workItemId",
+    "status",
+    "archived",
+    "qualityItemId",
+    "product",
+    "codigo",
+    "client",
+    "lote",
+    "vto",
+    "orderNumber",
+    "packingGroups",
+    "plannedQuantity",
+    "finishedQty",
+    "sampleUnits",
+    "deliverableUnits",
+    "bulkRemainderKg",
+    "bulkRemainderObservation",
+    "productionPedidoId",
+    "pedidoOp",
+    "sourceSector",
+    "quantity",
+    "unit",
+    "plannedDeliveryDate",
+    "actualDeliveredAt",
+    "remito",
+    "receivedBy",
+    "observations",
+    "deliveredBy",
+    "deliveredBySector",
+  ];
+  const pedidoCols = ["id", "op"];
   const table = (name: string, cols: string[]) => {
     const t: Record<string, unknown> = { __name: name };
     for (const c of cols) t[c] = { name: c };
@@ -153,6 +214,7 @@ vi.mock("@/lib/db/schema", () => {
     workItemDeliveries: table("workItemDeliveries", deliveryCols),
     operationalEvents: table("operationalEvents", []),
     operationalOrders: table("operationalOrders", orderCols),
+    productionPedidos: table("productionPedidos", pedidoCols),
   };
 });
 
@@ -702,5 +764,143 @@ describe("saveWorkProgressDurable — Lote/VTO fill-once (fake tx)", () => {
       )
     ).rejects.toThrow();
     expect(fakeDbHandle.workItems.get("wi-progress")!.packagingLote).toBeNull();
+  });
+});
+
+/**
+ * AUDITORÍA DE INTEGRIDAD END-TO-END DEL WORK ITEM — deliverWorkDurable era
+ * el punto de fuga real confirmado: vto/orderNumber/packingGroups ya se
+ * releían frescos de work_items (0028), pero lote/product/client/quantity/
+ * unit/cantidades/muestras/sobrante/Pedido se tomaban tal cual del body del
+ * cliente. Si el navegador de Depósito/Expedición tenía una pantalla vieja
+ * abierta (ej. Codificado completó el lote recién, y el poll de 20s todavía
+ * no llegó), la entrega quedaba grabada con el valor viejo — y esa fila es
+ * la fuente del Remito. REGLA NUEVA: el servidor SIEMPRE relee todo dato
+ * canónico del work_item actual en Neon al momento de entregar, nunca del
+ * body — ver loadWorkItemOperationalData().
+ */
+describe("deliverWorkDurable — el servidor relee TODO dato canónico de Neon, nunca confía en el body (fake tx)", () => {
+  let deliverWorkDurable: typeof import("./work-item-progress-repository").deliverWorkDurable;
+
+  const baseInput = {
+    workItemId: "wi-deliver",
+    qualityItemId: "qc-1",
+    codigo: "COD-1",
+    sourceSector: "CODIFICADO" as const,
+    plannedDeliveryDate: "2026-09-15",
+    actualDeliveredAt: "2026-09-12T12:00:00.000Z",
+    remito: null,
+    receivedBy: "Juan Pérez",
+    observations: "Entrega de prueba",
+    deliveredBy: "deposito@laboratoriogenus.com.ar",
+    deliveredBySector: "DEPOSITO" as const,
+  };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ deliverWorkDurable } = await import("./work-item-progress-repository"));
+    fakeDbHandle.workItems.set("wi-deliver", {
+      id: "wi-deliver",
+      client: "Cliente Real",
+      product: "Producto Real",
+      unit: "u",
+      orderNumber: "OA-2026-000150",
+      productionPedidoId: "pedido-1",
+      packagingLote: "L26099",
+      packagingVto: "2028-10",
+      plannedQuantity: "1250",
+      finishedQty: "1250",
+      packagingTotalUnits: 1250,
+      packingGroups: [
+        { cajas: 10, unidadesPorCaja: 100 },
+        { cajas: 2, unidadesPorCaja: 50 },
+      ],
+      packingMismatchObservation: null,
+      sampleUnits: 3,
+      deliverableUnits: 1200,
+      bulkRemainderKg: null,
+      bulkRemainderObservation: null,
+    });
+    fakeDbHandle.productionPedidos.set("pedido-1", { id: "pedido-1", op: "OP-4521" });
+  });
+
+  it("TEST CRÍTICO — el frontend manda lote/vto/packingGroups viejos o vacíos; el resultado conserva lo que está en Neon (test obligatorio #8)", async () => {
+    const row = await deliverWorkDurable({
+      ...baseInput,
+      // Frontend "stale": manda valores viejos/vacíos para datos que YA
+      // pertenecen al work item — el servidor debe ignorarlos por completo.
+      product: "Producto Viejo (stale)",
+      client: "Cliente Viejo (stale)",
+      lote: null,
+      quantity: "1",
+      unit: "kg",
+    } as never);
+
+    expect(row.lote).toBe("L26099");
+    expect(row.vto).toBe("2028-10");
+    expect(row.product).toBe("Producto Real");
+    expect(row.client).toBe("Cliente Real");
+    expect(row.packingGroups).toEqual([
+      { cajas: 10, unidadesPorCaja: 100 },
+      { cajas: 2, unidadesPorCaja: 50 },
+    ]);
+    expect(row.orderNumber).toBe("OA-2026-000150");
+    expect(row.pedidoOp).toBe("OP-4521");
+    expect(row.plannedQuantity).toBe("1250");
+    expect(row.finishedQty).toBe("1250");
+    expect(row.sampleUnits).toBe(3);
+    expect(row.deliverableUnits).toBe(1200);
+    // Cantidad "oficial" de la entrega = lo físicamente embalado (1200), no
+    // el "1" que mandó el frontend ni la cantidad producida cruda (1250).
+    expect(row.quantity).toBe("1200");
+
+    // Segunda lectura independiente — contra la fila realmente persistida,
+    // no contra el valor de retorno de la propia llamada.
+    const persisted = fakeDbHandle.workItemDeliveries.get(row.id as string)!;
+    expect(persisted.lote).toBe("L26099");
+    expect(persisted.vto).toBe("2028-10");
+    expect(persisted.packingGroups).toEqual([
+      { cajas: 10, unidadesPorCaja: 100 },
+      { cajas: 2, unidadesPorCaja: 50 },
+    ]);
+  });
+
+  it("preserva muestras y sobrante de granel (ELABORACION) en el snapshot de entrega", async () => {
+    fakeDbHandle.workItems.get("wi-deliver")!.bulkRemainderKg = 4.5;
+    fakeDbHandle.workItems.get("wi-deliver")!.bulkRemainderObservation = "Sobrante de mezcla";
+    const row = await deliverWorkDurable(baseInput as never);
+    expect(row.sampleUnits).toBe(3);
+    expect(row.bulkRemainderKg).toBe(4.5);
+    expect(row.bulkRemainderObservation).toBe("Sobrante de mezcla");
+  });
+
+  it("no reconstruye packingGroups desde un total — preserva el array de grupos EXACTO (10×100, 2×50, nunca 1200 plano)", async () => {
+    const row = await deliverWorkDurable(baseInput as never);
+    expect(row.packingGroups).toEqual([
+      { cajas: 10, unidadesPorCaja: 100 },
+      { cajas: 2, unidadesPorCaja: 50 },
+    ]);
+    expect(Array.isArray(row.packingGroups)).toBe(true);
+    expect((row.packingGroups as unknown[]).length).toBe(2);
+  });
+
+  it("idempotente: si ya hay una entrega activa, la devuelve sin crear una segunda ni volver a leer el work item", async () => {
+    fakeDbHandle.workItemDeliveries.set("dlv-existing", {
+      id: "dlv-existing",
+      workItemId: "wi-deliver",
+      status: "ENTREGADO",
+      archived: false,
+      lote: "L26099",
+    });
+    const row = await deliverWorkDurable(baseInput as never);
+    expect(row.id).toBe("dlv-existing");
+    expect(fakeDbHandle.workItemDeliveries.size).toBe(1);
+  });
+
+  it("rechaza si el work item no existe", async () => {
+    await expect(
+      deliverWorkDurable({ ...baseInput, workItemId: "wi-inexistente" } as never)
+    ).rejects.toThrow("Work item no encontrado.");
   });
 });

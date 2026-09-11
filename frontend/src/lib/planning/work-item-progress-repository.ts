@@ -16,6 +16,7 @@ import { resolveDirectCompletePackedUnits, type PackingGroup } from "@/lib/remit
 import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
 import { addDaysIso, weekStartMonday } from "@/lib/operational/operational-calendar";
 import { normalizeOaOrderNumber } from "@/lib/planning/oa-assign-helpers";
+import { loadWorkItemOperationalData } from "@/lib/planning/work-item-operational-data";
 
 /**
  * Fuente de verdad durable del avance operativo (0023) — reemplaza el overlay
@@ -977,13 +978,13 @@ export interface DeliverWorkInput {
   id?: string;
   workItemId: string;
   qualityItemId?: string | null;
-  product: string;
+  /**
+   * codigo (código de producto) no vive en work_items — sale de un registro
+   * aparte (Asignación de Lotes). Fuera del alcance de esta garantía: no es
+   * un campo operativo del WorkItem, así que sigue viniendo del caller.
+   */
   codigo: string | null;
-  client: string | null;
-  lote: string | null;
   sourceSector: SectorId;
-  quantity: string | null;
-  unit: string | null;
   plannedDeliveryDate: string | null;
   actualDeliveredAt: string;
   remito: string | null;
@@ -991,17 +992,36 @@ export interface DeliverWorkInput {
   observations: string | null;
   deliveredBy: string;
   deliveredBySector: SectorId;
+  /**
+   * @deprecated Datos canónicos del work item (product/client/lote/quantity/
+   * unit y todo lo que WorkItemOperationalData cubre) — el servidor los
+   * relee SIEMPRE frescos de Neon (ver loadWorkItemOperationalData) y
+   * descarta lo que venga acá. Quedan tipados por compat con clientes
+   * viejos, pero nunca se persisten.
+   */
+  product?: string;
+  lote?: string | null;
+  client?: string | null;
+  quantity?: string | null;
+  unit?: string | null;
 }
 
 /**
  * Idempotente: si ya hay una entrega activa (ENTREGADO, no archivada) para
  * el work item, la devuelve.
  *
- * vto/orderNumber/packingGroups se leen directo del work_item en este mismo
- * momento (no se piden al caller) — es un snapshot histórico (0028): el
- * work_item sigue siendo editable después (ej. corrección de VTO), pero la
- * entrega ya confirmada debe conservar exactamente lo que existía cuando se
- * entregó, no lo que el work_item diga más tarde.
+ * REGLA: al momento de esta entrega, el servidor toma como fuente de verdad
+ * el work_item ACTUAL en Neon — nunca el body del frontend, que puede venir
+ * de una pantalla abierta hace rato y no reflejar un lote/VTO/packingGroups
+ * que otro sector acaba de completar (ver loadWorkItemOperationalData). El
+ * frontend solo controla datos propios de ESTA acción de entrega
+ * (fecha/hora real, remito, quién recibe, observaciones) — nunca puede
+ * reemplazar datos canónicos del work item con un valor stale.
+ *
+ * Es además un snapshot histórico (0028/0031): el work_item sigue siendo
+ * editable después (ej. corrección de VTO por Producción), pero la entrega
+ * ya confirmada conserva exactamente lo que existía en Neon en el momento
+ * real de la entrega.
  */
 export async function deliverWorkDurable(input: DeliverWorkInput) {
   const db = getDb();
@@ -1019,31 +1039,38 @@ export async function deliverWorkDurable(input: DeliverWorkInput) {
       .limit(1);
     if (existingActive) return existingActive;
 
-    const [workItemRow] = await tx
-      .select({
-        packagingVto: workItems.packagingVto,
-        orderNumber: workItems.orderNumber,
-        packingGroups: workItems.packingGroups,
-      })
-      .from(workItems)
-      .where(eq(workItems.id, input.workItemId))
-      .limit(1);
+    const canonical = await loadWorkItemOperationalData(tx, input.workItemId);
+    if (!canonical) throw new Error("Work item no encontrado.");
 
     const [row] = await tx
       .insert(workItemDeliveries)
       .values({
         workItemId: input.workItemId,
         qualityItemId: input.qualityItemId ?? null,
-        product: input.product,
+        product: canonical.product,
         codigo: input.codigo,
-        client: input.client,
-        lote: input.lote,
-        vto: workItemRow?.packagingVto ?? null,
-        orderNumber: workItemRow?.orderNumber ?? null,
-        packingGroups: workItemRow?.packingGroups ?? null,
+        client: canonical.client,
+        lote: canonical.packagingLote,
+        vto: canonical.packagingVto,
+        orderNumber: canonical.orderNumber,
+        packingGroups: canonical.packingGroups,
+        plannedQuantity: canonical.plannedQuantity,
+        finishedQty: canonical.finishedQty,
+        sampleUnits: canonical.sampleUnits,
+        deliverableUnits: canonical.deliverableUnits,
+        bulkRemainderKg: canonical.bulkRemainderKg,
+        bulkRemainderObservation: canonical.bulkRemainderObservation,
+        productionPedidoId: canonical.productionPedidoId,
+        pedidoOp: canonical.pedidoOp,
         sourceSector: input.sourceSector,
-        quantity: input.quantity,
-        unit: input.unit,
+        // Cantidad "oficial" de la entrega: lo físicamente embalado
+        // (deliverableUnits) cuando hay cierre; si no, la cantidad final
+        // declarada. Nunca la cantidad cruda producida ni un valor del body.
+        quantity:
+          canonical.deliverableUnits != null
+            ? String(canonical.deliverableUnits)
+            : (canonical.finishedQty ?? canonical.plannedQuantity),
+        unit: canonical.unit,
         plannedDeliveryDate: input.plannedDeliveryDate,
         actualDeliveredAt: new Date(input.actualDeliveredAt),
         remito: input.remito,
@@ -1187,6 +1214,21 @@ export function toClientDeliveryRecord(row: typeof workItemDeliveries.$inferSele
     codigo: row.codigo,
     client: row.client,
     lote: row.lote,
+    // vto/orderNumber/packingGroups (0028) se persistían pero nunca viajaban
+    // al cliente acá — la UI no podía mostrarlos aunque Neon los tuviera.
+    vto: row.vto ?? null,
+    orderNumber: row.orderNumber ?? null,
+    packingGroups:
+      (row.packingGroups as Array<{ cajas: number; unidadesPorCaja: number }> | null) ?? null,
+    // Snapshot completo (0031) — ver work-item-operational-data.ts.
+    plannedQuantity: row.plannedQuantity ?? null,
+    finishedQty: row.finishedQty ?? null,
+    sampleUnits: row.sampleUnits ?? null,
+    deliverableUnits: row.deliverableUnits ?? null,
+    bulkRemainderKg: row.bulkRemainderKg ?? null,
+    bulkRemainderObservation: row.bulkRemainderObservation ?? null,
+    productionPedidoId: row.productionPedidoId ?? null,
+    pedidoOp: row.pedidoOp ?? null,
     sourceSector: row.sourceSector,
     quantity: row.quantity,
     unit: row.unit,
