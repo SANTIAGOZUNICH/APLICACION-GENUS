@@ -118,6 +118,30 @@ export function projectDomainWorkItems(items: DomainWorkItem[]): WorkItem[] {
     .filter((item): item is WorkItem => item !== null);
 }
 
+/**
+ * ⚠️ CONTRATO INCOMPLETO A PROPÓSITO — NO es un QualityItem completo.
+ *
+ * Este proyector alimenta el modo legacy "sheets" (getPlanningSource() ===
+ * "sheets", cuando no hay DATABASE_URL — ver planning-source.ts). El modelo
+ * de origen, DomainWorkItem, viene 100% de Google Sheets y JAMÁS tuvo
+ * concepto de packagingLote/packagingVto/packingGroups/sampleUnits/
+ * deliverableUnits/pedidoOp — esos campos nacieron con el "avance operativo"
+ * durable (0023/0024), exclusivo del modelo nativo (Neon). No hay forma
+ * segura de completarlos acá sin inventar datos que Sheets nunca tuvo.
+ *
+ * El proyector correcto y completo para el modo nativo (el que corre en
+ * Production, que sí tiene DATABASE_URL) es projectQualityItem() en
+ * native-projector.ts — ese SÍ expone vto/packingGroups/packedUnits/
+ * sampleUnits/pedidoOp, leídos directo de la fila de Neon.
+ *
+ * Si algún día se necesita mezclar resultados de ambos proyectores en una
+ * misma lista, o promover este modo a un contrato completo, hay que traer
+ * antes esos campos al pipeline de Sheets (load-operational-pipeline.ts) —
+ * no alcanza con agregarlos acá. Ver work-item-projector.test.ts para el
+ * test que actúa de tripwire: si este proyector alguna vez empieza a
+ * devolver esas claves sin que el pipeline las provea de verdad, hay que
+ * revisar esto primero.
+ */
 export function projectQualityItemsFromDomain(items: DomainWorkItem[]) {
   return items
     .filter((item) => item.loteRef && (item.sector === "CALIDAD" || item.oeRef || item.oaRef))

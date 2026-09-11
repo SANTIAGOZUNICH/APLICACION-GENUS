@@ -288,6 +288,24 @@ export const workItemDeliveries = pgTable(
     orderNumber: text("order_number"),
     /** Snapshot histórico — 0028. Distribución de cajas al momento de la entrega. */
     packingGroups: jsonb("packing_groups"),
+    /**
+     * Snapshot histórico — 0031 (auditoría de integridad end-to-end del
+     * WorkItem). Cantidad teórica/asignada original — nunca la pisa la
+     * cantidad final.
+     */
+    plannedQuantity: text("planned_quantity"),
+    /** Snapshot histórico — 0031. Cantidad final declarada por el sector ejecutor. */
+    finishedQty: text("finished_qty"),
+    /** Snapshot histórico — 0031. Muestras (PARTE A) al momento de la entrega. */
+    sampleUnits: integer("sample_units"),
+    /** Snapshot histórico — 0031. SUM(packingGroups) al momento de la entrega. */
+    deliverableUnits: doublePrecision("deliverable_units"),
+    /** Snapshot histórico — 0031. Sobrante de granel (ELABORACION), si aplica. */
+    bulkRemainderKg: doublePrecision("bulk_remainder_kg"),
+    bulkRemainderObservation: text("bulk_remainder_observation"),
+    /** Snapshot histórico — 0031. Referencia de Pedido/OP al momento de la entrega. */
+    productionPedidoId: uuid("production_pedido_id"),
+    pedidoOp: text("pedido_op"),
     sourceSector: text("source_sector").notNull(),
     quantity: text("quantity"),
     unit: text("unit"),

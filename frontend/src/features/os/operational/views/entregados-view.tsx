@@ -924,11 +924,30 @@ export function EntregadosView() {
                 <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Estado</dt><dd>{isLateDelivery(detail) ? "Fuera de fecha" : "En fecha"}</dd></div>
                 <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Código</dt><dd className="font-mono text-xs">{displayField(detail.codigo)}</dd></div>
                 <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Lote</dt><dd className="font-mono text-xs">{displayField(detail.lote)}</dd></div>
+                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">VTO</dt><dd className="font-mono text-xs">{displayField(detail.vto ?? null)}</dd></div>
+                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">OA/OE</dt><dd className="font-mono text-xs">{displayField(detail.orderNumber ?? null)}</dd></div>
+                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Pedido</dt><dd className="font-mono text-xs">{displayField(detail.pedidoOp ?? null)}</dd></div>
                 <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Origen</dt><dd>{SECTOR_LABELS[detail.sourceSector]}</dd></div>
-                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Cantidad</dt><dd>{[detail.quantity, detail.unit].filter(Boolean).join(" ") || "—"}</dd></div>
+                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Cantidad teórica</dt><dd>{displayField(detail.plannedQuantity ?? null)}</dd></div>
+                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Cantidad final</dt><dd>{displayField(detail.finishedQty ?? null)}</dd></div>
+                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Cantidad entregada</dt><dd>{[detail.quantity, detail.unit].filter(Boolean).join(" ") || "—"}</dd></div>
+                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Muestras</dt><dd>{detail.sampleUnits != null ? detail.sampleUnits : "—"}</dd></div>
+                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Sobrante</dt><dd>{detail.bulkRemainderKg != null ? `${detail.bulkRemainderKg} kg` : "—"}</dd></div>
                 <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Remito</dt><dd>{displayField(detail.remito)}</dd></div>
                 <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Recibido por</dt><dd>{displayField(detail.receivedBy)}</dd></div>
               </dl>
+              {detail.packingGroups && detail.packingGroups.length > 0 && (
+                <div>
+                  <p className="text-xs uppercase text-[var(--os-text-muted)]">Packing</p>
+                  <ul className="mt-1 space-y-0.5 text-sm">
+                    {detail.packingGroups.map((g, idx) => (
+                      <li key={idx} className="font-mono text-xs">
+                        {g.cajas} caja{g.cajas === 1 ? "" : "s"} × {g.unidadesPorCaja}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div>
                 <p className="text-xs uppercase text-[var(--os-text-muted)]">Observaciones</p>
                 <p className="mt-1 text-sm">{detail.observations || "Sin observaciones."}</p>

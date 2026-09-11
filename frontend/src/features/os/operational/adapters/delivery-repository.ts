@@ -20,6 +20,18 @@ export interface DeliveryRecord {
   codigo: string | null;
   client: string | null;
   lote: string | null;
+  /** Snapshot histórico (0028/0031) — congelado al momento real de la entrega. */
+  vto?: string | null;
+  orderNumber?: string | null;
+  packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
+  plannedQuantity?: string | null;
+  finishedQty?: string | null;
+  sampleUnits?: number | null;
+  deliverableUnits?: number | null;
+  bulkRemainderKg?: number | null;
+  bulkRemainderObservation?: string | null;
+  productionPedidoId?: string | null;
+  pedidoOp?: string | null;
   sourceSector: SectorId;
   quantity: string | null;
   unit: string | null;
