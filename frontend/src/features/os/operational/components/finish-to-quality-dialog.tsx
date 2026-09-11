@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { parseBulkRemainderKg } from "../lib/bulk-remainder";
+import { WorkItemWarningBadge } from "./work-item-warning-badge";
 
 type Props = {
   open: boolean;
@@ -72,6 +73,7 @@ export function FinishToQualityDialog({
             avance. ¿Confirmás que terminaste este trabajo?
           </DialogDescription>
         </DialogHeader>
+        <WorkItemWarningBadge item={item} className="mb-1" />
         <div className="space-y-3 text-sm">
           <label className="block">
             <span className="font-medium">Sobrante de granel (kg) — opcional</span>

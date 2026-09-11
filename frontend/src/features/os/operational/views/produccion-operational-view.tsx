@@ -67,6 +67,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { correctWorkItemLoteVto } from "../lib/lote-vto-correction";
+import { WorkItemWarningBadge } from "../components/work-item-warning-badge";
+import type { WorkItemWarningField } from "@/lib/planning/work-item-warnings";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
 
 const CONTROL_CLASS =
@@ -301,6 +303,23 @@ export function ProduccionOperationalView({
     refresh,
   ]);
 
+  /**
+   * Al tocar un warning de datos faltantes: si es lote/VTO, abre directo la
+   * corrección de Producción (único campo que Producción puede completar
+   * desde acá); el resto, abre el detalle del trabajo para que el usuario
+   * vea de dónde falta.
+   */
+  const handleWarningSelect = useCallback(
+    (item: WorkItem, field: WorkItemWarningField, detail?: QualityItem) => {
+      if (field === "lote" || field === "vto") {
+        openLoteVtoCorrection(item);
+        return;
+      }
+      if (detail) setDetailItem(detail);
+    },
+    [openLoteVtoCorrection]
+  );
+
   function presetRange(preset: "7d" | "this_month" | "last_month"): { from: string; to: string } {
     const now = new Date();
     const toIso = (d: Date) => d.toISOString().slice(0, 10);
@@ -471,6 +490,19 @@ export function ProduccionOperationalView({
         ),
       },
       {
+        key: "warning",
+        header: "",
+        render: (row) => {
+          const wi = workItems.find((w) => w.id === workIdFromQuality(row)) ?? null;
+          return wi ? (
+            <WorkItemWarningBadge
+              item={wi}
+              onSelectField={(field) => handleWarningSelect(wi, field, row)}
+            />
+          ) : null;
+        },
+      },
+      {
         key: "detalle",
         header: "Detalle",
         render: (row) =>
@@ -561,7 +593,7 @@ export function ProduccionOperationalView({
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps -- handlers use latest closures
-    [getQualityObservation, remitoBusy, remitoStatusByWork, aprobados, workItems]
+    [getQualityObservation, remitoBusy, remitoStatusByWork, aprobados, workItems, handleWarningSelect]
   );
 
   const workColumns: OperationalTableColumn<WorkItem>[] = useMemo(
@@ -602,8 +634,15 @@ export function ProduccionOperationalView({
           />
         ),
       },
+      {
+        key: "warning",
+        header: "",
+        render: (row) => (
+          <WorkItemWarningBadge item={row} onSelectField={(field) => handleWarningSelect(row, field)} />
+        ),
+      },
     ],
-    [getFinishedQty]
+    [getFinishedQty, handleWarningSelect]
   );
 
   const tabs = PRODUCCION_TABS.map((tab) => {
@@ -911,6 +950,17 @@ export function ProduccionOperationalView({
                   <p className="mt-1 text-sm text-[var(--os-text-muted)]">
                     {displayField(detailItem.client)}
                   </p>
+                  {(() => {
+                    const wi = workItems.find((w) => w.id === workIdFromQuality(detailItem));
+                    return wi ? (
+                      <div className="mt-2">
+                        <WorkItemWarningBadge
+                          item={wi}
+                          onSelectField={(field) => handleWarningSelect(wi, field, detailItem)}
+                        />
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
                 <DrawerCloseButton />
               </DrawerHeader>

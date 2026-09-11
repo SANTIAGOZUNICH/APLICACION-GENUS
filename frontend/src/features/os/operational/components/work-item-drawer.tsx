@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Download, Eye, FileWarning } from "lucide-react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
@@ -25,6 +25,8 @@ import { PackagingQuantitiesBlock } from "./packaging-quantities-block";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { SendToCodificadoDialog } from "./send-to-codificado-dialog";
 import { FinishToQualityDialog } from "./finish-to-quality-dialog";
+import { WorkItemWarningBadge } from "./work-item-warning-badge";
+import type { WorkItemWarningField } from "@/lib/planning/work-item-warnings";
 import {
   Dialog,
   DialogContent,
@@ -89,6 +91,17 @@ export function WorkItemDrawer({
   const [cancelReason, setCancelReason] = useState("");
   const [cancelBusy, setCancelBusy] = useState(false);
   const [loadedItemId, setLoadedItemId] = useState<string | null>(null);
+  const packagingRef = useRef<HTMLDivElement>(null);
+  const finishedQtyRef = useRef<HTMLInputElement>(null);
+
+  function focusMissingField(field: WorkItemWarningField) {
+    if (field === "cantidadFinal") {
+      finishedQtyRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      finishedQtyRef.current?.focus();
+      return;
+    }
+    packagingRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
 
   if (item && item.id !== loadedItemId) {
     setLoadedItemId(item.id);
@@ -118,6 +131,9 @@ export function WorkItemDrawer({
           <div>
             <DrawerTitle>{displayField(item.product)}</DrawerTitle>
             <p className="mt-1 text-sm text-[var(--os-text-muted)]">{displayField(item.client)}</p>
+            <div className="mt-2">
+              <WorkItemWarningBadge item={item} onSelectField={focusMissingField} />
+            </div>
           </div>
           <DrawerCloseButton />
         </DrawerHeader>
@@ -180,11 +196,13 @@ export function WorkItemDrawer({
           </div>
 
           {!isElaboracion ? (
-            <PackagingQuantitiesBlock
-              item={item}
-              actorName={email ?? "envasado"}
-              readOnly={transferred}
-            />
+            <div ref={packagingRef}>
+              <PackagingQuantitiesBlock
+                item={item}
+                actorName={email ?? "envasado"}
+                readOnly={transferred}
+              />
+            </div>
           ) : null}
 
           <div className="space-y-2">
@@ -193,6 +211,7 @@ export function WorkItemDrawer({
             </label>
             <input
               id="drawer-finished-qty"
+              ref={finishedQtyRef}
               type="text"
               inputMode="decimal"
               value={finishedQty}

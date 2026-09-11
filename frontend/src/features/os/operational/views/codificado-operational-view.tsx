@@ -22,6 +22,7 @@ import { canEditInCodificado, codificadoOriginLabel, WORK_TRANSFER } from "../li
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
 import { AssignWorkDialog } from "../components/assign-work-dialog";
+import { WorkItemWarningBadge } from "../components/work-item-warning-badge";
 
 type TabId = "pendientes" | "entregados";
 
@@ -434,6 +435,9 @@ export function CodificadoOperationalView() {
                       <span className="mt-0.5 block text-xs text-[var(--os-text-muted)] md:hidden">
                         {displayField(item.client)}
                       </span>
+                      <div className="mt-1">
+                        <WorkItemWarningBadge item={item} onSelectField={() => openItem(item)} />
+                      </div>
                     </td>
                     <td className="hidden py-2 pr-2 md:table-cell">
                       <span className="line-clamp-2">{displayField(item.client)}</span>
@@ -473,6 +477,7 @@ export function CodificadoOperationalView() {
               <DialogHeader>
                 <DialogTitle>{displayField(selected.product)}</DialogTitle>
               </DialogHeader>
+              <WorkItemWarningBadge item={selected} />
               <div className="space-y-3 text-sm">
                 <p>
                   <span className="text-[var(--os-text-muted)]">Cliente · </span>

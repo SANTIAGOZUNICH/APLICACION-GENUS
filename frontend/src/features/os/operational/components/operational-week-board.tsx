@@ -16,6 +16,7 @@ import { workItemCoversDate } from "@/lib/operational/work-item-date-range";
 import { isWorkItemReschedulable } from "../lib/work-transfer-labels";
 import { StatusChip } from "./operational-ui";
 import { DeliveryDateBadge } from "./delivery-date-badge";
+import { WorkItemWarningBadge } from "./work-item-warning-badge";
 
 /** Id del día destino codificado en el droppable — `${zone}::${day}`. */
 export function weekBoardDropId(zone: string, day: string): string {
@@ -217,6 +218,9 @@ function WorkItemRichCard({ item }: { item: WorkItem }) {
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <StatusChip status={item.status} />
         {item.deliveryDate ? <DeliveryDateBadge deliveryDate={item.deliveryDate} /> : null}
+      </div>
+      <div className="mt-1.5">
+        <WorkItemWarningBadge item={item} />
       </div>
     </li>
   );

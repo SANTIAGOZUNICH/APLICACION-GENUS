@@ -51,6 +51,8 @@ import {
 import { SortSelect } from "../components/sort-select";
 import { useSortPreference } from "../lib/use-sort-preference";
 import { applySort, compareDates, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
+import { WorkItemWarningBadge } from "../components/work-item-warning-badge";
+import { qualityItemProgressKey } from "../lib/resolve-quality-work-item";
 
 type EntregadosTab = "entregados" | "archivados" | "pendientes";
 type TimelinessFilter = "todos" | "en_fecha" | "fuera_fecha";
@@ -662,6 +664,16 @@ export function EntregadosView() {
       render: (item) => <span className="font-mono text-xs">{displayField(getQualityRef(item))}</span>,
     },
     { key: "status", header: "Estado", render: () => <StatusChip status="aprobado" /> },
+    {
+      key: "warning",
+      header: "",
+      render: (item) => {
+        const wi = workItemsById.get(item.relatedWorkItemId ?? qualityItemProgressKey(item)) ?? null;
+        return wi ? (
+          <WorkItemWarningBadge item={wi} onSelectField={() => openDeliveryModal(item)} />
+        ) : null;
+      },
+    },
     {
       key: "actions",
       header: "Acción",

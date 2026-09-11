@@ -14,6 +14,8 @@ import type { WorkProgressRecord } from "../store/operational-store";
 import type { QualityItem } from "../types";
 import type { WorkItem } from "@/types/operational/work-item";
 import { packingGroupsFromLegacy, summarizePackingGroups } from "@/lib/remitos/packing-math";
+import { qualityItemProgressKey, resolveWorkItemForQualityItem } from "../lib/resolve-quality-work-item";
+import { WorkItemWarningBadge } from "../components/work-item-warning-badge";
 import { SortSelect } from "../components/sort-select";
 import { useSortPreference } from "../lib/use-sort-preference";
 import { applySort, compareDates, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
@@ -70,14 +72,8 @@ const EXPEDICION_SORT_OPTIONS: SortOption<QualityItem>[] = [
 ];
 const EXPEDICION_SORT_KEYS = EXPEDICION_SORT_OPTIONS.map((o) => o.key);
 
-function progressKeyFor(item: QualityItem): string {
-  return item.relatedWorkItemId ?? (item.id.startsWith("qc:") ? item.id.slice(3) : item.id);
-}
-
-function resolveWorkItem(workItems: WorkItem[], item: QualityItem): WorkItem | null {
-  const key = progressKeyFor(item);
-  return workItems.find((w) => w.id === item.relatedWorkItemId || w.id === key) ?? null;
-}
+const progressKeyFor = qualityItemProgressKey;
+const resolveWorkItem = resolveWorkItemForQualityItem;
 
 /**
  * Contrato de scope de Expedición: SOLO Envasado Masivo/Premium/Codificado
@@ -243,6 +239,8 @@ export function ExpedicionCard({
         <p className="truncate font-medium">{displayField(item.product)}</p>
         <p className="truncate text-sm text-[var(--os-text-muted)]">{displayField(item.client)}</p>
       </div>
+
+      {workItem ? <WorkItemWarningBadge item={workItem} /> : null}
 
       <dl className="grid grid-cols-2 gap-2 text-xs">
         <div>
