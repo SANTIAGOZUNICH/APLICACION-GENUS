@@ -15,6 +15,7 @@ import {
 import { parseBulkRemainderKg } from "../lib/bulk-remainder";
 import { resolveTotalUnitsForCodificado } from "../lib/codificado-flow";
 import { WORK_TRANSFER } from "../lib/work-transfer-labels";
+import { WorkItemWarningBadge } from "./work-item-warning-badge";
 
 type Props = {
   open: boolean;
@@ -87,6 +88,8 @@ export function SendToCodificadoDialog({
             El trabajo pasa a Codificado con la misma identidad. No se envía a Calidad ni se genera remito.
           </DialogDescription>
         </DialogHeader>
+
+        <WorkItemWarningBadge item={item} className="mb-1" />
 
         <div className="max-h-[60vh] space-y-3 overflow-y-auto overflow-x-hidden text-sm">
           <div>

@@ -112,6 +112,30 @@ describe("ExpedicionCard — datos reales, nunca inventados", () => {
     expect(screen.getByTestId("expedicion-vto").textContent).toBe("2027-01");
   });
 
+  // Test 9 (advertencias no bloqueantes): Expedición ve la misma advertencia
+  // que Calidad/Producción, calculada del mismo WorkItem canónico.
+  it("Test 9: muestra el warning rojo de datos faltantes cuando el WorkItem resuelto los tiene vacíos", () => {
+    const item = qi({ id: "qc:wi-warn", kind: "salida", status: "aprobado" });
+    const workItem = createTestWorkItem({
+      id: "wi-warn",
+      sector: "CODIFICADO",
+      status: "codificado_completo",
+      originStage: "CODIFICADO",
+      packagingLote: null,
+      packagingVto: null,
+      packingGroups: [{ cajas: 1, unidadesPorCaja: 500 }],
+    });
+
+    render(<ExpedicionCard item={item} workItem={workItem} progress={null} />);
+    expect(screen.getByTestId("work-item-warning-badge").textContent).toContain("FALTA LOTE Y VTO");
+  });
+
+  it("sin WorkItem resuelto, no muestra ningún warning (nunca inventa datos)", () => {
+    const item = qi({ id: "qc:wi-nowarn", kind: "salida", status: "aprobado" });
+    render(<ExpedicionCard item={item} workItem={null} progress={null} />);
+    expect(screen.queryByTestId("work-item-warning-badge")).toBeNull();
+  });
+
   it("estado usa el qualityStatus real: pendiente → 'Pendiente de aprobación', aprobado → 'Aprobado'", () => {
     const pendiente = qi({ id: "qc:wi-4", kind: "salida", status: "pendiente" });
     const { unmount } = render(<ExpedicionCard item={pendiente} workItem={null} progress={null} />);

@@ -53,6 +53,8 @@ import type { QualityItem } from "../types";
 import { canAccessRemitos } from "@/lib/remitos/types";
 import { isPackagingQualityItem } from "@/lib/remitos/from-quality";
 import { CodificadoTracePanel } from "../components/codificado-trace-panel";
+import { WorkItemWarningBadge } from "../components/work-item-warning-badge";
+import { resolveWorkItemForQualityItem } from "../lib/resolve-quality-work-item";
 import { FormulasAdminPanel } from "../components/formulas-admin-panel";
 import { LifecycleRowActions } from "../components/lifecycle-row-actions";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
@@ -495,6 +497,14 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
         ...base,
         { key: "status", header: "Estado", render: (row) => <StatusChip status={row.status} transferredInbox={Boolean(row.receivedFrom)} /> },
         {
+          key: "warning",
+          header: "",
+          render: (row) => {
+            const wi = resolveWorkItemForQualityItem(workItems, row);
+            return wi ? <WorkItemWarningBadge item={wi} onSelectField={() => openReview(row)} /> : null;
+          },
+        },
+        {
           key: "actions",
           header: "Acción",
           render: (row) =>
@@ -508,7 +518,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
         },
       ];
     },
-    [canDecide, openReview]
+    [canDecide, openReview, workItems]
   );
 
   const granelColumns = useMemo(() => buildColumns("granel"), [buildColumns]);
@@ -548,6 +558,14 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
         ),
       },
       { key: "status", header: "Estado", render: (row) => <StatusChip status={row.status} /> },
+      {
+        key: "warning",
+        header: "",
+        render: (row) => {
+          const wi = resolveWorkItemForQualityItem(workItems, row);
+          return wi ? <WorkItemWarningBadge item={wi} onSelectField={() => openReview(row)} /> : null;
+        },
+      },
       {
         key: "obs",
         header: "Observación de Calidad",
@@ -619,6 +637,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
       workspace.context.displayName,
       email,
       showToast,
+      workItems,
     ]
   );
 
@@ -635,6 +654,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
   const reviewDoc = reviewItem
     ? getLatestDocumentByRef(reviewItem.kind === "granel" ? reviewItem.oe : reviewItem.oa)
     : null;
+  const reviewWorkItem = reviewItem ? resolveWorkItemForQualityItem(workItems, reviewItem) : null;
 
   return (
     <TwinShell title="Calidad">
@@ -769,6 +789,11 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                   <p className="mt-1 text-sm text-[var(--os-text-muted)]">
                     {displayField(reviewItem.client)}
                   </p>
+                  {reviewWorkItem ? (
+                    <div className="mt-2">
+                      <WorkItemWarningBadge item={reviewWorkItem} />
+                    </div>
+                  ) : null}
                 </div>
                 <DrawerCloseButton />
               </DrawerHeader>
@@ -802,16 +827,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
 
                 {reviewItem.kind === "salida" ? (
                   <CodificadoTracePanel
-                    workItem={
-                      workItems.find(
-                        (w) =>
-                          w.id === reviewItem.relatedWorkItemId ||
-                          w.id ===
-                            (reviewItem.id.startsWith("qc:")
-                              ? reviewItem.id.slice(3)
-                              : reviewItem.id)
-                      ) ?? null
-                    }
+                    workItem={reviewWorkItem}
                     progress={
                       progressMap[
                         reviewItem.relatedWorkItemId ??
