@@ -10,6 +10,7 @@ import {
 import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { ActionButton, StatusChip } from "./operational-ui";
 import { DeliveryDateBadge } from "./delivery-date-badge";
+import { WorkItemWarningBadge } from "./work-item-warning-badge";
 
 interface WorkItemProgressTableProps {
   items: WorkItem[];
@@ -129,6 +130,9 @@ export function WorkItemProgressTable({
                 </td>
                 <td className={`${tdClass} font-medium`}>
                   <span className="os-break">{displayField(item.product)}</span>
+                  <div className="mt-1" onClick={(e) => e.stopPropagation()}>
+                    <WorkItemWarningBadge item={item} onSelectField={() => onSelectItem(item)} />
+                  </div>
                 </td>
                 <td className={`${tdClass} hidden tabular-nums sm:table-cell`}>{planned}</td>
                 <td className={`${tdClass} hidden tabular-nums sm:table-cell`}>{finishedQty || "—"}</td>
