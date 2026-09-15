@@ -67,6 +67,14 @@ import {
   canAccessAsignacionLotes,
   canMutateAsignacionLotes,
 } from "../lib/asignacion-lotes-rbac";
+import { SmartPasteDialog } from "../components/smart-paste-dialog";
+import type { SmartPasteRow } from "@/lib/smart-paste/types";
+import {
+  buildAsignacionLotesMasterData,
+  makeAsignacionLotesDuplicateChecker,
+  smartPasteRowToAsignacionLoteInput,
+} from "../lib/asignacion-lotes-smart-paste";
+import { todayIso } from "../lib/delivery-date";
 
 const PAGE_SIZE = 20;
 
@@ -259,6 +267,7 @@ export function AsignacionLotesView() {
   const [bulkPending, setBulkPending] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [smartPasteOpen, setSmartPasteOpen] = useState(false);
   const [seedImportText, setSeedImportText] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
 
@@ -397,6 +406,21 @@ export function AsignacionLotesView() {
     await refresh();
     showFeedback(
       `Importación lista: ${result.imported} cargadas, ${result.skipped} omitidas, ${result.duplicates} duplicadas, ${result.errors.length} errores.`
+    );
+  };
+
+  const smartPasteMaster = useMemo(() => buildAsignacionLotesMasterData(items), [items]);
+  const smartPasteDuplicateChecker = useMemo(() => makeAsignacionLotesDuplicateChecker(items), [items]);
+
+  const handleSmartPasteConfirm = async ({ rows }: { rows: SmartPasteRow[]; batchId: string }) => {
+    const fecha = todayIso();
+    const payloads = rows.map((row) =>
+      smartPasteRowToAsignacionLoteInput(row, workspace.context.displayName, fecha)
+    );
+    const result = await importAsignacionLotesApi(session, payloads);
+    await refresh();
+    showFeedback(
+      `Pegado inteligente: ${result.imported} cargadas, ${result.skipped} omitidas, ${result.duplicates} duplicadas, ${result.errors.length} errores.`
     );
   };
 
@@ -616,6 +640,16 @@ export function AsignacionLotesView() {
                 <ClipboardPaste className="size-4" aria-hidden="true" />
                 Pegar desde Excel
               </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setSmartPasteOpen(true)}
+                disabled={!canMutate}
+                data-testid="open-smart-paste"
+              >
+                <ClipboardPaste className="size-4" aria-hidden="true" />
+                Pegado inteligente (beta)
+              </Button>
               <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-medium text-[var(--foreground)] hover:bg-[var(--sidebar-item-hover)]">
                 <Upload className="size-4" aria-hidden="true" />
                 Importar CSV
@@ -802,6 +836,25 @@ export function AsignacionLotesView() {
           }}
           onConfirm={handleImportConfirm}
           onToast={(message) => showFeedback(message)}
+        />
+
+        <SmartPasteDialog
+          open={smartPasteOpen}
+          onOpenChange={setSmartPasteOpen}
+          title="Pegado inteligente — Asignación de lotes"
+          description="Pegá filas en cualquier orden de columnas. Interpretamos cada valor por su contenido (lote, VTO, cantidad, cliente, producto) usando lo que GENUS OS ya conoce — nunca inventamos un dato."
+          fields={[
+            { key: "producto", label: "Producto" },
+            { key: "cliente", label: "Cliente / Marca" },
+            { key: "lote", label: "Lote" },
+            { key: "vto", label: "VTO" },
+            { key: "cantidad", label: "Cantidad" },
+            { key: "codigo", label: "Código" },
+          ]}
+          master={smartPasteMaster}
+          checkDuplicate={smartPasteDuplicateChecker}
+          onConfirm={handleSmartPasteConfirm}
+          batchIdPrefix="asignacion-lotes-smart-paste"
         />
       </div>
     </TwinShell>
