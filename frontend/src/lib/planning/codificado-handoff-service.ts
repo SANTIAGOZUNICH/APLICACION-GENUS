@@ -67,13 +67,14 @@ export type HandoffCodificadoInput = {
   totalUnits: number;
   observation?: string | null;
   /**
-   * Handoff Envasado→Codificado es un cambio de estado, no un punto de
-   * carga de datos: nunca escribe Lote/VTO, ni para completarlos ni para
-   * corregirlos — siempre preserva el valor ya persistido en la fila (sea
-   * el que cargó Producción o el que Envasado/Codificado ya haya
-   * completado antes vía "Guardar avance", ver saveWorkProgressDurable).
-   * El campo queda tipado por compat con clientes viejos pero el server
-   * nunca lo aplica acá.
+   * Handoff Envasado→Codificado es principalmente un cambio de estado —
+   * "fill-once" igual que saveWorkProgressDurable: si la fila YA tiene un
+   * valor persistido (cargado por Producción o completado antes vía
+   * "Guardar avance"), este campo se ignora en silencio y jamás lo
+   * sobreescribe ni lo borra. Si está vacío, Envasado puede completarlo acá
+   * mismo al enviar. Para corregir un valor ya cargado, el único camino
+   * sigue siendo updateWorkItemLoteVtoDurable (Producción, con motivo
+   * auditado).
    */
   packagingLote?: string | null;
   /** ver packagingLote. */

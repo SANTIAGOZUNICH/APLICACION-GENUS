@@ -686,3 +686,421 @@ describe("ROUND TRIP 3 — NO-CLOBBER: ninguna operación de lifecycle borra un 
     assertCanonicalIntact(fakeDbHandle.workItems.get("wi-noclobber")!);
   });
 });
+
+/**
+ * BLINDAJE DEFINITIVO LOTE/VTO (auditoría "GENUS OS no puede perder Lote/VTO
+ * una vez cargados"). Las suites de arriba ya prueban que un body SIN el
+ * campo (undefined) o con `null` nunca clobberea un lote/VTO existente. Acá
+ * se prueba el caso que todavía faltaba explícito: un frontend viejo que
+ * manda un valor NO VACÍO pero INCORRECTO (ej. quedó con una pantalla
+ * abierta desde antes de que Producción cargara L26099 y todavía tiene
+ * L25020 en su estado) — debe ser igual de inofensivo que null/undefined en
+ * cualquier operación que no sea la corrección explícita.
+ */
+describe("BLINDAJE DEFINITIVO LOTE/VTO — un valor stale INCORRECTO (no solo vacío) nunca reemplaza el canónico", () => {
+  let saveWorkProgressDurable: typeof import("./work-item-progress-repository").saveWorkProgressDurable;
+  let handoffToCodificadoDurable: typeof import("./codificado-handoff-service").handoffToCodificadoDurable;
+  let deliverFromCodificadoDurable: typeof import("./codificado-handoff-service").deliverFromCodificadoDurable;
+  let decideQualityDurable: typeof import("./work-item-progress-repository").decideQualityDurable;
+  let deliverWorkDurable: typeof import("./work-item-progress-repository").deliverWorkDurable;
+
+  const masivo = { email: "envasado@laboratoriogenus.com.ar", displayName: "Envasado", sector: "ENVASADO_MASIVO" };
+  const codificado = { email: "codificado@laboratoriogenus.com.ar", displayName: "Codificado", sector: "CODIFICADO" };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ saveWorkProgressDurable, decideQualityDurable, deliverWorkDurable } = await import(
+      "./work-item-progress-repository"
+    ));
+    ({ handoffToCodificadoDurable, deliverFromCodificadoDurable } = await import(
+      "./codificado-handoff-service"
+    ));
+    fakeDbHandle.workItems.set(
+      "wi-stale-wrong",
+      baseWorkItem({
+        id: "wi-stale-wrong",
+        orderNumber: "OA-2026-000170",
+        packagingLote: "L26099",
+        packagingVto: "09/2028",
+        packingGroups: [{ cajas: 25, unidadesPorCaja: 50 }],
+      })
+    );
+  });
+
+  it("saveWorkProgressDurable: un body con lote/vto DISTINTO al canónico no lo pisa", async () => {
+    await saveWorkProgressDurable(
+      "wi-stale-wrong",
+      {
+        finishedQty: "1250",
+        observation: "",
+        updatedBy: masivo.email,
+        packagingLote: "L25020",
+        packagingVto: "04/2027",
+      },
+      "ENVASADO_MASIVO"
+    );
+    const persisted = fakeDbHandle.workItems.get("wi-stale-wrong")!;
+    expect(persisted.packagingLote).toBe("L26099");
+    expect(persisted.packagingVto).toBe("09/2028");
+  });
+
+  it("handoffToCodificadoDurable: un body con lote/vto DISTINTO al canónico no lo pisa", async () => {
+    await handoffToCodificadoDurable(
+      {
+        workItemId: "wi-stale-wrong",
+        totalUnits: 1250,
+        idempotencyKey: "stale-wrong-send-001",
+        packagingLote: "L25020",
+        packagingVto: "04/2027",
+      },
+      masivo
+    );
+    const persisted = fakeDbHandle.workItems.get("wi-stale-wrong")!;
+    expect(persisted.packagingLote).toBe("L26099");
+    expect(persisted.packagingVto).toBe("09/2028");
+  });
+
+  it("deliverFromCodificadoDurable: un body con lote/vto DISTINTO al canónico no lo pisa", async () => {
+    await handoffToCodificadoDurable(
+      { workItemId: "wi-stale-wrong", totalUnits: 1250, idempotencyKey: "stale-wrong-send-002" },
+      masivo
+    );
+    await deliverFromCodificadoDurable(
+      {
+        workItemId: "wi-stale-wrong",
+        idempotencyKey: "stale-wrong-deliver-001",
+        packagingLote: "L25020",
+        packagingVto: "04/2027",
+      },
+      codificado
+    );
+    const persisted = fakeDbHandle.workItems.get("wi-stale-wrong")!;
+    expect(persisted.packagingLote).toBe("L26099");
+    expect(persisted.packagingVto).toBe("09/2028");
+  });
+
+  it("deliverWorkDurable: ni siquiera lee lote/vto del body — el snapshot de entrega usa SIEMPRE el WorkItem actual", async () => {
+    await handoffToCodificadoDurable(
+      { workItemId: "wi-stale-wrong", totalUnits: 1250, idempotencyKey: "stale-wrong-send-003" },
+      masivo
+    );
+    await deliverFromCodificadoDurable(
+      { workItemId: "wi-stale-wrong", idempotencyKey: "stale-wrong-deliver-002" },
+      codificado
+    );
+    await decideQualityDurable("wi-stale-wrong", "aprobado", {
+      decidedBy: "calidad@laboratoriogenus.com.ar",
+      decidedBySector: "CALIDAD",
+    });
+
+    const delivery = await deliverWorkDurable({
+      workItemId: "wi-stale-wrong",
+      qualityItemId: "qc-stale-wrong",
+      codigo: null,
+      sourceSector: "CALIDAD",
+      plannedDeliveryDate: "2026-10-01",
+      actualDeliveredAt: "2026-09-29T15:00:00.000Z",
+      remito: null,
+      receivedBy: "Cliente",
+      observations: null,
+      deliveredBy: "deposito@laboratoriogenus.com.ar",
+      deliveredBySector: "DEPOSITO",
+      // Body de un frontend viejo (Expedición con la pantalla abierta desde
+      // antes de que existiera L26099) — el servidor debe ignorarlo por
+      // completo, ni siquiera "casi" usarlo.
+      lote: "L25020",
+    } as never);
+
+    expect(delivery.lote).toBe("L26099");
+    expect(delivery.vto).toBe("09/2028");
+
+    // SEGUNDA LECTURA independiente del snapshot recién insertado.
+    const persistedDelivery = fakeDbHandle.workItemDeliveries.get(delivery.id as string)!;
+    expect(persistedDelivery.lote).toBe("L26099");
+    expect(persistedDelivery.vto).toBe("09/2028");
+
+    // Y el WorkItem canónico sigue intacto — deliverWorkDurable nunca escribe de vuelta.
+    const persisted = fakeDbHandle.workItems.get("wi-stale-wrong")!;
+    expect(persisted.packagingLote).toBe("L26099");
+    expect(persisted.packagingVto).toBe("09/2028");
+  });
+});
+
+/**
+ * Corrección explícita (updateWorkItemLoteVtoDurable) — el ÚNICO camino
+ * autorizado para reemplazar un Lote/VTO ya cargado. Debe auditar el
+ * cambio y, crucialmente, NUNCA reescribir retroactivamente una entrega ya
+ * confirmada — ese snapshot es evidencia histórica del Remito emitido con
+ * el valor vigente en ese momento.
+ */
+describe("BLINDAJE DEFINITIVO LOTE/VTO — corrección explícita audita el cambio y no toca snapshots históricos", () => {
+  let updateWorkItemLoteVtoDurable: typeof import("./work-item-progress-repository").updateWorkItemLoteVtoDurable;
+  let deliverWorkDurable: typeof import("./work-item-progress-repository").deliverWorkDurable;
+  let decideQualityDurable: typeof import("./work-item-progress-repository").decideQualityDurable;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ updateWorkItemLoteVtoDurable, deliverWorkDurable, decideQualityDurable } = await import(
+      "./work-item-progress-repository"
+    ));
+    fakeDbHandle.workItems.set(
+      "wi-correction",
+      baseWorkItem({
+        id: "wi-correction",
+        orderNumber: "OA-2026-000180",
+        packagingLote: "L26099",
+        packagingVto: "09/2028",
+        finishedQty: "1250",
+        packingGroups: [{ cajas: 25, unidadesPorCaja: 50 }],
+      })
+    );
+  });
+
+  it("corrige L26099→L26100 y 09/2028→10/2028, deja auditoría con valor anterior/nuevo/actor/motivo", async () => {
+    const row = await updateWorkItemLoteVtoDurable("wi-correction", {
+      packagingLote: "L26100",
+      packagingVto: "10/2028",
+      reason: "Error de tipeo al cargar el lote original",
+      updatedBy: "produccion@laboratoriogenus.com.ar",
+      updatedBySector: "PRODUCCION",
+    });
+    expect(row.packagingLote).toBe("L26100");
+    expect(row.packagingVto).toBe("10/2028");
+
+    // SEGUNDA LECTURA — todas las pantallas ahora deben ver L26100/10-2028.
+    const persisted = fakeDbHandle.workItems.get("wi-correction")!;
+    expect(persisted.packagingLote).toBe("L26100");
+    expect(persisted.packagingVto).toBe("10/2028");
+
+    const event = fakeDbHandle.operationalEvents.find(
+      (e) => e.type === "LOTE_VTO_CORRECTED"
+    ) as { fromStatus: string; toStatus: string; actorEmail: string; note: string } | undefined;
+    expect(event).toBeTruthy();
+    expect(JSON.parse(event!.fromStatus)).toEqual({ lote: "L26099", vto: "09/2028" });
+    expect(JSON.parse(event!.toStatus)).toEqual({ lote: "L26100", vto: "10/2028" });
+    expect(event!.actorEmail).toBe("produccion@laboratoriogenus.com.ar");
+    expect(event!.note).toBe("Error de tipeo al cargar el lote original");
+  });
+
+  it("una entrega ya confirmada ANTES de la corrección conserva su snapshot histórico (L26099), aunque el WorkItem pase a L26100", async () => {
+    await decideQualityDurable("wi-correction", "aprobado", {
+      decidedBy: "calidad@laboratoriogenus.com.ar",
+      decidedBySector: "CALIDAD",
+    });
+    const delivery = await deliverWorkDurable({
+      workItemId: "wi-correction",
+      qualityItemId: "qc-correction",
+      codigo: null,
+      sourceSector: "CALIDAD",
+      plannedDeliveryDate: "2026-10-05",
+      actualDeliveredAt: "2026-10-02T15:00:00.000Z",
+      remito: "R-0001",
+      receivedBy: "Cliente",
+      observations: null,
+      deliveredBy: "deposito@laboratoriogenus.com.ar",
+      deliveredBySector: "DEPOSITO",
+    } as never);
+    expect(delivery.lote).toBe("L26099");
+
+    // Producción corrige DESPUÉS de que el remito ya salió con L26099.
+    await updateWorkItemLoteVtoDurable("wi-correction", {
+      packagingLote: "L26100",
+      reason: "Corrección posterior — no debe tocar el remito ya emitido",
+      updatedBy: "produccion@laboratoriogenus.com.ar",
+      updatedBySector: "PRODUCCION",
+    });
+
+    // El WorkItem (fuente actual) ya muestra L26100...
+    expect(fakeDbHandle.workItems.get("wi-correction")!.packagingLote).toBe("L26100");
+    // ...pero el snapshot de la entrega ya confirmada NO cambió retroactivamente.
+    const persistedDelivery = fakeDbHandle.workItemDeliveries.get(delivery.id as string)!;
+    expect(persistedDelivery.lote).toBe("L26099");
+  });
+
+  it("rechaza la corrección sin motivo — no hay forma de pisar Lote/VTO sin auditoría", async () => {
+    await expect(
+      updateWorkItemLoteVtoDurable("wi-correction", {
+        packagingLote: "L26100",
+        reason: "",
+        updatedBy: "produccion@laboratoriogenus.com.ar",
+        updatedBySector: "PRODUCCION",
+      })
+    ).rejects.toThrow(/motivo/i);
+    expect(fakeDbHandle.workItems.get("wi-correction")!.packagingLote).toBe("L26099");
+  });
+});
+
+/**
+ * Lote y VTO pueden cargarse en momentos distintos — completar uno no debe
+ * exigir reenviar el otro, en ningún sentido (lote-primero-vto-después, y
+ * a la inversa).
+ */
+describe("BLINDAJE DEFINITIVO LOTE/VTO — se completan en momentos independientes, sin reenviar el otro", () => {
+  let saveWorkProgressDurable: typeof import("./work-item-progress-repository").saveWorkProgressDurable;
+  let handoffToCodificadoDurable: typeof import("./codificado-handoff-service").handoffToCodificadoDurable;
+  let deliverFromCodificadoDurable: typeof import("./codificado-handoff-service").deliverFromCodificadoDurable;
+
+  const masivo = { email: "envasado@laboratoriogenus.com.ar", displayName: "Envasado", sector: "ENVASADO_MASIVO" };
+  const codificado = { email: "codificado@laboratoriogenus.com.ar", displayName: "Codificado", sector: "CODIFICADO" };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ saveWorkProgressDurable } = await import("./work-item-progress-repository"));
+    ({ handoffToCodificadoDurable, deliverFromCodificadoDurable } = await import(
+      "./codificado-handoff-service"
+    ));
+  });
+
+  it("Producción carga solo Lote; Codificado completa solo VTO al entregar — Codificado no reenvía el lote", async () => {
+    fakeDbHandle.workItems.set(
+      "wi-lote-primero",
+      baseWorkItem({ id: "wi-lote-primero", orderNumber: "OA-2026-000190", packagingLote: "L26099", packagingVto: null })
+    );
+
+    await saveWorkProgressDurable(
+      "wi-lote-primero",
+      {
+        finishedQty: "1250",
+        observation: "",
+        updatedBy: masivo.email,
+        packingGroups: [{ cajas: 25, unidadesPorCaja: 50 }],
+      },
+      "ENVASADO_MASIVO"
+    );
+    let persisted = fakeDbHandle.workItems.get("wi-lote-primero")!;
+    expect(persisted.packagingLote).toBe("L26099");
+    expect(persisted.packagingVto).toBeNull();
+
+    await handoffToCodificadoDurable(
+      { workItemId: "wi-lote-primero", totalUnits: 1250, idempotencyKey: "lote-primero-send-001" },
+      masivo
+    );
+    persisted = fakeDbHandle.workItems.get("wi-lote-primero")!;
+    expect(persisted.packagingLote).toBe("L26099");
+    expect(persisted.packagingVto).toBeNull();
+
+    // Codificado manda SOLO el VTO — nunca tuvo ni necesita reenviar el lote.
+    await deliverFromCodificadoDurable(
+      { workItemId: "wi-lote-primero", packagingVto: "09/2028", idempotencyKey: "lote-primero-deliver-001" },
+      codificado
+    );
+
+    persisted = fakeDbHandle.workItems.get("wi-lote-primero")!;
+    expect(persisted.packagingLote).toBe("L26099");
+    expect(persisted.packagingVto).toBe("09/2028");
+  });
+
+  it("a la inversa: Producción carga solo VTO; Codificado completa solo Lote al entregar — Codificado no reenvía el VTO", async () => {
+    fakeDbHandle.workItems.set(
+      "wi-vto-primero",
+      baseWorkItem({
+        id: "wi-vto-primero",
+        orderNumber: "OA-2026-000191",
+        packagingLote: null,
+        packagingVto: "09/2028",
+        packingGroups: [{ cajas: 25, unidadesPorCaja: 50 }],
+      })
+    );
+
+    await handoffToCodificadoDurable(
+      { workItemId: "wi-vto-primero", totalUnits: 1250, idempotencyKey: "vto-primero-send-001" },
+      masivo
+    );
+    let persisted = fakeDbHandle.workItems.get("wi-vto-primero")!;
+    expect(persisted.packagingLote).toBeNull();
+    expect(persisted.packagingVto).toBe("09/2028");
+
+    await deliverFromCodificadoDurable(
+      { workItemId: "wi-vto-primero", packagingLote: "L26099", idempotencyKey: "vto-primero-deliver-001" },
+      codificado
+    );
+
+    persisted = fakeDbHandle.workItems.get("wi-vto-primero")!;
+    expect(persisted.packagingLote).toBe("L26099");
+    expect(persisted.packagingVto).toBe("09/2028");
+  });
+});
+
+/**
+ * El sistema de warnings (getWorkItemWarnings) debe reflejar exactamente el
+ * mismo WorkItem canónico en cada punto del ciclo — nunca "atrasado" ni
+ * "adelantado" respecto de lo que Neon tiene en ese momento.
+ */
+describe("BLINDAJE DEFINITIVO LOTE/VTO — los warnings siguen al WorkItem canónico en cada paso", () => {
+  let saveWorkProgressDurable: typeof import("./work-item-progress-repository").saveWorkProgressDurable;
+  let handoffToCodificadoDurable: typeof import("./codificado-handoff-service").handoffToCodificadoDurable;
+  let deliverFromCodificadoDurable: typeof import("./codificado-handoff-service").deliverFromCodificadoDurable;
+  let getWorkItemWarningCodes: typeof import("./work-item-warnings").getWorkItemWarningCodes;
+
+  const masivo = { email: "envasado@laboratoriogenus.com.ar", displayName: "Envasado", sector: "ENVASADO_MASIVO" };
+  const codificado = { email: "codificado@laboratoriogenus.com.ar", displayName: "Codificado", sector: "CODIFICADO" };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ saveWorkProgressDurable } = await import("./work-item-progress-repository"));
+    ({ handoffToCodificadoDurable, deliverFromCodificadoDurable } = await import(
+      "./codificado-handoff-service"
+    ));
+    ({ getWorkItemWarningCodes } = await import("./work-item-warnings"));
+    fakeDbHandle.workItems.set(
+      "wi-warnings",
+      baseWorkItem({
+        id: "wi-warnings",
+        orderNumber: "OA-2026-000195",
+        packagingLote: null,
+        packagingVto: null,
+      })
+    );
+  });
+
+  /**
+   * getWorkItemWarnings() lee WorkItem.status (mapeado por el proyector
+   * nativo desde operationalStatus — ver native-projector.ts), no el
+   * `status` de workflow crudo (PUBLICADO/BORRADOR) que usa esta fila fake.
+   * Se arma el objeto con esa traducción para llamar al helper real tal
+   * cual lo hace la UI sobre un WorkItem ya proyectado.
+   */
+  function asProjectedWorkItem(row: FakeRow) {
+    return { ...row, status: row.operationalStatus } as never;
+  }
+
+  it("FALTA_LOTE+FALTA_VTO mientras están vacíos, y desaparecen apenas Codificado los completa — mismo WorkItem, mismo cálculo", async () => {
+    await saveWorkProgressDurable(
+      "wi-warnings",
+      {
+        finishedQty: "1250",
+        observation: "",
+        updatedBy: masivo.email,
+        packingGroups: [{ cajas: 25, unidadesPorCaja: 50 }],
+      },
+      "ENVASADO_MASIVO"
+    );
+    let row = fakeDbHandle.workItems.get("wi-warnings")!;
+    expect(getWorkItemWarningCodes(asProjectedWorkItem(row))).toEqual(
+      expect.arrayContaining(["FALTA_LOTE", "FALTA_VTO"])
+    );
+
+    await handoffToCodificadoDurable(
+      { workItemId: "wi-warnings", totalUnits: 1250, idempotencyKey: "warnings-send-001" },
+      masivo
+    );
+    await deliverFromCodificadoDurable(
+      {
+        workItemId: "wi-warnings",
+        packagingLote: "L26099",
+        packagingVto: "09/2028",
+        idempotencyKey: "warnings-deliver-001",
+      },
+      codificado
+    );
+
+    row = fakeDbHandle.workItems.get("wi-warnings")!;
+    const codes = getWorkItemWarningCodes(asProjectedWorkItem(row));
+    expect(codes).not.toContain("FALTA_LOTE");
+    expect(codes).not.toContain("FALTA_VTO");
+  });
+});
