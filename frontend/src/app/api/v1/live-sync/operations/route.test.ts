@@ -10,6 +10,9 @@ vi.mock("@/lib/api/bff-helpers", () => ({
 
 const mutateMock = vi.fn();
 const notifyMock = vi.fn();
+const getQualityDecisionMock = vi.fn<(itemId: string) => { status: string } | undefined>(
+  () => undefined
+);
 
 vi.mock("@/lib/notifications/approval-envasado-notify", () => ({
   notifyEnvasadoForApproval: (...args: unknown[]) => notifyMock(...args),
@@ -21,6 +24,7 @@ vi.mock("@/lib/live-sync/server-operational-state", () => ({
     cancelWork: (...args: unknown[]) => mutateMock("cancel_work", ...args),
     restoreCancelledWork: (...args: unknown[]) => mutateMock("restore_work", ...args),
     decideQuality: (...args: unknown[]) => mutateMock("quality_decision", ...args),
+    getQualityDecision: (itemId: string) => getQualityDecisionMock(itemId),
     annulQualityDecision: (...args: unknown[]) => mutateMock("quality_annul", ...args),
     archiveDelivery: (...args: unknown[]) => mutateMock("archive_delivery", ...args),
     restoreDelivery: (...args: unknown[]) => mutateMock("restore_delivery", ...args),
@@ -48,6 +52,8 @@ describe("POST /api/v1/live-sync/operations RBAC", () => {
   beforeEach(() => {
     mutateMock.mockReset();
     notifyMock.mockReset();
+    getQualityDecisionMock.mockReset();
+    getQualityDecisionMock.mockReturnValue(undefined);
   });
 
   async function post(body: Record<string, unknown>, headers: Record<string, string>) {
@@ -178,5 +184,108 @@ describe("POST /api/v1/live-sync/operations RBAC", () => {
       { "x-genus-actor-email": "produccion@laboratoriogenus.com.ar", "x-genus-actor-sector": "PRODUCCION" }
     );
     expect(notifyMock).not.toHaveBeenCalled();
+  });
+
+  describe("quality_approve_batch — aprobación masiva de Calidad", () => {
+    const calidadHeaders = {
+      "x-genus-actor-email": "calidad@laboratoriogenus.com.ar",
+      "x-genus-actor-sector": "CALIDAD",
+    };
+
+    it("403 si el actor no es CALIDAD/PRODUCCION", async () => {
+      const res = await post(
+        { action: "quality_approve_batch", itemIds: ["q1", "q2"], batchId: "b1", actorSectorId: "ELABORACION" },
+        { "x-genus-actor-email": "elaboracion@laboratoriogenus.com.ar", "x-genus-actor-sector": "ELABORACION" }
+      );
+      expect(res.status).toBe(403);
+      expect(mutateMock).not.toHaveBeenCalled();
+    });
+
+    it("400 EMPTY_BATCH si no se envían ids", async () => {
+      const res = await post(
+        { action: "quality_approve_batch", itemIds: [], batchId: "b1" },
+        calidadHeaders
+      );
+      const body = (await res.json()) as { code?: string };
+      expect(res.status).toBe(400);
+      expect(body.code).toBe("EMPTY_BATCH");
+    });
+
+    it("aprueba varios ids y devuelve un resultado individual por cada uno (nunca un conteo agregado único)", async () => {
+      mutateMock.mockReturnValue({});
+      const res = await post(
+        { action: "quality_approve_batch", itemIds: ["q1", "q2"], batchId: "b1" },
+        calidadHeaders
+      );
+      const body = (await res.json()) as { ok: boolean; batchId: string; results: Array<{ id: string; status: string }> };
+      expect(res.status).toBe(200);
+      expect(body.batchId).toBe("b1");
+      expect(body.results).toEqual([
+        { id: "q1", status: "ok" },
+        { id: "q2", status: "ok" },
+      ]);
+      expect(mutateMock).toHaveBeenCalledWith("quality_decision", "q1", "aprobado", expect.any(Object));
+      expect(mutateMock).toHaveBeenCalledWith("quality_decision", "q2", "aprobado", expect.any(Object));
+    });
+
+    it("idempotente: un id ya aprobado se reporta 'already' y no vuelve a decidirse", async () => {
+      getQualityDecisionMock.mockImplementation((itemId) =>
+        itemId === "q1" ? { status: "aprobado" } : undefined
+      );
+      mutateMock.mockReturnValue({});
+      const res = await post(
+        { action: "quality_approve_batch", itemIds: ["q1", "q2"], batchId: "b1" },
+        calidadHeaders
+      );
+      const body = (await res.json()) as { results: Array<{ id: string; status: string; currentStatus?: string }> };
+      expect(body.results).toEqual([
+        { id: "q1", status: "already", currentStatus: "aprobado" },
+        { id: "q2", status: "ok" },
+      ]);
+      expect(mutateMock).not.toHaveBeenCalledWith("quality_decision", "q1", expect.anything(), expect.anything());
+      expect(mutateMock).toHaveBeenCalledWith("quality_decision", "q2", "aprobado", expect.any(Object));
+    });
+
+    it("nunca pisa una decisión distinta ya tomada (rechazado) — la reporta como error", async () => {
+      getQualityDecisionMock.mockImplementation((itemId) =>
+        itemId === "q1" ? { status: "rechazado" } : undefined
+      );
+      const res = await post(
+        { action: "quality_approve_batch", itemIds: ["q1"], batchId: "b1" },
+        calidadHeaders
+      );
+      const body = (await res.json()) as { results: Array<{ id: string; status: string; message?: string }> };
+      expect(body.results).toEqual([
+        { id: "q1", status: "error", message: "Ya tiene una decisión distinta (rechazado)." },
+      ]);
+      expect(mutateMock).not.toHaveBeenCalled();
+    });
+
+    it("resultado parcial: un id que falla al decidir no interrumpe el resto del lote", async () => {
+      mutateMock.mockImplementation((action: string, itemId: string) => {
+        if (itemId === "q-error") throw new Error("boom");
+        return {};
+      });
+      const res = await post(
+        { action: "quality_approve_batch", itemIds: ["q1", "q-error", "q2"], batchId: "b1" },
+        calidadHeaders
+      );
+      const body = (await res.json()) as { results: Array<{ id: string; status: string }> };
+      expect(res.status).toBe(200);
+      expect(body.results).toEqual([
+        { id: "q1", status: "ok" },
+        { id: "q-error", status: "error", message: "boom" },
+        { id: "q2", status: "ok" },
+      ]);
+    });
+
+    it("no notifica Envasado para ítems del overlay en memoria (solo el camino nativo trae snapshot para notificar)", async () => {
+      mutateMock.mockReturnValue({});
+      await post(
+        { action: "quality_approve_batch", itemIds: ["q1"], batchId: "b1" },
+        calidadHeaders
+      );
+      expect(notifyMock).not.toHaveBeenCalled();
+    });
   });
 });

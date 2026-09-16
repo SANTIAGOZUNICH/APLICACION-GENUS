@@ -3,6 +3,12 @@ import type { SectorId } from "@/types/operational/sector";
 
 export type QualityDecisionStatus = "pendiente" | "aprobado" | "rechazado";
 
+/** Resultado individual de una aprobación masiva — uno por id enviado, nunca un resultado agregado único. */
+export type QualityBatchItemResult =
+  | { id: string; status: "ok" }
+  | { id: string; status: "already"; currentStatus: "aprobado" | "rechazado" }
+  | { id: string; status: "error"; message: string };
+
 export type QualityItemKind = "granel" | "salida";
 
 export interface QualityItem {
