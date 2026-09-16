@@ -16,6 +16,7 @@ function createFakeDb() {
   const workItems = new Map<string, FakeWorkItem>();
   const planningWeeks = new Map<string, Record<string, unknown> & { id: string }>();
   const productionPedidos = new Map<string, FakePedido>();
+  const asignacionLotes = new Map<string, Record<string, unknown> & { id: string }>();
   const productionPedidoStatusEvents: Record<string, unknown>[] = [];
   const operationalEvents: Record<string, unknown>[] = [];
   let seq = 0;
@@ -69,7 +70,9 @@ function createFakeDb() {
                 ? planningWeeks
                 : t.__name === "productionPedidos"
                   ? productionPedidos
-                  : workItems;
+                  : t.__name === "asignacionLotes"
+                    ? asignacionLotes
+                    : workItems;
           return selectApi(target);
         },
       };
@@ -157,6 +160,7 @@ function createFakeDb() {
     workItems,
     planningWeeks,
     productionPedidos,
+    asignacionLotes,
     productionPedidoStatusEvents,
     operationalEvents,
   };
@@ -199,6 +203,17 @@ vi.mock("@/lib/db/schema", () => {
     productionPedidoStatusEvents: table("productionPedidoStatusEvents", []),
     operationalEvents: table("operationalEvents", []),
     operationalOrders: table("operationalOrders", ["id", "orderNumber", "linkedWorkItemId"]),
+    asignacionLotes: table("asignacionLotes", [
+      "id",
+      "lote",
+      "vto",
+      "producto",
+      "marca",
+      "codigo",
+      "cantidades",
+      "fecha",
+      "archived",
+    ]),
   };
 });
 
@@ -432,5 +447,180 @@ describe("assignWorkItemDurable — origen Pedido (fake tx)", () => {
       actor
     );
     expect(fakeDbHandle.productionPedidoStatusEvents).toHaveLength(0);
+  });
+});
+
+describe("assignWorkItemDurable — vínculo Asignación de Lotes → WorkItem (fake tx)", () => {
+  let assignWorkItemDurable: typeof import("./work-assignment-service").assignWorkItemDurable;
+
+  const actor = {
+    email: "produccion@laboratoriogenus.com.ar",
+    sector: "PRODUCCION",
+    displayName: "Producción",
+  };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ assignWorkItemDurable } = await import("./work-assignment-service"));
+    fakeDbHandle.asignacionLotes.set("al-1", {
+      id: "al-1",
+      lote: "G26043",
+      vto: "2028-10-31",
+      producto: "SERUM NIACINAMIDA",
+      marca: "NIZA",
+      codigo: "ABC123",
+      cantidades: 1200,
+      fecha: "2026-09-10",
+      archived: false,
+    });
+  });
+
+  it("Test 1: hay una asignación de lote única -> el WorkItem se crea con ese lote/VTO exactos", async () => {
+    const result = await assignWorkItemDurable(
+      {
+        sector: "ENVASADO_MASIVO",
+        client: "NIZA",
+        product: "SERUM NIACINAMIDA",
+        plannedQuantity: "1200",
+        plannedDate: "2026-09-10",
+        line: "Línea 1",
+        asignacionLoteId: "al-1",
+        idempotencyKey: "idem-lote-000001",
+      },
+      actor
+    );
+    expect(result.item.packagingLote).toBe("G26043");
+    expect(result.item.packagingVto).toBe("2028-10-31");
+    const event = fakeDbHandle.operationalEvents[0] as { note: string };
+    expect(event.note).toContain("loteSource=ASIGNACION_LOTES");
+    expect(event.note).toContain("asignacionLoteId=al-1");
+  });
+
+  it("Test 9: nunca clobber — sin asignacionLoteId, packagingLote/VTO manuales pasan tal cual (sin intentar resolver)", async () => {
+    const result = await assignWorkItemDurable(
+      {
+        sector: "ENVASADO_MASIVO",
+        client: "NIZA",
+        product: "SERUM NIACINAMIDA",
+        plannedQuantity: "1200",
+        plannedDate: "2026-09-10",
+        line: "Línea 1",
+        packagingLote: "MANUAL-1",
+        packagingVto: "2030-01-31",
+        idempotencyKey: "idem-lote-000002",
+      },
+      actor
+    );
+    expect(result.item.packagingLote).toBe("MANUAL-1");
+    expect(result.item.packagingVto).toBe("2030-01-31");
+    const event = fakeDbHandle.operationalEvents[0] as { note: string };
+    expect(event.note).not.toContain("loteSource=ASIGNACION_LOTES");
+  });
+
+  it("Test 8: el server relee Asignación de Lotes en el momento de confirmar — si cambió desde que el diálogo resolvió, usa el valor FRESCO", async () => {
+    // Simula: el diálogo resolvió al-1 con G26043/2028-10-31, pero entre esa
+    // resolución y la confirmación alguien editó la fila en Asignación de
+    // Lotes. El cliente todavía manda asignacionLoteId="al-1" (y, en el
+    // peor caso, seguiría mostrando el snapshot viejo en pantalla) — el
+    // servidor debe usar el valor ACTUAL, nunca el que el diálogo mostró.
+    fakeDbHandle.asignacionLotes.get("al-1")!.lote = "G26099";
+    fakeDbHandle.asignacionLotes.get("al-1")!.vto = "2029-01-31";
+
+    const result = await assignWorkItemDurable(
+      {
+        sector: "ENVASADO_MASIVO",
+        client: "NIZA",
+        product: "SERUM NIACINAMIDA",
+        plannedQuantity: "1200",
+        plannedDate: "2026-09-10",
+        line: "Línea 1",
+        asignacionLoteId: "al-1",
+        // El cliente todavía manda el snapshot viejo por las dudas —
+        // el servidor debe ignorarlo por completo cuando hay un id.
+        packagingLote: "G26043",
+        packagingVto: "2028-10-31",
+        idempotencyKey: "idem-lote-000003",
+      },
+      actor
+    );
+    expect(result.item.packagingLote).toBe("G26099");
+    expect(result.item.packagingVto).toBe("2029-01-31");
+  });
+
+  it("id de Asignación de Lotes ya no existe (se borró/archivó) -> no bloquea, cae a lo recibido manualmente", async () => {
+    const result = await assignWorkItemDurable(
+      {
+        sector: "ENVASADO_MASIVO",
+        client: "NIZA",
+        product: "SERUM NIACINAMIDA",
+        plannedQuantity: "1200",
+        plannedDate: "2026-09-10",
+        line: "Línea 1",
+        asignacionLoteId: "al-inexistente",
+        packagingLote: "MANUAL-2",
+        packagingVto: null,
+        idempotencyKey: "idem-lote-000004",
+      },
+      actor
+    );
+    expect(result.item.packagingLote).toBe("MANUAL-2");
+    expect(result.item.packagingVto).toBeNull();
+  });
+
+  it("id de Asignación de Lotes ya no corresponde a cliente+producto (se editó a otro producto) -> no lo usa, no bloquea", async () => {
+    fakeDbHandle.asignacionLotes.get("al-1")!.producto = "OTRO PRODUCTO DISTINTO";
+    const result = await assignWorkItemDurable(
+      {
+        sector: "ENVASADO_MASIVO",
+        client: "NIZA",
+        product: "SERUM NIACINAMIDA",
+        plannedQuantity: "1200",
+        plannedDate: "2026-09-10",
+        line: "Línea 1",
+        asignacionLoteId: "al-1",
+        idempotencyKey: "idem-lote-000005",
+      },
+      actor
+    );
+    expect(result.item.packagingLote).toBeNull();
+    expect(result.item.packagingVto).toBeNull();
+  });
+
+  it("Elaboración nunca intenta resolver Asignación de Lotes (no tiene packaging)", async () => {
+    const result = await assignWorkItemDurable(
+      {
+        sector: "ELABORACION",
+        client: "NIZA",
+        product: "SERUM NIACINAMIDA",
+        plannedQuantity: "1200",
+        unit: "kg",
+        plannedDate: "2026-09-10",
+        branchOwner: "Cristian",
+        asignacionLoteId: "al-1",
+        idempotencyKey: "idem-lote-000006",
+      },
+      actor
+    );
+    expect(result.item.packagingLote).toBeNull();
+    expect(result.item.packagingVto).toBeNull();
+  });
+
+  it("Test 10: se asigna sin lote/VTO (ninguna asignación coincide) -> el WorkItem se crea igual, sin bloquear", async () => {
+    const result = await assignWorkItemDurable(
+      {
+        sector: "ENVASADO_MASIVO",
+        client: "OTRO CLIENTE",
+        product: "OTRO PRODUCTO",
+        plannedQuantity: "10",
+        plannedDate: "2026-09-10",
+        line: "Línea 1",
+        idempotencyKey: "idem-lote-000007",
+      },
+      actor
+    );
+    expect(result.item.id).toBeTruthy();
+    expect(result.item.packagingLote).toBeNull();
+    expect(result.item.packagingVto).toBeNull();
   });
 });

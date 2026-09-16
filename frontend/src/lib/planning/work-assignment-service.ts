@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import {
+  asignacionLotes,
   operationalEvents,
   operationalOrders,
   planningWeeks,
@@ -11,6 +12,7 @@ import {
   productionPedidoStatusEvents,
   workItems,
 } from "@/lib/db/schema";
+import { findAsignacionLoteByIdForWorkItem } from "@/lib/asignacion-lotes/resolve-for-work-item";
 import { weekStartMonday } from "@/lib/operational/operational-calendar";
 import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
 import type { PlanningActor, PlanningSector, PlanningWorkItemRecord } from "@/lib/planning/types";
@@ -50,6 +52,18 @@ export type WorkAssignmentInput = {
   orderId?: string | null;
   packagingLote?: string | null;
   packagingVto?: string | null;
+  /**
+   * Id de la fila de Asignación de Lotes elegida en el diálogo (automática
+   * si hubo una única coincidencia, o explícita si el usuario eligió entre
+   * varias). El servidor SIEMPRE relee esta fila fresca antes de persistir
+   * — nunca confía en el packagingLote/packagingVto que el cliente mostró,
+   * que pudo quedar desactualizado si alguien editó Asignación de Lotes
+   * mientras el diálogo estaba abierto. Si la fila ya no existe/no
+   * coincide más con cliente+producto, se ignora en silencio (nunca
+   * bloquea la asignación) y se usa packagingLote/packagingVto tal como
+   * vinieron (carga manual).
+   */
+  asignacionLoteId?: string | null;
   /** Código de producto (opcional; se copia a la OA). */
   productCode?: string | null;
   /** FK a production_pedidos — origina el trabajo desde un Pedido real (opcional). */
@@ -394,6 +408,50 @@ export async function assignWorkItemDurable(
         filledEmptyFields?: string[];
       } | null = null;
 
+      // Vínculo Asignación de Lotes → WorkItem: si el cliente eligió (o el
+      // diálogo auto-resolvió) una fila puntual, el SERVER la relee fresca
+      // acá mismo — nunca confía en el packagingLote/packagingVto que el
+      // cliente mostró, que pudo quedar desactualizado si alguien editó
+      // Asignación de Lotes mientras el diálogo estaba abierto. Se resuelve
+      // ANTES de crear/vincular la OA/OE para que también queden con el
+      // valor correcto. Solo aplica a sectores con packaging (Elaboración
+      // no tiene estos campos, igual que ya filtraba el resto de este
+      // archivo).
+      let matchedAsignacionLoteId: string | null = null;
+      let resolvedPackagingLote = input.packagingLote?.trim() || null;
+      let resolvedPackagingVto = input.packagingVto?.trim() || null;
+      const asignacionLoteId = input.asignacionLoteId?.trim() || null;
+      if (asignacionLoteId && input.sector !== "ELABORACION") {
+        const rows = await tx
+          .select()
+          .from(asignacionLotes)
+          .where(eq(asignacionLotes.id, asignacionLoteId))
+          .limit(1);
+        const candidates = rows.map((row: typeof asignacionLotes.$inferSelect) => ({
+          id: row.id,
+          lote: row.lote,
+          vto: row.vto,
+          producto: row.producto,
+          marca: row.marca,
+          codigo: row.codigo,
+          cantidades: Number(row.cantidades) || 0,
+          fecha: row.fecha,
+          archived: row.archived,
+        }));
+        const fresh = findAsignacionLoteByIdForWorkItem(candidates, asignacionLoteId, {
+          cliente: input.client,
+          producto: input.product,
+        });
+        if (fresh) {
+          matchedAsignacionLoteId = fresh.id;
+          resolvedPackagingLote = fresh.lote?.trim() || null;
+          resolvedPackagingVto = fresh.vto?.trim() || null;
+        }
+        // Si ya no existe/no coincide (se editó/archivó mientras el
+        // diálogo estaba abierto), se ignora en silencio y se cae al
+        // packagingLote/packagingVto recibidos tal cual — nunca bloquea.
+      }
+
       // Envasado Masivo / Premium / Codificado: auto-crear o vincular OA.
       if (isPackagingOaSector(input.sector) && (orderNumberRaw || orderId)) {
         let numberForEnsure = orderNumberRaw;
@@ -414,8 +472,8 @@ export async function assignWorkItemDurable(
           sector: input.sector,
           product: input.product.trim(),
           client: input.client.trim(),
-          lot: input.packagingLote?.trim() || "",
-          vto: input.packagingVto?.trim() || "",
+          lot: resolvedPackagingLote ?? "",
+          vto: resolvedPackagingVto ?? "",
           code: productCode,
           quantity: input.plannedQuantity.trim(),
           notes,
@@ -458,7 +516,7 @@ export async function assignWorkItemDurable(
           sector: "ELABORACION",
           product: input.product.trim(),
           client: input.client.trim(),
-          lot: input.packagingLote?.trim() || "",
+          lot: resolvedPackagingLote ?? "",
           code: productCode,
           quantity: input.plannedQuantity.trim(),
           notes,
@@ -572,8 +630,8 @@ export async function assignWorkItemDurable(
           branchOwner: assignment.branchOwner,
           priority: "NORMAL",
           notes,
-          packagingLote: input.packagingLote?.trim() || null,
-          packagingVto: input.packagingVto?.trim() || null,
+          packagingLote: resolvedPackagingLote,
+          packagingVto: resolvedPackagingVto,
           packagingTotalUnits: (() => {
             const unit = input.unit ?? (input.sector === "ELABORACION" ? "kg" : "un.");
             const parsed = isIntegerUnit(unit)
@@ -652,7 +710,11 @@ export async function assignWorkItemDurable(
         toStatus: "PUBLICADO",
         actorEmail: actor.email,
         actorSector: actor.sector,
-        note: `operationId=${operationId};oa=${orderMeta?.orderNumber ?? "none"};oaCreated=${orderMeta?.created ?? false}`,
+        note:
+          `operationId=${operationId};oa=${orderMeta?.orderNumber ?? "none"};oaCreated=${orderMeta?.created ?? false}` +
+          (matchedAsignacionLoteId
+            ? `;loteSource=ASIGNACION_LOTES;asignacionLoteId=${matchedAsignacionLoteId}`
+            : ""),
       });
 
       if (pedidoSnapshot) {

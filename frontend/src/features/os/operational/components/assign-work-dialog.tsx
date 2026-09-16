@@ -19,6 +19,12 @@ import { getClientPlanningSource } from "@/lib/planning/planning-source";
 import type { ProductionPedidoRecord } from "@/lib/production-pedidos/types";
 import { todayIso } from "../lib/delivery-date";
 import { buildAutoOrderRef } from "../lib/pedido-order-ref";
+import {
+  computeLoteVtoWarning,
+  LOTE_VTO_WARNING_LABEL,
+  type AsignacionLoteMatchCandidate,
+  type AsignacionLoteResolution,
+} from "@/lib/asignacion-lotes/resolve-for-work-item";
 
 export type AssignableSector = Extract<
   SectorId,
@@ -143,6 +149,81 @@ export function AssignWorkDialog({
   const [autoOrderRef, setAutoOrderRef] = useState<string | null>(null);
   const idempotencyRef = useRef(newIdempotencyKey());
   const inFlightRef = useRef(false);
+
+  /**
+   * Vínculo Asignación de Lotes → WorkItem: se resuelve cuando Producción
+   * ya tiene Cliente+Producto (momento pedido por el requerimiento — antes
+   * de confirmar). `selectedAsignacionLoteId` es la fila elegida (automática
+   * si hubo una única coincidencia, o explícita si el usuario la eligió
+   * entre varias); el servidor SIEMPRE la relee fresca al confirmar, esto
+   * es solo la preview. Si Producción edita Lote/VTO a mano después de un
+   * auto-completado, se limpia la selección — pasa a carga manual.
+   */
+  const [loteResolution, setLoteResolution] = useState<AsignacionLoteResolution | null>(null);
+  const [selectedAsignacionLoteId, setSelectedAsignacionLoteId] = useState<string | null>(null);
+  const [loteResolutionLoading, setLoteResolutionLoading] = useState(false);
+  const showsPackagingFields = sector !== "ELABORACION";
+
+  useEffect(() => {
+    if (!native || !showsPackagingFields) {
+      const t = window.setTimeout(() => {
+        setLoteResolution(null);
+        setSelectedAsignacionLoteId(null);
+      }, 0);
+      return () => window.clearTimeout(t);
+    }
+    const cliente = client.trim();
+    const producto = product.trim();
+    if (!cliente || !producto) {
+      const t = window.setTimeout(() => {
+        setLoteResolution(null);
+        setSelectedAsignacionLoteId(null);
+      }, 0);
+      return () => window.clearTimeout(t);
+    }
+    const handle = window.setTimeout(() => {
+      setLoteResolutionLoading(true);
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/v1/asignacion-lotes/resolve?cliente=${encodeURIComponent(cliente)}&producto=${encodeURIComponent(producto)}`,
+            { credentials: "include" }
+          );
+          if (!res.ok) {
+            setLoteResolution(null);
+            return;
+          }
+          const data = (await res.json()) as AsignacionLoteResolution;
+          setLoteResolution(data);
+          if (data.status === "found") {
+            setSelectedAsignacionLoteId(data.candidate.id);
+            setPackagingLote(data.candidate.lote ?? "");
+            setPackagingVto(data.candidate.vto ?? "");
+          } else {
+            setSelectedAsignacionLoteId(null);
+          }
+        } catch {
+          setLoteResolution(null);
+        } finally {
+          setLoteResolutionLoading(false);
+        }
+      })();
+    }, 350);
+    return () => window.clearTimeout(handle);
+  }, [client, product, native, showsPackagingFields]);
+
+  function pickAsignacionLote(candidate: AsignacionLoteMatchCandidate) {
+    setSelectedAsignacionLoteId(candidate.id);
+    setPackagingLote(candidate.lote ?? "");
+    setPackagingVto(candidate.vto ?? "");
+  }
+
+  function editPackagingManually(field: "lote" | "vto", value: string) {
+    // Producción tomó control manual — ya no es lo que auto-completamos.
+    setSelectedAsignacionLoteId(null);
+    if (field === "lote") setPackagingLote(value);
+    else setPackagingVto(value);
+  }
 
   // Lookup OA al escribir número (solo sectores de acondicionamiento).
   useEffect(() => {
@@ -301,6 +382,7 @@ export function AssignWorkDialog({
       notes: notes.trim() || null,
       packagingLote: sector === "ELABORACION" ? null : packagingLote.trim() || null,
       packagingVto: sector === "ELABORACION" ? null : packagingVto.trim() || null,
+      asignacionLoteId: sector === "ELABORACION" ? null : selectedAsignacionLoteId,
       productionPedidoId: selectedPedido?.id ?? null,
       idempotencyKey: idempotencyRef.current,
       forceLink: Boolean(opts?.forceLink),
@@ -678,7 +760,7 @@ export function AssignWorkDialog({
                   id="af-lote"
                   value={packagingLote}
                   disabled={submitting}
-                  onChange={(e) => setPackagingLote(e.target.value)}
+                  onChange={(e) => editPackagingManually("lote", e.target.value)}
                   placeholder="Puede completarse después"
                   className={CONTROL_CLASS}
                   data-testid="assign-packaging-lote"
@@ -692,11 +774,82 @@ export function AssignWorkDialog({
                   id="af-vto"
                   value={packagingVto}
                   disabled={submitting}
-                  onChange={(e) => setPackagingVto(e.target.value)}
+                  onChange={(e) => editPackagingManually("vto", e.target.value)}
                   placeholder="Puede completarse después"
                   className={CONTROL_CLASS}
                   data-testid="assign-packaging-vto"
                 />
+              </div>
+
+              <div className="space-y-1.5 sm:col-span-2" data-testid="assign-lote-resolution">
+                {loteResolutionLoading ? (
+                  <p className="text-xs text-[var(--os-text-muted)]">Buscando en Asignación de Lotes…</p>
+                ) : loteResolution?.status === "found" && selectedAsignacionLoteId === loteResolution.candidate.id ? (
+                  (() => {
+                    const warning = computeLoteVtoWarning(loteResolution);
+                    return warning === "NONE" ? (
+                      <p
+                        className="rounded-[var(--os-radius-sm)] border border-[var(--genus-success)]/30 bg-[var(--genus-success-soft,#eafff3)] px-3 py-2 text-sm text-[var(--genus-success)]"
+                        data-testid="assign-lote-found"
+                      >
+                        ✓ LOTE: {loteResolution.candidate.lote} · ✓ VTO: {loteResolution.candidate.vto}
+                        <br />
+                        <span className="text-xs opacity-80">Encontrado automáticamente en Asignación de Lotes.</span>
+                      </p>
+                    ) : (
+                      <p
+                        className="rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/30 bg-[var(--genus-error-soft,#fff0f0)] px-3 py-2 text-sm text-[var(--genus-error,#e85d5d)]"
+                        data-testid="assign-lote-warning"
+                      >
+                        🔴 {LOTE_VTO_WARNING_LABEL[warning]}
+                        <br />
+                        <span className="text-xs opacity-80">
+                          No bloquea — podés asignar el trabajo igual.
+                        </span>
+                      </p>
+                    );
+                  })()
+                ) : loteResolution?.status === "ambiguous" ? (
+                  <div
+                    className="space-y-2 rounded-[var(--os-radius-sm)] border border-[var(--genus-warning)]/40 bg-[var(--genus-warning-soft,#fff8e6)] px-3 py-2 text-sm"
+                    data-testid="assign-lote-ambiguous"
+                  >
+                    <p className="text-[var(--genus-warning,#b45309)]">
+                      🟡 {LOTE_VTO_WARNING_LABEL.AMBIGUOUS} — elegí cuál corresponde:
+                    </p>
+                    <ul className="space-y-1">
+                      {loteResolution.candidates.map((candidate) => (
+                        <li key={candidate.id}>
+                          <button
+                            type="button"
+                            disabled={submitting}
+                            onClick={() => pickAsignacionLote(candidate)}
+                            data-testid={`assign-lote-option-${candidate.id}`}
+                            className={`w-full rounded-[var(--os-radius-sm)] border px-2 py-1.5 text-left text-xs hover:bg-[var(--os-teal)]/10 ${
+                              selectedAsignacionLoteId === candidate.id
+                                ? "border-[var(--os-teal)] bg-[var(--os-teal)]/10"
+                                : "border-[var(--os-border)]"
+                            }`}
+                          >
+                            Lote {candidate.lote || "—"} · VTO {candidate.vto || "—"}
+                            {candidate.codigo ? ` · Código ${candidate.codigo}` : ""}
+                            {candidate.cantidades ? ` · Cant. ${candidate.cantidades}` : ""}
+                            {candidate.fecha ? ` · ${candidate.fecha}` : ""}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : loteResolution?.status === "none" ? (
+                  <p
+                    className="rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/30 bg-[var(--genus-error-soft,#fff0f0)] px-3 py-2 text-sm text-[var(--genus-error,#e85d5d)]"
+                    data-testid="assign-lote-warning"
+                  >
+                    🔴 {LOTE_VTO_WARNING_LABEL.MISSING_LOTE_AND_VTO}
+                    <br />
+                    <span className="text-xs opacity-80">No bloquea — podés asignar el trabajo igual.</span>
+                  </p>
+                ) : null}
               </div>
             </>
           ) : null}

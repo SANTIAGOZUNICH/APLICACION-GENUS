@@ -16,6 +16,23 @@ describe("delivery-date", () => {
     expect(parseFlexibleDate("")).toBeNull();
   });
 
+  /**
+   * AUDIT_EXCEL_VTO_BUG: mm/yy (año de 2 dígitos) es el formato real más
+   * usado para VTO en GENUS ("08-28", "07/29") y no se reconocía — un VTO
+   * válido se perdía en silencio al pegar desde Excel. Mismo criterio de
+   * siglo que src/lib/smart-paste/normalize.ts (GENUS opera 2020-2069).
+   */
+  it("parsea mm/yy con año de 2 dígitos (formato real de VTO en Asignación de Lotes/MP)", () => {
+    expect(parseFlexibleDate("08-28")).toBe("2028-08-31");
+    expect(parseFlexibleDate("07/29")).toBe("2029-07-31");
+    expect(parseFlexibleDate("1/30")).toBe("2030-01-31");
+  });
+
+  it("mm/yy con mes inválido no inventa una fecha", () => {
+    expect(parseFlexibleDate("13/28")).toBeNull();
+    expect(parseFlexibleDate("00/28")).toBeNull();
+  });
+
   it("formatea y compara fechas ISO", () => {
     expect(formatDateDisplay("2026-07-03")).toBe("03/07/2026");
     expect(formatDateDisplay(null)).toBe("—");

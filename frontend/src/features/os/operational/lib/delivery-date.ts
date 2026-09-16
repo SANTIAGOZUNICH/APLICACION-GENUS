@@ -51,6 +51,24 @@ export function parseFlexibleDate(raw: string): string | null {
     return `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
   }
 
+  /**
+   * mm/yy (año de 2 dígitos) — el formato real más común para VTO en Excel
+   * (confirmado en Asignación de Lotes/MP: "08-28", "07/29"), no reconocido
+   * antes por este parser. Mismo criterio de siglo que
+   * src/lib/smart-paste/normalize.ts#parseVtoCandidate (GENUS opera en el
+   * rango 2020-2069) — implementado acá de forma independiente, sin
+   * depender de Smart Paste.
+   */
+  const mmYy = trimmed.match(/^(\d{1,2})[/.-](\d{2})$/);
+  if (mmYy) {
+    const month = Number(mmYy[1]);
+    const yy = Number(mmYy[2]);
+    if (month < 1 || month > 12) return null;
+    const year = yy <= 69 ? 2000 + yy : 1900 + yy;
+    const lastDay = new Date(year, month, 0).getDate();
+    return `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+  }
+
   return null;
 }
 

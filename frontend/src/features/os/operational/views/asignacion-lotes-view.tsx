@@ -95,9 +95,9 @@ const IMPORT_FIELDS: ExcelImportFieldDef[] = [
     mobilePrimary: true,
     formatDisplay: (value) => formatAsignacionCodigoPreview(value),
   },
-  { key: "marca", label: "Marca" },
+  { key: "marca", label: "Marca / Cliente", mobilePrimary: true },
   { key: "cantidades", label: "Cantidades", required: true, mobilePrimary: true },
-  { key: "vto", label: "VTO" },
+  { key: "vto", label: "VTO", mobilePrimary: true },
   { key: "muestras", label: "Muestras" },
   { key: "cjMuestra", label: "CJ muestra" },
   { key: "fechaAnalisis", label: "Fecha análisis" },
@@ -525,27 +525,12 @@ export function AsignacionLotesView() {
     {
       key: "vto",
       header: "VTO",
-      hideOnMobile: "xl",
       render: (row) => formatDateDisplay(row.vto),
     },
-    {
-      key: "muestras",
-      header: "Muestras",
-      hideOnMobile: "xl",
-      render: (row) => row.muestras || "—",
-    },
-    {
-      key: "cjMuestra",
-      header: "CJ muestra",
-      hideOnMobile: "xl",
-      render: (row) => row.cjMuestra || "—",
-    },
-    {
-      key: "fechaAnalisis",
-      header: "Análisis",
-      hideOnMobile: "xl",
-      render: (row) => formatDateDisplay(row.fechaAnalisis),
-    },
+    // Muestras/CJ muestra/Fecha análisis se sacaron de la tabla principal
+    // (info secundaria que no debe ocupar espacio permanente) — siguen
+    // disponibles en el detalle/Editar más abajo. Nunca se borran ni se
+    // pierden datos históricos, solo dejan de mostrarse acá.
     {
       key: "acciones",
       header: "Acción",
@@ -913,10 +898,17 @@ export function AsignacionLotesView() {
                 <Field label="Marca" value={form.marca} onChange={(value) => setForm((f) => ({ ...f, marca: value }))} />
                 <Field label="Cantidades*" type="number" min="0" step="any" value={form.cantidades} onChange={(value) => setForm((f) => ({ ...f, cantidades: value }))} />
                 <Field label="VTO" type="date" value={form.vto} onChange={(value) => setForm((f) => ({ ...f, vto: value }))} />
-                <Field label="Muestras" value={form.muestras} onChange={(value) => setForm((f) => ({ ...f, muestras: value }))} />
-                <Field label="CJ muestra" value={form.cjMuestra} onChange={(value) => setForm((f) => ({ ...f, cjMuestra: value }))} />
-                <Field label="Fecha análisis" type="date" value={form.fechaAnalisis} onChange={(value) => setForm((f) => ({ ...f, fechaAnalisis: value }))} />
-                <label className="space-y-1.5 text-sm font-medium sm:col-span-2">
+              </div>
+              <div className="space-y-3 border-t border-[var(--os-border)] pt-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
+                  Información adicional
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <Field label="Muestras" value={form.muestras} onChange={(value) => setForm((f) => ({ ...f, muestras: value }))} />
+                  <Field label="CJ muestra" value={form.cjMuestra} onChange={(value) => setForm((f) => ({ ...f, cjMuestra: value }))} />
+                  <Field label="Fecha análisis" type="date" value={form.fechaAnalisis} onChange={(value) => setForm((f) => ({ ...f, fechaAnalisis: value }))} />
+                </div>
+                <label className="space-y-1.5 text-sm font-medium sm:col-span-2 block">
                   Observaciones
                   <textarea
                     value={form.observaciones}

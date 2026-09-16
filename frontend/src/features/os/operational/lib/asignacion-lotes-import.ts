@@ -3,7 +3,21 @@ import { parseNonNegativeNumber } from "./clipboard-import";
 import type { ExcelPreviewIssue } from "./excel-import-preview-utils";
 import { parseFlexibleDate } from "./delivery-date";
 
-/** Aliases de encabezado (solo títulos). El contenido de celdas no se normaliza aquí. */
+/**
+ * Aliases de encabezado (solo títulos). El contenido de celdas no se
+ * normaliza aquí.
+ *
+ * CAUSA RAÍZ (auditoría del pegado desde Excel): el matcher de encabezados
+ * (`headerMatchesAlias` en clipboard-import.ts) exige coincidencia exacta o
+ * por token completo — no tolera plural/singular ni abreviaturas. "CJ
+ * Muestras"/"Cajas Muestras" (plural, la forma real más usada) no
+ * matcheaban contra los alias en singular ("cj muestra"/"cajas muestra"),
+ * y "F. Analisis" (abreviatura real común) no matcheaba ningún alias de
+ * fechaAnalisis — ambos quedaban sin mapear y el dato se perdía en
+ * silencio. Se agregan las variantes reales encontradas en vez de tocar el
+ * algoritmo de matching compartido (usado también por MP Hub/ME
+ * Ingresos-Salidas) — fix acotado al lugar correcto.
+ */
 export const ASIGNACION_LOTES_FIELD_ALIASES: Record<string, string[]> = {
   lote: ["lote", "n° lote", "nº lote", "nro lote", "batch"],
   fecha: ["fecha", "fecha asignacion", "fecha asignación"],
@@ -11,10 +25,28 @@ export const ASIGNACION_LOTES_FIELD_ALIASES: Record<string, string[]> = {
   codigo: ["codigo", "código", "cod.", "cod", "codigo producto", "código producto"],
   marca: ["marca"],
   cantidades: ["cantidad", "cantidades", "cant."],
-  vto: ["vto", "vencimiento", "fecha vto", "fecha vencimiento"],
-  muestras: ["muestras"],
-  cjMuestra: ["cj muestra", "cajas muestra", "cajas de muestra"],
-  fechaAnalisis: ["fecha analisis", "fecha análisis"],
+  vto: ["vto", "vencimiento", "fecha vto", "fecha vencimiento", "fecha de vencimiento"],
+  muestras: ["muestras", "muestra"],
+  cjMuestra: [
+    "cj muestra",
+    "cj muestras",
+    "cj. muestra",
+    "cj. muestras",
+    "cajas muestra",
+    "cajas muestras",
+    "cajas de muestra",
+    "cajas de muestras",
+  ],
+  fechaAnalisis: [
+    "fecha analisis",
+    "fecha análisis",
+    "f analisis",
+    "f análisis",
+    "f. analisis",
+    "f. análisis",
+    "fecha de analisis",
+    "fecha de análisis",
+  ],
   observaciones: ["observaciones", "observacion", "observación", "notas", "comentarios"],
   cliente: ["cliente", "razon social", "razón social"],
 };
@@ -67,9 +99,17 @@ export function validateAsignacionLoteRow(
     issues.push({ rowIndex, field: "fecha", message: "Fecha inválida.", severity: "warning" });
   }
 
+  // A diferencia de "fecha" (que conserva el texto crudo si no puede
+  // parsearse), VTO y Fecha análisis se persisten como null cuando no se
+  // pueden interpretar (dateOnly() en asignacion-lotes-service.ts escribe
+  // sobre una columna date real — guardar texto crudo ahí rompería el
+  // insert). Por eso, si el dato SÍ vino pero es ilegible, esto debe ser un
+  // error que deja la fila fuera de la selección por defecto — nunca un
+  // warning silencioso que permita importar con el valor perdido sin que
+  // nadie lo note (ver AUDIT_EXCEL_VTO_BUG).
   const vto = row.vto?.trim();
   if (vto && !parseFlexibleDate(vto)) {
-    issues.push({ rowIndex, field: "vto", message: "VTO inválido.", severity: "warning" });
+    issues.push({ rowIndex, field: "vto", message: "VTO inválido.", severity: "error" });
   }
 
   const fechaAnalisis = row.fechaAnalisis?.trim();
@@ -78,7 +118,7 @@ export function validateAsignacionLoteRow(
       rowIndex,
       field: "fechaAnalisis",
       message: "Fecha análisis inválida.",
-      severity: "warning",
+      severity: "error",
     });
   }
 
