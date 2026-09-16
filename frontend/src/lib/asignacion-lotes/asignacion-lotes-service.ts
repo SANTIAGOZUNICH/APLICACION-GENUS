@@ -11,6 +11,7 @@ import {
 } from "@/features/os/operational/lib/asignacion-lotes-rbac";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { asignacionLotes } from "@/lib/db/schema";
+import { fillBareWorkItemsFromAsignacionLote } from "./sync-to-bare-workitems";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from "@/lib/orders/types";
 import type {
@@ -329,6 +330,14 @@ export class AsignacionLotesService {
           .where(eq(asignacionLotes.id, record.id));
       } else {
         await db.insert(asignacionLotes).values(values);
+      }
+      // Sincronización retroactiva (caso "se asigna sin lote/VTO, después
+      // se carga en Asignación de Lotes") — best-effort, nunca puede tirar
+      // abajo el alta/edición de la asignación en sí.
+      try {
+        await fillBareWorkItemsFromAsignacionLote(record, actor.sector);
+      } catch {
+        // No-op: el guardado de la asignación ya se confirmó arriba.
       }
       return record;
     }

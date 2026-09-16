@@ -551,3 +551,202 @@ describe("AssignWorkDialog — autocompletar OA/OE desde N° de Pedido", () => {
     expect(capturedBody).toMatchObject({ orderNumber: "OA-2026-000777", productionPedidoId: null });
   });
 });
+
+/**
+ * Vínculo Asignación de Lotes → WorkItem — resolución en el momento en que
+ * Producción completa Cliente+Producto (antes de confirmar), Tests 3/4/5
+ * del pedido (warnings no bloqueantes) + selección explícita ante ambigüedad.
+ */
+describe("AssignWorkDialog — vínculo con Asignación de Lotes", () => {
+  beforeEach(() => {
+    document.documentElement.dataset.genusPlanningSource = "native";
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    delete document.documentElement.dataset.genusPlanningSource;
+  });
+
+  function mockResolve(response: Record<string, unknown>) {
+    fetchMock.mockImplementation((url: string) => {
+      const u = String(url);
+      if (u.includes("/api/v1/asignacion-lotes/resolve")) {
+        return Promise.resolve(new Response(JSON.stringify(response), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+  }
+
+  it("Test 1/3/4: una única coincidencia auto-completa LOTE y VTO y lo muestra como encontrado", async () => {
+    const user = userEvent.setup();
+    mockResolve({
+      status: "found",
+      candidate: { id: "al-1", lote: "G26043", vto: "2028-10-31", producto: "SERUM", marca: "NIZA", codigo: "", cantidades: 1200, fecha: "2026-09-10" },
+    });
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByLabelText(/^Cliente/), "NIZA");
+    await user.type(screen.getByLabelText(/^Producto/), "SERUM");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("assign-lote-found")).toBeTruthy();
+    });
+    expect((screen.getByTestId("assign-packaging-lote") as HTMLInputElement).value).toBe("G26043");
+    expect((screen.getByTestId("assign-packaging-vto") as HTMLInputElement).value).toBe("2028-10-31");
+  });
+
+  it("Test 2: sin ninguna asignación -> warning rojo 'NO TIENE LOTE Y VTO ASIGNADO', no bloquea", async () => {
+    const user = userEvent.setup();
+    mockResolve({ status: "none" });
+    let capturedBody: Record<string, unknown> | null = null;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/api/v1/asignacion-lotes/resolve")) {
+        return Promise.resolve(new Response(JSON.stringify({ status: "none" }), { status: 200 }));
+      }
+      if (u.includes("/api/v1/work-assignments") && init?.method === "POST") {
+        capturedBody = JSON.parse(String(init.body));
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, workItem: { id: "native:wi-x" } }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByLabelText(/^Cliente/), "Sin Asignación");
+    await user.type(screen.getByLabelText(/^Producto/), "Producto X");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("assign-lote-warning").textContent).toContain("NO TIENE LOTE Y VTO ASIGNADO");
+    });
+
+    await user.type(screen.getByLabelText(/^Cantidad/), "10");
+    await user.click(screen.getByTestId("assign-submit"));
+    await waitFor(() => expect(capturedBody).not.toBeNull());
+    expect(capturedBody).toMatchObject({ asignacionLoteId: null });
+  });
+
+  it("Test 3: encontrado pero SOLO falta VTO -> 'NO TIENE VTO ASIGNADO'", async () => {
+    const user = userEvent.setup();
+    mockResolve({
+      status: "found",
+      candidate: { id: "al-2", lote: "G26050", vto: null, producto: "X", marca: "Y", codigo: "", cantidades: 1, fecha: null },
+    });
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByLabelText(/^Cliente/), "Y");
+    await user.type(screen.getByLabelText(/^Producto/), "X");
+    await waitFor(() => {
+      expect(screen.getByTestId("assign-lote-warning").textContent).toContain("NO TIENE VTO ASIGNADO");
+    });
+  });
+
+  it("Test 4: encontrado pero SOLO falta LOTE -> 'NO TIENE LOTE ASIGNADO'", async () => {
+    const user = userEvent.setup();
+    mockResolve({
+      status: "found",
+      candidate: { id: "al-3", lote: "", vto: "2028-05-31", producto: "X", marca: "Y", codigo: "", cantidades: 1, fecha: null },
+    });
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByLabelText(/^Cliente/), "Y");
+    await user.type(screen.getByLabelText(/^Producto/), "X");
+    await waitFor(() => {
+      expect(screen.getByTestId("assign-lote-warning").textContent).toContain("NO TIENE LOTE ASIGNADO");
+    });
+  });
+
+  it("Test 5: dos coincidencias -> 'HAY MÁS DE UN LOTE POSIBLE', nunca elige sola; elegir una la aplica", async () => {
+    const user = userEvent.setup();
+    mockResolve({
+      status: "ambiguous",
+      candidates: [
+        { id: "al-1", lote: "G26043", vto: "2028-10-31", producto: "SERUM", marca: "NIZA", codigo: "", cantidades: 1200, fecha: "2026-09-10" },
+        { id: "al-2", lote: "G26044", vto: "2028-11-30", producto: "SERUM", marca: "NIZA", codigo: "", cantidades: 800, fecha: "2026-09-11" },
+      ],
+    });
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByLabelText(/^Cliente/), "NIZA");
+    await user.type(screen.getByLabelText(/^Producto/), "SERUM");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("assign-lote-ambiguous")).toBeTruthy();
+    });
+    // No auto-completó ninguno de los dos.
+    expect((screen.getByTestId("assign-packaging-lote") as HTMLInputElement).value).toBe("");
+
+    await user.click(screen.getByTestId("assign-lote-option-al-2"));
+    expect((screen.getByTestId("assign-packaging-lote") as HTMLInputElement).value).toBe("G26044");
+    expect((screen.getByTestId("assign-packaging-vto") as HTMLInputElement).value).toBe("2028-11-30");
+  });
+
+  it("el payload manda asignacionLoteId cuando hubo una única coincidencia auto-completada", async () => {
+    const user = userEvent.setup();
+    let capturedBody: Record<string, unknown> | null = null;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/api/v1/asignacion-lotes/resolve")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "found",
+              candidate: { id: "al-9", lote: "G26043", vto: "2028-10-31", producto: "SERUM", marca: "NIZA", codigo: "", cantidades: 1200, fecha: "2026-09-10" },
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      if (u.includes("/api/v1/work-assignments") && init?.method === "POST") {
+        capturedBody = JSON.parse(String(init.body));
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, workItem: { id: "native:wi-y" } }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByLabelText(/^Cliente/), "NIZA");
+    await user.type(screen.getByLabelText(/^Producto/), "SERUM");
+    await waitFor(() => expect(screen.getByTestId("assign-lote-found")).toBeTruthy());
+
+    await user.type(screen.getByLabelText(/^Cantidad/), "1200");
+    await user.click(screen.getByTestId("assign-submit"));
+    await waitFor(() => expect(capturedBody).not.toBeNull());
+    expect(capturedBody).toMatchObject({ asignacionLoteId: "al-9", packagingLote: "G26043", packagingVto: "2028-10-31" });
+  });
+
+  it("editar LOTE/VTO a mano después de auto-completar toma control manual: asignacionLoteId queda null", async () => {
+    const user = userEvent.setup();
+    let capturedBody: Record<string, unknown> | null = null;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes("/api/v1/asignacion-lotes/resolve")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "found",
+              candidate: { id: "al-9", lote: "G26043", vto: "2028-10-31", producto: "SERUM", marca: "NIZA", codigo: "", cantidades: 1200, fecha: "2026-09-10" },
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      if (u.includes("/api/v1/work-assignments") && init?.method === "POST") {
+        capturedBody = JSON.parse(String(init.body));
+        return Promise.resolve(new Response(JSON.stringify({ ok: true, workItem: { id: "native:wi-z" } }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    });
+
+    render(<AssignWorkDialog sector="ENVASADO_MASIVO" onClose={() => {}} />);
+    await user.type(screen.getByLabelText(/^Cliente/), "NIZA");
+    await user.type(screen.getByLabelText(/^Producto/), "SERUM");
+    await waitFor(() => expect(screen.getByTestId("assign-lote-found")).toBeTruthy());
+
+    const loteInput = screen.getByTestId("assign-packaging-lote") as HTMLInputElement;
+    await user.clear(loteInput);
+    await user.type(loteInput, "MANUAL-999");
+    await user.type(screen.getByLabelText(/^Cantidad/), "1200");
+    await user.click(screen.getByTestId("assign-submit"));
+    await waitFor(() => expect(capturedBody).not.toBeNull());
+    expect(capturedBody).toMatchObject({ asignacionLoteId: null, packagingLote: "MANUAL-999" });
+  });
+});

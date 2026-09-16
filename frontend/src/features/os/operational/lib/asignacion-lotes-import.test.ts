@@ -237,3 +237,119 @@ describe("asignacion-lotes import — celdas vacías permitidas (carga flexible)
     expect(issues[0]!.severity).toBe("warning");
   });
 });
+
+/**
+ * AUDIT_EXCEL_VTO_BUG — Pegado desde Excel en Asignación de Lotes perdía
+ * VTO/CJ Muestras/Muestras/Fecha análisis. Causa raíz real (investigación
+ * previa): (1) los alias de encabezado para CJ Muestras/Fecha análisis no
+ * toleraban plural ("CJ Muestras"/"Cajas Muestras") ni abreviatura
+ * ("F. Analisis"); (2) parseFlexibleDate no reconocía año de 2 dígitos
+ * (formato real más común de VTO en GENUS: "08-28", "07/29"), así que un
+ * VTO real y válido se descartaba en silencio a null; (3) esa pérdida
+ * silenciosa solo generaba un warning no bloqueante, dejando la fila
+ * preseleccionada para importar con el dato ya perdido.
+ */
+describe("AUDIT_EXCEL_VTO_BUG — encabezados tolerantes (Tests 1-3, 8)", () => {
+  it("Test 1: encabezado 'VTO' mapea e importa correctamente", () => {
+    const tsv = ["Producto\tLote\tVTO", "Serum X\tG26043\t10/2028"].join("\n");
+    const { rows } = mapPaste(tsv);
+    const built = buildAsignacionLoteFromMappedRow(rows[0]!, "Calidad");
+    expect(built.vto).toBe("2028-10-31");
+  });
+
+  it("Test 2: encabezado 'Vencimiento' mapea a VTO", () => {
+    const tsv = ["Producto\tLote\tVencimiento", "Serum X\tG26043\t10/2028"].join("\n");
+    const { mapping, rows } = mapPaste(tsv);
+    expect(mapping.vto).not.toBeNull();
+    const built = buildAsignacionLoteFromMappedRow(rows[0]!, "Calidad");
+    expect(built.vto).toBe("2028-10-31");
+  });
+
+  it("Test 3: encabezado 'Fecha de vencimiento' mapea a VTO", () => {
+    const tsv = ["Producto\tLote\tFecha de vencimiento", "Serum X\tG26043\t10/2028"].join("\n");
+    const { mapping, rows } = mapPaste(tsv);
+    expect(mapping.vto).not.toBeNull();
+    const built = buildAsignacionLoteFromMappedRow(rows[0]!, "Calidad");
+    expect(built.vto).toBe("2028-10-31");
+  });
+
+  it("Test 8/con tildes/mayúsculas/puntos: 'CJ Muestras' (plural) mapea igual que 'CJ Muestra' (singular)", () => {
+    const tsv = ["Producto\tLote\tCJ Muestras", "Serum X\tG26043\t2"].join("\n");
+    const { mapping, rows } = mapPaste(tsv);
+    expect(mapping.cjMuestra).not.toBeNull();
+    expect(rows[0]!.cjMuestra).toBe("2");
+  });
+
+  it("'Cajas Muestras' (plural) también mapea a cjMuestra", () => {
+    const tsv = ["Producto\tLote\tCajas Muestras", "Serum X\tG26043\t3"].join("\n");
+    const { mapping, rows } = mapPaste(tsv);
+    expect(mapping.cjMuestra).not.toBeNull();
+    expect(rows[0]!.cjMuestra).toBe("3");
+  });
+
+  it("'F. Analisis' (abreviatura real) mapea a fechaAnalisis", () => {
+    const tsv = ["Producto\tLote\tF. Analisis", "Serum X\tG26043\t14/08/2026"].join("\n");
+    const { mapping, rows } = mapPaste(tsv);
+    expect(mapping.fechaAnalisis).not.toBeNull();
+    const built = buildAsignacionLoteFromMappedRow(rows[0]!, "Calidad");
+    expect(built.fechaAnalisis).toBe("2026-08-14");
+  });
+
+  it("encabezados con tildes/mayúsculas/puntos: 'FECHA ANÁLISIS' en mayúsculas también mapea", () => {
+    const tsv = ["Producto\tLote\tFECHA ANÁLISIS", "Serum X\tG26043\t14/08/2026"].join("\n");
+    const { mapping } = mapPaste(tsv);
+    expect(mapping.fechaAnalisis).not.toBeNull();
+  });
+});
+
+describe("AUDIT_EXCEL_VTO_BUG — VTO con año de 2 dígitos (formato real más común)", () => {
+  it("VTO '08-28' (mes-año de 2 dígitos) se importa como 2028-08-31, no se pierde", () => {
+    const tsv = ["Producto\tLote\tVTO", "Serum X\tG26043\t08-28"].join("\n");
+    const { rows } = mapPaste(tsv);
+    const built = buildAsignacionLoteFromMappedRow(rows[0]!, "Calidad");
+    expect(built.vto).toBe("2028-08-31");
+  });
+
+  it("VTO '07/29' (con barra) también se reconoce", () => {
+    const tsv = ["Producto\tLote\tVTO", "Serum X\tG26043\t07/29"].join("\n");
+    const { rows } = mapPaste(tsv);
+    const built = buildAsignacionLoteFromMappedRow(rows[0]!, "Calidad");
+    expect(built.vto).toBe("2029-07-31");
+  });
+
+  it("VTO 10/2028 (Test 4) persiste igual que antes tras el fix", () => {
+    const tsv = ["Producto\tLote\tVTO", "Serum X\tG26043\t10/2028"].join("\n");
+    const { rows } = mapPaste(tsv);
+    const built = buildAsignacionLoteFromMappedRow(rows[0]!, "Calidad");
+    expect(built.vto).toBe("2028-10-31");
+  });
+});
+
+describe("AUDIT_EXCEL_VTO_BUG — Muestras se importa (Test 6)", () => {
+  it("columna 'Muestras' se importa tal cual", () => {
+    const tsv = ["Producto\tLote\tMuestras", "Serum X\tG26043\t5"].join("\n");
+    const { rows } = mapPaste(tsv);
+    const built = buildAsignacionLoteFromMappedRow(rows[0]!, "Calidad");
+    expect(built.muestras).toBe("5");
+  });
+});
+
+describe("AUDIT_EXCEL_VTO_BUG — VTO ilegible es un error, nunca un warning silencioso (Test de preview)", () => {
+  it("un VTO presente pero genuinamente ilegible se marca severity 'error' (fila queda fuera de la selección por defecto)", () => {
+    const issues = validateAsignacionLoteRow({ producto: "X", vto: "no-es-una-fecha" }, 1);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.field).toBe("vto");
+    expect(issues[0]!.severity).toBe("error");
+  });
+
+  it("una Fecha análisis ilegible también es error", () => {
+    const issues = validateAsignacionLoteRow({ producto: "X", fechaAnalisis: "no-es-una-fecha" }, 1);
+    expect(issues[0]!.severity).toBe("error");
+  });
+
+  it("si la preview mostraría '—' para un VTO que sí venía en el Excel (G26043 | 10/2028), eso ya no ocurre: el valor se resuelve", () => {
+    const built = buildAsignacionLoteFromMappedRow({ producto: "X", lote: "G26043", vto: "10/2028" }, "Calidad");
+    expect(built.vto).not.toBeNull();
+    expect(built.vto).toBe("2028-10-31");
+  });
+});
