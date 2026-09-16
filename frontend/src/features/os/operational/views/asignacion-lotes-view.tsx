@@ -67,7 +67,14 @@ import {
   canAccessAsignacionLotes,
   canMutateAsignacionLotes,
 } from "../lib/asignacion-lotes-rbac";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { SmartPasteDialog } from "../components/smart-paste-dialog";
+import {
+  buildMonthFilterOptions,
+  filterByMonthKey,
+  groupByMonth,
+  SIN_MES_KEY,
+} from "../lib/asignacion-lotes-month-grouping";
 import type { SmartPasteRow } from "@/lib/smart-paste/types";
 import {
   buildAsignacionLotesMasterData,
@@ -268,6 +275,9 @@ export function AsignacionLotesView() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [smartPasteOpen, setSmartPasteOpen] = useState(false);
+  const [monthFilter, setMonthFilter] = useState("");
+  const [groupedByMonth, setGroupedByMonth] = useState(false);
+  const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(() => new Set());
   const [seedImportText, setSeedImportText] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
 
@@ -306,11 +316,39 @@ export function AsignacionLotesView() {
     return applySort(rows, ASIGNACION_LOTES_SORT_OPTIONS, sort);
   }, [items, search, producto, codigo, lote, marca, month, year, dateField, sort]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  // Mes: SIEMPRE se aplica sobre `filtered` (búsqueda global + filtros de
+  // texto/fecha ya resueltos) — nunca es una fuente de datos separada, solo
+  // un filtro/agrupación adicional sobre el mismo array. Búsqueda global +
+  // mes = TODOS sigue encontrando cualquier registro sin importar el mes.
+  const monthOptions = useMemo(() => buildMonthFilterOptions(filtered), [filtered]);
+  const monthFilteredRows = useMemo(
+    () => filterByMonthKey(filtered, monthFilter),
+    [filtered, monthFilter]
+  );
+  const monthGroups = useMemo(
+    () => (groupedByMonth ? groupByMonth(monthFilteredRows) : []),
+    [groupedByMonth, monthFilteredRows]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(monthFilteredRows.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
-  const paginated = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const visibleIds = useMemo(() => paginated.map((r) => r.id), [paginated]);
+  const paginated = monthFilteredRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  // Agrupado: se muestran TODAS las filas que matchean (sin paginar) para no
+  // fragmentar los grupos — selección múltiple opera sobre esas filas.
+  const visibleIds = useMemo(
+    () => (groupedByMonth ? monthFilteredRows.map((r) => r.id) : paginated.map((r) => r.id)),
+    [groupedByMonth, monthFilteredRows, paginated]
+  );
   const sel = useListSelectionMode(visibleIds);
+
+  function toggleMonthCollapsed(key: string) {
+    setCollapsedMonths((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   const showFeedback = (message: string) => {
     setFeedback(message);
@@ -327,6 +365,7 @@ export function AsignacionLotesView() {
     setYear("");
     setDateField("fecha");
     setSort("fecha_desc");
+    setMonthFilter("");
     setPage(1);
   };
 
@@ -607,6 +646,45 @@ export function AsignacionLotesView() {
             </label>
             <FilterInput label="Año" value={year} onChange={setYear} placeholder="2026" />
           </div>
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-[var(--os-border)] pt-3">
+            <label className="space-y-1 text-xs font-medium">
+              Período
+              <select
+                value={monthFilter}
+                onChange={(event) => {
+                  setMonthFilter(event.target.value);
+                  setPage(1);
+                }}
+                data-testid="asignacion-lotes-month-filter"
+                className="w-full min-w-[12rem] rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
+              >
+                {monthOptions.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {option.label} ({option.count})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="mt-4 inline-flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={groupedByMonth}
+                onChange={(event) => setGroupedByMonth(event.target.checked)}
+                data-testid="asignacion-lotes-group-by-month"
+              />
+              Agrupar por mes
+            </label>
+            {monthFilter && (
+              <span
+                className="mt-4 rounded-full bg-[var(--os-teal-soft)] px-2.5 py-0.5 text-xs font-medium text-[var(--os-teal)]"
+                data-testid="asignacion-lotes-month-filter-active"
+              >
+                Filtro de período activo: {monthOptions.find((o) => o.key === monthFilter)?.label}
+              </span>
+            )}
+          </div>
+
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
               <SortSelect
@@ -619,7 +697,9 @@ export function AsignacionLotesView() {
               <Button type="button" variant="secondary" onClick={clearFilters}>
                 Limpiar filtros
               </Button>
-              <span className="text-sm text-[var(--os-text-muted)]">{filtered.length} resultado(s)</span>
+              <span className="text-sm text-[var(--os-text-muted)]">
+                {monthFilteredRows.length} resultado(s)
+              </span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {canMutate &&
@@ -667,31 +747,86 @@ export function AsignacionLotesView() {
           </div>
         </section>
 
-        <OperationalTable
-          columns={columns}
-          rows={paginated}
-          rowKey={(row) => row.id}
-          emptyMessage="Sin asignaciones para los filtros actuales."
-          selection={
-            sel.active
-              ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
-              : undefined
-          }
-        />
-
-        <div className="flex items-center justify-between text-sm text-[var(--os-text-muted)]">
-          <span>
-            Página {currentPage} de {totalPages} · {PAGE_SIZE} por página
-          </span>
-          <div className="flex gap-2">
-            <Button type="button" variant="secondary" size="sm" disabled={currentPage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
-              Anterior
-            </Button>
-            <Button type="button" variant="secondary" size="sm" disabled={currentPage >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
-              Siguiente
-            </Button>
+        {groupedByMonth ? (
+          <div className="space-y-3" data-testid="asignacion-lotes-month-groups">
+            {monthGroups.length === 0 && (
+              <p className="rounded-[var(--os-radius-md)] border border-dashed border-[var(--os-border)] p-6 text-center text-sm text-[var(--os-text-muted)]">
+                Sin asignaciones para los filtros actuales.
+              </p>
+            )}
+            {monthGroups.map((group) => {
+              const groupKey = group.key ?? SIN_MES_KEY;
+              const collapsed = collapsedMonths.has(groupKey);
+              return (
+                <section
+                  key={groupKey}
+                  className="rounded-[var(--os-radius-md)] border border-[var(--os-border)]"
+                  data-testid="asignacion-lotes-month-group"
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleMonthCollapsed(groupKey)}
+                    className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold"
+                    data-testid={`asignacion-lotes-month-group-toggle-${groupKey}`}
+                  >
+                    {collapsed ? (
+                      <ChevronRight className="size-4" aria-hidden="true" />
+                    ) : (
+                      <ChevronDown className="size-4" aria-hidden="true" />
+                    )}
+                    {group.label}
+                    <span className="font-normal text-[var(--os-text-muted)]">
+                      {group.count} registro{group.count === 1 ? "" : "s"}
+                    </span>
+                  </button>
+                  {!collapsed && (
+                    <div className="border-t border-[var(--os-border)]">
+                      <OperationalTable
+                        columns={columns}
+                        rows={group.items}
+                        rowKey={(row) => row.id}
+                        emptyMessage="Sin asignaciones para los filtros actuales."
+                        selection={
+                          sel.active
+                            ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
+                            : undefined
+                        }
+                      />
+                    </div>
+                  )}
+                </section>
+              );
+            })}
           </div>
-        </div>
+        ) : (
+          <>
+            <OperationalTable
+              columns={columns}
+              rows={paginated}
+              rowKey={(row) => row.id}
+              emptyMessage="Sin asignaciones para los filtros actuales."
+              selection={
+                sel.active
+                  ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
+                  : undefined
+              }
+            />
+
+            <div className="flex items-center justify-between text-sm text-[var(--os-text-muted)]">
+              <span>
+                Página {currentPage} de {totalPages} · {PAGE_SIZE} por página
+              </span>
+              <div className="flex gap-2">
+                <Button type="button" variant="secondary" size="sm" disabled={currentPage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                  Anterior
+                </Button>
+                <Button type="button" variant="secondary" size="sm" disabled={currentPage >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                  Siguiente
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
 
         <LifecycleConfirmDialog
           pending={
@@ -738,7 +873,7 @@ export function AsignacionLotesView() {
             let ok = 0;
             let failed = 0;
             const deletedIds: string[] = [];
-            const byId = new Map(paginated.map((r) => [r.id, r]));
+            const byId = new Map(monthFilteredRows.map((r) => [r.id, r]));
             for (const id of sel.selectedIds) {
               const row = byId.get(id);
               if (!row) continue;
