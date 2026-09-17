@@ -794,7 +794,12 @@ export function AssignWorkDialog({
                       >
                         ✓ LOTE: {loteResolution.candidate.lote} · ✓ VTO: {loteResolution.candidate.vto}
                         <br />
-                        <span className="text-xs opacity-80">Encontrado automáticamente en Asignación de Lotes.</span>
+                        <span className="text-xs opacity-80">
+                          Encontrado automáticamente en Asignación de Lotes
+                          {loteResolution.matchTier === "COMPATIBLE"
+                            ? " (coincidencia por texto compatible, no literal)."
+                            : "."}
+                        </span>
                       </p>
                     ) : (
                       <p

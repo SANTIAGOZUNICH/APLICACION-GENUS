@@ -17,10 +17,18 @@ function createFakeDb() {
   function matchCond(row: Record<string, unknown>, cond: unknown): boolean {
     if (!cond) return true;
     if (Array.isArray(cond)) return cond.every((c) => matchCond(row, c));
-    const c = cond as { __eq?: [string, unknown]; __isNull?: string; __ne?: [string, unknown] };
+    const c = cond as {
+      __eq?: [string, unknown];
+      __isNull?: string;
+      __isNotNull?: string;
+      __ne?: [string, unknown];
+      __or?: unknown[];
+    };
     if (c.__eq) return row[c.__eq[0]] === c.__eq[1];
     if (c.__isNull) return row[c.__isNull] == null;
+    if (c.__isNotNull) return row[c.__isNotNull] != null;
     if (c.__ne) return row[c.__ne[0]] !== c.__ne[1];
+    if (c.__or) return c.__or.some((sub) => matchCond(row, sub));
     return true;
   }
 
@@ -89,6 +97,10 @@ vi.mock("drizzle-orm", async () => {
     isNull: (col: { name?: string } | string) => ({
       __isNull: typeof col === "string" ? col : (col as { name?: string }).name ?? "id",
     }),
+    isNotNull: (col: { name?: string } | string) => ({
+      __isNotNull: typeof col === "string" ? col : (col as { name?: string }).name ?? "id",
+    }),
+    or: (...args: unknown[]) => ({ __or: args }),
     and: (...args: unknown[]) => args,
   };
 });
@@ -121,6 +133,7 @@ describe("fillBareWorkItemsFromAsignacionLote — sincronización retroactiva (T
     lote: "G26043",
     vto: "2028-10-31",
     producto: "SERUM NIACINAMIDA",
+    codigo: "",
     marca: "NIZA",
     updatedBy: "calidad@laboratoriogenus.com.ar",
   };
@@ -219,5 +232,72 @@ describe("fillBareWorkItemsFromAsignacionLote — sincronización retroactiva (T
     );
     expect(result.filledWorkItemId).toBeNull();
     expect(fakeDbHandle.workItems.get("wi-1")!.packagingLote).toBeNull();
+  });
+
+  it("caso real ECODERM/ROSEHIP: marca=ROSEHIP-ECODERM producto=SERUM codigo=VITAMINA C completa el WorkItem cliente=ECODERM producto='SERUM VITAMINA C ROSEHIP'", async () => {
+    fakeDbHandle.workItems.set("wi-1", {
+      id: "wi-1",
+      client: "ECODERM",
+      product: "SERUM VITAMINA C ROSEHIP",
+      sector: "CODIFICADO",
+      planningWeekId: "week-1",
+      deletedAt: null,
+      packagingLote: null,
+      packagingVto: null,
+    });
+    const result = await fillBareWorkItemsFromAsignacionLote(
+      {
+        id: "al-serum",
+        lote: "S26018",
+        vto: "2029-12-31",
+        producto: "SERUM",
+        codigo: "VITAMINA C",
+        marca: "ROSEHIP-ECODERM",
+        updatedBy: "calidad@laboratoriogenus.com.ar",
+      },
+      "CALIDAD"
+    );
+    expect(result.filledWorkItemId).toBe("wi-1");
+    expect(fakeDbHandle.workItems.get("wi-1")!.packagingLote).toBe("S26018");
+  });
+
+  it("Sección 11: WorkItem con lote propio DISTINTO al de una asignación inequívoca -> señala inconsistencia sin tocar el dato", async () => {
+    fakeDbHandle.workItems.set("wi-1", {
+      id: "wi-1",
+      client: "NIZA",
+      product: "SERUM NIACINAMIDA",
+      sector: "ENVASADO_MASIVO",
+      planningWeekId: "week-1",
+      deletedAt: null,
+      packagingLote: "G26050",
+      packagingVto: "2028-11-30",
+    });
+    const result = await fillBareWorkItemsFromAsignacionLote(record, "CALIDAD");
+    expect(result.filledWorkItemId).toBeNull();
+    expect(result.flaggedInconsistencyWorkItemId).toBe("wi-1");
+    expect(fakeDbHandle.workItems.get("wi-1")!.packagingLote).toBe("G26050");
+    expect(fakeDbHandle.workItems.get("wi-1")!.packagingVto).toBe("2028-11-30");
+    expect(fakeDbHandle.operationalEvents).toHaveLength(1);
+    expect(fakeDbHandle.operationalEvents[0]).toMatchObject({
+      type: "LOTE_VTO_POSIBLE_INCONSISTENCIA",
+      workItemId: "wi-1",
+    });
+  });
+
+  it("Sección 11: WorkItem con el MISMO lote/vto -> no hay inconsistencia que señalar", async () => {
+    fakeDbHandle.workItems.set("wi-1", {
+      id: "wi-1",
+      client: "NIZA",
+      product: "SERUM NIACINAMIDA",
+      sector: "ENVASADO_MASIVO",
+      planningWeekId: "week-1",
+      deletedAt: null,
+      packagingLote: "G26043",
+      packagingVto: "2028-10-31",
+    });
+    const result = await fillBareWorkItemsFromAsignacionLote(record, "CALIDAD");
+    expect(result.filledWorkItemId).toBeNull();
+    expect(result.flaggedInconsistencyWorkItemId).toBeNull();
+    expect(fakeDbHandle.operationalEvents).toHaveLength(0);
   });
 });
