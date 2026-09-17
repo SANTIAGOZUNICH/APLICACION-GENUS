@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  clienteRelation,
   computeLoteVtoWarning,
+  detectLoteVtoInconsistency,
   findAsignacionLoteByIdForWorkItem,
+  productoRelation,
   resolveAsignacionLoteForWorkItem,
 } from "./resolve-for-work-item";
 import type { AsignacionLote } from "./types";
@@ -37,6 +40,7 @@ describe("resolveAsignacionLoteForWorkItem — Test 6: matching por cliente/prod
     });
     expect(result).toEqual({
       status: "found",
+      matchTier: "EXACTO",
       candidate: {
         id: "al-1",
         lote: "G26043",
@@ -119,17 +123,19 @@ describe("resolveAsignacionLoteForWorkItem — Test 5: más de una coincidencia 
 
 describe("computeLoteVtoWarning — warnings no bloqueantes (Test 3/4)", () => {
   it("found con lote y vto completos -> NONE", () => {
-    expect(computeLoteVtoWarning({ status: "found", candidate: { ...lote({ id: "x" }) } })).toBe("NONE");
+    expect(
+      computeLoteVtoWarning({ status: "found", matchTier: "EXACTO", candidate: { ...lote({ id: "x" }) } })
+    ).toBe("NONE");
   });
 
   it("Test 3: found sin vto -> MISSING_VTO", () => {
     const candidate = { ...lote({ id: "x" }), vto: null };
-    expect(computeLoteVtoWarning({ status: "found", candidate })).toBe("MISSING_VTO");
+    expect(computeLoteVtoWarning({ status: "found", matchTier: "EXACTO", candidate })).toBe("MISSING_VTO");
   });
 
   it("Test 4: found sin lote -> MISSING_LOTE", () => {
     const candidate = { ...lote({ id: "x" }), lote: "" };
-    expect(computeLoteVtoWarning({ status: "found", candidate })).toBe("MISSING_LOTE");
+    expect(computeLoteVtoWarning({ status: "found", matchTier: "EXACTO", candidate })).toBe("MISSING_LOTE");
   });
 
   it("none -> MISSING_LOTE_AND_VTO", () => {
@@ -167,5 +173,206 @@ describe("findAsignacionLoteByIdForWorkItem — releer antes de persistir (Test 
       producto: "SERUM NIACINAMIDA",
     });
     expect(found).toBeNull();
+  });
+});
+
+// Caso real reproducido en Production (ver auditoría de solo lectura):
+//   Asignación de Lotes: marca="ROSEHIP-ECODERM", producto="SERUM", codigo="VITAMINA C"
+//   Pedido de Producción: cliente="ECODERM", producto="SERUM VITAMINA C ROSEHIP"
+// El match exacto normalizado por cliente+producto no encontraba nada:
+// "ECODERM" !== "ROSEHIP-ECODERM" y "SERUM" !== "SERUM VITAMINA C ROSEHIP".
+describe("resolveAsignacionLoteForWorkItem — Test 12 real: caso ECODERM / ROSEHIP", () => {
+  it("SERUM VITAMINA C ROSEHIP -> encuentra la asignación marca=ROSEHIP-ECODERM producto=SERUM codigo=VITAMINA C", () => {
+    const candidates = [
+      lote({
+        id: "al-serum",
+        marca: "ROSEHIP-ECODERM",
+        producto: "SERUM",
+        codigo: "VITAMINA C",
+        lote: "S26018",
+        vto: null,
+      }),
+    ];
+    const result = resolveAsignacionLoteForWorkItem(candidates, {
+      cliente: "ECODERM",
+      producto: "SERUM VITAMINA C ROSEHIP",
+    });
+    expect(result).toMatchObject({ status: "found", matchTier: "COMPATIBLE", candidate: { id: "al-serum", lote: "S26018" } });
+  });
+
+  it("CREMA FACIAL HIALURONICO ROSEHIP -> encuentra la asignación marca=ROSEHIP-ECODERM producto=CREMA FACIAL CON ACIDO HIALURONICO", () => {
+    const candidates = [
+      lote({
+        id: "al-crema",
+        marca: "ROSEHIP-ECODERM",
+        producto: "CREMA FACIAL CON ACIDO HIALURONICO",
+        codigo: "",
+        lote: "S26017",
+        vto: null,
+      }),
+    ];
+    const result = resolveAsignacionLoteForWorkItem(candidates, {
+      cliente: "ECODERM",
+      producto: "CREMA FACIAL HIALURONICO ROSEHIP",
+    });
+    expect(result).toMatchObject({ status: "found", matchTier: "COMPATIBLE", candidate: { id: "al-crema" } });
+  });
+
+  it("no confunde el resto de la familia ECODERM (DESODORANTE/ACONDICIONADOR/etc.) con el pedido ROSEHIP", () => {
+    const candidates = [
+      lote({ id: "al-serum", marca: "ROSEHIP-ECODERM", producto: "SERUM", codigo: "VITAMINA C" }),
+      lote({ id: "al-desodorante", marca: "ECODERM", producto: "DESODORANTE", codigo: "" }),
+      lote({ id: "al-acond", marca: "ECODERM - DUGA", producto: "ACONDICIONADOR", codigo: "INFANTIL" }),
+    ];
+    const result = resolveAsignacionLoteForWorkItem(candidates, {
+      cliente: "ECODERM",
+      producto: "SERUM VITAMINA C ROSEHIP",
+    });
+    expect(result).toMatchObject({ status: "found", candidate: { id: "al-serum" } });
+  });
+});
+
+describe("clienteRelation — tolerancia de submarca compuesta (no fuzzy)", () => {
+  it("cliente exacto -> EXACT", () => {
+    expect(clienteRelation("ECODERM", "ECODERM")).toBe("EXACT");
+  });
+  it("submarca compuesta con el cliente como token -> TOKEN_SUBSET", () => {
+    expect(clienteRelation("ECODERM", "ROSEHIP-ECODERM")).toBe("TOKEN_SUBSET");
+    expect(clienteRelation("ECODERM", "ECODERM - DUGA")).toBe("TOKEN_SUBSET");
+    expect(clienteRelation("ECODERM", "ECODERM/WENEAR")).toBe("TOKEN_SUBSET");
+  });
+  it("clientes sin ningún token en común -> NONE (nunca fuzzy global)", () => {
+    expect(clienteRelation("ECODERM", "NIZA")).toBe("NONE");
+  });
+});
+
+describe("productoRelation — matriz de tolerancia de nombre de producto", () => {
+  const base = { producto: "", codigo: "", marca: "NIZA" };
+
+  it("producto idéntico -> EXACT", () => {
+    expect(productoRelation({ ...base, producto: "CREMA ROSEHIP" }, "CREMA ROSEHIP")).toBe("EXACT");
+  });
+  it("mayúsculas/minúsculas -> EXACT", () => {
+    expect(productoRelation({ ...base, producto: "crema rosehip" }, "CREMA ROSEHIP")).toBe("EXACT");
+  });
+  it("tildes -> EXACT", () => {
+    expect(productoRelation({ ...base, producto: "SÉRUM" }, "SERUM")).toBe("EXACT");
+  });
+  it("guiones -> EXACT (\"CREMA - ROSEHIP\" vs \"CREMA ROSEHIP\")", () => {
+    expect(productoRelation({ ...base, producto: "CREMA - ROSEHIP" }, "CREMA ROSEHIP")).toBe("EXACT");
+  });
+  it("espacios dobles -> EXACT", () => {
+    expect(productoRelation({ ...base, producto: "CREMA   ROSEHIP" }, "CREMA ROSEHIP")).toBe("EXACT");
+  });
+  it("ROSE HIP vs ROSEHIP (junto/separado) -> EXACT", () => {
+    expect(productoRelation({ ...base, producto: "CREMA ROSE HIP" }, "CREMA ROSEHIP")).toBe("EXACT");
+  });
+  it("diferencia menor no ambigua (ACIDO HIALURONICO vs HIALURONICO) -> CONTAINED", () => {
+    expect(
+      productoRelation({ ...base, producto: "CREMA FACIAL CON ACIDO HIALURONICO" }, "CREMA FACIAL HIALURONICO")
+    ).toBe("CONTAINED");
+  });
+  it("mismo producto, otro cliente -> productoRelation no filtra cliente (eso lo hace resolveAsignacionLoteForWorkItem)", () => {
+    expect(productoRelation({ ...base, producto: "CREMA" }, "CREMA")).toBe("EXACT");
+  });
+  it("productos parecidos, mismo cliente, NO deben confundirse (CREMA ROSEHIP vs SERUM ROSEHIP)", () => {
+    expect(productoRelation({ ...base, producto: "CREMA ROSEHIP" }, "SERUM ROSEHIP")).toBe("NONE");
+  });
+  it("dos presentaciones distintas (50G vs 100G) no se distinguen por texto -> ambas CONTAINED (la unicidad la exige el resolver, no esta función)", () => {
+    expect(productoRelation({ ...base, producto: "CREMA ROSEHIP 50G" }, "CREMA ROSEHIP")).toBe("CONTAINED");
+  });
+  it("talle/cantidad no cambia el resultado (ALISADO KERATIN 1KG vs ALISADO KERATIN)", () => {
+    expect(productoRelation({ ...base, producto: "ALISADO KERATIN" }, "ALISADO KERATIN 1KG")).toBe("CONTAINED");
+  });
+  it("una palabra extra NO explicada por marca/talle se trata como variante real y NO matchea (AFTER SHAVE vs AFTER SHAVE VIOLETA)", () => {
+    expect(productoRelation({ ...base, producto: "AFTER SHAVE" }, "AFTER SHAVE VIOLETA")).toBe("NONE");
+  });
+  it("sin candidato (bolsas vacías) -> NONE", () => {
+    expect(productoRelation({ ...base, producto: "" }, "CREMA")).toBe("NONE");
+  });
+  it("candidato de una sola palabra genérica sin código -> NONE (evita match por una palabra suelta)", () => {
+    expect(productoRelation({ ...base, producto: "SERUM", codigo: "" }, "SERUM ROSEHIP")).toBe("NONE");
+  });
+});
+
+describe("resolveAsignacionLoteForWorkItem — matriz completa (sección 13 del pedido)", () => {
+  it("dos lotes candidatos con presentaciones distintas -> ambiguous, nunca se elige solo", () => {
+    const candidates = [
+      lote({ id: "al-50g", producto: "CREMA ROSEHIP 50G" }),
+      lote({ id: "al-100g", producto: "CREMA ROSEHIP 100G" }),
+    ];
+    const result = resolveAsignacionLoteForWorkItem(candidates, { cliente: "NIZA", producto: "CREMA ROSEHIP" });
+    expect(result.status).toBe("ambiguous");
+  });
+
+  it("candidato claramente superior (EXACTO) gana aunque exista otro COMPATIBLE", () => {
+    const candidates = [
+      lote({ id: "al-exacto", producto: "CREMA ROSEHIP" }),
+      lote({ id: "al-compatible", producto: "CREMA ROSEHIP 50G" }),
+    ];
+    const result = resolveAsignacionLoteForWorkItem(candidates, { cliente: "NIZA", producto: "CREMA ROSEHIP" });
+    expect(result).toMatchObject({ status: "found", matchTier: "EXACTO", candidate: { id: "al-exacto" } });
+  });
+
+  it("lote sin VTO -> found con warning MISSING_VTO (no bloquea)", () => {
+    const candidates = [lote({ id: "al-1", vto: null })];
+    const result = resolveAsignacionLoteForWorkItem(candidates, { cliente: "NIZA", producto: "SERUM NIACINAMIDA" });
+    expect(result).toMatchObject({ status: "found" });
+    expect(computeLoteVtoWarning(result)).toBe("MISSING_VTO");
+  });
+
+  it("VTO sin lote -> found con warning MISSING_LOTE (no bloquea)", () => {
+    const candidates = [lote({ id: "al-1", lote: "" })];
+    const result = resolveAsignacionLoteForWorkItem(candidates, { cliente: "NIZA", producto: "SERUM NIACINAMIDA" });
+    expect(result).toMatchObject({ status: "found" });
+    expect(computeLoteVtoWarning(result)).toBe("MISSING_LOTE");
+  });
+});
+
+describe("detectLoteVtoInconsistency — sección 11: nunca sobreescribe, solo señala", () => {
+  it("WorkItem sin lote/vto propio -> null (ese caso lo resuelve el sync retroactivo, no esto)", () => {
+    const result = resolveAsignacionLoteForWorkItem([lote({ id: "al-1" })], {
+      cliente: "NIZA",
+      producto: "SERUM NIACINAMIDA",
+    });
+    expect(detectLoteVtoInconsistency({ packagingLote: null, packagingVto: null }, result)).toBeNull();
+  });
+
+  it("WorkItem con el mismo lote/vto encontrado -> null (no hay inconsistencia)", () => {
+    const result = resolveAsignacionLoteForWorkItem([lote({ id: "al-1", lote: "G26043", vto: "2028-10" })], {
+      cliente: "NIZA",
+      producto: "SERUM NIACINAMIDA",
+    });
+    expect(
+      detectLoteVtoInconsistency({ packagingLote: "G26043", packagingVto: "2028-10" }, result)
+    ).toBeNull();
+  });
+
+  it("WorkItem con un lote DISTINTO al encontrado -> reporta inconsistencia sin sugerir sobreescritura", () => {
+    const result = resolveAsignacionLoteForWorkItem([lote({ id: "al-1", lote: "G26043", vto: "2028-10" })], {
+      cliente: "NIZA",
+      producto: "SERUM NIACINAMIDA",
+    });
+    const inconsistency = detectLoteVtoInconsistency(
+      { packagingLote: "G26050", packagingVto: "2028-11" },
+      result
+    );
+    expect(inconsistency).toEqual({
+      currentLote: "G26050",
+      currentVto: "2028-11",
+      foundLote: "G26043",
+      foundVto: "2028-10",
+      asignacionLoteId: "al-1",
+    });
+  });
+
+  it("resolución ambigua o sin match -> null (no hay un único candidato con el que comparar)", () => {
+    const ambiguous = resolveAsignacionLoteForWorkItem(
+      [lote({ id: "al-1" }), lote({ id: "al-2", lote: "G26044" })],
+      { cliente: "NIZA", producto: "SERUM NIACINAMIDA" }
+    );
+    expect(detectLoteVtoInconsistency({ packagingLote: "G26050", packagingVto: "2028-11" }, ambiguous)).toBeNull();
+    const none = resolveAsignacionLoteForWorkItem([], { cliente: "NIZA", producto: "SERUM NIACINAMIDA" });
+    expect(detectLoteVtoInconsistency({ packagingLote: "G26050", packagingVto: "2028-11" }, none)).toBeNull();
   });
 });
