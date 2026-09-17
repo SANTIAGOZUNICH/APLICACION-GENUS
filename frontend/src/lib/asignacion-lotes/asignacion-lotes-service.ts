@@ -120,6 +120,7 @@ function rowToDomain(row: typeof asignacionLotes.$inferSelect): AsignacionLote {
     updatedAt: row.updatedAt.toISOString(),
     updatedBy: row.updatedBy,
     archived: row.archived,
+    sourceId: row.sourceId ?? null,
   };
 }
 
@@ -142,6 +143,7 @@ function domainToInsert(record: AsignacionLote): typeof asignacionLotes.$inferIn
     createdBy: record.createdBy,
     updatedAt: new Date(record.updatedAt),
     updatedBy: record.updatedBy,
+    sourceId: record.sourceId ?? null,
   };
 }
 
@@ -193,6 +195,34 @@ async function findDuplicateNeon(
       (options.includeArchived || !row.archived)
   );
   return match ? rowToDomain(match) : null;
+}
+
+/**
+ * Compara los campos "de contenido" (no auditoría) entre lo ya guardado y
+ * lo que trae la fuente — usado por el sync para reportar "sin cambios" de
+ * verdad en vez de contar cada fila vista como "actualizada".
+ */
+function fieldsDiffer(previous: AsignacionLote, input: Omit<AsignacionLoteUpsertInput, "sourceId">): boolean {
+  const nextFecha = input.fecha?.trim() || previous.fecha || null;
+  const nextMarca = input.marca?.trim() ?? previous.marca ?? "";
+  const nextVto = input.vto ?? previous.vto ?? null;
+  const nextMuestras = input.muestras?.trim() ?? previous.muestras ?? "";
+  const nextCjMuestra = input.cjMuestra?.trim() ?? previous.cjMuestra ?? "";
+  const nextFechaAnalisis = input.fechaAnalisis ?? previous.fechaAnalisis ?? null;
+  const nextObservaciones = input.observaciones?.trim() ?? previous.observaciones ?? "";
+  return (
+    previous.lote !== (input.lote.trim() || previous.lote) ||
+    previous.fecha !== nextFecha ||
+    previous.producto !== (input.producto.trim() || previous.producto) ||
+    previous.codigo !== (input.codigo.trim() || previous.codigo) ||
+    previous.marca !== nextMarca ||
+    previous.cantidades !== (Number.isFinite(input.cantidades) ? input.cantidades : previous.cantidades) ||
+    previous.vto !== nextVto ||
+    previous.muestras !== nextMuestras ||
+    previous.cjMuestra !== nextCjMuestra ||
+    previous.fechaAnalisis !== nextFechaAnalisis ||
+    previous.observaciones !== nextObservaciones
+  );
 }
 
 function sortItems(items: AsignacionLote[]): AsignacionLote[] {
@@ -303,6 +333,7 @@ export class AsignacionLotesService {
       updatedAt: now,
       updatedBy,
       archived: input.archived ?? previous?.archived ?? false,
+      sourceId: input.sourceId !== undefined ? input.sourceId : (previous?.sourceId ?? null),
     };
 
     if (useNeon()) {
@@ -326,6 +357,7 @@ export class AsignacionLotesService {
             archived: values.archived,
             updatedAt: values.updatedAt,
             updatedBy: values.updatedBy,
+            sourceId: values.sourceId,
           })
           .where(eq(asignacionLotes.id, record.id));
       } else {
@@ -347,6 +379,113 @@ export class AsignacionLotesService {
     if (idx >= 0) items[idx] = record;
     else items.push(record);
     return record;
+  }
+
+  /**
+   * Identidad estable de sincronización (ver resolve-for-work-item.ts del
+   * pedido de vínculo con Producción, mismo espíritu): mover una fila en la
+   * Sheet no cambia lote+código, así que reordenar NUNCA duplica. Solo
+   * busca DENTRO de la misma fuente — nunca "adopta" un registro manual o
+   * de otra fuente aunque coincida lote+código (ese caso es justamente el
+   * conflicto entre fuentes que hay que reportar, no fusionar en silencio).
+   */
+  private async findBySourceKey(
+    sourceId: string,
+    lote: string,
+    codigo: string
+  ): Promise<AsignacionLote | null> {
+    const key = duplicateKey(lote, codigo);
+    if (useNeon()) {
+      const db = getDb();
+      const rows = await db.select().from(asignacionLotes).where(eq(asignacionLotes.sourceId, sourceId));
+      const match = rows.find((row) => duplicateKey(row.lote, row.codigo) === key);
+      return match ? rowToDomain(match) : null;
+    }
+    return (
+      mem().find((item) => item.sourceId === sourceId && duplicateKey(item.lote, item.codigo) === key) ?? null
+    );
+  }
+
+  /**
+   * Detecta si lote+código ya existe en una fuente DISTINTA (manual, Excel,
+   * u otra fuente Google Sheets) — usado por el motor de sync para nunca
+   * elegir en silencio entre fuentes en conflicto (pedido #16-17).
+   */
+  async findConflictingRecord(
+    sourceId: string,
+    lote: string,
+    codigo: string
+  ): Promise<AsignacionLote | null> {
+    if (useNeon()) {
+      return findDuplicateNeon(lote, codigo).then((match) =>
+        match && match.sourceId !== sourceId ? match : null
+      );
+    }
+    const match = findDuplicateMem(lote, codigo);
+    return match && match.sourceId !== sourceId ? match : null;
+  }
+
+  /**
+   * Upsert usado EXCLUSIVAMENTE por el motor de sincronización de Google
+   * Sheets — nunca por un request de usuario. No pasa por `assertMutate`
+   * (RBAC de sector humano) porque el proceso de sync ya fue autorizado al
+   * conectar la fuente (RBAC de `asignacion-lote-sources-rbac.ts`); es un
+   * proceso de servidor confiable, no un endpoint expuesto a cualquier
+   * sector. Reutiliza `writeRecord` así que hereda gratis: carga flexible,
+   * fill-once de WorkItem y detección de inconsistencia (PR #95).
+   */
+  async upsertFromSource(
+    sourceId: string,
+    actorAttribution: { email: string; displayName: string },
+    input: Omit<AsignacionLoteUpsertInput, "sourceId">
+  ): Promise<{ record: AsignacionLote; created: boolean; changed: boolean }> {
+    const previous = await this.findBySourceKey(sourceId, input.lote, input.codigo);
+    if (previous && !fieldsDiffer(previous, input)) {
+      return { record: previous, created: false, changed: false };
+    }
+    const systemActor: AsignacionLotesActor = {
+      email: actorAttribution.email,
+      sector: "PRODUCCION",
+      displayName: actorAttribution.displayName,
+    };
+    const record = await this.writeRecord(
+      systemActor,
+      { ...input, id: previous?.id, sourceId },
+      previous
+    );
+    return { record, created: !previous, changed: true };
+  }
+
+  /** Todos los registros activos que pertenecen a una fuente — usado al final de un sync para detectar bajas. */
+  async listBySource(sourceId: string): Promise<AsignacionLote[]> {
+    if (useNeon()) {
+      const db = getDb();
+      const rows = await db.select().from(asignacionLotes).where(eq(asignacionLotes.sourceId, sourceId));
+      return rows.filter((r) => !r.archived).map(rowToDomain);
+    }
+    return mem().filter((item) => item.sourceId === sourceId && !item.archived);
+  }
+
+  /**
+   * Sección 13 del pedido: una fila que desaparece de la Sheet nunca se
+   * borra físicamente — se archiva con motivo, igual que `delete()`, pero
+   * sin exigir RBAC de sector humano (lo dispara el propio motor de sync).
+   */
+  async archiveRemovedFromSource(id: string, sourceName: string): Promise<void> {
+    const reason = `Ya no está presente en la fuente Google Sheets · ${sourceName}.`;
+    const now = new Date().toISOString();
+    if (useNeon()) {
+      const db = getDb();
+      await db
+        .update(asignacionLotes)
+        .set({ archived: true, deletedReason: reason, updatedAt: new Date(now) })
+        .where(eq(asignacionLotes.id, id));
+      return;
+    }
+    const items = mem();
+    const idx = items.findIndex((item) => item.id === id);
+    if (idx < 0) return;
+    items[idx] = { ...items[idx]!, archived: true, updatedAt: now };
   }
 
   /** Restaura filas archivadas/eliminadas (incl. bajas con deleted_reason). */

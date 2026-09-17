@@ -154,6 +154,8 @@ export interface UpdateLoteVtoInput {
   reason: string;
   updatedBy: string;
   updatedBySector: SectorId | string;
+  /** Ver UpdateWorkItemPlanningInput#expectedVersion. */
+  expectedVersion?: number;
 }
 
 /**
@@ -182,11 +184,13 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
         packagingLote: workItems.packagingLote,
         packagingVto: workItems.packagingVto,
         planningWeekId: workItems.planningWeekId,
+        version: workItems.version,
       })
       .from(workItems)
       .where(eq(workItems.id, id))
       .limit(1);
     if (!existing) throw new Error("Work item no encontrado.");
+    assertVersionMatches(existing.version, input.expectedVersion);
 
     if (
       (nextLote === undefined || nextLote === existing.packagingLote) &&
@@ -195,7 +199,10 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
       throw new Error("El valor indicado es igual al actual — no hay corrección para aplicar.");
     }
 
-    const patch: Partial<typeof workItems.$inferInsert> = { updatedAt: new Date() };
+    const patch: Partial<typeof workItems.$inferInsert> = {
+      updatedAt: new Date(),
+      version: existing.version + 1,
+    };
     if (nextLote !== undefined) patch.packagingLote = nextLote;
     if (nextVto !== undefined) patch.packagingVto = nextVto;
 
@@ -362,6 +369,32 @@ export interface UpdateWorkItemPlanningInput {
   reason?: string | null;
   updatedBy: string;
   updatedBySector: SectorId | string;
+  /**
+   * Concurrencia optimista (pedido de edición/eliminación de trabajos):
+   * versión que el cliente tenía cargada al abrir el formulario. Si no
+   * coincide con la versión real leída fresca dentro de esta misma
+   * transacción, se rechaza — nunca se pisa un cambio ajeno más reciente.
+   * `undefined` (compatibilidad con callers existentes que todavía no la
+   * envían) desactiva el chequeo, igual que antes de este campo.
+   */
+  expectedVersion?: number;
+}
+
+/**
+ * Concurrencia optimista compartida por las mutaciones de WorkItem — nunca
+ * pisa en silencio un cambio hecho por otra pantalla mientras la actual
+ * seguía abierta. El mensaje contiene "conflicto" a propósito: el catch-all
+ * de la ruta (`/restaur|conflict|cancelado|aprobad|rechazad/i`) ya mapea
+ * cualquier error con esa palabra a HTTP 409, así que no hace falta un tipo
+ * de error nuevo ni tocar el mapeo de la ruta.
+ */
+function assertVersionMatches(currentVersion: number, expectedVersion: number | undefined): void {
+  if (expectedVersion === undefined) return;
+  if (expectedVersion !== currentVersion) {
+    throw new PlanningValidationError(
+      "Este trabajo fue modificado mientras lo estabas editando (conflicto de versión) — actualizá y revisá antes de guardar."
+    );
+  }
 }
 
 const PLANNING_EDITABLE_KEYS = [
@@ -399,15 +432,20 @@ export async function updateWorkItemPlanningDurable(
         planningWeekId: workItems.planningWeekId,
         plannedDate: workItems.plannedDate,
         plannedDateTo: workItems.plannedDateTo,
+        version: workItems.version,
       })
       .from(workItems)
       .where(eq(workItems.id, id))
       .limit(1);
     if (!existing) throw new Error("Work item no encontrado.");
+    assertVersionMatches(existing.version, input.expectedVersion);
 
     const before: Record<string, unknown> = {};
     const after: Record<string, unknown> = {};
-    const patch: Partial<typeof workItems.$inferInsert> = { updatedAt: new Date() };
+    const patch: Partial<typeof workItems.$inferInsert> = {
+      updatedAt: new Date(),
+      version: existing.version + 1,
+    };
 
     if (input.plannedDate !== undefined) {
       const nextDate = input.plannedDate?.trim() || null;
@@ -572,8 +610,11 @@ export async function rescheduleWorkItemDurable(id: string, input: RescheduleWor
 }
 
 export interface DeleteWorkItemInput {
-  reason?: string | null;
+  /** Obligatorio — nunca se acepta un borrado sin motivo auditable. */
+  reason: string;
   deletedBy: string;
+  /** Ver UpdateWorkItemPlanningInput#expectedVersion. */
+  expectedVersion?: number;
 }
 
 /**
@@ -591,6 +632,10 @@ export interface DeleteWorkItemInput {
  * uno de los 4 que Producción gestiona.
  */
 export async function deleteWorkItemDurable(id: string, input: DeleteWorkItemInput) {
+  const reason = input.reason?.trim();
+  if (!reason) {
+    throw new PlanningValidationError("El motivo es obligatorio para eliminar un trabajo.");
+  }
   const db = getDb();
   return db.transaction(async (tx) => {
     const [existing] = await tx
@@ -601,6 +646,7 @@ export async function deleteWorkItemDurable(id: string, input: DeleteWorkItemInp
         client: workItems.client,
         operationalStatus: workItems.operationalStatus,
         planningWeekId: workItems.planningWeekId,
+        version: workItems.version,
       })
       .from(workItems)
       .where(eq(workItems.id, id))
@@ -610,9 +656,9 @@ export async function deleteWorkItemDurable(id: string, input: DeleteWorkItemInp
       const [row] = await tx.select().from(workItems).where(eq(workItems.id, id)).limit(1);
       return row!;
     }
+    assertVersionMatches(existing.version, input.expectedVersion);
 
     const now = new Date();
-    const reason = input.reason?.trim() || "Sin motivo informado";
     const [row] = await tx
       .update(workItems)
       .set({
@@ -620,6 +666,7 @@ export async function deleteWorkItemDurable(id: string, input: DeleteWorkItemInp
         deletedBy: input.deletedBy,
         deleteReason: reason,
         updatedAt: now,
+        version: existing.version + 1,
       })
       .where(eq(workItems.id, id))
       .returning();

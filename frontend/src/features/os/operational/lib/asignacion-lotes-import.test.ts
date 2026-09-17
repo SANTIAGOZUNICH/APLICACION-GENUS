@@ -19,6 +19,24 @@ function mapPaste(tsv: string) {
   return { grid, mapping, rows };
 }
 
+describe("asignacion-lotes import — columna 'Cliente' cae en marca (sync Google Sheets)", () => {
+  it("planilla con encabezado CLIENTE (sin MARCA) igual persiste el valor en marca", () => {
+    const tsv = ["PRODUCTO\tCLIENTE\tLOTE\tFECHA\tCANTIDAD", "SERUM\tECODERM\tS-1\t01/08/2026\t10"].join("\n");
+    const { rows } = mapPaste(tsv);
+    expect(rows[0]!.cliente).toBe("ECODERM");
+    const built = buildAsignacionLoteFromMappedRow(rows[0]!, "Calidad");
+    expect(built.marca).toBe("ECODERM");
+  });
+
+  it("si ambas columnas MARCA y CLIENTE vienen cargadas, MARCA tiene prioridad", () => {
+    const built = buildAsignacionLoteFromMappedRow(
+      { producto: "SERUM", marca: "ROSEHIP-ECODERM", cliente: "ECODERM", lote: "S-1" },
+      "Calidad"
+    );
+    expect(built.marca).toBe("ROSEHIP-ECODERM");
+  });
+});
+
 describe("asignacion-lotes import Excel paste", () => {
   it("ejemplo real: PRODUCTO OLEO CALCAREO + CÓDIGO QSOFT no intercambia columnas", () => {
     const tsv = [

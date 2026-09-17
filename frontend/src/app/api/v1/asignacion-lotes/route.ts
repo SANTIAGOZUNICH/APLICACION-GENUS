@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { getAsignacionLotesService } from "@/lib/asignacion-lotes/asignacion-lotes-service";
 import type {
   AsignacionLoteUpsertInput,
@@ -7,6 +7,39 @@ import { isDatabaseConfigured } from "@/lib/db/client";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
+import { getAsignacionLoteSourcesService } from "@/lib/asignacion-lotes/asignacion-lote-sources-service";
+import { isDueForOpportunisticSync, syncSource } from "@/lib/asignacion-lotes/asignacion-lotes-sync-service";
+
+/**
+ * Sync oportunista (pedido #6): en vez de un cron cada pocos minutos
+ * (Vercel Cron en plan Hobby solo permite 1 vez/día), cada vez que alguien
+ * abre/refresca Asignación de Lotes se aprovecha ese request para
+ * sincronizar las fuentes que ya pasaron su intervalo mínimo — con
+ * `after()` para no demorar la respuesta al usuario. Best-effort: un fallo
+ * acá nunca puede romper el listado que ya se está devolviendo.
+ */
+const OPPORTUNISTIC_SYNC_MIN_INTERVAL_MS = 3 * 60 * 1000;
+
+function scheduleOpportunisticSync(): void {
+  // `after()` lanza sincrónicamente fuera de un request real de Next.js
+  // (por ejemplo, al invocar el handler directo en un test unitario) — eso
+  // nunca puede tumbar el listado que esta misma función ya devolvió.
+  try {
+    after(async () => {
+      try {
+        const sources = await getAsignacionLoteSourcesService().listEnabledForSync();
+        const due = sources.filter((s) => isDueForOpportunisticSync(s, OPPORTUNISTIC_SYNC_MIN_INTERVAL_MS));
+        for (const source of due) {
+          await syncSource(source, "opportunistic", "opportunistic");
+        }
+      } catch {
+        // No-op: el listado ya se respondió; la próxima carga vuelve a intentar.
+      }
+    });
+  } catch {
+    // No-op: fuera de request scope (tests, invocación directa del handler).
+  }
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,6 +65,7 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const includeArchived = url.searchParams.get("includeArchived") === "1";
     const items = await getAsignacionLotesService().list(toActor(actor), { includeArchived });
+    scheduleOpportunisticSync();
     return NextResponse.json({
       items,
       persistenceReady: isDatabaseConfigured(),

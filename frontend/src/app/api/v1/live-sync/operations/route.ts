@@ -119,6 +119,7 @@ type OperationAction =
       reason: string;
       updatedBy?: string;
       actorSectorId?: SectorId;
+      expectedVersion?: number;
     }
   | {
       action: "update_order_ref";
@@ -141,13 +142,16 @@ type OperationAction =
       reason?: string | null;
       updatedBy?: string;
       actorSectorId?: SectorId;
+      expectedVersion?: number;
     }
   | {
       action: "delete_work";
       itemId: string;
+      /** Obligatorio server-side — deleteWorkItemDurable rechaza si viene vacío. */
       reason?: string | null;
       deletedBy?: string;
       actorSectorId?: SectorId;
+      expectedVersion?: number;
     }
   | {
       action: "reschedule_work";
@@ -445,9 +449,10 @@ export async function POST(request: Request) {
         const row = await updateWorkItemLoteVtoDurable(nativeLoteVtoId, {
           packagingLote: body.packagingLote,
           packagingVto: body.packagingVto,
-          reason: body.reason,
+          reason: body.reason ?? "",
           updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
           updatedBySector: actor.sector,
+          expectedVersion: body.expectedVersion,
         });
         return NextResponse.json({ ok: true, revision: row.version, record: row });
       }
@@ -496,6 +501,7 @@ export async function POST(request: Request) {
           reason: body.reason,
           updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
           updatedBySector: actor.sector,
+          expectedVersion: body.expectedVersion,
         });
         return NextResponse.json({ ok: true, revision: row.version, record: row });
       }
@@ -534,8 +540,9 @@ export async function POST(request: Request) {
           );
         }
         const row = await deleteWorkItemDurable(nativeDeleteId, {
-          reason: body.reason,
+          reason: body.reason ?? "",
           deletedBy: body.deletedBy ?? actor.displayName ?? actor.email,
+          expectedVersion: body.expectedVersion,
         });
         return NextResponse.json({ ok: true, revision: row.version, record: row });
       }
