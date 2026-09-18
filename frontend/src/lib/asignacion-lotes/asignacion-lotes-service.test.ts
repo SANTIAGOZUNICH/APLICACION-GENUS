@@ -391,5 +391,41 @@ describe("AsignacionLotesService", () => {
       const stillThere = await svc.get(calidad, record.id);
       expect(stillThere).toBeNull(); // get() ya filtra archivados, igual que el resto del módulo
     });
+
+    it("Hotfix (BUG crítico) — upsertFromSource REVIVE un registro archivado si reaparece con el MISMO contenido exacto", async () => {
+      const svc = getAsignacionLotesService();
+      const { record } = await svc.upsertFromSource("src-1", syncActor, {
+        lote: "G26043",
+        fecha: "2026-09-10",
+        producto: "SERUM",
+        codigo: "VITAMINA C",
+        cantidades: 100,
+        vto: "2028-10-31",
+        updatedBy: syncActor.email,
+      });
+      await svc.archiveRemovedFromSource(record.id, "Asignación de Lotes 2026");
+      expect(await svc.listBySource("src-1")).toHaveLength(0);
+
+      // Antes de este fix: como el contenido es IDÉNTICO al que quedó
+      // archivado, `fieldsDiffer` devolvía false y upsertFromSource
+      // retornaba el registro archivado tal cual (changed:false) SIN
+      // pasar por writeRecord — quedaba invisible para siempre aunque la
+      // fila siguiera en la Sheet. Debe revivirse.
+      const revived = await svc.upsertFromSource("src-1", syncActor, {
+        lote: "G26043",
+        fecha: "2026-09-10",
+        producto: "SERUM",
+        codigo: "VITAMINA C",
+        cantidades: 100,
+        vto: "2028-10-31",
+        updatedBy: syncActor.email,
+      });
+      expect(revived.record.id).toBe(record.id);
+      expect(revived.record.archived).toBe(false);
+      expect(revived.changed).toBe(true);
+      const bySourceAfter = await svc.listBySource("src-1");
+      expect(bySourceAfter).toHaveLength(1);
+      expect(bySourceAfter[0]!.archived).toBe(false);
+    });
   });
 });

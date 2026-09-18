@@ -132,4 +132,78 @@ describe("AsignacionLoteSourcesPanel — conectar planilla con vista previa obli
     expect(screen.getByTestId("asignacion-lote-source-preview-result").textContent).toContain("Conflictos");
     expect(screen.getByTestId("asignacion-lote-source-preview-result").textContent).toContain("G25001");
   });
+
+  it("Hotfix — Sincronizar ahora muestra el resumen REAL (nunca 'éxito' a secas si hay avisos) con VER DETALLE", async () => {
+    const source = {
+      id: "als-1",
+      name: "Asignación de Lotes 2025",
+      period: "2025",
+      spreadsheetId: "abc123",
+      sheetTab: null,
+      enabled: true,
+      priority: 0,
+      lastSyncAt: null,
+      lastSuccessfulSyncAt: null,
+      syncStatus: "nunca_sincronizado",
+      lastError: null,
+      createdBy: "produccion@x.com",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes("/sources") && url.includes("/sync")) {
+        return Promise.resolve(
+          jsonResponse({
+            run: {
+              id: "run-1",
+              sourceId: "als-1",
+              startedAt: "2026-01-01T00:00:00.000Z",
+              finishedAt: "2026-01-01T00:00:05.000Z",
+              status: "parcial",
+              rowsRead: 30,
+              createdCount: 20,
+              updatedCount: 5,
+              unchangedCount: 0,
+              invalidCount: 2,
+              archivedCount: 0,
+              conflictCount: 1,
+              blankCount: 1,
+              duplicateCount: 1,
+              reconciled: true,
+              ignoredTabs: [{ tab: "OBSERVACIONES", reason: "no se reconocieron las columnas mínimas (lote/producto)." }],
+              sheetsTotal: 3,
+              conflictSamples: [{ lote: "G25001", codigo: "", producto: "SERUM", motivo: "Conflicto entre hojas." }],
+              invalidSamples: [{ tab: "ENERO", rowIndex: 5, lote: "", producto: "", motivo: "Falta lote o producto." }],
+              errorMessage: null,
+              triggeredBy: "produccion@x.com",
+              triggerKind: "manual",
+            },
+          })
+        );
+      }
+      if (url.endsWith("/api/v1/asignacion-lotes/sources") && (!init || init.method === undefined)) {
+        return Promise.resolve(jsonResponse({ sources: [source] }));
+      }
+      return Promise.resolve(jsonResponse({ sources: [source] }));
+    });
+    const user = userEvent.setup();
+    render(<AsignacionLoteSourcesPanel session={session} />);
+    await user.click(screen.getByTestId("asignacion-lote-sources-toggle"));
+    await user.click(await screen.findByTestId("asignacion-lote-source-sync-als-1"));
+
+    const summary = await screen.findByTestId("asignacion-lote-source-sync-result-als-1");
+    expect(summary.textContent).toContain("SINCRONIZACIÓN COMPLETADA CON AVISOS");
+    expect(summary.textContent).toContain("3 hoja(s) detectada(s)");
+    expect(summary.textContent).toContain("30 fila(s) de datos leídas");
+    expect(summary.textContent).toContain("+ 20 nuevas");
+    expect(summary.textContent).toContain("↻ 5 actualizadas");
+    expect(summary.textContent).toContain("1 requieren revisión");
+    expect(summary.textContent).toContain("2 inválidas");
+
+    await user.click(screen.getByTestId("asignacion-lote-source-sync-detail-toggle-als-1"));
+    const detail = await screen.findByTestId("asignacion-lote-source-sync-detail-als-1");
+    expect(detail.textContent).toContain("OBSERVACIONES");
+    expect(detail.textContent).toContain("G25001");
+    expect(detail.textContent).toContain("ENERO");
+  });
 });

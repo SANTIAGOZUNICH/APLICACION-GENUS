@@ -232,6 +232,13 @@
       "when": 1789750000000,
       "tag": "0033_asignacion_lote_sources_multi_tab",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1789800000000,
+      "tag": "0034_asignacion_lote_sync_reconciliation",
+      "breakpoints": true
     }
   ]
 }

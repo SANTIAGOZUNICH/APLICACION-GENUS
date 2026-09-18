@@ -63,6 +63,13 @@ async function recordRun(summary: SyncRunSummary): Promise<void> {
       invalidCount: summary.invalidCount,
       archivedCount: summary.archivedCount,
       conflictCount: summary.conflictCount,
+      blankCount: summary.blankCount,
+      duplicateCount: summary.duplicateCount,
+      reconciled: summary.reconciled,
+      ignoredTabs: summary.ignoredTabs,
+      sheetsTotal: summary.sheetsTotal ?? null,
+      conflictSamples: summary.conflictSamples,
+      invalidSamples: summary.invalidSamples,
       errorMessage: summary.errorMessage,
       triggeredBy: summary.triggeredBy,
       triggerKind: summary.triggerKind,
@@ -95,6 +102,13 @@ export async function listSyncRuns(sourceId: string, limit = 20): Promise<SyncRu
       invalidCount: row.invalidCount,
       archivedCount: row.archivedCount,
       conflictCount: row.conflictCount,
+      blankCount: row.blankCount,
+      duplicateCount: row.duplicateCount,
+      reconciled: row.reconciled,
+      ignoredTabs: (row.ignoredTabs as SyncRunSummary["ignoredTabs"]) ?? [],
+      sheetsTotal: row.sheetsTotal ?? undefined,
+      conflictSamples: (row.conflictSamples as SyncRunSummary["conflictSamples"]) ?? [],
+      invalidSamples: (row.invalidSamples as SyncRunSummary["invalidSamples"]) ?? [],
       errorMessage: row.errorMessage,
       triggeredBy: row.triggeredBy,
       triggerKind: row.triggerKind as SyncTriggerKind,
@@ -121,6 +135,29 @@ function rowContentSignature(input: ReturnType<typeof buildAsignacionLoteFromMap
     fechaAnalisis: input.fechaAnalisis,
     observaciones: input.observaciones,
   });
+}
+
+/**
+ * Sección 7 (reconciliación obligatoria): suma de todos los buckets en los
+ * que puede caer una fila leída. Exportada como función pura (sin efectos)
+ * para poder testear la ecuación en sí, además de a través de un sync
+ * completo — nunca debe cerrar en falso salvo que el pipeline tenga un bug.
+ */
+export function reconciliationTotal(
+  summary: Pick<
+    SyncRunSummary,
+    "blankCount" | "invalidCount" | "duplicateCount" | "conflictCount" | "createdCount" | "updatedCount" | "unchangedCount"
+  >
+): number {
+  return (
+    summary.blankCount +
+    summary.invalidCount +
+    summary.duplicateCount +
+    summary.conflictCount +
+    summary.createdCount +
+    summary.updatedCount +
+    summary.unchangedCount
+  );
 }
 
 /**
@@ -152,13 +189,99 @@ async function discoverCompatibleTabs(
   return { compatible, ignored };
 }
 
-/** Lista de hojas a sincronizar — respeta compatibilidad (sección 12): sheetTab fijo = solo esa hoja, igual que antes de 0033. */
-async function resolveTabsToSync(
-  source: AsignacionLoteSource
-): Promise<{ tabs: string[]; ignored: Array<{ tab: string; reason: string }> }> {
-  if (source.sheetTab?.trim()) return { tabs: [source.sheetTab.trim()], ignored: [] };
-  const { compatible, ignored } = await discoverCompatibleTabs(source.spreadsheetId);
-  return { tabs: compatible, ignored };
+/**
+ * Procesa las filas YA LEÍDAS de una hoja — comparte la misma lógica de
+ * clasificación/identidad entre el sync real y la vista previa multi-hoja
+ * (una sola implementación, nunca dos parsers que puedan divergir).
+ * Cada fila cae EXACTAMENTE en uno de estos buckets — ninguna puede
+ * "desaparecer" sin pasar por alguno (sección 7, reconciliación):
+ * blank | invalid | duplicate-en-esta-corrida | conflicto | created/updated/unchanged.
+ */
+async function processTabRows(
+  dataRows: string[][],
+  tab: string,
+  mapping: ReturnType<typeof autoMapColumns>,
+  source: AsignacionLoteSource,
+  lotesService: ReturnType<typeof getAsignacionLotesService>,
+  seenKeysThisRun: Map<string, { signature: string; tab: string }>,
+  seenIds: Set<string>,
+  summary: SyncRunSummary
+): Promise<void> {
+  for (let i = 0; i < dataRows.length; i += 1) {
+    const rowIndex = i + 2; // +1 header, +1 base-1 para que coincida con el número de fila real de la Sheet
+    const mapped = rowToObject(dataRows[i]!, mapping) as Partial<AsignacionLoteMappedRow>;
+
+    if (!mapped.lote?.trim() && !mapped.producto?.trim()) {
+      summary.blankCount += 1; // fila vacía — intencional, nunca cuenta como inválida
+      continue;
+    }
+
+    const issues = validateAsignacionLoteRow(mapped, rowIndex);
+    const hasBlockingError = issues.some((issue) => issue.severity === "error");
+    if (hasBlockingError || !mapped.lote?.trim() || !mapped.producto?.trim()) {
+      // Carga flexible tolera celdas vacías salvo lote/producto — sin eso
+      // no hay nada determinístico que vincular después.
+      summary.invalidCount += 1;
+      if (summary.invalidSamples.length < 20) {
+        summary.invalidSamples.push({
+          tab,
+          rowIndex,
+          lote: mapped.lote?.trim() ?? "",
+          producto: mapped.producto?.trim() ?? "",
+          motivo: issues.map((issue) => issue.message).join("; ") || "Falta lote o producto.",
+        });
+      }
+      continue;
+    }
+
+    const input = buildAsignacionLoteFromMappedRow(mapped, SYNC_ACTOR.email);
+    const key = `${mapped.lote.trim().toLowerCase()}::${(mapped.codigo ?? "").trim().toLowerCase()}`;
+    const signature = rowContentSignature(input);
+    const seenBefore = seenKeysThisRun.get(key);
+    if (seenBefore) {
+      // Sección 10: mismo lote+código visto en OTRA hoja de esta misma
+      // fuente, en esta misma corrida. Idéntico → ya está, no duplica (no
+      // se vuelve a escribir, pero cuenta en la reconciliación). Distinto →
+      // conflicto ENTRE hojas, nunca se elige en silencio cuál vale: se
+      // reporta y se deja tal cual quedó con la primera hoja procesada.
+      if (seenBefore.signature !== signature) {
+        summary.conflictCount += 1;
+        if (summary.conflictSamples.length < 20) {
+          summary.conflictSamples.push({
+            lote: input.lote,
+            codigo: input.codigo,
+            producto: input.producto,
+            motivo: `Conflicto entre hojas — datos distintos en "${seenBefore.tab}" y "${tab}".`,
+            tabs: [seenBefore.tab, tab],
+          });
+        }
+      } else {
+        summary.duplicateCount += 1;
+      }
+      continue;
+    }
+    seenKeysThisRun.set(key, { signature, tab });
+
+    const conflict = await lotesService.findConflictingRecord(source.id, mapped.lote, mapped.codigo ?? "");
+    if (conflict) {
+      summary.conflictCount += 1;
+      if (summary.conflictSamples.length < 20) {
+        summary.conflictSamples.push({
+          lote: input.lote,
+          codigo: input.codigo,
+          producto: input.producto,
+          motivo: `Ya existe con datos distintos en otro origen (${conflict.sourceId ? "otra fuente Google Sheets" : "manual/Excel"}).`,
+        });
+      }
+      continue;
+    }
+
+    const { record, created, changed } = await lotesService.upsertFromSource(source.id, SYNC_ACTOR, input, tab);
+    seenIds.add(record.id);
+    if (created) summary.createdCount += 1;
+    else if (changed) summary.updatedCount += 1;
+    else summary.unchangedCount += 1;
+  }
 }
 
 export async function syncSource(
@@ -184,89 +307,112 @@ export async function syncSource(
     invalidCount: 0,
     archivedCount: 0,
     conflictCount: 0,
+    blankCount: 0,
+    duplicateCount: 0,
+    reconciled: true,
+    ignoredTabs: [],
+    conflictSamples: [],
+    invalidSamples: [],
     errorMessage: null,
     triggeredBy,
     triggerKind,
   };
 
   try {
-    const { tabs } = await resolveTabsToSync(source);
     const seenIds = new Set<string>();
     // Identidad (lote,código) → firma de contenido + hoja de origen — para
     // detectar duplicado EXACTO entre hojas (mismo registro, no duplicar)
     // vs conflicto real entre hojas (mismos datos-clave, contenido distinto
     // → nunca se elige en silencio, se reporta y no se vuelve a escribir).
     const seenKeysThisRun = new Map<string, { signature: string; tab: string }>();
+    // Hojas que SÍ se leyeron y procesaron bien esta corrida — usado para
+    // la guarda de archivado abajo (sección 8: nunca perder datos por un
+    // error transitorio o de formato en una sola hoja).
+    const readableTabs = new Set<string>();
+    let realTabsThisRun: Set<string> | null = null; // solo se usa en modo multi-hoja
 
-    for (const tab of tabs) {
+    if (source.sheetTab?.trim()) {
+      // Hoja específica — comportamiento single-tab preexistente, sin
+      // cambios: un error acá SÍ aborta la corrida completa (siempre lo
+      // hizo — no hay "otras hojas" que proteger).
+      const tab = source.sheetTab.trim();
       const rows = await sheetsReader.readTab(source.spreadsheetId, tab);
       const header = rows[0] ?? [];
       const dataRows = rows.slice(1);
       summary.rowsRead += dataRows.length;
-
       const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+      await processTabRows(dataRows, tab, mapping, source, lotesService, seenKeysThisRun, seenIds, summary);
+      readableTabs.add(tab);
+    } else {
+      // Sin hoja específica: descubrir TODAS las hojas reales (Google
+      // Sheets API — nunca se asumen nombres). Sección 3: un error o
+      // formato no reconocido en UNA hoja NUNCA corta las demás — se
+      // aísla por hoja y se reporta en `ignoredTabs`.
+      const allTabs = await sheetsReader.listTabs(source.spreadsheetId);
+      realTabsThisRun = new Set(allTabs);
+      summary.sheetsTotal = allTabs.length;
 
-      for (let i = 0; i < dataRows.length; i += 1) {
-        const rowIndex = i + 2; // +1 header, +1 base-1 para que coincida con el número de fila real de la Sheet
-        const mapped = rowToObject(dataRows[i]!, mapping) as Partial<AsignacionLoteMappedRow>;
-        if (!mapped.lote?.trim() && !mapped.producto?.trim()) continue; // fila vacía — no cuenta como inválida
-
-        const issues = validateAsignacionLoteRow(mapped, rowIndex);
-        const hasBlockingError = issues.some((issue) => issue.severity === "error");
-        if (hasBlockingError || !mapped.lote?.trim() || !mapped.producto?.trim()) {
-          // Carga flexible tolera celdas vacías salvo lote/producto — sin
-          // eso no hay nada determinístico que vincular después.
-          summary.invalidCount += 1;
-          continue;
+      for (const tab of allTabs) {
+        try {
+          const rows = await sheetsReader.readTab(source.spreadsheetId, tab);
+          const header = rows[0] ?? [];
+          const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+          if (mapping.lote == null || mapping.producto == null) {
+            summary.ignoredTabs.push({
+              tab,
+              reason: "no se reconocieron las columnas mínimas (lote/producto).",
+            });
+            continue;
+          }
+          const dataRows = rows.slice(1);
+          summary.rowsRead += dataRows.length;
+          await processTabRows(dataRows, tab, mapping, source, lotesService, seenKeysThisRun, seenIds, summary);
+          readableTabs.add(tab);
+        } catch (err) {
+          // Una hoja individual que falla (transitorio de Google, permisos,
+          // etc.) nunca puede tumbar la sincronización de las demás.
+          summary.ignoredTabs.push({
+            tab,
+            reason: err instanceof Error ? err.message : "no se pudo leer la hoja.",
+          });
         }
-
-        const input = buildAsignacionLoteFromMappedRow(mapped, SYNC_ACTOR.email);
-        const key = `${mapped.lote.trim().toLowerCase()}::${(mapped.codigo ?? "").trim().toLowerCase()}`;
-        const signature = rowContentSignature(input);
-        const seenBefore = seenKeysThisRun.get(key);
-        if (seenBefore) {
-          // Sección 10: mismo lote+código visto en OTRA hoja de esta misma
-          // fuente, en esta misma corrida. Idéntico → ya está, no duplica
-          // (no se vuelve a escribir). Distinto → conflicto ENTRE hojas,
-          // nunca se elige en silencio cuál vale: se reporta y se deja tal
-          // cual quedó con la primera hoja procesada.
-          if (seenBefore.signature !== signature) summary.conflictCount += 1;
-          continue;
-        }
-        seenKeysThisRun.set(key, { signature, tab });
-
-        const conflict = await lotesService.findConflictingRecord(source.id, mapped.lote, mapped.codigo ?? "");
-        if (conflict) {
-          summary.conflictCount += 1;
-          continue;
-        }
-
-        const { record, created, changed } = await lotesService.upsertFromSource(
-          source.id,
-          SYNC_ACTOR,
-          input,
-          tab
-        );
-        seenIds.add(record.id);
-        if (created) summary.createdCount += 1;
-        else if (changed) summary.updatedCount += 1;
-        else summary.unchangedCount += 1;
       }
     }
 
     // Sección 13: lo que pertenecía a esta fuente y no se vio en esta
     // pasada ya no está en la Sheet — se archiva, nunca se borra físico.
+    // Sección 8 (guarda anti-pérdida): en modo multi-hoja, un registro
+    // NUNCA se archiva si su hoja de origen sigue existiendo en el
+    // spreadsheet pero no se pudo leer/clasificar esta corrida — solo se
+    // archiva cuando estamos seguros de que la fila realmente ya no está
+    // (la hoja se leyó bien y la fila no apareció, o la hoja fue borrada
+    // del spreadsheet).
     const existing = await lotesService.listBySource(source.id);
     for (const record of existing) {
-      if (!seenIds.has(record.id)) {
-        await lotesService.archiveRemovedFromSource(record.id, source.name);
-        summary.archivedCount += 1;
+      if (seenIds.has(record.id)) continue;
+      const recordTab = record.sourceSheetTab;
+      if (realTabsThisRun && recordTab && realTabsThisRun.has(recordTab) && !readableTabs.has(recordTab)) {
+        continue; // protegido — la hoja existe pero quedó ignorada/falló esta corrida
       }
+      await lotesService.archiveRemovedFromSource(record.id, source.name);
+      summary.archivedCount += 1;
     }
 
-    summary.status = summary.invalidCount > 0 || summary.conflictCount > 0 ? "parcial" : "ok";
+    // Sección 7 (reconciliación obligatoria): toda fila leída debe caer en
+    // EXACTAMENTE un bucket conocido. Si no cierra, nunca se afirma éxito.
+    const reconciledTotal = reconciliationTotal(summary);
+    summary.reconciled = reconciledTotal === summary.rowsRead;
+
+    if (!summary.reconciled) {
+      summary.status = "inconsistente";
+      summary.errorMessage = `Se leyeron ${summary.rowsRead} filas pero solo ${reconciledTotal} pudieron ser reconciliadas. ${summary.rowsRead - reconciledTotal} fila(s) no tienen resultado conocido.`;
+    } else if (summary.ignoredTabs.length > 0 || summary.invalidCount > 0 || summary.conflictCount > 0) {
+      summary.status = "parcial";
+    } else {
+      summary.status = "ok";
+    }
     summary.finishedAt = new Date().toISOString();
-    await sourcesService.recordSyncOutcome(source.id, { ok: true });
+    await sourcesService.recordSyncOutcome(source.id, { ok: summary.status !== "inconsistente", error: summary.errorMessage ?? undefined });
   } catch (err) {
     summary.status = "error";
     summary.errorMessage = err instanceof Error ? err.message : "Error desconocido durante la sincronización.";
@@ -434,13 +580,28 @@ export async function previewImport(
     const sheets: ImportPreviewSheetBreakdown[] = [];
 
     for (const compatibleTab of compatible) {
-      const counts = await previewOneTab(spreadsheetId, compatibleTab, lotesService, seenKeysThisRun, conflictSamples);
-      sheets.push({ ...counts, compatible: true });
-      result.rowsFound += counts.rowsFound;
-      result.nuevas += counts.nuevas;
-      result.existentes += counts.existentes;
-      result.conflictos += counts.conflictos;
-      result.invalidas += counts.invalidas;
+      // Sección 3: un error transitorio al previsualizar UNA hoja nunca
+      // corta la vista previa de las demás.
+      try {
+        const counts = await previewOneTab(spreadsheetId, compatibleTab, lotesService, seenKeysThisRun, conflictSamples);
+        sheets.push({ ...counts, compatible: true });
+        result.rowsFound += counts.rowsFound;
+        result.nuevas += counts.nuevas;
+        result.existentes += counts.existentes;
+        result.conflictos += counts.conflictos;
+        result.invalidas += counts.invalidas;
+      } catch (err) {
+        sheets.push({
+          tab: compatibleTab,
+          compatible: false,
+          ignoredReason: err instanceof Error ? err.message : "no se pudo leer la hoja.",
+          rowsFound: 0,
+          nuevas: 0,
+          existentes: 0,
+          conflictos: 0,
+          invalidas: 0,
+        });
+      }
     }
     for (const { tab: ignoredTab, reason } of ignored) {
       sheets.push({
