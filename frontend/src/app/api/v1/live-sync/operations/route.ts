@@ -26,6 +26,7 @@ import {
   deliverWorkDurable,
   nativeIdFromItemId,
   restoreCancelledWorkDurable,
+  restoreDeletedWorkItemDurable,
   restoreDeliveryDurable,
   rescheduleWorkItemDurable,
   reworkWorkItemDurable,
@@ -112,6 +113,13 @@ type OperationAction =
       actorSectorId?: SectorId;
     }
   | {
+      action: "restore_deleted_work";
+      itemId: string;
+      reason?: string | null;
+      restoredBy?: string;
+      actorSectorId?: SectorId;
+    }
+  | {
       action: "update_lote_vto";
       itemId: string;
       packagingLote?: string | null;
@@ -119,6 +127,7 @@ type OperationAction =
       reason: string;
       updatedBy?: string;
       actorSectorId?: SectorId;
+      expectedVersion?: number;
     }
   | {
       action: "update_order_ref";
@@ -141,13 +150,16 @@ type OperationAction =
       reason?: string | null;
       updatedBy?: string;
       actorSectorId?: SectorId;
+      expectedVersion?: number;
     }
   | {
       action: "delete_work";
       itemId: string;
+      /** Obligatorio server-side — deleteWorkItemDurable rechaza si viene vacío. */
       reason?: string | null;
       deletedBy?: string;
       actorSectorId?: SectorId;
+      expectedVersion?: number;
     }
   | {
       action: "reschedule_work";
@@ -429,6 +441,25 @@ export async function POST(request: Request) {
           record,
         });
       }
+      case "restore_deleted_work": {
+        assertBodySectorMatches(body.actorSectorId, actor.sector);
+        const gate = validateWorkMutationActor(actor.sector);
+        if (!gate.ok) {
+          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
+        }
+        const nativeRestoreDeletedId = nativeIdFromItemId(body.itemId);
+        if (!nativeRestoreDeletedId) {
+          return NextResponse.json(
+            { error: "Restauración no disponible para este trabajo.", code: "NOT_NATIVE" },
+            { status: 400 }
+          );
+        }
+        const row = await restoreDeletedWorkItemDurable(nativeRestoreDeletedId, {
+          restoredBy: body.restoredBy ?? actor.displayName ?? actor.email,
+          reason: body.reason,
+        });
+        return NextResponse.json({ ok: true, revision: row.version, record: row });
+      }
       case "update_lote_vto": {
         assertBodySectorMatches(body.actorSectorId, actor.sector);
         const gate = validateWorkMutationActor(actor.sector);
@@ -445,9 +476,10 @@ export async function POST(request: Request) {
         const row = await updateWorkItemLoteVtoDurable(nativeLoteVtoId, {
           packagingLote: body.packagingLote,
           packagingVto: body.packagingVto,
-          reason: body.reason,
+          reason: body.reason ?? "",
           updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
           updatedBySector: actor.sector,
+          expectedVersion: body.expectedVersion,
         });
         return NextResponse.json({ ok: true, revision: row.version, record: row });
       }
@@ -496,6 +528,7 @@ export async function POST(request: Request) {
           reason: body.reason,
           updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
           updatedBySector: actor.sector,
+          expectedVersion: body.expectedVersion,
         });
         return NextResponse.json({ ok: true, revision: row.version, record: row });
       }
@@ -534,8 +567,9 @@ export async function POST(request: Request) {
           );
         }
         const row = await deleteWorkItemDurable(nativeDeleteId, {
-          reason: body.reason,
+          reason: body.reason ?? "",
           deletedBy: body.deletedBy ?? actor.displayName ?? actor.email,
+          expectedVersion: body.expectedVersion,
         });
         return NextResponse.json({ ok: true, revision: row.version, record: row });
       }

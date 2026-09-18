@@ -17,6 +17,8 @@ import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-ada
 import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { OperationalTable, StatusChip, type OperationalTableColumn } from "../components/operational-ui";
 import { AssignedWorkLifecycleActions } from "../components/assigned-work-lifecycle-actions";
+import { WorkItemEditDeleteActions } from "../components/work-item-edit-delete-actions";
+import { DeletedWorkItemsPanel } from "../components/deleted-work-items-panel";
 import { Button } from "@/components/ui/button";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
@@ -227,19 +229,31 @@ export function ProduccionPanelView() {
             key: "acciones",
             header: "Acción",
             render: (r: ActiveRow) => (
-              <AssignedWorkLifecycleActions
-                item={r.item}
-                actorSectorId={sectorId}
-                actorName={workspace.context.displayName}
-                finishedQty={getFinishedQty(r.id)}
-                onOpen={() => navigateTo({ view: sectorViewMap[r.item.sector] })}
-                primaryLabel="Abrir"
-                onChanged={() => {
-                  refreshDecisions();
-                  setPanelTick((v) => v + 1);
-                }}
-                onToast={(message) => showToast(message, "info")}
-              />
+              <div className="flex flex-col items-start gap-1.5">
+                <AssignedWorkLifecycleActions
+                  item={r.item}
+                  actorSectorId={sectorId}
+                  actorName={workspace.context.displayName}
+                  finishedQty={getFinishedQty(r.id)}
+                  onOpen={() => navigateTo({ view: sectorViewMap[r.item.sector] })}
+                  primaryLabel="Abrir"
+                  onChanged={() => {
+                    refreshDecisions();
+                    setPanelTick((v) => v + 1);
+                  }}
+                  onToast={(message) => showToast(message, "info")}
+                />
+                <WorkItemEditDeleteActions
+                  item={r.item}
+                  actorSectorId={sectorId}
+                  actorName={workspace.context.displayName}
+                  onChanged={() => {
+                    refreshDecisions();
+                    setPanelTick((v) => v + 1);
+                  }}
+                  onToast={(message) => showToast(message, "info")}
+                />
+              </div>
             ),
           } satisfies OperationalTableColumn<ActiveRow>,
         ]
@@ -266,6 +280,14 @@ export function ProduccionPanelView() {
           Vista consolidada de planta — Elaboración, Envasado y Calidad.
         </p>
       </header>
+
+      {canMutateWorks ? (
+        <DeletedWorkItemsPanel
+          actorSectorId={sectorId}
+          actorName={workspace.context.displayName}
+          onToast={(message) => showToast(message, "info")}
+        />
+      ) : null}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
         <KpiTile label="Pendientes" value={pendientes} />

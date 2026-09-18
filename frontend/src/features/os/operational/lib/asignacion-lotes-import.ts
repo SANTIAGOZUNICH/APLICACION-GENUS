@@ -134,7 +134,12 @@ export function buildAsignacionLoteFromMappedRow(
     fecha: row.fecha?.trim() ? parseFlexibleDate(row.fecha) ?? row.fecha.trim() : null,
     producto: row.producto?.trim() ?? "",
     codigo: normalizeImportedCodigo(row.codigo),
-    marca: row.marca?.trim() ?? "",
+    // "cliente" es alias de encabezado separado de "marca" (ver
+    // ASIGNACION_LOTES_FIELD_ALIASES) — si la planilla real usa una columna
+    // "Cliente" en vez de "Marca", sin este fallback el dato se mapeaba a
+    // `row.cliente` y nunca llegaba a persistirse (quedaba en un campo que
+    // esta función no leía). Marca tiene prioridad si ambas vinieran cargadas.
+    marca: row.marca?.trim() || row.cliente?.trim() || "",
     cantidades: parseNonNegativeNumber(row.cantidades ?? "") ?? 0,
     vto: row.vto?.trim() ? parseFlexibleDate(row.vto) : null,
     muestras: row.muestras?.trim() ?? "",

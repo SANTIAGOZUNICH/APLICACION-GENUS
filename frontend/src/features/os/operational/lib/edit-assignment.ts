@@ -23,6 +23,8 @@ export async function editWorkItemAssignment(input: {
   reason?: string | null;
   actorSectorId: SectorId;
   updatedBy?: string;
+  /** Concurrencia optimista — ver work-item-progress-repository.ts#assertVersionMatches. */
+  expectedVersion?: number;
 }): Promise<EditAssignmentResult> {
   let response: Response;
   try {
@@ -38,6 +40,7 @@ export async function editWorkItemAssignment(input: {
       reason: input.reason,
       updatedBy: input.updatedBy,
       actorSectorId: input.actorSectorId,
+      expectedVersion: input.expectedVersion,
     });
   } catch {
     return { ok: false, error: "Sin conexión con el servidor. Reintentá." };
@@ -45,6 +48,13 @@ export async function editWorkItemAssignment(input: {
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string; code?: string };
+    if (response.status === 409) {
+      return {
+        ok: false,
+        error: "⚠ Este trabajo fue modificado mientras lo estabas editando. Actualizá y revisá antes de guardar.",
+        code: "VERSION_CONFLICT",
+      };
+    }
     return { ok: false, error: body.error ?? "No se pudo editar el trabajo.", code: body.code };
   }
   return { ok: true };

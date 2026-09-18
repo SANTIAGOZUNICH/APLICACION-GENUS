@@ -67,6 +67,8 @@ import {
   canAccessAsignacionLotes,
   canMutateAsignacionLotes,
 } from "../lib/asignacion-lotes-rbac";
+import { canConfigureAsignacionLoteSources } from "../lib/asignacion-lote-sources-rbac";
+import { AsignacionLoteSourcesPanel } from "../components/asignacion-lote-sources-panel";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { SmartPasteDialog } from "../components/smart-paste-dialog";
 import {
@@ -589,6 +591,10 @@ export function AsignacionLotesView() {
             : "Sincronizado con servidor — caché local como respaldo offline"}
         </div>
 
+        {canConfigureAsignacionLoteSources(workspace.context.sectorId) ? (
+          <AsignacionLoteSourcesPanel session={session} />
+        ) : null}
+
         {feedback && (
           <p className="rounded-[var(--os-radius-sm)] border border-[var(--os-teal)]/30 bg-[var(--os-teal-soft)]/40 px-4 py-2 text-sm font-medium text-[var(--os-teal)]">
             {feedback}
@@ -889,6 +895,11 @@ export function AsignacionLotesView() {
               <DialogTitle>{editing ? "Editar asignación" : "Nuevo lote"}</DialogTitle>
               <DialogDescription>El duplicado lote + código se bloquea para evitar doble carga.</DialogDescription>
             </DialogHeader>
+            {editing?.sourceId ? (
+              <p className="text-xs text-[var(--os-text-muted)]" data-testid="asignacion-lote-origin-badge">
+                Origen: Google Sheets (sincronizado automáticamente)
+              </p>
+            ) : null}
             <form onSubmit={saveForm} className="space-y-4">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <Field label="Lote*" value={form.lote} onChange={(value) => setForm((f) => ({ ...f, lote: value }))} />

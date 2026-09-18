@@ -857,6 +857,12 @@ export const asignacionLotes = pgTable(
     observaciones: text("observaciones").notNull().default(""),
     archived: boolean("archived").notNull().default(false),
     deletedReason: text("deleted_reason"),
+    /**
+     * Nullable (0032) — null = carga manual o "Pegar desde Excel" (sin
+     * cambios). Solo lo setea el sync de Google Sheets — permite mostrar
+     * "Origen: Google Sheets · <fuente>" y detectar conflicto entre fuentes.
+     */
+    sourceId: text("source_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by").notNull().default(""),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -867,7 +873,57 @@ export const asignacionLotes = pgTable(
       .on(table.lote, table.codigo)
       .where(sql`${table.archived} = false`),
     index("asignacion_lotes_fecha_idx").on(table.fecha),
+    index("asignacion_lotes_source_id_idx").on(table.sourceId),
   ]
+);
+
+/**
+ * Fuentes configurables de Asignación de Lotes (0032) — Google Sheets como
+ * fuente externa. Nunca hardcodeado a un spreadsheetId: conectar una
+ * planilla nueva (ej. 2027) es una fila acá, no un deploy.
+ */
+export const asignacionLoteSources = pgTable(
+  "asignacion_lote_sources",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    period: text("period").notNull().default(""),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    sheetTab: text("sheet_tab").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    priority: integer("priority").notNull().default(0),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    lastSuccessfulSyncAt: timestamp("last_successful_sync_at", { withTimezone: true }),
+    syncStatus: text("sync_status").notNull().default("nunca_sincronizado"),
+    lastError: text("last_error"),
+    createdBy: text("created_by").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("asignacion_lote_sources_enabled_idx").on(table.enabled)]
+);
+
+/** Auditoría por ejecución de sync (ISO 9001) — a nivel fuente, no WorkItem. */
+export const asignacionLoteSyncRuns = pgTable(
+  "asignacion_lote_sync_runs",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id").references(() => asignacionLoteSources.id, { onDelete: "cascade" }),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    status: text("status").notNull().default("en_progreso"),
+    rowsRead: integer("rows_read").notNull().default(0),
+    createdCount: integer("created_count").notNull().default(0),
+    updatedCount: integer("updated_count").notNull().default(0),
+    unchangedCount: integer("unchanged_count").notNull().default(0),
+    invalidCount: integer("invalid_count").notNull().default(0),
+    archivedCount: integer("archived_count").notNull().default(0),
+    conflictCount: integer("conflict_count").notNull().default(0),
+    errorMessage: text("error_message"),
+    triggeredBy: text("triggered_by").notNull().default(""),
+    triggerKind: text("trigger_kind").notNull().default("manual"),
+  },
+  (table) => [index("asignacion_lote_sync_runs_source_idx").on(table.sourceId, table.startedAt)]
 );
 
 /** COA metadata — binarios en Drive; migración 0005. */

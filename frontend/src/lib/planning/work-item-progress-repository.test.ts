@@ -19,8 +19,9 @@ function createFakeDb() {
   function matchCond(row: Record<string, unknown>, cond: unknown): boolean {
     if (!cond) return true;
     if (Array.isArray(cond)) return cond.every((c) => matchCond(row, c));
-    const c = cond as { __eq?: [string, unknown] };
+    const c = cond as { __eq?: [string, unknown]; __isNotNull?: string };
     if (c.__eq) return row[c.__eq[0]] === c.__eq[1];
+    if (c.__isNotNull) return row[c.__isNotNull] != null;
     // Predicado SQL crudo (ej. version + 1, IS NULL OR = id) — no
     // introspectable en el fake; se trata como cierto (mismo criterio que
     // work-assignment-service.test.ts).
@@ -55,6 +56,15 @@ function createFakeDb() {
               .filter((r) => matchCond(r, cond))
               .slice(0, n)
               .map((r) => ({ ...r }))
+          );
+        },
+        // Drizzle real es awaitable en .where() sin necesitar .limit() —
+        // algunas consultas de solo lectura (ej. listDeletedWorkItemsDurable)
+        // no acotan resultados. Sin esto, `await tx.select()...where(...)`
+        // resuelve al objeto `api` en vez de las filas.
+        then(resolve: (v: FakeRow[]) => unknown) {
+          return Promise.resolve(
+            resolve([...target.values()].filter((r) => matchCond(r, cond)).map((r) => ({ ...r })))
           );
         },
       };
@@ -129,6 +139,9 @@ vi.mock("drizzle-orm", async () => {
     ne: (col: { name?: string } | string, val: unknown) => ({
       __ne: [typeof col === "string" ? col : (col as { name?: string }).name ?? "id", val],
     }),
+    isNotNull: (col: { name?: string } | string) => ({
+      __isNotNull: typeof col === "string" ? col : (col as { name?: string }).name ?? "id",
+    }),
     or: (...args: unknown[]) => args,
     desc: (col: unknown) => col,
     sql: actual.sql,
@@ -157,6 +170,8 @@ vi.mock("@/lib/db/schema", () => {
     "line",
     "operationalStatus",
     "deletedAt",
+    "deletedBy",
+    "deleteReason",
     "packagingLote",
     "packagingVto",
     "packagingTotalUnits",
@@ -281,6 +296,220 @@ describe("updateWorkItemPlanningDurable — Fecha de producción y patch parcial
     expect(row.plannedDate).toBe("2026-08-25");
     const event = fakeDbHandle.operationalEvents[0] as { fromStatus: string; toStatus: string };
     expect(Object.keys(JSON.parse(event.toStatus))).toEqual(["notes"]);
+  });
+
+  it("concurrencia: expectedVersion coincide -> guarda y sube la versión", async () => {
+    fakeDbHandle.workItems.set("wi-1", { ...fakeDbHandle.workItems.get("wi-1")!, version: 1 });
+    const row = await updateWorkItemPlanningDurable("wi-1", {
+      notes: "Con control de versión",
+      reason: "Test",
+      expectedVersion: 1,
+      ...actorArgs,
+    });
+    expect((row as { version: number }).version).toBe(2);
+  });
+
+  it("concurrencia: expectedVersion desactualizada -> rechaza SIN mutar, nunca pisa un cambio ajeno más reciente", async () => {
+    fakeDbHandle.workItems.set("wi-1", { ...fakeDbHandle.workItems.get("wi-1")!, version: 3 });
+    await expect(
+      updateWorkItemPlanningDurable("wi-1", {
+        notes: "Pantalla vieja",
+        reason: "Test",
+        expectedVersion: 1,
+        ...actorArgs,
+      })
+    ).rejects.toMatchObject({ name: "PlanningValidationError" });
+    expect(fakeDbHandle.workItems.get("wi-1")!.notes).toBe("Nota original");
+    expect(fakeDbHandle.workItems.get("wi-1")!.version).toBe(3);
+  });
+
+  it("sin expectedVersion (callers existentes) -> se comporta igual que antes, no rechaza", async () => {
+    fakeDbHandle.workItems.set("wi-1", { ...fakeDbHandle.workItems.get("wi-1")!, version: 5 });
+    const row = await updateWorkItemPlanningDurable("wi-1", {
+      notes: "Sin control de versión",
+      reason: "Test",
+      ...actorArgs,
+    });
+    expect(row.notes).toBe("Sin control de versión");
+  });
+});
+
+describe("updateWorkItemLoteVtoDurable — corrección manual de Lote/VTO (fake tx)", () => {
+  let updateWorkItemLoteVtoDurable: typeof import("./work-item-progress-repository").updateWorkItemLoteVtoDurable;
+
+  const actorArgs = { updatedBy: "produccion@laboratoriogenus.com.ar", updatedBySector: "PRODUCCION" as const };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ updateWorkItemLoteVtoDurable } = await import("./work-item-progress-repository"));
+    fakeDbHandle.workItems.set("wi-lv", {
+      id: "wi-lv",
+      packagingLote: "G26043",
+      packagingVto: "2028-10-31",
+      planningWeekId: "week-1",
+      version: 1,
+    });
+  });
+
+  it("motivo obligatorio: sin motivo rechaza sin mutar", async () => {
+    await expect(
+      updateWorkItemLoteVtoDurable("wi-lv", { packagingLote: "G26044", reason: "", ...actorArgs })
+    ).rejects.toThrow();
+    expect(fakeDbHandle.workItems.get("wi-lv")!.packagingLote).toBe("G26043");
+  });
+
+  it("corrige lote y vto con motivo, audita before/after y sube versión", async () => {
+    const row = await updateWorkItemLoteVtoDurable("wi-lv", {
+      packagingLote: "G26044",
+      packagingVto: "2028-11-30",
+      reason: "Corrección informada por Producción",
+      ...actorArgs,
+    });
+    expect(row.packagingLote).toBe("G26044");
+    expect(row.packagingVto).toBe("2028-11-30");
+    expect((row as { version: number }).version).toBe(2);
+    const event = fakeDbHandle.operationalEvents[0] as { type: string; fromStatus: string; toStatus: string };
+    expect(event.type).toBe("LOTE_VTO_CORRECTED");
+    expect(JSON.parse(event.fromStatus)).toEqual({ lote: "G26043", vto: "2028-10-31" });
+    expect(JSON.parse(event.toStatus)).toEqual({ lote: "G26044", vto: "2028-11-30" });
+  });
+
+  it("concurrencia: expectedVersion desactualizada -> rechaza, nunca pisa una corrección más reciente", async () => {
+    fakeDbHandle.workItems.set("wi-lv", { ...fakeDbHandle.workItems.get("wi-lv")!, version: 4 });
+    await expect(
+      updateWorkItemLoteVtoDurable("wi-lv", {
+        packagingLote: "G26099",
+        reason: "Pantalla vieja",
+        expectedVersion: 1,
+        ...actorArgs,
+      })
+    ).rejects.toMatchObject({ name: "PlanningValidationError" });
+    expect(fakeDbHandle.workItems.get("wi-lv")!.packagingLote).toBe("G26043");
+  });
+});
+
+describe("deleteWorkItemDurable — soft delete/tombstone de Producción (fake tx)", () => {
+  let deleteWorkItemDurable: typeof import("./work-item-progress-repository").deleteWorkItemDurable;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ deleteWorkItemDurable } = await import("./work-item-progress-repository"));
+    fakeDbHandle.workItems.set("wi-del", {
+      id: "wi-del",
+      sector: "ENVASADO_MASIVO",
+      product: "SERUM",
+      client: "NIZA",
+      operationalStatus: "pendiente",
+      planningWeekId: "week-1",
+      deletedAt: null,
+      version: 1,
+    });
+  });
+
+  it("motivo obligatorio: sin motivo rechaza, nunca borra sin auditoría", async () => {
+    await expect(
+      deleteWorkItemDurable("wi-del", { reason: "", deletedBy: "produccion@x.com" })
+    ).rejects.toThrow();
+    expect(fakeDbHandle.workItems.get("wi-del")!.deletedAt).toBeNull();
+  });
+
+  it("soft delete con motivo: setea deletedAt/deletedBy/deleteReason, nunca borra la fila, sube versión", async () => {
+    const row = await deleteWorkItemDurable("wi-del", {
+      reason: "Pedido duplicado",
+      deletedBy: "produccion@x.com",
+    });
+    expect(row.deletedAt).not.toBeNull();
+    expect(row.deletedBy).toBe("produccion@x.com");
+    expect(row.deleteReason).toBe("Pedido duplicado");
+    expect((row as { version: number }).version).toBe(2);
+    expect(fakeDbHandle.workItems.has("wi-del")).toBe(true); // nunca DELETE físico
+  });
+
+  it("idempotente: borrar dos veces no duplica el evento de auditoría", async () => {
+    await deleteWorkItemDurable("wi-del", { reason: "Motivo", deletedBy: "produccion@x.com" });
+    await deleteWorkItemDurable("wi-del", { reason: "Motivo otra vez", deletedBy: "produccion@x.com" });
+    expect(fakeDbHandle.operationalEvents).toHaveLength(1);
+  });
+
+  it("concurrencia: expectedVersion desactualizada -> rechaza sin eliminar", async () => {
+    fakeDbHandle.workItems.set("wi-del", { ...fakeDbHandle.workItems.get("wi-del")!, version: 4 });
+    await expect(
+      deleteWorkItemDurable("wi-del", {
+        reason: "Pantalla vieja",
+        deletedBy: "produccion@x.com",
+        expectedVersion: 1,
+      })
+    ).rejects.toMatchObject({ name: "PlanningValidationError" });
+    expect(fakeDbHandle.workItems.get("wi-del")!.deletedAt).toBeNull();
+  });
+});
+
+describe("listDeletedWorkItemsDurable / restoreDeletedWorkItemDurable — Ver eliminados (fake tx)", () => {
+  let listDeletedWorkItemsDurable: typeof import("./work-item-progress-repository").listDeletedWorkItemsDurable;
+  let restoreDeletedWorkItemDurable: typeof import("./work-item-progress-repository").restoreDeletedWorkItemDurable;
+  let deleteWorkItemDurable: typeof import("./work-item-progress-repository").deleteWorkItemDurable;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ listDeletedWorkItemsDurable, restoreDeletedWorkItemDurable, deleteWorkItemDurable } = await import(
+      "./work-item-progress-repository"
+    ));
+    fakeDbHandle.workItems.set("wi-active", {
+      id: "wi-active",
+      sector: "ENVASADO_MASIVO",
+      product: "CREMA",
+      client: "NIZA",
+      operationalStatus: "pendiente",
+      planningWeekId: "week-1",
+      deletedAt: null,
+      version: 1,
+    });
+    fakeDbHandle.workItems.set("wi-deleted", {
+      id: "wi-deleted",
+      sector: "ENVASADO_MASIVO",
+      product: "SERUM",
+      client: "ECODERM",
+      operationalStatus: "pendiente",
+      planningWeekId: "week-1",
+      deletedAt: null,
+      version: 1,
+    });
+  });
+
+  it("solo lista trabajos con deletedAt informado — nunca los activos", async () => {
+    await deleteWorkItemDurable("wi-deleted", { reason: "Pedido duplicado", deletedBy: "produccion@x.com" });
+    const deleted = await listDeletedWorkItemsDurable();
+    expect(deleted.map((r) => r.id)).toEqual(["wi-deleted"]);
+  });
+
+  it("restaura un trabajo eliminado: limpia deletedAt/deletedBy/deleteReason y sube versión", async () => {
+    await deleteWorkItemDurable("wi-deleted", { reason: "Pedido duplicado", deletedBy: "produccion@x.com" });
+    const restored = await restoreDeletedWorkItemDurable("wi-deleted", { restoredBy: "produccion@x.com" });
+    expect(restored.deletedAt).toBeNull();
+    expect(restored.deletedBy).toBeNull();
+    expect(restored.deleteReason).toBeNull();
+    expect((restored as { version: number }).version).toBe(3); // delete(2) + restore(3)
+    const deleted = await listDeletedWorkItemsDurable();
+    expect(deleted).toHaveLength(0);
+  });
+
+  it("restaurar un trabajo que NO está eliminado rechaza — no confunde con restoreCancelledWorkDurable", async () => {
+    await expect(
+      restoreDeletedWorkItemDurable("wi-active", { restoredBy: "produccion@x.com" })
+    ).rejects.toThrow("no está eliminado");
+  });
+
+  it("restaurar nunca borra OA/entregas/remitos/historial — solo toca las 3 columnas de borrado + version", async () => {
+    await deleteWorkItemDurable("wi-deleted", { reason: "Motivo", deletedBy: "produccion@x.com" });
+    const before = { ...fakeDbHandle.workItems.get("wi-deleted")! };
+    const restored = await restoreDeletedWorkItemDurable("wi-deleted", { restoredBy: "produccion@x.com" });
+    expect(restored.sector).toBe(before.sector);
+    expect(restored.product).toBe(before.product);
+    expect(restored.client).toBe(before.client);
+    expect(fakeDbHandle.operationalEvents.some((e) => (e as { type: string }).type === "WORK_ITEM_RESTORED_BY_PRODUCCION")).toBe(true);
   });
 });
 

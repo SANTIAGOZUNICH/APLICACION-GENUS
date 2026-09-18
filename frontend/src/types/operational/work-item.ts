@@ -111,6 +111,13 @@ export interface WorkItem {
   /** Avance operativo en vivo (Genus OS — no Sheets). */
   finishedQty?: string | null;
   operationalObservation?: string | null;
+  /**
+   * Concurrencia optimista (solo work items nativos/Neon) — la pantalla debe
+   * reenviarla como `expectedVersion` al guardar una edición/eliminación
+   * para que el servidor rechace si otra pantalla ya lo modificó mientras
+   * tanto. `undefined` en fuentes no nativas (Sheets) — no aplica ahí.
+   */
+  version?: number;
   /** Lote PT asignado en Producción / Envasado (opcional). */
   packagingLote?: string | null;
   /** Vencimiento PT (opcional, ISO o texto operativo). */

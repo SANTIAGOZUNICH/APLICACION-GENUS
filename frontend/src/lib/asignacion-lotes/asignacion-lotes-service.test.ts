@@ -260,4 +260,136 @@ describe("AsignacionLotesService", () => {
       ).rejects.toThrow(OrdersValidationError);
     });
   });
+
+  describe("upsertFromSource — sincronización Google Sheets (0032)", () => {
+    const syncActor = { email: "sync@sistema", displayName: "Sync" };
+
+    it("primera vez: crea el registro y marca sourceId", async () => {
+      const svc = getAsignacionLotesService();
+      const { record, created, changed } = await svc.upsertFromSource("src-1", syncActor, {
+        lote: "G26043",
+        fecha: "2026-09-10",
+        producto: "SERUM",
+        codigo: "VITAMINA C",
+        marca: "ECODERM",
+        cantidades: 100,
+        vto: "2028-10-31",
+        updatedBy: syncActor.email,
+      });
+      expect(created).toBe(true);
+      expect(changed).toBe(true);
+      expect(record.sourceId).toBe("src-1");
+      expect(record.lote).toBe("G26043");
+    });
+
+    it("mover la fila (mismo lote+código) en una segunda pasada actualiza el MISMO registro, nunca duplica", async () => {
+      const svc = getAsignacionLotesService();
+      const first = await svc.upsertFromSource("src-1", syncActor, {
+        lote: "G26043",
+        fecha: "2026-09-10",
+        producto: "SERUM",
+        codigo: "VITAMINA C",
+        marca: "ECODERM",
+        cantidades: 100,
+        vto: "2028-10-31",
+        updatedBy: syncActor.email,
+      });
+      const second = await svc.upsertFromSource("src-1", syncActor, {
+        lote: "G26043",
+        fecha: "2026-09-10",
+        producto: "SERUM",
+        codigo: "VITAMINA C",
+        marca: "ECODERM",
+        cantidades: 100,
+        vto: "2028-10-31",
+        updatedBy: syncActor.email,
+      });
+      expect(second.created).toBe(false);
+      expect(second.changed).toBe(false);
+      expect(second.record.id).toBe(first.record.id);
+      const bySource = await svc.listBySource("src-1");
+      expect(bySource).toHaveLength(1);
+    });
+
+    it("VTO actualizado en la fuente actualiza el registro existente (changed=true) y persiste el nuevo valor", async () => {
+      const svc = getAsignacionLotesService();
+      const first = await svc.upsertFromSource("src-1", syncActor, {
+        lote: "G26043",
+        fecha: "2026-09-10",
+        producto: "SERUM",
+        codigo: "VITAMINA C",
+        marca: "ECODERM",
+        cantidades: 100,
+        vto: "2028-10-31",
+        updatedBy: syncActor.email,
+      });
+      const second = await svc.upsertFromSource("src-1", syncActor, {
+        lote: "G26043",
+        fecha: "2026-09-10",
+        producto: "SERUM",
+        codigo: "VITAMINA C",
+        marca: "ECODERM",
+        cantidades: 100,
+        vto: "2028-11-30",
+        updatedBy: syncActor.email,
+      });
+      expect(second.changed).toBe(true);
+      expect(second.record.id).toBe(first.record.id);
+      expect(second.record.vto).toBe("2028-11-30");
+    });
+
+    it("sincronizar 100 veces sin cambios produce exactamente el mismo estado (idempotencia)", async () => {
+      const svc = getAsignacionLotesService();
+      let lastId: string | null = null;
+      for (let i = 0; i < 100; i += 1) {
+        const { record } = await svc.upsertFromSource("src-1", syncActor, {
+          lote: "G26043",
+          fecha: "2026-09-10",
+          producto: "SERUM",
+          codigo: "VITAMINA C",
+          marca: "ECODERM",
+          cantidades: 100,
+          vto: "2028-10-31",
+          updatedBy: syncActor.email,
+        });
+        if (lastId) expect(record.id).toBe(lastId);
+        lastId = record.id;
+      }
+      const bySource = await svc.listBySource("src-1");
+      expect(bySource).toHaveLength(1);
+    });
+
+    it("mismo lote+código ya cargado MANUALMENTE (otra fuente/sin fuente) -> conflicto, nunca se fusiona en silencio", async () => {
+      const svc = getAsignacionLotesService();
+      await svc.upsert(calidad, {
+        lote: "G26043",
+        fecha: "2026-09-10",
+        producto: "SERUM",
+        codigo: "VITAMINA C",
+        marca: "ECODERM",
+        cantidades: 100,
+        updatedBy: "Calidad",
+      });
+      const conflict = await svc.findConflictingRecord("src-1", "G26043", "VITAMINA C");
+      expect(conflict).not.toBeNull();
+      expect(conflict?.marca).toBe("ECODERM");
+    });
+
+    it("archiveRemovedFromSource archiva (nunca borra físico) y deja motivo con el nombre de la fuente", async () => {
+      const svc = getAsignacionLotesService();
+      const { record } = await svc.upsertFromSource("src-1", syncActor, {
+        lote: "G26043",
+        fecha: "2026-09-10",
+        producto: "SERUM",
+        codigo: "VITAMINA C",
+        cantidades: 100,
+        updatedBy: syncActor.email,
+      });
+      await svc.archiveRemovedFromSource(record.id, "Asignación de Lotes 2026");
+      const bySource = await svc.listBySource("src-1");
+      expect(bySource).toHaveLength(0);
+      const stillThere = await svc.get(calidad, record.id);
+      expect(stillThere).toBeNull(); // get() ya filtra archivados, igual que el resto del módulo
+    });
+  });
 });

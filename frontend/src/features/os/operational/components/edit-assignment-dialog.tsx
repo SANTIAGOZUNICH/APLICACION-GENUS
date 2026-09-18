@@ -98,6 +98,7 @@ export function EditAssignmentDialog({
         reason,
         actorSectorId,
         updatedBy: actorName,
+        expectedVersion: item.version,
       });
       if (!loteResult.ok) {
         setBusy(false);
@@ -133,6 +134,7 @@ export function EditAssignmentDialog({
         reason,
         actorSectorId,
         updatedBy: actorName,
+        expectedVersion: item.version,
       });
       if (!result.ok) {
         setBusy(false);

@@ -117,6 +117,11 @@ const WORK_ITEM_SELECT_COLUMNS = {
   pedidoOp: productionPedidos.op,
 } as const;
 
+/** Exportada para lecturas puntuales fuera del repositorio (ver work-items/[id] GET — fresh-fetch antes de editar). */
+export function mapWorkItemRow(row: WorkItemRow | Record<string, unknown>): PlanningWorkItemRecord {
+  return mapItem(row);
+}
+
 function mapItem(row: WorkItemRow | Record<string, unknown>): PlanningWorkItemRecord {
   const r = row as WorkItemRow;
   return {
