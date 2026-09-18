@@ -910,6 +910,151 @@ export async function decideQualityDurable(
   return row;
 }
 
+export interface QualityBatchDecisionInput {
+  decidedBy: string;
+  decidedBySector: SectorId | string;
+  observation?: string;
+  batchId: string;
+}
+
+export type QualityBatchItemOutcome =
+  | {
+      id: string;
+      status: "ok";
+      snapshot: {
+        product: string;
+        client: string;
+        plannedDate: string | null;
+        plannedDateTo: string | null;
+        lote: string | null;
+        quantity: string | null;
+      };
+    }
+  | { id: string; status: "already"; currentStatus: "aprobado" | "rechazado" }
+  | { id: string; status: "error"; message: string };
+
+/**
+ * Aprobación masiva de Calidad — cada id se procesa en su propia transacción
+ * (una fila que falla no revierte ni bloquea al resto del lote). Idempotente
+ * frente a doble click/retry: la escritura solo aplica si qualityStatus
+ * seguía en 'pendiente' en el momento del UPDATE (WHERE id=… AND
+ * quality_status='pendiente'); si otra decisión ganó la carrera entre la
+ * lectura y la escritura, se relee y se informa "already"/"error" en vez de
+ * pisarla. Nunca toca packagingLote/packagingVto/packingGroups/finishedQty —
+ * los mismos campos "fill-once" protegidos en el resto de este archivo.
+ */
+export async function decideQualityBatchDurable(
+  ids: string[],
+  decision: "aprobado",
+  input: QualityBatchDecisionInput
+): Promise<QualityBatchItemOutcome[]> {
+  const db = getDb();
+  const results: QualityBatchItemOutcome[] = [];
+  for (const id of ids) {
+    try {
+      const outcome = await db.transaction(async (tx): Promise<QualityBatchItemOutcome> => {
+        const [existing] = await tx
+          .select({
+            id: workItems.id,
+            qualityStatus: workItems.qualityStatus,
+            deletedAt: workItems.deletedAt,
+            planningWeekId: workItems.planningWeekId,
+            product: workItems.product,
+            client: workItems.client,
+            plannedDate: workItems.plannedDate,
+            plannedDateTo: workItems.plannedDateTo,
+            packagingLote: workItems.packagingLote,
+            finishedQty: workItems.finishedQty,
+            plannedQuantity: workItems.plannedQuantity,
+          })
+          .from(workItems)
+          .where(eq(workItems.id, id))
+          .limit(1);
+        if (!existing) {
+          return { id, status: "error", message: "Trabajo no encontrado." };
+        }
+        if (existing.deletedAt) {
+          return { id, status: "error", message: "Este trabajo fue eliminado por Producción." };
+        }
+        if (existing.qualityStatus !== "pendiente") {
+          if (existing.qualityStatus === decision) {
+            return { id, status: "already", currentStatus: existing.qualityStatus as "aprobado" | "rechazado" };
+          }
+          return {
+            id,
+            status: "error",
+            message: `Ya tiene una decisión distinta (${existing.qualityStatus}).`,
+          };
+        }
+
+        const now = new Date();
+        const [row] = await tx
+          .update(workItems)
+          .set({
+            qualityStatus: decision,
+            qualityDecidedAt: now,
+            qualityDecidedBy: input.decidedBy,
+            qualityDecidedBySector: String(input.decidedBySector),
+            qualityObservation: input.observation?.trim() || null,
+            qualityChangeReason: null,
+            updatedAt: now,
+          })
+          .where(and(eq(workItems.id, id), eq(workItems.qualityStatus, "pendiente")))
+          .returning();
+
+        if (!row) {
+          // Perdió la carrera: otra decisión se aplicó entre el SELECT y el UPDATE.
+          const [reread] = await tx
+            .select({ qualityStatus: workItems.qualityStatus })
+            .from(workItems)
+            .where(eq(workItems.id, id))
+            .limit(1);
+          if (reread?.qualityStatus === decision) {
+            return { id, status: "already", currentStatus: reread.qualityStatus as "aprobado" | "rechazado" };
+          }
+          return {
+            id,
+            status: "error",
+            message: "El trabajo cambió de estado mientras se procesaba.",
+          };
+        }
+
+        await tx.insert(operationalEvents).values({
+          workItemId: id,
+          planningWeekId: existing.planningWeekId,
+          type: "QUALITY_APPROVED",
+          fromStatus: "pendiente",
+          toStatus: decision,
+          actorEmail: input.decidedBy,
+          actorSector: String(input.decidedBySector),
+          note: `batchId=${input.batchId}·lote=${existing.packagingLote ?? "-"}`,
+        });
+
+        return {
+          id,
+          status: "ok",
+          snapshot: {
+            product: existing.product,
+            client: existing.client,
+            plannedDate: existing.plannedDate,
+            plannedDateTo: existing.plannedDateTo,
+            lote: existing.packagingLote,
+            quantity: existing.finishedQty ?? existing.plannedQuantity,
+          },
+        };
+      });
+      results.push(outcome);
+    } catch (err) {
+      results.push({
+        id,
+        status: "error",
+        message: err instanceof Error ? err.message : "No se pudo procesar.",
+      });
+    }
+  }
+  return results;
+}
+
 export async function annulQualityDecisionDurable(
   id: string,
   input: { reason: string; decidedBy: string; decidedBySector: SectorId | string; decidedByEmail?: string }

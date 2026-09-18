@@ -184,6 +184,12 @@ vi.mock("@/lib/db/schema", () => {
     "productionPedidoId",
     "finishedQty",
     "version",
+    "qualityStatus",
+    "qualityDecidedAt",
+    "qualityDecidedBy",
+    "qualityDecidedBySector",
+    "qualityObservation",
+    "qualityChangeReason",
   ];
   const orderCols = ["id", "orderNumber", "type", "linkedWorkItemId", "version"];
   const deliveryCols = [
@@ -1131,5 +1137,168 @@ describe("deliverWorkDurable — el servidor relee TODO dato canónico de Neon, 
     await expect(
       deliverWorkDurable({ ...baseInput, workItemId: "wi-inexistente" } as never)
     ).rejects.toThrow("Work item no encontrado.");
+  });
+});
+
+describe("decideQualityBatchDurable — aprobación masiva de Calidad (fake tx)", () => {
+  let decideQualityBatchDurable: typeof import("./work-item-progress-repository").decideQualityBatchDurable;
+
+  const actorArgs = {
+    decidedBy: "calidad@laboratoriogenus.com.ar",
+    decidedBySector: "CALIDAD" as const,
+    batchId: "batch-1",
+  };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ decideQualityBatchDurable } = await import("./work-item-progress-repository"));
+    fakeDbHandle.workItems.set("wi-1", {
+      id: "wi-1",
+      qualityStatus: "pendiente",
+      deletedAt: null,
+      planningWeekId: "week-1",
+      product: "SHAVING GEL",
+      client: "NOCE CANA",
+      plannedDate: "2026-09-10",
+      plannedDateTo: null,
+      packagingLote: "G26043",
+      packagingVto: "2028-10",
+      packingGroups: [{ cajas: 10, unidadesPorCaja: 100 }],
+      finishedQty: "1000",
+      plannedQuantity: "1000",
+    });
+    fakeDbHandle.workItems.set("wi-2", {
+      id: "wi-2",
+      qualityStatus: "pendiente",
+      deletedAt: null,
+      planningWeekId: "week-1",
+      product: "SERUM NIACINAMIDA",
+      client: "NIZA",
+      plannedDate: "2026-09-11",
+      plannedDateTo: null,
+      packagingLote: "A26042",
+      packagingVto: "2028-11",
+      packingGroups: [{ cajas: 5, unidadesPorCaja: 50 }],
+      finishedQty: "500",
+      plannedQuantity: "500",
+    });
+  });
+
+  it("aprueba varios ids pendientes — un resultado 'ok' y un evento de auditoría independiente por cada uno", async () => {
+    const results = await decideQualityBatchDurable(["wi-1", "wi-2"], "aprobado", actorArgs);
+    expect(results).toEqual([
+      {
+        id: "wi-1",
+        status: "ok",
+        snapshot: {
+          product: "SHAVING GEL",
+          client: "NOCE CANA",
+          plannedDate: "2026-09-10",
+          plannedDateTo: null,
+          lote: "G26043",
+          quantity: "1000",
+        },
+      },
+      {
+        id: "wi-2",
+        status: "ok",
+        snapshot: {
+          product: "SERUM NIACINAMIDA",
+          client: "NIZA",
+          plannedDate: "2026-09-11",
+          plannedDateTo: null,
+          lote: "A26042",
+          quantity: "500",
+        },
+      },
+    ]);
+    expect(fakeDbHandle.workItems.get("wi-1")!.qualityStatus).toBe("aprobado");
+    expect(fakeDbHandle.workItems.get("wi-1")!.qualityDecidedBy).toBe(actorArgs.decidedBy);
+    expect(fakeDbHandle.workItems.get("wi-1")!.qualityDecidedBySector).toBe("CALIDAD");
+    expect(fakeDbHandle.operationalEvents).toHaveLength(2);
+    const [event1, event2] = fakeDbHandle.operationalEvents as Array<Record<string, unknown>>;
+    expect(event1).toMatchObject({
+      workItemId: "wi-1",
+      type: "QUALITY_APPROVED",
+      fromStatus: "pendiente",
+      toStatus: "aprobado",
+      actorEmail: actorArgs.decidedBy,
+      actorSector: "CALIDAD",
+      note: "batchId=batch-1·lote=G26043",
+    });
+    expect(event2).toMatchObject({ workItemId: "wi-2", note: "batchId=batch-1·lote=A26042" });
+  });
+
+  it("idempotente frente a doble click/retry: reintentar sobre ids ya aprobados devuelve 'already', sin duplicar auditoría", async () => {
+    await decideQualityBatchDurable(["wi-1"], "aprobado", actorArgs);
+    expect(fakeDbHandle.operationalEvents).toHaveLength(1);
+    const retry = await decideQualityBatchDurable(["wi-1"], "aprobado", actorArgs);
+    expect(retry).toEqual([{ id: "wi-1", status: "already", currentStatus: "aprobado" }]);
+    // Ningún evento nuevo — la segunda llamada no vuelve a decidir ni a auditar.
+    expect(fakeDbHandle.operationalEvents).toHaveLength(1);
+  });
+
+  it("nunca pisa una decisión distinta ya tomada (rechazado) — la reporta como error, no la sobreescribe", async () => {
+    fakeDbHandle.workItems.get("wi-1")!.qualityStatus = "rechazado";
+    const results = await decideQualityBatchDurable(["wi-1"], "aprobado", actorArgs);
+    expect(results).toEqual([
+      { id: "wi-1", status: "error", message: "Ya tiene una decisión distinta (rechazado)." },
+    ]);
+    expect(fakeDbHandle.workItems.get("wi-1")!.qualityStatus).toBe("rechazado");
+    expect(fakeDbHandle.operationalEvents).toHaveLength(0);
+  });
+
+  it("id inexistente → error individual, no interrumpe el resto del lote", async () => {
+    const results = await decideQualityBatchDurable(["wi-inexistente", "wi-1"], "aprobado", actorArgs);
+    expect(results[0]).toEqual({ id: "wi-inexistente", status: "error", message: "Trabajo no encontrado." });
+    expect(results[1]).toMatchObject({ id: "wi-1", status: "ok" });
+  });
+
+  it("un trabajo eliminado por Producción no puede aprobarse", async () => {
+    fakeDbHandle.workItems.get("wi-1")!.deletedAt = new Date("2026-09-01T00:00:00Z");
+    const results = await decideQualityBatchDurable(["wi-1"], "aprobado", actorArgs);
+    expect(results).toEqual([
+      { id: "wi-1", status: "error", message: "Este trabajo fue eliminado por Producción." },
+    ]);
+    expect(fakeDbHandle.workItems.get("wi-1")!.qualityStatus).toBe("pendiente");
+  });
+
+  it("resultado parcial: ok + error conviven en el mismo lote sin abortarse entre sí", async () => {
+    const results = await decideQualityBatchDurable(
+      ["wi-1", "wi-inexistente", "wi-2"],
+      "aprobado",
+      actorArgs
+    );
+    expect(results.map((r) => r.status)).toEqual(["ok", "error", "ok"]);
+  });
+
+  it("nunca toca lote/VTO/packing/cantidades — solo las columnas quality_*", async () => {
+    await decideQualityBatchDurable(["wi-1"], "aprobado", actorArgs);
+    const row = fakeDbHandle.workItems.get("wi-1")!;
+    expect(row.packagingLote).toBe("G26043");
+    expect(row.packagingVto).toBe("2028-10");
+    expect(row.packingGroups).toEqual([{ cajas: 10, unidadesPorCaja: 100 }]);
+    expect(row.finishedQty).toBe("1000");
+  });
+
+  it("concurrencia: si otro proceso decide el mismo trabajo entre la lectura y la escritura, relee en vez de pisarlo", async () => {
+    const realUpdate = fakeDbHandle.tx.update.bind(fakeDbHandle.tx);
+    let intercepted = false;
+    fakeDbHandle.tx.update = ((table: { __name: string }) => {
+      if (!intercepted) {
+        intercepted = true;
+        // Simula que otra decisión (rechazado) ganó la carrera justo antes del UPDATE guardado.
+        fakeDbHandle.workItems.get("wi-1")!.qualityStatus = "rechazado";
+      }
+      return realUpdate(table);
+    }) as typeof fakeDbHandle.tx.update;
+
+    const results = await decideQualityBatchDurable(["wi-1"], "aprobado", actorArgs);
+    expect(results).toEqual([
+      { id: "wi-1", status: "error", message: "El trabajo cambió de estado mientras se procesaba." },
+    ]);
+    expect(fakeDbHandle.workItems.get("wi-1")!.qualityStatus).toBe("rechazado");
+    expect(fakeDbHandle.operationalEvents).toHaveLength(0);
   });
 });

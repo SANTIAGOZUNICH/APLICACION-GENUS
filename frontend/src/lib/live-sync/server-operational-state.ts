@@ -197,6 +197,11 @@ class ServerOperationalState {
     return { progress, completion };
   }
 
+  /** Decisión actual (si existe) — usado por la aprobación masiva para no pisar una decisión previa distinta. */
+  getQualityDecision(itemId: string): QualityDecisionRecord | undefined {
+    return this.decisions.get(itemId);
+  }
+
   decideQuality(
     itemId: string,
     status: QualityDecisionStatus,

@@ -10,6 +10,7 @@ import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types"
 import { AuthUnauthorizedError } from "@/lib/auth/types";
 import { PlanningValidationError } from "@/lib/planning/types";
 import type { WorkItem } from "@/types/operational/work-item";
+import type { QualityBatchItemResult } from "@/features/os/operational/types";
 import type { SectorId } from "@/types/operational/sector";
 import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
 import { notifyEnvasadoForApproval } from "@/lib/notifications/approval-envasado-notify";
@@ -20,6 +21,7 @@ import {
   archiveDeliveryDurable,
   cancelWorkDurable,
   completeWorkDurable,
+  decideQualityBatchDurable,
   decideQualityDurable,
   deleteDeliveryRecordDurable,
   deleteWorkItemDurable,
@@ -81,6 +83,14 @@ type OperationAction =
       lote?: string | null;
       quantity?: string | null;
       relatedWorkItemId?: string | null;
+    }
+  | {
+      action: "quality_approve_batch";
+      itemIds: string[];
+      batchId: string;
+      decidedBy?: string;
+      observation?: string;
+      actorSectorId?: SectorId;
     }
   | {
       action: "quality_annul";
@@ -335,6 +345,120 @@ export async function POST(request: Request) {
           ok: true,
           revision: serverOperationalState.getRevision(),
           record,
+        });
+      }
+      case "quality_approve_batch": {
+        assertBodySectorMatches(body.actorSectorId, actor.sector);
+        const gate = validateQualityDecisionActor(actor.sector);
+        if (!gate.ok) {
+          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
+        }
+        const itemIds = Array.isArray(body.itemIds)
+          ? [...new Set(body.itemIds.filter((id): id is string => typeof id === "string" && id.trim() !== ""))]
+          : [];
+        if (itemIds.length === 0) {
+          return NextResponse.json(
+            { error: "No se recibieron trabajos para aprobar.", code: "EMPTY_BATCH" },
+            { status: 400 }
+          );
+        }
+        const batchId = typeof body.batchId === "string" && body.batchId.trim() ? body.batchId.trim() : `calidad-${Date.now()}`;
+        const decidedBy = body.decidedBy ?? actor.displayName ?? actor.email;
+
+        const nativeEntries = itemIds
+          .map((itemId) => ({ itemId, nativeId: nativeIdFromItemId(itemId) }))
+          .filter((e): e is { itemId: string; nativeId: string } => e.nativeId != null);
+        const legacyIds = itemIds.filter((itemId) => nativeIdFromItemId(itemId) == null);
+
+        const results: QualityBatchItemResult[] = [];
+        const approvedForNotify: Array<{
+          itemId: string;
+          product: string;
+          client: string;
+          plannedDate: string | null;
+          plannedDateTo: string | null;
+          lote: string | null;
+          quantity: string | null;
+        }> = [];
+
+        if (nativeEntries.length > 0) {
+          const outcomes = await decideQualityBatchDurable(
+            nativeEntries.map((e) => e.nativeId),
+            "aprobado",
+            { decidedBy, decidedBySector: actor.sector, observation: body.observation, batchId }
+          );
+          outcomes.forEach((outcome, idx) => {
+            const itemId = nativeEntries[idx].itemId;
+            if (outcome.status === "ok") {
+              results.push({ id: itemId, status: "ok" });
+              approvedForNotify.push({ itemId, ...outcome.snapshot });
+            } else if (outcome.status === "already") {
+              results.push({ id: itemId, status: "already", currentStatus: outcome.currentStatus });
+            } else {
+              results.push({ id: itemId, status: "error", message: outcome.message });
+            }
+          });
+        }
+
+        // Ítems legado (no nativos, overlay en memoria) — mismo criterio de
+        // no pisar una decisión previa distinta, sin transacción real porque
+        // este estado vive en un único proceso Node (no hay carrera entre
+        // requests concurrentes de otra instancia).
+        for (const itemId of legacyIds) {
+          const previous = serverOperationalState.getQualityDecision(itemId);
+          if (previous?.status === "aprobado") {
+            results.push({ id: itemId, status: "already", currentStatus: "aprobado" });
+            continue;
+          }
+          if (previous?.status === "rechazado") {
+            results.push({
+              id: itemId,
+              status: "error",
+              message: "Ya tiene una decisión distinta (rechazado).",
+            });
+            continue;
+          }
+          try {
+            serverOperationalState.decideQuality(itemId, "aprobado", {
+              decidedBy,
+              observation: body.observation,
+              decidedBySector: actor.sector,
+              decidedByEmail: actor.email,
+            });
+            results.push({ id: itemId, status: "ok" });
+          } catch (err) {
+            results.push({
+              id: itemId,
+              status: "error",
+              message: err instanceof Error ? err.message : "No se pudo procesar.",
+            });
+          }
+        }
+
+        if (actor.sector === "CALIDAD" || actor.sector === "PRODUCCION") {
+          for (const item of approvedForNotify) {
+            await notifyEnvasadoForApproval(
+              actor,
+              {
+                itemId: item.itemId,
+                product: item.product,
+                client: item.client,
+                plannedDate: item.plannedDate,
+                plannedDateTo: item.plannedDateTo,
+                lote: item.lote,
+                quantity: item.quantity,
+                relatedWorkItemId: item.itemId,
+              },
+              actor.sector
+            );
+          }
+        }
+
+        return NextResponse.json({
+          ok: true,
+          revision: serverOperationalState.getRevision(),
+          batchId,
+          results,
         });
       }
       case "quality_annul": {

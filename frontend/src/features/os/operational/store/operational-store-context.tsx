@@ -14,10 +14,18 @@ import type { SectorId } from "@/types/operational/sector";
 import {
   postCompleteWork,
   postQualityAnnul,
+  postQualityApproveBatch,
   postQualityDecision,
   postSaveProgress,
+  type QualityApproveBatchResponse,
 } from "@/lib/api/live-sync-client";
-import type { CompletionEvent, QualityDecisionStatus, OperationalOverlay, QualityItem } from "../types";
+import type {
+  CompletionEvent,
+  QualityBatchItemResult,
+  QualityDecisionStatus,
+  OperationalOverlay,
+  QualityItem,
+} from "../types";
 import {
   gateQualityDecision,
   type QualityDecisionAttempt,
@@ -65,6 +73,16 @@ export type QualityAnnulOptions = {
   actorEmail?: string;
 };
 
+export type QualityApproveBatchOptions = {
+  actorSectorId: SectorId;
+  decidedBy?: string;
+  observation?: string;
+};
+
+export type QualityBatchAttempt =
+  | { ok: true; batchId: string; results: QualityBatchItemResult[] }
+  | { ok: false; error: string };
+
 interface OperationalStoreValue {
   decisionMap: DecisionMap;
   progressMap: ProgressMap;
@@ -82,6 +100,11 @@ interface OperationalStoreValue {
     options: QualityDecisionOptions
   ) => Promise<QualityDecisionAttempt>;
   annulQualityItem: (itemId: string, options: QualityAnnulOptions) => Promise<QualityDecisionAttempt>;
+  /** Aprobación masiva — un resultado individual por id (ok/already/error), nunca un conteo agregado único. */
+  approveQualityItemsBatch: (
+    itemIds: string[],
+    options: QualityApproveBatchOptions
+  ) => Promise<QualityBatchAttempt>;
   getWorkStatus: (itemId: string, seedStatus: WorkItemStatus) => WorkItemStatus;
   getFinishedQty: (itemId: string) => string;
   getObservation: (itemId: string) => string;
@@ -292,6 +315,50 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
         };
       }
       return { ok: true };
+    },
+    [syncFromStorage]
+  );
+
+  const approveQualityItemsBatch = useCallback(
+    async (
+      itemIds: string[],
+      options: QualityApproveBatchOptions
+    ): Promise<QualityBatchAttempt> => {
+      const gate = gateQualityDecision(options.actorSectorId);
+      if (!gate.ok) {
+        return { ok: false, error: gate.error };
+      }
+      const batchId = `calidad-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      let response: QualityApproveBatchResponse;
+      try {
+        response = await postQualityApproveBatch({
+          itemIds,
+          batchId,
+          decidedBy: options.decidedBy,
+          observation: options.observation,
+          actorSectorId: options.actorSectorId,
+        });
+      } catch (err) {
+        return {
+          ok: false,
+          error:
+            err instanceof Error ? err.message : "No se pudo procesar la aprobación masiva.",
+        };
+      }
+      // Overlay optimista local — solo para los ids que el servidor confirmó
+      // como aprobados (ok) o ya aprobados (already); los que fallaron
+      // permanecen tal cual, sin tocar su estado local.
+      for (const result of response.results) {
+        if (result.status === "ok" || result.status === "already") {
+          recordQualityDecision(result.id, "aprobado", {
+            decidedBy: options.decidedBy,
+            decidedBySector: options.actorSectorId,
+            observation: options.observation,
+          });
+        }
+      }
+      syncFromStorage();
+      return { ok: true, batchId: response.batchId, results: response.results };
     },
     [syncFromStorage]
   );
@@ -580,6 +647,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       approveQualityItem,
       rejectQualityItem,
       annulQualityItem,
+      approveQualityItemsBatch,
       getWorkStatus,
       getFinishedQty,
       getObservation,
@@ -602,6 +670,7 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       approveQualityItem,
       rejectQualityItem,
       annulQualityItem,
+      approveQualityItemsBatch,
       getWorkStatus,
       getFinishedQty,
       getObservation,

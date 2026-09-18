@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
@@ -54,7 +54,10 @@ import { canAccessRemitos } from "@/lib/remitos/types";
 import { isPackagingQualityItem } from "@/lib/remitos/from-quality";
 import { CodificadoTracePanel } from "../components/codificado-trace-panel";
 import { WorkItemWarningBadge } from "../components/work-item-warning-badge";
+import { useListSelectionMode } from "../components/list-selection-mode";
+import { getWorkItemWarnings } from "@/lib/planning/work-item-warnings";
 import { resolveWorkItemForQualityItem } from "../lib/resolve-quality-work-item";
+import type { QualityBatchItemResult } from "../types";
 import { FormulasAdminPanel } from "../components/formulas-admin-panel";
 import { LifecycleRowActions } from "../components/lifecycle-row-actions";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
@@ -168,6 +171,7 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     approveQualityItem,
     rejectQualityItem,
     annulQualityItem,
+    approveQualityItemsBatch,
     progressMap,
   } = useOperationalStore();
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
@@ -213,6 +217,103 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
     [qualityItems]
   );
 
+  /**
+   * Selección múltiple para aprobación masiva — reusa useListSelectionMode
+   * (mismo mecanismo que las otras pantallas con selección) forzado siempre
+   * activo (nunca hay un botón "Entrar en modo selección" acá: el checkbox
+   * de cada fila ya está siempre disponible para Calidad). SOLO sobre los
+   * registros efectivamente visibles en la sub-pestaña actual (Elaboraciones
+   * o Envasados) — el propio hook recorta la selección cada vez que
+   * `currentVisibleIds` cambia (cambio de sub-pestaña, filtro o un ítem que
+   * deja de estar pendiente), nunca arrastra selección invisible.
+   */
+  const currentPendingList = subTab === "elaboracion" ? granelesPendientes : salidasPendientes;
+  const currentVisibleIds = useMemo(
+    () => currentPendingList.map((row) => row.id),
+    [currentPendingList]
+  );
+  const sel = useListSelectionMode(currentVisibleIds);
+  const {
+    active: selectionActive,
+    enter: enterSelection,
+    isSelected: isRowSelected,
+    toggle: toggleRow,
+    selectAllVisible,
+    deselectAll,
+    selectedIds: selectedIdSet,
+  } = sel;
+  useEffect(() => {
+    if (!selectionActive) enterSelection();
+  }, [selectionActive, enterSelection]);
+
+  const allVisibleSelected =
+    currentVisibleIds.length > 0 && currentVisibleIds.every((id) => isRowSelected(id));
+  const someVisibleSelected = currentVisibleIds.some((id) => isRowSelected(id));
+  const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectAllCheckboxRef.current) {
+      selectAllCheckboxRef.current.indeterminate = someVisibleSelected && !allVisibleSelected;
+    }
+  }, [someVisibleSelected, allVisibleSelected]);
+
+  const selectedQualityItems = useMemo(
+    () => currentPendingList.filter((row) => selectedIdSet.has(row.id)),
+    [currentPendingList, selectedIdSet]
+  );
+
+  const [showApproveConfirm, setShowApproveConfirm] = useState(false);
+  const [approveBatchBusy, setApproveBatchBusy] = useState(false);
+  const [approveBatchError, setApproveBatchError] = useState<string | null>(null);
+  const [approveBatchResult, setApproveBatchResult] = useState<QualityBatchItemResult[] | null>(
+    null
+  );
+
+  const handleApproveBatch = useCallback(async () => {
+    if (selectedQualityItems.length === 0) return;
+    if (!canDecideQuality(sectorId)) {
+      setApproveBatchError(QUALITY_DECISION_DENIED_MESSAGE);
+      showToast(QUALITY_DECISION_DENIED_MESSAGE, "info");
+      return;
+    }
+    setApproveBatchBusy(true);
+    setApproveBatchError(null);
+    const ids = selectedQualityItems.map((row) => row.id);
+    const result = await approveQualityItemsBatch(ids, {
+      actorSectorId: sectorId,
+      decidedBy: workspace.context.displayName,
+    });
+    setApproveBatchBusy(false);
+    if (!result.ok) {
+      setApproveBatchError(result.error);
+      showToast(result.error, "info");
+      return;
+    }
+    const okCount = result.results.filter((r) => r.status === "ok").length;
+    const alreadyCount = result.results.filter((r) => r.status === "already").length;
+    const errorCount = result.results.filter((r) => r.status === "error").length;
+    // Limpia selección solo de los procesados (ok/already) — los que
+    // fallaron quedan seleccionados en Pendientes para reintentar/revisar.
+    for (const r of result.results) {
+      if (r.status !== "error" && isRowSelected(r.id)) toggleRow(r.id);
+    }
+    setApproveBatchResult(result.results);
+    setShowApproveConfirm(false);
+    const parts = [`${okCount} aprobado${okCount === 1 ? "" : "s"}`];
+    if (alreadyCount > 0) parts.push(`${alreadyCount} ya estaba${alreadyCount === 1 ? "" : "n"} aprobado${alreadyCount === 1 ? "" : "s"}`);
+    if (errorCount > 0) parts.push(`${errorCount} no pudo${errorCount === 1 ? "" : "ieron"} procesarse`);
+    showToast(parts.join(" · "));
+    await refresh();
+  }, [
+    selectedQualityItems,
+    sectorId,
+    approveQualityItemsBatch,
+    workspace.context.displayName,
+    showToast,
+    refresh,
+    isRowSelected,
+    toggleRow,
+  ]);
+
   const [aprobadosSort, setAprobadosSort] = useSortPreference(
     "calidad-aprobados",
     "completado_desc",
@@ -243,6 +344,19 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
   );
 
   const workItems = useMemo(() => data?.workItems ?? [], [data?.workItems]);
+
+  const selectedItemsWithWarnings = useMemo(
+    () =>
+      selectedQualityItems.map((row) => {
+        const wi = resolveWorkItemForQualityItem(workItems, row);
+        return { row, warnings: wi ? getWorkItemWarnings(wi) : [] };
+      }),
+    [selectedQualityItems, workItems]
+  );
+  const selectedWithWarningsCount = selectedItemsWithWarnings.filter(
+    (x) => x.warnings.length > 0
+  ).length;
+
   const canShowRemitos = canAccessRemitos(sectorId);
   const remitoActions = useRemitoAprobadosActions({
     aprobados,
@@ -715,12 +829,95 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
               activeId={subTab}
               onChange={(id) => setSubTab(id as PendingSubTabId)}
             />
+            {approveBatchResult && approveBatchResult.some((r) => r.status === "error") && (
+              <div
+                className="rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/25 bg-[var(--genus-error-soft)] px-4 py-3 text-sm text-[var(--genus-error)]"
+                data-testid="calidad-batch-result-errors"
+              >
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <strong>
+                    {approveBatchResult.filter((r) => r.status === "error").length} trabajo
+                    {approveBatchResult.filter((r) => r.status === "error").length === 1 ? "" : "s"} no{" "}
+                    {approveBatchResult.filter((r) => r.status === "error").length === 1 ? "pudo" : "pudieron"} procesarse:
+                  </strong>
+                  <button
+                    type="button"
+                    className="text-xs underline"
+                    onClick={() => setApproveBatchResult(null)}
+                  >
+                    Descartar
+                  </button>
+                </div>
+                <ul className="list-disc space-y-0.5 pl-4">
+                  {approveBatchResult
+                    .filter((r) => r.status === "error")
+                    .map((r) => {
+                      const item = qualityItems.find((qi) => qi.id === r.id);
+                      return (
+                        <li key={r.id}>
+                          {item ? displayField(item.product) : r.id}: {r.message}
+                        </li>
+                      );
+                    })}
+                </ul>
+              </div>
+            )}
+            {canDecide && (
+              <div
+                className="flex flex-wrap items-center gap-3 rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2"
+                data-testid="calidad-bulk-toolbar"
+              >
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <input
+                    ref={selectAllCheckboxRef}
+                    type="checkbox"
+                    className="size-4 accent-[var(--os-teal)]"
+                    checked={allVisibleSelected}
+                    disabled={currentVisibleIds.length === 0}
+                    onChange={() => (allVisibleSelected ? deselectAll() : selectAllVisible())}
+                    data-testid="calidad-select-all"
+                  />
+                  Seleccionar todos
+                </label>
+                <span className="text-sm text-[var(--os-text-muted)]" data-testid="calidad-selected-count">
+                  {selectedQualityItems.length} seleccionado{selectedQualityItems.length === 1 ? "" : "s"}
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={selectedQualityItems.length === 0 || approveBatchBusy}
+                  onClick={() => setShowApproveConfirm(true)}
+                  data-testid="calidad-approve-selected"
+                >
+                  Aprobar seleccionados
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={selectedQualityItems.length === 0 || approveBatchBusy}
+                  onClick={deselectAll}
+                >
+                  Quitar selección
+                </Button>
+                {approveBatchError && (
+                  <span role="alert" className="text-xs text-[var(--genus-error)]">
+                    {approveBatchError}
+                  </span>
+                )}
+              </div>
+            )}
             {subTab === "elaboracion" && (
               <OperationalTable
                 columns={granelColumns}
                 rows={granelesPendientes}
                 rowKey={(row) => row.id}
                 emptyMessage="Sin graneles pendientes de revisión."
+                selection={
+                  canDecide
+                    ? { active: true, isSelected: isRowSelected, onToggle: toggleRow }
+                    : undefined
+                }
               />
             )}
             {subTab === "acondicionamiento" && (
@@ -729,6 +926,11 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                 rows={salidasPendientes}
                 rowKey={(row) => row.id}
                 emptyMessage="Sin salidas pendientes de aprobación."
+                selection={
+                  canDecide
+                    ? { active: true, isSelected: isRowSelected, onToggle: toggleRow }
+                    : undefined
+                }
               />
             )}
           </div>
@@ -971,6 +1173,76 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
         cancelLabel="Cancelar"
         onConfirm={handleApprove}
       />
+
+      <Dialog
+        open={showApproveConfirm}
+        onOpenChange={(open) => {
+          if (!approveBatchBusy) setShowApproveConfirm(open);
+        }}
+      >
+        <DialogContent data-testid="calidad-approve-batch-dialog">
+          <DialogHeader>
+            <DialogTitle>APROBAR {selectedItemsWithWarnings.length} TRABAJO{selectedItemsWithWarnings.length === 1 ? "" : "S"}</DialogTitle>
+            <DialogDescription>
+              {selectedItemsWithWarnings.length} seleccionado{selectedItemsWithWarnings.length === 1 ? "" : "s"} ·{" "}
+              {selectedItemsWithWarnings.length - selectedWithWarningsCount} sin advertencias ·{" "}
+              {selectedWithWarningsCount} con datos faltantes
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-80 space-y-2 overflow-y-auto">
+            {selectedItemsWithWarnings.map(({ row, warnings }) => (
+              <div
+                key={row.id}
+                className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] px-3 py-2 text-sm"
+                data-testid="calidad-approve-batch-row"
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                  <span className="font-medium">{displayField(row.product)}</span>
+                  <span className="text-xs text-[var(--os-text-muted)]">{displayField(row.client)}</span>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-[var(--os-text-muted)]">
+                  <span>Lote: {displayField(row.lote)}</span>
+                  <span>VTO: {displayField(row.vto)}</span>
+                  <span>Cantidad final: {displayField(row.finishedQty ?? row.quantity)}</span>
+                </div>
+                {warnings.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {warnings.map((w) => (
+                      <span
+                        key={w.code}
+                        className="inline-flex items-center gap-1 rounded-full bg-[var(--genus-error-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--genus-error)]"
+                      >
+                        <span aria-hidden="true">🔴</span>
+                        {w.label}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          {selectedWithWarningsCount > 0 && (
+            <p className="text-xs text-[var(--os-text-muted)]">
+              Los datos faltantes no bloquean la aprobación — Calidad puede aprobar igual.
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={approveBatchBusy}
+              onClick={() => setShowApproveConfirm(false)}
+            >
+              Cancelar
+            </Button>
+            <Button type="button" disabled={approveBatchBusy} onClick={() => void handleApproveBatch()}>
+              {approveBatchBusy
+                ? "Aprobando…"
+                : `Confirmar aprobación de ${selectedItemsWithWarnings.length}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={annulTarget !== null}

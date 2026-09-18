@@ -10,6 +10,7 @@ import {
 } from "@/lib/auth/header-names";
 import type { SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
+import type { QualityBatchItemResult } from "@/features/os/operational/types";
 
 function jsonActorHeaders(): HeadersInit {
   const session = getCurrentAuthSession();
@@ -206,6 +207,35 @@ export async function postQualityDecision(payload: {
       (body as { error?: string } | null)?.error ?? "No se pudo registrar la decisión en el servidor."
     );
   }
+}
+
+export interface QualityApproveBatchResponse {
+  ok: boolean;
+  batchId: string;
+  results: QualityBatchItemResult[];
+}
+
+/** Aprobación masiva de Calidad — un resultado individual por id, nunca un conteo agregado único. */
+export async function postQualityApproveBatch(payload: {
+  itemIds: string[];
+  batchId: string;
+  decidedBy?: string;
+  observation?: string;
+  actorSectorId?: string;
+}): Promise<QualityApproveBatchResponse> {
+  const response = await fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "quality_approve_batch", ...payload }),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      (body as { error?: string } | null)?.error ?? "No se pudo procesar la aprobación masiva."
+    );
+  }
+  return body as QualityApproveBatchResponse;
 }
 
 export async function postQualityAnnul(payload: {
