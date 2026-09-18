@@ -74,7 +74,7 @@ function SyncResultSummary({
   detailOpen: boolean;
   onToggleDetail: () => void;
 }) {
-  const hasProblems = run.invalidCount > 0 || run.conflictCount > 0 || run.ignoredTabs.length > 0;
+  const hasProblems = run.invalidCount > 0 || run.conflictCount > 0;
   const headline =
     run.status === "inconsistente"
       ? "🔴 SINCRONIZACIÓN INCONSISTENTE"
@@ -96,21 +96,19 @@ function SyncResultSummary({
       data-testid={`asignacion-lote-source-sync-result-${run.sourceId}`}
     >
       <p className="font-semibold">{headline}</p>
-      {run.sheetsTotal != null ? <p>{run.sheetsTotal} hoja(s) detectada(s)</p> : null}
       <p>{run.rowsRead} fila(s) de datos leídas</p>
       <p>+ {run.createdCount} nuevas</p>
       <p>↻ {run.updatedCount} actualizadas</p>
       <p>= {run.unchangedCount} sin cambios</p>
       {run.conflictCount > 0 ? <p>⚠ {run.conflictCount} requieren revisión (conflicto)</p> : null}
       {run.invalidCount > 0 ? <p>✕ {run.invalidCount} inválidas</p> : null}
-      {run.duplicateCount > 0 ? <p>{run.duplicateCount} duplicado(s) exacto(s) entre hojas — no se re-escriben</p> : null}
+      {run.duplicateCount > 0 ? <p>{run.duplicateCount} fila(s) repetida(s) idénticas — no se re-escriben</p> : null}
       {run.archivedCount > 0 ? <p>{run.archivedCount} archivada(s) (ya no están en la fuente)</p> : null}
-      {run.ignoredTabs.length > 0 ? <p>⚠ {run.ignoredTabs.length} hoja(s) no se pudieron leer/clasificar esta corrida — sus datos existentes quedaron protegidos, no se tocaron</p> : null}
       {!run.reconciled ? (
         <p className="font-semibold">{run.errorMessage}</p>
       ) : null}
 
-      {(run.conflictSamples.length > 0 || run.invalidSamples.length > 0 || run.ignoredTabs.length > 0) ? (
+      {(run.conflictSamples.length > 0 || run.invalidSamples.length > 0) ? (
         <>
           <button
             type="button"
@@ -122,18 +120,6 @@ function SyncResultSummary({
           </button>
           {detailOpen ? (
             <div className="mt-1 space-y-2" data-testid={`asignacion-lote-source-sync-detail-${run.sourceId}`}>
-              {run.ignoredTabs.length > 0 ? (
-                <div>
-                  <p className="font-medium">Hojas ignoradas:</p>
-                  <ul className="list-disc pl-4">
-                    {run.ignoredTabs.map((t) => (
-                      <li key={t.tab}>
-                        &quot;{t.tab}&quot; — {t.reason}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
               {run.conflictSamples.length > 0 ? (
                 <div>
                   <p className="font-medium">Conflictos:</p>
@@ -401,7 +387,7 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--os-text-muted)]">Hoja específica (opcional)</label>
+              <label className="mb-1 block text-xs text-[var(--os-text-muted)]">Hoja (tab)</label>
               <input
                 className={CONTROL_CLASS}
                 value={form.sheetTab}
@@ -413,7 +399,7 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
                 data-testid="asignacion-lote-source-sheet-tab-input"
               />
               <p className="mt-1 text-xs text-[var(--os-text-muted)]">
-                Dejalo vacío para importar todas las hojas.
+                Una fuente = una hoja específica del spreadsheet.
               </p>
             </div>
 
@@ -462,7 +448,7 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
                 type="button"
                 variant="secondary"
                 size="sm"
-                disabled={previewing}
+                disabled={previewing || !form.sheetTab.trim()}
                 onClick={handlePreviewImport}
                 data-testid="asignacion-lote-source-preview-import"
               >
@@ -482,30 +468,6 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
                 {previewResult.ok ? (
                   <>
                     <p className="font-medium">Antes de importar definitivamente:</p>
-                    {previewResult.sheets ? (
-                      <>
-                        <p>
-                          {previewResult.sheets.length} hojas encontradas ·{" "}
-                          {previewResult.sheets.filter((s) => s.compatible).length} compatibles ·{" "}
-                          {previewResult.sheets.filter((s) => !s.compatible).length} ignoradas
-                        </p>
-                        <ul className="mt-1 list-disc pl-4">
-                          {previewResult.sheets.map((s) => (
-                            <li key={s.tab}>
-                              {s.compatible ? (
-                                <>
-                                  {s.tab}: {s.rowsFound} filas
-                                </>
-                              ) : (
-                                <>
-                                  ⚠ Hoja &quot;{s.tab}&quot; ignorada / Motivo: {s.ignoredReason}
-                                </>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      </>
-                    ) : null}
                     <p>Filas encontradas: {previewResult.rowsFound}</p>
                     <p>Nuevas: {previewResult.nuevas}</p>
                     <p>Ya existentes (sin cambios): {previewResult.existentes}</p>
@@ -541,6 +503,7 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
                 connecting ||
                 !form.name.trim() ||
                 !form.spreadsheetUrlOrId.trim() ||
+                !form.sheetTab.trim() ||
                 !previewResult?.ok
               }
               onClick={handleConnect}

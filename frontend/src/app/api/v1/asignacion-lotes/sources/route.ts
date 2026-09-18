@@ -28,8 +28,8 @@ export async function POST(request: Request) {
   try {
     const actor = await resolveOrdersActor(request);
     const body = (await request.json()) as Partial<AsignacionLoteSourceInput>;
-    if (!body.name || !body.spreadsheetUrlOrId) {
-      throw new OrdersValidationError("name y spreadsheetUrlOrId son obligatorios.");
+    if (!body.name || !body.spreadsheetUrlOrId || !body.sheetTab) {
+      throw new OrdersValidationError("name, spreadsheetUrlOrId y sheetTab son obligatorios.");
     }
     const source = await getAsignacionLoteSourcesService().create(toActor(actor), {
       name: body.name,

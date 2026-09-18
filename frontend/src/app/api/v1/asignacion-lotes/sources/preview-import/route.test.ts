@@ -66,16 +66,9 @@ describe("POST /api/v1/asignacion-lotes/sources/preview-import", () => {
     expect(res.status).toBe(400);
   });
 
-  it("Hotfix — sheetTab omitido ya no es un error: dispara el modo multi-hoja", async () => {
-    listTabsMock.mockResolvedValue(["ENERO"]);
-    readTabMock.mockResolvedValue([
-      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
-      ["G25001", "10/01/2025", "SERUM", "50"],
-    ]);
+  it("Hotfix (revertido) — sheetTab omitido vuelve a ser obligatorio, nunca dispara descubrimiento de hojas", async () => {
     const res = await post({ spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/abc123XYZ_-987" }, produccion);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; sheets?: unknown[] };
-    expect(body.ok).toBe(true);
-    expect(body.sheets).toBeDefined();
+    expect(res.status).toBe(400);
+    expect(listTabsMock).not.toHaveBeenCalled();
   });
 });

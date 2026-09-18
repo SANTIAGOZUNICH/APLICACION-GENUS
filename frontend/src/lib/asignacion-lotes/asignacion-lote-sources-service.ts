@@ -111,10 +111,11 @@ export class AsignacionLoteSourcesService {
   async create(actor: AsignacionLotesActor, input: AsignacionLoteSourceInput): Promise<AsignacionLoteSource> {
     assertConfigAccess(actor);
     const name = input.name.trim();
-    // Hoja opcional (0033): vacío/omitido = descubrir e importar TODAS las
-    // hojas compatibles del spreadsheet en cada sync, en vez de exigir una.
-    const sheetTab = input.sheetTab?.trim() || null;
+    // Una fuente = una hoja (decisión de producto, revertido tras el
+    // hotfix post-#98) — obligatoria, nunca se descubre automáticamente.
+    const sheetTab = input.sheetTab?.trim() ?? "";
     if (!name) throw new OrdersValidationError("El nombre de la fuente es obligatorio.");
+    if (!sheetTab) throw new OrdersValidationError("La hoja (tab) es obligatoria.");
     const spreadsheetId = extractSpreadsheetId(input.spreadsheetUrlOrId);
     if (!spreadsheetId) {
       throw new OrdersValidationError(
@@ -177,7 +178,11 @@ export class AsignacionLoteSourcesService {
       const patch: Partial<typeof asignacionLoteSources.$inferInsert> = { updatedAt: new Date(now) };
       if (input.name !== undefined) patch.name = input.name.trim();
       if (input.period !== undefined) patch.period = input.period.trim();
-      if (input.sheetTab !== undefined) patch.sheetTab = input.sheetTab?.trim() || null;
+      if (input.sheetTab !== undefined) {
+        const nextTab = input.sheetTab.trim();
+        if (!nextTab) throw new OrdersValidationError("La hoja (tab) es obligatoria.");
+        patch.sheetTab = nextTab;
+      }
       if (input.enabled !== undefined) patch.enabled = input.enabled;
       if (input.priority !== undefined) patch.priority = input.priority;
       await db.update(asignacionLoteSources).set(patch).where(eq(asignacionLoteSources.id, id));
@@ -188,11 +193,14 @@ export class AsignacionLoteSourcesService {
     const idx = items.findIndex((s) => s.id === id);
     if (idx < 0) throw new OrdersNotFoundError("Fuente no encontrada.");
     const existing = items[idx]!;
+    if (input.sheetTab !== undefined && !input.sheetTab.trim()) {
+      throw new OrdersValidationError("La hoja (tab) es obligatoria.");
+    }
     const updated: AsignacionLoteSource = {
       ...existing,
       name: input.name !== undefined ? input.name.trim() : existing.name,
       period: input.period !== undefined ? input.period.trim() : existing.period,
-      sheetTab: input.sheetTab !== undefined ? input.sheetTab?.trim() || null : existing.sheetTab,
+      sheetTab: input.sheetTab !== undefined ? input.sheetTab.trim() : existing.sheetTab,
       enabled: input.enabled !== undefined ? input.enabled : existing.enabled,
       priority: input.priority !== undefined ? input.priority : existing.priority,
       updatedAt: now,

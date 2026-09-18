@@ -59,13 +59,11 @@ describe("POST/GET /api/v1/asignacion-lotes/sources", () => {
     expect(res.status).toBe(400);
   });
 
-  it("Hotfix — sheetTab omitido ya no es obligatorio (hoja opcional, sección 5)", async () => {
-    const created = await post(
+  it("Hotfix (revertido) — sheetTab omitido vuelve a ser obligatorio (una fuente = una hoja)", async () => {
+    const res = await post(
       { name: "Asignación de Lotes 2025", period: "2025", spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/hist2025AAAA_-111" },
       produccion
     );
-    expect(created.status).toBe(201);
-    const body = (await created.json()) as { source: { sheetTab: string | null } };
-    expect(body.source.sheetTab).toBeNull();
+    expect(res.status).toBe(400);
   });
 });

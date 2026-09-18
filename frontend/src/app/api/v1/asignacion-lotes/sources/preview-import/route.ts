@@ -20,9 +20,9 @@ export async function POST(request: Request) {
         "Ver la vista previa de importación está habilitado solo para Producción/Dirección."
       );
     }
-    const body = (await request.json()) as { spreadsheetUrlOrId?: string; sheetTab?: string | null };
-    if (!body.spreadsheetUrlOrId) {
-      throw new OrdersValidationError("spreadsheetUrlOrId es obligatorio.");
+    const body = (await request.json()) as { spreadsheetUrlOrId?: string; sheetTab?: string };
+    if (!body.spreadsheetUrlOrId || !body.sheetTab) {
+      throw new OrdersValidationError("spreadsheetUrlOrId y sheetTab son obligatorios.");
     }
     const result = await previewImport(body.spreadsheetUrlOrId, body.sheetTab);
     return NextResponse.json(result);
