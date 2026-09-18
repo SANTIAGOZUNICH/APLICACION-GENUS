@@ -863,6 +863,8 @@ export const asignacionLotes = pgTable(
      * "Origen: Google Sheets · <fuente>" y detectar conflicto entre fuentes.
      */
     sourceId: text("source_id"),
+    /** Nullable (0033) — de qué hoja/tab salió este registro dentro de la fuente. Solo diagnóstico/auditoría. */
+    sourceSheetTab: text("source_sheet_tab"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by").notNull().default(""),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -889,7 +891,8 @@ export const asignacionLoteSources = pgTable(
     name: text("name").notNull(),
     period: text("period").notNull().default(""),
     spreadsheetId: text("spreadsheet_id").notNull(),
-    sheetTab: text("sheet_tab").notNull(),
+    /** Nullable (0033) — vacío = descubrir e importar TODAS las hojas compatibles del spreadsheet. */
+    sheetTab: text("sheet_tab"),
     enabled: boolean("enabled").notNull().default(true),
     priority: integer("priority").notNull().default(0),
     lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),

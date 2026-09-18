@@ -23,6 +23,7 @@ import {
 import { StatusChip } from "./operational-ui";
 import { PackagingQuantitiesBlock } from "./packaging-quantities-block";
 import { usePreviewSession } from "@/features/os/session/preview-context";
+import { WorkItemEditDeleteActions } from "./work-item-edit-delete-actions";
 import { SendToCodificadoDialog } from "./send-to-codificado-dialog";
 import { FinishToQualityDialog } from "./finish-to-quality-dialog";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
@@ -82,7 +83,7 @@ export function WorkItemDrawer({
   onSendToCodificado,
   onCancelCodificado,
 }: WorkItemDrawerProps) {
-  const { email } = usePreviewSession();
+  const { email, sectorId } = usePreviewSession();
   const [finishedQty, setFinishedQty] = useState("");
   const [observation, setObservation] = useState("");
   const [confirmFinish, setConfirmFinish] = useState(false);
@@ -133,6 +134,14 @@ export function WorkItemDrawer({
             <p className="mt-1 text-sm text-[var(--os-text-muted)]">{displayField(item.client)}</p>
             <div className="mt-2">
               <WorkItemWarningBadge item={item} onSelectField={focusMissingField} />
+            </div>
+            <div className="mt-2">
+              <WorkItemEditDeleteActions
+                item={item}
+                actorSectorId={sectorId}
+                actorName={email ?? "Producción"}
+                onChanged={() => onOpenChange(false)}
+              />
             </div>
           </div>
           <DrawerCloseButton />

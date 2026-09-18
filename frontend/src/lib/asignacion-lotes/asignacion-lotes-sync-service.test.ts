@@ -302,6 +302,159 @@ describe("syncSource — sincronización Google Sheets → Asignación de Lotes"
     expect(lotes2027.map((r) => r.lote)).toEqual(["G27001"]);
   });
 
+  it("Hotfix — sheetTab vacío descubre e importa TODAS las hojas compatibles (12 hojas)", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2025",
+      period: "2025",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/multi2025AAAA_-111",
+      sheetTab: null,
+    });
+    const meses = [
+      "ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
+      "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE",
+    ];
+    listTabsMock.mockResolvedValue(meses);
+    readTabMock.mockImplementation(async (_id: string, tab: string) => [
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+      [`G-${tab}`, "10/01/2025", `PRODUCTO ${tab}`, "10"],
+    ]);
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.status).toBe("ok");
+    expect(summary.createdCount).toBe(12);
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes).toHaveLength(12);
+    expect(lotes.map((l) => l.sourceSheetTab).sort()).toEqual([...meses].sort());
+  });
+
+  it("Hotfix — hoja inválida (columnas no reconocidas) se ignora y no rompe la sincronización de las demás", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2025",
+      period: "2025",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/multi2025BBBB_-222",
+      sheetTab: null,
+    });
+    listTabsMock.mockResolvedValue(["ENERO", "OBSERVACIONES"]);
+    readTabMock.mockImplementation(async (_id: string, tab: string) => {
+      if (tab === "OBSERVACIONES") return [["NOTA", "AUTOR"], ["algo", "juan"]];
+      return [
+        ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+        ["G25001", "10/01/2025", "SERUM", "50"],
+      ];
+    });
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.createdCount).toBe(1);
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes.map((l) => l.lote)).toEqual(["G25001"]);
+  });
+
+  it("Hotfix — duplicado IDÉNTICO entre hojas (mismo lote al final de una y al inicio de la siguiente) no duplica", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2025",
+      period: "2025",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/multi2025CCCC_-333",
+      sheetTab: null,
+    });
+    listTabsMock.mockResolvedValue(["ENERO", "FEBRERO"]);
+    readTabMock.mockImplementation(async (_id: string, tab: string) => {
+      if (tab === "ENERO") {
+        return [
+          ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD", "VTO"],
+          ["G25043", "31/01/2025", "SERUM", "50", "10/2027"],
+        ];
+      }
+      return [
+        ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD", "VTO"],
+        ["G25043", "31/01/2025", "SERUM", "50", "10/2027"],
+      ];
+    });
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.createdCount).toBe(1);
+    expect(summary.conflictCount).toBe(0);
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes).toHaveLength(1);
+  });
+
+  it("Hotfix — conflicto ENTRE hojas (mismo lote, datos distintos en cada hoja) se informa, nunca se elige en silencio", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2025",
+      period: "2025",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/multi2025DDDD_-444",
+      sheetTab: null,
+    });
+    listTabsMock.mockResolvedValue(["ENERO", "FEBRERO"]);
+    readTabMock.mockImplementation(async (_id: string, tab: string) => {
+      if (tab === "ENERO") {
+        return [
+          ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD", "VTO"],
+          ["G25043", "31/01/2025", "SERUM", "50", "10/2027"],
+        ];
+      }
+      return [
+        ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD", "VTO"],
+        ["G25043", "31/01/2025", "SERUM", "50", "11/2027"],
+      ];
+    });
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.conflictCount).toBe(1);
+    expect(summary.status).toBe("parcial");
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes).toHaveLength(1);
+    expect(lotes[0]!.vto).toBe("2027-10-31"); // primera hoja (ENERO) persiste, nunca se sobreescribe en silencio
+  });
+
+  it("Hotfix — fuente con sheetTab específico configurado sigue sincronizando SOLO esa hoja (compatibilidad 0032)", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource({ sheetTab: "Asignación" });
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+      ["G26001", "10/09/2026", "SERUM", "100"],
+    ]);
+    await syncSource(source, "test", "manual");
+    expect(listTabsMock).not.toHaveBeenCalled();
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes.map((l) => l.lote)).toEqual(["G26001"]);
+  });
+
+  it("Hotfix — hoja agregada DESPUÉS de conectar la fuente se descubre automáticamente en el siguiente sync", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2025",
+      period: "2025",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/multi2025EEEE_-555",
+      sheetTab: null,
+    });
+    listTabsMock.mockResolvedValue(["ENERO"]);
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+      ["G25001", "10/01/2025", "SERUM", "50"],
+    ]);
+    const first = await syncSource(source, "test", "manual");
+    expect(first.createdCount).toBe(1);
+
+    // Se agrega DICIEMBRE a la planilla real — GENUS OS nunca cachea la lista de hojas.
+    listTabsMock.mockResolvedValue(["ENERO", "DICIEMBRE"]);
+    readTabMock.mockImplementation(async (_id: string, tab: string) => {
+      if (tab === "DICIEMBRE") {
+        return [
+          ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+          ["G25999", "15/12/2025", "CREMA", "30"],
+        ];
+      }
+      return [
+        ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+        ["G25001", "10/01/2025", "SERUM", "50"],
+      ];
+    });
+    const second = await syncSource(source, "test", "manual");
+    expect(second.createdCount).toBe(1);
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes.map((l) => l.lote).sort()).toEqual(["G25001", "G25999"]);
+  });
+
   it("Test 28 (regresión): caso real ECODERM/ROSEHIP sincronizado desde Sheets alimenta el resolver existente", async () => {
     const { syncSource } = await import("./asignacion-lotes-sync-service");
     const { resolveAsignacionLoteForWorkItem } = await import("./resolve-for-work-item");

@@ -24,6 +24,7 @@ import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider
 import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
 import { FormulasAdminPanel } from "../components/formulas-admin-panel";
 import { PRODUCTION_MANAGED_SECTORS } from "@/lib/operational/production-managed-sectors";
+import { normalizeSearchKey } from "@/lib/formulas/types";
 
 // Sectores cuyos trabajos deben verse en el panel general de Producción —
 // derivado de la única definición central (production-managed-sectors.ts)
@@ -90,6 +91,7 @@ export function ProduccionPanelView() {
   const { getQualityStatus, getFinishedQty, refreshDecisions } = useOperationalStore();
   const [panelTick, setPanelTick] = useState(0);
   const [deliveredWorkItemIds, setDeliveredWorkItemIds] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
 
   // Neon (work_item_deliveries), no localStorage — ver AUDIT_TRAZABILIDAD.
   useEffect(() => {
@@ -193,7 +195,7 @@ export function ProduccionPanelView() {
       qualityItems.length > 0 ? Math.round(((aprobados + rechazados) / qualityItems.length) * 100) : 0,
   };
 
-  const activeRows: ActiveRow[] = allActiveItems
+  const activeRowsUnfiltered: ActiveRow[] = allActiveItems
     .filter((i) => i.status !== "cancelado")
     .map((i) => ({
       id: i.id,
@@ -206,6 +208,29 @@ export function ProduccionPanelView() {
       asignadoA: i.ownerPerson,
       estado: i.status,
     }));
+
+  // Búsqueda client-side (ya tenemos los WorkItems cargados — nunca un
+  // request por tecla). Ignora mayúsculas/tildes/espacios extra, parcial.
+  // Producto/marca son obligatorios; lote/OA-OE/pedido se agregan gratis
+  // porque ya están en el WorkItem.
+  const searchKey = normalizeSearchKey(search);
+  const activeRows: ActiveRow[] = searchKey
+    ? activeRowsUnfiltered.filter((r) => {
+        const haystack = normalizeSearchKey(
+          [
+            r.producto,
+            r.cliente,
+            r.item.loteRef,
+            r.item.oaRef,
+            r.item.oeRef,
+            r.item.pedidoOp,
+          ]
+            .filter(Boolean)
+            .join(" ")
+        );
+        return haystack.includes(searchKey);
+      })
+    : activeRowsUnfiltered;
 
   const kgElaborados = bySector.ELABORACION.filter((i) => isWorkTransferredStatus(i.status)).reduce(
     (sum, i) => sum + (Number.parseFloat(getFinishedQty(i.id)) || 0),
@@ -374,6 +399,28 @@ export function ProduccionPanelView() {
           <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
             Trabajos activos
           </h3>
+          <div className="mb-3 flex items-center gap-2">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="🔍 Buscar trabajo, producto o marca..."
+              aria-label="Buscar trabajo, producto o marca"
+              data-testid="produccion-panel-search"
+              className="w-full max-w-sm rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
+            />
+            {search ? (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                aria-label="Limpiar búsqueda"
+                data-testid="produccion-panel-search-clear"
+                className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] px-2 py-1 text-xs text-[var(--os-text-muted)] hover:text-[var(--os-text)]"
+              >
+                ✕
+              </button>
+            ) : null}
+          </div>
           <OperationalTable
             columns={columns}
             rows={activeRows}

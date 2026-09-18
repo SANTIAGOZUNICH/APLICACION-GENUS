@@ -117,3 +117,81 @@ describe("previewImport — importación inicial segura (sección 'IMPORTACIÓN 
     expect(result.ok).toBe(false);
   });
 });
+
+describe("previewImport — modo multi-hoja (hotfix, sheetTab vacío)", () => {
+  beforeEach(() => {
+    resetAsignacionLotesMemoryForTests();
+    readTabMock.mockReset();
+    listTabsMock.mockReset();
+  });
+
+  const url = "https://docs.google.com/spreadsheets/d/multiPreviewAAAA_-111";
+
+  it("sin sheetTab -> descubre todas las hojas y muestra desglose por hoja", async () => {
+    listTabsMock.mockResolvedValue(["ENERO", "FEBRERO", "OBSERVACIONES"]);
+    readTabMock.mockImplementation(async (_id: string, tab: string) => {
+      if (tab === "OBSERVACIONES") return [["NOTA"], ["algo"]];
+      if (tab === "ENERO") {
+        return [
+          ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+          ["G25001", "10/01/2025", "SERUM", "50"],
+        ];
+      }
+      return [
+        ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+        ["G25002", "10/02/2025", "CREMA", "30"],
+      ];
+    });
+    const { previewImport } = await import("./asignacion-lotes-sync-service");
+    const result = await previewImport(url, null);
+    expect(result.ok).toBe(true);
+    expect(result.sheets).toHaveLength(3);
+    expect(result.sheets!.filter((s) => s.compatible).map((s) => s.tab).sort()).toEqual(["ENERO", "FEBRERO"]);
+    const ignored = result.sheets!.find((s) => s.tab === "OBSERVACIONES");
+    expect(ignored?.compatible).toBe(false);
+    expect(ignored?.ignoredReason).toContain("columnas mínimas");
+    expect(result.rowsFound).toBe(2);
+    expect(result.nuevas).toBe(2);
+  });
+
+  it("duplicado idéntico entre hojas en preview no se cuenta dos veces", async () => {
+    listTabsMock.mockResolvedValue(["ENERO", "FEBRERO"]);
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD", "VTO"],
+      ["G25043", "31/01/2025", "SERUM", "50", "10/2027"],
+    ]);
+    const { previewImport } = await import("./asignacion-lotes-sync-service");
+    const result = await previewImport(url, null);
+    expect(result.rowsFound).toBe(2);
+    expect(result.nuevas).toBe(1);
+    expect(result.conflictos).toBe(0);
+  });
+
+  it("conflicto entre hojas en preview se informa con las dos hojas involucradas", async () => {
+    listTabsMock.mockResolvedValue(["ENERO", "FEBRERO"]);
+    readTabMock.mockImplementation(async (_id: string, tab: string) => {
+      const vto = tab === "ENERO" ? "10/2027" : "11/2027";
+      return [
+        ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD", "VTO"],
+        ["G25043", "31/01/2025", "SERUM", "50", vto],
+      ];
+    });
+    const { previewImport } = await import("./asignacion-lotes-sync-service");
+    const result = await previewImport(url, null);
+    expect(result.conflictos).toBe(1);
+    expect(result.conflictSamples).toHaveLength(1);
+    expect(result.conflictSamples[0]!.tabs).toEqual(["ENERO", "FEBRERO"]);
+  });
+
+  it("con sheetTab específico -> preview single-tab preexistente sin cambios (sin 'sheets')", async () => {
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+      ["G25001", "10/01/2025", "SERUM", "50"],
+    ]);
+    const { previewImport } = await import("./asignacion-lotes-sync-service");
+    const result = await previewImport(url, "LOTES_2025");
+    expect(result.sheets).toBeUndefined();
+    expect(listTabsMock).not.toHaveBeenCalled();
+    expect(result.nuevas).toBe(1);
+  });
+});

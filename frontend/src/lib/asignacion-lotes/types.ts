@@ -21,6 +21,8 @@ export interface AsignacionLote {
   archived?: boolean;
   /** null = carga manual o "Pegar desde Excel". Presente = vino del sync de Google Sheets. */
   sourceId?: string | null;
+  /** De qué hoja/tab salió este registro (auditoría/diagnóstico) — solo informativo. */
+  sourceSheetTab?: string | null;
 }
 
 export type AsignacionLoteUpsertInput = {
@@ -42,6 +44,8 @@ export type AsignacionLoteUpsertInput = {
   archived?: boolean;
   /** Solo lo setea el sync de Google Sheets — nunca viene de alta/edición manual ni de "Pegar desde Excel". */
   sourceId?: string | null;
+  /** Ver AsignacionLote#sourceSheetTab. */
+  sourceSheetTab?: string | null;
 };
 
 export interface AsignacionLoteImportError {

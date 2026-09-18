@@ -106,9 +106,6 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
         form.sheetTab || undefined
       );
       setTestResult(result);
-      if (result.ok && !form.sheetTab && result.availableTabs[0]) {
-        setForm((f) => ({ ...f, sheetTab: result.availableTabs[0]! }));
-      }
     } catch (err) {
       setConnectError(err instanceof Error ? err.message : "No se pudo probar la conexión.");
     } finally {
@@ -285,7 +282,7 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-[var(--os-text-muted)]">Hoja</label>
+              <label className="mb-1 block text-xs text-[var(--os-text-muted)]">Hoja específica (opcional)</label>
               <input
                 className={CONTROL_CLASS}
                 value={form.sheetTab}
@@ -294,7 +291,11 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
                   setPreviewResult(null);
                 }}
                 placeholder="LOTES"
+                data-testid="asignacion-lote-source-sheet-tab-input"
               />
+              <p className="mt-1 text-xs text-[var(--os-text-muted)]">
+                Dejalo vacío para importar todas las hojas.
+              </p>
             </div>
 
             <Button
@@ -342,7 +343,7 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
                 type="button"
                 variant="secondary"
                 size="sm"
-                disabled={previewing || !form.sheetTab}
+                disabled={previewing}
                 onClick={handlePreviewImport}
                 data-testid="asignacion-lote-source-preview-import"
               >
@@ -362,6 +363,30 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
                 {previewResult.ok ? (
                   <>
                     <p className="font-medium">Antes de importar definitivamente:</p>
+                    {previewResult.sheets ? (
+                      <>
+                        <p>
+                          {previewResult.sheets.length} hojas encontradas ·{" "}
+                          {previewResult.sheets.filter((s) => s.compatible).length} compatibles ·{" "}
+                          {previewResult.sheets.filter((s) => !s.compatible).length} ignoradas
+                        </p>
+                        <ul className="mt-1 list-disc pl-4">
+                          {previewResult.sheets.map((s) => (
+                            <li key={s.tab}>
+                              {s.compatible ? (
+                                <>
+                                  {s.tab}: {s.rowsFound} filas
+                                </>
+                              ) : (
+                                <>
+                                  ⚠ Hoja &quot;{s.tab}&quot; ignorada / Motivo: {s.ignoredReason}
+                                </>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : null}
                     <p>Filas encontradas: {previewResult.rowsFound}</p>
                     <p>Nuevas: {previewResult.nuevas}</p>
                     <p>Ya existentes (sin cambios): {previewResult.existentes}</p>
@@ -397,7 +422,6 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
                 connecting ||
                 !form.name.trim() ||
                 !form.spreadsheetUrlOrId.trim() ||
-                !form.sheetTab.trim() ||
                 !previewResult?.ok
               }
               onClick={handleConnect}

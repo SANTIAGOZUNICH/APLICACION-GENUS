@@ -15,11 +15,12 @@ import {
 } from "@/features/work/lib/calendar";
 import { filterWorkItemsForDate } from "@/features/work/lib/work-items-day-view";
 import { formatWorkItemPresentation } from "@/features/work/lib/work-items-day-view";
+import { WorkItemEditDeleteActions } from "@/features/os/operational/components/work-item-edit-delete-actions";
 
 /** Plan semanal L–V con WorkItems reales del sector activo. */
 export function WireframePlanSemanal() {
   const { applyEffectiveStatus, openWorkItem } = usePreviewContext();
-  const { sectorId } = usePreviewSession();
+  const { sectorId, email } = usePreviewSession();
   const { data, loading } = useSectorWorkItems(sectorId);
   const [today] = useState(() => startOfDay(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
@@ -141,19 +142,26 @@ export function WireframePlanSemanal() {
             ) : (
               <div className="grid gap-3 sm:grid-cols-2">
                 {selectedItems.map((item) => (
-                  <button
+                  <div
                     key={item.id}
-                    type="button"
-                    onClick={() => openWorkItem(item.id)}
-                    className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-5 py-4 text-left transition-colors hover:border-[var(--os-teal)]"
+                    className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-5 py-4 transition-colors hover:border-[var(--os-teal)]"
                   >
-                    <p className="text-xs font-bold uppercase text-[var(--os-teal)]">
-                      {item.line ?? item.sector}
-                    </p>
-                    <p className="mt-2 font-semibold">{item.client}</p>
-                    <p className="text-sm text-[var(--os-text-muted)]">{item.product}</p>
-                    <p className="mt-2 text-lg font-light">{formatWorkItemPresentation(item)}</p>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => openWorkItem(item.id)}
+                      className="w-full text-left"
+                    >
+                      <p className="text-xs font-bold uppercase text-[var(--os-teal)]">
+                        {item.line ?? item.sector}
+                      </p>
+                      <p className="mt-2 font-semibold">{item.client}</p>
+                      <p className="text-sm text-[var(--os-text-muted)]">{item.product}</p>
+                      <p className="mt-2 text-lg font-light">{formatWorkItemPresentation(item)}</p>
+                    </button>
+                    <div className="mt-3">
+                      <WorkItemEditDeleteActions item={item} actorSectorId={sectorId} actorName={email} />
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
