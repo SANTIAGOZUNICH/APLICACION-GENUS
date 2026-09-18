@@ -22,6 +22,7 @@ import {
 import type {
   AsignacionLoteSource,
   ImportPreviewResult,
+  SyncRunSummary,
   TestConnectionResult,
 } from "@/lib/asignacion-lotes/source-types";
 
@@ -59,12 +60,120 @@ function emptyConnectForm(): ConnectFormState {
   return { name: "", period: "", spreadsheetUrlOrId: "", sheetTab: "" };
 }
 
+/**
+ * Resumen REAL post-sincronización (hotfix sección 6/7) — nunca "sincronización
+ * exitosa" a secas: siempre muestra qué pasó con cada fila leída, y si la
+ * reconciliación no cerró, lo dice explícitamente en vez de afirmar éxito.
+ */
+function SyncResultSummary({
+  run,
+  detailOpen,
+  onToggleDetail,
+}: {
+  run: SyncRunSummary;
+  detailOpen: boolean;
+  onToggleDetail: () => void;
+}) {
+  const hasProblems = run.invalidCount > 0 || run.conflictCount > 0 || run.ignoredTabs.length > 0;
+  const headline =
+    run.status === "inconsistente"
+      ? "🔴 SINCRONIZACIÓN INCONSISTENTE"
+      : run.status === "error"
+        ? "🔴 SINCRONIZACIÓN FALLIDA"
+        : hasProblems
+          ? "⚠ SINCRONIZACIÓN COMPLETADA CON AVISOS"
+          : "✓ SINCRONIZACIÓN COMPLETADA";
+
+  return (
+    <div
+      className={`mt-2 rounded-[var(--os-radius-sm)] border px-3 py-2 text-xs ${
+        run.status === "inconsistente" || run.status === "error"
+          ? "border-[var(--genus-error)]/40 text-[var(--genus-error,#e85d5d)]"
+          : hasProblems
+            ? "border-[var(--os-teal)]/40 text-[var(--os-text)]"
+            : "border-[var(--genus-success,#2f9e6e)]/40 text-[var(--os-text)]"
+      }`}
+      data-testid={`asignacion-lote-source-sync-result-${run.sourceId}`}
+    >
+      <p className="font-semibold">{headline}</p>
+      {run.sheetsTotal != null ? <p>{run.sheetsTotal} hoja(s) detectada(s)</p> : null}
+      <p>{run.rowsRead} fila(s) de datos leídas</p>
+      <p>+ {run.createdCount} nuevas</p>
+      <p>↻ {run.updatedCount} actualizadas</p>
+      <p>= {run.unchangedCount} sin cambios</p>
+      {run.conflictCount > 0 ? <p>⚠ {run.conflictCount} requieren revisión (conflicto)</p> : null}
+      {run.invalidCount > 0 ? <p>✕ {run.invalidCount} inválidas</p> : null}
+      {run.duplicateCount > 0 ? <p>{run.duplicateCount} duplicado(s) exacto(s) entre hojas — no se re-escriben</p> : null}
+      {run.archivedCount > 0 ? <p>{run.archivedCount} archivada(s) (ya no están en la fuente)</p> : null}
+      {run.ignoredTabs.length > 0 ? <p>⚠ {run.ignoredTabs.length} hoja(s) no se pudieron leer/clasificar esta corrida — sus datos existentes quedaron protegidos, no se tocaron</p> : null}
+      {!run.reconciled ? (
+        <p className="font-semibold">{run.errorMessage}</p>
+      ) : null}
+
+      {(run.conflictSamples.length > 0 || run.invalidSamples.length > 0 || run.ignoredTabs.length > 0) ? (
+        <>
+          <button
+            type="button"
+            onClick={onToggleDetail}
+            className="mt-1 font-medium underline"
+            data-testid={`asignacion-lote-source-sync-detail-toggle-${run.sourceId}`}
+          >
+            {detailOpen ? "Ocultar detalle" : "[ VER DETALLE ]"}
+          </button>
+          {detailOpen ? (
+            <div className="mt-1 space-y-2" data-testid={`asignacion-lote-source-sync-detail-${run.sourceId}`}>
+              {run.ignoredTabs.length > 0 ? (
+                <div>
+                  <p className="font-medium">Hojas ignoradas:</p>
+                  <ul className="list-disc pl-4">
+                    {run.ignoredTabs.map((t) => (
+                      <li key={t.tab}>
+                        &quot;{t.tab}&quot; — {t.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {run.conflictSamples.length > 0 ? (
+                <div>
+                  <p className="font-medium">Conflictos:</p>
+                  <ul className="list-disc pl-4">
+                    {run.conflictSamples.map((c, i) => (
+                      <li key={`${c.lote}-${c.codigo}-${i}`}>
+                        Lote {c.lote || "—"} · {c.producto} — {c.motivo}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {run.invalidSamples.length > 0 ? (
+                <div>
+                  <p className="font-medium">Inválidas:</p>
+                  <ul className="list-disc pl-4">
+                    {run.invalidSamples.map((s, i) => (
+                      <li key={`${s.tab}-${s.rowIndex}-${i}`}>
+                        {s.tab} · fila {s.rowIndex} · Lote {s.lote || "—"} — {s.motivo}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientSession }) {
   const [expanded, setExpanded] = useState(false);
   const [sources, setSources] = useState<AsignacionLoteSource[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [syncResults, setSyncResults] = useState<Record<string, SyncRunSummary>>({});
+  const [syncDetailOpenFor, setSyncDetailOpenFor] = useState<string | null>(null);
 
   const [connectOpen, setConnectOpen] = useState(false);
   const [form, setForm] = useState<ConnectFormState>(() => emptyConnectForm());
@@ -151,7 +260,8 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
   async function handleSyncNow(id: string) {
     setSyncingId(id);
     try {
-      await syncAsignacionLoteSourceNowApi(session, id);
+      const run = await syncAsignacionLoteSourceNowApi(session, id);
+      setSyncResults((prev) => ({ ...prev, [id]: run }));
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo sincronizar.");
@@ -226,6 +336,15 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
                     <span className="text-[var(--genus-error,#e85d5d)]"> — {source.lastError}</span>
                   ) : null}
                 </p>
+                {syncResults[source.id] ? (
+                  <SyncResultSummary
+                    run={syncResults[source.id]!}
+                    detailOpen={syncDetailOpenFor === source.id}
+                    onToggleDetail={() =>
+                      setSyncDetailOpenFor((cur) => (cur === source.id ? null : source.id))
+                    }
+                  />
+                ) : null}
               </li>
             ))}
             {!loading && sources.length === 0 ? (

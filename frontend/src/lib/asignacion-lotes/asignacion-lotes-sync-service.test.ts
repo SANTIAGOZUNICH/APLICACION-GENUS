@@ -455,6 +455,182 @@ describe("syncSource — sincronización Google Sheets → Asignación de Lotes"
     expect(lotes.map((l) => l.lote).sort()).toEqual(["G25001", "G25999"]);
   });
 
+  it("Hotfix reconciliación #1 — 3 hojas × 100 filas -> procesa las 300 (ninguna se pierde)", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2025",
+      period: "2025",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/recon3x100AAAA",
+      sheetTab: null,
+    });
+    const tabs = ["ENERO", "FEBRERO", "MARZO"];
+    listTabsMock.mockResolvedValue(tabs);
+    readTabMock.mockImplementation(async (_id: string, tab: string) => {
+      const header = ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"];
+      const rows = Array.from({ length: 100 }, (_v, i) => [`${tab}-G${i}`, "10/01/2025", `PRODUCTO ${tab}`, "10"]);
+      return [header, ...rows];
+    });
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.rowsRead).toBe(300);
+    expect(summary.createdCount).toBe(300);
+    expect(summary.reconciled).toBe(true);
+    expect(summary.status).toBe("ok");
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes).toHaveLength(300);
+  });
+
+  it("Hotfix reconciliación #2 — 12 hojas reales -> ninguna queda afuera de la reconciliación", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2025",
+      period: "2025",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/recon12AAAA",
+      sheetTab: null,
+    });
+    const meses = [
+      "ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
+      "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE",
+    ];
+    listTabsMock.mockResolvedValue(meses);
+    readTabMock.mockImplementation(async (_id: string, tab: string) => [
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+      ["", "", "", ""], // fila vacía intencional — debe contar como blank, no perderse
+      [`G-${tab}`, "10/01/2025", `PRODUCTO ${tab}`, "10"],
+    ]);
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.sheetsTotal).toBe(12);
+    expect(summary.ignoredTabs).toHaveLength(0);
+    expect(summary.createdCount).toBe(12);
+    expect(summary.blankCount).toBe(12);
+    expect(summary.rowsRead).toBe(24);
+    expect(summary.reconciled).toBe(true);
+    expect(summary.status).toBe("ok");
+  });
+
+  it("Hotfix reconciliación #3 — error transitorio en UNA hoja no elimina las demás ni se pierde su cobertura", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2025",
+      period: "2025",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/reconErrorAAAA",
+      sheetTab: null,
+    });
+    listTabsMock.mockResolvedValue(["ENERO", "FEBRERO", "MARZO"]);
+    readTabMock.mockImplementation(async (_id: string, tab: string) => {
+      if (tab === "FEBRERO") throw new Error("500 Google API caída (transitorio)");
+      return [
+        ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+        [`G-${tab}`, "10/01/2025", `PRODUCTO ${tab}`, "10"],
+      ];
+    });
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.createdCount).toBe(2); // ENERO y MARZO sí se procesaron
+    expect(summary.ignoredTabs).toHaveLength(1);
+    expect(summary.ignoredTabs[0]!.tab).toBe("FEBRERO");
+    expect(summary.ignoredTabs[0]!.reason).toContain("500");
+    expect(summary.status).toBe("parcial"); // nunca "error" completo por una sola hoja
+    expect(summary.reconciled).toBe(true);
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes.map((l) => l.lote).sort()).toEqual(["G-ENERO", "G-MARZO"]);
+  });
+
+  it("Hotfix reconciliación #4 — hoja que falla esta corrida NUNCA archiva sus registros ya sincronizados (anti-pérdida)", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2025",
+      period: "2025",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/reconProtectAAAA",
+      sheetTab: null,
+    });
+    listTabsMock.mockResolvedValue(["ENERO", "FEBRERO"]);
+    readTabMock.mockImplementation(async (_id: string, tab: string) => [
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+      [`G-${tab}`, "10/01/2025", `SERUM ${tab}`, "50"],
+    ]);
+    const first = await syncSource(source, "test", "manual");
+    expect(first.createdCount).toBe(2); // una fila real y distinta en cada hoja
+
+    // FEBRERO falla transitoriamente en la siguiente corrida — su registro
+    // YA sincronizado no puede desaparecer del listado activo.
+    readTabMock.mockImplementation(async (_id: string, tab: string) => {
+      if (tab === "FEBRERO") throw new Error("timeout de red");
+      return [
+        ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+        [`G-${tab}`, "10/01/2025", `SERUM ${tab}`, "50"],
+      ];
+    });
+    const second = await syncSource(source, "test", "manual");
+    expect(second.archivedCount).toBe(0); // nada se archiva por el error transitorio
+    const active = await getAsignacionLotesService().listBySource(source.id);
+    expect(active).toHaveLength(2); // los dos registros siguen activos/visibles
+  });
+
+  it("Hotfix reconciliación #5 (BUG crítico) — un registro archivado que reaparece en la Sheet se REVIVE, nunca queda invisible para siempre", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD", "VTO"],
+      ["G26043", "10/09/2026", "SERUM", "100", "10/2028"],
+    ]);
+    await syncSource(source, "test", "manual");
+    let lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes).toHaveLength(1);
+
+    // La fila desaparece de la Sheet (por ejemplo, se borró por error) ->
+    // el sync la archiva correctamente (comportamiento ya esperado).
+    readTabMock.mockResolvedValue([["LOTE", "FECHA", "PRODUCTO", "CANTIDAD", "VTO"]]);
+    const removed = await syncSource(source, "test", "manual");
+    expect(removed.archivedCount).toBe(1);
+    lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes).toHaveLength(0); // invisible en el listado activo, como se espera de un archivado real
+
+    // La fila VUELVE a aparecer en la Sheet con los MISMOS datos exactos
+    // (ej. alguien deshizo el borrado accidental) -> ANTES de este fix,
+    // quedaba archivada PARA SIEMPRE porque el contenido coincidía con el
+    // registro archivado y `upsertFromSource` la daba por "sin cambios"
+    // sin revivirla. Debe volver a aparecer en el listado activo.
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD", "VTO"],
+      ["G26043", "10/09/2026", "SERUM", "100", "10/2028"],
+    ]);
+    const revived = await syncSource(source, "test", "manual");
+    expect(revived.createdCount + revived.updatedCount).toBe(1);
+    lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes).toHaveLength(1);
+    expect(lotes[0]!.lote).toBe("G26043");
+    expect(lotes[0]!.vto).toBe("2028-10-31"); // VTO se conserva correctamente al revivir
+  });
+
+  it("Hotfix reconciliación #6 — misma marca/producto con lotes DIFERENTES conserva ambos (no deduplica agresivamente)", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "MARCA", "CANTIDAD", "VTO"],
+      ["G26001", "10/09/2026", "SERUM VITAMINA C", "ECODERM", "100", "10/2028"],
+      ["G26002", "10/09/2026", "SERUM VITAMINA C", "ECODERM", "50", "11/2028"],
+    ]);
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.createdCount).toBe(2);
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes.map((l) => l.lote).sort()).toEqual(["G26001", "G26002"]);
+  });
+
+  it("Hotfix reconciliación #7 — la ecuación de reconciliación detecta una inconsistencia real (unit del helper puro)", async () => {
+    const { reconciliationTotal } = await import("./asignacion-lotes-sync-service");
+    const balanced = {
+      blankCount: 2,
+      invalidCount: 1,
+      duplicateCount: 1,
+      conflictCount: 1,
+      createdCount: 3,
+      updatedCount: 2,
+      unchangedCount: 0,
+    };
+    expect(reconciliationTotal(balanced)).toBe(10);
+    const unbalanced = { ...balanced, createdCount: 1 }; // simula 2 filas "perdidas"
+    expect(reconciliationTotal(unbalanced)).toBe(8);
+  });
+
   it("Test 28 (regresión): caso real ECODERM/ROSEHIP sincronizado desde Sheets alimenta el resolver existente", async () => {
     const { syncSource } = await import("./asignacion-lotes-sync-service");
     const { resolveAsignacionLoteForWorkItem } = await import("./resolve-for-work-item");

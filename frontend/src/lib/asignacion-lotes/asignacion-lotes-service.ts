@@ -450,6 +450,16 @@ export class AsignacionLotesService {
    * proceso de servidor confiable, no un endpoint expuesto a cualquier
    * sector. Reutiliza `writeRecord` así que hereda gratis: carga flexible,
    * fill-once de WorkItem y detección de inconsistencia (PR #95).
+   *
+   * CAUSA RAÍZ (hotfix reconciliación): `findBySourceKey` encuentra el
+   * registro aunque esté archivado (a propósito, para revivirlo en vez de
+   * crear un duplicado con otro id). Antes de este fix, si ese registro
+   * archivado tenía el MISMO contenido que la fila actual, se devolvía tal
+   * cual (`changed: false`) sin pasar por `writeRecord` — quedaba archivado
+   * PARA SIEMPRE aunque la fila siguiera presente en la Sheet, invisible en
+   * el listado activo sin ningún aviso. La Sheet es la fuente de verdad
+   * para sus propios registros: si la fila está presente en esta corrida,
+   * nunca puede quedar archivada.
    */
   async upsertFromSource(
     sourceId: string,
@@ -458,7 +468,8 @@ export class AsignacionLotesService {
     sourceSheetTab?: string | null
   ): Promise<{ record: AsignacionLote; created: boolean; changed: boolean }> {
     const previous = await this.findBySourceKey(sourceId, input.lote, input.codigo);
-    if (previous && !fieldsDiffer(previous, input)) {
+    const revivingArchived = previous?.archived === true;
+    if (previous && !revivingArchived && !fieldsDiffer(previous, input)) {
       return { record: previous, created: false, changed: false };
     }
     const systemActor: AsignacionLotesActor = {
@@ -468,7 +479,7 @@ export class AsignacionLotesService {
     };
     const record = await this.writeRecord(
       systemActor,
-      { ...input, id: previous?.id, sourceId, sourceSheetTab: sourceSheetTab ?? null },
+      { ...input, id: previous?.id, sourceId, sourceSheetTab: sourceSheetTab ?? null, archived: false },
       previous
     );
     return { record, created: !previous, changed: true };
