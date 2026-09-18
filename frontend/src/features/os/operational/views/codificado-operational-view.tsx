@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
 import { AssignWorkDialog } from "../components/assign-work-dialog";
 import { WorkItemWarningBadge } from "../components/work-item-warning-badge";
+import { WorkItemEditDeleteActions } from "../components/work-item-edit-delete-actions";
 
 type TabId = "pendientes" | "entregados";
 
@@ -478,6 +479,15 @@ export function CodificadoOperationalView() {
                 <DialogTitle>{displayField(selected.product)}</DialogTitle>
               </DialogHeader>
               <WorkItemWarningBadge item={selected} />
+              <WorkItemEditDeleteActions
+                item={selected}
+                actorSectorId={actorSectorId}
+                actorName={actorName}
+                onChanged={() => {
+                  setSelected(null);
+                  setDraft(null);
+                }}
+              />
               <div className="space-y-3 text-sm">
                 <p>
                   <span className="text-[var(--os-text-muted)]">Cliente · </span>

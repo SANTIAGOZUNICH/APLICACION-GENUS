@@ -111,9 +111,10 @@ export class AsignacionLoteSourcesService {
   async create(actor: AsignacionLotesActor, input: AsignacionLoteSourceInput): Promise<AsignacionLoteSource> {
     assertConfigAccess(actor);
     const name = input.name.trim();
-    const sheetTab = input.sheetTab.trim();
+    // Hoja opcional (0033): vacío/omitido = descubrir e importar TODAS las
+    // hojas compatibles del spreadsheet en cada sync, en vez de exigir una.
+    const sheetTab = input.sheetTab?.trim() || null;
     if (!name) throw new OrdersValidationError("El nombre de la fuente es obligatorio.");
-    if (!sheetTab) throw new OrdersValidationError("La hoja (tab) es obligatoria.");
     const spreadsheetId = extractSpreadsheetId(input.spreadsheetUrlOrId);
     if (!spreadsheetId) {
       throw new OrdersValidationError(
@@ -176,7 +177,7 @@ export class AsignacionLoteSourcesService {
       const patch: Partial<typeof asignacionLoteSources.$inferInsert> = { updatedAt: new Date(now) };
       if (input.name !== undefined) patch.name = input.name.trim();
       if (input.period !== undefined) patch.period = input.period.trim();
-      if (input.sheetTab !== undefined) patch.sheetTab = input.sheetTab.trim();
+      if (input.sheetTab !== undefined) patch.sheetTab = input.sheetTab?.trim() || null;
       if (input.enabled !== undefined) patch.enabled = input.enabled;
       if (input.priority !== undefined) patch.priority = input.priority;
       await db.update(asignacionLoteSources).set(patch).where(eq(asignacionLoteSources.id, id));
@@ -191,7 +192,7 @@ export class AsignacionLoteSourcesService {
       ...existing,
       name: input.name !== undefined ? input.name.trim() : existing.name,
       period: input.period !== undefined ? input.period.trim() : existing.period,
-      sheetTab: input.sheetTab !== undefined ? input.sheetTab.trim() : existing.sheetTab,
+      sheetTab: input.sheetTab !== undefined ? input.sheetTab?.trim() || null : existing.sheetTab,
       enabled: input.enabled !== undefined ? input.enabled : existing.enabled,
       priority: input.priority !== undefined ? input.priority : existing.priority,
       updatedAt: now,

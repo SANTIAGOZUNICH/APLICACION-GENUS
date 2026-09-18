@@ -3,8 +3,12 @@ import { resetAsignacionLotesMemoryForTests } from "@/lib/asignacion-lotes/asign
 import { OrdersValidationError } from "@/lib/orders/types";
 
 const readTabMock = vi.fn();
+const listTabsMock = vi.fn();
 vi.mock("@/lib/adapters/sheets/sheets-reader", () => ({
-  sheetsReader: { readTab: (...args: unknown[]) => readTabMock(...args), listTabs: vi.fn() },
+  sheetsReader: {
+    readTab: (...args: unknown[]) => readTabMock(...args),
+    listTabs: (...args: unknown[]) => listTabsMock(...args),
+  },
 }));
 
 vi.mock("@/lib/orders/actor", () => ({
@@ -34,6 +38,7 @@ describe("POST /api/v1/asignacion-lotes/sources/preview-import", () => {
   beforeEach(() => {
     resetAsignacionLotesMemoryForTests();
     readTabMock.mockReset();
+    listTabsMock.mockReset();
   });
 
   it("Test 29: RBAC bloquea a un sector operativo", async () => {
@@ -56,8 +61,21 @@ describe("POST /api/v1/asignacion-lotes/sources/preview-import", () => {
     expect(body.nuevas).toBe(1);
   });
 
-  it("faltan campos -> 400", async () => {
-    const res = await post({ spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/abc123XYZ_-987" }, produccion);
+  it("falta spreadsheetUrlOrId -> 400", async () => {
+    const res = await post({ sheetTab: "LOTES" }, produccion);
     expect(res.status).toBe(400);
+  });
+
+  it("Hotfix — sheetTab omitido ya no es un error: dispara el modo multi-hoja", async () => {
+    listTabsMock.mockResolvedValue(["ENERO"]);
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+      ["G25001", "10/01/2025", "SERUM", "50"],
+    ]);
+    const res = await post({ spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/abc123XYZ_-987" }, produccion);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; sheets?: unknown[] };
+    expect(body.ok).toBe(true);
+    expect(body.sheets).toBeDefined();
   });
 });

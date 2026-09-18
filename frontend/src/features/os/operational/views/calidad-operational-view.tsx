@@ -54,6 +54,7 @@ import { canAccessRemitos } from "@/lib/remitos/types";
 import { isPackagingQualityItem } from "@/lib/remitos/from-quality";
 import { CodificadoTracePanel } from "../components/codificado-trace-panel";
 import { WorkItemWarningBadge } from "../components/work-item-warning-badge";
+import { WorkItemEditDeleteActions } from "../components/work-item-edit-delete-actions";
 import { resolveWorkItemForQualityItem } from "../lib/resolve-quality-work-item";
 import { FormulasAdminPanel } from "../components/formulas-admin-panel";
 import { LifecycleRowActions } from "../components/lifecycle-row-actions";
@@ -792,6 +793,16 @@ export function CalidadOperationalView({ initialTab = "pendientes" }: CalidadOpe
                   {reviewWorkItem ? (
                     <div className="mt-2">
                       <WorkItemWarningBadge item={reviewWorkItem} />
+                    </div>
+                  ) : null}
+                  {reviewWorkItem ? (
+                    <div className="mt-2">
+                      <WorkItemEditDeleteActions
+                        item={reviewWorkItem}
+                        actorSectorId={sectorId}
+                        actorName={email ?? "Producción"}
+                        onChanged={() => setReviewItem(null)}
+                      />
                     </div>
                   ) : null}
                 </div>

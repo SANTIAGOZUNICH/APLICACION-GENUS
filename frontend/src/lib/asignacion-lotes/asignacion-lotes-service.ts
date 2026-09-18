@@ -121,6 +121,7 @@ function rowToDomain(row: typeof asignacionLotes.$inferSelect): AsignacionLote {
     updatedBy: row.updatedBy,
     archived: row.archived,
     sourceId: row.sourceId ?? null,
+    sourceSheetTab: row.sourceSheetTab ?? null,
   };
 }
 
@@ -144,6 +145,7 @@ function domainToInsert(record: AsignacionLote): typeof asignacionLotes.$inferIn
     updatedAt: new Date(record.updatedAt),
     updatedBy: record.updatedBy,
     sourceId: record.sourceId ?? null,
+    sourceSheetTab: record.sourceSheetTab ?? null,
   };
 }
 
@@ -203,7 +205,7 @@ async function findDuplicateNeon(
  * verdad en vez de contar cada fila vista como "actualizada", y por la
  * vista previa de importación (sección "ya existentes" vs "conflictos").
  */
-export function fieldsDiffer(previous: AsignacionLote, input: Omit<AsignacionLoteUpsertInput, "sourceId">): boolean {
+export function fieldsDiffer(previous: AsignacionLote, input: Omit<AsignacionLoteUpsertInput, "sourceId" | "sourceSheetTab">): boolean {
   const nextFecha = input.fecha?.trim() || previous.fecha || null;
   const nextMarca = input.marca?.trim() ?? previous.marca ?? "";
   const nextVto = input.vto ?? previous.vto ?? null;
@@ -335,6 +337,8 @@ export class AsignacionLotesService {
       updatedBy,
       archived: input.archived ?? previous?.archived ?? false,
       sourceId: input.sourceId !== undefined ? input.sourceId : (previous?.sourceId ?? null),
+      sourceSheetTab:
+        input.sourceSheetTab !== undefined ? input.sourceSheetTab : (previous?.sourceSheetTab ?? null),
     };
 
     if (useNeon()) {
@@ -359,6 +363,7 @@ export class AsignacionLotesService {
             updatedAt: values.updatedAt,
             updatedBy: values.updatedBy,
             sourceId: values.sourceId,
+            sourceSheetTab: values.sourceSheetTab,
           })
           .where(eq(asignacionLotes.id, record.id));
       } else {
@@ -449,7 +454,8 @@ export class AsignacionLotesService {
   async upsertFromSource(
     sourceId: string,
     actorAttribution: { email: string; displayName: string },
-    input: Omit<AsignacionLoteUpsertInput, "sourceId">
+    input: Omit<AsignacionLoteUpsertInput, "sourceId" | "sourceSheetTab">,
+    sourceSheetTab?: string | null
   ): Promise<{ record: AsignacionLote; created: boolean; changed: boolean }> {
     const previous = await this.findBySourceKey(sourceId, input.lote, input.codigo);
     if (previous && !fieldsDiffer(previous, input)) {
@@ -462,7 +468,7 @@ export class AsignacionLotesService {
     };
     const record = await this.writeRecord(
       systemActor,
-      { ...input, id: previous?.id, sourceId },
+      { ...input, id: previous?.id, sourceId, sourceSheetTab: sourceSheetTab ?? null },
       previous
     );
     return { record, created: !previous, changed: true };

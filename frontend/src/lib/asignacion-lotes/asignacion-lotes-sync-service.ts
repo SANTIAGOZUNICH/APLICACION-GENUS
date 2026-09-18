@@ -31,7 +31,13 @@ import { fieldsDiffer, getAsignacionLotesService } from "./asignacion-lotes-serv
 import { extractSpreadsheetId } from "./spreadsheet-url";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { asignacionLoteSyncRuns } from "@/lib/db/schema";
-import type { AsignacionLoteSource, ImportPreviewResult, SyncRunSummary, SyncTriggerKind } from "./source-types";
+import type {
+  AsignacionLoteSource,
+  ImportPreviewResult,
+  ImportPreviewSheetBreakdown,
+  SyncRunSummary,
+  SyncTriggerKind,
+} from "./source-types";
 
 const SYNC_ACTOR = { email: "asignacion-lotes-sync@sistema", displayName: "Sincronización Google Sheets" };
 
@@ -102,6 +108,59 @@ export async function listSyncRuns(sourceId: string, limit = 20): Promise<SyncRu
  * borrada, credenciales) se captura y se persiste como syncStatus="error" +
  * lastError, dejando los datos existentes sin tocar.
  */
+/** Firma de contenido de una fila mapeada — para detectar duplicado exacto entre hojas vs conflicto real. */
+function rowContentSignature(input: ReturnType<typeof buildAsignacionLoteFromMappedRow>): string {
+  return JSON.stringify({
+    fecha: input.fecha,
+    producto: input.producto,
+    marca: input.marca,
+    cantidades: input.cantidades,
+    vto: input.vto,
+    muestras: input.muestras,
+    cjMuestra: input.cjMuestra,
+    fechaAnalisis: input.fechaAnalisis,
+    observaciones: input.observaciones,
+  });
+}
+
+/**
+ * Descubre las hojas reales del spreadsheet (Google Sheets API — nunca se
+ * asumen nombres de mes) y clasifica cada una como compatible (mapea al
+ * menos lote+producto) o ignorada (con motivo) — una hoja inválida nunca
+ * rompe la importación de las demás.
+ */
+async function discoverCompatibleTabs(
+  spreadsheetId: string
+): Promise<{ compatible: string[]; ignored: Array<{ tab: string; reason: string }> }> {
+  const allTabs = await sheetsReader.listTabs(spreadsheetId);
+  const compatible: string[] = [];
+  const ignored: Array<{ tab: string; reason: string }> = [];
+  for (const tab of allTabs) {
+    try {
+      const rows = await sheetsReader.readTab(spreadsheetId, tab);
+      const header = rows[0] ?? [];
+      const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+      if (mapping.lote != null && mapping.producto != null) {
+        compatible.push(tab);
+      } else {
+        ignored.push({ tab, reason: "no se reconocieron las columnas mínimas (lote/producto)." });
+      }
+    } catch (err) {
+      ignored.push({ tab, reason: err instanceof Error ? err.message : "no se pudo leer la hoja." });
+    }
+  }
+  return { compatible, ignored };
+}
+
+/** Lista de hojas a sincronizar — respeta compatibilidad (sección 12): sheetTab fijo = solo esa hoja, igual que antes de 0033. */
+async function resolveTabsToSync(
+  source: AsignacionLoteSource
+): Promise<{ tabs: string[]; ignored: Array<{ tab: string; reason: string }> }> {
+  if (source.sheetTab?.trim()) return { tabs: [source.sheetTab.trim()], ignored: [] };
+  const { compatible, ignored } = await discoverCompatibleTabs(source.spreadsheetId);
+  return { tabs: compatible, ignored };
+}
+
 export async function syncSource(
   source: AsignacionLoteSource,
   triggeredBy: string,
@@ -131,44 +190,68 @@ export async function syncSource(
   };
 
   try {
-    const rows = await sheetsReader.readTab(source.spreadsheetId, source.sheetTab);
-    const header = rows[0] ?? [];
-    const dataRows = rows.slice(1);
-    summary.rowsRead = dataRows.length;
-
-    const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+    const { tabs } = await resolveTabsToSync(source);
     const seenIds = new Set<string>();
+    // Identidad (lote,código) → firma de contenido + hoja de origen — para
+    // detectar duplicado EXACTO entre hojas (mismo registro, no duplicar)
+    // vs conflicto real entre hojas (mismos datos-clave, contenido distinto
+    // → nunca se elige en silencio, se reporta y no se vuelve a escribir).
+    const seenKeysThisRun = new Map<string, { signature: string; tab: string }>();
 
-    for (let i = 0; i < dataRows.length; i += 1) {
-      const rowIndex = i + 2; // +1 header, +1 base-1 para que coincida con el número de fila real de la Sheet
-      const mapped = rowToObject(dataRows[i]!, mapping) as Partial<AsignacionLoteMappedRow>;
-      if (!mapped.lote?.trim() && !mapped.producto?.trim()) continue; // fila vacía — no cuenta como inválida
+    for (const tab of tabs) {
+      const rows = await sheetsReader.readTab(source.spreadsheetId, tab);
+      const header = rows[0] ?? [];
+      const dataRows = rows.slice(1);
+      summary.rowsRead += dataRows.length;
 
-      const issues = validateAsignacionLoteRow(mapped, rowIndex);
-      const hasBlockingError = issues.some((issue) => issue.severity === "error");
-      if (hasBlockingError) {
-        summary.invalidCount += 1;
-        continue;
+      const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+
+      for (let i = 0; i < dataRows.length; i += 1) {
+        const rowIndex = i + 2; // +1 header, +1 base-1 para que coincida con el número de fila real de la Sheet
+        const mapped = rowToObject(dataRows[i]!, mapping) as Partial<AsignacionLoteMappedRow>;
+        if (!mapped.lote?.trim() && !mapped.producto?.trim()) continue; // fila vacía — no cuenta como inválida
+
+        const issues = validateAsignacionLoteRow(mapped, rowIndex);
+        const hasBlockingError = issues.some((issue) => issue.severity === "error");
+        if (hasBlockingError || !mapped.lote?.trim() || !mapped.producto?.trim()) {
+          // Carga flexible tolera celdas vacías salvo lote/producto — sin
+          // eso no hay nada determinístico que vincular después.
+          summary.invalidCount += 1;
+          continue;
+        }
+
+        const input = buildAsignacionLoteFromMappedRow(mapped, SYNC_ACTOR.email);
+        const key = `${mapped.lote.trim().toLowerCase()}::${(mapped.codigo ?? "").trim().toLowerCase()}`;
+        const signature = rowContentSignature(input);
+        const seenBefore = seenKeysThisRun.get(key);
+        if (seenBefore) {
+          // Sección 10: mismo lote+código visto en OTRA hoja de esta misma
+          // fuente, en esta misma corrida. Idéntico → ya está, no duplica
+          // (no se vuelve a escribir). Distinto → conflicto ENTRE hojas,
+          // nunca se elige en silencio cuál vale: se reporta y se deja tal
+          // cual quedó con la primera hoja procesada.
+          if (seenBefore.signature !== signature) summary.conflictCount += 1;
+          continue;
+        }
+        seenKeysThisRun.set(key, { signature, tab });
+
+        const conflict = await lotesService.findConflictingRecord(source.id, mapped.lote, mapped.codigo ?? "");
+        if (conflict) {
+          summary.conflictCount += 1;
+          continue;
+        }
+
+        const { record, created, changed } = await lotesService.upsertFromSource(
+          source.id,
+          SYNC_ACTOR,
+          input,
+          tab
+        );
+        seenIds.add(record.id);
+        if (created) summary.createdCount += 1;
+        else if (changed) summary.updatedCount += 1;
+        else summary.unchangedCount += 1;
       }
-      if (!mapped.lote?.trim() || !mapped.producto?.trim()) {
-        // Carga flexible tolera celdas vacías salvo estas dos — sin lote o
-        // sin producto no hay nada determinístico que vincular después.
-        summary.invalidCount += 1;
-        continue;
-      }
-
-      const conflict = await lotesService.findConflictingRecord(source.id, mapped.lote, mapped.codigo ?? "");
-      if (conflict) {
-        summary.conflictCount += 1;
-        continue;
-      }
-
-      const input = buildAsignacionLoteFromMappedRow(mapped, SYNC_ACTOR.email);
-      const { record, created, changed } = await lotesService.upsertFromSource(source.id, SYNC_ACTOR, input);
-      seenIds.add(record.id);
-      if (created) summary.createdCount += 1;
-      else if (changed) summary.updatedCount += 1;
-      else summary.unchangedCount += 1;
     }
 
     // Sección 13: lo que pertenecía a esta fuente y no se vio en esta
@@ -234,9 +317,82 @@ export function isDueForOpportunisticSync(source: AsignacionLoteSource, minInter
  * nuevos: compara cada fila contra TODA Asignación de Lotes existente por
  * lote+código (misma identidad que usa el sync real).
  */
+async function previewOneTab(
+  spreadsheetId: string,
+  tab: string,
+  lotesService: ReturnType<typeof getAsignacionLotesService>,
+  seenKeysThisRun: Map<string, { signature: string; tab: string }>,
+  conflictSamples: ImportPreviewResult["conflictSamples"]
+): Promise<Omit<ImportPreviewSheetBreakdown, "compatible" | "ignoredReason">> {
+  const rows = await sheetsReader.readTab(spreadsheetId, tab);
+  const header = rows[0] ?? [];
+  const dataRows = rows.slice(1);
+  const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+
+  const counts = { tab, rowsFound: 0, nuevas: 0, existentes: 0, conflictos: 0, invalidas: 0 };
+
+  for (let i = 0; i < dataRows.length; i += 1) {
+    const rowIndex = i + 2;
+    const mapped = rowToObject(dataRows[i]!, mapping) as Partial<AsignacionLoteMappedRow>;
+    if (!mapped.lote?.trim() && !mapped.producto?.trim()) continue;
+    counts.rowsFound += 1;
+
+    const issues = validateAsignacionLoteRow(mapped, rowIndex);
+    const hasBlockingError = issues.some((issue) => issue.severity === "error");
+    if (hasBlockingError || !mapped.lote?.trim() || !mapped.producto?.trim()) {
+      counts.invalidas += 1;
+      continue;
+    }
+
+    const input = buildAsignacionLoteFromMappedRow(mapped, "preview");
+    const key = `${mapped.lote.trim().toLowerCase()}::${(mapped.codigo ?? "").trim().toLowerCase()}`;
+    const signature = rowContentSignature(input);
+    const seenBefore = seenKeysThisRun.get(key);
+    if (seenBefore) {
+      if (seenBefore.signature !== signature) {
+        counts.conflictos += 1;
+        if (conflictSamples.length < 20) {
+          conflictSamples.push({
+            lote: input.lote,
+            codigo: input.codigo,
+            producto: input.producto,
+            motivo: `Conflicto entre hojas — datos distintos en "${seenBefore.tab}" y "${tab}".`,
+            tabs: [seenBefore.tab, tab],
+          });
+        }
+      } else {
+        counts.existentes += 1;
+      }
+      continue;
+    }
+    seenKeysThisRun.set(key, { signature, tab });
+
+    const existing = await lotesService.findExistingRecordByKey(input.lote, input.codigo);
+    if (!existing) {
+      counts.nuevas += 1;
+      continue;
+    }
+    if (fieldsDiffer(existing, input)) {
+      counts.conflictos += 1;
+      if (conflictSamples.length < 20) {
+        conflictSamples.push({
+          lote: input.lote,
+          codigo: input.codigo,
+          producto: input.producto,
+          motivo: `Ya existe con datos distintos (ej. VTO/producto/cantidad) — origen actual: ${existing.sourceId ? "otra fuente Google Sheets" : "manual/Excel"}.`,
+        });
+      }
+    } else {
+      counts.existentes += 1;
+    }
+  }
+
+  return counts;
+}
+
 export async function previewImport(
   spreadsheetUrlOrId: string,
-  sheetTab: string
+  sheetTab?: string | null
 ): Promise<ImportPreviewResult> {
   const empty: Omit<ImportPreviewResult, "ok" | "error"> = {
     rowsFound: 0,
@@ -253,48 +409,53 @@ export async function previewImport(
   }
 
   try {
-    const rows = await sheetsReader.readTab(spreadsheetId, sheetTab);
-    const header = rows[0] ?? [];
-    const dataRows = rows.slice(1);
-    const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
     const lotesService = getAsignacionLotesService();
+    const seenKeysThisRun = new Map<string, { signature: string; tab: string }>();
+    const conflictSamples: ImportPreviewResult["conflictSamples"] = [];
 
-    const result: ImportPreviewResult = { ok: true, ...empty };
-
-    for (let i = 0; i < dataRows.length; i += 1) {
-      const rowIndex = i + 2;
-      const mapped = rowToObject(dataRows[i]!, mapping) as Partial<AsignacionLoteMappedRow>;
-      if (!mapped.lote?.trim() && !mapped.producto?.trim()) continue;
-      result.rowsFound += 1;
-
-      const issues = validateAsignacionLoteRow(mapped, rowIndex);
-      const hasBlockingError = issues.some((issue) => issue.severity === "error");
-      if (hasBlockingError || !mapped.lote?.trim() || !mapped.producto?.trim()) {
-        result.invalidas += 1;
-        continue;
-      }
-
-      const input = buildAsignacionLoteFromMappedRow(mapped, "preview");
-      const existing = await lotesService.findExistingRecordByKey(input.lote, input.codigo);
-      if (!existing) {
-        result.nuevas += 1;
-        continue;
-      }
-      if (fieldsDiffer(existing, input)) {
-        result.conflictos += 1;
-        if (result.conflictSamples.length < 20) {
-          result.conflictSamples.push({
-            lote: input.lote,
-            codigo: input.codigo,
-            producto: input.producto,
-            motivo: `Ya existe con datos distintos (ej. VTO/producto/cantidad) — origen actual: ${existing.sourceId ? "otra fuente Google Sheets" : "manual/Excel"}.`,
-          });
-        }
-      } else {
-        result.existentes += 1;
-      }
+    const tab = sheetTab?.trim();
+    if (tab) {
+      // Hoja específica — comportamiento single-tab preexistente, sin cambios.
+      const counts = await previewOneTab(spreadsheetId, tab, lotesService, seenKeysThisRun, conflictSamples);
+      const result: ImportPreviewResult = { ok: true, ...empty };
+      result.rowsFound = counts.rowsFound;
+      result.nuevas = counts.nuevas;
+      result.existentes = counts.existentes;
+      result.conflictos = counts.conflictos;
+      result.invalidas = counts.invalidas;
+      result.conflictSamples = conflictSamples;
+      return result;
     }
 
+    // Sin hoja específica: descubrir TODAS las hojas reales (Google Sheets
+    // API — nunca se asumen nombres) y previsualizar cada una compatible.
+    const { compatible, ignored } = await discoverCompatibleTabs(spreadsheetId);
+    const result: ImportPreviewResult = { ok: true, ...empty };
+    const sheets: ImportPreviewSheetBreakdown[] = [];
+
+    for (const compatibleTab of compatible) {
+      const counts = await previewOneTab(spreadsheetId, compatibleTab, lotesService, seenKeysThisRun, conflictSamples);
+      sheets.push({ ...counts, compatible: true });
+      result.rowsFound += counts.rowsFound;
+      result.nuevas += counts.nuevas;
+      result.existentes += counts.existentes;
+      result.conflictos += counts.conflictos;
+      result.invalidas += counts.invalidas;
+    }
+    for (const { tab: ignoredTab, reason } of ignored) {
+      sheets.push({
+        tab: ignoredTab,
+        compatible: false,
+        ignoredReason: reason,
+        rowsFound: 0,
+        nuevas: 0,
+        existentes: 0,
+        conflictos: 0,
+        invalidas: 0,
+      });
+    }
+    result.sheets = sheets;
+    result.conflictSamples = conflictSamples;
     return result;
   } catch (err) {
     return {

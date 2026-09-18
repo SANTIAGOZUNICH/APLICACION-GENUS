@@ -7,7 +7,8 @@ export interface AsignacionLoteSource {
   name: string;
   period: string;
   spreadsheetId: string;
-  sheetTab: string;
+  /** null = descubrir e importar TODAS las hojas compatibles del spreadsheet. */
+  sheetTab: string | null;
   enabled: boolean;
   priority: number;
   lastSyncAt: string | null;
@@ -24,7 +25,8 @@ export interface AsignacionLoteSourceInput {
   period: string;
   /** URL completa pegada por el usuario, o el spreadsheetId puro — se extrae automáticamente. */
   spreadsheetUrlOrId: string;
-  sheetTab: string;
+  /** Opcional — vacío/omitido = descubrir e importar TODAS las hojas compatibles. */
+  sheetTab?: string | null;
   enabled?: boolean;
   priority?: number;
 }
@@ -32,7 +34,7 @@ export interface AsignacionLoteSourceInput {
 export interface AsignacionLoteSourceUpdateInput {
   name?: string;
   period?: string;
-  sheetTab?: string;
+  sheetTab?: string | null;
   enabled?: boolean;
   priority?: number;
 }
@@ -42,6 +44,20 @@ export interface ImportPreviewConflictSample {
   codigo: string;
   producto: string;
   motivo: string;
+  /** Presente solo en conflictos ENTRE hojas de la misma fuente. */
+  tabs?: string[];
+}
+
+/** Desglose por hoja — presente solo cuando la fuente no fija una hoja específica. */
+export interface ImportPreviewSheetBreakdown {
+  tab: string;
+  compatible: boolean;
+  ignoredReason?: string;
+  rowsFound: number;
+  nuevas: number;
+  existentes: number;
+  conflictos: number;
+  invalidas: number;
 }
 
 /**
@@ -60,6 +76,8 @@ export interface ImportPreviewResult {
   conflictos: number;
   invalidas: number;
   conflictSamples: ImportPreviewConflictSample[];
+  /** Presente solo en modo multi-hoja (sheetTab vacío). */
+  sheets?: ImportPreviewSheetBreakdown[];
   error?: string;
 }
 
