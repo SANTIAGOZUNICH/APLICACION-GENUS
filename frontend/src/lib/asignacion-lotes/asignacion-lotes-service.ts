@@ -200,9 +200,10 @@ async function findDuplicateNeon(
 /**
  * Compara los campos "de contenido" (no auditoría) entre lo ya guardado y
  * lo que trae la fuente — usado por el sync para reportar "sin cambios" de
- * verdad en vez de contar cada fila vista como "actualizada".
+ * verdad en vez de contar cada fila vista como "actualizada", y por la
+ * vista previa de importación (sección "ya existentes" vs "conflictos").
  */
-function fieldsDiffer(previous: AsignacionLote, input: Omit<AsignacionLoteUpsertInput, "sourceId">): boolean {
+export function fieldsDiffer(previous: AsignacionLote, input: Omit<AsignacionLoteUpsertInput, "sourceId">): boolean {
   const nextFecha = input.fecha?.trim() || previous.fecha || null;
   const nextMarca = input.marca?.trim() ?? previous.marca ?? "";
   const nextVto = input.vto ?? previous.vto ?? null;
@@ -423,6 +424,17 @@ export class AsignacionLotesService {
     }
     const match = findDuplicateMem(lote, codigo);
     return match && match.sourceId !== sourceId ? match : null;
+  }
+
+  /**
+   * Cualquier registro activo con este lote+código, sin importar su fuente
+   * — usado por la vista previa de importación de una fuente TODAVÍA NO
+   * conectada (sección "importación inicial segura"): antes de crear la
+   * fuente no hay sourceId con el que comparar, así que se busca contra
+   * TODA Asignación de Lotes existente (manual/Excel/otra Sheets).
+   */
+  async findExistingRecordByKey(lote: string, codigo: string): Promise<AsignacionLote | null> {
+    return useNeon() ? findDuplicateNeon(lote, codigo) : findDuplicateMem(lote, codigo);
   }
 
   /**

@@ -4,6 +4,7 @@ import type {
   AsignacionLoteSource,
   AsignacionLoteSourceInput,
   AsignacionLoteSourceUpdateInput,
+  ImportPreviewResult,
   SyncRunSummary,
   TestConnectionResult,
 } from "@/lib/asignacion-lotes/source-types";
@@ -71,6 +72,20 @@ export async function testAsignacionLoteSourceConnectionApi(
     body: JSON.stringify({ spreadsheetUrlOrId, sheetTab }),
   });
   return readJsonOrThrow<TestConnectionResult>(res, "No se pudo probar la conexión.");
+}
+
+export async function previewAsignacionLoteImportApi(
+  session: OrdersClientSession,
+  spreadsheetUrlOrId: string,
+  sheetTab: string
+): Promise<ImportPreviewResult> {
+  const res = await fetch("/api/v1/asignacion-lotes/sources/preview-import", {
+    method: "POST",
+    credentials: "include",
+    headers: headers(session),
+    body: JSON.stringify({ spreadsheetUrlOrId, sheetTab }),
+  });
+  return readJsonOrThrow<ImportPreviewResult>(res, "No se pudo calcular la vista previa de importación.");
 }
 
 export async function syncAsignacionLoteSourceNowApi(

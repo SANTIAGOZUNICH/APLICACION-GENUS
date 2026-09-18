@@ -20,6 +20,7 @@ export async function correctWorkItemLoteVto(input: {
   reason: string;
   actorSectorId: SectorId;
   updatedBy?: string;
+  expectedVersion?: number;
 }): Promise<LoteVtoCorrectionResult> {
   const reason = input.reason.trim();
   if (!reason) {
@@ -41,6 +42,7 @@ export async function correctWorkItemLoteVto(input: {
       reason,
       updatedBy: input.updatedBy,
       actorSectorId: input.actorSectorId,
+      expectedVersion: input.expectedVersion,
     });
   } catch {
     return { ok: false, error: "Sin conexión con el servidor. Reintentá." };
@@ -51,6 +53,13 @@ export async function correctWorkItemLoteVto(input: {
       error?: string;
       code?: string;
     };
+    if (response.status === 409) {
+      return {
+        ok: false,
+        error: "⚠ Este trabajo fue modificado mientras lo estabas editando. Actualizá y revisá antes de guardar.",
+        code: "VERSION_CONFLICT",
+      };
+    }
     return {
       ok: false,
       error: body.error ?? "No se pudo corregir Lote/VTO.",

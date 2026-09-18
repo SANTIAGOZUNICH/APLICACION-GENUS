@@ -244,6 +244,64 @@ describe("syncSource — sincronización Google Sheets → Asignación de Lotes"
     expect(summary?.createdCount).toBe(1);
   });
 
+  it("Test 19b: dos fuentes históricas (2025 + 2026) conectadas simultáneamente — ninguna interfiere con la otra", async () => {
+    const source2025 = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2025",
+      period: "2025",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/hist2025AAAA_-111",
+      sheetTab: "LOTES_2025",
+    });
+    const source2026 = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2026",
+      period: "2026",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/hist2026BBBB_-222",
+      sheetTab: "LOTES_2026",
+    });
+    readTabMock.mockImplementation(async (spreadsheetId: string) => {
+      if (spreadsheetId === source2025.spreadsheetId) {
+        return [
+          ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+          ["G25043", "10/03/2025", "SERUM HISTORICO", "80"],
+        ];
+      }
+      return [
+        ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+        ["G26043", "10/09/2026", "SERUM", "100"],
+      ];
+    });
+    const { syncAllEnabledSources } = await import("./asignacion-lotes-sync-service");
+    const results = await syncAllEnabledSources("test", "manual");
+    expect(results).toHaveLength(2);
+    const lotes2025 = await getAsignacionLotesService().listBySource(source2025.id);
+    const lotes2026 = await getAsignacionLotesService().listBySource(source2026.id);
+    expect(lotes2025.map((r) => r.lote)).toEqual(["G25043"]);
+    expect(lotes2026.map((r) => r.lote)).toEqual(["G26043"]);
+
+    // Búsqueda global (search por lote histórico de 2025) debe encontrarlo
+    // sin scoping por fuente/año — list() no filtra por source.
+    const all = await getAsignacionLotesService().list(admin);
+    expect(all.some((r) => r.lote === "G25043")).toBe(true);
+    expect(all.some((r) => r.lote === "G26043")).toBe(true);
+
+    // Agregar una TERCERA fuente (2027) más adelante funciona sin cambio de
+    // código — misma API, mismo flujo, ningún hardcode de "máximo 2 fuentes".
+    const source2027 = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2027",
+      period: "2027",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/future2027CCCC_-333",
+      sheetTab: "LOTES_2027",
+    });
+    readTabMock.mockImplementation(async (spreadsheetId: string) => {
+      if (spreadsheetId === source2025.spreadsheetId) return [["LOTE"], ["G25043"]];
+      if (spreadsheetId === source2026.spreadsheetId) return [["LOTE"], ["G26043"]];
+      return [["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"], ["G27001", "05/01/2027", "CREMA", "10"]];
+    });
+    const resultsWithThird = await syncAllEnabledSources("test", "manual");
+    expect(resultsWithThird).toHaveLength(3);
+    const lotes2027 = await getAsignacionLotesService().listBySource(source2027.id);
+    expect(lotes2027.map((r) => r.lote)).toEqual(["G27001"]);
+  });
+
   it("Test 28 (regresión): caso real ECODERM/ROSEHIP sincronizado desde Sheets alimenta el resolver existente", async () => {
     const { syncSource } = await import("./asignacion-lotes-sync-service");
     const { resolveAsignacionLoteForWorkItem } = await import("./resolve-for-work-item");

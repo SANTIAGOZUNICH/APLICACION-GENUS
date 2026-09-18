@@ -19,8 +19,9 @@ function createFakeDb() {
   function matchCond(row: Record<string, unknown>, cond: unknown): boolean {
     if (!cond) return true;
     if (Array.isArray(cond)) return cond.every((c) => matchCond(row, c));
-    const c = cond as { __eq?: [string, unknown] };
+    const c = cond as { __eq?: [string, unknown]; __isNotNull?: string };
     if (c.__eq) return row[c.__eq[0]] === c.__eq[1];
+    if (c.__isNotNull) return row[c.__isNotNull] != null;
     // Predicado SQL crudo (ej. version + 1, IS NULL OR = id) — no
     // introspectable en el fake; se trata como cierto (mismo criterio que
     // work-assignment-service.test.ts).
@@ -55,6 +56,15 @@ function createFakeDb() {
               .filter((r) => matchCond(r, cond))
               .slice(0, n)
               .map((r) => ({ ...r }))
+          );
+        },
+        // Drizzle real es awaitable en .where() sin necesitar .limit() —
+        // algunas consultas de solo lectura (ej. listDeletedWorkItemsDurable)
+        // no acotan resultados. Sin esto, `await tx.select()...where(...)`
+        // resuelve al objeto `api` en vez de las filas.
+        then(resolve: (v: FakeRow[]) => unknown) {
+          return Promise.resolve(
+            resolve([...target.values()].filter((r) => matchCond(r, cond)).map((r) => ({ ...r })))
           );
         },
       };
@@ -128,6 +138,9 @@ vi.mock("drizzle-orm", async () => {
     and: (...args: unknown[]) => args,
     ne: (col: { name?: string } | string, val: unknown) => ({
       __ne: [typeof col === "string" ? col : (col as { name?: string }).name ?? "id", val],
+    }),
+    isNotNull: (col: { name?: string } | string) => ({
+      __isNotNull: typeof col === "string" ? col : (col as { name?: string }).name ?? "id",
     }),
     or: (...args: unknown[]) => args,
     desc: (col: unknown) => col,
@@ -430,6 +443,73 @@ describe("deleteWorkItemDurable — soft delete/tombstone de Producción (fake t
       })
     ).rejects.toMatchObject({ name: "PlanningValidationError" });
     expect(fakeDbHandle.workItems.get("wi-del")!.deletedAt).toBeNull();
+  });
+});
+
+describe("listDeletedWorkItemsDurable / restoreDeletedWorkItemDurable — Ver eliminados (fake tx)", () => {
+  let listDeletedWorkItemsDurable: typeof import("./work-item-progress-repository").listDeletedWorkItemsDurable;
+  let restoreDeletedWorkItemDurable: typeof import("./work-item-progress-repository").restoreDeletedWorkItemDurable;
+  let deleteWorkItemDurable: typeof import("./work-item-progress-repository").deleteWorkItemDurable;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ listDeletedWorkItemsDurable, restoreDeletedWorkItemDurable, deleteWorkItemDurable } = await import(
+      "./work-item-progress-repository"
+    ));
+    fakeDbHandle.workItems.set("wi-active", {
+      id: "wi-active",
+      sector: "ENVASADO_MASIVO",
+      product: "CREMA",
+      client: "NIZA",
+      operationalStatus: "pendiente",
+      planningWeekId: "week-1",
+      deletedAt: null,
+      version: 1,
+    });
+    fakeDbHandle.workItems.set("wi-deleted", {
+      id: "wi-deleted",
+      sector: "ENVASADO_MASIVO",
+      product: "SERUM",
+      client: "ECODERM",
+      operationalStatus: "pendiente",
+      planningWeekId: "week-1",
+      deletedAt: null,
+      version: 1,
+    });
+  });
+
+  it("solo lista trabajos con deletedAt informado — nunca los activos", async () => {
+    await deleteWorkItemDurable("wi-deleted", { reason: "Pedido duplicado", deletedBy: "produccion@x.com" });
+    const deleted = await listDeletedWorkItemsDurable();
+    expect(deleted.map((r) => r.id)).toEqual(["wi-deleted"]);
+  });
+
+  it("restaura un trabajo eliminado: limpia deletedAt/deletedBy/deleteReason y sube versión", async () => {
+    await deleteWorkItemDurable("wi-deleted", { reason: "Pedido duplicado", deletedBy: "produccion@x.com" });
+    const restored = await restoreDeletedWorkItemDurable("wi-deleted", { restoredBy: "produccion@x.com" });
+    expect(restored.deletedAt).toBeNull();
+    expect(restored.deletedBy).toBeNull();
+    expect(restored.deleteReason).toBeNull();
+    expect((restored as { version: number }).version).toBe(3); // delete(2) + restore(3)
+    const deleted = await listDeletedWorkItemsDurable();
+    expect(deleted).toHaveLength(0);
+  });
+
+  it("restaurar un trabajo que NO está eliminado rechaza — no confunde con restoreCancelledWorkDurable", async () => {
+    await expect(
+      restoreDeletedWorkItemDurable("wi-active", { restoredBy: "produccion@x.com" })
+    ).rejects.toThrow("no está eliminado");
+  });
+
+  it("restaurar nunca borra OA/entregas/remitos/historial — solo toca las 3 columnas de borrado + version", async () => {
+    await deleteWorkItemDurable("wi-deleted", { reason: "Motivo", deletedBy: "produccion@x.com" });
+    const before = { ...fakeDbHandle.workItems.get("wi-deleted")! };
+    const restored = await restoreDeletedWorkItemDurable("wi-deleted", { restoredBy: "produccion@x.com" });
+    expect(restored.sector).toBe(before.sector);
+    expect(restored.product).toBe(before.product);
+    expect(restored.client).toBe(before.client);
+    expect(fakeDbHandle.operationalEvents.some((e) => (e as { type: string }).type === "WORK_ITEM_RESTORED_BY_PRODUCCION")).toBe(true);
   });
 });
 

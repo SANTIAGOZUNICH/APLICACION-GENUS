@@ -14,11 +14,16 @@ import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import {
   createAsignacionLoteSourceApi,
   fetchAsignacionLoteSourcesApi,
+  previewAsignacionLoteImportApi,
   syncAsignacionLoteSourceNowApi,
   testAsignacionLoteSourceConnectionApi,
   updateAsignacionLoteSourceApi,
 } from "@/lib/asignacion-lotes/asignacion-lote-sources-client";
-import type { AsignacionLoteSource, TestConnectionResult } from "@/lib/asignacion-lotes/source-types";
+import type {
+  AsignacionLoteSource,
+  ImportPreviewResult,
+  TestConnectionResult,
+} from "@/lib/asignacion-lotes/source-types";
 
 const CONTROL_CLASS =
   "w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--ig-control-bg,var(--os-surface))] px-3 py-2 text-sm text-[var(--ig-control-fg,var(--os-text))]";
@@ -67,6 +72,8 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
   const [testing, setTesting] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [previewResult, setPreviewResult] = useState<ImportPreviewResult | null>(null);
+  const [previewing, setPreviewing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -109,6 +116,19 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
     }
   }
 
+  async function handlePreviewImport() {
+    setPreviewing(true);
+    setConnectError(null);
+    try {
+      const result = await previewAsignacionLoteImportApi(session, form.spreadsheetUrlOrId, form.sheetTab);
+      setPreviewResult(result);
+    } catch (err) {
+      setConnectError(err instanceof Error ? err.message : "No se pudo calcular la vista previa de importación.");
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
   async function handleConnect() {
     setConnecting(true);
     setConnectError(null);
@@ -122,6 +142,7 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
       setConnectOpen(false);
       setForm(emptyConnectForm());
       setTestResult(null);
+      setPreviewResult(null);
       await load();
     } catch (err) {
       setConnectError(err instanceof Error ? err.message : "No se pudo conectar la planilla.");
@@ -257,6 +278,7 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
                 onChange={(e) => {
                   setForm((f) => ({ ...f, spreadsheetUrlOrId: e.target.value }));
                   setTestResult(null);
+                  setPreviewResult(null);
                 }}
                 placeholder="https://docs.google.com/spreadsheets/d/..."
                 data-testid="asignacion-lote-source-url-input"
@@ -267,7 +289,10 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
               <input
                 className={CONTROL_CLASS}
                 value={form.sheetTab}
-                onChange={(e) => setForm((f) => ({ ...f, sheetTab: e.target.value }))}
+                onChange={(e) => {
+                  setForm((f) => ({ ...f, sheetTab: e.target.value }));
+                  setPreviewResult(null);
+                }}
                 placeholder="LOTES"
               />
             </div>
@@ -312,6 +337,54 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
               </div>
             ) : null}
 
+            {testResult?.ok ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={previewing || !form.sheetTab}
+                onClick={handlePreviewImport}
+                data-testid="asignacion-lote-source-preview-import"
+              >
+                {previewing ? "Calculando…" : "Vista previa de importación"}
+              </Button>
+            ) : null}
+
+            {previewResult ? (
+              <div
+                className={`rounded-[var(--os-radius-sm)] border px-3 py-2 text-xs ${
+                  previewResult.ok
+                    ? "border-[var(--os-teal)]/40 text-[var(--os-text)]"
+                    : "border-[var(--genus-error)]/30 text-[var(--genus-error,#e85d5d)]"
+                }`}
+                data-testid="asignacion-lote-source-preview-result"
+              >
+                {previewResult.ok ? (
+                  <>
+                    <p className="font-medium">Antes de importar definitivamente:</p>
+                    <p>Filas encontradas: {previewResult.rowsFound}</p>
+                    <p>Nuevas: {previewResult.nuevas}</p>
+                    <p>Ya existentes (sin cambios): {previewResult.existentes}</p>
+                    <p className={previewResult.conflictos > 0 ? "text-[var(--genus-error,#e85d5d)]" : ""}>
+                      Conflictos (requieren revisión, nunca se fusionan solos): {previewResult.conflictos}
+                    </p>
+                    <p>Inválidas: {previewResult.invalidas}</p>
+                    {previewResult.conflictSamples.length > 0 ? (
+                      <ul className="mt-1 list-disc pl-4">
+                        {previewResult.conflictSamples.slice(0, 5).map((c, i) => (
+                          <li key={`${c.lote}-${c.codigo}-${i}`}>
+                            Lote {c.lote || "—"} · {c.producto} — {c.motivo}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </>
+                ) : (
+                  <p>{previewResult.error ?? "No se pudo calcular la vista previa."}</p>
+                )}
+              </div>
+            ) : null}
+
             {connectError ? <p className="text-xs text-[var(--genus-error,#e85d5d)]">{connectError}</p> : null}
           </div>
           <DialogFooter>
@@ -320,7 +393,13 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
             </Button>
             <Button
               type="button"
-              disabled={connecting || !form.name.trim() || !form.spreadsheetUrlOrId.trim() || !form.sheetTab.trim()}
+              disabled={
+                connecting ||
+                !form.name.trim() ||
+                !form.spreadsheetUrlOrId.trim() ||
+                !form.sheetTab.trim() ||
+                !previewResult?.ok
+              }
               onClick={handleConnect}
               data-testid="asignacion-lote-source-connect-submit"
             >

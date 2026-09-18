@@ -117,6 +117,7 @@ export function projectNativeWorkItem(item: PlanningWorkItemRecord): WorkItem {
     oaRef: item.sector !== "ELABORACION" ? orderNumber : null,
     loteRef: packagingLote,
     notes: item.notes,
+    version: item.version,
     packagingLote,
     packagingVto,
     packagingTotalUnits:

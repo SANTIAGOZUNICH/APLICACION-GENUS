@@ -24,6 +24,29 @@ function jsonActorHeaders(): HeadersInit {
   };
 }
 
+export interface FreshWorkItemResult {
+  item: WorkItem;
+  version: number;
+  deletedAt: string | null;
+}
+
+/**
+ * Fresh-fetch por id — para "Editar trabajo"/"Eliminar trabajo": nunca
+ * confiar solamente en el objeto de WorkItem que quedó cargado antes en
+ * React. Incluye `version` para la concurrencia optimista.
+ */
+export async function fetchWorkItemById(itemId: string): Promise<FreshWorkItemResult> {
+  const response = await fetch(`/api/v1/work-items/${encodeURIComponent(itemId)}`, {
+    credentials: "include",
+    headers: jsonActorHeaders(),
+  });
+  const body = (await response.json().catch(() => ({}))) as Partial<FreshWorkItemResult> & { error?: string };
+  if (!response.ok || !body.item) {
+    throw new Error(body.error ?? "No se pudo obtener el trabajo actualizado.");
+  }
+  return { item: body.item, version: body.version ?? 1, deletedAt: body.deletedAt ?? null };
+}
+
 export async function fetchLiveSyncStatus(): Promise<LiveSyncStatus & { mode?: string }> {
   const response = await fetch("/api/v1/live-sync/status", { cache: "no-store" });
   if (!response.ok) {
@@ -303,6 +326,44 @@ export async function postRestoreWork(payload: {
   });
 }
 
+/** Restaura un trabajo REALMENTE eliminado (soft-delete) — ver "Ver eliminados". */
+export async function postRestoreDeletedWork(payload: {
+  itemId: string;
+  actorSectorId: SectorId;
+  restoredBy?: string;
+  reason?: string | null;
+}): Promise<Response> {
+  return fetch("/api/v1/live-sync/operations", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonActorHeaders(),
+    body: JSON.stringify({ action: "restore_deleted_work", ...payload }),
+  });
+}
+
+export interface DeletedWorkItemEntry {
+  item: WorkItem;
+  deletedAt: string | null;
+  deletedBy: string | null;
+  deleteReason: string | null;
+}
+
+/** "Ver eliminados" — lista work items nativos con soft-delete activo. */
+export async function fetchDeletedWorkItems(): Promise<DeletedWorkItemEntry[]> {
+  const response = await fetch("/api/v1/work-items/deleted", {
+    credentials: "include",
+    headers: jsonActorHeaders(),
+  });
+  const body = (await response.json().catch(() => ({}))) as {
+    items?: DeletedWorkItemEntry[];
+    error?: string;
+  };
+  if (!response.ok) {
+    throw new Error(body.error ?? "No se pudieron cargar los trabajos eliminados.");
+  }
+  return body.items ?? [];
+}
+
 /**
  * Corrección de Lote/VTO por Producción (PARTE A — fuente única). Solo
  * PRODUCCION puede llamar esto (gate server-side); Envasado/Codificado
@@ -315,6 +376,7 @@ export async function postUpdateLoteVto(payload: {
   reason: string;
   updatedBy?: string;
   actorSectorId: SectorId;
+  expectedVersion?: number;
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
@@ -383,6 +445,7 @@ export async function postDeleteWork(payload: {
   reason?: string | null;
   deletedBy?: string;
   actorSectorId: SectorId;
+  expectedVersion?: number;
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
@@ -404,6 +467,7 @@ export async function postEditAssignment(payload: {
   reason?: string | null;
   updatedBy?: string;
   actorSectorId: SectorId;
+  expectedVersion?: number;
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",

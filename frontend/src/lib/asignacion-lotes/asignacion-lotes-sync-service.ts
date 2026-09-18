@@ -27,10 +27,11 @@ import {
   type AsignacionLoteMappedRow,
 } from "@/features/os/operational/lib/asignacion-lotes-import";
 import { getAsignacionLoteSourcesService } from "./asignacion-lote-sources-service";
-import { getAsignacionLotesService } from "./asignacion-lotes-service";
+import { fieldsDiffer, getAsignacionLotesService } from "./asignacion-lotes-service";
+import { extractSpreadsheetId } from "./spreadsheet-url";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { asignacionLoteSyncRuns } from "@/lib/db/schema";
-import type { AsignacionLoteSource, SyncRunSummary, SyncTriggerKind } from "./source-types";
+import type { AsignacionLoteSource, ImportPreviewResult, SyncRunSummary, SyncTriggerKind } from "./source-types";
 
 const SYNC_ACTOR = { email: "asignacion-lotes-sync@sistema", displayName: "Sincronización Google Sheets" };
 
@@ -221,4 +222,85 @@ export function isDueForOpportunisticSync(source: AsignacionLoteSource, minInter
   if (!source.enabled) return false;
   if (!source.lastSyncAt) return true;
   return Date.now() - new Date(source.lastSyncAt).getTime() >= minIntervalMs;
+}
+
+/**
+ * Vista previa de importación — "importación inicial de 2025" del pedido:
+ * antes de conectar definitivamente una fuente (o antes de una fuente que
+ * puede traer muchos registros históricos), mostrar cuántas filas son
+ * nuevas, cuántas ya existen igual (manual/Excel/otra fuente), cuántas
+ * tienen datos en conflicto y cuántas son inválidas — SIN persistir nada.
+ * No asume que, por venir de una fuente nueva, todos los registros son
+ * nuevos: compara cada fila contra TODA Asignación de Lotes existente por
+ * lote+código (misma identidad que usa el sync real).
+ */
+export async function previewImport(
+  spreadsheetUrlOrId: string,
+  sheetTab: string
+): Promise<ImportPreviewResult> {
+  const empty: Omit<ImportPreviewResult, "ok" | "error"> = {
+    rowsFound: 0,
+    nuevas: 0,
+    existentes: 0,
+    conflictos: 0,
+    invalidas: 0,
+    conflictSamples: [],
+  };
+
+  const spreadsheetId = extractSpreadsheetId(spreadsheetUrlOrId);
+  if (!spreadsheetId) {
+    return { ok: false, ...empty, error: "No se pudo reconocer el spreadsheetId a partir de la URL." };
+  }
+
+  try {
+    const rows = await sheetsReader.readTab(spreadsheetId, sheetTab);
+    const header = rows[0] ?? [];
+    const dataRows = rows.slice(1);
+    const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+    const lotesService = getAsignacionLotesService();
+
+    const result: ImportPreviewResult = { ok: true, ...empty };
+
+    for (let i = 0; i < dataRows.length; i += 1) {
+      const rowIndex = i + 2;
+      const mapped = rowToObject(dataRows[i]!, mapping) as Partial<AsignacionLoteMappedRow>;
+      if (!mapped.lote?.trim() && !mapped.producto?.trim()) continue;
+      result.rowsFound += 1;
+
+      const issues = validateAsignacionLoteRow(mapped, rowIndex);
+      const hasBlockingError = issues.some((issue) => issue.severity === "error");
+      if (hasBlockingError || !mapped.lote?.trim() || !mapped.producto?.trim()) {
+        result.invalidas += 1;
+        continue;
+      }
+
+      const input = buildAsignacionLoteFromMappedRow(mapped, "preview");
+      const existing = await lotesService.findExistingRecordByKey(input.lote, input.codigo);
+      if (!existing) {
+        result.nuevas += 1;
+        continue;
+      }
+      if (fieldsDiffer(existing, input)) {
+        result.conflictos += 1;
+        if (result.conflictSamples.length < 20) {
+          result.conflictSamples.push({
+            lote: input.lote,
+            codigo: input.codigo,
+            producto: input.producto,
+            motivo: `Ya existe con datos distintos (ej. VTO/producto/cantidad) — origen actual: ${existing.sourceId ? "otra fuente Google Sheets" : "manual/Excel"}.`,
+          });
+        }
+      } else {
+        result.existentes += 1;
+      }
+    }
+
+    return result;
+  } catch (err) {
+    return {
+      ok: false,
+      ...empty,
+      error: err instanceof Error ? err.message : "No se pudo leer la planilla.",
+    };
+  }
 }

@@ -26,6 +26,7 @@ import {
   deliverWorkDurable,
   nativeIdFromItemId,
   restoreCancelledWorkDurable,
+  restoreDeletedWorkItemDurable,
   restoreDeliveryDurable,
   rescheduleWorkItemDurable,
   reworkWorkItemDurable,
@@ -109,6 +110,13 @@ type OperationAction =
       reason?: string;
       restoredBy?: string;
       sector?: SectorId;
+      actorSectorId?: SectorId;
+    }
+  | {
+      action: "restore_deleted_work";
+      itemId: string;
+      reason?: string | null;
+      restoredBy?: string;
       actorSectorId?: SectorId;
     }
   | {
@@ -432,6 +440,25 @@ export async function POST(request: Request) {
           revision: serverOperationalState.getRevision(),
           record,
         });
+      }
+      case "restore_deleted_work": {
+        assertBodySectorMatches(body.actorSectorId, actor.sector);
+        const gate = validateWorkMutationActor(actor.sector);
+        if (!gate.ok) {
+          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
+        }
+        const nativeRestoreDeletedId = nativeIdFromItemId(body.itemId);
+        if (!nativeRestoreDeletedId) {
+          return NextResponse.json(
+            { error: "Restauración no disponible para este trabajo.", code: "NOT_NATIVE" },
+            { status: 400 }
+          );
+        }
+        const row = await restoreDeletedWorkItemDurable(nativeRestoreDeletedId, {
+          restoredBy: body.restoredBy ?? actor.displayName ?? actor.email,
+          reason: body.reason,
+        });
+        return NextResponse.json({ ok: true, revision: row.version, record: row });
       }
       case "update_lote_vto": {
         assertBodySectorMatches(body.actorSectorId, actor.sector);

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { operationalEvents, operationalOrders, workItemDeliveries, workItems } from "@/lib/db/schema";
 import type { SectorId } from "@/types/operational/sector";
@@ -681,6 +681,84 @@ export async function deleteWorkItemDurable(id: string, input: DeleteWorkItemInp
       actorEmail: input.deletedBy,
       actorSector: "PRODUCCION",
       note: `sector=${existing.sector} · producto=${existing.product} · cliente=${existing.client} · motivo=${reason}`,
+    });
+
+    return row;
+  });
+}
+
+/**
+ * "Ver eliminados" (sección 32 del pedido) — lista work_items nativos con
+ * deletedAt informado. Nunca toca datos: solo lectura. Ordenado por fecha
+ * de borrado descendente (los más recientes primero).
+ */
+export async function listDeletedWorkItemsDurable() {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const rows = await tx.select().from(workItems).where(isNotNull(workItems.deletedAt));
+    return [...rows].sort((a, b) => {
+      const aTime = a.deletedAt ? new Date(a.deletedAt).getTime() : 0;
+      const bTime = b.deletedAt ? new Date(b.deletedAt).getTime() : 0;
+      return bTime - aTime;
+    });
+  });
+}
+
+export interface RestoreDeletedWorkItemInput {
+  restoredBy: string;
+  reason?: string | null;
+}
+
+/**
+ * Restaura un trabajo eliminado (soft-delete) de vuelta a la operación
+ * activa — limpia deletedAt/deletedBy/deleteReason. Solo aplica a un
+ * trabajo REALMENTE eliminado (deletedAt no nulo); para un trabajo
+ * cancelado, el camino sigue siendo restoreCancelledWorkDurable (no se
+ * fusionan ambos conceptos). Auditado — antes/después queda en
+ * operational_events.
+ */
+export async function restoreDeletedWorkItemDurable(id: string, input: RestoreDeletedWorkItemInput) {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        deletedAt: workItems.deletedAt,
+        deleteReason: workItems.deleteReason,
+        operationalStatus: workItems.operationalStatus,
+        planningWeekId: workItems.planningWeekId,
+        version: workItems.version,
+      })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!existing) throw new Error("Work item no encontrado.");
+    if (!existing.deletedAt) {
+      throw new Error("Este trabajo no está eliminado — nada para restaurar.");
+    }
+
+    const now = new Date();
+    const [row] = await tx
+      .update(workItems)
+      .set({
+        deletedAt: null,
+        deletedBy: null,
+        deleteReason: null,
+        updatedAt: now,
+        version: existing.version + 1,
+      })
+      .where(eq(workItems.id, id))
+      .returning();
+    if (!row) throw new Error("No se pudo restaurar el trabajo.");
+
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: existing.planningWeekId,
+      type: "WORK_ITEM_RESTORED_BY_PRODUCCION",
+      fromStatus: existing.operationalStatus,
+      toStatus: existing.operationalStatus,
+      actorEmail: input.restoredBy,
+      actorSector: "PRODUCCION",
+      note: `Restaurado — eliminado antes por motivo: ${existing.deleteReason ?? "—"}. ${input.reason?.trim() ? `Motivo de restauración: ${input.reason.trim()}` : ""}`,
     });
 
     return row;

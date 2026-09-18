@@ -37,6 +37,32 @@ export interface AsignacionLoteSourceUpdateInput {
   priority?: number;
 }
 
+export interface ImportPreviewConflictSample {
+  lote: string;
+  codigo: string;
+  producto: string;
+  motivo: string;
+}
+
+/**
+ * Vista previa de importación (antes de conectar una fuente definitivamente,
+ * o antes de una sincronización manual) — nunca persiste nada. "Existentes"
+ * = mismo lote+código y mismos datos que un registro ya presente en GENUS OS
+ * (manual/Excel/otra fuente) — informativo, se ignora igual que siempre.
+ * "Conflictos" = mismo lote+código pero ALGÚN dato difiere — requiere
+ * revisión humana, nunca se fusiona ni se sobreescribe en silencio.
+ */
+export interface ImportPreviewResult {
+  ok: boolean;
+  rowsFound: number;
+  nuevas: number;
+  existentes: number;
+  conflictos: number;
+  invalidas: number;
+  conflictSamples: ImportPreviewConflictSample[];
+  error?: string;
+}
+
 export interface TestConnectionResult {
   ok: boolean;
   spreadsheetAccessible: boolean;
