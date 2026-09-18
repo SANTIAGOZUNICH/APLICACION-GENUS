@@ -70,6 +70,7 @@ describe("AsignacionLoteSourcesPanel — conectar planilla con vista previa obli
       screen.getByTestId("asignacion-lote-source-url-input"),
       "https://docs.google.com/spreadsheets/d/hist2025AAAA_-111"
     );
+    await user.type(screen.getByTestId("asignacion-lote-source-sheet-tab-input"), "LOTES_2025");
 
     const connectBtn = screen.getByTestId("asignacion-lote-source-connect-submit") as HTMLButtonElement;
     expect(connectBtn.disabled).toBe(true);
@@ -125,6 +126,7 @@ describe("AsignacionLoteSourcesPanel — conectar planilla con vista previa obli
     await user.click(await screen.findByTestId("asignacion-lote-source-connect-open"));
     await user.type(screen.getByTestId("asignacion-lote-source-name-input"), "2025");
     await user.type(screen.getByTestId("asignacion-lote-source-url-input"), "https://docs.google.com/spreadsheets/d/x");
+    await user.type(screen.getByTestId("asignacion-lote-source-sheet-tab-input"), "LOTES");
     await user.click(screen.getByTestId("asignacion-lote-source-test-connection"));
     await waitFor(() => expect(screen.getByTestId("asignacion-lote-source-test-result")).toBeTruthy());
     await user.click(await screen.findByTestId("asignacion-lote-source-preview-import"));
@@ -139,7 +141,7 @@ describe("AsignacionLoteSourcesPanel — conectar planilla con vista previa obli
       name: "Asignación de Lotes 2025",
       period: "2025",
       spreadsheetId: "abc123",
-      sheetTab: null,
+      sheetTab: "SEPTIEMBRE",
       enabled: true,
       priority: 0,
       lastSyncAt: null,
@@ -170,10 +172,8 @@ describe("AsignacionLoteSourcesPanel — conectar planilla con vista previa obli
               blankCount: 1,
               duplicateCount: 1,
               reconciled: true,
-              ignoredTabs: [{ tab: "OBSERVACIONES", reason: "no se reconocieron las columnas mínimas (lote/producto)." }],
-              sheetsTotal: 3,
-              conflictSamples: [{ lote: "G25001", codigo: "", producto: "SERUM", motivo: "Conflicto entre hojas." }],
-              invalidSamples: [{ tab: "ENERO", rowIndex: 5, lote: "", producto: "", motivo: "Falta lote o producto." }],
+              conflictSamples: [{ lote: "G25001", codigo: "", producto: "SERUM", motivo: "Fila repetida con datos distintos." }],
+              invalidSamples: [{ tab: "SEPTIEMBRE", rowIndex: 5, lote: "", producto: "", motivo: "Falta lote o producto." }],
               errorMessage: null,
               triggeredBy: "produccion@x.com",
               triggerKind: "manual",
@@ -193,7 +193,6 @@ describe("AsignacionLoteSourcesPanel — conectar planilla con vista previa obli
 
     const summary = await screen.findByTestId("asignacion-lote-source-sync-result-als-1");
     expect(summary.textContent).toContain("SINCRONIZACIÓN COMPLETADA CON AVISOS");
-    expect(summary.textContent).toContain("3 hoja(s) detectada(s)");
     expect(summary.textContent).toContain("30 fila(s) de datos leídas");
     expect(summary.textContent).toContain("+ 20 nuevas");
     expect(summary.textContent).toContain("↻ 5 actualizadas");
@@ -202,8 +201,7 @@ describe("AsignacionLoteSourcesPanel — conectar planilla con vista previa obli
 
     await user.click(screen.getByTestId("asignacion-lote-source-sync-detail-toggle-als-1"));
     const detail = await screen.findByTestId("asignacion-lote-source-sync-detail-als-1");
-    expect(detail.textContent).toContain("OBSERVACIONES");
     expect(detail.textContent).toContain("G25001");
-    expect(detail.textContent).toContain("ENERO");
+    expect(detail.textContent).toContain("SEPTIEMBRE");
   });
 });

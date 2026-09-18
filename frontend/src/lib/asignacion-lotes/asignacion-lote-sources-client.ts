@@ -77,7 +77,7 @@ export async function testAsignacionLoteSourceConnectionApi(
 export async function previewAsignacionLoteImportApi(
   session: OrdersClientSession,
   spreadsheetUrlOrId: string,
-  sheetTab?: string | null
+  sheetTab: string
 ): Promise<ImportPreviewResult> {
   const res = await fetch("/api/v1/asignacion-lotes/sources/preview-import", {
     method: "POST",
