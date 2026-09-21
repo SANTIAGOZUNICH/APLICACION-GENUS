@@ -924,6 +924,8 @@ export const asignacionLoteSyncRuns = pgTable(
     conflictCount: integer("conflict_count").notNull().default(0),
     /** Reconciliación obligatoria (0034) — ver SyncRunSummary. */
     blankCount: integer("blank_count").notNull().default(0),
+    /** Filas sin N° LOTE pero con contenido (notas/filas auxiliares) — 0035. */
+    auxiliaryCount: integer("auxiliary_count").notNull().default(0),
     duplicateCount: integer("duplicate_count").notNull().default(0),
     reconciled: boolean("reconciled").notNull().default(true),
     ignoredTabs: jsonb("ignored_tabs"),

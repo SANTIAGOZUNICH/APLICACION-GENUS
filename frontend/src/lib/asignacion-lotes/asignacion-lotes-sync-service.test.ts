@@ -452,6 +452,7 @@ describe("syncSource — sincronización Google Sheets → Asignación de Lotes"
     const { reconciliationTotal } = await import("./asignacion-lotes-sync-service");
     const balanced = {
       blankCount: 2,
+      auxiliaryCount: 1,
       invalidCount: 1,
       duplicateCount: 1,
       conflictCount: 1,
@@ -459,9 +460,89 @@ describe("syncSource — sincronización Google Sheets → Asignación de Lotes"
       updatedCount: 2,
       unchangedCount: 0,
     };
-    expect(reconciliationTotal(balanced)).toBe(10);
+    expect(reconciliationTotal(balanced)).toBe(11);
     const unbalanced = { ...balanced, createdCount: 1 }; // simula 2 filas "perdidas"
-    expect(reconciliationTotal(unbalanced)).toBe(8);
+    expect(reconciliationTotal(unbalanced)).toBe(9);
+  });
+
+  it("Hotfix reproducción real — hoja SEPTIEMBRE 2026: sincroniza limpio, ninguna fila real queda inválida", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource({ sheetTab: "SEPTIEMBRE" });
+
+    const header = [
+      "N° LOTE", "FECHA", "PRODUCTO", "CODIGO", "MARCA", "CANTIDAD", "VTO",
+      "MM", "FECHA ANALISIS", "N° ANALISIS", "OE", "OA", "RL", "OBSERVACION",
+    ];
+    const rows = [
+      header,
+      ["", "", "AGU DEL SECTOR DE ELABORACION", "", "", "", "", "", "2-9", "", "", "", "", ""],
+      ["S26001", "1/9/2026", "AFTER SHAVE", "VERDE", "ORIGINAL BLACK", "6800", "1/9/28", "", "N/A", "", "", "", "", ""],
+      ["S26002", "1/9/2026", "AFTER SHAVE", "VIOLETA", "ORIGINAL BLACK", "6800", "1/9/28", "", "N/A", "", "", "", "", ""],
+      ["S26003", "1/9/2026", "AFTER SHAVE", "AZUL", "ORIGINAL BLACK", "6800", "1/9/28", "", "N/A", "", "", "", "", ""],
+      ["S26004", "1/9/2026", "SERUM", "SILICIO+OLIGOELEMENTOS", "LUCENT", "500", "1/9/28", "", "N/A", "", "", "", "", ""],
+      ["S26012", "1/9/2026", "ADVANCE", "VITAMINA C", "PROFESSIONAL BEAUTY", "500", "1/9/28", "", "N/A", "", "", "", "", ""],
+      ["S26017", "1/9/2026", "CREMA FACIAL CON ACIDO HIALURONICO", "", "ROSEHIP-ECODERM", "240", "1/9/28", "", "N/A", "", "", "", "", ""],
+      ["S26018", "1/9/2026", "SERUM", "VITAMINA C", "ROSEHIP-ECODERM", "300", "1/9/28", "", "N/A", "", "", "", "", ""],
+    ];
+    readTabMock.mockResolvedValue(rows);
+
+    const summary = await syncSource(source, "test", "manual");
+
+    // El resultado deja de ser "91 leídas / 90 inválidas": las 7 filas
+    // reales se crean, solo la fila auxiliar queda aparte (nunca inválida).
+    expect(summary.rowsRead).toBe(8);
+    expect(summary.createdCount).toBe(7);
+    expect(summary.auxiliaryCount).toBe(1);
+    expect(summary.invalidCount).toBe(0);
+    expect(summary.reconciled).toBe(true);
+    expect(summary.status).toBe("ok");
+
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    const byLote = Object.fromEntries(lotes.map((l) => [l.lote, l]));
+
+    expect(Object.keys(byLote).sort()).toEqual(
+      ["S26001", "S26002", "S26003", "S26004", "S26012", "S26017", "S26018"].sort()
+    );
+
+    expect(byLote.S26001).toMatchObject({
+      fecha: "2026-09-01",
+      producto: "AFTER SHAVE",
+      codigo: "VERDE",
+      marca: "ORIGINAL BLACK",
+      cantidades: 6800,
+      vto: "2028-09-01",
+    });
+    expect(byLote.S26002).toMatchObject({ codigo: "VIOLETA", vto: "2028-09-01" });
+    expect(byLote.S26003).toMatchObject({ codigo: "AZUL", vto: "2028-09-01" });
+    expect(byLote.S26004).toMatchObject({
+      producto: "SERUM",
+      codigo: "SILICIO+OLIGOELEMENTOS",
+      marca: "LUCENT",
+      vto: "2028-09-01",
+    });
+    expect(byLote.S26012).toMatchObject({ producto: "ADVANCE", codigo: "VITAMINA C", vto: "2028-09-01" });
+    expect(byLote.S26017).toMatchObject({
+      producto: "CREMA FACIAL CON ACIDO HIALURONICO",
+      codigo: "", // CÓDIGO vacío en la Sheet real — nunca bloquea
+      marca: "ROSEHIP-ECODERM",
+      vto: "2028-09-01",
+    });
+    expect(byLote.S26018).toMatchObject({
+      producto: "SERUM",
+      codigo: "VITAMINA C",
+      marca: "ROSEHIP-ECODERM",
+      cantidades: 300,
+      vto: "2028-09-01",
+    });
+
+    // Búsqueda global (usa el mismo resolver que Asignar trabajo) encuentra
+    // por lote y por marca/producto, sin importar en qué fila llegó.
+    const all = await getAsignacionLotesService().list(admin);
+    expect(all.some((r) => r.lote === "S26001")).toBe(true);
+    expect(all.filter((r) => r.marca === "ROSEHIP-ECODERM").map((r) => r.lote).sort()).toEqual(["S26017", "S26018"]);
+    expect(all.filter((r) => r.producto === "AFTER SHAVE").map((r) => r.lote).sort()).toEqual([
+      "S26001", "S26002", "S26003",
+    ]);
   });
 
   it("Test 28 (regresión): caso real ECODERM/ROSEHIP sincronizado desde Sheets alimenta el resolver existente", async () => {

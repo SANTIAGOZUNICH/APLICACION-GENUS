@@ -102,6 +102,7 @@ function SyncResultSummary({
       <p>= {run.unchangedCount} sin cambios</p>
       {run.conflictCount > 0 ? <p>⚠ {run.conflictCount} requieren revisión (conflicto)</p> : null}
       {run.invalidCount > 0 ? <p>✕ {run.invalidCount} inválidas</p> : null}
+      {run.auxiliaryCount > 0 ? <p>{run.auxiliaryCount} fila(s) auxiliar(es) ignorada(s) (sin N° lote, no son asignaciones)</p> : null}
       {run.duplicateCount > 0 ? <p>{run.duplicateCount} fila(s) repetida(s) idénticas — no se re-escriben</p> : null}
       {run.archivedCount > 0 ? <p>{run.archivedCount} archivada(s) (ya no están en la fuente)</p> : null}
       {!run.reconciled ? (
@@ -475,6 +476,9 @@ export function AsignacionLoteSourcesPanel({ session }: { session: OrdersClientS
                       Conflictos (requieren revisión, nunca se fusionan solos): {previewResult.conflictos}
                     </p>
                     <p>Inválidas: {previewResult.invalidas}</p>
+                    {previewResult.auxiliares > 0 ? (
+                      <p>Auxiliares ignoradas (sin N° lote, no son asignaciones): {previewResult.auxiliares}</p>
+                    ) : null}
                     {previewResult.conflictSamples.length > 0 ? (
                       <ul className="mt-1 list-disc pl-4">
                         {previewResult.conflictSamples.slice(0, 5).map((c, i) => (

@@ -67,6 +67,8 @@ export interface ImportPreviewResult {
   existentes: number;
   conflictos: number;
   invalidas: number;
+  /** Filas sin N° LOTE pero con contenido (notas/filas auxiliares) — no son asignaciones reales, se ignoran justificadamente. */
+  auxiliares: number;
   conflictSamples: ImportPreviewConflictSample[];
   error?: string;
 }
@@ -114,6 +116,8 @@ export interface SyncRunSummary {
   conflictCount: number;
   /** Filas vacías (sin lote ni producto) — se ignoran intencionalmente, nunca cuentan como inválidas. */
   blankCount: number;
+  /** Filas sin N° LOTE pero con contenido (notas/filas auxiliares de la planilla, ej. "AGU DEL SECTOR DE ELABORACION") — no son asignaciones reales, se ignoran justificadamente, nunca cuentan como inválidas. */
+  auxiliaryCount: number;
   /** Duplicado EXACTO (mismo lote+código, mismo contenido) repetido dentro de la misma hoja en esta corrida — no se re-escribe, pero cuenta en la reconciliación. */
   duplicateCount: number;
   /** false = la ecuación de reconciliación no cerró (alguna fila quedó sin bucket conocido) — nunca se afirma éxito en ese caso. */

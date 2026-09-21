@@ -371,3 +371,109 @@ describe("AUDIT_EXCEL_VTO_BUG — VTO ilegible es un error, nunca un warning sil
     expect(built.vto).toBe("2028-10-31");
   });
 });
+
+/**
+ * Hotfix (reproducción real, hoja SEPTIEMBRE 2026): "N/A" en Fecha análisis
+ * es un marcador explícito de "no aplica", NO un intento de fecha mal
+ * escrito — antes disparaba el mismo error bloqueante que un dato
+ * realmente ilegible, tirando abajo filas enteras (lote/producto/VTO
+ * correctos) solo por este campo secundario. Whitelist exacta y acotada
+ * (nunca fuzzy) para no confundir esto con AUDIT_EXCEL_VTO_BUG.
+ */
+describe("Hotfix — tokens explícitos de 'sin dato' (N/A, S/D, -) no bloquean la fila", () => {
+  it("Fecha análisis 'N/A' no genera error — persiste como null, no bloquea la fila", () => {
+    const issues = validateAsignacionLoteRow({ producto: "X", lote: "L-1", fechaAnalisis: "N/A" }, 1);
+    expect(issues).toEqual([]);
+    const built = buildAsignacionLoteFromMappedRow({ producto: "X", lote: "L-1", fechaAnalisis: "N/A" }, "Calidad");
+    expect(built.fechaAnalisis).toBeNull();
+  });
+
+  it("variantes de 'sin dato' (n/a, S/D, -, minúsculas/mayúsculas/espacios) tampoco bloquean", () => {
+    for (const token of ["n/a", "N/A", " N/A ", "s/d", "S/D", "-", "NA", "n.a."]) {
+      const issues = validateAsignacionLoteRow({ producto: "X", lote: "L-1", fechaAnalisis: token }, 1);
+      expect(issues).toEqual([]);
+    }
+  });
+
+  it("un valor realmente ilegible (no está en la whitelist) SIGUE siendo error — no se relaja la validación en general", () => {
+    const issues = validateAsignacionLoteRow({ producto: "X", lote: "L-1", fechaAnalisis: "2-9" }, 1);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.severity).toBe("error");
+  });
+
+  it("VTO 'N/A' también se tolera igual que Fecha análisis (misma clase de problema)", () => {
+    const issues = validateAsignacionLoteRow({ producto: "X", lote: "L-1", vto: "N/A" }, 1);
+    expect(issues).toEqual([]);
+    const built = buildAsignacionLoteFromMappedRow({ producto: "X", lote: "L-1", vto: "N/A" }, "Calidad");
+    expect(built.vto).toBeNull();
+  });
+});
+
+/**
+ * Hotfix (reproducción real, hoja SEPTIEMBRE 2026 — reporte de Production):
+ * "91 filas leídas, 0 nuevas, 90 inválidas" con motivo "Falta lote o
+ * producto" para S26001/S26002/S26003, aunque el lote SÍ se leía
+ * correctamente. Reproducción exacta con los encabezados y filas reales
+ * de la hoja para demostrar la causa raíz real (VTO dd/mm/aa + Fecha
+ * análisis "N/A", NUNCA un problema de mapeo de encabezados — PRODUCTO y
+ * N° LOTE ya mapeaban correctamente).
+ */
+describe("Hotfix — reproducción real hoja SEPTIEMBRE 2026 (headers + filas reales)", () => {
+  const header = [
+    "N° LOTE", "FECHA", "PRODUCTO", "CODIGO", "MARCA", "CANTIDAD", "VTO",
+    "MM", "FECHA ANALISIS", "N° ANALISIS", "OE", "OA", "RL", "OBSERVACION",
+  ];
+
+  function mapSeptiembreRow(row: string[]) {
+    const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+    return rowToObject(row, mapping);
+  }
+
+  it("el mapper YA reconoce N° LOTE y PRODUCTO correctamente (la causa raíz NO es el header mapping)", () => {
+    const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+    expect(mapping.lote).toBe(0);
+    expect(mapping.producto).toBe(2);
+    expect(mapping.codigo).toBe(3);
+    expect(mapping.marca).toBe(4);
+    expect(mapping.cantidades).toBe(5);
+    expect(mapping.vto).toBe(6);
+    expect(mapping.fechaAnalisis).toBe(8);
+  });
+
+  it("S26001 (VTO '1/9/28' + Fecha análisis 'N/A') pasa validación limpio tras el fix — antes era bloqueado", () => {
+    const mapped = mapSeptiembreRow([
+      "S26001", "1/9/2026", "AFTER SHAVE", "VERDE", "ORIGINAL BLACK", "6800", "1/9/28",
+      "", "N/A", "", "", "", "", "",
+    ]);
+    expect(validateAsignacionLoteRow(mapped, 3)).toEqual([]);
+    const built = buildAsignacionLoteFromMappedRow(mapped, "sync");
+    expect(built.lote).toBe("S26001");
+    expect(built.producto).toBe("AFTER SHAVE");
+    expect(built.codigo).toBe("VERDE");
+    expect(built.marca).toBe("ORIGINAL BLACK");
+    expect(built.cantidades).toBe(6800);
+    expect(built.vto).toBe("2028-09-01"); // VTO nunca se pierde
+    expect(built.fechaAnalisis).toBeNull(); // "N/A" -> null, sin bloquear
+  });
+
+  it("S26017 (CÓDIGO vacío) también se importa correctamente — código vacío nunca bloquea", () => {
+    const mapped = mapSeptiembreRow([
+      "S26017", "1/9/2026", "CREMA FACIAL CON ACIDO HIALURONICO", "", "ROSEHIP-ECODERM", "240", "1/9/28",
+      "", "N/A", "", "", "", "", "",
+    ]);
+    expect(validateAsignacionLoteRow(mapped, 19)).toEqual([]);
+    const built = buildAsignacionLoteFromMappedRow(mapped, "sync");
+    expect(built.lote).toBe("S26017");
+    expect(built.codigo).toBe("");
+    expect(built.marca).toBe("ROSEHIP-ECODERM");
+    expect(built.vto).toBe("2028-09-01");
+  });
+
+  it("la fila auxiliar ('AGU DEL SECTOR DE ELABORACION', sin N° LOTE) no tiene lote — el sync la clasifica aparte, nunca como asignación", () => {
+    const mapped = mapSeptiembreRow([
+      "", "", "AGU DEL SECTOR DE ELABORACION", "", "", "", "", "", "2-9", "", "", "", "", "",
+    ]);
+    expect(mapped.lote?.trim()).toBe("");
+    expect(mapped.producto?.trim()).toBe("AGU DEL SECTOR DE ELABORACION");
+  });
+});

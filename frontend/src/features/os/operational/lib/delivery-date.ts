@@ -43,6 +43,23 @@ export function parseFlexibleDate(raw: string): string | null {
     return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
   }
 
+  /**
+   * dd/mm/yy (año de 2 dígitos, día explícito) — formato real confirmado en
+   * Asignación de Lotes (hoja SEPTIEMBRE 2026: "1/9/28", "1/10/28") — antes
+   * no reconocido porque solo existían patrones de 4 dígitos de año (con
+   * día) o de 2 dígitos de año (sin día, mm/yy). Mismo criterio de siglo
+   * que mm/yy más abajo (GENUS opera en el rango 2020-2069).
+   */
+  const ddMmYy = trimmed.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2})$/);
+  if (ddMmYy) {
+    const d = Number(ddMmYy[1]);
+    const m = Number(ddMmYy[2]);
+    const yy = Number(ddMmYy[3]);
+    if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+    const year = yy <= 69 ? 2000 + yy : 1900 + yy;
+    return `${year}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+
   const mmYyyy = trimmed.match(/^(\d{1,2})[/.-](\d{4})$/);
   if (mmYyyy) {
     const month = Number(mmYyyy[1]);
