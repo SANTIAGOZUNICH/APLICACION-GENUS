@@ -33,6 +33,27 @@ describe("delivery-date", () => {
     expect(parseFlexibleDate("00/28")).toBeNull();
   });
 
+  /**
+   * Hotfix (reproducción real, hoja SEPTIEMBRE 2026 de Asignación de
+   * Lotes): dd/mm/aa con día explícito y año de 2 dígitos ("1/9/28",
+   * "1/10/28") es el formato real de VTO en esa planilla y no se
+   * reconocía — el parser solo tenía dd/mm/AAAA (4 dígitos) o mm/aa (sin
+   * día). Causaba que la fila entera se rechazara como "VTO inválido" y
+   * se perdiera la asignación completa, no solo el VTO.
+   */
+  it("parsea dd/mm/aa con año de 2 dígitos (VTO real de Asignación de Lotes, hoja SEPTIEMBRE)", () => {
+    expect(parseFlexibleDate("1/9/28")).toBe("2028-09-01");
+    expect(parseFlexibleDate("1/10/28")).toBe("2028-10-01");
+    expect(parseFlexibleDate("01/09/2028")).toBe("2028-09-01");
+    expect(parseFlexibleDate("09/2028")).toBe("2028-09-30");
+    expect(parseFlexibleDate("09-28")).toBe("2028-09-30");
+  });
+
+  it("dd/mm/aa con mes o día inválido no inventa una fecha", () => {
+    expect(parseFlexibleDate("1/13/28")).toBeNull();
+    expect(parseFlexibleDate("32/1/28")).toBeNull();
+  });
+
   it("formatea y compara fechas ISO", () => {
     expect(formatDateDisplay("2026-07-03")).toBe("03/07/2026");
     expect(formatDateDisplay(null)).toBe("—");

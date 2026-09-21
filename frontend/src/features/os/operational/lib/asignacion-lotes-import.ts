@@ -66,6 +66,20 @@ export interface AsignacionLoteMappedRow {
   cliente: string;
 }
 
+/**
+ * Tokens reales confirmados en Asignación de Lotes (hoja SEPTIEMBRE 2026,
+ * columna FECHA ANÁLISIS) para "no aplica"/"sin dato" — nunca un intento de
+ * fecha mal escrito. Whitelist exacta (case/espacios-insensible, nunca
+ * fuzzy) para no confundir un dato realmente ilegible (que sí debe
+ * bloquear, ver AUDIT_EXCEL_VTO_BUG) con un campo secundario
+ * explícitamente marcado como no disponible.
+ */
+const NO_DATA_TOKENS = new Set(["n/a", "na", "n.a.", "n.a", "s/d", "sd", "-", "—", "sin dato"]);
+
+function isNoDataToken(value: string): boolean {
+  return NO_DATA_TOKENS.has(value.trim().toLowerCase());
+}
+
 /** Texto de preview cuando el código importado está vacío (no se persiste). */
 export function formatAsignacionCodigoPreview(codigo: string | null | undefined): string {
   return codigo?.trim() ? codigo.trim() : "Sin código";
@@ -108,12 +122,12 @@ export function validateAsignacionLoteRow(
   // warning silencioso que permita importar con el valor perdido sin que
   // nadie lo note (ver AUDIT_EXCEL_VTO_BUG).
   const vto = row.vto?.trim();
-  if (vto && !parseFlexibleDate(vto)) {
+  if (vto && !isNoDataToken(vto) && !parseFlexibleDate(vto)) {
     issues.push({ rowIndex, field: "vto", message: "VTO inválido.", severity: "error" });
   }
 
   const fechaAnalisis = row.fechaAnalisis?.trim();
-  if (fechaAnalisis && !parseFlexibleDate(fechaAnalisis)) {
+  if (fechaAnalisis && !isNoDataToken(fechaAnalisis) && !parseFlexibleDate(fechaAnalisis)) {
     issues.push({
       rowIndex,
       field: "fechaAnalisis",

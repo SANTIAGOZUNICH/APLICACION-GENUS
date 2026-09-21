@@ -63,6 +63,7 @@ async function recordRun(summary: SyncRunSummary): Promise<void> {
       archivedCount: summary.archivedCount,
       conflictCount: summary.conflictCount,
       blankCount: summary.blankCount,
+      auxiliaryCount: summary.auxiliaryCount,
       duplicateCount: summary.duplicateCount,
       reconciled: summary.reconciled,
       conflictSamples: summary.conflictSamples,
@@ -100,6 +101,7 @@ export async function listSyncRuns(sourceId: string, limit = 20): Promise<SyncRu
       archivedCount: row.archivedCount,
       conflictCount: row.conflictCount,
       blankCount: row.blankCount,
+      auxiliaryCount: row.auxiliaryCount,
       duplicateCount: row.duplicateCount,
       reconciled: row.reconciled,
       conflictSamples: (row.conflictSamples as SyncRunSummary["conflictSamples"]) ?? [],
@@ -141,11 +143,19 @@ function rowContentSignature(input: ReturnType<typeof buildAsignacionLoteFromMap
 export function reconciliationTotal(
   summary: Pick<
     SyncRunSummary,
-    "blankCount" | "invalidCount" | "duplicateCount" | "conflictCount" | "createdCount" | "updatedCount" | "unchangedCount"
+    | "blankCount"
+    | "auxiliaryCount"
+    | "invalidCount"
+    | "duplicateCount"
+    | "conflictCount"
+    | "createdCount"
+    | "updatedCount"
+    | "unchangedCount"
   >
 ): number {
   return (
     summary.blankCount +
+    summary.auxiliaryCount +
     summary.invalidCount +
     summary.duplicateCount +
     summary.conflictCount +
@@ -180,9 +190,19 @@ async function processTabRows(
       continue;
     }
 
+    if (!mapped.lote?.trim()) {
+      // Fila sin N° LOTE pero con algo de contenido (ej. "AGU DEL SECTOR DE
+      // ELABORACION") — no es una asignación real, es una nota/fila
+      // auxiliar de la planilla. Se ignora justificadamente, nunca se
+      // cuenta como inválida (no es un dato mal cargado, simplemente no
+      // tiene forma de asignación) — pero sí cuenta en la reconciliación.
+      summary.auxiliaryCount += 1;
+      continue;
+    }
+
     const issues = validateAsignacionLoteRow(mapped, rowIndex);
     const hasBlockingError = issues.some((issue) => issue.severity === "error");
-    if (hasBlockingError || !mapped.lote?.trim() || !mapped.producto?.trim()) {
+    if (hasBlockingError || !mapped.producto?.trim()) {
       // Carga flexible tolera celdas vacías salvo lote/producto — sin eso
       // no hay nada determinístico que vincular después.
       summary.invalidCount += 1;
@@ -192,7 +212,7 @@ async function processTabRows(
           rowIndex,
           lote: mapped.lote?.trim() ?? "",
           producto: mapped.producto?.trim() ?? "",
-          motivo: issues.map((issue) => issue.message).join("; ") || "Falta lote o producto.",
+          motivo: issues.map((issue) => issue.message).join("; ") || "Falta producto.",
         });
       }
       continue;
@@ -271,6 +291,7 @@ export async function syncSource(
     archivedCount: 0,
     conflictCount: 0,
     blankCount: 0,
+    auxiliaryCount: 0,
     duplicateCount: 0,
     reconciled: true,
     conflictSamples: [],
@@ -392,6 +413,7 @@ export async function previewImport(
     existentes: 0,
     conflictos: 0,
     invalidas: 0,
+    auxiliares: 0,
     conflictSamples: [],
   };
 
@@ -420,9 +442,16 @@ export async function previewImport(
       if (!mapped.lote?.trim() && !mapped.producto?.trim()) continue;
       result.rowsFound += 1;
 
+      if (!mapped.lote?.trim()) {
+        // Fila sin N° LOTE pero con contenido — nota/fila auxiliar de la
+        // planilla, no una asignación real. Nunca cuenta como inválida.
+        result.auxiliares += 1;
+        continue;
+      }
+
       const issues = validateAsignacionLoteRow(mapped, rowIndex);
       const hasBlockingError = issues.some((issue) => issue.severity === "error");
-      if (hasBlockingError || !mapped.lote?.trim() || !mapped.producto?.trim()) {
+      if (hasBlockingError || !mapped.producto?.trim()) {
         result.invalidas += 1;
         continue;
       }
