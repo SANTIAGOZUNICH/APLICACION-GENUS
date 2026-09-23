@@ -7,7 +7,7 @@
   "crons": [
     {
       "path": "/api/cron/asignacion-lotes-sync",
-      "schedule": "0 6 * * *"
+      "schedule": "*/10 * * * *"
     }
   ]
 }

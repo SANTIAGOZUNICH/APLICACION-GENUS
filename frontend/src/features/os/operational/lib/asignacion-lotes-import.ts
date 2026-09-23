@@ -74,10 +74,56 @@ export interface AsignacionLoteMappedRow {
  * bloquear, ver AUDIT_EXCEL_VTO_BUG) con un campo secundario
  * explícitamente marcado como no disponible.
  */
-const NO_DATA_TOKENS = new Set(["n/a", "na", "n.a.", "n.a", "s/d", "sd", "-", "—", "sin dato"]);
+const NO_DATA_TOKENS = new Set([
+  "n/a",
+  "na",
+  "n.a.",
+  "n.a",
+  "s/d",
+  "sd",
+  "-",
+  "—",
+  "sin dato",
+  // "envían [la muestra]" — confirmado en la hoja real (SEPTIEMBRE 2026):
+  // todavía no se mandó a analizar, no es una fecha mal escrita.
+  "envian",
+  "envían",
+]);
 
 function isNoDataToken(value: string): boolean {
   return NO_DATA_TOKENS.has(value.trim().toLowerCase());
+}
+
+/**
+ * FECHA ANÁLISIS real (hoja SEPTIEMBRE 2026, validado contra la planilla en
+ * vivo): además de fechas completas, esta columna suele tener solo "día-mes"
+ * sin año (ej. "2-9", "16/9") — una nota informal de cuándo se mandó la
+ * muestra, asumiendo el año en curso. `parseFlexibleDate` no lo reconoce (su
+ * único patrón de 2 dígitos es mm/yy con año, no día/mes sin año) — antes
+ * esto bloqueaba ~31% de las filas activas de la hoja real como "inválidas"
+ * y nunca llegaban a sincronizarse. Se resuelve el año a partir de la propia
+ * FECHA de la fila (mismo año casi siempre — la muestra se manda cerca de la
+ * fecha del lote) en vez de asumir el año calendario actual, que sería
+ * incorrecto al sincronizar una fuente de un año anterior (ej. "Asignación
+ * de Lotes 2025").
+ */
+export function parseAnalysisDateShorthand(
+  raw: string,
+  referenceIso?: string | null,
+  now = new Date()
+): string | null {
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^(\d{1,2})[/.-](\d{1,2})$/);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+  const referenceYear = referenceIso?.match(/^(\d{4})-/)?.[1];
+  const year = referenceYear ? Number(referenceYear) : now.getFullYear();
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 /** Texto de preview cuando el código importado está vacío (no se persiste). */
@@ -127,7 +173,12 @@ export function validateAsignacionLoteRow(
   }
 
   const fechaAnalisis = row.fechaAnalisis?.trim();
-  if (fechaAnalisis && !isNoDataToken(fechaAnalisis) && !parseFlexibleDate(fechaAnalisis)) {
+  if (
+    fechaAnalisis &&
+    !isNoDataToken(fechaAnalisis) &&
+    !parseFlexibleDate(fechaAnalisis) &&
+    !parseAnalysisDateShorthand(fechaAnalisis, row.fecha ? parseFlexibleDate(row.fecha) : null)
+  ) {
     issues.push({
       rowIndex,
       field: "fechaAnalisis",
@@ -158,7 +209,13 @@ export function buildAsignacionLoteFromMappedRow(
     vto: row.vto?.trim() ? parseFlexibleDate(row.vto) : null,
     muestras: row.muestras?.trim() ?? "",
     cjMuestra: row.cjMuestra?.trim() ?? "",
-    fechaAnalisis: row.fechaAnalisis?.trim() ? parseFlexibleDate(row.fechaAnalisis) : null,
+    fechaAnalisis: row.fechaAnalisis?.trim()
+      ? (parseFlexibleDate(row.fechaAnalisis) ??
+        parseAnalysisDateShorthand(
+          row.fechaAnalisis,
+          row.fecha ? parseFlexibleDate(row.fecha) : null
+        ))
+      : null,
     observaciones: row.observaciones?.trim() ?? "",
     updatedBy,
     createdBy: updatedBy,
