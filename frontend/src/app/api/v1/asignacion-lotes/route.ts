@@ -11,12 +11,14 @@ import { getAsignacionLoteSourcesService } from "@/lib/asignacion-lotes/asignaci
 import { isDueForOpportunisticSync, syncSource } from "@/lib/asignacion-lotes/asignacion-lotes-sync-service";
 
 /**
- * Sync oportunista (pedido #6): en vez de un cron cada pocos minutos
- * (Vercel Cron en plan Hobby solo permite 1 vez/día), cada vez que alguien
- * abre/refresca Asignación de Lotes se aprovecha ese request para
- * sincronizar las fuentes que ya pasaron su intervalo mínimo — con
- * `after()` para no demorar la respuesta al usuario. Best-effort: un fallo
- * acá nunca puede romper el listado que ya se está devolviendo.
+ * Sync oportunista — BONUS de frescura, no el mecanismo principal (ver
+ * src/app/api/cron/asignacion-lotes-sync/route.ts, que corre cada 10
+ * minutos vía Vercel Cron y es quien garantiza la sincronización aunque
+ * nadie abra GENUS OS). Cada vez que alguien abre/refresca Asignación de
+ * Lotes se aprovecha ese request para adelantar el sync de fuentes que ya
+ * pasaron su intervalo mínimo, con `after()` para no demorar la respuesta
+ * al usuario. Best-effort: un fallo acá nunca puede romper el listado que
+ * ya se está devolviendo.
  */
 const OPPORTUNISTIC_SYNC_MIN_INTERVAL_MS = 3 * 60 * 1000;
 

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/asignacion-lotes/asignacion-lotes-sync-service", () => ({
@@ -36,5 +38,20 @@ describe("GET /api/cron/asignacion-lotes-sync", () => {
       })
     );
     expect(res.status).toBe(200);
+  });
+});
+
+describe("vercel.json — frecuencia del cron de Asignación de Lotes", () => {
+  it("corre más de una vez por día (regresión: antes era '0 6 * * *', 1x/día, tratado como mero respaldo) — mismo patrón que GENUS-CRM (mismo equipo de Vercel)", () => {
+    const vercelConfig = JSON.parse(
+      readFileSync(join(process.cwd(), "vercel.json"), "utf8")
+    ) as { crons?: { path: string; schedule: string }[] };
+    const cron = vercelConfig.crons?.find((c) => c.path === "/api/cron/asignacion-lotes-sync");
+    expect(cron).toBeTruthy();
+    // Un schedule diario tiene 4 campos fijos (minuto hora * * *) sin "/" ni
+    // "," — cualquier schedule con "/" (step, ej. "*/10 * * * *") o que no
+    // fije hora exacta corre más de 1 vez/día. No se hardcodea el valor
+    // exacto para no romper si se ajusta la cadencia dentro de "frecuente".
+    expect(cron!.schedule).toMatch(/\*\/|,/);
   });
 });
