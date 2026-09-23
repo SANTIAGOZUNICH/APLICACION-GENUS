@@ -13,6 +13,21 @@ import {
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isApi = pathname.startsWith("/api/v1/");
+  /**
+   * Bug real (encontrado auditando por qué el cron de Asignación de Lotes
+   * nunca sincronizaba en Production pese a existir y tener CRON_SECRET
+   * configurado): Vercel Cron llama a /api/cron/* con
+   * `Authorization: Bearer $CRON_SECRET` — nunca manda la cookie
+   * `genus_session`. Como esta ruta no empieza con /api/v1/, `isApi` daba
+   * false, así que el gate de sesión de abajo la trataba como página y
+   * respondía 307 a /login ANTES de que el handler (que sí valida
+   * CRON_SECRET) llegara a ejecutarse — confirmado en vivo contra
+   * Production (curl a appgenus.vercel.app/api/cron/... → 307 Location:
+   * /login). /api/cron/* tiene su propia autenticación (Bearer token) en
+   * el propio handler, igual que /api/health — nunca debe pasar por el
+   * gate de sesión.
+   */
+  const isCronEndpoint = pathname.startsWith("/api/cron/");
 
   // Dominio canónico único en Production — ver canonical-host.ts. Corre
   // ANTES que todo lo demás: la cookie de sesión es host-only, así que un
@@ -23,7 +38,7 @@ export function middleware(request: NextRequest) {
     shouldRedirectToCanonicalHost({
       vercelEnv: process.env.VERCEL_ENV,
       hostname: request.nextUrl.hostname,
-      isApiRequest: isApi,
+      isApiRequest: isApi || isCronEndpoint,
     })
   ) {
     const canonicalUrl = request.nextUrl.clone();
@@ -40,7 +55,7 @@ export function middleware(request: NextRequest) {
     shouldRedirectToCanonicalPreviewHost({
       vercelEnv: process.env.VERCEL_ENV,
       hostname: request.nextUrl.hostname,
-      isApiRequest: isApi,
+      isApiRequest: isApi || isCronEndpoint,
       deploymentHost: process.env.VERCEL_URL,
     })
   ) {
@@ -60,7 +75,7 @@ export function middleware(request: NextRequest) {
   const isHealthCheck =
     pathname === "/api/health" || pathname === "/api/v1/connectivity";
 
-  if (!isPublicPage && !isAuthLogin && !isHealthCheck && !hasSessionCookie) {
+  if (!isPublicPage && !isAuthLogin && !isHealthCheck && !isCronEndpoint && !hasSessionCookie) {
     if (isApi) {
       return NextResponse.json({ error: "Sesión requerida.", code: "AUTH_UNAUTHORIZED" }, { status: 401 });
     }
