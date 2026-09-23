@@ -61,7 +61,7 @@ export function normalizeForDuplicateMatch(value: string | null | undefined): st
     .replace(/\s+/g, " ");
 }
 
-function tierOf(status: string): "COMPLETA" | "INCOMPLETA" {
+export function tierOf(status: string): "COMPLETA" | "INCOMPLETA" {
   return COMPLETE_TIER_STATUSES.has(status) ? "COMPLETA" : "INCOMPLETA";
 }
 
@@ -151,23 +151,39 @@ export function pickKeeper(candidates: OaDuplicateCandidate[]): OaDuplicateCandi
  * diferencia es inequívoca y el candidato no tiene relaciones activas que
  * el keeper no tenga (Caso A y Caso C con diferencia clara).
  */
+/** Cliente/código/pedido difieren entre dos OA que por lo demás matchean lote+producto — nunca se asume duplicado real ante esto. */
+export function hasSafetyMismatch(a: OaDuplicateCandidate, b: OaDuplicateCandidate): boolean {
+  const clientMismatch =
+    normalizeForDuplicateMatch(a.client) &&
+    normalizeForDuplicateMatch(b.client) &&
+    normalizeForDuplicateMatch(a.client) !== normalizeForDuplicateMatch(b.client);
+  const codeMismatch =
+    normalizeForDuplicateMatch(a.code) &&
+    normalizeForDuplicateMatch(b.code) &&
+    normalizeForDuplicateMatch(a.code) !== normalizeForDuplicateMatch(b.code);
+  const aOps = a.pedidoOps.map(normalizeForDuplicateMatch);
+  const bOps = b.pedidoOps.map(normalizeForDuplicateMatch);
+  const opMismatch = aOps.length > 0 && bOps.length > 0 && !bOps.some((o) => aOps.includes(o));
+  return clientMismatch || codeMismatch || opMismatch;
+}
+
+/** `candidate` tiene una relación activa (work item/entrega/Calidad) que `keeper` no tiene. */
+export function hasExtraActiveRelations(
+  keeper: OaDuplicateCandidate,
+  candidate: OaDuplicateCandidate
+): boolean {
+  return (
+    (candidate.activeWorkItemCount > 0 && keeper.activeWorkItemCount === 0) ||
+    (candidate.activeDeliveryCount > 0 && keeper.activeDeliveryCount === 0) ||
+    (candidate.hasQualityDecision && !keeper.hasQualityDecision)
+  );
+}
+
 export function classifyOaDuplicate(
   keeper: OaDuplicateCandidate,
   candidate: OaDuplicateCandidate
 ): OaDuplicateResult {
-  const clientMismatch =
-    normalizeForDuplicateMatch(keeper.client) &&
-    normalizeForDuplicateMatch(candidate.client) &&
-    normalizeForDuplicateMatch(keeper.client) !== normalizeForDuplicateMatch(candidate.client);
-  const codeMismatch =
-    normalizeForDuplicateMatch(keeper.code) &&
-    normalizeForDuplicateMatch(candidate.code) &&
-    normalizeForDuplicateMatch(keeper.code) !== normalizeForDuplicateMatch(candidate.code);
-  const keeperOps = keeper.pedidoOps.map(normalizeForDuplicateMatch);
-  const candOps = candidate.pedidoOps.map(normalizeForDuplicateMatch);
-  const opMismatch = keeperOps.length > 0 && candOps.length > 0 && !candOps.some((o) => keeperOps.includes(o));
-
-  if (clientMismatch || codeMismatch || opMismatch) {
+  if (hasSafetyMismatch(keeper, candidate)) {
     return {
       classification: "CONFLICTO",
       reason:
@@ -175,11 +191,7 @@ export function classifyOaDuplicate(
     };
   }
 
-  const candHasExtraRelations =
-    (candidate.activeWorkItemCount > 0 && keeper.activeWorkItemCount === 0) ||
-    (candidate.activeDeliveryCount > 0 && keeper.activeDeliveryCount === 0) ||
-    (candidate.hasQualityDecision && !keeper.hasQualityDecision);
-  if (candHasExtraRelations) {
+  if (hasExtraActiveRelations(keeper, candidate)) {
     return {
       classification: "CONFLICTO",
       reason:
@@ -215,4 +227,79 @@ export function classifyOaDuplicate(
     classification: "CONFLICTO",
     reason: `Caso C: ambas incompletas y la diferencia de completitud (${keeperScore} vs ${candScore}) no es inequívoca.`,
   };
+}
+
+export type OaDuplicateReportEstado = "A" | "B" | "C" | "D";
+
+export type OaDuplicateReportRow = {
+  /** N° de pedido/OP asociado (join de pedidoOps) — "SIN_PEDIDO_OP" si ninguna OA del grupo tiene uno. */
+  pedido: string;
+  producto: string;
+  lote: string;
+  ordenesEncontradas: string[];
+  estado: OaDuplicateReportEstado;
+  detalle: string[];
+};
+
+/**
+ * Reporte de duplicados históricos agrupados por Pedido+Producto+Lote
+ * (sección 10 del pedido "corregir duplicación OA/OE") — SOLO LECTURA, nunca
+ * borra ni modifica nada. Reutiliza el agrupamiento/keeper/clasificación ya
+ * testeados de este mismo módulo; agrega la etiqueta A/B/C/D pedida:
+ *
+ *   A) una OA completa + una (o más) incompleta(s) en el grupo.
+ *   B) todas las OA del grupo están incompletas.
+ *   C) todas las OA del grupo están completas.
+ *   D) datos ambiguos — alguna OA del grupo difiere en un control de
+ *      seguridad (cliente/código/pedido) frente a la elegida como keeper, o
+ *      tiene relaciones activas (work item/entrega/Calidad) que el keeper no
+ *      tiene. D tiene prioridad sobre A/B/C: ante cualquier ambigüedad, se
+ *      reporta como revisión manual antes que como "completo/incompleto".
+ *
+ * `pedido` usa `pedidoOps` (N° de Pedido/OP ya presente en OaDuplicateCandidate)
+ * porque este tipo es el que ya alimenta scripts/_oa_duplicate_audit_readonly.mjs
+ * contra Neon — no se le agregó pedidoId/productIdentityKey/loteIdentityKey
+ * (0036) para no expandir el alcance de este audit ya existente; el
+ * agrupamiento lote+producto normalizado sigue siendo el mismo criterio
+ * (nunca fuzzy) que ya corrió contra Production.
+ */
+export function buildOaDuplicateReport(orders: OaDuplicateCandidate[]): OaDuplicateReportRow[] {
+  const groups = groupOaByLotProduct(orders);
+  const rows: OaDuplicateReportRow[] = [];
+
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const keeper = pickKeeper(group);
+    const others = group.filter((o) => o !== keeper);
+
+    const detalle = others.map((cand) => classifyOaDuplicate(keeper, cand).reason);
+    const ambiguous = others.some(
+      (cand) => hasSafetyMismatch(keeper, cand) || hasExtraActiveRelations(keeper, cand)
+    );
+    const tiers = group.map((o) => tierOf(o.status));
+    const completeCount = tiers.filter((t) => t === "COMPLETA").length;
+
+    let estado: OaDuplicateReportEstado;
+    if (ambiguous) {
+      estado = "D";
+    } else if (completeCount === group.length) {
+      estado = "C";
+    } else if (completeCount === 0) {
+      estado = "B";
+    } else {
+      estado = "A";
+    }
+
+    const pedidoOps = [...new Set(group.flatMap((o) => o.pedidoOps))];
+    rows.push({
+      pedido: pedidoOps.length > 0 ? pedidoOps.join(" / ") : "SIN_PEDIDO_OP",
+      producto: group[0]!.product,
+      lote: group[0]!.lot,
+      ordenesEncontradas: group.map((o) => o.orderNumber),
+      estado,
+      detalle,
+    });
+  }
+
+  return rows;
 }
