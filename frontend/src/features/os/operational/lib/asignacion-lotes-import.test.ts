@@ -9,6 +9,7 @@ import {
   buildAsignacionLoteFromMappedRow,
   formatAsignacionCodigoPreview,
   normalizeImportedCodigo,
+  parseAnalysisDateShorthand,
   validateAsignacionLoteRow,
 } from "./asignacion-lotes-import";
 
@@ -396,7 +397,13 @@ describe("Hotfix — tokens explícitos de 'sin dato' (N/A, S/D, -) no bloquean 
   });
 
   it("un valor realmente ilegible (no está en la whitelist) SIGUE siendo error — no se relaja la validación en general", () => {
-    const issues = validateAsignacionLoteRow({ producto: "X", lote: "L-1", fechaAnalisis: "2-9" }, 1);
+    // "2-9" (día-mes sin año) YA NO es un buen ejemplo de "ilegible": es un
+    // formato real confirmado en la hoja SEPTIEMBRE 2026 en vivo (~31% de
+    // las filas activas), reconocido por parseAnalysisDateShorthand — ver
+    // el describe "FECHA ANALISIS día-mes sin año" más abajo. Este test
+    // sigue cubriendo el caso genuinamente ilegible con texto sin forma de
+    // fecha alguna.
+    const issues = validateAsignacionLoteRow({ producto: "X", lote: "L-1", fechaAnalisis: "asdf" }, 1);
     expect(issues).toHaveLength(1);
     expect(issues[0]!.severity).toBe("error");
   });
@@ -406,6 +413,66 @@ describe("Hotfix — tokens explícitos de 'sin dato' (N/A, S/D, -) no bloquean 
     expect(issues).toEqual([]);
     const built = buildAsignacionLoteFromMappedRow({ producto: "X", lote: "L-1", vto: "N/A" }, "Calidad");
     expect(built.vto).toBeNull();
+  });
+});
+
+/**
+ * FECHA ANALISIS día-mes sin año (validación contra la hoja SEPTIEMBRE 2026
+ * REAL — no un ejemplo inventado): "2-9", "16/9", "envían" son formatos
+ * reales confirmados que antes de este fix bloqueaban ~31% de las filas
+ * activas de la hoja (30 de 97) como "inválidas", así que nunca llegaban a
+ * sincronizarse. parseFlexibleDate no los reconoce (solo tiene mm/yy con
+ * año, no día/mes sin año) — se agrega un parser específico para este campo,
+ * que infiere el año de la propia FECHA de la fila (nunca del reloj real,
+ * que rompería fuentes de años anteriores como "Asignación de Lotes 2025").
+ */
+describe("parseAnalysisDateShorthand — FECHA ANALISIS día-mes sin año (hoja SEPTIEMBRE 2026 real)", () => {
+  it("día-mes con '-' o '/' se resuelve usando el año de la FECHA de la fila", () => {
+    expect(parseAnalysisDateShorthand("2-9", "2026-09-01")).toBe("2026-09-02");
+    expect(parseAnalysisDateShorthand("16/9", "2026-09-01")).toBe("2026-09-16");
+  });
+
+  it("sin FECHA de referencia disponible, usa el año actual (nunca inventa otro)", () => {
+    const now = new Date("2027-03-15T00:00:00Z");
+    expect(parseAnalysisDateShorthand("2-9", null, now)).toBe("2027-09-02");
+  });
+
+  it("una fuente de un año anterior (ej. Asignación de Lotes 2025) resuelve al año de ESA fila, no al año calendario actual", () => {
+    const now = new Date("2026-09-23T00:00:00Z");
+    expect(parseAnalysisDateShorthand("10-3", "2025-03-05", now)).toBe("2025-03-10");
+  });
+
+  it("mes fuera de rango -> null (nunca inventa una fecha)", () => {
+    expect(parseAnalysisDateShorthand("5-13", "2026-09-01")).toBeNull();
+  });
+
+  it("no es día-mes (formato completamente distinto) -> null", () => {
+    expect(parseAnalysisDateShorthand("asdf", "2026-09-01")).toBeNull();
+  });
+
+  it("validateAsignacionLoteRow: '2-9' en FECHA ANALISIS ya no es error (era el bug real de Production)", () => {
+    const issues = validateAsignacionLoteRow(
+      { producto: "X", lote: "L-1", fecha: "1/9/2026", fechaAnalisis: "2-9" },
+      1
+    );
+    expect(issues).toEqual([]);
+  });
+
+  it("buildAsignacionLoteFromMappedRow: '16-9' persiste como fecha real, no como null", () => {
+    const built = buildAsignacionLoteFromMappedRow(
+      { producto: "X", lote: "L-1", fecha: "1/9/2026", fechaAnalisis: "16-9" },
+      "sync"
+    );
+    expect(built.fechaAnalisis).toBe("2026-09-16");
+  });
+
+  it("'envían'/'envian' (sin fecha aún) se tolera igual que N/A — no bloquea, persiste null", () => {
+    for (const token of ["envian", "envían", "ENVIAN", " Envían "]) {
+      const issues = validateAsignacionLoteRow({ producto: "X", lote: "L-1", fechaAnalisis: token }, 1);
+      expect(issues).toEqual([]);
+      const built = buildAsignacionLoteFromMappedRow({ producto: "X", lote: "L-1", fechaAnalisis: token }, "sync");
+      expect(built.fechaAnalisis).toBeNull();
+    }
   });
 });
 
