@@ -101,6 +101,38 @@ export async function syncAsignacionLoteSourceNowApi(
   return body.run;
 }
 
+export interface OfficialAsignacionLotesStatus {
+  sources: Array<{
+    year: string;
+    name: string;
+    spreadsheetId: string;
+    connected: boolean;
+    enabled: boolean;
+    syncStatus: string;
+    lastSyncAt: string | null;
+    lastSuccessfulSyncAt: string | null;
+    lastError: string | null;
+    lastRun: {
+      status: string;
+      rowsRead: number;
+      sheetsTotal: number | null;
+      ignoredTabsCount: number;
+    } | null;
+  }>;
+  syncFrequencyMinutes: number;
+}
+
+/** Solo lectura — visible para cualquier sector con acceso a Asignación de Lotes (sección 12 del pedido). */
+export async function fetchOfficialAsignacionLotesStatusApi(
+  session: OrdersClientSession
+): Promise<OfficialAsignacionLotesStatus> {
+  const res = await fetch("/api/v1/asignacion-lotes/official-status", {
+    credentials: "include",
+    headers: headers(session),
+  });
+  return readJsonOrThrow<OfficialAsignacionLotesStatus>(res, "No se pudo cargar el estado de sincronización.");
+}
+
 export async function fetchAsignacionLoteSourceRunsApi(
   session: OrdersClientSession,
   id: string

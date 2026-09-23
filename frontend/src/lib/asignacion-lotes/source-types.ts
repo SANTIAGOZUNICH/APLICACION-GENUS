@@ -50,6 +50,8 @@ export interface ImportPreviewConflictSample {
   codigo: string;
   producto: string;
   motivo: string;
+  /** Presente solo en conflictos ENTRE hojas de un mismo spreadsheet multi-tab. */
+  tabs?: [string, string];
 }
 
 /**
@@ -122,6 +124,27 @@ export interface SyncRunSummary {
   duplicateCount: number;
   /** false = la ecuación de reconciliación no cerró (alguna fila quedó sin bucket conocido) — nunca se afirma éxito en ese caso. */
   reconciled: boolean;
+  /**
+   * Fuente multi-tab (sheetTab null = descubrir todas las hojas del
+   * spreadsheet): cuántas hojas tiene el spreadsheet en total y cuáles se
+   * ignoraron (con motivo — estructura no reconocida o error de lectura).
+   * Una hoja individual nunca aborta la sincronización de las demás.
+   * `undefined`/vacío para fuentes de una sola hoja explícita (sin cambios).
+   */
+  sheetsTotal?: number;
+  ignoredTabs?: Array<{ tab: string; reason: string }>;
+  /** Detalle por hoja SÍ procesada — solo en fuentes multi-tab. */
+  tabBreakdown?: Array<{
+    tab: string;
+    rowsRead: number;
+    createdCount: number;
+    updatedCount: number;
+    unchangedCount: number;
+    invalidCount: number;
+    auxiliaryCount: number;
+    duplicateCount: number;
+    conflictCount: number;
+  }>;
   /** Detalle de conflictos para "VER DETALLE" — máx. 20. */
   conflictSamples: ImportPreviewConflictSample[];
   /** Detalle de filas inválidas para "VER DETALLE" — máx. 20. */

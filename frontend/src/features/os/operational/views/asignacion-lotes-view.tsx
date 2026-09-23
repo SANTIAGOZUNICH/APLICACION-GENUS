@@ -69,6 +69,7 @@ import {
 } from "../lib/asignacion-lotes-rbac";
 import { canConfigureAsignacionLoteSources } from "../lib/asignacion-lote-sources-rbac";
 import { AsignacionLoteSourcesPanel } from "../components/asignacion-lote-sources-panel";
+import { OfficialAsignacionLotesStatusBanner } from "../components/official-asignacion-lotes-status";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { SmartPasteDialog } from "../components/smart-paste-dialog";
 import {
@@ -590,6 +591,8 @@ export function AsignacionLotesView() {
             ? "Sin conexión al servidor — mostrando caché local de este navegador"
             : "Sincronizado con servidor — caché local como respaldo offline"}
         </div>
+
+        <OfficialAsignacionLotesStatusBanner session={session} />
 
         {canConfigureAsignacionLoteSources(workspace.context.sectorId) ? (
           <AsignacionLoteSourcesPanel session={session} />

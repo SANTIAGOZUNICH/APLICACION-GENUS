@@ -29,6 +29,7 @@ import {
 import { getAsignacionLoteSourcesService } from "./asignacion-lote-sources-service";
 import { fieldsDiffer, getAsignacionLotesService } from "./asignacion-lotes-service";
 import { extractSpreadsheetId } from "./spreadsheet-url";
+import { ensureOfficialSourcesAndRetireRedundant } from "./official-sources";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { asignacionLoteSyncRuns } from "@/lib/db/schema";
 import type {
@@ -66,6 +67,9 @@ async function recordRun(summary: SyncRunSummary): Promise<void> {
       auxiliaryCount: summary.auxiliaryCount,
       duplicateCount: summary.duplicateCount,
       reconciled: summary.reconciled,
+      ignoredTabs: summary.ignoredTabs ?? null,
+      sheetsTotal: summary.sheetsTotal ?? null,
+      tabBreakdown: summary.tabBreakdown ?? null,
       conflictSamples: summary.conflictSamples,
       invalidSamples: summary.invalidSamples,
       errorMessage: summary.errorMessage,
@@ -104,6 +108,9 @@ export async function listSyncRuns(sourceId: string, limit = 20): Promise<SyncRu
       auxiliaryCount: row.auxiliaryCount,
       duplicateCount: row.duplicateCount,
       reconciled: row.reconciled,
+      sheetsTotal: row.sheetsTotal ?? undefined,
+      ignoredTabs: (row.ignoredTabs as SyncRunSummary["ignoredTabs"]) ?? undefined,
+      tabBreakdown: (row.tabBreakdown as SyncRunSummary["tabBreakdown"]) ?? undefined,
       conflictSamples: (row.conflictSamples as SyncRunSummary["conflictSamples"]) ?? [],
       invalidSamples: (row.invalidSamples as SyncRunSummary["invalidSamples"]) ?? [],
       errorMessage: row.errorMessage,
@@ -166,10 +173,66 @@ export function reconciliationTotal(
 }
 
 /**
- * Procesa las filas YA LEÍDAS de la hoja de la fuente (una fuente = una
- * hoja). Cada fila cae EXACTAMENTE en uno de estos buckets — ninguna puede
- * "desaparecer" sin pasar por alguno (sección 7, reconciliación):
- * blank | invalid | duplicado-repetido-en-la-hoja | conflicto | created/updated/unchanged.
+ * Columnas mínimas que debe reconocer el header de una hoja para
+ * considerarla una pestaña real de Asignación de Lotes (pedido explícito):
+ * N° LOTE, FECHA, PRODUCTO, CODIGO, MARCA, CANTIDAD, VTO. MM/FECHA
+ * ANALISIS/N° ANALISIS/OE/OA/RL/OBSERVACION son opcionales — su ausencia
+ * nunca descalifica una hoja. Nunca fuzzy: usa el mismo resolver tolerante
+ * de alias (`autoMapColumns` + `ASIGNACION_LOTES_FIELD_ALIASES`) que ya usa
+ * el resto del pipeline, solo que acá TODAS estas claves deben resolver a
+ * una columna real para que la hoja cuente como válida.
+ */
+const REQUIRED_TAB_HEADER_KEYS: readonly (keyof AsignacionLoteMappedRow)[] = [
+  "lote",
+  "fecha",
+  "producto",
+  "codigo",
+  "marca",
+  "cantidades",
+  "vto",
+];
+
+/**
+ * Descubre las hojas reales de un spreadsheet completo (Google Sheets API —
+ * nunca se asumen nombres de mes) y clasifica cada una como compatible
+ * (estructura mínima reconocida) o ignorada (con motivo) — una hoja
+ * inválida o con error de lectura nunca rompe el descubrimiento de las
+ * demás (sección 3 del pedido).
+ */
+async function discoverCompatibleTabs(
+  spreadsheetId: string
+): Promise<{ compatible: string[]; ignored: Array<{ tab: string; reason: string }> }> {
+  const allTabs = await sheetsReader.listTabs(spreadsheetId);
+  const compatible: string[] = [];
+  const ignored: Array<{ tab: string; reason: string }> = [];
+  for (const tab of allTabs) {
+    try {
+      const rows = await sheetsReader.readTab(spreadsheetId, tab);
+      const header = rows[0] ?? [];
+      const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+      const missing = REQUIRED_TAB_HEADER_KEYS.filter((key) => mapping[key] == null);
+      if (missing.length === 0) {
+        compatible.push(tab);
+      } else {
+        ignored.push({
+          tab,
+          reason: `Estructura no reconocida — faltan columnas equivalentes a: ${missing.join(", ")}.`,
+        });
+      }
+    } catch (err) {
+      ignored.push({ tab, reason: err instanceof Error ? err.message : "No se pudo leer la hoja." });
+    }
+  }
+  return { compatible, ignored };
+}
+
+/**
+ * Procesa las filas YA LEÍDAS de una hoja — comparte la misma lógica de
+ * clasificación/identidad entre el sync de una hoja específica y el loop
+ * multi-tab (una sola implementación, nunca dos parsers que puedan
+ * divergir). Cada fila cae EXACTAMENTE en uno de estos buckets — ninguna
+ * puede "desaparecer" sin pasar por alguno (sección 7, reconciliación):
+ * blank | invalid | duplicado-repetido-en-esta-corrida | conflicto | created/updated/unchanged.
  */
 async function processTabRows(
   dataRows: string[][],
@@ -301,18 +364,7 @@ export async function syncSource(
     triggerKind,
   };
 
-  const tab = source.sheetTab?.trim();
-  if (!tab) {
-    // Una fuente = una hoja (decisión de producto) — nunca se descubre
-    // automáticamente. Una fuente legacy sin hoja configurada no sincroniza
-    // hasta que se le asigna una explícitamente (editar fuente).
-    summary.status = "error";
-    summary.errorMessage = "Esta fuente no tiene una hoja específica configurada — editá la fuente y asigná la hoja (tab) a sincronizar.";
-    summary.finishedAt = new Date().toISOString();
-    await sourcesService.recordSyncOutcome(source.id, { ok: false, error: summary.errorMessage });
-    await recordRun(summary);
-    return summary;
-  }
+  const explicitTab = source.sheetTab?.trim();
 
   try {
     const seenIds = new Set<string>();
@@ -321,19 +373,92 @@ export async function syncSource(
     // duplicar) vs conflicto real (mismos datos-clave, contenido distinto
     // → nunca se elige en silencio, se reporta y no se vuelve a escribir).
     const seenKeysThisRun = new Map<string, { signature: string; tab: string }>();
+    // Sección 9/8 del pedido: una hoja que existe en el spreadsheet pero
+    // falló/quedó ignorada esta corrida NUNCA puede hacer que sus registros
+    // se archiven — solo protege lo ya sincronizado antes; una hoja que se
+    // borró del spreadsheet (ya no aparece ni siquiera como ignorada) sí
+    // deja archivar sus registros, como siempre.
+    const readableTabs = new Set<string>();
+    let realTabsThisRun: Set<string> | null = null;
 
-    const rows = await sheetsReader.readTab(source.spreadsheetId, tab);
-    const header = rows[0] ?? [];
-    const dataRows = rows.slice(1);
-    summary.rowsRead += dataRows.length;
-    const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
-    await processTabRows(dataRows, tab, mapping, source, lotesService, seenKeysThisRun, seenIds, summary);
+    if (explicitTab) {
+      // Hoja específica — comportamiento single-tab preexistente, sin
+      // cambios: un error acá SÍ aborta la corrida completa (siempre lo
+      // hizo — no hay "otras hojas" que proteger).
+      const rows = await sheetsReader.readTab(source.spreadsheetId, explicitTab);
+      const header = rows[0] ?? [];
+      const dataRows = rows.slice(1);
+      summary.rowsRead += dataRows.length;
+      const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+      await processTabRows(dataRows, explicitTab, mapping, source, lotesService, seenKeysThisRun, seenIds, summary);
+      readableTabs.add(explicitTab);
+    } else {
+      // Sin hoja específica: descubrir TODAS las hojas reales del
+      // spreadsheet (sección 1/2 del pedido — reemplaza "una fuente = una
+      // hoja" para estas fuentes oficiales). Una hoja inválida o con error
+      // de lectura NUNCA corta las demás — se aísla y se reporta en
+      // `ignoredTabs`.
+      const { compatible, ignored } = await discoverCompatibleTabs(source.spreadsheetId);
+      realTabsThisRun = new Set([...compatible, ...ignored.map((i) => i.tab)]);
+      summary.sheetsTotal = realTabsThisRun.size;
+      summary.ignoredTabs = ignored;
+      const tabBreakdown: NonNullable<SyncRunSummary["tabBreakdown"]> = [];
+
+      for (const tab of compatible) {
+        const before = {
+          rowsRead: summary.rowsRead,
+          createdCount: summary.createdCount,
+          updatedCount: summary.updatedCount,
+          unchangedCount: summary.unchangedCount,
+          invalidCount: summary.invalidCount,
+          auxiliaryCount: summary.auxiliaryCount,
+          duplicateCount: summary.duplicateCount,
+          conflictCount: summary.conflictCount,
+        };
+        try {
+          const rows = await sheetsReader.readTab(source.spreadsheetId, tab);
+          const header = rows[0] ?? [];
+          const dataRows = rows.slice(1);
+          summary.rowsRead += dataRows.length;
+          const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+          await processTabRows(dataRows, tab, mapping, source, lotesService, seenKeysThisRun, seenIds, summary);
+          readableTabs.add(tab);
+          tabBreakdown.push({
+            tab,
+            rowsRead: summary.rowsRead - before.rowsRead,
+            createdCount: summary.createdCount - before.createdCount,
+            updatedCount: summary.updatedCount - before.updatedCount,
+            unchangedCount: summary.unchangedCount - before.unchangedCount,
+            invalidCount: summary.invalidCount - before.invalidCount,
+            auxiliaryCount: summary.auxiliaryCount - before.auxiliaryCount,
+            duplicateCount: summary.duplicateCount - before.duplicateCount,
+            conflictCount: summary.conflictCount - before.conflictCount,
+          });
+        } catch (err) {
+          // Una hoja individual que falla al leer (transitorio de Google,
+          // permisos puntuales, etc.) nunca puede tumbar la sincronización
+          // de las demás.
+          summary.ignoredTabs!.push({
+            tab,
+            reason: err instanceof Error ? err.message : "No se pudo leer la hoja.",
+          });
+        }
+      }
+      summary.tabBreakdown = tabBreakdown;
+    }
 
     // Sección 13: lo que pertenecía a esta fuente y no se vio en esta
     // pasada ya no está en la Sheet — se archiva, nunca se borra físico.
+    // Sección 9 (guarda anti-pérdida): en modo multi-hoja, un registro
+    // NUNCA se archiva si su hoja de origen sigue existiendo en el
+    // spreadsheet pero no se pudo leer/clasificar esta corrida.
     const existing = await lotesService.listBySource(source.id);
     for (const record of existing) {
       if (seenIds.has(record.id)) continue;
+      const recordTab = record.sourceSheetTab;
+      if (realTabsThisRun && recordTab && realTabsThisRun.has(recordTab) && !readableTabs.has(recordTab)) {
+        continue; // protegido — la hoja existe pero quedó ignorada/falló esta corrida
+      }
       await lotesService.archiveRemovedFromSource(record.id, source.name);
       summary.archivedCount += 1;
     }
@@ -346,7 +471,7 @@ export async function syncSource(
     if (!summary.reconciled) {
       summary.status = "inconsistente";
       summary.errorMessage = `Se leyeron ${summary.rowsRead} filas pero solo ${reconciledTotal} pudieron ser reconciliadas. ${summary.rowsRead - reconciledTotal} fila(s) no tienen resultado conocido.`;
-    } else if (summary.invalidCount > 0 || summary.conflictCount > 0) {
+    } else if ((summary.ignoredTabs?.length ?? 0) > 0 || summary.invalidCount > 0 || summary.conflictCount > 0) {
       summary.status = "parcial";
     } else {
       summary.status = "ok";
@@ -374,10 +499,19 @@ export async function syncSourceById(
   return syncSource(source, triggeredBy, triggerKind);
 }
 
+/**
+ * Punto de entrada único del motor de sync (cron cada 10 min, "Sincronizar
+ * ahora", sync oportunista — una sola implementación, nunca dos). Primero
+ * se asegura de que las fuentes oficiales (2025/2026, ver official-sources.ts)
+ * existan y de retirar con seguridad cualquier fuente vieja/redundante que
+ * apunte al mismo spreadsheet con una hoja individual — server-side,
+ * idempotente, sin que nadie tenga que configurar nada desde la UI.
+ */
 export async function syncAllEnabledSources(
   triggeredBy: string,
   triggerKind: SyncTriggerKind
 ): Promise<SyncRunSummary[]> {
+  await ensureOfficialSourcesAndRetireRedundant(SYNC_ACTOR);
   const sources = await getAsignacionLoteSourcesService().listEnabledForSync();
   const results: SyncRunSummary[] = [];
   for (const source of sources) {
