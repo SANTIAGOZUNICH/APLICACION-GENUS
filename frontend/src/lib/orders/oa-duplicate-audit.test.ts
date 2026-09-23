@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildOaDuplicateReport,
   classifyOaDuplicate,
   fieldCompletenessScore,
   groupOaByLot,
@@ -201,6 +202,79 @@ describe("pickKeeper", () => {
     const a = candidate({ orderNumber: "OA-1", status: "BORRADOR" });
     const b = candidate({ orderNumber: "OA-2", status: "COMPLETA" });
     expect(pickKeeper([a, b]).orderNumber).toBe("OA-2");
+  });
+});
+
+describe("buildOaDuplicateReport — sección 10: reporte Pedido | Producto | Lote | OA encontradas | Estado (solo lectura)", () => {
+  it("A) una OA completa + una incompleta, sin ambigüedad", () => {
+    const rows = buildOaDuplicateReport([
+      candidate({ orderNumber: "OA-1", lot: "S26018", product: "SERUM", status: "COMPLETA", pedidoOps: ["P-100"] }),
+      candidate({ orderNumber: "OA-2", lot: "S26018", product: "SERUM", status: "BORRADOR", pedidoOps: ["P-100"] }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.estado).toBe("A");
+    expect(rows[0]!.pedido).toBe("P-100");
+    expect(rows[0]!.ordenesEncontradas.sort()).toEqual(["OA-1", "OA-2"]);
+  });
+
+  it("B) todas incompletas", () => {
+    const rows = buildOaDuplicateReport([
+      candidate({ orderNumber: "OA-1", lot: "S26020", product: "CREMA", status: "BORRADOR" }),
+      candidate({ orderNumber: "OA-2", lot: "S26020", product: "CREMA", status: "PENDIENTE" }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.estado).toBe("B");
+  });
+
+  it("C) todas completas", () => {
+    const rows = buildOaDuplicateReport([
+      candidate({ orderNumber: "OA-1", lot: "S26030", product: "GEL", status: "COMPLETA" }),
+      candidate({ orderNumber: "OA-2", lot: "S26030", product: "GEL", status: "COMPLETA_CON_PENDIENTES" }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.estado).toBe("C");
+  });
+
+  it("D) datos ambiguos (cliente distinto) -> nunca se clasifica como A/B/C, siempre a revisión manual", () => {
+    const rows = buildOaDuplicateReport([
+      candidate({ orderNumber: "OA-1", lot: "S26040", product: "TONICO", status: "COMPLETA", client: "CLIENTE A" }),
+      candidate({ orderNumber: "OA-2", lot: "S26040", product: "TONICO", status: "BORRADOR", client: "CLIENTE B" }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.estado).toBe("D");
+  });
+
+  it("D) relaciones activas divergentes -> ambiguo aunque ambas estén completas", () => {
+    const rows = buildOaDuplicateReport([
+      candidate({ orderNumber: "OA-1", lot: "S26050", product: "SERUM", status: "COMPLETA", activeWorkItemCount: 0 }),
+      candidate({ orderNumber: "OA-2", lot: "S26050", product: "SERUM", status: "COMPLETA", activeWorkItemCount: 1 }),
+    ]);
+    expect(rows[0]!.estado).toBe("D");
+  });
+
+  it("nunca borra nada — solo reporta filas, nunca muta las OA de entrada", () => {
+    const orders = [
+      candidate({ orderNumber: "OA-1", lot: "S26060", product: "SERUM", status: "COMPLETA" }),
+      candidate({ orderNumber: "OA-2", lot: "S26060", product: "SERUM", status: "BORRADOR" }),
+    ];
+    const snapshot = JSON.stringify(orders);
+    buildOaDuplicateReport(orders);
+    expect(JSON.stringify(orders)).toBe(snapshot);
+  });
+
+  it("grupos sin duplicado (una sola OA por lote+producto) no generan fila", () => {
+    const rows = buildOaDuplicateReport([
+      candidate({ orderNumber: "OA-1", lot: "S26070", product: "SERUM ÚNICO" }),
+    ]);
+    expect(rows).toHaveLength(0);
+  });
+
+  it("sin pedidoOps en ninguna OA del grupo -> pedido se reporta como SIN_PEDIDO_OP (nunca se inventa un valor)", () => {
+    const rows = buildOaDuplicateReport([
+      candidate({ orderNumber: "OA-1", lot: "S26080", product: "SERUM", pedidoOps: [] }),
+      candidate({ orderNumber: "OA-2", lot: "S26080", product: "SERUM", pedidoOps: [] }),
+    ]);
+    expect(rows[0]!.pedido).toBe("SIN_PEDIDO_OP");
   });
 });
 

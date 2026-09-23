@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, isNotNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { operationalEvents, operationalOrders, workItemDeliveries, workItems } from "@/lib/db/schema";
 import type { SectorId } from "@/types/operational/sector";
@@ -17,6 +17,14 @@ import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-nu
 import { addDaysIso, weekStartMonday } from "@/lib/operational/operational-calendar";
 import { normalizeOaOrderNumber } from "@/lib/planning/oa-assign-helpers";
 import { loadWorkItemOperationalData } from "@/lib/planning/work-item-operational-data";
+import {
+  computeLoteIdentityKey,
+  computeProductIdentityKey,
+  isCompleteOrderStatus,
+} from "@/lib/planning/order-identity";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Tx = any;
 
 /**
  * Fuente de verdad durable del avance operativo (0023) — reemplaza el overlay
@@ -148,6 +156,148 @@ export async function saveWorkProgressDurable(
   });
 }
 
+/**
+ * Re-resuelve la OA/OE vinculada cuando Producción edita el producto y/o el
+ * lote de un WorkItem YA asignado y originado desde un Pedido (identidad
+ * funcional PEDIDO+PRODUCTO+LOTE — ver order-identity.ts). Es la contraparte,
+ * en edición, de la resolución que ensureOaForAssignment/ensureOeForAssignment
+ * hacen al asignar por primera vez:
+ *
+ *  1. Si la identidad (producto+lote) no cambió realmente (ej. el texto
+ *     cambió pero normaliza igual), no hace nada.
+ *  2. Si ya existe otra OA/OE activa para la nueva identidad, reengancha
+ *     este WorkItem a ESA orden (nunca duplica).
+ *  3. Si no existe ninguna y la OA/OE actual es EXCLUSIVA de este WorkItem
+ *     (ningún otro WorkItem activo comparte order_id) y no está COMPLETA,
+ *     se renombra en el lugar — evita generar un número nuevo para lo que
+ *     sigue siendo, físicamente, la misma orden.
+ *  4. Si la OA/OE está compartida con otro WorkItem activo, o ya está
+ *     COMPLETA, es una situación ambigua: NUNCA se resuelve en silencio —
+ *     se rechaza con un mensaje accionable (corrección manual vía
+ *     updateWorkItemOrderRefDurable).
+ *
+ * Devuelve `null` cuando no hay OA/OE vinculada, el WorkItem no viene de un
+ * Pedido, o la identidad no cambió (nada para re-resolver).
+ */
+async function reresolveOrderIdentityOnEdit(
+  tx: Tx,
+  params: {
+    workItemId: string;
+    pedidoId: string;
+    orderId: string;
+    sector: string;
+    client: string;
+    product: string;
+    lot: string | null;
+    actorEmail: string;
+  }
+): Promise<{ orderId: string; orderNumber: string } | null> {
+  const type = params.sector === "ELABORACION" ? "OE" : "OA";
+  const productIdentityKey = computeProductIdentityKey(params.product, null);
+  const loteIdentityKey = computeLoteIdentityKey(null, params.lot);
+
+  const [current] = await tx
+    .select({
+      id: operationalOrders.id,
+      orderNumber: operationalOrders.orderNumber,
+      status: operationalOrders.status,
+      productIdentityKey: operationalOrders.productIdentityKey,
+      loteIdentityKey: operationalOrders.loteIdentityKey,
+    })
+    .from(operationalOrders)
+    .where(eq(operationalOrders.id, params.orderId))
+    .limit(1);
+  // Sin orden encontrada (no debería pasar): no bloquea la corrección de
+  // lote/producto en sí, solo no hay nada que re-resolver acá.
+  if (!current) return null;
+
+  if (
+    current.productIdentityKey === productIdentityKey &&
+    current.loteIdentityKey === loteIdentityKey
+  ) {
+    return null;
+  }
+
+  const [match] = await tx
+    .select({
+      id: operationalOrders.id,
+      orderNumber: operationalOrders.orderNumber,
+      linkedWorkItemId: operationalOrders.linkedWorkItemId,
+    })
+    .from(operationalOrders)
+    .where(
+      and(
+        eq(operationalOrders.type, type),
+        eq(operationalOrders.pedidoId, params.pedidoId),
+        productIdentityKey === null
+          ? isNull(operationalOrders.productIdentityKey)
+          : eq(operationalOrders.productIdentityKey, productIdentityKey),
+        loteIdentityKey === null
+          ? isNull(operationalOrders.loteIdentityKey)
+          : eq(operationalOrders.loteIdentityKey, loteIdentityKey),
+        isNull(operationalOrders.deletedAt),
+        ne(operationalOrders.id, params.orderId)
+      )
+    )
+    .limit(1);
+
+  if (match) {
+    if (!match.linkedWorkItemId) {
+      await tx
+        .update(operationalOrders)
+        .set({
+          linkedWorkItemId: params.workItemId,
+          updatedBy: params.actorEmail,
+          updatedAt: new Date(),
+          version: sql`${operationalOrders.version} + 1`,
+        })
+        .where(
+          and(eq(operationalOrders.id, match.id), isNull(operationalOrders.linkedWorkItemId))
+        );
+    }
+    return { orderId: match.id, orderNumber: match.orderNumber };
+  }
+
+  const siblings = await tx
+    .select({ id: workItems.id })
+    .from(workItems)
+    .where(
+      and(
+        eq(workItems.orderId, params.orderId),
+        ne(workItems.id, params.workItemId),
+        isNull(workItems.deletedAt)
+      )
+    )
+    .limit(1);
+  if (siblings.length > 0) {
+    throw new PlanningValidationError(
+      `Esta ${type} está compartida con otro trabajo que todavía tiene la identidad anterior — no se puede renombrar automáticamente. Corregí manualmente la ${type} vinculada a este trabajo (con motivo auditado).`
+    );
+  }
+
+  if (isCompleteOrderStatus(current.status)) {
+    throw new PlanningValidationError(
+      `Esta ${type} ya está COMPLETA — no se puede modificar su identidad automáticamente. Corregí manualmente la ${type} vinculada a este trabajo.`
+    );
+  }
+
+  await tx
+    .update(operationalOrders)
+    .set({
+      product: params.product,
+      client: params.client,
+      lot: params.lot ?? "",
+      productIdentityKey,
+      loteIdentityKey,
+      updatedBy: params.actorEmail,
+      updatedAt: new Date(),
+      version: sql`${operationalOrders.version} + 1`,
+    })
+    .where(eq(operationalOrders.id, params.orderId));
+
+  return { orderId: params.orderId, orderNumber: current.orderNumber };
+}
+
 export interface UpdateLoteVtoInput {
   packagingLote?: string | null;
   packagingVto?: string | null;
@@ -185,6 +335,11 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
         packagingVto: workItems.packagingVto,
         planningWeekId: workItems.planningWeekId,
         version: workItems.version,
+        productionPedidoId: workItems.productionPedidoId,
+        orderId: workItems.orderId,
+        sector: workItems.sector,
+        client: workItems.client,
+        product: workItems.product,
       })
       .from(workItems)
       .where(eq(workItems.id, id))
@@ -206,6 +361,29 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
     if (nextLote !== undefined) patch.packagingLote = nextLote;
     if (nextVto !== undefined) patch.packagingVto = nextVto;
 
+    // Identidad OA/OE = PEDIDO+PRODUCTO+LOTE (ver order-identity.ts): si el
+    // lote efectivamente cambió y este trabajo viene de un Pedido con OA/OE
+    // ya vinculada, re-resuelve esa vinculación para la nueva identidad
+    // (reusar existente / renombrar en el lugar si es segura / rechazar si
+    // es ambiguo) — nunca deja la OA/OE apuntando al lote viejo.
+    let reresolvedOrder: { orderId: string; orderNumber: string } | null = null;
+    if (nextLote !== undefined && existing.productionPedidoId && existing.orderId) {
+      reresolvedOrder = await reresolveOrderIdentityOnEdit(tx, {
+        workItemId: id,
+        pedidoId: existing.productionPedidoId,
+        orderId: existing.orderId,
+        sector: existing.sector,
+        client: existing.client,
+        product: existing.product,
+        lot: nextLote,
+        actorEmail: input.updatedBy,
+      });
+      if (reresolvedOrder) {
+        patch.orderId = reresolvedOrder.orderId;
+        patch.orderNumber = reresolvedOrder.orderNumber;
+      }
+    }
+
     const [row] = await tx.update(workItems).set(patch).where(eq(workItems.id, id)).returning();
     if (!row) throw new Error("No se pudo actualizar Lote/VTO.");
 
@@ -225,6 +403,22 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
       actorSector: String(input.updatedBySector),
       note: reason,
     });
+
+    if (reresolvedOrder) {
+      await tx.insert(operationalEvents).values({
+        workItemId: id,
+        planningWeekId: existing.planningWeekId,
+        type: "ORDER_IDENTITY_RERESOLVED",
+        fromStatus: JSON.stringify({ orderId: existing.orderId }),
+        toStatus: JSON.stringify({
+          orderId: reresolvedOrder.orderId,
+          orderNumber: reresolvedOrder.orderNumber,
+        }),
+        actorEmail: input.updatedBy,
+        actorSector: String(input.updatedBySector),
+        note: `Re-resuelto por cambio de lote (${reason})`,
+      });
+    }
 
     return row;
   });
@@ -357,6 +551,52 @@ export async function updateWorkItemOrderRefDurable(id: string, input: UpdateOrd
   });
 }
 
+export interface OrderQuantityTotal {
+  orderId: string;
+  /** Suma de plannedQuantity de todos los WorkItems activos vinculados a esta OA/OE. */
+  total: number;
+  /** Cantidad de WorkItems activos que aportan al total (para distinguir "500" de un solo trabajo vs. varios). */
+  workItemCount: number;
+  /** Unidad del primer WorkItem encontrado — se asume homogénea dentro de una misma OA/OE (mismo Pedido+Producto+Lote). */
+  unit: string | null;
+}
+
+/**
+ * Total real de una OA/OE compartida entre varios WorkItems (sección 8:
+ * "cantidades") — SIEMPRE derivado en el momento vía SUM(plannedQuantity),
+ * nunca un contador guardado. `operational_orders` no incrementa ningún
+ * campo de cantidad al reusar/vincular (ver ensureOaForAssignment/
+ * ensureOeForAssignment — el `content`/formData de la OA se fija solo al
+ * crearla), así que no hay ningún valor que pueda quedar doble-contado por
+ * un reintento o una edición: leer esto de nuevo siempre da el total
+ * correcto sin importar cuántas veces se haya reasignado/editado un
+ * WorkItem de este grupo.
+ */
+export async function getOrderQuantityTotalDurable(orderId: string): Promise<OrderQuantityTotal> {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select({
+        plannedQuantity: workItems.plannedQuantity,
+        unit: workItems.unit,
+      })
+      .from(workItems)
+      .where(and(eq(workItems.orderId, orderId), isNull(workItems.deletedAt)));
+
+    let total = 0;
+    let unit: string | null = null;
+    for (const row of rows as Array<{ plannedQuantity: string; unit: string }>) {
+      if (unit === null) unit = row.unit;
+      const parsed = isIntegerUnit(row.unit)
+        ? parseArInteger(row.plannedQuantity)
+        : parseArDecimal(row.plannedQuantity);
+      if (parsed.ok && parsed.value !== null) total += parsed.value;
+    }
+
+    return { orderId, total, workItemCount: rows.length, unit };
+  });
+}
+
 export interface UpdateWorkItemPlanningInput {
   client?: string | null;
   product?: string | null;
@@ -433,6 +673,10 @@ export async function updateWorkItemPlanningDurable(
         plannedDate: workItems.plannedDate,
         plannedDateTo: workItems.plannedDateTo,
         version: workItems.version,
+        productionPedidoId: workItems.productionPedidoId,
+        orderId: workItems.orderId,
+        sector: workItems.sector,
+        packagingLote: workItems.packagingLote,
       })
       .from(workItems)
       .where(eq(workItems.id, id))
@@ -491,6 +735,28 @@ export async function updateWorkItemPlanningDurable(
       throw new Error("No hay cambios para guardar.");
     }
 
+    // Identidad OA/OE = PEDIDO+PRODUCTO+LOTE (ver order-identity.ts): si el
+    // producto efectivamente cambió y este trabajo viene de un Pedido con
+    // OA/OE ya vinculada, re-resuelve esa vinculación con el producto nuevo
+    // (mismo mecanismo que el cambio de lote en updateWorkItemLoteVtoDurable).
+    let reresolvedOrder: { orderId: string; orderNumber: string } | null = null;
+    if ("product" in after && existing.productionPedidoId && existing.orderId) {
+      reresolvedOrder = await reresolveOrderIdentityOnEdit(tx, {
+        workItemId: id,
+        pedidoId: existing.productionPedidoId,
+        orderId: existing.orderId,
+        sector: existing.sector,
+        client: (after.client as string | null) ?? existing.client,
+        product: after.product as string,
+        lot: existing.packagingLote,
+        actorEmail: input.updatedBy,
+      });
+      if (reresolvedOrder) {
+        patch.orderId = reresolvedOrder.orderId;
+        patch.orderNumber = reresolvedOrder.orderNumber;
+      }
+    }
+
     const [row] = await tx.update(workItems).set(patch).where(eq(workItems.id, id)).returning();
     if (!row) throw new Error("No se pudo actualizar el trabajo.");
 
@@ -504,6 +770,22 @@ export async function updateWorkItemPlanningDurable(
       actorSector: String(input.updatedBySector),
       note: input.reason?.trim() || null,
     });
+
+    if (reresolvedOrder) {
+      await tx.insert(operationalEvents).values({
+        workItemId: id,
+        planningWeekId: existing.planningWeekId,
+        type: "ORDER_IDENTITY_RERESOLVED",
+        fromStatus: JSON.stringify({ orderId: existing.orderId }),
+        toStatus: JSON.stringify({
+          orderId: reresolvedOrder.orderId,
+          orderNumber: reresolvedOrder.orderNumber,
+        }),
+        actorEmail: input.updatedBy,
+        actorSector: String(input.updatedBySector),
+        note: `Re-resuelto por cambio de producto (${input.reason?.trim() || "sin motivo"})`,
+      });
+    }
 
     return row;
   });

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import {
   asignacionLotes,
@@ -13,6 +13,7 @@ import {
   workItems,
 } from "@/lib/db/schema";
 import { findAsignacionLoteByIdForWorkItem } from "@/lib/asignacion-lotes/resolve-for-work-item";
+import { computeLoteIdentityKey, computeProductIdentityKey } from "@/lib/planning/order-identity";
 import { weekStartMonday } from "@/lib/operational/operational-calendar";
 import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
 import type { PlanningActor, PlanningSector, PlanningWorkItemRecord } from "@/lib/planning/types";
@@ -406,6 +407,7 @@ export async function assignWorkItemDurable(
         created?: boolean;
         linked?: boolean;
         filledEmptyFields?: string[];
+        reusedByIdentity?: boolean;
       } | null = null;
 
       // Vínculo Asignación de Lotes → WorkItem: si el cliente eligió (o el
@@ -452,6 +454,20 @@ export async function assignWorkItemDurable(
         // packagingLote/packagingVto recibidos tal cual — nunca bloquea.
       }
 
+      // Identidad funcional OA/OE = PEDIDO + PRODUCTO + LOTE (ver
+      // order-identity.ts) — solo tiene sentido cuando el trabajo se
+      // origina desde un Pedido real; sin Pedido se mantiene el
+      // comportamiento legacy (1 trabajo = 1 OA/OE por número exacto), sin
+      // cambios. El lote se computa DESPUÉS de resolverlo arriba (Sección
+      // 4 del pedido: "no crear la OA antes de conocer el lote si el lote
+      // puede resolverse automáticamente").
+      const productIdentityKey = productionPedidoId
+        ? computeProductIdentityKey(input.product.trim(), productCode || null)
+        : null;
+      const loteIdentityKey = productionPedidoId
+        ? computeLoteIdentityKey(matchedAsignacionLoteId, resolvedPackagingLote)
+        : null;
+
       // Envasado Masivo / Premium / Codificado: auto-crear o vincular OA.
       if (isPackagingOaSector(input.sector) && (orderNumberRaw || orderId)) {
         let numberForEnsure = orderNumberRaw;
@@ -481,6 +497,9 @@ export async function assignWorkItemDurable(
           forceLink,
           actorEmail: actor.email,
           actorSector: actor.sector,
+          pedidoId: productionPedidoId,
+          productIdentityKey,
+          loteIdentityKey,
         });
 
         orderRow = {
@@ -492,6 +511,7 @@ export async function assignWorkItemDurable(
           created: ensured.created,
           linked: ensured.linked,
           filledEmptyFields: ensured.filledEmptyFields,
+          reusedByIdentity: ensured.reusedByIdentity,
         };
       } else if (input.sector === "ELABORACION" && (orderNumberRaw || orderId)) {
         // Elaboración: auto-crear o vincular OE (mismo patrón que OA arriba
@@ -524,6 +544,9 @@ export async function assignWorkItemDurable(
           forceLink,
           actorEmail: actor.email,
           actorSector: actor.sector,
+          pedidoId: productionPedidoId,
+          productIdentityKey,
+          loteIdentityKey,
         });
 
         orderRow = {
@@ -535,6 +558,7 @@ export async function assignWorkItemDurable(
           created: ensured.created,
           linked: ensured.linked,
           filledEmptyFields: ensured.filledEmptyFields,
+          reusedByIdentity: ensured.reusedByIdentity,
         };
       } else if (orderId || orderNumberRaw) {
         // Otros casos residuales (ningún sector asignable actual llega
@@ -665,7 +689,7 @@ export async function assignWorkItemDurable(
           .where(
             and(
               eq(operationalOrders.id, orderRow.id),
-              sql`(${operationalOrders.linkedWorkItemId} IS NULL OR ${operationalOrders.linkedWorkItemId} = '')`
+              or(isNull(operationalOrders.linkedWorkItemId), eq(operationalOrders.linkedWorkItemId, ""))
             )
           )
           .returning({
@@ -678,28 +702,52 @@ export async function assignWorkItemDurable(
         // 1 trabajo = 1 OA/OE: la actualización condicional de arriba (WHERE
         // linkedWorkItemId IS NULL) es la que hace cumplir la regla ante una
         // carrera — si no devolvió fila, otra transacción ya vinculó esta
-        // orden primero.
+        // orden primero. EXCEPCIÓN deliberada: reuso legítimo por identidad
+        // (mismo Pedido+Producto+Lote) — ahí SÍ es esperable que otro
+        // WorkItem ya haya reclamado `linkedWorkItemId` como "principal";
+        // este WorkItem igual queda correctamente vinculado vía
+        // `work_items.order_id` (ya insertado arriba), nunca es un conflicto.
         if (!updatedOrder) {
-          throw new PlanningConflictError(
-            "Esta orden ya tiene un trabajo asignado.",
-            mapItemRow(inserted)
-          );
+          if (!orderRow.reusedByIdentity) {
+            throw new PlanningConflictError(
+              "Esta orden ya tiene un trabajo asignado.",
+              mapItemRow(inserted)
+            );
+          }
+          const [current] = await tx
+            .select({
+              id: operationalOrders.id,
+              orderNumber: operationalOrders.orderNumber,
+              assignedSector: operationalOrders.assignedSector,
+              linkedWorkItemId: operationalOrders.linkedWorkItemId,
+            })
+            .from(operationalOrders)
+            .where(eq(operationalOrders.id, orderRow.id))
+            .limit(1);
+          orderMeta = current
+            ? {
+                ...current,
+                created: Boolean(orderRow.created),
+                linked: true,
+                filledEmptyFields: orderRow.filledEmptyFields ?? [],
+              }
+            : null;
+        } else {
+          if (
+            updatedOrder.linkedWorkItemId !== inserted.id ||
+            updatedOrder.assignedSector !== input.sector
+          ) {
+            throw new PlanningValidationError(
+              "No se pudo confirmar la coherencia OA/OE ↔ trabajo. Reintentá."
+            );
+          }
+          orderMeta = {
+            ...updatedOrder,
+            created: Boolean(orderRow.created),
+            linked: !orderRow.created,
+            filledEmptyFields: orderRow.filledEmptyFields ?? [],
+          };
         }
-
-        if (
-          updatedOrder.linkedWorkItemId !== inserted.id ||
-          updatedOrder.assignedSector !== input.sector
-        ) {
-          throw new PlanningValidationError(
-            "No se pudo confirmar la coherencia OA/OE ↔ trabajo. Reintentá."
-          );
-        }
-        orderMeta = {
-          ...updatedOrder,
-          created: Boolean(orderRow.created),
-          linked: !orderRow.created,
-          filledEmptyFields: orderRow.filledEmptyFields ?? [],
-        };
       }
 
       await tx.insert(operationalEvents).values({

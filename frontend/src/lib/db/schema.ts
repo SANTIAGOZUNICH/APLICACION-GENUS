@@ -434,8 +434,42 @@ export const operationalOrders = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deletedBy: text("deleted_by"),
     deleteReason: text("delete_reason"),
+    /**
+     * Identidad funcional PEDIDO + PRODUCTO + LOTE (0036) — ver
+     * order-identity.ts. Nullable: solo se completa cuando la OA/OE nace
+     * desde un Pedido vinculado (Asignar trabajo); las OA/OE creadas desde
+     * el flujo manual de Órdenes, o legacy, quedan sin estas columnas y
+     * siguen identificándose solo por `order_number` (sin cambios).
+     */
+    pedidoId: uuid("pedido_id"),
+    /** Código canónico si existe, si no texto normalizado — ver computeProductIdentityKey. */
+    productIdentityKey: text("product_identity_key"),
+    /** id de Asignación de Lotes si existe, si no texto normalizado, si no null (SIN_LOTE) — ver computeLoteIdentityKey. */
+    loteIdentityKey: text("lote_identity_key"),
   },
-  (table) => [uniqueIndex("operational_orders_number_uidx").on(table.orderNumber)]
+  (table) => [
+    uniqueIndex("operational_orders_number_uidx").on(table.orderNumber),
+    /**
+     * Reutilización con lote conocido: a lo sumo UNA OA/OE activa por
+     * (tipo, pedido, producto, lote). Protege contra duplicados incluso en
+     * asignaciones concurrentes (constraint real de Postgres, no solo
+     * aplicativo) — ver ensure-oa-on-assign.ts/ensure-oe-on-assign.ts.
+     */
+    uniqueIndex("operational_orders_identity_with_lote_uidx")
+      .on(table.type, table.pedidoId, table.productIdentityKey, table.loteIdentityKey)
+      .where(
+        sql`${table.pedidoId} IS NOT NULL AND ${table.loteIdentityKey} IS NOT NULL AND ${table.deletedAt} IS NULL`
+      ),
+    /**
+     * SIN_LOTE: a lo sumo UNA OA/OE provisional activa por (tipo, pedido,
+     * producto) mientras no se conozca el lote — sección 5 del pedido.
+     */
+    uniqueIndex("operational_orders_identity_no_lote_uidx")
+      .on(table.type, table.pedidoId, table.productIdentityKey)
+      .where(
+        sql`${table.pedidoId} IS NOT NULL AND ${table.loteIdentityKey} IS NULL AND ${table.deletedAt} IS NULL`
+      ),
+  ]
 );
 
 export const orderVersions = pgTable("order_versions", {

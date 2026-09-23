@@ -19,9 +19,16 @@ function createFakeDb() {
   function matchCond(row: Record<string, unknown>, cond: unknown): boolean {
     if (!cond) return true;
     if (Array.isArray(cond)) return cond.every((c) => matchCond(row, c));
-    const c = cond as { __eq?: [string, unknown]; __isNotNull?: string };
+    const c = cond as {
+      __eq?: [string, unknown];
+      __ne?: [string, unknown];
+      __isNotNull?: string;
+      __isNull?: string;
+    };
     if (c.__eq) return row[c.__eq[0]] === c.__eq[1];
+    if (c.__ne) return row[c.__ne[0]] !== c.__ne[1];
     if (c.__isNotNull) return row[c.__isNotNull] != null;
+    if (c.__isNull) return row[c.__isNull] == null;
     // Predicado SQL crudo (ej. version + 1, IS NULL OR = id) — no
     // introspectable en el fake; se trata como cierto (mismo criterio que
     // work-assignment-service.test.ts).
@@ -142,6 +149,9 @@ vi.mock("drizzle-orm", async () => {
     isNotNull: (col: { name?: string } | string) => ({
       __isNotNull: typeof col === "string" ? col : (col as { name?: string }).name ?? "id",
     }),
+    isNull: (col: { name?: string } | string) => ({
+      __isNull: typeof col === "string" ? col : (col as { name?: string }).name ?? "id",
+    }),
     or: (...args: unknown[]) => args,
     desc: (col: unknown) => col,
     sql: actual.sql,
@@ -185,7 +195,23 @@ vi.mock("@/lib/db/schema", () => {
     "finishedQty",
     "version",
   ];
-  const orderCols = ["id", "orderNumber", "type", "linkedWorkItemId", "version"];
+  const orderCols = [
+    "id",
+    "orderNumber",
+    "type",
+    "linkedWorkItemId",
+    "version",
+    "pedidoId",
+    "productIdentityKey",
+    "loteIdentityKey",
+    "status",
+    "product",
+    "client",
+    "lot",
+    "deletedAt",
+    "updatedBy",
+    "updatedAt",
+  ];
   const deliveryCols = [
     "id",
     "workItemId",
@@ -386,6 +412,241 @@ describe("updateWorkItemLoteVtoDurable — corrección manual de Lote/VTO (fake 
       })
     ).rejects.toMatchObject({ name: "PlanningValidationError" });
     expect(fakeDbHandle.workItems.get("wi-lv")!.packagingLote).toBe("G26043");
+  });
+
+  it("sin Pedido vinculado (legacy) -> corrige el lote sin tocar ninguna OA/OE", async () => {
+    const row = await updateWorkItemLoteVtoDurable("wi-lv", {
+      packagingLote: "G26099",
+      reason: "Corrección legacy",
+      ...actorArgs,
+    });
+    expect(row.packagingLote).toBe("G26099");
+    expect(fakeDbHandle.operationalOrders.size).toBe(0);
+    expect(fakeDbHandle.operationalEvents.some((e) => (e as { type: string }).type === "ORDER_IDENTITY_RERESOLVED")).toBe(false);
+  });
+});
+
+describe("updateWorkItemLoteVtoDurable / updateWorkItemPlanningDurable — re-resolución de OA/OE al editar lote/producto (fake tx)", () => {
+  let updateWorkItemLoteVtoDurable: typeof import("./work-item-progress-repository").updateWorkItemLoteVtoDurable;
+  let updateWorkItemPlanningDurable: typeof import("./work-item-progress-repository").updateWorkItemPlanningDurable;
+
+  const actorArgs = { updatedBy: "produccion@laboratoriogenus.com.ar", updatedBySector: "PRODUCCION" as const };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ updateWorkItemLoteVtoDurable, updateWorkItemPlanningDurable } = await import(
+      "./work-item-progress-repository"
+    ));
+    fakeDbHandle.operationalOrders.set("oa-1", {
+      id: "oa-1",
+      orderNumber: "OA-2026-000123",
+      type: "OA",
+      linkedWorkItemId: "wi-edit",
+      version: 1,
+      pedidoId: "pedido-1",
+      productIdentityKey: "serum niacinamida",
+      loteIdentityKey: "TXT:s26018",
+      status: "PENDIENTE",
+      product: "SERUM NIACINAMIDA",
+      client: "NIZA",
+      lot: "S26018",
+      deletedAt: null,
+    });
+    fakeDbHandle.workItems.set("wi-edit", {
+      id: "wi-edit",
+      sector: "ENVASADO_MASIVO",
+      client: "NIZA",
+      product: "SERUM NIACINAMIDA",
+      plannedQuantity: "300",
+      unit: "un.",
+      packagingLote: "S26018",
+      packagingVto: "2028-10-31",
+      planningWeekId: "week-1",
+      plannedDate: "2026-09-10",
+      plannedDateTo: null,
+      productionPedidoId: "pedido-1",
+      orderId: "oa-1",
+      orderNumber: "OA-2026-000123",
+      deletedAt: null,
+      version: 1,
+    });
+  });
+
+  it("1) edita lote, OA exclusiva de este trabajo y sin otra OA con la identidad nueva -> renombra la MISMA OA en el lugar (no duplica)", async () => {
+    const row = await updateWorkItemLoteVtoDurable("wi-edit", {
+      packagingLote: "S26045",
+      reason: "Cambio de lote confirmado por Producción",
+      ...actorArgs,
+    });
+    expect(row.packagingLote).toBe("S26045");
+    expect(row.orderId).toBe("oa-1");
+    expect(row.orderNumber).toBe("OA-2026-000123");
+    expect(fakeDbHandle.operationalOrders.size).toBe(1);
+    const order = fakeDbHandle.operationalOrders.get("oa-1")!;
+    expect(order.loteIdentityKey).toBe("TXT:s26045");
+    expect(order.lot).toBe("S26045");
+    const event = fakeDbHandle.operationalEvents.find(
+      (e) => (e as { type: string }).type === "ORDER_IDENTITY_RERESOLVED"
+    ) as { toStatus: string } | undefined;
+    expect(event).toBeTruthy();
+    expect(JSON.parse(event!.toStatus)).toMatchObject({ orderId: "oa-1", orderNumber: "OA-2026-000123" });
+  });
+
+  it("2) edita lote y YA existe otra OA para Pedido+Producto+lote nuevo -> reengancha a ESA, nunca duplica ni muta la vieja", async () => {
+    fakeDbHandle.operationalOrders.set("oa-2", {
+      id: "oa-2",
+      orderNumber: "OA-2026-000200",
+      type: "OA",
+      linkedWorkItemId: null,
+      version: 1,
+      pedidoId: "pedido-1",
+      productIdentityKey: "serum niacinamida",
+      loteIdentityKey: "TXT:s26045",
+      status: "PENDIENTE",
+      product: "SERUM NIACINAMIDA",
+      client: "NIZA",
+      lot: "S26045",
+      deletedAt: null,
+    });
+    const row = await updateWorkItemLoteVtoDurable("wi-edit", {
+      packagingLote: "S26045",
+      reason: "Cambio de lote — ya había otra tanda con ese lote",
+      ...actorArgs,
+    });
+    expect(row.orderId).toBe("oa-2");
+    expect(row.orderNumber).toBe("OA-2026-000200");
+    expect(fakeDbHandle.operationalOrders.size).toBe(2);
+    // La OA vieja queda intacta, no se toca su lote/identidad.
+    expect(fakeDbHandle.operationalOrders.get("oa-1")!.lot).toBe("S26018");
+    expect(fakeDbHandle.operationalOrders.get("oa-2")!.linkedWorkItemId).toBe("wi-edit");
+  });
+
+  it("3) edita lote, OA compartida con OTRO trabajo activo y sin match para la identidad nueva -> rechaza, no resuelve en silencio", async () => {
+    fakeDbHandle.workItems.set("wi-sibling", {
+      id: "wi-sibling",
+      sector: "ENVASADO_MASIVO",
+      orderId: "oa-1",
+      deletedAt: null,
+    });
+    await expect(
+      updateWorkItemLoteVtoDurable("wi-edit", {
+        packagingLote: "S26045",
+        reason: "Cambio de lote",
+        ...actorArgs,
+      })
+    ).rejects.toMatchObject({ name: "PlanningValidationError" });
+    expect(fakeDbHandle.workItems.get("wi-edit")!.packagingLote).toBe("S26018");
+    expect(fakeDbHandle.operationalOrders.get("oa-1")!.lot).toBe("S26018");
+    expect(fakeDbHandle.operationalOrders.size).toBe(1);
+  });
+
+  it("4) edita lote, OA exclusiva pero ya está COMPLETA -> rechaza, nunca muta una OA completa", async () => {
+    fakeDbHandle.operationalOrders.set("oa-1", {
+      ...fakeDbHandle.operationalOrders.get("oa-1")!,
+      status: "COMPLETA",
+    });
+    await expect(
+      updateWorkItemLoteVtoDurable("wi-edit", {
+        packagingLote: "S26045",
+        reason: "Cambio de lote",
+        ...actorArgs,
+      })
+    ).rejects.toMatchObject({ name: "PlanningValidationError" });
+    expect(fakeDbHandle.operationalOrders.get("oa-1")!.lot).toBe("S26018");
+  });
+
+  it("5) edita PRODUCTO (updateWorkItemPlanningDurable), OA exclusiva -> re-resuelve la identidad también por cambio de producto", async () => {
+    const row = await updateWorkItemPlanningDurable("wi-edit", {
+      product: "SERUM VITAMINA C",
+      reason: "Corrección de producto",
+      ...actorArgs,
+    });
+    expect(row.product).toBe("SERUM VITAMINA C");
+    expect(row.orderId).toBe("oa-1");
+    expect(fakeDbHandle.operationalOrders.size).toBe(1);
+    expect(fakeDbHandle.operationalOrders.get("oa-1")!.productIdentityKey).toBe("serum vitamina c");
+  });
+
+  it("6) edita cantidad (sin tocar lote/producto) -> NUNCA re-resuelve ni toca la OA", async () => {
+    const row = await updateWorkItemPlanningDurable("wi-edit", {
+      plannedQuantity: "500",
+      reason: "Ajuste de cantidad",
+      ...actorArgs,
+    });
+    expect(row.plannedQuantity).toBe("500");
+    expect(row.orderId).toBe("oa-1");
+    expect(
+      fakeDbHandle.operationalEvents.some((e) => (e as { type: string }).type === "ORDER_IDENTITY_RERESOLVED")
+    ).toBe(false);
+    expect(fakeDbHandle.operationalOrders.get("oa-1")!.loteIdentityKey).toBe("TXT:s26018");
+  });
+
+  it("7) edita lote a un valor que normaliza igual (mismo lote, distinto casing/espacios) -> no re-resuelve (sin cambio real de identidad)", async () => {
+    const row = await updateWorkItemLoteVtoDurable("wi-edit", {
+      packagingLote: "  s26018 ",
+      reason: "Solo prolijidad de formato",
+      ...actorArgs,
+    });
+    expect(row.packagingLote).toBe("s26018");
+    expect(row.orderId).toBe("oa-1");
+    expect(
+      fakeDbHandle.operationalEvents.some((e) => (e as { type: string }).type === "ORDER_IDENTITY_RERESOLVED")
+    ).toBe(false);
+  });
+});
+
+describe("getOrderQuantityTotalDurable — total real de una OA/OE compartida (fake tx)", () => {
+  let getOrderQuantityTotalDurable: typeof import("./work-item-progress-repository").getOrderQuantityTotalDurable;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    fakeDbHandle = createFakeDb();
+    ({ getOrderQuantityTotalDurable } = await import("./work-item-progress-repository"));
+  });
+
+  it("suma plannedQuantity de todos los WorkItems activos vinculados a la misma OA (sin doble conteo)", async () => {
+    fakeDbHandle.workItems.set("wi-mon", {
+      id: "wi-mon",
+      orderId: "oa-1",
+      plannedQuantity: "300",
+      unit: "un.",
+      deletedAt: null,
+    });
+    fakeDbHandle.workItems.set("wi-tue", {
+      id: "wi-tue",
+      orderId: "oa-1",
+      plannedQuantity: "200",
+      unit: "un.",
+      deletedAt: null,
+    });
+    const result = await getOrderQuantityTotalDurable("oa-1");
+    expect(result.total).toBe(500);
+    expect(result.workItemCount).toBe(2);
+    expect(result.unit).toBe("un.");
+  });
+
+  it("ignora WorkItems eliminados (tombstone) y los de otra OA", async () => {
+    fakeDbHandle.workItems.set("wi-a", { id: "wi-a", orderId: "oa-1", plannedQuantity: "100", unit: "kg", deletedAt: null });
+    fakeDbHandle.workItems.set("wi-b", {
+      id: "wi-b",
+      orderId: "oa-1",
+      plannedQuantity: "999",
+      unit: "kg",
+      deletedAt: new Date(),
+    });
+    fakeDbHandle.workItems.set("wi-c", { id: "wi-c", orderId: "oa-2", plannedQuantity: "50", unit: "kg", deletedAt: null });
+    const result = await getOrderQuantityTotalDurable("oa-1");
+    expect(result.total).toBe(100);
+    expect(result.workItemCount).toBe(1);
+  });
+
+  it("reproduce el mismo total en llamadas repetidas — no hay ningún contador que se incremente en cada lectura", async () => {
+    fakeDbHandle.workItems.set("wi-1", { id: "wi-1", orderId: "oa-1", plannedQuantity: "150", unit: "un.", deletedAt: null });
+    const first = await getOrderQuantityTotalDurable("oa-1");
+    const second = await getOrderQuantityTotalDurable("oa-1");
+    expect(first.total).toBe(150);
+    expect(second.total).toBe(150);
   });
 });
 
