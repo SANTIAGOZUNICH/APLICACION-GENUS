@@ -964,6 +964,8 @@ export const asignacionLoteSyncRuns = pgTable(
     reconciled: boolean("reconciled").notNull().default(true),
     ignoredTabs: jsonb("ignored_tabs"),
     sheetsTotal: integer("sheets_total"),
+    /** Detalle por hoja de una corrida multi-tab (0037) — ver SyncRunSummary#tabBreakdown. */
+    tabBreakdown: jsonb("tab_breakdown"),
     conflictSamples: jsonb("conflict_samples"),
     invalidSamples: jsonb("invalid_samples"),
     errorMessage: text("error_message"),

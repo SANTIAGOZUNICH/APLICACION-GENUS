@@ -15,6 +15,16 @@ vi.mock("@/lib/adapters/sheets/sheets-reader", () => ({
   },
 }));
 
+// Las fuentes oficiales (2025/2026, ver official-sources.ts) tienen su
+// propia suite dedicada (official-sources.test.ts). Acá se neutralizan para
+// que los tests preexistentes de este archivo — que ejercitan
+// syncAllEnabledSources con SUS PROPIAS fuentes de prueba — no se vean
+// afectados por la creación automática de las 2 fuentes oficiales.
+vi.mock("./official-sources", () => ({
+  ensureOfficialSourcesAndRetireRedundant: vi.fn().mockResolvedValue(undefined),
+  OFFICIAL_ASIGNACION_LOTES_SPREADSHEETS: [],
+}));
+
 const admin = { email: "produccion@laboratoriogenus.com.ar", sector: "PRODUCCION" as const, displayName: "Producción" };
 
 async function createSource(overrides: Partial<{ sheetTab: string }> = {}) {
@@ -302,7 +312,7 @@ describe("syncSource — sincronización Google Sheets → Asignación de Lotes"
     expect(lotes2027.map((r) => r.lote)).toEqual(["G27001"]);
   });
 
-  it("Hotfix (revertido) — una fuente = una hoja SIEMPRE obligatoria, GENUS OS nunca descubre hojas automáticamente", async () => {
+  it("fuente con hoja EXPLÍCITA sincroniza esa única hoja, sin descubrir nada (comportamiento sin cambios)", async () => {
     const { syncSource } = await import("./asignacion-lotes-sync-service");
     const source = await createSource({ sheetTab: "Asignación" });
     readTabMock.mockResolvedValue([
@@ -315,22 +325,76 @@ describe("syncSource — sincronización Google Sheets → Asignación de Lotes"
     expect(lotes.map((l) => l.lote)).toEqual(["G26001"]);
   });
 
-  it("Hotfix (revertido) — fuente sin hoja configurada (legacy) nunca sincroniza ni intenta descubrir hojas", async () => {
+  /**
+   * Cambio definitivo (reemplaza "una fuente = una hoja obligatoria",
+   * PR #99): sheetTab null ya NO es un error — significa "descubrir todas
+   * las hojas válidas del spreadsheet". Una hoja sin la estructura mínima
+   * (lote/fecha/producto/codigo/marca/cantidad/vto) se ignora
+   * justificadamente, nunca rompe las demás.
+   */
+  it("fuente SIN hoja configurada -> descubre todas las hojas y sincroniza las que tienen estructura válida", async () => {
     const { syncSource } = await import("./asignacion-lotes-sync-service");
     const source = await getAsignacionLoteSourcesService().create(admin, {
       name: "Asignación de Lotes 2025",
       period: "2025",
-      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/legacyNoTabAAAA",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/multiTabAAAA",
       sheetTab: "x",
     });
-    // Simula un registro legacy con sheetTab null (posible durante la
-    // breve ventana en que fue opcional, #97) editando directo la memoria.
-    const legacy = { ...source, sheetTab: null };
-    const summary = await syncSource(legacy, "test", "manual");
-    expect(listTabsMock).not.toHaveBeenCalled();
-    expect(readTabMock).not.toHaveBeenCalled();
-    expect(summary.status).toBe("error");
-    expect(summary.errorMessage).toContain("hoja");
+    const spreadsheetLevel = { ...source, sheetTab: null };
+    listTabsMock.mockResolvedValue(["ENERO", "FEBRERO", "NOTAS INTERNAS"]);
+    readTabMock.mockImplementation(async (_spreadsheetId: string, tab: string) => {
+      if (tab === "ENERO") {
+        return [
+          ["N° LOTE", "FECHA", "PRODUCTO", "CODIGO", "MARCA", "CANTIDAD", "VTO"],
+          ["E25001", "05/01/2025", "SERUM", "VIT-C", "ECODERM", "80", "05/2027"],
+        ];
+      }
+      if (tab === "FEBRERO") {
+        return [
+          ["N° LOTE", "FECHA", "PRODUCTO", "CODIGO", "MARCA", "CANTIDAD", "VTO"],
+          ["F25001", "03/02/2025", "CREMA", "", "ECODERM", "40", "03/2027"],
+        ];
+      }
+      // "NOTAS INTERNAS": no tiene la estructura mínima -> se ignora.
+      return [["TITULO", "COMENTARIO"], ["x", "y"]];
+    });
+    const summary = await syncSource(spreadsheetLevel, "test", "manual");
+    expect(summary.status).toBe("parcial"); // 1 hoja ignorada
+    expect(summary.sheetsTotal).toBe(3);
+    expect(summary.ignoredTabs).toHaveLength(1);
+    expect(summary.ignoredTabs![0]!.tab).toBe("NOTAS INTERNAS");
+    expect(summary.tabBreakdown).toHaveLength(2);
+    expect(summary.tabBreakdown!.map((t) => t.tab).sort()).toEqual(["ENERO", "FEBRERO"]);
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes.map((l) => l.lote).sort()).toEqual(["E25001", "F25001"]);
+    expect(lotes.every((l) => l.sourceSheetTab === "ENERO" || l.sourceSheetTab === "FEBRERO")).toBe(true);
+  });
+
+  it("una hoja que falla al leer (error transitorio) no tumba la sincronización de las demás ni pierde lo ya sincronizado antes", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2026",
+      period: "2026",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/partialFailAAAA",
+      sheetTab: "x",
+    });
+    const spreadsheetLevel = { ...source, sheetTab: null };
+    listTabsMock.mockResolvedValue(["ENERO", "FEBRERO", "MARZO", "ABRIL"]);
+    const okRows = (lote: string) => [
+      ["N° LOTE", "FECHA", "PRODUCTO", "CODIGO", "MARCA", "CANTIDAD", "VTO"],
+      [lote, "05/01/2026", "SERUM", "", "ECODERM", "10", "05/2028"],
+    ];
+    readTabMock.mockImplementation(async (_spreadsheetId: string, tab: string) => {
+      if (tab === "ENERO") return okRows("E26001");
+      if (tab === "FEBRERO") return okRows("F26001");
+      if (tab === "MARZO") throw new Error("Google API caída para esta hoja");
+      return okRows("A26001");
+    });
+    const summary = await syncSource(spreadsheetLevel, "test", "manual");
+    expect(summary.status).toBe("parcial");
+    expect(summary.ignoredTabs!.some((t) => t.tab === "MARZO")).toBe(true);
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes.map((l) => l.lote).sort()).toEqual(["A26001", "E26001", "F26001"]);
   });
 
   it("Hotfix reconciliación #1 — 100 filas de una sola hoja -> procesa las 100 (ninguna se pierde)", async () => {

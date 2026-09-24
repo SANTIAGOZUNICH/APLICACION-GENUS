@@ -253,6 +253,13 @@
       "when": 1789900000000,
       "tag": "0036_operational_orders_pedido_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1790185000000,
+      "tag": "0037_asignacion_lote_sync_tab_breakdown",
+      "breakpoints": true
     }
   ]
 }

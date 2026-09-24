@@ -108,6 +108,93 @@ export class AsignacionLoteSourcesService {
     return mem().filter((s) => s.enabled);
   }
 
+  /** Lectura interna sin RBAC, TODAS las fuentes (incl. deshabilitadas) — usada por official-sources.ts para auditar redundancia. */
+  async listAllForSync(): Promise<AsignacionLoteSource[]> {
+    if (neonEnabled()) {
+      const db = getDb();
+      const rows = await db.select().from(asignacionLoteSources);
+      return rows.map(rowToDomain);
+    }
+    return [...mem()];
+  }
+
+  /**
+   * Crea una fuente "spreadsheet completo" (sheetTab null = descubrir todas
+   * las hojas válidas) — SOLO para official-sources.ts. A diferencia de
+   * `create()`, nunca exige RBAC de sector ni hoja explícita: estas fuentes
+   * las gestiona el propio motor de sync server-side, nunca un usuario
+   * desde la UI (pedido explícito: "NO quiero pegar links, NO quiero
+   * elegir hoja por hoja").
+   */
+  async createSpreadsheetLevelSourceForSync(input: {
+    name: string;
+    period: string;
+    spreadsheetId: string;
+    createdBy: string;
+  }): Promise<AsignacionLoteSource> {
+    const now = new Date().toISOString();
+    const record: AsignacionLoteSource = {
+      id: makeId(),
+      name: input.name,
+      period: input.period,
+      spreadsheetId: input.spreadsheetId,
+      sheetTab: null,
+      enabled: true,
+      priority: 0,
+      lastSyncAt: null,
+      lastSuccessfulSyncAt: null,
+      syncStatus: "nunca_sincronizado",
+      lastError: null,
+      createdBy: input.createdBy,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    if (neonEnabled()) {
+      const db = getDb();
+      await db.insert(asignacionLoteSources).values({
+        id: record.id,
+        name: record.name,
+        period: record.period,
+        spreadsheetId: record.spreadsheetId,
+        sheetTab: null,
+        enabled: record.enabled,
+        priority: record.priority,
+        syncStatus: record.syncStatus,
+        createdBy: record.createdBy,
+        createdAt: new Date(record.createdAt),
+        updatedAt: new Date(record.updatedAt),
+      });
+      return record;
+    }
+
+    mem().push(record);
+    return record;
+  }
+
+  /**
+   * Deshabilita (nunca borra) una fuente redundante — SOLO para
+   * official-sources.ts. Sin RBAC: lo dispara el propio motor de sync, no
+   * un request de usuario. El motivo queda en `lastError` para que quede
+   * visible en la pantalla avanzada de fuentes (sección 15: "auditar" debe
+   * poder verse, no ser silencioso).
+   */
+  async disableRedundantForSync(id: string, reason: string): Promise<void> {
+    const now = new Date().toISOString();
+    if (neonEnabled()) {
+      const db = getDb();
+      await db
+        .update(asignacionLoteSources)
+        .set({ enabled: false, lastError: reason, updatedAt: new Date(now) })
+        .where(eq(asignacionLoteSources.id, id));
+      return;
+    }
+    const items = mem();
+    const idx = items.findIndex((s) => s.id === id);
+    if (idx < 0) return;
+    items[idx] = { ...items[idx]!, enabled: false, lastError: reason, updatedAt: now };
+  }
+
   async create(actor: AsignacionLotesActor, input: AsignacionLoteSourceInput): Promise<AsignacionLoteSource> {
     assertConfigAccess(actor);
     const name = input.name.trim();
