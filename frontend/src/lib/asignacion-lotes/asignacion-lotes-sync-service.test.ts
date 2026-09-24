@@ -609,6 +609,81 @@ describe("syncSource — sincronización Google Sheets → Asignación de Lotes"
     ]);
   });
 
+  /**
+   * Hotfix real (Production, #104 recién mergeado): las DOS fuentes
+   * oficiales reportaban "12 hojas detectadas, 12 ignoradas, 0 filas
+   * procesadas" / "9 hojas detectadas, 9 ignoradas, 0 filas procesadas".
+   * Causa raíz confirmada leyendo el dato RAW real de la hoja (export CSV
+   * público, mismo contenido que ve la Sheets API): la fila 1 de CADA hoja
+   * es un título fusionado ("ASIGNACION DE LOTE SEPTIEMBRE 2026"), el
+   * header real recién aparece en la fila 2. El código asumía header=fila 1
+   * en discoverCompatibleTabs Y en el loop multi-hoja de syncSource — por
+   * eso TODAS las hojas de AMBOS spreadsheets quedaban "sin estructura
+   * reconocida" (el título no mapea ninguna columna). Este test reproduce
+   * EXACTAMENTE esa estructura (título + header en fila 2) vía discovery
+   * multi-tab (sheetTab null, como las fuentes oficiales) — antes de este
+   * fix, fallaba con sheetsTotal=1/ignoredTabs=1/rowsRead=0.
+   */
+  it("Hotfix real #2 (Production, 21/21 hojas ignoradas) — título fusionado en la fila 1 antes del header real ya no bloquea la hoja", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await getAsignacionLoteSourcesService().create(admin, {
+      name: "Asignación de Lotes 2026",
+      period: "2026",
+      spreadsheetUrlOrId: "https://docs.google.com/spreadsheets/d/1MUPI0vgnXZOD2Iy5lyaGlGls-Dgwz353pbL57YlJI6o",
+      sheetTab: "x",
+    });
+    const spreadsheetLevel = { ...source, sheetTab: null };
+    listTabsMock.mockResolvedValue(["SEPTIEMBRE"]);
+    // Fila por fila, EXACTAMENTE como la devuelve Google para esta hoja real
+    // (confirmado con export CSV público del spreadsheet real).
+    readTabMock.mockResolvedValue([
+      ["", "ASIGNACION DE LOTE SEPTIEMBRE 2026", "", "", "", "", "", "", "", "", "", "", "", "", "102640"],
+      ["", "N° LOTE", "FECHA", "PRODUCTO", "CODIGO", "MARCA", "CANTIDAD", "VTO", "MM", "FECHA ANALISIS", "N° ANALISIS", "OE", "OA", "RL", "OBSERVACION"],
+      ["", "", "", "AGU DEL SECTOR DE ELABORACION", "", "", "", "", "", "2-9", "", "", "", "", ""],
+      ["", "S26001", "1/9/2026", "AFTER SHAVE", "VERDE", "ORIGINAL BLACK", "6800", "1/9/28", "", "N/A", "", "", "", "", ""],
+      ["", "S26002", "1/9/2026", "AFTER SHAVE", "VIOLETA", "ORIGINAL BLACK", "6800", "1/9/28", "", "N/A", "", "", "", "", ""],
+      ["", "S26003", "1/9/2026", "AFTER SHAVE", "AZUL", "ORIGINAL BLACK", "6800", "1/9/28", "", "N/A", "", "", "", "", ""],
+    ]);
+
+    const summary = await syncSource(spreadsheetLevel, "test", "manual");
+
+    expect(summary.sheetsTotal).toBe(1);
+    expect(summary.ignoredTabs).toHaveLength(0); // la hoja SÍ es válida — antes quedaba acá por error
+    expect(summary.rowsRead).toBe(4); // 1 auxiliar + 3 reales — la fila título NUNCA se cuenta (no es un dataRow)
+    expect(summary.auxiliaryCount).toBe(1);
+    expect(summary.createdCount).toBe(3);
+    expect(summary.invalidCount).toBe(0);
+    expect(summary.status).toBe("ok");
+
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    const byLote = Object.fromEntries(lotes.map((l) => [l.lote, l]));
+    expect(Object.keys(byLote).sort()).toEqual(["S26001", "S26002", "S26003"]);
+    expect(byLote.S26001).toMatchObject({
+      producto: "AFTER SHAVE",
+      codigo: "VERDE",
+      marca: "ORIGINAL BLACK",
+      cantidades: 6800,
+      vto: "2028-09-01",
+    });
+    expect(byLote.S26002).toMatchObject({ codigo: "VIOLETA", cantidades: 6800, vto: "2028-09-01" });
+    expect(byLote.S26003).toMatchObject({ codigo: "AZUL", cantidades: 6800, vto: "2028-09-01" });
+  });
+
+  it("una fila TÍTULO (sin lote ni producto reconocibles) en la fila 1 de una fuente de hoja EXPLÍCITA tampoco bloquea la sincronización", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource({ sheetTab: "SEPTIEMBRE" });
+    readTabMock.mockResolvedValue([
+      ["", "ASIGNACION DE LOTE SEPTIEMBRE 2026", "", "", "", "", ""],
+      ["N° LOTE", "FECHA", "PRODUCTO", "CODIGO", "MARCA", "CANTIDAD", "VTO"],
+      ["S26001", "1/9/2026", "AFTER SHAVE", "VERDE", "ORIGINAL BLACK", "6800", "1/9/28"],
+    ]);
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.status).toBe("ok");
+    expect(summary.createdCount).toBe(1);
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes[0]).toMatchObject({ lote: "S26001", vto: "2028-09-01" });
+  });
+
   it("Test 28 (regresión): caso real ECODERM/ROSEHIP sincronizado desde Sheets alimenta el resolver existente", async () => {
     const { syncSource } = await import("./asignacion-lotes-sync-service");
     const { resolveAsignacionLoteForWorkItem } = await import("./resolve-for-work-item");

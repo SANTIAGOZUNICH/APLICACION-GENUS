@@ -173,14 +173,27 @@ export function reconciliationTotal(
 }
 
 /**
+ * Ancla mínima para reconocer una fila como "el header" al buscarlo (nunca
+ * el chequeo de estructura completa — ver REQUIRED_TAB_HEADER_KEYS abajo,
+ * usado solo para clasificar una hoja como válida en el descubrimiento
+ * automático). Una fila título como "ASIGNACION DE LOTE SEPTIEMBRE 2026"
+ * nunca resuelve ni lote ni producto, así que nunca puede confundirse con
+ * el header real.
+ */
+const HEADER_ROW_ANCHOR_KEYS: readonly (keyof AsignacionLoteMappedRow)[] = ["lote", "producto"];
+
+/**
  * Columnas mínimas que debe reconocer el header de una hoja para
- * considerarla una pestaña real de Asignación de Lotes (pedido explícito):
- * N° LOTE, FECHA, PRODUCTO, CODIGO, MARCA, CANTIDAD, VTO. MM/FECHA
- * ANALISIS/N° ANALISIS/OE/OA/RL/OBSERVACION son opcionales — su ausencia
- * nunca descalifica una hoja. Nunca fuzzy: usa el mismo resolver tolerante
- * de alias (`autoMapColumns` + `ASIGNACION_LOTES_FIELD_ALIASES`) que ya usa
- * el resto del pipeline, solo que acá TODAS estas claves deben resolver a
- * una columna real para que la hoja cuente como válida.
+ * considerarla una pestaña real de Asignación de Lotes en el
+ * DESCUBRIMIENTO AUTOMÁTICO (pedido explícito): N° LOTE, FECHA, PRODUCTO,
+ * CODIGO, MARCA, CANTIDAD, VTO. MM/FECHA ANALISIS/N° ANALISIS/OE/OA/RL/
+ * OBSERVACION son opcionales — su ausencia nunca descalifica una hoja.
+ * Nunca fuzzy: usa el mismo resolver tolerante de alias (`autoMapColumns` +
+ * `ASIGNACION_LOTES_FIELD_ALIASES`) que ya usa el resto del pipeline.
+ * NO se aplica a una fuente de hoja explícita (el usuario ya la señaló a
+ * mano) ni a previewImport — ahí, como siempre, alcanza con encontrar la
+ * fila de header (lote+producto) y dejar que la validación por fila
+ * (`processTabRows`) maneje columnas opcionales ausentes.
  */
 const REQUIRED_TAB_HEADER_KEYS: readonly (keyof AsignacionLoteMappedRow)[] = [
   "lote",
@@ -193,11 +206,48 @@ const REQUIRED_TAB_HEADER_KEYS: readonly (keyof AsignacionLoteMappedRow)[] = [
 ];
 
 /**
+ * Cuántas filas iniciales se revisan buscando el header real. Hotfix real
+ * (Production, 2025/2026 con 21/21 hojas ignoradas — 0 filas procesadas):
+ * la hoja real NO tiene el header en la fila 1 — tiene un título fusionado
+ * arriba (ej. "ASIGNACION DE LOTE SEPTIEMBRE 2026", confirmado leyendo el
+ * dato RAW real de la hoja) y el header recién aparece en la fila 2. Asumir
+ * "header = fila 1" hacía que TODAS las columnas quedaran sin mapear en
+ * TODAS las hojas — nunca un problema de normalización de alias (esa parte
+ * ya funcionaba bien).
+ */
+const HEADER_SEARCH_MAX_ROWS = 5;
+
+/**
+ * Busca la fila de encabezados real dentro de las primeras
+ * `HEADER_SEARCH_MAX_ROWS` filas — NUNCA asume que está en la fila 1
+ * (pedido explícito, sección 3). Ancla LENIENTE (lote+producto, ver
+ * HEADER_ROW_ANCHOR_KEYS): alcanza para distinguir un header real de una
+ * fila título, sin exigir todavía la estructura completa — eso lo decide
+ * cada caller según corresponda (descubrimiento automático vs. hoja ya
+ * señalada a mano).
+ */
+function locateTabHeader(rows: string[][]): {
+  headerRowIndex: number | null;
+  header: string[];
+  dataRows: string[][];
+} {
+  const limit = Math.min(rows.length, HEADER_SEARCH_MAX_ROWS);
+  for (let i = 0; i < limit; i++) {
+    const candidate = rows[i] ?? [];
+    const mapping = autoMapColumns(candidate, ASIGNACION_LOTES_FIELD_ALIASES);
+    if (HEADER_ROW_ANCHOR_KEYS.every((key) => mapping[key] != null)) {
+      return { headerRowIndex: i, header: candidate, dataRows: rows.slice(i + 1) };
+    }
+  }
+  return { headerRowIndex: null, header: rows[0] ?? [], dataRows: [] };
+}
+
+/**
  * Descubre las hojas reales de un spreadsheet completo (Google Sheets API —
  * nunca se asumen nombres de mes) y clasifica cada una como compatible
- * (estructura mínima reconocida) o ignorada (con motivo) — una hoja
- * inválida o con error de lectura nunca rompe el descubrimiento de las
- * demás (sección 3 del pedido).
+ * (header localizado + estructura mínima completa reconocida) o ignorada
+ * (con motivo) — una hoja inválida o con error de lectura nunca rompe el
+ * descubrimiento de las demás (sección 3 del pedido).
  */
 async function discoverCompatibleTabs(
   spreadsheetId: string
@@ -208,17 +258,24 @@ async function discoverCompatibleTabs(
   for (const tab of allTabs) {
     try {
       const rows = await sheetsReader.readTab(spreadsheetId, tab);
-      const header = rows[0] ?? [];
-      const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
+      const located = locateTabHeader(rows);
+      if (located.headerRowIndex == null) {
+        ignored.push({
+          tab,
+          reason: `No se encontró una fila de encabezados (con columnas equivalentes a lote/producto) en las primeras ${HEADER_SEARCH_MAX_ROWS} filas.`,
+        });
+        continue;
+      }
+      const mapping = autoMapColumns(located.header, ASIGNACION_LOTES_FIELD_ALIASES);
       const missing = REQUIRED_TAB_HEADER_KEYS.filter((key) => mapping[key] == null);
-      if (missing.length === 0) {
-        compatible.push(tab);
-      } else {
+      if (missing.length > 0) {
         ignored.push({
           tab,
           reason: `Estructura no reconocida — faltan columnas equivalentes a: ${missing.join(", ")}.`,
         });
+        continue;
       }
+      compatible.push(tab);
     } catch (err) {
       ignored.push({ tab, reason: err instanceof Error ? err.message : "No se pudo leer la hoja." });
     }
@@ -242,10 +299,14 @@ async function processTabRows(
   lotesService: ReturnType<typeof getAsignacionLotesService>,
   seenKeysThisRun: Map<string, { signature: string; tab: string }>,
   seenIds: Set<string>,
-  summary: SyncRunSummary
+  summary: SyncRunSummary,
+  headerRowIndex = 0
 ): Promise<void> {
   for (let i = 0; i < dataRows.length; i += 1) {
-    const rowIndex = i + 2; // +1 header, +1 base-1 para que coincida con el número de fila real de la Sheet
+    // headerRowIndex (0-indexed, ver locateTabHeader) + 1 para pasar a
+    // 1-indexed + 1 para la fila siguiente al header + i = número de fila
+    // REAL en la Sheet — nunca asume que el header está en la fila 1.
+    const rowIndex = headerRowIndex + i + 2;
     const mapped = rowToObject(dataRows[i]!, mapping) as Partial<AsignacionLoteMappedRow>;
 
     if (!mapped.lote?.trim() && !mapped.producto?.trim()) {
@@ -386,11 +447,25 @@ export async function syncSource(
       // cambios: un error acá SÍ aborta la corrida completa (siempre lo
       // hizo — no hay "otras hojas" que proteger).
       const rows = await sheetsReader.readTab(source.spreadsheetId, explicitTab);
-      const header = rows[0] ?? [];
-      const dataRows = rows.slice(1);
-      summary.rowsRead += dataRows.length;
-      const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
-      await processTabRows(dataRows, explicitTab, mapping, source, lotesService, seenKeysThisRun, seenIds, summary);
+      const located = locateTabHeader(rows);
+      if (located.headerRowIndex == null) {
+        throw new Error(
+          `No se encontró una fila de encabezados (con columnas equivalentes a lote/producto) en las primeras ${HEADER_SEARCH_MAX_ROWS} filas de "${explicitTab}".`
+        );
+      }
+      summary.rowsRead += located.dataRows.length;
+      const mapping = autoMapColumns(located.header, ASIGNACION_LOTES_FIELD_ALIASES);
+      await processTabRows(
+        located.dataRows,
+        explicitTab,
+        mapping,
+        source,
+        lotesService,
+        seenKeysThisRun,
+        seenIds,
+        summary,
+        located.headerRowIndex
+      );
       readableTabs.add(explicitTab);
     } else {
       // Sin hoja específica: descubrir TODAS las hojas reales del
@@ -417,11 +492,32 @@ export async function syncSource(
         };
         try {
           const rows = await sheetsReader.readTab(source.spreadsheetId, tab);
-          const header = rows[0] ?? [];
-          const dataRows = rows.slice(1);
+          const located = locateTabHeader(rows);
+          if (located.headerRowIndex == null) {
+            // Ya se había clasificado compatible en discoverCompatibleTabs
+            // (misma hoja) — un cambio entre esa lectura y esta es
+            // extremadamente raro, pero nunca debe romper el resto del
+            // spreadsheet: se ignora esta hoja puntual, como cualquier otra.
+            summary.ignoredTabs!.push({
+              tab,
+              reason: `No se encontró una fila de encabezados (con columnas equivalentes a lote/producto) en las primeras ${HEADER_SEARCH_MAX_ROWS} filas.`,
+            });
+            continue;
+          }
+          const { header, dataRows } = located;
           summary.rowsRead += dataRows.length;
           const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
-          await processTabRows(dataRows, tab, mapping, source, lotesService, seenKeysThisRun, seenIds, summary);
+          await processTabRows(
+            dataRows,
+            tab,
+            mapping,
+            source,
+            lotesService,
+            seenKeysThisRun,
+            seenIds,
+            summary,
+            located.headerRowIndex
+          );
           readableTabs.add(tab);
           tabBreakdown.push({
             tab,
@@ -562,8 +658,15 @@ export async function previewImport(
 
   try {
     const rows = await sheetsReader.readTab(spreadsheetId, tab);
-    const header = rows[0] ?? [];
-    const dataRows = rows.slice(1);
+    const located = locateTabHeader(rows);
+    if (located.headerRowIndex == null) {
+      return {
+        ok: false,
+        ...empty,
+        error: `No se encontró una fila de encabezados (con columnas equivalentes a lote/producto) en las primeras ${HEADER_SEARCH_MAX_ROWS} filas de "${tab}".`,
+      };
+    }
+    const { header, dataRows } = located;
     const mapping = autoMapColumns(header, ASIGNACION_LOTES_FIELD_ALIASES);
     const lotesService = getAsignacionLotesService();
     const seenKeysThisRun = new Map<string, { signature: string; tab: string }>();
@@ -571,7 +674,7 @@ export async function previewImport(
     const result: ImportPreviewResult = { ok: true, ...empty };
 
     for (let i = 0; i < dataRows.length; i += 1) {
-      const rowIndex = i + 2;
+      const rowIndex = located.headerRowIndex + i + 2;
       const mapped = rowToObject(dataRows[i]!, mapping) as Partial<AsignacionLoteMappedRow>;
       if (!mapped.lote?.trim() && !mapped.producto?.trim()) continue;
       result.rowsFound += 1;
