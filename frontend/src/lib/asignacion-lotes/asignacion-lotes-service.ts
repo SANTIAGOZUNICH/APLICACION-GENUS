@@ -62,8 +62,16 @@ function normalizeKeyPart(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function duplicateKey(lote: string, codigo: string): string {
-  return `${normalizeKeyPart(lote)}::${normalizeKeyPart(codigo)}`;
+/**
+ * Identidad (lote,código,PRODUCTO) — ampliada 0038 (antes solo lote,
+ * código). Causa demostrada con datos reales (lote G26042, AGOSTO 2026):
+ * dos productos DISTINTOS comparten el mismo lote y ambos tienen código
+ * vacío — con (lote,código) solo, colapsaban a la misma identidad y uno se
+ * perdía/pisaba al otro. Agregar producto los distingue sin afectar los
+ * casos donde código ya alcanzaba (ahí producto es redundante, no daña).
+ */
+function duplicateKey(lote: string, codigo: string, producto: string): string {
+  return `${normalizeKeyPart(lote)}::${normalizeKeyPart(codigo)}::${normalizeKeyPart(producto)}`;
 }
 
 function asOptionalDate(value: unknown): string | null {
@@ -98,6 +106,8 @@ function migrateRecord(raw: unknown, now = new Date().toISOString()): Asignacion
     updatedAt,
     updatedBy: asString(record.updatedBy),
     archived: Boolean(record.archived),
+    datosIncompletos: Boolean(record.datosIncompletos),
+    camposIncompletos: Array.isArray(record.camposIncompletos) ? (record.camposIncompletos as string[]) : null,
   };
 }
 
@@ -122,6 +132,8 @@ function rowToDomain(row: typeof asignacionLotes.$inferSelect): AsignacionLote {
     archived: row.archived,
     sourceId: row.sourceId ?? null,
     sourceSheetTab: row.sourceSheetTab ?? null,
+    datosIncompletos: row.datosIncompletos,
+    camposIncompletos: (row.camposIncompletos as string[] | null) ?? null,
   };
 }
 
@@ -146,6 +158,8 @@ function domainToInsert(record: AsignacionLote): typeof asignacionLotes.$inferIn
     updatedBy: record.updatedBy,
     sourceId: record.sourceId ?? null,
     sourceSheetTab: record.sourceSheetTab ?? null,
+    datosIncompletos: record.datosIncompletos ?? false,
+    camposIncompletos: record.camposIncompletos ?? null,
   };
 }
 
@@ -166,13 +180,14 @@ function assertMutate(actor: AsignacionLotesActor): void {
 function findDuplicateMem(
   lote: string,
   codigo: string,
+  producto: string,
   options: { excludeId?: string; includeArchived?: boolean } = {}
 ): AsignacionLote | null {
-  const key = duplicateKey(lote, codigo);
+  const key = duplicateKey(lote, codigo, producto);
   return (
     mem().find(
       (item) =>
-        duplicateKey(item.lote, item.codigo) === key &&
+        duplicateKey(item.lote, item.codigo, item.producto) === key &&
         item.id !== options.excludeId &&
         (options.includeArchived || !item.archived)
     ) ?? null
@@ -182,6 +197,7 @@ function findDuplicateMem(
 async function findDuplicateNeon(
   lote: string,
   codigo: string,
+  producto: string,
   options: { excludeId?: string; includeArchived?: boolean } = {}
 ): Promise<AsignacionLote | null> {
   const db = getDb();
@@ -189,10 +205,10 @@ async function findDuplicateNeon(
     .select()
     .from(asignacionLotes)
     .where(options.includeArchived ? undefined : eq(asignacionLotes.archived, false));
-  const key = duplicateKey(lote, codigo);
+  const key = duplicateKey(lote, codigo, producto);
   const match = rows.find(
     (row) =>
-      duplicateKey(row.lote, row.codigo) === key &&
+      duplicateKey(row.lote, row.codigo, row.producto) === key &&
       row.id !== options.excludeId &&
       (options.includeArchived || !row.archived)
   );
@@ -290,11 +306,11 @@ export class AsignacionLotesService {
     }
 
     const duplicate = useNeon()
-      ? await findDuplicateNeon(input.lote, input.codigo, { excludeId: input.id })
-      : findDuplicateMem(input.lote, input.codigo, { excludeId: input.id });
+      ? await findDuplicateNeon(input.lote, input.codigo, input.producto, { excludeId: input.id })
+      : findDuplicateMem(input.lote, input.codigo, input.producto, { excludeId: input.id });
     if (duplicate) {
       throw new OrdersValidationError(
-        `Ya existe el lote ${duplicate.lote} para el código ${duplicate.codigo}.`
+        `Ya existe el lote ${duplicate.lote} para el código ${duplicate.codigo} y producto ${duplicate.producto}.`
       );
     }
 
@@ -339,6 +355,9 @@ export class AsignacionLotesService {
       sourceId: input.sourceId !== undefined ? input.sourceId : (previous?.sourceId ?? null),
       sourceSheetTab:
         input.sourceSheetTab !== undefined ? input.sourceSheetTab : (previous?.sourceSheetTab ?? null),
+      datosIncompletos: input.datosIncompletos ?? previous?.datosIncompletos ?? false,
+      camposIncompletos:
+        input.camposIncompletos !== undefined ? input.camposIncompletos : (previous?.camposIncompletos ?? null),
     };
 
     if (useNeon()) {
@@ -364,6 +383,8 @@ export class AsignacionLotesService {
             updatedBy: values.updatedBy,
             sourceId: values.sourceId,
             sourceSheetTab: values.sourceSheetTab,
+            datosIncompletos: values.datosIncompletos,
+            camposIncompletos: values.camposIncompletos,
           })
           .where(eq(asignacionLotes.id, record.id));
       } else {
@@ -398,17 +419,20 @@ export class AsignacionLotesService {
   private async findBySourceKey(
     sourceId: string,
     lote: string,
-    codigo: string
+    codigo: string,
+    producto: string
   ): Promise<AsignacionLote | null> {
-    const key = duplicateKey(lote, codigo);
+    const key = duplicateKey(lote, codigo, producto);
     if (useNeon()) {
       const db = getDb();
       const rows = await db.select().from(asignacionLotes).where(eq(asignacionLotes.sourceId, sourceId));
-      const match = rows.find((row) => duplicateKey(row.lote, row.codigo) === key);
+      const match = rows.find((row) => duplicateKey(row.lote, row.codigo, row.producto) === key);
       return match ? rowToDomain(match) : null;
     }
     return (
-      mem().find((item) => item.sourceId === sourceId && duplicateKey(item.lote, item.codigo) === key) ?? null
+      mem().find(
+        (item) => item.sourceId === sourceId && duplicateKey(item.lote, item.codigo, item.producto) === key
+      ) ?? null
     );
   }
 
@@ -420,14 +444,15 @@ export class AsignacionLotesService {
   async findConflictingRecord(
     sourceId: string,
     lote: string,
-    codigo: string
+    codigo: string,
+    producto: string
   ): Promise<AsignacionLote | null> {
     if (useNeon()) {
-      return findDuplicateNeon(lote, codigo).then((match) =>
+      return findDuplicateNeon(lote, codigo, producto).then((match) =>
         match && match.sourceId !== sourceId ? match : null
       );
     }
-    const match = findDuplicateMem(lote, codigo);
+    const match = findDuplicateMem(lote, codigo, producto);
     return match && match.sourceId !== sourceId ? match : null;
   }
 
@@ -438,8 +463,8 @@ export class AsignacionLotesService {
    * fuente no hay sourceId con el que comparar, así que se busca contra
    * TODA Asignación de Lotes existente (manual/Excel/otra Sheets).
    */
-  async findExistingRecordByKey(lote: string, codigo: string): Promise<AsignacionLote | null> {
-    return useNeon() ? findDuplicateNeon(lote, codigo) : findDuplicateMem(lote, codigo);
+  async findExistingRecordByKey(lote: string, codigo: string, producto: string): Promise<AsignacionLote | null> {
+    return useNeon() ? findDuplicateNeon(lote, codigo, producto) : findDuplicateMem(lote, codigo, producto);
   }
 
   /**
@@ -467,7 +492,7 @@ export class AsignacionLotesService {
     input: Omit<AsignacionLoteUpsertInput, "sourceId" | "sourceSheetTab">,
     sourceSheetTab?: string | null
   ): Promise<{ record: AsignacionLote; created: boolean; changed: boolean }> {
-    const previous = await this.findBySourceKey(sourceId, input.lote, input.codigo);
+    const previous = await this.findBySourceKey(sourceId, input.lote, input.codigo, input.producto);
     const revivingArchived = previous?.archived === true;
     if (previous && !revivingArchived && !fieldsDiffer(previous, input)) {
       return { record: previous, created: false, changed: false };
@@ -592,7 +617,7 @@ export class AsignacionLotesService {
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
       const rowIndex = index + 1;
-      const key = duplicateKey(row.lote, row.codigo);
+      const key = duplicateKey(row.lote, row.codigo, row.producto);
       if (row.fecha?.trim() && !parseFlexibleDate(row.fecha)) {
         errors.push({ rowIndex, field: "fecha", message: "Fecha inválida." });
       }
@@ -602,8 +627,8 @@ export class AsignacionLotesService {
       }
 
       const dup = useNeon()
-        ? await findDuplicateNeon(row.lote, row.codigo)
-        : findDuplicateMem(row.lote, row.codigo);
+        ? await findDuplicateNeon(row.lote, row.codigo, row.producto)
+        : findDuplicateMem(row.lote, row.codigo, row.producto);
       if (seen.has(key) || dup) {
         duplicates += 1;
         skipped += 1;

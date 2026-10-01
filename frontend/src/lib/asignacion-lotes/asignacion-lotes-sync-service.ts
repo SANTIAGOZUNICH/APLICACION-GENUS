@@ -23,7 +23,6 @@ import { autoMapColumns, rowToObject } from "@/features/os/operational/lib/clipb
 import {
   ASIGNACION_LOTES_FIELD_ALIASES,
   buildAsignacionLoteFromMappedRow,
-  validateAsignacionLoteRow,
   type AsignacionLoteMappedRow,
 } from "@/features/os/operational/lib/asignacion-lotes-import";
 import { getAsignacionLoteSourcesService } from "./asignacion-lote-sources-service";
@@ -66,12 +65,14 @@ async function recordRun(summary: SyncRunSummary): Promise<void> {
       blankCount: summary.blankCount,
       auxiliaryCount: summary.auxiliaryCount,
       duplicateCount: summary.duplicateCount,
+      incompleteCount: summary.incompleteCount,
       reconciled: summary.reconciled,
       ignoredTabs: summary.ignoredTabs ?? null,
       sheetsTotal: summary.sheetsTotal ?? null,
       tabBreakdown: summary.tabBreakdown ?? null,
       conflictSamples: summary.conflictSamples,
       invalidSamples: summary.invalidSamples,
+      incompleteSamples: summary.incompleteSamples,
       errorMessage: summary.errorMessage,
       triggeredBy: summary.triggeredBy,
       triggerKind: summary.triggerKind,
@@ -107,12 +108,14 @@ export async function listSyncRuns(sourceId: string, limit = 20): Promise<SyncRu
       blankCount: row.blankCount,
       auxiliaryCount: row.auxiliaryCount,
       duplicateCount: row.duplicateCount,
+      incompleteCount: row.incompleteCount,
       reconciled: row.reconciled,
       sheetsTotal: row.sheetsTotal ?? undefined,
       ignoredTabs: (row.ignoredTabs as SyncRunSummary["ignoredTabs"]) ?? undefined,
       tabBreakdown: (row.tabBreakdown as SyncRunSummary["tabBreakdown"]) ?? undefined,
       conflictSamples: (row.conflictSamples as SyncRunSummary["conflictSamples"]) ?? [],
       invalidSamples: (row.invalidSamples as SyncRunSummary["invalidSamples"]) ?? [],
+      incompleteSamples: (row.incompleteSamples as SyncRunSummary["incompleteSamples"]) ?? [],
       errorMessage: row.errorMessage,
       triggeredBy: row.triggeredBy,
       triggerKind: row.triggerKind as SyncTriggerKind,
@@ -289,7 +292,11 @@ async function discoverCompatibleTabs(
  * multi-tab (una sola implementación, nunca dos parsers que puedan
  * divergir). Cada fila cae EXACTAMENTE en uno de estos buckets — ninguna
  * puede "desaparecer" sin pasar por alguno (sección 7, reconciliación):
- * blank | invalid | duplicado-repetido-en-esta-corrida | conflicto | created/updated/unchanged.
+ * blank | auxiliar | duplicado-repetido-en-esta-corrida | conflicto |
+ * created/updated/unchanged. `invalid` queda sin usar desde 0038: si la
+ * fila tiene N° LOTE, SIEMPRE cae en created/updated/unchanged — como mucho
+ * queda marcada `incompleteCount` (⚠, no resta de la reconciliación, ver
+ * SyncRunSummary#incompleteCount), nunca se pierde entera.
  */
 async function processTabRows(
   dataRows: string[][],
@@ -324,34 +331,41 @@ async function processTabRows(
       continue;
     }
 
-    const issues = validateAsignacionLoteRow(mapped, rowIndex);
-    const hasBlockingError = issues.some((issue) => issue.severity === "error");
-    if (hasBlockingError || !mapped.producto?.trim()) {
-      // Carga flexible tolera celdas vacías salvo lote/producto — sin eso
-      // no hay nada determinístico que vincular después.
-      summary.invalidCount += 1;
-      if (summary.invalidSamples.length < 20) {
-        summary.invalidSamples.push({
+    // Hotfix "SIGUE PERDIENDO LOTES": antes de este fix, un VTO/FECHA
+    // ANÁLISIS no parseable o un PRODUCTO vacío descartaba la fila ENTERA
+    // aunque el N° LOTE fuera real y válido (demostrado con datos reales:
+    // 112/915 filas 2026 se perdían así). Si hay lote, la fila SIEMPRE se
+    // importa — los campos secundarios que no se pudieron leer quedan
+    // null/"" (como ya hacía buildAsignacionLoteFromMappedRow) y la fila se
+    // marca ⚠ DATOS INCOMPLETOS en vez de desaparecer.
+    const input = buildAsignacionLoteFromMappedRow(mapped, SYNC_ACTOR.email);
+    if (input.datosIncompletos) {
+      summary.incompleteCount += 1;
+      if (summary.incompleteSamples.length < 20) {
+        summary.incompleteSamples.push({
           tab,
           rowIndex,
           lote: mapped.lote?.trim() ?? "",
           producto: mapped.producto?.trim() ?? "",
-          motivo: issues.map((issue) => issue.message).join("; ") || "Falta producto.",
+          camposIncompletos: input.camposIncompletos ?? [],
         });
       }
-      continue;
     }
 
-    const input = buildAsignacionLoteFromMappedRow(mapped, SYNC_ACTOR.email);
-    const key = `${mapped.lote.trim().toLowerCase()}::${(mapped.codigo ?? "").trim().toLowerCase()}`;
+    // Identidad (lote,código,PRODUCTO) — ampliada (0038). Causa demostrada
+    // con datos reales (lote G26042, AGOSTO 2026): dos productos DISTINTOS
+    // comparten el mismo lote y ambos tienen código vacío; con (lote,
+    // código) solo, colapsaban a la misma identidad y uno se perdía como
+    // "conflicto" aunque los dos existieran válidamente en Google.
+    const key = `${mapped.lote.trim().toLowerCase()}::${(mapped.codigo ?? "").trim().toLowerCase()}::${input.producto.trim().toLowerCase()}`;
     const signature = rowContentSignature(input);
     const seenBefore = seenKeysThisRun.get(key);
     if (seenBefore) {
-      // Mismo lote+código repetido DENTRO de la misma hoja, en esta misma
-      // corrida. Idéntico → ya está, no duplica (no se vuelve a escribir,
-      // pero cuenta en la reconciliación). Distinto → conflicto real, nunca
-      // se elige en silencio cuál vale: se reporta y se deja tal cual quedó
-      // con la primera fila procesada.
+      // Mismo lote+código+producto repetido DENTRO de la misma hoja, en
+      // esta misma corrida. Idéntico → ya está, no duplica (no se vuelve a
+      // escribir, pero cuenta en la reconciliación). Distinto → conflicto
+      // real, nunca se elige en silencio cuál vale: se reporta y se deja
+      // tal cual quedó con la primera fila procesada.
       if (seenBefore.signature !== signature) {
         summary.conflictCount += 1;
         if (summary.conflictSamples.length < 20) {
@@ -369,7 +383,12 @@ async function processTabRows(
     }
     seenKeysThisRun.set(key, { signature, tab });
 
-    const conflict = await lotesService.findConflictingRecord(source.id, mapped.lote, mapped.codigo ?? "");
+    const conflict = await lotesService.findConflictingRecord(
+      source.id,
+      mapped.lote,
+      mapped.codigo ?? "",
+      input.producto
+    );
     if (conflict) {
       summary.conflictCount += 1;
       if (summary.conflictSamples.length < 20) {
@@ -417,9 +436,11 @@ export async function syncSource(
     blankCount: 0,
     auxiliaryCount: 0,
     duplicateCount: 0,
+    incompleteCount: 0,
     reconciled: true,
     conflictSamples: [],
     invalidSamples: [],
+    incompleteSamples: [],
     errorMessage: null,
     triggeredBy,
     triggerKind,
@@ -489,6 +510,7 @@ export async function syncSource(
           auxiliaryCount: summary.auxiliaryCount,
           duplicateCount: summary.duplicateCount,
           conflictCount: summary.conflictCount,
+          incompleteCount: summary.incompleteCount,
         };
         try {
           const rows = await sheetsReader.readTab(source.spreadsheetId, tab);
@@ -529,6 +551,7 @@ export async function syncSource(
             auxiliaryCount: summary.auxiliaryCount - before.auxiliaryCount,
             duplicateCount: summary.duplicateCount - before.duplicateCount,
             conflictCount: summary.conflictCount - before.conflictCount,
+            incompleteCount: summary.incompleteCount - before.incompleteCount,
           });
         } catch (err) {
           // Una hoja individual que falla al leer (transitorio de Google,
@@ -568,6 +591,10 @@ export async function syncSource(
       summary.status = "inconsistente";
       summary.errorMessage = `Se leyeron ${summary.rowsRead} filas pero solo ${reconciledTotal} pudieron ser reconciliadas. ${summary.rowsRead - reconciledTotal} fila(s) no tienen resultado conocido.`;
     } else if ((summary.ignoredTabs?.length ?? 0) > 0 || summary.invalidCount > 0 || summary.conflictCount > 0) {
+      // Nota (0038): incompleteCount NO entra acá — una fila incompleta SÍ
+      // se importó (el lote no se perdió), solo quedó marcada ⚠ para
+      // revisión de datos. "parcial" es sobre COMPLETITUD (lotes perdidos/
+      // en conflicto), no sobre calidad de dato — ver incompleteCount para eso.
       summary.status = "parcial";
     } else {
       summary.status = "ok";
@@ -643,6 +670,7 @@ export async function previewImport(
     existentes: 0,
     conflictos: 0,
     invalidas: 0,
+    incompletas: 0,
     auxiliares: 0,
     conflictSamples: [],
   };
@@ -674,7 +702,6 @@ export async function previewImport(
     const result: ImportPreviewResult = { ok: true, ...empty };
 
     for (let i = 0; i < dataRows.length; i += 1) {
-      const rowIndex = located.headerRowIndex + i + 2;
       const mapped = rowToObject(dataRows[i]!, mapping) as Partial<AsignacionLoteMappedRow>;
       if (!mapped.lote?.trim() && !mapped.producto?.trim()) continue;
       result.rowsFound += 1;
@@ -686,15 +713,14 @@ export async function previewImport(
         continue;
       }
 
-      const issues = validateAsignacionLoteRow(mapped, rowIndex);
-      const hasBlockingError = issues.some((issue) => issue.severity === "error");
-      if (hasBlockingError || !mapped.producto?.trim()) {
-        result.invalidas += 1;
-        continue;
-      }
-
+      // Mismo criterio que processTabRows (0038): un lote real nunca se
+      // descarta por un campo secundario incompleto/no parseable — queda
+      // contado en "incompletas" para revisión, no en "invalidas".
       const input = buildAsignacionLoteFromMappedRow(mapped, "preview");
-      const key = `${mapped.lote.trim().toLowerCase()}::${(mapped.codigo ?? "").trim().toLowerCase()}`;
+      if (input.datosIncompletos) {
+        result.incompletas += 1;
+      }
+      const key = `${mapped.lote.trim().toLowerCase()}::${(mapped.codigo ?? "").trim().toLowerCase()}::${input.producto.trim().toLowerCase()}`;
       const signature = rowContentSignature(input);
       const seenBefore = seenKeysThisRun.get(key);
       if (seenBefore) {
@@ -715,7 +741,7 @@ export async function previewImport(
       }
       seenKeysThisRun.set(key, { signature, tab });
 
-      const existing = await lotesService.findExistingRecordByKey(input.lote, input.codigo);
+      const existing = await lotesService.findExistingRecordByKey(input.lote, input.codigo, input.producto);
       if (!existing) {
         result.nuevas += 1;
         continue;

@@ -80,7 +80,7 @@ describe("previewImport — importación inicial segura (sección 'IMPORTACIÓN 
     expect(result.conflictSamples[0]!.lote).toBe("G25001");
   });
 
-  it("fila inválida (VTO ilegible) cuenta aparte, no rompe el resto del preview", async () => {
+  it("Hotfix 0038 — fila con VTO ilegible NUNCA se pierde del preview (lote real): cuenta como 'nuevas' + 'incompletas', nunca 'invalidas'", async () => {
     readTabMock.mockResolvedValue([
       ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD", "VTO"],
       ["G25001", "10/01/2025", "SERUM", "50", "no-es-fecha"],
@@ -88,8 +88,9 @@ describe("previewImport — importación inicial segura (sección 'IMPORTACIÓN 
     ]);
     const { previewImport } = await import("./asignacion-lotes-sync-service");
     const result = await previewImport(url, "LOTES_2025");
-    expect(result.invalidas).toBe(1);
-    expect(result.nuevas).toBe(1);
+    expect(result.invalidas).toBe(0);
+    expect(result.incompletas).toBe(1);
+    expect(result.nuevas).toBe(2);
   });
 
   it("no persiste absolutamente nada — GENUS OS queda igual después del preview", async () => {

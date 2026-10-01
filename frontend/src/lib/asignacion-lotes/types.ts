@@ -23,6 +23,10 @@ export interface AsignacionLote {
   sourceId?: string | null;
   /** De qué hoja/tab salió este registro (auditoría/diagnóstico) — solo informativo. */
   sourceSheetTab?: string | null;
+  /** 0038 — true si el N° LOTE es real pero algún campo secundario no se pudo leer/parsear de la fuente. Nunca implica que el registro no exista. */
+  datosIncompletos?: boolean;
+  /** 0038 — qué campos exactos (ej. ["producto","vto"]). Null/undefined si datosIncompletos es false. */
+  camposIncompletos?: string[] | null;
 }
 
 export type AsignacionLoteUpsertInput = {
@@ -46,6 +50,10 @@ export type AsignacionLoteUpsertInput = {
   sourceId?: string | null;
   /** Ver AsignacionLote#sourceSheetTab. */
   sourceSheetTab?: string | null;
+  /** Ver AsignacionLote#datosIncompletos. */
+  datosIncompletos?: boolean;
+  /** Ver AsignacionLote#camposIncompletos. */
+  camposIncompletos?: string[] | null;
 };
 
 export interface AsignacionLoteImportError {

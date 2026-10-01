@@ -401,9 +401,9 @@ export function AsignacionLotesView() {
       setFormError("Cantidades debe ser un número mayor o igual a 0.");
       return;
     }
-    const duplicate = findDuplicateAsignacionLote(form.lote, form.codigo, { excludeId: editing?.id });
+    const duplicate = findDuplicateAsignacionLote(form.lote, form.codigo, form.producto, { excludeId: editing?.id });
     if (duplicate) {
-      setFormError(`Ya existe el lote ${duplicate.lote} para el código ${duplicate.codigo}.`);
+      setFormError(`Ya existe el lote ${duplicate.lote} para el código ${duplicate.codigo} y producto ${duplicate.producto}.`);
       return;
     }
 
@@ -952,7 +952,7 @@ export function AsignacionLotesView() {
             if (!open) setSeedImportText("");
           }}
           title="Pegar asignaciones desde Excel"
-          description="Las filas con errores o duplicadas por lote + código se excluyen."
+          description="Las filas con errores o duplicadas por lote + código + producto se excluyen."
           fields={IMPORT_FIELDS}
           fieldAliases={ASIGNACION_LOTES_FIELD_ALIASES}
           analyzeMode="live"
@@ -963,11 +963,14 @@ export function AsignacionLotesView() {
           validateMappedRow={(mapped, { rowNumber }) => {
             const row = mapped as Partial<AsignacionLoteMappedRow>;
             const issues = validateAsignacionLoteRow(row, rowNumber);
-            if (row.lote?.trim() && findDuplicateAsignacionLote(row.lote, row.codigo ?? "")) {
+            if (
+              row.lote?.trim() &&
+              findDuplicateAsignacionLote(row.lote, row.codigo ?? "", row.producto ?? "")
+            ) {
               issues.push({
                 rowIndex: rowNumber,
                 field: "lote",
-                message: "Duplicado por lote + código; no se importará.",
+                message: "Duplicado por lote + código + producto; no se importará.",
               });
             }
             return {

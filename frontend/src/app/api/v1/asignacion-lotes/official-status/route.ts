@@ -25,6 +25,20 @@ export interface OfficialSourceStatus {
     rowsRead: number;
     sheetsTotal: number | null;
     ignoredTabsCount: number;
+    /**
+     * Protección permanente (0038, hotfix "sigue perdiendo lotes"): filas
+     * CON N° LOTE real leídas vs. las que efectivamente quedaron
+     * reconciliadas (created+updated+unchanged+duplicate). Si no coinciden,
+     * la UI NUNCA debe mostrar "✓ sincronizado" — ver `faltantes`.
+     */
+    filasConLote: number;
+    reconciliadas: number;
+    /** invalidCount + conflictCount — lotes reales que NO quedaron como su propio registro esta corrida. */
+    faltantes: number;
+    /** Detalle lote+motivo de cada faltante (invalidSamples + conflictSamples), máx. 20. */
+    faltantesDetalle: Array<{ lote: string; producto: string; motivo: string }>;
+    /** Lotes importados igual pero con 1+ campo secundario incompleto (⚠, no están "faltantes"). */
+    incompleteCount: number;
   } | null;
 }
 
@@ -53,11 +67,20 @@ export async function GET(request: Request) {
       if (match) {
         const [run] = await listSyncRuns(match.id, 1);
         if (run) {
+          const faltantesDetalle = [
+            ...run.invalidSamples.map((s) => ({ lote: s.lote, producto: s.producto, motivo: s.motivo })),
+            ...run.conflictSamples.map((s) => ({ lote: s.lote, producto: s.producto, motivo: s.motivo })),
+          ].slice(0, 20);
           lastRun = {
             status: run.status,
             rowsRead: run.rowsRead,
             sheetsTotal: run.sheetsTotal ?? null,
             ignoredTabsCount: run.ignoredTabs?.length ?? 0,
+            filasConLote: run.rowsRead - run.blankCount - run.auxiliaryCount,
+            reconciliadas: run.createdCount + run.updatedCount + run.unchangedCount + run.duplicateCount,
+            faltantes: run.invalidCount + run.conflictCount,
+            faltantesDetalle,
+            incompleteCount: run.incompleteCount,
           };
         }
       }

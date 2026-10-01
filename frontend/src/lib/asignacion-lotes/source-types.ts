@@ -69,6 +69,8 @@ export interface ImportPreviewResult {
   existentes: number;
   conflictos: number;
   invalidas: number;
+  /** 0038 — filas con lote real que importarían igual (created/updated) pero con 1+ campo secundario incompleto/no parseable; nunca se descartan. */
+  incompletas: number;
   /** Filas sin N° LOTE pero con contenido (notas/filas auxiliares) — no son asignaciones reales, se ignoran justificadamente. */
   auxiliares: number;
   conflictSamples: ImportPreviewConflictSample[];
@@ -98,6 +100,20 @@ export interface SyncInvalidSample {
 }
 
 /**
+ * Fila CON N° LOTE real que SÍ se importó (created/updated/unchanged) pero
+ * con uno o más campos secundarios incompletos/no parseables — 0038, hotfix
+ * "sigue perdiendo lotes". El lote nunca se pierde por esto; queda marcado
+ * ⚠ DATOS INCOMPLETOS para revisión humana en vez de desaparecer.
+ */
+export interface SyncIncompleteSample {
+  tab: string;
+  rowIndex: number;
+  lote: string;
+  producto: string;
+  camposIncompletos: string[];
+}
+
+/**
  * Reconciliación matemática obligatoria (hotfix): rowsRead debe repartirse
  * ÍNTEGRAMENTE entre estos buckets. Si no cierra, `reconciled: false` y
  * `status: "inconsistente"` — nunca se afirma éxito con filas sin destino
@@ -120,8 +136,15 @@ export interface SyncRunSummary {
   blankCount: number;
   /** Filas sin N° LOTE pero con contenido (notas/filas auxiliares de la planilla, ej. "AGU DEL SECTOR DE ELABORACION") — no son asignaciones reales, se ignoran justificadamente, nunca cuentan como inválidas. */
   auxiliaryCount: number;
-  /** Duplicado EXACTO (mismo lote+código, mismo contenido) repetido dentro de la misma hoja en esta corrida — no se re-escribe, pero cuenta en la reconciliación. */
+  /** Duplicado EXACTO (mismo lote+código+producto, mismo contenido) repetido dentro de la misma hoja en esta corrida — no se re-escribe, pero cuenta en la reconciliación. */
   duplicateCount: number;
+  /**
+   * 0038 — subconjunto de created+updated+unchanged: filas CON lote real que
+   * SÍ se importaron pero con 1+ campo secundario incompleto/no parseable
+   * (nunca resta de la reconciliación — el lote está contado igual en su
+   * bucket de siempre, esto es solo la marca ⚠ para revisión).
+   */
+  incompleteCount: number;
   /** false = la ecuación de reconciliación no cerró (alguna fila quedó sin bucket conocido) — nunca se afirma éxito en ese caso. */
   reconciled: boolean;
   /**
@@ -144,11 +167,15 @@ export interface SyncRunSummary {
     auxiliaryCount: number;
     duplicateCount: number;
     conflictCount: number;
+    /** 0038 — filas con lote real importadas igual pero con campo(s) secundario(s) incompleto(s) (⚠, no se pierden). */
+    incompleteCount: number;
   }>;
   /** Detalle de conflictos para "VER DETALLE" — máx. 20. */
   conflictSamples: ImportPreviewConflictSample[];
   /** Detalle de filas inválidas para "VER DETALLE" — máx. 20. */
   invalidSamples: SyncInvalidSample[];
+  /** 0038 — detalle de filas incompletas (lote+campos) para "VER DETALLE" — máx. 20. */
+  incompleteSamples: SyncIncompleteSample[];
   errorMessage: string | null;
   triggeredBy: string;
   triggerKind: SyncTriggerKind;

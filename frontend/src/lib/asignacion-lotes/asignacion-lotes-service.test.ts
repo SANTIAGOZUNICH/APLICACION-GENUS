@@ -370,7 +370,7 @@ describe("AsignacionLotesService", () => {
         cantidades: 100,
         updatedBy: "Calidad",
       });
-      const conflict = await svc.findConflictingRecord("src-1", "G26043", "VITAMINA C");
+      const conflict = await svc.findConflictingRecord("src-1", "G26043", "VITAMINA C", "SERUM");
       expect(conflict).not.toBeNull();
       expect(conflict?.marca).toBe("ECODERM");
     });

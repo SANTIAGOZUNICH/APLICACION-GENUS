@@ -190,11 +190,37 @@ export function validateAsignacionLoteRow(
   return issues;
 }
 
+/**
+ * Hotfix "ASIGNACIÓN DE LOTES SIGUE PERDIENDO LOTES" — diagnóstico real
+ * contra las 9 hojas 2026 (código de producción, sin cambios todavía):
+ * 112/915 filas con N° LOTE real se descartaban enteras por un campo
+ * SECUNDARIO (89 sin PRODUCTO — lote reservado/placeholder sin datos aún;
+ * 22 con FECHA ANÁLISIS no-fecha, ej. un nombre de persona anotado en esa
+ * celda; 1 con VTO mal tipeado). Si existe N° LOTE, la fila NUNCA se
+ * descarta — se importa con lo que sí se pudo leer y este helper devuelve
+ * qué campos quedaron sin datos/sin poder parsearse, para marcar el
+ * registro ⚠ DATOS INCOMPLETOS en vez de hacerlo desaparecer.
+ */
+export function computeIncompleteFields(
+  row: Partial<AsignacionLoteMappedRow>,
+  issues: ExcelPreviewIssue[]
+): string[] {
+  const fields = new Set<string>();
+  if (!row.producto?.trim()) fields.add("producto");
+  for (const issue of issues) {
+    if (issue.severity === "error" && issue.field) fields.add(issue.field);
+  }
+  return Array.from(fields);
+}
+
 export function buildAsignacionLoteFromMappedRow(
   row: Partial<AsignacionLoteMappedRow>,
   updatedBy: string
 ): AsignacionLoteUpsertInput {
+  const incompleteFields = computeIncompleteFields(row, validateAsignacionLoteRow(row));
   return {
+    datosIncompletos: incompleteFields.length > 0,
+    camposIncompletos: incompleteFields.length > 0 ? incompleteFields : null,
     lote: row.lote?.trim() ?? "",
     fecha: row.fecha?.trim() ? parseFlexibleDate(row.fecha) ?? row.fecha.trim() : null,
     producto: row.producto?.trim() ?? "",
