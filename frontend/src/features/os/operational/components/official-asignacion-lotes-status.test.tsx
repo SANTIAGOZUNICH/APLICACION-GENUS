@@ -148,6 +148,77 @@ describe("OfficialAsignacionLotesStatusBanner — sección 12: estado simple, vi
     expect(await screen.findByText(/pendiente de la primera corrida/)).toBeTruthy();
   });
 
+  it("Hotfix 0038 — si quedan lotes sin reconciliar, NUNCA muestra '✓ sincronizado': muestra 'FALTAN N LOTES' + detalle expandible por lote", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        sources: [
+          {
+            year: "2025",
+            name: "Asignación de Lotes 2025",
+            spreadsheetId: "x",
+            connected: true,
+            enabled: true,
+            syncStatus: "parcial",
+            lastSyncAt: new Date().toISOString(),
+            lastSuccessfulSyncAt: new Date().toISOString(),
+            lastError: null,
+            lastRun: {
+              status: "parcial",
+              rowsRead: 90,
+              sheetsTotal: 9,
+              ignoredTabsCount: 0,
+              filasConLote: 90,
+              reconciliadas: 88,
+              faltantes: 2,
+              faltantesDetalle: [
+                { lote: "G26042", producto: "CREMA FACIAL", motivo: "Ya existe con datos distintos en otro origen." },
+                { lote: "F26200", producto: "", motivo: "Fila repetida con datos distintos dentro de la misma hoja." },
+              ],
+              incompleteCount: 3,
+            },
+          },
+          {
+            year: "2026",
+            name: "Asignación de Lotes 2026",
+            spreadsheetId: "y",
+            connected: true,
+            enabled: true,
+            syncStatus: "ok",
+            lastSyncAt: new Date().toISOString(),
+            lastSuccessfulSyncAt: new Date().toISOString(),
+            lastError: null,
+            lastRun: {
+              status: "ok",
+              rowsRead: 114,
+              sheetsTotal: 9,
+              ignoredTabsCount: 0,
+              filasConLote: 114,
+              reconciliadas: 114,
+              faltantes: 0,
+              faltantesDetalle: [],
+              incompleteCount: 0,
+            },
+          },
+        ],
+        syncFrequencyMinutes: 10,
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<OfficialAsignacionLotesStatusBanner session={session} />);
+
+    expect(await screen.findByText(/Sincronización incompleta/)).toBeTruthy();
+    expect(screen.getByText(/FALTAN 2 LOTES/)).toBeTruthy();
+    expect(screen.getByText(/✓ COMPLETO/)).toBeTruthy();
+    expect(screen.queryByText(/G26042/)).toBeNull(); // detalle colapsado por defecto
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("official-asignacion-lotes-ver-faltantes-2025"));
+    expect(screen.getByText(/G26042/)).toBeTruthy();
+    expect(screen.getByText(/F26200/)).toBeTruthy();
+  });
+
   it("si la API falla (ej. sector sin acceso), no rompe el resto de la pantalla — se oculta en silencio", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ error: "Forbidden" }, 403));
     vi.stubGlobal("fetch", fetchMock);

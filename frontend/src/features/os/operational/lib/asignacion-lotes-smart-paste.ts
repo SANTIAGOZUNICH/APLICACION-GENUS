@@ -17,28 +17,35 @@ export function buildAsignacionLotesMasterData(existing: AsignacionLote[]): Smar
   return buildMasterData(records);
 }
 
-function duplicateKey(lote: string, codigo: string): string {
-  return `${lote.trim().toLowerCase()}::${codigo.trim().toLowerCase()}`;
+function duplicateKey(lote: string, codigo: string, producto: string): string {
+  return `${lote.trim().toLowerCase()}::${codigo.trim().toLowerCase()}::${producto.trim().toLowerCase()}`;
 }
 
 /**
- * Clave de duplicado real de este dominio: lote + código (idéntica a
- * findDuplicateAsignacionLote / asignacion-lotes-service.ts — no se
- * inventa una regla nueva). Revisa tanto contra lo YA guardado como contra
- * otras filas del MISMO pegado (para no crear duplicados internos).
+ * Clave de duplicado real de este dominio: lote + código + PRODUCTO
+ * (ampliada 0038, idéntica a findDuplicateAsignacionLote /
+ * asignacion-lotes-service.ts#duplicateKey — no se inventa una regla
+ * nueva). Antes solo lote+código: dos productos distintos con el mismo
+ * lote y código vacío se marcaban como "duplicado" entre sí aunque fueran
+ * asignaciones reales distintas (causa demostrada con datos reales — ver
+ * lote G26042 en asignacion-lotes-sync-service.ts). Revisa tanto contra lo
+ * YA guardado como contra otras filas del MISMO pegado (para no crear
+ * duplicados internos).
  */
 export function makeAsignacionLotesDuplicateChecker(
   existing: AsignacionLote[]
 ): (row: SmartPasteRow) => string | undefined {
-  const existingKeys = new Set(existing.map((item) => duplicateKey(item.lote, item.codigo)));
+  const existingKeys = new Set(existing.map((item) => duplicateKey(item.lote, item.codigo, item.producto)));
   const seenInBatch = new Set<string>();
   return (row: SmartPasteRow) => {
     const lote = row.assignments.lote?.value?.trim();
     const codigo = row.assignments.codigo?.value?.trim() ?? "";
+    const producto = row.assignments.producto?.value?.trim() ?? "";
     if (!lote) return undefined;
-    const key = duplicateKey(lote, codigo);
-    if (existingKeys.has(key)) return `Ya existe una asignación para el lote ${lote} y código "${codigo || "—"}".`;
-    if (seenInBatch.has(key)) return `Lote ${lote} y código "${codigo || "—"}" repetido dentro de este mismo pegado.`;
+    const key = duplicateKey(lote, codigo, producto);
+    if (existingKeys.has(key)) return `Ya existe una asignación para el lote ${lote}, código "${codigo || "—"}" y producto "${producto || "—"}".`;
+    if (seenInBatch.has(key))
+      return `Lote ${lote}, código "${codigo || "—"}" y producto "${producto || "—"}" repetido dentro de este mismo pegado.`;
     seenInBatch.add(key);
     return undefined;
   };

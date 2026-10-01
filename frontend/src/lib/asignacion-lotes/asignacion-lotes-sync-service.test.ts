@@ -118,7 +118,7 @@ describe("syncSource — sincronización Google Sheets → Asignación de Lotes"
     expect(all[0]!.vto).toBe("2028-11-30");
   });
 
-  it("Test 15: una fila con VTO inválido no rompe el resto de la sincronización", async () => {
+  it("Test 15 (hotfix 0038): una fila con VTO inválido NUNCA se pierde — se importa con VTO null y queda marcada ⚠ DATOS INCOMPLETOS", async () => {
     const { syncSource } = await import("./asignacion-lotes-sync-service");
     const source = await createSource();
     readTabMock.mockResolvedValue([
@@ -128,11 +128,88 @@ describe("syncSource — sincronización Google Sheets → Asignación de Lotes"
       ["G26045", "10/09/2026", "GEL", "", "NIZA", "20", "12/2028"],
     ]);
     const summary = await syncSource(source, "test", "manual");
-    expect(summary.createdCount).toBe(2);
-    expect(summary.invalidCount).toBe(1);
-    expect(summary.status).toBe("parcial");
+    // Antes de 0038: createdCount=2, invalidCount=1, G26044 desaparecía por
+    // completo aunque su N° LOTE fuera real — exactamente el bug reportado
+    // ("ASIGNACIÓN DE LOTES SIGUE PERDIENDO LOTES").
+    expect(summary.createdCount).toBe(3);
+    expect(summary.invalidCount).toBe(0);
+    expect(summary.incompleteCount).toBe(1);
+    expect(summary.incompleteSamples).toHaveLength(1);
+    expect(summary.incompleteSamples[0]).toMatchObject({ lote: "G26044", camposIncompletos: ["vto"] });
     const all = await getAsignacionLotesService().listBySource(source.id);
-    expect(all.map((r) => r.lote).sort()).toEqual(["G26043", "G26045"]);
+    expect(all.map((r) => r.lote).sort()).toEqual(["G26043", "G26044", "G26045"]);
+    const g26044 = all.find((r) => r.lote === "G26044");
+    expect(g26044?.vto).toBeNull();
+    expect(g26044?.datosIncompletos).toBe(true);
+    expect(g26044?.camposIncompletos).toEqual(["vto"]);
+  });
+
+  it("Hotfix 0038 — fila con LOTE pero SIN producto (lote reservado/placeholder, caso real: F26063...F26117 de FEBRERO 2026) se importa igual, marcada incompleta", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CÓDIGO", "MARCA", "CANTIDAD", "VTO"],
+      ["F26063", "", "", "", "", "", ""],
+    ]);
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.createdCount).toBe(1);
+    expect(summary.invalidCount).toBe(0);
+    expect(summary.incompleteCount).toBe(1);
+    const [row] = await getAsignacionLotesService().listBySource(source.id);
+    expect(row).toMatchObject({ lote: "F26063", producto: "", datosIncompletos: true });
+    expect(row!.camposIncompletos).toEqual(["producto"]);
+  });
+
+  it("Hotfix 0038 — FECHA ANÁLISIS con texto no-fecha (ej. nombre de persona, caso real E26014/E26015 de ENERO 2026) no bloquea el lote", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CÓDIGO", "MARCA", "CANTIDAD", "VTO", "FECHA ANALISIS"],
+      ["E26014", "6/1/2026", "CREMA FACIAL", "", "ROSEHIP", "", "1-2028", "Fabiana"],
+    ]);
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.createdCount).toBe(1);
+    expect(summary.invalidCount).toBe(0);
+    expect(summary.incompleteCount).toBe(1);
+    const [row] = await getAsignacionLotesService().listBySource(source.id);
+    expect(row).toMatchObject({ lote: "E26014", producto: "CREMA FACIAL", vto: "2028-01-31", fechaAnalisis: null });
+    expect(row!.camposIncompletos).toEqual(["fechaAnalisis"]);
+  });
+
+  it("Hotfix 0038 (causa raíz demostrada — lote G26042, AGOSTO 2026) — DOS productos distintos bajo el MISMO lote con CÓDIGO vacío ya NO colisionan: identidad ampliada a (lote,codigo,producto) conserva ambos", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CÓDIGO", "MARCA", "CANTIDAD", "VTO"],
+      ["G26042", "7/8/2026", "MILKY TONNER", "", "THE MINIMAL CO", "800", "8/2028"],
+      ["G26042", "7/8/2026", "CREMA FACIAL", "", "KORIDERM", "1000", "8/2028"],
+    ]);
+    const summary = await syncSource(source, "test", "manual");
+    // Antes de 0038: la identidad (lote,codigo) colapsaba ambas filas a la
+    // misma clave "g26042::" -> la segunda se reportaba como "conflicto" y
+    // SOLO UNO de los dos productos reales quedaba creado.
+    expect(summary.createdCount).toBe(2);
+    expect(summary.conflictCount).toBe(0);
+    const lotes = await getAsignacionLotesService().listBySource(source.id);
+    expect(lotes).toHaveLength(2);
+    expect(lotes.map((l) => l.producto).sort()).toEqual(["CREMA FACIAL", "MILKY TONNER"]);
+    expect(lotes.every((l) => l.lote === "G26042" && l.codigo === "")).toBe(true);
+  });
+
+  it("Hotfix 0038 — VTO 'raro' (2 dígitos de año, ej. '8-28') se parsea igual; si es realmente ilegible, el lote se importa incompleto en vez de perderse", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CÓDIGO", "MARCA", "CANTIDAD", "VTO"],
+      ["A26030", "15/4/2026", "LECHE DE LIMPIEZA", "", "NE", "500", "4-028"],
+    ]);
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.createdCount).toBe(1);
+    expect(summary.invalidCount).toBe(0);
+    expect(summary.incompleteCount).toBe(1);
+    const [row] = await getAsignacionLotesService().listBySource(source.id);
+    expect(row).toMatchObject({ lote: "A26030", producto: "LECHE DE LIMPIEZA", vto: null });
+    expect(row!.camposIncompletos).toEqual(["vto"]);
   });
 
   it("Test 16: eliminar/quitar una fila de la Sheet archiva el registro, nunca DELETE físico", async () => {

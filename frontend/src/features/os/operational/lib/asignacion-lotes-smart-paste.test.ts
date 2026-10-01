@@ -47,6 +47,16 @@ describe("Asignación de lotes — Smart Paste (piloto)", () => {
     expect(result.rows[0]!.status).toBe("duplicado");
   });
 
+  it("Hotfix 0038 (causa real G26042) — no marca duplicado si el PRODUCTO es distinto, aunque lote y código (vacío) coincidan", () => {
+    const existing = [lote({ lote: "G26042", codigo: "", producto: "MILKY TONNER" })];
+    const checker = makeAsignacionLotesDuplicateChecker(existing);
+    const master = buildAsignacionLotesMasterData(existing);
+    const result = runSmartPaste("CREMA FACIAL\tKORIDERM\tG26042\t10/2028\t1000\t", master, {
+      checkDuplicate: checker,
+    });
+    expect(result.rows[0]!.status).not.toBe("duplicado");
+  });
+
   it("no marca duplicado si el código es distinto (misma clave real: lote+código, no solo lote)", () => {
     const existing = [lote({ lote: "G26043", codigo: "PR-01" })];
     const checker = makeAsignacionLotesDuplicateChecker(existing);

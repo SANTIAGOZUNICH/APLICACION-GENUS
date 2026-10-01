@@ -117,6 +117,11 @@ export interface OfficialAsignacionLotesStatus {
       rowsRead: number;
       sheetsTotal: number | null;
       ignoredTabsCount: number;
+      filasConLote: number;
+      reconciliadas: number;
+      faltantes: number;
+      faltantesDetalle: Array<{ lote: string; producto: string; motivo: string }>;
+      incompleteCount: number;
     } | null;
   }>;
   syncFrequencyMinutes: number;

@@ -899,14 +899,32 @@ export const asignacionLotes = pgTable(
     sourceId: text("source_id"),
     /** Nullable (0033) — de qué hoja/tab salió este registro dentro de la fuente. Solo diagnóstico/auditoría. */
     sourceSheetTab: text("source_sheet_tab"),
+    /**
+     * 0038 (hotfix "sigue perdiendo lotes") — true cuando el N° LOTE es real
+     * pero uno o más campos secundarios (PRODUCTO/VTO/FECHA ANALISIS/etc.)
+     * no se pudieron leer de la fuente. El lote NUNCA se descarta por esto
+     * — se importa igual y queda marcado para revisión humana.
+     */
+    datosIncompletos: boolean("datos_incompletos").notNull().default(false),
+    /** 0038 — qué campos exactos quedaron incompletos (ej. ["producto","vto"]). Null si datosIncompletos=false. */
+    camposIncompletos: jsonb("campos_incompletos"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by").notNull().default(""),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     updatedBy: text("updated_by").notNull().default(""),
   },
   (table) => [
-    uniqueIndex("asignacion_lotes_lote_codigo_active_uidx")
-      .on(table.lote, table.codigo)
+    /**
+     * 0038 — ampliado de (lote,codigo) a (lote,codigo,producto). Causa
+     * demostrada con datos reales (AGOSTO 2026, lote G26042): dos productos
+     * DISTINTOS ("MILKY TONNER"/THE MINIMAL CO y "CREMA FACIAL"/KORIDERM)
+     * comparten el mismo lote y ambos tienen CODIGO vacío — con (lote,
+     * codigo) ambos colapsan a la misma identidad y uno pisa/descarta al
+     * otro. Agregar producto a la clave los distingue sin afectar los casos
+     * donde codigo ya era suficiente (ahí producto es redundante, no daña).
+     */
+    uniqueIndex("asignacion_lotes_lote_codigo_producto_active_uidx")
+      .on(table.lote, table.codigo, table.producto)
       .where(sql`${table.archived} = false`),
     index("asignacion_lotes_fecha_idx").on(table.fecha),
     index("asignacion_lotes_source_id_idx").on(table.sourceId),
@@ -961,6 +979,8 @@ export const asignacionLoteSyncRuns = pgTable(
     /** Filas sin N° LOTE pero con contenido (notas/filas auxiliares) — 0035. */
     auxiliaryCount: integer("auxiliary_count").notNull().default(0),
     duplicateCount: integer("duplicate_count").notNull().default(0),
+    /** 0038 — filas CON lote importadas (created/updated/unchanged) pero con 1+ campo secundario incompleto/no parseable. Subconjunto informativo, no suma aparte en la reconciliación. */
+    incompleteCount: integer("incomplete_count").notNull().default(0),
     reconciled: boolean("reconciled").notNull().default(true),
     ignoredTabs: jsonb("ignored_tabs"),
     sheetsTotal: integer("sheets_total"),
@@ -968,6 +988,8 @@ export const asignacionLoteSyncRuns = pgTable(
     tabBreakdown: jsonb("tab_breakdown"),
     conflictSamples: jsonb("conflict_samples"),
     invalidSamples: jsonb("invalid_samples"),
+    /** 0038 — detalle de filas incompletas (lote+campos faltantes) para la UI "VER DETALLE" (máx. 20). */
+    incompleteSamples: jsonb("incomplete_samples"),
     errorMessage: text("error_message"),
     triggeredBy: text("triggered_by").notNull().default(""),
     triggerKind: text("trigger_kind").notNull().default("manual"),

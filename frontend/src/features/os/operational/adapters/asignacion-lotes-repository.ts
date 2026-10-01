@@ -44,8 +44,9 @@ function normalizeKeyPart(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function duplicateKey(lote: string, codigo: string): string {
-  return `${normalizeKeyPart(lote)}::${normalizeKeyPart(codigo)}`;
+/** Identidad (lote,código,producto) — ampliada 0038, igual criterio que el servidor (ver asignacion-lotes-service.ts#duplicateKey). */
+function duplicateKey(lote: string, codigo: string, producto: string): string {
+  return `${normalizeKeyPart(lote)}::${normalizeKeyPart(codigo)}::${normalizeKeyPart(producto)}`;
 }
 
 function asOptionalDate(value: unknown): string | null {
@@ -143,13 +144,14 @@ export function getAllAsignacionLotes(options: { includeArchived?: boolean } = {
 export function findDuplicateAsignacionLote(
   lote: string,
   codigo: string,
+  producto: string,
   options: { excludeId?: string; includeArchived?: boolean } = {}
 ): AsignacionLote | null {
-  const key = duplicateKey(lote, codigo);
+  const key = duplicateKey(lote, codigo, producto);
   return (
     readAll().find(
       (item) =>
-        duplicateKey(item.lote, item.codigo) === key &&
+        duplicateKey(item.lote, item.codigo, item.producto) === key &&
         item.id !== options.excludeId &&
         (options.includeArchived || !item.archived)
     ) ?? null
@@ -234,7 +236,7 @@ export function importAsignacionLotes(
 
   rows.forEach((row, index) => {
     const rowIndex = index + 1;
-    const key = duplicateKey(row.lote, row.codigo);
+    const key = duplicateKey(row.lote, row.codigo, row.producto);
     // Carga flexible — igual criterio que asignacion-lotes-service.ts#import.
     if (row.fecha?.trim() && !parseFlexibleDate(row.fecha)) {
       errors.push({ rowIndex, field: "fecha", message: "Fecha inválida." });
@@ -244,7 +246,7 @@ export function importAsignacionLotes(
       return;
     }
 
-    if (seen.has(key) || findDuplicateAsignacionLote(row.lote, row.codigo)) {
+    if (seen.has(key) || findDuplicateAsignacionLote(row.lote, row.codigo, row.producto)) {
       duplicates += 1;
       skipped += 1;
       return;

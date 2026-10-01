@@ -40,6 +40,7 @@ function approxNextSync(lastSyncAt: string | null, frequencyMinutes: number): st
 export function OfficialAsignacionLotesStatusBanner({ session }: { session: OrdersClientSession }) {
   const [status, setStatus] = useState<OfficialAsignacionLotesStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expandedYear, setExpandedYear] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +61,9 @@ export function OfficialAsignacionLotesStatusBanner({ session }: { session: Orde
 
   const allOk = status.sources.every((s) => s.connected && s.enabled && s.syncStatus !== "error");
   const anyError = status.sources.some((s) => s.syncStatus === "error");
+  // Protección permanente (0038): nunca "✓ sincronizado" si quedó algún
+  // lote real sin reconciliar esta corrida — ver lastRun.faltantes.
+  const anyFaltantes = status.sources.some((s) => (s.lastRun?.faltantes ?? 0) > 0);
 
   return (
     <div
@@ -67,50 +71,86 @@ export function OfficialAsignacionLotesStatusBanner({ session }: { session: Orde
       className="rounded-[var(--os-radius-md)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4"
     >
       <div className="flex items-center gap-2 text-sm font-semibold">
-        <span>{anyError ? "🔴" : allOk ? "🟢" : "⚪"}</span>
+        <span>{anyError || anyFaltantes ? "🔴" : allOk ? "🟢" : "⚪"}</span>
         <span>
           {anyError
             ? "Error de sincronización en alguna fuente oficial"
-            : allOk
-              ? "Google Sheets conectado — sincronización automática activa"
-              : "Sincronización oficial pendiente de la primera corrida"}
+            : anyFaltantes
+              ? "Sincronización incompleta — faltan lotes por reconciliar"
+              : allOk
+                ? "Google Sheets conectado — sincronización automática activa"
+                : "Sincronización oficial pendiente de la primera corrida"}
         </span>
       </div>
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {status.sources.map((source) => (
-          <div
-            key={source.spreadsheetId}
-            data-testid={`official-asignacion-lotes-status-${source.year}`}
-            className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] px-3 py-2 text-xs"
-          >
-            <p className="font-medium text-[var(--os-text)]">
-              {source.year}{" "}
-              {source.syncStatus === "error"
-                ? "🔴"
-                : source.connected && source.enabled
-                  ? "✓ sincronizado"
-                  : "⚪ pendiente"}
-            </p>
-            <p className="mt-1 text-[var(--os-text-muted)]">
-              Última actualización: {relativeTime(source.lastSuccessfulSyncAt ?? source.lastSyncAt)}
-            </p>
-            {source.lastRun ? (
-              <p className="mt-1 text-[var(--os-text-muted)]">
-                {source.lastRun.sheetsTotal != null
-                  ? `${source.lastRun.sheetsTotal} hoja(s) detectada(s)${
-                      source.lastRun.ignoredTabsCount > 0
-                        ? ` · ${source.lastRun.ignoredTabsCount} ignorada(s)`
-                        : ""
-                    } · `
-                  : ""}
-                {source.lastRun.rowsRead} fila(s) procesada(s)
+        {status.sources.map((source) => {
+          const faltan = source.lastRun?.faltantes ?? 0;
+          const completo = source.lastRun != null && faltan === 0;
+          const expanded = expandedYear === source.year;
+          return (
+            <div
+              key={source.spreadsheetId}
+              data-testid={`official-asignacion-lotes-status-${source.year}`}
+              className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] px-3 py-2 text-xs"
+            >
+              <p className="font-medium text-[var(--os-text)]">
+                {source.year}{" "}
+                {source.syncStatus === "error"
+                  ? "🔴"
+                  : faltan > 0
+                    ? `🔴 FALTAN ${faltan} LOTE${faltan === 1 ? "" : "S"}`
+                    : completo
+                      ? "✓ COMPLETO"
+                      : source.connected && source.enabled
+                        ? "✓ sincronizado"
+                        : "⚪ pendiente"}
               </p>
-            ) : null}
-            {source.syncStatus === "error" && source.lastError ? (
-              <p className="mt-1 text-[var(--genus-error,#e85d5d)]">{source.lastError}</p>
-            ) : null}
-          </div>
-        ))}
+              <p className="mt-1 text-[var(--os-text-muted)]">
+                Última actualización: {relativeTime(source.lastSuccessfulSyncAt ?? source.lastSyncAt)}
+              </p>
+              {source.lastRun ? (
+                <p className="mt-1 text-[var(--os-text-muted)]">
+                  {source.lastRun.sheetsTotal != null
+                    ? `${source.lastRun.sheetsTotal} hoja(s) detectada(s)${
+                        source.lastRun.ignoredTabsCount > 0
+                          ? ` · ${source.lastRun.ignoredTabsCount} ignorada(s)`
+                          : ""
+                      } · `
+                    : ""}
+                  {source.lastRun.rowsRead} fila(s) procesada(s)
+                  {source.lastRun.incompleteCount > 0
+                    ? ` · ⚠ ${source.lastRun.incompleteCount} con datos incompletos`
+                    : ""}
+                </p>
+              ) : null}
+              {faltan > 0 ? (
+                <>
+                  <button
+                    type="button"
+                    data-testid={`official-asignacion-lotes-ver-faltantes-${source.year}`}
+                    className="mt-1 font-medium text-[var(--genus-error,#e85d5d)] underline"
+                    onClick={() => setExpandedYear(expanded ? null : source.year)}
+                  >
+                    [VER LOTES FALTANTES]
+                  </button>
+                  {expanded ? (
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[var(--os-text-muted)]">
+                      {(source.lastRun?.faltantesDetalle ?? []).map((item, idx) => (
+                        <li key={`${item.lote}-${idx}`}>
+                          <span className="font-semibold">{item.lote || "(sin lote)"}</span>
+                          {item.producto ? ` · ${item.producto}` : ""} — {item.motivo}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </>
+              ) : null}
+              {source.syncStatus === "error" && source.lastError ? (
+                <p className="mt-1 text-[var(--genus-error,#e85d5d)]">{source.lastError}</p>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
       <p className="mt-3 text-xs text-[var(--os-text-muted)]">
         Actualización automática: cada {status.syncFrequencyMinutes} min
