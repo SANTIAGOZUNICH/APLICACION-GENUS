@@ -284,20 +284,189 @@ describe("syncSource — sincronización Google Sheets → Asignación de Lotes"
     expect(stillThere).toHaveLength(1);
   });
 
-  it("Test 21: conflicto entre fuentes (mismo lote+código ya cargado manualmente) se reporta, no se fusiona", async () => {
+  it("Test 21 (hotfix 0039 — reemplaza el comportamiento viejo): mismo lote+código+producto ya cargado MANUALMENTE se ADOPTA a Google, nunca queda en conflicto para siempre", async () => {
     const { syncSource } = await import("./asignacion-lotes-sync-service");
     const source = await createSource();
-    await getAsignacionLotesService().upsert(
+    const manual = await getAsignacionLotesService().upsert(
       { email: "calidad@x.com", sector: "CALIDAD", displayName: "Calidad" },
       { lote: "G26043", fecha: "2026-09-10", producto: "SERUM", codigo: "", cantidades: 100, updatedBy: "Calidad" }
     );
     readTabMock.mockResolvedValue([
       ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
-      ["G26043", "10/09/2026", "SERUM", "100"],
+      ["G26043", "10/09/2026", "SERUM", "150"],
+    ]);
+    // Antes de 0039: esto quedaba en conflictCount=1, "parcial", bloqueado
+    // para siempre ("Ya existe con datos distintos en otro origen
+    // (manual/Excel)") — exactamente el bug reportado en Production (329
+    // falsos conflictos en 2026).
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.conflictCount).toBe(0);
+    expect(summary.adoptedCount).toBe(1);
+    expect(summary.adoptedSamples).toHaveLength(1);
+    expect(summary.adoptedSamples[0]).toMatchObject({ lote: "G26043", producto: "SERUM" });
+    expect(summary.status).toBe("ok");
+
+    const all = await getAsignacionLotesService().listBySource(source.id);
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({
+      id: manual.id, // mismo registro, nunca se duplicó
+      lote: "G26043",
+      cantidades: 150, // actualizado al valor de Google
+      sourceId: source.id,
+      adoptedFromManual: true,
+    });
+    expect(all[0]!.adoptedAt).toBeTruthy();
+    expect(all[0]!.createdBy).toBe("Calidad"); // auditoría original preservada
+  });
+
+  it("Hotfix 0039 — manual mismo registro + VTO distinto: adopta y actualiza al VTO de Google", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    await getAsignacionLotesService().upsert(
+      { email: "calidad@x.com", sector: "CALIDAD", displayName: "Calidad" },
+      {
+        lote: "G26050",
+        fecha: "2026-09-10",
+        producto: "CREMA ESENCIAL",
+        codigo: "",
+        cantidades: 80,
+        vto: "2027-05-31",
+        updatedBy: "Calidad",
+      }
+    );
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD", "VTO"],
+      ["G26050", "10/09/2026", "CREMA ESENCIAL", "80", "12/2028"],
     ]);
     const summary = await syncSource(source, "test", "manual");
+    expect(summary.adoptedCount).toBe(1);
+    const [row] = await getAsignacionLotesService().listBySource(source.id);
+    expect(row!.vto).toBe("2028-12-31");
+  });
+
+  it("Hotfix 0039 — registro ya adoptado: sincronizar de nuevo es idempotente (unchanged, nunca vuelve a conflicto)", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    await getAsignacionLotesService().upsert(
+      { email: "calidad@x.com", sector: "CALIDAD", displayName: "Calidad" },
+      { lote: "G26051", fecha: "2026-09-10", producto: "GEL", codigo: "", cantidades: 40, updatedBy: "Calidad" }
+    );
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+      ["G26051", "10/09/2026", "GEL", "40"],
+    ]);
+    const first = await syncSource(source, "test", "manual");
+    expect(first.adoptedCount).toBe(1);
+
+    const second = await syncSource(source, "test", "manual");
+    expect(second.adoptedCount).toBe(0);
+    expect(second.conflictCount).toBe(0);
+    expect(second.unchangedCount).toBe(1);
+    const all = await getAsignacionLotesService().listBySource(source.id);
+    expect(all).toHaveLength(1);
+  });
+
+  it("Hotfix 0039 — después de adoptado, si Google cambia el dato más adelante, actualiza normal (nunca vuelve a conflicto manual/Excel)", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    await getAsignacionLotesService().upsert(
+      { email: "calidad@x.com", sector: "CALIDAD", displayName: "Calidad" },
+      { lote: "G26052", fecha: "2026-09-10", producto: "TONICO", codigo: "", cantidades: 60, updatedBy: "Calidad" }
+    );
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+      ["G26052", "10/09/2026", "TONICO", "60"],
+    ]);
+    await syncSource(source, "test", "manual");
+
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+      ["G26052", "10/09/2026", "TONICO", "99"],
+    ]);
+    const third = await syncSource(source, "test", "manual");
+    expect(third.updatedCount).toBe(1);
+    expect(third.adoptedCount).toBe(0);
+    expect(third.conflictCount).toBe(0);
+    const [row] = await getAsignacionLotesService().listBySource(source.id);
+    expect(row!.cantidades).toBe(99);
+  });
+
+  it("Hotfix 0039 (Tier 2 — respaldo lote+marca) — código/producto históricos vacíos, candidato único: adopta y corrige esos campos al valor de Google", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    const calidad = { email: "calidad@x.com", sector: "CALIDAD" as const, displayName: "Calidad" };
+    // Carga flexible (import, no upsert manual) porque históricamente este
+    // registro nunca tuvo PRODUCTO cargado — upsert() exige los 3 campos
+    // para alta manual nueva, pero la carga real desde Excel sí lo permitía.
+    await getAsignacionLotesService().import(calidad, [
+      {
+        lote: "J26001",
+        fecha: "2026-01-05",
+        producto: "",
+        codigo: "",
+        marca: "NICOLE",
+        cantidades: 200,
+        updatedBy: "Calidad",
+      },
+    ]);
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CODIGO", "MARCA", "CANTIDAD"],
+      ["J26001", "05/01/2026", "CREMA DIA", "COD-9", "NICOLE", "200"],
+    ]);
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.adoptedCount).toBe(1);
+    expect(summary.adoptedSamples[0]!.motivo).toMatch(/lote\+marca/);
+    const [row] = await getAsignacionLotesService().listBySource(source.id);
+    expect(row).toMatchObject({ lote: "J26001", producto: "CREMA DIA", codigo: "COD-9", adoptedFromManual: true });
+  });
+
+  it("Hotfix 0039 (Tier 2) — dos candidatos manuales ambiguos para el mismo lote+marca: nunca elige en silencio, queda como conflicto explícito", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    const svc = getAsignacionLotesService();
+    const actor = { email: "calidad@x.com", sector: "CALIDAD" as const, displayName: "Calidad" };
+    // Carga flexible (import) — ambos históricamente sin PRODUCTO cargado.
+    await svc.import(actor, [
+      { lote: "J26002", fecha: "2026-01-05", producto: "", codigo: "COD-A", marca: "NICOLE", cantidades: 10, updatedBy: "Calidad" },
+    ]);
+    await svc.import(actor, [
+      { lote: "J26002", fecha: "2026-01-05", producto: "", codigo: "COD-B", marca: "NICOLE", cantidades: 20, updatedBy: "Calidad" },
+    ]);
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CODIGO", "MARCA", "CANTIDAD"],
+      ["J26002", "05/01/2026", "SERUM NUEVO", "COD-C", "NICOLE", "30"],
+    ]);
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.adoptedCount).toBe(0);
     expect(summary.conflictCount).toBe(1);
-    expect(summary.status).toBe("parcial");
+    expect(summary.conflictSamples[0]!.motivo).toMatch(/[Aa]mbiguos/);
+    const all = await svc.list(actor);
+    expect(all.filter((r) => r.lote === "J26002")).toHaveLength(2); // nada se tocó
+  });
+
+  it("Hotfix 0039 — lote igual pero PRODUCTO realmente distinto (no solo vacío): nunca adopta incorrectamente, queda nuevo/sin tocar el manual", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    const svc = getAsignacionLotesService();
+    const actor = { email: "calidad@x.com", sector: "CALIDAD" as const, displayName: "Calidad" };
+    const manual = await svc.upsert(actor, {
+      lote: "J26003",
+      fecha: "2026-01-05",
+      producto: "SHAMPOO ANTICAIDA", // producto YA cargado, no vacío
+      codigo: "",
+      marca: "NICOLE",
+      cantidades: 10,
+      updatedBy: "Calidad",
+    });
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "MARCA", "CANTIDAD"],
+      ["J26003", "05/01/2026", "ACONDICIONADOR", "NICOLE", "25"], // producto genuinamente distinto
+    ]);
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.adoptedCount).toBe(0);
+    expect(summary.createdCount).toBe(1); // se crea como registro NUEVO, nunca pisa el manual existente
+    const stillManual = await svc.get(actor, manual.id);
+    expect(stillManual).toMatchObject({ producto: "SHAMPOO ANTICAIDA", sourceId: null });
   });
 
   it("Test 22: si Google falla (Sheets caído), GENUS OS conserva el último estado válido — nunca lanza", async () => {
@@ -600,10 +769,38 @@ describe("syncSource — sincronización Google Sheets → Asignación de Lotes"
       createdCount: 3,
       updatedCount: 2,
       unchangedCount: 0,
+      adoptedCount: 1,
+      errorCount: 1,
     };
-    expect(reconciliationTotal(balanced)).toBe(11);
+    expect(reconciliationTotal(balanced)).toBe(13);
     const unbalanced = { ...balanced, createdCount: 1 }; // simula 2 filas "perdidas"
-    expect(reconciliationTotal(unbalanced)).toBe(9);
+    expect(reconciliationTotal(unbalanced)).toBe(11);
+  });
+
+  it("Hotfix 0039 — una excepción al procesar UNA fila nunca aborta el resto de la hoja: queda aislada en errorCount, la reconciliación sigue cerrando (causa real Production 2025: 102 filas 'sin resultado conocido')", async () => {
+    const { syncSource } = await import("./asignacion-lotes-sync-service");
+    const source = await createSource();
+    const svc = getAsignacionLotesService();
+    const originalUpsertFromSource = svc.upsertFromSource.bind(svc);
+    const spy = vi.spyOn(svc, "upsertFromSource").mockImplementation(async (sourceId, actor, input, tab) => {
+      if (input.lote === "G26999") throw new Error("Fallo simulado al escribir esta fila.");
+      return originalUpsertFromSource(sourceId, actor, input, tab);
+    });
+    readTabMock.mockResolvedValue([
+      ["LOTE", "FECHA", "PRODUCTO", "CANTIDAD"],
+      ["G26997", "10/09/2026", "SERUM", "10"],
+      ["G26999", "10/09/2026", "CREMA", "20"], // esta fila falla al escribirse
+      ["G26998", "10/09/2026", "GEL", "30"],
+    ]);
+    const summary = await syncSource(source, "test", "manual");
+    expect(summary.errorCount).toBe(1);
+    expect(summary.errorSamples).toHaveLength(1);
+    expect(summary.errorSamples[0]).toMatchObject({ lote: "G26999" });
+    expect(summary.errorSamples[0]!.motivo).toContain("Fallo simulado");
+    expect(summary.createdCount).toBe(2); // las otras dos filas SÍ se procesan, nunca se abortan
+    expect(summary.rowsRead).toBe(3);
+    expect(summary.reconciled).toBe(true); // nunca "sin resultado conocido"
+    spy.mockRestore();
   });
 
   it("Hotfix reproducción real — hoja SEPTIEMBRE 2026: sincroniza limpio, ninguna fila real queda inválida", async () => {

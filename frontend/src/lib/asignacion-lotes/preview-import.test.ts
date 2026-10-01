@@ -36,7 +36,7 @@ describe("previewImport — importación inicial segura (sección 'IMPORTACIÓN 
     expect(result.conflictos).toBe(0);
   });
 
-  it("fila ya cargada manualmente con LOS MISMOS datos -> 'ya existente', nunca cuenta como nueva ni conflicto", async () => {
+  it("fila ya cargada manualmente con LOS MISMOS datos -> 'adoptable' (0039: se vincularía a Google, nunca nueva ni conflicto)", async () => {
     await getAsignacionLotesService().upsert(calidad, {
       lote: "G25001",
       fecha: "2025-01-10",
@@ -53,12 +53,13 @@ describe("previewImport — importación inicial segura (sección 'IMPORTACIÓN 
     ]);
     const { previewImport } = await import("./asignacion-lotes-sync-service");
     const result = await previewImport(url, "LOTES_2025");
-    expect(result.existentes).toBe(1);
+    expect(result.adoptables).toBe(1);
+    expect(result.existentes).toBe(0);
     expect(result.nuevas).toBe(0);
     expect(result.conflictos).toBe(0);
   });
 
-  it("fila ya cargada manualmente con datos DISTINTOS (ej. VTO diferente) -> 'conflicto', nunca se fusiona sola", async () => {
+  it("Hotfix 0039 (reemplaza el comportamiento viejo) — fila ya cargada manualmente con datos DISTINTOS (ej. VTO diferente) -> 'adoptable', nunca conflicto bloqueado para siempre", async () => {
     await getAsignacionLotesService().upsert(calidad, {
       lote: "G25001",
       fecha: "2025-01-10",
@@ -74,10 +75,12 @@ describe("previewImport — importación inicial segura (sección 'IMPORTACIÓN 
     ]);
     const { previewImport } = await import("./asignacion-lotes-sync-service");
     const result = await previewImport(url, "LOTES_2025");
-    expect(result.conflictos).toBe(1);
+    // Antes de 0039: esto quedaba en conflictos=1 ("Ya existe con datos
+    // distintos... manual/Excel"), bloqueado para siempre — exactamente el
+    // bug reportado en Production.
+    expect(result.adoptables).toBe(1);
+    expect(result.conflictos).toBe(0);
     expect(result.existentes).toBe(0);
-    expect(result.conflictSamples).toHaveLength(1);
-    expect(result.conflictSamples[0]!.lote).toBe("G25001");
   });
 
   it("Hotfix 0038 — fila con VTO ilegible NUNCA se pierde del preview (lote real): cuenta como 'nuevas' + 'incompletas', nunca 'invalidas'", async () => {

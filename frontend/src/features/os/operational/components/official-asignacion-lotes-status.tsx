@@ -121,6 +121,9 @@ export function OfficialAsignacionLotesStatusBanner({ session }: { session: Orde
                   {source.lastRun.incompleteCount > 0
                     ? ` · ⚠ ${source.lastRun.incompleteCount} con datos incompletos`
                     : ""}
+                  {source.lastRun.adoptedCount > 0
+                    ? ` · ${source.lastRun.adoptedCount} adoptado(s) de manual/Excel`
+                    : ""}
                 </p>
               ) : null}
               {faltan > 0 ? (
