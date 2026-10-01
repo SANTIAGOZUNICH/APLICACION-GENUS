@@ -908,6 +908,15 @@ export const asignacionLotes = pgTable(
     datosIncompletos: boolean("datos_incompletos").notNull().default(false),
     /** 0038 — qué campos exactos quedaron incompletos (ej. ["producto","vto"]). Null si datosIncompletos=false. */
     camposIncompletos: jsonb("campos_incompletos"),
+    /**
+     * 0039 (hotfix "reconciliar datos históricos") — true si este registro
+     * fue originalmente manual/Excel (sourceId null) y luego se ADOPTÓ a
+     * una fuente Google oficial porque coincidía inequívocamente con una
+     * fila real. Nunca se limpia — es trazabilidad permanente de origen.
+     */
+    adoptedFromManual: boolean("adopted_from_manual").notNull().default(false),
+    /** 0039 — cuándo se adoptó (null si nunca fue adoptado). */
+    adoptedAt: timestamp("adopted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by").notNull().default(""),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -981,6 +990,21 @@ export const asignacionLoteSyncRuns = pgTable(
     duplicateCount: integer("duplicate_count").notNull().default(0),
     /** 0038 — filas CON lote importadas (created/updated/unchanged) pero con 1+ campo secundario incompleto/no parseable. Subconjunto informativo, no suma aparte en la reconciliación. */
     incompleteCount: integer("incomplete_count").notNull().default(0),
+    /**
+     * 0039 — filas de Google que coincidían inequívocamente con un registro
+     * manual/Excel YA cargado (sourceId null) y se ADOPTARON (se vincularon
+     * a esta fuente y se actualizaron con los datos de Google) en vez de
+     * quedar bloqueadas como conflicto para siempre. Bucket EXCLUSIVO —
+     * suma en la reconciliación junto a created/updated/unchanged.
+     */
+    adoptedCount: integer("adopted_count").notNull().default(0),
+    /**
+     * 0039 — filas que tiraron una excepción al procesarse individualmente
+     * (aislada por fila, nunca aborta el resto de la hoja). Bucket
+     * EXCLUSIVO — sin esto, una fila así quedaba "sin resultado conocido"
+     * (demostrado en Production, 2025: 102 filas).
+     */
+    errorCount: integer("error_count").notNull().default(0),
     reconciled: boolean("reconciled").notNull().default(true),
     ignoredTabs: jsonb("ignored_tabs"),
     sheetsTotal: integer("sheets_total"),
@@ -990,6 +1014,10 @@ export const asignacionLoteSyncRuns = pgTable(
     invalidSamples: jsonb("invalid_samples"),
     /** 0038 — detalle de filas incompletas (lote+campos faltantes) para la UI "VER DETALLE" (máx. 20). */
     incompleteSamples: jsonb("incomplete_samples"),
+    /** 0039 — detalle de adopciones (lote+motivo) para "VER DETALLE" (máx. 20). */
+    adoptedSamples: jsonb("adopted_samples"),
+    /** 0039 — detalle de filas con error aislado (lote/fila/mensaje) para "VER DETALLE" (máx. 20). */
+    errorSamples: jsonb("error_samples"),
     errorMessage: text("error_message"),
     triggeredBy: text("triggered_by").notNull().default(""),
     triggerKind: text("trigger_kind").notNull().default("manual"),

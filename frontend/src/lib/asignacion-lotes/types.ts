@@ -27,6 +27,10 @@ export interface AsignacionLote {
   datosIncompletos?: boolean;
   /** 0038 — qué campos exactos (ej. ["producto","vto"]). Null/undefined si datosIncompletos es false. */
   camposIncompletos?: string[] | null;
+  /** 0039 — true si este registro fue originalmente manual/Excel y luego se adoptó a una fuente Google oficial. Nunca se limpia. */
+  adoptedFromManual?: boolean;
+  /** 0039 — cuándo se adoptó (null si nunca). */
+  adoptedAt?: string | null;
 }
 
 export type AsignacionLoteUpsertInput = {
@@ -54,6 +58,10 @@ export type AsignacionLoteUpsertInput = {
   datosIncompletos?: boolean;
   /** Ver AsignacionLote#camposIncompletos. */
   camposIncompletos?: string[] | null;
+  /** Ver AsignacionLote#adoptedFromManual. Solo lo setea adoptIntoSource. */
+  adoptedFromManual?: boolean;
+  /** Ver AsignacionLote#adoptedAt. */
+  adoptedAt?: string | null;
 };
 
 export interface AsignacionLoteImportError {

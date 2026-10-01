@@ -122,6 +122,7 @@ export interface OfficialAsignacionLotesStatus {
       faltantes: number;
       faltantesDetalle: Array<{ lote: string; producto: string; motivo: string }>;
       incompleteCount: number;
+      adoptedCount: number;
     } | null;
   }>;
   syncFrequencyMinutes: number;

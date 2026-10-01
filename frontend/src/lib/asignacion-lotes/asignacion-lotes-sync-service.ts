@@ -66,6 +66,8 @@ async function recordRun(summary: SyncRunSummary): Promise<void> {
       auxiliaryCount: summary.auxiliaryCount,
       duplicateCount: summary.duplicateCount,
       incompleteCount: summary.incompleteCount,
+      adoptedCount: summary.adoptedCount,
+      errorCount: summary.errorCount,
       reconciled: summary.reconciled,
       ignoredTabs: summary.ignoredTabs ?? null,
       sheetsTotal: summary.sheetsTotal ?? null,
@@ -73,6 +75,8 @@ async function recordRun(summary: SyncRunSummary): Promise<void> {
       conflictSamples: summary.conflictSamples,
       invalidSamples: summary.invalidSamples,
       incompleteSamples: summary.incompleteSamples,
+      adoptedSamples: summary.adoptedSamples,
+      errorSamples: summary.errorSamples,
       errorMessage: summary.errorMessage,
       triggeredBy: summary.triggeredBy,
       triggerKind: summary.triggerKind,
@@ -109,6 +113,8 @@ export async function listSyncRuns(sourceId: string, limit = 20): Promise<SyncRu
       auxiliaryCount: row.auxiliaryCount,
       duplicateCount: row.duplicateCount,
       incompleteCount: row.incompleteCount,
+      adoptedCount: row.adoptedCount,
+      errorCount: row.errorCount,
       reconciled: row.reconciled,
       sheetsTotal: row.sheetsTotal ?? undefined,
       ignoredTabs: (row.ignoredTabs as SyncRunSummary["ignoredTabs"]) ?? undefined,
@@ -116,6 +122,8 @@ export async function listSyncRuns(sourceId: string, limit = 20): Promise<SyncRu
       conflictSamples: (row.conflictSamples as SyncRunSummary["conflictSamples"]) ?? [],
       invalidSamples: (row.invalidSamples as SyncRunSummary["invalidSamples"]) ?? [],
       incompleteSamples: (row.incompleteSamples as SyncRunSummary["incompleteSamples"]) ?? [],
+      adoptedSamples: (row.adoptedSamples as SyncRunSummary["adoptedSamples"]) ?? [],
+      errorSamples: (row.errorSamples as SyncRunSummary["errorSamples"]) ?? [],
       errorMessage: row.errorMessage,
       triggeredBy: row.triggeredBy,
       triggerKind: row.triggerKind as SyncTriggerKind,
@@ -161,6 +169,8 @@ export function reconciliationTotal(
     | "createdCount"
     | "updatedCount"
     | "unchangedCount"
+    | "adoptedCount"
+    | "errorCount"
   >
 ): number {
   return (
@@ -171,7 +181,9 @@ export function reconciliationTotal(
     summary.conflictCount +
     summary.createdCount +
     summary.updatedCount +
-    summary.unchangedCount
+    summary.unchangedCount +
+    summary.adoptedCount +
+    summary.errorCount
   );
 }
 
@@ -293,10 +305,20 @@ async function discoverCompatibleTabs(
  * divergir). Cada fila cae EXACTAMENTE en uno de estos buckets — ninguna
  * puede "desaparecer" sin pasar por alguno (sección 7, reconciliación):
  * blank | auxiliar | duplicado-repetido-en-esta-corrida | conflicto |
- * created/updated/unchanged. `invalid` queda sin usar desde 0038: si la
- * fila tiene N° LOTE, SIEMPRE cae en created/updated/unchanged — como mucho
- * queda marcada `incompleteCount` (⚠, no resta de la reconciliación, ver
- * SyncRunSummary#incompleteCount), nunca se pierde entera.
+ * adopted | error | created/updated/unchanged. `invalid` queda sin usar
+ * desde 0038: si la fila tiene N° LOTE, SIEMPRE cae en alguno de los
+ * anteriores — como mucho queda marcada `incompleteCount` (⚠, no resta de
+ * la reconciliación, ver SyncRunSummary#incompleteCount), nunca se pierde
+ * entera.
+ *
+ * Aislamiento por fila (0039, hotfix "reconciliar datos históricos"): el
+ * cuerpo de cada fila corre en su propio try/catch — una excepción al
+ * escribir UNA fila (ej. una violación de constraint inesperada) ya NO
+ * aborta el resto de la hoja en silencio. Causa raíz real encontrada en
+ * Production (2025, 102 filas "sin resultado conocido"): `rowsRead` se
+ * incrementa por TODA la hoja antes de procesarla, así que una excepción a
+ * mitad de hoja dejaba las filas restantes contadas en rowsRead pero sin
+ * ningún bucket — exactamente la inconsistencia que esto corrige.
  */
 async function processTabRows(
   dataRows: string[][],
@@ -331,82 +353,157 @@ async function processTabRows(
       continue;
     }
 
-    // Hotfix "SIGUE PERDIENDO LOTES": antes de este fix, un VTO/FECHA
-    // ANÁLISIS no parseable o un PRODUCTO vacío descartaba la fila ENTERA
-    // aunque el N° LOTE fuera real y válido (demostrado con datos reales:
-    // 112/915 filas 2026 se perdían así). Si hay lote, la fila SIEMPRE se
-    // importa — los campos secundarios que no se pudieron leer quedan
-    // null/"" (como ya hacía buildAsignacionLoteFromMappedRow) y la fila se
-    // marca ⚠ DATOS INCOMPLETOS en vez de desaparecer.
-    const input = buildAsignacionLoteFromMappedRow(mapped, SYNC_ACTOR.email);
-    if (input.datosIncompletos) {
-      summary.incompleteCount += 1;
-      if (summary.incompleteSamples.length < 20) {
-        summary.incompleteSamples.push({
-          tab,
-          rowIndex,
-          lote: mapped.lote?.trim() ?? "",
-          producto: mapped.producto?.trim() ?? "",
-          camposIncompletos: input.camposIncompletos ?? [],
-        });
+    try {
+      // Hotfix "SIGUE PERDIENDO LOTES": antes de este fix, un VTO/FECHA
+      // ANÁLISIS no parseable o un PRODUCTO vacío descartaba la fila ENTERA
+      // aunque el N° LOTE fuera real y válido (demostrado con datos reales:
+      // 112/915 filas 2026 se perdían así). Si hay lote, la fila SIEMPRE se
+      // importa — los campos secundarios que no se pudieron leer quedan
+      // null/"" (como ya hacía buildAsignacionLoteFromMappedRow) y la fila
+      // se marca ⚠ DATOS INCOMPLETOS en vez de desaparecer.
+      const input = buildAsignacionLoteFromMappedRow(mapped, SYNC_ACTOR.email);
+      if (input.datosIncompletos) {
+        summary.incompleteCount += 1;
+        if (summary.incompleteSamples.length < 20) {
+          summary.incompleteSamples.push({
+            tab,
+            rowIndex,
+            lote: mapped.lote?.trim() ?? "",
+            producto: mapped.producto?.trim() ?? "",
+            camposIncompletos: input.camposIncompletos ?? [],
+          });
+        }
       }
-    }
 
-    // Identidad (lote,código,PRODUCTO) — ampliada (0038). Causa demostrada
-    // con datos reales (lote G26042, AGOSTO 2026): dos productos DISTINTOS
-    // comparten el mismo lote y ambos tienen código vacío; con (lote,
-    // código) solo, colapsaban a la misma identidad y uno se perdía como
-    // "conflicto" aunque los dos existieran válidamente en Google.
-    const key = `${mapped.lote.trim().toLowerCase()}::${(mapped.codigo ?? "").trim().toLowerCase()}::${input.producto.trim().toLowerCase()}`;
-    const signature = rowContentSignature(input);
-    const seenBefore = seenKeysThisRun.get(key);
-    if (seenBefore) {
-      // Mismo lote+código+producto repetido DENTRO de la misma hoja, en
-      // esta misma corrida. Idéntico → ya está, no duplica (no se vuelve a
-      // escribir, pero cuenta en la reconciliación). Distinto → conflicto
-      // real, nunca se elige en silencio cuál vale: se reporta y se deja
-      // tal cual quedó con la primera fila procesada.
-      if (seenBefore.signature !== signature) {
+      // Identidad (lote,código,PRODUCTO) — ampliada (0038). Causa
+      // demostrada con datos reales (lote G26042, AGOSTO 2026): dos
+      // productos DISTINTOS comparten el mismo lote y ambos tienen código
+      // vacío; con (lote,código) solo, colapsaban a la misma identidad y
+      // uno se perdía como "conflicto" aunque los dos existieran
+      // válidamente en Google.
+      const key = `${mapped.lote.trim().toLowerCase()}::${(mapped.codigo ?? "").trim().toLowerCase()}::${input.producto.trim().toLowerCase()}`;
+      const signature = rowContentSignature(input);
+      const seenBefore = seenKeysThisRun.get(key);
+      if (seenBefore) {
+        // Mismo lote+código+producto repetido DENTRO de la misma hoja, en
+        // esta misma corrida. Idéntico → ya está, no duplica (no se vuelve
+        // a escribir, pero cuenta en la reconciliación). Distinto →
+        // conflicto real, nunca se elige en silencio cuál vale: se reporta
+        // y se deja tal cual quedó con la primera fila procesada.
+        if (seenBefore.signature !== signature) {
+          summary.conflictCount += 1;
+          if (summary.conflictSamples.length < 20) {
+            summary.conflictSamples.push({
+              lote: input.lote,
+              codigo: input.codigo,
+              producto: input.producto,
+              motivo: `Fila repetida con datos distintos dentro de la misma hoja "${tab}".`,
+            });
+          }
+        } else {
+          summary.duplicateCount += 1;
+        }
+        continue;
+      }
+      seenKeysThisRun.set(key, { signature, tab });
+
+      // Hotfix "RECONCILIAR DATOS HISTÓRICOS": Google es ahora la fuente de
+      // verdad para los spreadsheets oficiales. Si el match exacto
+      // (lote,código,producto) es con un registro SIN fuente (manual o
+      // pegado desde Excel), NUNCA se bloquea como conflicto para siempre
+      // — se ADOPTA: se vincula a esta fuente y se actualiza con los datos
+      // de Google, preservando createdAt/createdBy y marcando
+      // adoptedFromManual+adoptedAt (trazabilidad). Si el match es con OTRA
+      // fuente Google oficial, sigue siendo un conflicto real (nunca se
+      // elige en silencio entre dos fuentes oficiales).
+      const exactConflict = await lotesService.findConflictingRecord(
+        source.id,
+        mapped.lote,
+        mapped.codigo ?? "",
+        input.producto
+      );
+      if (exactConflict) {
+        if (!exactConflict.sourceId) {
+          const { record } = await lotesService.adoptIntoSource(exactConflict.id, source.id, SYNC_ACTOR, input, tab);
+          seenIds.add(record.id);
+          summary.adoptedCount += 1;
+          if (summary.adoptedSamples.length < 20) {
+            summary.adoptedSamples.push({
+              tab,
+              rowIndex,
+              lote: input.lote,
+              producto: input.producto,
+              motivo: "Adoptado desde registro manual/Excel (coincidencia exacta lote+código+producto) — Google es ahora la fuente de verdad.",
+            });
+          }
+          continue;
+        }
         summary.conflictCount += 1;
         if (summary.conflictSamples.length < 20) {
           summary.conflictSamples.push({
             lote: input.lote,
             codigo: input.codigo,
             producto: input.producto,
-            motivo: `Fila repetida con datos distintos dentro de la misma hoja "${tab}".`,
+            motivo: "Ya existe con datos distintos en otra fuente Google Sheets oficial.",
           });
         }
-      } else {
-        summary.duplicateCount += 1;
+        continue;
       }
-      continue;
-    }
-    seenKeysThisRun.set(key, { signature, tab });
 
-    const conflict = await lotesService.findConflictingRecord(
-      source.id,
-      mapped.lote,
-      mapped.codigo ?? "",
-      input.producto
-    );
-    if (conflict) {
-      summary.conflictCount += 1;
-      if (summary.conflictSamples.length < 20) {
-        summary.conflictSamples.push({
-          lote: input.lote,
-          codigo: input.codigo,
-          producto: input.producto,
-          motivo: `Ya existe con datos distintos en otro origen (${conflict.sourceId ? "otra fuente Google Sheets" : "manual/Excel"}).`,
+      // Respaldo (Tier 2): sin match exacto por (lote,código,producto) —
+      // casos históricos donde código/producto se cargaron vacíos o con
+      // otra forma. Buscar candidatos manuales por lote+marca. Exactamente
+      // UNO → adoptar (y corregir código/producto al valor de Google). Más
+      // de uno → nunca elegir en silencio, queda como conflicto explícito.
+      if (input.marca?.trim()) {
+        const candidates = await lotesService.findManualCandidatesByLoteMarca(mapped.lote, input.marca);
+        if (candidates.length === 1) {
+          const { record } = await lotesService.adoptIntoSource(candidates[0]!.id, source.id, SYNC_ACTOR, input, tab);
+          seenIds.add(record.id);
+          summary.adoptedCount += 1;
+          if (summary.adoptedSamples.length < 20) {
+            summary.adoptedSamples.push({
+              tab,
+              rowIndex,
+              lote: input.lote,
+              producto: input.producto,
+              motivo: "Adoptado por coincidencia lote+marca (código/producto históricos vacíos o distintos).",
+            });
+          }
+          continue;
+        }
+        if (candidates.length > 1) {
+          summary.conflictCount += 1;
+          if (summary.conflictSamples.length < 20) {
+            summary.conflictSamples.push({
+              lote: input.lote,
+              codigo: input.codigo,
+              producto: input.producto,
+              motivo: `Múltiples candidatos manuales ambiguos para lote+marca (${candidates.length}) — no se adopta automáticamente.`,
+            });
+          }
+          continue;
+        }
+      }
+
+      const { record, created, changed } = await lotesService.upsertFromSource(source.id, SYNC_ACTOR, input, tab);
+      seenIds.add(record.id);
+      if (created) summary.createdCount += 1;
+      else if (changed) summary.updatedCount += 1;
+      else summary.unchangedCount += 1;
+    } catch (err) {
+      // Aislamiento por fila: nunca puede abortar el resto de la hoja ni
+      // dejar filas "sin resultado conocido" en la reconciliación.
+      summary.errorCount += 1;
+      if (summary.errorSamples.length < 20) {
+        summary.errorSamples.push({
+          tab,
+          rowIndex,
+          lote: mapped.lote?.trim() ?? "",
+          motivo: err instanceof Error ? err.message : "Error desconocido al procesar esta fila.",
         });
       }
-      continue;
     }
-
-    const { record, created, changed } = await lotesService.upsertFromSource(source.id, SYNC_ACTOR, input, tab);
-    seenIds.add(record.id);
-    if (created) summary.createdCount += 1;
-    else if (changed) summary.updatedCount += 1;
-    else summary.unchangedCount += 1;
   }
 }
 
@@ -437,10 +534,14 @@ export async function syncSource(
     auxiliaryCount: 0,
     duplicateCount: 0,
     incompleteCount: 0,
+    adoptedCount: 0,
+    errorCount: 0,
     reconciled: true,
     conflictSamples: [],
     invalidSamples: [],
     incompleteSamples: [],
+    adoptedSamples: [],
+    errorSamples: [],
     errorMessage: null,
     triggeredBy,
     triggerKind,
@@ -511,6 +612,8 @@ export async function syncSource(
           duplicateCount: summary.duplicateCount,
           conflictCount: summary.conflictCount,
           incompleteCount: summary.incompleteCount,
+          adoptedCount: summary.adoptedCount,
+          errorCount: summary.errorCount,
         };
         try {
           const rows = await sheetsReader.readTab(source.spreadsheetId, tab);
@@ -552,6 +655,8 @@ export async function syncSource(
             duplicateCount: summary.duplicateCount - before.duplicateCount,
             conflictCount: summary.conflictCount - before.conflictCount,
             incompleteCount: summary.incompleteCount - before.incompleteCount,
+            adoptedCount: summary.adoptedCount - before.adoptedCount,
+            errorCount: summary.errorCount - before.errorCount,
           });
         } catch (err) {
           // Una hoja individual que falla al leer (transitorio de Google,
@@ -671,6 +776,7 @@ export async function previewImport(
     conflictos: 0,
     invalidas: 0,
     incompletas: 0,
+    adoptables: 0,
     auxiliares: 0,
     conflictSamples: [],
   };
@@ -744,6 +850,14 @@ export async function previewImport(
       const existing = await lotesService.findExistingRecordByKey(input.lote, input.codigo, input.producto);
       if (!existing) {
         result.nuevas += 1;
+        continue;
+      }
+      if (!existing.sourceId) {
+        // Hotfix "RECONCILIAR DATOS HISTÓRICOS": coincide con un registro
+        // manual/Excel — al conectar esta fuente se ADOPTA (se vincula y
+        // actualiza con los datos de Google), nunca se duplica ni queda
+        // bloqueado como conflicto para siempre.
+        result.adoptables += 1;
         continue;
       }
       if (fieldsDiffer(existing, input)) {

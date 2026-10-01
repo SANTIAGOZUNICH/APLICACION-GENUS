@@ -108,6 +108,8 @@ function migrateRecord(raw: unknown, now = new Date().toISOString()): Asignacion
     archived: Boolean(record.archived),
     datosIncompletos: Boolean(record.datosIncompletos),
     camposIncompletos: Array.isArray(record.camposIncompletos) ? (record.camposIncompletos as string[]) : null,
+    adoptedFromManual: Boolean(record.adoptedFromManual),
+    adoptedAt: asString(record.adoptedAt) || null,
   };
 }
 
@@ -134,6 +136,8 @@ function rowToDomain(row: typeof asignacionLotes.$inferSelect): AsignacionLote {
     sourceSheetTab: row.sourceSheetTab ?? null,
     datosIncompletos: row.datosIncompletos,
     camposIncompletos: (row.camposIncompletos as string[] | null) ?? null,
+    adoptedFromManual: row.adoptedFromManual,
+    adoptedAt: row.adoptedAt ? row.adoptedAt.toISOString() : null,
   };
 }
 
@@ -160,6 +164,8 @@ function domainToInsert(record: AsignacionLote): typeof asignacionLotes.$inferIn
     sourceSheetTab: record.sourceSheetTab ?? null,
     datosIncompletos: record.datosIncompletos ?? false,
     camposIncompletos: record.camposIncompletos ?? null,
+    adoptedFromManual: record.adoptedFromManual ?? false,
+    adoptedAt: record.adoptedAt ? new Date(record.adoptedAt) : null,
   };
 }
 
@@ -358,6 +364,8 @@ export class AsignacionLotesService {
       datosIncompletos: input.datosIncompletos ?? previous?.datosIncompletos ?? false,
       camposIncompletos:
         input.camposIncompletos !== undefined ? input.camposIncompletos : (previous?.camposIncompletos ?? null),
+      adoptedFromManual: input.adoptedFromManual ?? previous?.adoptedFromManual ?? false,
+      adoptedAt: input.adoptedAt !== undefined ? input.adoptedAt : (previous?.adoptedAt ?? null),
     };
 
     if (useNeon()) {
@@ -385,6 +393,8 @@ export class AsignacionLotesService {
             sourceSheetTab: values.sourceSheetTab,
             datosIncompletos: values.datosIncompletos,
             camposIncompletos: values.camposIncompletos,
+            adoptedFromManual: values.adoptedFromManual,
+            adoptedAt: values.adoptedAt,
           })
           .where(eq(asignacionLotes.id, record.id));
       } else {
@@ -508,6 +518,105 @@ export class AsignacionLotesService {
       previous
     );
     return { record, created: !previous, changed: true };
+  }
+
+  /**
+   * Adopción (0039, hotfix "reconciliar datos históricos"): Google Sheets
+   * pasa a ser la fuente de verdad para los spreadsheets oficiales — si un
+   * registro manual/Excel YA cargado (sourceId null) coincide
+   * inequívocamente con una fila de Google, ese registro se ACTUALIZA con
+   * los datos de Google y se vincula a la fuente, en vez de quedar
+   * bloqueado para siempre como "conflicto". Preserva createdAt/createdBy
+   * originales (vía `writeRecord`) y marca `adoptedFromManual`+`adoptedAt`
+   * — trazabilidad permanente de que el registro nació manual. Nunca crea
+   * un registro nuevo ni borra el existente.
+   */
+  async adoptIntoSource(
+    existingId: string,
+    sourceId: string,
+    actorAttribution: { email: string; displayName: string },
+    input: Omit<AsignacionLoteUpsertInput, "sourceId" | "sourceSheetTab">,
+    sourceSheetTab?: string | null
+  ): Promise<{ record: AsignacionLote }> {
+    const existing = await this.findById(existingId);
+    if (!existing) {
+      // Se borró/archivó entre la detección del candidato y la adopción —
+      // nunca debe tirar: se trata como alta nueva de esta fuente.
+      const { record } = await this.upsertFromSource(sourceId, actorAttribution, input, sourceSheetTab);
+      return { record };
+    }
+    const systemActor: AsignacionLotesActor = {
+      email: actorAttribution.email,
+      sector: "PRODUCCION",
+      displayName: actorAttribution.displayName,
+    };
+    const record = await this.writeRecord(
+      systemActor,
+      {
+        ...input,
+        id: existing.id,
+        sourceId,
+        sourceSheetTab: sourceSheetTab ?? null,
+        archived: false,
+        adoptedFromManual: true,
+        adoptedAt: new Date().toISOString(),
+      },
+      existing
+    );
+    return { record };
+  }
+
+  /** Lee un registro por id sin filtrar por archived/RBAC — uso interno exclusivo del motor de sync. */
+  private async findById(id: string): Promise<AsignacionLote | null> {
+    if (useNeon()) {
+      const db = getDb();
+      const [row] = await db.select().from(asignacionLotes).where(eq(asignacionLotes.id, id));
+      return row ? rowToDomain(row) : null;
+    }
+    return mem().find((item) => item.id === id) ?? null;
+  }
+
+  /**
+   * Candidatos manuales/Excel (sourceId null, activos) que comparten LOTE y
+   * MARCA normalizados — respaldo (0039) para cuando el match exacto
+   * lote+codigo+producto no encuentra nada porque históricamente código o
+   * producto se cargaron vacíos. Si hay exactamente UNO, se adopta; si hay
+   * más de uno, nunca se elige en silencio (conflicto explícito) — ver
+   * `processTabRows`.
+   *
+   * Seguridad (nunca adoptar incorrectamente un producto realmente
+   * distinto): solo se consideran candidatos cuyo PRODUCTO ya guardado
+   * está vacío — es decir, el match exacto falló por falta de dato (nunca
+   * se llegó a registrar qué producto era), no porque el candidato tenga
+   * un producto genuinamente distinto al de Google. Un registro manual
+   * con producto propio ya cargado NUNCA se adopta por esta vía, aunque
+   * comparta lote+marca — queda como alta nueva, nunca se pisa en silencio.
+   */
+  async findManualCandidatesByLoteMarca(lote: string, marca: string): Promise<AsignacionLote[]> {
+    const loteKey = normalizeKeyPart(lote);
+    const marcaKey = normalizeKeyPart(marca);
+    const isIncompleteIdentity = (producto: string) => !producto.trim();
+    if (useNeon()) {
+      const db = getDb();
+      const rows = await db.select().from(asignacionLotes).where(eq(asignacionLotes.archived, false));
+      return rows
+        .filter(
+          (row) =>
+            !row.sourceId &&
+            normalizeKeyPart(row.lote) === loteKey &&
+            normalizeKeyPart(row.marca) === marcaKey &&
+            isIncompleteIdentity(row.producto)
+        )
+        .map(rowToDomain);
+    }
+    return mem().filter(
+      (item) =>
+        !item.archived &&
+        !item.sourceId &&
+        normalizeKeyPart(item.lote) === loteKey &&
+        normalizeKeyPart(item.marca) === marcaKey &&
+        isIncompleteIdentity(item.producto)
+    );
   }
 
   /** Todos los registros activos que pertenecen a una fuente — usado al final de un sync para detectar bajas. */

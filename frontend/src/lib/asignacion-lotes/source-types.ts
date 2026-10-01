@@ -71,6 +71,8 @@ export interface ImportPreviewResult {
   invalidas: number;
   /** 0038 — filas con lote real que importarían igual (created/updated) pero con 1+ campo secundario incompleto/no parseable; nunca se descartan. */
   incompletas: number;
+  /** 0039 — filas que coincidirían inequívocamente con un registro manual/Excel ya cargado y se adoptarían (vincularían) en vez de quedar en conflicto. Preview — nunca persiste nada. */
+  adoptables: number;
   /** Filas sin N° LOTE pero con contenido (notas/filas auxiliares) — no son asignaciones reales, se ignoran justificadamente. */
   auxiliares: number;
   conflictSamples: ImportPreviewConflictSample[];
@@ -114,6 +116,28 @@ export interface SyncIncompleteSample {
 }
 
 /**
+ * Fila de Google adoptada (0039, hotfix "reconciliar datos históricos"):
+ * coincidía inequívocamente con un registro manual/Excel YA cargado y se
+ * vinculó/actualizó a la fuente Google en vez de quedar bloqueada como
+ * conflicto para siempre.
+ */
+export interface SyncAdoptedSample {
+  tab: string;
+  rowIndex: number;
+  lote: string;
+  producto: string;
+  motivo: string;
+}
+
+/** Fila que tiró una excepción al procesarse — aislada por fila, nunca pierde el resto de la hoja (0039). */
+export interface SyncErrorSample {
+  tab: string;
+  rowIndex: number;
+  lote: string;
+  motivo: string;
+}
+
+/**
  * Reconciliación matemática obligatoria (hotfix): rowsRead debe repartirse
  * ÍNTEGRAMENTE entre estos buckets. Si no cierra, `reconciled: false` y
  * `status: "inconsistente"` — nunca se afirma éxito con filas sin destino
@@ -145,6 +169,19 @@ export interface SyncRunSummary {
    * bucket de siempre, esto es solo la marca ⚠ para revisión).
    */
   incompleteCount: number;
+  /**
+   * 0039 — filas de Google que coincidían inequívocamente con un registro
+   * manual/Excel YA cargado (sourceId null) y se adoptaron a esta fuente
+   * en vez de quedar bloqueadas como conflicto. Bucket EXCLUSIVO (suma en
+   * la reconciliación).
+   */
+  adoptedCount: number;
+  /**
+   * 0039 — filas que tiraron una excepción al procesarse individualmente.
+   * Aislada por fila: nunca aborta el resto de la hoja ni deja filas "sin
+   * resultado conocido". Bucket EXCLUSIVO (suma en la reconciliación).
+   */
+  errorCount: number;
   /** false = la ecuación de reconciliación no cerró (alguna fila quedó sin bucket conocido) — nunca se afirma éxito en ese caso. */
   reconciled: boolean;
   /**
@@ -169,6 +206,10 @@ export interface SyncRunSummary {
     conflictCount: number;
     /** 0038 — filas con lote real importadas igual pero con campo(s) secundario(s) incompleto(s) (⚠, no se pierden). */
     incompleteCount: number;
+    /** 0039 — filas adoptadas desde un registro manual/Excel preexistente. */
+    adoptedCount: number;
+    /** 0039 — filas con error aislado (nunca abortan el resto de la hoja). */
+    errorCount: number;
   }>;
   /** Detalle de conflictos para "VER DETALLE" — máx. 20. */
   conflictSamples: ImportPreviewConflictSample[];
@@ -176,6 +217,10 @@ export interface SyncRunSummary {
   invalidSamples: SyncInvalidSample[];
   /** 0038 — detalle de filas incompletas (lote+campos) para "VER DETALLE" — máx. 20. */
   incompleteSamples: SyncIncompleteSample[];
+  /** 0039 — detalle de adopciones (lote+motivo) para "VER DETALLE" — máx. 20. */
+  adoptedSamples: SyncAdoptedSample[];
+  /** 0039 — detalle de filas con error aislado (lote/fila/mensaje) para "VER DETALLE" — máx. 20. */
+  errorSamples: SyncErrorSample[];
   errorMessage: string | null;
   triggeredBy: string;
   triggerKind: SyncTriggerKind;

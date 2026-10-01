@@ -33,12 +33,18 @@ export interface OfficialSourceStatus {
      */
     filasConLote: number;
     reconciliadas: number;
-    /** invalidCount + conflictCount — lotes reales que NO quedaron como su propio registro esta corrida. */
+    /** invalidCount + conflictCount + errorCount — lotes reales que NO quedaron como su propio registro esta corrida. */
     faltantes: number;
-    /** Detalle lote+motivo de cada faltante (invalidSamples + conflictSamples), máx. 20. */
+    /** Detalle lote+motivo de cada faltante (invalidSamples + conflictSamples + errorSamples), máx. 20. */
     faltantesDetalle: Array<{ lote: string; producto: string; motivo: string }>;
     /** Lotes importados igual pero con 1+ campo secundario incompleto (⚠, no están "faltantes"). */
     incompleteCount: number;
+    /**
+     * 0039 — registros manuales/Excel que coincidían inequívocamente con
+     * esta corrida y se vincularon/actualizaron a Google (nunca duplicados,
+     * nunca bloqueados como conflicto). Éxito — no es un faltante.
+     */
+    adoptedCount: number;
   } | null;
 }
 
@@ -70,6 +76,7 @@ export async function GET(request: Request) {
           const faltantesDetalle = [
             ...run.invalidSamples.map((s) => ({ lote: s.lote, producto: s.producto, motivo: s.motivo })),
             ...run.conflictSamples.map((s) => ({ lote: s.lote, producto: s.producto, motivo: s.motivo })),
+            ...run.errorSamples.map((s) => ({ lote: s.lote, producto: "", motivo: s.motivo })),
           ].slice(0, 20);
           lastRun = {
             status: run.status,
@@ -77,10 +84,12 @@ export async function GET(request: Request) {
             sheetsTotal: run.sheetsTotal ?? null,
             ignoredTabsCount: run.ignoredTabs?.length ?? 0,
             filasConLote: run.rowsRead - run.blankCount - run.auxiliaryCount,
-            reconciliadas: run.createdCount + run.updatedCount + run.unchangedCount + run.duplicateCount,
-            faltantes: run.invalidCount + run.conflictCount,
+            reconciliadas:
+              run.createdCount + run.updatedCount + run.unchangedCount + run.duplicateCount + run.adoptedCount,
+            faltantes: run.invalidCount + run.conflictCount + run.errorCount,
             faltantesDetalle,
             incompleteCount: run.incompleteCount,
+            adoptedCount: run.adoptedCount,
           };
         }
       }
