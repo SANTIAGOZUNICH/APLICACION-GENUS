@@ -267,6 +267,13 @@
       "when": 1790200000000,
       "tag": "0038_asignacion_lotes_incomplete_and_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1790300000000,
+      "tag": "0039_me_remito_ai",
+      "breakpoints": true
     }
   ]
 }

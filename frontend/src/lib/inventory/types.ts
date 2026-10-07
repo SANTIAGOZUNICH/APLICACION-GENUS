@@ -19,6 +19,18 @@ export type MeIngresoRow = {
   anulado?: boolean;
   anuladoAt?: string | null;
   anuladoReason?: string | null;
+  /** Origen del ingreso. Ausente = carga manual. */
+  source?: "MANUAL" | "REMITO_AI";
+  /** Trazabilidad REMITO_AI (evidencia objetiva ISO 9001). */
+  remitoDocumentoId?: string | null;
+  remitoLineaId?: string | null;
+  remitoFecha?: string | null;
+  descripcionOriginal?: string | null;
+  /** Cantidad que interpretó la IA (puede diferir de `total` si el operario corrigió). */
+  cantidadInterpretada?: number | null;
+  materialSugeridoId?: string | null;
+  confirmadoPor?: string | null;
+  confirmadoAt?: string | null;
   createdBy: string;
   updatedBy: string;
   createdAt: string;

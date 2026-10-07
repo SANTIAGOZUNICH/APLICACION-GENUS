@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ClipboardPaste, Pencil, Plus, Trash2 } from "lucide-react";
+import { Camera, ClipboardPaste, FileText, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { LifecycleConfirmDialog } from "@/features/os/operational/components/lifecycle-confirm-dialog";
@@ -11,6 +11,8 @@ import {
   mutateInventory,
   InventoryClientError,
 } from "@/features/os/operational/adapters/inventory-client";
+import { MeRemitoAiDialog } from "@/features/os/operational/components/me-remito-ai-dialog";
+import { remitoDocumentUrl } from "@/features/os/operational/adapters/remito-ai-client";
 import { ExcelPasteDialog } from "@/features/os/operational/components/excel-paste-dialog";
 import { OperationalTable, type OperationalTableColumn } from "@/features/os/operational/components/operational-ui";
 import {
@@ -93,6 +95,7 @@ export function MeIngresosView() {
   const [bulkPending, setBulkPending] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
+  const [remitoOpen, setRemitoOpen] = useState(false);
   const [page, setPage] = useState(0);
   const pageSize = 20;
 
@@ -239,6 +242,9 @@ export function MeIngresosView() {
             <Button type="button" onClick={() => setForm(emptyForm())}>
               <Plus className="mr-1 size-4" /> Nuevo ingreso
             </Button>
+            <Button type="button" variant="secondary" onClick={() => setRemitoOpen(true)} data-testid="me-ingresos-cargar-remito">
+              <Camera className="mr-1 size-4" /> Cargar desde remito
+            </Button>
             <Button type="button" variant="secondary" onClick={() => setPasteOpen(true)}>
               <ClipboardPaste className="mr-1 size-4" /> Pegar desde Excel
             </Button>
@@ -287,6 +293,17 @@ export function MeIngresosView() {
                   header: "",
                   render: (row: MeIngresoRow) => (
                     <div className="flex flex-wrap gap-1">
+                      {row.remitoDocumentoId && (
+                        <button
+                          type="button"
+                          aria-label="Ver remito"
+                          title="Ver remito original"
+                          className="inline-flex size-8 items-center justify-center"
+                          onClick={() => window.open(remitoDocumentUrl(row.remitoDocumentoId!), "_blank", "noopener")}
+                        >
+                          <FileText className="size-4" />
+                        </button>
+                      )}
                       {!row.anulado && (
                         <>
                       <button
@@ -510,6 +527,18 @@ export function MeIngresosView() {
           );
         }}
       />
+
+      {remitoOpen && (
+        <MeRemitoAiDialog
+          open
+          onClose={() => setRemitoOpen(false)}
+          onDone={() => void reload()}
+          onShowIngresos={(nro) => {
+            setSearch(nro);
+            setPage(0);
+          }}
+        />
+      )}
 
       <ExcelPasteDialog
         open={pasteOpen}

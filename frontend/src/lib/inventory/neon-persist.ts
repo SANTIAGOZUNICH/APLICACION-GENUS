@@ -11,6 +11,8 @@ import {
   invMeAlerts,
   invMeIngresos,
   invMeMaterials,
+  invMeRemitoAliases,
+  invMeRemitoDocs,
   invMeSalidas,
   invMpCompras,
   invMpControl,
@@ -18,6 +20,7 @@ import {
   invMpStock,
 } from "@/lib/db/schema";
 import type { MemoryInventoryRepo, StockAjuste } from "./memory-repo";
+import type { MeRemitoAlias, MeRemitoDoc } from "./remito-ai/types";
 import type {
   InventoryAudit,
   MeAlert,
@@ -104,6 +107,23 @@ export async function hydrateInventoryFromNeon(
     markHydrated(repo.meMaterials);
     repo.meAlerts = alerts.map((r) => r.payload as MeAlert);
     markHydrated(repo.meAlerts);
+
+    // Tablas de remito IA (migración 0039): tolerante si todavía no existen.
+    const optionalRows = async (table: typeof invMeRemitoDocs | typeof invMeRemitoAliases) => {
+      try {
+        return await db.select().from(table);
+      } catch {
+        return [];
+      }
+    };
+    const [remitoDocs, remitoAliases] = await Promise.all([
+      optionalRows(invMeRemitoDocs),
+      optionalRows(invMeRemitoAliases),
+    ]);
+    repo.meRemitoDocs = remitoDocs.map((r) => r.payload as MeRemitoDoc);
+    repo.meRemitoAliases = remitoAliases.map((r) => r.payload as MeRemitoAlias);
+    markHydrated(repo.meRemitoDocs);
+    markHydrated(repo.meRemitoAliases);
     repo.meAlertReads = reads.map((r) => r.payload as MeAlertRead);
     repo.mpStock = mpStock.map((r) => normalizeMpStockPayload(r.payload));
     repo.mpIngresos = mpIngresos.map((r) => normalizeMpIngresoPayload(r.payload));
@@ -275,6 +295,8 @@ export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promi
   const meSalidas = dirty(repo.meSalidas);
   const meMaterials = dirty(repo.meMaterials);
   const meAlerts = dirty(repo.meAlerts);
+  const meRemitoDocs = dirty(repo.meRemitoDocs);
+  const meRemitoAliases = dirty(repo.meRemitoAliases);
   const mpStock = [...repo.mpStock];
   const mpIngresos = [...repo.mpIngresos];
   const mpControl = [...repo.mpControl];
@@ -289,6 +311,8 @@ export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promi
       | typeof invMeSalidas
       | typeof invMeMaterials
       | typeof invMeAlerts
+      | typeof invMeRemitoDocs
+      | typeof invMeRemitoAliases
       | typeof invMpStock
       | typeof invMpIngresos
       | typeof invMpControl
@@ -310,7 +334,17 @@ export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promi
   await upsertIdPayload(invMeSalidas, meSalidas);
   await upsertIdPayload(invMeMaterials, meMaterials);
   await upsertIdPayload(invMeAlerts, meAlerts);
-  markHydrated([...meIngresos, ...meSalidas, ...meMaterials, ...meAlerts]);
+  // Remito IA: solo hay filas sucias cuando se usó la función (tabla de la migración 0039).
+  await upsertIdPayload(invMeRemitoDocs, meRemitoDocs);
+  await upsertIdPayload(invMeRemitoAliases, meRemitoAliases);
+  markHydrated([
+    ...meIngresos,
+    ...meSalidas,
+    ...meMaterials,
+    ...meAlerts,
+    ...meRemitoDocs,
+    ...meRemitoAliases,
+  ]);
   await upsertIdPayload(invMpStock, mpStock);
   await upsertIdPayload(invMpIngresos, mpIngresos);
   await upsertIdPayload(invMpControl, mpControl);

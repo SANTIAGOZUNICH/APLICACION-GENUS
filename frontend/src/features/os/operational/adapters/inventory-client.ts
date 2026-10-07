@@ -13,7 +13,7 @@ export type InventoryResource =
   | "mp_control"
   | "mp_compras";
 
-function actorHeaders(): HeadersInit {
+export function actorHeaders(): HeadersInit {
   const session = getCurrentAuthSession();
   return {
     "Content-Type": "application/json",

@@ -1,49 +1,17 @@
 import { NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
-import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { osNotifications } from "@/lib/db/schema";
+import { readyInventoryService } from "@/lib/inventory/ready-service";
 import { getInventoryService, memoryInventoryRepo } from "@/lib/inventory/get-inventory-service";
 import {
-  ensureInventoryPersistenceReady,
   inventoryErrorResponse,
   resolveInventoryActor,
 } from "@/lib/inventory/http";
-import { hydrateInventoryFromNeon, persistInventorySnapshot, persistMpIngresoRow, persistMpStockSnapshot, refreshMpInventoryFromNeon } from "@/lib/inventory/neon-persist";
+import { persistInventorySnapshot, persistMpIngresoRow, persistMpStockSnapshot } from "@/lib/inventory/neon-persist";
 import type { InventoryActor } from "@/lib/inventory/inventory-service";
-import { ME_ALERT_NOTIFY_SECTORS } from "@/lib/inventory/rbac";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function readyService() {
-  const blocked = ensureInventoryPersistenceReady();
-  if (blocked) return { blocked } as const;
-  await hydrateInventoryFromNeon(memoryInventoryRepo, { force: true });
-  await refreshMpInventoryFromNeon(memoryInventoryRepo);
-  const service = getInventoryService();
-  service.onNotify(async (payload) => {
-    if (!isDatabaseConfigured()) return;
-    try {
-      const db = getDb();
-      await db.insert(osNotifications).values({
-        id: randomUUID(),
-        kind: payload.kind,
-        title: payload.title,
-        message: payload.message,
-        sectors: payload.sectors.length ? payload.sectors : ME_ALERT_NOTIFY_SECTORS,
-        href: payload.href ?? null,
-        orderId: null,
-        readBy: [],
-        dismissedBy: [],
-        deletedBy: [],
-        createdAt: new Date(),
-      });
-    } catch (err) {
-      console.warn("[inventory] notify failed", err);
-    }
-  });
-  return { service } as const;
-}
+const readyService = readyInventoryService;
 
 export async function GET(request: Request) {
   try {

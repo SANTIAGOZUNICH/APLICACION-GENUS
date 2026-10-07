@@ -197,6 +197,27 @@ export class InventoryService {
     }
   }
 
+  /** Permiso de escritura de ingresos ME (para flujos que orquestan el ingreso canónico). */
+  assertCanWriteMeIngresos(actor: InventoryActor) {
+    this.guard(actor, "me_ingresos", true);
+  }
+
+  assertCanReadMeIngresos(actor: InventoryActor) {
+    this.guard(actor, "me_ingresos", false);
+  }
+
+  recordAudit(
+    actor: InventoryActor,
+    module: string,
+    entityId: string,
+    action: string,
+    before: Record<string, unknown> | null,
+    after: Record<string, unknown> | null,
+    reason: string | null = null
+  ) {
+    return this.audit(actor, module, entityId, action, before, after, reason);
+  }
+
   private audit(
     actor: InventoryActor,
     module: string,
@@ -274,6 +295,16 @@ export class InventoryService {
       anulado: false,
       anuladoAt: null,
       anuladoReason: null,
+      // Trazabilidad de origen (REMITO_AI): se conserva al editar el ingreso.
+      source: input.source ?? existing?.source ?? "MANUAL",
+      remitoDocumentoId: input.remitoDocumentoId ?? existing?.remitoDocumentoId ?? null,
+      remitoLineaId: input.remitoLineaId ?? existing?.remitoLineaId ?? null,
+      remitoFecha: input.remitoFecha ?? existing?.remitoFecha ?? null,
+      descripcionOriginal: input.descripcionOriginal ?? existing?.descripcionOriginal ?? null,
+      cantidadInterpretada: input.cantidadInterpretada ?? existing?.cantidadInterpretada ?? null,
+      materialSugeridoId: input.materialSugeridoId ?? existing?.materialSugeridoId ?? null,
+      confirmadoPor: input.confirmadoPor ?? existing?.confirmadoPor ?? null,
+      confirmadoAt: input.confirmadoAt ?? existing?.confirmadoAt ?? null,
       createdBy: existing?.createdBy ?? actor.email,
       updatedBy: actor.email,
       createdAt: existing?.createdAt ?? now,

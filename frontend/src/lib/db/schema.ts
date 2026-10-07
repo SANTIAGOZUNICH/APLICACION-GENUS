@@ -585,6 +585,20 @@ export const invMeMaterials = pgTable("inv_me_materials", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Carga asistida de ingresos ME desde remito (IA propone, humano confirma). */
+export const invMeRemitoDocs = pgTable("inv_me_remito_docs", {
+  id: uuid("id").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Equivalencias proveedor+descripción → material, confirmadas por humanos (auditable). */
+export const invMeRemitoAliases = pgTable("inv_me_remito_aliases", {
+  id: uuid("id").primaryKey(),
+  payload: jsonb("payload").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const invMeAlerts = pgTable("inv_me_alerts", {
   id: uuid("id").primaryKey(),
   payload: jsonb("payload").notNull(),

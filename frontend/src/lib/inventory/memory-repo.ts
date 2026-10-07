@@ -3,6 +3,7 @@
  */
 
 import { normalizeMeCodigo } from "./me-codigo";
+import type { MeRemitoAlias, MeRemitoDoc } from "./remito-ai/types";
 import type {
   InventoryAudit,
   MeAlert,
@@ -45,6 +46,8 @@ export class MemoryInventoryRepo {
   mpCompras: MpCompraRow[] = [];
   ajustes: StockAjuste[] = [];
   audit: InventoryAudit[] = [];
+  meRemitoDocs: MeRemitoDoc[] = [];
+  meRemitoAliases: MeRemitoAlias[] = [];
 
   reset() {
     this.meIngresos = [];
@@ -58,6 +61,29 @@ export class MemoryInventoryRepo {
     this.mpCompras = [];
     this.ajustes = [];
     this.audit = [];
+    this.meRemitoDocs = [];
+    this.meRemitoAliases = [];
+  }
+
+  listMeRemitoDocs() {
+    return clone(this.meRemitoDocs);
+  }
+  getMeRemitoDoc(id: string) {
+    const d = this.meRemitoDocs.find((r) => r.id === id);
+    return d ? clone(d) : null;
+  }
+  upsertMeRemitoDoc(row: MeRemitoDoc) {
+    const i = this.meRemitoDocs.findIndex((r) => r.id === row.id);
+    if (i >= 0) this.meRemitoDocs[i] = clone(row);
+    else this.meRemitoDocs.push(clone(row));
+  }
+  listMeRemitoAliases() {
+    return clone(this.meRemitoAliases);
+  }
+  upsertMeRemitoAlias(row: MeRemitoAlias) {
+    const i = this.meRemitoAliases.findIndex((r) => r.id === row.id);
+    if (i >= 0) this.meRemitoAliases[i] = clone(row);
+    else this.meRemitoAliases.push(clone(row));
   }
 
   listMeIngresos() {
