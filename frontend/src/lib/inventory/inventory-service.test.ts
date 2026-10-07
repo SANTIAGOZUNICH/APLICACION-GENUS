@@ -285,7 +285,7 @@ describe("InventoryService ME/MP", () => {
     expect(list[0]!.id).not.toBe(list[1]!.id);
   });
 
-  it("salida MANUAL no descuenta; OA sí descuenta con confirmación si negativo", () => {
+  it("salida MANUAL no descuenta; consumo OA descuenta y NO se rechaza por stock insuficiente", () => {
     const ing = svc.upsertMeIngreso(deposito, {
       descripcionInsumo: "Cajas",
       codigo: "CAJ-X",
@@ -303,15 +303,9 @@ describe("InventoryService ME/MP", () => {
     });
     expect(svc.listMeMaterials(deposito)[0]?.stockActual).toBe(100);
 
-    expect(() =>
-      svc.applyOaStockDelta(deposito, ing.materialId!, -200, {})
-    ).toThrow(InventoryValidationError);
-
-    svc.applyOaStockDelta(deposito, ing.materialId!, -200, {
-      allowNegative: true,
-      reason: "urgencia producción",
-    });
-    expect(svc.listMeMaterials(deposito)[0]?.stockActual).toBe(-100);
+    // OA usa 300 con stock 100: el movimiento real se persiste → -200 visible.
+    applyOaDeliveryToMe(svc, produccion, makeOaForSalida(ing.materialId!, "CAJ-X", "300"));
+    expect(svc.listMeMaterials(deposito)[0]?.stockActual).toBe(-200);
   });
 
   it("aviso al cruzar mínimo sin duplicar; notifica 8 sectores; dismiss no borra aviso", () => {

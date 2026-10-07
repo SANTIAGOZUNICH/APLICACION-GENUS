@@ -134,7 +134,7 @@ async function mutateResource(
 
   switch (`${resource}:${action}`) {
     case "me_ingresos:upsert":
-      return service.upsertMeIngreso(actor, payload as never);
+      return service.upsertMeIngresoWithSummary(actor, payload as never);
     case "me_ingresos:delete":
       return service.deleteMeIngreso(actor, id!, reason ?? "");
     case "me_salidas:upsert":

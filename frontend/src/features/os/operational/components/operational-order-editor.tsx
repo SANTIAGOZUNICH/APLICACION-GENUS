@@ -1244,10 +1244,10 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       <Dialog open={meShortageOpen} onOpenChange={setMeShortageOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Stock ME insuficiente</DialogTitle>
+            <DialogTitle>🔴 Stock ME quedará negativo</DialogTitle>
             <DialogDescription>
-              No hay stock suficiente para la cantidad utilizada. Podés cancelar o confirmar con
-              motivo (no se deja stock negativo en silencio).
+              Este consumo dejará el stock en negativo. Ingreso de Material de Empaque pendiente de
+              registrar. El consumo real se registra igual: ¿Continuar?
             </DialogDescription>
           </DialogHeader>
           <ul className="space-y-2 text-sm" data-testid="me-stock-shortages">
@@ -1264,7 +1264,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             ))}
           </ul>
           <label className="block space-y-1 text-sm">
-            <span>Motivo (obligatorio para confirmar)</span>
+            <span>Observación (opcional, queda como trazabilidad)</span>
             <textarea
               value={meShortageReason}
               onChange={(e) => setMeShortageReason(e.target.value)}
@@ -1279,15 +1279,14 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             <Button
               type="button"
               data-testid="me-shortage-confirm"
-              disabled={!meShortageReason.trim()}
               onClick={() =>
                 void onDeliver(pendingAllowIncomplete, {
                   allowNegativeMeStock: true,
-                  negativeMeStockReason: meShortageReason.trim(),
+                  negativeMeStockReason: meShortageReason.trim() || undefined,
                 })
               }
             >
-              Entregar con stock insuficiente
+              Continuar y registrar consumo
             </Button>
           </DialogFooter>
         </DialogContent>
