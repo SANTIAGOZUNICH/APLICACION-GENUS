@@ -172,7 +172,16 @@ export function MeIngresosView() {
       return;
     }
     try {
-      await mutateInventory({
+      const saved = await mutateInventory<{
+        stockSummary?: {
+          codigo: string;
+          ingresoRegistrado: number;
+          consumoAcumulado: number;
+          stockActual: number;
+          negativo: boolean;
+          ingresoTardio: boolean;
+        };
+      }>({
         action: "upsert",
         resource: "me_ingresos",
         payload: {
@@ -191,6 +200,22 @@ export function MeIngresosView() {
       });
       setForm(null);
       await reload();
+      const s = saved.data?.stockSummary;
+      if (s) {
+        const fmt = (n: number) => n.toLocaleString("es-AR");
+        const lines = [`INGRESO REGISTRADO +${fmt(s.ingresoRegistrado)} un.`];
+        if (s.consumoAcumulado > 0) {
+          lines.push(
+            `${s.negativo ? "Consumo acumulado" : "Consumo registrado previamente"}: -${fmt(s.consumoAcumulado)} un.`
+          );
+        }
+        lines.push(
+          s.negativo
+            ? `🔴 STOCK ACTUAL: ${fmt(s.stockActual)} un. Revisar movimientos pendientes de carga.`
+            : `Stock actual: ${fmt(s.stockActual)} un.`
+        );
+        setBanner(lines.join(" · "));
+      }
     } catch (e) {
       setBanner(e instanceof InventoryClientError ? e.message : "No se pudo guardar");
     }

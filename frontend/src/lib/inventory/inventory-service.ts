@@ -144,6 +144,34 @@ export class InventoryNotFoundError extends Error {
   }
 }
 
+export type MeIngresoStockSummary = {
+  codigo: string;
+  ingresoRegistrado: number;
+  /** Consumo OA activo acumulado (positivo). */
+  consumoAcumulado: number;
+  stockActual: number;
+  negativo: boolean;
+  /** Ya existía consumo OA registrado antes de cargar este ingreso. */
+  ingresoTardio: boolean;
+};
+
+export type MeLedgerEntry = {
+  id: string;
+  tipo: "INGRESO" | "CONSUMO" | "AJUSTE";
+  /** Con signo: ingreso +, consumo −. */
+  cantidad: number;
+  /** Fecha efectiva del movimiento. */
+  fecha: string;
+  /** Cuándo se cargó en GENUS OS. */
+  createdAt: string;
+  usuario: string;
+  origen: string;
+  oaNumber: string | null;
+  observacion: string;
+  anulado: boolean;
+  saldo: number;
+};
+
 type NotifyFn = (payload: InventoryNotificationPayload) => void | Promise<void>;
 
 export class InventoryService {
@@ -205,8 +233,7 @@ export class InventoryService {
 
   upsertMeIngreso(
     actor: InventoryActor,
-    input: Partial<MeIngresoRow> & { id?: string },
-    opts?: { allowNegativeStock?: boolean; negativeReason?: string }
+    input: Partial<MeIngresoRow> & { id?: string }
   ) {
     this.guard(actor, "me_ingresos", true);
     const existing = input.id ? this.repo.getMeIngreso(input.id) : null;
@@ -253,19 +280,14 @@ export class InventoryService {
       updatedAt: now,
     };
 
-    // Revert previous impact then apply new
-    if (existing?.materialId && existing.total != null) {
-      this.applyMeStockDelta(existing.materialId, -existing.total);
-    }
-    if (row.materialId && row.total != null) {
-      this.applyMeStockDelta(row.materialId, row.total, {
-        allowNegative: opts?.allowNegativeStock,
-        reason: opts?.negativeReason,
-        actor,
-      });
-    }
-
+    // INGRESO y CONSUMO son movimientos independientes: el ingreso se persiste siempre
+    // (aunque exista consumo OA previo o el saldo resulte negativo) y el stock se
+    // DERIVA del ledger. Nunca se toca ni se vuelve a generar un consumo.
     this.repo.upsertMeIngreso(row);
+    this.recalculateMeStock(row.materialId!);
+    if (existing?.materialId && existing.materialId !== row.materialId) {
+      this.recalculateMeStock(existing.materialId);
+    }
     this.audit(
       actor,
       "me_ingresos",
@@ -275,7 +297,103 @@ export class InventoryService {
       row as unknown as Record<string, unknown>
     );
     this.syncMeAlerts(actor, row.materialId!);
+    if (existing?.materialId && existing.materialId !== row.materialId) {
+      this.syncMeAlerts(actor, existing.materialId);
+    }
     return row;
+  }
+
+  /**
+   * Igual que `upsertMeIngreso` + resumen de saldo para la UI de Depósito
+   * (ingreso registrado, consumo previo, stock actual, alerta de stock negativo).
+   */
+  upsertMeIngresoWithSummary(
+    actor: InventoryActor,
+    input: Partial<MeIngresoRow> & { id?: string }
+  ): MeIngresoRow & { stockSummary: MeIngresoStockSummary } {
+    const row = this.upsertMeIngreso(actor, input);
+    return { ...row, stockSummary: this.buildMeIngresoStockSummary(row) };
+  }
+
+  private buildMeIngresoStockSummary(row: MeIngresoRow): MeIngresoStockSummary {
+    const mat = this.repo.getMeMaterial(row.materialId!)!;
+    const codigo = normalizeMeCodigo(mat.codigo);
+    const consumos = this.repo
+      .listMeSalidas()
+      .filter((r) => r.origen === "OA" && !r.reverted && normalizeMeCodigo(r.codigo) === codigo);
+    const consumoAcumulado = consumos.reduce((acc, r) => acc + (r.total ?? r.cantidad ?? 0), 0);
+    return {
+      codigo,
+      ingresoRegistrado: row.total ?? 0,
+      consumoAcumulado,
+      stockActual: mat.stockActual,
+      negativo: mat.stockActual < 0,
+      ingresoTardio: consumos.some((c) => c.createdAt <= row.createdAt),
+    };
+  }
+
+  /**
+   * Historial cronológico (fecha efectiva, luego createdAt) con saldo corrido.
+   * Fuente: ledger persistido (ingresos, salidas OA, ajustes). Los anulados se
+   * muestran pero no afectan el saldo.
+   */
+  getMeLedger(actor: InventoryActor, materialId: string): MeLedgerEntry[] {
+    this.guard(actor, "me_stock", false);
+    const mat = this.repo.getMeMaterial(materialId);
+    if (!mat) throw new InventoryNotFoundError("Material ME no encontrado.");
+    const codigo = normalizeMeCodigo(mat.codigo);
+    const entries: Omit<MeLedgerEntry, "saldo">[] = [];
+    for (const r of this.repo.listMeIngresos()) {
+      if (normalizeMeCodigo(r.codigo) !== codigo) continue;
+      entries.push({
+        id: r.id,
+        tipo: "INGRESO",
+        cantidad: r.total ?? 0,
+        fecha: r.fecha,
+        createdAt: r.createdAt,
+        usuario: r.createdBy,
+        origen: r.ingresoNro,
+        oaNumber: null,
+        observacion: r.remitoNro ? `Remito ${r.remitoNro}` : "",
+        anulado: Boolean(r.anulado),
+      });
+    }
+    for (const r of this.repo.listMeSalidas()) {
+      if (r.origen !== "OA" || normalizeMeCodigo(r.codigo) !== codigo) continue;
+      entries.push({
+        id: r.id,
+        tipo: "CONSUMO",
+        cantidad: -(r.total ?? r.cantidad ?? 0),
+        fecha: r.fecha,
+        createdAt: r.createdAt,
+        usuario: r.createdBy,
+        origen: r.oaNumber ?? r.egresoNro,
+        oaNumber: r.oaNumber,
+        observacion: r.comentarios,
+        anulado: r.reverted,
+      });
+    }
+    for (const a of this.repo.ajustes) {
+      if (a.module !== "ME" || a.entityId !== materialId) continue;
+      entries.push({
+        id: a.id,
+        tipo: "AJUSTE",
+        cantidad: a.diferencia,
+        fecha: a.createdAt.slice(0, 10),
+        createdAt: a.createdAt,
+        usuario: a.actor,
+        origen: "AJUSTE",
+        oaNumber: null,
+        observacion: a.motivo,
+        anulado: false,
+      });
+    }
+    entries.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.createdAt.localeCompare(b.createdAt));
+    let saldo = 0;
+    return entries.map((e) => {
+      if (!e.anulado) saldo = Number((saldo + e.cantidad).toFixed(6));
+      return { ...e, saldo };
+    });
   }
 
   deleteMeIngreso(actor: InventoryActor, id: string, reason: string) {
@@ -302,9 +420,6 @@ export class InventoryService {
     if (!existing) throw new InventoryNotFoundError("Ingreso ME no encontrado.");
     if (existing.anulado) return existing;
 
-    if (existing.materialId && existing.total != null) {
-      this.applyMeStockDelta(existing.materialId, -existing.total, { actor, reason: trimmed });
-    }
     const now = nowIso();
     const row: MeIngresoRow = {
       ...existing,
@@ -314,7 +429,9 @@ export class InventoryService {
       updatedBy: actor.email,
       updatedAt: now,
     };
+    // Anular un ingreso no se bloquea por saldo negativo: queda visible, no oculto.
     this.repo.upsertMeIngreso(row);
+    if (existing.materialId) this.recalculateMeStock(existing.materialId);
     this.audit(
       actor,
       "me_ingresos",
@@ -435,21 +552,6 @@ export class InventoryService {
       return existing;
     }
 
-    const qty = existing.total ?? existing.cantidad ?? 0;
-    if (
-      existing.origen === "OA" &&
-      existing.materialId &&
-      qty != null &&
-      Number(qty) !== 0
-    ) {
-      this.applyMeStockDelta(existing.materialId, Number(qty), {
-        actor,
-        reason: `Anulación salida ME: ${trimmed}`,
-        allowNegative: true,
-      });
-      this.syncMeAlerts(actor, existing.materialId);
-    }
-
     const now = nowIso();
     const row = {
       ...existing,
@@ -460,6 +562,11 @@ export class InventoryService {
       updatedAt: now,
     };
     this.repo.upsertMeSalida(row);
+    if (existing.origen === "OA" && existing.materialId) {
+      // Reintegro = la salida deja de contar en el ledger (una sola vez).
+      this.recalculateMeStock(existing.materialId);
+      this.syncMeAlerts(actor, existing.materialId);
+    }
     this.audit(
       actor,
       "me_salidas",
@@ -481,7 +588,9 @@ export class InventoryService {
 
   listMeMaterials(actor: InventoryActor, options: { includeArchived?: boolean } = {}) {
     this.guard(actor, "me_stock", false);
-    const rows = this.repo.listMeMaterials();
+    const rows = this.repo
+      .listMeMaterials()
+      .map((m) => (m.archived ? m : this.recalculateMeStock(m.id)));
     if (options.includeArchived) return rows;
     return rows.filter((r) => !r.archived);
   }
@@ -512,12 +621,10 @@ export class InventoryService {
   ) {
     this.guard(actor, "me_ajustes", true);
     if (!motivo.trim()) throw new InventoryValidationError("Motivo obligatorio para ajuste de stock.");
-    const mat = this.repo.getMeMaterial(materialId);
-    if (!mat) throw new InventoryNotFoundError("Material ME no encontrado.");
+    if (!this.repo.getMeMaterial(materialId)) throw new InventoryNotFoundError("Material ME no encontrado.");
+    const mat = this.recalculateMeStock(materialId);
     const anterior = mat.stockActual;
     const diferencia = cantidadNueva - anterior;
-    const updated: MeMaterial = { ...mat, stockActual: cantidadNueva, updatedAt: nowIso() };
-    this.repo.upsertMeMaterial(updated);
     const ajuste: StockAjuste = {
       id: randomUUID(),
       module: "ME",
@@ -531,6 +638,7 @@ export class InventoryService {
       createdAt: nowIso(),
     };
     this.repo.addAjuste(ajuste);
+    const updated = this.recalculateMeStock(materialId);
     this.audit(
       actor,
       "me_ajustes",
@@ -582,11 +690,19 @@ export class InventoryService {
 
     const recalculated = this.recalculateMeStock(id);
     if (recalculated.stockActual !== 0) {
-      this.applyMeStockDelta(id, -recalculated.stockActual, {
-        allowNegative: true,
-        reason: trimmed,
-        actor,
+      this.repo.addAjuste({
+        id: randomUUID(),
+        module: "ME",
+        entityId: id,
+        cantidadAnterior: recalculated.stockActual,
+        cantidadNueva: 0,
+        diferencia: -recalculated.stockActual,
+        motivo: `Archivo de material: ${trimmed}`,
+        actor: actor.email,
+        actorSector: actor.sector,
+        createdAt: nowIso(),
       });
+      this.recalculateMeStock(id);
     }
 
     const now = nowIso();
@@ -698,7 +814,7 @@ export class InventoryService {
     };
   }
 
-  /** STOCK = ingresos activos − salidas OA activas (excluye anulados), por CÓDIGO. */
+  /** STOCK = ingresos activos − salidas OA activas + ajustes (excluye anulados), por CÓDIGO. Puede ser negativo. */
   recalculateMeStock(materialId: string): MeMaterial {
     const mat = this.repo.getMeMaterial(materialId);
     if (!mat) throw new InventoryNotFoundError("Material ME no encontrado.");
@@ -722,7 +838,11 @@ export class InventoryService {
           normalizeMeCodigo(r.codigo) === codigo
       )
       .reduce((acc, r) => acc + (r.total ?? r.cantidad ?? 0), 0);
-    const stockActual = Number((ingresos - salidasOa).toFixed(6));
+    const ajustes = this.repo.ajustes
+      .filter((a) => a.module === "ME" && a.entityId === materialId)
+      .reduce((acc, a) => acc + a.diferencia, 0);
+    const stockActual = Number((ingresos - salidasOa + ajustes).toFixed(6));
+    if (mat.codigo === codigo && mat.stockActual === stockActual) return mat;
     const updated: MeMaterial = { ...mat, codigo, stockActual, updatedAt: nowIso() };
     this.repo.upsertMeMaterial(updated);
     return updated;
@@ -808,28 +928,13 @@ export class InventoryService {
 
   getMeMaterialById(actor: InventoryActor, id: string) {
     this.guard(actor, "me_stock", false);
-    return this.repo.getMeMaterial(id);
+    return this.repo.getMeMaterial(id) ? this.recalculateMeStock(id) : null;
   }
 
   getMeMaterialByCodigo(actor: InventoryActor, codigo: string) {
     this.guard(actor, "me_stock", false);
-    return this.repo.findMeMaterialByCodigo(codigo);
-  }
-
-  applyOaStockDelta(
-    actor: InventoryActor,
-    materialId: string,
-    delta: number,
-    opts?: { allowNegative?: boolean; reason?: string }
-  ) {
-    if (!canWriteOaMeSalida(actor.sector) && !canWriteInventory(actor.sector, "me_ajustes")) {
-      throw new InventoryForbiddenError("Sector no puede ajustar stock ME por OA.");
-    }
-    this.applyMeStockDelta(materialId, delta, {
-      allowNegative: opts?.allowNegative,
-      reason: opts?.reason,
-      actor,
-    });
+    const mat = this.repo.findMeMaterialByCodigo(codigo);
+    return mat ? this.recalculateMeStock(mat.id) : null;
   }
 
   resolveMeMaterialByCodigo(
@@ -904,7 +1009,9 @@ export class InventoryService {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
+    // Consumo OA = movimiento del ledger; nunca se rechaza por stock insuficiente.
     this.repo.upsertMeSalida(row);
+    this.recalculateMeStock(input.materialId);
     this.audit(
       actor,
       "me_salidas_oa",
@@ -953,6 +1060,7 @@ export class InventoryService {
       updatedBy: actor.email,
       updatedAt: nowIso(),
     });
+    if (existing.materialId) this.recalculateMeStock(existing.materialId);
   }
 
   markMeSalidaReplaced(actor: InventoryActor, id: string, reason: string) {
@@ -962,40 +1070,6 @@ export class InventoryService {
   /** Expuesto para puente OA (avisos post-descuento). */
   syncMeAlertsPublic(actor: InventoryActor, materialId: string) {
     return this.syncMeAlerts(actor, materialId);
-  }
-
-  private applyMeStockDelta(
-    materialId: string,
-    delta: number,
-    opts?: {
-      allowNegative?: boolean;
-      reason?: string;
-      actor?: InventoryActor;
-    }
-  ) {
-    const mat = this.repo.getMeMaterial(materialId);
-    if (!mat) throw new InventoryNotFoundError("Material ME no encontrado.");
-    const next = mat.stockActual + delta;
-    if (next < 0 && !opts?.allowNegative) {
-      throw new InventoryValidationError(
-        `Stock negativo no permitido sin confirmación (quedaría ${next}).`
-      );
-    }
-    if (next < 0 && opts?.allowNegative && !opts.reason?.trim()) {
-      throw new InventoryValidationError("Motivo obligatorio para stock negativo.");
-    }
-    this.repo.upsertMeMaterial({ ...mat, stockActual: next, updatedAt: nowIso() });
-    if (next < 0 && opts?.actor && opts.reason) {
-      this.audit(
-        opts.actor,
-        "me_stock",
-        materialId,
-        "negative_stock",
-        { stockActual: mat.stockActual },
-        { stockActual: next },
-        opts.reason
-      );
-    }
   }
 
   // ─── ME Avisos ─────────────────────────────────────────────
@@ -1138,8 +1212,8 @@ export class InventoryService {
 
   /** Crear/actualizar aviso al cruzar umbral; no duplicar. */
   syncMeAlerts(actor: InventoryActor, materialId: string) {
-    const mat = this.repo.getMeMaterial(materialId);
-    if (!mat) return null;
+    if (!this.repo.getMeMaterial(materialId)) return null;
+    const mat = this.recalculateMeStock(materialId);
     const level = calcMeAlertLevel(mat.stockActual, mat.stockMinimo, mat.puntoReposicion);
     const open = this.repo.findOpenAlert(materialId);
 

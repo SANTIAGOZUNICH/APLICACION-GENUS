@@ -177,13 +177,6 @@ export function applyOaDeliveryToMe(
       materialId: line.materialId,
     });
 
-    if (delta !== 0) {
-      service.applyOaStockDelta(invActor, mat.id, -delta, {
-        allowNegative: opts?.allowNegativeStock,
-        reason: opts?.negativeReason,
-      });
-    }
-
     const row = service.createOaMeSalida(invActor, {
       codigo: line.codigo,
       descripcion: line.material,
@@ -215,12 +208,10 @@ export function reverseOaMeSalidas(
   const invActor = toInvActor(actor);
   const salidas = service.listMeSalidasByOaId(orderId).filter((s) => !s.reverted && s.origen === "OA");
   for (const s of salidas) {
-    const qty = s.total ?? s.cantidad ?? 0;
-    if (s.materialId && qty) {
-      service.applyOaStockDelta(invActor, s.materialId, qty, { allowNegative: true, reason: trimmed });
+    service.markMeSalidaReverted(invActor, s.id, trimmed);
+    if (s.materialId) {
       service.syncMeAlertsPublic(invActor, s.materialId);
     }
-    service.markMeSalidaReverted(invActor, s.id, trimmed);
   }
   return salidas.length;
 }
@@ -242,12 +233,7 @@ export function assertNoSilentNegative(
       shortages
     );
   }
-  if (!opts.negativeReason?.trim()) {
-    throw new InventoryValidationError(
-      "Motivo obligatorio para entregar OA con stock ME insuficiente.",
-      shortages
-    );
-  }
+  // El motivo es opcional (solo trazabilidad de la advertencia): un consumo real no se bloquea.
 }
 
 void randomUUID;

@@ -118,7 +118,14 @@ export function MeInventarioView() {
       return {
         key: label,
         header: label,
-        render: (row) => displayCell(row[key]),
+        render: (row) =>
+          label === "CANTIDAD TOTAL" && row.cantidadTotal < 0 ? (
+            <span className="font-semibold text-red-600">
+              {`🔴 STOCK NEGATIVO: ${row.cantidadTotal.toLocaleString("es-AR")} UN.`}
+            </span>
+          ) : (
+            displayCell(row[key])
+          ),
       };
     }
   );

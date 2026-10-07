@@ -31,6 +31,19 @@ import type {
   MpStockRow,
 } from "./types";
 
+/**
+ * Filas ME tal como se hidrataron de la DB (por identidad de objeto). Los upserts del repo
+ * reemplazan el objeto, así que toda fila ausente de este set fue creada/modificada por el
+ * request en curso. `persistInventorySnapshot` escribe SOLO esas filas: un POST concurrente
+ * no pisa con un payload viejo movimientos que otro request acaba de guardar
+ * (ingreso de Depósito vs consumo de Envasado). El saldo no se persiste como decisión:
+ * se deriva del ledger al leer.
+ */
+const hydratedMeRows = new WeakSet<object>();
+function markHydrated(rows: object[]) {
+  for (const row of rows) hydratedMeRows.add(row);
+}
+
 let hydrated = false;
 let hydratePromise: Promise<void> | null = null;
 
@@ -86,7 +99,11 @@ export async function hydrateInventoryFromNeon(
         archivedReason: p.archivedReason ?? null,
       };
     });
+    markHydrated(repo.meIngresos);
+    markHydrated(repo.meSalidas);
+    markHydrated(repo.meMaterials);
     repo.meAlerts = alerts.map((r) => r.payload as MeAlert);
+    markHydrated(repo.meAlerts);
     repo.meAlertReads = reads.map((r) => r.payload as MeAlertRead);
     repo.mpStock = mpStock.map((r) => normalizeMpStockPayload(r.payload));
     repo.mpIngresos = mpIngresos.map((r) => normalizeMpIngresoPayload(r.payload));
@@ -252,6 +269,20 @@ export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promi
   const db = getDb();
   const now = new Date();
 
+  // Capturar las filas a escribir ANTES de cualquier await (otro request puede re-hidratar el repo).
+  const dirty = <T extends { id: string }>(rows: T[]) => rows.filter((r) => !hydratedMeRows.has(r));
+  const meIngresos = dirty(repo.meIngresos);
+  const meSalidas = dirty(repo.meSalidas);
+  const meMaterials = dirty(repo.meMaterials);
+  const meAlerts = dirty(repo.meAlerts);
+  const mpStock = [...repo.mpStock];
+  const mpIngresos = [...repo.mpIngresos];
+  const mpControl = [...repo.mpControl];
+  const mpCompras = [...repo.mpCompras];
+  const meAlertReads = [...repo.meAlertReads];
+  const ajustes = [...repo.ajustes];
+  const audit = [...repo.audit];
+
   async function upsertIdPayload(
     table:
       | typeof invMeIngresos
@@ -275,16 +306,17 @@ export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promi
     }
   }
 
-  await upsertIdPayload(invMeIngresos, repo.meIngresos);
-  await upsertIdPayload(invMeSalidas, repo.meSalidas);
-  await upsertIdPayload(invMeMaterials, repo.meMaterials);
-  await upsertIdPayload(invMeAlerts, repo.meAlerts);
-  await upsertIdPayload(invMpStock, repo.mpStock);
-  await upsertIdPayload(invMpIngresos, repo.mpIngresos);
-  await upsertIdPayload(invMpControl, repo.mpControl);
-  await upsertIdPayload(invMpCompras, repo.mpCompras);
+  await upsertIdPayload(invMeIngresos, meIngresos);
+  await upsertIdPayload(invMeSalidas, meSalidas);
+  await upsertIdPayload(invMeMaterials, meMaterials);
+  await upsertIdPayload(invMeAlerts, meAlerts);
+  markHydrated([...meIngresos, ...meSalidas, ...meMaterials, ...meAlerts]);
+  await upsertIdPayload(invMpStock, mpStock);
+  await upsertIdPayload(invMpIngresos, mpIngresos);
+  await upsertIdPayload(invMpControl, mpControl);
+  await upsertIdPayload(invMpCompras, mpCompras);
 
-  for (const row of repo.meAlertReads) {
+  for (const row of meAlertReads) {
     await db
       .insert(invMeAlertReads)
       .values({
@@ -299,7 +331,7 @@ export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promi
       });
   }
 
-  for (const row of repo.ajustes) {
+  for (const row of ajustes) {
     await db
       .insert(invAjustes)
       .values({ id: row.id, payload: row, createdAt: new Date(row.createdAt) })
@@ -308,7 +340,7 @@ export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promi
         set: { payload: row },
       });
   }
-  for (const row of repo.audit) {
+  for (const row of audit) {
     await db
       .insert(invAudit)
       .values({ id: row.id, payload: row, createdAt: new Date(row.createdAt) })
