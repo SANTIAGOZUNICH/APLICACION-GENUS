@@ -3,7 +3,8 @@ import "server-only";
 import { google } from "googleapis";
 import { createGoogleAuth, SHEETS_WRITE_SCOPES } from "@/lib/adapters/google/google-auth";
 import { sheetsReader } from "@/lib/adapters/sheets/sheets-reader";
-import type { SheetMerge } from "@/lib/semanas-sheet/calendar-model";
+import type { SheetFormats, SheetMerge } from "@/lib/semanas-sheet/calendar-model";
+import { formatsFromGoogleGrid } from "@/lib/semanas-sheet/sheet-formats";
 
 /**
  * Puerto hacia Google Sheets para el write-back (opción C). Es una interfaz
@@ -26,6 +27,8 @@ export interface SheetGridGateway extends SheetCellGateway {
   readMerges(spreadsheetId: string, tab: string): Promise<SheetMerge[]>;
   /** A1 de todas las celdas que son fórmulas. */
   readFormulaCells(spreadsheetId: string, tab: string): Promise<Set<string>>;
+  /** Formato visual (colores, anchos, filas ocultas). Solo lectura y opcional: si falla, la vista se muestra sin colores. */
+  readFormats?(spreadsheetId: string, tab: string): Promise<SheetFormats>;
 }
 
 function quoteTab(tab: string): string {
@@ -79,6 +82,18 @@ export class GoogleSheetCellGateway implements SheetGridGateway {
       startColumn: m.startColumn,
       endColumn: m.endColumn,
     }));
+  }
+
+  /** SOLO LECTURA (spreadsheets.get): colores, anchos y filas ocultas para reproducir el calendario. */
+  async readFormats(spreadsheetId: string, tab: string): Promise<SheetFormats> {
+    const res = await this.sheets().spreadsheets.get({
+      spreadsheetId,
+      ranges: [quoteTab(tab)],
+      includeGridData: true,
+      fields:
+        "sheets(data(columnMetadata(pixelSize,hiddenByUser),rowMetadata(pixelSize,hiddenByUser),rowData(values(effectiveFormat(backgroundColor,textFormat(bold,foregroundColor))))))",
+    });
+    return formatsFromGoogleGrid(res.data.sheets?.[0]?.data?.[0] as never);
   }
 
   async readFormulaCells(spreadsheetId: string, tab: string): Promise<Set<string>> {

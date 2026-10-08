@@ -17,6 +17,8 @@ export interface SemanasViewResponse {
   writable: boolean;
   canEdit: boolean;
   weeks?: CalendarWeek[];
+  /** Ancho (px) de Lun..Vie en la Sheet original. */
+  dayWidths?: number[];
   table?: FlatTable;
   readAt: string;
   /** "Hoy" que usa el servidor para decidir períodos cerrados. */

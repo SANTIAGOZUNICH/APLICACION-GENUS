@@ -23,7 +23,7 @@ import { sheetCellEdits } from "@/lib/db/schema";
 import { GoogleSheetCellGateway, type SheetGridGateway } from "@/lib/asignacion-lotes/writeback-gateway";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
-import { findCalendarCell, parseA1, parseWeeklyCalendar, type CalendarWeek } from "./calendar-model";
+import { dayWidths, findCalendarCell, parseA1, parseWeeklyCalendar, type CalendarWeek, type SheetFormats } from "./calendar-model";
 import { loadOperationalLocks, norm, UNVERIFIABLE, type OperationalLocks } from "./operational-locks";
 import { findFlatCell, parseFlatTable, type FlatTable } from "./flat-model";
 
@@ -104,6 +104,8 @@ export interface SemanasViewPayload {
   /** La Sheet permite escribir desde GENUS (flag + allowlist). El permiso por usuario se evalúa aparte. */
   writable: boolean;
   weeks?: CalendarWeek[];
+  /** Ancho (px) de Lun..Vie en la Sheet original (solo calendarios). */
+  dayWidths?: number[];
   table?: FlatTable;
   /** Valor de lectura "como lo vio el usuario": base del chequeo de conflicto. */
   readAt: string;
@@ -132,11 +134,13 @@ export async function loadSemanasView(tabKey: SemanasTabKey, today = todayIso())
   const def = SEMANAS_TABS[tabKey];
   const gw = await gateway();
   const id = await spreadsheetId();
-  const [rows, merges, formulaCells, locks] = await Promise.all([
+  const [rows, merges, formulaCells, locks, formats] = await Promise.all([
     gw.readTab(id, def.tab),
     gw.readMerges(id, def.tab),
     gw.readFormulaCells(id, def.tab),
     loadOperationalLocks(),
+    // El formato es solo presentación: si no se puede leer, se muestra sin colores (nunca bloquea la vista).
+    def.kind === "CALENDAR" && gw.readFormats ? gw.readFormats(id, def.tab).catch((): SheetFormats | undefined => undefined) : Promise.resolve(undefined),
   ]);
   const base = {
     spreadsheetId: id, tabKey, tab: def.tab, label: def.label, kind: def.kind,
@@ -144,7 +148,7 @@ export async function loadSemanasView(tabKey: SemanasTabKey, today = todayIso())
     locksKnown: locks.known, reasonRequiredBefore: today,
   };
   if (def.kind === "CALENDAR") {
-    return { ...base, weeks: parseWeeklyCalendar(rows, merges, { year: YEAR(), formulaCells, cellLock: calendarCellLock(locks) }) };
+    return { ...base, dayWidths: dayWidths(formats), weeks: parseWeeklyCalendar(rows, merges, { year: YEAR(), formulaCells, formats, cellLock: calendarCellLock(locks) }) };
   }
   return { ...base, table: parseFlatTable(tabKey === "ENTREGAS" ? "ENTREGAS" : "CDIA", rows, merges, { formulaCells, rowLock: flatRowLock(locks) }) };
 }

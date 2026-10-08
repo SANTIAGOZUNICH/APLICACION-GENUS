@@ -7,7 +7,8 @@ Motor único: `GenusGrid` (react-datasheet-grid). Estándar: selección de celda
 | Módulo / pantalla | Planilla (seleccionar + copiar rangos) | Edición por celda | Estado |
 |---|---|---|---|
 | Asignación de Lotes | ✅ | ✅ (manual + Google opción C, con permisos por sector) | probado E2E local + simulado Google |
-| Producción → Semanas (ELABORACION, ACONDICIONAMIENTO, C/DIA, ENTREGAS) | ✅ | ✅ (Sheet = fuente de verdad, write-back a copia de prueba) | probado E2E sobre copia local del libro |
+| Producción → Semanas: ELABORACION y ACONDICIONAMIENTO | ✅ calendario con celdas combinadas reales, colores/anchos/semanas plegadas de la Sheet; «Ver como lista» disponible | ✅ (Sheet = fuente de verdad, write-back solo a copia de prueba) | unitarias + E2E visual Chromium (escritorio y móvil) sobre copia local |
+| Producción → Semanas: C/DIA y ENTREGAS | ✅ GenusGrid (son tablas planas) | ✅ | probado E2E sobre copia local del libro |
 | Pedidos (Producción) | ✅ | ✅ op, fecha, OC, cliente, producto, S, Q, ML (KG derivado y ESTADO protegidos; ENTREGADO cerrado) | probado E2E local, PATCH parcial + conflicto |
 | Elaboración / Envasado Masivo / Envasado Premium / Pendientes (`WorkItemProgressTable`) | ✅ | ✅ planificación (fecha, entrega, cliente, producto, cantidad, unidad, observación, lote/VTO con motivo) vía `PATCH /api/v1/work-items/cells`; avance/estado siguen por el drawer | unitarias de política + servicio |
 | Codificado | ✅ | ❌ | idem |

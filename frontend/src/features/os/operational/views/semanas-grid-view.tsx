@@ -9,6 +9,7 @@ import {
   type GenusGridColumn,
   type GenusGridCommitResult,
 } from "@/components/data-grid/genus-grid";
+import { SemanasCalendarGrid, type CalendarCommitChange, type CalendarCommitResult } from "@/features/os/operational/components/semanas-calendar-grid";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
@@ -16,6 +17,9 @@ import { fetchSemanasView, patchSemanasCells, type SemanasViewResponse } from "@
 import { SEMANAS_TABS, type SemanasTabKey } from "@/lib/semanas-sheet/semanas-tabs";
 import type { CalendarRow } from "@/lib/semanas-sheet/calendar-model";
 import type { FlatRow } from "@/lib/semanas-sheet/flat-model";
+
+const MODE_KEY = "genus_os_semanas_mode";
+type SemanasMode = "calendar" | "list";
 
 const TAB_ORDER: SemanasTabKey[] = ["ELABORACION", "ACONDICIONAMIENTO", "CDIA", "ENTREGAS"];
 const DAY_LABELS = ["Lun", "Mar", "Mié", "Jue", "Vie"];
@@ -63,6 +67,25 @@ export function SemanasGridView() {
   const [weekId, setWeekId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [mode, setModeState] = useState<SemanasMode>("calendar");
+  const [showFolded, setShowFolded] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(MODE_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (saved === "list" || saved === "calendar") setModeState(saved);
+    } catch {
+      /* almacenamiento no disponible: se usa el modo por defecto */
+    }
+  }, []);
+  const setMode = (m: SemanasMode) => {
+    setModeState(m);
+    try {
+      window.localStorage.setItem(MODE_KEY, m);
+    } catch {
+      /* no crítico */
+    }
+  };
 
   const load = useCallback(
     async (key: SemanasTabKey, keepWeek = false) => {
@@ -74,7 +97,10 @@ export function SemanasGridView() {
         if (v.kind === "CALENDAR" && !keepWeek) {
           // Semana en curso (la primera cuyo viernes ≥ hoy) o la última.
           const today = v.today ?? new Date().toISOString().slice(0, 10);
-          const current = v.weeks?.find((w) => (w.dates[4] ?? "") >= today) ?? v.weeks?.[v.weeks.length - 1];
+          // Semanas plegadas en la Sheet original no cuentan como «actual» (no se muestran por defecto).
+          const shown = (v.weeks ?? []).filter((w) => !w.hidden);
+          const pool = shown.length > 0 ? shown : (v.weeks ?? []);
+          const current = pool.find((w) => (w.dates[4] ?? "") >= today) ?? pool[pool.length - 1];
           setWeekId(current?.id ?? null);
         }
       } catch (e) {
@@ -154,6 +180,25 @@ export function SemanasGridView() {
     [view, rows, session, load]
   );
 
+  const onCalendarCommit = useCallback(
+    async (changes: CalendarCommitChange[]): Promise<CalendarCommitResult> => {
+      if (!view) return { ok: false, failures: [], message: "Sin datos." };
+      const res = await patchSemanasCells(
+        session,
+        changes.map((c) => ({ tabKey: view.tabKey, a1: c.a1, expectedValue: c.oldValue, value: c.newValue, reason: c.reason }))
+      );
+      const failures = res.results.flatMap((r, i) => (r.ok ? [] : [{ a1: changes[i]!.a1, message: r.message ?? "No se guardó." }]));
+      // Siempre se relee la Sheet: lo mostrado es lo que Google confirma.
+      await load(view.tabKey, true);
+      return { ok: res.ok && failures.length === 0, message: res.error, failures };
+    },
+    [view, session, load]
+  );
+
+  const calendarWeeks = useMemo(() => (view?.weeks ?? []).filter((w) => showFolded || !w.hidden), [view, showFolded]);
+  const foldedCount = (view?.weeks ?? []).filter((w) => w.hidden).length;
+  const useCalendar = view?.kind === "CALENDAR" && mode === "calendar";
+
   const canEdit = Boolean(view?.canEdit);
   // Trazabilidad: editar una fecha anterior a hoy exige motivo (el servidor lo vuelve a exigir).
   const reasonRequired = useCallback(
@@ -199,14 +244,33 @@ export function SemanasGridView() {
             Recargar
           </Button>
           {view?.kind === "CALENDAR" && (
+            <>
+              <Button type="button" variant={useCalendar ? "primary" : "secondary"} onClick={() => setMode("calendar")} data-testid="semanas-mode-calendar">
+                Calendario
+              </Button>
+              <Button type="button" variant={!useCalendar ? "primary" : "secondary"} onClick={() => setMode("list")} data-testid="semanas-mode-list">
+                Ver como lista
+              </Button>
+              {useCalendar && foldedCount > 0 && (
+                <label className="flex items-center gap-1 text-xs text-[var(--os-text-muted)]">
+                  <input type="checkbox" checked={showFolded} onChange={(e) => setShowFolded(e.target.checked)} data-testid="semanas-show-folded" />
+                  Semanas plegadas en la Sheet ({foldedCount})
+                </label>
+              )}
+            </>
+          )}
+          {view?.kind === "CALENDAR" && (
             <select
               value={weekId ?? ""}
-              onChange={(e) => setWeekId(e.target.value)}
+              onChange={(e) => {
+                setWeekId(e.target.value);
+                if (useCalendar) document.getElementById(`semanas-week-${e.target.value}`)?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+              }}
               className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm"
               data-testid="semanas-week"
               aria-label="Semana"
             >
-              {view.weeks?.map((w) => (
+              {(useCalendar ? calendarWeeks : (view.weeks ?? [])).map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.label}
                 </option>
@@ -231,7 +295,19 @@ export function SemanasGridView() {
           </p>
         )}
 
-        {view && rows.length > 0 && (
+        {view && useCalendar && calendarWeeks.length > 0 && (
+          <SemanasCalendarGrid
+            key={`${view.tabKey}:${showFolded}`}
+            weeks={calendarWeeks}
+            dayWidths={view.dayWidths ?? []}
+            canEdit={canEdit}
+            reasonRequiredBefore={view.reasonRequiredBefore ?? ""}
+            focusWeekId={weekId}
+            onCommit={onCalendarCommit}
+            historicNote={`Leído de Google: ${new Date(view.readAt).toLocaleTimeString("es-AR")}. Las fechas anteriores a hoy se corrigen con motivo; encabezados, combinadas no ancladas, fórmulas y registros cerrados son de solo lectura.`}
+          />
+        )}
+        {view && !useCalendar && rows.length > 0 && (
           <GenusGrid<SheetGridRow>
             key={`${view.tabKey}:${weekId ?? ""}`}
             rows={rows}

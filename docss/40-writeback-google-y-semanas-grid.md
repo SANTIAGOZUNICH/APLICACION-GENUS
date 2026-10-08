@@ -64,6 +64,33 @@ Límites conocidos (no se inventan equivalencias):
 - **Fidelidad visual:** la grilla muestra cada día como UNA columna (Lun–Vie); las bandas combinadas (p. ej. `D4:I4`, `B4:K4`) aparecen en la celda ancla y las cubiertas quedan vacías/protegidas (el motor no tiene `colSpan`). La **Sheet conserva** celdas combinadas, fórmulas, formatos y distribución: se escribe `values.update` de UNA celda (nunca estilos ni combinadas) y los tests comparan combinadas/fórmulas/valores antes y después.
 - La copia local del libro (`SEMANAS 2026.xlsx`, del repo) **no equivale** a la versión viva; no se pudo acceder a Google desde este entorno.
 
+## 3 bis. Producción → Semanas: calendario fiel (celdas combinadas)
+
+La vista de ELABORACION y ACONDICIONAMIENTO ya no es una tabla plana de 5 columnas: reproduce el calendario original.
+
+| Aspecto de la Sheet | Cómo se representa |
+|---|---|
+| Bloques de semana apilados (Lunes…Viernes + n° de día + mes) | Un bloque por semana, con su etiqueta y filas de la Sheet (n° de fila a la izquierda, como Sheets) |
+| Combinadas horizontales (banda del responsable B:K, bandas `D4:I4`, etc.) | `colSpan` real (1–5 días) |
+| Combinadas verticales (`F15:G16`, `H188:I189`…) | `rowSpan` real; las celdas cubiertas no se dibujan |
+| Colores de fondo / negrita / color de texto | Leídos **solo en lectura** (`spreadsheets.get`, `effectiveFormat`) y aplicados tal cual; si no se pueden leer, la vista sigue sin colores |
+| Anchos de columna | Ancho de cada día = columna ancla + hermana, como en la Sheet |
+| Alturas de fila y **semanas plegadas** (filas ocultas) | Las semanas plegadas en la Sheet no se muestran por defecto; casilla «Semanas plegadas en la Sheet (N)» para verlas |
+| Selección / copiar / pegar / editar | Rangos con mouse o Shift+flechas, Ctrl+C (TSV; el valor de una combinación va en su esquina), Ctrl+V con vista previa, Enter / doble clic / escribir para editar, Supr, barra de valor (útil en móvil) |
+| Protección | La del servidor: encabezados, combinadas no ancladas, fórmulas, registros cerrados en GENUS. Fechas anteriores a hoy → motivo obligatorio y auditado |
+| «Ver como lista» | Conserva la grilla `GenusGrid` por semana (preferencia `genus_os_semanas_mode`) |
+| ENTREGAS y C/DIA | Siguen en `GenusGrid` (son tablas planas en el original) |
+
+**Por qué un renderer propio y no `GenusGrid`:** `react-datasheet-grid` no soporta celdas combinadas. Se reutilizan las mismas reglas (protección que viene del servidor, sin fórmulas, vista previa, motivo, rollback con error real, relectura de la Sheet tras guardar); el motor de tabla plana sigue siendo `GenusGrid`.
+
+**Rendimiento:** cada semana monta su `<table>` solo cuando está a menos de ~900 px del viewport (IntersectionObserver); fuera de pantalla queda un marcador con la altura medida. Con la copia local del libro: 2 de 12 semanas montadas a la vez; el scroll horizontal es interno al contenedor (no ensancha la página).
+
+**Qué NO cambió:** no se tocan fórmulas, no se escribe en las planillas originales (el formato se lee, jamás se escribe; el write-back sigue con doble llave y bloqueado en Production), no se modifican datos productivos.
+
+**Validación:** `src/lib/semanas-sheet/{calendar-grid-model,sheet-formats}.test.ts`, `src/features/os/operational/components/semanas-calendar-grid.test.tsx` (combinadas, varias semanas, selección/copia, edición, protegidas, motivo histórico, rollback, 200 semanas) y `npm run test:e2e:semanas-visual` (Chromium real escritorio 1500 px y móvil 390 px sobre la copia local, con capturas).
+
+**Limitaciones conocidas de fidelidad:** (1) bordes/fuentes/tamaños de letra y alineaciones de la Sheet no se reproducen (solo fondo, negrita, color de texto); (2) las celdas sin formato se ven con el tema de la app (la Sheet es blanca); (3) la columna A y las columnas L–X de la Sheet no se muestran; (4) congelar filas/columnas y filtros de la Sheet no se replican; (5) un cambio de estructura de la Sheet (otra disposición de B,D,F,H,J) requiere ajustar el modelo; (6) el formato de Google se verificó solo contra la copia local `.xlsx`, no contra la Sheet real (ver docss/42).
+
 ## 4. Variables de entorno (sin secretos)
 | Variable | Uso |
 |---|---|

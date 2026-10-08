@@ -22,6 +22,24 @@ export interface SheetMerge {
   endColumn: number;
 }
 
+/** Formato visual de la Sheet (solo lectura): colores y anchos, para reproducir el calendario original. */
+export interface SheetCellFormat {
+  /** Fondo #RRGGBB (se omite el blanco/por defecto). */
+  bg?: string;
+  /** Color de texto #RRGGBB (se omite el negro). */
+  fg?: string;
+  bold?: boolean;
+}
+export interface SheetFormats {
+  /** Ancho en px por columna (0-based; hueco = sin dato). */
+  colWidths: number[];
+  /** Filas ocultas (1-based) en la Sheet original. */
+  hiddenRows: number[];
+  /** Alto en px por fila (1-based, solo si difiere del normal). */
+  rowHeights?: Record<number, number>;
+  cells: Record<string, SheetCellFormat>;
+}
+
 export type CalendarRowRole = "structural" | "planning";
 
 export interface CalendarCell {
@@ -32,6 +50,10 @@ export interface CalendarCell {
   covered: boolean;
   /** Cuántos días abarca la combinación (1 = normal, 5 = banda de toda la semana). */
   span: number;
+  /** Cuántas filas abarca la combinación vertical (1 = normal). */
+  rowSpan: number;
+  /** Formato visual de la Sheet (fondo/negrita/color) — solo presentación. */
+  format?: SheetCellFormat;
   /** Protegida por política (estructural, fórmula, cubierta, cierre operativo) → motivo. */
   protection: string | null;
   /** Fecha ISO del día de la columna (null si el encabezado no es interpretable). */
@@ -40,6 +62,10 @@ export interface CalendarCell {
 
 export interface CalendarRow {
   rowNumber: number;
+  /** Fila oculta (plegada) en la Sheet original. */
+  hidden?: boolean;
+  /** Alto en px en la Sheet original (si difiere del normal). */
+  height?: number;
   role: CalendarRowRole;
   cells: CalendarCell[];
 }
@@ -52,6 +78,8 @@ export interface CalendarWeek {
   dates: (string | null)[];
   label: string;
   rows: CalendarRow[];
+  /** Todas las filas del bloque están ocultas en la Sheet original (semanas antiguas plegadas). */
+  hidden?: boolean;
 }
 
 export const DAY_NAMES = ["lunes", "martes", "miercoles", "jueves", "viernes"] as const;
@@ -100,12 +128,16 @@ function dateFor(dayCell: string | undefined, monthCell: string | undefined, yea
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+const d0 = (col: number) => DAY_ANCHOR_COLS.indexOf(col as (typeof DAY_ANCHOR_COLS)[number]);
+
 function mergeCovering(merges: SheetMerge[], row: number, col: number): SheetMerge | null {
   return merges.find((m) => row >= m.startRow && row <= m.endRow && col + 1 >= m.startColumn && col + 1 <= m.endColumn) ?? null;
 }
 
 export interface ParseCalendarOptions {
   year: number;
+  /** Formato visual leído de la Sheet (opcional): colores, filas ocultas, alturas. */
+  formats?: SheetFormats;
   /** Celdas con fórmula (A1) — nunca editables. */
   formulaCells?: ReadonlySet<string>;
   /**
@@ -122,6 +154,7 @@ export function parseWeeklyCalendar(rows: string[][], merges: SheetMerge[], opti
     if (isWeekHeader(row)) headers.push(i + 1);
   });
   const weeks: CalendarWeek[] = [];
+  const hiddenSet = new Set(options.formats?.hiddenRows ?? []);
 
   headers.forEach((headerRow, w) => {
     const nextHeader = headers[w + 1];
@@ -145,18 +178,25 @@ export function parseWeeklyCalendar(rows: string[][], merges: SheetMerge[], opti
         const anchorRow = merge ? merge.startRow : r;
         const isAnchor = !merge || (anchorRow === r && anchorCol === col);
         const covered = Boolean(merge) && !isAnchor;
-        const spanDays = merge ? Math.max(1, Math.round((merge.endColumn - merge.startColumn + 1) / 2)) : 1;
+        // Días que cubre la combinación: anclas de día (B,D,F,H,J) dentro de su rango, sin salirse de la semana.
+        const spanDays = merge
+          ? Math.min(DAY_ANCHOR_COLS.length - d0(col), Math.max(1, DAY_ANCHOR_COLS.filter((c) => c + 1 >= merge.startColumn && c + 1 <= merge.endColumn).length))
+          : 1;
+        const rowSpan = merge && isAnchor ? merge.endRow - merge.startRow + 1 : 1;
         const value = covered ? "" : String(rows[r - 1]?.[col] ?? "");
         let protection: string | null = null;
         if (role === "structural") protection = "Encabezado del calendario (día, fecha, mes): solo lectura.";
         else if (covered) protection = "Celda combinada: se edita en la celda ancla.";
         else if (options.formulaCells?.has(a1)) protection = "Celda con fórmula: no se sobrescribe.";
         else if (value.trim()) protection = options.cellLock?.({ a1, value, date: dates[d] ?? null }) ?? null;
-        return { a1, value, covered, span: spanDays, protection, date: dates[d] ?? null };
+        const format = options.formats?.cells[a1];
+        return { a1, value, covered, span: spanDays, rowSpan, ...(format ? { format } : {}), protection, date: dates[d] ?? null };
       });
-      outRows.push({ rowNumber: r, role, cells });
+      const hidden = hiddenSet.has(r) || undefined;
+      const height = options.formats?.rowHeights?.[r];
+      outRows.push({ rowNumber: r, role, cells, ...(hidden ? { hidden } : {}), ...(height ? { height } : {}) });
     }
-    weeks.push({ id: `${headerRow}`, headerRow, lastRow, dates, label, rows: outRows });
+    weeks.push({ id: `${headerRow}`, headerRow, lastRow, dates, label, rows: outRows, ...(outRows.every((r) => r.hidden) ? { hidden: true } : {}) });
   });
   return weeks;
 }
@@ -172,4 +212,12 @@ export function findCalendarCell(weeks: CalendarWeek[], a1: string): { week: Cal
     if (row && cell) return { week, row, cell };
   }
   return null;
+}
+
+/** Ancho (px) de cada día = columna ancla + su columna hermana (los días son pares combinados B:C, D:E…). */
+export function dayWidths(formats: SheetFormats | undefined, fallback = 280): number[] {
+  return DAY_ANCHOR_COLS.map((c) => {
+    const w = (formats?.colWidths[c] ?? 0) + (formats?.colWidths[c + 1] ?? 0);
+    return w >= 120 ? w : fallback;
+  });
 }
