@@ -9,17 +9,22 @@ import {
   type GenusGridColumn,
   type GenusGridCommitResult,
 } from "@/components/data-grid/genus-grid";
+import { SemanasCardsView } from "@/features/os/operational/components/semanas-cards-view";
+import { SemanasTvMode } from "@/features/os/operational/components/semanas-tv-mode";
+import type { CalendarTask } from "@/lib/semanas-sheet/calendar-tasks";
+import { canEditPriorities } from "@/lib/semanas-sheet/priorities-permissions";
+import type { Priority } from "@/lib/semanas-sheet/priorities";
 import { SemanasCalendarGrid, type CalendarCommitChange, type CalendarCommitResult } from "@/features/os/operational/components/semanas-calendar-grid";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
-import { fetchPreviewSource, fetchSemanasView, patchSemanasCells, resetPreviewSource, uploadPreviewSource, type PreviewSourceStatus, type SemanasViewResponse } from "@/lib/semanas-sheet/semanas-client";
+import { patchTaskPriority, fetchPreviewSource, fetchSemanasView, patchSemanasCells, resetPreviewSource, uploadPreviewSource, type PreviewSourceStatus, type SemanasViewResponse } from "@/lib/semanas-sheet/semanas-client";
 import { SEMANAS_TABS, type SemanasTabKey } from "@/lib/semanas-sheet/semanas-tabs";
 import type { CalendarRow } from "@/lib/semanas-sheet/calendar-model";
 import type { FlatRow } from "@/lib/semanas-sheet/flat-model";
 
 const MODE_KEY = "genus_os_semanas_mode";
-type SemanasMode = "calendar" | "list";
+type SemanasMode = "operativo" | "planilla" | "list";
 
 const TAB_ORDER: SemanasTabKey[] = ["ELABORACION", "ACONDICIONAMIENTO", "CDIA", "ENTREGAS"];
 const DAY_LABELS = ["Lun", "Mar", "Mié", "Jue", "Vie"];
@@ -67,7 +72,7 @@ export function SemanasGridView() {
   const [weekId, setWeekId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [mode, setModeState] = useState<SemanasMode>("calendar");
+  const [mode, setModeState] = useState<SemanasMode>("operativo");
   // null = automático: en la copia de Preview se muestran todas las semanas (para revisar el diseño completo).
   const [showFoldedChoice, setShowFolded] = useState<boolean | null>(null);
   const [previewInfo, setPreviewInfo] = useState<PreviewSourceStatus | null>(null);
@@ -77,7 +82,7 @@ export function SemanasGridView() {
     try {
       const saved = window.localStorage.getItem(MODE_KEY);
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (saved === "list" || saved === "calendar") setModeState(saved);
+      if (saved === "list" || saved === "planilla" || saved === "operativo") setModeState(saved);
     } catch {
       /* almacenamiento no disponible: se usa el modo por defecto */
     }
@@ -222,10 +227,43 @@ export function SemanasGridView() {
     [view, session, load]
   );
 
+  const [tvOpen, setTvOpen] = useState(false);
+  const openTv = () => {
+    setTvOpen(true);
+    // Pantalla completa del navegador (si el navegador lo permite); el Modo TV funciona igual sin ella.
+    void document.documentElement.requestFullscreen?.().catch(() => undefined);
+  };
+  const closeTv = useCallback(() => {
+    setTvOpen(false);
+    if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
+  }, []);
+
+  const priorityLock = !canEditPriorities(session.sector as never)
+    ? "Solo Producción puede cambiar prioridades."
+    : view?.priorities && !view.priorities.available
+      ? "Las prioridades no están habilitadas en esta base (migración 0041 pendiente)."
+      : null;
+  const onPriorityChange = useCallback(
+    async (task: CalendarTask, next: Priority) => {
+      if (!view) return;
+      const cur = view.priorities?.byTask[task.key];
+      try {
+        const stored = await patchTaskPriority(session, { tabKey: view.tabKey, taskKey: task.key, priority: next, expectedVersion: cur?.version ?? 0 });
+        // Se refleja lo que la base confirmó (no un valor optimista).
+        setView((v) => (v ? { ...v, priorities: { available: true, byTask: { ...(v.priorities?.byTask ?? {}), [task.key]: stored } } } : v));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "No se pudo guardar la prioridad.");
+        await load(view.tabKey, true); // trae la prioridad vigente (p. ej. si otro usuario la cambió)
+      }
+    },
+    [view, session, load]
+  );
+
   const showFolded = showFoldedChoice ?? view?.source === "PREVIEW_XLSX";
   const calendarWeeks = useMemo(() => (view?.weeks ?? []).filter((w) => showFolded || !w.hidden), [view, showFolded]);
   const foldedCount = (view?.weeks ?? []).filter((w) => w.hidden).length;
-  const useCalendar = view?.kind === "CALENDAR" && mode === "calendar";
+  const useCalendar = view?.kind === "CALENDAR" && mode === "planilla";
+  const useCards = view?.kind === "CALENDAR" && mode === "operativo";
 
   const canEdit = Boolean(view?.canEdit);
   // Trazabilidad: editar una fecha anterior a hoy exige motivo (el servidor lo vuelve a exigir).
@@ -251,7 +289,7 @@ export function SemanasGridView() {
         <header className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight">Semanas 2026</h2>
           <p className="text-sm text-[var(--os-text-muted)]">
-            Planilla en vivo de SEMANAS 2026: Google Sheets es la fuente de verdad. Cada celda editada se escribe sola en la Sheet.
+            Planificación semanal de Producción. Cada línea es una celda de SEMANAS 2026: editá en el lugar y se guarda solo esa celda. La prioridad es un dato de GENUS y no se escribe en la planilla.
           </p>
         </header>
 
@@ -273,13 +311,21 @@ export function SemanasGridView() {
           </Button>
           {view?.kind === "CALENDAR" && (
             <>
-              <Button type="button" variant={useCalendar ? "primary" : "secondary"} onClick={() => setMode("calendar")} data-testid="semanas-mode-calendar">
+              <div className="inline-flex gap-1 rounded-xl border border-[var(--os-border)] p-1" role="group" aria-label="Vista">
+              <Button type="button" variant={useCards ? "primary" : "secondary"} onClick={() => setMode("operativo")} data-testid="semanas-mode-operativo">
                 Calendario
               </Button>
-              <Button type="button" variant={!useCalendar ? "primary" : "secondary"} onClick={() => setMode("list")} data-testid="semanas-mode-list">
+              <Button type="button" variant={useCalendar ? "primary" : "secondary"} onClick={() => setMode("planilla")} data-testid="semanas-mode-planilla">
+                Planilla
+              </Button>
+              <Button type="button" variant={!useCalendar && !useCards ? "primary" : "secondary"} onClick={() => setMode("list")} data-testid="semanas-mode-list">
                 Ver como lista
               </Button>
-              {useCalendar && foldedCount > 0 && (
+              </div>
+              <Button type="button" variant="secondary" onClick={openTv} data-testid="semanas-tv-open">
+                📺 Modo TV
+              </Button>
+              {(useCalendar || useCards) && foldedCount > 0 && (
                 <label className="flex items-center gap-1 text-xs text-[var(--os-text-muted)]">
                   <input type="checkbox" checked={showFolded} onChange={(e) => setShowFolded(e.target.checked)} data-testid="semanas-show-folded" />
                   Semanas plegadas en la Sheet ({foldedCount})
@@ -298,7 +344,7 @@ export function SemanasGridView() {
               data-testid="semanas-week"
               aria-label="Semana"
             >
-              {(useCalendar ? calendarWeeks : (view.weeks ?? [])).map((w) => (
+              {(useCalendar || useCards ? calendarWeeks : (view.weeks ?? [])).map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.label}
                 </option>
@@ -359,6 +405,24 @@ export function SemanasGridView() {
           </p>
         )}
 
+        {view && useCards && calendarWeeks.length > 0 && (
+          <SemanasCardsView
+            key={`${view.tabKey}:${showFolded}`}
+            tabKey={view.tabKey}
+            weeks={calendarWeeks}
+            weekId={weekId}
+            today={view.today ?? new Date().toISOString().slice(0, 10)}
+            canEdit={canEdit}
+            reasonRequiredBefore={view.reasonRequiredBefore ?? ""}
+            priorities={view.priorities}
+            priorityLock={priorityLock}
+            sectionLabel={view.tabKey === "ELABORACION" ? "Responsable" : "Línea / área"}
+            onPriorityChange={onPriorityChange}
+            onCommit={onCalendarCommit}
+            historicNote={`Leído de ${view.source === "PREVIEW_XLSX" ? "la copia XLSX de Preview" : view.source === "LOCAL_FIXTURE" ? "la copia local" : "Google"}: ${new Date(view.readAt).toLocaleTimeString("es-AR")}.`}
+          />
+        )}
+        {tvOpen && <SemanasTvMode session={session} initialTab={view?.kind === "CALENDAR" ? view.tabKey : "ELABORACION"} onExit={closeTv} />}
         {view && useCalendar && calendarWeeks.length > 0 && (
           <SemanasCalendarGrid
             key={`${view.tabKey}:${showFolded}`}
@@ -371,7 +435,7 @@ export function SemanasGridView() {
             historicNote={`Leído de ${view.source === "PREVIEW_XLSX" ? "la copia XLSX de Preview" : view.source === "LOCAL_FIXTURE" ? "la copia local" : "Google"}: ${new Date(view.readAt).toLocaleTimeString("es-AR")}. Las fechas anteriores a hoy se corrigen con motivo; encabezados, combinadas no ancladas, fórmulas y registros cerrados son de solo lectura.`}
           />
         )}
-        {view && !useCalendar && rows.length > 0 && (
+        {view && !useCalendar && !useCards && rows.length > 0 && (
           <GenusGrid<SheetGridRow>
             key={`${view.tabKey}:${weekId ?? ""}`}
             rows={rows}

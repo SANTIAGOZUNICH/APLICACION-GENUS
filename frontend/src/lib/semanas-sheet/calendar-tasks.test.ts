@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CalendarCell, CalendarWeek } from "./calendar-model";
 import { parseWeeklyCalendar } from "./calendar-model";
-import { buildWeekModel, isQuantityLike } from "./calendar-tasks";
+import { buildWeekModel, isQuantityLike, moveVisible } from "./calendar-tasks";
 import { XlsxFixtureGateway } from "./xlsx-grid";
 
 const COLS = "BDFHJ";
@@ -88,6 +88,19 @@ describe("calendar-tasks (tareas de la planilla)", () => {
     w.rows.push({ rowNumber: 100, role: "planning", cells: ["11/05/2026", "12/05/2026", "13/05/2026", "14/05/2026", "15/05/2026"].map((v, d) => cell(`${COLS[d]}100`, v)) });
     const m = buildWeekModel(w, "ELABORACION");
     expect(m.sections.flatMap((s) => s.tasks)).toHaveLength(1);
+  });
+});
+
+describe("navegación entre líneas visibles", () => {
+  const w = weekOf([{ title: "CRISTIAN", days: [["THELMA", "ALC EN GEL 300KG", "", "UNICA", "CREMA"], ["TYL", "CREMA 95kg"], [], ["X", "Y"], []] }]);
+  it("↓ salta las filas vacías; ↑ vuelve; ←→ buscan la línea más cercana del día contiguo (saltando días vacíos)", () => {
+    expect(moveVisible(w, { ri: 1, d: 0 }, "ArrowDown")).toEqual({ ri: 2, d: 0 }); // THELMA → ALC EN GEL
+    expect(moveVisible(w, { ri: 2, d: 0 }, "ArrowDown")).toEqual({ ri: 4, d: 0 }); // salta la fila vacía
+    expect(moveVisible(w, { ri: 4, d: 0 }, "ArrowUp")).toEqual({ ri: 2, d: 0 });
+    expect(moveVisible(w, { ri: 5, d: 0 }, "ArrowDown")).toEqual({ ri: 5, d: 0 }); // borde
+    expect(moveVisible(w, { ri: 2, d: 0 }, "ArrowRight")).toEqual({ ri: 2, d: 1 });
+    expect(moveVisible(w, { ri: 2, d: 1 }, "ArrowRight")).toEqual({ ri: 2, d: 3 }); // martes→jueves (miércoles vacío)
+    expect(moveVisible(w, { ri: 1, d: 0 }, "ArrowLeft")).toEqual({ ri: 1, d: 0 });
   });
 });
 

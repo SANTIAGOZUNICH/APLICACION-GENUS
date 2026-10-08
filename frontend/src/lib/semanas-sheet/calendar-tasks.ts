@@ -15,7 +15,7 @@
  *            cuando alguien corrige el texto de la tarea (cambia `key`) sin cambiar su lugar.
  * Mover una tarea a OTRO DÍA la convierte en otra tarea (otra fecha) y empieza en NORMAL.
  */
-import { buildLayout, cellAt, type WeekLayout } from "./calendar-grid-model";
+import { buildLayout, cellAt, type Pos, type WeekLayout } from "./calendar-grid-model";
 import type { CalendarWeek } from "./calendar-model";
 
 export type LineRole = "client" | "product" | "quantity" | "note";
@@ -197,4 +197,38 @@ export function buildWeekModel(week: CalendarWeek, tab: string): WeekModel {
 
 export function buildCalendarModel(weeks: CalendarWeek[], tab: string): WeekModel[] {
   return weeks.map((w) => buildWeekModel(w, tab));
+}
+
+// ---------- navegación por teclado entre las líneas VISIBLES del calendario operativo ----------
+
+
+const navCache = new WeakMap<CalendarWeek, Pos[]>();
+
+/** Posiciones (fila, día) de todo lo que se ve y se edita en las tarjetas: títulos de sección y líneas de tareas. */
+export function visiblePositions(week: CalendarWeek): Pos[] {
+  let cached = navCache.get(week);
+  if (!cached) {
+    const model = buildWeekModel(week, "nav");
+    cached = model.sections.flatMap((s) => [...(s.title ? [{ ri: s.title.ri, d: s.title.d }] : []), ...s.tasks.flatMap((t) => t.lines.map((l) => ({ ri: l.ri, d: l.d })))]);
+    navCache.set(week, cached);
+  }
+  return cached;
+}
+
+/** Flechas sobre líneas visibles: ↑↓ dentro de la columna del día; ←→ a la línea más cercana (en altura) del día contiguo. */
+export function moveVisible(week: CalendarWeek, from: Pos, key: "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"): Pos {
+  const all = visiblePositions(week);
+  if (all.length === 0) return from;
+  if (key === "ArrowDown" || key === "ArrowUp") {
+    const col = all.filter((p) => p.d === from.d).sort((a, b) => a.ri - b.ri);
+    const next = key === "ArrowDown" ? col.find((p) => p.ri > from.ri) : [...col].reverse().find((p) => p.ri < from.ri);
+    return next ?? from;
+  }
+  const step = key === "ArrowRight" ? 1 : -1;
+  for (let d = from.d + step; d >= 0 && d <= 4; d += step) {
+    const col = all.filter((p) => p.d === d);
+    if (col.length === 0) continue;
+    return col.reduce((best, p) => (Math.abs(p.ri - from.ri) < Math.abs(best.ri - from.ri) ? p : best));
+  }
+  return from;
 }

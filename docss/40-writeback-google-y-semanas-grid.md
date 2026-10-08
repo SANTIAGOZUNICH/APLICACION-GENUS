@@ -103,6 +103,27 @@ La vista de ELABORACION y ACONDICIONAMIENTO ya no es una tabla plana de 5 column
 
 Pruebas: `src/lib/semanas-sheet/preview-source.test.ts` y `npm run test:e2e:semanas-preview` (navegador real con la misma fuente que Vercel Preview).
 
+## 3 quater. Semanas: Calendario operativo, Planilla, Modo TV y prioridades
+
+**Tres formas de ver la MISMA planificación** (misma lectura `GET /api/v1/semanas/grid`, mismo motor de edición `useCalendarEngine`, mismo guardado `PATCH /api/v1/semanas/cells`):
+
+| Vista | Para qué | Qué conserva |
+|---|---|---|
+| **Calendario** (predeterminada) | Que cualquier operario vea qué elaborar/envasar, cuánto, qué día, quién y con qué prioridad | Tarjetas por responsable (o línea/área) y día L–V; producto grande, cantidad destacada, cliente; combinadas de varios días = tarjeta ancha; sin n° de fila. Cada línea es una celda (A1): clic/doble clic/Enter edita en el lugar, Esc cancela, Tab avanza, selección de rangos, Ctrl+C/Ctrl+V con vista previa, celdas protegidas, motivo en fechas históricas |
+| **Planilla** | Trabajo avanzado | Estructura original con celdas combinadas reales, colores/anchos de la Sheet, filas, selección/copia/pegado/edición |
+| **Ver como lista** | Alternativa plana | `GenusGrid` por semana |
+| **📺 Modo TV** | Televisores de planta | Pantalla completa (portal sobre toda la app), solo lectura, letras grandes, hoy + siguiente día con planificación (3 columnas en ≥1700 px), prioridad muy visible, rota Elaboración/Acondicionamiento (pausable), se actualiza cada 60 s con datos seguros (si falla conserva lo último y avisa), «Actualizado hh:mm:ss». Si hoy no está en la planilla muestra el próximo día cargado y lo dice |
+
+**Cómo se arma una tarea (`calendar-tasks.ts`)**: la Sheet no tiene registros; una tarea es un grupo de celdas contiguas de una columna de día, separado por celda vacía, por cambio de color de bloque o por una nota «ENTREGA …» (que cierra su tarea). Los roles (cliente / producto / cantidad / nota) son solo estilo: **ninguna línea se descarta ni se reordena** y todas conservan su A1. Se corta antes de la plantilla de semanas futuras (títulos «LABORATORIO GENUS / PLANIFICACIÓN SEMANAL», azules de plantilla, fila de fechas).
+
+**Prioridades (URGENTE 🔴 / IMPORTANTE 🟡 / NORMAL 🟢)** — dato de GENUS en la base (migración **0041**, aditiva, hash fijado en `migration-reconcile.mjs`), **nunca** en la Sheet; independiente del estado de producción (la planilla no tiene estados y no se inventan).
+- **Identidad de la tarea (no es el n° de fila):** `key` = pestaña + fecha del día + texto normalizado de las líneas + n-ésima repetición; respaldo `posKey` = semana/día/n° de sección/orden. Insertar o borrar filas, reordenar tareas o renombrar al responsable **no** pierden la prioridad. Corregir el texto (`key` cambia) la conserva por `posKey` y se re-asocia al guardar. **Limitaciones:** mover una tarea a otro día la convierte en otra (NORMAL); si se corrige el texto Y se mueve a la vez, se pierde; dos tareas idénticas el mismo día se distinguen por orden.
+- **Tablas:** `semanas_task_priorities` (única por spreadsheet+pestaña+`task_key`, `version`, `updated_by/_sector/_name`, `updated_at`) y `semanas_task_priority_events` (auditoría desde→hacia, quién, cuándo). Alcance por `spreadsheet_id`: la copia de Preview no se mezcla con la original.
+- **Reglas:** solo **Producción** cambia (el resto la ve); concurrencia por versión (409 si otro la cambió o la tarea ya no está); sin migración aplicada, la vista funciona (todo NORMAL, aviso) y guardar responde 503; la sincronización/lectura de la Sheet no toca estas tablas (no hay forma de que la pisen).
+- **Filtrar/ordenar** por prioridad es solo visual (no cambia la planilla).
+
+**Pruebas:** `calendar-tasks.test.ts` (tareas, identidad estable, plantilla, navegación), `semanas-priorities.test.ts` (persistencia, permisos, concurrencia, sincronización con filas insertadas/reordenadas/renombradas, relink), `semanas-cards-view.test.tsx`, `tv-days.test.ts`; contra **Postgres real descartable**: `npm run test:e2e:semanas-priorities-db` (migración 0041 idempotente, persistencia entre instancias, auditoría, escrituras simultáneas, tabla ausente); en **Chromium real**: `npm run test:e2e:semanas-ux` (39 comprobaciones: escritorio 1500 px, TV 1366×768 / 1280×720 / 1920×1080, móvil 390 px, edición en el lugar, Esc/Enter/Tab, prioridades + recarga, copiar/pegar con vista previa, combinadas, Modo TV con refresco) y `npm run test:e2e:semanas-preview`.
+
 ## 4. Variables de entorno (sin secretos)
 | Variable | Uso |
 |---|---|

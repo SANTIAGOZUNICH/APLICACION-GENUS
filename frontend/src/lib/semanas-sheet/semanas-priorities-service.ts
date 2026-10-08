@@ -12,7 +12,9 @@ import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types"
 import type { SectorId } from "@/types/operational/sector";
 import { buildCalendarModel, type CalendarTask } from "./calendar-tasks";
 import type { CalendarWeek } from "./calendar-model";
-import { DEFAULT_PRIORITY, isPriority, matchPriorities, type Priority, type PriorityRow, type StoredPriority } from "./priorities";
+import { canEditPriorities } from "./priorities-permissions";
+import { DEFAULT_PRIORITY, isPriority, matchPriorities, type PrioritiesPayload, type Priority, type PriorityRow, type StoredPriority } from "./priorities";
+export type { PrioritiesPayload };
 
 export class PriorityConflictError extends Error {
   readonly status = 409;
@@ -21,9 +23,7 @@ export class PriorityUnavailableError extends Error {
   readonly status = 503;
 }
 
-export function canEditPriorities(sector: SectorId | null | undefined): boolean {
-  return sector === "PRODUCCION";
-}
+export { canEditPriorities };
 
 interface Row extends PriorityRow {
   spreadsheetId: string;
@@ -70,12 +70,6 @@ async function listRows(spreadsheetId: string, tab: string): Promise<Row[]> {
   return rows.map(toPriorityRow);
 }
 
-export interface PrioritiesPayload {
-  /** Prioridades por clave de tarea ACTUAL (ausente = NORMAL). */
-  byTask: Record<string, StoredPriority>;
-  /** false = la tabla todavía no existe (migración 0041 pendiente): se muestra NORMAL y no se puede guardar. */
-  available: boolean;
-}
 
 /** Prioridades de las tareas actuales de una pestaña. Nunca falla la vista: sin tabla → `available:false`. */
 export async function loadPriorities(spreadsheetId: string, tab: string, weeks: CalendarWeek[]): Promise<PrioritiesPayload> {

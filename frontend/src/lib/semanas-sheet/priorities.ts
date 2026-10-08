@@ -69,3 +69,10 @@ export function matchPriorities(tasks: Array<{ key: string; posKey: string }>, r
 export function priorityOf(map: Record<string, StoredPriority> | undefined, key: string): Priority {
   return map?.[key]?.priority ?? DEFAULT_PRIORITY;
 }
+
+export interface PrioritiesPayload {
+  /** Prioridades por clave de tarea ACTUAL (ausente = NORMAL). */
+  byTask: Record<string, StoredPriority>;
+  /** false = la tabla todavía no existe (migración 0041 pendiente): se muestra NORMAL y no se puede guardar. */
+  available: boolean;
+}

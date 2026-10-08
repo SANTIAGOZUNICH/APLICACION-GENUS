@@ -2,6 +2,7 @@ import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type { CalendarWeek } from "./calendar-model";
 import type { FlatTable } from "./flat-model";
+import type { PrioritiesPayload } from "./priorities";
 import type { SemanasTabKey } from "./semanas-tabs";
 
 function headers(session: OrdersClientSession): HeadersInit {
@@ -20,6 +21,8 @@ export interface SemanasViewResponse {
   weeks?: CalendarWeek[];
   /** Ancho (px) de Lun..Vie en la Sheet original. */
   dayWidths?: number[];
+  /** Prioridades guardadas en GENUS (por clave de tarea). */
+  priorities?: PrioritiesPayload;
   table?: FlatTable;
   readAt: string;
   /** "Hoy" que usa el servidor para decidir períodos cerrados. */
@@ -96,4 +99,23 @@ export function uploadPreviewSource(s: OrdersClientSession, file: File) {
     if (!res.ok) throw new Error(body.error ?? `Error ${res.status}`);
     return body;
   });
+}
+
+export interface StoredPriorityDto {
+  priority: "URGENTE" | "IMPORTANTE" | "NORMAL";
+  version: number;
+  updatedBy: string;
+  updatedByName: string;
+  updatedAt: string;
+}
+
+/** Cambia la prioridad de una tarea (dato de GENUS; no escribe en la Sheet). Lanza con el motivo real si no se guardó. */
+export async function patchTaskPriority(
+  session: OrdersClientSession,
+  body: { tabKey: SemanasTabKey; taskKey: string; priority: string; expectedVersion: number }
+): Promise<StoredPriorityDto> {
+  const res = await fetch("/api/v1/semanas/priorities", { method: "PATCH", credentials: "include", headers: headers(session), body: JSON.stringify(body) });
+  const json = (await res.json().catch(() => ({}))) as { stored?: StoredPriorityDto; error?: string };
+  if (!res.ok || !json.stored) throw new Error(json.error ?? `No se pudo guardar la prioridad (${res.status}).`);
+  return json.stored;
 }
