@@ -16,12 +16,16 @@ import {
 import { filterWorkItemsForDate } from "@/features/work/lib/work-items-day-view";
 import { formatWorkItemPresentation } from "@/features/work/lib/work-items-day-view";
 import { WorkItemEditDeleteActions } from "@/features/os/operational/components/work-item-edit-delete-actions";
+import { ActionButton, ExcelOrList, excelCol } from "@/features/os/operational/components/operational-ui";
+import { useWorkItemCellEditing } from "@/features/os/operational/hooks/use-work-item-cells";
+import { formatDateDisplay } from "@/features/os/operational/lib/delivery-date";
+import type { WorkItem } from "@/types/operational/work-item";
 
 /** Plan semanal L–V con WorkItems reales del sector activo. */
 export function WireframePlanSemanal() {
   const { applyEffectiveStatus, openWorkItem } = usePreviewContext();
   const { sectorId, email } = usePreviewSession();
-  const { data, loading } = useSectorWorkItems(sectorId);
+  const { data, loading, refresh } = useSectorWorkItems(sectorId);
   const [today] = useState(() => startOfDay(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
 
@@ -51,7 +55,33 @@ export function WireframePlanSemanal() {
 
   const selectedItems = useMemo(
     () => filterWorkItemsForDate(workItems, selectedDate, today),
-    [workItems, selectedDate]
+    [workItems, selectedDate, today]
+  );
+
+  // Detalle del día como planilla: mismas columnas/política que las tablas de trabajos (PATCH por celda).
+  const cells = useWorkItemCellEditing(selectedItems, refresh);
+  const detailColumns = useMemo(
+    () => [
+      excelCol<WorkItem>("linea", "Línea", (i) => i.line ?? i.sector),
+      excelCol<WorkItem>("plannedDate", "Fecha", (i) => (i.plannedDate ? formatDateDisplay(i.plannedDate) : i.dayLabel ?? ""), { edit: cells.edit("plannedDate") }),
+      excelCol<WorkItem>("deliveryDate", "Entrega", (i) => (i.deliveryDate ? formatDateDisplay(i.deliveryDate) : ""), { edit: cells.edit("deliveryDate") }),
+      excelCol<WorkItem>("client", "Cliente", (i) => i.client ?? "", { edit: cells.edit("client") }),
+      excelCol<WorkItem>("product", "Producto", (i) => i.product ?? "", { edit: cells.edit("product") }),
+      excelCol<WorkItem>("plannedQuantity", "Cantidad", (i) => i.quantity ?? "", { edit: cells.edit("plannedQuantity") }),
+      excelCol<WorkItem>("unit", "Unidad", (i) => i.unit ?? "", { edit: cells.edit("unit") }),
+      excelCol<WorkItem>("estado", "Estado", (i) => i.status.replace(/_/g, " ")),
+      excelCol<WorkItem>("notes", "Observación", (i) => i.notes ?? "", { edit: cells.edit("notes") }),
+      {
+        key: "acciones",
+        header: "Acción",
+        action: true,
+        text: () => "",
+        render: (i: WorkItem) => (
+          <ActionButton label="Abrir trabajo" variant="neutral" onClick={() => openWorkItem(i.id)} />
+        ),
+      },
+    ],
+    [cells, openWorkItem]
   );
 
   return (
@@ -140,6 +170,16 @@ export function WireframePlanSemanal() {
                 message="No tenés trabajos asignados para este día."
               />
             ) : (
+              <ExcelOrList
+                columns={detailColumns}
+                rows={selectedItems}
+                rowKey={(i) => i.id}
+                tableId="plan-semanal-detalle"
+                canEditCells={cells.canEditCells}
+                onCellsCommit={cells.onCellsCommit}
+                rowVersion={cells.rowVersion}
+                reasonRequired={cells.reasonRequired}
+              >
               <div className="grid gap-3 sm:grid-cols-2">
                 {selectedItems.map((item) => (
                   <div
@@ -164,6 +204,7 @@ export function WireframePlanSemanal() {
                   </div>
                 ))}
               </div>
+              </ExcelOrList>
             )}
           </section>
         </>

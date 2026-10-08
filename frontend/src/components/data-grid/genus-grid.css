@@ -1,0 +1,62 @@
+/* Tema de la grilla Excel de GENUS OS — se apoya en los tokens --os-* / --genus-*. */
+.genus-grid,
+.genus-grid .dsg-container {
+  --dsg-border-color: var(--os-border, #d7dde3);
+  --dsg-cell-background-color: var(--os-surface, #fff);
+  --dsg-cell-disabled-background-color: var(--os-bg, #f4f6f8);
+  --dsg-header-text-color: var(--os-text-muted, #5b6b78);
+  --dsg-header-active-text-color: var(--os-text, #0f2433);
+  --dsg-selection-border-color: var(--os-teal, #0f766e);
+  --dsg-selection-background-color: color-mix(in srgb, var(--os-teal, #0f766e) 14%, transparent);
+  --dsg-selection-disabled-border-color: var(--os-text-muted, #64748b);
+  --dsg-selection-disabled-background-color: color-mix(in srgb, var(--os-text-muted, #64748b) 12%, transparent);
+  --dsg-selection-border-width: 2px;
+  font-size: 0.8125rem;
+  color: var(--os-text, #0f2433);
+  max-width: 100%;
+  touch-action: manipulation;
+}
+.genus-grid .dsg-input {
+  font-size: 0.8125rem;
+  color: var(--os-text, #0f2433);
+}
+.genus-grid .genus-cell-protected .dsg-input {
+  color: var(--os-text-muted, #5b6b78);
+}
+.genus-grid .dsg-cell-header {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.genus-grid .genus-cell-wrap {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  align-items: center;
+}
+.genus-grid .genus-cell-lock {
+  flex: none;
+  margin-right: 4px;
+  opacity: 0.5;
+  line-height: 0;
+}
+/* Celda protegida (solo lectura por política) */
+.genus-grid .genus-cell-protected {
+  background: var(--os-bg, #f4f6f8);
+  color: var(--os-text-muted, #5b6b78);
+}
+/* Estado de guardado por celda */
+.genus-grid .genus-cell-saving {
+  background: var(--genus-warning-soft, #fffbeb);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #b45309 50%, transparent);
+}
+.genus-grid .genus-cell-error {
+  background: var(--genus-error-soft, #fef2f2);
+  box-shadow: inset 0 0 0 1px var(--genus-error, #b91c1c);
+}
+.genus-grid .genus-cell-num .dsg-input {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

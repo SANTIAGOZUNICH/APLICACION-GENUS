@@ -1,0 +1,77 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { MemoryInventoryRepo } from "@/lib/inventory/memory-repo";
+import { InventoryForbiddenError, InventoryService } from "@/lib/inventory/inventory-service";
+import { inventoryCellProtection, validateInventoryValue } from "@/lib/inventory/cell-edit";
+import type { SectorId } from "@/types/operational/sector";
+
+const deposito = { email: "deposito@laboratoriogenus.com.ar", sector: "DEPOSITO" as SectorId };
+const mp = { email: "mp@laboratoriogenus.com.ar", sector: "MATERIA_PRIMA" as SectorId };
+
+describe("inventario — edición por celda", () => {
+  let repo: MemoryInventoryRepo;
+  let svc: InventoryService;
+  beforeEach(() => {
+    repo = new MemoryInventoryRepo();
+    svc = new InventoryService(repo);
+  });
+
+  it("ME: edita ubicación sin tocar stock ni código ni vecinas; versión cambia; audita", () => {
+    svc.upsertMeIngreso(deposito, { codigo: "CAJ-01", descripcionInsumo: "Cajas", bultos: 10, cantidad: 25, ingresoNro: "X1" });
+    const m = svc.listMeMaterials(deposito)[0]!;
+    const [r] = svc.patchInventoryCells(deposito, "me_inventario", [{ id: m.id, field: "ubicacion", value: "Rack 9", expectedVersion: m.updatedAt }]);
+    expect(r!.ok).toBe(true);
+    const after = svc.listMeMaterials(deposito)[0]!;
+    expect(after.ubicacion).toBe("Rack 9");
+    expect(after.stockActual).toBe(250);
+    expect(after.codigo).toBe(m.codigo);
+    expect(after.descripcion).toBe(m.descripcion);
+    expect(after.updatedAt).not.toBe(m.updatedAt);
+    expect(repo.audit.some((a) => a.action === "cell_edit" && a.entityId === m.id)).toBe(true);
+  });
+
+  it("ME: código y stock NO son editables; conflicto de versión; sector sin permiso", () => {
+    svc.upsertMeIngreso(deposito, { codigo: "CAJ-02", descripcionInsumo: "Tapas", bultos: 1, cantidad: 5, ingresoNro: "X2" });
+    const m = svc.listMeMaterials(deposito)[0]!;
+    for (const field of ["codigo", "stockActual"]) {
+      const [r] = svc.patchInventoryCells(deposito, "me_inventario", [{ id: m.id, field, value: "1", expectedVersion: m.updatedAt }]);
+      expect(r).toMatchObject({ ok: false, code: "INVALID" });
+    }
+    svc.patchInventoryCells(deposito, "me_inventario", [{ id: m.id, field: "cliente", value: "A", expectedVersion: m.updatedAt }]);
+    const [stale] = svc.patchInventoryCells(deposito, "me_inventario", [{ id: m.id, field: "cliente", value: "B", expectedVersion: m.updatedAt }]);
+    expect(stale).toMatchObject({ ok: false, code: "CONFLICT" });
+    expect(() =>
+      svc.patchInventoryCells({ email: "c@x", sector: "CALIDAD" as SectorId }, "me_inventario", [{ id: m.id, field: "cliente", value: "Z", expectedVersion: m.updatedAt }])
+    ).toThrow(InventoryForbiddenError);
+  });
+
+  it("MP: ubicación manual se edita; kg exige motivo y queda en ajustes; todo-o-nada", () => {
+    const lot = svc.upsertMpStock(mp, { descripcion: "Agua", cantidadKg: 40, lote: "A", ubicacion: "R1" });
+    const [bad] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "cantidadKg", value: "30", expectedVersion: lot.updatedAt }]);
+    expect(bad).toMatchObject({ ok: false, code: "INVALID" });
+    expect(repo.getMpStock(lot.id)!.cantidadKg).toBe(40);
+    const mixed = svc.patchInventoryCells(mp, "mp_stock", [
+      { id: lot.id, field: "ubicacion", value: "R7", expectedVersion: lot.updatedAt },
+      { id: lot.id, field: "vencimiento", value: "no-fecha", expectedVersion: lot.updatedAt },
+    ]);
+    expect(mixed.some((x) => !x.ok)).toBe(true);
+    expect(repo.getMpStock(lot.id)!.ubicacion).toBe("R1");
+    const ok = svc.patchInventoryCells(mp, "mp_stock", [
+      { id: lot.id, field: "ubicacion", value: "R7", expectedVersion: lot.updatedAt },
+      { id: lot.id, field: "cantidadKg", value: "30,5", expectedVersion: lot.updatedAt, reason: "Conteo físico del 08/10" },
+    ]);
+    expect(ok.every((x) => x.ok)).toBe(true);
+    const after = repo.getMpStock(lot.id)!;
+    expect(after.ubicacion).toBe("R7");
+    expect(after.cantidadKg).toBe(30.5);
+    expect(after.lote).toBe("A");
+    expect(repo.ajustes.some((a) => a.entityId === lot.id && a.cantidadAnterior === 40 && a.cantidadNueva === 30.5)).toBe(true);
+  });
+
+  it("MP: lotes originados en un ingreso tienen datos del documento protegidos", () => {
+    expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "lote", true)).toMatch(/ingreso/);
+    expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "cantidadKg", true)).toMatch(/Ajustar/);
+    expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "ubicacion", true)).toBeNull();
+    expect(inventoryCellProtection("mp_stock", { origen: "manual", archived: true }, "ubicacion", true)).toMatch(/archivado/);
+    expect(validateInventoryValue("vencimiento", "31/12/2026")).toEqual({ ok: true, value: "2026-12-31" });
+  });
+});

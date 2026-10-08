@@ -108,6 +108,38 @@ describe("resolveAuthenticatedActor", () => {
     expect(actor.email).toBe(ANA.email);
   });
 
+  it("Production (VERCEL_ENV=production) IGNORA el header aunque GENUS_AUTH_ALLOW_TEST_HEADERS=1", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERCEL_ENV", "production");
+    vi.stubEnv("GENUS_AUTH_ALLOW_TEST_HEADERS", "1");
+    await expect(resolveAuthenticatedActor(requestWithHeader(ANA.email))).rejects.toBeInstanceOf(AuthUnauthorizedError);
+  });
+
+  it("Production IGNORA el header incluso con NODE_ENV=test o GENUS_ENV=production", async () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("VERCEL_ENV", "production");
+    await expect(resolveAuthenticatedActor(requestWithHeader(ANA.email))).rejects.toBeInstanceOf(AuthUnauthorizedError);
+    vi.stubEnv("VERCEL_ENV", "");
+    vi.stubEnv("GENUS_ENV", "production");
+    await expect(resolveAuthenticatedActor(requestWithHeader(ANA.email))).rejects.toBeInstanceOf(AuthUnauthorizedError);
+  });
+
+  it("Preview de Vercel también IGNORA el header aunque GENUS_AUTH_ALLOW_TEST_HEADERS=1", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("VERCEL_ENV", "preview");
+    vi.stubEnv("GENUS_AUTH_ALLOW_TEST_HEADERS", "1");
+    await expect(resolveAuthenticatedActor(requestWithHeader(ANA.email))).rejects.toBeInstanceOf(AuthUnauthorizedError);
+  });
+
+  it("Production con la variable activa sigue autenticando por cookie de sesión", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERCEL_ENV", "production");
+    vi.stubEnv("GENUS_AUTH_ALLOW_TEST_HEADERS", "1");
+    const { token } = await service.login(ANA.email, "clave-segura-1");
+    expect((await resolveAuthenticatedActor(requestWithCookie(token))).email).toBe(ANA.email);
+  });
+
   it("el header legacy con un email fuera del directorio sigue siendo 401 incluso en modo test", async () => {
     vi.stubEnv("NODE_ENV", "test");
     await expect(

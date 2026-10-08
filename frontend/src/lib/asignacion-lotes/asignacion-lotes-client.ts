@@ -4,6 +4,10 @@ import {
 } from "@/lib/auth/header-names";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type {
+  AsignacionCellChange,
+  AsignacionCellFailure,
+} from "@/lib/asignacion-lotes/cell-edit";
+import type {
   AsignacionLote,
   AsignacionLoteImportResult,
   AsignacionLoteUpsertInput,
@@ -20,7 +24,7 @@ function headers(session: OrdersClientSession): HeadersInit {
 export async function fetchAsignacionLotesApi(
   session: OrdersClientSession,
   options: { includeArchived?: boolean } = {}
-): Promise<{ items: AsignacionLote[]; schemaPending: boolean }> {
+): Promise<{ items: AsignacionLote[]; schemaPending: boolean; writableSourceIds: string[] }> {
   const qs = new URLSearchParams();
   if (options.includeArchived) qs.set("includeArchived", "1");
   const res = await fetch(`/api/v1/asignacion-lotes?${qs}`, { credentials: "include", headers: headers(session) });
@@ -28,11 +32,13 @@ export async function fetchAsignacionLotesApi(
     items?: AsignacionLote[];
     error?: string;
     schemaPending?: boolean;
+    writableSourceIds?: string[];
   };
   if (!res.ok) throw new Error(body.error ?? "No se pudieron cargar asignaciones de lotes");
   return {
     items: body.items ?? [],
     schemaPending: Boolean(body.schemaPending),
+    writableSourceIds: body.writableSourceIds ?? [],
   };
 }
 
@@ -106,4 +112,60 @@ export async function deleteAsignacionLoteApi(
   });
   const body = (await res.json()) as { error?: string };
   if (!res.ok) throw new Error(body.error ?? "No se pudo eliminar la asignación");
+}
+
+export class AsignacionCellsApiError extends Error {
+  constructor(
+    message: string,
+    readonly failures: AsignacionCellFailure[],
+    readonly status: number,
+    /** Registros que SÍ quedaron consistentes pese al fallo parcial (para refrescar la UI). */
+    readonly items: AsignacionLote[] = []
+  ) {
+    super(message);
+    this.name = "AsignacionCellsApiError";
+  }
+}
+
+/**
+ * PATCH parcial por celda (atómico). Envía SOLO {id, campo, valor, versión}
+ * por celda — nunca la fila completa. Resuelve únicamente si el servidor
+ * confirmó la persistencia; ante rechazo lanza AsignacionCellsApiError con
+ * el detalle por celda.
+ */
+export async function patchAsignacionLoteCellsApi(
+  session: OrdersClientSession,
+  changes: AsignacionCellChange[]
+): Promise<{ items: AsignacionLote[]; changedCells: number; unchangedCells: number }> {
+  let res: Response;
+  try {
+    res = await fetch("/api/v1/asignacion-lotes/cells", {
+      method: "PATCH",
+      credentials: "include",
+      headers: headers(session),
+      body: JSON.stringify({ actorSectorId: session.sector, changes }),
+    });
+  } catch {
+    throw new AsignacionCellsApiError("Sin conexión con el servidor. Reintentá.", [], 0);
+  }
+  const body = (await res.json().catch(() => ({}))) as {
+    items?: AsignacionLote[];
+    changedCells?: number;
+    unchangedCells?: number;
+    error?: string;
+    failures?: AsignacionCellFailure[];
+  };
+  if (!res.ok) {
+    throw new AsignacionCellsApiError(
+      body.failures?.[0]?.message ?? body.error ?? "No se pudo guardar el cambio.",
+      body.failures ?? [],
+      res.status,
+      body.items ?? []
+    );
+  }
+  return {
+    items: body.items ?? [],
+    changedCells: body.changedCells ?? 0,
+    unchangedCells: body.unchangedCells ?? 0,
+  };
 }

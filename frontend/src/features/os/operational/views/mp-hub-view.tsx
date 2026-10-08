@@ -59,6 +59,7 @@ import {
   ACTOR_SECTOR_HEADER,
 } from "@/lib/auth/header-names";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useInventoryCellEditing } from "@/features/os/operational/hooks/use-inventory-cells";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import {
   applySort,
@@ -157,6 +158,16 @@ const TAB_TO_RESOURCE = {
   "Compras MP": "mp_compras",
   "COA'S": "mp_stock",
 } as const;
+
+const MP_STOCK_CELL_FIELDS: Record<string, string> = {
+  PROVEEDOR: "proveedor",
+  CLIENTE: "cliente",
+  "DESCRIPCIÓN MATERIA PRIMA": "descripcion",
+  "CANTIDAD (KG)": "cantidadKg",
+  UBICACIÓN: "ubicacion",
+  LOTE: "lote",
+  VENCIMIENTO: "vencimiento",
+};
 
 export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: MpHubTab }) {
   const { email, sectorId } = usePreviewSession();
@@ -400,6 +411,14 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       setBanner(e instanceof InventoryClientError ? e.message : "Error al guardar");
     }
   }
+
+  const stockCells = useInventoryCellEditing<MpStockRow>(
+    "mp_stock",
+    canWrite && tab === "Stock",
+    MP_STOCK_CELL_FIELDS,
+    (r) => r.id,
+    reload
+  );
 
   const stockColumns: OperationalTableColumn<MpStockRow>[] = MP_STOCK_COLUMNS.map((label) => {
     const map: Record<string, keyof MpStockRow> = {
@@ -888,8 +907,13 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           </div>
         ) : null}
         <OperationalTable
+          tableId="mp-stock"
+          canEditCells={stockCells.canEditCells}
+          onCellsCommit={stockCells.onCellsCommit}
+          reasonRequired={stockCells.reasonRequired}
+          rowVersion={stockCells.rowVersion}
           columns={[
-            ...stockColumns,
+            ...stockColumns.map((col) => ({ ...col, edit: stockCells.edit(String(col.key)) })),
             ...(canWrite
               ? [
                   {

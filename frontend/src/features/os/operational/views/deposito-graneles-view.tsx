@@ -1,5 +1,16 @@
 "use client";
 
+import { ExcelOrList, excelCol } from "../components/operational-ui";
+import type { GenusGridCellChange, GenusGridCommitResult } from "@/components/data-grid/genus-grid";
+import {
+  GRANEL_CELL_KIND,
+  GRANEL_REASON_FIELDS,
+  GRANEL_SENSITIVE_FIELDS,
+  granelCellProtection,
+  isGranelCellField,
+  validateGranelValue,
+  type GranelCellField,
+} from "@/lib/graneles/cell-edit";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
@@ -17,6 +28,7 @@ import {
   createManualGranelApi,
   deleteOrAnnulGranelApi,
   fetchGranelesApi,
+  patchGranelCellsApi,
   updateGranelApi,
 } from "@/lib/graneles/graneles-client";
 import type { GranelRemainderRecord, GranelStatus } from "@/lib/graneles/types";
@@ -106,6 +118,39 @@ export function DepositoGranelesView() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const commitCells = useCallback(
+    async (changes: GenusGridCellChange[]): Promise<GenusGridCommitResult> => {
+      const payload = changes.flatMap((c) =>
+        isGranelCellField(c.columnKey)
+          ? [{ id: c.rowId, field: c.columnKey, value: c.newValue, expectedVersion: c.rowVersion ?? "", reason: c.reason }]
+          : []
+      );
+      const res = await patchGranelCellsApi(session, payload);
+      await refresh(); // lo mostrado es lo que la base confirmó
+      const failures = res.results.flatMap((r, i) => (r.ok ? [] : [{ rowId: payload[i]?.id ?? "", columnKey: payload[i]?.field ?? "", message: r.message ?? "Error" }]));
+      if (res.ok && failures.length === 0) return { ok: true };
+      return { ok: false, message: res.error ?? failures[0]?.message, failures };
+    },
+    [session, refresh]
+  );
+  const itemsById = useMemo(() => new Map(items.map((r) => [r.id, r] as const)), [items]);
+  const granelReasonRequired = useCallback(
+    (changes: GenusGridCellChange[]) =>
+      changes.some((c) => isGranelCellField(c.columnKey) && GRANEL_REASON_FIELDS.has(c.columnKey))
+        ? "Corregir el stock requiere un motivo (queda auditado con kg anterior y nuevo)."
+        : null,
+    []
+  );
+  const granelEdit = (field: GranelCellField) => ({
+    kind: GRANEL_CELL_KIND[field],
+    sensitive: GRANEL_SENSITIVE_FIELDS.has(field),
+    protection: (r: GranelRemainderRecord) => granelCellProtection(r, field, canEdit),
+    validate: (raw: string) => {
+      const v = validateGranelValue(field, raw);
+      return v.ok ? null : v.message;
+    },
+  });
 
   const [sort, setSort] = useSortPreference("deposito-graneles", "ingreso_desc", GRANELES_SORT_KEYS);
   const filtered = useMemo(() => {
@@ -285,6 +330,45 @@ export function DepositoGranelesView() {
       ) : (
         <>
           <div className="hidden overflow-x-hidden md:block">
+            <ExcelOrList
+              tableId="graneles"
+              rows={filtered}
+              rowKey={(r) => r.id}
+              disabled={sel.active}
+              canEditCells={canEdit}
+              onCellsCommit={commitCells}
+              rowVersion={(r) => itemsById.get(r.id)?.updatedAt ?? r.updatedAt}
+              reasonRequired={granelReasonRequired}
+              columns={[
+                excelCol("product", "Producto", (r: (typeof filtered)[number]) => r.product ?? "", { edit: granelEdit("product") }),
+                excelCol("client", "Cliente", (r: (typeof filtered)[number]) => r.client ?? "", { edit: granelEdit("client") }),
+                excelCol("bulkLot", "Lote granel", (r: (typeof filtered)[number]) => r.bulkLot ?? "", { edit: granelEdit("bulkLot") }),
+                excelCol("kgAvailable", "Kg", (r: (typeof filtered)[number]) => String(r.kgAvailable), { edit: granelEdit("kgAvailable") }),
+                excelCol("intakeDate", "Ingreso", (r: (typeof filtered)[number]) => String(r.intakeDate ?? ""), { edit: granelEdit("intakeDate") }),
+                excelCol("location", "Ubicación", (r: (typeof filtered)[number]) => r.location ?? "", { edit: granelEdit("location") }),
+                excelCol("observation", "Observación", (r: (typeof filtered)[number]) => r.observation ?? "", { edit: granelEdit("observation") }),
+                excelCol("origen", "Origen", (r: (typeof filtered)[number]) => r.originSector ?? "—"),
+                excelCol("estado", "Estado", (r: (typeof filtered)[number]) => String(r.status)),
+                {
+                  key: "acciones",
+                  header: "Acciones",
+                  action: true,
+                  text: () => "",
+                  render: (r: (typeof filtered)[number]) => (
+                    <>
+                      <Button size="sm" variant="secondary" onClick={() => setEdit({ ...r })}>
+                        Abrir
+                      </Button>
+                      {canEdit ? (
+                        <Button size="sm" variant="destructive" onClick={() => { setDeleteTarget(r); setReason(""); }}>
+                          Eliminar
+                        </Button>
+                      ) : null}
+                    </>
+                  ),
+                },
+              ]}
+            >
             <table className="os-table w-full max-w-full table-fixed text-sm" data-testid="graneles-table">
               <thead>
                 <tr className="text-left text-xs uppercase text-[var(--os-text-muted)]">
@@ -348,6 +432,7 @@ export function DepositoGranelesView() {
                 ))}
               </tbody>
             </table>
+            </ExcelOrList>
           </div>
 
           <div className="space-y-3 md:hidden">

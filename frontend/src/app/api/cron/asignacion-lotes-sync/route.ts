@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { reconcileWritebacks } from "@/lib/asignacion-lotes/asignacion-lotes-writeback-service";
 import { syncAllEnabledSources } from "@/lib/asignacion-lotes/asignacion-lotes-sync-service";
 
 export const runtime = "nodejs";
@@ -39,6 +40,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "No autorizado." }, { status: 401 });
   }
 
+  // Primero se completan en Neon las escrituras que Google ya confirmó (opción C); el sync recién después.
+  const reconciliation = await reconcileWritebacks().catch(() => null);
   const results = await syncAllEnabledSources("cron", "cron");
-  return NextResponse.json({ ok: true, sourcesSynced: results.length, results });
+  return NextResponse.json({ ok: true, sourcesSynced: results.length, results, writebackReconciliation: reconciliation });
 }

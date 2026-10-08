@@ -16,6 +16,8 @@ import {
   SyncStatusBar,
   type OperationalTableColumn,
 } from "../components/operational-ui";
+import { formatDateDisplay } from "../lib/delivery-date";
+import { useWorkItemCellEditing } from "../hooks/use-work-item-cells";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { buildOperationalActivityFeed } from "../lib/completion-events";
 import {
@@ -210,6 +212,7 @@ export function ProduccionOperationalView({
     () => filterWorkItemsTransferredElaboracion(workItems),
     [workItems]
   );
+  const cells = useWorkItemCellEditing(workItems, refresh);
   const elaboracionRows = useMemo(
     () => sortWorkItemsTransferredFirst([...pendienteElaboracion, ...transferidoElaboracion]),
     [pendienteElaboracion, transferidoElaboracion]
@@ -608,17 +611,27 @@ export function ProduccionOperationalView({
         header: "Línea / Resp.",
         render: (row) => displayField(row.line ?? row.ownerPerson),
       },
-      { key: "client", header: "Cliente", render: (row) => displayField(row.client) },
+      { key: "client", header: "Cliente", render: (row) => displayField(row.client), text: (row) => row.client ?? "", edit: cells.edit("client") },
       {
         key: "product",
         header: "Producto",
         render: (row) => displayField(row.product),
+        text: (row) => row.product ?? "",
+        edit: cells.edit("product"),
       },
       {
-        key: "quantity",
+        key: "plannedQuantity",
         header: "Planif.",
         render: (row) => formatQuantity(row),
+        text: (row) => row.quantity ?? "",
+        edit: cells.edit("plannedQuantity"),
       },
+      { key: "unit", header: "Unidad", excelOnly: true, render: (row) => row.unit ?? "", text: (row) => row.unit ?? "", edit: cells.edit("unit") },
+      { key: "plannedDate", header: "Fecha", excelOnly: true, render: (row) => row.plannedDate ?? "", text: (row) => (row.plannedDate ? formatDateDisplay(row.plannedDate) : ""), edit: cells.edit("plannedDate") },
+      { key: "deliveryDate", header: "Entrega", excelOnly: true, render: (row) => row.deliveryDate ?? "", text: (row) => (row.deliveryDate ? formatDateDisplay(row.deliveryDate) : ""), edit: cells.edit("deliveryDate") },
+      { key: "notes", header: "Observaciones", excelOnly: true, render: (row) => row.notes ?? "", text: (row) => row.notes ?? "", edit: cells.edit("notes") },
+      { key: "packagingLote", header: "Lote", excelOnly: true, render: (row) => row.packagingLote ?? "", text: (row) => row.packagingLote ?? "", edit: cells.edit("packagingLote") },
+      { key: "packagingVto", header: "VTO", excelOnly: true, render: (row) => row.packagingVto ?? "", text: (row) => (row.packagingVto ? formatDateDisplay(row.packagingVto) : ""), edit: cells.edit("packagingVto") },
       {
         key: "finished",
         header: "Terminadas",
@@ -642,7 +655,7 @@ export function ProduccionOperationalView({
         ),
       },
     ],
-    [getFinishedQty, handleWarningSelect]
+    [getFinishedQty, handleWarningSelect, cells]
   );
 
   const tabs = PRODUCCION_TABS.map((tab) => {
@@ -757,6 +770,11 @@ export function ProduccionOperationalView({
               columns={workColumns}
               rows={elaboracionRows}
               rowKey={(row) => row.id}
+              tableId="produccion-elaboracion"
+              canEditCells={cells.canEditCells}
+              onCellsCommit={cells.onCellsCommit}
+              rowVersion={cells.rowVersion}
+              reasonRequired={cells.reasonRequired}
               emptyMessage="Sin elaboraciones en plan."
             />
           </>
@@ -775,6 +793,11 @@ export function ProduccionOperationalView({
               columns={workColumns}
               rows={envasadoRows}
               rowKey={(row) => row.id}
+              tableId="produccion-envasados"
+              canEditCells={cells.canEditCells}
+              onCellsCommit={cells.onCellsCommit}
+              rowVersion={cells.rowVersion}
+              reasonRequired={cells.reasonRequired}
               emptyMessage="Sin envasados en plan."
             />
           </>

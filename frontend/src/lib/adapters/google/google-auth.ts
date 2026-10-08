@@ -4,6 +4,12 @@ import { google } from "googleapis";
 
 const DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"];
 const SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"];
+/**
+ * Scope de ESCRITURA — solo para el gateway de write-back de Asignación de Lotes
+ * (opción C). Nunca forma parte de ALL_SCOPES: las lecturas siguen siendo readonly.
+ * Además exige allowlist de spreadsheets (ver asignacion-lotes/writeback.ts).
+ */
+export const SHEETS_WRITE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 const ALL_SCOPES = [...DRIVE_SCOPES, ...SHEETS_SCOPES];
 
 function getCredentials():

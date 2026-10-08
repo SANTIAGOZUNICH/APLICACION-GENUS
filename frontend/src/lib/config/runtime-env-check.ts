@@ -13,6 +13,8 @@ import {
   getServerDataMode,
   shouldFallbackToDemo,
 } from "@/lib/config/data-mode";
+import { isTestHeaderModeEnabled } from "@/lib/auth/resolve-authenticated-actor";
+import { databaseFingerprint } from "@/lib/config/db-fingerprint";
 import { isDatabaseConfigured } from "@/lib/db/client";
 import { getPlanningSource } from "@/lib/planning/planning-source";
 
@@ -77,8 +79,27 @@ export interface RuntimeEnvSnapshot {
   hasDatabaseUrlUnpooled: boolean;
   hasPostgresUrl: boolean;
   databaseConfigured: boolean;
+  /**
+   * Huella NO reversible de host+base de DATABASE_URL (12 hex). Sirve para confirmar que Preview y Production
+   * usan bases distintas comparando ambos /api/v1/env-check, sin exponer la conexión.
+   */
+  databaseFingerprint: string | null;
+  /** true = este deploy acepta el header `x-genus-actor-email` como identidad (debe ser false en Preview y Production). */
+  authTestHeaderMode: boolean;
+  /** Estado del write-back a Google (solo presencia/cantidad, nunca ids). */
+  googleWriteback: {
+    blockedByProduction: boolean;
+    asignacionFlag: boolean;
+    asignacionAllowlistCount: number;
+    semanasFlag: boolean;
+    semanasAllowlistCount: number;
+  };
   checkedAt: string;
 }
+
+export { databaseFingerprint };
+
+const countList = (v: string | undefined) => (v ?? "").split(",").map((s) => s.trim()).filter(Boolean).length;
 
 function readRawEnv(name: string): string | null {
   const value = process.env[name];
@@ -299,6 +320,17 @@ export async function buildRuntimeEnvSnapshot(): Promise<RuntimeEnvSnapshot> {
     hasDatabaseUrlUnpooled: Boolean(process.env.DATABASE_URL_UNPOOLED?.trim()),
     hasPostgresUrl: Boolean(process.env.POSTGRES_URL?.trim()),
     databaseConfigured: isDatabaseConfigured(),
+    databaseFingerprint: databaseFingerprint(
+      process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? process.env.DATABASE_URL_UNPOOLED
+    ),
+    authTestHeaderMode: isTestHeaderModeEnabled(),
+    googleWriteback: {
+      blockedByProduction: process.env.VERCEL_ENV === "production",
+      asignacionFlag: process.env.ASIGNACION_LOTES_WRITEBACK === "1",
+      asignacionAllowlistCount: countList(process.env.ASIGNACION_LOTES_WRITEBACK_SPREADSHEET_IDS),
+      semanasFlag: process.env.SEMANAS_WRITEBACK === "1",
+      semanasAllowlistCount: countList(process.env.SEMANAS_WRITEBACK_SPREADSHEET_IDS),
+    },
     checkedAt: new Date().toISOString(),
   };
 }

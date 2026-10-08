@@ -9,6 +9,11 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e:plan-semanal": "bash scripts/e2e/run-plan-semanal-local.sh",
+    "test:e2e:semanas-visual": "bash scripts/e2e/run-semanas-visual-local.sh",
+    "test:e2e:semanas-ux": "bash scripts/e2e/run-semanas-ux-local.sh",
+    "test:e2e:semanas-preview": "bash scripts/e2e/run-semanas-preview-local.sh",
+    "test:e2e:semanas-priorities-db": "bash scripts/e2e/run-semanas-priorities-db-local.sh",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
@@ -48,6 +53,7 @@
     "pdf-lib": "^1.17.1",
     "pdfkit": "^0.19.1",
     "react": "19.2.4",
+    "react-datasheet-grid": "4.11.6",
     "react-dom": "19.2.4",
     "server-only": "^0.0.1",
     "tailwind-merge": "^3.6.0",
@@ -76,5 +82,11 @@
     "tsx": "^4.23.1",
     "typescript": "^5",
     "vitest": "^3.2.4"
+  },
+  "overrides": {
+    "react-resize-detector": {
+      "react": "$react",
+      "react-dom": "$react-dom"
+    }
   }
 }

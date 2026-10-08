@@ -267,7 +267,20 @@
       "when": 1790200000000,
       "tag": "0038_asignacion_lotes_incomplete_and_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1791100000000,
+      "tag": "0040_asignacion_lotes_cell_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1791200000000,
+      "tag": "0041_semanas_task_priorities",
+      "breakpoints": true
     }
   ]
 }
-

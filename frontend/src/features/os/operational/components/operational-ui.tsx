@@ -1,7 +1,14 @@
 "use client";
 
-import { Fragment, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronRight, Rows3, Table2 } from "lucide-react";
+import {
+  GenusGrid,
+  type GenusGridCellChange,
+  type GenusGridColumn,
+  type GenusGridCommitResult,
+} from "@/components/data-grid/genus-grid";
+import { nodeToText } from "@/lib/utils/node-text";
 import {
   SelectionCheckbox,
   selectedRowClassName,
@@ -71,6 +78,24 @@ export interface OperationalTableColumn<T> {
    * Usar "lg"/"xl"/"2xl" en tablas anchas (laptop → desktop amplio).
    */
   hideOnMobile?: boolean | "md" | "lg" | "xl" | "2xl";
+  /** Texto plano de la celda para la planilla (selección/copia estilo Excel). Si falta se deriva de `render`. */
+  text?: (row: T) => string;
+  /** Solo se muestra en la planilla (p. ej. la «Unidad» que en la lista va dentro de la cantidad). */
+  excelOnly?: boolean;
+  /** Columna de botones/acciones: en la planilla va fija a la derecha con su render real (no se copia). */
+  action?: boolean;
+  /**
+   * Edición directa de la celda en la planilla (opt-in por columna). Sin esto la columna es de solo lectura
+   * (seleccionable y copiable). Requiere `onCellsCommit` y `canEditCells` en la tabla.
+   */
+  edit?: {
+    kind?: "text" | "number" | "date";
+    /** Motivo por el que NO es editable para esta fila (permisos/estados/registros cerrados). null = editable. */
+    protection?: (row: T) => string | null;
+    validate?: (raw: string, row: T) => string | null;
+    /** Identidad/trazabilidad: la edición siempre pide confirmación. */
+    sensitive?: boolean;
+  };
 }
 
 type CollapseBelow = "md" | "lg" | "xl" | "2xl";
@@ -108,17 +133,195 @@ interface OperationalTableProps<T> {
   emptyMessage?: string;
   /** Modo selección explícito (checkboxes solo si active). */
   selection?: OperationalTableSelection;
+  /**
+   * Planilla tipo Excel (GenusGrid): selección de celdas/rangos, Ctrl+C a Excel/Sheets, navegación con teclado.
+   * Activa por defecto (salvo modo selección múltiple y tests); `false` la desactiva. El usuario puede volver
+   * a la lista con «Ver como lista».
+   */
+  excel?: boolean;
+  /** Identificador estable de la tabla (testids). */
+  tableId?: string;
+  /** Edición de celdas (solo columnas con `edit`): persiste SOLO las celdas modificadas y resuelve al confirmar el servidor. */
+  onCellsCommit?: (changes: GenusGridCellChange[]) => Promise<GenusGridCommitResult>;
+  canEditCells?: boolean;
+  /** Versión de concurrencia por fila (p. ej. updatedAt). */
+  rowVersion?: (row: T) => string;
+  reasonRequired?: (changes: GenusGridCellChange[]) => string | null;
+}
+
+const TABLE_MODE_KEY = "genus_os_table_mode";
+const ACTION_KEYS = new Set(["acciones", "accion", "acción", "actions", "action"]);
+const isActionColumn = <T,>(c: OperationalTableColumn<T>): boolean =>
+  c.action ?? (ACTION_KEYS.has(c.key.toLowerCase()) || c.header.trim() === "");
+
+function readTableMode(): "excel" | "list" {
+  try {
+    return window.localStorage.getItem(TABLE_MODE_KEY) === "list" ? "list" : "excel";
+  } catch {
+    return "excel";
+  }
+}
+
+/** Preferencia lista/planilla compartida por todas las tablas (se recuerda por usuario/navegador). */
+function useTableMode() {
+  // Planilla por defecto; en tests se mantiene la lista clásica (la grilla virtualizada necesita layout real).
+  const [mode, setMode] = useState<"excel" | "list">(process.env.NODE_ENV === "test" ? "list" : "excel");
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "test") {
+      // Preferencia guardada del usuario (solo disponible en el cliente).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMode(readTableMode());
+    }
+  }, []);
+  const toggle = () =>
+    setMode((m) => {
+      const next = m === "excel" ? "list" : "excel";
+      try {
+        window.localStorage.setItem(TABLE_MODE_KEY, next);
+      } catch {
+        // sin persistencia: solo esta sesión
+      }
+      return next;
+    });
+  return { mode, toggle };
+}
+
+/** Columna de texto para la planilla (copiable); `action` = botones (columna fija a la derecha). */
+export function excelCol<T>(
+  key: string,
+  header: string,
+  text: (row: T) => string,
+  extra: Partial<OperationalTableColumn<T>> = {}
+): OperationalTableColumn<T> {
+  return { key, header, text, render: (row) => text(row), ...extra };
+}
+
+/**
+ * Para tablas con marcado propio (listados con filas expandibles, botones, etc.): muestra la planilla
+ * tipo Excel (GenusGrid, solo lectura salvo columnas con `edit`) y deja el marcado existente como
+ * «lista». Misma preferencia y mismo botón que OperationalTable.
+ */
+export function ExcelOrList<T>({
+  columns,
+  rows,
+  rowKey,
+  tableId,
+  children,
+  disabled = false,
+  onCellsCommit,
+  canEditCells,
+  rowVersion,
+  reasonRequired,
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired"> & {
+  /** Lista clásica (el marcado existente) como hijo. */
+  children: ReactNode;
+  /** true = fuerza la lista (p. ej. modo selección múltiple). */
+  disabled?: boolean;
+}) {
+  const { mode, toggle } = useTableMode();
+  if (disabled || mode !== "excel" || rows.length === 0) {
+    return (
+      <div className="space-y-1">
+        {!disabled && rows.length > 0 && process.env.NODE_ENV !== "test" ? (
+          <div className="flex justify-end">
+            <button type="button" onClick={toggle} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--os-text-muted)] hover:bg-[var(--os-teal-soft)]/50" data-testid="os-table-mode-toggle">
+              <Table2 className="size-3.5" aria-hidden="true" />
+              Ver como planilla
+            </button>
+          </div>
+        ) : null}
+        {children}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1" data-testid={tableId ? `${tableId}-excel` : "os-table-excel"}>
+      <div className="flex justify-end">
+        <button type="button" onClick={toggle} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--os-text-muted)] hover:bg-[var(--os-teal-soft)]/50" data-testid="os-table-mode-toggle">
+          <Rows3 className="size-3.5" aria-hidden="true" />
+          Ver como lista
+        </button>
+      </div>
+      <ExcelView columns={columns} rows={rows} rowKey={rowKey} tableId={tableId} onCellsCommit={onCellsCommit} canEditCells={canEditCells} rowVersion={rowVersion} reasonRequired={reasonRequired} />
+    </div>
+  );
+}
+
+/** Planilla de solo lectura/edición opt-in sobre las mismas columnas de la tabla. */
+function ExcelView<T>({
+  columns,
+  rows,
+  rowKey,
+  tableId,
+  onCellsCommit,
+  canEditCells,
+  rowVersion,
+  reasonRequired,
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired">) {
+  const dataColumns = useMemo(() => columns.filter((c) => !isActionColumn(c)), [columns]);
+  const actionColumns = useMemo(() => columns.filter((c) => isActionColumn(c)), [columns]);
+  const textOf = (c: OperationalTableColumn<T>, row: T) => (c.text ? c.text(row) : nodeToText(c.render(row)));
+  const gridColumns = useMemo<GenusGridColumn<T>[]>(
+    () =>
+      dataColumns.map((c) => ({
+        key: c.key,
+        title: c.header,
+        kind: c.edit?.kind ?? "text",
+        basis: 150,
+        sensitive: c.edit?.sensitive,
+        getValue: (row: T) => textOf(c, row),
+        protection: (row: T) => (c.edit ? (c.edit.protection?.(row) ?? null) : "Columna de solo lectura."),
+        validate: c.edit?.validate,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dataColumns]
+  );
+  return (
+    <GenusGrid<T>
+      rows={rows}
+      rowId={rowKey}
+      rowVersion={rowVersion ?? (() => "")}
+      rowLabel={(row) => textOf(dataColumns[0]!, row) || rowKey(row)}
+      columns={gridColumns}
+      canEdit={Boolean(canEditCells && onCellsCommit)}
+      onCommit={onCellsCommit ?? (async () => ({ ok: false, message: "Esta tabla es de solo lectura." }))}
+      reasonRequired={reasonRequired}
+      renderRowActions={
+        actionColumns.length
+          ? (row) => (
+              <div className="flex items-center gap-1">
+                {actionColumns.map((c) => (
+                  <Fragment key={c.key}>{c.render(row)}</Fragment>
+                ))}
+              </div>
+            )
+          : undefined
+      }
+      rowActionsWidth={actionColumns.length ? 128 : undefined}
+      maxHeight={560}
+      testId={tableId ? `${tableId}-grid` : "os-table-grid"}
+    />
+  );
 }
 
 /** Tabla funcional — sin scroll horizontal; secundarios en “Más datos”. */
 export function OperationalTable<T>({
-  columns,
+  columns: allColumns,
   rows,
   rowKey,
   emptyMessage = "Sin registros.",
   selection,
+  excel = true,
+  tableId,
+  onCellsCommit,
+  canEditCells,
+  rowVersion,
+  reasonRequired,
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const { mode, toggle: toggleMode } = useTableMode();
+  // Las columnas `excelOnly` existen solo en la planilla; la lista clásica queda exactamente como antes.
+  const columns = useMemo(() => allColumns.filter((c) => !c.excelOnly), [allColumns]);
   const secondaryMeta = columns
     .map((c) => ({ col: c, bp: resolveCollapse(c.hideOnMobile) }))
     .filter((x): x is { col: OperationalTableColumn<T>; bp: CollapseBelow } => x.bp != null);
@@ -141,8 +344,50 @@ export function OperationalTable<T>({
     );
   }
 
+  const showExcel = excel && mode === "excel" && !selectionActive;
+  if (showExcel) {
+    return (
+      <div className="space-y-1" data-testid={tableId ? `${tableId}-excel` : "os-table-excel"}>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={toggleMode}
+            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--os-text-muted)] hover:bg-[var(--os-teal-soft)]/50"
+            data-testid="os-table-mode-toggle"
+          >
+            <Rows3 className="size-3.5" aria-hidden="true" />
+            Ver como lista
+          </button>
+        </div>
+        <ExcelView
+          columns={allColumns}
+          rows={rows}
+          rowKey={rowKey}
+          tableId={tableId}
+          onCellsCommit={onCellsCommit}
+          canEditCells={canEditCells}
+          rowVersion={rowVersion}
+          reasonRequired={reasonRequired}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="os-table-wrap max-w-full min-w-0 overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)]">
+      {excel && !selectionActive && mode === "list" && process.env.NODE_ENV !== "test" ? (
+        <div className="flex justify-end border-b border-[var(--os-border)] px-2 py-1">
+          <button
+            type="button"
+            onClick={toggleMode}
+            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--os-text-muted)] hover:bg-[var(--os-teal-soft)]/50"
+            data-testid="os-table-mode-toggle"
+          >
+            <Table2 className="size-3.5" aria-hidden="true" />
+            Ver como planilla
+          </button>
+        </div>
+      ) : null}
       <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,12.75px)]">
         <thead className="sticky top-0 z-[1]">
           <tr className="border-b border-[var(--os-border)] bg-[var(--os-surface-glass)] backdrop-blur-md">

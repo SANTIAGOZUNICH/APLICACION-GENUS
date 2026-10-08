@@ -6,6 +6,20 @@ import { Button } from "@/components/ui/button";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
+  GenusGrid,
+  type GenusGridCellChange,
+  type GenusGridColumn,
+  type GenusGridCommitResult,
+} from "@/components/data-grid/genus-grid";
+import {
+  PEDIDO_CELL_KIND,
+  PEDIDO_IDENTITY_FIELDS,
+  isPedidoCellField,
+  pedidoCellProtection,
+} from "@/lib/production-pedidos/cell-edit";
+import {
+  PedidoCellsApiError,
+  patchProductionPedidoCellsApi,
   createProductionPedidoApi,
   deleteProductionPedidoApi,
   fetchProductionPedidosApi,
@@ -242,6 +256,55 @@ export function ProductionPedidosView() {
   const sortedItems = useMemo(
     () => applySort(items, PEDIDOS_SORT_OPTIONS, sortKey),
     [items, sortKey]
+  );
+
+  // ---- Planilla tipo Excel (GenusGrid): selección/copia de rangos y edición por celda ----
+  const [excelMode, setExcelMode] = useState(true);
+  const pedidoColumns = useMemo<GenusGridColumn<ProductionPedidoRecord>[]>(() => {
+    const editable = (key: "op" | "fecha" | "nroOc" | "cliente" | "producto" | "s" | "q" | "ml", title: string, basis: number, value: (r: ProductionPedidoRecord) => string): GenusGridColumn<ProductionPedidoRecord> => ({
+      key,
+      title,
+      kind: PEDIDO_CELL_KIND[key],
+      basis,
+      sensitive: PEDIDO_IDENTITY_FIELDS.has(key),
+      getValue: value,
+      protection: (r) => pedidoCellProtection(r, key),
+      validate: (raw) => {
+        const f = coercePedidoFields({ [key]: raw.trim() === "" ? null : raw } as ProductionPedidoInput);
+        return f.errors[0] ?? null;
+      },
+    });
+    return [
+      editable("op", "OP", 100, (r) => r.op ?? ""),
+      editable("fecha", "FECHA", 110, (r) => r.fecha ?? ""),
+      editable("nroOc", "N.º OC", 110, (r) => r.nroOc ?? ""),
+      editable("cliente", "CLIENTE", 170, (r) => r.cliente ?? ""),
+      editable("producto", "PRODUCTO", 220, (r) => r.producto ?? ""),
+      editable("s", "S", 70, (r) => r.s ?? ""),
+      editable("q", "Q", 90, (r) => (r.q == null ? "" : String(r.q))),
+      editable("ml", "ML", 90, (r) => (r.ml == null ? "" : String(r.ml))),
+      { key: "kg", title: "KG", basis: 100, getValue: (r) => r.kgDisplay, protection: (r) => pedidoCellProtection(r, "kg") },
+      { key: "estado", title: "ESTADO", basis: 170, getValue: (r) => (r.estado ? PRODUCTION_PEDIDO_STATUS_LABELS[r.estado] : ""), protection: (r) => pedidoCellProtection(r, "estado") },
+    ];
+  }, []);
+  const commitPedidoCells = useCallback(
+    async (changes: GenusGridCellChange[]): Promise<GenusGridCommitResult> => {
+      try {
+        const res = await patchProductionPedidoCellsApi(
+          session,
+          changes.filter((c) => isPedidoCellField(c.columnKey)).map((c) => ({ id: c.rowId, field: c.columnKey, value: c.newValue, expectedVersion: c.rowVersion }))
+        );
+        const byId = new Map(res.items.map((r) => [r.id, r] as const));
+        setItems((prev) => prev.map((r) => byId.get(r.id) ?? r));
+        return { ok: true };
+      } catch (err) {
+        if (err instanceof PedidoCellsApiError) {
+          return { ok: false, message: err.message, failures: err.failures.map((f) => ({ rowId: f.id, columnKey: f.field, message: f.message })) };
+        }
+        return { ok: false, message: err instanceof Error ? err.message : "No se pudo guardar." };
+      }
+    },
+    [session]
   );
 
   const visibleIds = useMemo(() => sortedItems.map((r) => r.id), [sortedItems]);
@@ -568,8 +631,45 @@ export function ProductionPedidosView() {
           />
         </div>
 
+        {/* Planilla tipo Excel (desktop): seleccionar/copiar rangos + editar celdas autorizadas */}
+        {!sel.active && excelMode && (
+          <div className="hidden lg:block" data-testid="pedidos-excel">
+            <div className="mb-1 flex justify-end">
+              <button type="button" className="text-xs text-[var(--os-text-muted)] underline" onClick={() => setExcelMode(false)} data-testid="pedidos-mode-toggle">
+                Ver como lista
+              </button>
+            </div>
+            <GenusGrid<ProductionPedidoRecord>
+              rows={sortedItems}
+              rowId={(r) => r.id}
+              rowVersion={(r) => r.updatedAt}
+              rowLabel={(r) => r.op || r.id}
+              columns={pedidoColumns}
+              onCommit={commitPedidoCells}
+              canEdit
+              onReload={() => void reload()}
+              maxHeight={560}
+              testId="pedidos-grid"
+              renderRowActions={(r) => (
+                <div className="flex gap-2 text-xs">
+                  <button type="button" className="underline" onClick={() => openEdit(r)}>Editar</button>
+                  <button type="button" className="underline text-amber-300" onClick={() => { setDeleteId(r.id); setDeleteReason(""); }}>Eliminar</button>
+                </div>
+              )}
+              rowActionsWidth={130}
+              hint="Estado y KG son de solo lectura (flujo operativo / cálculo Q×ML); los pedidos ENTREGADOS están cerrados. Cada celda se guarda sola."
+            />
+          </div>
+        )}
         {/* Desktop table */}
-        <div className="hidden overflow-x-hidden lg:block">
+        <div className={`hidden overflow-x-hidden ${!sel.active && excelMode ? "" : "lg:block"}`}>
+          {!sel.active && !excelMode && (
+            <div className="mb-1 flex justify-end">
+              <button type="button" className="text-xs text-[var(--os-text-muted)] underline" onClick={() => setExcelMode(true)}>
+                Ver como planilla
+              </button>
+            </div>
+          )}
           <table className="os-table w-full min-w-0 table-fixed text-left text-sm">
             <thead>
               <tr>

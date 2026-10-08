@@ -9,10 +9,14 @@ import { AuthUnauthorizedError, type AuthActor } from "@/lib/auth/types";
 /** Directorio → AuthActor "provisional" (solo para el header legacy de tests). No trae userId real. */
 const TEST_HEADER_ACTOR_USER_ID_PREFIX = "test-header:";
 
-function isTestHeaderModeEnabled(): boolean {
-  return (
-    process.env.NODE_ENV === "test" || process.env.GENUS_AUTH_ALLOW_TEST_HEADERS === "1"
-  );
+/**
+ * ¿Se acepta el header legacy como identidad? NUNCA en un deploy de Vercel (Production ni Preview) ni con
+ * GENUS_ENV=production, aunque `GENUS_AUTH_ALLOW_TEST_HEADERS=1` o `NODE_ENV=test` estén definidos por error:
+ * ahí la identidad sale solo de la cookie de sesión. Queda solo para vitest y harness locales.
+ */
+export function isTestHeaderModeEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  if (env.VERCEL || env.VERCEL_ENV || env.GENUS_ENV === "production") return false;
+  return env.NODE_ENV === "test" || env.GENUS_AUTH_ALLOW_TEST_HEADERS === "1";
 }
 
 /**
@@ -21,7 +25,7 @@ function isTestHeaderModeEnabled(): boolean {
  * Orden de resolución:
  * 1. Cookie `genus_session` (HttpOnly) → valida contra AuthService.
  * 2. Si NO hay cookie válida y estamos en modo test
- *    (`NODE_ENV==='test'` o `GENUS_AUTH_ALLOW_TEST_HEADERS==='1'`): se
+ *    (`NODE_ENV==='test'` o `GENUS_AUTH_ALLOW_TEST_HEADERS==='1'`, y NUNCA en un deploy de Vercel): se
  *    acepta el header legacy `x-genus-actor-email` resuelto contra el
  *    directorio de cuentas (SOLO para compatibilidad con vitest/harness
  *    de tests — nunca se usa como fuente de identidad en Preview real).

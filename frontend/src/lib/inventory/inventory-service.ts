@@ -16,7 +16,7 @@ import {
   multiplyTotal,
   parseOptionalNumber,
 } from "./calcs";
-import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
+import { normalizeOptionalReason, sanitizeOptionalReason } from "@/lib/lifecycle/reason";
 import { ME_CODIGO_REQUIRED_MSG, normalizeMeCodigo } from "./me-codigo";
 import {
   rebuildMeInventarioByCodigo,
@@ -49,6 +49,17 @@ import {
   isMpInternalCodigo,
   mpInternalCodigoForIngreso,
 } from "./types";
+import {
+  INVENTORY_REASON_FIELDS,
+  MAX_INVENTORY_CELL_CHANGES,
+  inventoryCellProtection,
+  isInventoryCellField,
+  validateInventoryValue,
+  type InventoryCellChange,
+  type InventoryCellResource,
+  type InventoryCellResult,
+} from "./cell-edit";
+
 
 const DRAFT_NO_STOCK_MSG =
   "Guardado sin afectar Stock: falta Cantidad/Total > 0";
@@ -113,6 +124,11 @@ function nowIso() {
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** ISO estrictamente posterior a `prev` (la versión debe cambiar siempre, incluso dentro del mismo ms). */
+function bumpIso(prev: string): string {
+  return new Date(Math.max(Date.now(), new Date(prev).getTime() + 1)).toISOString();
 }
 
 export class InventoryForbiddenError extends Error {
@@ -593,6 +609,82 @@ export class InventoryService {
       .map((m) => (m.archived ? m : this.recalculateMeStock(m.id)));
     if (options.includeArchived) return rows;
     return rows.filter((r) => !r.archived);
+  }
+
+  /**
+   * PATCH parcial por celda (Inventario ME / Stock MP). Valida todo primero (una celda inválida ⇒
+   * no se guarda ninguna); luego aplica cada una con control de versión y auditoría `cell_edit`.
+   * Los kg de MP pasan por `adjustMpStock` (servicio canónico, con motivo). El stock ME no es editable.
+   */
+  patchInventoryCells(
+    actor: InventoryActor,
+    resource: InventoryCellResource,
+    changes: InventoryCellChange[]
+  ): InventoryCellResult[] {
+    this.guard(actor, resource === "me_inventario" ? "me_stock" : "mp_stock", true);
+    if (changes.length === 0 || changes.length > MAX_INVENTORY_CELL_CHANGES) {
+      throw new InventoryValidationError(`Entre 1 y ${MAX_INVENTORY_CELL_CHANGES} celdas por operación.`);
+    }
+    const load = (id: string) => (resource === "me_inventario" ? this.repo.getMeMaterial(id) : this.repo.getMpStock(id));
+    const results: InventoryCellResult[] = [];
+    const parsed: Array<{ c: InventoryCellChange; value: string | number | null }> = [];
+    for (const c of changes) {
+      const row = load(c.id) as (Record<string, unknown> & { archived?: boolean; origen?: string }) | null;
+      if (!row) { results.push({ ok: false, code: "NOT_FOUND", message: "Registro no encontrado." }); continue; }
+      if (!isInventoryCellField(resource, c.field)) { results.push({ ok: false, code: "INVALID", message: `Campo no editable: ${String(c.field)}.` }); continue; }
+      const prot = inventoryCellProtection(resource, row, c.field, true);
+      if (prot) { results.push({ ok: false, code: "PROTECTED", message: prot }); continue; }
+      const v = validateInventoryValue(c.field, c.value);
+      if (!v.ok) { results.push({ ok: false, code: "INVALID", message: v.message }); continue; }
+      if (INVENTORY_REASON_FIELDS.has(c.field) && sanitizeOptionalReason(c.reason).length < 8) {
+        results.push({ ok: false, code: "INVALID", message: "Corregir cantidades requiere un motivo (mín. 8 caracteres)." });
+        continue;
+      }
+      results.push({ ok: true });
+      parsed.push({ c, value: v.value });
+    }
+    if (results.some((r) => !r.ok)) return results;
+
+    const out: InventoryCellResult[] = [];
+    const versions = new Map<string, string>();
+    for (const { c, value } of parsed) {
+      if (resource === "me_inventario") {
+        const current = this.recalculateMeStock(c.id);
+        const expected = versions.get(c.id) ?? c.expectedVersion;
+        if (current.updatedAt !== expected) {
+          out.push({ ok: false, code: "CONFLICT", message: "Otro usuario modificó este material. Recargá y reintentá." });
+          continue;
+        }
+        const before = { [c.field]: (current as Record<string, unknown>)[c.field] };
+        const updated: MeMaterial = { ...current, [c.field]: value, updatedAt: bumpIso(current.updatedAt) } as MeMaterial;
+        this.repo.upsertMeMaterial(updated);
+        this.audit(actor, "me_stock", c.id, "cell_edit", before, { [c.field]: value });
+        this.syncMeAlerts(actor, c.id);
+        versions.set(c.id, updated.updatedAt);
+      } else {
+        const current = this.repo.getMpStock(c.id)!;
+        const expected = versions.get(c.id) ?? c.expectedVersion;
+        if (current.updatedAt !== expected) {
+          out.push({ ok: false, code: "CONFLICT", message: "Otro usuario modificó este lote. Recargá y reintentá." });
+          continue;
+        }
+        if (c.field === "cantidadKg") {
+          this.adjustMpStock(actor, c.id, Number(value), sanitizeOptionalReason(c.reason));
+        } else {
+          const next = this.enrichMpStock({
+            ...current,
+            [c.field]: value,
+            updatedBy: actor.email,
+            updatedAt: bumpIso(current.updatedAt),
+          } as MpStockRow);
+          this.repo.upsertMpStock(next);
+          this.audit(actor, "mp_stock", c.id, "cell_edit", { [c.field]: (current as Record<string, unknown>)[c.field] }, { [c.field]: value });
+        }
+        versions.set(c.id, this.repo.getMpStock(c.id)!.updatedAt);
+      }
+      out.push({ ok: true });
+    }
+    return out;
   }
 
   updateMeThresholds(

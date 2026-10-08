@@ -1,5 +1,6 @@
 "use client";
 
+import { ExcelOrList, excelCol } from "./operational-ui";
 import { useCallback, useEffect, useState } from "react";
 import {
   ACTOR_EMAIL_HEADER,
@@ -129,6 +130,19 @@ export function MpStockLedgerPanel({ schemaPending }: { schemaPending: boolean }
         </p>
       ) : null}
       {error ? <p className="text-xs text-rose-700">{error}</p> : null}
+      <ExcelOrList
+        tableId="mp-ledger"
+        rows={sortedRows}
+        rowKey={(r) => r.id}
+        columns={[
+          excelCol("fecha", "Fecha", (r: Movement) => new Date(r.createdAt).toLocaleString("es-AR")),
+          excelCol("origen", "Origen", (r: Movement) => r.kind),
+          excelCol("cantidad", "Cantidad", (r: Movement) => String(r.quantity)),
+          excelCol("saldo", "Saldo", (r: Movement) => String(r.balanceAfter ?? "—")),
+          excelCol("motivo", "Motivo", (r: Movement) => r.reason),
+          excelCol("actor", "Actor", (r: Movement) => r.actorEmail),
+        ]}
+      >
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b text-left">
@@ -160,6 +174,7 @@ export function MpStockLedgerPanel({ schemaPending }: { schemaPending: boolean }
           ) : null}
         </tbody>
       </table>
+      </ExcelOrList>
     </div>
   );
 }

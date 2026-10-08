@@ -229,7 +229,7 @@ const HEADER_SEARCH_MAX_ROWS = 5;
  * cada caller según corresponda (descubrimiento automático vs. hoja ya
  * señalada a mano).
  */
-function locateTabHeader(rows: string[][]): {
+export function locateTabHeader(rows: string[][]): {
   headerRowIndex: number | null;
   header: string[];
   dataRows: string[][];
@@ -307,7 +307,8 @@ async function processTabRows(
   seenKeysThisRun: Map<string, { signature: string; tab: string }>,
   seenIds: Set<string>,
   summary: SyncRunSummary,
-  headerRowIndex = 0
+  headerRowIndex = 0,
+  runStartedAt: string | null = null
 ): Promise<void> {
   for (let i = 0; i < dataRows.length; i += 1) {
     // headerRowIndex (0-indexed, ver locateTabHeader) + 1 para pasar a
@@ -402,7 +403,7 @@ async function processTabRows(
       continue;
     }
 
-    const { record, created, changed } = await lotesService.upsertFromSource(source.id, SYNC_ACTOR, input, tab);
+    const { record, created, changed } = await lotesService.upsertFromSource(source.id, SYNC_ACTOR, input, tab, runStartedAt);
     seenIds.add(record.id);
     if (created) summary.createdCount += 1;
     else if (changed) summary.updatedCount += 1;
@@ -485,7 +486,8 @@ export async function syncSource(
         seenKeysThisRun,
         seenIds,
         summary,
-        located.headerRowIndex
+        located.headerRowIndex,
+        startedAt
       );
       readableTabs.add(explicitTab);
     } else {
@@ -538,7 +540,8 @@ export async function syncSource(
             seenKeysThisRun,
             seenIds,
             summary,
-            located.headerRowIndex
+            located.headerRowIndex,
+            startedAt
           );
           readableTabs.add(tab);
           tabBreakdown.push({

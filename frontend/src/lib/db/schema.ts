@@ -932,6 +932,146 @@ export const asignacionLotes = pgTable(
 );
 
 /**
+ * 0040 — Auditoría de edición por celda de Asignación de Lotes (grilla tipo
+ * Excel): una fila por celda modificada, con valor anterior y nuevo. Se
+ * escribe en la MISMA transacción que el UPDATE: si la auditoría falla, el
+ * cambio no se persiste (nunca hay un cambio sin rastro).
+ */
+export const asignacionLotesCellAudit = pgTable(
+  "asignacion_lotes_cell_audit",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    batchId: text("batch_id").notNull(),
+    recordId: text("record_id").notNull(),
+    lote: text("lote").notNull().default(""),
+    field: text("field").notNull(),
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    actorName: text("actor_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("asignacion_lotes_cell_audit_record_idx").on(table.recordId, table.createdAt),
+    index("asignacion_lotes_cell_audit_batch_idx").on(table.batchId),
+  ]
+);
+
+/**
+ * 0040 — Bitácora idempotente de escrituras de vuelta a Google Sheets
+ * (opción C). status: pending | google_done | confirmed | failed | conflict.
+ */
+export const asignacionLotesWritebackOps = pgTable(
+  "asignacion_lotes_writeback_ops",
+  {
+    id: text("id").primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    recordId: text("record_id").notNull(),
+    lote: text("lote").notNull().default(""),
+    field: text("field").notNull(),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    sheetTab: text("sheet_tab").notNull(),
+    a1: text("a1"),
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    status: text("status").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    actorName: text("actor_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("asignacion_lotes_writeback_ops_idem_uidx").on(table.idempotencyKey),
+    uniqueIndex("asignacion_lotes_writeback_ops_open_uidx")
+      .on(table.recordId, table.field)
+      .where(sql`${table.status} in ('pending','google_done')`),
+    index("asignacion_lotes_writeback_ops_record_idx").on(table.recordId, table.status),
+  ]
+);
+
+/** 0040 — Bitácora de ediciones de celdas de SEMANAS 2026 (la Sheet es la fuente de verdad). */
+export const sheetCellEdits = pgTable(
+  "sheet_cell_edits",
+  {
+    id: text("id").primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    sheetTab: text("sheet_tab").notNull(),
+    a1: text("a1").notNull(),
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    status: text("status").notNull(),
+    lastError: text("last_error"),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    actorName: text("actor_name").notNull().default(""),
+    reason: text("reason"),
+    affectsIndicators: boolean("affects_indicators").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("sheet_cell_edits_open_uidx")
+      .on(table.spreadsheetId, table.sheetTab, table.a1)
+      .where(sql`${table.status} = 'pending'`),
+    uniqueIndex("sheet_cell_edits_idem_uidx").on(table.idempotencyKey),
+    index("sheet_cell_edits_cell_idx").on(table.spreadsheetId, table.sheetTab, table.a1),
+  ]
+);
+
+/**
+ * 0041 — Prioridad operativa (URGENTE / IMPORTANTE / NORMAL) de las tareas de Producción → Semanas.
+ * Dato de GENUS: jamás se escribe en la Sheet. Identidad = `task_key` (contenido + fecha), respaldo `pos_key`.
+ */
+export const semanasTaskPriorities = pgTable(
+  "semanas_task_priorities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    tab: text("tab").notNull(),
+    taskKey: text("task_key").notNull(),
+    posKey: text("pos_key").notNull().default(""),
+    taskDate: text("task_date"),
+    summary: text("summary").notNull().default(""),
+    priority: text("priority").notNull().default("NORMAL"),
+    version: integer("version").notNull().default(1),
+    updatedBy: text("updated_by").notNull(),
+    updatedBySector: text("updated_by_sector").notNull(),
+    updatedByName: text("updated_by_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("semanas_task_priorities_key_uidx").on(table.spreadsheetId, table.tab, table.taskKey),
+    index("semanas_task_priorities_pos_idx").on(table.spreadsheetId, table.tab, table.posKey),
+  ]
+);
+
+export const semanasTaskPriorityEvents = pgTable(
+  "semanas_task_priority_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    tab: text("tab").notNull(),
+    taskKey: text("task_key").notNull(),
+    summary: text("summary").notNull().default(""),
+    fromPriority: text("from_priority").notNull(),
+    toPriority: text("to_priority").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    actorName: text("actor_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("semanas_task_priority_events_task_idx").on(table.spreadsheetId, table.tab, table.taskKey, table.createdAt)]
+);
+
+/**
  * Fuentes configurables de Asignación de Lotes (0032) — Google Sheets como
  * fuente externa. Nunca hardcodeado a un spreadsheetId: conectar una
  * planilla nueva (ej. 2027) es una fila acá, no un deploy.

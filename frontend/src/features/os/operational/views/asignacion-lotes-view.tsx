@@ -33,6 +33,7 @@ import {
   upsertAsignacionLoteApi,
 } from "@/lib/asignacion-lotes/asignacion-lotes-client";
 import { OperationalTable, type OperationalTableColumn } from "../components/operational-ui";
+import { AsignacionLotesGrid } from "../components/asignacion-lotes-grid";
 import { SortSelect } from "../components/sort-select";
 import { useSortPreference } from "../lib/use-sort-preference";
 import {
@@ -283,12 +284,27 @@ export function AsignacionLotesView() {
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(() => new Set());
   const [seedImportText, setSeedImportText] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [writableSourceIds, setWritableSourceIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+
+  // El servidor confirmó una edición por celda: reemplaza SOLO esos registros.
+  const handleRowsUpdated = useCallback((updated: AsignacionLote[]) => {
+    const byId = new Map(updated.map((row) => [row.id, row] as const));
+    setItems((prev) => {
+      const next = prev.map((row) => byId.get(row.id) ?? row);
+      replaceAsignacionLotesCache(next);
+      return next;
+    });
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
-      const { items: allItems } = await fetchAsignacionLotesApi(session);
+      const { items: allItems, writableSourceIds: writable } = await fetchAsignacionLotesApi(session);
+      setWritableSourceIds(new Set(writable));
       replaceAsignacionLotesCache(allItems);
-      setItems(getAllAsignacionLotes());
+      // Datos del servidor tal cual (con sourceId/updatedAt reales: la grilla
+      // los necesita para proteger filas de Google y controlar concurrencia).
+      setItems(allItems.filter((item) => !item.archived));
       setOfflineCache(false);
     } catch {
       setItems(getAllAsignacionLotes());
@@ -563,6 +579,46 @@ export function AsignacionLotesView() {
     },
   ];
 
+  const useGrid = viewMode === "grid" && !sel.active;
+  const renderGridRowActions = (row: AsignacionLote) => (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        disabled={!canMutate}
+        onClick={() => startEdit(row)}
+        aria-label={`Editar ${row.lote}`}
+        title="Editar en formulario"
+        className="rounded p-1 text-[var(--os-text-muted)] hover:bg-[var(--os-bg)] hover:text-[var(--os-text)] disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Pencil className="size-4" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        disabled={!canMutate}
+        onClick={() => setDeleteTarget(row)}
+        aria-label={`Eliminar ${row.lote}`}
+        title="Eliminar"
+        className="rounded p-1 text-[var(--os-text-muted)] hover:bg-[var(--genus-error-soft)] hover:text-[var(--genus-error)] disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Trash2 className="size-4" aria-hidden="true" />
+      </button>
+    </div>
+  );
+  const gridFor = (rows: AsignacionLote[], testId: string, maxHeight?: number) => (
+    <AsignacionLotesGrid
+      rows={rows}
+      session={session}
+      sector={workspace.context.sectorId}
+      canEdit={canMutate}
+      writableSourceIds={writableSourceIds}
+      onRowsUpdated={handleRowsUpdated}
+      onReload={() => void refresh()}
+      renderRowActions={renderGridRowActions}
+      maxHeight={maxHeight}
+      testId={testId}
+    />
+  );
+
   if (!canAccess) {
     return (
       <TwinShell title="Asignación de lotes">
@@ -696,6 +752,14 @@ export function AsignacionLotesView() {
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setViewMode((m) => (m === "grid" ? "list" : "grid"))}
+                data-testid="asignacion-lotes-view-toggle"
+              >
+                {viewMode === "grid" ? "Ver como lista" : "Ver como planilla"}
+              </Button>
               {canMutate &&
                 (!sel.active ? (
                   <ListSelectionEnterButton onClick={sel.enter} />
@@ -775,17 +839,22 @@ export function AsignacionLotesView() {
                   </button>
                   {!collapsed && (
                     <div className="border-t border-[var(--os-border)]">
-                      <OperationalTable
-                        columns={columns}
-                        rows={group.items}
-                        rowKey={(row) => row.id}
-                        emptyMessage="Sin asignaciones para los filtros actuales."
-                        selection={
-                          sel.active
-                            ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
-                            : undefined
-                        }
-                      />
+                      {useGrid ? (
+                        gridFor(group.items, `asignacion-lotes-grid-${groupKey}`, 420)
+                      ) : (
+                        <OperationalTable
+                          excel={false}
+                          columns={columns}
+                          rows={group.items}
+                          rowKey={(row) => row.id}
+                          emptyMessage="Sin asignaciones para los filtros actuales."
+                          selection={
+                            sel.active
+                              ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
+                              : undefined
+                          }
+                        />
+                      )}
                     </div>
                   )}
                 </section>
@@ -794,18 +863,32 @@ export function AsignacionLotesView() {
           </div>
         ) : (
           <>
-            <OperationalTable
-              columns={columns}
-              rows={paginated}
-              rowKey={(row) => row.id}
-              emptyMessage="Sin asignaciones para los filtros actuales."
-              selection={
-                sel.active
-                  ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
-                  : undefined
-              }
-            />
+            {useGrid ? (
+              // Planilla: virtualizada, sin paginar — así el rango seleccionado/copiado/pegado
+              // no se corta en el borde de una página.
+              monthFilteredRows.length === 0 ? (
+                <p className="rounded-[var(--os-radius-md)] border border-dashed border-[var(--os-border)] p-6 text-center text-sm text-[var(--os-text-muted)]">
+                  Sin asignaciones para los filtros actuales.
+                </p>
+              ) : (
+                gridFor(monthFilteredRows, "asignacion-lotes-grid", 620)
+              )
+            ) : (
+              <OperationalTable
+                excel={false}
+                columns={columns}
+                rows={paginated}
+                rowKey={(row) => row.id}
+                emptyMessage="Sin asignaciones para los filtros actuales."
+                selection={
+                  sel.active
+                    ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
+                    : undefined
+                }
+              />
+            )}
 
+            {!useGrid && (
             <div className="flex items-center justify-between text-sm text-[var(--os-text-muted)]">
               <span>
                 Página {currentPage} de {totalPages} · {PAGE_SIZE} por página
@@ -819,6 +902,7 @@ export function AsignacionLotesView() {
                 </Button>
               </div>
             </div>
+            )}
           </>
         )}
 

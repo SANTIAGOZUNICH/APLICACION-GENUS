@@ -32,6 +32,7 @@ const nextConfig: NextConfig = {
     "/api/**/*": [
       "./node_modules/pdfkit/js/data/**/*",
       "./assets/remitos/**/*",
+      "./assets/semanas-preview/**/*",
     ],
   },
   env: {

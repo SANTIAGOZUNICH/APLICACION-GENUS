@@ -8,7 +8,9 @@ import {
   plannedQuantityLabel,
 } from "../lib/operational-progress";
 import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
-import { ActionButton, StatusChip } from "./operational-ui";
+import { ActionButton, ExcelOrList, excelCol, StatusChip } from "./operational-ui";
+import { useWorkItemCellEditing } from "../hooks/use-work-item-cells";
+import { formatDateDisplay } from "../lib/delivery-date";
 import { DeliveryDateBadge } from "./delivery-date-badge";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
 
@@ -26,13 +28,34 @@ interface WorkItemProgressTableProps {
   archiveBusyId?: string | null;
   /** Agrega columnas Lote/VTO/OA — usado por Pendientes, donde esos datos son parte de lo mínimo a mostrar. */
   showPackagingColumns?: boolean;
+  /** Recarga la lista tras una edición por celda (el servidor ya confirmó). */
+  onItemsChanged?: () => void | Promise<void>;
 }
 
 const thClass = "os-table-th";
 const tdClass = "os-table-td";
 
 /** Tabla operativa — Envasado / Elaboración. La fila abre el drawer de trabajo. */
-export function WorkItemProgressTable({
+type CellEditing = ReturnType<typeof useWorkItemCellEditing>;
+const NO_CELL_EDITING: CellEditing = {
+  canEditCells: undefined,
+  onCellsCommit: undefined,
+  rowVersion: undefined,
+  reasonRequired: undefined,
+  edit: () => undefined,
+} as unknown as CellEditing;
+
+function EditableWorkItemTable(props: WorkItemProgressTableProps) {
+  const cells = useWorkItemCellEditing(props.items, props.onItemsChanged);
+  return <WorkItemProgressTableInner {...props} cells={cells} />;
+}
+
+/** Con `onItemsChanged` la lista es editable por celda (requiere WorkspaceProvider); sin él, solo lectura. */
+export function WorkItemProgressTable(props: WorkItemProgressTableProps) {
+  return props.onItemsChanged ? <EditableWorkItemTable {...props} /> : <WorkItemProgressTableInner {...props} />;
+}
+
+function WorkItemProgressTableInner({
   items,
   variant,
   getFinishedQty,
@@ -44,7 +67,9 @@ export function WorkItemProgressTable({
   onRestoreToView,
   archiveBusyId = null,
   showPackagingColumns = false,
-}: WorkItemProgressTableProps) {
+  cells: cellsIn,
+}: WorkItemProgressTableProps & { cells?: CellEditing }) {
+  const cells = cellsIn ?? NO_CELL_EDITING;
   if (items.length === 0) {
     return (
       <p className="rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-border)] px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
@@ -53,7 +78,53 @@ export function WorkItemProgressTable({
     );
   }
 
+  // Planilla tipo Excel (seleccionar/copiar rangos); la lista clásica queda como «Ver como lista».
+  const excelColumns = [
+    ...(variant === "envasado" ? [excelCol<WorkItem>("linea", "Línea", (i) => displayField(i.line))] : []),
+    excelCol<WorkItem>("plannedDate", "Fecha", (i) => (i.plannedDate ? formatDateDisplay(i.plannedDate) : displayField(i.dayLabel)), { edit: cells.edit("plannedDate") }),
+    excelCol<WorkItem>("deliveryDate", "Fecha de entrega", (i) => (i.deliveryDate ? formatDateDisplay(i.deliveryDate) : ""), { edit: cells.edit("deliveryDate") }),
+    excelCol<WorkItem>("client", "Cliente", (i) => i.client ?? "", { edit: cells.edit("client") }),
+    excelCol<WorkItem>("product", "Producto", (i) => i.product ?? "", { edit: cells.edit("product") }),
+    excelCol<WorkItem>("plannedQuantity", variant === "envasado" ? "Unidades planificadas" : "Kg planificados", (i) => i.quantity ?? "", { edit: cells.edit("plannedQuantity") }),
+    excelCol<WorkItem>("unit", "Unidad", (i) => i.unit ?? "", { edit: cells.edit("unit") }),
+    excelCol<WorkItem>("realizado", variant === "envasado" ? "Unidades realizadas" : "Kg realizados", (i) => getFinishedQty(i.id) || "—"),
+    ...(variant === "envasado" ? [excelCol<WorkItem>("diferencia", "Diferencia", (i) => formatOperationalDifference(i.quantity, getFinishedQty(i.id)))] : []),
+    ...(showPackagingColumns
+      ? [
+          excelCol<WorkItem>("packagingLote", "Lote", (i) => i.packagingLote ?? i.loteRef ?? "", { edit: cells.edit("packagingLote") }),
+          excelCol<WorkItem>("packagingVto", "VTO", (i) => (i.packagingVto ? formatDateDisplay(i.packagingVto) : ""), { edit: cells.edit("packagingVto") }),
+          excelCol<WorkItem>("oa", "OA", (i) => displayField(i.oaRef)),
+        ]
+      : []),
+    excelCol<WorkItem>("estado", "Estado", (i) => i.status.replace(/_/g, " ")),
+    excelCol<WorkItem>("notes", "Observación", (i) => i.notes ?? "", { edit: cells.edit("notes") }),
+    excelCol<WorkItem>("avance", "Avance informado", (i) => getObservation(i.id) || "—"),
+    {
+      key: "acciones",
+      header: "Acción",
+      action: true,
+      text: () => "",
+      render: (i: WorkItem) => (
+        <ActionButton
+          label={listMode === "archived" || isWorkTransferredStatus(i.status) ? "Ver detalle" : "Ver / Registrar avance"}
+          variant="neutral"
+          onClick={() => onSelectItem(i)}
+        />
+      ),
+    },
+  ];
+
   return (
+    <ExcelOrList
+      columns={excelColumns}
+      rows={items}
+      rowKey={(i) => i.id}
+      tableId={`work-items-${variant}`}
+      canEditCells={cells.canEditCells}
+      onCellsCommit={cells.onCellsCommit}
+      rowVersion={cells.rowVersion}
+      reasonRequired={cells.reasonRequired}
+    >
     <div className="os-table-wrap overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
       <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,13px)]">
         <thead>
@@ -222,5 +293,6 @@ export function WorkItemProgressTable({
         </tbody>
       </table>
     </div>
+    </ExcelOrList>
   );
 }

@@ -8,7 +8,7 @@ import { and, desc, eq, notInArray } from "drizzle-orm";
 import { canAccessGraneles, canMutateGraneles, canUpsertGranelFromEnvasado } from "@/lib/graneles/graneles-rbac";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { depositoGraneles, depositoGranelesAudit } from "@/lib/db/schema";
-import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
+import { normalizeOptionalReason, sanitizeOptionalReason } from "@/lib/lifecycle/reason";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
 import type {
@@ -22,6 +22,14 @@ import type {
   UpsertGranelFromEnvasadoInput,
   UpsertGranelResult,
 } from "@/lib/graneles/types";
+import {
+  GRANEL_REASON_FIELDS,
+  MAX_GRANEL_CELL_CHANGES,
+  granelCellProtection,
+  isGranelCellField,
+  validateGranelValue,
+  type GranelCellChange,
+} from "@/lib/graneles/cell-edit";
 import { GRANEL_STATUSES, type GranelStatus } from "@/lib/graneles/types";
 
 const ARCHIVED_STATUSES: GranelStatus[] = ["ANULADO", "ARCHIVADO"];
@@ -179,6 +187,10 @@ async function writeAudit(entry: Omit<GranelAuditEntry, "id" | "createdAt">): Pr
     createdAt: now.toISOString(),
   });
 }
+
+export type GranelCellResult =
+  | { ok: true; record: GranelRemainderRecord }
+  | { ok: false; code: "NOT_FOUND" | "PROTECTED" | "INVALID" | "CONFLICT"; message: string };
 
 export class GranelesService {
   async list(actor: GranelesActor, filters: ListGranelesFilters = {}): Promise<GranelRemainderRecord[]> {
@@ -415,7 +427,8 @@ export class GranelesService {
     }
 
     const beforeKg = current.kgAvailable;
-    const now = new Date().toISOString();
+    // Versión estrictamente creciente (ms): el control de concurrencia por celda depende de ello.
+    const now = new Date(Math.max(Date.now(), new Date(current.updatedAt).getTime() + 1)).toISOString();
     const next: GranelRemainderRecord = {
       ...current,
       ...input.patch,
@@ -469,6 +482,55 @@ export class GranelesService {
    * - Manual sin workItemId → hard delete si BORRADOR (sin movimientos posteriores).
    * - Originado en Envasado o ya con movimientos → anular con motivo (idempotente).
    */
+  /**
+   * PATCH parcial por celda: valida TODO primero (si una celda falla no se guarda ninguna), luego
+   * aplica cada celda por el servicio canónico `update()` con SOLO ese campo (auditoría incluida).
+   */
+  async patchCells(actor: GranelesActor, changes: GranelCellChange[]): Promise<GranelCellResult[]> {
+    assertMutate(actor);
+    if (changes.length === 0 || changes.length > MAX_GRANEL_CELL_CHANGES) {
+      throw new OrdersValidationError(`Entre 1 y ${MAX_GRANEL_CELL_CHANGES} celdas por operación.`);
+    }
+    const cache = new Map<string, GranelRemainderRecord | null>();
+    const getCur = async (id: string) => {
+      if (!cache.has(id)) cache.set(id, await this.get(actor, id));
+      return cache.get(id)!;
+    };
+    const results: GranelCellResult[] = [];
+    const parsed: Array<{ change: GranelCellChange; value: string | number }> = [];
+    for (const c of changes) {
+      const cur = await getCur(c.id);
+      if (!cur) { results.push({ ok: false, code: "NOT_FOUND", message: "Registro no encontrado." }); continue; }
+      if (!isGranelCellField(c.field)) { results.push({ ok: false, code: "INVALID", message: `Campo no editable: ${String(c.field)}.` }); continue; }
+      const prot = granelCellProtection(cur, c.field, true);
+      if (prot) { results.push({ ok: false, code: "PROTECTED", message: prot }); continue; }
+      const v = validateGranelValue(c.field, c.value);
+      if (!v.ok) { results.push({ ok: false, code: "INVALID", message: v.message }); continue; }
+      if (GRANEL_REASON_FIELDS.has(c.field) && sanitizeOptionalReason(c.reason).length < 8) {
+        results.push({ ok: false, code: "INVALID", message: "Corregir el stock requiere un motivo (mín. 8 caracteres)." });
+        continue;
+      }
+      results.push({ ok: true, record: cur });
+      parsed.push({ change: c, value: v.value });
+    }
+    if (results.some((r) => !r.ok)) return results;
+    // Versión: la del cliente debe coincidir con la vigente (se encadena por registro).
+    const out: GranelCellResult[] = [];
+    const versions = new Map<string, string>();
+    for (const { change, value } of parsed) {
+      const cur = (await this.get(actor, change.id))!;
+      const expected = versions.get(change.id) ?? change.expectedVersion;
+      if (cur.updatedAt !== expected && !versions.has(change.id)) {
+        out.push({ ok: false, code: "CONFLICT", message: "Otro usuario modificó este registro. Recargá y reintentá." });
+        continue;
+      }
+      const rec = await this.update(actor, change.id, { patch: { [change.field]: value }, reason: change.reason });
+      versions.set(change.id, rec.updatedAt);
+      out.push({ ok: true, record: rec });
+    }
+    return out;
+  }
+
   async deleteOrAnnul(actor: GranelesActor, id: string, reason?: string): Promise<DeleteOrAnnulResult> {
     assertMutate(actor);
     const current = await this.get(actor, id);

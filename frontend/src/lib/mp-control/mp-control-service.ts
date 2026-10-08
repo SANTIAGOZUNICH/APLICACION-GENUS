@@ -21,6 +21,13 @@ import {
 } from "./types";
 import { mpControlLifecycleActions } from "@/lib/lifecycle/adapters/common";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
+import { MAX_MP_LINE_CELL_CHANGES, isMpLineCellField, mpLineProtection, validateMpLineValue, type MpLineCellChange } from "./cell-edit";
+
+export class MpControlCellError extends Error {
+  constructor(readonly code: "CONFLICT" | "PROTECTED" | "INVALID" | "NOT_FOUND", message: string) {
+    super(message);
+  }
+}
 
 type Mem = { controls: MpWeeklyControl[] };
 const g = globalThis as unknown as { __genusMpControlMem?: Mem };
@@ -274,6 +281,50 @@ export class MpControlService {
       formulaSnapshot: existing.formulaSnapshot,
     };
     await this.persist(next);
+    return next;
+  }
+
+  /**
+   * PATCH parcial por celda de líneas: solo los campos de captura indicados, solo BORRADOR,
+   * con control de versión (`expectedVersion` = updatedAt que vio el cliente). Todo o nada.
+   * Las demás líneas/columnas y el snapshot de fórmula se conservan tal cual.
+   */
+  async patchLineCells(
+    actor: MpControlActor,
+    id: string,
+    changes: MpLineCellChange[],
+    expectedVersion: string
+  ): Promise<MpWeeklyControl> {
+    assertWrite(actor);
+    await assertFeatureWritesEnabled();
+    if (changes.length === 0 || changes.length > MAX_MP_LINE_CELL_CHANGES) {
+      throw new MpControlCellError("INVALID", `Entre 1 y ${MAX_MP_LINE_CELL_CHANGES} celdas por operación.`);
+    }
+    const existing = await this.get(actor, id);
+    if (!existing) throw new MpControlCellError("NOT_FOUND", "Control no encontrado.");
+    const blocked = mpLineProtection(existing.status);
+    if (blocked) throw new MpControlCellError("PROTECTED", blocked);
+    if (existing.updatedAt !== expectedVersion) {
+      throw new MpControlCellError("CONFLICT", "Otro usuario modificó este control. Recargá y reintentá.");
+    }
+    const lines = existing.lines.map((l) => ({ ...l }));
+    for (const c of changes) {
+      const line = lines.find((l) => l.id === c.lineId);
+      if (!line) throw new MpControlCellError("NOT_FOUND", "Línea no encontrada.");
+      if (!isMpLineCellField(c.field)) throw new MpControlCellError("INVALID", `Campo no editable: ${String(c.field)}.`);
+      const v = validateMpLineValue(c.field, c.value);
+      if (!v.ok) throw new MpControlCellError("INVALID", v.message);
+      (line as Record<string, unknown>)[c.field] = v.value;
+    }
+    const now = new Date();
+    const prev = new Date(existing.updatedAt).getTime();
+    const next: MpWeeklyControl = {
+      ...existing,
+      lines: recalcLines(lines, existing.quantityKg),
+      updatedBy: actor.email,
+      updatedAt: new Date(Math.max(now.getTime(), prev + 1)).toISOString(),
+    };
+    await this.persist(next, { action: "cell_edit" });
     return next;
   }
 

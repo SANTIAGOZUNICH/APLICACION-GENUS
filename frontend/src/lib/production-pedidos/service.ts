@@ -15,6 +15,13 @@ import {
 import type { SectorId } from "@/types/operational/sector";
 import { duplicateKeyFromRecord } from "./excel-paste";
 import {
+  MAX_PEDIDO_CELL_CHANGES,
+  isPedidoCellField,
+  pedidoCellProtection,
+  type PedidoCellChange,
+  type PedidoCellFailure,
+} from "./cell-edit";
+import {
   canAccessProductionPedidos,
   coercePedidoFields,
   toPublicRecord,
@@ -44,6 +51,21 @@ function mem(): Mem {
 export function resetProductionPedidosMemoryForTests(): void {
   g.__genusProductionPedidosMem = { rows: [], imports: new Map() };
 }
+
+/** Rechazo atómico de un PATCH por celdas de Pedidos: NADA se aplicó. */
+export class PedidoCellPatchError extends Error {
+  readonly status: number;
+  constructor(readonly failures: PedidoCellFailure[]) {
+    super(failures.length === 1 ? failures[0]!.message : `${failures.length} celdas rechazadas — no se guardó ningún cambio.`);
+    this.name = "PedidoCellPatchError";
+    this.status = failures.some((f) => f.code === "CONFLICT") ? 409 : failures.some((f) => f.code === "PROTECTED" || f.code === "FORBIDDEN") ? 403 : 400;
+  }
+}
+
+const sameMs = (a: string, b: string) => {
+  const x = new Date(a).getTime();
+  return Number.isFinite(x) && x === new Date(b).getTime();
+};
 
 export type ImportManyResult = {
   created: ProductionPedidoRecord[];
@@ -368,6 +390,119 @@ export class ProductionPedidosService {
       select * from production_pedidos where id = ${id}::uuid limit 1
     `);
     return mapRow((refreshed.rows as Record<string, unknown>[])[0]!);
+  }
+
+  /**
+   * Edición por celda (grilla Excel): PATCH parcial y atómico. Solo se escriben las columnas editadas
+   * (+ KG derivado si cambia Q/ML), con validación server-side, protección de estado/pedidos cerrados,
+   * control de concurrencia por `updatedAt` y auditoría por celda. Nunca reemplaza el registro completo.
+   */
+  async patchCells(
+    actor: ProductionPedidosActor,
+    changes: PedidoCellChange[]
+  ): Promise<{ items: ProductionPedidoRecord[]; changedCells: number }> {
+    const a = assertAccess(actor);
+    const mode = await assertWrites();
+    if (!Array.isArray(changes) || changes.length === 0) throw new OrdersValidationError("No hay cambios para guardar.");
+    if (changes.length > MAX_PEDIDO_CELL_CHANGES) throw new OrdersValidationError(`Máximo ${MAX_PEDIDO_CELL_CHANGES} celdas por operación.`);
+
+    const ids = [...new Set(changes.map((c) => String(c?.id ?? "")))];
+    const current = new Map<string, ProductionPedidoRecord>();
+    const useMem = mode === "memory" || useMemory();
+    if (useMem) {
+      for (const r of mem().rows) if (ids.includes(r.id) && !r.deletedAt) current.set(r.id, r);
+    } else {
+      const db = getDb();
+      for (const id of ids) {
+        const res = await db.execute(sql`select * from production_pedidos where id = ${id}::uuid and deleted_at is null limit 1`);
+        const row = (res.rows as Record<string, unknown>[])[0];
+        if (row) current.set(id, mapRow(row));
+      }
+    }
+
+    const failures: PedidoCellFailure[] = [];
+    const merged = new Map<string, ProductionPedidoRecord>(current);
+    const touched = new Map<string, Array<{ field: string; oldValue: string; newValue: string }>>();
+    changes.forEach((c, index) => {
+      const fail = (code: PedidoCellFailure["code"], message: string) => failures.push({ index, id: String(c?.id ?? ""), field: String(c?.field ?? ""), code, message });
+      const rec = current.get(c?.id);
+      if (!rec) return fail("NOT_FOUND", "El pedido ya no existe.");
+      if (!isPedidoCellField(c.field)) return fail("PROTECTED", "Columna no editable.");
+      const reason = pedidoCellProtection(rec, c.field);
+      if (reason) return fail("PROTECTED", reason);
+      if (!c.expectedVersion || !sameMs(rec.updatedAt, c.expectedVersion)) return fail("CONFLICT", "Otro usuario modificó este pedido. Recargá antes de editar.");
+      const base = merged.get(rec.id)!;
+      const input = {
+        op: base.op, fecha: base.fecha, nroOc: base.nroOc, cliente: base.cliente, producto: base.producto, s: base.s, q: base.q, ml: base.ml, estado: base.estado,
+        [c.field]: String(c.value ?? "").trim() === "" ? null : c.value,
+      };
+      const fields = coercePedidoFields(input as ProductionPedidoInput);
+      if (fields.errors.length) return fail("INVALID", fields.errors.join("; "));
+      const next = toPublicRecord({ ...base, ...fields });
+      const before = String((base as unknown as Record<string, unknown>)[c.field] ?? "");
+      const after = String((next as unknown as Record<string, unknown>)[c.field] ?? "");
+      if (before !== after) {
+        merged.set(rec.id, next);
+        const list = touched.get(rec.id) ?? [];
+        list.push({ field: c.field, oldValue: before, newValue: after });
+        touched.set(rec.id, list);
+      }
+    });
+    if (failures.length) throw new PedidoCellPatchError(failures);
+
+    // updatedAt es la versión de concurrencia: tiene que cambiar SIEMPRE (aunque caiga en el mismo ms).
+    const nowFor = (id: string) => new Date(Math.max(Date.now(), new Date(current.get(id)!.updatedAt).getTime() + 1)).toISOString();
+    const stamp = new Map([...touched.keys()].map((id) => [id, nowFor(id)] as const));
+    const updated: ProductionPedidoRecord[] = [];
+    for (const id of touched.keys()) {
+      updated.push(toPublicRecord({ ...merged.get(id)!, updatedBy: a.email, updatedAt: stamp.get(id)! }));
+    }
+    if (updated.length === 0) return { items: [...current.values()], changedCells: 0 };
+
+    if (useMem) {
+      // Re-chequeo síncrono de versión justo antes de escribir (sin await en medio): equivale al CAS de Neon.
+      for (const [id] of touched) {
+        const cur = mem().rows.find((r) => r.id === id);
+        if (!cur || cur.updatedAt !== current.get(id)!.updatedAt) {
+          throw new PedidoCellPatchError([{ index: changes.findIndex((c) => c.id === id), id, field: changes.find((c) => c.id === id)?.field ?? "", code: "CONFLICT", message: "Otro usuario modificó este pedido. Recargá antes de editar." }]);
+        }
+      }
+      for (const u of updated) {
+        const i = mem().rows.findIndex((r) => r.id === u.id);
+        if (i >= 0) mem().rows[i] = u;
+      }
+    } else {
+      const db = getDb();
+      await db.transaction(async (tx) => {
+        for (const [id, edits] of touched) {
+          const m = merged.get(id)!;
+          const colOf: Record<string, string> = { op: "op", fecha: "fecha", nroOc: "nro_oc", cliente: "cliente", producto: "producto", s: "s", q: "q", ml: "ml" };
+          const sets = edits.map((e) => sql`${sql.raw(`"${colOf[e.field]}"`)} = ${(m as unknown as Record<string, unknown>)[e.field] ?? null}`);
+          if (edits.some((e) => e.field === "q" || e.field === "ml")) sets.push(sql`"kg" = ${m.kg}`);
+          const res = await tx.execute(sql`
+            update production_pedidos set ${sql.join(sets, sql`, `)}, updated_by = ${a.email}, updated_at = ${stamp.get(id)!}::timestamptz
+            where id = ${id}::uuid and deleted_at is null
+              and date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', ${current.get(id)!.updatedAt}::timestamptz)
+            returning id
+          `);
+          if (!(res.rows as unknown[]).length) {
+            throw new PedidoCellPatchError([{ index: changes.findIndex((c) => c.id === id), id, field: edits[0]!.field, code: "CONFLICT", message: "Otro usuario modificó este pedido. Recargá antes de editar." }]);
+          }
+        }
+      });
+    }
+    for (const [id, edits] of touched) {
+      for (const e of edits) {
+        recordLifecycleEvent({
+          entityKind: "pedido",
+          entityId: id,
+          action: "editar_celda",
+          actor: { email: a.email, sector: a.sector as SectorId },
+          impact: { field: e.field, oldValue: e.oldValue, newValue: e.newValue },
+        });
+      }
+    }
+    return { items: updated, changedCells: [...touched.values()].reduce((n, l) => n + l.length, 0) };
   }
 
   async remove(
