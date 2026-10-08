@@ -932,6 +932,33 @@ export const asignacionLotes = pgTable(
 );
 
 /**
+ * 0039 — Auditoría de edición por celda de Asignación de Lotes (grilla tipo
+ * Excel): una fila por celda modificada, con valor anterior y nuevo. Se
+ * escribe en la MISMA transacción que el UPDATE: si la auditoría falla, el
+ * cambio no se persiste (nunca hay un cambio sin rastro).
+ */
+export const asignacionLotesCellAudit = pgTable(
+  "asignacion_lotes_cell_audit",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    batchId: text("batch_id").notNull(),
+    recordId: text("record_id").notNull(),
+    lote: text("lote").notNull().default(""),
+    field: text("field").notNull(),
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    actorName: text("actor_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("asignacion_lotes_cell_audit_record_idx").on(table.recordId, table.createdAt),
+    index("asignacion_lotes_cell_audit_batch_idx").on(table.batchId),
+  ]
+);
+
+/**
  * Fuentes configurables de Asignación de Lotes (0032) — Google Sheets como
  * fuente externa. Nunca hardcodeado a un spreadsheetId: conectar una
  * planilla nueva (ej. 2027) es una fila acá, no un deploy.

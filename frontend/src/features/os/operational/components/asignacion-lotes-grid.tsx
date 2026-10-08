@@ -1,0 +1,163 @@
+"use client";
+
+import { useCallback, useMemo, type ReactNode } from "react";
+import {
+  GenusGrid,
+  type GenusGridCellChange,
+  type GenusGridColumn,
+  type GenusGridCommitResult,
+} from "@/components/data-grid/genus-grid";
+import {
+  ASIGNACION_CELL_KIND,
+  ASIGNACION_CELL_FIELDS,
+  IDENTITY_FIELDS,
+  cellProtectionReason,
+  isAsignacionCellField,
+  validateCellValue,
+  type AsignacionCellField,
+} from "@/lib/asignacion-lotes/cell-edit";
+import {
+  AsignacionCellsApiError,
+  patchAsignacionLoteCellsApi,
+} from "@/lib/asignacion-lotes/asignacion-lotes-client";
+import type { OrdersClientSession } from "@/lib/orders/orders-client";
+import type { SectorId } from "@/types/operational/sector";
+import type { AsignacionLote } from "../adapters/asignacion-lotes-repository";
+import { formatDateDisplay } from "../lib/delivery-date";
+
+const TITLES: Record<AsignacionCellField, string> = {
+  lote: "Lote",
+  fecha: "Fecha",
+  producto: "Producto",
+  codigo: "Código",
+  marca: "Marca / Cliente",
+  cantidades: "Cantidades",
+  vto: "VTO",
+  muestras: "Muestras",
+  cjMuestra: "CJ muestra",
+  fechaAnalisis: "Fecha análisis",
+  observaciones: "Observaciones",
+};
+
+const WIDTHS: Partial<Record<AsignacionCellField, number>> = {
+  lote: 110,
+  fecha: 120,
+  producto: 230,
+  codigo: 110,
+  marca: 150,
+  cantidades: 110,
+  vto: 120,
+  muestras: 90,
+  cjMuestra: 90,
+  fechaAnalisis: 125,
+  observaciones: 240,
+};
+
+function cellText(row: AsignacionLote, field: AsignacionCellField): string {
+  const value = row[field];
+  if (value === null || value === undefined) return "";
+  if (ASIGNACION_CELL_KIND[field] === "date") return formatDateDisplay(String(value)).replace("—", "");
+  return String(value);
+}
+
+function originLabel(row: AsignacionLote): string {
+  return row.sourceId ? `Google${row.sourceSheetTab ? ` · ${row.sourceSheetTab}` : ""}` : "Manual";
+}
+
+/** Adaptador de Asignación de Lotes sobre GenusGrid (ETAPA 1). */
+export function AsignacionLotesGrid({
+  rows,
+  session,
+  sector,
+  canEdit,
+  onRowsUpdated,
+  onReload,
+  renderRowActions,
+  maxHeight,
+  testId,
+}: {
+  rows: AsignacionLote[];
+  session: OrdersClientSession;
+  sector: SectorId;
+  canEdit: boolean;
+  /** El servidor confirmó: reemplazar estos registros en el estado/caché de la vista. */
+  onRowsUpdated: (items: AsignacionLote[]) => void;
+  onReload: () => void;
+  renderRowActions?: (row: AsignacionLote) => ReactNode;
+  maxHeight?: number;
+  testId?: string;
+}) {
+  const columns = useMemo<GenusGridColumn<AsignacionLote>[]>(() => {
+    const editable: GenusGridColumn<AsignacionLote>[] = ASIGNACION_CELL_FIELDS.map((field) => ({
+      key: field,
+      title: TITLES[field],
+      kind: ASIGNACION_CELL_KIND[field],
+      basis: WIDTHS[field],
+      sensitive: IDENTITY_FIELDS.has(field),
+      getValue: (row) => cellText(row, field),
+      protection: (row) => cellProtectionReason(row, field, sector),
+      validate: (raw) => {
+        const result = validateCellValue(field, raw);
+        return result.ok ? null : result.message;
+      },
+    }));
+    // Columna derivada: solo lectura siempre (no es un campo del registro).
+    editable.push({
+      key: "origen",
+      title: "Origen",
+      basis: 130,
+      getValue: originLabel,
+      protection: () => "Columna calculada (solo lectura).",
+    });
+    return editable;
+  }, [sector]);
+
+  const onCommit = useCallback(
+    async (changes: GenusGridCellChange[]): Promise<GenusGridCommitResult> => {
+      const payload = changes.flatMap((c) =>
+        isAsignacionCellField(c.columnKey)
+          ? [{ id: c.rowId, field: c.columnKey, value: c.newValue, expectedVersion: c.rowVersion }]
+          : []
+      );
+      try {
+        const result = await patchAsignacionLoteCellsApi(session, payload);
+        onRowsUpdated(result.items);
+        return { ok: true };
+      } catch (err) {
+        if (err instanceof AsignacionCellsApiError) {
+          return {
+            ok: false,
+            message: err.message,
+            failures: err.failures.map((f) => ({ rowId: f.id, columnKey: f.field, message: f.message })),
+          };
+        }
+        return { ok: false, message: err instanceof Error ? err.message : "No se pudo guardar." };
+      }
+    },
+    [session, onRowsUpdated]
+  );
+
+  return (
+    <GenusGrid<AsignacionLote>
+      rows={rows}
+      rowId={(row) => row.id}
+      rowVersion={(row) => row.updatedAt}
+      rowLabel={(row) => row.lote || row.id}
+      columns={columns}
+      onCommit={onCommit}
+      canEdit={canEdit}
+      onReload={onReload}
+      renderRowActions={renderRowActions}
+      rowActionsWidth={68}
+      maxHeight={maxHeight}
+      testId={testId ?? "asignacion-lotes-grid"}
+      hint={
+        <>
+          Clic: seleccionar · doble clic / Enter / escribir: editar · arrastrar: rango · Ctrl+C / Ctrl+V (Excel y Google Sheets) ·
+          Supr: limpiar · Ctrl+Z: deshacer el último guardado. Cada celda se guarda sola; las filas con origen Google son de solo
+          lectura (corregilas en la Sheet).
+        </>
+      }
+    />
+  );
+}

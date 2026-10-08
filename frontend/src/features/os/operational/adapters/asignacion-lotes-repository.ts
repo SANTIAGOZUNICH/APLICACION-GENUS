@@ -61,7 +61,9 @@ function migrateRecord(raw: unknown, now = new Date().toISOString()): Asignacion
   return {
     id: asString(record.id) || makeId(),
     lote: asString(record.lote),
-    fecha: asOptionalDate(record.fecha) ?? now.slice(0, 10),
+    // null = no informada (carga flexible / fila de Google sin fecha): NUNCA se
+    // inventa "hoy" — mostraría y copiaría a la grilla un dato falso.
+    fecha: asOptionalDate(record.fecha),
     producto: asString(record.producto),
     codigo: asString(record.codigo),
     marca: asString(record.marca),
@@ -76,6 +78,12 @@ function migrateRecord(raw: unknown, now = new Date().toISOString()): Asignacion
     updatedAt,
     updatedBy: asString(record.updatedBy),
     archived: Boolean(record.archived),
+    // Metadatos de origen: la grilla necesita saber qué registros vienen de
+    // Google Sheets (fuente de verdad → solo lectura). Antes se descartaban.
+    sourceId: typeof record.sourceId === "string" && record.sourceId ? record.sourceId : null,
+    sourceSheetTab: typeof record.sourceSheetTab === "string" && record.sourceSheetTab ? record.sourceSheetTab : null,
+    datosIncompletos: Boolean(record.datosIncompletos),
+    camposIncompletos: Array.isArray(record.camposIncompletos) ? (record.camposIncompletos as string[]) : null,
   };
 }
 

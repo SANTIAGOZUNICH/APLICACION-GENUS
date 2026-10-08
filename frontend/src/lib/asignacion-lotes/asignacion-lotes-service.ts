@@ -3,17 +3,28 @@
  */
 import "server-only";
 
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { parseFlexibleDate } from "@/features/os/operational/lib/delivery-date";
 import {
   canAccessAsignacionLotes,
   canMutateAsignacionLotes,
 } from "@/features/os/operational/lib/asignacion-lotes-rbac";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { asignacionLotes } from "@/lib/db/schema";
+import { asignacionLotes, asignacionLotesCellAudit } from "@/lib/db/schema";
 import { fillBareWorkItemsFromAsignacionLote } from "./sync-to-bare-workitems";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from "@/lib/orders/types";
+import {
+  ASIGNACION_CELL_KIND,
+  IDENTITY_FIELDS,
+  MAX_CELL_CHANGES_PER_REQUEST,
+  cellProtectionReason,
+  isAsignacionCellField,
+  validateCellValue,
+  type AsignacionCellChange,
+  type AsignacionCellField,
+  type AsignacionCellFailure,
+} from "./cell-edit";
 import type {
   AsignacionLote,
   AsignacionLoteImportResult,
@@ -248,6 +259,61 @@ function sortItems(items: AsignacionLote[]): AsignacionLote[] {
   return [...items].sort(
     (a, b) => (b.fecha ?? "").localeCompare(a.fecha ?? "") || a.lote.localeCompare(b.lote, "es")
   );
+}
+
+
+/** Rechazo atómico de un PATCH por celdas: NADA se aplicó. */
+export class AsignacionCellPatchError extends Error {
+  readonly status: number;
+  readonly code = "ASIGNACION_CELL_PATCH_REJECTED";
+  constructor(readonly failures: AsignacionCellFailure[]) {
+    super(
+      failures.length === 1
+        ? failures[0]!.message
+        : `${failures.length} celdas rechazadas — no se guardó ningún cambio.`
+    );
+    this.name = "AsignacionCellPatchError";
+    this.status = failures.some((f) => f.code === "CONFLICT")
+      ? 409
+      : failures.some((f) => f.code === "PROTECTED_SOURCE" || f.code === "FORBIDDEN_FIELD")
+        ? 403
+        : 400;
+  }
+}
+
+export interface AsignacionCellAuditEntry {
+  batchId: string;
+  recordId: string;
+  lote: string;
+  field: string;
+  oldValue: string | null;
+  newValue: string | null;
+  actorEmail: string;
+  actorSector: string;
+  actorName: string;
+  createdAt: string;
+}
+
+const gAudit = globalThis as unknown as { __genusAsignacionCellAudit?: AsignacionCellAuditEntry[] };
+
+/** Solo path en memoria (tests / sin DATABASE_URL). */
+export function getAsignacionCellAuditMemory(): AsignacionCellAuditEntry[] {
+  if (!gAudit.__genusAsignacionCellAudit) gAudit.__genusAsignacionCellAudit = [];
+  return gAudit.__genusAsignacionCellAudit;
+}
+
+function sameVersion(a: string, b: string): boolean {
+  const ta = new Date(a).getTime();
+  const tb = new Date(b).getTime();
+  return Number.isFinite(ta) && ta === tb;
+}
+
+function auditText(value: string | number | null | undefined): string | null {
+  return value === null || value === undefined ? null : String(value);
+}
+
+function currentCellValue(record: AsignacionLote, field: AsignacionCellField): string | number | null {
+  return record[field] ?? null;
 }
 
 export class AsignacionLotesService {
@@ -540,6 +606,243 @@ export class AsignacionLotesService {
     const idx = items.findIndex((item) => item.id === id);
     if (idx < 0) return;
     items[idx] = { ...items[idx]!, archived: true, updatedAt: now };
+  }
+
+
+  /**
+   * Edición por celda (grilla tipo Excel) — PATCH PARCIAL y ATÓMICO.
+   *
+   * - Solo se escribe cada campo editado (+ updatedAt/updatedBy): NUNCA se
+   *   reenvía la fila completa, así que LOTE/VTO/PRODUCTO/etc. no editados
+   *   no pueden pisarse con datos viejos.
+   * - Todo el lote de celdas se valida primero (permisos, protección de
+   *   registros sincronizados desde Google, tipos, duplicados, versión). Si
+   *   UNA falla no se guarda NINGUNA y se informan todas las fallas.
+   * - Concurrencia optimista: `expectedVersion` = updatedAt que vio el
+   *   cliente; si otro usuario/sync modificó el registro → CONFLICT.
+   * - Auditoría (usuario, registro, campo, antes, después) en la misma
+   *   transacción que el UPDATE.
+   */
+  async patchCells(
+    actor: AsignacionLotesActor,
+    changes: AsignacionCellChange[]
+  ): Promise<{ items: AsignacionLote[]; changedCells: number; unchangedCells: number }> {
+    assertMutate(actor);
+    if (!Array.isArray(changes) || changes.length === 0) {
+      throw new OrdersValidationError("No hay cambios para guardar.");
+    }
+    if (changes.length > MAX_CELL_CHANGES_PER_REQUEST) {
+      throw new OrdersValidationError(
+        `Máximo ${MAX_CELL_CHANGES_PER_REQUEST} celdas por operación. Dividí el pegado.`
+      );
+    }
+
+    const ids = [...new Set(changes.map((c) => String(c?.id ?? "")))];
+    const records = new Map<string, AsignacionLote>();
+    let activeRows: AsignacionLote[];
+    if (useNeon()) {
+      const db = getDb();
+      const rows = await db.select().from(asignacionLotes).where(inArray(asignacionLotes.id, ids));
+      for (const row of rows) records.set(row.id, rowToDomain(row));
+      const active = await db.select().from(asignacionLotes).where(eq(asignacionLotes.archived, false));
+      activeRows = active.map(rowToDomain);
+    } else {
+      for (const item of mem()) if (ids.includes(item.id)) records.set(item.id, item);
+      activeRows = mem().filter((item) => !item.archived);
+    }
+
+    const failures: AsignacionCellFailure[] = [];
+    const fail = (index: number, change: AsignacionCellChange, code: AsignacionCellFailure["code"], message: string) => {
+      failures.push({ index, id: String(change?.id ?? ""), field: String(change?.field ?? ""), code, message });
+    };
+
+    type Pending = {
+      record: AsignacionLote;
+      patch: Partial<Record<AsignacionCellField, string | number | null>>;
+    };
+    const pending = new Map<string, Pending>();
+    let unchangedCells = 0;
+
+    changes.forEach((change, index) => {
+      if (!change || !isAsignacionCellField(change.field)) {
+        fail(index, change, "INVALID_FIELD", "Columna no editable.");
+        return;
+      }
+      const record = records.get(change.id);
+      if (!record) {
+        fail(index, change, "NOT_FOUND", "El registro ya no existe.");
+        return;
+      }
+      const reason = cellProtectionReason(record, change.field, actor.sector);
+      if (reason) {
+        const code = record.archived ? "ARCHIVED" : record.sourceId ? "PROTECTED_SOURCE" : "FORBIDDEN_FIELD";
+        fail(index, change, code, reason);
+        return;
+      }
+      if (!change.expectedVersion || !sameVersion(record.updatedAt, change.expectedVersion)) {
+        fail(
+          index,
+          change,
+          "CONFLICT",
+          "Otro usuario (o una sincronización) modificó este registro. Recargá antes de editar."
+        );
+        return;
+      }
+      const validation = validateCellValue(change.field, change.value);
+      if (!validation.ok) {
+        fail(index, change, "INVALID_VALUE", validation.message);
+        return;
+      }
+      const entry = pending.get(record.id) ?? { record, patch: {} };
+      const current = currentCellValue(record, change.field);
+      if (auditText(current) === auditText(validation.value)) {
+        // Mismo valor que el guardado: nada que escribir (pero un pegado posterior en la misma celda sí cuenta).
+        delete entry.patch[change.field];
+        unchangedCells += 1;
+      } else {
+        entry.patch[change.field] = validation.value;
+      }
+      pending.set(record.id, entry);
+    });
+
+    // Identidad (lote, código, producto): no puede duplicar otro registro activo ni otro del mismo lote de cambios.
+    if (failures.length === 0) {
+      const claimed = new Map<string, string>();
+      for (const [id, entry] of pending) {
+        if (!Object.keys(entry.patch).some((f) => IDENTITY_FIELDS.has(f as AsignacionCellField))) continue;
+        const next = {
+          lote: String(entry.patch.lote ?? entry.record.lote),
+          codigo: String(entry.patch.codigo ?? entry.record.codigo),
+          producto: String(entry.patch.producto ?? entry.record.producto),
+        };
+        const key = duplicateKey(next.lote, next.codigo, next.producto);
+        const clash = activeRows.find(
+          (row) => row.id !== id && !pending.has(row.id) && duplicateKey(row.lote, row.codigo, row.producto) === key
+        );
+        const sibling = claimed.get(key);
+        if (clash || (sibling && sibling !== id)) {
+          changes.forEach((change, index) => {
+            if (change.id === id && IDENTITY_FIELDS.has(change.field)) {
+              fail(index, change, "DUPLICATE", `Ya existe el lote ${next.lote} para el código ${next.codigo} y producto ${next.producto}.`);
+            }
+          });
+        }
+        claimed.set(key, id);
+        // Otro registro del mismo lote de cambios que ya existía y también cambia: chequeado vía `claimed`.
+        for (const [otherId, other] of pending) {
+          if (otherId === id || Object.keys(other.patch).some((f) => IDENTITY_FIELDS.has(f as AsignacionCellField))) continue;
+          if (duplicateKey(other.record.lote, other.record.codigo, other.record.producto) === key) {
+            changes.forEach((change, index) => {
+              if (change.id === id && IDENTITY_FIELDS.has(change.field)) {
+                fail(index, change, "DUPLICATE", `Ya existe el lote ${next.lote} para el código ${next.codigo} y producto ${next.producto}.`);
+              }
+            });
+          }
+        }
+      }
+    }
+
+    if (failures.length > 0) throw new AsignacionCellPatchError(failures);
+
+    const toWrite = [...pending.values()].filter((entry) => Object.keys(entry.patch).length > 0);
+    const changedCells = toWrite.reduce((n, entry) => n + Object.keys(entry.patch).length, 0);
+    if (toWrite.length === 0) {
+      return { items: [...records.values()], changedCells: 0, unchangedCells };
+    }
+
+    // updatedAt es la "versión" del registro: debe cambiar SIEMPRE, aunque dos
+    // ediciones caigan en el mismo milisegundo.
+    const latestPrev = Math.max(...toWrite.map((entry) => new Date(entry.record.updatedAt).getTime()));
+    const nowDate = new Date(Math.max(Date.now(), latestPrev + 1));
+    const now = nowDate.toISOString();
+    const updatedBy = actor.displayName;
+    const batchId = `cb-${nowDate.getTime()}-${Math.random().toString(36).slice(2, 8)}`;
+    const auditRows: AsignacionCellAuditEntry[] = [];
+    const updated: AsignacionLote[] = [];
+
+    for (const entry of toWrite) {
+      for (const [field, value] of Object.entries(entry.patch) as [AsignacionCellField, string | number | null][]) {
+        auditRows.push({
+          batchId,
+          recordId: entry.record.id,
+          lote: entry.record.lote,
+          field,
+          oldValue: auditText(currentCellValue(entry.record, field)),
+          newValue: auditText(value),
+          actorEmail: actor.email,
+          actorSector: actor.sector,
+          actorName: actor.displayName,
+          createdAt: now,
+        });
+      }
+      updated.push({ ...entry.record, ...(entry.patch as Partial<AsignacionLote>), updatedAt: now, updatedBy });
+    }
+
+    if (useNeon()) {
+      const db = getDb();
+      await db.transaction(async (tx) => {
+        for (const entry of toWrite) {
+          const set: Record<string, unknown> = { updatedAt: nowDate, updatedBy };
+          for (const [field, value] of Object.entries(entry.patch)) {
+            set[field] =
+              ASIGNACION_CELL_KIND[field as AsignacionCellField] === "number" ? String(value) : value;
+          }
+          const res = await tx
+            .update(asignacionLotes)
+            .set(set)
+            .where(
+              sql`${asignacionLotes.id} = ${entry.record.id}
+                and ${asignacionLotes.archived} = false
+                and ${asignacionLotes.sourceId} is null
+                and date_trunc('milliseconds', ${asignacionLotes.updatedAt}) = ${new Date(entry.record.updatedAt)}`
+            )
+            .returning({ id: asignacionLotes.id });
+          if (res.length === 0) {
+            // Perdió la carrera: otro writer cambió el registro entre la lectura y el UPDATE → rollback total.
+            throw new AsignacionCellPatchError([
+              {
+                index: changes.findIndex((c) => c.id === entry.record.id),
+                id: entry.record.id,
+                field: Object.keys(entry.patch)[0] ?? "",
+                code: "CONFLICT",
+                message: "Otro usuario (o una sincronización) modificó este registro. Recargá antes de editar.",
+              },
+            ]);
+          }
+        }
+        await tx.insert(asignacionLotesCellAudit).values(
+          auditRows.map((row) => ({
+            batchId: row.batchId,
+            recordId: row.recordId,
+            lote: row.lote,
+            field: row.field,
+            oldValue: row.oldValue,
+            newValue: row.newValue,
+            actorEmail: row.actorEmail,
+            actorSector: row.actorSector,
+            actorName: row.actorName,
+            createdAt: nowDate,
+          }))
+        );
+      });
+      // Sincronización retroactiva a WorkItems "pelados" — best-effort, igual que writeRecord().
+      for (const record of updated) {
+        try {
+          await fillBareWorkItemsFromAsignacionLote(record, actor.sector);
+        } catch {
+          // No-op: el guardado de la celda ya se confirmó.
+        }
+      }
+    } else {
+      const items = mem();
+      for (const record of updated) {
+        const idx = items.findIndex((item) => item.id === record.id);
+        if (idx >= 0) items[idx] = record;
+      }
+      getAsignacionCellAuditMemory().push(...auditRows);
+    }
+
+    return { items: updated, changedCells, unchangedCells };
   }
 
   /** Restaura filas archivadas/eliminadas (incl. bajas con deleted_reason). */
