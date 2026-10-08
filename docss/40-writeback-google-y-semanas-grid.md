@@ -2,20 +2,18 @@
 
 > Estado: implementado y probado **localmente** (Sheets simuladas / copia local del libro). **No** probado contra Google real ni Neon real: ver §6.
 
-## 1. Migraciones (verificado con `git ls-tree origin/main`)
-`main` llega hasta `0038`. Las tres `0039` son de ramas **no mergeadas** (ninguna está en producción):
+## 1. Migraciones — estrategia que no saltea ninguna (independiente del orden de merge)
+`main` llega hasta `0038`. Las tres `0039` están en ramas **no mergeadas** (ninguna está en producción): `feat/me-ingresos-desde-remito` (`0039_me_remito_ai`), `fix/asignacion-lotes-adopt-historical-manual-records` (`0039_asignacion_lotes_adoption_reconciliation`) y #109 (que pasó a **`0040_asignacion_lotes_cell_audit`**). No se modificó ninguna migración ejecutada ni ninguna otra rama.
 
-| Rama | Archivo | `when` en el journal |
-|---|---|---|
-| `feat/me-ingresos-desde-remito` | `0039_me_remito_ai` | 1790300000000 |
-| `fix/asignacion-lotes-adopt-historical-manual-records` | `0039_asignacion_lotes_adoption_reconciliation` | 1790900000000 |
-| PR #109 (antes) | `0039_asignacion_lotes_cell_audit` | 1790300000000 |
+**Problema real:** el migrador de Drizzle aplica solo entradas del journal con `when` mayor al `created_at` más alto ya aplicado; una migración mergeada después con `when` menor se **saltea en silencio**. Renumerar archivos no lo evita.
 
-No se inventó un orden de merge. Cambio hecho **solo en #109** (no se tocó ninguna migración aplicada ni ninguna otra rama): la migración pasó a **`0040_asignacion_lotes_cell_audit`** con `when = 1791100000000` (> a las otras dos) y SQL 100 % idempotente (`IF NOT EXISTS`).
+**Solución (`scripts/lib/migration-reconcile.mjs`, corre en `scripts/migrate-if-database.mjs` justo después de `migrate()`):** para cada migración declarada *reconcile-safe* verifica por **hash sha256 del archivo** (el mismo que usa Drizzle) si está en `drizzle.__drizzle_migrations`; si falta, la aplica (sentencias separadas por `--> statement-breakpoint`, en transacción) y la registra con su `when`. Así, cualquiera sea el orden de merge, todas terminan aplicadas.
+- *Reconcile-safe* = línea `-- genus:reconcile-safe` en el SQL (la de #109 la tiene) **o** tag en `KNOWN_RECONCILE_SAFE_TAGS` (las dos `0039` de las otras ramas, auditadas: solo `CREATE ... IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`). Las migraciones viejas (≤0038), las diferidas por gate (0005–0018, 0022) y las no marcadas **nunca** se reaplican.
+- **Guardas (test `src/lib/db/migration-reconcile.test.ts`)**: tags únicos, `idx` consecutivos, archivo presente; toda migración posterior a 0038 debe ser reconcile-safe, sin `DROP/DELETE/TRUNCATE` y con `IF NOT EXISTS` en cada `CREATE/ALTER`; las ≤0038 no tienen la marca. Simulación del escenario real: producción ya aplicó A (`when` alto) y luego se mergea B (`when` menor) → Drizzle la saltea, la reconciliación la aplica; el orden inverso no hace nada; segunda corrida idempotente.
+- Al mergear, el único conflicto esperable es textual en `_journal.json` (cada rama agrega una entrada al final): se resuelve conservando todas las entradas con `idx` consecutivos; el orden ya no afecta la corrección.
+- **No probado contra Neon real** (ver §7): `src/integration/neon.integration.test.ts` corre el script real dos veces, simula una migración "saltada" y verifica que se reaplica.
 
-⚠️ Regla de Drizzle a respetar al mergear: el migrador aplica solo migraciones con `when` mayor al de la última ya aplicada. Si `0039_asignacion_lotes_adoption_reconciliation` (1790900000000) se mergea **después** de una `0040` ya desplegada, Drizzle la **salteará**. Quien mergee segundo debe subir el `when` de su entrada del journal por encima del último desplegado (y renumerar si choca el nombre). Esto no puede resolverse sin conocer el orden real de merge.
-
-La migración 0040 crea: `asignacion_lotes_cell_audit`, `asignacion_lotes_writeback_ops`, `sheet_cell_edits` (todas tablas nuevas, sin tocar datos existentes).
+La migración 0040 crea: `asignacion_lotes_cell_audit`, `asignacion_lotes_writeback_ops` (índice único parcial: una sola operación abierta por registro+campo), `sheet_cell_edits` (índice único parcial: una sola edición `pending` por celda; columnas `reason` y `affects_indicators`).
 
 ## 2. Asignación de Lotes — opción C (bidireccional)
 Código: `lib/asignacion-lotes/{writeback-ops,writeback-gateway,asignacion-lotes-writeback-service}.ts`; entrada única: `PATCH /api/v1/asignacion-lotes/cells`.
@@ -48,19 +46,22 @@ Principio: **la Sheet es la única fuente de verdad**. GENUS la lee en vivo y es
 
 | Pestaña | Presentación | Edición |
 |---|---|---|
-| ELABORACION / ACONDICIONAMIENTO | Calendario Lun–Vie por semana, igual a la planilla (bandas combinadas, responsables, bloques cliente/producto/cantidad) | Por celda **ancla** (B/D/F/H/J + fila). Protegidos: encabezados (día/fecha/mes), celdas combinadas no ancla, fórmulas, semanas anteriores a la actual |
-| C/DIA (`QACONDDIA`) | Tabla plana (fecha heredada por día) | Editable en los últimos 14 días y futuro; antes = "día cerrado" (**supuesto de política**, ajustable en `CDIA_EDIT_WINDOW_DAYS`) |
-| ENTREGAS | Tabla plana | Editable desde hoy; fechas anteriores = entregas históricas protegidas. *Pendiente*: protegerlas también por estado real del flujo operativo (entregas confirmadas en GENUS) |
+| ELABORACION / ACONDICIONAMIENTO | Calendario Lun–Vie por semana, igual a la planilla (bandas combinadas, responsables, bloques cliente/producto/cantidad) | Por celda **ancla** (B/D/F/H/J + fila). Protegidos: encabezados (día/fecha/mes), celdas combinadas no ancla, fórmulas y celdas de producto con **cierre de envasado/decisión de Calidad real en GENUS**. Semanas anteriores: **editables** (con motivo) |
+| C/DIA (`QACONDDIA`) | Tabla plana (fecha heredada por día) | **Sin ventana de antigüedad.** Protegida solo si GENUS tiene la producción **cerrada** (cierre de envasado o decisión de Calidad ese día para ese producto). Fechas anteriores a hoy exigen **motivo**; CANTIDAD/RESPONSABLE (alimentan DB: `SUMIFS(QACONDDIA!D/E…)`) quedan marcadas `affects_indicators` en la bitácora |
+| ENTREGAS | Tabla plana | Protegida por **estado real**: entrega `ENTREGADO` (no archivada/anulada/eliminada) o **remito no-borrador** en GENUS para ese cliente y fecha (criterio conservador: protege de más, nunca de menos). Una entrega histórica NO confirmada se puede corregir (con motivo) |
 | DB | — | **No expuesta**: dashboard con 106 fórmulas (`SUMIFS(QACONDDIA!$D$4:$D$52…)` con rangos fijos). Nunca editable |
 
-Escritura de una celda (servidor, nunca confiando en el cliente): modelo vivo → protección → valor remoto == lo que vio el usuario (si no, **conflicto**) → rechazo de fórmulas (también valores que empiezan con `=`) → una sola celda → relectura de confirmación → bitácora. No se envían estilos, combinadas ni formato; no se crean ni borran filas; no se toca ninguna otra celda (test: 1 celda cambiada de las miles del libro).
+**Fail-closed:** si el estado operativo no se puede verificar (sin base o consulta fallida) ENTREGAS y C/DIA quedan **bloqueadas** (`UNKNOWN_LOCKS`) y la UI lo avisa.
 
-Doble llave para escribir: `SEMANAS_WRITEBACK=1` + `SEMANAS_WRITEBACK_SPREADSHEET_IDS` con el id de una **copia de prueba**. Sin eso la vista es de solo lectura y avisa.
+Escritura de una celda (servidor, nunca confiando en el cliente): modelo vivo → estado operativo real → protección → motivo si es histórica → reserva de la celda (una sola edición `pending` por celda: dos usuarios a la vez → uno recibe `BUSY`) → valor remoto == lo que vio el usuario (si no, **conflicto**) → rechazo de fórmulas (también valores que empiezan con `=`) → una sola celda → relectura de confirmación → bitácora. No se envían estilos, combinadas ni formato; no se crean ni borran filas; no se toca ninguna otra celda (test: 1 celda cambiada de las miles del libro).
+
+Doble llave para escribir: `SEMANAS_WRITEBACK=1` + `SEMANAS_WRITEBACK_SPREADSHEET_IDS` con el id de una **copia de prueba**. Sin eso la vista es de solo lectura y avisa. **Nunca en Production:** con `VERCEL_ENV=production` el write-back (Asignación y Semanas) queda deshabilitado aunque estén los flags (test).
 
 Límites conocidos (no se inventan equivalencias):
 - El calendario no mapea 1:1 a work-items (bloque de 2 columnas, producciones de 2 días): la grilla edita **celdas**, no registros; "mover una producción entre días" = copiar/pegar celdas y borrar el origen (varias celdas en una operación).
 - Insertar/eliminar filas o semanas nuevas: no implementado (riesgo para `SUMIFS` fijos y combinadas).
 - El año de las fechas viene de `SEMANAS_YEAR` (2026 por defecto) — la planilla no lo trae en el encabezado.
+- **Fidelidad visual:** la grilla muestra cada día como UNA columna (Lun–Vie); las bandas combinadas (p. ej. `D4:I4`, `B4:K4`) aparecen en la celda ancla y las cubiertas quedan vacías/protegidas (el motor no tiene `colSpan`). La **Sheet conserva** celdas combinadas, fórmulas, formatos y distribución: se escribe `values.update` de UNA celda (nunca estilos ni combinadas) y los tests comparan combinadas/fórmulas/valores antes y después.
 - La copia local del libro (`SEMANAS 2026.xlsx`, del repo) **no equivale** a la versión viva; no se pudo acceder a Google desde este entorno.
 
 ## 4. Variables de entorno (sin secretos)
@@ -81,5 +82,8 @@ Ver el informe final del PR #109 (implementado / probado local / probado con ser
 3. **Neon**: una rama Neon de prueba y su connection string cargada **solo** en el entorno Preview de Vercel como `DATABASE_URL` (Vercel → Settings → Environment Variables). El build corre `db:migrate` y aplica `0040`.
 4. Con eso, correr la matriz de pruebas reales del §7.
 
-## 7. Pruebas reales pendientes (necesitan 1–3)
-Persistencia y concurrencia reales en Neon (`date_trunc` ms, transacción, índice único de ops); escritura/relectura reales en Sheets de prueba (locale de fechas, `USER_ENTERED`); inserción de fila arriba durante una edición; cron real sin revertir; reconciliación tras corte entre Google y Neon.
+## 7. Pruebas contra servicios reales (preparadas, NO ejecutadas aquí)
+`src/integration/` (se saltan sin `GENUS_IT_*`; ver su README):
+- `neon.integration.test.ts` — rama Neon **descartable** (`GENUS_IT_DATABASE_URL` directo + `GENUS_IT_CONFIRM_DISPOSABLE_DB=yes`): migraciones completas con el script real (2 corridas), reaplicación de una migración "saltada", persistencia/versión por `date_trunc` ms, auditoría transaccional, atomicidad, **dos usuarios misma celda**, **dos usuarios misma identidad de lote (DUPLICATE, no 500)**, índice único parcial de operaciones abiertas.
+- `google-copy.integration.test.ts` — copias de Google (`GENUS_IT_GOOGLE_SEMANAS_COPY_ID`, `..._ASIGNACION_COPY_ID`, `..._ASIGNACION_TAB`, `GENUS_IT_GOOGLE_CONFIRM_COPIES=yes`): **se niega si el título no contiene copia/copy/test/prueba**; edita y revierte una celda comparando valores/combinadas/fórmulas; conflicto por cambio externo.
+Qué configurar vos: §6.
