@@ -216,6 +216,9 @@ try {
     },
     log: (m) => console.log(m),
   });
+  if (reconciled.rejected?.length) {
+    console.warn("[db:migrate] reconciliación: migraciones NO ejecutadas (fuera de la lista explícita / hash distinto):", JSON.stringify(reconciled.rejected));
+  }
   if (reconciled.applied.length) {
     console.log(`[db:migrate] reconciliadas: ${reconciled.applied.join(", ")}`);
   }
