@@ -28,6 +28,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0039_me_remito_ai": "0ea9de391d7ede8d07a0b40d8e749ca646c467e4c03215970dcc89b1ea159e92",
   "0039_asignacion_lotes_adoption_reconciliation": "17f87ae7f5656ea23271e12219199c5754c4ca6c92ee530a5795d60616b5f184",
   "0040_asignacion_lotes_cell_audit": "e5572cbca6585d6bd29b22414609ccea8dfda8730a0d476e8561d3ebc03031fb",
+  "0041_semanas_task_priorities": "b610bd6e4e5913bb2ccd2e9d1640ac9b835bed1946b7bc5a3154fffffb933c19",
 });
 
 export const RECONCILE_LOG_TABLE = "genus_migration_reconcile_log";

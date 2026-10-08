@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
 import { OrdersValidationError } from "@/lib/orders/types";
-import { writeSemanasCell, type SemanasCellEdit, type SemanasEditResult } from "@/lib/semanas-sheet/semanas-sheet-service";
+import { reconcileSemanasPriorities, writeSemanasCell, type SemanasCellEdit, type SemanasEditResult } from "@/lib/semanas-sheet/semanas-sheet-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +31,7 @@ export async function PATCH(request: Request) {
         })
       );
     }
+    if (results.some((r) => r.ok)) await reconcileSemanasPriorities(body.edits.filter((_, i) => results[i]?.ok).map((e) => String(e.tabKey)));
     const ok = results.every((r) => r.ok);
     const codes = new Set(results.flatMap((r) => (r.ok ? [] : [r.code])));
     const status = ok ? 200 : codes.has("CONFLICT") || codes.has("BUSY") ? 409 : codes.has("NOT_WRITABLE") || codes.has("PROTECTED") ? 403 : codes.has("INVALID") || codes.has("REASON_REQUIRED") ? 400 : 502;

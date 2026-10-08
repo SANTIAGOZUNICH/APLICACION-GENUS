@@ -1026,6 +1026,52 @@ export const sheetCellEdits = pgTable(
 );
 
 /**
+ * 0041 — Prioridad operativa (URGENTE / IMPORTANTE / NORMAL) de las tareas de Producción → Semanas.
+ * Dato de GENUS: jamás se escribe en la Sheet. Identidad = `task_key` (contenido + fecha), respaldo `pos_key`.
+ */
+export const semanasTaskPriorities = pgTable(
+  "semanas_task_priorities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    tab: text("tab").notNull(),
+    taskKey: text("task_key").notNull(),
+    posKey: text("pos_key").notNull().default(""),
+    taskDate: text("task_date"),
+    summary: text("summary").notNull().default(""),
+    priority: text("priority").notNull().default("NORMAL"),
+    version: integer("version").notNull().default(1),
+    updatedBy: text("updated_by").notNull(),
+    updatedBySector: text("updated_by_sector").notNull(),
+    updatedByName: text("updated_by_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("semanas_task_priorities_key_uidx").on(table.spreadsheetId, table.tab, table.taskKey),
+    index("semanas_task_priorities_pos_idx").on(table.spreadsheetId, table.tab, table.posKey),
+  ]
+);
+
+export const semanasTaskPriorityEvents = pgTable(
+  "semanas_task_priority_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    tab: text("tab").notNull(),
+    taskKey: text("task_key").notNull(),
+    summary: text("summary").notNull().default(""),
+    fromPriority: text("from_priority").notNull(),
+    toPriority: text("to_priority").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    actorName: text("actor_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("semanas_task_priority_events_task_idx").on(table.spreadsheetId, table.tab, table.taskKey, table.createdAt)]
+);
+
+/**
  * Fuentes configurables de Asignación de Lotes (0032) — Google Sheets como
  * fuente externa. Nunca hardcodeado a un spreadsheetId: conectar una
  * planilla nueva (ej. 2027) es una fila acá, no un deploy.

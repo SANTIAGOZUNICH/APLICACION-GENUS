@@ -25,6 +25,8 @@ import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types"
 import type { SectorId } from "@/types/operational/sector";
 import { dayWidths, findCalendarCell, parseA1, parseWeeklyCalendar, type CalendarWeek, type SheetFormats } from "./calendar-model";
 import { loadOperationalLocks, norm, UNVERIFIABLE, type OperationalLocks } from "./operational-locks";
+import { isPriority } from "./priorities";
+import { loadPriorities, reconcilePriorities, setTaskPriority, type PrioritiesPayload } from "./semanas-priorities-service";
 import { PREVIEW_SPREADSHEET_ID, getPreviewGateway, isPreviewSourceAllowed } from "./preview-source";
 import { findFlatCell, parseFlatTable, type FlatTable } from "./flat-model";
 
@@ -120,6 +122,8 @@ export interface SemanasViewPayload {
   /** La Sheet permite escribir desde GENUS (flag + allowlist). El permiso por usuario se evalúa aparte. */
   writable: boolean;
   weeks?: CalendarWeek[];
+  /** Prioridades operativas guardadas en GENUS (nunca en la Sheet), por clave de tarea. Solo calendarios. */
+  priorities?: PrioritiesPayload;
   /** Ancho (px) de Lun..Vie en la Sheet original (solo calendarios). */
   dayWidths?: number[];
   table?: FlatTable;
@@ -165,7 +169,8 @@ export async function loadSemanasView(tabKey: SemanasTabKey, today = todayIso())
     locksKnown: locks.known, reasonRequiredBefore: today,
   };
   if (def.kind === "CALENDAR") {
-    return { ...base, dayWidths: dayWidths(formats), weeks: parseWeeklyCalendar(rows, merges, { year: YEAR(), formulaCells, formats, cellLock: calendarCellLock(locks) }) };
+    const weeks = parseWeeklyCalendar(rows, merges, { year: YEAR(), formulaCells, formats, cellLock: calendarCellLock(locks) });
+    return { ...base, dayWidths: dayWidths(formats), weeks, priorities: await loadPriorities(id, def.tab, weeks) };
   }
   return { ...base, table: parseFlatTable(tabKey === "ENTREGAS" ? "ENTREGAS" : "CDIA", rows, merges, { formulaCells, rowLock: flatRowLock(locks) }) };
 }
@@ -376,5 +381,30 @@ export async function writeSemanasCell(
     return { ok: true, a1, value: normalized.text };
   } catch (err) {
     return await fail("failed", "GOOGLE_ERROR", `Google Sheets rechazó o no respondió: ${err instanceof Error ? err.message : "error"}. No se guardó.`);
+  }
+}
+
+/** Cambia la prioridad de una tarea (dato de GENUS; no escribe en la Sheet). Relee la planilla para validar que la tarea existe. */
+export async function updateTaskPriority(
+  actor: { email: string; sector: SectorId; displayName: string },
+  input: { tabKey: string; taskKey: string; priority: string; expectedVersion: number }
+) {
+  if (!isSemanasTabKey(input.tabKey) || SEMANAS_TABS[input.tabKey].kind !== "CALENDAR") throw new OrdersValidationError("Solo ELABORACION y ACONDICIONAMIENTO tienen prioridades.");
+  if (!isPriority(input.priority)) throw new OrdersValidationError("Prioridad inválida (URGENTE, IMPORTANTE o NORMAL).");
+  if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 0) throw new OrdersValidationError("expectedVersion inválida.");
+  const view = await loadSemanasView(input.tabKey);
+  return setTaskPriority(actor, { spreadsheetId: view.spreadsheetId, tab: view.tab, taskKey: input.taskKey, priority: input.priority, expectedVersion: input.expectedVersion }, view.weeks ?? []);
+}
+
+/** Tras editar celdas: re-asocia prioridades de tareas cuyo texto se corrigió (mejor esfuerzo). */
+export async function reconcileSemanasPriorities(tabKeys: string[]): Promise<void> {
+  for (const key of new Set(tabKeys)) {
+    if (!isSemanasTabKey(key) || SEMANAS_TABS[key].kind !== "CALENDAR") continue;
+    try {
+      const view = await loadSemanasView(key);
+      await reconcilePriorities(view.spreadsheetId, view.tab, view.weeks ?? []);
+    } catch {
+      /* no bloquea la edición */
+    }
   }
 }
