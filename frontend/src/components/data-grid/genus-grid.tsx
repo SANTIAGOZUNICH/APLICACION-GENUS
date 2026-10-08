@@ -603,6 +603,8 @@ export function GenusGrid<T>({
 
       <div className="genus-grid overflow-hidden rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
         <DataSheetGrid<GenusGridRow>
+          // Si cambian las columnas (otra pestaña/semana) el motor se remonta: sus encabezados no se actualizan en caliente.
+          key={columns.map((c) => `${c.key}:${c.title}`).join("|")}
           ref={gridRef}
           value={gridRows}
           onChange={(next) => handleChange(next)}

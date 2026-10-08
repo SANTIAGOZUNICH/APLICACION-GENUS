@@ -991,6 +991,31 @@ export const asignacionLotesWritebackOps = pgTable(
   ]
 );
 
+/** 0040 — Bitácora de ediciones de celdas de SEMANAS 2026 (la Sheet es la fuente de verdad). */
+export const sheetCellEdits = pgTable(
+  "sheet_cell_edits",
+  {
+    id: text("id").primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    sheetTab: text("sheet_tab").notNull(),
+    a1: text("a1").notNull(),
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    status: text("status").notNull(),
+    lastError: text("last_error"),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    actorName: text("actor_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("sheet_cell_edits_idem_uidx").on(table.idempotencyKey),
+    index("sheet_cell_edits_cell_idx").on(table.spreadsheetId, table.sheetTab, table.a1),
+  ]
+);
+
 /**
  * Fuentes configurables de Asignación de Lotes (0032) — Google Sheets como
  * fuente externa. Nunca hardcodeado a un spreadsheetId: conectar una

@@ -3,6 +3,7 @@ import "server-only";
 import { google } from "googleapis";
 import { createGoogleAuth, SHEETS_WRITE_SCOPES } from "@/lib/adapters/google/google-auth";
 import { sheetsReader } from "@/lib/adapters/sheets/sheets-reader";
+import type { SheetMerge } from "@/lib/semanas-sheet/calendar-model";
 
 /**
  * Puerto hacia Google Sheets para el write-back (opción C). Es una interfaz
@@ -20,11 +21,18 @@ export interface SheetCellGateway {
   writeCell(spreadsheetId: string, tab: string, a1: string, value: string): Promise<void>;
 }
 
+/** Extensión para planillas con celdas combinadas y fórmulas (SEMANAS 2026). */
+export interface SheetGridGateway extends SheetCellGateway {
+  readMerges(spreadsheetId: string, tab: string): Promise<SheetMerge[]>;
+  /** A1 de todas las celdas que son fórmulas. */
+  readFormulaCells(spreadsheetId: string, tab: string): Promise<Set<string>>;
+}
+
 function quoteTab(tab: string): string {
   return `'${tab.replace(/'/g, "''")}'`;
 }
 
-export class GoogleSheetCellGateway implements SheetCellGateway {
+export class GoogleSheetCellGateway implements SheetGridGateway {
   private sheets() {
     return google.sheets({ version: "v4", auth: createGoogleAuth(SHEETS_WRITE_SCOPES) });
   }
@@ -62,4 +70,39 @@ export class GoogleSheetCellGateway implements SheetCellGateway {
       requestBody: { values: [[value]] },
     });
   }
+
+  async readMerges(spreadsheetId: string, tab: string): Promise<SheetMerge[]> {
+    const meta = await sheetsReader.getSpreadsheetMeta(spreadsheetId);
+    return (meta.mergesByTab[tab] ?? []).map((m) => ({
+      startRow: m.startRow,
+      endRow: m.endRow,
+      startColumn: m.startColumn,
+      endColumn: m.endColumn,
+    }));
+  }
+
+  async readFormulaCells(spreadsheetId: string, tab: string): Promise<Set<string>> {
+    const res = await this.sheets().spreadsheets.values.get({
+      spreadsheetId,
+      range: quoteTab(tab),
+      valueRenderOption: "FORMULA",
+    });
+    const out = new Set<string>();
+    (res.data.values ?? []).forEach((row, r) =>
+      row.forEach((cell, c) => {
+        if (typeof cell === "string" && cell.startsWith("=")) out.add(`${columnLetterOf(c)}${r + 1}`);
+      })
+    );
+    return out;
+  }
+}
+
+function columnLetterOf(index: number): string {
+  let n = index;
+  let out = "";
+  do {
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return out;
 }

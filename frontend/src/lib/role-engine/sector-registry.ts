@@ -293,6 +293,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     sidebarItems: [
       "mi_trabajo",
       "pedidos",
+      "semanas_planilla",
       "ordenes_elaboracion",
       "entregados",
       "asignacion_lotes",

@@ -107,6 +107,7 @@ export const SIDEBAR_ITEM_IDS = [
   "avisos",
   "avisos_me",
   "semanas_produccion",
+  "semanas_planilla",
   "entregados",
   "asignacion_lotes",
   "ver_elaboracion",

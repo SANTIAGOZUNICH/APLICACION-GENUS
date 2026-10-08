@@ -33,7 +33,7 @@ Adaptador de la Etapa 1: `operational/components/asignacion-lotes-grid.tsx`.
 - Atómico: se valida todo el lote (campo, permisos de sector, protección de origen, tipos, duplicados de identidad, versión); si una celda falla no se guarda ninguna y se devuelve `failures[]` por celda.
 - Concurrencia optimista: `expectedVersion` = `updatedAt` visto por el cliente; el `UPDATE` incluye `date_trunc('milliseconds', updated_at) = $version` → `409 CONFLICT` si otro usuario/sync modificó el registro.
 - Validación server-side: `lib/asignacion-lotes/cell-edit.ts` (compartido con el cliente, pero el servidor siempre revalida). Cantidades ≥ 0 (formato es-AR), fechas reales, lote/producto no vacíos, identidad `(lote, código, producto)` sin duplicar.
-- Auditoría: tabla `asignacion_lotes_cell_audit` (migración **0039**, aditiva, sin gate): usuario, sector, registro, campo, valor anterior y nuevo, lote de operación. Se escribe **en la misma transacción** que el UPDATE.
+- Auditoría: tabla `asignacion_lotes_cell_audit` (migración **0040** (renumerada, ver docss/40), aditiva, sin gate): usuario, sector, registro, campo, valor anterior y nuevo, lote de operación. Se escribe **en la misma transacción** que el UPDATE.
 - Persistencia real en Neon (`db.transaction`); en memoria solo sin `DATABASE_URL` (tests).
 
 ## 4. Política de edición para Asignación de Lotes (Google Sheets) — PROPUESTA IMPLEMENTADA
