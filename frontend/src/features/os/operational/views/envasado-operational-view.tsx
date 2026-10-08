@@ -560,6 +560,10 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
             items={pendientesItems}
             variant="envasado"
             showPackagingColumns
+            onItemsChanged={async () => {
+              await refresh();
+              await refreshPendientes();
+            }}
             getFinishedQty={getFinishedQty}
             getObservation={getObservation}
             onSelectItem={(item) => {
@@ -669,6 +673,9 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
                 items={visibleItems}
                 variant="envasado"
                 listMode={listTab === "archivados" ? "archived" : "active"}
+                onItemsChanged={async () => {
+                  await refresh();
+                }}
                 getFinishedQty={getFinishedQty}
                 getObservation={getObservation}
                 onSelectItem={(item) => {
@@ -931,6 +938,9 @@ export function ElaboracionOperationalView() {
               <WorkItemProgressTable
                 items={items}
                 variant="elaboracion"
+                onItemsChanged={async () => {
+                  await refresh();
+                }}
                 getFinishedQty={getFinishedQty}
                 getObservation={getObservation}
                 onSelectItem={(item) => {

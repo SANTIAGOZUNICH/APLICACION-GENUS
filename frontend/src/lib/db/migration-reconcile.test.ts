@@ -2,7 +2,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-// @ts-expect-error módulo .mjs sin tipos (script de build)
 import { ALLOWED_RECONCILE_MIGRATIONS, drizzleHash, reconcileMigrations, rejectStatement, splitStatements } from "../../../scripts/lib/migration-reconcile.mjs";
 
 const DRIZZLE_DIR = path.resolve(__dirname, "../../../drizzle");
@@ -165,7 +164,7 @@ describe("guardas sobre el journal real del repo", () => {
   it("toda migración posterior a 0038 DEL REPO está en la lista explícita con su hash exacto y pasa la validación de sentencias", () => {
     for (const e of journal.entries.filter((x) => x.idx > 37)) {
       const text = fs.readFileSync(path.join(DRIZZLE_DIR, `${e.tag}.sql`), "utf8");
-      expect(ALLOWED_RECONCILE_MIGRATIONS[e.tag], `${e.tag} debe figurar en ALLOWED_RECONCILE_MIGRATIONS (revisión explícita)`).toBe(drizzleHash(text));
+      expect((ALLOWED_RECONCILE_MIGRATIONS as Record<string, string>)[e.tag], `${e.tag} debe figurar en ALLOWED_RECONCILE_MIGRATIONS (revisión explícita)`).toBe(drizzleHash(text));
       for (const stmt of splitStatements(text)) expect(rejectStatement(stmt), `${e.tag}: ${stmt.slice(0, 60)}`).toBeNull();
     }
   });

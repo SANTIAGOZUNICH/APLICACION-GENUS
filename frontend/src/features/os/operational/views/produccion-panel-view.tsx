@@ -7,6 +7,8 @@ import { usePreviewContext, usePreviewSession } from "@/features/os/session/prev
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { SECTOR_LABELS } from "@/types/operational/sector";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
+import { formatDateDisplay } from "../lib/delivery-date";
+import { useWorkItemCellEditing } from "../hooks/use-work-item-cells";
 import { useOperationalStore } from "../store/operational-store-context";
 import { isWorkTransferredStatus } from "../lib/work-transfer-labels";
 import { getFormulaForProduct } from "../adapters/formula-repository";
@@ -240,12 +242,22 @@ export function ProduccionPanelView() {
     .filter((i) => isWorkTransferredStatus(i.status))
     .reduce((sum, i) => sum + (Number.parseFloat(getFinishedQty(i.id)) || 0), 0);
 
+  const refreshAllPlans = async () => {
+    await Promise.all([elaboracion.refresh(), masivo.refresh(), premium.refresh(), codificado.refresh(), calidad.refresh()]);
+    refreshDecisions();
+    setPanelTick((v) => v + 1);
+  };
+  const cells = useWorkItemCellEditing(activeRows.map((r) => r.item), refreshAllPlans);
+  const toItem = (r: ActiveRow) => r.item;
   const columns: OperationalTableColumn<ActiveRow>[] = [
     { key: "sector", header: "Sector", render: (r) => r.sector },
-    { key: "fecha", header: "Fecha", render: (r) => displayField(r.fecha) },
-    { key: "cliente", header: "Cliente", render: (r) => displayField(r.cliente) },
-    { key: "producto", header: "Producto", render: (r) => displayField(r.producto) },
-    { key: "cantidad", header: "Cantidad", render: (r) => r.cantidad || "—" },
+    { key: "plannedDate", header: "Fecha", render: (r) => displayField(r.fecha), text: (r) => (r.item.plannedDate ? formatDateDisplay(r.item.plannedDate) : ""), edit: cells.edit<ActiveRow>("plannedDate", toItem) },
+    { key: "client", header: "Cliente", render: (r) => displayField(r.cliente), text: (r) => r.item.client ?? "", edit: cells.edit<ActiveRow>("client", toItem) },
+    { key: "product", header: "Producto", render: (r) => displayField(r.producto), text: (r) => r.item.product ?? "", edit: cells.edit<ActiveRow>("product", toItem) },
+    { key: "plannedQuantity", header: "Cantidad", render: (r) => r.cantidad || "—", text: (r) => r.item.quantity ?? "", edit: cells.edit<ActiveRow>("plannedQuantity", toItem) },
+    { key: "unit", header: "Unidad", excelOnly: true, render: (r) => r.item.unit ?? "", text: (r) => r.item.unit ?? "", edit: cells.edit<ActiveRow>("unit", toItem) },
+    { key: "deliveryDate", header: "Entrega", excelOnly: true, render: (r) => r.item.deliveryDate ?? "", text: (r) => (r.item.deliveryDate ? formatDateDisplay(r.item.deliveryDate) : ""), edit: cells.edit<ActiveRow>("deliveryDate", toItem) },
+    { key: "notes", header: "Observaciones", excelOnly: true, render: (r) => r.item.notes ?? "", text: (r) => r.item.notes ?? "", edit: cells.edit<ActiveRow>("notes", toItem) },
     { key: "asignado", header: "Asignado a", render: (r) => displayField(r.asignadoA) },
     { key: "estado", header: "Estado", render: (r) => <StatusChip status={r.estado} /> },
     ...(canMutateWorks
@@ -425,6 +437,11 @@ export function ProduccionPanelView() {
             columns={columns}
             rows={activeRows}
             rowKey={(r) => r.id}
+            tableId="produccion-panel"
+            canEditCells={cells.canEditCells}
+            onCellsCommit={cells.onCellsCommit}
+            rowVersion={(r) => String(r.item.version ?? "")}
+            reasonRequired={cells.reasonRequired}
             emptyMessage="Sin trabajos activos."
           />
         </section>

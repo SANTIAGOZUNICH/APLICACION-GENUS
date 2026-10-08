@@ -80,6 +80,8 @@ export interface OperationalTableColumn<T> {
   hideOnMobile?: boolean | "md" | "lg" | "xl" | "2xl";
   /** Texto plano de la celda para la planilla (selección/copia estilo Excel). Si falta se deriva de `render`. */
   text?: (row: T) => string;
+  /** Solo se muestra en la planilla (p. ej. la «Unidad» que en la lista va dentro de la cantidad). */
+  excelOnly?: boolean;
   /** Columna de botones/acciones: en la planilla va fija a la derecha con su render real (no se copia). */
   action?: boolean;
   /**
@@ -304,7 +306,7 @@ function ExcelView<T>({
 
 /** Tabla funcional — sin scroll horizontal; secundarios en “Más datos”. */
 export function OperationalTable<T>({
-  columns,
+  columns: allColumns,
   rows,
   rowKey,
   emptyMessage = "Sin registros.",
@@ -318,6 +320,8 @@ export function OperationalTable<T>({
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const { mode, toggle: toggleMode } = useTableMode();
+  // Las columnas `excelOnly` existen solo en la planilla; la lista clásica queda exactamente como antes.
+  const columns = useMemo(() => allColumns.filter((c) => !c.excelOnly), [allColumns]);
   const secondaryMeta = columns
     .map((c) => ({ col: c, bp: resolveCollapse(c.hideOnMobile) }))
     .filter((x): x is { col: OperationalTableColumn<T>; bp: CollapseBelow } => x.bp != null);
@@ -356,7 +360,7 @@ export function OperationalTable<T>({
           </button>
         </div>
         <ExcelView
-          columns={columns}
+          columns={allColumns}
           rows={rows}
           rowKey={rowKey}
           tableId={tableId}
