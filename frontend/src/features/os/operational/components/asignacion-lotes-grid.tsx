@@ -70,6 +70,7 @@ export function AsignacionLotesGrid({
   session,
   sector,
   canEdit,
+  writableSourceIds,
   onRowsUpdated,
   onReload,
   renderRowActions,
@@ -80,6 +81,8 @@ export function AsignacionLotesGrid({
   session: OrdersClientSession;
   sector: SectorId;
   canEdit: boolean;
+  /** Fuentes Google con escritura de vuelta habilitada (opción C). */
+  writableSourceIds?: ReadonlySet<string>;
   /** El servidor confirmó: reemplazar estos registros en el estado/caché de la vista. */
   onRowsUpdated: (items: AsignacionLote[]) => void;
   onReload: () => void;
@@ -95,7 +98,7 @@ export function AsignacionLotesGrid({
       basis: WIDTHS[field],
       sensitive: IDENTITY_FIELDS.has(field),
       getValue: (row) => cellText(row, field),
-      protection: (row) => cellProtectionReason(row, field, sector),
+      protection: (row) => cellProtectionReason(row, field, sector, writableSourceIds),
       validate: (raw) => {
         const result = validateCellValue(field, raw);
         return result.ok ? null : result.message;
@@ -110,7 +113,7 @@ export function AsignacionLotesGrid({
       protection: () => "Columna calculada (solo lectura).",
     });
     return editable;
-  }, [sector]);
+  }, [sector, writableSourceIds]);
 
   const onCommit = useCallback(
     async (changes: GenusGridCellChange[]): Promise<GenusGridCommitResult> => {
@@ -125,6 +128,8 @@ export function AsignacionLotesGrid({
         return { ok: true };
       } catch (err) {
         if (err instanceof AsignacionCellsApiError) {
+          // Fallo parcial: lo que sí quedó consistente en Google y Neon se refleja igual.
+          if (err.items.length > 0) onRowsUpdated(err.items);
           return {
             ok: false,
             message: err.message,

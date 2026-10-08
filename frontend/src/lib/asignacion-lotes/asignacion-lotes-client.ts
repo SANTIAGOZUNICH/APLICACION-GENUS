@@ -24,7 +24,7 @@ function headers(session: OrdersClientSession): HeadersInit {
 export async function fetchAsignacionLotesApi(
   session: OrdersClientSession,
   options: { includeArchived?: boolean } = {}
-): Promise<{ items: AsignacionLote[]; schemaPending: boolean }> {
+): Promise<{ items: AsignacionLote[]; schemaPending: boolean; writableSourceIds: string[] }> {
   const qs = new URLSearchParams();
   if (options.includeArchived) qs.set("includeArchived", "1");
   const res = await fetch(`/api/v1/asignacion-lotes?${qs}`, { credentials: "include", headers: headers(session) });
@@ -32,11 +32,13 @@ export async function fetchAsignacionLotesApi(
     items?: AsignacionLote[];
     error?: string;
     schemaPending?: boolean;
+    writableSourceIds?: string[];
   };
   if (!res.ok) throw new Error(body.error ?? "No se pudieron cargar asignaciones de lotes");
   return {
     items: body.items ?? [],
     schemaPending: Boolean(body.schemaPending),
+    writableSourceIds: body.writableSourceIds ?? [],
   };
 }
 
@@ -116,7 +118,9 @@ export class AsignacionCellsApiError extends Error {
   constructor(
     message: string,
     readonly failures: AsignacionCellFailure[],
-    readonly status: number
+    readonly status: number,
+    /** Registros que SÍ quedaron consistentes pese al fallo parcial (para refrescar la UI). */
+    readonly items: AsignacionLote[] = []
   ) {
     super(message);
     this.name = "AsignacionCellsApiError";
@@ -155,7 +159,8 @@ export async function patchAsignacionLoteCellsApi(
     throw new AsignacionCellsApiError(
       body.failures?.[0]?.message ?? body.error ?? "No se pudo guardar el cambio.",
       body.failures ?? [],
-      res.status
+      res.status,
+      body.items ?? []
     );
   }
   return {

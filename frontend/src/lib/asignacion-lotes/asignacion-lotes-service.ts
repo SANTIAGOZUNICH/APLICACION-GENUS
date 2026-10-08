@@ -12,6 +12,7 @@ import {
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { asignacionLotes, asignacionLotesCellAudit } from "@/lib/db/schema";
 import { fillBareWorkItemsFromAsignacionLote } from "./sync-to-bare-workitems";
+import { hasWritebackSince } from "./writeback-ops";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from "@/lib/orders/types";
 import {
@@ -589,9 +590,17 @@ export class AsignacionLotesService {
     sourceId: string,
     actorAttribution: { email: string; displayName: string },
     input: Omit<AsignacionLoteUpsertInput, "sourceId" | "sourceSheetTab">,
-    sourceSheetTab?: string | null
+    sourceSheetTab?: string | null,
+    runStartedAt?: string | null
   ): Promise<{ record: AsignacionLote; created: boolean; changed: boolean }> {
     const previous = await this.findBySourceKey(sourceId, input.lote, input.codigo, input.producto);
+    // Opción C: si GENUS escribió esta fila en la Sheet (en curso, o confirmada
+    // DESPUÉS de que esta corrida empezó a leer), la lectura que trae el sync
+    // puede ser anterior a esa escritura → no se pisa; la próxima corrida ya
+    // lee el valor nuevo desde Google.
+    if (previous && (await hasWritebackSince(previous.id, runStartedAt ?? null))) {
+      return { record: previous, created: false, changed: false };
+    }
     const revivingArchived = previous?.archived === true;
     if (previous && !revivingArchived && !fieldsDiffer(previous, input)) {
       return { record: previous, created: false, changed: false };
@@ -658,7 +667,17 @@ export class AsignacionLotesService {
    */
   async patchCells(
     actor: AsignacionLotesActor,
-    changes: AsignacionCellChange[]
+    changes: AsignacionCellChange[],
+    options: {
+      /**
+       * USO INTERNO (orquestador de write-back): ids de registros de Google cuya
+       * celda YA fue escrita y confirmada en la Sheet — recién entonces se
+       * refleja en Neon. Nunca se llena desde un request de usuario.
+       */
+      bypassSourceProtection?: ReadonlySet<string>;
+      /** Solo valida (permisos/tipos/versión/duplicados) sin escribir. */
+      dryRun?: boolean;
+    } = {}
   ): Promise<{ items: AsignacionLote[]; changedCells: number; unchangedCells: number }> {
     assertMutate(actor);
     if (!Array.isArray(changes) || changes.length === 0) {
@@ -706,9 +725,10 @@ export class AsignacionLotesService {
         fail(index, change, "NOT_FOUND", "El registro ya no existe.");
         return;
       }
-      const reason = cellProtectionReason(record, change.field, actor.sector);
+      const bypass = options.bypassSourceProtection?.has(record.id) === true;
+      const reason = cellProtectionReason(bypass ? { ...record, sourceId: null } : record, change.field, actor.sector);
       if (reason) {
-        const code = record.archived ? "ARCHIVED" : record.sourceId ? "PROTECTED_SOURCE" : "FORBIDDEN_FIELD";
+        const code = record.archived ? "ARCHIVED" : record.sourceId && !bypass ? "PROTECTED_SOURCE" : "FORBIDDEN_FIELD";
         fail(index, change, code, reason);
         return;
       }
@@ -777,6 +797,8 @@ export class AsignacionLotesService {
 
     if (failures.length > 0) throw new AsignacionCellPatchError(failures);
 
+    if (options.dryRun) return { items: [...records.values()], changedCells: 0, unchangedCells };
+
     const toWrite = [...pending.values()].filter((entry) => Object.keys(entry.patch).length > 0);
     const changedCells = toWrite.reduce((n, entry) => n + Object.keys(entry.patch).length, 0);
     if (toWrite.length === 0) {
@@ -826,7 +848,7 @@ export class AsignacionLotesService {
             .where(
               sql`${asignacionLotes.id} = ${entry.record.id}
                 and ${asignacionLotes.archived} = false
-                and ${asignacionLotes.sourceId} is null
+                and (${options.bypassSourceProtection?.has(entry.record.id) ? sql`true` : sql`${asignacionLotes.sourceId} is null`})
                 and date_trunc('milliseconds', ${asignacionLotes.updatedAt}) = ${new Date(entry.record.updatedAt)}`
             )
             .returning({ id: asignacionLotes.id });

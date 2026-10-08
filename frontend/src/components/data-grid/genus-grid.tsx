@@ -392,19 +392,27 @@ export function GenusGrid<T>({
         } catch (err) {
           result = { ok: false, message: err instanceof Error ? err.message : "Error de red al guardar." };
         }
-        const clear = (status?: "error") =>
-          setOverlay((prev) => {
-            const next = { ...prev };
-            for (const c of changes) {
-              if (status) {
-                // El valor mostrado vuelve al anterior; la celda queda marcada en rojo hasta reintentar/descartar.
-                next[cellKey(c.rowId, c.columnKey)] = { value: c.oldValue, status };
-              } else delete next[cellKey(c.rowId, c.columnKey)];
-            }
-            return next;
-          });
+        // Fallo PARCIAL (filas de Google): solo las celdas rechazadas quedan en error; las confirmadas se limpian.
+        const failedKeys = new Set((result.failures ?? []).map((f) => cellKey(f.rowId, f.columnKey)));
+        const partial = !result.ok && failedKeys.size > 0 && failedKeys.size < changes.length;
+        const failedChanges = result.ok
+          ? []
+          : partial
+            ? changes.filter((c) => failedKeys.has(cellKey(c.rowId, c.columnKey)))
+            : changes;
+        const failedSet = new Set(failedChanges.map((c) => cellKey(c.rowId, c.columnKey)));
+        setOverlay((prev) => {
+          const next = { ...prev };
+          for (const c of changes) {
+            const k = cellKey(c.rowId, c.columnKey);
+            if (failedSet.has(k)) {
+              // El valor mostrado vuelve al anterior; la celda queda marcada en rojo hasta reintentar/descartar.
+              next[k] = { value: c.oldValue, status: "error" };
+            } else delete next[k];
+          }
+          return next;
+        });
         if (result.ok) {
-          clear();
           if (opts.retryOf != null) setFailed((prev) => prev.filter((b) => b.id !== opts.retryOf));
           if (opts.recordUndo) {
             undoStack.current.push(
@@ -415,12 +423,11 @@ export function GenusGrid<T>({
           }
           markSaved(changes.length);
         } else {
-          clear("error");
           const message = result.failures?.[0]?.message ?? result.message ?? "No se pudo guardar.";
           setSaveState("error");
           setFailed((prev) => {
             const id = opts.retryOf ?? ++batchSeq.current;
-            const entry = { id, changes, message };
+            const entry = { id, changes: failedChanges, message };
             return prev.some((b) => b.id === id) ? prev.map((b) => (b.id === id ? entry : b)) : [...prev, entry];
           });
         }

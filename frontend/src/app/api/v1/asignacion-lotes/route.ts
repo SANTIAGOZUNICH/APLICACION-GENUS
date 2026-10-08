@@ -8,6 +8,7 @@ import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
 import { getAsignacionLoteSourcesService } from "@/lib/asignacion-lotes/asignacion-lote-sources-service";
+import { isWritebackEnabledFor } from "@/lib/asignacion-lotes/writeback-ops";
 import { isDueForOpportunisticSync, syncSource } from "@/lib/asignacion-lotes/asignacion-lotes-sync-service";
 
 /**
@@ -68,8 +69,13 @@ export async function GET(request: Request) {
     const includeArchived = url.searchParams.get("includeArchived") === "1";
     const items = await getAsignacionLotesService().list(toActor(actor), { includeArchived });
     scheduleOpportunisticSync();
+    // Fuentes Google con escritura de vuelta habilitada (opción C): la grilla las muestra editables.
+    const writableSourceIds = (await getAsignacionLoteSourcesService().listAllForSync())
+      .filter((s) => isWritebackEnabledFor(s.spreadsheetId))
+      .map((s) => s.id);
     return NextResponse.json({
       items,
+      writableSourceIds,
       persistenceReady: isDatabaseConfigured(),
       schemaPending: !isDatabaseConfigured(),
     });

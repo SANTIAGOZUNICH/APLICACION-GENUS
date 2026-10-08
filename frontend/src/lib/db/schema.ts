@@ -932,7 +932,7 @@ export const asignacionLotes = pgTable(
 );
 
 /**
- * 0039 — Auditoría de edición por celda de Asignación de Lotes (grilla tipo
+ * 0040 — Auditoría de edición por celda de Asignación de Lotes (grilla tipo
  * Excel): una fila por celda modificada, con valor anterior y nuevo. Se
  * escribe en la MISMA transacción que el UPDATE: si la auditoría falla, el
  * cambio no se persiste (nunca hay un cambio sin rastro).
@@ -955,6 +955,39 @@ export const asignacionLotesCellAudit = pgTable(
   (table) => [
     index("asignacion_lotes_cell_audit_record_idx").on(table.recordId, table.createdAt),
     index("asignacion_lotes_cell_audit_batch_idx").on(table.batchId),
+  ]
+);
+
+/**
+ * 0040 — Bitácora idempotente de escrituras de vuelta a Google Sheets
+ * (opción C). status: pending | google_done | confirmed | failed | conflict.
+ */
+export const asignacionLotesWritebackOps = pgTable(
+  "asignacion_lotes_writeback_ops",
+  {
+    id: text("id").primaryKey(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    recordId: text("record_id").notNull(),
+    lote: text("lote").notNull().default(""),
+    field: text("field").notNull(),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    sheetTab: text("sheet_tab").notNull(),
+    a1: text("a1"),
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    status: text("status").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    actorName: text("actor_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("asignacion_lotes_writeback_ops_idem_uidx").on(table.idempotencyKey),
+    index("asignacion_lotes_writeback_ops_record_idx").on(table.recordId, table.status),
   ]
 );
 

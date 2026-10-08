@@ -284,6 +284,7 @@ export function AsignacionLotesView() {
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(() => new Set());
   const [seedImportText, setSeedImportText] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [writableSourceIds, setWritableSourceIds] = useState<ReadonlySet<string>>(() => new Set());
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
 
   // El servidor confirmó una edición por celda: reemplaza SOLO esos registros.
@@ -298,7 +299,8 @@ export function AsignacionLotesView() {
 
   const refresh = useCallback(async () => {
     try {
-      const { items: allItems } = await fetchAsignacionLotesApi(session);
+      const { items: allItems, writableSourceIds: writable } = await fetchAsignacionLotesApi(session);
+      setWritableSourceIds(new Set(writable));
       replaceAsignacionLotesCache(allItems);
       // Datos del servidor tal cual (con sourceId/updatedAt reales: la grilla
       // los necesita para proteger filas de Google y controlar concurrencia).
@@ -608,6 +610,7 @@ export function AsignacionLotesView() {
       session={session}
       sector={workspace.context.sectorId}
       canEdit={canMutate}
+      writableSourceIds={writableSourceIds}
       onRowsUpdated={handleRowsUpdated}
       onReload={() => void refresh()}
       renderRowActions={renderGridRowActions}

@@ -90,9 +90,15 @@ export function canEditAsignacionCellField(
 export function cellProtectionReason(
   record: { sourceId?: string | null; archived?: boolean },
   field: AsignacionCellField,
-  sector: SectorId | null | undefined
+  sector: SectorId | null | undefined,
+  /** Fuentes Google con escritura de vuelta habilitada (opción C). Sin esto, las filas de Google son solo lectura. */
+  writableSourceIds?: ReadonlySet<string>
 ): string | null {
   if (record.archived) return "Registro archivado: restauralo para editarlo.";
+  if (record.sourceId && writableSourceIds?.has(record.sourceId)) {
+    if (!canEditAsignacionCellField(sector, field)) return "Tu sector no puede editar esta columna.";
+    return null;
+  }
   if (record.sourceId) {
     return "Registro sincronizado desde Google Sheets (fuente de verdad). Corregilo en la Sheet — el próximo sync pisaría cualquier cambio local.";
   }
@@ -171,7 +177,10 @@ export type AsignacionCellFailureCode =
   | "INVALID_VALUE"
   | "DUPLICATE"
   | "CONFLICT"
-  | "ARCHIVED";
+  | "ARCHIVED"
+  | "GOOGLE_CONFLICT"
+  | "GOOGLE_ERROR"
+  | "GOOGLE_PENDING";
 
 export interface AsignacionCellFailure {
   index: number;
@@ -180,6 +189,9 @@ export interface AsignacionCellFailure {
   code: AsignacionCellFailureCode;
   message: string;
 }
+
+/** Tope de celdas por request cuando hay escritura a Google (cada celda es 1 round-trip a la Sheets API). */
+export const MAX_GOOGLE_CELL_CHANGES_PER_REQUEST = 40;
 
 /** Tope por request: un pegado masivo razonable, nunca una importación encubierta. */
 export const MAX_CELL_CHANGES_PER_REQUEST = 2000;
