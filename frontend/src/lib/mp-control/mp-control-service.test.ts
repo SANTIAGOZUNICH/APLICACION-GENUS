@@ -185,3 +185,67 @@ describe("MpControlService", () => {
     await expect(svc.deleteDraft(actor, c.id)).rejects.toThrow(/Anular o Archivar/);
   });
 });
+
+describe("MpControlService.patchLineCells (edición por celda)", () => {
+  beforeEach(() => resetMpControlMemoryForTests());
+  const actor = { email: "mp@test", sector: "MATERIA_PRIMA" as const };
+  const snap: MpFormulaSnapshot = {
+    client: "UNICA",
+    product: "X",
+    source: "DRIVE",
+    driveFileId: "f",
+    materials: [
+      { materiaPrima: "Agua", codigo: "MP-AGUA", formulaPct: 80 },
+      { materiaPrima: "Tens", codigo: "MP-TEN", formulaPct: 20 },
+    ],
+    capturedAt: new Date().toISOString(),
+  };
+  const mk = () => getMpControlService().create(actor, { client: "UNICA", product: "X", quantityKg: 100, snapshot: snap, stockByCodigo: { "MP-AGUA": 100 } });
+
+  it("edita solo la celda indicada y conserva vecinas, snapshot y versión nueva", async () => {
+    const svc = getMpControlService();
+    const c = await mk();
+    const l0 = c.lines[0]!;
+    const r = await svc.patchLineCells(actor, c.id, [{ lineId: l0.id, field: "lote", value: "L-77" }], c.updatedAt);
+    expect(r.lines[0]!.lote).toBe("L-77");
+    expect(r.lines[0]!.kgEditados).toBe(l0.kgEditados);
+    expect(r.lines[0]!.codigo).toBe(l0.codigo);
+    expect(r.lines[1]).toEqual(c.lines[1]);
+    expect(JSON.stringify(r.formulaSnapshot)).toBe(JSON.stringify(c.formulaSnapshot));
+    expect(r.updatedAt).not.toBe(c.updatedAt);
+  });
+
+  it("pegado de rango: kg y preparado en varias líneas; inválido ⇒ nada se guarda", async () => {
+    const svc = getMpControlService();
+    const c = await mk();
+    const ok = await svc.patchLineCells(actor, c.id, [
+      { lineId: c.lines[0]!.id, field: "kgEditados", value: "12,5" },
+      { lineId: c.lines[1]!.id, field: "preparado", value: "Sí" },
+    ], c.updatedAt);
+    expect(ok.lines[0]!.kgEditados).toBe(12.5);
+    expect(ok.lines[1]!.preparado).toBe(true);
+    await expect(
+      svc.patchLineCells(actor, c.id, [
+        { lineId: c.lines[0]!.id, field: "lote", value: "Z" },
+        { lineId: c.lines[1]!.id, field: "kgEditados", value: "abc" },
+      ], ok.updatedAt)
+    ).rejects.toMatchObject({ code: "INVALID" });
+    expect((await svc.get(actor, c.id))!.lines[0]!.lote).toBe("");
+  });
+
+  it("conflicto de versión, campo protegido, sector sin permiso y control completado", async () => {
+    const svc = getMpControlService();
+    const c = await mk();
+    const l = c.lines[0]!;
+    await svc.patchLineCells(actor, c.id, [{ lineId: l.id, field: "lote", value: "A" }], c.updatedAt);
+    await expect(svc.patchLineCells(actor, c.id, [{ lineId: l.id, field: "lote", value: "B" }], c.updatedAt)).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      svc.patchLineCells(actor, c.id, [{ lineId: l.id, field: "codigo" as never, value: "X" }], (await svc.get(actor, c.id))!.updatedAt)
+    ).rejects.toMatchObject({ code: "INVALID" });
+    await expect(
+      svc.patchLineCells({ email: "p@test", sector: "PRODUCCION" }, c.id, [{ lineId: l.id, field: "lote", value: "B" }], (await svc.get(actor, c.id))!.updatedAt)
+    ).rejects.toThrow(/Solo MP/);
+    const done = await svc.update(actor, c.id, { status: "COMPLETADO" });
+    await expect(svc.patchLineCells(actor, c.id, [{ lineId: l.id, field: "lote", value: "C" }], done.updatedAt)).rejects.toMatchObject({ code: "PROTECTED" });
+  });
+});

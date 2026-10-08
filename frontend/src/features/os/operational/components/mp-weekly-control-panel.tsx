@@ -19,6 +19,9 @@ import type { LifecycleAction } from "@/lib/lifecycle";
 import { matchesVisibilityFilter } from "@/lib/lifecycle";
 import type { MpWeeklyControl, MpWeeklyControlLine } from "@/lib/mp-control/types";
 import { canWriteMpControl } from "@/lib/mp-control/types";
+import { MP_LINE_CELL_KIND, isMpLineCellField, mpLineProtection, validateMpLineValue } from "@/lib/mp-control/cell-edit";
+import { ExcelOrList, excelCol } from "./operational-ui";
+import type { GenusGridCellChange, GenusGridCommitResult } from "@/components/data-grid/genus-grid";
 
 function actorHeaders(email: string, sector: string): HeadersInit {
   return {
@@ -151,7 +154,60 @@ export function MpWeeklyControlPanel() {
     void patchActive({ lines });
   }
 
-  const writesEnabled = canWrite && !schemaPending;
+  const writesEnabled = canWrite && !schemaPending && active?.status === "BORRADOR";
+
+  const commitCells = useCallback(
+    async (changes: GenusGridCellChange[]): Promise<GenusGridCommitResult> => {
+      if (!active) return { ok: false, message: "Sin control activo." };
+      const payload = changes.flatMap((c) =>
+        isMpLineCellField(c.columnKey) ? [{ lineId: c.rowId, field: c.columnKey, value: c.newValue }] : []
+      );
+      try {
+        const res = await fetch(`/api/v1/mp-control/${active.id}/cells`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: actorHeaders(session.email, session.sector),
+          body: JSON.stringify({ changes: payload, expectedVersion: active.updatedAt }),
+        });
+        const body = (await res.json()) as { control?: MpWeeklyControl; error?: string };
+        if (!res.ok || !body.control) {
+          // Recarga: lo mostrado es lo que la base confirmó.
+          const fresh = await fetch(`/api/v1/mp-control/${active.id}`, { credentials: "include", headers: actorHeaders(session.email, session.sector) });
+          const fb = (await fresh.json().catch(() => ({}))) as { control?: MpWeeklyControl };
+          if (fb.control) setActive(fb.control);
+          return { ok: false, message: body.error ?? "No se pudo guardar." };
+        }
+        setActive(body.control);
+        await reload();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, message: e instanceof Error ? e.message : "Error de red al guardar." };
+      }
+    },
+    [active, session, reload]
+  );
+
+  const lineEdit = (field: "kgEditados" | "lote" | "preparado" | "observacion") => ({
+    kind: MP_LINE_CELL_KIND[field],
+    protection: () => (canWrite && !schemaPending ? mpLineProtection(active?.status ?? "BORRADOR") : "Tu sector no puede editar el Control semanal."),
+    validate: (raw: string) => {
+      const v = validateMpLineValue(field, raw);
+      return v.ok ? null : v.message;
+    },
+  });
+  const lineColumns = [
+    excelCol<MpWeeklyControlLine>("codigo", "Código", (l) => l.codigo),
+    excelCol<MpWeeklyControlLine>("materiaPrima", "Materia prima", (l) => l.materiaPrima),
+    excelCol<MpWeeklyControlLine>("formulaPct", "%", (l) => String(l.formulaPct ?? "")),
+    excelCol<MpWeeklyControlLine>("kgEditados", "Kg nec.", (l) => String(l.kgEditados ?? l.kgNecesarios ?? ""), { edit: lineEdit("kgEditados") }),
+    excelCol<MpWeeklyControlLine>("stockActual", "Stock", (l) => String(l.stockActual ?? "")),
+    excelCol<MpWeeklyControlLine>("stockProyectado", "Proyectado", (l) => String(l.stockProyectado ?? "")),
+    excelCol<MpWeeklyControlLine>("diferencia", "Dif.", (l) => String(l.diferencia ?? "")),
+    excelCol<MpWeeklyControlLine>("estado", "Estado", (l) => l.estado),
+    excelCol<MpWeeklyControlLine>("lote", "Lote", (l) => l.lote, { edit: lineEdit("lote") }),
+    excelCol<MpWeeklyControlLine>("preparado", "Prep.", (l) => (l.preparado ? "Sí" : "No"), { edit: lineEdit("preparado") }),
+    excelCol<MpWeeklyControlLine>("observacion", "Observación", (l) => l.observacion, { edit: lineEdit("observacion") }),
+  ];
 
   const visibleControls = useMemo(
     () =>
@@ -396,6 +452,15 @@ export function MpWeeklyControlPanel() {
                   {active.linkedOeId ? ` · OE ${active.linkedOeId}` : ""}
                 </span>
               </div>
+              <ExcelOrList
+                columns={lineColumns}
+                rows={active.lines}
+                rowKey={(l) => l.id}
+                tableId="mp-control-lines"
+                canEditCells={canWrite}
+                onCellsCommit={commitCells}
+                rowVersion={() => active.updatedAt}
+              >
               <table className="os-table w-full max-w-full table-fixed text-xs" data-testid="mp-control-lines">
                 <thead>
                   <tr className="border-b text-left">
@@ -419,7 +484,7 @@ export function MpWeeklyControlPanel() {
                         <input
                           className="w-full min-w-0 max-w-[5rem] rounded border px-1"
                           value={l.codigo}
-                          disabled={!writesEnabled}
+                          disabled
                           onChange={(e) => updateLine(l.id, { codigo: e.target.value })}
                         />
                       </td>
@@ -477,6 +542,7 @@ export function MpWeeklyControlPanel() {
                   ))}
                 </tbody>
               </table>
+              </ExcelOrList>
             </div>
           ) : (
             <p className="p-4 text-sm text-[var(--os-text-muted)]">
