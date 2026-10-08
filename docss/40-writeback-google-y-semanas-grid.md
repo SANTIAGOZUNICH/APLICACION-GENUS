@@ -91,6 +91,18 @@ La vista de ELABORACION y ACONDICIONAMIENTO ya no es una tabla plana de 5 column
 
 **Limitaciones conocidas de fidelidad:** (1) bordes/fuentes/tamaños de letra y alineaciones de la Sheet no se reproducen (solo fondo, negrita, color de texto); (2) las celdas sin formato se ven con el tema de la app (la Sheet es blanca); (3) la columna A y las columnas L–X de la Sheet no se muestran; (4) congelar filas/columnas y filtros de la Sheet no se replican; (5) un cambio de estructura de la Sheet (otra disposición de B,D,F,H,J) requiere ajustar el modelo; (6) el formato de Google se verificó solo contra la copia local `.xlsx`, no contra la Sheet real (ver docss/42).
 
+## 3 ter. Preview: fuente de datos de prueba (copia XLSX, solo lectura)
+
+**Qué pasaba:** en Preview las variables de Google existen (cuenta de servicio + carpeta `GOOGLE_DRIVE_PRODUCCION_2026_FOLDER_ID`) pero **no** `SEMANAS_SHEET_ID`; la vista dependía de que Drive indexara y la cuenta de servicio pudiera leer la SEMANAS 2026 original, y no había ningún mecanismo para cargar otra planilla. Los logs de runtime de Vercel no registraban la causa exacta (la ruta no loguea el error), así que **no se pudo confirmar** si fallaba la indexación, el permiso o el formato del archivo (la Sheets API no lee `.xlsx` de Office). Para no depender de eso y sin tocar la original:
+
+- En **Preview** (`VERCEL_ENV=preview`) y si no hay `SEMANAS_SHEET_ID` ni fixture, Semanas lee una **copia XLSX** (`assets/semanas-preview/SEMANAS-2026-copia-de-prueba.xlsx`, incluida en el deploy; datos, colores, combinadas y estructura semanal). **Solo lectura**: `writable=false` siempre; no se lee ni escribe la planilla original ni la base.
+- Para usar una copia de Google en su lugar: definir `SEMANAS_SHEET_ID` (id de la **copia**) en Preview; la copia incluida deja de usarse.
+- **Carga de otro .xlsx** (solo Preview/desarrollo, sector Producción): botón en la vista → `POST /api/v1/semanas/preview-source`. Validaciones: extensión `.xlsx`, ≤ 4 MB, cabecera zip, libro legible, pestañas `ELABORACION`, `ACONDICIONAMIENTO`, `ENTREGAS`, `QACONDDIA`, semanas (`Lunes…Viernes`) en ambos calendarios y fila `FECHA` en ENTREGAS. Se guarda en Blob privado si está configurado (`GENUS_FILE_STORAGE`); si no, queda en memoria de esa instancia (se avisa). `DELETE` vuelve a la copia incluida.
+- **Production**: `isPreviewSourceAllowed()` es `false` con `VERCEL_ENV=production` o `GENUS_ENV=production`; la ruta responde 404 y la fuente no se usa.
+- En la copia de Preview se muestran **todas** las semanas (también las plegadas en la Sheet original).
+
+Pruebas: `src/lib/semanas-sheet/preview-source.test.ts` y `npm run test:e2e:semanas-preview` (navegador real con la misma fuente que Vercel Preview).
+
 ## 4. Variables de entorno (sin secretos)
 | Variable | Uso |
 |---|---|

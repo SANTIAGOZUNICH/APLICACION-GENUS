@@ -25,6 +25,7 @@ import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types"
 import type { SectorId } from "@/types/operational/sector";
 import { dayWidths, findCalendarCell, parseA1, parseWeeklyCalendar, type CalendarWeek, type SheetFormats } from "./calendar-model";
 import { loadOperationalLocks, norm, UNVERIFIABLE, type OperationalLocks } from "./operational-locks";
+import { PREVIEW_SPREADSHEET_ID, getPreviewGateway, isPreviewSourceAllowed } from "./preview-source";
 import { findFlatCell, parseFlatTable, type FlatTable } from "./flat-model";
 
 import { SEMANAS_TABS, isSemanasTabKey, type SemanasTabKey } from "./semanas-tabs";
@@ -40,8 +41,19 @@ export function setSemanasGatewayForTests(g: SheetGridGateway | null): void {
 }
 let fixture: SheetGridGateway | null = null;
 
+/**
+ * ¿Se usa la copia XLSX de Preview? Solo en Preview/desarrollo (jamás Production), cuando NO hay una copia de Google
+ * configurada explícitamente (SEMANAS_SHEET_ID) ni el fixture local. Así Preview nunca lee ni toca la planilla original.
+ */
+export function usesPreviewSource(env: Record<string, string | undefined> = process.env): boolean {
+  if (!isPreviewSourceAllowed(env)) return false;
+  if (env.SEMANAS_SHEET_ID?.trim() || env.GENUS_SEMANAS_FIXTURE_XLSX?.trim()) return false;
+  return env.VERCEL_ENV === "preview" || env.GENUS_SEMANAS_PREVIEW_SOURCE === "1";
+}
+
 async function gateway(): Promise<SheetGridGateway> {
   if (gatewayOverride) return gatewayOverride;
+  if (usesPreviewSource()) return (await getPreviewGateway()).gateway;
   const file = process.env.GENUS_SEMANAS_FIXTURE_XLSX?.trim();
   if (file && process.env.NODE_ENV !== "production") {
     if (!fixture) {
@@ -54,6 +66,7 @@ async function gateway(): Promise<SheetGridGateway> {
 }
 
 async function spreadsheetId(): Promise<string> {
+  if (!gatewayOverride && usesPreviewSource()) return PREVIEW_SPREADSHEET_ID;
   const override = process.env.SEMANAS_SHEET_ID?.trim();
   if (override) return override;
   if (process.env.GENUS_SEMANAS_FIXTURE_XLSX?.trim() && process.env.NODE_ENV !== "production") return "fixture-semanas-2026";
@@ -85,6 +98,7 @@ export function isProductionDeployment(): boolean {
 
 export function isSemanasWritable(sheetId: string): boolean {
   if (isProductionDeployment()) return false;
+  if (sheetId === PREVIEW_SPREADSHEET_ID) return false; // copia XLSX de Preview: solo lectura (no hay dónde persistir)
   if (isProtectedOriginalSpreadsheet(sheetId)) return false;
   const allow = (process.env.SEMANAS_WRITEBACK_SPREADSHEET_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   return process.env.SEMANAS_WRITEBACK === "1" && allow.includes(sheetId);
@@ -101,6 +115,8 @@ export interface SemanasViewPayload {
   tab: string;
   label: string;
   kind: "CALENDAR" | "FLAT";
+  /** De dónde salen los datos: Google, copia XLSX de Preview o fixture local. */
+  source: "GOOGLE" | "PREVIEW_XLSX" | "LOCAL_FIXTURE";
   /** La Sheet permite escribir desde GENUS (flag + allowlist). El permiso por usuario se evalúa aparte. */
   writable: boolean;
   weeks?: CalendarWeek[];
@@ -144,6 +160,7 @@ export async function loadSemanasView(tabKey: SemanasTabKey, today = todayIso())
   ]);
   const base = {
     spreadsheetId: id, tabKey, tab: def.tab, label: def.label, kind: def.kind,
+    source: (id === PREVIEW_SPREADSHEET_ID ? "PREVIEW_XLSX" : id === "fixture-semanas-2026" ? "LOCAL_FIXTURE" : "GOOGLE") as SemanasViewPayload["source"],
     writable: isSemanasWritable(id), readAt: new Date().toISOString(), today,
     locksKnown: locks.known, reasonRequiredBefore: today,
   };

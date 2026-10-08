@@ -13,7 +13,7 @@ import { SemanasCalendarGrid, type CalendarCommitChange, type CalendarCommitResu
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
-import { fetchSemanasView, patchSemanasCells, type SemanasViewResponse } from "@/lib/semanas-sheet/semanas-client";
+import { fetchPreviewSource, fetchSemanasView, patchSemanasCells, resetPreviewSource, uploadPreviewSource, type PreviewSourceStatus, type SemanasViewResponse } from "@/lib/semanas-sheet/semanas-client";
 import { SEMANAS_TABS, type SemanasTabKey } from "@/lib/semanas-sheet/semanas-tabs";
 import type { CalendarRow } from "@/lib/semanas-sheet/calendar-model";
 import type { FlatRow } from "@/lib/semanas-sheet/flat-model";
@@ -68,7 +68,11 @@ export function SemanasGridView() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [mode, setModeState] = useState<SemanasMode>("calendar");
-  const [showFolded, setShowFolded] = useState(false);
+  // null = automático: en la copia de Preview se muestran todas las semanas (para revisar el diseño completo).
+  const [showFoldedChoice, setShowFolded] = useState<boolean | null>(null);
+  const [previewInfo, setPreviewInfo] = useState<PreviewSourceStatus | null>(null);
+  const [previewMsg, setPreviewMsg] = useState<string | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(MODE_KEY);
@@ -118,6 +122,29 @@ export function SemanasGridView() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load(tab);
   }, [load, tab]);
+
+  const isPreviewSource = view?.source === "PREVIEW_XLSX";
+  useEffect(() => {
+    if (!isPreviewSource) return;
+    void fetchPreviewSource(session)
+      .then((r) => setPreviewInfo(r.status ?? null))
+      .catch(() => setPreviewInfo(null));
+  }, [isPreviewSource, session]);
+
+  const runPreviewAction = async (action: () => Promise<{ status?: PreviewSourceStatus; persisted?: boolean }>, okMsg: string) => {
+    setPreviewBusy(true);
+    setPreviewMsg(null);
+    try {
+      const r = await action();
+      setPreviewInfo(r.status ?? null);
+      setPreviewMsg(r.persisted === false ? `${okMsg} (queda solo en memoria de esta instancia: no hay almacenamiento privado configurado).` : okMsg);
+      await load(tab);
+    } catch (e) {
+      setPreviewMsg(e instanceof Error ? e.message : "No se pudo cargar el archivo.");
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
 
   const rows = useMemo(() => (view ? toRows(view, weekId) : []), [view, weekId]);
   const week = view?.kind === "CALENDAR" ? (view.weeks?.find((w) => w.id === weekId) ?? view.weeks?.[0]) : undefined;
@@ -195,6 +222,7 @@ export function SemanasGridView() {
     [view, session, load]
   );
 
+  const showFolded = showFoldedChoice ?? view?.source === "PREVIEW_XLSX";
   const calendarWeeks = useMemo(() => (view?.weeks ?? []).filter((w) => showFolded || !w.hidden), [view, showFolded]);
   const foldedCount = (view?.weeks ?? []).filter((w) => w.hidden).length;
   const useCalendar = view?.kind === "CALENDAR" && mode === "calendar";
@@ -279,7 +307,43 @@ export function SemanasGridView() {
           )}
         </div>
 
-        {view && !view.canEdit && (
+        {isPreviewSource && (
+          <div className="space-y-2 rounded-[var(--os-radius-sm)] border border-[var(--genus-warning)]/40 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm" data-testid="semanas-preview-banner">
+            <p>
+              <b>Vista de prueba (Preview).</b> Datos de una <b>copia XLSX</b> de SEMANAS 2026, solo lectura: no se lee ni se escribe la planilla original de Google ni la base.
+              {previewInfo && (
+                <>
+                  {" "}Origen: {previewInfo.origin === "BUNDLED" ? "copia incluida en el deploy" : "archivo cargado"} · {previewInfo.weeks.ELABORACION ?? 0} semanas en ELABORACION, {previewInfo.weeks.ACONDICIONAMIENTO ?? 0} en ACONDICIONAMIENTO · sha {previewInfo.sha256.slice(0, 8)}.
+                </>
+              )}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-1.5">
+                <span>Cargar otro .xlsx de SEMANAS 2026</span>
+                <input
+                  type="file"
+                  accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  className="sr-only"
+                  disabled={previewBusy}
+                  data-testid="semanas-preview-upload"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (f) void runPreviewAction(() => uploadPreviewSource(session, f), `Se cargó «${f.name}».`);
+                  }}
+                />
+              </label>
+              {previewInfo && previewInfo.origin !== "BUNDLED" && (
+                <Button type="button" variant="secondary" disabled={previewBusy} onClick={() => void runPreviewAction(() => resetPreviewSource(session), "Se restauró la copia incluida.")} data-testid="semanas-preview-reset">
+                  Volver a la copia incluida
+                </Button>
+              )}
+              {previewBusy && <span>Validando y cargando…</span>}
+            </div>
+            {previewMsg && <p role="status" data-testid="semanas-preview-msg">{previewMsg}</p>}
+          </div>
+        )}
+        {view && !view.canEdit && !isPreviewSource && (
           <p className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm text-[var(--os-text-muted)]" data-testid="semanas-readonly">
             Solo lectura: la escritura a esta planilla no está habilitada desde GENUS (solo copias de prueba autorizadas).
           </p>
@@ -304,7 +368,7 @@ export function SemanasGridView() {
             reasonRequiredBefore={view.reasonRequiredBefore ?? ""}
             focusWeekId={weekId}
             onCommit={onCalendarCommit}
-            historicNote={`Leído de Google: ${new Date(view.readAt).toLocaleTimeString("es-AR")}. Las fechas anteriores a hoy se corrigen con motivo; encabezados, combinadas no ancladas, fórmulas y registros cerrados son de solo lectura.`}
+            historicNote={`Leído de ${view.source === "PREVIEW_XLSX" ? "la copia XLSX de Preview" : view.source === "LOCAL_FIXTURE" ? "la copia local" : "Google"}: ${new Date(view.readAt).toLocaleTimeString("es-AR")}. Las fechas anteriores a hoy se corrigen con motivo; encabezados, combinadas no ancladas, fórmulas y registros cerrados son de solo lectura.`}
           />
         )}
         {view && !useCalendar && rows.length > 0 && (

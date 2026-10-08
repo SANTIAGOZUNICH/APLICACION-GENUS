@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "test:e2e:plan-semanal": "bash scripts/e2e/run-plan-semanal-local.sh",
     "test:e2e:semanas-visual": "bash scripts/e2e/run-semanas-visual-local.sh",
+    "test:e2e:semanas-preview": "bash scripts/e2e/run-semanas-preview-local.sh",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",

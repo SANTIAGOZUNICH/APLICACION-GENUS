@@ -19,8 +19,9 @@ export class XlsxFixtureGateway implements SheetGridGateway {
   private formats = new Map<string, SheetFormats>();
   readonly writes: Array<{ tab: string; a1: string; value: string }> = [];
 
-  constructor(file: string) {
-    const wb = XLSX.read(readFileSync(file), { type: "buffer", cellDates: true, cellStyles: true });
+  /** `source` = ruta de un .xlsx local o los bytes del libro (carga de Preview). */
+  constructor(source: string | Uint8Array) {
+    const wb = XLSX.read(typeof source === "string" ? readFileSync(source) : Buffer.from(source), { type: "buffer", cellDates: true, cellStyles: true });
     for (const tab of wb.SheetNames) {
       const ws = wb.Sheets[tab]!;
       const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
