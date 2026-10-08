@@ -157,3 +157,40 @@ export async function previewProductionPedidosPasteApi(
     summary: body.summary ?? "",
   };
 }
+
+export class PedidoCellsApiError extends Error {
+  constructor(
+    message: string,
+    readonly failures: Array<{ index: number; id: string; field: string; code: string; message: string }>,
+    readonly status: number
+  ) {
+    super(message);
+    this.name = "PedidoCellsApiError";
+  }
+}
+
+/** PATCH parcial y atómico por celda: envía solo {id, campo, valor, versión}. Resuelve únicamente tras la confirmación del servidor. */
+export async function patchProductionPedidoCellsApi(
+  session: OrdersClientSession,
+  changes: Array<{ id: string; field: string; value: string; expectedVersion: string }>
+): Promise<{ items: ProductionPedidoRecord[]; changedCells: number }> {
+  let res: Response;
+  try {
+    res = await fetch("/api/v1/production-pedidos/cells", {
+      method: "PATCH",
+      credentials: "include",
+      headers: headers(session),
+      body: JSON.stringify({ changes }),
+    });
+  } catch {
+    throw new PedidoCellsApiError("Sin conexión con el servidor. Reintentá.", [], 0);
+  }
+  const body = (await res.json().catch(() => ({}))) as {
+    items?: ProductionPedidoRecord[];
+    changedCells?: number;
+    error?: string;
+    failures?: Array<{ index: number; id: string; field: string; code: string; message: string }>;
+  };
+  if (!res.ok) throw new PedidoCellsApiError(body.failures?.[0]?.message ?? body.error ?? "No se pudo guardar.", body.failures ?? [], res.status);
+  return { items: body.items ?? [], changedCells: body.changedCells ?? 0 };
+}

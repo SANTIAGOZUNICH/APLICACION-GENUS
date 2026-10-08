@@ -1,5 +1,6 @@
 "use client";
 
+import { ExcelOrList, excelCol } from "../components/operational-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
@@ -285,6 +286,39 @@ export function DepositoGranelesView() {
       ) : (
         <>
           <div className="hidden overflow-x-hidden md:block">
+            <ExcelOrList
+              tableId="graneles"
+              rows={filtered}
+              rowKey={(r) => r.id}
+              disabled={sel.active}
+              columns={[
+                excelCol("producto", "Producto", (r: (typeof filtered)[number]) => displayField(r.product || "—")),
+                excelCol("cliente", "Cliente", (r: (typeof filtered)[number]) => displayField(r.client || "—")),
+                excelCol("lote", "Lote granel", (r: (typeof filtered)[number]) => displayField(r.bulkLot || "Sin lote")),
+                excelCol("kg", "Kg", (r: (typeof filtered)[number]) => String(r.kgAvailable)),
+                excelCol("ingreso", "Ingreso", (r: (typeof filtered)[number]) => String(r.intakeDate ?? "")),
+                excelCol("origen", "Origen", (r: (typeof filtered)[number]) => r.originSector ?? "—"),
+                excelCol("estado", "Estado", (r: (typeof filtered)[number]) => String(r.status)),
+                {
+                  key: "acciones",
+                  header: "Acciones",
+                  action: true,
+                  text: () => "",
+                  render: (r: (typeof filtered)[number]) => (
+                    <>
+                      <Button size="sm" variant="secondary" onClick={() => setEdit({ ...r })}>
+                        Abrir
+                      </Button>
+                      {canEdit ? (
+                        <Button size="sm" variant="destructive" onClick={() => { setDeleteTarget(r); setReason(""); }}>
+                          Eliminar
+                        </Button>
+                      ) : null}
+                    </>
+                  ),
+                },
+              ]}
+            >
             <table className="os-table w-full max-w-full table-fixed text-sm" data-testid="graneles-table">
               <thead>
                 <tr className="text-left text-xs uppercase text-[var(--os-text-muted)]">
@@ -348,6 +382,7 @@ export function DepositoGranelesView() {
                 ))}
               </tbody>
             </table>
+            </ExcelOrList>
           </div>
 
           <div className="space-y-3 md:hidden">

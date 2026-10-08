@@ -1,5 +1,6 @@
 "use client";
 
+import { ExcelOrList, excelCol } from "../components/operational-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { Button } from "@/components/ui/button";
@@ -534,6 +535,41 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                 </tbody>
               </table>
             ) : (
+            <ExcelOrList
+              tableId="remitos"
+              rows={folderRemitos}
+              rowKey={(r) => r.id}
+              columns={[
+                excelCol("nombre", "Nombre", (r: (typeof folderRemitos)[number]) => r.displayName || "—"),
+                excelCol("numero", "N° int.", (r: (typeof folderRemitos)[number]) => r.remitoNumber || "—"),
+                excelCol("cliente", "Cliente", (r: (typeof folderRemitos)[number]) => r.clientDisplay),
+                excelCol("prod", "Prod.", (r: (typeof folderRemitos)[number]) => String(r.lines.length)),
+                excelCol("totales", "Totales", (r: (typeof folderRemitos)[number]) => `${r.totalUnits}u · ${r.totalCajas}c`),
+                excelCol("version", "Ver.", (r: (typeof folderRemitos)[number]) => `v${r.version}`),
+                excelCol("estado", "Estado", (r: (typeof folderRemitos)[number]) => r.status),
+                excelCol("actor", "Actor", (r: (typeof folderRemitos)[number]) => r.generatedBy || r.updatedBy || r.createdBy || "—"),
+                {
+                  key: "acciones",
+                  header: "Acciones",
+                  action: true,
+                  text: () => "",
+                  render: (r: (typeof folderRemitos)[number]) => (
+                    <RemitoLifecycleRowActions
+                      remito={r}
+                      session={session}
+                      disabled={busy || schemaPending}
+                      canDeleteDraft={r.status === "BORRADOR" && (!r.versions || r.versions.length === 0)}
+                      onOpen={() => setSelected(r)}
+                      onChanged={() => {
+                        if (selected?.id === r.id) setSelected(null);
+                        void reload();
+                      }}
+                      onError={(message) => setError(message)}
+                    />
+                  ),
+                },
+              ]}
+            >
             <table className="os-table w-full max-w-full table-fixed text-left text-[length:var(--os-table-font,13px)]" data-testid="remitos-table">
               <thead className="border-b border-[var(--os-border)] text-xs text-[var(--os-text-muted)]">
                 <tr>
@@ -628,6 +664,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                 )}
               </tbody>
             </table>
+            </ExcelOrList>
             )}
           </div>
 

@@ -15,7 +15,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { parseFlexibleDate, formatDateDisplay } from "@/features/os/operational/lib/delivery-date";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { sheetCellEdits } from "@/lib/db/schema";

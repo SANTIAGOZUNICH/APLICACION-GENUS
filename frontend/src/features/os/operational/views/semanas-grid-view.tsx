@@ -25,7 +25,9 @@ interface SheetGridRow {
   id: string;
   rowNumber: number;
   structural: boolean;
-  cells: Array<{ a1: string; value: string; protection: string | null }>;
+  /** Fecha ISO de la celda/fila (para exigir motivo en ediciones históricas). */
+  date: string | null;
+  cells: Array<{ a1: string; value: string; protection: string | null; date?: string | null }>;
 }
 
 function toRows(view: SemanasViewResponse, weekId: string | null): SheetGridRow[] {
@@ -35,14 +37,16 @@ function toRows(view: SemanasViewResponse, weekId: string | null): SheetGridRow[
       id: `${view.tab}!${r.rowNumber}`,
       rowNumber: r.rowNumber,
       structural: r.role === "structural",
-      cells: r.cells.map((c) => ({ a1: c.a1, value: c.value, protection: c.protection })),
+      date: null,
+      cells: r.cells.map((c) => ({ a1: c.a1, value: c.value, protection: c.protection, date: c.date })),
     }));
   }
   return (view.table?.rows ?? []).map((r: FlatRow) => ({
     id: `${view.tab}!${r.rowNumber}`,
     rowNumber: r.rowNumber,
     structural: r.role === "structural",
-    cells: r.cells.map((c) => ({ a1: c.a1, value: c.value, protection: c.protection })),
+    date: r.date,
+    cells: r.cells.map((c) => ({ a1: c.a1, value: c.value, protection: c.protection, date: r.date })),
   }));
 }
 
@@ -136,7 +140,7 @@ export function SemanasGridView() {
       const edits = changes.map((c) => {
         const idx = Number(c.columnKey.slice(1));
         const a1 = byId.get(c.rowId)?.cells[idx]?.a1 ?? "";
-        return { tabKey: view.tabKey, a1, expectedValue: c.oldValue, value: c.newValue };
+        return { tabKey: view.tabKey, a1, expectedValue: c.oldValue, value: c.newValue, reason: c.reason };
       });
       const res = await patchSemanasCells(session, edits);
       const failures = res.results.flatMap((r, i) =>
@@ -151,6 +155,22 @@ export function SemanasGridView() {
   );
 
   const canEdit = Boolean(view?.canEdit);
+  // Trazabilidad: editar una fecha anterior a hoy exige motivo (el servidor lo vuelve a exigir).
+  const reasonRequired = useCallback(
+    (changes: GenusGridCellChange[]) => {
+      if (!view) return null;
+      const byId = new Map(rows.map((r) => [r.id, r] as const));
+      const historic = changes.some((c) => {
+        const cell = byId.get(c.rowId)?.cells[Number(c.columnKey.slice(1))];
+        return Boolean(cell?.date && cell.date < view.reasonRequiredBefore!);
+      });
+      if (!historic) return null;
+      return view.tabKey === "CDIA"
+        ? "Estás editando un registro histórico. Puede alterar los indicadores del dashboard DB: indicá el motivo."
+        : "Estás editando una fecha anterior a hoy. Indicá el motivo (queda auditado).";
+    },
+    [view, rows]
+  );
 
   return (
     <TwinShell title="Semanas">
@@ -200,6 +220,11 @@ export function SemanasGridView() {
             Solo lectura: la escritura a esta planilla no está habilitada desde GENUS (solo copias de prueba autorizadas).
           </p>
         )}
+        {view && view.locksKnown === false && (view.tabKey === "ENTREGAS" || view.tabKey === "CDIA") && (
+          <p className="rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/40 bg-[var(--genus-error-soft)] px-3 py-2 text-sm text-[var(--genus-error)]" role="alert" data-testid="semanas-locks-unknown">
+            No se pudo verificar el estado operativo (entregas / cierres) en GENUS: esta pestaña queda en solo lectura por seguridad.
+          </p>
+        )}
         {error && (
           <p className="rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/40 bg-[var(--genus-error-soft)] px-3 py-2 text-sm text-[var(--genus-error)]" role="alert">
             {error}
@@ -216,12 +241,13 @@ export function SemanasGridView() {
             columns={columns}
             onCommit={onCommit}
             canEdit={canEdit}
+            reasonRequired={reasonRequired}
             onReload={() => void load(tab, true)}
             maxHeight={640}
             testId="semanas-grid"
             hint={
               <>
-                Los encabezados de día, las celdas combinadas no ancladas, las fórmulas y los períodos cerrados son de solo lectura. No se crean ni eliminan filas
+                Son de solo lectura los encabezados de día, las celdas combinadas no ancladas, las fórmulas y los registros cerrados en GENUS (entregas confirmadas / remitos / envasado cerrado). Las fechas anteriores a hoy se pueden corregir con motivo. No se crean ni eliminan filas
                 desde acá. Leído de Google: {new Date(view.readAt).toLocaleTimeString("es-AR")}.
               </>
             }

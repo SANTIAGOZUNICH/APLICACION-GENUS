@@ -1,5 +1,6 @@
 "use client";
 
+import { ExcelOrList, excelCol } from "../components/operational-ui";
 import { useCallback, useMemo, useState } from "react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { TwinShell } from "@/features/os/shell/twin-shell";
@@ -410,6 +411,29 @@ export function CodificadoOperationalView() {
             : "Todavía no hay entregas desde Codificado."}
         </p>
       ) : (
+        <ExcelOrList
+          tableId="codificado"
+          rows={list}
+          rowKey={(i) => i.id}
+          columns={[
+            excelCol("producto", "Producto", (i: (typeof list)[number]) => displayField(i.product)),
+            excelCol("cliente", "Cliente", (i: (typeof list)[number]) => displayField(i.client)),
+            excelCol("cantidad", "Cant.", (i: (typeof list)[number]) => String(progressMap[i.id]?.packagingTotalUnits ?? i.packagingTotalUnits ?? (Number.parseFloat(getFinishedQty(i.id) || i.quantity || "") || "—"))),
+            excelCol("origen", "Origen", (i: (typeof list)[number]) => codificadoOriginLabel(i)),
+            excelCol("estado", "Estado", (i: (typeof list)[number]) => i.status.replace(/_/g, " ")),
+            {
+              key: "acciones",
+              header: "Acciones",
+              action: true,
+              text: () => "",
+              render: (i: (typeof list)[number]) => (
+                <Button size="sm" variant="secondary" onClick={() => openItem(i)}>
+                  Abrir
+                </Button>
+              ),
+            },
+          ]}
+        >
         <div className="mt-4 overflow-x-hidden">
           <table className="os-table w-full max-w-full table-fixed text-sm">
             <thead>
@@ -461,6 +485,7 @@ export function CodificadoOperationalView() {
             </tbody>
           </table>
         </div>
+        </ExcelOrList>
       )}
 
       <Dialog

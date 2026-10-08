@@ -843,6 +843,7 @@ export function AsignacionLotesView() {
                         gridFor(group.items, `asignacion-lotes-grid-${groupKey}`, 420)
                       ) : (
                         <OperationalTable
+                          excel={false}
                           columns={columns}
                           rows={group.items}
                           rowKey={(row) => row.id}
@@ -874,6 +875,7 @@ export function AsignacionLotesView() {
               )
             ) : (
               <OperationalTable
+                excel={false}
                 columns={columns}
                 rows={paginated}
                 rowKey={(row) => row.id}

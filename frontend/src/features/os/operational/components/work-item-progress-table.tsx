@@ -8,7 +8,7 @@ import {
   plannedQuantityLabel,
 } from "../lib/operational-progress";
 import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
-import { ActionButton, StatusChip } from "./operational-ui";
+import { ActionButton, ExcelOrList, excelCol, StatusChip } from "./operational-ui";
 import { DeliveryDateBadge } from "./delivery-date-badge";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
 
@@ -53,7 +53,42 @@ export function WorkItemProgressTable({
     );
   }
 
+  // Planilla tipo Excel (seleccionar/copiar rangos); la lista clásica queda como «Ver como lista».
+  const excelColumns = [
+    ...(variant === "envasado" ? [excelCol<WorkItem>("linea", "Línea", (i) => displayField(i.line))] : []),
+    excelCol<WorkItem>("fecha", "Fecha", (i) => displayField(i.dayLabel ?? i.plannedDate)),
+    excelCol<WorkItem>("entrega", "Fecha de entrega", (i) => displayField(i.deliveryDate)),
+    excelCol<WorkItem>("cliente", "Cliente", (i) => displayField(i.client)),
+    excelCol<WorkItem>("producto", "Producto", (i) => displayField(i.product)),
+    excelCol<WorkItem>("planificado", variant === "envasado" ? "Unidades planificadas" : "Kg planificados", (i) => plannedQuantityLabel(i.quantity, i.unit)),
+    excelCol<WorkItem>("realizado", variant === "envasado" ? "Unidades realizadas" : "Kg realizados", (i) => getFinishedQty(i.id) || "—"),
+    ...(variant === "envasado" ? [excelCol<WorkItem>("diferencia", "Diferencia", (i) => formatOperationalDifference(i.quantity, getFinishedQty(i.id)))] : []),
+    ...(showPackagingColumns
+      ? [
+          excelCol<WorkItem>("lote", "Lote", (i) => displayField(i.packagingLote ?? i.loteRef)),
+          excelCol<WorkItem>("vto", "VTO", (i) => displayField(i.packagingVto)),
+          excelCol<WorkItem>("oa", "OA", (i) => displayField(i.oaRef)),
+        ]
+      : []),
+    excelCol<WorkItem>("estado", "Estado", (i) => i.status.replace(/_/g, " ")),
+    excelCol<WorkItem>("observacion", "Observación", (i) => getObservation(i.id) || "—"),
+    {
+      key: "acciones",
+      header: "Acción",
+      action: true,
+      text: () => "",
+      render: (i: WorkItem) => (
+        <ActionButton
+          label={listMode === "archived" || isWorkTransferredStatus(i.status) ? "Ver detalle" : "Ver / Registrar avance"}
+          variant="neutral"
+          onClick={() => onSelectItem(i)}
+        />
+      ),
+    },
+  ];
+
   return (
+    <ExcelOrList columns={excelColumns} rows={items} rowKey={(i) => i.id} tableId={`work-items-${variant}`}>
     <div className="os-table-wrap overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
       <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,13px)]">
         <thead>
@@ -222,5 +257,6 @@ export function WorkItemProgressTable({
         </tbody>
       </table>
     </div>
+    </ExcelOrList>
   );
 }

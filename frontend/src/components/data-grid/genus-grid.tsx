@@ -77,6 +77,8 @@ export interface GenusGridCellChange {
   newValue: string;
   /** Versión del registro que el usuario tenía al editar. */
   rowVersion: string;
+  /** Motivo declarado por el usuario (ediciones que lo exigen, p. ej. históricas). */
+  reason?: string;
 }
 
 export interface GenusGridCommitResult {
@@ -107,6 +109,12 @@ export interface GenusGridProps<T> {
   rowActionsWidth?: number;
   /** Pide recargar datos del servidor (tras un conflicto de concurrencia). */
   onReload?: () => void;
+  /**
+   * Si devuelve un texto, esas ediciones piden un MOTIVO antes de guardarse (trazabilidad de
+   * ediciones históricas / que alimentan indicadores). El motivo viaja en `change.reason`.
+   */
+  reasonRequired?: (changes: GenusGridCellChange[]) => string | null;
+  minReasonLength?: number;
   testId?: string;
   /** Texto de ayuda en el pie. */
   hint?: ReactNode;
@@ -115,6 +123,8 @@ export interface GenusGridProps<T> {
 type SaveState = "idle" | "saving" | "saved" | "error";
 
 interface PreviewState {
+  /** Pide motivo (texto de la pregunta) antes de aplicar. */
+  reasonPrompt?: string | null;
   changes: GenusGridCellChange[];
   invalid: { change: GenusGridCellChange; message: string }[];
   skipped: { rowLabel: string; columnTitle: string; reason: string }[];
@@ -198,9 +208,12 @@ export function GenusGrid<T>({
   renderRowActions,
   rowActionsWidth = 96,
   onReload,
+  reasonRequired,
+  minReasonLength = 8,
   testId = "genus-grid",
   hint,
 }: GenusGridProps<T>) {
+  const [reasonText, setReasonText] = useState("");
   const gridRef = useRef<DataSheetGridRef>(null);
   const [overlay, setOverlay] = useState<Record<string, { value: string; status: "saving" | "error" }>>({});
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -494,7 +507,9 @@ export function GenusGrid<T>({
 
       const touchesSensitive = changes.some((c) => columnByKey.get(c.columnKey)?.sensitive);
       const bulkDelete = changes.filter((c) => c.newValue === "" && c.oldValue !== "").length > 1;
+      const reasonPrompt = changes.length > 0 ? (reasonRequired?.(changes) ?? null) : null;
       const needsPreview =
+        Boolean(reasonPrompt) ||
         skipped.length > 0 || invalid.length > 1 || (invalid.length > 0 && changes.length > 0) ||
         changes.length > previewThreshold || bulkDelete || touchesSensitive;
 
@@ -506,14 +521,15 @@ export function GenusGrid<T>({
         void runCommit(changes, { useLatestVersion: true, recordUndo: true });
         return;
       }
-      setPreview({ changes, invalid, skipped });
+      setReasonText("");
+      setPreview({ changes, invalid, skipped, reasonPrompt });
     },
-    [columnKeys, columnByKey, flushSkips, previewThreshold, rowLabel, rowVersion, runCommit]
+    [columnKeys, columnByKey, flushSkips, previewThreshold, rowLabel, rowVersion, runCommit, reasonRequired]
   );
 
   const applyPreview = () => {
     if (!preview) return;
-    const toApply = preview.changes;
+    const toApply = preview.reasonPrompt ? preview.changes.map((c) => ({ ...c, reason: reasonText.trim() })) : preview.changes;
     setPreview(null);
     if (toApply.length) void runCommit(toApply, { useLatestVersion: true, recordUndo: true });
   };
@@ -667,6 +683,22 @@ export function GenusGrid<T>({
                   </ul>
                 </section>
               )}
+              {preview.reasonPrompt && (
+                <section>
+                  <label className="block text-xs font-semibold" htmlFor={`${testId}-reason`}>
+                    {preview.reasonPrompt}
+                  </label>
+                  <textarea
+                    id={`${testId}-reason`}
+                    data-testid={`${testId}-reason`}
+                    value={reasonText}
+                    onChange={(e) => setReasonText(e.target.value)}
+                    rows={2}
+                    className="mt-1 w-full rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 py-1 text-sm"
+                    placeholder={`Motivo (mín. ${minReasonLength} caracteres)`}
+                  />
+                </section>
+              )}
               {preview.changes.length > 0 && (
                 <section>
                   <h4 className="font-semibold">Se guardarán {preview.changes.length} celda(s)</h4>
@@ -704,7 +736,13 @@ export function GenusGrid<T>({
               {preview && preview.changes.length === 0 ? "Entendido" : "Cancelar (no guardar nada)"}
             </Button>
             {preview && preview.changes.length > 0 && (
-              <Button type="button" variant="primary" onClick={applyPreview} data-testid={`${testId}-preview-apply`}>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={applyPreview}
+                disabled={Boolean(preview.reasonPrompt) && reasonText.trim().length < minReasonLength}
+                data-testid={`${testId}-preview-apply`}
+              >
                 {preview.invalid.length + preview.skipped.length > 0
                   ? `Guardar solo las ${preview.changes.length} válidas`
                   : `Guardar ${preview.changes.length} cambio${preview.changes.length === 1 ? "" : "s"}`}

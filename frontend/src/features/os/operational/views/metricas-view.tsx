@@ -1,5 +1,6 @@
 "use client";
 
+import { ExcelOrList, excelCol } from "../components/operational-ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { Button } from "@/components/ui/button";
@@ -311,6 +312,47 @@ export function MetricasView() {
           <SortSelect value={sort} onChange={setSort} options={METRICAS_SORT_OPTIONS} testId="metricas-sort" />
         </div>
 
+        <ExcelOrList
+          tableId="metricas"
+          rows={sortedMetrics}
+          rowKey={(m) => m.id}
+          columns={[
+            excelCol("fecha", "Fecha", (m: (typeof sortedMetrics)[number]) => m.metricDate),
+            ...(isProdAdmin ? [excelCol("sector", "Sector", (m: (typeof sortedMetrics)[number]) => SECTOR_LABELS[m.sector] ?? m.sector)] : []),
+            excelCol("producto", "Producto", (m: (typeof sortedMetrics)[number]) => m.product ?? "—"),
+            excelCol("unidades", "Unidades", (m: (typeof sortedMetrics)[number]) => String(m.units)),
+            excelCol("responsable", "Responsable", (m: (typeof sortedMetrics)[number]) => m.responsibleDisplay ?? ""),
+            {
+              key: "acciones",
+              header: "",
+              action: true,
+              text: () => "",
+              render: (m: (typeof sortedMetrics)[number]) =>
+                showArchived ? (
+                  <Button size="sm" variant="tertiary" disabled={busy || schemaPending} onClick={() => void handleRestore(m.id)}>
+                    Restaurar
+                  </Button>
+                ) : (
+                  <>
+                    <Button size="sm" variant="tertiary" disabled={busy || schemaPending} onClick={() => startEdit(m)}>
+                      Editar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="tertiary"
+                      disabled={busy || schemaPending}
+                      onClick={() => {
+                        setConfirmDeleteId(m.id);
+                        setConfirmDeleteLabel(m.product ?? m.responsibleDisplay ?? m.id);
+                      }}
+                    >
+                      Borrar
+                    </Button>
+                  </>
+                ),
+            },
+          ]}
+        >
         <div className="os-table-wrap overflow-x-clip rounded border">
           <table className="os-table w-full max-w-full table-fixed text-[length:var(--os-table-font,13px)]" data-testid="metricas-table">
             <thead className="bg-muted/50">
@@ -382,6 +424,7 @@ export function MetricasView() {
             </tbody>
           </table>
         </div>
+        </ExcelOrList>
 
         <section>
           <h3 className="mb-2 font-medium">Ranking por responsable</h3>
