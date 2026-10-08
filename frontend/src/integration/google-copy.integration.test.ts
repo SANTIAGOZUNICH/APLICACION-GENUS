@@ -12,6 +12,8 @@ const ASIG_TAB = process.env.GENUS_IT_GOOGLE_ASIGNACION_TAB?.trim();
 const SAFE_TITLE = /copia|copy|test|prueba/i;
 
 async function assertIsCopy(spreadsheetId: string): Promise<void> {
+  const { isProtectedOriginalSpreadsheet } = await import("@/lib/google/protected-spreadsheets");
+  if (isProtectedOriginalSpreadsheet(spreadsheetId)) throw new Error("SE NIEGA: es una planilla ORIGINAL protegida, no una copia.");
   const { createGoogleAuth } = await import("@/lib/adapters/google/google-auth");
   const sheets = google.sheets({ version: "v4", auth: createGoogleAuth() });
   const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: "properties.title" });

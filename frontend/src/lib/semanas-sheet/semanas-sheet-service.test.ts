@@ -16,6 +16,10 @@ const produccion = { email: "p@laboratoriogenus.com.ar", sector: "PRODUCCION" as
 const otro = { email: "q@laboratoriogenus.com.ar", sector: "PRODUCCION" as const, displayName: "Producción 2" };
 const TODAY = "2026-02-16";
 const ID = "fixture-semanas-2026";
+// La SEMANAS 2026 "indexada en Drive" (la original) para estas pruebas.
+vi.mock("@/lib/adapters/drive/operations-document-repository", () => ({
+  operationsDocumentRepository: { tryGetCriticalSheetRef: async () => ({ fileId: "semanas-original-indexada" }) },
+}));
 const open = () => buildOperationalLocks({ deliveries: [], remitos: [], closedWorkItems: [] });
 
 describe.skipIf(!existsSync(FIXTURE))("Producción → Semanas: edición por celda (copia local, nunca Google)", () => {
@@ -215,5 +219,13 @@ describe.skipIf(!existsSync(FIXTURE))("Producción → Semanas: edición por cel
     expect(closed).toMatchObject({ ok: false, code: "PROTECTED" });
     // @ts-expect-error DB no es una pestaña editable
     await expect(writeSemanasCell(produccion, { tabKey: "DB", a1: "X3", expectedValue: "", value: "1" }, TODAY)).rejects.toThrow();
+  });
+
+  it("nunca escribe en la SEMANAS 2026 original indexada, aunque esté configurada y en la allowlist", async () => {
+    vi.stubEnv("SEMANAS_SHEET_ID", "semanas-original-indexada");
+    vi.stubEnv("SEMANAS_WRITEBACK_SPREADSHEET_IDS", "semanas-original-indexada");
+    const r = await writeSemanasCell(produccion, { tabKey: "ELABORACION", a1: "F6", expectedValue: "SERUM AH+NIA", value: "X" }, TODAY);
+    expect(r).toMatchObject({ ok: false, code: "NOT_WRITABLE" });
+    expect(gw.writes).toHaveLength(0);
   });
 });

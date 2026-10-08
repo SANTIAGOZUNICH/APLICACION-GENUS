@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { asignacionLotesWritebackOps } from "@/lib/db/schema";
+import { isProtectedOriginalSpreadsheet } from "@/lib/google/protected-spreadsheets";
 
 export type WritebackStatus = "pending" | "google_done" | "confirmed" | "failed" | "conflict";
 
@@ -64,6 +65,8 @@ export function writebackAllowlist(): Set<string> {
 export function isWritebackEnabledFor(spreadsheetId: string): boolean {
   // Nunca en Production (VERCEL_ENV=production), sin importar flags ni allowlist.
   if (process.env.VERCEL_ENV === "production") return false;
+  // Nunca sobre las planillas ORIGINALES (oficiales 2025/2026 o GENUS_PROTECTED_SPREADSHEET_IDS), aunque estén en la allowlist.
+  if (isProtectedOriginalSpreadsheet(spreadsheetId)) return false;
   return process.env.ASIGNACION_LOTES_WRITEBACK === "1" && writebackAllowlist().has(spreadsheetId);
 }
 

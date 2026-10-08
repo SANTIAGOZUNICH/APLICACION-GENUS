@@ -16,6 +16,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
+import { isProtectedOriginalSpreadsheet } from "@/lib/google/protected-spreadsheets";
 import { parseFlexibleDate, formatDateDisplay } from "@/features/os/operational/lib/delivery-date";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { sheetCellEdits } from "@/lib/db/schema";
@@ -62,6 +63,21 @@ async function spreadsheetId(): Promise<string> {
   return ref.fileId;
 }
 
+/**
+ * ¿Es la SEMANAS 2026 ORIGINAL (la indexada en Drive)? Fail-closed: si no se puede averiguar, se trata como original.
+ * La copia local de pruebas (fixture) nunca es la original.
+ */
+async function isIndexedOriginalSemanas(sheetId: string): Promise<boolean> {
+  if (sheetId === "fixture-semanas-2026") return false;
+  try {
+    const { operationsDocumentRepository } = await import("@/lib/adapters/drive/operations-document-repository");
+    const ref = await operationsDocumentRepository.tryGetCriticalSheetRef("semanas_2026");
+    return !ref || ref.fileId === sheetId;
+  } catch {
+    return true;
+  }
+}
+
 /** El write-back NUNCA se habilita en Producción (VERCEL_ENV=production), sin importar flags ni allowlist. */
 export function isProductionDeployment(): boolean {
   return process.env.VERCEL_ENV === "production";
@@ -69,6 +85,7 @@ export function isProductionDeployment(): boolean {
 
 export function isSemanasWritable(sheetId: string): boolean {
   if (isProductionDeployment()) return false;
+  if (isProtectedOriginalSpreadsheet(sheetId)) return false;
   const allow = (process.env.SEMANAS_WRITEBACK_SPREADSHEET_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   return process.env.SEMANAS_WRITEBACK === "1" && allow.includes(sheetId);
 }
@@ -266,6 +283,9 @@ export async function writeSemanasCell(
   const id = await spreadsheetId();
   if (!isSemanasWritable(id)) {
     return { ok: false, code: "NOT_WRITABLE", message: isProductionDeployment() ? "El write-back está deshabilitado en Production." : "La escritura a esta planilla no está habilitada (solo copias de prueba autorizadas)." };
+  }
+  if (await isIndexedOriginalSemanas(id)) {
+    return { ok: false, code: "NOT_WRITABLE", message: "Es la SEMANAS 2026 original: GENUS solo escribe en copias de prueba." };
   }
 
   // Modelo VIVO + estado operativo real: la protección se decide en el servidor, nunca por lo que diga el cliente.

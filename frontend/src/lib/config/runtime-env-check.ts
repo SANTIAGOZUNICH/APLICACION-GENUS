@@ -15,6 +15,7 @@ import {
   getServerDataMode,
   shouldFallbackToDemo,
 } from "@/lib/config/data-mode";
+import { isTestHeaderModeEnabled } from "@/lib/auth/resolve-authenticated-actor";
 import { isDatabaseConfigured } from "@/lib/db/client";
 import { getPlanningSource } from "@/lib/planning/planning-source";
 
@@ -84,6 +85,8 @@ export interface RuntimeEnvSnapshot {
    * usan bases distintas comparando ambos /api/v1/env-check, sin exponer la conexión.
    */
   databaseFingerprint: string | null;
+  /** true = este deploy acepta el header `x-genus-actor-email` como identidad (debe ser false en Preview y Production). */
+  authTestHeaderMode: boolean;
   /** Estado del write-back a Google (solo presencia/cantidad, nunca ids). */
   googleWriteback: {
     blockedByProduction: boolean;
@@ -330,6 +333,7 @@ export async function buildRuntimeEnvSnapshot(): Promise<RuntimeEnvSnapshot> {
     databaseFingerprint: databaseFingerprint(
       process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? process.env.DATABASE_URL_UNPOOLED
     ),
+    authTestHeaderMode: isTestHeaderModeEnabled(),
     googleWriteback: {
       blockedByProduction: process.env.VERCEL_ENV === "production",
       asignacionFlag: process.env.ASIGNACION_LOTES_WRITEBACK === "1",
