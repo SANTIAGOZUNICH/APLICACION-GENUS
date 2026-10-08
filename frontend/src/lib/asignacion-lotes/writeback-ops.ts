@@ -62,6 +62,8 @@ export function writebackAllowlist(): Set<string> {
   );
 }
 export function isWritebackEnabledFor(spreadsheetId: string): boolean {
+  // Nunca en Production (VERCEL_ENV=production), sin importar flags ni allowlist.
+  if (process.env.VERCEL_ENV === "production") return false;
   return process.env.ASIGNACION_LOTES_WRITEBACK === "1" && writebackAllowlist().has(spreadsheetId);
 }
 
@@ -93,9 +95,46 @@ export async function findOpByKey(key: string): Promise<WritebackOp | null> {
   return mem().find((o) => o.idempotencyKey === key) ?? null;
 }
 
+/** Una operación abierta más vieja que esto se considera abandonada. */
+export const OPEN_OP_TTL_MS = 2 * 60 * 1000;
+
+/** Hay otra operación ABIERTA (otra clave de idempotencia) sobre el mismo registro+campo → otro usuario está escribiendo esa celda. */
+export async function findOtherOpenOp(recordId: string, field: string, idempotencyKey: string): Promise<WritebackOp | null> {
+  const fresh = (o: WritebackOp) => Date.now() - new Date(o.updatedAt).getTime() < OPEN_OP_TTL_MS;
+  if (isDatabaseConfigured()) {
+    const rows = await getDb()
+      .select()
+      .from(asignacionLotesWritebackOps)
+      .where(and(eq(asignacionLotesWritebackOps.recordId, recordId), eq(asignacionLotesWritebackOps.field, field), inArray(asignacionLotesWritebackOps.status, OPEN)));
+    return rows.map(rowToOp).find((o) => o.idempotencyKey !== idempotencyKey && fresh(o)) ?? null;
+  }
+  return mem().find((o) => o.recordId === recordId && o.field === field && OPEN.includes(o.status) && o.idempotencyKey !== idempotencyKey && fresh(o)) ?? null;
+}
+
+/** Libera operaciones abiertas abandonadas del mismo registro+campo (para poder retomar la celda). */
+export async function abandonStaleOps(recordId: string, field: string, idempotencyKey: string): Promise<void> {
+  const stale = (o: WritebackOp) => o.idempotencyKey !== idempotencyKey && Date.now() - new Date(o.updatedAt).getTime() >= OPEN_OP_TTL_MS;
+  const open = isDatabaseConfigured()
+    ? (await getDb().select().from(asignacionLotesWritebackOps).where(and(eq(asignacionLotesWritebackOps.recordId, recordId), eq(asignacionLotesWritebackOps.field, field), inArray(asignacionLotesWritebackOps.status, OPEN)))).map(rowToOp)
+    : mem().filter((o) => o.recordId === recordId && o.field === field && OPEN.includes(o.status));
+  for (const o of open.filter(stale)) {
+    // google_done abandonada NO se descarta: la reconciliación la completa. Solo se libera `pending` colgada.
+    if (o.status === "pending") await updateOp(o.id, { status: "failed", lastError: "Operación abandonada (timeout)." });
+  }
+}
+
+export class WritebackBusyError extends Error {
+  constructor() {
+    super("Otro usuario está escribiendo esta celda en este momento. Esperá unos segundos, recargá y reintentá.");
+    this.name = "WritebackBusyError";
+  }
+}
+
 export async function createOp(
   input: Omit<WritebackOp, "id" | "attempts" | "createdAt" | "updatedAt" | "confirmedAt" | "lastError" | "status">
 ): Promise<WritebackOp> {
+  await abandonStaleOps(input.recordId, input.field, input.idempotencyKey);
+  if (await findOtherOpenOp(input.recordId, input.field, input.idempotencyKey)) throw new WritebackBusyError();
   const now = new Date();
   const op: WritebackOp = {
     ...input,
@@ -108,11 +147,21 @@ export async function createOp(
     confirmedAt: null,
   };
   if (isDatabaseConfigured()) {
-    await getDb()
-      .insert(asignacionLotesWritebackOps)
-      .values({ ...op, createdAt: now, updatedAt: now, confirmedAt: null })
-      .onConflictDoNothing({ target: asignacionLotesWritebackOps.idempotencyKey });
+    try {
+      await getDb()
+        .insert(asignacionLotesWritebackOps)
+        .values({ ...op, createdAt: now, updatedAt: now, confirmedAt: null })
+        .onConflictDoNothing({ target: asignacionLotesWritebackOps.idempotencyKey });
+    } catch (err) {
+      // Índice único parcial (record_id, field) con status abierto: otro usuario la reservó primero.
+      if ((err as { code?: string })?.code === "23505" || (err as { cause?: { code?: string } })?.cause?.code === "23505") throw new WritebackBusyError();
+      throw err;
+    }
     return (await findOpByKey(input.idempotencyKey)) ?? op;
+  }
+  // Sección crítica síncrona (sin await): reserva atómica en memoria.
+  if (mem().some((o) => o.recordId === input.recordId && o.field === input.field && OPEN.includes(o.status) && o.idempotencyKey !== input.idempotencyKey)) {
+    throw new WritebackBusyError();
   }
   mem().push(op);
   return op;

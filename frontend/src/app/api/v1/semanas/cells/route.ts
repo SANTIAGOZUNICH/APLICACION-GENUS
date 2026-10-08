@@ -27,12 +27,13 @@ export async function PATCH(request: Request) {
           a1: String(edit.a1 ?? ""),
           expectedValue: String(edit.expectedValue ?? ""),
           value: String(edit.value ?? ""),
+          reason: edit.reason ? String(edit.reason) : undefined,
         })
       );
     }
     const ok = results.every((r) => r.ok);
     const codes = new Set(results.flatMap((r) => (r.ok ? [] : [r.code])));
-    const status = ok ? 200 : codes.has("CONFLICT") ? 409 : codes.has("NOT_WRITABLE") || codes.has("PROTECTED") ? 403 : codes.has("INVALID") ? 400 : 502;
+    const status = ok ? 200 : codes.has("CONFLICT") || codes.has("BUSY") ? 409 : codes.has("NOT_WRITABLE") || codes.has("PROTECTED") ? 403 : codes.has("INVALID") || codes.has("REASON_REQUIRED") ? 400 : 502;
     return NextResponse.json({ ok, results, error: results.find((r) => !r.ok && "message" in r) && (results.find((r) => !r.ok) as { message: string }).message }, { status });
   } catch (err) {
     return ordersErrorResponse(err);

@@ -21,6 +21,8 @@ export interface SemanasViewResponse {
   readAt: string;
   /** "Hoy" que usa el servidor para decidir períodos cerrados. */
   today?: string;
+  locksKnown?: boolean;
+  reasonRequiredBefore?: string;
 }
 
 export async function fetchSemanasView(session: OrdersClientSession, tab: SemanasTabKey): Promise<SemanasViewResponse> {
@@ -35,6 +37,7 @@ export interface SemanasEditPayload {
   a1: string;
   expectedValue: string;
   value: string;
+  reason?: string;
 }
 export interface SemanasEditResultDto {
   ok: boolean;

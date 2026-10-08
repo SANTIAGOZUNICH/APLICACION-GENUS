@@ -303,6 +303,11 @@ export function getAsignacionCellAuditMemory(): AsignacionCellAuditEntry[] {
   return gAudit.__genusAsignacionCellAudit;
 }
 
+function isUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: string; cause?: { code?: string } } | null;
+  return e?.code === "23505" || e?.cause?.code === "23505";
+}
+
 function sameVersion(a: string, b: string): boolean {
   const ta = new Date(a).getTime();
   const tb = new Date(b).getTime();
@@ -835,6 +840,7 @@ export class AsignacionLotesService {
 
     if (useNeon()) {
       const db = getDb();
+      try {
       await db.transaction(async (tx) => {
         for (const entry of toWrite) {
           const set: Record<string, unknown> = { updatedAt: nowDate, updatedBy };
@@ -880,6 +886,17 @@ export class AsignacionLotesService {
           }))
         );
       });
+      } catch (err) {
+        // Dos usuarios cambiando la identidad (lote/código/producto) a la vez: gana el índice único
+        // parcial (lote,codigo,producto WHERE NOT archived); el perdedor recibe DUPLICATE, no un 500.
+        if (isUniqueViolation(err)) {
+          const idChange = changes.findIndex((c) => IDENTITY_FIELDS.has(c.field));
+          throw new AsignacionCellPatchError([
+            { index: Math.max(0, idChange), id: changes[Math.max(0, idChange)]?.id ?? "", field: changes[Math.max(0, idChange)]?.field ?? "", code: "DUPLICATE", message: "Otro usuario acaba de crear/cambiar un registro con el mismo lote, código y producto. No se guardó nada." },
+          ]);
+        }
+        throw err;
+      }
       // Sincronización retroactiva a WorkItems "pelados" — best-effort, igual que writeRecord().
       for (const record of updated) {
         try {
@@ -890,6 +907,20 @@ export class AsignacionLotesService {
       }
     } else {
       const items = mem();
+      // Re-chequeo SÍNCRONO de identidad (sin await entre el chequeo y la escritura): equivale al
+      // índice único de Neon cuando dos pegados concurrentes cambian la identidad a la vez.
+      for (const record of updated) {
+        const key = duplicateKey(record.lote, record.codigo, record.producto);
+        const clash = items.find((it) => it.id !== record.id && !it.archived && duplicateKey(it.lote, it.codigo, it.producto) === key && !updated.some((u) => u.id === it.id));
+        if (clash) {
+          const i = changes.findIndex((c) => c.id === record.id && IDENTITY_FIELDS.has(c.field));
+          throw new AsignacionCellPatchError([{ index: Math.max(0, i), id: record.id, field: changes[Math.max(0, i)]?.field ?? "lote", code: "DUPLICATE", message: `Ya existe el lote ${record.lote} para el código ${record.codigo} y producto ${record.producto}.` }]);
+        }
+        const cur = items.find((it) => it.id === record.id);
+        if (cur && cur.updatedAt !== toWrite.find((w) => w.record.id === record.id)!.record.updatedAt) {
+          throw new AsignacionCellPatchError([{ index: changes.findIndex((c) => c.id === record.id), id: record.id, field: changes.find((c) => c.id === record.id)?.field ?? "", code: "CONFLICT", message: "Otro usuario modificó este registro. Recargá antes de editar." }]);
+        }
+      }
       for (const record of updated) {
         const idx = items.findIndex((item) => item.id === record.id);
         if (idx >= 0) items[idx] = record;

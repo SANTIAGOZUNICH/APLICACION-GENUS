@@ -38,10 +38,12 @@ import {
 import {
   createOp,
   findOpByKey,
+  findOtherOpenOp,
   idempotencyKeyFor,
   isWritebackEnabledFor,
   listOpenOps,
   updateOp,
+  WritebackBusyError,
   type WritebackOp,
 } from "./writeback-ops";
 import { GoogleSheetCellGateway, type SheetCellGateway } from "./writeback-gateway";
@@ -169,7 +171,8 @@ async function applyToNeon(ctx: Pick<Ctx, "actor" | "record" | "field" | "rawVal
 /** Ejecuta/reanuda una operación. Nunca lanza: devuelve el estado final de la celda. */
 async function runOp(op: WritebackOp, ctx: Ctx, index: number): Promise<CellResult> {
   const gw = gateway();
-  await updateOp(op.id, { attempts: op.attempts + 1, lastError: null });
+  // Reabre (pending) para que el índice único parcial vuelva a reservar la celda durante el reintento.
+  await updateOp(op.id, { attempts: op.attempts + 1, lastError: null, ...(op.status === "google_done" ? {} : { status: "pending" as const }) });
   try {
     if (op.status !== "google_done") {
       const loc = await locateCell(gw, ctx.spreadsheetId, ctx.tab, ctx.record, ctx.field);
@@ -329,7 +332,16 @@ export async function patchCellsWithWriteback(
       continue;
     }
 
-    const op =
+    if (existing) {
+      // Reintento de una operación fallida/en conflicto: hay que volver a reservar la celda.
+      if (await findOtherOpenOp(c.id, c.field, key)) {
+        fail("GOOGLE_CONFLICT", new WritebackBusyError().message);
+        continue;
+      }
+    }
+    let op: WritebackOp;
+    try {
+      op =
       existing ??
       (await createOp({
         idempotencyKey: key,
@@ -345,6 +357,13 @@ export async function patchCellsWithWriteback(
         actorSector: actor.sector,
         actorName: actor.displayName,
       }));
+    } catch (err) {
+      if (err instanceof WritebackBusyError) {
+        fail("GOOGLE_CONFLICT", err.message);
+        continue;
+      }
+      throw err;
+    }
     results[i] = await runOp(
       op,
       { actor, record: current, spreadsheetId: target.spreadsheetId, tab, field: c.field, rawValue: c.value, normalized: validation.value },

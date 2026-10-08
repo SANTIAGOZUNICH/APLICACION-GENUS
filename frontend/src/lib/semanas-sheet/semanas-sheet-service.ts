@@ -15,7 +15,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { parseFlexibleDate, formatDateDisplay } from "@/features/os/operational/lib/delivery-date";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { sheetCellEdits } from "@/lib/db/schema";
@@ -23,6 +23,7 @@ import { GoogleSheetCellGateway, type SheetGridGateway } from "@/lib/asignacion-
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
 import { findCalendarCell, parseA1, parseWeeklyCalendar, type CalendarWeek } from "./calendar-model";
+import { loadOperationalLocks, norm, UNVERIFIABLE, type OperationalLocks } from "./operational-locks";
 import { findFlatCell, parseFlatTable, type FlatTable } from "./flat-model";
 
 import { SEMANAS_TABS, isSemanasTabKey, type SemanasTabKey } from "./semanas-tabs";
@@ -61,7 +62,13 @@ async function spreadsheetId(): Promise<string> {
   return ref.fileId;
 }
 
+/** El write-back NUNCA se habilita en Producción (VERCEL_ENV=production), sin importar flags ni allowlist. */
+export function isProductionDeployment(): boolean {
+  return process.env.VERCEL_ENV === "production";
+}
+
 export function isSemanasWritable(sheetId: string): boolean {
+  if (isProductionDeployment()) return false;
   const allow = (process.env.SEMANAS_WRITEBACK_SPREADSHEET_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   return process.env.SEMANAS_WRITEBACK === "1" && allow.includes(sheetId);
 }
@@ -84,29 +91,54 @@ export interface SemanasViewPayload {
   /** Valor de lectura "como lo vio el usuario": base del chequeo de conflicto. */
   readAt: string;
   today: string;
+  /** false = estado operativo no verificable (ENTREGAS y C/DIA quedan bloqueadas por seguridad). */
+  locksKnown: boolean;
+  /** Fechas anteriores a hoy requieren motivo para editarse (trazabilidad). */
+  reasonRequiredBefore: string;
+}
+
+function calendarCellLock(locks: OperationalLocks) {
+  return ({ value, date }: { a1: string; value: string; date: string | null }) => locks.plannedProductionLock({ date, product: value });
+}
+
+function flatRowLock(locks: OperationalLocks) {
+  return ({ kind, date, values, columns }: { kind: "ENTREGAS" | "CDIA"; date: string | null; values: string[]; columns: Array<{ title: string }> }) => {
+    if (!locks.known) return UNVERIFIABLE;
+    const at = (title: string) => values[columns.findIndex((c) => norm(c.title) === title)] ?? "";
+    return kind === "ENTREGAS"
+      ? locks.deliveryLock({ date, client: at("cliente"), product: at("producto") })
+      : locks.dayRecordLock({ date, product: at("producto") });
+  };
 }
 
 export async function loadSemanasView(tabKey: SemanasTabKey, today = todayIso()): Promise<SemanasViewPayload> {
   const def = SEMANAS_TABS[tabKey];
   const gw = await gateway();
   const id = await spreadsheetId();
-  const [rows, merges, formulaCells] = await Promise.all([
+  const [rows, merges, formulaCells, locks] = await Promise.all([
     gw.readTab(id, def.tab),
     gw.readMerges(id, def.tab),
     gw.readFormulaCells(id, def.tab),
+    loadOperationalLocks(),
   ]);
-  const base = { spreadsheetId: id, tabKey, tab: def.tab, label: def.label, kind: def.kind, writable: isSemanasWritable(id), readAt: new Date().toISOString(), today };
+  const base = {
+    spreadsheetId: id, tabKey, tab: def.tab, label: def.label, kind: def.kind,
+    writable: isSemanasWritable(id), readAt: new Date().toISOString(), today,
+    locksKnown: locks.known, reasonRequiredBefore: today,
+  };
   if (def.kind === "CALENDAR") {
-    return { ...base, weeks: parseWeeklyCalendar(rows, merges, { year: YEAR(), formulaCells, today }) };
+    return { ...base, weeks: parseWeeklyCalendar(rows, merges, { year: YEAR(), formulaCells, cellLock: calendarCellLock(locks) }) };
   }
-  return { ...base, table: parseFlatTable(tabKey === "ENTREGAS" ? "ENTREGAS" : "CDIA", rows, merges, { formulaCells, today }) };
+  return { ...base, table: parseFlatTable(tabKey === "ENTREGAS" ? "ENTREGAS" : "CDIA", rows, merges, { formulaCells, rowLock: flatRowLock(locks) }) };
 }
 
 // ---------- bitácora ----------
 interface EditOp {
   id: string; idempotencyKey: string; spreadsheetId: string; sheetTab: string; a1: string;
   oldValue: string | null; newValue: string | null; status: string; lastError: string | null;
-  actorEmail: string; actorSector: string; actorName: string; createdAt: string; confirmedAt: string | null;
+  actorEmail: string; actorSector: string; actorName: string;
+  reason: string | null; affectsIndicators: boolean;
+  createdAt: string; updatedAt: string; confirmedAt: string | null;
 }
 const g = globalThis as unknown as { __genusSheetCellEdits?: EditOp[] };
 export function getSheetCellEditsMemory(): EditOp[] {
@@ -114,28 +146,73 @@ export function getSheetCellEditsMemory(): EditOp[] {
   return g.__genusSheetCellEdits;
 }
 
+/** Una operación `pending` más vieja que esto se considera abandonada (se puede retomar la celda). */
+export const OPEN_EDIT_TTL_MS = 2 * 60 * 1000;
+
+function rowToEdit(row: typeof sheetCellEdits.$inferSelect): EditOp {
+  return { ...row, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(), confirmedAt: row.confirmedAt?.toISOString() ?? null };
+}
+
 async function findEdit(key: string): Promise<EditOp | null> {
   if (isDatabaseConfigured()) {
     const [row] = await getDb().select().from(sheetCellEdits).where(eq(sheetCellEdits.idempotencyKey, key));
-    return row ? { ...row, createdAt: row.createdAt.toISOString(), confirmedAt: row.confirmedAt?.toISOString() ?? null } : null;
+    return row ? rowToEdit(row) : null;
   }
   return getSheetCellEditsMemory().find((o) => o.idempotencyKey === key) ?? null;
 }
+
+async function findOpenEdit(spreadsheetId: string, tab: string, a1: string): Promise<EditOp | null> {
+  if (isDatabaseConfigured()) {
+    const [row] = await getDb()
+      .select()
+      .from(sheetCellEdits)
+      .where(and(eq(sheetCellEdits.spreadsheetId, spreadsheetId), eq(sheetCellEdits.sheetTab, tab), eq(sheetCellEdits.a1, a1), eq(sheetCellEdits.status, "pending")));
+    return row ? rowToEdit(row) : null;
+  }
+  return getSheetCellEditsMemory().find((o) => o.spreadsheetId === spreadsheetId && o.sheetTab === tab && o.a1 === a1 && o.status === "pending") ?? null;
+}
+
 async function saveEdit(op: EditOp): Promise<void> {
+  const now = new Date();
   if (isDatabaseConfigured()) {
     await getDb()
       .insert(sheetCellEdits)
-      .values({ ...op, createdAt: new Date(op.createdAt), confirmedAt: op.confirmedAt ? new Date(op.confirmedAt) : null })
+      .values({ ...op, createdAt: new Date(op.createdAt), updatedAt: now, confirmedAt: op.confirmedAt ? new Date(op.confirmedAt) : null })
       .onConflictDoUpdate({
         target: sheetCellEdits.idempotencyKey,
-        set: { status: op.status, lastError: op.lastError, confirmedAt: op.confirmedAt ? new Date(op.confirmedAt) : null },
+        set: { status: op.status, lastError: op.lastError, updatedAt: now, confirmedAt: op.confirmedAt ? new Date(op.confirmedAt) : null },
       });
     return;
   }
   const list = getSheetCellEditsMemory();
   const i = list.findIndex((o) => o.idempotencyKey === op.idempotencyKey);
-  if (i >= 0) list[i] = op;
-  else list.push(op);
+  const next = { ...op, updatedAt: now.toISOString() };
+  if (i >= 0) list[i] = next;
+  else list.push(next);
+}
+
+/**
+ * Reserva la celda: a lo sumo UNA edición `pending` por celda (índice único parcial en Neon).
+ * Devuelve false si otro usuario la está editando ahora mismo.
+ */
+async function claimCell(op: EditOp): Promise<boolean> {
+  const open = await findOpenEdit(op.spreadsheetId, op.sheetTab, op.a1);
+  if (open && open.idempotencyKey !== op.idempotencyKey) {
+    if (Date.now() - new Date(open.updatedAt).getTime() < OPEN_EDIT_TTL_MS) return false;
+    await saveEdit({ ...open, status: "failed", lastError: "Operación abandonada (timeout): la celda se retomó." });
+  }
+  try {
+    // En memoria el chequeo + alta es síncrono (sin await en medio de la sección crítica del claim).
+    if (!isDatabaseConfigured()) {
+      const again = getSheetCellEditsMemory().find((o) => o.spreadsheetId === op.spreadsheetId && o.sheetTab === op.sheetTab && o.a1 === op.a1 && o.status === "pending" && o.idempotencyKey !== op.idempotencyKey);
+      if (again) return false;
+    }
+    await saveEdit(op);
+    return true;
+  } catch (err) {
+    if ((err as { code?: string; cause?: { code?: string } })?.code === "23505" || (err as { cause?: { code?: string } })?.cause?.code === "23505") return false; // índice único parcial: otro la reservó primero
+    throw err;
+  }
 }
 
 // ---------- escritura ----------
@@ -145,10 +222,16 @@ export interface SemanasCellEdit {
   /** Lo que el usuario veía en la celda (control de conflicto). */
   expectedValue: string;
   value: string;
+  /** Motivo (obligatorio para fechas anteriores a hoy — trazabilidad de ediciones históricas). */
+  reason?: string;
 }
 export type SemanasEditResult =
   | { ok: true; idempotent?: boolean; a1: string; value: string }
-  | { ok: false; code: "FORBIDDEN" | "NOT_WRITABLE" | "PROTECTED" | "INVALID" | "CONFLICT" | "GOOGLE_ERROR" | "GOOGLE_PENDING"; message: string };
+  | { ok: false; code: "FORBIDDEN" | "NOT_WRITABLE" | "PROTECTED" | "INVALID" | "REASON_REQUIRED" | "CONFLICT" | "BUSY" | "GOOGLE_ERROR" | "GOOGLE_PENDING"; message: string };
+
+export const MIN_REASON_LENGTH = 8;
+/** Columnas de C/DIA que alimentan el dashboard DB (SUMIFS sobre QACONDDIA!D y !E). */
+const INDICATOR_COLUMNS = new Set(["cantidad", "responsable"]);
 
 function normalizeForColumn(tabKey: SemanasTabKey, columnTitle: string | null, raw: string): { ok: true; text: string } | { ok: false; message: string } {
   const value = raw.trim();
@@ -182,37 +265,53 @@ export async function writeSemanasCell(
   const gw = await gateway();
   const id = await spreadsheetId();
   if (!isSemanasWritable(id)) {
-    return { ok: false, code: "NOT_WRITABLE", message: "La escritura a esta planilla no está habilitada (solo copias de prueba autorizadas)." };
+    return { ok: false, code: "NOT_WRITABLE", message: isProductionDeployment() ? "El write-back está deshabilitado en Production." : "La escritura a esta planilla no está habilitada (solo copias de prueba autorizadas)." };
   }
 
-  // Modelo VIVO: la protección se decide en el servidor, nunca por lo que diga el cliente.
+  // Modelo VIVO + estado operativo real: la protección se decide en el servidor, nunca por lo que diga el cliente.
   const view = await loadSemanasView(edit.tabKey, today);
   let protection: string | null;
   let columnTitle: string | null = null;
+  let cellDate: string | null = null;
   if (view.kind === "CALENDAR") {
     const found = findCalendarCell(view.weeks ?? [], a1);
     protection = found ? found.cell.protection : "La celda no pertenece a un bloque de semana.";
+    cellDate = found?.cell.date ?? null;
   } else {
     const found = findFlatCell(view.table!, a1);
     protection = found ? found.protection : "La celda no pertenece a la tabla (no se crean filas nuevas desde la grilla).";
     columnTitle = view.table!.columns.find((c) => a1.startsWith(c.letter) && /^\d+$/.test(a1.slice(c.letter.length)))?.title ?? null;
+    cellDate = view.table!.rows.find((r) => r.rowNumber === parseA1(a1)!.row)?.date ?? null;
   }
   if (protection) return { ok: false, code: "PROTECTED", message: protection };
 
   const normalized = normalizeForColumn(edit.tabKey, columnTitle, edit.value);
   if (!normalized.ok) return { ok: false, code: "INVALID", message: normalized.message };
 
+  // Trazabilidad de ediciones históricas: motivo obligatorio; marca si alimenta indicadores del dashboard DB.
+  const historic = Boolean(cellDate && cellDate < today);
+  const affectsIndicators = edit.tabKey === "CDIA" && INDICATOR_COLUMNS.has((columnTitle ?? "").toLowerCase());
+  const reason = (edit.reason ?? "").trim();
+  if (historic && reason.length < MIN_REASON_LENGTH) {
+    return { ok: false, code: "REASON_REQUIRED", message: `Editar una fecha anterior a hoy requiere un motivo (mín. ${MIN_REASON_LENGTH} caracteres)${affectsIndicators ? " — esta celda alimenta los indicadores del dashboard DB" : ""}.` };
+  }
+
   const key = createHash("sha256").update(`${id}\u0000${def.tab}\u0000${a1}\u0000${edit.expectedValue.trim()}\u0000${normalized.text}`).digest("hex").slice(0, 40);
   const existing = await findEdit(key);
   if (existing?.status === "confirmed") return { ok: true, idempotent: true, a1, value: normalized.text };
 
-  const op: EditOp = existing ?? {
-    id: `sce-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  const nowIso = new Date().toISOString();
+  const op: EditOp = {
+    id: existing?.id ?? `sce-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     idempotencyKey: key, spreadsheetId: id, sheetTab: def.tab, a1,
     oldValue: edit.expectedValue, newValue: normalized.text, status: "pending", lastError: null,
     actorEmail: actor.email, actorSector: actor.sector, actorName: actor.displayName,
-    createdAt: new Date().toISOString(), confirmedAt: null,
+    reason: reason || null, affectsIndicators,
+    createdAt: existing?.createdAt ?? nowIso, updatedAt: nowIso, confirmedAt: null,
   };
+  if (!(await claimCell(op))) {
+    return { ok: false, code: "BUSY", message: "Otro usuario está editando esta celda en este momento. Esperá unos segundos, recargá y reintentá." };
+  }
   const fail = async (status: string, code: Extract<SemanasEditResult, { ok: false }>["code"], message: string) => {
     await saveEdit({ ...op, status, lastError: message });
     return { ok: false as const, code, message };
@@ -230,7 +329,7 @@ export async function writeSemanasCell(
     }
     const back = (await gw.readCell(id, def.tab, a1)).trim();
     if (back !== normalized.text) {
-      return await fail("pending", "GOOGLE_PENDING", "Google no confirmó el valor escrito. No se informa como guardado; recargá y reintentá.");
+      return await fail("pending_unconfirmed", "GOOGLE_PENDING", "Google no confirmó el valor escrito. No se informa como guardado; recargá y reintentá.");
     }
     await saveEdit({ ...op, status: "confirmed", lastError: null, confirmedAt: new Date().toISOString() });
     return { ok: true, a1, value: normalized.text };

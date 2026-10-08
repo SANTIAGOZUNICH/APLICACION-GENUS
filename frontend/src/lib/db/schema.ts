@@ -987,6 +987,9 @@ export const asignacionLotesWritebackOps = pgTable(
   },
   (table) => [
     uniqueIndex("asignacion_lotes_writeback_ops_idem_uidx").on(table.idempotencyKey),
+    uniqueIndex("asignacion_lotes_writeback_ops_open_uidx")
+      .on(table.recordId, table.field)
+      .where(sql`${table.status} in ('pending','google_done')`),
     index("asignacion_lotes_writeback_ops_record_idx").on(table.recordId, table.status),
   ]
 );
@@ -1007,10 +1010,16 @@ export const sheetCellEdits = pgTable(
     actorEmail: text("actor_email").notNull(),
     actorSector: text("actor_sector").notNull(),
     actorName: text("actor_name").notNull().default(""),
+    reason: text("reason"),
+    affectsIndicators: boolean("affects_indicators").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
   },
   (table) => [
+    uniqueIndex("sheet_cell_edits_open_uidx")
+      .on(table.spreadsheetId, table.sheetTab, table.a1)
+      .where(sql`${table.status} = 'pending'`),
     uniqueIndex("sheet_cell_edits_idem_uidx").on(table.idempotencyKey),
     index("sheet_cell_edits_cell_idx").on(table.spreadsheetId, table.sheetTab, table.a1),
   ]

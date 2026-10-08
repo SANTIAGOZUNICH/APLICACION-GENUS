@@ -37,10 +37,14 @@ class FakeSheet implements SheetCellGateway {
     for (const ch of m[1]!) col = col * 26 + (ch.charCodeAt(0) - 64);
     return { row: Number(m[2]) - 1, col: col - 1 };
   }
-  async readTab() { return this.grid.map((r) => [...r]); }
-  async readCell(_s: string, _t: string, a1: string) { const p = this.pos(a1); return this.grid[p.row]?.[p.col] ?? ""; }
+  /** ms de latencia simulada por llamada (fuerza intercalado entre usuarios concurrentes). */
+  latency = 0;
+  private async lag() { if (this.latency) await new Promise((r) => setTimeout(r, this.latency)); }
+  async readTab() { await this.lag(); return this.grid.map((r) => [...r]); }
+  async readCell(_s: string, _t: string, a1: string) { await this.lag(); const p = this.pos(a1); return this.grid[p.row]?.[p.col] ?? ""; }
   async readFormula(_s: string, _t: string, a1: string) { return this.formulas.has(a1) ? "=SUM(A1:A2)" : null; }
   async writeCell(_s: string, _t: string, a1: string, value: string) {
+    await this.lag();
     if (this.failWrite) throw new Error("403 The caller does not have permission");
     this.writes.push({ a1, value });
     if (this.swallowWrite) return;
@@ -256,6 +260,75 @@ describe("write-back a Google Sheets (opción C)", () => {
     const res = await patchCellsWithWriteback(produccion, [change(manual, "11"), change(google, "7000")]);
     expect(res.ok).toBe(true);
     expect(res.results.map((x) => x.status)).toEqual(["confirmed", "confirmed"]);
+    expect(sheet.writes).toHaveLength(1);
+  });
+
+  it("NUNCA escribe en Production (VERCEL_ENV=production) aunque flag y allowlist estén activos", async () => {
+    const r = await seedRecord();
+    vi.stubEnv("VERCEL_ENV", "production");
+    const res = await patchCellsWithWriteback(produccion, [change(r, "7000")]);
+    expect(res.results[0]).toMatchObject({ status: "failed", code: "PROTECTED_SOURCE" });
+    expect(sheet.writes).toHaveLength(0);
+  });
+
+  it("DOS USUARIOS editan la MISMA celda de Google a la vez: una sola escritura, el otro recibe conflicto", async () => {
+    const r = await seedRecord();
+    sheet.latency = 5;
+    const other = { email: "cal@laboratoriogenus.com.ar", sector: "CALIDAD" as const, displayName: "Calidad" };
+    const [a, b] = await Promise.all([
+      patchCellsWithWriteback(produccion, [change(r, "7000")]),
+      patchCellsWithWriteback(other, [change(r, "9000")]),
+    ]);
+    const oks = [a, b].filter((x) => x.ok);
+    expect(oks).toHaveLength(1);
+    expect(sheet.writes).toHaveLength(1);
+    const loser = [a, b].find((x) => !x.ok)!;
+    expect(loser.results[0]).toMatchObject({ status: "failed" });
+    const final = (await getAsignacionLotesService().list(produccion))[0]!.cantidades;
+    expect(final).toBe(Number(sheet.writes[0]!.value));
+    expect(sheet.grid[2]![5]).toBe(sheet.writes[0]!.value); // Sheet y Neon consistentes
+  });
+
+  it("DOS USUARIOS cambian el LOTE del mismo registro de Google a la vez: solo uno gana y Sheet/Neon quedan consistentes", async () => {
+    const r = await seedRecord();
+    sheet.latency = 5;
+    const other = { email: "cal@laboratoriogenus.com.ar", sector: "CALIDAD" as const, displayName: "Calidad" };
+    const [a, b] = await Promise.all([
+      patchCellsWithWriteback(produccion, [{ id: r.id, field: "lote" as never, value: "G-NUEVO-A", expectedVersion: r.updatedAt }]),
+      patchCellsWithWriteback(other, [{ id: r.id, field: "lote" as never, value: "G-NUEVO-B", expectedVersion: r.updatedAt }]),
+    ]);
+    expect([a, b].filter((x) => x.ok)).toHaveLength(1);
+    expect(sheet.writes).toHaveLength(1);
+    const rec = (await getAsignacionLotesService().list(produccion))[0]!;
+    expect(rec.lote).toBe(sheet.writes[0]!.value);
+    expect(sheet.grid[2]![0]).toBe(rec.lote);
+  });
+
+  it("DOS USUARIOS cambian la identidad de DOS registros manuales al MISMO lote a la vez: uno gana, no se duplica", async () => {
+    const svc = getAsignacionLotesService();
+    const a = await svc.upsert(produccion, { lote: "M1", fecha: "2026-08-04", producto: "IGUAL", codigo: "X", cantidades: 1, updatedBy: "P" });
+    const b = await svc.upsert(produccion, { lote: "M2", fecha: "2026-08-04", producto: "IGUAL", codigo: "X", cantidades: 1, updatedBy: "P" });
+    const results = await Promise.all([
+      patchCellsWithWriteback(produccion, [{ id: a.id, field: "lote" as never, value: "COMPARTIDO", expectedVersion: a.updatedAt }]),
+      patchCellsWithWriteback(produccion, [{ id: b.id, field: "lote" as never, value: "COMPARTIDO", expectedVersion: b.updatedAt }]),
+    ]);
+    expect(results.filter((x) => x.ok)).toHaveLength(1);
+    const rows = (await svc.list(produccion)).filter((x) => x.lote === "COMPARTIDO");
+    expect(rows).toHaveLength(1);
+  });
+
+  it("reintento de un fallo por Google reabre la celda y un tercero no puede colarse mientras tanto", async () => {
+    const r = await seedRecord();
+    sheet.failWrite = true;
+    await patchCellsWithWriteback(produccion, [change(r, "7000")]);
+    sheet.failWrite = false;
+    sheet.latency = 5;
+    const other = { email: "cal@laboratoriogenus.com.ar", sector: "CALIDAD" as const, displayName: "Calidad" };
+    const [retry, intruder] = await Promise.all([
+      patchCellsWithWriteback(produccion, [change(r, "7000")]),
+      patchCellsWithWriteback(other, [change(r, "8000")]),
+    ]);
+    expect([retry, intruder].filter((x) => x.ok)).toHaveLength(1);
     expect(sheet.writes).toHaveLength(1);
   });
 });

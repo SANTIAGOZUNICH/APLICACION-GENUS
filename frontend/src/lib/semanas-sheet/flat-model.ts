@@ -36,20 +36,18 @@ export interface FlatTable {
 
 const fold = (v: string) => v.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
-/** Días hacia atrás en los que C/DIA sigue siendo editable; más viejo = día cerrado (supuesto de política, ajustable). */
-export const CDIA_EDIT_WINDOW_DAYS = 14;
-
-function addDays(iso: string, delta: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + delta);
-  return d.toISOString().slice(0, 10);
-}
+/**
+ * Bloqueo por proceso operativo REAL de una fila (entrega confirmada/remito en GENUS,
+ * producción cerrada...). Devuelve el motivo o null. NO existe ventana de antigüedad:
+ * un registro histórico se puede corregir mientras no esté cerrado (con motivo + auditoría).
+ */
+export type FlatRowLock = (info: { kind: FlatKind; date: string | null; values: string[]; columns: FlatColumn[] }) => string | null;
 
 export function parseFlatTable(
   kind: FlatKind,
   rows: string[][],
   merges: SheetMerge[],
-  options: { formulaCells?: ReadonlySet<string>; today: string }
+  options: { formulaCells?: ReadonlySet<string>; rowLock?: FlatRowLock }
 ): FlatTable {
   const headerIdx = rows.findIndex((r) => fold(r[1] ?? "") === "fecha");
   if (headerIdx < 0) return { kind, columns: [], rows: [] };
@@ -82,14 +80,14 @@ export function parseFlatTable(
     const structural = isRepeatedHeader || isMonthTitle;
 
     const date = structural ? null : currentDate;
+    const rowLockReason = structural ? null : (options.rowLock?.({ kind, date, values: columns.map((c) => String(row[c.index] ?? "")), columns }) ?? null);
     const cells: FlatCell[] = columns.map((col) => {
       const a1 = a1Of(rowNumber, col.index);
       let protection: string | null = null;
       if (structural) protection = "Encabezado/título: solo lectura.";
       else if (covered(rowNumber, col.index)) protection = "Celda combinada: se edita en la celda ancla.";
       else if (options.formulaCells?.has(a1)) protection = "Celda con fórmula: no se sobrescribe.";
-      else if (kind === "ENTREGAS" && date && date < options.today) protection = "Entrega histórica: no se modifica.";
-      else if (kind === "CDIA" && date && date < addDays(options.today, -CDIA_EDIT_WINDOW_DAYS)) protection = "Registro diario cerrado: solo lectura.";
+      else if (rowLockReason) protection = rowLockReason;
       return { a1, value: String(row[col.index] ?? ""), protection };
     });
     out.push({ rowNumber, role: structural ? "structural" : "data", date, cells });

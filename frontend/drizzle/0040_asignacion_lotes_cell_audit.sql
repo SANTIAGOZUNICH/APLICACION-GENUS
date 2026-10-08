@@ -1,3 +1,4 @@
+-- genus:reconcile-safe
 -- Migración 0040 — Auditoría de edición por celda de Asignación de Lotes
 -- (grilla tipo Excel). ADITIVA / IDEMPOTENTE / sin gate (mismo criterio que
 -- 0019-0038): solo crea una tabla nueva, no toca datos existentes.
@@ -52,6 +53,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS "asignacion_lotes_writeback_ops_idem_uidx"
 CREATE INDEX IF NOT EXISTS "asignacion_lotes_writeback_ops_record_idx"
   ON "asignacion_lotes_writeback_ops" ("record_id","status");
 --> statement-breakpoint
+-- A lo sumo UNA operación abierta por (registro, campo): dos usuarios no escriben la misma celda a la vez.
+CREATE UNIQUE INDEX IF NOT EXISTS "asignacion_lotes_writeback_ops_open_uidx"
+  ON "asignacion_lotes_writeback_ops" ("record_id","field") WHERE "status" IN ('pending','google_done');
+--> statement-breakpoint
 -- Auditoría/idempotencia de ediciones de celdas de SEMANAS 2026 (grilla Producción → Semanas):
 -- la Sheet es la única fuente de verdad; aquí solo queda la bitácora de quién cambió qué celda.
 CREATE TABLE IF NOT EXISTS "sheet_cell_edits" (
@@ -67,9 +72,15 @@ CREATE TABLE IF NOT EXISTS "sheet_cell_edits" (
   "actor_email" text NOT NULL,
   "actor_sector" text NOT NULL,
   "actor_name" text NOT NULL DEFAULT '',
+  "reason" text,
+  "affects_indicators" boolean NOT NULL DEFAULT false,
   "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+  "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
   "confirmed_at" timestamp with time zone
 );
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "sheet_cell_edits_open_uidx"
+  ON "sheet_cell_edits" ("spreadsheet_id","sheet_tab","a1") WHERE "status" = 'pending';
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "sheet_cell_edits_idem_uidx" ON "sheet_cell_edits" ("idempotency_key");
 --> statement-breakpoint

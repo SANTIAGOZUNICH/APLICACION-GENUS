@@ -35,6 +35,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { reconcileMigrations } from "./lib/migration-reconcile.mjs";
 
 const url =
   process.env.DATABASE_URL_UNPOOLED?.trim() ||
@@ -205,6 +206,19 @@ try {
   const sql = neon(url);
   const db = drizzle(sql);
   await migrate(db, { migrationsFolder: folder });
+  // Garantiza que ninguna migración "reconcile-safe" quede salteada por el orden de
+  // merge (Drizzle compara solo `when` contra la última aplicada). Ver scripts/lib/migration-reconcile.mjs.
+  const reconciled = await reconcileMigrations({
+    folder,
+    query: async (text, params) => (await sql.query(text, params ?? [])),
+    transaction: async (stmts) => {
+      await sql.transaction(stmts.map((s) => sql.query(s.text, s.params ?? [])));
+    },
+    log: (m) => console.log(m),
+  });
+  if (reconciled.applied.length) {
+    console.log(`[db:migrate] reconciliadas: ${reconciled.applied.join(", ")}`);
+  }
   console.log(
     "[db:migrate] OK — migraciones aplicadas (0005–0018 condicionadas)."
   );

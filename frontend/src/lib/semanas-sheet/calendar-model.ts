@@ -32,8 +32,10 @@ export interface CalendarCell {
   covered: boolean;
   /** Cuántos días abarca la combinación (1 = normal, 5 = banda de toda la semana). */
   span: number;
-  /** Protegida por política (estructural, fórmula, día pasado, cubierta) → motivo. */
+  /** Protegida por política (estructural, fórmula, cubierta, cierre operativo) → motivo. */
   protection: string | null;
+  /** Fecha ISO del día de la columna (null si el encabezado no es interpretable). */
+  date: string | null;
 }
 
 export interface CalendarRow {
@@ -106,15 +108,12 @@ export interface ParseCalendarOptions {
   year: number;
   /** Celdas con fórmula (A1) — nunca editables. */
   formulaCells?: ReadonlySet<string>;
-  /** ISO de hoy: los días anteriores al lunes de la semana en curso quedan protegidos. */
-  today?: string;
-}
-
-function mondayOf(iso: string): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  const dow = (d.getUTCDay() + 6) % 7; // lunes = 0
-  d.setUTCDate(d.getUTCDate() - dow);
-  return d.toISOString().slice(0, 10);
+  /**
+   * Bloqueo por proceso operativo REAL (p. ej. producción ya cerrada en GENUS) para una
+   * celda de planificación. NO hay bloqueo por antigüedad: semanas anteriores se pueden
+   * corregir; la edición histórica exige motivo y queda auditada (ver semanas-sheet-service).
+   */
+  cellLock?: (info: { a1: string; value: string; date: string | null }) => string | null;
 }
 
 export function parseWeeklyCalendar(rows: string[][], merges: SheetMerge[], options: ParseCalendarOptions): CalendarWeek[] {
@@ -122,7 +121,6 @@ export function parseWeeklyCalendar(rows: string[][], merges: SheetMerge[], opti
   rows.forEach((row, i) => {
     if (isWeekHeader(row)) headers.push(i + 1);
   });
-  const currentMonday = options.today ? mondayOf(options.today) : null;
   const weeks: CalendarWeek[] = [];
 
   headers.forEach((headerRow, w) => {
@@ -153,8 +151,8 @@ export function parseWeeklyCalendar(rows: string[][], merges: SheetMerge[], opti
         if (role === "structural") protection = "Encabezado del calendario (día, fecha, mes): solo lectura.";
         else if (covered) protection = "Celda combinada: se edita en la celda ancla.";
         else if (options.formulaCells?.has(a1)) protection = "Celda con fórmula: no se sobrescribe.";
-        else if (currentMonday && dates[d] && dates[d]! < currentMonday) protection = "Semana pasada: solo lectura.";
-        return { a1, value, covered, span: spanDays, protection };
+        else if (value.trim()) protection = options.cellLock?.({ a1, value, date: dates[d] ?? null }) ?? null;
+        return { a1, value, covered, span: spanDays, protection, date: dates[d] ?? null };
       });
       outRows.push({ rowNumber: r, role, cells });
     }

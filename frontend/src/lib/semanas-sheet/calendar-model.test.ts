@@ -62,13 +62,17 @@ describe.skipIf(!existsSync(FIXTURE))("calendar-model sobre la copia local de SE
     expect(findCalendarCell([w!], "F2")!.cell.protection).toMatch(/Encabezado/);
   });
 
-  it("fórmulas y semanas pasadas quedan protegidas; la semana en curso y las futuras no", () => {
+  it("fórmulas y producciones cerradas quedan protegidas; las semanas pasadas NO se bloquean por antigüedad", () => {
     const { rows, merges } = load("ELABORACION");
-    const weeks = parseWeeklyCalendar(rows, merges, { year: 2026, formulaCells: new Set(["F6"]), today: "2026-02-24" });
+    const weeks = parseWeeklyCalendar(rows, merges, {
+      year: 2026,
+      formulaCells: new Set(["F6"]),
+      cellLock: ({ value, date }) => (value === "NIZA" && date === "2026-02-19" ? "Producción con cierre de envasado en GENUS: no se modifica." : null),
+    });
     expect(findCalendarCell(weeks, "F6")!.cell.protection).toMatch(/fórmula/);
-    expect(findCalendarCell(weeks, "H5")!.cell.protection).toMatch(/pasada/); // semana del 16/02 < lunes 23/02
-    const w2 = weeks[1]!;
-    expect(w2.rows.find((r) => r.role === "planning")!.cells.some((c) => c.protection === null)).toBe(true);
+    expect(findCalendarCell(weeks, "H5")!.cell.protection).toMatch(/cierre de envasado/); // H5 = NIZA (jueves 19/02)
+    expect(findCalendarCell(weeks, "J5")!.cell.protection).toBeNull(); // semana pasada, no cerrada → editable
+    expect(findCalendarCell(weeks, "J5")!.cell.date).toBe("2026-02-20");
   });
 
   it("cada celda editable referencia SU ancla exacta (no hay reconstrucción de calendario)", () => {
@@ -81,24 +85,26 @@ describe.skipIf(!existsSync(FIXTURE))("calendar-model sobre la copia local de SE
 import { parseFlatTable, findFlatCell } from "./flat-model";
 
 describe.skipIf(!existsSync(FIXTURE))("flat-model sobre la copia local", () => {
-  it("ENTREGAS: columnas FECHA/CLIENTE/PRODUCTO/CANTIDAD; entregas históricas protegidas, futuras editables", () => {
+  it("ENTREGAS: sin protección por fecha; solo se bloquean filas con entrega/remito real (rowLock)", () => {
     const { rows, merges } = load("ENTREGAS");
-    const t = parseFlatTable("ENTREGAS", rows, merges, { today: "2026-02-24" });
+    const t = parseFlatTable("ENTREGAS", rows, merges, {
+      rowLock: ({ date, values }) => (date === "2026-02-19" && values[1] === "TSU" ? "Entrega confirmada en GENUS (Entregados): no se modifica." : null),
+    });
     expect(t.columns.map((c) => c.title)).toEqual(["FECHA", "CLIENTE", "PRODUCTO", "CANTIDAD"]);
-    const hist = t.rows.find((r) => r.date === "2026-02-19")!;
-    expect(hist.cells.every((c) => c.protection)).toBe(true);
-    const future = t.rows.find((r) => r.date && r.date >= "2026-02-24")!;
-    expect(future.cells.every((c) => c.protection === null || /fórmula/.test(c.protection))).toBe(true);
+    const locked = t.rows.find((r) => r.date === "2026-02-19" && r.cells[1]!.value === "TSU")!;
+    expect(locked.cells.every((c) => c.protection)).toBe(true);
+    const oldButOpen = t.rows.find((r) => r.date === "2026-02-20")!;
+    expect(oldButOpen.cells.every((c) => c.protection === null || /fórmula/.test(c.protection))).toBe(true);
   });
 
-  it("C/DIA: títulos de mes estructurales, fecha heredada por día, días cerrados protegidos", () => {
+  it("C/DIA: títulos de mes estructurales, fecha heredada por día, sin ventana de 14 días", () => {
     const { rows, merges } = load("QACONDDIA");
-    const t = parseFlatTable("CDIA", rows, merges, { today: "2026-04-01" });
+    const t = parseFlatTable("CDIA", rows, merges, {});
     expect(t.rows.some((r) => r.role === "structural")).toBe(true);
     const sub = t.rows.find((r) => r.role === "data" && r.cells[0]!.value === "" && r.date === "2026-02-18");
     expect(sub).toBeTruthy(); // fila sin fecha propia hereda la del día
-    expect(findFlatCell(t, sub!.cells[1]!.a1)!.protection).toMatch(/cerrado/);
-    const recent = parseFlatTable("CDIA", rows, merges, { today: "2026-02-19" });
-    expect(recent.rows.find((r) => r.date === "2026-02-19")!.cells[1]!.protection).toBeNull();
+    expect(findFlatCell(t, sub!.cells[1]!.a1)!.protection).toBeNull(); // histórica y editable
+    const locked = parseFlatTable("CDIA", rows, merges, { rowLock: ({ date }) => (date === "2026-02-18" ? "Producción con cierre de envasado en GENUS: no se modifica." : null) });
+    expect(findFlatCell(locked, sub!.cells[1]!.a1)!.protection).toMatch(/cierre/);
   });
 });
