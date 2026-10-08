@@ -194,6 +194,11 @@ export interface WorkItem {
   reworkRequestedBy?: string | null;
   reworkRequestedBySector?: string | null;
   reworkReason?: string | null;
+  /**
+   * Prioridad operativa asignada por Producción en Semanas (URGENTE/IMPORTANTE/NORMAL) — compartida, solo lectura.
+   * Ausente = NORMAL (o no se pudo identificar la tarea de forma inequívoca). No confundir con `priority` (legado).
+   */
+  genusPriority?: { priority: "URGENTE" | "IMPORTANTE" | "NORMAL"; updatedByName: string; updatedAt: string; version: number };
 }
 
 export interface WorkItemsResponse {

@@ -1038,6 +1038,11 @@ export const semanasTaskPriorities = pgTable(
     taskKey: text("task_key").notNull(),
     posKey: text("pos_key").notNull().default(""),
     taskDate: text("task_date"),
+    /** 0042 — datos de enlace con las tareas de cada sector (fecha fin inclusive, cliente/productos/sección normalizados). */
+    taskDateTo: text("task_date_to"),
+    clientNorm: text("client_norm"),
+    productsNorm: jsonb("products_norm").$type<string[]>(),
+    sectionNorm: text("section_norm"),
     summary: text("summary").notNull().default(""),
     priority: text("priority").notNull().default("NORMAL"),
     version: integer("version").notNull().default(1),

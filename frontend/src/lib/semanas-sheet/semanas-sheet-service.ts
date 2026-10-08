@@ -26,7 +26,7 @@ import type { SectorId } from "@/types/operational/sector";
 import { dayWidths, findCalendarCell, parseA1, parseWeeklyCalendar, type CalendarWeek, type SheetFormats } from "./calendar-model";
 import { loadOperationalLocks, norm, UNVERIFIABLE, type OperationalLocks } from "./operational-locks";
 import { isPriority } from "./priorities";
-import { loadPriorities, reconcilePriorities, setTaskPriority, type PrioritiesPayload } from "./semanas-priorities-service";
+import { loadPriorities, reconcilePriorities, setTaskPriority, taskKeysByCell, type PrioritiesPayload } from "./semanas-priorities-service";
 import { PREVIEW_SPREADSHEET_ID, getPreviewGateway, isPreviewSourceAllowed } from "./preview-source";
 import { findFlatCell, parseFlatTable, type FlatTable } from "./flat-model";
 
@@ -396,15 +396,44 @@ export async function updateTaskPriority(
   return setTaskPriority(actor, { spreadsheetId: view.spreadsheetId, tab: view.tab, taskKey: input.taskKey, priority: input.priority, expectedVersion: input.expectedVersion }, view.weeks ?? []);
 }
 
-/** Tras editar celdas: re-asocia prioridades de tareas cuyo texto se corrigió (mejor esfuerzo). */
-export async function reconcileSemanasPriorities(tabKeys: string[]): Promise<void> {
-  for (const key of new Set(tabKeys)) {
-    if (!isSemanasTabKey(key) || SEMANAS_TABS[key].kind !== "CALENDAR") continue;
+/** Antes de editar: clave de la tarea que contiene cada celda (para poder re-asociar su prioridad si se corrige el texto). */
+export async function captureEditedTaskKeys(edits: Array<{ tabKey: string; a1: string }>): Promise<Array<{ tabKey: SemanasTabKey; a1: string; oldKey: string }>> {
+  const out: Array<{ tabKey: SemanasTabKey; a1: string; oldKey: string }> = [];
+  const byTab = new Map<SemanasTabKey, string[]>();
+  for (const e of edits) {
+    if (!isSemanasTabKey(e.tabKey) || SEMANAS_TABS[e.tabKey].kind !== "CALENDAR") continue;
+    byTab.set(e.tabKey, [...(byTab.get(e.tabKey) ?? []), String(e.a1).toUpperCase()]);
+  }
+  for (const [tabKey, a1s] of byTab) {
     try {
-      const view = await loadSemanasView(key);
-      await reconcilePriorities(view.spreadsheetId, view.tab, view.weeks ?? []);
+      const view = await loadSemanasView(tabKey);
+      const keys = taskKeysByCell(view.weeks ?? [], view.tab, a1s);
+      for (const [a1, oldKey] of Object.entries(keys)) out.push({ tabKey, a1, oldKey });
+    } catch {
+      /* sin lectura previa no se puede re-asociar: la edición sigue */
+    }
+  }
+  return out;
+}
+
+/** Tras editar celdas: re-asocia (de forma explícita) las prioridades de las tareas cuyo texto se corrigió. Mejor esfuerzo. */
+export async function reconcileSemanasPriorities(
+  captured: Array<{ tabKey: SemanasTabKey; a1: string; oldKey: string }>,
+  actor: { email: string; sector: SectorId; displayName: string }
+): Promise<void> {
+  const tabs = new Set(captured.map((c) => c.tabKey));
+  for (const tabKey of tabs) {
+    try {
+      const view = await loadSemanasView(tabKey);
+      const edited = Object.fromEntries(captured.filter((c) => c.tabKey === tabKey).map((c) => [c.a1, c.oldKey]));
+      await reconcilePriorities(view.spreadsheetId, view.tab, view.weeks ?? [], edited, actor);
     } catch {
       /* no bloquea la edición */
     }
   }
+}
+
+/** Spreadsheet activo (copia de Preview, Google o fixture) — para enlazar prioridades con las tareas de cada sector. */
+export async function getActiveSemanasSpreadsheetId(): Promise<string> {
+  return spreadsheetId();
 }

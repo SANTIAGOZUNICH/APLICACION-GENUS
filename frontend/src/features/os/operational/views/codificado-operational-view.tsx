@@ -1,6 +1,7 @@
 "use client";
 
 import { ExcelOrList, excelCol } from "../components/operational-ui";
+import { WorkItemPriorityBadge, workItemPriorityText } from "../components/work-item-priority-badge";
 import { useCallback, useMemo, useState } from "react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { TwinShell } from "@/features/os/shell/twin-shell";
@@ -416,6 +417,7 @@ export function CodificadoOperationalView() {
           rows={list}
           rowKey={(i) => i.id}
           columns={[
+            excelCol("prioridad", "Prioridad", (i: (typeof list)[number]) => workItemPriorityText(i), { render: (i: (typeof list)[number]) => <WorkItemPriorityBadge item={i} /> }),
             excelCol("producto", "Producto", (i: (typeof list)[number]) => displayField(i.product)),
             excelCol("cliente", "Cliente", (i: (typeof list)[number]) => displayField(i.client)),
             excelCol("cantidad", "Cant.", (i: (typeof list)[number]) => String(progressMap[i.id]?.packagingTotalUnits ?? i.packagingTotalUnits ?? (Number.parseFloat(getFinishedQty(i.id) || i.quantity || "") || "—"))),
@@ -438,6 +440,7 @@ export function CodificadoOperationalView() {
           <table className="os-table w-full max-w-full table-fixed text-sm">
             <thead>
               <tr className="text-left text-xs uppercase text-[var(--os-text-muted)]">
+                <th className="w-[14%] py-2" data-testid="th-prioridad">Prioridad</th>
                 <th className="w-[22%] py-2">Producto</th>
                 <th className="hidden w-[18%] py-2 md:table-cell">Cliente</th>
                 <th className="w-[12%] py-2">Cant.</th>
@@ -455,6 +458,9 @@ export function CodificadoOperationalView() {
                   (Number.parseFloat(getFinishedQty(item.id) || item.quantity || "") || "—");
                 return (
                   <tr key={item.id} className="border-t border-[var(--os-border)]">
+                    <td className="py-2 pr-2" data-testid="td-prioridad">
+                      <WorkItemPriorityBadge item={item} />
+                    </td>
                     <td className="py-2 pr-2">
                       <span className="line-clamp-2 font-medium">{displayField(item.product)}</span>
                       <span className="mt-0.5 block text-xs text-[var(--os-text-muted)] md:hidden">

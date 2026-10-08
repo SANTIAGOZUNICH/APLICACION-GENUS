@@ -80,32 +80,56 @@ describe("prioridades de Semanas (persistencia en memoria = misma lógica que la
     expect(p[urgentKey]!.relinked).toBeUndefined();
   });
 
-  it("corregir el texto de una tarea conserva su prioridad (relink por posición) y reconcile re-asocia la clave", async () => {
+  it("corregir el texto DESDE GENUS conserva la prioridad: se re-asocia de forma explícita (no por posición)", async () => {
     const w = weekOf(SPEC);
     await set(w, 0, "URGENTE");
+    const oldKey = tasksOf(w)[0]!.key;
     const edited = weekOf([{ ...SPEC[0]!, days: [["THELMA Y LOUISE", "ALC EN GEL 300KG", "", ...SPEC[0]!.days[0]!.slice(3)], SPEC[0]!.days[1]!, [], [], []] }, SPEC[1]!]);
     const t0 = tasksOf(edited)[0]!;
-    const shown = (await loadPriorities(SID, TAB, [edited])).byTask[t0.key];
-    expect(shown).toMatchObject({ priority: "URGENTE", relinked: true });
-    expect(await reconcilePriorities(SID, TAB, [edited])).toBe(1);
-    const after = (await loadPriorities(SID, TAB, [edited])).byTask[t0.key];
-    expect(after!.priority).toBe("URGENTE");
-    expect(after!.relinked).toBeUndefined();
-    // y se puede seguir cambiando con la versión que ve el cliente
-    expect((await set(edited, 0, "NORMAL", after!.version)).priority).toBe("NORMAL");
+    expect(t0.key).not.toBe(oldKey);
+    // sin re-asociación explícita NO se hereda por posición
+    expect((await loadPriorities(SID, TAB, [edited])).byTask[t0.key]).toBeUndefined();
+    expect(await reconcilePriorities(SID, TAB, [edited], { B5: oldKey })).toBe(1);
+    expect((await loadPriorities(SID, TAB, [edited])).byTask[t0.key]).toMatchObject({ priority: "URGENTE" });
+    expect(getSemanasPriorityEventsMemory().some((e) => /Re-asociada/.test(e.summary))).toBe(true);
+    const v = (await loadPriorities(SID, TAB, [edited])).byTask[t0.key]!.version;
+    expect((await set(edited, 0, "NORMAL", v)).priority).toBe("NORMAL");
   });
 
-  it("una fila huérfana nunca se asigna a dos tareas ni a una tarea que ya tiene la suya", () => {
-    const tasks = [{ key: "a", posKey: "p0" }, { key: "b", posKey: "p1" }];
-    const rows = [
-      { taskKey: "a", posKey: "p0", priority: "URGENTE" as const, version: 1, updatedBy: "u", updatedByName: "U", updatedAt: "t" },
-      { taskKey: "viejo", posKey: "p1", priority: "IMPORTANTE" as const, version: 1, updatedBy: "u", updatedByName: "U", updatedAt: "t" },
-      { taskKey: "viejo2", posKey: "p0", priority: "NORMAL" as const, version: 1, updatedBy: "u", updatedByName: "U", updatedAt: "t" },
-    ];
-    const m = matchPriorities(tasks, rows);
-    expect(m.a!.priority).toBe("URGENTE");
-    expect(m.a!.relinked).toBeUndefined();
-    expect(m.b).toMatchObject({ priority: "IMPORTANTE", relinked: true });
+  it("si una tarea se ELIMINA o se REEMPLAZA por otra distinta, su prioridad NO pasa a la nueva", async () => {
+    const w = weekOf(SPEC);
+    await set(w, 0, "URGENTE");
+    const replaced = weekOf([{ ...SPEC[0]!, days: [["OTRO CLIENTE", "PRODUCTO DISTINTO 10KG", "", ...SPEC[0]!.days[0]!.slice(3)], SPEC[0]!.days[1]!, [], [], []] }, SPEC[1]!]);
+    expect(Object.keys((await loadPriorities(SID, TAB, [replaced])).byTask)).toHaveLength(0);
+    expect(await reconcilePriorities(SID, TAB, [replaced], {})).toBe(0);
+    const deleted = weekOf([{ ...SPEC[0]!, days: [[], SPEC[0]!.days[1]!, [], [], []] }, SPEC[1]!]);
+    expect((await loadPriorities(SID, TAB, [deleted])).byTask).toEqual({});
+  });
+
+  it("si la tarea cambia de DÍA y puede identificarse sin ambigüedad, la prioridad la acompaña", async () => {
+    const w = weekOf(SPEC);
+    await set(w, 2, "IMPORTANTE"); // TYL del martes
+    const moved = weekOf([{ ...SPEC[0]!, days: [SPEC[0]!.days[0]!, [], ["TYL", "CREMA 95kg", "ENTREGA 7/5"], [], []] }, SPEC[1]!]); // ahora miércoles
+    const t = tasksOf(moved).find((x) => x.lines.some((l) => l.value === "TYL"))!;
+    expect(t.d).toBe(2);
+    expect((await loadPriorities(SID, TAB, [moved])).byTask[t.key]).toMatchObject({ priority: "IMPORTANTE", relinked: true });
+    expect(await reconcilePriorities(SID, TAB, [moved])).toBe(1);
+    expect((await loadPriorities(SID, TAB, [moved])).byTask[t.key]!.relinked).toBeUndefined();
+  });
+
+  it("si hay DOS tareas idénticas el mismo día no se adivina cuál se movió", async () => {
+    const dup = [{ title: "X", days: [["TYL", "SANITIZANTE", "5000x40ml", "", "TYL", "SANITIZANTE", "5000x40ml"], [], [], [], []] }];
+    await set(weekOf(dup), 0, "URGENTE");
+    const movedBoth = weekOf([{ title: "X", days: [[], ["TYL", "SANITIZANTE", "5000x40ml", "", "TYL", "SANITIZANTE", "5000x40ml"], [], [], []] }]);
+    expect((await loadPriorities(SID, TAB, [movedBoth])).byTask).toEqual({});
+  });
+
+  it("matchPriorities: una fila huérfana nunca pisa a una tarea que ya tiene la suya", () => {
+    const tasks = [{ key: "E|2026-05-04|a|1", posKey: "p0" }, { key: "E|2026-05-05|b|1", posKey: "p1" }];
+    const row = (taskKey: string, priority: "URGENTE" | "IMPORTANTE") => ({ taskKey, posKey: "", priority, version: 1, updatedBy: "u", updatedByName: "U", updatedAt: "t" });
+    const m = matchPriorities(tasks, [row("E|2026-05-04|a|1", "URGENTE"), row("E|2026-05-01|b|1", "IMPORTANTE")]);
+    expect(m["E|2026-05-04|a|1"]!.priority).toBe("URGENTE");
+    expect(m["E|2026-05-05|b|1"]).toMatchObject({ priority: "IMPORTANTE", relinked: true });
   });
 
   it("la prioridad es independiente del spreadsheet (copia de Preview ≠ original) y de la pestaña", async () => {

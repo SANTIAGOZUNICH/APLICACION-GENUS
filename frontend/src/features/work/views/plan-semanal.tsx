@@ -16,16 +16,28 @@ import {
 import { filterWorkItemsForDate } from "@/features/work/lib/work-items-day-view";
 import { formatWorkItemPresentation } from "@/features/work/lib/work-items-day-view";
 import { WorkItemEditDeleteActions } from "@/features/os/operational/components/work-item-edit-delete-actions";
+import { WorkItemPriorityBadge, workItemPriorityText } from "@/features/os/operational/components/work-item-priority-badge";
+import { WorkItemsTvMode } from "@/features/os/operational/components/work-items-tv-mode";
 import { ActionButton, ExcelOrList, excelCol } from "@/features/os/operational/components/operational-ui";
 import { useWorkItemCellEditing } from "@/features/os/operational/hooks/use-work-item-cells";
 import { formatDateDisplay } from "@/features/os/operational/lib/delivery-date";
 import type { WorkItem } from "@/types/operational/work-item";
+
+const SECTOR_TV_LABEL: Record<string, string> = {
+  ELABORACION: "Elaboración",
+  ENVASADO_MASIVO: "Envasado Masivo",
+  ENVASADO_PREMIUM: "Envasado Premium",
+  CODIFICADO: "Codificado / Loteado",
+  DEPOSITO: "Depósito",
+  PRODUCCION: "Producción",
+};
 
 /** Plan semanal L–V con WorkItems reales del sector activo. */
 export function WireframePlanSemanal() {
   const { applyEffectiveStatus, openWorkItem } = usePreviewContext();
   const { sectorId, email } = usePreviewSession();
   const { data, loading, refresh } = useSectorWorkItems(sectorId);
+  const [tvOpen, setTvOpen] = useState(false);
   const [today] = useState(() => startOfDay(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
 
@@ -62,6 +74,7 @@ export function WireframePlanSemanal() {
   const cells = useWorkItemCellEditing(selectedItems, refresh);
   const detailColumns = useMemo(
     () => [
+      excelCol<WorkItem>("prioridad", "Prioridad", (i) => workItemPriorityText(i), { render: (i) => <WorkItemPriorityBadge item={i} /> }),
       excelCol<WorkItem>("linea", "Línea", (i) => i.line ?? i.sector),
       excelCol<WorkItem>("plannedDate", "Fecha", (i) => (i.plannedDate ? formatDateDisplay(i.plannedDate) : i.dayLabel ?? ""), { edit: cells.edit("plannedDate") }),
       excelCol<WorkItem>("deliveryDate", "Entrega", (i) => (i.deliveryDate ? formatDateDisplay(i.deliveryDate) : ""), { edit: cells.edit("deliveryDate") }),
@@ -111,7 +124,28 @@ export function WireframePlanSemanal() {
         >
           Mañana →
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            setTvOpen(true);
+            void document.documentElement.requestFullscreen?.().catch(() => undefined);
+          }}
+          className="ml-auto rounded-[var(--os-radius-sm)] border border-[var(--os-border)] px-3 py-1.5 text-sm hover:border-[var(--os-teal)]"
+          data-testid="plan-tv-open"
+        >
+          📺 Modo TV
+        </button>
       </div>
+      {tvOpen && (
+        <WorkItemsTvMode
+          sector={sectorId}
+          sectorLabel={SECTOR_TV_LABEL[sectorId] ?? "Mi sector"}
+          onExit={() => {
+            setTvOpen(false);
+            if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
+          }}
+        />
+      )}
 
       {loading && <div className="os-skeleton h-96 rounded-[var(--os-radius)]" />}
 
@@ -194,7 +228,10 @@ export function WireframePlanSemanal() {
                       <p className="text-xs font-bold uppercase text-[var(--os-teal)]">
                         {item.line ?? item.sector}
                       </p>
-                      <p className="mt-2 font-semibold">{item.client}</p>
+                      <div className="mt-2 flex items-start justify-between gap-2">
+                        <p className="font-semibold">{item.client}</p>
+                        <WorkItemPriorityBadge item={item} />
+                      </div>
                       <p className="text-sm text-[var(--os-text-muted)]">{item.product}</p>
                       <p className="mt-2 text-lg font-light">{formatWorkItemPresentation(item)}</p>
                     </button>

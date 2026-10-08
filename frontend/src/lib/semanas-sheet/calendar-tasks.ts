@@ -40,6 +40,8 @@ export interface CalendarTask {
   d: number;
   /** Fecha ISO del día de inicio (null si el encabezado no es interpretable). */
   date: string | null;
+  /** Fecha ISO del último día que cubre (= `date` salvo tareas combinadas de varios días). */
+  dateTo: string | null;
   sectionIndex: number;
   /** Días que abarca la combinación (1 = normal). */
   span: number;
@@ -70,7 +72,7 @@ export interface WeekModel {
   sections: CalendarSection[];
 }
 
-const fold = (v: string) => v.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+export const fold = (v: string) => v.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
 
 const QTY_RE = /^[\d.,\s]+(kg|kgs|lt|lts|l|ml|g|gr|un|u|unid\w*)?(\s*(total|x\s*\S*|×\s*\S*|c\/u))?$|^\d[\d.,]*\s*[x×]\s*\S+/i;
 const NOTE_RE = /^entrega\b/i;
@@ -149,6 +151,7 @@ export function buildWeekModel(week: CalendarWeek, tab: string): WeekModel {
           weekId: week.id,
           d,
           date,
+          dateTo: week.dates[Math.min(4, d + span - 1)] ?? date,
           sectionIndex,
           span,
           lines,
@@ -231,4 +234,43 @@ export function moveVisible(week: CalendarWeek, from: Pos, key: "ArrowUp" | "Arr
     return col.reduce((best, p) => (Math.abs(p.ri - from.ri) < Math.abs(best.ri - from.ri) ? p : best));
   }
   return from;
+}
+
+// ---------- enlace con las tareas operativas de cada sector ----------
+
+const QTY_TAIL_RE = /\s*\(?\d[\d.,]*\s*(kg|kgs|lt|lts|l|ml|g|gr|un|u|unid\w*)?\)?\s*$/i;
+
+/** Texto de producto comparable entre la Sheet y una tarea operativa: sin tildes/mayúsculas/puntuación ni cantidad al final. */
+export function normalizeProductForMatch(value: string): string {
+  const folded = fold(value).replace(/[^a-z0-9+ ]+/g, " ").replace(/\s+/g, " ").trim();
+  return folded.replace(QTY_TAIL_RE, "").trim() || folded;
+}
+
+export function productsMatch(a: string, b: string): boolean {
+  const x = normalizeProductForMatch(a);
+  const y = normalizeProductForMatch(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 6 && long.includes(short);
+}
+
+export interface TaskLinkFields {
+  taskDate: string | null;
+  taskDateTo: string | null;
+  clientNorm: string;
+  productsNorm: string[];
+  sectionNorm: string;
+}
+
+/** Datos con los que otro sector reconoce la MISMA tarea (fecha, cliente, productos, sección). */
+export function taskLinkFields(task: CalendarTask, sectionTitle: string | null): TaskLinkFields {
+  const client = task.lines.find((l) => l.role === "client");
+  return {
+    taskDate: task.date,
+    taskDateTo: task.dateTo,
+    clientNorm: client ? fold(client.value) : "",
+    productsNorm: task.lines.filter((l) => l.role === "product").map((l) => normalizeProductForMatch(l.value)).filter(Boolean),
+    sectionNorm: sectionTitle ? fold(sectionTitle) : "",
+  };
 }

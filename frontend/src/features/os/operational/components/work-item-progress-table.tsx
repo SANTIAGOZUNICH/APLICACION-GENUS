@@ -9,6 +9,7 @@ import {
 } from "../lib/operational-progress";
 import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { ActionButton, ExcelOrList, excelCol, StatusChip } from "./operational-ui";
+import { WorkItemPriorityBadge, workItemPriorityText } from "./work-item-priority-badge";
 import { useWorkItemCellEditing } from "../hooks/use-work-item-cells";
 import { formatDateDisplay } from "../lib/delivery-date";
 import { DeliveryDateBadge } from "./delivery-date-badge";
@@ -80,6 +81,7 @@ function WorkItemProgressTableInner({
 
   // Planilla tipo Excel (seleccionar/copiar rangos); la lista clásica queda como «Ver como lista».
   const excelColumns = [
+    excelCol<WorkItem>("prioridad", "Prioridad", (i) => workItemPriorityText(i), { render: (i) => <WorkItemPriorityBadge item={i} /> }),
     ...(variant === "envasado" ? [excelCol<WorkItem>("linea", "Línea", (i) => displayField(i.line))] : []),
     excelCol<WorkItem>("plannedDate", "Fecha", (i) => (i.plannedDate ? formatDateDisplay(i.plannedDate) : displayField(i.dayLabel)), { edit: cells.edit("plannedDate") }),
     excelCol<WorkItem>("deliveryDate", "Fecha de entrega", (i) => (i.deliveryDate ? formatDateDisplay(i.deliveryDate) : ""), { edit: cells.edit("deliveryDate") }),
@@ -129,6 +131,7 @@ function WorkItemProgressTableInner({
       <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,13px)]">
         <thead>
           <tr className="border-b border-[var(--os-border)] bg-[var(--os-bg)]">
+            <th className={thClass} data-testid="th-prioridad">Prioridad</th>
             {variant === "envasado" && (
               <th className={`${thClass} hidden md:table-cell`}>Línea</th>
             )}
@@ -185,6 +188,9 @@ function WorkItemProgressTableInner({
                     : "hover:bg-[var(--os-bg)]/60"
                 }`}
               >
+                <td className={tdClass} data-testid="td-prioridad">
+                  <WorkItemPriorityBadge item={item} />
+                </td>
                 {variant === "envasado" && (
                   <td className={`${tdClass} hidden font-medium md:table-cell`}>
                     <span className="os-break">{displayField(item.line)}</span>

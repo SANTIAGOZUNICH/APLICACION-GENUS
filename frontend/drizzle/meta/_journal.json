@@ -281,6 +281,13 @@
       "when": 1791200000000,
       "tag": "0041_semanas_task_priorities",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1791300000000,
+      "tag": "0042_semanas_task_priorities_link",
+      "breakpoints": true
     }
   ]
 }

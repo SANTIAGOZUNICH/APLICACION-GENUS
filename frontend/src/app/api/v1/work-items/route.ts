@@ -15,6 +15,7 @@ import {
   projectQualityItems,
 } from "@/lib/planning/native-projector";
 import { getPlanningSource } from "@/lib/planning/planning-source";
+import { attachGenusPriorities } from "@/lib/semanas-sheet/work-item-priorities";
 import { CURRENT_SECTOR_OPTIONS, type CurrentSectorId } from "@/types/operational/sector";
 import type { SectorId } from "@/types/operational/sector";
 
@@ -99,6 +100,8 @@ async function listNativeWorkItems(
     else if (weekStart) workItems = filterWorkItemsByWeekStart(workItems, weekStart);
     qualityItems = [];
   }
+  // Prioridades compartidas con Producción → Semanas (solo lectura; nunca rompe la lista).
+  workItems = await attachGenusPriorities(workItems);
 
   const emptyMessage = date
     ? "Hoy no hay trabajos publicados."
@@ -195,7 +198,7 @@ export async function GET(request: Request) {
     });
     const syncStatus = workItemsService.getSyncStatus();
     return NextResponse.json(
-      { ...response, planningSource: "sheets" },
+      { ...response, workItems: await attachGenusPriorities(response.workItems), planningSource: "sheets" },
       {
         headers: {
           "X-Live-Sync-Revision": String(syncStatus.revision),
