@@ -93,3 +93,24 @@ export async function mutateInventory<T>(body: {
   }
   return { data: json.data as T, persistence: true };
 }
+
+export interface InventoryCellApiResult {
+  ok: boolean;
+  results: Array<{ ok: boolean; message?: string; code?: string }>;
+  error?: string;
+}
+
+/** PATCH parcial por celda (Inventario ME / Stock MP). No lanza por rechazos de negocio: devuelve cada resultado. */
+export async function patchInventoryCells(
+  resource: "me_inventario" | "mp_stock",
+  changes: import("@/lib/inventory/cell-edit").InventoryCellChange[]
+): Promise<InventoryCellApiResult> {
+  const res = await fetch("/api/v1/inventory/cells", {
+    method: "PATCH",
+    headers: actorHeaders(),
+    body: JSON.stringify({ resource, changes }),
+  });
+  const json = (await res.json().catch(() => ({}))) as Partial<InventoryCellApiResult>;
+  if (!json.results) return { ok: false, results: [], error: json.error ?? `Error ${res.status} al guardar.` };
+  return { ok: Boolean(json.ok), results: json.results, error: json.error };
+}

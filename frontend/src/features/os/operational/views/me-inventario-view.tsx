@@ -26,10 +26,14 @@ import {
   type MeInventarioViewRow,
 } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
+import { useInventoryCellEditing } from "@/features/os/operational/hooks/use-inventory-cells";
 import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import { applySort, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
+
+// Solo estas columnas se editan por celda. CÓDIGO (clave) y CANTIDAD TOTAL (se deriva de ingresos − salidas) NO.
+const ME_CELL_FIELDS: Record<string, string> = { CLIENTE: "cliente", INSUMO: "descripcion", UBICACIÓN: "ubicacion" };
 
 export const ME_INVENTARIO_SORT_OPTIONS: SortOption<MeInventarioViewRow>[] = [
   { key: "codigo_asc", label: "Código A-Z", compare: (a, b) => compareStrings(a.codigo, b.codigo, "asc") },
@@ -103,6 +107,8 @@ export function MeInventarioView() {
     },
     [reload]
   );
+
+  const cells = useInventoryCellEditing<MeInventarioViewRow>("me_inventario", canWrite, ME_CELL_FIELDS, (r) => r.materialId, reload);
 
   const columns: OperationalTableColumn<MeInventarioViewRow>[] = ME_INVENTARIO_COLUMNS.map(
     (label) => {
@@ -211,8 +217,12 @@ export function MeInventarioView() {
           ))}
       </div>
       <OperationalTable
+        tableId="me-inventario"
+        canEditCells={cells.canEditCells}
+        onCellsCommit={cells.onCellsCommit}
+        rowVersion={cells.rowVersion}
         columns={[
-          ...columns,
+          ...columns.map((col) => ({ ...col, edit: cells.edit(String(col.key)) })),
           ...(canWrite
             ? [
                 {
