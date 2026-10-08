@@ -316,6 +316,34 @@ function currentCellValue(record: AsignacionLote, field: AsignacionCellField): s
   return record[field] ?? null;
 }
 
+
+function assertUpsertRespectsCellPolicy(
+  actor: AsignacionLotesActor,
+  previous: AsignacionLote,
+  input: AsignacionLoteUpsertInput
+): void {
+  const next: Record<AsignacionCellField, string | number | null> = {
+    lote: input.lote.trim(),
+    fecha: input.fecha?.trim() ? (parseFlexibleDate(input.fecha) ?? input.fecha.trim()) : null,
+    producto: input.producto.trim(),
+    codigo: input.codigo.trim(),
+    marca: input.marca?.trim() ?? previous.marca,
+    cantidades: input.cantidades,
+    vto: input.vto ?? null,
+    muestras: input.muestras?.trim() ?? previous.muestras,
+    cjMuestra: input.cjMuestra?.trim() ?? previous.cjMuestra,
+    fechaAnalisis: input.fechaAnalisis ?? null,
+    observaciones: input.observaciones?.trim() ?? previous.observaciones,
+  };
+  for (const field of Object.keys(next) as AsignacionCellField[]) {
+    const before = auditText(currentCellValue(previous, field)) ?? "";
+    const after = auditText(next[field]) ?? "";
+    if (before === after) continue;
+    const reason = cellProtectionReason(previous, field, actor.sector);
+    if (reason) throw new OrdersForbiddenError(`${field}: ${reason}`);
+  }
+}
+
 export class AsignacionLotesService {
   async list(
     actor: AsignacionLotesActor,
@@ -370,6 +398,11 @@ export class AsignacionLotesService {
     if (!Number.isFinite(input.cantidades) || input.cantidades < 0) {
       throw new OrdersValidationError("Cantidades debe ser un número mayor o igual a 0.");
     }
+
+    // Misma política que la grilla: el modal clásico no puede saltear la matriz
+    // de sectores ni editar registros sincronizados desde Google (solo los
+    // campos que REALMENTE cambian se validan contra la política).
+    if (previous) assertUpsertRespectsCellPolicy(actor, previous, input);
 
     const duplicate = useNeon()
       ? await findDuplicateNeon(input.lote, input.codigo, input.producto, { excludeId: input.id })

@@ -270,3 +270,28 @@ describe("AsignacionLotesService.patchCells", () => {
     expect(getAsignacionCellAuditMemory()).toHaveLength(1100);
   });
 });
+
+describe("modal clásico (upsert) respeta la misma política que la grilla", () => {
+  beforeEach(() => resetAsignacionLotesMemoryForTests());
+
+  it("Codificado no puede cambiar cantidades por el modal; sí observaciones", async () => {
+    const svc = getAsignacionLotesService();
+    const row = await seed();
+    const base = { id: row.id, lote: row.lote, fecha: row.fecha, producto: row.producto, codigo: row.codigo, marca: row.marca, cantidades: row.cantidades, vto: row.vto, updatedBy: "Cod" };
+    await expect(svc.upsert(codificado, { ...base, cantidades: 1 })).rejects.toThrow(OrdersForbiddenError);
+    await expect(svc.upsert(codificado, { ...base, observaciones: "ok" })).resolves.toBeTruthy();
+  });
+
+  it("registro sincronizado desde Google no se edita por el modal", async () => {
+    const svc = getAsignacionLotesService();
+    const { record } = await svc.upsertFromSource(
+      "src-9",
+      { email: "s", displayName: "S" },
+      { lote: "G9", fecha: "2026-08-01", producto: "X", codigo: "", cantidades: 5, updatedBy: "S" },
+      "AGO"
+    );
+    await expect(
+      svc.upsert(produccion, { id: record.id, lote: "G9", fecha: "2026-08-01", producto: "X", codigo: "", cantidades: 6, updatedBy: "P" })
+    ).rejects.toThrow(OrdersForbiddenError);
+  });
+});
