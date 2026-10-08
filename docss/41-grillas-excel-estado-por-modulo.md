@@ -9,16 +9,17 @@ Motor único: `GenusGrid` (react-datasheet-grid). Estándar: selección de celda
 | Asignación de Lotes | ✅ | ✅ (manual + Google opción C, con permisos por sector) | probado E2E local + simulado Google |
 | Producción → Semanas (ELABORACION, ACONDICIONAMIENTO, C/DIA, ENTREGAS) | ✅ | ✅ (Sheet = fuente de verdad, write-back a copia de prueba) | probado E2E sobre copia local del libro |
 | Pedidos (Producción) | ✅ | ✅ op, fecha, OC, cliente, producto, S, Q, ML (KG derivado y ESTADO protegidos; ENTREGADO cerrado) | probado E2E local, PATCH parcial + conflicto |
-| Elaboración / Envasado Masivo / Envasado Premium / Pendientes (`WorkItemProgressTable`) | ✅ | ❌ solo lectura (el avance se registra por el drawer: estados/aprobaciones) | código listo, sin datos demo para E2E |
+| Elaboración / Envasado Masivo / Envasado Premium / Pendientes (`WorkItemProgressTable`) | ✅ | ✅ planificación (fecha, entrega, cliente, producto, cantidad, unidad, observación, lote/VTO con motivo) vía `PATCH /api/v1/work-items/cells`; avance/estado siguen por el drawer | unitarias de política + servicio |
 | Codificado | ✅ | ❌ | idem |
 | Calidad (pendientes / aprobados / rechazados) | ✅ | ❌ (decisiones = aprobaciones) | verificado en navegador |
-| Depósito Graneles | ✅ | ❌ (pendiente: campos autorizados) | código listo |
-| Material de Empaque: ingresos / salidas / inventario / avisos | ✅ (OperationalTable) | ❌ (ledger de stock inmutable) | código listo |
-| Materias Primas: stock / hub / ledger / compras | ✅ | ❌ (ledger inmutable) | código listo |
+| Producción operativo / Panel de Producción | ✅ | ✅ mismos campos de trabajo (solo sector Producción, trabajos nativos no cerrados) | unitarias |
+| Plan semanal (detalle del día) | ✅ | ✅ mismos campos de trabajo; calendario L–V sin cambios | unitaria de vista |
+| Depósito Graneles | ✅ | ✅ `PATCH /api/v1/deposito-graneles/cells` (kg con motivo y delta auditado; registros de Envasado/anulados/archivados protegidos) | unitarias de servicio |
+| Material de Empaque: ingresos / salidas / inventario / avisos | ✅ (OperationalTable) | ✅ inventario: campos maestros (`PATCH /api/v1/inventory/cells`); stock derivado y ledgers inmutables | unitarias |
+| Materias Primas: stock / hub / ledger / compras | ✅ | ✅ stock: kg por `adjustMpStock` con motivo; lotes de ingreso y ledger inmutables | unitarias |
 | Entregados / Historial / Remitos / Métricas | ✅ | ❌ (históricos/legales inmutables) | código listo |
 | Órdenes de Elaboración (listado) | ✅ | ❌ (formularios legales OA/OE) | código listo |
-| Control semanal MP (líneas con inputs) | ❌ | ya editable con sus propios inputs | pendiente de migrar |
-| Plan semanal (vista calendario de work-items) | ❌ | — | pendiente |
+| Control semanal MP | ✅ | ✅ `PATCH /api/v1/mp-control/[id]/cells` (kg, lote, preparado, observación; solo BORRADOR, todo-o-nada) | unitarias de servicio |
 | Fórmulas (admin) | ✅ (OperationalTable) | ❌ | código listo |
 
-**Pendiente de implementación (honesto):** edición por celda en Depósito, MP, ME inventario (campos maestros), Producción operativo/panel (cantidades/fechas planificadas), Plan semanal y Control semanal MP; requiere PATCH parcial por dominio con sus reglas de estado/aprobación (el patrón está en `production-pedidos/cell-edit.ts` + `patchCells`).
+**Pendiente (honesto):** Codificado, Calidad, Entregados/Historial/Remitos y Órdenes de Elaboración quedan **solo lectura a propósito** (decisiones, firmas e históricos legales no se editan por celda). Ninguna edición por celda fue probada todavía contra Neon/Google reales: todo lo marcado como «unitarias» corre sobre servicios en modo memoria. Trabajos de la planilla Google (no nativos) se editan solo desde Producción → Semanas.

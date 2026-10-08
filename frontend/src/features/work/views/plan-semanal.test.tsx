@@ -3,7 +3,7 @@
  */
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import type { WorkItem } from "@/types/operational/work-item";
 
@@ -80,6 +80,10 @@ vi.mock("@/features/work/hooks/use-sector-work-items", () => ({
   }),
 }));
 
+vi.mock("@/features/os/workspace/workspace-provider", () => ({
+  useRequiredWorkspace: () => ({ context: { email: "actor@genus.test", sectorId: mockSectorId } }),
+}));
+
 let mockSectorId = "PRODUCCION";
 vi.mock("@/features/os/session/preview-context", () => ({
   usePreviewContext: () => ({
@@ -90,7 +94,13 @@ vi.mock("@/features/os/session/preview-context", () => ({
 }));
 
 describe("WireframePlanSemanal — Editar/Eliminar en el detalle del día (hotfix sección 1)", () => {
+  // El detalle muestra el día de hoy: se fija al día del trabajo de prueba.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 8, 18, 10, 0, 0));
+  });
   afterEach(() => {
+    vi.useRealTimers();
     cleanup();
     mockSectorId = "PRODUCCION";
   });
