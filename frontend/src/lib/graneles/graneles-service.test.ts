@@ -218,3 +218,53 @@ describe("GranelesService", () => {
     expect(updated.status).toBe("AGOTADO");
   });
 });
+
+describe("GranelesService.patchCells (edición por celda)", () => {
+  beforeEach(() => resetGranelesMemoryForTests());
+  const dep = { email: "deposito@laboratoriogenus.com.ar", sector: "DEPOSITO" as const, displayName: "Depósito" };
+  const env = { email: "e@laboratoriogenus.com.ar", sector: "ENVASADO_MASIVO" as const, displayName: "Env" };
+
+  it("edita solo la celda indicada, conserva vecinas y cambia la versión", async () => {
+    const svc = getGranelesService();
+    const r = await svc.createManual(dep, { kg: 10, product: "Creamy", client: "A", location: "R1" });
+    const [res] = await svc.patchCells(dep, [{ id: r.id, field: "location", value: "R2", expectedVersion: r.updatedAt }]);
+    expect(res!.ok).toBe(true);
+    const after = (await svc.get(dep, r.id))!;
+    expect(after.location).toBe("R2");
+    expect({ ...after, location: "", updatedAt: "" }).toEqual({ ...r, location: "", updatedAt: "" });
+    expect(after.updatedAt).not.toBe(r.updatedAt);
+  });
+
+  it("kg exige motivo, audita delta y el rango pegado es todo-o-nada", async () => {
+    const svc = getGranelesService();
+    const r = await svc.createManual(dep, { kg: 10, product: "P" });
+    const bad = await svc.patchCells(dep, [{ id: r.id, field: "kgAvailable", value: "7", expectedVersion: r.updatedAt }]);
+    expect(bad[0]).toMatchObject({ ok: false, code: "INVALID" });
+    expect((await svc.get(dep, r.id))!.kgAvailable).toBe(10);
+    const ok = await svc.patchCells(dep, [{ id: r.id, field: "kgAvailable", value: "7,5", expectedVersion: r.updatedAt, reason: "Conteo físico real" }]);
+    expect(ok[0]!.ok).toBe(true);
+    const audit = await svc.listAudit(dep, r.id);
+    expect(audit.some((a) => a.action === "delta" && a.beforeKg === 10 && a.afterKg === 7.5)).toBe(true);
+    const cur = (await svc.get(dep, r.id))!;
+    const mix = await svc.patchCells(dep, [
+      { id: r.id, field: "location", value: "X", expectedVersion: cur.updatedAt },
+      { id: r.id, field: "intakeDate", value: "no es fecha", expectedVersion: cur.updatedAt },
+    ]);
+    expect(mix.some((m) => !m.ok)).toBe(true);
+    expect((await svc.get(dep, r.id))!.location).toBe(cur.location);
+  });
+
+  it("conflicto de versión, protegidos (origen Envasado, anulado) y sector sin permiso", async () => {
+    const svc = getGranelesService();
+    const r = await svc.createManual(dep, { kg: 5, product: "P" });
+    await svc.patchCells(dep, [{ id: r.id, field: "location", value: "A", expectedVersion: r.updatedAt }]);
+    const stale = await svc.patchCells(dep, [{ id: r.id, field: "location", value: "B", expectedVersion: r.updatedAt }]);
+    expect(stale[0]).toMatchObject({ ok: false, code: "CONFLICT" });
+    const o = await svc.upsertFromEnvasado(env, { workItemId: "wi-9", originSector: "ENVASADO_MASIVO", product: "Z", client: "C", bulkLot: "L", kg: 2, reportedBy: "Op" });
+    const prot = await svc.patchCells(dep, [{ id: o.record.id, field: "bulkLot", value: "otro", expectedVersion: o.record.updatedAt }]);
+    expect(prot[0]).toMatchObject({ ok: false, code: "PROTECTED" });
+    const loc = await svc.patchCells(dep, [{ id: o.record.id, field: "location", value: "R9", expectedVersion: o.record.updatedAt }]);
+    expect(loc[0]!.ok).toBe(true);
+    await expect(svc.patchCells(env, [{ id: r.id, field: "location", value: "Q", expectedVersion: "x" }])).rejects.toThrow(OrdersForbiddenError);
+  });
+});

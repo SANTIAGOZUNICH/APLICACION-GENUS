@@ -104,3 +104,25 @@ export async function deleteOrAnnulGranelApi(
   if (!res.ok) throw new Error(body.error ?? "No se pudo eliminar el sobrante.");
   return { action: body.action ?? "eliminar" };
 }
+
+export interface GranelCellApiResult {
+  ok: boolean;
+  results: Array<{ ok: boolean; message?: string; code?: string }>;
+  error?: string;
+}
+
+/** PATCH parcial por celda (devuelve el resultado de cada celda, nunca lanza por rechazo de negocio). */
+export async function patchGranelCellsApi(
+  session: OrdersClientSession,
+  changes: import("@/lib/graneles/cell-edit").GranelCellChange[]
+): Promise<GranelCellApiResult> {
+  const res = await fetch("/api/v1/deposito-graneles/cells", {
+    method: "PATCH",
+    credentials: "include",
+    headers: headers(session),
+    body: JSON.stringify({ changes }),
+  });
+  const body = (await res.json().catch(() => ({}))) as Partial<GranelCellApiResult>;
+  if (!body.results) return { ok: false, results: [], error: body.error ?? `Error ${res.status} al guardar.` };
+  return { ok: Boolean(body.ok), results: body.results, error: body.error };
+}
