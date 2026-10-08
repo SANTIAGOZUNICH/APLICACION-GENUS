@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import {
   getGenusFolderId,
   hasAnyCriticalSheetFastPath,
@@ -77,8 +79,34 @@ export interface RuntimeEnvSnapshot {
   hasDatabaseUrlUnpooled: boolean;
   hasPostgresUrl: boolean;
   databaseConfigured: boolean;
+  /**
+   * Huella NO reversible de host+base de DATABASE_URL (12 hex). Sirve para confirmar que Preview y Production
+   * usan bases distintas comparando ambos /api/v1/env-check, sin exponer la conexión.
+   */
+  databaseFingerprint: string | null;
+  /** Estado del write-back a Google (solo presencia/cantidad, nunca ids). */
+  googleWriteback: {
+    blockedByProduction: boolean;
+    asignacionFlag: boolean;
+    asignacionAllowlistCount: number;
+    semanasFlag: boolean;
+    semanasAllowlistCount: number;
+  };
   checkedAt: string;
 }
+
+/** host/base de una URL Postgres → 12 hex de sha256 (null si falta o no es URL). */
+export function databaseFingerprint(url: string | null | undefined): string | null {
+  if (!url?.trim()) return null;
+  try {
+    const u = new URL(url.trim());
+    return createHash("sha256").update(`${u.hostname.toLowerCase()}/${u.pathname.replace(/^\//, "")}`).digest("hex").slice(0, 12);
+  } catch {
+    return null;
+  }
+}
+
+const countList = (v: string | undefined) => (v ?? "").split(",").map((s) => s.trim()).filter(Boolean).length;
 
 function readRawEnv(name: string): string | null {
   const value = process.env[name];
@@ -299,6 +327,16 @@ export async function buildRuntimeEnvSnapshot(): Promise<RuntimeEnvSnapshot> {
     hasDatabaseUrlUnpooled: Boolean(process.env.DATABASE_URL_UNPOOLED?.trim()),
     hasPostgresUrl: Boolean(process.env.POSTGRES_URL?.trim()),
     databaseConfigured: isDatabaseConfigured(),
+    databaseFingerprint: databaseFingerprint(
+      process.env.DATABASE_URL ?? process.env.POSTGRES_URL ?? process.env.DATABASE_URL_UNPOOLED
+    ),
+    googleWriteback: {
+      blockedByProduction: process.env.VERCEL_ENV === "production",
+      asignacionFlag: process.env.ASIGNACION_LOTES_WRITEBACK === "1",
+      asignacionAllowlistCount: countList(process.env.ASIGNACION_LOTES_WRITEBACK_SPREADSHEET_IDS),
+      semanasFlag: process.env.SEMANAS_WRITEBACK === "1",
+      semanasAllowlistCount: countList(process.env.SEMANAS_WRITEBACK_SPREADSHEET_IDS),
+    },
     checkedAt: new Date().toISOString(),
   };
 }

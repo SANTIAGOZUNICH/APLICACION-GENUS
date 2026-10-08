@@ -61,3 +61,6 @@ next-env.d.ts
 /tmp-prod-neon-bootstrap/passwords*
 .vercel
 .env*
+
+# E2E local (scripts/e2e): certificados y logs
+/.e2e-local/

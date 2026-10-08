@@ -13,7 +13,7 @@ Motor único: `GenusGrid` (react-datasheet-grid). Estándar: selección de celda
 | Codificado | ✅ | ❌ | idem |
 | Calidad (pendientes / aprobados / rechazados) | ✅ | ❌ (decisiones = aprobaciones) | verificado en navegador |
 | Producción operativo / Panel de Producción | ✅ | ✅ mismos campos de trabajo (solo sector Producción, trabajos nativos no cerrados) | unitarias |
-| Plan semanal (detalle del día) | ✅ | ✅ mismos campos de trabajo; calendario L–V sin cambios | unitaria de vista |
+| Plan semanal (detalle del día) | ✅ | ✅ mismos campos de trabajo; calendario L–V sin cambios | E2E local 16/16 (`npm run test:e2e:plan-semanal`, Postgres descartable) |
 | Depósito Graneles | ✅ | ✅ `PATCH /api/v1/deposito-graneles/cells` (kg con motivo y delta auditado; registros de Envasado/anulados/archivados protegidos) | unitarias de servicio |
 | Material de Empaque: ingresos / salidas / inventario / avisos | ✅ (OperationalTable) | ✅ inventario: campos maestros (`PATCH /api/v1/inventory/cells`); stock derivado y ledgers inmutables | unitarias |
 | Materias Primas: stock / hub / ledger / compras | ✅ | ✅ stock: kg por `adjustMpStock` con motivo; lotes de ingreso y ledger inmutables | unitarias |
