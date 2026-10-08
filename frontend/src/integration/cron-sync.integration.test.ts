@@ -39,7 +39,7 @@ describe.skipIf(!ENABLED)("Cron real: Google (solo lectura) → rama Neon descar
   };
 
   beforeAll(async () => {
-    const { databaseFingerprint } = await import("@/lib/config/runtime-env-check");
+    const { databaseFingerprint } = await import("@/lib/config/db-fingerprint");
     if (databaseFingerprint(URL_IT) === PROD_FP) {
       throw new Error("SE NIEGA: GENUS_IT_DATABASE_URL tiene la huella de la base de Production.");
     }

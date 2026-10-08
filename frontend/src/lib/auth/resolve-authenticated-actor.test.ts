@@ -119,8 +119,16 @@ describe("resolveAuthenticatedActor", () => {
     vi.stubEnv("NODE_ENV", "test");
     vi.stubEnv("VERCEL_ENV", "production");
     await expect(resolveAuthenticatedActor(requestWithHeader(ANA.email))).rejects.toBeInstanceOf(AuthUnauthorizedError);
-    vi.stubEnv("VERCEL_ENV", "preview");
+    vi.stubEnv("VERCEL_ENV", "");
     vi.stubEnv("GENUS_ENV", "production");
+    await expect(resolveAuthenticatedActor(requestWithHeader(ANA.email))).rejects.toBeInstanceOf(AuthUnauthorizedError);
+  });
+
+  it("Preview de Vercel también IGNORA el header aunque GENUS_AUTH_ALLOW_TEST_HEADERS=1", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("VERCEL_ENV", "preview");
+    vi.stubEnv("GENUS_AUTH_ALLOW_TEST_HEADERS", "1");
     await expect(resolveAuthenticatedActor(requestWithHeader(ANA.email))).rejects.toBeInstanceOf(AuthUnauthorizedError);
   });
 

@@ -43,6 +43,11 @@ describe("databaseFingerprint", () => {
     expect(a).not.toBe(databaseFingerprint("postgres://u:p@ep-preview.neon.tech/neondb"));
     expect(a).not.toBe(databaseFingerprint("postgres://u:p@ep-main.neon.tech/otra"));
   });
+  it("el host pooled de Neon y el directo dan la misma huella", () => {
+    expect(databaseFingerprint("postgres://u:p@ep-main-123-pooler.us-east-2.aws.neon.tech/neondb")).toBe(
+      databaseFingerprint("postgres://u:p@ep-main-123.us-east-2.aws.neon.tech/neondb")
+    );
+  });
   it("null sin URL o con URL inválida", () => {
     expect(databaseFingerprint(undefined)).toBeNull();
     expect(databaseFingerprint("  ")).toBeNull();

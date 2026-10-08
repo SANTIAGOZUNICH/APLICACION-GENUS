@@ -1,7 +1,5 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
-
 import {
   getGenusFolderId,
   hasAnyCriticalSheetFastPath,
@@ -16,6 +14,7 @@ import {
   shouldFallbackToDemo,
 } from "@/lib/config/data-mode";
 import { isTestHeaderModeEnabled } from "@/lib/auth/resolve-authenticated-actor";
+import { databaseFingerprint } from "@/lib/config/db-fingerprint";
 import { isDatabaseConfigured } from "@/lib/db/client";
 import { getPlanningSource } from "@/lib/planning/planning-source";
 
@@ -98,16 +97,7 @@ export interface RuntimeEnvSnapshot {
   checkedAt: string;
 }
 
-/** host/base de una URL Postgres → 12 hex de sha256 (null si falta o no es URL). */
-export function databaseFingerprint(url: string | null | undefined): string | null {
-  if (!url?.trim()) return null;
-  try {
-    const u = new URL(url.trim());
-    return createHash("sha256").update(`${u.hostname.toLowerCase()}/${u.pathname.replace(/^\//, "")}`).digest("hex").slice(0, 12);
-  } catch {
-    return null;
-  }
-}
+export { databaseFingerprint };
 
 const countList = (v: string | undefined) => (v ?? "").split(",").map((s) => s.trim()).filter(Boolean).length;
 
