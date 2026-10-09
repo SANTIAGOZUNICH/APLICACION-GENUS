@@ -27,6 +27,13 @@ export interface AsignacionLote {
   datosIncompletos?: boolean;
   /** 0038 — qué campos exactos (ej. ["producto","vto"]). Null/undefined si datosIncompletos es false. */
   camposIncompletos?: string[] | null;
+  /** 0043 — identidad tal como está en la planilla de origen (el sync la usa aunque GENUS haya corregido lote/código/producto). */
+  sourceIdentity?: { lote: string; codigo: string; producto: string } | null;
+  /**
+   * 0043 — campos que GENUS editó sobre un registro sincronizado (solo en el listado). ACTIVE: el sync no los pisa.
+   * CONFLICT: la planilla cambió ese campo después; espera una decisión.
+   */
+  localEdits?: Record<string, { id: string; status: "ACTIVE" | "CONFLICT"; sheetValue: string | null; localValue: string | null; conflictSheetValue: string | null; editedBy: string; editedAt: string }>;
 }
 
 export type AsignacionLoteUpsertInput = {

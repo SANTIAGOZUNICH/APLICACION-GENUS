@@ -182,3 +182,19 @@ export async function fetchAsignacionLoteHistoryApi(session: OrdersClientSession
   if (!res.ok) throw new Error(body.error ?? `No se pudo leer el historial (${res.status}).`);
   return body.entries ?? [];
 }
+
+/** 0043 — Decide sobre una edición de GENUS en un lote sincronizado. Lanza con el motivo real si no se guardó. */
+export async function resolveAsignacionLocalEditApi(
+  session: OrdersClientSession,
+  body: { editId: string; action: "KEEP_GENUS" | "USE_SHEET" | "REVERT_TO_SHEET" | "ARCHIVE"; expectedVersion: string; reason?: string }
+): Promise<AsignacionLote> {
+  const res = await fetch("/api/v1/asignacion-lotes/local-edits", {
+    method: "POST",
+    credentials: "include",
+    headers: headers(session),
+    body: JSON.stringify({ actorSectorId: session.sector, ...body }),
+  });
+  const json = (await res.json().catch(() => ({}))) as { item?: AsignacionLote; error?: string };
+  if (!res.ok || !json.item) throw new Error(json.error ?? `No se pudo guardar la decisión (${res.status}).`);
+  return json.item;
+}

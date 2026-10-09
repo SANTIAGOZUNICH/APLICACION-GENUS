@@ -95,13 +95,9 @@ export function cellProtectionReason(
   writableSourceIds?: ReadonlySet<string>
 ): string | null {
   if (record.archived) return "Registro archivado: restauralo para editarlo.";
-  if (record.sourceId && writableSourceIds?.has(record.sourceId)) {
-    if (!canEditAsignacionCellField(sector, field)) return "Tu sector no puede editar esta columna.";
-    return null;
-  }
-  if (record.sourceId) {
-    return "Registro sincronizado desde Google Sheets (fuente de verdad). Corregilo en la Sheet — el próximo sync pisaría cualquier cambio local.";
-  }
+  // 0043: los registros sincronizados desde Google también se editan en GENUS. La edición queda guardada como
+  // «editado en GENUS» y el sync no la pisa (si la planilla cambia ese campo después, se marca conflicto).
+  void writableSourceIds;
   if (!canEditAsignacionCellField(sector, field)) {
     return "Tu sector no puede editar esta columna.";
   }
@@ -167,6 +163,8 @@ export interface AsignacionCellChange {
   value: string;
   /** `updatedAt` del registro que el cliente tenía al editar (control de concurrencia). */
   expectedVersion: string;
+  /** Motivo (opcional) que queda en la auditoría. */
+  reason?: string;
 }
 
 export type AsignacionCellFailureCode =

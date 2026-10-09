@@ -66,6 +66,8 @@ export interface GenusGridColumn<T> {
   validate?: (raw: string, row: T) => string | null;
   /** Columna sensible (identidad/trazabilidad): su edición siempre pide confirmación. */
   sensitive?: boolean;
+  /** Clase extra por celda (p. ej. «editado en GENUS» / conflicto). Opcional y aditivo. */
+  cellClassName?: (row: T) => string | undefined;
 }
 
 export interface GenusGridCellChange {
@@ -348,6 +350,11 @@ export function GenusGrid<T>({
           if (rowData.__st[key] === "saving") classes.push("genus-cell-saving");
           if (rowData.__st[key] === "error") classes.push("genus-cell-error");
           if (kind === "number") classes.push("genus-cell-num");
+          if (col.cellClassName) {
+            const source = rowByIdRef.current.get(rowData.__id);
+            const extra = source ? col.cellClassName(source) : undefined;
+            if (extra) classes.push(extra);
+          }
           return classes.join(" ") || undefined;
         },
       };
