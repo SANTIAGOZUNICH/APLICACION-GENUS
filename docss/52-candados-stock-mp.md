@@ -119,6 +119,10 @@ Lo que hice, **sin borrar nada**:
 | E2E Chromium, **build de producción**, 1440×900, preferencia vieja «lista» guardada (`GENUS_E2E_PRODUCTION_BUILD=1 npm run test:e2e:planillas-celda`) | **87/87** |
 | Integración contra Postgres (Semanas, Producción, lotes, Depósito, MP) | **48/48** |
 | Unitarias nuevas o ajustadas (`cell-edit.test.ts`, `mp-trazabilidad.test.ts`) | 6/6 y 4/4 |
+| Vitest completo | 2157 OK (89 saltados: necesitan base) |
+| Regresión E2E Materias Primas, build de producción | 24/24 |
+| Regresión E2E Depósito | 25/25 |
+| Regresión E2E Asignación de lotes, build de producción | 30/30 |
 
 E2E: fila **igual a las de Production**, con el usuario **Materia Prima**.
 - La fila:
