@@ -1,5 +1,6 @@
 "use client";
 
+import { WorkItemPriorityBadge } from "./work-item-priority-badge";
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
@@ -201,6 +202,7 @@ function WorkItemRichCard({ item }: { item: WorkItem }) {
 
   return (
     <li className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] p-2.5 text-xs leading-snug text-[var(--os-text)] shadow-sm">
+      <WorkItemPriorityBadge itemId={item.id} className="mb-1" />
       <p className="line-clamp-2 text-sm font-semibold" title={item.product ?? ""}>
         {displayField(item.product)}
       </p>
@@ -328,6 +330,7 @@ function WeekBoardDayCell({
                 <span className="font-medium">{displayField(item.line ?? item.ownerPerson)}</span>
                 <br />
                 {displayField(item.product ?? item.client)}
+                <WorkItemPriorityBadge itemId={item.id} className="ml-1 align-middle" />
                 <br />
                 <span className="text-[var(--os-text-muted)]">{displayField(item.quantity)}</span>
               </li>

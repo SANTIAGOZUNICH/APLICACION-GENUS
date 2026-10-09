@@ -1,5 +1,6 @@
 "use client";
 
+import { WorkItemPriorityBadge } from "./work-item-priority-badge";
 import { useRef, useState } from "react";
 import { Download, Eye, FileWarning } from "lucide-react";
 import type { WorkItem } from "@/types/operational/work-item";
@@ -130,6 +131,7 @@ export function WorkItemDrawer({
       <DrawerContent aria-describedby={undefined}>
         <DrawerHeader>
           <div>
+            <WorkItemPriorityBadge itemId={item.id} className="mb-1.5" />
             <DrawerTitle>{displayField(item.product)}</DrawerTitle>
             <p className="mt-1 text-sm text-[var(--os-text-muted)]">{displayField(item.client)}</p>
             <div className="mt-2">

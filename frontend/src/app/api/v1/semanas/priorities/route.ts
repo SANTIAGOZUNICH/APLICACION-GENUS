@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     const tabKey = url.searchParams.get("tabKey");
     const taskKey = url.searchParams.get("taskKey");
     if (!tabKey || !taskKey) throw new OrdersValidationError("tabKey y taskKey son obligatorios.");
-    return NextResponse.json({ events: await loadPriorityHistory(tabKey, taskKey) });
+    return NextResponse.json(await loadPriorityHistory(tabKey, taskKey));
   } catch (err) {
     return ordersErrorResponse(err);
   }

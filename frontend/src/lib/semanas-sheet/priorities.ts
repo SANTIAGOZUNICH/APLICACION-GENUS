@@ -100,7 +100,7 @@ export function isTextCorrection(oldKey: string, newKey: string): boolean {
  *     la prioridad ese contenido era único en la semana (marca `|solo`), y hoy hay una sola fila huérfana y una sola
  *     tarea sin prioridad con ese contenido en esa semana.
  */
-export function matchPriorityRows<R extends PriorityRow>(tasks: Array<{ key: string; posKey: string }>, rows: R[]): Map<string, { row: R; how: PriorityMatchKind }> {
+export function matchPriorityRows<R extends { taskKey: string; posKey: string }>(tasks: Array<{ key: string; posKey: string }>, rows: R[]): Map<string, { row: R; how: PriorityMatchKind }> {
   const out = new Map<string, { row: R; how: PriorityMatchKind }>();
   const byKey = new Map(rows.map((r) => [r.taskKey, r] as const));
   const currentKeys = new Set(tasks.map((t) => t.key));

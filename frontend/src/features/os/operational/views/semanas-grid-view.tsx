@@ -15,10 +15,11 @@ import type { CalendarCommitChange, CalendarCommitResult } from "@/features/os/o
 import { canEditPriorities } from "@/lib/semanas-sheet/priorities-permissions";
 import type { Priority } from "@/lib/semanas-sheet/priorities";
 import { PLAN_SECTORS } from "@/lib/semanas-sheet/plan-tasks";
+import type { LinkActions } from "@/features/os/operational/components/semanas-link-panel";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
-import { patchTaskPriority, fetchPriorityHistory, fetchPreviewSource, fetchSemanasView, patchSemanasCells, resetPreviewSource, uploadPreviewSource, type PreviewSourceStatus, type SemanasViewResponse } from "@/lib/semanas-sheet/semanas-client";
+import { deleteTaskLink, fetchLinkCandidates, postTaskLink, patchTaskPriority, fetchPriorityHistory, fetchPreviewSource, fetchSemanasView, patchSemanasCells, resetPreviewSource, uploadPreviewSource, type PreviewSourceStatus, type SemanasViewResponse } from "@/lib/semanas-sheet/semanas-client";
 import { SEMANAS_TABS, type SemanasTabKey } from "@/lib/semanas-sheet/semanas-tabs";
 import type { CalendarRow } from "@/lib/semanas-sheet/calendar-model";
 import type { FlatRow } from "@/lib/semanas-sheet/flat-model";
@@ -244,7 +245,25 @@ export function SemanasGridView() {
   const foldedCount = (view?.weeks ?? []).filter((w) => w.hidden).length;
   const isCalendar = view?.kind === "CALENDAR";
   const listWeek = isCalendar ? (calendarWeeks.find((w) => w.id === weekId) ?? calendarWeeks[calendarWeeks.length - 1]) : undefined;
-  const loadHistory = useCallback((taskKey: string) => (view ? fetchPriorityHistory(session, view.tabKey, taskKey) : Promise.resolve([])), [view, session]);
+  const loadHistory = useCallback((taskKey: string) => (view ? fetchPriorityHistory(session, view.tabKey, taskKey) : Promise.resolve({ events: [], linkEvents: [] })), [view, session]);
+  // Vínculos tarea ↔ trabajo operativo: cada cambio se relee del servidor (nunca un estado optimista).
+  const viewTabKey = view?.tabKey;
+  const canLink = Boolean(view?.canLink);
+  const linkActions = useMemo<LinkActions | undefined>(() => {
+    if (!viewTabKey) return undefined;
+    return {
+      canLink,
+      loadCandidates: (taskKey) => fetchLinkCandidates(session, viewTabKey, taskKey),
+      link: async (taskKey, workItemId, replace, reason) => {
+        await postTaskLink(session, { tabKey: viewTabKey, taskKey, workItemId, replace, reason });
+        await load(viewTabKey, true);
+      },
+      unlink: async (linkId, expectedVersion, reason) => {
+        await deleteTaskLink(session, { linkId, expectedVersion, reason });
+        await load(viewTabKey, true);
+      },
+    };
+  }, [viewTabKey, canLink, session, load]);
 
   const canEdit = Boolean(view?.canEdit);
   // Trazabilidad: editar una fecha anterior a hoy exige motivo (el servidor lo vuelve a exigir).
@@ -368,6 +387,28 @@ export function SemanasGridView() {
           </p>
         )}
 
+        {view?.links && view.links.orphans.length > 0 && (
+          <div className="rounded-[var(--os-radius-sm)] border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-100" role="status" data-testid="semanas-link-orphans">
+            <b>{view.links.orphans.length} vínculo(s) sin tarea:</b> la tarea ya no está en la planilla, así que esos trabajos no muestran prioridad en «Mi trabajo». Revisalos:
+            <ul className="mt-1 list-disc pl-5">
+              {view.links.orphans.slice(0, 8).map((o) => (
+                <li key={o.linkId}>
+                  {o.workItem ? `${o.workItem.product} · ${o.workItem.quantity} ${o.workItem.unit}` : "Trabajo inexistente"} — antes vinculado a «{o.summary}»{" "}
+                  <button
+                    type="button"
+                    className="ml-1 underline underline-offset-2"
+                    onClick={() => {
+                      const reason = window.prompt("Motivo para quitar el vínculo (mín. 8 caracteres):") ?? "";
+                      if (reason.trim().length >= 8) void linkActions?.unlink(o.linkId, o.version, reason.trim()).catch((e) => setError(e instanceof Error ? e.message : "No se pudo quitar."));
+                    }}
+                  >
+                    Quitar vínculo
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {view && isCalendar && listWeek && (view.tabKey === "ELABORACION" || view.tabKey === "ACONDICIONAMIENTO") && (
           <SemanasTaskList
             key={`${view.tabKey}:${listWeek.id}`}
@@ -382,6 +423,8 @@ export function SemanasGridView() {
             onPriorityChange={onPriorityChange}
             onCommit={onCalendarCommit}
             loadHistory={loadHistory}
+            links={view.links}
+            linkActions={linkActions}
             footnote={`Leído de ${view.source === "PREVIEW_XLSX" ? "la copia XLSX de Preview" : view.source === "LOCAL_FIXTURE" ? "la copia local" : "Google"}: ${new Date(view.readAt).toLocaleTimeString("es-AR")}.${canEdit ? " Las fechas anteriores a hoy se corrigen con motivo; encabezados, fórmulas y registros cerrados son de solo lectura." : ""}`}
           />
         )}

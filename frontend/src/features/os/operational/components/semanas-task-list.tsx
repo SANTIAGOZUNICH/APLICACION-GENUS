@@ -17,7 +17,9 @@ import type { CalendarWeek } from "@/lib/semanas-sheet/calendar-model";
 import { parseClipboard, validateCalendarValue, type PlannedChange, type SkippedCell } from "@/lib/semanas-sheet/calendar-grid-model";
 import { byPriority, formatDay, PLAN_SECTOR_LABEL, projectPlanTasks, type PlanTask, type PlanTaskLine } from "@/lib/semanas-sheet/plan-tasks";
 import { PRIORITIES, PRIORITY_META, type PrioritiesPayload, type Priority } from "@/lib/semanas-sheet/priorities";
-import type { PriorityEventDto } from "@/lib/semanas-sheet/semanas-client";
+import type { TaskHistory } from "@/lib/semanas-sheet/semanas-client";
+import type { LinkView, TaskLinksPayload } from "@/lib/semanas-sheet/task-links";
+import { LinkCell, LinkPanel, type LinkActions } from "./semanas-link-panel";
 import { EngineNotice, EnginePreview, useCalendarEngine, type CalendarCommitChange, type CalendarCommitResult, type CalendarEngine } from "./semanas-calendar-engine";
 import { PRIORITY_STYLE, PriorityChip } from "./semanas-priority-chip";
 
@@ -25,11 +27,11 @@ import { PRIORITY_STYLE, PriorityChip } from "./semanas-priority-chip";
 const COLS = [
   { id: "priority", title: "Prioridad", w: "w-[9.5rem]" },
   { id: "date", title: "Fecha", w: "w-[7.5rem]" },
-  { id: "assignee", title: "Responsable / sector", w: "w-[11rem]" },
-  { id: "client", title: "Cliente", role: "client", w: "w-[13rem]" },
+  { id: "assignee", title: "Responsable / sector", w: "w-[10rem]" },
+  { id: "client", title: "Cliente", role: "client", w: "w-[11rem]" },
   { id: "product", title: "Producto", role: "product", w: "" },
   { id: "quantity", title: "Cantidad", role: "quantity", w: "w-[9rem]" },
-  { id: "note", title: "Notas", role: "note", w: "w-[9rem]" },
+  { id: "note", title: "Notas", role: "note", w: "w-[8rem]" },
 ] as const;
 type ColId = (typeof COLS)[number]["id"];
 const EDITABLE: Record<ColId, PlanTaskLine["role"] | null> = { priority: null, date: null, assignee: null, client: "client", product: "product", quantity: "quantity", note: "note" };
@@ -48,7 +50,10 @@ export interface SemanasTaskListProps {
   priorityLock: string | null;
   onPriorityChange: (taskKey: string, next: Priority) => Promise<void>;
   onCommit: (changes: CalendarCommitChange[]) => Promise<CalendarCommitResult>;
-  loadHistory?: (taskKey: string) => Promise<PriorityEventDto[]>;
+  loadHistory?: (taskKey: string) => Promise<TaskHistory>;
+  /** Vínculos con trabajos operativos (0042) y acciones de Producción. */
+  links?: TaskLinksPayload;
+  linkActions?: LinkActions;
   footnote?: string;
 }
 
@@ -58,7 +63,11 @@ function linesOf(t: PlanTask, col: ColId): PlanTaskLine[] {
 }
 
 export function SemanasTaskList(props: SemanasTaskListProps) {
-  const { tabKey, tab, week, today, canEdit, reasonRequiredBefore, priorities, priorityLock, onPriorityChange, onCommit, loadHistory, footnote } = props;
+  const { tabKey, tab, week, today, canEdit, reasonRequiredBefore, priorities, priorityLock, onPriorityChange, onCommit, loadHistory, footnote, linkActions } = props;
+  // Sin planificación nativa (p. ej. la copia de Preview) no hay trabajos que vincular: no se muestra la columna.
+  const links = props.links?.available ? props.links : undefined;
+  const [linkOpen, setLinkOpen] = useState<string | null>(null);
+  const NO_LINKS: LinkView[] = [];
   const weeks = useMemo(() => [week], [week]);
   const e = useCalendarEngine({ weeks, canEdit, reasonRequiredBefore, onCommit, focusWeekId: null });
   const all = useMemo(() => projectPlanTasks(tabKey, weeks, tab, priorities, { withCells: true }), [tabKey, weeks, tab, priorities]);
@@ -68,7 +77,7 @@ export function SemanasTaskList(props: SemanasTaskListProps) {
   const [sortByPriority, setSortByPriority] = useState(false);
   const [focus, setFocus] = useState<Focus | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [history, setHistory] = useState<{ key: string; events: PriorityEventDto[] | null; error: string | null } | null>(null);
+  const [history, setHistory] = useState<{ key: string; data: TaskHistory | null; error: string | null } | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
   const sections = useMemo(() => [...new Set(all.map((t) => t.section ?? "(sin banda)"))], [all]);
@@ -188,12 +197,12 @@ export function SemanasTaskList(props: SemanasTaskListProps) {
   const openHistory = async (t: PlanTask) => {
     if (!loadHistory) return;
     if (history?.key === t.key) { setHistory(null); return; }
-    setHistory({ key: t.key, events: null, error: null });
+    setHistory({ key: t.key, data: null, error: null });
     try {
-      const events = await loadHistory(t.key);
-      setHistory((h) => (h?.key === t.key ? { key: t.key, events, error: null } : h));
+      const data = await loadHistory(t.key);
+      setHistory((h) => (h?.key === t.key ? { key: t.key, data, error: null } : h));
     } catch (err) {
-      setHistory((h) => (h?.key === t.key ? { key: t.key, events: null, error: err instanceof Error ? err.message : "No se pudo leer el historial." } : h));
+      setHistory((h) => (h?.key === t.key ? { key: t.key, data: null, error: err instanceof Error ? err.message : "No se pudo leer el historial." } : h));
     }
   };
 
@@ -243,6 +252,11 @@ export function SemanasTaskList(props: SemanasTaskListProps) {
         </span>
       </div>
       <EngineNotice e={e} />
+      {props.links && !props.links.available && (
+        <p className="text-xs text-[var(--os-text-muted)]" data-testid="links-unavailable">
+          Vincular tareas con trabajos de «Mi trabajo» requiere la planificación nativa (base de datos con la migración 0042).
+        </p>
+      )}
       {priorities && !priorities.available && (
         <p className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-100" role="status" data-testid="priority-unavailable">
           Las prioridades todavía no están habilitadas en esta base (falta aplicar la migración 0041): se muestran como NORMAL y no se pueden cambiar.
@@ -261,7 +275,7 @@ export function SemanasTaskList(props: SemanasTaskListProps) {
         className="overflow-x-auto rounded-2xl border border-[var(--os-border)] bg-[var(--os-bg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--os-teal)]"
         data-testid="semanas-list-grid"
       >
-        <table className="w-full min-w-[960px] border-separate border-spacing-0 text-sm">
+        <table className="w-full min-w-[1100px] border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10">
             <tr>
               {COLS.map((c) => (
@@ -269,6 +283,11 @@ export function SemanasTaskList(props: SemanasTaskListProps) {
                   {c.title}
                 </th>
               ))}
+              {links && (
+                <th scope="col" className="w-[12rem] border-b border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--os-text-muted)]">
+                  Trabajo vinculado
+                </th>
+              )}
               <th className="w-10 border-b border-[var(--os-border)] bg-[var(--os-surface)]" aria-label="Historial" />
             </tr>
           </thead>
@@ -292,6 +311,11 @@ export function SemanasTaskList(props: SemanasTaskListProps) {
                 onPriority={(p) => void setPriority(t, p)}
                 onHistory={loadHistory ? () => void openHistory(t) : undefined}
                 history={history?.key === t.key ? history : null}
+                links={links ? (links.byTask[t.key] ?? NO_LINKS) : null}
+                linksAvailable={Boolean(links?.available)}
+                linkOpen={linkOpen === t.key}
+                onToggleLink={() => setLinkOpen((k) => (k === t.key ? null : t.key))}
+                linkActions={linkActions}
               />
             ))}
           </tbody>
@@ -322,7 +346,12 @@ interface RowProps {
   onFinish: (commit: boolean, value: string, dir: "down" | "right" | null) => void;
   onPriority: (p: Priority) => void;
   onHistory?: () => void;
-  history: { events: PriorityEventDto[] | null; error: string | null } | null;
+  history: { data: TaskHistory | null; error: string | null } | null;
+  links: LinkView[] | null;
+  linksAvailable: boolean;
+  linkOpen: boolean;
+  onToggleLink: () => void;
+  linkActions?: LinkActions;
 }
 
 const FIELD_CLASS: Record<string, string> = {
@@ -332,7 +361,8 @@ const FIELD_CLASS: Record<string, string> = {
   note: "text-[13px] font-semibold text-amber-200",
 };
 
-const TaskRow = memo(function TaskRow({ t, r, e, weekId, today, focus, busy, priorityLock, lockOf, valueOf, onPick, onEdit, onFinish, onPriority, onHistory, history }: RowProps) {
+const TaskRow = memo(function TaskRow({ t, r, e, weekId, today, focus, busy, priorityLock, lockOf, valueOf, onPick, onEdit, onFinish, onPriority, onHistory, history, links, linksAvailable, linkOpen, onToggleLink, linkActions }: RowProps) {
+  const colSpan = COLS.length + 1 + (links ? 1 : 0);
   const st = PRIORITY_STYLE[t.priority];
   const cellBase = "border-b border-[var(--os-border)] px-3 py-2 align-top";
   const ring = (c: number) => (focus?.col === c ? "outline outline-2 -outline-offset-2 outline-[var(--os-teal)]" : "");
@@ -396,6 +426,11 @@ const TaskRow = memo(function TaskRow({ t, r, e, weekId, today, focus, busy, pri
             </td>
           );
         })}
+        {links && (
+          <td className={cellBase}>
+            <LinkCell links={links} open={linkOpen} onToggle={onToggleLink} available={linksAvailable} />
+          </td>
+        )}
         <td className={`${cellBase} text-center`}>
           {onHistory && (
             <button type="button" onClick={onHistory} className="rounded p-1 text-[var(--os-text-muted)] hover:bg-white/10 hover:text-[var(--os-text)]" title="Historial de prioridad" aria-label="Historial de prioridad" data-testid="list-history">
@@ -404,15 +439,29 @@ const TaskRow = memo(function TaskRow({ t, r, e, weekId, today, focus, busy, pri
           )}
         </td>
       </tr>
+      {links && linkOpen && linkActions && <LinkPanel task={t} links={links} actions={linkActions} colSpan={colSpan} />}
       {history && (
         <tr data-testid="list-history-row">
-          <td colSpan={COLS.length + 1} className="border-b border-[var(--os-border)] bg-[var(--os-bg)] px-4 py-2 text-xs text-[var(--os-text-muted)]">
-            <span className="mr-2 font-semibold uppercase tracking-wide">Historial de prioridad</span>
-            {history.error ? history.error : !history.events ? "Cargando…" : history.events.length === 0 ? "Sin cambios registrados (NORMAL inicial)." : history.events.map((ev, i) => (
-              <span key={i} className="mr-4 inline-block">
-                {new Date(ev.at).toLocaleString("es-AR")} · {ev.actorName || ev.actorEmail}: {ev.from} → <b className="text-[var(--os-text)]">{ev.to}</b>
-              </span>
-            ))}
+          <td colSpan={colSpan} className="border-b border-[var(--os-border)] bg-[var(--os-bg)] px-4 py-2 text-xs text-[var(--os-text-muted)]">
+            <div>
+              <span className="mr-2 font-semibold uppercase tracking-wide">Historial de prioridad</span>
+              {history.error ? history.error : !history.data ? "Cargando…" : history.data.events.length === 0 ? "Sin cambios registrados (NORMAL inicial)." : history.data.events.map((ev, i) => (
+                <span key={i} className="mr-4 inline-block">
+                  {new Date(ev.at).toLocaleString("es-AR")} · {ev.actorName || ev.actorEmail}: {ev.from} → <b className="text-[var(--os-text)]">{ev.to}</b>
+                </span>
+              ))}
+            </div>
+            {history.data && history.data.linkEvents.length > 0 && (
+              <div className="mt-1" data-testid="list-history-links">
+                <span className="mr-2 font-semibold uppercase tracking-wide">Vínculos</span>
+                {history.data.linkEvents.map((ev, i) => (
+                  <span key={i} className="mr-4 inline-block">
+                    {new Date(ev.at).toLocaleString("es-AR")} · {ev.actorName || ev.actorEmail}: <b className="text-[var(--os-text)]">{ev.action === "LINK" ? "vinculó" : "quitó"}</b> {ev.workItemSummary}
+                    {ev.reason ? ` — «${ev.reason}»` : ""}
+                  </span>
+                ))}
+              </div>
+            )}
             <span className="ml-2 font-mono opacity-70">Celdas: {t.lines.map((l) => l.a1).join(", ")}</span>
           </td>
         </tr>

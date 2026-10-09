@@ -4,6 +4,7 @@ import type { CalendarWeek } from "./calendar-model";
 import type { FlatTable } from "./flat-model";
 import type { PrioritiesPayload } from "./priorities";
 import type { PlanSector, PlanTask } from "./plan-tasks";
+import type { LinkCandidate, LinkEventDto, LinkView, TaskLinksPayload, WorkItemPrioritiesPayload } from "./task-links";
 import type { SemanasTabKey } from "./semanas-tabs";
 
 function headers(session: OrdersClientSession): HeadersInit {
@@ -24,6 +25,10 @@ export interface SemanasViewResponse {
   dayWidths?: number[];
   /** Prioridades guardadas en GENUS (por clave de tarea). */
   priorities?: PrioritiesPayload;
+  /** Vínculos con trabajos operativos (solo Producción). */
+  links?: TaskLinksPayload;
+  /** Producción puede vincular (hay planificación nativa y migración 0042). */
+  canLink?: boolean;
   table?: FlatTable;
   readAt: string;
   /** "Hoy" que usa el servidor para decidir períodos cerrados. */
@@ -153,9 +158,46 @@ export interface PriorityEventDto {
   actorSector: string;
   at: string;
 }
-export async function fetchPriorityHistory(session: OrdersClientSession, tabKey: SemanasTabKey, taskKey: string): Promise<PriorityEventDto[]> {
+export interface TaskHistory {
+  events: PriorityEventDto[];
+  linkEvents: LinkEventDto[];
+}
+export async function fetchPriorityHistory(session: OrdersClientSession, tabKey: SemanasTabKey, taskKey: string): Promise<TaskHistory> {
   const res = await fetch(`/api/v1/semanas/priorities?tabKey=${tabKey}&taskKey=${encodeURIComponent(taskKey)}`, { credentials: "include", headers: headers(session) });
-  const body = (await res.json().catch(() => ({}))) as { events?: PriorityEventDto[]; error?: string };
+  const body = (await res.json().catch(() => ({}))) as Partial<TaskHistory> & { error?: string };
   if (!res.ok) throw new Error(body.error ?? `No se pudo leer el historial (${res.status}).`);
-  return body.events ?? [];
+  return { events: body.events ?? [], linkEvents: body.linkEvents ?? [] };
+}
+
+// ---------- vínculos tarea de Semanas ↔ trabajo operativo ----------
+async function jsonCall<T>(session: OrdersClientSession, url: string, init: RequestInit = {}): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(url, { credentials: "include", ...init, headers: { ...headers(session), ...(init.headers ?? {}) } });
+  } catch {
+    throw new Error("Sin conexión con el servidor.");
+  }
+  const body = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(body.error ?? `Error ${res.status}`);
+  return body;
+}
+
+export interface LinkSuggestionsDto {
+  candidates: LinkCandidate[];
+  linkedElsewhere: Array<LinkCandidate & { link: { linkId: string; version: number; taskKey: string; summary: string } }>;
+}
+export function fetchLinkCandidates(session: OrdersClientSession, tabKey: SemanasTabKey, taskKey: string): Promise<LinkSuggestionsDto> {
+  return jsonCall(session, `/api/v1/semanas/links/candidates?tabKey=${tabKey}&taskKey=${encodeURIComponent(taskKey)}`);
+}
+export function postTaskLink(
+  session: OrdersClientSession,
+  body: { tabKey: SemanasTabKey; taskKey: string; workItemId: string; replace?: { linkId: string; expectedVersion: number }; reason?: string }
+): Promise<{ link: LinkView }> {
+  return jsonCall(session, "/api/v1/semanas/links", { method: "POST", body: JSON.stringify(body) });
+}
+export function deleteTaskLink(session: OrdersClientSession, body: { linkId: string; expectedVersion: number; reason: string }): Promise<{ ok: boolean }> {
+  return jsonCall(session, "/api/v1/semanas/links", { method: "DELETE", body: JSON.stringify(body) });
+}
+export function fetchWorkItemPriorities(session: OrdersClientSession): Promise<WorkItemPrioritiesPayload & { error?: string }> {
+  return jsonCall(session, "/api/v1/semanas/work-item-priorities");
 }

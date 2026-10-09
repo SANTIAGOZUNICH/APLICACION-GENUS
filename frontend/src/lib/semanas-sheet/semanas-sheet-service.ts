@@ -27,6 +27,7 @@ import { dayWidths, findCalendarCell, parseA1, parseWeeklyCalendar, type Calenda
 import { loadOperationalLocks, norm, UNVERIFIABLE, type OperationalLocks } from "./operational-locks";
 import { isPriority } from "./priorities";
 import { listPriorityEvents, loadPriorities, reconcilePriorities, setTaskPriority, type PrioritiesPayload } from "./semanas-priorities-service";
+import { linkTask, listLinkEvents, loadTaskLinks, loadWorkItemPriorities, reconcileLinks, suggestLinkCandidates, unlinkTask, type LinkActor } from "./semanas-links-service";
 import { filterBySectors, isPlanSector, PLAN_SECTOR_TAB, projectPlanTasks, seesWholePlan, viewablePlanSectors, type PlanSector, type PlanTask } from "./plan-tasks";
 import { PREVIEW_SPREADSHEET_ID, getPreviewGateway, isPreviewSourceAllowed } from "./preview-source";
 import { findFlatCell, parseFlatTable, type FlatTable } from "./flat-model";
@@ -404,6 +405,7 @@ export async function reconcileSemanasPriorities(tabKeys: string[]): Promise<voi
     try {
       const view = await loadSemanasView(key);
       await reconcilePriorities(view.spreadsheetId, view.tab, view.weeks ?? []);
+      await reconcileLinks(view.spreadsheetId, view.tab, calendarTasksOf(view));
     } catch {
       /* no bloquea la edición */
     }
@@ -456,9 +458,54 @@ export async function loadSectorPlan(viewer: SectorId, requested: string | null 
   };
 }
 
-/** Historial de cambios de prioridad de una tarea (auditoría). */
+/** Historial de una tarea (auditoría): cambios de prioridad y de vínculo con trabajos operativos. */
 export async function loadPriorityHistory(tabKey: string, taskKey: string) {
   if (!isSemanasTabKey(tabKey) || SEMANAS_TABS[tabKey].kind !== "CALENDAR") throw new OrdersValidationError("Solo ELABORACION y ACONDICIONAMIENTO tienen prioridades.");
   const id = await spreadsheetId();
-  return listPriorityEvents(id, SEMANAS_TABS[tabKey].tab, taskKey);
+  const [events, linkEvents] = await Promise.all([listPriorityEvents(id, SEMANAS_TABS[tabKey].tab, taskKey), listLinkEvents(id, SEMANAS_TABS[tabKey].tab, taskKey)]);
+  return { events, linkEvents };
+}
+
+// ---------- vínculos tarea de Semanas ↔ trabajo operativo (0042) ----------
+type CalendarTabKey = "ELABORACION" | "ACONDICIONAMIENTO";
+function calendarTabKey(tabKey: string): CalendarTabKey {
+  if (tabKey !== "ELABORACION" && tabKey !== "ACONDICIONAMIENTO") throw new OrdersValidationError("Solo ELABORACION y ACONDICIONAMIENTO tienen tareas vinculables.");
+  return tabKey;
+}
+/** Tareas ACTUALES (con prioridad) de una vista de calendario: la misma proyección que Semanas, Día a día y TV. */
+function calendarTasksOf(view: SemanasViewPayload): PlanTask[] {
+  return projectPlanTasks(view.tabKey as CalendarTabKey, view.weeks ?? [], view.tab, view.priorities);
+}
+
+/** Vínculos de la pestaña para la Lista de Producción (se agregan a la lectura de la grilla). */
+export async function loadLinksForView(view: SemanasViewPayload) {
+  if (view.kind !== "CALENDAR") return undefined;
+  return loadTaskLinks(view.spreadsheetId, view.tab, calendarTasksOf(view));
+}
+
+export async function suggestSemanasLinks(tabKey: string, taskKey: string) {
+  const view = await loadSemanasView(calendarTabKey(tabKey));
+  const task = calendarTasksOf(view).find((t) => t.key === taskKey);
+  if (!task) throw new OrdersValidationError("La tarea ya no está en la planilla. Recargá.");
+  return suggestLinkCandidates(task, view.spreadsheetId);
+}
+
+export async function linkSemanasTask(actor: LinkActor, input: { tabKey: string; taskKey: string; workItemId: string; replace?: { linkId: string; expectedVersion: number }; reason?: string }) {
+  if (!canEditSemanas(actor.sector)) throw new OrdersForbiddenError("Solo Producción puede vincular tareas de Semanas con trabajos.");
+  const view = await loadSemanasView(calendarTabKey(input.tabKey));
+  return linkTask(actor, { spreadsheetId: view.spreadsheetId, tab: view.tab, taskKey: input.taskKey, workItemId: input.workItemId, replace: input.replace, reason: input.reason }, calendarTasksOf(view));
+}
+
+export async function unlinkSemanasTask(actor: LinkActor, input: { linkId: string; expectedVersion: number; reason: string }) {
+  return unlinkTask(actor, input);
+}
+
+/** Prioridad de Semanas de los trabajos de «Mi trabajo» que el usuario puede ver (solo los vinculados por Producción). */
+export async function loadSemanasWorkItemPriorities(viewer: SectorId, today = todayIso()) {
+  const id = await spreadsheetId();
+  const byTab = Object.fromEntries((["ELABORACION", "ACONDICIONAMIENTO"] as const).map((k) => [SEMANAS_TABS[k].tab, k]));
+  return loadWorkItemPriorities(viewer, id, async (tab) => {
+    const key = byTab[tab];
+    return key ? calendarTasksOf(await loadSemanasView(key, today)) : [];
+  });
 }

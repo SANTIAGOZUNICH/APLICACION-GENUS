@@ -81,6 +81,8 @@ export interface PlanTaskLine {
 
 export interface PlanTask {
   key: string;
+  /** Posición semana/día/sección/orden (respaldo para re-asociar prioridad y vínculos cuando se corrige el texto). */
+  posKey: string;
   tabKey: "ELABORACION" | "ACONDICIONAMIENTO";
   weekId: string;
   /** Lunes ISO de la semana (identifica la semana entre pestañas; si no hay fecha, el id del bloque). */
@@ -142,6 +144,7 @@ export function toPlanTask(
   const pick = (role: LineRole) => task.lines.filter((l) => l.role === role).map((l) => l.value);
   return {
     key: task.key,
+    posKey: task.posKey,
     tabKey,
     weekId: task.weekId,
     weekStart: task.weekId,

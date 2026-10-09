@@ -1072,6 +1072,59 @@ export const semanasTaskPriorityEvents = pgTable(
 );
 
 /**
+ * Vínculo EXPLÍCITO tarea de Semanas ↔ work item (0042). Lo confirma Producción; nunca se infiere. Un work item tiene a lo
+ * sumo un vínculo activo (índice único parcial); desvincular es lógico (`unlinkedAt`). La clave de la tarea se re-asocia
+ * igual que las prioridades (texto corregido / traslado de día inequívoco).
+ */
+export const semanasTaskLinks = pgTable(
+  "semanas_task_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    tab: text("tab").notNull(),
+    taskKey: text("task_key").notNull(),
+    posKey: text("pos_key").notNull().default(""),
+    taskDate: text("task_date"),
+    summary: text("summary").notNull().default(""),
+    workItemId: uuid("work_item_id").notNull(),
+    version: integer("version").notNull().default(1),
+    linkedBy: text("linked_by").notNull(),
+    linkedByName: text("linked_by_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    unlinkedAt: timestamp("unlinked_at", { withTimezone: true }),
+    unlinkedBy: text("unlinked_by"),
+  },
+  (table) => [
+    uniqueIndex("semanas_task_links_active_work_item_uidx").on(table.workItemId).where(sql`${table.unlinkedAt} IS NULL`),
+    index("semanas_task_links_task_idx").on(table.spreadsheetId, table.tab, table.taskKey),
+  ]
+);
+
+export const semanasTaskLinkEvents = pgTable(
+  "semanas_task_link_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    spreadsheetId: text("spreadsheet_id").notNull(),
+    tab: text("tab").notNull(),
+    taskKey: text("task_key").notNull(),
+    workItemId: uuid("work_item_id").notNull(),
+    action: text("action").notNull(),
+    summary: text("summary").notNull().default(""),
+    workItemSummary: text("work_item_summary").notNull().default(""),
+    reason: text("reason"),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    actorName: text("actor_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("semanas_task_link_events_task_idx").on(table.spreadsheetId, table.tab, table.taskKey, table.createdAt),
+    index("semanas_task_link_events_work_item_idx").on(table.workItemId, table.createdAt),
+  ]
+);
+
+/**
  * Fuentes configurables de Asignación de Lotes (0032) — Google Sheets como
  * fuente externa. Nunca hardcodeado a un spreadsheetId: conectar una
  * planilla nueva (ej. 2027) es una fila acá, no un deploy.

@@ -75,7 +75,7 @@ la prioridad (compartida) vive sobre las tareas de Semanas y se ve en todas las 
   se muestra ninguna línea. Si se agregan bandas «LÍNEA n» / «PREMIUM A», se muestran como LÍNEA automáticamente.
 - **Cantidad:** se muestra solo cuando la planilla la tiene en su propio renglón; cuando viene dentro del texto del producto
   («CREMA CHICLE 95kg») no se separa (sería interpretar).
-- **«Mi trabajo» (`work_items`) no muestra la prioridad de Semanas**: no hay identidad común inequívoca entre ambos registros.
+- ~~«Mi trabajo» no muestra la prioridad de Semanas~~ → resuelto con un vínculo explícito confirmado por Producción (ver `docss/44`).
 - Codificado y Depósito no tienen bandas propias en SEMANAS 2026: ven Envasado (Masivo + Premium), como en el plan compartido.
 - Los componentes `semanas-cards-view.tsx` y `semanas-calendar-grid.tsx` quedan sin ruta (sus tests cubren el motor compartido).
-- La prueba de prioridades contra Neon (`test:e2e:semanas-priorities-db`) requiere una base descartable; no se ejecutó en este entorno.
+- La prueba de prioridades contra Postgres real (`test:e2e:semanas-priorities-db`) se ejecutó con una base descartable: 4/4 (ver `docss/44`).

@@ -1,5 +1,8 @@
 "use client";
 
+import { WorkItemPriorityBadge } from "./work-item-priority-badge";
+import { useWorkItemPrioritiesMap } from "../hooks/use-work-item-priorities";
+import { PRIORITY_META } from "@/lib/semanas-sheet/priorities";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
 import { VIEW_ARCHIVE_TOOLTIP } from "@/lib/work-view-archive";
@@ -70,6 +73,9 @@ function WorkItemProgressTableInner({
   cells: cellsIn,
 }: WorkItemProgressTableProps & { cells?: CellEditing }) {
   const cells = cellsIn ?? NO_CELL_EDITING;
+  // Prioridad de Semanas (solo trabajos vinculados por Producción). Solo lectura: la cambia Producción en Semanas.
+  const semanasPriorities = useWorkItemPrioritiesMap();
+  const showPriority = items.some((i) => semanasPriorities[i.id]);
   if (items.length === 0) {
     return (
       <p className="rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-border)] px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
@@ -80,6 +86,14 @@ function WorkItemProgressTableInner({
 
   // Planilla tipo Excel (seleccionar/copiar rangos); la lista clásica queda como «Ver como lista».
   const excelColumns = [
+    ...(showPriority
+      ? [
+          excelCol<WorkItem>("semanasPriority", "Prioridad", (i) => {
+            const p = semanasPriorities[i.id]?.priority;
+            return p ? `${PRIORITY_META[p].icon} ${PRIORITY_META[p].label}` : "";
+          }),
+        ]
+      : []),
     ...(variant === "envasado" ? [excelCol<WorkItem>("linea", "Línea", (i) => displayField(i.line))] : []),
     excelCol<WorkItem>("plannedDate", "Fecha", (i) => (i.plannedDate ? formatDateDisplay(i.plannedDate) : displayField(i.dayLabel)), { edit: cells.edit("plannedDate") }),
     excelCol<WorkItem>("deliveryDate", "Fecha de entrega", (i) => (i.deliveryDate ? formatDateDisplay(i.deliveryDate) : ""), { edit: cells.edit("deliveryDate") }),
@@ -200,7 +214,8 @@ function WorkItemProgressTableInner({
                   <span className="os-break">{displayField(item.client)}</span>
                 </td>
                 <td className={`${tdClass} font-medium`}>
-                  <span className="os-break">{displayField(item.product)}</span>
+                  <WorkItemPriorityBadge itemId={item.id} className="mb-1" />
+                  <span className="os-break block">{displayField(item.product)}</span>
                   <div className="mt-1" onClick={(e) => e.stopPropagation()}>
                     <WorkItemWarningBadge item={item} onSelectField={() => onSelectItem(item)} />
                   </div>
