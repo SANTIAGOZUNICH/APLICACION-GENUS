@@ -33,6 +33,10 @@ export type StockAjuste = {
   createdAt: string;
 };
 
+export type MpLedgerOp =
+  | { kind: "reclasificacion"; refId: string; lotId: string; from: string; to: string; mode: "all" | "quantity"; quantity: number; reason: string; lote: string; descripcion: string }
+  | { kind: "saldo_codigo"; refId: string; lotId: string; codigo: string; target: number; expected: number | null; reason: string };
+
 export class MemoryInventoryRepo {
   meIngresos: MeIngresoRow[] = [];
   meSalidas: MeSalidaRow[] = [];
@@ -45,8 +49,14 @@ export class MemoryInventoryRepo {
   mpCompras: MpCompraRow[] = [];
   ajustes: StockAjuste[] = [];
   audit: InventoryAudit[] = [];
+  /**
+   * Operaciones de libro mayor que nacen de una edición de Stock MP y se aplican en la MISMA transacción que el
+   * lote (ver `runMpInventoryOp`): corrección de código (reclasificación) y edición de «Stock código».
+   */
+  mpLedgerOps: MpLedgerOp[] = [];
 
   reset() {
+    this.mpLedgerOps = [];
     this.meIngresos = [];
     this.meSalidas = [];
     this.meMaterials = [];

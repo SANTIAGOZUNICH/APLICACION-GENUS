@@ -121,8 +121,23 @@ export async function runMpInventoryOp<T>(
       service.onNotify((p) => void notifications.push(p));
       const out = await op({ service, repo, tx });
 
-      // Cada ajuste de kg de un lote → mismo delta en el libro mayor (misma transacción).
       const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
+      // Operaciones de libro mayor de la planilla Stock MP (misma transacción): corrección de código (traspaso de
+      // saldo + alias) y edición de «Stock código» (ajuste por la diferencia; conflicto si el saldo cambió).
+      for (const op of repo.mpLedgerOps) {
+        if (op.kind === "reclasificacion") {
+          await getMpStockLedger().reclassifyCodigo(
+            { email: actor.email, sector: actor.sector },
+            { from: op.from, to: op.to, mode: op.mode, quantity: op.quantity, reason: op.reason, refId: op.refId, lote: op.lote, descripcion: op.descripcion }
+          );
+        } else {
+          await getMpStockLedger().adjustCodigoBalance(
+            { email: actor.email, sector: actor.sector },
+            { codigo: op.codigo, target: op.target, expected: op.expected, reason: op.reason, refId: op.refId }
+          );
+        }
+      }
+      // Cada ajuste de kg de un lote → mismo delta en el libro mayor (misma transacción).
       for (const aj of repo.ajustes) {
         if (aj.module !== "MP" || !aj.diferencia) continue;
         const lot = repo.mpStock.find((l) => l.id === aj.entityId);
@@ -273,6 +288,18 @@ export async function patchMpStockCells(actor: InventoryActor, changes: Inventor
   if (!Array.isArray(changes) || changes.length === 0 || changes.length > MAX_INVENTORY_CELL_CHANGES) {
     throw new InventoryValidationError(`Entre 1 y ${MAX_INVENTORY_CELL_CHANGES} celdas por operación.`);
   }
+  const { MpLedgerConflictError } = await import("@/lib/mp-stock/mp-stock-ledger");
+  try {
+    return await patchMpStockCellsTx(actor, changes);
+  } catch (err) {
+    if (err instanceof MpLedgerConflictError) {
+      throw new MpSheetPatchError(changes.map(() => ({ ok: false as const, code: "CONFLICT" as const, message: err.message })));
+    }
+    throw err;
+  }
+}
+
+async function patchMpStockCellsTx(actor: InventoryActor, changes: InventoryCellChange[]): Promise<{ items: MpStockRow[] }> {
   return runMpInventoryOp(actor, ({ service, repo }) => {
     const results = service.patchInventoryCells(actor, "mp_stock", changes);
     if (!results.every((r) => r.ok)) {
