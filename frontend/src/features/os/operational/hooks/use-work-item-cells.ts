@@ -55,7 +55,7 @@ export function useWorkItemCellEditing(items: WorkItem[], onChanged?: () => void
     async (changes: GenusGridCellChange[]): Promise<GenusGridCommitResult> => {
       const payload = changes.flatMap((c) =>
         isWorkItemCellField(c.columnKey)
-          ? [{ id: c.rowId, field: c.columnKey, value: c.newValue, expectedVersion: Number(c.rowVersion), reason: c.reason }]
+          ? [{ id: c.rowId, field: c.columnKey, value: c.newValue, expectedVersion: Number(c.rowVersion), reason: c.reason, ...(c.columnKey === "finishedQty" ? { expectedValue: c.oldValue ?? null } : {}) }]
           : []
       );
       const res = await patchWorkItemCellsApi(session, payload);

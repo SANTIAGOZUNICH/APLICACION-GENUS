@@ -3,19 +3,20 @@
  */
 import "server-only";
 
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { parseFlexibleDate } from "@/features/os/operational/lib/delivery-date";
 import {
   canAccessAsignacionLotes,
   canMutateAsignacionLotes,
 } from "@/features/os/operational/lib/asignacion-lotes-rbac";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { asignacionLotes, asignacionLotesCellAudit } from "@/lib/db/schema";
+import { asignacionLotes, asignacionLotesCellAudit, workItems } from "@/lib/db/schema";
 import { fillBareWorkItemsFromAsignacionLote } from "./sync-to-bare-workitems";
 import { hasWritebackSince } from "./writeback-ops";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from "@/lib/orders/types";
 import {
+  ASIGNACION_CELL_FIELDS,
   ASIGNACION_CELL_KIND,
   IDENTITY_FIELDS,
   MAX_CELL_CHANGES_PER_REQUEST,
@@ -282,6 +283,11 @@ export class AsignacionCellPatchError extends Error {
   }
 }
 
+export type AsignacionLoteHistoryEntry =
+  | { kind: "CHANGE"; at: string; actor: string; actorSector: string; field: string; oldValue: string | null; newValue: string | null; batchId: string; origin: "FORM" | "CELL" }
+  | { kind: "CREATED"; at: string; actor: string; origin: "SYNC" | "MANUAL" }
+  | { kind: "ARCHIVED"; at: string; actor: string; reason: string | null };
+
 export interface AsignacionCellAuditEntry {
   batchId: string;
   recordId: string;
@@ -322,6 +328,27 @@ function currentCellValue(record: AsignacionLote, field: AsignacionCellField): s
   return record[field] ?? null;
 }
 
+
+/** Campos de trazabilidad de un lote: no se sobrescriben si el lote ya fue aprobado/entregado en algún trabajo. */
+const LOT_TRACE_FIELDS: ReadonlySet<string> = new Set(["lote", "producto", "codigo", "vto"]);
+
+/**
+ * ¿El lote ya quedó en un registro histórico (Calidad decidió, envasado cerrado o entregado)? Devuelve el motivo
+ * (con el procedimiento de corrección) o null. Solo con base real: en memoria no hay trabajos que consultar.
+ */
+export async function lockedLotUsageReason(lote: string | null | undefined): Promise<string | null> {
+  const value = lote?.trim();
+  if (!value || !isDatabaseConfigured()) return null;
+  const rows = await getDb()
+    .select({ product: workItems.product, quality: workItems.qualityStatus, status: workItems.operationalStatus, closed: workItems.packagingClosedAt })
+    .from(workItems)
+    .where(and(eq(workItems.packagingLote, value), isNull(workItems.deletedAt)))
+    .limit(50);
+  const locked = rows.filter((r) => r.quality === "aprobado" || r.quality === "rechazado" || r.status === "entregado" || r.closed);
+  if (locked.length === 0) return null;
+  const what = locked.some((r) => r.status === "entregado") ? "entregado" : locked.some((r) => r.quality === "aprobado" || r.quality === "rechazado") ? "decidido por Calidad" : "cerrado en Envasado";
+  return `El lote ${value} ya fue ${what} en ${locked.length} trabajo(s) (${locked.map((r) => r.product).slice(0, 3).join(", ")}). No se sobrescribe el registro histórico: para corregirlo, anulá la decisión de Calidad / la entrega del trabajo y corregí el lote desde el trabajo (queda auditado).`;
+}
 
 function assertUpsertRespectsCellPolicy(
   actor: AsignacionLotesActor,
@@ -370,6 +397,33 @@ export class AsignacionLotesService {
     );
   }
 
+  /**
+   * Historial de un lote: cambios campo a campo (edición por celda y por formulario, con valor anterior, nuevo y
+   * quién), más alta y archivo con su motivo. Solo lectura; incluye registros archivados.
+   */
+  async history(actor: AsignacionLotesActor, id: string): Promise<AsignacionLoteHistoryEntry[]> {
+    assertAccess(actor);
+    let record: AsignacionLote | undefined;
+    let deletedReason: string | null = null;
+    let audit: AsignacionCellAuditEntry[];
+    if (isDatabaseConfigured()) {
+      const db = getDb();
+      const [row] = await db.select().from(asignacionLotes).where(eq(asignacionLotes.id, id)).limit(1);
+      record = row ? rowToDomain(row) : undefined;
+      deletedReason = row?.deletedReason ?? null;
+      const rows = await db.select().from(asignacionLotesCellAudit).where(eq(asignacionLotesCellAudit.recordId, id)).orderBy(desc(asignacionLotesCellAudit.createdAt)).limit(500);
+      audit = rows.map((r) => ({ batchId: r.batchId, recordId: r.recordId, lote: r.lote, field: r.field as AsignacionCellField, oldValue: r.oldValue, newValue: r.newValue, actorEmail: r.actorEmail, actorSector: r.actorSector, actorName: r.actorName, createdAt: new Date(r.createdAt).toISOString() }));
+    } else {
+      record = mem().find((item) => item.id === id);
+      audit = getAsignacionCellAuditMemory().filter((r) => r.recordId === id).reverse();
+    }
+    if (!record) throw new OrdersNotFoundError("Lote no encontrado.");
+    const out: AsignacionLoteHistoryEntry[] = audit.map((r) => ({ kind: "CHANGE", at: r.createdAt, actor: r.actorName || r.actorEmail, actorSector: r.actorSector, field: r.field, oldValue: r.oldValue, newValue: r.newValue, batchId: r.batchId, origin: r.batchId.startsWith("form-") ? "FORM" : "CELL" }));
+    if (record.archived) out.unshift({ kind: "ARCHIVED", at: record.updatedAt, actor: record.updatedBy, reason: deletedReason });
+    out.push({ kind: "CREATED", at: record.createdAt, actor: record.createdBy, origin: record.sourceId ? "SYNC" : "MANUAL" });
+    return out;
+  }
+
   async get(actor: AsignacionLotesActor, id: string): Promise<AsignacionLote | null> {
     assertAccess(actor);
     if (useNeon()) {
@@ -409,6 +463,14 @@ export class AsignacionLotesService {
     // de sectores ni editar registros sincronizados desde Google (solo los
     // campos que REALMENTE cambian se validan contra la política).
     if (previous) assertUpsertRespectsCellPolicy(actor, previous, input);
+    if (previous && input.expectedUpdatedAt && !sameVersion(previous.updatedAt, input.expectedUpdatedAt)) {
+      throw new OrdersValidationError("Otro usuario (o una sincronización) modificó este lote mientras lo editabas (conflicto de versión). Recargá antes de guardar.");
+    }
+    if (previous) {
+      const traceChanged = [...LOT_TRACE_FIELDS].some((f) => String(previous[f as keyof AsignacionLote] ?? "").trim() !== String((input as Record<string, unknown>)[f] ?? "").trim() && (input as Record<string, unknown>)[f] !== undefined);
+      const locked = traceChanged ? await lockedLotUsageReason(previous.lote) : null;
+      if (locked) throw new OrdersValidationError(locked);
+    }
 
     const duplicate = useNeon()
       ? await findDuplicateNeon(input.lote, input.codigo, input.producto, { excludeId: input.id })
@@ -419,7 +481,7 @@ export class AsignacionLotesService {
       );
     }
 
-    return this.writeRecord(actor, input, previous);
+    return this.writeRecord(actor, input, previous, { audit: true });
   }
 
   /**
@@ -430,7 +492,8 @@ export class AsignacionLotesService {
   private async writeRecord(
     actor: AsignacionLotesActor,
     input: AsignacionLoteUpsertInput,
-    previous: AsignacionLote | null | undefined
+    previous: AsignacionLote | null | undefined,
+    options: { audit?: boolean } = {}
   ): Promise<AsignacionLote> {
     const now = new Date().toISOString();
     const updatedBy = input.updatedBy.trim() || actor.displayName;
@@ -468,7 +531,43 @@ export class AsignacionLotesService {
     if (useNeon()) {
       const db = getDb();
       const values = domainToInsert(record);
-      if (previous) {
+      if (previous && options.audit) {
+        // Edición manual (formulario): actualización condicionada a la versión leída + auditoría campo a campo,
+        // en la MISMA transacción (mismo registro que la edición por celda).
+        const changed = ASIGNACION_CELL_FIELDS.filter((f) => auditText(currentCellValue(previous, f)) !== auditText(currentCellValue(record, f)));
+        const nowDate = new Date(Math.max(Date.now(), new Date(previous.updatedAt).getTime() + 1));
+        const batchId = `form-${nowDate.getTime()}-${Math.random().toString(36).slice(2, 8)}`;
+        record.updatedAt = nowDate.toISOString();
+        const v = domainToInsert(record);
+        await db.transaction(async (tx) => {
+          const res = await tx
+            .update(asignacionLotes)
+            .set({
+              lote: v.lote, fecha: v.fecha, producto: v.producto, codigo: v.codigo, marca: v.marca, cantidades: v.cantidades, vto: v.vto,
+              muestras: v.muestras, cjMuestra: v.cjMuestra, fechaAnalisis: v.fechaAnalisis, observaciones: v.observaciones,
+              updatedAt: nowDate, updatedBy: v.updatedBy,
+            })
+            .where(sql`${asignacionLotes.id} = ${record.id} and date_trunc('milliseconds', ${asignacionLotes.updatedAt}) = ${new Date(previous.updatedAt)}`)
+            .returning({ id: asignacionLotes.id });
+          if (res.length === 0) throw new OrdersValidationError("Otro usuario (o una sincronización) modificó este lote mientras lo editabas (conflicto de versión). Recargá antes de guardar.");
+          if (changed.length > 0) {
+            await tx.insert(asignacionLotesCellAudit).values(
+              changed.map((field) => ({
+                batchId,
+                recordId: record.id,
+                lote: previous.lote,
+                field,
+                oldValue: auditText(currentCellValue(previous, field)),
+                newValue: auditText(currentCellValue(record, field)),
+                actorEmail: actor.email,
+                actorSector: actor.sector,
+                actorName: actor.displayName,
+                createdAt: nowDate,
+              }))
+            );
+          }
+        });
+      } else if (previous) {
         await db
           .update(asignacionLotes)
           .set({
@@ -797,6 +896,19 @@ export class AsignacionLotesService {
             });
           }
         }
+      }
+    }
+
+    // Lotes ya aprobados / entregados / cerrados: su trazabilidad no se sobrescribe (procedimiento de corrección).
+    if (isDatabaseConfigured()) {
+      for (const [id, entry] of pending) {
+        const traceFields = Object.keys(entry.patch).filter((f) => LOT_TRACE_FIELDS.has(f));
+        if (traceFields.length === 0) continue;
+        const locked = await lockedLotUsageReason(entry.record.lote);
+        if (!locked) continue;
+        changes.forEach((change, index) => {
+          if (change.id === id && LOT_TRACE_FIELDS.has(change.field)) fail(index, change, "FORBIDDEN_FIELD", locked);
+        });
       }
     }
 

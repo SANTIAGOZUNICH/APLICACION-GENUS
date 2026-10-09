@@ -25,6 +25,8 @@ import { StatusChip } from "./operational-ui";
 import { PackagingQuantitiesBlock } from "./packaging-quantities-block";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { WorkItemEditDeleteActions } from "./work-item-edit-delete-actions";
+import { WorkItemPlanEditor } from "./work-item-plan-editor";
+import { isNativeWorkItemId } from "@/lib/planning/work-item-cell-edit";
 import { SendToCodificadoDialog } from "./send-to-codificado-dialog";
 import { FinishToQualityDialog } from "./finish-to-quality-dialog";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
@@ -45,6 +47,8 @@ interface WorkItemDrawerProps {
   responsibleLabel: string;
   getFinishedQty: (itemId: string) => string;
   getObservation: (itemId: string) => string;
+  /** Producción: tras editar la planificación desde el detalle, recargar la lista. */
+  onPlanningChanged?: () => void | Promise<void>;
   onSaveProgress: (itemId: string, payload: { finishedQty: string; observation: string }) => void;
   onMarkFinished: (
     item: WorkItem,
@@ -79,6 +83,7 @@ export function WorkItemDrawer({
   responsibleLabel,
   getFinishedQty,
   getObservation,
+  onPlanningChanged,
   onSaveProgress,
   onMarkFinished,
   onSendToCodificado,
@@ -125,6 +130,8 @@ export function WorkItemDrawer({
   const transferred = isWorkTransferredStatus(item.status);
   const inCodificado = isInCodificadoStatus(item.status);
   const showCodificado = !isElaboracion && Boolean(onSendToCodificado);
+  // Producción ve el editor de planificación (dato fresco del servidor): no se repite un resumen estático que podría quedar viejo.
+  const planEditable = sectorId === "PRODUCCION" && isNativeWorkItemId(item.id);
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -150,6 +157,8 @@ export function WorkItemDrawer({
         </DrawerHeader>
 
         <DrawerBody className="space-y-6">
+          <WorkItemPlanEditor item={item} variant={variant} onChanged={onPlanningChanged} />
+          {!planEditable && (
           <dl className="grid grid-cols-2 gap-4 text-sm">
             <div>
               <dt className="text-xs uppercase text-[var(--os-text-muted)]">{orderLabel}</dt>
@@ -174,6 +183,7 @@ export function WorkItemDrawer({
               </dd>
             </div>
           </dl>
+          )}
 
           <div>
             <p className="mb-1.5 text-xs uppercase text-[var(--os-text-muted)]">

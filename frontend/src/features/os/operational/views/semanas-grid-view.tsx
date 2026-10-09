@@ -377,7 +377,10 @@ export function SemanasGridView() {
         )}
         {view && !view.canEdit && !isPreviewSource && (
           <p className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm text-[var(--os-text-muted)]" data-testid="semanas-readonly">
-            Solo lectura: la escritura a esta planilla no está habilitada desde GENUS (solo copias de prueba autorizadas).
+            <b className="text-[var(--os-text)]">La planilla se ve en vivo pero no se escribe desde GENUS.</b>{" "}
+            {view.writeBlockReason ?? "La escritura solo se habilita para copias de prueba autorizadas."}{" "}
+            Lo que sí se edita acá y queda guardado en GENUS: la <b>prioridad</b> de cada tarea, los <b>vínculos</b> con trabajos y{" "}
+            <b>«Crear trabajo desde esta tarea»</b>. Los datos de cada trabajo (producto, cantidades, fechas, responsable, lote) se editan en el «Mi trabajo» de cada sector.
           </p>
         )}
         {view && view.locksKnown === false && (view.tabKey === "ENTREGAS" || view.tabKey === "CDIA") && (

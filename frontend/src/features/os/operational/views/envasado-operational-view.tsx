@@ -636,6 +636,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
                         onCreateSlot={(day, zone) =>
                           setAssignSlot({ line: LINE_TAB_LABELS[zone as LineBucket], plannedDate: day })
                         }
+                        onEditItem={actorSectorId === "PRODUCCION" ? (item) => { setSelectedItem(item); setDrawerOpen(true); } : undefined}
                       />
                     </section>
                   );
@@ -709,6 +710,10 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         responsibleLabel="Línea"
         getFinishedQty={getFinishedQty}
         getObservation={getObservation}
+        onPlanningChanged={async () => {
+          await refresh();
+          await refreshPendientes();
+        }}
         onSaveProgress={handleSave}
         onMarkFinished={handleFinish}
         onSendToCodificado={handleSendToCodificado}
@@ -924,6 +929,7 @@ export function ElaboracionOperationalView() {
             dropZoneId="elaboracion"
             canCreate={canAssignWork}
             onCreateSlot={(day) => setAssignSlot({ plannedDate: day })}
+            onEditItem={actorSectorId === "PRODUCCION" ? (item) => { setSelectedItem(item); setDrawerOpen(true); } : undefined}
           />
         </DndContext>
       )}
@@ -966,6 +972,9 @@ export function ElaboracionOperationalView() {
         responsibleLabel="Responsable"
         getFinishedQty={getFinishedQty}
         getObservation={getObservation}
+        onPlanningChanged={async () => {
+          await refresh();
+        }}
         onSaveProgress={handleSave}
         onMarkFinished={handleFinish}
       />

@@ -24,6 +24,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
 import { AssignWorkDialog } from "../components/assign-work-dialog";
 import { WorkItemWarningBadge } from "../components/work-item-warning-badge";
+import { WorkItemPlanEditor } from "../components/work-item-plan-editor";
 import { WorkItemEditDeleteActions } from "../components/work-item-edit-delete-actions";
 
 type TabId = "pendientes" | "entregados";
@@ -427,8 +428,8 @@ export function CodificadoOperationalView() {
               action: true,
               text: () => "",
               render: (i: (typeof list)[number]) => (
-                <Button size="sm" variant="secondary" onClick={() => openItem(i)}>
-                  Abrir
+                <Button size="sm" variant="secondary" onClick={() => openItem(i)} data-testid="codificado-open">
+                  {actorSectorId === "PRODUCCION" ? "Abrir / Editar" : "Abrir"}
                 </Button>
               ),
             },
@@ -476,7 +477,7 @@ export function CodificadoOperationalView() {
                     </td>
                     <td className="py-2">
                       <Button size="sm" variant="secondary" onClick={() => openItem(item)}>
-                        Abrir
+                        {actorSectorId === "PRODUCCION" ? "Abrir / Editar" : "Abrir"}
                       </Button>
                     </td>
                   </tr>
@@ -504,6 +505,7 @@ export function CodificadoOperationalView() {
                 <DialogTitle>{displayField(selected.product)}</DialogTitle>
               </DialogHeader>
               <WorkItemWarningBadge item={selected} />
+              <WorkItemPlanEditor item={selected} variant="envasado" onChanged={refresh} />
               <WorkItemEditDeleteActions
                 item={selected}
                 actorSectorId={actorSectorId}

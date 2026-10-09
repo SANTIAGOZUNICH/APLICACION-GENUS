@@ -108,6 +108,15 @@ export function isSemanasWritable(sheetId: string): boolean {
   return process.env.SEMANAS_WRITEBACK === "1" && allow.includes(sheetId);
 }
 
+/** Por qué la planilla no se escribe desde GENUS (texto para Producción; null = se puede escribir). Misma regla que isSemanasWritable. */
+export function semanasWriteBlockReason(sheetId: string): string | null {
+  if (isSemanasWritable(sheetId)) return null;
+  if (isProductionDeployment()) return "En Production GENUS nunca escribe en la planilla original SEMANAS 2026 (bloqueo de seguridad intencional).";
+  if (sheetId === PREVIEW_SPREADSHEET_ID) return "Esta es la copia de prueba incluida en Preview: no hay dónde guardar.";
+  if (isProtectedOriginalSpreadsheet(sheetId)) return "La planilla está marcada como original protegida.";
+  return "La escritura solo se habilita para copias de prueba autorizadas.";
+}
+
 /** SEMANAS_TODAY_OVERRIDE existe solo para probar con la copia local del libro (nunca en producción). */
 const todayIso = () =>
   (process.env.NODE_ENV !== "production" && process.env.SEMANAS_TODAY_OVERRIDE?.trim()) || new Date().toISOString().slice(0, 10);
@@ -123,6 +132,8 @@ export interface SemanasViewPayload {
   source: "GOOGLE" | "PREVIEW_XLSX" | "LOCAL_FIXTURE";
   /** La Sheet permite escribir desde GENUS (flag + allowlist). El permiso por usuario se evalúa aparte. */
   writable: boolean;
+  /** Por qué no se escribe en la planilla (null si se puede). */
+  writeBlockReason?: string | null;
   weeks?: CalendarWeek[];
   /** Prioridades operativas guardadas en GENUS (nunca en la Sheet), por clave de tarea. Solo calendarios. */
   priorities?: PrioritiesPayload;
@@ -167,7 +178,7 @@ export async function loadSemanasView(tabKey: SemanasTabKey, today = todayIso())
   const base = {
     spreadsheetId: id, tabKey, tab: def.tab, label: def.label, kind: def.kind,
     source: (id === PREVIEW_SPREADSHEET_ID ? "PREVIEW_XLSX" : id === "fixture-semanas-2026" ? "LOCAL_FIXTURE" : "GOOGLE") as SemanasViewPayload["source"],
-    writable: isSemanasWritable(id), readAt: new Date().toISOString(), today,
+    writable: isSemanasWritable(id), writeBlockReason: semanasWriteBlockReason(id), readAt: new Date().toISOString(), today,
     locksKnown: locks.known, reasonRequiredBefore: today,
   };
   if (def.kind === "CALENDAR") {

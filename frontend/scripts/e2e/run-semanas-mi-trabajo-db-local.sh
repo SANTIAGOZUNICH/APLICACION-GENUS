@@ -103,4 +103,4 @@ setsid env -i PATH="$PATH" HOME="${HOME:-/root}" NODE_EXTRA_CA_CERTS="$NODE_EXTR
   npx next dev -H 127.0.0.1 -p "$PORT" > "$STATE_DIR/next-mi-trabajo.log" 2>&1 &
 PIDS+=($!)
 for _ in $(seq 1 200); do curl -sf -o /dev/null "http://127.0.0.1:$PORT/login" && break; sleep 0.5; done
-GENUS_E2E_BASE_URL="http://localhost:$PORT" node scripts/e2e/semanas-mi-trabajo-validate.mjs
+GENUS_E2E_BASE_URL="http://localhost:$PORT" node "${GENUS_E2E_VALIDATE_SCRIPT:-scripts/e2e/semanas-mi-trabajo-validate.mjs}"

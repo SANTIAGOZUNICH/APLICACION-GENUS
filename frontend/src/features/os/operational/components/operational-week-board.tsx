@@ -3,6 +3,7 @@
 import { priorityEdge, WorkItemPriorityBadge } from "./work-item-priority-badge";
 import { useWorkItemSemanasPriority } from "../hooks/use-work-item-priorities";
 import { useState, type CSSProperties, type ReactNode } from "react";
+import { Pencil } from "lucide-react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import type { WorkItem } from "@/types/operational/work-item";
@@ -71,6 +72,29 @@ interface OperationalWeekBoardProps {
   canCreate?: boolean;
   /** Se dispara al clickear "+" en una celda — recibe el día ISO y el `dropZoneId` de esa grilla. */
   onCreateSlot?: (day: string, zone: string) => void;
+  /** Producción: botón «Editar» en cada tarjeta → abre el detalle con la planificación editable. */
+  onEditItem?: (item: WorkItem) => void;
+}
+
+/** Botón discreto de edición; no inicia el arrastre ni selecciona el día. */
+function CardEditButton({ item, onEditItem }: { item: WorkItem; onEditItem?: (item: WorkItem) => void }) {
+  if (!onEditItem) return null;
+  return (
+    <button
+      type="button"
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onEditItem(item);
+      }}
+      className="inline-flex items-center gap-1 rounded border border-[var(--os-teal)]/50 px-1.5 py-0.5 text-[0.65rem] font-semibold text-[var(--os-teal)] hover:bg-[var(--os-teal)]/10"
+      aria-label={`Editar ${item.product ?? "trabajo"}`}
+      data-testid="week-board-edit"
+    >
+      <Pencil className="size-3" aria-hidden="true" /> Editar
+    </button>
+  );
 }
 
 /** Envuelve una tarjeta con drag & drop — no-op visual si `disabled`. */
@@ -190,7 +214,7 @@ function ConsultaCard({ item }: { item: WeeklyPlanItemDto }) {
 }
 
 /** Trabajo compacto del tablero semanal: responsable/línea + prioridad de Semanas, producto y cantidad destacados. */
-function CompactWorkItem({ item }: { item: WorkItem }) {
+function CompactWorkItem({ item, onEditItem }: { item: WorkItem; onEditItem?: (item: WorkItem) => void }) {
   const semanas = useWorkItemSemanasPriority(item.id);
   return (
     <li className="pl-2 text-xs leading-snug text-[var(--os-text)]" style={priorityEdge(semanas?.priority, 3)} data-semanas-priority={semanas?.priority}>
@@ -200,6 +224,7 @@ function CompactWorkItem({ item }: { item: WorkItem }) {
       </div>
       <div className="font-semibold">{displayField(item.product ?? item.client)}</div>
       <div className="font-semibold tabular-nums">{displayField(item.quantity)} {item.unit ?? ""}</div>
+      {onEditItem && <div className="mt-1"><CardEditButton item={item} onEditItem={onEditItem} /></div>}
     </li>
   );
 }
@@ -209,7 +234,7 @@ function CompactWorkItem({ item }: { item: WorkItem }) {
  * Cantidad, luego datos secundarios compactos (Lote/VTO/OA, sin repetir la
  * fecha de producción: ya la da la columna del día). Estado como chip.
  */
-function WorkItemRichCard({ item }: { item: WorkItem }) {
+function WorkItemRichCard({ item, onEditItem }: { item: WorkItem; onEditItem?: (item: WorkItem) => void }) {
   const semanas = useWorkItemSemanasPriority(item.id);
   const secondary = [
     item.packagingLote ? `Lote ${item.packagingLote}` : null,
@@ -237,6 +262,7 @@ function WorkItemRichCard({ item }: { item: WorkItem }) {
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <StatusChip status={item.status} />
         {item.deliveryDate ? <DeliveryDateBadge deliveryDate={item.deliveryDate} /> : null}
+        <CardEditButton item={item} onEditItem={onEditItem} />
       </div>
       <div className="mt-1.5">
         <WorkItemWarningBadge item={item} />
@@ -258,6 +284,7 @@ interface WeekBoardDayCellProps {
   canCreate: boolean;
   onSelectDay: (iso: string) => void;
   onCreateSlot?: (day: string, zone: string) => void;
+  onEditItem?: (item: WorkItem) => void;
 }
 
 function WeekBoardDayCell({
@@ -273,6 +300,7 @@ function WeekBoardDayCell({
   canCreate,
   onSelectDay,
   onCreateSlot,
+  onEditItem,
 }: WeekBoardDayCellProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: weekBoardDropId(dropZoneId, day),
@@ -327,10 +355,10 @@ function WeekBoardDayCell({
                 id={item.id}
                 disabled={!isWorkItemReschedulable(item.status)}
               >
-                <WorkItemRichCard item={item} />
+                <WorkItemRichCard item={item} onEditItem={onEditItem} />
               </DraggableCard>
             ) : (
-              <WorkItemRichCard key={item.id} item={item} />
+              <WorkItemRichCard key={item.id} item={item} onEditItem={onEditItem} />
             )
           )}
           {dayItems.length > 5 && (
@@ -342,7 +370,7 @@ function WeekBoardDayCell({
       ) : (
         <ul className="space-y-2">
           {dayItems.slice(0, 6).map((item) => {
-            const compact = <CompactWorkItem key={item.id} item={item} />;
+            const compact = <CompactWorkItem key={item.id} item={item} onEditItem={onEditItem} />;
             return draggable ? (
               <DraggableCard
                 key={item.id}
@@ -420,6 +448,7 @@ export function OperationalWeekBoard({
   dropZoneId = "default",
   canCreate = false,
   onCreateSlot,
+  onEditItem,
 }: OperationalWeekBoardProps) {
   const weekStart = weekDays[0] ?? weekStartMonday(today);
   const end = weekDays[weekDays.length - 1];
@@ -480,6 +509,7 @@ export function OperationalWeekBoard({
             canCreate={canCreate}
             onSelectDay={onSelectDay}
             onCreateSlot={onCreateSlot}
+            onEditItem={onEditItem}
           />
         ))}
       </div>

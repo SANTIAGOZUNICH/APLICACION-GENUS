@@ -265,7 +265,9 @@ try {
   const editField = async (card, testId, value, reason = "Ajuste de planificación E2E") => {
     await card.locator(`[data-testid=${testId}]`).click();
     const input = mp.locator("[data-testid=card-field-input]");
-    await input.fill(value);
+    // responsable / línea se elige de una lista; el resto se escribe
+    if ((await input.evaluate((el) => el.tagName)) === "SELECT") await input.selectOption({ label: value });
+    else await input.fill(value);
     await input.press("Enter");
     const r = mp.locator("[data-testid=card-field-reason]");
     if (await r.waitFor({ state: "visible", timeout: 6000 }).then(() => true).catch(() => false)) {
@@ -281,7 +283,7 @@ try {
   check("Producción edita la cantidad desde la tarjeta → persiste en la base con nueva versión", wiK?.planned_quantity === "1200" && Number(wiK?.version) > 1, JSON.stringify(wiK));
   check("diferencia con Semanas visible (no se sincroniza sola): «Cantidad en Semanas: …1100KG»", /Cantidad en Semanas/.test(await k.locator("[data-testid=card-semanas-diff]").innerText().catch(() => "")) );
   // responsable: JALEA Cristian → Nicolás (versión + auditoría)
-  await editField(pcard("JALEA TERMAL"), "card-assignee", "nicolas");
+  await editField(pcard("JALEA TERMAL"), "card-assignee", "Nicolás");
   await mp.waitForFunction(() => [...document.querySelectorAll("[data-testid=work-item-card]")].some((c) => c.textContent.includes("JALEA TERMAL") && c.textContent.includes("Nicolás")), null, { timeout: 20_000 }).catch(() => {});
   const [wiJ] = await q("select branch_owner from work_items where id = $1", [String(ids.jalea).replace(/^native:/, "")]);
   const evJ = await q("select type, from_status, to_status, actor_sector from operational_events where work_item_id = $1 and type = 'PLANNING_FIELDS_CORRECTED' order by created_at desc limit 1", [String(ids.jalea).replace(/^native:/, "")]);
