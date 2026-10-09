@@ -94,4 +94,29 @@ describe("inventario — edición por celda", () => {
     const [kg] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "cantidadKg", value: "1", expectedVersion: after.updatedAt, reason: "Conteo físico de prueba" }]);
     expect(kg).toMatchObject({ ok: false, code: "PROTECTED" });
   });
+
+  it("Stock = dato vigente que usan vencimientos (días/estado); el ingreso original conserva lo recibido; código/kg intactos", async () => {
+    await svc.upsertMpIngreso(mp, { codigo: "MP-88", producto: "CREMA Y", descripcion: "Urea", proveedor: "P1", lote: "L1", vencimiento: "2020-01-31", bultos: 1, cantidad: 4, confirm: true } as never);
+    const lot = svc.listMpStock(mp).find((r) => r.codigo === "MP-88")!;
+    const ing = repo.listMpIngresos().find((i) => i.codigo === "MP-88")!;
+    expect(lot.estadoVencimiento).not.toBe(""); // vencido según el dato recibido
+    const venceAntes = lot.diasAlVence;
+    const res = svc.patchInventoryCells(mp, "mp_stock", [
+      { id: lot.id, field: "vencimiento", value: "31/12/2099", expectedVersion: lot.updatedAt },
+      { id: lot.id, field: "lote", value: "L1-CORREGIDO", expectedVersion: lot.updatedAt },
+      { id: lot.id, field: "proveedor", value: "P2", expectedVersion: lot.updatedAt },
+    ]);
+    expect(res.every((x) => x.ok)).toBe(true);
+    const after = svc.listMpStock(mp).find((r) => r.id === lot.id)!;
+    expect(after.vencimiento).toBe("2099-12-31");
+    expect(after.diasAlVence).toBeGreaterThan(venceAntes ?? 0); // vencimientos usan el dato vigente de Stock
+    expect(after.lote).toBe("L1-CORREGIDO");
+    expect(after).toMatchObject({ codigo: "MP-88", cantidadKg: lot.cantidadKg });
+    // Trazabilidad: el ingreso original queda como se recibió.
+    expect(repo.getMpIngreso(ing.id)).toMatchObject({ lote: "L1", vencimiento: "2020-01-31", proveedor: "P1", producto: "CREMA Y", status: "CONFIRMADO" });
+    // La auditoría guarda antes/después de cada cambio en Stock.
+    const audits = repo.audit.filter((a) => a.action === "cell_edit" && a.entityId === lot.id);
+    expect(audits.map((a) => a.before)).toEqual(expect.arrayContaining([{ vencimiento: "2020-01-31" }, { lote: "L1" }, { proveedor: "P1" }]));
+  });
 });
+

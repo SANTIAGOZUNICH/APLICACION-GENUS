@@ -170,6 +170,45 @@ describe.skipIf(Boolean(PROBLEM))(`Materias Primas: planillas transaccionales en
     expect((await lotsOf("IT-MP-USEC"))[0]).toMatchObject({ producto: "CREMA IT", proveedor: "P IT 2" });
   });
 
+  it("precisión al ms NO permite pisar cambios concurrentes: fila con microsegundos, dos ediciones simultáneas → una gana, la otra 409", async () => {
+    const { patchMpStockCells } = await db();
+    const id = randomUUID();
+    const T = "2026-09-02T10:00:00.000Z";
+    const lot = { id, codigo: "IT-MP-CONC", descripcion: "Lote IT concurrente", proveedor: "P0", cliente: "", cantidadKg: 5, ubicacion: "A", lote: "L", vencimiento: "", origen: "ingreso", productosAsociados: "", archived: false, createdBy: "import", updatedBy: "import", createdAt: T, updatedAt: T };
+    await q("insert into inv_mp_stock (id, payload, updated_at) values ($1, $2, now() + interval '321 microseconds')", [id, lot]);
+    const results = await Promise.allSettled([
+      patchMpStockCells(mp, [{ id, field: "proveedor", value: "P-A", expectedVersion: T }]),
+      patchMpStockCells(mp, [{ id, field: "proveedor", value: "P-B", expectedVersion: T }]),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const winner = (results.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<{ items: Array<{ proveedor: string }> }>).value.items[0]!.proveedor;
+    const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect((rejected.reason as { status: number }).status).toBe(409);
+    expect((await lotsOf("IT-MP-CONC"))[0]!.proveedor).toBe(winner);
+    // Una versión vieja (la del primer guardado) tampoco pisa: conflicto.
+    await expect(patchMpStockCells(mp, [{ id, field: "proveedor", value: "P-C", expectedVersion: T }])).rejects.toMatchObject({ status: 409 });
+    expect((await lotsOf("IT-MP-CONC"))[0]!.proveedor).toBe(winner);
+  });
+
+  it("guardado del snapshot de otro request entre la lectura y la escritura → conflicto (no se pisa)", async () => {
+    const { runMpInventoryOp } = await db();
+    const id = randomUUID();
+    const T = "2026-09-03T10:00:00.000Z";
+    const lot = { id, codigo: "IT-MP-RACE", descripcion: "Lote IT carrera", proveedor: "P0", cliente: "", cantidadKg: 5, ubicacion: "A", lote: "L", vencimiento: "", origen: "manual", productosAsociados: "", archived: false, createdBy: "import", updatedBy: "import", createdAt: T, updatedAt: T };
+    await q("insert into inv_mp_stock (id, payload, updated_at) values ($1, $2, now())", [id, lot]);
+    await expect(
+      runMpInventoryOp(mp, async ({ service }) => {
+        // Otro proceso (sin el candado de MP) cambia la fila mientras esta operación ya la leyó.
+        const { Pool } = await import("@neondatabase/serverless");
+        const other = new Pool({ connectionString: process.env.GENUS_E2E_DATABASE_URL });
+        await other.query("update inv_mp_stock set payload = jsonb_set(payload, '{proveedor}', '\"OTRO\"'), updated_at = now() where id = $1", [id]);
+        await other.end();
+        return service.patchInventoryCells(mp, "mp_stock", [{ id, field: "proveedor", value: "MIO", expectedVersion: T }]);
+      })
+    ).rejects.toThrow();
+    expect((await lotsOf("IT-MP-RACE"))[0]!.proveedor).toBe("OTRO");
+  });
+
   it("consumo de OE sin stock suficiente: se registra igual (negativo visible), ya no se pierde en silencio", async () => {
     const l = await ledger();
     await l.applyOeConsumption(
