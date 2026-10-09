@@ -1,5 +1,6 @@
 "use client";
 
+import { readOnlyReason } from "@/features/os/operational/lib/readonly-reasons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
@@ -198,14 +199,14 @@ export function MpWeeklyControlPanel() {
     },
   });
   const lineColumns = [
-    excelCol<MpWeeklyControlLine>("codigo", "Código", (l) => l.codigo),
-    excelCol<MpWeeklyControlLine>("materiaPrima", "Materia prima", (l) => l.materiaPrima),
-    excelCol<MpWeeklyControlLine>("formulaPct", "%", (l) => String(l.formulaPct ?? "")),
+    excelCol<MpWeeklyControlLine>("codigo", "Código", (l) => l.codigo, { readOnlyReason: readOnlyReason("mp_control", "codigo") }),
+    excelCol<MpWeeklyControlLine>("materiaPrima", "Materia prima", (l) => l.materiaPrima, { readOnlyReason: readOnlyReason("mp_control", "materiaPrima") }),
+    excelCol<MpWeeklyControlLine>("formulaPct", "%", (l) => String(l.formulaPct ?? ""), { readOnlyReason: readOnlyReason("mp_control", "formulaPct") }),
     excelCol<MpWeeklyControlLine>("kgEditados", "Kg nec.", (l) => String(l.kgEditados ?? l.kgNecesarios ?? ""), { edit: lineEdit("kgEditados") }),
-    excelCol<MpWeeklyControlLine>("stockActual", "Stock", (l) => String(l.stockActual ?? "")),
-    excelCol<MpWeeklyControlLine>("stockProyectado", "Proyectado", (l) => String(l.stockProyectado ?? "")),
-    excelCol<MpWeeklyControlLine>("diferencia", "Dif.", (l) => String(l.diferencia ?? "")),
-    excelCol<MpWeeklyControlLine>("estado", "Estado", (l) => l.estado),
+    excelCol<MpWeeklyControlLine>("stockActual", "Stock", (l) => String(l.stockActual ?? ""), { readOnlyReason: readOnlyReason("mp_control", "stockActual") }),
+    excelCol<MpWeeklyControlLine>("stockProyectado", "Proyectado", (l) => String(l.stockProyectado ?? ""), { readOnlyReason: readOnlyReason("mp_control", "stockProyectado") }),
+    excelCol<MpWeeklyControlLine>("diferencia", "Dif.", (l) => String(l.diferencia ?? ""), { readOnlyReason: readOnlyReason("mp_control", "diferencia") }),
+    excelCol<MpWeeklyControlLine>("estado", "Estado", (l) => l.estado, { readOnlyReason: readOnlyReason("mp_control", "estado") }),
     excelCol<MpWeeklyControlLine>("lote", "Lote", (l) => l.lote, { edit: lineEdit("lote") }),
     excelCol<MpWeeklyControlLine>("preparado", "Prep.", (l) => (l.preparado ? "Sí" : "No"), { edit: lineEdit("preparado") }),
     excelCol<MpWeeklyControlLine>("observacion", "Observación", (l) => l.observacion, { edit: lineEdit("observacion") }),

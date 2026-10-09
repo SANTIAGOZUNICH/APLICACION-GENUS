@@ -96,6 +96,11 @@ export interface OperationalTableColumn<T> {
     /** Identidad/trazabilidad: la edición siempre pide confirmación. */
     sensitive?: boolean;
   };
+  /**
+   * Por qué esta columna NO se edita en la planilla (p. ej. «TOTAL = bultos × cantidad: se calcula»). Se muestra en
+   * la celda (candado + texto) y al intentar editarla. Sin esto: «Columna de solo lectura.».
+   */
+  readOnlyReason?: string;
 }
 
 type CollapseBelow = "md" | "lg" | "xl" | "2xl";
@@ -151,41 +156,77 @@ interface OperationalTableProps<T> {
   rowClassName?: (row: T) => string | undefined;
 }
 
-const TABLE_MODE_KEY = "genus_os_table_mode";
+/**
+ * Preferencia planilla/lista.
+ *
+ * Bug de Production (Etapas 2 y 3): la preferencia era UNA sola clave para TODAS las tablas. Quien alguna vez tocó
+ * «Ver como lista» en cualquier tabla veía después todas las tablas de inventario como lista (botones y formularios,
+ * sin edición en la celda), aunque la planilla editable existiera. Los E2E usaban un navegador limpio (sin esa
+ * preferencia) y por eso daban verde. Ahora:
+ *  - la preferencia es POR TABLA (`genus_os_table_mode:<tableId>`);
+ *  - una tabla editable abre SIEMPRE como planilla salvo que el usuario elija la lista en ESA tabla; la clave global
+ *    vieja solo se respeta en tablas de solo lectura.
+ */
+const LEGACY_TABLE_MODE_KEY = "genus_os_table_mode";
+const tableModeKey = (tableId: string) => `${LEGACY_TABLE_MODE_KEY}:${tableId}`;
 const ACTION_KEYS = new Set(["acciones", "accion", "acción", "actions", "action"]);
 const isActionColumn = <T,>(c: OperationalTableColumn<T>): boolean =>
   c.action ?? (ACTION_KEYS.has(c.key.toLowerCase()) || c.header.trim() === "");
 
-function readTableMode(): "excel" | "list" {
+export function readTableMode(tableId: string | undefined, editable: boolean): "excel" | "list" {
   try {
-    return window.localStorage.getItem(TABLE_MODE_KEY) === "list" ? "list" : "excel";
+    const own = tableId ? window.localStorage.getItem(tableModeKey(tableId)) : null;
+    if (own === "list" || own === "excel") return own;
+    if (editable) return "excel";
+    return window.localStorage.getItem(LEGACY_TABLE_MODE_KEY) === "list" ? "list" : "excel";
   } catch {
     return "excel";
   }
 }
 
-/** Preferencia lista/planilla compartida por todas las tablas (se recuerda por usuario/navegador). */
-function useTableMode() {
+/** Preferencia lista/planilla de UNA tabla (se recuerda por usuario/navegador). */
+function useTableMode(tableId: string | undefined, editable: boolean) {
   // Planilla por defecto; en tests se mantiene la lista clásica (la grilla virtualizada necesita layout real).
   const [mode, setMode] = useState<"excel" | "list">(process.env.NODE_ENV === "test" ? "list" : "excel");
   useEffect(() => {
     if (process.env.NODE_ENV !== "test") {
       // Preferencia guardada del usuario (solo disponible en el cliente).
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setMode(readTableMode());
+      setMode(readTableMode(tableId, editable));
     }
-  }, []);
+  }, [tableId, editable]);
   const toggle = () =>
     setMode((m) => {
       const next = m === "excel" ? "list" : "excel";
       try {
-        window.localStorage.setItem(TABLE_MODE_KEY, next);
+        window.localStorage.setItem(tableId ? tableModeKey(tableId) : LEGACY_TABLE_MODE_KEY, next);
       } catch {
         // sin persistencia: solo esta sesión
       }
       return next;
     });
   return { mode, toggle };
+}
+
+/** En modo lista de una tabla EDITABLE: aviso visible de que la edición es en las celdas de la planilla. */
+function EditInSheetHint({ onClick }: { onClick: () => void }) {
+  return (
+    <div
+      className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--os-radius-sm)] border border-[var(--os-teal)]/40 bg-[var(--os-teal-soft)]/30 px-3 py-2 text-xs text-[var(--os-text)]"
+      data-testid="os-table-edit-in-sheet-hint"
+    >
+      <span>Esta tabla se edita directamente en las celdas (doble clic) en el modo planilla.</span>
+      <button
+        type="button"
+        onClick={onClick}
+        className="inline-flex items-center gap-1 rounded bg-[var(--os-teal)] px-2 py-1 font-medium text-[var(--os-navy)]"
+        data-testid="os-table-edit-in-sheet"
+      >
+        <Table2 className="size-3.5" aria-hidden="true" />
+        Editar en la planilla
+      </button>
+    </div>
+  );
 }
 
 /** Columna de texto para la planilla (copiable); `action` = botones (columna fija a la derecha). */
@@ -221,10 +262,12 @@ export function ExcelOrList<T>({
   /** true = fuerza la lista (p. ej. modo selección múltiple). */
   disabled?: boolean;
 }) {
-  const { mode, toggle } = useTableMode();
+  const editable = Boolean(canEditCells && onCellsCommit && columns.some((c) => c.edit));
+  const { mode, toggle } = useTableMode(tableId, editable);
   if (disabled || mode !== "excel" || rows.length === 0) {
     return (
       <div className="space-y-1">
+        {!disabled && editable && rows.length > 0 && process.env.NODE_ENV !== "test" ? <EditInSheetHint onClick={toggle} /> : null}
         {!disabled && rows.length > 0 && process.env.NODE_ENV !== "test" ? (
           <div className="flex justify-end">
             <button type="button" onClick={toggle} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-[var(--os-text-muted)] hover:bg-[var(--os-teal-soft)]/50" data-testid="os-table-mode-toggle">
@@ -274,7 +317,7 @@ function ExcelView<T>({
         basis: 150,
         sensitive: c.edit?.sensitive,
         getValue: (row: T) => textOf(c, row),
-        protection: (row: T) => (c.edit ? (c.edit.protection?.(row) ?? null) : "Columna de solo lectura."),
+        protection: (row: T) => (c.edit ? (c.edit.protection?.(row) ?? null) : (c.readOnlyReason ?? "Columna de solo lectura.")),
         validate: c.edit?.validate,
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -325,7 +368,8 @@ export function OperationalTable<T>({
   rowClassName,
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const { mode, toggle: toggleMode } = useTableMode();
+  const editableTable = Boolean(canEditCells && onCellsCommit && allColumns.some((c) => c.edit));
+  const { mode, toggle: toggleMode } = useTableMode(tableId, editableTable);
   // Las columnas `excelOnly` existen solo en la planilla; la lista clásica queda exactamente como antes.
   const columns = useMemo(() => allColumns.filter((c) => !c.excelOnly), [allColumns]);
   const secondaryMeta = columns
@@ -382,6 +426,11 @@ export function OperationalTable<T>({
 
   return (
     <div className="os-table-wrap max-w-full min-w-0 overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)]">
+      {excel && !selectionActive && mode === "list" && editableTable && process.env.NODE_ENV !== "test" ? (
+        <div className="border-b border-[var(--os-border)] p-2">
+          <EditInSheetHint onClick={toggleMode} />
+        </div>
+      ) : null}
       {excel && !selectionActive && mode === "list" && process.env.NODE_ENV !== "test" ? (
         <div className="flex justify-end border-b border-[var(--os-border)] px-2 py-1">
           <button

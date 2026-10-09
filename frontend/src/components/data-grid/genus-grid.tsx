@@ -547,8 +547,44 @@ export function GenusGrid<T>({
     if (toApply.length) void runCommit(toApply, { useLatestVersion: true, recordUndo: true });
   };
 
+  // ---- Tab / Shift+Tab: saltan a la siguiente celda EDITABLE (como en una planilla con celdas bloqueadas) ----
+  const tabDir = useRef<0 | 1 | -1>(0);
+  const onActiveCellChange = useCallback(
+    ({ cell }: { cell: { col: number; row: number } | null }) => {
+      const dir = tabDir.current;
+      tabDir.current = 0;
+      if (!dir || !cell) return;
+      const rowsNow = gridRowsRef.current;
+      const isProtected = (r: number, c: number) => {
+        const key = columnKeys[c];
+        const row = rowsNow[r];
+        return !row || !key || Boolean(row.__prot[key]);
+      };
+      if (!isProtected(cell.row, cell.col)) return;
+      let r = cell.row;
+      let c = cell.col;
+      for (let i = 0; i < rowsNow.length * columnKeys.length; i++) {
+        c += dir;
+        if (c >= columnKeys.length) {
+          c = 0;
+          r += 1;
+        } else if (c < 0) {
+          c = columnKeys.length - 1;
+          r -= 1;
+        }
+        if (r < 0 || r >= rowsNow.length) return;
+        if (!isProtected(r, c)) {
+          gridRef.current?.setActiveCell({ col: c, row: r });
+          return;
+        }
+      }
+    },
+    [columnKeys]
+  );
+
   // ---- Ctrl+Z (fuera de un input) ----
   const onKeyDownCapture = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Tab") tabDir.current = event.shiftKey ? -1 : 1;
     if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "z") {
       if ((event.target as HTMLElement).tagName === "INPUT") return;
       event.preventDefault();
@@ -657,6 +693,7 @@ export function GenusGrid<T>({
               : undefined
           }
           onSelectionChange={({ selection }) => describeSelection(selection)}
+          onActiveCellChange={onActiveCellChange}
         />
       </div>
 
