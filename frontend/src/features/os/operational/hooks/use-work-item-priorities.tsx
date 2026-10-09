@@ -15,10 +15,16 @@ import { fetchWorkItemPriorities } from "@/lib/semanas-sheet/semanas-client";
 import type { WorkItemPriorityDto } from "@/lib/semanas-sheet/task-links";
 
 const REFRESH_MS = 60_000;
-const Ctx = createContext<Record<string, WorkItemPriorityDto>>({});
+interface CtxValue {
+  /** true = el servidor respondió (planificación nativa + 0042): un trabajo sin entrada está SIN VINCULAR (neutral). */
+  available: boolean;
+  byWorkItem: Record<string, WorkItemPriorityDto>;
+}
+const EMPTY: CtxValue = { available: false, byWorkItem: {} };
+const Ctx = createContext<CtxValue>(EMPTY);
 
 export function WorkItemPrioritiesProvider({ session, enabled, children }: { session: OrdersClientSession; enabled: boolean; children: ReactNode }) {
-  const [byWorkItem, setByWorkItem] = useState<Record<string, WorkItemPriorityDto>>({});
+  const [state, setState] = useState<CtxValue>(EMPTY);
   const inflight = useRef(false);
   const active = enabled && getClientPlanningSource() === "native";
 
@@ -27,7 +33,7 @@ export function WorkItemPrioritiesProvider({ session, enabled, children }: { ses
     inflight.current = true;
     try {
       const r = await fetchWorkItemPriorities(session);
-      if (r.available) setByWorkItem(r.byWorkItem);
+      if (r.available) setState({ available: true, byWorkItem: r.byWorkItem });
     } catch {
       /* sin conexión: se conserva lo último (nunca se inventa una prioridad) */
     } finally {
@@ -46,17 +52,22 @@ export function WorkItemPrioritiesProvider({ session, enabled, children }: { ses
     return () => clearInterval(t);
   }, [active, load]);
 
-  const value = useMemo(() => (active ? byWorkItem : {}), [active, byWorkItem]);
+  const value = useMemo(() => (active ? state : EMPTY), [active, state]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 /** Prioridad de Semanas de un trabajo (por su id de cliente, p. ej. `native:<uuid>`), o null si no está vinculado. */
 export function useWorkItemSemanasPriority(itemId: string | null | undefined): WorkItemPriorityDto | null {
-  const map = useContext(Ctx);
-  return itemId ? (map[itemId] ?? null) : null;
+  const { byWorkItem } = useContext(Ctx);
+  return itemId ? (byWorkItem[itemId] ?? null) : null;
+}
+
+/** ¿Se sabe qué trabajos están vinculados? (si no, no se muestra ni prioridad ni «sin prioridad»). */
+export function useWorkItemPrioritiesAvailable(): boolean {
+  return useContext(Ctx).available;
 }
 
 /** Mapa completo (para tablas que arman sus columnas una sola vez). */
 export function useWorkItemPrioritiesMap(): Record<string, WorkItemPriorityDto> {
-  return useContext(Ctx);
+  return useContext(Ctx).byWorkItem;
 }

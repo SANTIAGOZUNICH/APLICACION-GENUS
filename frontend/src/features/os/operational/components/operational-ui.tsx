@@ -147,6 +147,8 @@ interface OperationalTableProps<T> {
   /** Versión de concurrencia por fila (p. ej. updatedAt). */
   rowVersion?: (row: T) => string;
   reasonRequired?: (changes: GenusGridCellChange[]) => string | null;
+  /** Clase CSS opcional por fila en la planilla (p. ej. borde de prioridad). */
+  rowClassName?: (row: T) => string | undefined;
 }
 
 const TABLE_MODE_KEY = "genus_os_table_mode";
@@ -212,7 +214,8 @@ export function ExcelOrList<T>({
   canEditCells,
   rowVersion,
   reasonRequired,
-}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired"> & {
+  rowClassName,
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "rowClassName"> & {
   /** Lista clásica (el marcado existente) como hijo. */
   children: ReactNode;
   /** true = fuerza la lista (p. ej. modo selección múltiple). */
@@ -242,7 +245,7 @@ export function ExcelOrList<T>({
           Ver como lista
         </button>
       </div>
-      <ExcelView columns={columns} rows={rows} rowKey={rowKey} tableId={tableId} onCellsCommit={onCellsCommit} canEditCells={canEditCells} rowVersion={rowVersion} reasonRequired={reasonRequired} />
+      <ExcelView columns={columns} rows={rows} rowKey={rowKey} tableId={tableId} onCellsCommit={onCellsCommit} canEditCells={canEditCells} rowVersion={rowVersion} reasonRequired={reasonRequired} rowClassName={rowClassName} />
     </div>
   );
 }
@@ -257,7 +260,8 @@ function ExcelView<T>({
   canEditCells,
   rowVersion,
   reasonRequired,
-}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired">) {
+  rowClassName,
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "rowClassName">) {
   const dataColumns = useMemo(() => columns.filter((c) => !isActionColumn(c)), [columns]);
   const actionColumns = useMemo(() => columns.filter((c) => isActionColumn(c)), [columns]);
   const textOf = (c: OperationalTableColumn<T>, row: T) => (c.text ? c.text(row) : nodeToText(c.render(row)));
@@ -300,6 +304,7 @@ function ExcelView<T>({
       rowActionsWidth={actionColumns.length ? 128 : undefined}
       maxHeight={560}
       testId={tableId ? `${tableId}-grid` : "os-table-grid"}
+      rowClassName={rowClassName}
     />
   );
 }

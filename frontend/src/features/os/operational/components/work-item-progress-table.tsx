@@ -1,7 +1,7 @@
 "use client";
 
-import { WorkItemPriorityBadge } from "./work-item-priority-badge";
-import { useWorkItemPrioritiesMap } from "../hooks/use-work-item-priorities";
+import { NEUTRAL_PRIORITY_TEXT, priorityEdge, WorkItemPriorityBadge } from "./work-item-priority-badge";
+import { useWorkItemPrioritiesAvailable, useWorkItemPrioritiesMap } from "../hooks/use-work-item-priorities";
 import { PRIORITY_META } from "@/lib/semanas-sheet/priorities";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
@@ -75,7 +75,8 @@ function WorkItemProgressTableInner({
   const cells = cellsIn ?? NO_CELL_EDITING;
   // Prioridad de Semanas (solo trabajos vinculados por Producción). Solo lectura: la cambia Producción en Semanas.
   const semanasPriorities = useWorkItemPrioritiesMap();
-  const showPriority = items.some((i) => semanasPriorities[i.id]);
+  // Con la función disponible se muestra siempre la columna: vinculado = prioridad; sin vínculo = indicación neutral.
+  const showPriority = useWorkItemPrioritiesAvailable();
   if (items.length === 0) {
     return (
       <p className="rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-border)] px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
@@ -90,7 +91,7 @@ function WorkItemProgressTableInner({
       ? [
           excelCol<WorkItem>("semanasPriority", "Prioridad", (i) => {
             const p = semanasPriorities[i.id]?.priority;
-            return p ? `${PRIORITY_META[p].icon} ${PRIORITY_META[p].label}` : "";
+            return p ? `${PRIORITY_META[p].icon} ${PRIORITY_META[p].label}` : `⚪ ${NEUTRAL_PRIORITY_TEXT}`;
           }),
         ]
       : []),
@@ -138,6 +139,7 @@ function WorkItemProgressTableInner({
       onCellsCommit={cells.onCellsCommit}
       rowVersion={cells.rowVersion}
       reasonRequired={cells.reasonRequired}
+      rowClassName={showPriority ? (i) => `genus-row-prio-${semanasPriorities[i.id]?.priority ?? "NONE"}` : undefined}
     >
     <div className="os-table-wrap overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
       <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,13px)]">
@@ -193,6 +195,8 @@ function WorkItemProgressTableInner({
               <tr
                 key={item.id}
                 onClick={() => onSelectItem(item)}
+                data-semanas-priority={semanasPriorities[item.id]?.priority ?? (showPriority ? "NONE" : undefined)}
+                style={isTransferred ? undefined : priorityEdge(semanasPriorities[item.id]?.priority)}
                 className={`cursor-pointer border-b border-[var(--os-border-subtle)] last:border-b-0 ${
                   isTransferred
                     ? "border-l-4 border-l-[var(--os-teal)] bg-[var(--os-teal-soft)]/40"

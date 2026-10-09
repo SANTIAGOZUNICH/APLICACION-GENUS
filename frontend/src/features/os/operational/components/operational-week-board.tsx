@@ -1,6 +1,7 @@
 "use client";
 
-import { WorkItemPriorityBadge } from "./work-item-priority-badge";
+import { priorityEdge, WorkItemPriorityBadge } from "./work-item-priority-badge";
+import { useWorkItemSemanasPriority } from "../hooks/use-work-item-priorities";
 import { useState, type CSSProperties, type ReactNode } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
@@ -188,12 +189,28 @@ function ConsultaCard({ item }: { item: WeeklyPlanItemDto }) {
   );
 }
 
+/** Trabajo compacto del tablero semanal: responsable/línea + prioridad de Semanas, producto y cantidad destacados. */
+function CompactWorkItem({ item }: { item: WorkItem }) {
+  const semanas = useWorkItemSemanasPriority(item.id);
+  return (
+    <li className="pl-2 text-xs leading-snug text-[var(--os-text)]" style={priorityEdge(semanas?.priority, 3)} data-semanas-priority={semanas?.priority}>
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="font-medium">{displayField(item.line ?? item.ownerPerson)}</span>
+        <WorkItemPriorityBadge itemId={item.id} tone="solid" />
+      </div>
+      <div className="font-semibold">{displayField(item.product ?? item.client)}</div>
+      <div className="font-semibold tabular-nums">{displayField(item.quantity)} {item.unit ?? ""}</div>
+    </li>
+  );
+}
+
 /**
  * Tarjeta enriquecida de un trabajo — jerarquía Producto > Cliente >
  * Cantidad, luego datos secundarios compactos (Lote/VTO/OA, sin repetir la
  * fecha de producción: ya la da la columna del día). Estado como chip.
  */
 function WorkItemRichCard({ item }: { item: WorkItem }) {
+  const semanas = useWorkItemSemanasPriority(item.id);
   const secondary = [
     item.packagingLote ? `Lote ${item.packagingLote}` : null,
     item.packagingVto ? `VTO ${item.packagingVto}` : null,
@@ -201,7 +218,7 @@ function WorkItemRichCard({ item }: { item: WorkItem }) {
   ].filter(Boolean);
 
   return (
-    <li className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] p-2.5 text-xs leading-snug text-[var(--os-text)] shadow-sm">
+    <li className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] p-2.5 text-xs leading-snug text-[var(--os-text)] shadow-sm" style={priorityEdge(semanas?.priority)} data-semanas-priority={semanas?.priority}>
       <WorkItemPriorityBadge itemId={item.id} className="mb-1" />
       <p className="line-clamp-2 text-sm font-semibold" title={item.product ?? ""}>
         {displayField(item.product)}
@@ -325,16 +342,7 @@ function WeekBoardDayCell({
       ) : (
         <ul className="space-y-2">
           {dayItems.slice(0, 6).map((item) => {
-            const compact = (
-              <li key={item.id} className="text-xs leading-snug text-[var(--os-text)]">
-                <span className="font-medium">{displayField(item.line ?? item.ownerPerson)}</span>
-                <br />
-                {displayField(item.product ?? item.client)}
-                <WorkItemPriorityBadge itemId={item.id} className="ml-1 align-middle" />
-                <br />
-                <span className="text-[var(--os-text-muted)]">{displayField(item.quantity)}</span>
-              </li>
-            );
+            const compact = <CompactWorkItem key={item.id} item={item} />;
             return draggable ? (
               <DraggableCard
                 key={item.id}

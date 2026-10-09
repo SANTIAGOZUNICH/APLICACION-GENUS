@@ -116,6 +116,8 @@ export interface GenusGridProps<T> {
   reasonRequired?: (changes: GenusGridCellChange[]) => string | null;
   minReasonLength?: number;
   testId?: string;
+  /** Clase CSS opcional por fila (p. ej. borde de prioridad). No afecta edición ni selección. */
+  rowClassName?: (row: T) => string | undefined;
   /** Texto de ayuda en el pie. */
   hint?: ReactNode;
 }
@@ -212,6 +214,7 @@ export function GenusGrid<T>({
   minReasonLength = 8,
   testId = "genus-grid",
   hint,
+  rowClassName,
 }: GenusGridProps<T>) {
   const [reasonText, setReasonText] = useState("");
   const gridRef = useRef<DataSheetGridRef>(null);
@@ -635,6 +638,14 @@ export function GenusGrid<T>({
           headerRowHeight={rowHeight}
           stickyRightColumn={stickyRight}
           gutterColumn={{ basis: 44, minWidth: 44, title: "#" } as never}
+          rowClassName={
+            rowClassName
+              ? ({ rowData }) => {
+                  const source = rowByIdRef.current.get(rowData.__id);
+                  return source ? rowClassName(source) : undefined;
+                }
+              : undefined
+          }
           onSelectionChange={({ selection }) => describeSelection(selection)}
         />
       </div>

@@ -39,9 +39,11 @@ equivocada, así que **no se vincula automáticamente**. La columna heredada `wo
 - **Producción → Semanas (Lista):** columna «Trabajo vinculado» y panel **en línea** (sin ventanas flotantes) con los trabajos
   vinculados (Quitar con motivo), sugerencias de la semana (Vincular) y «Ya vinculados a otra tarea» (Mover aquí con motivo).
   El historial de la fila muestra prioridad + vínculos.
-- **Sectores → Mi trabajo:** columna «Prioridad» (solo lectura) en la planilla del día, etiqueta de color en la lista, en el
-  tablero semanal y en el detalle del trabajo. Sin vínculo no se muestra nada (no se inventa NORMAL). Los botones
-  «Ver / Registrar avance», «Guardar avance», «Finalizar y enviar a Calidad», Codificado, etc. no cambiaron.
+- **Sectores → Mi trabajo:** prioridad de solo lectura con **indicador de color + borde lateral** (rojo / amarillo / verde):
+  columna «Prioridad» y borde en la planilla del día (`rowClassName`, prop opcional y aditiva de `GenusGrid`), etiqueta y borde
+  en la lista, etiqueta sólida (legible sobre fondo claro u oscuro) y borde en el tablero semanal, etiqueta en el detalle.
+  Un trabajo **sin vínculo** muestra la indicación neutral «Sin prioridad» (gris, sin borde): nunca se inventa una prioridad.
+  Los botones «Ver / Registrar avance», «Guardar avance», «Finalizar y enviar a Calidad», Codificado, etc. no cambiaron.
 - La prioridad que ve «Mi trabajo» sale de la misma proyección que Semanas, Día a día y Modo TV (`plan-tasks.ts`).
 
 ## 4. Permisos (servidor)
@@ -57,15 +59,26 @@ Si la planilla no se puede leer, `work-item-priorities` responde `available:fals
 
 ## 5. Validación
 
+- `src/integration/semanas-links.db.integration.test.ts` (Postgres **real** descartable, 6 casos): productos repetidos y tareas
+  idénticas (solo el trabajo vinculado recibe prioridad; el idéntico sin vínculo queda neutral), borrar una de dos tareas
+  idénticas no transfiere la prioridad, persistencia entre instancias, concurrencia (índice único: un solo vínculo gana),
+  permisos, y **avance + finalización reales** (`saveWorkProgressDurable` / `completeWorkDurable`, las mismas funciones que
+  `/api/v1/live-sync/operations`) sobre un trabajo vinculado, con el RBAC operativo intacto. Se corren en serie con el test de
+  prioridades (comparten la base y ese test renombra la tabla temporalmente).
+
 - Unit/servidor: `semanas-links.test.ts` (11), `semanas/links/route.test.ts` (3). Suite completa: 2102 OK.
-- `npm run test:e2e:semanas-mi-trabajo` — **26/26 en Chromium** con Postgres **descartable** (migraciones reales 0000–0042, login
+- `npm run test:e2e:semanas-mi-trabajo` — **30/30 en Chromium** (tres prioridades + neutral + producto repetido, bordes en
+  planilla / lista / tablero semanal) con Postgres **descartable** (migraciones reales 0000–0042, login
   real, planificación nativa, copia local del libro; nunca Google ni Neon). Capturas en `docss/img/semanas-mi-trabajo/`.
-- `npm run test:e2e:semanas-priorities-db` — 4/4 contra Postgres real (pendiente del PR anterior).
+- `npm run test:e2e:semanas-priorities-db` — 10/10 contra Postgres real (prioridades 4 + vínculos 6), 3 corridas seguidas.
 
 ## 6. Limitaciones
 
 - Los vínculos se crean a mano: los trabajos ya existentes aparecen **sin prioridad** hasta que Producción los vincule.
 - Solo trabajos de la planificación nativa (base de datos). En la copia de Preview sin base, la columna no se muestra.
-- La vista planilla de «Mi trabajo» (`GenusGrid`) solo admite texto por celda: la prioridad se ve como «🔴 URGENTE» (indicador +
-  texto); la etiqueta de color completa está en la vista lista, el tablero semanal y el detalle.
+- La vista planilla de «Mi trabajo» (`GenusGrid`) solo admite texto por celda: la prioridad se ve como «🔴 URGENTE» + borde
+  lateral; la etiqueta de color completa está en la vista lista, el tablero semanal y el detalle.
+- Avances y finalizaciones se validaron con sus funciones durables contra Postgres real; la ruta HTTP
+  `/api/v1/live-sync/operations` exige modo real con Google y no se puede ejecutar en un entorno local.
+- Preexistente (no cambiado): la columna «HOY» del tablero semanal de «Mi trabajo» tiene fondo claro con texto claro.
 - Quitar un vínculo «sin tarea» desde el aviso superior usa un cuadro del navegador para el motivo (caso poco frecuente).

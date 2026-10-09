@@ -51,6 +51,9 @@ async function seed() {
   await create("keratin", { client: "BL COSMETICS", product: "ALISADO KERATIN", plannedQuantity: "1100", sector: "ELABORACION", branchOwner: "Cristian" });
   await create("jalea", { client: "TIERRAS DEL VOLCAN", product: "JALEA TERMAL", plannedQuantity: "110", sector: "ELABORACION", branchOwner: "Cristian" });
   await create("libre", { client: "OTRO CLIENTE", product: "PRODUCTO SIN TAREA", plannedQuantity: "10", sector: "ELABORACION", branchOwner: "Cristian" });
+  // Producto REPETIDO: mismo cliente, producto y día que KERATIN (otra cantidad). Nunca debe heredar su prioridad.
+  await create("repetido", { client: "BL COSMETICS", product: "ALISADO KERATIN", plannedQuantity: "500", sector: "ELABORACION", branchOwner: "Cristian" });
+  await create("sanitizante", { client: "TYL", product: "SANITIZANTE UVA", plannedQuantity: "40", unit: "lt", sector: "ELABORACION", branchOwner: "Nicolás" });
   await create("envasado", { client: "TYL", product: "ALC EN GEL CHICLE", plannedQuantity: "2000", unit: "u", sector: "ENVASADO_MASIVO", line: "Línea 1" });
   const pub = await api.post(`/api/v1/planning/weeks/${weekId}/publish`, { data: {} });
   if (![200, 201, 409].includes(pub.status())) throw new Error(`publicar: ${await pub.text()}`);
@@ -78,7 +81,7 @@ const rowOf = (page, text) => page.locator("[data-testid=list-row]", { hasText: 
 
 try {
   const ids = await seed();
-  check("datos de prueba: 4 trabajos nativos publicados (3 Elaboración, 1 Envasado)", Object.keys(ids).length === 4);
+  check("datos de prueba: 6 trabajos nativos publicados (5 Elaboración, 1 Envasado)", Object.keys(ids).length === 6);
 
   // ================= PRODUCCIÓN: prioridad + vínculo explícito =================
   const prod = await openAs(E2E_USERS.produccion);
@@ -96,12 +99,12 @@ try {
   const panel = pp.locator("[data-testid=list-link-row]");
   await panel.locator("[data-testid=link-candidate]").first().waitFor({ timeout: 30_000 });
   const cands = await panel.locator("[data-testid=link-candidate]").allInnerTexts();
-  check("sugerencias de la semana y del sector (sin Envasado), la correcta primero", cands.length === 3 && cands[0].includes("ALISADO KERATIN") && !cands.join(" ").includes("ALC EN GEL"), cands.map((c) => c.split("\n")[0]).join(" | "));
+  check("sugerencias de la semana y del sector (sin Envasado); los dos KERATIN repetidos primero, Producción elige", cands.length === 5 && cands[0].includes("ALISADO KERATIN") && cands[1].includes("ALISADO KERATIN") && !cands.join(" ").includes("ALC EN GEL"), cands.map((c) => c.split("\n").slice(0, 2).join(" ")).join(" | "));
   check("la sugerencia indica en qué coincide (no vincula sola)", /coincide producto/i.test(cands[0]) && (await keratin.locator("[data-testid=list-link-cell]").getAttribute("data-linked")) === "0");
   // vínculo EQUIVOCADO a propósito (JALEA en la tarea KERATIN) para probar la corrección
   await panel.locator("[data-testid=link-candidate]", { hasText: "JALEA TERMAL" }).locator("[data-testid=link-confirm]").click();
   await pp.waitForFunction(() => document.querySelector("[data-testid=list-link-cell][data-linked='1']"), null, { timeout: 20_000 });
-  await panel.locator("[data-testid=link-candidate]", { hasText: "ALISADO KERATIN" }).locator("[data-testid=link-confirm]").click();
+  await panel.locator("[data-testid=link-candidate]", { hasText: "ALISADO KERATIN" }).filter({ hasText: "1100 kg" }).locator("[data-testid=link-confirm]").click();
   await pp.waitForFunction(() => document.querySelector("[data-testid=list-link-cell][data-linked='2']"), null, { timeout: 20_000 });
   check("Producción vincula (confirmando) dos trabajos a la tarea", (await keratin.locator("[data-testid=list-link-chip]").count()) === 2);
   await pp.screenshot({ path: `${OUT}/7-produccion-vincular-trabajo.png` });
@@ -129,6 +132,18 @@ try {
   const hist = await pp.locator("[data-testid=list-history-row]").innerText();
   check("historial: prioridad + vínculos (vinculó / quitó con motivo)", /NORMAL → URGENTE/.test(hist) && /vinculó/.test(hist) && /quitó/.test(hist) && /tarea equivocada/.test(hist));
   await pp.screenshot({ path: `${OUT}/9-produccion-historial.png` });
+  await keratin.locator("[data-testid=list-history]").click();
+  // tercera prioridad: JALEA → IMPORTANTE; y SANITIZANTE (Nicolás) vinculado con NORMAL
+  await jalea.locator("[data-testid=priority-chip]").click();
+  await pp.click("[data-testid=priority-option-IMPORTANTE]");
+  await pp.waitForFunction(() => [...document.querySelectorAll("[data-testid=list-row]")].some((r) => r.textContent.includes("JALEA TERMAL 110KG") && r.getAttribute("data-priority") === "IMPORTANTE"), null, { timeout: 20_000 });
+  const sani = rowOf(pp, "SANITIZANTE UVA 40LT");
+  await sani.locator("[data-testid=list-link-cell]").click();
+  const panel3 = pp.locator("[data-testid=list-link-row]");
+  await panel3.locator("[data-testid=link-candidate]", { hasText: "SANITIZANTE UVA" }).locator("[data-testid=link-confirm]").click({ timeout: 30_000 });
+  await pp.waitForFunction(() => [...document.querySelectorAll("[data-testid=list-row]")].some((r) => r.textContent.includes("SANITIZANTE UVA 40LT") && r.querySelector("[data-testid=list-link-cell][data-linked='1']")), null, { timeout: 20_000 });
+  await sani.locator("[data-testid=list-link-cell]").click();
+  check("tres tareas vinculadas con las tres prioridades (URGENTE, IMPORTANTE, NORMAL)", (await keratin.getAttribute("data-priority")) === "URGENTE" && (await jalea.getAttribute("data-priority")) === "IMPORTANTE" && (await sani.getAttribute("data-priority")) === "NORMAL");
 
   // ================= ELABORACIÓN: «Mi trabajo» =================
   const elab = await openAs(E2E_USERS.elaboracion);
@@ -136,32 +151,59 @@ try {
   // Vista por defecto: planilla (celdas = inputs). La columna Prioridad es de solo lectura.
   const gridRows = () => ep.evaluate(() => [...document.querySelectorAll(".dsg-row")].map((r) => [...r.querySelectorAll("input")].map((i) => i.value).join(" | ")));
   await ep.waitForFunction(() => [...document.querySelectorAll(".dsg-row input")].some((i) => i.value.includes("ALISADO KERATIN") ) && [...document.querySelectorAll(".dsg-row input")].some((i) => i.value.includes("URGENTE")), null, { timeout: 120_000 });
+  await ep.waitForFunction(() => [...document.querySelectorAll(".dsg-row input")].some((i) => i.value.includes("IMPORTANTE")), null, { timeout: 60_000 });
   const rowsTxt = await gridRows();
-  const gridRow = (t) => rowsTxt.find((r) => r.includes(t)) ?? "";
-  check("Mi trabajo (planilla): columna Prioridad — KERATIN URGENTE, JALEA NORMAL, sin vínculo vacío", gridRow("ALISADO KERATIN").includes("URGENTE") && gridRow("JALEA TERMAL").includes("NORMAL") && !/URGENTE|IMPORTANTE|NORMAL/.test(gridRow("PRODUCTO SIN TAREA")), rowsTxt.filter(Boolean).map((r) => r.split(" | ").slice(0, 5).join(" ")).join(" // "));
+  const gridRow = (...t) => rowsTxt.find((r) => t.every((x) => r.includes(x))) ?? "";
+  const NEUTRAL = "⚪ Sin prioridad";
+  check(
+    "Mi trabajo (planilla): KERATIN 1100 URGENTE · JALEA IMPORTANTE · SANITIZANTE NORMAL · sin vínculo y REPETIDO = neutral",
+    gridRow("ALISADO KERATIN", "1100").includes("URGENTE") && gridRow("JALEA TERMAL").includes("IMPORTANTE") && gridRow("SANITIZANTE UVA").includes("NORMAL") &&
+      gridRow("PRODUCTO SIN TAREA").includes(NEUTRAL) && gridRow("ALISADO KERATIN", "500").includes(NEUTRAL),
+    rowsTxt.filter(Boolean).map((r) => r.split(" | ").slice(0, 6).join(" ")).join(" // ")
+  );
+  const edges = await ep.evaluate(() => ["URGENTE", "IMPORTANTE", "NORMAL", "NONE"].map((p) => document.querySelectorAll(`.genus-row-prio-${p}`).length));
+  check("planilla: borde lateral por prioridad (1 rojo, 1 amarillo, 1 verde) y sin borde los neutrales", edges.join() === "1,1,1,2", edges.join());
   await ep.screenshot({ path: `${OUT}/10-elaboracion-mi-trabajo-planilla.png` });
-  await ep.locator("[data-testid=os-table-mode-toggle]").first().click();
+  // cada tabla (Cristian, Nicolás) tiene su propio selector de vista
+  for (let i = 0; i < 4; i += 1) {
+    const toList = ep.locator("[data-testid=os-table-mode-toggle]", { hasText: "Ver como lista" });
+    if ((await toList.count()) === 0) break;
+    await toList.first().click();
+  }
   await ep.waitForSelector("[data-testid=work-item-priority]", { timeout: 30_000 });
-  const rowWith = (text) => ep.locator("tr", { hasText: text }).first();
-  const badgeOf = async (text) => (await rowWith(text).locator("[data-testid=work-item-priority]").count()) ? rowWith(text).locator("[data-testid=work-item-priority]").getAttribute("data-priority") : null;
-  check("Mi trabajo (Elaboración): KERATIN muestra URGENTE", (await badgeOf("ALISADO KERATIN")) === "URGENTE");
-  check("Mi trabajo: JALEA vinculada muestra su prioridad (NORMAL)", (await badgeOf("JALEA TERMAL")) === "NORMAL");
-  check("Mi trabajo: un trabajo SIN vínculo no muestra prioridad (no se inventa)", (await badgeOf("PRODUCTO SIN TAREA")) === null);
+  const rowWith = (text, extra) => (extra ? ep.locator("tr", { hasText: text }).filter({ hasText: extra }) : ep.locator("tr", { hasText: text })).first();
+  const badgeOf = async (text, extra) => ((await rowWith(text, extra).locator("[data-testid=work-item-priority]").count()) ? rowWith(text, extra).locator("[data-testid=work-item-priority]").getAttribute("data-priority") : null);
+  const edgeOf = (text, extra) => rowWith(text, extra).evaluate((el) => getComputedStyle(el).boxShadow);
+  check("Mi trabajo (lista): URGENTE / IMPORTANTE / NORMAL en los tres vinculados", (await badgeOf("ALISADO KERATIN", "1100")) === "URGENTE" && (await badgeOf("JALEA TERMAL")) === "IMPORTANTE" && (await badgeOf("SANITIZANTE UVA")) === "NORMAL");
+  check("Mi trabajo: sin vínculo → indicación NEUTRAL (no se inventa prioridad)", (await badgeOf("PRODUCTO SIN TAREA")) === "NONE");
+  check("Mi trabajo: el producto REPETIDO (mismo cliente/producto/día) NO hereda URGENTE", (await badgeOf("ALISADO KERATIN", "500")) === "NONE");
+  const e1 = await edgeOf("ALISADO KERATIN", "1100");
+  const e2 = await edgeOf("JALEA TERMAL");
+  const e3 = await edgeOf("SANITIZANTE UVA");
+  const e0 = await edgeOf("PRODUCTO SIN TAREA");
+  check("lista: borde lateral rojo / amarillo / verde y ninguno en el neutral", e1.includes("239, 68, 68") && e2.includes("245, 158, 11") && e3.includes("34, 197, 94") && !/239, 68, 68|245, 158, 11|34, 197, 94/.test(e0), [e1, e2, e3, e0].join(" ; "));
   check("Mi trabajo: sin controles para cambiar prioridad ni vincular", (await ep.locator("[data-testid=priority-chip], [data-testid=list-link-cell]").count()) === 0);
   await ep.screenshot({ path: `${OUT}/10b-elaboracion-mi-trabajo-lista.png` });
-  await rowWith("ALISADO KERATIN").click();
+  await rowWith("ALISADO KERATIN", "1100").click();
   await ep.getByRole("button", { name: "Guardar avance" }).waitFor({ timeout: 20_000 });
   check("detalle: prioridad visible y acciones operativas intactas (Guardar avance / Finalizar)", (await ep.locator("[role=dialog] [data-testid=work-item-priority]").getAttribute("data-priority")) === "URGENTE" && (await ep.getByRole("button", { name: "Finalizar y enviar a Calidad" }).isEnabled()));
   await ep.screenshot({ path: `${OUT}/11-elaboracion-detalle-trabajo.png` });
   await ep.keyboard.press("Escape");
+  // tablero semanal de «Mi trabajo»
+  await ep.getByRole("button", { name: /^Semana$/ }).first().click();
+  await ep.waitForSelector("li[data-semanas-priority]", { timeout: 30_000 }).catch(() => {});
+  const weekEdges = await ep.evaluate(() => [...document.querySelectorAll("li[data-semanas-priority]")].map((l) => l.getAttribute("data-semanas-priority")).sort());
+  check("tablero semanal: tarjetas con borde de prioridad (URGENTE, IMPORTANTE, NORMAL)", ["IMPORTANTE", "NORMAL", "URGENTE"].every((p) => weekEdges.includes(p)), weekEdges.join(","));
+  await ep.screenshot({ path: `${OUT}/12-elaboracion-mi-trabajo-semana.png` });
+  await ep.getByRole("button", { name: /^Día$/ }).first().click();
 
   // ================= cambio de prioridad → se refleja =================
   await keratin.locator("[data-testid=priority-chip]").click();
   await pp.click("[data-testid=priority-option-IMPORTANTE]");
   await pp.waitForFunction(() => [...document.querySelectorAll("[data-testid=list-row]")].some((r) => r.textContent.includes("ALISADO KERATIN 1100KG") && r.getAttribute("data-priority") === "IMPORTANTE"), null, { timeout: 20_000 });
   await ep.reload();
-  await ep.waitForFunction(() => [...document.querySelectorAll("tr")].some((r) => r.textContent.includes("ALISADO KERATIN") && r.querySelector("[data-testid=work-item-priority][data-priority=IMPORTANTE]")), null, { timeout: 90_000 }).catch(() => {});
-  check("Producción cambia a IMPORTANTE → Mi trabajo lo muestra tras recargar", (await badgeOf("ALISADO KERATIN")) === "IMPORTANTE");
+  await ep.waitForFunction(() => [...document.querySelectorAll("tr")].some((r) => r.textContent.includes("ALISADO KERATIN") && r.textContent.includes("1100") && r.querySelector("[data-testid=work-item-priority][data-priority=IMPORTANTE]")), null, { timeout: 90_000 }).catch(() => {});
+  check("Producción cambia a IMPORTANTE → Mi trabajo lo muestra tras recargar", (await badgeOf("ALISADO KERATIN", "1100")) === "IMPORTANTE");
   // misma prioridad en Semanas del sector
   await nav(ep, "Semanas");
   await ep.waitForSelector("[data-testid=plan-card]", { timeout: 60_000 });
@@ -180,10 +222,10 @@ try {
   check("Envasado no recibe prioridades de trabajos de Elaboración", ownOnly.available === true && Object.keys(ownOnly.byWorkItem).length === 0);
   const elabOwn = await (await er.get("/api/v1/semanas/work-item-priorities")).json();
   const bare = (id) => String(id).replace(/^native:/, "");
-  check("Elaboración recibe solo sus 2 trabajos vinculados", Object.keys(elabOwn.byWorkItem).map(bare).sort().join() === [ids.keratin, ids.jalea].map(bare).sort().join(), Object.keys(elabOwn.byWorkItem).join(", "));
+  check("Elaboración recibe solo sus 3 trabajos vinculados (ni el repetido ni el libre)", Object.keys(elabOwn.byWorkItem).map(bare).sort().join() === [ids.keratin, ids.jalea, ids.sanitizante].map(bare).sort().join(), Object.keys(elabOwn.byWorkItem).join(", "));
   // auditoría en la base
   const ev = await q("select action, reason from semanas_task_link_events order by created_at");
-  check("auditoría en la base: LINK, LINK, UNLINK(con motivo), LINK", ev.map((e) => e.action).join(",") === "LINK,LINK,UNLINK,LINK" && ev[2].reason === "Estaba vinculado a la tarea equivocada");
+  check("auditoría en la base: LINK, LINK, UNLINK(con motivo), LINK, LINK", ev.map((e) => e.action).join(",") === "LINK,LINK,UNLINK,LINK,LINK" && ev[2].reason === "Estaba vinculado a la tarea equivocada");
   const wi = await q("select priority, operational_status from work_items where id = $1", [String(ids.keratin).replace(/^native:/, "")]);
   check("work_items no se modificó (su campo priority heredado sigue NORMAL)", wi[0]?.priority === "NORMAL");
   await envasado.ctx.close();
