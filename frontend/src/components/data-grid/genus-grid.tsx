@@ -703,16 +703,16 @@ export function GenusGrid<T>({
 
       {inlineReason && (
         <div
-          className="flex flex-wrap items-center gap-2 rounded-[var(--os-radius-sm)] border border-[var(--genus-warning)]/50 bg-[var(--genus-warning-soft)] px-2 py-1.5 text-xs"
+          className="flex flex-wrap items-center gap-2 rounded-[var(--os-radius-sm)] border border-amber-400 bg-amber-50 px-2 py-1.5 text-xs"
           data-testid={`${testId}-inline-reason`}
           role="group"
           aria-label="Motivo del cambio"
         >
-          <span className="font-medium text-[var(--os-text)]">
+          <span className="font-medium text-amber-950">
             {inlineReason.changes[0]!.rowLabel} · {inlineReason.changes[0]!.columnTitle}: {previewValue(inlineReason.changes[0]!.oldValue)} →{" "}
             <strong>{previewValue(inlineReason.changes[0]!.newValue)}</strong>
           </span>
-          <span className="text-[var(--os-text-muted)]">{inlineReason.prompt}</span>
+          <span className="text-amber-900">{inlineReason.prompt}</span>
           <input
             autoFocus
             value={inlineText}
@@ -727,7 +727,7 @@ export function GenusGrid<T>({
               }
             }}
             placeholder="Motivo + Enter"
-            className="h-7 min-w-[14rem] flex-1 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2 text-xs text-[var(--os-text)]"
+            className="h-7 min-w-[14rem] flex-1 rounded border border-amber-400 bg-white px-2 text-xs text-slate-900 placeholder:text-slate-500"
             data-testid={`${testId}-inline-reason-input`}
           />
           {["Conteo físico", "Corrección de carga", "Merma o rotura", "Devolución a proveedor"].map((m) => (

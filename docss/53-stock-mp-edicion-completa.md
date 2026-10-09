@@ -35,4 +35,25 @@ Dos ediciones simultáneas: una gana y la otra recibe 409, con un solo traspaso.
 
 ## 3. Validación
 
-Ver el PR.
+Todas las pruebas usaron una base Postgres descartable: no se modificaron datos de Production.
+
+| Prueba | Resultado |
+|---|---|
+| E2E nuevo `GENUS_E2E_PRODUCTION_BUILD=1 npm run test:e2e:stock-mp-completo` (Chromium, build de producción, usuario Materia Prima, fila existente de un ingreso confirmado con historia en el libro mayor, preferencia vieja «lista») | **47/47** |
+| Integración Postgres (incluye 5 nuevas: reclasificación transaccional con historia intacta, alias para OE y para ingresos con el código viejo, Stock código con 409, kg de lote de ingreso, dos correcciones de código simultáneas) | **53/53** |
+| E2E 7 tablas (`test:e2e:planillas-celda`) | **87/87** |
+| Regresión Materias Primas / Depósito / Asignación de lotes | **24/24 · 25/25 · 30/30** |
+| Vitest completo | **2164 OK** |
+
+El E2E nuevo verifica:
+- **Candados**: ninguna de las 14 columnas tiene candado.
+- **Datos administrativos**: se guardan con Enter, sin diálogo, y siguen igual al recargar. Funcionan Tab y Escape.
+- **Kg lote**: el motivo se pide en la planilla, el ajuste queda en el libro mayor y Escape en el motivo cancela.
+- **Stock código**: genera un ajuste por la diferencia y el lote no cambia.
+- **Código**: el lote y el ingreso pasan al código nuevo, el saldo se traspasa completo, se crea el alias y la historia queda idéntica.
+- **Días VTO y estados**: funcionan como operación segura, y vaciar la celda vuelve al cálculo.
+- **Otros**: pegado de un rango de 2 filas, 409 por versión vieja y por saldo visto viejo, auditoría, y Producción recibe 403.
+
+Ajuste de pruebas existentes: verificaban el candado de Kg lote, Código y Stock código, que este cambio quita a propósito. Ahora verifican que esas celdas no tienen candado.
+
+Capturas en `docss/img/stock-mp-edicion-completa/`.
