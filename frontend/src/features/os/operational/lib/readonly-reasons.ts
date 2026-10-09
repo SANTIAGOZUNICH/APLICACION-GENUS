@@ -17,8 +17,7 @@ const REASONS: Record<string, Record<string, string>> = {
     TOTAL,
   },
   mp_stock: {
-    CÓDIGO: "Código del material: se corrige en el ingreso.",
-    PRODUCTO: "Se arma con los ingresos confirmados del mismo código.",
+    CÓDIGO: "El código identifica el saldo en el libro mayor: cambiarlo movería stock entre códigos. Se corrige en el ingreso (con motivo).",
     "STOCK CÓDIGO (LIBRO MAYOR)": "Saldo del libro mayor (ingresos − consumos de OE ± ajustes): no se edita.",
     "ESTADO STOCK": "Se calcula a partir de los kg del lote.",
     "DÍAS AL VENCE": "Se calcula a partir del vencimiento.",

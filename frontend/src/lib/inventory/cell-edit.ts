@@ -4,9 +4,12 @@
  * NO editables por celda (operaciones de negocio con servicio propio y auditoría):
  *  - ME: código (clave de inventario), stock actual (se deriva de ingresos − salidas; se corrige con
  *    «Ajustar stock» + motivo), ingresos/salidas/movimientos (ledger inmutable).
- *  - MP: código/lote/vencimiento/proveedor/descripción de lotes originados en un ingreso confirmado
- *    (origen "ingreso": vienen del documento), movimientos y ajustes (ledger).
- *  - kg de MP: se corrige con motivo por el servicio canónico `adjustMpStock` (queda en ajustes).
+ *  - MP: código (identifica el saldo en el libro mayor), movimientos y ajustes (ledger).
+ *  - kg de MP: se corrige con motivo por el servicio canónico `adjustMpStock` (queda en ajustes). En un lote creado
+ *    por un ingreso, solo con «Ajustar stock».
+ *  Los datos administrativos (producto, proveedor, cliente, descripción, ubicación, lote, vencimiento) se editan en
+ *  la celda en TODOS los lotes, también los creados por un ingreso: el lote de Stock se agrupa por código y no se
+ *  vuelve a sincronizar con el documento de ingreso, así que bloquearlos dejaba el dato sin forma de corregirse.
  */
 import { parseFlexibleDate } from "@/features/os/operational/lib/delivery-date";
 import { parseNonNegativeNumber } from "@/features/os/operational/lib/clipboard-import";
@@ -14,19 +17,20 @@ import { parseNonNegativeNumber } from "@/features/os/operational/lib/clipboard-
 export type InventoryCellResource = "me_inventario" | "mp_stock";
 
 export const ME_CELL_FIELDS = ["descripcion", "cliente", "ubicacion", "cantidadPorBulto", "stockMinimo", "puntoReposicion", "responsable", "observacion"] as const;
-export const MP_CELL_FIELDS = ["proveedor", "cliente", "descripcion", "ubicacion", "lote", "vencimiento", "cantidadKg"] as const;
+export const MP_CELL_FIELDS = ["producto", "proveedor", "cliente", "descripcion", "ubicacion", "lote", "vencimiento", "cantidadKg"] as const;
 export type MeCellField = (typeof ME_CELL_FIELDS)[number];
 export type MpCellField = (typeof MP_CELL_FIELDS)[number];
 export type InventoryCellField = MeCellField | MpCellField;
 
 const NUMERIC = new Set<string>(["cantidadPorBulto", "stockMinimo", "puntoReposicion", "cantidadKg"]);
 const DATES = new Set<string>(["vencimiento"]);
-/** Siempre piden confirmación. */
-export const INVENTORY_SENSITIVE_FIELDS: ReadonlySet<string> = new Set(["descripcion", "cliente", "proveedor", "lote", "vencimiento", "cantidadKg"]);
+/**
+ * Piden confirmación (y motivo): solo lo que mueve stock. Los datos administrativos se guardan con Enter, como en
+ * Excel (quedan auditados con valor anterior y nuevo, y se deshacen con Ctrl+Z).
+ */
+export const INVENTORY_SENSITIVE_FIELDS: ReadonlySet<string> = new Set(["cantidadKg"]);
 /** Exigen motivo (corrección de stock). */
 export const INVENTORY_REASON_FIELDS: ReadonlySet<string> = new Set(["cantidadKg"]);
-/** MP derivados del documento de ingreso. */
-const MP_ORIGIN_LOCKED = new Set<string>(["proveedor", "descripcion", "lote", "vencimiento", "cantidadKg"]);
 export const MAX_INVENTORY_CELL_CHANGES = 200;
 
 export function inventoryFieldKind(field: string): "text" | "number" | "date" {
@@ -47,10 +51,8 @@ export function inventoryCellProtection(
 ): string | null {
   if (!canWrite) return "Tu sector no puede editar este inventario.";
   if (row.archived) return "Registro archivado: no se edita.";
-  if (resource === "mp_stock" && row.origen === "ingreso" && MP_ORIGIN_LOCKED.has(field)) {
-    return field === "cantidadKg"
-      ? "Kg de un lote ingresado: usá «Ajustar stock» (queda auditado)."
-      : "Dato del documento de ingreso: se corrige en el ingreso.";
+  if (resource === "mp_stock" && row.origen === "ingreso" && field === "cantidadKg") {
+    return "Kg de un lote creado por un ingreso: se corrigen con «Ajustar stock» (motivo, queda en el libro mayor) o corrigiendo el ingreso.";
   }
   return null;
 }

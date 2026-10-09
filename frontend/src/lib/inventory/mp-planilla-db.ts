@@ -150,7 +150,10 @@ export async function runMpInventoryOp<T>(
             const res = await tx
               .update(table)
               .set({ payload: row as never, updatedAt: now })
-              .where(and(eq(table.id, row.id), eq(table.updatedAt, before.dbUpdatedAt)))
+              // Comparación al milisegundo: JS lee updated_at truncado a ms, pero una fila escrita por SQL (now(),
+              // migración, importación) guarda microsegundos; con igualdad exacta esa fila NUNCA se podía editar
+              // (siempre «otro usuario la modificó»). Las operaciones de MP ya están serializadas por el candado.
+              .where(and(eq(table.id, row.id), sql`date_trunc('milliseconds', ${table.updatedAt}) = ${before.dbUpdatedAt.toISOString()}::timestamptz`))
               .returning({ id: table.id });
             if (res.length === 0) throw new MpConflictError();
           } else {

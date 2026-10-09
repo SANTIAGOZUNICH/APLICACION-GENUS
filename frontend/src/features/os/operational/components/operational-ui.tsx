@@ -101,6 +101,8 @@ export interface OperationalTableColumn<T> {
    * la celda (candado + texto) y al intentar editarla. Sin esto: «Columna de solo lectura.».
    */
   readOnlyReason?: string;
+  /** Nota de trazabilidad por celda en la planilla (marca + texto al pasar el mouse). No bloquea la edición. */
+  cellNote?: (row: T) => string | null;
 }
 
 type CollapseBelow = "md" | "lg" | "xl" | "2xl";
@@ -319,6 +321,7 @@ function ExcelView<T>({
         getValue: (row: T) => textOf(c, row),
         protection: (row: T) => (c.edit ? (c.edit.protection?.(row) ?? null) : (c.readOnlyReason ?? "Columna de solo lectura.")),
         validate: c.edit?.validate,
+        cellNote: c.cellNote,
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dataColumns]

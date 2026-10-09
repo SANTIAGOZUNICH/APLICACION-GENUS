@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import {
   assertFeatureWritesEnabled,
@@ -545,7 +545,8 @@ export class MpControlService {
                 completedAt: control.completedAt ? new Date(control.completedAt) : null,
                 audit,
               })
-              .where(and(eq(mpWeeklyControls.id, control.id), eq(mpWeeklyControls.updatedAt, new Date(expectedPrevUpdatedAt))))
+              // Al milisegundo: una fila escrita por SQL guarda microsegundos y con igualdad exacta nunca coincidía.
+              .where(and(eq(mpWeeklyControls.id, control.id), sql`date_trunc('milliseconds', ${mpWeeklyControls.updatedAt}) = ${new Date(expectedPrevUpdatedAt).toISOString()}::timestamptz`))
               .returning({ id: mpWeeklyControls.id });
             if (res.length === 0) {
               throw new MpControlCellError("CONFLICT", "Otro usuario modificó este control. Recargá y reintentá.");

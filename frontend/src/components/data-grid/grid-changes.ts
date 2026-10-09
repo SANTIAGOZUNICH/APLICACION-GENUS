@@ -11,6 +11,8 @@ export interface GenusGridRow {
   __prot: Record<string, string | null>;
   /** columna → estado de guardado optimista. */
   __st: Record<string, "saving" | "error" | undefined>;
+  /** columna → nota de trazabilidad (p. ej. «el ingreso original dice X»); se ve al pasar el mouse. */
+  __note?: Record<string, string | null>;
   [columnKey: string]: unknown;
 }
 
