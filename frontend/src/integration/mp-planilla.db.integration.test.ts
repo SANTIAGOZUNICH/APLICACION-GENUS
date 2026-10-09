@@ -155,6 +155,21 @@ describe.skipIf(Boolean(PROBLEM))(`Materias Primas: planillas transaccionales en
     expect(await balance("IT-MP-MAN")).toBe(12);
   });
 
+  it("fila existente escrita por SQL (updated_at con microsegundos, como una importación): se edita en la celda", async () => {
+    const { patchMpStockCells } = await db();
+    const id = randomUUID();
+    const T = "2026-09-01T10:00:00.000Z";
+    const lot = { id, codigo: "IT-MP-USEC", descripcion: "Lote IT importado", proveedor: "P IT", cliente: "", cantidadKg: 12, ubicacion: "A", lote: "L", vencimiento: "", origen: "ingreso", productosAsociados: "", archived: false, createdBy: "import", updatedBy: "import", createdAt: T, updatedAt: T };
+    // now() de Postgres guarda microsegundos; JS lee milisegundos (antes: conflicto permanente).
+    await q("insert into inv_mp_stock (id, payload, updated_at) values ($1, $2, now() + interval '123 microseconds')", [id, lot]);
+    const { items } = await patchMpStockCells(mp, [
+      { id, field: "producto", value: "CREMA IT", expectedVersion: T },
+      { id, field: "proveedor", value: "P IT 2", expectedVersion: T },
+    ]);
+    expect(items[0]).toMatchObject({ producto: "CREMA IT", proveedor: "P IT 2", cantidadKg: 12 });
+    expect((await lotsOf("IT-MP-USEC"))[0]).toMatchObject({ producto: "CREMA IT", proveedor: "P IT 2" });
+  });
+
   it("consumo de OE sin stock suficiente: se registra igual (negativo visible), ya no se pierde en silencio", async () => {
     const l = await ledger();
     await l.applyOeConsumption(

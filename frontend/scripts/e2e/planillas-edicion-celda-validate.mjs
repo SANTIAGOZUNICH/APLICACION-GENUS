@@ -81,6 +81,12 @@ async function openAs(user) {
     } catch {}
   });
   const page = await ctx.newPage();
+  // Si un guardado por celda falla, se ve el motivo exacto del servidor.
+  page.on("response", async (res) => {
+    if (res.url().includes("/api/v1/inventory/cells") && res.status() >= 400) {
+      console.log(`  [cells ${res.status()}] ${(await res.text().catch(() => "")).slice(0, 400)}`);
+    }
+  });
   debugPages.push(page);
   await page.goto("/login");
   await page.locator('input[type="email"]').fill(user.email);
@@ -160,6 +166,9 @@ async function editCell(page, gridId, rowValue, title, value, reason) {
 const cellValue = async (page, gridId, rowValue, title) => (await cell(page, gridId, rowValue, title)).locator("input").inputValue();
 const lockReason = async (page, gridId, rowValue, title) =>
   (await cell(page, gridId, rowValue, title)).evaluate((el) => (el.querySelector(".genus-cell-lock") ? el.querySelector(".genus-cell-wrap")?.getAttribute("title") ?? "(sin motivo)" : ""));
+/** Nota de trazabilidad de la celda (marca en la esquina + texto al pasar el mouse), o "" si no tiene. */
+const noteOf = async (page, gridId, rowValue, title) =>
+  (await cell(page, gridId, rowValue, title)).evaluate((el) => (el.querySelector(".genus-cell-note") ? el.querySelector(".genus-cell-wrap")?.getAttribute("title") ?? "(sin texto)" : ""));
 const waitDb = async (fn, timeout = 20_000) => {
   const end = Date.now() + timeout;
   while (Date.now() < end) {
@@ -291,8 +300,26 @@ try {
   await inCellRoundTrip(mp, { label: "Stock MP (fila tipo Production)", navLabel: "Stock", gridId: "mp-stock-grid", rowValue: "PLAN-MP-PROD", column: "Producto", value: "CREMA PROD · GEL NUEVO", read: async () => (await lotPayload())?.producto });
   await inCellRoundTrip(mp, { label: "Stock MP (fila tipo Production)", navLabel: "Stock", gridId: "mp-stock-grid", rowValue: "PLAN-MP-PROD", column: "Proveedor", value: "PROV CORREGIDO", read: async () => (await lotPayload())?.proveedor });
   await inCellRoundTrip(mp, { label: "Stock MP (fila tipo Production)", navLabel: "Stock", gridId: "mp-stock-grid", rowValue: "PLAN-MP-PROD", column: "Descripción", value: "Mentol cristal", read: async () => (await lotPayload())?.descripcion });
+  await inCellRoundTrip(mp, { label: "Stock MP (fila tipo Production)", navLabel: "Stock", gridId: "mp-stock-grid", rowValue: "PLAN-MP-PROD", column: "Lote", value: "L-PROD-1B", read: async () => (await lotPayload())?.lote });
+  await inCellRoundTrip(mp, { label: "Stock MP (fila tipo Production)", navLabel: "Stock", gridId: "mp-stock-grid", rowValue: "PLAN-MP-PROD", column: "Vencimiento", value: "2027-06-30", read: async () => (await lotPayload())?.vencimiento });
+  {
+    // Consistencia: Stock = dato vigente; el ingreso original conserva lo recibido (trazabilidad) y las dos celdas lo dicen.
+    const orig = await ingreso("PL-MP-PROD");
+    check(
+      "Consistencia: el ingreso original conserva lo recibido (producto, proveedor, descripción, lote, vencimiento)",
+      orig?.producto === "CREMA PROD" && orig?.proveedor === "PROV ORIGINAL" && orig?.descripcion === "Mentol planilla" && orig?.lote === "L-PROD-1" && orig?.vencimiento === "2027-05-31",
+      JSON.stringify({ p: orig?.producto, pr: orig?.proveedor, l: orig?.lote, v: orig?.vencimiento })
+    );
+    for (const col of ["Producto", "Proveedor", "Lote", "Vencimiento"]) {
+      const n = await noteOf(mp, "mp-stock-grid", "PLAN-MP-PROD", col);
+      check(`Consistencia: Stock «${col}» marca que es el dato vigente y cita el ingreso original`, /vigente/.test(n) && /MP-I-09001/.test(n), n);
+    }
+    check("Consistencia: Ubicación igual al ingreso → sin marca", (await noteOf(mp, "mp-stock-grid", "PLAN-MP-PROD", "Ubicación")) === "");
+    await (await cell(mp, "mp-stock-grid", "PLAN-MP-PROD", "Proveedor")).hover();
+    await mp.screenshot({ path: `${OUT}/5c-stock-mp-dato-vigente-vs-ingreso.png` });
+  }
   check("Stock MP (fila tipo Production): los kg no cambiaron (25) y no hay movimientos del código", (await lotPayload())?.cantidadKg === 25 && (await q("select 1 from mp_stock_movements where codigo = 'PLAN-MP-PROD'")).length === 0);
-  check("Stock MP (fila tipo Production): las 3 ediciones quedan auditadas", (await auditCount(prodLike.lot)) >= 3);
+  check("Stock MP (fila tipo Production): las 5 ediciones quedan auditadas", (await auditCount(prodLike.lot)) >= 5);
   {
     const why = await lockReason(mp, "mp-stock-grid", "PLAN-MP-PROD", "Kg lote");
     check("Stock MP: kg de un lote de ingreso protegidos con motivo específico", /Ajustar stock/.test(why), why);
@@ -301,12 +328,21 @@ try {
   }
   {
     const flagged = await mp.locator("[data-testid=mp-stock-grid]").evaluate((g) =>
-      [...g.querySelectorAll(".dsg-row")].some((r) => /^\.\.\s*C[óo]digo inv[áa]lido/.test([...r.querySelectorAll("input")].map((x) => x.value).find((v) => v.startsWith("..")) ?? "") || r.querySelector("[data-testid^=mp-stock-codigo-invalido-]"))
+      [...g.querySelectorAll(".dsg-row")].some((r) => /^\.\. · Código inválido$/.test([...r.querySelectorAll("input")].map((x) => x.value).find((v) => v.startsWith("..")) ?? "") || r.querySelector("[data-testid^=mp-stock-codigo-invalido-]"))
     );
     check("Stock MP: la fila «..» se marca «Código inválido» (no se oculta ni se borra)", flagged && (await q("select 1 from inv_mp_stock where id = $1", [prodLike.dots])).length === 1);
   }
   await (await cell(mp, "mp-stock-grid", "PLAN-MP-PROD", "Producto")).click();
   await mp.screenshot({ path: `${OUT}/5b-stock-mp-fila-production-producto.png` });
+  {
+    await nav(mp, "Ingresos MP");
+    await mp.locator("[data-testid=mp-ingresos-grid]").waitFor({ timeout: 60_000 });
+    const n = await noteOf(mp, "mp-ingresos-grid", "PL-MP-PROD", "Proveedor");
+    check("Consistencia: en Ingresos MP el original dice «dato recibido» y muestra el vigente de Stock", /recibido/.test(n) && /PROV CORREGIDO/.test(n), n);
+    await (await cell(mp, "mp-ingresos-grid", "PL-MP-PROD", "Proveedor")).hover();
+    await mp.screenshot({ path: `${OUT}/4b-ingresos-mp-dato-recibido.png` });
+    await nav(mp, "Stock");
+  }
 
   await nav(mp, "Compras MP");
   await inCellRoundTrip(mp, { label: "Compras MP", navLabel: "Compras MP", gridId: "mp-compras-grid", rowValue: "PL Mentol", column: "Nota", value: "nota editada en la celda", read: async () => (await q("select payload from inv_mp_compras where payload->>'materiaPrima' = 'PL Mentol'"))[0]?.payload.nota });

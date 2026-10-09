@@ -42,6 +42,18 @@
   opacity: 0.5;
   line-height: 0;
 }
+/* Nota de trazabilidad (p. ej. valor vigente distinto del ingreso original): marca en la esquina, no bloquea */
+.genus-grid .genus-cell-wrap { position: relative; }
+.genus-grid .genus-cell-note {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-top: 7px solid #0ea5e9;
+  border-left: 7px solid transparent;
+  pointer-events: none;
+}
 /* Celda protegida (solo lectura por política) */
 .genus-grid .genus-cell-protected {
   background: var(--os-bg, #f4f6f8);

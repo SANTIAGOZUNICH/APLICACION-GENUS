@@ -68,6 +68,8 @@ export interface GenusGridColumn<T> {
   sensitive?: boolean;
   /** Clase extra por celda (p. ej. «editado en GENUS» / conflicto). Opcional y aditivo. */
   cellClassName?: (row: T) => string | undefined;
+  /** Nota de trazabilidad de la celda (null = sin nota): marca visible y texto al pasar el mouse. No bloquea. */
+  cellNote?: (row: T) => string | null;
 }
 
 export interface GenusGridCellChange {
@@ -164,6 +166,7 @@ function GenusCell({
 }) {
   const { rowData, setRowData, focus, stopEditing } = props;
   const reason = rowData.__prot[colKey] ?? null;
+  const note = reason ? null : (rowData.__note?.[colKey] ?? null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   // Teclado apropiado en celular (numérico para cantidades, etc.).
@@ -182,7 +185,7 @@ function GenusCell({
 
   const Base = base.component as unknown as ComponentType<CellProps<string, unknown>>;
   return (
-    <div ref={wrapRef} className="genus-cell-wrap" title={reason ?? undefined}>
+    <div ref={wrapRef} className="genus-cell-wrap" title={reason ?? note ?? undefined}>
       <Base
         {...props}
         rowData={String(rowData[colKey] ?? "")}
@@ -195,6 +198,7 @@ function GenusCell({
           <Lock className="size-3" aria-hidden="true" />
         </span>
       ) : null}
+      {note ? <span className="genus-cell-note" aria-label={note} data-genus-note="1" /> : null}
     </div>
   );
 }
@@ -250,8 +254,9 @@ export function GenusGrid<T>({
     () =>
       rows.map((row) => {
         const id = rowId(row);
-        const out: GenusGridRow = { __id: id, __version: rowVersion(row), __prot: {}, __st: {} };
+        const out: GenusGridRow = { __id: id, __version: rowVersion(row), __prot: {}, __st: {}, __note: {} };
         for (const col of columns) {
+          if (col.cellNote) out.__note![col.key] = col.cellNote(row);
           const ov = overlay[cellKey(id, col.key)];
           out[col.key] = ov ? ov.value : col.getValue(row);
           out.__prot[col.key] = canEdit ? (col.protection?.(row) ?? null) : (readOnlyReason ?? "Tu sector no puede editar esta tabla.");

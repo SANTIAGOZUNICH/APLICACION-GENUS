@@ -5,6 +5,7 @@
  */
 
 import { readOnlyReason } from "@/features/os/operational/lib/readonly-reasons";
+import { MP_TRACE_FIELDS, ingresoTraceNote, originalIngresoByLot, stockTraceNote, type MpTraceField } from "@/features/os/operational/lib/mp-trazabilidad";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardPaste, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -200,6 +201,9 @@ const MP_STOCK_CELL_FIELDS: Record<string, string> = {
   LOTE: "lote",
   VENCIMIENTO: "vencimiento",
 };
+
+const traceField = (f: string | undefined): MpTraceField | null =>
+  f && (MP_TRACE_FIELDS as readonly string[]).includes(f) ? (f as MpTraceField) : null;
 
 export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: MpHubTab }) {
   const { email, sectorId } = usePreviewSession();
@@ -452,6 +456,10 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     reload
   );
 
+  // Trazabilidad Stock ↔ Ingreso original (ver lib/mp-trazabilidad: Stock = vigente, Ingreso = documento).
+  const originalByLot = useMemo(() => originalIngresoByLot(ingresos), [ingresos]);
+  const stockById = useMemo(() => new Map(stock.map((r) => [r.id, r] as const)), [stock]);
+
   const ingresoCells = useMpSheetEditing<MpIngresoRow>(
     "mp_ingresos",
     sectorId,
@@ -540,6 +548,17 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         headerTitle: label,
         hideOnMobile: false,
         className: "w-[7.5rem]",
+        // Texto de la planilla: el código y, si corresponde, su marca (se ve y se copia igual que en la lista).
+        text: (r) => {
+          const code = displayCell(r.codigo);
+          return [
+            code,
+            Boolean(r.codigoPendiente) || isMpInternalCodigo(r.codigo) ? "Sin código proveedor" : "",
+            /[\p{L}\p{N}]/u.test(code) ? "" : "Código inválido",
+          ]
+            .filter(Boolean)
+            .join(" · ");
+        },
         render: (r) => {
           const pending = Boolean(r.codigoPendiente) || isMpInternalCodigo(r.codigo);
           const code = displayCell(r.codigo);
@@ -1017,7 +1036,15 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           reasonRequired={stockCells.reasonRequired}
           rowVersion={stockCells.rowVersion}
           columns={[
-            ...stockColumns.map((col) => ({ ...col, edit: stockCells.edit(String(col.key)), readOnlyReason: readOnlyReason("mp_stock", String(col.key)) })),
+            ...stockColumns.map((col) => {
+              const field = traceField(MP_STOCK_CELL_FIELDS[String(col.key)]);
+              return {
+                ...col,
+                edit: stockCells.edit(String(col.key)),
+                readOnlyReason: readOnlyReason("mp_stock", String(col.key)),
+                cellNote: field ? (r: MpStockRow) => stockTraceNote(r, field, originalByLot.get(r.id)) : undefined,
+              };
+            }),
             ...(canWrite
               ? [
                   {
@@ -1110,7 +1137,17 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             onCellsCommit={ingresoCells.onCellsCommit}
             reasonRequired={ingresoCells.reasonRequired}
             rowVersion={ingresoCells.rowVersion}
-            columns={ingresoColumns.map((col) => ({ ...col, edit: ingresoCells.edit(String(col.key)), readOnlyReason: readOnlyReason("mp_ingresos", String(col.key)) }))}
+            columns={ingresoColumns.map((col) => {
+              const field = traceField(MP_INGRESO_CELL_FIELDS[String(col.key)]);
+              return {
+                ...col,
+                edit: ingresoCells.edit(String(col.key)),
+                readOnlyReason: readOnlyReason("mp_ingresos", String(col.key)),
+                cellNote: field
+                  ? (r: MpIngresoRow) => ingresoTraceNote(r, field, r.stockLotId ? stockById.get(r.stockLotId) : undefined, originalByLot.get(r.stockLotId ?? "")?.id === r.id)
+                  : undefined,
+              };
+            })}
             rows={pageRows as MpIngresoRow[]}
             rowKey={(r) => r.id}
             emptyMessage="Sin ingresos MP."
