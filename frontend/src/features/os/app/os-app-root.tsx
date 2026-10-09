@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { PreviewProvider, usePreviewContext } from "@/features/os/session/preview-context";
 import { isAuthenticatedPreview } from "@/features/os/auth/lib/auth-session-helpers";
@@ -9,9 +9,14 @@ import { WorkspaceProvider } from "@/features/os/workspace/workspace-provider";
 import { CreamyChatProvider } from "@/features/os/assistant/creamy-chat-context";
 import type { TwinNavEntry } from "@/features/os/navigation/twin-nav";
 import { TwinRouter } from "./twin-app";
+import { WorkItemPrioritiesProvider } from "@/features/os/operational/hooks/use-work-item-priorities";
+
+/** Pantallas que muestran trabajos operativos («Mi trabajo» y las vistas por sector de Producción). */
+const WORK_VIEWS = new Set(["mi-trabajo", "ver-elaboracion", "ver-envasado-masivo", "ver-envasado-premium", "ver-codificado", "work-detail"]);
 
 function TwinAppInner() {
-  const { session } = usePreviewContext();
+  const { session, currentNav } = usePreviewContext();
+  const prioritySession = useMemo(() => ({ email: session?.email ?? "", sector: session?.sectorId ?? "" }), [session?.email, session?.sectorId]);
   const router = useRouter();
 
   useEffect(() => {
@@ -22,7 +27,11 @@ function TwinAppInner() {
   }, [session, router]);
 
   if (!session) return null;
-  return <TwinRouter />;
+  return (
+    <WorkItemPrioritiesProvider session={prioritySession} enabled={WORK_VIEWS.has(currentNav.view)}>
+      <TwinRouter />
+    </WorkItemPrioritiesProvider>
+  );
 }
 
 export interface OsAppRootProps {

@@ -22,12 +22,14 @@ export const WORK_ITEM_CELL_FIELDS = [
   "notes",
   "packagingLote",
   "packagingVto",
+  /** Responsable (Elaboración: Cristian / Nicolás) o línea (Envasado: Línea N). */
+  "assignee",
 ] as const;
 export type WorkItemCellField = (typeof WORK_ITEM_CELL_FIELDS)[number];
 
 export const WORK_ITEM_CELL_KIND: Record<WorkItemCellField, "text" | "number" | "date"> = {
   client: "text", product: "text", plannedQuantity: "number", unit: "text",
-  plannedDate: "date", deliveryDate: "date", notes: "text", packagingLote: "text", packagingVto: "date",
+  plannedDate: "date", deliveryDate: "date", notes: "text", packagingLote: "text", packagingVto: "date", assignee: "text",
 };
 /** Identidad / trazabilidad (re-resuelve OA/OE o es dato de lote): confirmación reforzada. */
 export const WORK_ITEM_SENSITIVE_FIELDS: ReadonlySet<WorkItemCellField> = new Set(["product", "packagingLote", "packagingVto"]);
@@ -51,8 +53,9 @@ type ProtectableItem = Pick<
 >;
 
 /** Motivo por el que la celda NO es editable (null = editable). */
-export function workItemCellProtection(item: ProtectableItem, field: string, sector: SectorId | string | null | undefined): string | null {
+export function workItemCellProtection(item: ProtectableItem & { sector?: string }, field: string, sector: SectorId | string | null | undefined): string | null {
   if (!isWorkItemCellField(field)) return "Columna de solo lectura (calculada o de otro sector).";
+  if (field === "assignee" && item.sector === "CODIFICADO") return "Codificado no tiene responsable ni línea asignable.";
   if (sector !== "PRODUCCION") return "Solo Producción edita la planificación de trabajos.";
   if (!isNativeWorkItemId(item.id)) return "Trabajo de la planilla Google: se edita en Producción → Semanas.";
   if (item.operationalCancelledAt || CLOSED_STATUSES.has(item.status)) return `Trabajo ${item.status === "entregado" ? "entregado" : "cancelado"}: cerrado.`;
@@ -71,6 +74,16 @@ export function validateWorkItemCellValue(field: WorkItemCellField, raw: unknown
   if (field === "client" || field === "product") {
     if (!text) return { ok: false, message: "No puede quedar vacío." };
     return text.length > 300 ? { ok: false, message: "Máximo 300 caracteres." } : { ok: true, value: text };
+  }
+  if (field === "assignee") {
+    // Se normaliza a la forma de la base (Cristian, Nicolás, Línea 1…); el servidor valida la combinación con el sector.
+    const t = text.replace(/\s+/g, " ");
+    if (!t) return { ok: false, message: "El responsable / la línea es obligatorio." };
+    const linea = t.match(/^l[ií]nea\s*(\d)$/i) ?? t.match(/^(\d)$/);
+    if (linea) return { ok: true, value: `Línea ${linea[1]}` };
+    if (/^cristian$/i.test(t)) return { ok: true, value: "Cristian" };
+    if (/^nicol[aá]s$/i.test(t)) return { ok: true, value: "Nicolás" };
+    return { ok: false, message: "Usá Cristian / Nicolás (Elaboración) o Línea 1–4 (Envasado)." };
   }
   if (field === "unit") {
     if (!text) return { ok: false, message: "La unidad es obligatoria." };

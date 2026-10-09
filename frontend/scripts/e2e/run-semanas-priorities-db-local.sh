@@ -83,4 +83,5 @@ for _ in $(seq 1 50); do [[ -f "$CERT_DIR/ca-bundle.pem" ]] && grep -q "wss://" 
 grep -q "wss://" "$STATE_DIR/wsproxy.log" || { cat "$STATE_DIR/wsproxy.log" >&2; echo "[e2e] el proxy no arrancó (¿permiso para el puerto 443?)" >&2; exit 1; }
 export NODE_EXTRA_CA_CERTS="$CERT_DIR/ca-bundle.pem"
 node scripts/e2e/setup-e2e-db.mjs
-npx vitest run src/integration/semanas-priorities.db.integration.test.ts --reporter=verbose
+# Secuencial: comparten la MISMA base y un test renombra temporalmente la tabla de prioridades (migración pendiente).
+npx vitest run src/integration/semanas-priorities.db.integration.test.ts src/integration/semanas-links.db.integration.test.ts --no-file-parallelism --reporter=verbose

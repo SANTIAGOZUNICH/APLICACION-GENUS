@@ -791,6 +791,60 @@ export async function updateWorkItemPlanningDurable(
   });
 }
 
+export interface UpdateWorkItemAssigneeInput {
+  /** Elaboración: responsable (Cristian / Nicolás). Envasado: línea (Línea 1–4 Masivo, 1–2 Premium). */
+  assignee: string;
+  updatedBy: string;
+  updatedBySector: SectorId | string;
+  /** OBLIGATORIA: nunca se pisa un cambio ajeno (a diferencia del arrastre del tablero). */
+  expectedVersion: number;
+  reason?: string | null;
+}
+
+/**
+ * Cambia el responsable (Elaboración) o la línea (Envasado) de un trabajo — edición de planificación de Producción
+ * desde «Mi trabajo». Misma transacción que el resto de las correcciones: versión obligatoria, la combinación
+ * sector/línea/responsable se valida igual que al asignar (y la base la vuelve a exigir con su CHECK), y queda en
+ * operational_events. No toca avance, estado ni Calidad. Codificado no tiene responsable/línea editable.
+ */
+export async function updateWorkItemAssigneeDurable(id: string, input: UpdateWorkItemAssigneeInput) {
+  const { assertSectorAssignment } = await import("@/lib/planning/validators");
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ sector: workItems.sector, line: workItems.line, branchOwner: workItems.branchOwner, version: workItems.version, planningWeekId: workItems.planningWeekId, deletedAt: workItems.deletedAt })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!existing) throw new Error("Work item no encontrado.");
+    if (existing.deletedAt) throw new PlanningValidationError("Este trabajo fue borrado.");
+    assertVersionMatches(existing.version, input.expectedVersion);
+    const value = input.assignee?.trim() || null;
+    if (existing.sector === "CODIFICADO") throw new PlanningValidationError("Codificado no tiene responsable ni línea asignable.");
+    const next = existing.sector === "ELABORACION" ? assertSectorAssignment(existing.sector, null, value) : assertSectorAssignment(existing.sector, value, null);
+    const before = { line: existing.line ?? null, branchOwner: existing.branchOwner ?? null };
+    const after = { line: next.line, branchOwner: next.branchOwner };
+    if (before.line === after.line && before.branchOwner === after.branchOwner) throw new Error("No hay cambios para guardar.");
+    const [row] = await tx
+      .update(workItems)
+      .set({ line: next.line, branchOwner: next.branchOwner, updatedAt: new Date(), version: existing.version + 1 })
+      .where(and(eq(workItems.id, id), eq(workItems.version, existing.version)))
+      .returning();
+    if (!row) throw new PlanningValidationError("Este trabajo fue modificado mientras lo estabas editando (conflicto de versión) — actualizá y revisá antes de guardar.");
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: existing.planningWeekId,
+      type: "PLANNING_FIELDS_CORRECTED",
+      fromStatus: JSON.stringify(before),
+      toStatus: JSON.stringify(after),
+      actorEmail: input.updatedBy,
+      actorSector: String(input.updatedBySector),
+      note: input.reason?.trim() || null,
+    });
+    return row;
+  });
+}
+
 export interface RescheduleWorkItemInput {
   /** Nueva fecha de producción (día destino del drop). Requerida. */
   plannedDate: string;

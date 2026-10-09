@@ -1,5 +1,8 @@
 "use client";
 
+import { NEUTRAL_PRIORITY_TEXT, priorityEdge, WorkItemPriorityBadge } from "./work-item-priority-badge";
+import { useWorkItemPrioritiesAvailable, useWorkItemPrioritiesMap } from "../hooks/use-work-item-priorities";
+import { PRIORITY_META } from "@/lib/semanas-sheet/priorities";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
 import { VIEW_ARCHIVE_TOOLTIP } from "@/lib/work-view-archive";
@@ -13,6 +16,8 @@ import { useWorkItemCellEditing } from "../hooks/use-work-item-cells";
 import { formatDateDisplay } from "../lib/delivery-date";
 import { DeliveryDateBadge } from "./delivery-date-badge";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
+import { WorkItemCards } from "./work-item-cards";
+import { useWorkItemsView } from "../hooks/use-work-items-view";
 
 interface WorkItemProgressTableProps {
   items: WorkItem[];
@@ -70,6 +75,11 @@ function WorkItemProgressTableInner({
   cells: cellsIn,
 }: WorkItemProgressTableProps & { cells?: CellEditing }) {
   const cells = cellsIn ?? NO_CELL_EDITING;
+  const [view, setView] = useWorkItemsView();
+  // Prioridad de Semanas (solo trabajos vinculados por Producción). Solo lectura: la cambia Producción en Semanas.
+  const semanasPriorities = useWorkItemPrioritiesMap();
+  // Con la función disponible se muestra siempre la columna: vinculado = prioridad; sin vínculo = indicación neutral.
+  const showPriority = useWorkItemPrioritiesAvailable();
   if (items.length === 0) {
     return (
       <p className="rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-border)] px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
@@ -80,7 +90,16 @@ function WorkItemProgressTableInner({
 
   // Planilla tipo Excel (seleccionar/copiar rangos); la lista clásica queda como «Ver como lista».
   const excelColumns = [
-    ...(variant === "envasado" ? [excelCol<WorkItem>("linea", "Línea", (i) => displayField(i.line))] : []),
+    ...(showPriority
+      ? [
+          excelCol<WorkItem>("semanasPriority", "Prioridad", (i) => {
+            const p = semanasPriorities[i.id]?.priority;
+            return p ? `${PRIORITY_META[p].icon} ${PRIORITY_META[p].label}` : `⚪ ${NEUTRAL_PRIORITY_TEXT}`;
+          }),
+        ]
+      : []),
+    // Responsable (Elaboración) / Línea (Envasado): editable por Producción con versión y auditoría.
+    excelCol<WorkItem>("assignee", variant === "envasado" ? "Línea" : "Responsable", (i) => (variant === "envasado" ? (i.line ?? "") : (i.ownerPerson ?? "")), { edit: cells.edit("assignee") }),
     excelCol<WorkItem>("plannedDate", "Fecha", (i) => (i.plannedDate ? formatDateDisplay(i.plannedDate) : displayField(i.dayLabel)), { edit: cells.edit("plannedDate") }),
     excelCol<WorkItem>("deliveryDate", "Fecha de entrega", (i) => (i.deliveryDate ? formatDateDisplay(i.deliveryDate) : ""), { edit: cells.edit("deliveryDate") }),
     excelCol<WorkItem>("client", "Cliente", (i) => i.client ?? "", { edit: cells.edit("client") }),
@@ -114,7 +133,48 @@ function WorkItemProgressTableInner({
     },
   ];
 
+  const viewToggle = (
+    <div className="flex justify-end">
+      <div className="inline-flex rounded-lg border border-[var(--os-border)] p-0.5 text-xs" role="tablist" aria-label="Vista de trabajos">
+        {(["cards", "planilla"] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            role="tab"
+            aria-selected={view === v}
+            onClick={() => setView(v)}
+            data-testid={`work-items-view-${v}`}
+            className={`rounded-md px-2.5 py-1 font-semibold ${view === v ? "bg-[var(--os-teal)] text-[#04201e]" : "text-[var(--os-text-muted)] hover:text-[var(--os-text)]"}`}
+          >
+            {v === "cards" ? "Tarjetas" : "Planilla"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+  if (view === "cards") {
+    return (
+      <div className="space-y-2">
+        {viewToggle}
+        <WorkItemCards
+          items={items}
+          variant={variant}
+          getFinishedQty={getFinishedQty}
+          getObservation={getObservation}
+          onSelectItem={onSelectItem}
+          listMode={listMode}
+          onArchiveFromView={onArchiveFromView}
+          onRestoreToView={onRestoreToView}
+          archiveBusyId={archiveBusyId}
+          showPackagingColumns={showPackagingColumns}
+          cells={cells}
+        />
+      </div>
+    );
+  }
   return (
+    <div className="space-y-2">
+    {viewToggle}
     <ExcelOrList
       columns={excelColumns}
       rows={items}
@@ -124,6 +184,7 @@ function WorkItemProgressTableInner({
       onCellsCommit={cells.onCellsCommit}
       rowVersion={cells.rowVersion}
       reasonRequired={cells.reasonRequired}
+      rowClassName={showPriority ? (i) => `genus-row-prio-${semanasPriorities[i.id]?.priority ?? "NONE"}` : undefined}
     >
     <div className="os-table-wrap overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
       <table className="os-table w-full max-w-full table-fixed border-collapse text-[length:var(--os-table-font,13px)]">
@@ -179,6 +240,8 @@ function WorkItemProgressTableInner({
               <tr
                 key={item.id}
                 onClick={() => onSelectItem(item)}
+                data-semanas-priority={semanasPriorities[item.id]?.priority ?? (showPriority ? "NONE" : undefined)}
+                style={isTransferred ? undefined : priorityEdge(semanasPriorities[item.id]?.priority)}
                 className={`cursor-pointer border-b border-[var(--os-border-subtle)] last:border-b-0 ${
                   isTransferred
                     ? "border-l-4 border-l-[var(--os-teal)] bg-[var(--os-teal-soft)]/40"
@@ -200,7 +263,8 @@ function WorkItemProgressTableInner({
                   <span className="os-break">{displayField(item.client)}</span>
                 </td>
                 <td className={`${tdClass} font-medium`}>
-                  <span className="os-break">{displayField(item.product)}</span>
+                  <WorkItemPriorityBadge itemId={item.id} className="mb-1" />
+                  <span className="os-break block">{displayField(item.product)}</span>
                   <div className="mt-1" onClick={(e) => e.stopPropagation()}>
                     <WorkItemWarningBadge item={item} onSelectField={() => onSelectItem(item)} />
                   </div>
@@ -294,5 +358,6 @@ function WorkItemProgressTableInner({
       </table>
     </div>
     </ExcelOrList>
+    </div>
   );
 }

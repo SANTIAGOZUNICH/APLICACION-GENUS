@@ -26,6 +26,14 @@ function fakeStore(initial: WorkItem[]) {
       row.version = (row.version ?? 0) + 1;
       return { version: row.version };
     },
+    async updateAssignee(id, input) {
+      calls.push({ fn: "assignee", id, input: input as never });
+      const row = rows.get(`native:${id}`)!;
+      if (input.expectedVersion !== row.version) throw new Error("conflicto de versión");
+      (row as unknown as Record<string, unknown>).line = input.assignee;
+      row.version = (row.version ?? 0) + 1;
+      return { version: row.version };
+    },
     async updateLoteVto(id, input) {
       calls.push({ fn: "lotevto", id, input: input as never });
       const row = rows.get(`native:${id}`)!;
@@ -39,6 +47,30 @@ function fakeStore(initial: WorkItem[]) {
   return { store, rows, calls };
 }
 const ch = (field: string, value: string, over: Record<string, unknown> = {}) => ({ id: "native:w1", field: field as never, value, expectedVersion: 3, ...over });
+
+describe("responsable / línea (assignee) desde «Mi trabajo»", () => {
+  afterEach(() => setWorkItemCellStoreForTests(null));
+  it("normaliza a la forma de la base y rechaza valores sueltos", () => {
+    expect(validateWorkItemCellValue("assignee", "linea 2")).toEqual({ ok: true, value: "Línea 2" });
+    expect(validateWorkItemCellValue("assignee", "3")).toEqual({ ok: true, value: "Línea 3" });
+    expect(validateWorkItemCellValue("assignee", "nicolas")).toEqual({ ok: true, value: "Nicolás" });
+    expect(validateWorkItemCellValue("assignee", "Juan").ok).toBe(false);
+    expect(validateWorkItemCellValue("assignee", "").ok).toBe(false);
+  });
+  it("Codificado no tiene responsable editable; los sectores nunca editan", () => {
+    expect(workItemCellProtection({ ...base(), sector: "CODIFICADO" } as never, "assignee", "PRODUCCION")).toMatch(/Codificado/);
+    expect(workItemCellProtection(base(), "assignee", "ELABORACION")).toMatch(/Solo Producción/);
+    expect(workItemCellProtection(base(), "assignee", "PRODUCCION")).toBeNull();
+  });
+  it("se guarda con la función canónica de responsable, con versión", async () => {
+    const f = fakeStore([base()]);
+    setWorkItemCellStoreForTests(f.store);
+    const r = await applyWorkItemCellChanges(produccion, [ch("assignee", "linea 2")]);
+    expect(r.ok).toBe(true);
+    expect(f.calls).toEqual([{ fn: "assignee", id: "w1", input: expect.objectContaining({ assignee: "Línea 2", expectedVersion: 3 }) }]);
+    await expect(applyWorkItemCellChanges({ ...produccion, sector: "ELABORACION" }, [ch("assignee", "Línea 1")])).rejects.toBeInstanceOf(OrdersForbiddenError);
+  });
+});
 
 describe("política de celdas de WorkItem", () => {
   it("solo Producción; solo nativos; cerrados/informados/decididos/cerrados de envasado protegidos", () => {

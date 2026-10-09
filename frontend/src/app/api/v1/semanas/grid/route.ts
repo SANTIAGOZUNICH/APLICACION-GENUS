@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
-import { canEditSemanas, isSemanasTabKey, loadSemanasView } from "@/lib/semanas-sheet/semanas-sheet-service";
+import { canEditSemanas, isSemanasTabKey, loadLinksForView, loadSemanasView } from "@/lib/semanas-sheet/semanas-sheet-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +15,9 @@ export async function GET(request: Request) {
     const tab = new URL(request.url).searchParams.get("tab");
     if (!isSemanasTabKey(tab)) throw new OrdersValidationError("tab inválida (ELABORACION, ACONDICIONAMIENTO, CDIA, ENTREGAS).");
     const view = await loadSemanasView(tab);
-    return NextResponse.json({ ...view, canEdit: canEditSemanas(actor.sector) && view.writable });
+    // Vínculos con trabajos operativos (0042): nunca rompen la lectura de la planilla.
+    const links = await loadLinksForView(view).catch(() => ({ available: false, byTask: {}, orphans: [] }));
+    return NextResponse.json({ ...view, links, canEdit: canEditSemanas(actor.sector) && view.writable, canLink: canEditSemanas(actor.sector) && Boolean(links?.available) });
   } catch (err) {
     if (err instanceof Error && !("status" in err)) {
       return NextResponse.json({ error: `No se pudo leer la planilla: ${err.message}` }, { status: 502 });
