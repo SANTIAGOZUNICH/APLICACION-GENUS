@@ -310,14 +310,17 @@ try {
   // 8) Pegado desde Excel: un rango de 2 filas en Ubicación.
   {
     const grid = mp.locator(`[data-testid=${G}]`);
-    const order = await grid.evaluate((g) => [...g.querySelectorAll(".dsg-row")].flatMap((r) => [...r.querySelectorAll("input")].map((x) => x.value).filter((v) => v === "Glicerina full USP" || v === "Vaselina full")));
+    await grid.evaluate((g) => { const c = g.querySelector(".dsg-container"); if (c) c.scrollLeft = 0; });
+    await mp.waitForTimeout(200);
+    // Orden de las dos filas de prueba en la grilla (por Cliente, que se ve al inicio).
+    const order = await grid.evaluate((g) => [...g.querySelectorAll(".dsg-row")].flatMap((r) => [...r.querySelectorAll("input")].map((x) => x.value).filter((v) => v === "CLIENTE FULL" || v === "CLIENTE FULL 2")));
     await (await cell(mp, G, order[0], "Ubicación")).click();
     await mp.evaluate(() => {
       const dt = new DataTransfer();
       dt.setData("text/plain", "RACK-1\nRACK-2");
       document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true }));
     });
-    const byDesc = async (d) => (await q("select payload from inv_mp_stock where payload->>'descripcion' = $1", [d]))[0]?.payload?.ubicacion;
+    const byDesc = async (cliente) => (await q("select payload from inv_mp_stock where payload->>'cliente' = $1", [cliente]))[0]?.payload?.ubicacion;
     check("pegar desde Excel un rango de 2 filas (Ubicación): ambas guardadas", await waitDb(async () => (await byDesc(order[0])) === "RACK-1" && (await byDesc(order[1])) === "RACK-2"), JSON.stringify(order));
   }
 
