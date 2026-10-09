@@ -69,4 +69,16 @@ Además:
 
 Solo se editaron campos administrativos y borradores: **no se movió stock**.
 
-Capturas en `docss/img/planillas-edicion-celda/`.
+**Resultado: 38/38 OK** (build de producción).
+
+Capturas en `docss/img/planillas-edicion-celda/` (una por tabla, después de recargar).
+
+Regresión sobre esta rama:
+
+| Prueba | Resultado |
+|---|---|
+| Vitest completo (incluye 4 nuevas de `table-mode.test.ts`) | 2151 OK |
+| E2E Materias Primas, build de producción (`test:e2e:mp-planilla`) | 24/24 |
+| E2E Depósito (`test:e2e:deposito-me`) | 25/25 |
+| E2E Asignación de lotes, build de producción | 30/30 |
+| Lint de los archivos tocados | sin errores nuevos |
