@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import {
   assertFeatureWritesEnabled,
@@ -7,7 +7,8 @@ import {
   isFeatureSchemaReady,
   SchemaPendingError,
 } from "@/lib/db/feature-schema";
-import { mpWeeklyControlLines, mpWeeklyControls } from "@/lib/db/schema";
+import { mpStockBalances, mpWeeklyControlLines, mpWeeklyControls } from "@/lib/db/schema";
+import { isMissingSchemaError } from "@/lib/db/missing-schema";
 import { enrichControlLine } from "./calcs";
 import {
   canReadMpControl,
@@ -22,6 +23,11 @@ import {
 import { mpControlLifecycleActions } from "@/lib/lifecycle/adapters/common";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 import { MAX_MP_LINE_CELL_CHANGES, isMpLineCellField, mpLineProtection, validateMpLineValue, type MpLineCellChange } from "./cell-edit";
+
+/** Nueva versión estrictamente mayor que la anterior (dos guardados en el mismo milisegundo no comparten versión). */
+function bumpVersion(prev: string): string {
+  return new Date(Math.max(Date.now(), new Date(prev).getTime() + 1 || 0)).toISOString();
+}
 
 export class MpControlCellError extends Error {
   constructor(readonly code: "CONFLICT" | "PROTECTED" | "INVALID" | "NOT_FOUND", message: string) {
@@ -43,6 +49,54 @@ function assertWrite(actor: MpControlActor) {
   if (!canWriteMpControl(actor.sector)) throw new Error("Solo MP puede editar el Control semanal.");
 }
 
+const normCodigo = (c: string | null | undefined) => (c ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+
+/**
+ * Stock REAL por código desde el libro mayor de MP. Antes el cliente nunca mandaba `stockByCodigo` y todas las líneas
+ * quedaban con stock 0 (y por lo tanto «falta» todo).
+ */
+async function ledgerStockByCodigo(codes: Iterable<string>): Promise<Record<string, number>> {
+  const uniq = [...new Set([...codes].map(normCodigo).filter(Boolean))];
+  if (uniq.length === 0) return {};
+  const out: Record<string, number> = {};
+  if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
+    try {
+      const rows = await getDb()
+        .select({ codigo: mpStockBalances.codigo, stockActual: mpStockBalances.stockActual })
+        .from(mpStockBalances)
+        .where(inArray(mpStockBalances.codigo, uniq));
+      for (const r of rows) out[normCodigo(r.codigo)] = r.stockActual;
+      return out;
+    } catch {
+      if (!isFeatureMemoryAllowed()) return out;
+    }
+  }
+  const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
+  for (const c of uniq) {
+    const b = await getMpStockLedger().getBalance(c);
+    if (b) out[c] = b.stockActual;
+  }
+  return out;
+}
+
+/** Borradores: el stock de cada línea se muestra en vivo (libro mayor). Completados conservan el valor histórico. */
+async function withLiveStock(controls: MpWeeklyControl[]): Promise<MpWeeklyControl[]> {
+  const drafts = controls.filter((c) => c.status === "BORRADOR");
+  if (drafts.length === 0) return controls;
+  const stock = await ledgerStockByCodigo(drafts.flatMap((c) => c.lines.map((l) => l.codigo)));
+  return controls.map((c) =>
+    c.status !== "BORRADOR"
+      ? c
+      : {
+          ...c,
+          lines: recalcLines(
+            c.lines.map((l) => ({ ...l, stockActual: stock[normCodigo(l.codigo)] ?? 0 })),
+            c.quantityKg
+          ),
+        }
+  );
+}
+
 function buildLinesFromSnapshot(
   snapshot: MpFormulaSnapshot,
   quantityKg: number | null,
@@ -54,7 +108,7 @@ function buildLinesFromSnapshot(
       materiaPrima: m.materiaPrima ?? "",
       formulaPct: m.formulaPct,
       quantityKg,
-      stockActual: stockByCodigo[(m.codigo ?? "").trim()] ?? 0,
+      stockActual: stockByCodigo[normCodigo(m.codigo)] ?? stockByCodigo[(m.codigo ?? "").trim()] ?? 0,
       sortOrder: i,
     });
     return { id: randomUUID(), ...enriched };
@@ -150,13 +204,13 @@ export class MpControlService {
             .where(eq(mpWeeklyControlLines.controlId, row.id));
           out.push(rowToControl(row, lines));
         }
-        return out;
+        return await withLiveStock(out);
       } catch {
         if (!isFeatureMemoryAllowed()) return [];
       }
     }
     if (!isFeatureMemoryAllowed()) return [];
-    return [...mem().controls].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return withLiveStock([...mem().controls].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
   }
 
   async get(actor: MpControlActor, id: string): Promise<MpWeeklyControl | null> {
@@ -179,11 +233,10 @@ export class MpControlService {
     assertWrite(actor);
     await assertFeatureWritesEnabled();
     const now = new Date().toISOString();
-    const lines = buildLinesFromSnapshot(
-      input.snapshot,
-      input.quantityKg,
-      input.stockByCodigo
-    );
+    const lines = buildLinesFromSnapshot(input.snapshot, input.quantityKg, {
+      ...(input.stockByCodigo ?? {}),
+      ...(await ledgerStockByCodigo(input.snapshot.materials.map((m) => m.codigo ?? ""))),
+    });
     const control: MpWeeklyControl = {
       id: randomUUID(),
       status: "BORRADOR",
@@ -220,12 +273,17 @@ export class MpControlService {
       /** Si true, recalcula kg desde snapshot sin alterar formulaSnapshot. */
       recalcFromSnapshot?: boolean;
       stockByCodigo?: Record<string, number>;
+      /** Versión (updatedAt) que vio el usuario: si otro guardó antes, conflicto y no se pisa nada. */
+      expectedVersion?: string;
     }
   ): Promise<MpWeeklyControl> {
     assertWrite(actor);
     await assertFeatureWritesEnabled();
     const existing = await this.get(actor, id);
     if (!existing) throw new Error("Control no encontrado.");
+    if (patch.expectedVersion && patch.expectedVersion !== existing.updatedAt) {
+      throw new MpControlCellError("CONFLICT", "Otro usuario modificó este control. Recargá y reintentá.");
+    }
     if (existing.status === "COMPLETADO" && patch.status === "BORRADOR") {
       throw new Error("No se puede reabrir un control completado. Anulá o archivá.");
     }
@@ -241,7 +299,8 @@ export class MpControlService {
 
     if (patch.recalcFromSnapshot && existing.formulaSnapshot) {
       const snap = existing.formulaSnapshot;
-      lines = buildLinesFromSnapshot(snap, quantityKg, patch.stockByCodigo).map(
+      const stock = { ...(patch.stockByCodigo ?? {}), ...(await ledgerStockByCodigo(snap.materials.map((m) => m.codigo ?? ""))) };
+      lines = buildLinesFromSnapshot(snap, quantityKg, stock).map(
         (nl, i) => {
           const prev = existing.lines[i];
           return {
@@ -259,7 +318,7 @@ export class MpControlService {
       lines = recalcLines(lines, quantityKg);
     }
 
-    const now = new Date().toISOString();
+    const now = bumpVersion(existing.updatedAt);
     const next: MpWeeklyControl = {
       ...existing,
       client: patch.client ?? existing.client,
@@ -280,7 +339,7 @@ export class MpControlService {
       // snapshot inmutable: nunca se sobrescribe aquí
       formulaSnapshot: existing.formulaSnapshot,
     };
-    await this.persist(next);
+    await this.persist(next, undefined, existing.updatedAt);
     return next;
   }
 
@@ -324,7 +383,7 @@ export class MpControlService {
       updatedBy: actor.email,
       updatedAt: new Date(Math.max(now.getTime(), prev + 1)).toISOString(),
     };
-    await this.persist(next, { action: "cell_edit" });
+    await this.persist(next, { action: "cell_edit" }, existing.updatedAt);
     return next;
   }
 
@@ -376,7 +435,7 @@ export class MpControlService {
     if (!decision.anular.allowed || decision.anular.action !== "anular") {
       throw new Error(decision.anular.reason || "No se puede anular este control.");
     }
-    const now = new Date().toISOString();
+    const now = bumpVersion(existing.updatedAt);
     const next: MpWeeklyControl = {
       ...existing,
       status: "ANULADO",
@@ -389,7 +448,7 @@ export class MpControlService {
         annulledBy: actor.email,
       },
     };
-    await this.persist(next, { action: "annul", reason: trimmed });
+    await this.persist(next, { action: "annul", reason: trimmed }, existing.updatedAt);
     return next;
   }
 
@@ -402,7 +461,7 @@ export class MpControlService {
     if (!decision.archivar.allowed || decision.archivar.action !== "archivar") {
       throw new Error(decision.archivar.reason || "No se puede archivar este control.");
     }
-    const now = new Date().toISOString();
+    const now = bumpVersion(existing.updatedAt);
     const next: MpWeeklyControl = {
       ...existing,
       status: "ARCHIVADO",
@@ -415,7 +474,7 @@ export class MpControlService {
         archivedBy: actor.email,
       },
     };
-    await this.persist(next, { action: "archive" });
+    await this.persist(next, { action: "archive" }, existing.updatedAt);
     return next;
   }
 
@@ -428,7 +487,7 @@ export class MpControlService {
     if (!decision.restaurar.allowed) {
       throw new Error(decision.restaurar.reason || "No se puede restaurar este control.");
     }
-    const now = new Date().toISOString();
+    const now = bumpVersion(existing.updatedAt);
     const restoredStatus =
       existing.lifecycle?.previousStatus === "COMPLETADO"
         ? "COMPLETADO"
@@ -447,95 +506,112 @@ export class MpControlService {
         archivedBy: undefined,
       },
     };
-    await this.persist(next, { action: "restore" });
+    await this.persist(next, { action: "restore" }, existing.updatedAt);
     return next;
   }
 
+  /**
+   * Guarda el control y sus líneas en UNA transacción. Si se pasa `expectedPrevUpdatedAt`, solo se guarda si nadie lo
+   * modificó desde que se leyó (antes: upsert + borrar/insertar líneas sin transacción ni versión; un error a mitad
+   * de camino dejaba el control sin líneas y dos guardados simultáneos se pisaban). La auditoría del último cambio se
+   * actualiza también en las ediciones (antes solo se escribía al crear).
+   */
   private async persist(
     control: MpWeeklyControl,
-    auditEvent?: { action: string; reason?: string }
+    auditEvent?: { action: string; reason?: string },
+    expectedPrevUpdatedAt?: string
   ): Promise<void> {
+    const audit = {
+      updatedBy: control.updatedBy,
+      at: control.updatedAt,
+      action: auditEvent?.action ?? "persist",
+      reason: auditEvent?.reason,
+      lifecycle: control.lifecycle ?? {},
+    };
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
-        const db = getDb();
-        await db
-          .insert(mpWeeklyControls)
-          .values({
-            id: control.id,
-            status: control.status,
-            client: control.client,
-            product: control.product,
-            quantityKg: control.quantityKg,
-            linkedOeId: control.linkedOeId,
-            driveFileId: control.driveFileId,
-            driveModifiedTime: control.driveModifiedTime,
-            driveChecksum: control.driveChecksum,
-            formulaSnapshot: control.formulaSnapshot,
-            source: control.source,
-            createdBy: control.createdBy,
-            updatedBy: control.updatedBy,
-            createdAt: new Date(control.createdAt),
-            updatedAt: new Date(control.updatedAt),
-            completedAt: control.completedAt
-              ? new Date(control.completedAt)
-              : null,
-            audit: {
-              updatedBy: control.updatedBy,
-              at: control.updatedAt,
-              action: auditEvent?.action ?? "persist",
-              reason: auditEvent?.reason,
-              lifecycle: control.lifecycle ?? {},
-            },
-          })
-          .onConflictDoUpdate({
-            target: mpWeeklyControls.id,
-            set: {
+        await getDb().transaction(async (tx) => {
+          if (expectedPrevUpdatedAt) {
+            const res = await tx
+              .update(mpWeeklyControls)
+              .set({
+                status: control.status,
+                client: control.client,
+                product: control.product,
+                quantityKg: control.quantityKg,
+                linkedOeId: control.linkedOeId,
+                updatedBy: control.updatedBy,
+                updatedAt: new Date(control.updatedAt),
+                completedAt: control.completedAt ? new Date(control.completedAt) : null,
+                audit,
+              })
+              .where(and(eq(mpWeeklyControls.id, control.id), eq(mpWeeklyControls.updatedAt, new Date(expectedPrevUpdatedAt))))
+              .returning({ id: mpWeeklyControls.id });
+            if (res.length === 0) {
+              throw new MpControlCellError("CONFLICT", "Otro usuario modificó este control. Recargá y reintentá.");
+            }
+          } else {
+            await tx.insert(mpWeeklyControls).values({
+              id: control.id,
               status: control.status,
               client: control.client,
               product: control.product,
               quantityKg: control.quantityKg,
               linkedOeId: control.linkedOeId,
+              driveFileId: control.driveFileId,
+              driveModifiedTime: control.driveModifiedTime,
+              driveChecksum: control.driveChecksum,
+              formulaSnapshot: control.formulaSnapshot,
+              source: control.source,
+              createdBy: control.createdBy,
               updatedBy: control.updatedBy,
+              createdAt: new Date(control.createdAt),
               updatedAt: new Date(control.updatedAt),
-              completedAt: control.completedAt
-                ? new Date(control.completedAt)
-                : null,
-            },
-          });
-        await db
-          .delete(mpWeeklyControlLines)
-          .where(eq(mpWeeklyControlLines.controlId, control.id));
-        if (control.lines.length) {
-          await db.insert(mpWeeklyControlLines).values(
-            control.lines.map((l) => ({
-              id: l.id,
-              controlId: control.id,
-              sortOrder: l.sortOrder,
-              codigo: l.codigo,
-              materiaPrima: l.materiaPrima,
-              formulaPct: l.formulaPct,
-              kgNecesarios: l.kgNecesarios,
-              kgEditados: l.kgEditados,
-              stockActual: l.stockActual,
-              stockProyectado: l.stockProyectado,
-              diferencia: l.diferencia,
-              estado: l.estado,
-              lote: l.lote,
-              preparado: l.preparado,
-              observacion: l.observacion,
-              payload: {},
-            }))
-          );
-        }
+              completedAt: control.completedAt ? new Date(control.completedAt) : null,
+              audit,
+            });
+          }
+          await tx.delete(mpWeeklyControlLines).where(eq(mpWeeklyControlLines.controlId, control.id));
+          if (control.lines.length) {
+            await tx.insert(mpWeeklyControlLines).values(
+              control.lines.map((l) => ({
+                id: l.id,
+                controlId: control.id,
+                sortOrder: l.sortOrder,
+                codigo: l.codigo,
+                materiaPrima: l.materiaPrima,
+                formulaPct: l.formulaPct,
+                kgNecesarios: l.kgNecesarios,
+                kgEditados: l.kgEditados,
+                stockActual: l.stockActual,
+                stockProyectado: l.stockProyectado,
+                diferencia: l.diferencia,
+                estado: l.estado,
+                lote: l.lote,
+                preparado: l.preparado,
+                observacion: l.observacion,
+                payload: {},
+              }))
+            );
+          }
+        });
         return;
-      } catch {
-        if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
+      } catch (err) {
+        if (err instanceof MpControlCellError) throw err;
+        if (!isFeatureMemoryAllowed()) {
+          if (isMissingSchemaError(err)) throw new SchemaPendingError();
+          throw err;
+        }
       }
     }
     if (!isFeatureMemoryAllowed()) throw new SchemaPendingError();
     const idx = mem().controls.findIndex((c) => c.id === control.id);
-    if (idx >= 0) mem().controls[idx] = control;
-    else mem().controls.unshift(control);
+    if (idx >= 0) {
+      if (expectedPrevUpdatedAt && mem().controls[idx]!.updatedAt !== expectedPrevUpdatedAt) {
+        throw new MpControlCellError("CONFLICT", "Otro usuario modificó este control. Recargá y reintentá.");
+      }
+      mem().controls[idx] = control;
+    } else mem().controls.unshift(control);
   }
 }
 

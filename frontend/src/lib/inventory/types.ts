@@ -179,6 +179,8 @@ export type MpStockRow = {
   codigoPendiente?: boolean;
   /** Productos destino asociados (ingresos CONFIRMADO del mismo código), unidos por " · ". */
   productosAsociados: string;
+  /** Stock real del CÓDIGO según el libro mayor (solo lectura; lo agrega la API al listar). */
+  stockLibroMayor?: number | null;
   /** Archivo lógico: oculto del listado activo; no hard-delete del historial. */
   archived?: boolean;
   archivedAt?: string | null;

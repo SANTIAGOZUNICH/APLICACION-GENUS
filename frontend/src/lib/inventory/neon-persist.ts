@@ -109,6 +109,8 @@ export async function hydrateInventoryFromNeon(
     repo.mpIngresos = mpIngresos.map((r) => normalizeMpIngresoPayload(r.payload));
     repo.mpControl = mpControl.map((r) => r.payload as MpControlRow);
     repo.mpCompras = mpCompras.map((r) => r.payload as MpCompraRow);
+    // Igual que ME: lo hidratado no se re-escribe (un POST de otro módulo no puede pisar un guardado de MP).
+    markHydrated([...repo.mpStock, ...repo.mpIngresos, ...repo.mpControl, ...repo.mpCompras]);
     repo.ajustes = ajustes.map((r) => r.payload as StockAjuste);
     repo.audit = audit.map((r) => r.payload as InventoryAudit);
     hydrated = true;
@@ -120,7 +122,7 @@ export async function hydrateInventoryFromNeon(
   }
 }
 
-function normalizeMpIngresoPayload(raw: unknown): MpIngresoRow {
+export function normalizeMpIngresoPayload(raw: unknown): MpIngresoRow {
   const r = raw as Partial<MpIngresoRow>;
   const status = r.status === "CONFIRMADO" || r.status === "ANULADO" || r.status === "BORRADOR"
     ? r.status
@@ -156,7 +158,7 @@ function normalizeMpIngresoPayload(raw: unknown): MpIngresoRow {
   };
 }
 
-function normalizeMpStockPayload(raw: unknown): MpStockRow {
+export function normalizeMpStockPayload(raw: unknown): MpStockRow {
   const r = raw as Partial<MpStockRow>;
   return {
     id: String(r.id ?? ""),
@@ -209,6 +211,7 @@ export async function refreshMpInventoryFromNeon(
     ]);
     repo.mpStock = mpStock.map((r) => normalizeMpStockPayload(r.payload));
     repo.mpIngresos = mpIngresos.map((r) => normalizeMpIngresoPayload(r.payload));
+    markHydrated([...repo.mpStock, ...repo.mpIngresos]);
   })();
   mpRefreshInFlight = run;
   try {
@@ -253,10 +256,12 @@ export async function persistMpStockRow(row: MpStockRow): Promise<void> {
 /** Sincroniza todos los lotes MP en memoria (tras delta de ingreso). */
 export async function persistMpStockSnapshot(rows: MpStockRow[]): Promise<void> {
   if (!isDatabaseConfigured() || rows.length === 0) return;
-  const db = getDb();
-  for (const row of rows) {
+  // Solo lotes modificados en este request (los hidratados de la base no se re-escriben).
+  const changed = rows.filter((r) => !hydratedMeRows.has(r));
+  for (const row of changed) {
     await persistMpStockRow(row);
   }
+  markHydrated(changed);
 }
 
 /**
@@ -275,10 +280,11 @@ export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promi
   const meSalidas = dirty(repo.meSalidas);
   const meMaterials = dirty(repo.meMaterials);
   const meAlerts = dirty(repo.meAlerts);
-  const mpStock = [...repo.mpStock];
-  const mpIngresos = [...repo.mpIngresos];
-  const mpControl = [...repo.mpControl];
-  const mpCompras = [...repo.mpCompras];
+  // MP: solo las filas que ESTE request modificó (antes se re-escribían todas → "gana el último" entre requests).
+  const mpStock = dirty(repo.mpStock);
+  const mpIngresos = dirty(repo.mpIngresos);
+  const mpControl = dirty(repo.mpControl);
+  const mpCompras = dirty(repo.mpCompras);
   const meAlertReads = [...repo.meAlertReads];
   const ajustes = [...repo.ajustes];
   const audit = [...repo.audit];
@@ -315,6 +321,7 @@ export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promi
   await upsertIdPayload(invMpIngresos, mpIngresos);
   await upsertIdPayload(invMpControl, mpControl);
   await upsertIdPayload(invMpCompras, mpCompras);
+  markHydrated([...mpStock, ...mpIngresos, ...mpControl, ...mpCompras]);
 
   for (const row of meAlertReads) {
     await db

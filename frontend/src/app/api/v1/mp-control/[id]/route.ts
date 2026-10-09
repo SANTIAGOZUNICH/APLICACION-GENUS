@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getMpControlService } from "@/lib/mp-control/mp-control-service";
+import { MpControlCellError, getMpControlService } from "@/lib/mp-control/mp-control-service";
 import type { MpWeeklyControlLine, MpWeeklyControlStatus } from "@/lib/mp-control/types";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
@@ -39,6 +39,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
       stockByCodigo?: Record<string, number>;
       lifecycleAction?: "annul" | "archive" | "restore";
       reason?: string;
+      expectedVersion?: string;
     };
     const svc = getMpControlService();
     const mpActor = { email: actor.email, sector: actor.sector };
@@ -57,6 +58,10 @@ export async function PATCH(request: Request, ctx: Ctx) {
     const control = await svc.update(mpActor, id, body);
     return NextResponse.json({ control });
   } catch (err) {
+    if (err instanceof MpControlCellError) {
+      const status = err.code === "CONFLICT" ? 409 : err.code === "PROTECTED" ? 403 : err.code === "NOT_FOUND" ? 404 : 400;
+      return NextResponse.json({ error: err.message, code: err.code }, { status });
+    }
     return ordersErrorResponse(err);
   }
 }

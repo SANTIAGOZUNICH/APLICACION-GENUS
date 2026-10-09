@@ -3,6 +3,8 @@ import { isFeatureSchemaReady } from "@/lib/db/feature-schema";
 import { getMpStockLedger } from "@/lib/mp-stock/mp-stock-ledger";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
+import { OrdersForbiddenError } from "@/lib/orders/types";
+import { canReadInventory, canWriteInventory } from "@/lib/inventory/rbac";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,6 +12,8 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
     const actor = await resolveOrdersActor(request);
+    // Mismo permiso de lectura que la pestaña Stock MP (antes cualquier sector autenticado veía el libro mayor).
+    if (!canReadInventory(actor.sector, "mp_stock")) throw new OrdersForbiddenError("Tu sector no puede ver el stock de MP.");
     const url = new URL(request.url);
     const codigo = url.searchParams.get("codigo") ?? "";
     const persistenceReady = await isFeatureSchemaReady();
@@ -52,6 +56,8 @@ export async function POST(request: Request) {
     const a = { email: actor.email, sector: actor.sector };
 
     if (body.action === "seed") {
+      // El saldo inicial fija el stock de un código: solo quien escribe Stock MP (antes, cualquier sector autenticado).
+      if (!canWriteInventory(actor.sector, "mp_stock")) throw new OrdersForbiddenError("Solo Materia Prima registra el saldo inicial.");
       const balance = await ledger.seedSaldoInicialOnce(
         a,
         String(body.codigo ?? ""),

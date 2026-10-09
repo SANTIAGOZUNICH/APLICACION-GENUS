@@ -3,6 +3,8 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
+import { currentTx } from "@/lib/db/tx-context";
+import { isMissingSchemaError } from "@/lib/db/missing-schema";
 import {
   assertFeatureWritesEnabled,
   isFeatureMemoryAllowed,
@@ -123,6 +125,7 @@ async function notify(params: {
 }) {
   if (isDatabaseConfigured()) {
     try {
+      // Conexión propia a propósito: un aviso fallido nunca puede abortar la transacción del movimiento.
       const db = getDb();
       await db.insert(osNotifications).values({
         kind: params.kind,
@@ -149,7 +152,7 @@ export class MpStockLedgerService {
     if (!code) return null;
     if (isDatabaseConfigured()) {
       try {
-        const db = getDb();
+        const db = currentTx() ?? getDb();
         const [row] = await db
           .select()
           .from(mpStockBalances)
@@ -176,7 +179,7 @@ export class MpStockLedgerService {
     const code = codigo.trim().toUpperCase();
     if (isDatabaseConfigured()) {
       try {
-        const db = getDb();
+        const db = currentTx() ?? getDb();
         const rows = await db
           .select()
           .from(mpStockMovements)
@@ -455,7 +458,7 @@ export class MpStockLedgerService {
   private async markMovementReversed(idempotencyKey: string): Promise<void> {
     if (isDatabaseConfigured()) {
       try {
-        const db = getDb();
+        const db = currentTx() ?? getDb();
         await db
           .update(mpStockMovements)
           .set({ reversed: true })
@@ -501,12 +504,38 @@ export class MpStockLedgerService {
     });
   }
 
+  /**
+   * Ajuste de kg de un LOTE de Stock MP (celda «Cantidad kg» con motivo, o «Ajustar stock»): el mismo delta queda en
+   * el libro mayor del código, en la MISMA transacción que el lote (transacción ambiente). Antes el ajuste del lote
+   * no llegaba al libro mayor y los dos stocks se separaban. Permisos: los valida el servicio de inventario.
+   */
+  async applyLotAdjustment(
+    actor: MpStockActor,
+    params: { codigo: string; quantity: number; reason: string; ajusteId: string; lote?: string; descripcion?: string }
+  ): Promise<MpStockBalance | null> {
+    const code = normalizeMpCodigo(params.codigo);
+    if (!code || !Number.isFinite(params.quantity) || params.quantity === 0) return code ? this.getBalance(code) : null;
+    return this.applyMovement(actor, {
+      codigo: code,
+      kind: "AJUSTE",
+      quantity: Math.round(params.quantity * 1000) / 1000,
+      reason: params.reason.trim() || "Ajuste de lote MP",
+      idempotencyKey: `mp-lote-ajuste:${params.ajusteId}`,
+      refType: "mp_stock_ajuste",
+      refId: params.ajusteId,
+      lote: params.lote,
+      descripcion: params.descripcion,
+      // Un conteo físico que deja el código en negativo se registra igual (visible, con aviso): nunca se oculta.
+      allowNegative: true,
+    });
+  }
+
   private async listMovementsByPositionPrefix(
     positionKey: string
   ): Promise<MpStockMovement[]> {
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
-        const db = getDb();
+        const db = currentTx() ?? getDb();
         const rows = await db
           .select()
           .from(mpStockMovements)
@@ -543,7 +572,7 @@ export class MpStockLedgerService {
   ): Promise<MpStockMovement[]> {
     if (isDatabaseConfigured()) {
       try {
-        const db = getDb();
+        const db = currentTx() ?? getDb();
         const rows = await db
           .select()
           .from(mpStockMovements)
@@ -585,7 +614,7 @@ export class MpStockLedgerService {
   ): Promise<MpStockMovement | null> {
     if (isDatabaseConfigured()) {
       try {
-        const db = getDb();
+        const db = currentTx() ?? getDb();
         const [row] = await db
           .select()
           .from(mpStockMovements)
@@ -636,24 +665,153 @@ export class MpStockLedgerService {
     }
   ): Promise<MpStockBalance> {
     await assertFeatureWritesEnabled();
-    const existing = await this.findByIdempotency(input.idempotencyKey);
-    if (existing && !existing.reversed) {
-      const bal = await this.getBalance(input.codigo);
-      if (bal) return bal;
+    if (isDatabaseConfigured()) {
+      try {
+        return await this.applyMovementDb(actor, input);
+      } catch (err) {
+        // Solo "tabla/columna inexistente" es esquema pendiente; el resto (stock insuficiente, conflicto, red) se
+        // informa tal cual. Antes TODO error se convertía en "esquema pendiente" y ocultaba la causa real.
+        if (isMissingSchemaError(err) && isFeatureMemoryAllowed()) {
+          /* tests sin 0005: cae a memoria */
+        } else if (isMissingSchemaError(err)) {
+          throw new SchemaPendingError();
+        } else {
+          throw err;
+        }
+      }
     }
+    if (!isFeatureMemoryAllowed()) {
+      throw new SchemaPendingError();
+    }
+    return this.applyMovementMemory(actor, input);
+  }
 
-    let bal = await this.getBalance(input.codigo);
-    if (!bal) {
-      bal = {
-        codigo: input.codigo,
-        descripcion: input.descripcion ?? "",
-        saldoInicial: input.kind === "SALDO_INICIAL" ? input.quantity : 0,
-        stockActual: 0,
-        seededAt:
-          input.kind === "SALDO_INICIAL" ? new Date().toISOString() : null,
+  /**
+   * Movimiento en Postgres, ATÓMICO y serializado por código:
+   *  - candado transaccional por código (pg_advisory_xact_lock) + saldo leído con FOR UPDATE: dos movimientos del
+   *    mismo código nunca leen el mismo saldo (antes se leía y reescribía el saldo absoluto sin transacción y uno de
+   *    los dos se perdía);
+   *  - idempotencia verificada DENTRO del candado;
+   *  - si hay una transacción ambiente (operación de MP que también escribe el lote y la auditoría), se usa esa: o se
+   *    confirma todo o nada.
+   */
+  private async applyMovementDb(actor: MpStockActor, input: Parameters<MpStockLedgerService["applyMovement"]>[1]): Promise<MpStockBalance> {
+    const code = input.codigo;
+    let negative: { balance: number; confirmed: boolean } | null = null;
+    const run = async (tx: NonNullable<ReturnType<typeof currentTx>>): Promise<MpStockBalance> => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`genus-mp-stock:${code}`}))`);
+      const [balRow] = await tx.select().from(mpStockBalances).where(eq(mpStockBalances.codigo, code)).for("update");
+      const current: MpStockBalance = balRow
+        ? {
+            codigo: balRow.codigo,
+            descripcion: balRow.descripcion,
+            saldoInicial: balRow.saldoInicial,
+            stockActual: balRow.stockActual,
+            seededAt: balRow.saldoInicialSeededAt ? balRow.saldoInicialSeededAt.toISOString() : null,
+          }
+        : {
+            codigo: code,
+            descripcion: input.descripcion ?? "",
+            saldoInicial: 0,
+            stockActual: 0,
+            seededAt: null,
+          };
+      const [dup] = await tx
+        .select({ reversed: mpStockMovements.reversed })
+        .from(mpStockMovements)
+        .where(eq(mpStockMovements.idempotencyKey, input.idempotencyKey))
+        .limit(1);
+      if (dup && !dup.reversed) return current;
+
+      const nextStock = Math.round((current.stockActual + input.quantity) * 1000) / 1000;
+      if (nextStock < 0) {
+        negative = { balance: nextStock, confirmed: Boolean(input.allowNegative) };
+        if (!input.allowNegative) {
+          throw new MpStockInsufficientError(code, nextStock);
+        }
+      }
+      const now = new Date();
+      const next: MpStockBalance = {
+        ...current,
+        descripcion: input.descripcion || current.descripcion,
+        saldoInicial: input.kind === "SALDO_INICIAL" ? input.quantity : current.saldoInicial,
+        stockActual: nextStock,
+        seededAt: input.kind === "SALDO_INICIAL" ? now.toISOString() : current.seededAt,
       };
+      await tx
+        .insert(mpStockBalances)
+        .values({
+          codigo: next.codigo,
+          descripcion: next.descripcion,
+          saldoInicial: next.saldoInicial,
+          saldoInicialSeededAt: next.seededAt ? new Date(next.seededAt) : null,
+          stockActual: next.stockActual,
+          updatedAt: now,
+          payload: {},
+        })
+        .onConflictDoUpdate({
+          target: mpStockBalances.codigo,
+          set: {
+            descripcion: next.descripcion,
+            stockActual: next.stockActual,
+            saldoInicial: next.saldoInicial,
+            saldoInicialSeededAt: next.seededAt ? new Date(next.seededAt) : null,
+            updatedAt: now,
+          },
+        });
+      await tx.insert(mpStockMovements).values({
+        id: randomUUID(),
+        codigo: code,
+        kind: input.kind,
+        quantity: input.quantity,
+        balanceAfter: nextStock,
+        reason: input.reason,
+        refType: input.refType ?? null,
+        refId: input.refId ?? null,
+        lote: input.lote ?? null,
+        proveedor: input.proveedor ?? null,
+        documento: input.documento ?? null,
+        actorEmail: actor.email,
+        actorSector: actor.sector,
+        idempotencyKey: input.idempotencyKey,
+        reversed: false,
+        payload: {},
+      });
+      if (input.reverseOfKey) {
+        await tx.update(mpStockMovements).set({ reversed: true }).where(eq(mpStockMovements.idempotencyKey, input.reverseOfKey));
+      }
+      return next;
+    };
+    const ambient = currentTx();
+    try {
+      return ambient ? await run(ambient) : await getDb().transaction((tx) => run(tx));
+    } finally {
+      const neg = negative as { balance: number; confirmed: boolean } | null;
+      if (neg) {
+        await notify({
+          kind: neg.confirmed ? "mp_stock_negativo_confirmado" : "mp_stock_negativo",
+          title: neg.confirmed ? "Stock negativo registrado" : "Stock insuficiente",
+          message: neg.confirmed
+            ? `Código ${code}: saldo ${neg.balance} (confirmado).`
+            : `Código ${code}: el movimiento dejaría stock negativo.`,
+          sectors: ["MATERIA_PRIMA", "PRODUCCION"],
+          idempotencyHint: `${neg.confirmed ? "neg-ok" : "neg"}:${input.idempotencyKey}`,
+        });
+      }
     }
+  }
 
+  /** Modo memoria (tests / sin base): mismo cálculo, sin persistencia. */
+  private async applyMovementMemory(actor: MpStockActor, input: Parameters<MpStockLedgerService["applyMovement"]>[1]): Promise<MpStockBalance> {
+    const existing = mem().movements.find((m) => m.idempotencyKey === input.idempotencyKey);
+    const bal: MpStockBalance = mem().balances.get(input.codigo) ?? {
+      codigo: input.codigo,
+      descripcion: input.descripcion ?? "",
+      saldoInicial: 0,
+      stockActual: 0,
+      seededAt: null,
+    };
+    if (existing && !existing.reversed) return bal;
     const nextStock = Math.round((bal.stockActual + input.quantity) * 1000) / 1000;
     if (nextStock < 0 && !input.allowNegative) {
       await notify({
@@ -663,11 +821,9 @@ export class MpStockLedgerService {
         sectors: ["MATERIA_PRIMA", "PRODUCCION"],
         idempotencyHint: `neg:${input.idempotencyKey}`,
       });
-      throw new Error(
-        "Stock insuficiente — confirmá allowNegative para registrar negativo con auditoría."
-      );
+      throw new MpStockInsufficientError(input.codigo, nextStock);
     }
-    if (nextStock < 0 && input.allowNegative) {
+    if (nextStock < 0) {
       await notify({
         kind: "mp_stock_negativo_confirmado",
         title: "Stock negativo registrado",
@@ -676,7 +832,6 @@ export class MpStockLedgerService {
         idempotencyHint: `neg-ok:${input.idempotencyKey}`,
       });
     }
-
     const movement: MpStockMovement = {
       id: randomUUID(),
       codigo: input.codigo,
@@ -695,92 +850,32 @@ export class MpStockLedgerService {
       reversed: false,
       createdAt: new Date().toISOString(),
     };
-
     const nextBal: MpStockBalance = {
       ...bal,
       descripcion: input.descripcion || bal.descripcion,
-      saldoInicial:
-        input.kind === "SALDO_INICIAL" ? input.quantity : bal.saldoInicial,
+      saldoInicial: input.kind === "SALDO_INICIAL" ? input.quantity : bal.saldoInicial,
       stockActual: nextStock,
-      seededAt:
-        input.kind === "SALDO_INICIAL"
-          ? movement.createdAt
-          : bal.seededAt,
+      seededAt: input.kind === "SALDO_INICIAL" ? movement.createdAt : bal.seededAt,
     };
-
-    if (isDatabaseConfigured()) {
-      try {
-        const db = getDb();
-        await db
-          .insert(mpStockBalances)
-          .values({
-            codigo: nextBal.codigo,
-            descripcion: nextBal.descripcion,
-            saldoInicial: nextBal.saldoInicial,
-            saldoInicialSeededAt: nextBal.seededAt
-              ? new Date(nextBal.seededAt)
-              : null,
-            stockActual: nextBal.stockActual,
-            updatedAt: new Date(),
-            payload: {},
-          })
-          .onConflictDoUpdate({
-            target: mpStockBalances.codigo,
-            set: {
-              descripcion: nextBal.descripcion,
-              stockActual: nextBal.stockActual,
-              saldoInicial: nextBal.saldoInicial,
-              saldoInicialSeededAt: nextBal.seededAt
-                ? new Date(nextBal.seededAt)
-                : null,
-              updatedAt: new Date(),
-            },
-          });
-        await db.insert(mpStockMovements).values({
-          id: movement.id,
-          codigo: movement.codigo,
-          kind: movement.kind,
-          quantity: movement.quantity,
-          balanceAfter: movement.balanceAfter,
-          reason: movement.reason,
-          refType: movement.refType,
-          refId: movement.refId,
-          lote: movement.lote,
-          proveedor: movement.proveedor,
-          documento: movement.documento,
-          actorEmail: movement.actorEmail,
-          actorSector: movement.actorSector,
-          idempotencyKey: movement.idempotencyKey,
-          reversed: false,
-          payload: {},
-        });
-        if (input.reverseOfKey) {
-          await db
-            .update(mpStockMovements)
-            .set({ reversed: true })
-            .where(eq(mpStockMovements.idempotencyKey, input.reverseOfKey));
-        }
-        return nextBal;
-      } catch {
-        if (!isFeatureMemoryAllowed()) {
-          throw new SchemaPendingError();
-        }
-      }
-    }
-
-    if (!isFeatureMemoryAllowed()) {
-      throw new SchemaPendingError();
-    }
-
     mem().balances.set(nextBal.codigo, nextBal);
     mem().movements.push(movement);
     if (input.reverseOfKey) {
-      const orig = mem().movements.find(
-        (m) => m.idempotencyKey === input.reverseOfKey
-      );
+      const orig = mem().movements.find((m) => m.idempotencyKey === input.reverseOfKey);
       if (orig) orig.reversed = true;
     }
     return nextBal;
+  }
+}
+
+/** El movimiento dejaría el stock negativo y no se confirmó registrarlo así. */
+export class MpStockInsufficientError extends Error {
+  readonly code = "MP_STOCK_INSUFFICIENT" as const;
+  constructor(
+    readonly codigo: string,
+    readonly balanceAfter: number
+  ) {
+    super("Stock insuficiente — confirmá allowNegative para registrar negativo con auditoría.");
+    this.name = "MpStockInsufficientError";
   }
 }
 

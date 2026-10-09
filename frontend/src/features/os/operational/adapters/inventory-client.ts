@@ -102,7 +102,7 @@ export interface InventoryCellApiResult {
 
 /** PATCH parcial por celda (Inventario ME / Stock MP). No lanza por rechazos de negocio: devuelve cada resultado. */
 export async function patchInventoryCells(
-  resource: "me_inventario" | "mp_stock" | "me_ingresos" | "me_salidas",
+  resource: "me_inventario" | "mp_stock" | "me_ingresos" | "me_salidas" | "mp_ingresos" | "mp_compras",
   changes: import("@/lib/inventory/cell-edit").InventoryCellChange[]
 ): Promise<InventoryCellApiResult> {
   const res = await fetch("/api/v1/inventory/cells", {
