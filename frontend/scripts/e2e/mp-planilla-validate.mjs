@@ -131,7 +131,9 @@ try {
   await waitRow(pp, "E2E-MP-GLI");
   const libro = await (await cell(pp, "E2E-MP-GLI", "Stock código")).locator("input").inputValue();
   check("Stock: columna «Stock código» con el saldo del libro mayor (96)", /96/.test(libro), libro);
-  check("Stock: los kg de un lote ingresado no se pisan por celda (se ajustan con motivo)", await cellLocked(pp, "E2E-MP-GLI", "Kg lote"));
+  // Desde la edición completa de Stock MP los kg de un lote ingresado también se editan en la celda, siempre como
+  // AJUSTE con motivo (pedido en la planilla) que mueve lote y libro mayor juntos; ya no hay candado.
+  check("Stock: los kg de un lote ingresado se editan en la celda (sin candado; ajuste con motivo)", !(await cellLocked(pp, "E2E-MP-GLI", "Kg lote")));
   await pp.screenshot({ path: `${OUT}/3-stock-libro-mayor.png` });
   const lotId = (await q("select id from inv_mp_stock where payload->>'codigo' = 'E2E-MP-GLI'"))[0].id;
   const adj = await post(pp, { action: "adjust", resource: "mp_stock", id: lotId, payload: { cantidadNueva: 90, motivo: "Conteo físico E2E" } });

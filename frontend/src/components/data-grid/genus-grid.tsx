@@ -120,6 +120,8 @@ export interface GenusGridProps<T> {
    * ediciones históricas / que alimentan indicadores). El motivo viaja en `change.reason`.
    */
   reasonRequired?: (changes: GenusGridCellChange[]) => string | null;
+  /** El motivo de UNA celda se pide en una barra dentro de la planilla (sin ventana modal). */
+  reasonInline?: boolean;
   minReasonLength?: number;
   testId?: string;
   /** Clase CSS opcional por fila (p. ej. borde de prioridad). No afecta edición ni selección. */
@@ -220,6 +222,7 @@ export function GenusGrid<T>({
   rowActionsWidth = 96,
   onReload,
   reasonRequired,
+  reasonInline = false,
   minReasonLength = 8,
   testId = "genus-grid",
   hint,
@@ -233,6 +236,9 @@ export function GenusGrid<T>({
   const [notice, setNotice] = useState<string | null>(null);
   const [failed, setFailed] = useState<FailedBatch[]>([]);
   const [preview, setPreview] = useState<PreviewState | null>(null);
+  /** Motivo pedido EN LA PLANILLA (una celda que mueve saldo): barra en línea, sin ventana modal. */
+  const [inlineReason, setInlineReason] = useState<{ changes: GenusGridCellChange[]; prompt: string } | null>(null);
+  const [inlineText, setInlineText] = useState("");
   const [undoDepth, setUndoDepth] = useState(0);
   const [selectionLabel, setSelectionLabel] = useState("");
 
@@ -539,11 +545,35 @@ export function GenusGrid<T>({
         void runCommit(changes, { useLatestVersion: true, recordUndo: true });
         return;
       }
+      // Una sola celda que solo necesita motivo: se pide en la misma planilla (Enter guarda, Escape cancela).
+      if (reasonInline && reasonPrompt && changes.length === 1 && invalid.length === 0 && skipped.length === 0 && !bulkDelete && !touchesSensitive) {
+        setInlineText("");
+        setInlineReason({ changes, prompt: reasonPrompt });
+        return;
+      }
       setReasonText("");
       setPreview({ changes, invalid, skipped, reasonPrompt });
     },
-    [columnKeys, columnByKey, flushSkips, previewThreshold, rowLabel, rowVersion, runCommit, reasonRequired]
+    [columnKeys, columnByKey, flushSkips, previewThreshold, rowLabel, rowVersion, runCommit, reasonRequired, reasonInline]
   );
+
+  const MIN_INLINE_REASON = 8;
+  const applyInlineReason = (text: string) => {
+    if (!inlineReason) return;
+    const reason = text.trim();
+    if (reason.length < MIN_INLINE_REASON) {
+      setNotice(`Escribí el motivo (mín. ${MIN_INLINE_REASON} caracteres) o elegí uno de la lista.`);
+      return;
+    }
+    const toApply = inlineReason.changes.map((c) => ({ ...c, reason }));
+    setInlineReason(null);
+    setNotice(null);
+    void runCommit(toApply, { useLatestVersion: true, recordUndo: true });
+  };
+  const cancelInlineReason = () => {
+    setInlineReason(null);
+    setNotice("Cambio cancelado: no se guardó nada.");
+  };
 
   const applyPreview = () => {
     if (!preview) return;
@@ -668,6 +698,46 @@ export function GenusGrid<T>({
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {inlineReason && (
+        <div
+          className="flex flex-wrap items-center gap-2 rounded-[var(--os-radius-sm)] border border-amber-400 bg-amber-50 px-2 py-1.5 text-xs"
+          data-testid={`${testId}-inline-reason`}
+          role="group"
+          aria-label="Motivo del cambio"
+        >
+          <span className="font-medium text-amber-950">
+            {inlineReason.changes[0]!.rowLabel} · {inlineReason.changes[0]!.columnTitle}: {previewValue(inlineReason.changes[0]!.oldValue)} →{" "}
+            <strong>{previewValue(inlineReason.changes[0]!.newValue)}</strong>
+          </span>
+          <span className="text-amber-900">{inlineReason.prompt}</span>
+          <input
+            autoFocus
+            value={inlineText}
+            onChange={(e) => setInlineText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                applyInlineReason(inlineText);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancelInlineReason();
+              }
+            }}
+            placeholder="Motivo + Enter"
+            className="h-7 min-w-[14rem] flex-1 rounded border border-amber-400 bg-white px-2 text-xs text-slate-900 placeholder:text-slate-500"
+            data-testid={`${testId}-inline-reason-input`}
+          />
+          {["Conteo físico", "Corrección de carga", "Merma o rotura", "Devolución a proveedor"].map((m) => (
+            <Button key={m} type="button" size="sm" variant="secondary" className="h-6 px-2 text-xs" onClick={() => applyInlineReason(m)}>
+              {m}
+            </Button>
+          ))}
+          <Button type="button" size="sm" variant="secondary" className="h-6 px-2 text-xs" onClick={cancelInlineReason} data-testid={`${testId}-inline-reason-cancel`}>
+            Cancelar
+          </Button>
         </div>
       )}
 

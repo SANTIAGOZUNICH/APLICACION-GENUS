@@ -154,6 +154,8 @@ interface OperationalTableProps<T> {
   /** Versión de concurrencia por fila (p. ej. updatedAt). */
   rowVersion?: (row: T) => string;
   reasonRequired?: (changes: GenusGridCellChange[]) => string | null;
+  /** Motivo de una celda pedido dentro de la planilla (sin ventana modal). */
+  reasonInline?: boolean;
   /** Clase CSS opcional por fila en la planilla (p. ej. borde de prioridad). */
   rowClassName?: (row: T) => string | undefined;
 }
@@ -257,8 +259,9 @@ export function ExcelOrList<T>({
   canEditCells,
   rowVersion,
   reasonRequired,
+  reasonInline,
   rowClassName,
-}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "rowClassName"> & {
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName"> & {
   /** Lista clásica (el marcado existente) como hijo. */
   children: ReactNode;
   /** true = fuerza la lista (p. ej. modo selección múltiple). */
@@ -290,7 +293,7 @@ export function ExcelOrList<T>({
           Ver como lista
         </button>
       </div>
-      <ExcelView columns={columns} rows={rows} rowKey={rowKey} tableId={tableId} onCellsCommit={onCellsCommit} canEditCells={canEditCells} rowVersion={rowVersion} reasonRequired={reasonRequired} rowClassName={rowClassName} />
+      <ExcelView columns={columns} rows={rows} rowKey={rowKey} tableId={tableId} onCellsCommit={onCellsCommit} canEditCells={canEditCells} rowVersion={rowVersion} reasonRequired={reasonRequired} reasonInline={reasonInline} rowClassName={rowClassName} />
     </div>
   );
 }
@@ -305,8 +308,9 @@ function ExcelView<T>({
   canEditCells,
   rowVersion,
   reasonRequired,
+  reasonInline,
   rowClassName,
-}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "rowClassName">) {
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName">) {
   const dataColumns = useMemo(() => columns.filter((c) => !isActionColumn(c)), [columns]);
   const actionColumns = useMemo(() => columns.filter((c) => isActionColumn(c)), [columns]);
   const textOf = (c: OperationalTableColumn<T>, row: T) => (c.text ? c.text(row) : nodeToText(c.render(row)));
@@ -336,6 +340,7 @@ function ExcelView<T>({
       canEdit={Boolean(canEditCells && onCellsCommit)}
       onCommit={onCellsCommit ?? (async () => ({ ok: false, message: "Esta tabla es de solo lectura." }))}
       reasonRequired={reasonRequired}
+      reasonInline={reasonInline}
       renderRowActions={
         actionColumns.length
           ? (row) => (
@@ -368,6 +373,7 @@ export function OperationalTable<T>({
   canEditCells,
   rowVersion,
   reasonRequired,
+  reasonInline,
   rowClassName,
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -421,6 +427,7 @@ export function OperationalTable<T>({
           canEditCells={canEditCells}
           rowVersion={rowVersion}
           reasonRequired={reasonRequired}
+      reasonInline={reasonInline}
           rowClassName={rowClassName}
         />
       </div>

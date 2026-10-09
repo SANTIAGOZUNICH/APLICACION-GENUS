@@ -17,20 +17,44 @@ import { parseNonNegativeNumber } from "@/features/os/operational/lib/clipboard-
 export type InventoryCellResource = "me_inventario" | "mp_stock";
 
 export const ME_CELL_FIELDS = ["descripcion", "cliente", "ubicacion", "cantidadPorBulto", "stockMinimo", "puntoReposicion", "responsable", "observacion"] as const;
-export const MP_CELL_FIELDS = ["producto", "proveedor", "cliente", "descripcion", "ubicacion", "lote", "vencimiento", "cantidadKg"] as const;
+/**
+ * Stock MP: TODAS las columnas se editan en la celda. Las que mueven saldo o dependen de otros datos pasan por una
+ * operación segura (ver `patchInventoryCells`):
+ *  - cantidadKg       → ajuste del lote + mismo delta en el libro mayor (motivo).
+ *  - codigo           → reclasificación: lote + ingresos vinculados + traspaso de saldo en el libro mayor (motivo).
+ *  - stockLibroMayor  → ajuste del saldo del código por la diferencia (motivo; conflicto si el saldo cambió).
+ *  - diasAlVence      → fija el vencimiento = hoy + días.
+ *  - estadoStock / estadoVencimiento → estado fijado a mano (vacío = vuelve al cálculo); no toca kg ni libro mayor.
+ */
+export const MP_CELL_FIELDS = [
+  "codigo",
+  "producto",
+  "proveedor",
+  "cliente",
+  "descripcion",
+  "ubicacion",
+  "lote",
+  "vencimiento",
+  "cantidadKg",
+  "stockLibroMayor",
+  "estadoStock",
+  "diasAlVence",
+  "estadoVencimiento",
+  "origen",
+] as const;
 export type MeCellField = (typeof ME_CELL_FIELDS)[number];
 export type MpCellField = (typeof MP_CELL_FIELDS)[number];
 export type InventoryCellField = MeCellField | MpCellField;
 
-const NUMERIC = new Set<string>(["cantidadPorBulto", "stockMinimo", "puntoReposicion", "cantidadKg"]);
+const NUMERIC = new Set<string>(["cantidadPorBulto", "stockMinimo", "puntoReposicion", "cantidadKg", "stockLibroMayor"]);
 const DATES = new Set<string>(["vencimiento"]);
 /**
  * Piden confirmación (y motivo): solo lo que mueve stock. Los datos administrativos se guardan con Enter, como en
  * Excel (quedan auditados con valor anterior y nuevo, y se deshacen con Ctrl+Z).
  */
-export const INVENTORY_SENSITIVE_FIELDS: ReadonlySet<string> = new Set(["cantidadKg"]);
+export const INVENTORY_SENSITIVE_FIELDS: ReadonlySet<string> = new Set();
 /** Exigen motivo (corrección de stock). */
-export const INVENTORY_REASON_FIELDS: ReadonlySet<string> = new Set(["cantidadKg"]);
+export const INVENTORY_REASON_FIELDS: ReadonlySet<string> = new Set(["cantidadKg", "codigo", "stockLibroMayor"]);
 export const MAX_INVENTORY_CELL_CHANGES = 200;
 
 export function inventoryFieldKind(field: string): "text" | "number" | "date" {
@@ -51,16 +75,41 @@ export function inventoryCellProtection(
 ): string | null {
   if (!canWrite) return "Tu sector no puede editar este inventario.";
   if (row.archived) return "Registro archivado: no se edita.";
-  if (resource === "mp_stock" && row.origen === "ingreso" && field === "cantidadKg") {
-    return "Kg de un lote creado por un ingreso: se corrigen con «Ajustar stock» (motivo, queda en el libro mayor) o corrigiendo el ingreso.";
-  }
   return null;
 }
 
 export type InventoryValidation = { ok: true; value: string | number | null } | { ok: false; message: string };
 
+/** Entero escrito en la planilla («30», «-4»). */
+function parseSignedInteger(text: string): number | null {
+  if (!/^[-+]?\d+$/.test(text.replace(/\s/g, ""))) return null;
+  return Number(text.replace(/\s/g, ""));
+}
+
+/** Número tal como lo muestra la planilla en es-AR («1.234,5», «-10», «—»): valor anterior que vio el usuario. */
+export function parseDisplayedNumber(text: unknown): number | null {
+  const t = String(text ?? "").trim();
+  if (!t || t === "—") return null;
+  const n = Number(t.replace(/\s/g, "").replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
 export function validateInventoryValue(field: string, raw: unknown): InventoryValidation {
   const text = typeof raw === "number" ? String(raw) : typeof raw === "string" ? raw.trim() : "";
+  if (field === "codigo") {
+    if (!/[\p{L}\p{N}]/u.test(text)) return { ok: false, message: "El código necesita letras o números." };
+    if (text.length > 60) return { ok: false, message: "Máximo 60 caracteres." };
+    return { ok: true, value: text.replace(/\s+/g, " ").toUpperCase() };
+  }
+  if (field === "diasAlVence") {
+    const n = parseSignedInteger(text);
+    if (n === null || Math.abs(n) > 36500) return { ok: false, message: "Escribí una cantidad de días (puede ser negativa)." };
+    return { ok: true, value: n };
+  }
+  if (field === "estadoStock" || field === "estadoVencimiento" || field === "origen") {
+    if (text.length > 40) return { ok: false, message: "Máximo 40 caracteres." };
+    return { ok: true, value: text };
+  }
   if (NUMERIC.has(field)) {
     if (!text) return field === "cantidadKg" ? { ok: false, message: "Ingresá una cantidad (≥ 0)." } : { ok: true, value: null };
     const n = parseNonNegativeNumber(text);
@@ -85,6 +134,8 @@ export interface InventoryCellChange {
   value: string;
   expectedVersion: string;
   reason?: string;
+  /** Valor que el usuario veía en la celda (p. ej. «Stock código»): si el dato cambió desde entonces → conflicto. */
+  expectedValue?: string;
 }
 
 export type InventoryCellResult =
