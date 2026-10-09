@@ -1,5 +1,6 @@
 "use client";
 
+import { readOnlyReason } from "@/features/os/operational/lib/readonly-reasons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import {
@@ -239,7 +240,7 @@ export function MeInventarioView() {
         onCellsCommit={cells.onCellsCommit}
         rowVersion={cells.rowVersion}
         columns={[
-          ...columns.map((col) => ({ ...col, edit: cells.edit(String(col.key)) })),
+          ...columns.map((col) => ({ ...col, edit: cells.edit(String(col.key)), readOnlyReason: readOnlyReason("me_inventario", String(col.key)) })),
           ...(canWrite
             ? [
                 {

@@ -1,5 +1,6 @@
 "use client";
 
+import { readOnlyReason } from "@/features/os/operational/lib/readonly-reasons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardPaste, History, Pencil, Plus, Trash2 } from "lucide-react";
 import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
@@ -204,6 +205,7 @@ export function MeSalidasView() {
         return typeof v === "boolean" ? (v ? "Sí" : "No") : v == null ? "" : String(v);
       },
       edit: sheet.edit(label),
+      readOnlyReason: readOnlyReason("me_salidas", label),
       render: (row) => {
         if (label === "DESCUENTA STOCK") {
           return row.origen === "OA" ? "Sí (automática de OA)" : row.descuentaStock ? <b className="text-amber-500">Sí</b> : "No (registro)";

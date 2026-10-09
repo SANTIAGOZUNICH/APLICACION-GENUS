@@ -4,6 +4,7 @@
  * Hub MP — pestañas: Stock | Ingresos MP | Control semanal | Compras MP | COA'S.
  */
 
+import { readOnlyReason } from "@/features/os/operational/lib/readonly-reasons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardPaste, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -1003,7 +1004,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           reasonRequired={stockCells.reasonRequired}
           rowVersion={stockCells.rowVersion}
           columns={[
-            ...stockColumns.map((col) => ({ ...col, edit: stockCells.edit(String(col.key)) })),
+            ...stockColumns.map((col) => ({ ...col, edit: stockCells.edit(String(col.key)), readOnlyReason: readOnlyReason("mp_stock", String(col.key)) })),
             ...(canWrite
               ? [
                   {
@@ -1096,7 +1097,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             onCellsCommit={ingresoCells.onCellsCommit}
             reasonRequired={ingresoCells.reasonRequired}
             rowVersion={ingresoCells.rowVersion}
-            columns={ingresoColumns.map((col) => ({ ...col, edit: ingresoCells.edit(String(col.key)) }))}
+            columns={ingresoColumns.map((col) => ({ ...col, edit: ingresoCells.edit(String(col.key)), readOnlyReason: readOnlyReason("mp_ingresos", String(col.key)) }))}
             rows={pageRows as MpIngresoRow[]}
             rowKey={(r) => r.id}
             emptyMessage="Sin ingresos MP."

@@ -1,5 +1,6 @@
 "use client";
 
+import { readOnlyReason } from "@/features/os/operational/lib/readonly-reasons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardPaste, History, Pencil, Plus, Trash2 } from "lucide-react";
 import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
@@ -175,6 +176,7 @@ export function MeIngresosView() {
       text: (row) => (row[key] == null ? "" : String(row[key])),
       // Planilla editable (Depósito): TOTAL se calcula (bultos × cantidad), el resto se corrige en la celda.
       edit: sheet.edit(label),
+      readOnlyReason: readOnlyReason("me_ingresos", label),
     };
   });
 
