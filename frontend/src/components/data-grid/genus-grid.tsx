@@ -66,6 +66,8 @@ export interface GenusGridColumn<T> {
   validate?: (raw: string, row: T) => string | null;
   /** Columna sensible (identidad/trazabilidad): su edición siempre pide confirmación. */
   sensitive?: boolean;
+  /** Clase extra por celda (p. ej. «editado en GENUS» / conflicto). Opcional y aditivo. */
+  cellClassName?: (row: T) => string | undefined;
 }
 
 export interface GenusGridCellChange {
@@ -99,6 +101,8 @@ export interface GenusGridProps<T> {
   onCommit: (changes: GenusGridCellChange[]) => Promise<GenusGridCommitResult>;
   /** false = grilla de solo lectura (sector sin permiso de edición). */
   canEdit?: boolean;
+  /** Motivo que se muestra en las celdas cuando `canEdit` es false (por defecto: falta de permiso del sector). */
+  readOnlyReason?: string;
   /** Más de N celdas en una operación → preview antes de aplicar. */
   previewThreshold?: number;
   height?: number;
@@ -203,6 +207,7 @@ export function GenusGrid<T>({
   columns,
   onCommit,
   canEdit = true,
+  readOnlyReason,
   previewThreshold = 5,
   height,
   maxHeight = 560,
@@ -249,12 +254,12 @@ export function GenusGrid<T>({
         for (const col of columns) {
           const ov = overlay[cellKey(id, col.key)];
           out[col.key] = ov ? ov.value : col.getValue(row);
-          out.__prot[col.key] = canEdit ? (col.protection?.(row) ?? null) : "Tu sector no puede editar esta tabla.";
+          out.__prot[col.key] = canEdit ? (col.protection?.(row) ?? null) : (readOnlyReason ?? "Tu sector no puede editar esta tabla.");
           if (ov) out.__st[col.key] = ov.status;
         }
         return out;
       }),
-    [rows, columns, overlay, rowId, rowVersion, canEdit]
+    [rows, columns, overlay, rowId, rowVersion, canEdit, readOnlyReason]
   );
   const gridRowsRef = useRef(gridRows);
 
@@ -348,6 +353,11 @@ export function GenusGrid<T>({
           if (rowData.__st[key] === "saving") classes.push("genus-cell-saving");
           if (rowData.__st[key] === "error") classes.push("genus-cell-error");
           if (kind === "number") classes.push("genus-cell-num");
+          if (col.cellClassName) {
+            const source = rowByIdRef.current.get(rowData.__id);
+            const extra = source ? col.cellClassName(source) : undefined;
+            if (extra) classes.push(extra);
+          }
           return classes.join(" ") || undefined;
         },
       };

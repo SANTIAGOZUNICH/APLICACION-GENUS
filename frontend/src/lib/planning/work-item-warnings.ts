@@ -1,5 +1,4 @@
 import type { WorkItem } from "@/types/operational/work-item";
-import { summarizePackingGroups } from "@/lib/remitos/packing-math";
 
 /**
  * Contrato único de advertencias NO BLOQUEANTES por datos operativos
@@ -19,13 +18,12 @@ export const WORK_ITEM_WARNING_CODES = [
   "FALTA_LOTE",
   "FALTA_VTO",
   "FALTA_CANTIDAD_FINAL",
-  "FALTA_PACKING",
   "FALTA_SOBRANTE",
 ] as const;
 export type WorkItemWarningCode = (typeof WORK_ITEM_WARNING_CODES)[number];
 
 /** Campo al que apunta cada advertencia — usado para "abrir el campo faltante". */
-export type WorkItemWarningField = "lote" | "vto" | "cantidadFinal" | "packing" | "sobrante";
+export type WorkItemWarningField = "lote" | "vto" | "cantidadFinal" | "sobrante";
 
 export interface WorkItemWarning {
   code: WorkItemWarningCode;
@@ -38,7 +36,6 @@ const WARNING_LABEL: Record<WorkItemWarningCode, string> = {
   FALTA_LOTE: "FALTA LOTE",
   FALTA_VTO: "FALTA VTO",
   FALTA_CANTIDAD_FINAL: "FALTA CANTIDAD FINAL",
-  FALTA_PACKING: "FALTAN DATOS DE PACKING",
   FALTA_SOBRANTE: "FALTA SOBRANTE",
 };
 
@@ -46,7 +43,6 @@ const WARNING_FIELD: Record<WorkItemWarningCode, WorkItemWarningField> = {
   FALTA_LOTE: "lote",
   FALTA_VTO: "vto",
   FALTA_CANTIDAD_FINAL: "cantidadFinal",
-  FALTA_PACKING: "packing",
   FALTA_SOBRANTE: "sobrante",
 };
 
@@ -55,15 +51,6 @@ const SUPPRESSED_STATUSES: ReadonlySet<WorkItem["status"]> = new Set(["pendiente
 
 function isBlank(value: string | null | undefined): boolean {
   return value == null || value.trim() === "";
-}
-
-/**
- * Un WorkItem originado en ELABORACION (granel puro, nunca pasa por
- * Envasado/Acondicionamiento) no tiene noción de packing — no corresponde
- * pedirle cajas/unidades por caja.
- */
-function packingApplies(item: Pick<WorkItem, "originStage">): boolean {
-  return item.originStage !== "ELABORACION";
 }
 
 /**
@@ -102,10 +89,9 @@ export function getWorkItemWarningCodes(item: WorkItem): WorkItemWarningCode[] {
 
   if (isBlank(item.finishedQty ?? null)) codes.push("FALTA_CANTIDAD_FINAL");
 
-  if (packingApplies(item)) {
-    const { totalEmbalado } = summarizePackingGroups(item.packingGroups ?? []);
-    if (totalEmbalado <= 0) codes.push("FALTA_PACKING");
-  }
+  // Packing (cajas / unidades por caja) NO genera advertencia: en el proceso real casi nunca se completa. Los datos de
+  // packing que sí se cargan se siguen guardando y usando (cierre de envasado, remitos, diferencias); solo se quitó el
+  // aviso «FALTAN DATOS DE PACKING».
 
   if (hasUnexplainedGap(item)) codes.push("FALTA_SOBRANTE");
 

@@ -61,7 +61,10 @@ function cellText(row: AsignacionLote, field: AsignacionCellField): string {
 }
 
 function originLabel(row: AsignacionLote): string {
-  return row.sourceId ? `Google${row.sourceSheetTab ? ` · ${row.sourceSheetTab}` : ""}` : "Manual";
+  const base = row.sourceId ? `Google${row.sourceSheetTab ? ` · ${row.sourceSheetTab}` : ""}` : "Manual";
+  const edits = Object.values(row.localEdits ?? {});
+  if (edits.some((e) => e.status === "CONFLICT")) return `${base} · ⚠ conflicto`;
+  return edits.length > 0 ? `${base} · editado en GENUS` : base;
 }
 
 /** Adaptador de Asignación de Lotes sobre GenusGrid (ETAPA 1). */
@@ -70,6 +73,7 @@ export function AsignacionLotesGrid({
   session,
   sector,
   canEdit,
+  readOnlyReason,
   writableSourceIds,
   onRowsUpdated,
   onReload,
@@ -81,6 +85,8 @@ export function AsignacionLotesGrid({
   session: OrdersClientSession;
   sector: SectorId;
   canEdit: boolean;
+  /** Motivo de solo lectura cuando `canEdit` es false por algo que no es el permiso del sector. */
+  readOnlyReason?: string;
   /** Fuentes Google con escritura de vuelta habilitada (opción C). */
   writableSourceIds?: ReadonlySet<string>;
   /** El servidor confirmó: reemplazar estos registros en el estado/caché de la vista. */
@@ -99,6 +105,11 @@ export function AsignacionLotesGrid({
       sensitive: IDENTITY_FIELDS.has(field),
       getValue: (row) => cellText(row, field),
       protection: (row) => cellProtectionReason(row, field, sector, writableSourceIds),
+      // 0043: celda editada en GENUS (el sync no la pisa) o en conflicto con la planilla.
+      cellClassName: (row) => {
+        const e = row.localEdits?.[field];
+        return e ? (e.status === "CONFLICT" ? "genus-cell-local-conflict" : "genus-cell-local-edit") : undefined;
+      },
       validate: (raw) => {
         const result = validateCellValue(field, raw);
         return result.ok ? null : result.message;
@@ -151,6 +162,7 @@ export function AsignacionLotesGrid({
       columns={columns}
       onCommit={onCommit}
       canEdit={canEdit}
+      readOnlyReason={readOnlyReason}
       onReload={onReload}
       renderRowActions={renderRowActions}
       rowActionsWidth={68}
@@ -159,8 +171,9 @@ export function AsignacionLotesGrid({
       hint={
         <>
           Clic: seleccionar · doble clic / Enter / escribir: editar · arrastrar: rango · Ctrl+C / Ctrl+V (Excel y Google Sheets) ·
-          Supr: limpiar · Ctrl+Z: deshacer el último guardado. Cada celda se guarda sola; las filas con origen Google son de solo
-          lectura (corregilas en la Sheet).
+          Supr: limpiar · Ctrl+Z: deshacer el último guardado. Cada celda se guarda sola. Las filas de Google también se editan:
+          el cambio queda en GENUS (borde verde agua) y la sincronización no lo pisa; si la planilla cambia ese dato, la celda
+          se marca en ámbar para que decidas.
         </>
       }
     />

@@ -63,7 +63,7 @@ describe("getWorkItemWarningCodes — sistema de advertencias no bloqueantes", (
   });
 
   // Test 4
-  it("sin packingGroups reales (Envasado/Codificado) -> FALTA_PACKING", () => {
+  it("sin packingGroups (Envasado/Codificado) -> NO hay advertencia de packing (se quitó «FALTAN DATOS DE PACKING»)", () => {
     const item = envasadoItem({
       id: "wi-4",
       sector: "ENVASADO_MASIVO",
@@ -73,7 +73,7 @@ describe("getWorkItemWarningCodes — sistema de advertencias no bloqueantes", (
       packingGroups: [],
     });
     const codes = getWorkItemWarningCodes(item);
-    expect(codes).toEqual(["FALTA_PACKING"]);
+    expect(codes).toEqual([]);
 
     // packingGroups con solo filas en cero (placeholders) tampoco cuenta como cargado.
     const zeroed = envasadoItem({
@@ -84,7 +84,7 @@ describe("getWorkItemWarningCodes — sistema de advertencias no bloqueantes", (
       finishedQty: "100",
       packingGroups: [{ cajas: 0, unidadesPorCaja: 0 }],
     });
-    expect(getWorkItemWarningCodes(zeroed)).toEqual(["FALTA_PACKING"]);
+    expect(getWorkItemWarningCodes(zeroed)).toEqual([]);
   });
 
   // Test 5
@@ -256,9 +256,8 @@ describe("getWorkItemWarningCodes — sistema de advertencias no bloqueantes", (
       "FALTA_LOTE",
       "FALTA_VTO",
       "FALTA_CANTIDAD_FINAL",
-      "FALTA_PACKING",
     ]);
-    expect(getPrimaryWorkItemWarningLabel(warnings)).toBe("FALTA LOTE Y VTO (+2)");
+    expect(getPrimaryWorkItemWarningLabel(warnings)).toBe("FALTA LOTE Y VTO (+1)");
   });
 
   it("sin advertencias -> arrays vacíos y label null", () => {

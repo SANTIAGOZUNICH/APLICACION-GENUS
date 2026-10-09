@@ -243,7 +243,17 @@ export async function patchCellsWithWriteback(
   }
   const sources = getAsignacionLoteSourcesService();
   const writableCache = new Map<string, { spreadsheetId: string; tab: string | null } | null>();
-  const isGoogle = (c: AsignacionCellChange) => Boolean(records.get(c.id)?.sourceId);
+  // 0043: solo van a Google las filas de una fuente con escritura de vuelta HABILITADA (opción C). Las demás filas
+  // sincronizadas se editan en GENUS y quedan registradas como «editado en GENUS» (el sync no las pisa).
+  for (const rec of records.values()) {
+    if (!rec.sourceId || writableCache.has(rec.sourceId)) continue;
+    const src = await sources.getForSync(rec.sourceId);
+    writableCache.set(rec.sourceId, src && isWritebackEnabledFor(src.spreadsheetId) ? { spreadsheetId: src.spreadsheetId, tab: src.sheetTab } : null);
+  }
+  const isGoogle = (c: AsignacionCellChange) => {
+    const sourceId = records.get(c.id)?.sourceId;
+    return Boolean(sourceId && writableCache.get(sourceId));
+  };
 
   const manual = changes.map((c, i) => ({ c, i })).filter(({ c }) => !isGoogle(c));
   const google = changes.map((c, i) => ({ c, i })).filter(({ c }) => isGoogle(c));

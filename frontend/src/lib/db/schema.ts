@@ -908,6 +908,14 @@ export const asignacionLotes = pgTable(
     datosIncompletos: boolean("datos_incompletos").notNull().default(false),
     /** 0038 — qué campos exactos quedaron incompletos (ej. ["producto","vto"]). Null si datosIncompletos=false. */
     camposIncompletos: jsonb("campos_incompletos"),
+    /**
+     * 0043 — identidad del registro TAL COMO ESTÁ EN LA PLANILLA (lote, código, producto). El sync encuentra el
+     * registro por acá aunque GENUS haya corregido lote/código/producto. Null = carga manual o registro previo a 0043
+     * (se usa lote/código/producto).
+     */
+    sourceLote: text("source_lote"),
+    sourceCodigo: text("source_codigo"),
+    sourceProducto: text("source_producto"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by").notNull().default(""),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -950,11 +958,43 @@ export const asignacionLotesCellAudit = pgTable(
     actorEmail: text("actor_email").notNull(),
     actorSector: text("actor_sector").notNull(),
     actorName: text("actor_name").notNull().default(""),
+    /** 0043 — motivo de la corrección cuando se informó. */
+    reason: text("reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("asignacion_lotes_cell_audit_record_idx").on(table.recordId, table.createdAt),
     index("asignacion_lotes_cell_audit_batch_idx").on(table.batchId),
+  ]
+);
+
+/**
+ * 0043 — Ediciones de GENUS sobre registros sincronizados desde Google Sheets. Una fila abierta (resolved_at null) por
+ * registro+campo: `local_value` es lo que vale en GENUS; `sheet_value` lo que tenía la planilla cuando se editó.
+ * status ACTIVE = el sync no pisa ese campo; CONFLICT = la planilla cambió el mismo campo después (conflict_sheet_value)
+ * y espera que una persona decida. Resolver (mantener GENUS / usar planilla / volver a la planilla) cierra la fila.
+ */
+export const asignacionLotesLocalEdits = pgTable(
+  "asignacion_lotes_local_edits",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    recordId: text("record_id").notNull(),
+    field: text("field").notNull(),
+    sheetValue: text("sheet_value"),
+    localValue: text("local_value"),
+    status: text("status").notNull().default("ACTIVE"),
+    conflictSheetValue: text("conflict_sheet_value"),
+    createdBy: text("created_by").notNull(),
+    createdByName: text("created_by_name").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedBy: text("resolved_by"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolution: text("resolution"),
+  },
+  (table) => [
+    uniqueIndex("asignacion_lotes_local_edits_open_uidx").on(table.recordId, table.field).where(sql`${table.resolvedAt} is null`),
+    index("asignacion_lotes_local_edits_record_idx").on(table.recordId),
   ]
 );
 

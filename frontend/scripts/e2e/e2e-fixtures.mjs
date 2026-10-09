@@ -6,4 +6,6 @@ export const E2E_USERS = {
   envasado: { email: "e2e-envasado@genus.test", sector: "ENVASADO_MASIVO", displayName: "E2E Envasado", role: "ROL-OP", roleLabel: "Operario", sectorLabel: "Envasado Masivo" },
   elaboracion: { email: "e2e-elaboracion@genus.test", sector: "ELABORACION", displayName: "E2E Elaboración", role: "ROL-OP", roleLabel: "Operario", sectorLabel: "Elaboración" },
   deposito: { email: "e2e-deposito@genus.test", sector: "DEPOSITO", displayName: "E2E Depósito", role: "ROL-OP", roleLabel: "Operario", sectorLabel: "Depósito" },
+  calidad: { email: "e2e-calidad@genus.test", sector: "CALIDAD", displayName: "E2E Calidad", role: "ROL-CA", roleLabel: "Calidad", sectorLabel: "Calidad" },
+  codificado: { email: "e2e-codificado@genus.test", sector: "CODIFICADO", displayName: "E2E Codificado", role: "ROL-OP", roleLabel: "Operario", sectorLabel: "Codificado" },
 };

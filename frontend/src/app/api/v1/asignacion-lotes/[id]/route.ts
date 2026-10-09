@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAsignacionLotesService } from "@/lib/asignacion-lotes/asignacion-lotes-service";
 import { resolveOrdersActor } from "@/lib/orders/actor";
-import { ordersErrorResponse } from "@/lib/orders/http";
+import { asignacionLotesErrorResponse } from "@/lib/asignacion-lotes/schema-status";
 import { OrdersForbiddenError } from "@/lib/orders/types";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 
@@ -32,7 +32,7 @@ export async function GET(request: Request, ctx: Ctx) {
     if (!item) return NextResponse.json({ error: "No encontrado" }, { status: 404 });
     return NextResponse.json({ item });
   } catch (err) {
-    return ordersErrorResponse(err);
+    return asignacionLotesErrorResponse(err);
   }
 }
 
@@ -57,7 +57,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
 
     return NextResponse.json({ error: "lifecycleAction inválida" }, { status: 400 });
   } catch (err) {
-    return ordersErrorResponse(err);
+    return asignacionLotesErrorResponse(err);
   }
 }
 
@@ -75,6 +75,6 @@ export async function DELETE(request: Request, ctx: Ctx) {
     await getAsignacionLotesService().delete(toActor(actor), id, reason);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    return ordersErrorResponse(err);
+    return asignacionLotesErrorResponse(err);
   }
 }

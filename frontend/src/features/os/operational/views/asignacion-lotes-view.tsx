@@ -15,6 +15,7 @@ import {
   ExcelImportPreviewDialog,
   type ExcelImportFieldDef,
 } from "../components/excel-import-preview-dialog";
+import { AsignacionLotesLocalEditsPanel } from "../components/asignacion-lotes-local-edits-panel";
 import { AsignacionLoteHistoryDialog } from "../components/asignacion-lote-history-dialog";
 import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
@@ -29,6 +30,7 @@ import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import {
   deleteAsignacionLoteApi,
+  AsignacionLotesLoadError,
   fetchAsignacionLotesApi,
   importAsignacionLotesApi,
   upsertAsignacionLoteApi,
@@ -73,6 +75,7 @@ import { canConfigureAsignacionLoteSources } from "../lib/asignacion-lote-source
 import { AsignacionLoteSourcesPanel } from "../components/asignacion-lote-sources-panel";
 import { OfficialAsignacionLotesStatusBanner } from "../components/official-asignacion-lotes-status";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { clientBuildSha, isBuildSkew, shortBuild } from "@/lib/pwa/build-version";
 import { SmartPasteDialog } from "../components/smart-paste-dialog";
 import {
   buildMonthFilterOptions,
@@ -261,6 +264,10 @@ export function AsignacionLotesView() {
   const canMutate = canMutateAsignacionLotes(workspace.context.sectorId);
   const [items, setItems] = useState<AsignacionLote[]>(() => getAllAsignacionLotes());
   const [offlineCache, setOfflineCache] = useState(false);
+  // Por qué no se pudo cargar desde el servidor (esquema pendiente, sin conexión, error). Con esto la grilla queda en
+  // solo lectura CON el motivo real, en vez de mostrar la caché local como si fuera editable y fallar al guardar.
+  const [loadIssue, setLoadIssue] = useState<{ kind: "schema" | "offline" | "error"; message: string } | null>(null);
+  const [serverBuild, setServerBuild] = useState("");
   const [search, setSearch] = useState("");
   const [producto, setProducto] = useState("");
   const [codigo, setCodigo] = useState("");
@@ -301,18 +308,40 @@ export function AsignacionLotesView() {
 
   const refresh = useCallback(async () => {
     try {
-      const { items: allItems, writableSourceIds: writable } = await fetchAsignacionLotesApi(session);
+      const { items: allItems, writableSourceIds: writable, build } = await fetchAsignacionLotesApi(session);
+      setServerBuild(build);
+      setLoadIssue(null);
       setWritableSourceIds(new Set(writable));
       replaceAsignacionLotesCache(allItems);
       // Datos del servidor tal cual (con sourceId/updatedAt reales: la grilla
       // los necesita para proteger filas de Google y controlar concurrencia).
       setItems(allItems.filter((item) => !item.archived));
       setOfflineCache(false);
-    } catch {
+    } catch (err) {
       setItems(getAllAsignacionLotes());
       setOfflineCache(true);
+      if (err instanceof AsignacionLotesLoadError && err.schemaPending) {
+        setLoadIssue({ kind: "schema", message: err.message });
+      } else if (err instanceof AsignacionLotesLoadError && err.status === 0) {
+        setLoadIssue({ kind: "offline", message: "Sin conexión con el servidor: los cambios no se pueden guardar ahora." });
+      } else {
+        setLoadIssue({
+          kind: "error",
+          message: `El servidor no pudo cargar Asignación de lotes${err instanceof Error && err.message ? `: ${err.message}` : "."}`,
+        });
+      }
     }
   }, [session]);
+
+  // Pestaña/PWA abierta desde antes del último deploy: corre código viejo (p. ej. filas de Google bloqueadas).
+  const staleBuild = isBuildSkew(serverBuild);
+  const gridReadOnlyReason = !canMutate
+    ? null
+    : staleBuild
+      ? "Esta pestaña tiene una versión anterior de GENUS. Recargá la página para editar."
+      : loadIssue
+        ? loadIssue.message
+        : null;
 
   useEffect(() => {
     void refresh();
@@ -633,7 +662,8 @@ export function AsignacionLotesView() {
       rows={rows}
       session={session}
       sector={workspace.context.sectorId}
-      canEdit={canMutate}
+      canEdit={canMutate && !gridReadOnlyReason}
+      readOnlyReason={gridReadOnlyReason ?? undefined}
       writableSourceIds={writableSourceIds}
       onRowsUpdated={handleRowsUpdated}
       onReload={() => void refresh()}
@@ -666,11 +696,41 @@ export function AsignacionLotesView() {
           </p>
         </header>
 
-        <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-teal)]/40 bg-[var(--os-teal-soft)]/30 px-4 py-3 text-sm text-[var(--os-text)]">
-          {offlineCache
-            ? "Sin conexión al servidor — mostrando caché local de este navegador"
-            : "Sincronizado con servidor — caché local como respaldo offline"}
-        </div>
+        {staleBuild ? (
+          <div
+            role="alert"
+            data-testid="asignacion-lotes-stale-build"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--os-radius-sm)] border border-amber-500/60 bg-amber-500/15 px-4 py-3 text-sm text-[var(--os-text)]"
+          >
+            <span>
+              Hay una versión nueva de GENUS (servidor {shortBuild(serverBuild)}; esta pestaña {shortBuild(clientBuildSha())}).
+              Recargá para editar: esta pestaña quedó abierta con la versión anterior.
+            </span>
+            <Button type="button" variant="primary" onClick={() => window.location.reload()}>
+              Recargar ahora
+            </Button>
+          </div>
+        ) : null}
+
+        {loadIssue ? (
+          <div
+            role="alert"
+            data-testid="asignacion-lotes-load-issue"
+            data-kind={loadIssue.kind}
+            className="rounded-[var(--os-radius-sm)] border border-[var(--genus-error)]/60 bg-[var(--genus-error)]/15 px-4 py-3 text-sm text-[var(--os-text)]"
+          >
+            <p className="font-medium">{loadIssue.message}</p>
+            <p className="mt-1 text-xs text-[var(--os-text-muted)]">
+              Se muestra la caché local de este navegador en solo lectura (nada de lo que ves acá se puede guardar).
+            </p>
+          </div>
+        ) : (
+          <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-teal)]/40 bg-[var(--os-teal-soft)]/30 px-4 py-3 text-sm text-[var(--os-text)]">
+            {offlineCache
+              ? "Sin conexión al servidor — mostrando caché local de este navegador"
+              : "Sincronizado con servidor — caché local como respaldo offline"}
+          </div>
+        )}
 
         <OfficialAsignacionLotesStatusBanner session={session} />
 
@@ -828,6 +888,8 @@ export function AsignacionLotesView() {
             </div>
           </div>
         </section>
+
+        <AsignacionLotesLocalEditsPanel rows={items} session={session} canEdit={canMutate} onResolved={() => void refresh()} />
 
         {groupedByMonth ? (
           <div className="space-y-3" data-testid="asignacion-lotes-month-groups">
@@ -1010,7 +1072,8 @@ export function AsignacionLotesView() {
             </DialogHeader>
             {editing?.sourceId ? (
               <p className="text-xs text-[var(--os-text-muted)]" data-testid="asignacion-lote-origin-badge">
-                Origen: Google Sheets (sincronizado automáticamente)
+                Origen: Google Sheets (sincronizado automáticamente). Lo que cambies acá queda guardado en GENUS y la
+                sincronización no lo pisa; la planilla original no se modifica.
               </p>
             ) : null}
             <form onSubmit={saveForm} className="space-y-4">

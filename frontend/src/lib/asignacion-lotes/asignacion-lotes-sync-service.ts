@@ -581,8 +581,8 @@ export async function syncSource(
       if (realTabsThisRun && recordTab && realTabsThisRun.has(recordTab) && !readableTabs.has(recordTab)) {
         continue; // protegido — la hoja existe pero quedó ignorada/falló esta corrida
       }
-      await lotesService.archiveRemovedFromSource(record.id, source.name);
-      summary.archivedCount += 1;
+      // 0043: un registro con ediciones de GENUS no se archiva solo (queda marcado para que alguien decida).
+      if ((await lotesService.archiveRemovedFromSource(record.id, source.name)) === "archived") summary.archivedCount += 1;
     }
 
     // Sección 7 (reconciliación obligatoria): toda fila leída debe caer en

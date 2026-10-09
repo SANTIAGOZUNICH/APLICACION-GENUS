@@ -41,8 +41,10 @@ describe("permisos por sector y protección", () => {
     expect(canEditAsignacionCellField("DEPOSITO", "observaciones")).toBe(false);
   });
 
-  it("registros de Google Sheets están protegidos para todas las columnas y sectores", () => {
-    expect(cellProtectionReason({ sourceId: "src-1" }, "cantidades", "CALIDAD")).toMatch(/Google Sheets/);
+  it("registros sincronizados desde Google Sheets se editan en GENUS con la misma matriz de sectores (0043)", () => {
+    expect(cellProtectionReason({ sourceId: "src-1" }, "cantidades", "CALIDAD")).toBeNull();
+    expect(cellProtectionReason({ sourceId: "src-1" }, "cantidades", "CODIFICADO")).toMatch(/Tu sector/);
+    expect(cellProtectionReason({ sourceId: "src-1", archived: true }, "cantidades", "PRODUCCION")).toMatch(/archivado/);
     expect(cellProtectionReason({ sourceId: null }, "cantidades", "CALIDAD")).toBeNull();
     expect(cellProtectionReason({ sourceId: null, archived: true }, "cantidades", "CALIDAD")).toMatch(/archivado/);
   });

@@ -1,6 +1,6 @@
-# 48 — Etapa 2: Depósito ME como planillas editables (Ingresos, Salidas, Inventario)
+# 49 — Etapa 2: Depósito ME como planillas editables (Ingresos, Salidas, Inventario)
 
-Estado al 2026-10-09. Rama `claude/deposito-planilla-etapa2`, que parte de `main` y es independiente del PR #112. **Sin migraciones**: usa las tablas existentes `inv_me_*`, `inv_ajustes` e `inv_audit`.
+Estado al 2026-10-09. Rama `claude/deposito-planilla-etapa2`, que parte de `main` y incluye los PR #112 y #114 (merge de `main`). **Sin migraciones**: usa las tablas existentes `inv_me_*`, `inv_ajustes` e `inv_audit`.
 
 ## 1. Salidas manuales y descuento de stock
 

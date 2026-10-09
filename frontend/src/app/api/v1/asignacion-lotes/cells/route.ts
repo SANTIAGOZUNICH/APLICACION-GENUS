@@ -3,7 +3,7 @@ import { AsignacionCellPatchError } from "@/lib/asignacion-lotes/asignacion-lote
 import { patchCellsWithWriteback } from "@/lib/asignacion-lotes/asignacion-lotes-writeback-service";
 import type { AsignacionCellChange } from "@/lib/asignacion-lotes/cell-edit";
 import { resolveOrdersActor } from "@/lib/orders/actor";
-import { ordersErrorResponse } from "@/lib/orders/http";
+import { asignacionLotesErrorResponse } from "@/lib/asignacion-lotes/schema-status";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
 
 export const runtime = "nodejs";
@@ -63,6 +63,6 @@ export async function PATCH(request: Request) {
         { status: err.status }
       );
     }
-    return ordersErrorResponse(err);
+    return asignacionLotesErrorResponse(err);
   }
 }
