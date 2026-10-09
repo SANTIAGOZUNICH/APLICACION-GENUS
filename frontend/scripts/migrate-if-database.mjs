@@ -35,7 +35,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { reconcileMigrations } from "./lib/migration-reconcile.mjs";
+import { reconcileMigrations, verifyRequiredSchema } from "./lib/migration-reconcile.mjs";
 
 const url =
   process.env.DATABASE_URL_UNPOOLED?.trim() ||
@@ -221,6 +221,21 @@ try {
   }
   if (reconciled.applied.length) {
     console.log(`[db:migrate] reconciliadas: ${reconciled.applied.join(", ")}`);
+  }
+  // Lo que el código desplegado necesita tiene que estar en la base (ver REQUIRED_SCHEMA_OBJECTS). Una migración
+  // salteada en silencio dejaba en Production código que no podía listar ni guardar (Asignación de lotes, 0043).
+  const schema = await verifyRequiredSchema({
+    query: async (text, params) => await sql.query(text, params ?? []),
+  });
+  if (!schema.ok) {
+    const detail = schema.missing.map((m) => `${m.object} (${m.migration})`).join(", ");
+    if (process.env.VERCEL_ENV === "production") {
+      console.error(`[db:migrate] FALTAN objetos de esquema que este deploy necesita: ${detail}. Build cortado: se conserva el deploy anterior.`);
+      process.exit(1);
+    }
+    console.warn(`[db:migrate] AVISO: faltan objetos de esquema que este código necesita: ${detail}.`);
+  } else {
+    console.log("[db:migrate] esquema verificado: objetos requeridos presentes.");
   }
   console.log(
     "[db:migrate] OK — migraciones aplicadas (0005–0018 condicionadas)."

@@ -101,6 +101,8 @@ export interface GenusGridProps<T> {
   onCommit: (changes: GenusGridCellChange[]) => Promise<GenusGridCommitResult>;
   /** false = grilla de solo lectura (sector sin permiso de edición). */
   canEdit?: boolean;
+  /** Motivo que se muestra en las celdas cuando `canEdit` es false (por defecto: falta de permiso del sector). */
+  readOnlyReason?: string;
   /** Más de N celdas en una operación → preview antes de aplicar. */
   previewThreshold?: number;
   height?: number;
@@ -205,6 +207,7 @@ export function GenusGrid<T>({
   columns,
   onCommit,
   canEdit = true,
+  readOnlyReason,
   previewThreshold = 5,
   height,
   maxHeight = 560,
@@ -251,12 +254,12 @@ export function GenusGrid<T>({
         for (const col of columns) {
           const ov = overlay[cellKey(id, col.key)];
           out[col.key] = ov ? ov.value : col.getValue(row);
-          out.__prot[col.key] = canEdit ? (col.protection?.(row) ?? null) : "Tu sector no puede editar esta tabla.";
+          out.__prot[col.key] = canEdit ? (col.protection?.(row) ?? null) : (readOnlyReason ?? "Tu sector no puede editar esta tabla.");
           if (ov) out.__st[col.key] = ov.status;
         }
         return out;
       }),
-    [rows, columns, overlay, rowId, rowVersion, canEdit]
+    [rows, columns, overlay, rowId, rowVersion, canEdit, readOnlyReason]
   );
   const gridRowsRef = useRef(gridRows);
 

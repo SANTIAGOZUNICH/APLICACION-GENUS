@@ -73,6 +73,7 @@ export function AsignacionLotesGrid({
   session,
   sector,
   canEdit,
+  readOnlyReason,
   writableSourceIds,
   onRowsUpdated,
   onReload,
@@ -84,6 +85,8 @@ export function AsignacionLotesGrid({
   session: OrdersClientSession;
   sector: SectorId;
   canEdit: boolean;
+  /** Motivo de solo lectura cuando `canEdit` es false por algo que no es el permiso del sector. */
+  readOnlyReason?: string;
   /** Fuentes Google con escritura de vuelta habilitada (opción C). */
   writableSourceIds?: ReadonlySet<string>;
   /** El servidor confirmó: reemplazar estos registros en el estado/caché de la vista. */
@@ -159,6 +162,7 @@ export function AsignacionLotesGrid({
       columns={columns}
       onCommit={onCommit}
       canEdit={canEdit}
+      readOnlyReason={readOnlyReason}
       onReload={onReload}
       renderRowActions={renderRowActions}
       rowActionsWidth={68}
