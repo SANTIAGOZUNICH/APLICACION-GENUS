@@ -169,3 +169,16 @@ export async function patchAsignacionLoteCellsApi(
     unchangedCells: body.unchangedCells ?? 0,
   };
 }
+
+export type AsignacionLoteHistoryEntryDto =
+  | { kind: "CHANGE"; at: string; actor: string; actorSector: string; field: string; oldValue: string | null; newValue: string | null; batchId: string; origin: "FORM" | "CELL" }
+  | { kind: "CREATED"; at: string; actor: string; origin: "SYNC" | "MANUAL" }
+  | { kind: "ARCHIVED"; at: string; actor: string; reason: string | null };
+
+/** Historial de cambios de un lote (solo lectura). */
+export async function fetchAsignacionLoteHistoryApi(session: OrdersClientSession, id: string): Promise<AsignacionLoteHistoryEntryDto[]> {
+  const res = await fetch(`/api/v1/asignacion-lotes/${encodeURIComponent(id)}/history`, { credentials: "include", headers: headers(session) });
+  const body = (await res.json().catch(() => ({}))) as { entries?: AsignacionLoteHistoryEntryDto[]; error?: string };
+  if (!res.ok) throw new Error(body.error ?? `No se pudo leer el historial (${res.status}).`);
+  return body.entries ?? [];
+}

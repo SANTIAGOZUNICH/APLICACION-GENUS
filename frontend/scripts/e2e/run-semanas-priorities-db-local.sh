@@ -84,4 +84,4 @@ grep -q "wss://" "$STATE_DIR/wsproxy.log" || { cat "$STATE_DIR/wsproxy.log" >&2;
 export NODE_EXTRA_CA_CERTS="$CERT_DIR/ca-bundle.pem"
 node scripts/e2e/setup-e2e-db.mjs
 # Secuencial: comparten la MISMA base y un test renombra temporalmente la tabla de prioridades (migración pendiente).
-npx vitest run src/integration/semanas-priorities.db.integration.test.ts src/integration/semanas-links.db.integration.test.ts --no-file-parallelism --reporter=verbose
+npx vitest run src/integration/semanas-priorities.db.integration.test.ts src/integration/semanas-links.db.integration.test.ts src/integration/produccion-edicion.db.integration.test.ts --no-file-parallelism --reporter=verbose

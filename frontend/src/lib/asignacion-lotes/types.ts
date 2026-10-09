@@ -45,6 +45,8 @@ export type AsignacionLoteUpsertInput = {
   observaciones?: string;
   createdBy?: string;
   updatedBy: string;
+  /** Edición manual: `updatedAt` que el usuario tenía a la vista (si cambió en el medio → conflicto, no se pisa). */
+  expectedUpdatedAt?: string;
   archived?: boolean;
   /** Solo lo setea el sync de Google Sheets — nunca viene de alta/edición manual ni de "Pegar desde Excel". */
   sourceId?: string | null;

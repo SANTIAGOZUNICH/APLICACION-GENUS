@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
-import { ClipboardPaste, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { ClipboardPaste, Download, History, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,6 +15,7 @@ import {
   ExcelImportPreviewDialog,
   type ExcelImportFieldDef,
 } from "../components/excel-import-preview-dialog";
+import { AsignacionLoteHistoryDialog } from "../components/asignacion-lote-history-dialog";
 import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
 import {
@@ -275,6 +276,7 @@ export function AsignacionLotesView() {
   const [form, setForm] = useState<AsignacionFormState>(() => emptyForm());
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AsignacionLote | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<AsignacionLote | null>(null);
   const [bulkPending, setBulkPending] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -439,6 +441,8 @@ export function AsignacionLotesView() {
         observaciones: form.observaciones,
         updatedBy: workspace.context.displayName,
         createdBy: workspace.context.displayName,
+        // Concurrencia: si otro usuario (o una sincronización) cambió el lote mientras se editaba, no se pisa.
+        ...(editing ? { expectedUpdatedAt: editing.updatedAt } : {}),
       });
       setFormOpen(false);
       setEditing(null);
@@ -567,6 +571,16 @@ export function AsignacionLotesView() {
           </button>
           <button
             type="button"
+            onClick={() => setHistoryTarget(row)}
+            aria-label={`Historial de ${row.lote}`}
+            title="Historial de cambios"
+            className="rounded p-1.5 text-[var(--os-text-muted)] hover:bg-[var(--os-bg)] hover:text-[var(--os-text)]"
+            data-testid="lote-history-open"
+          >
+            <History className="size-4" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
             disabled={!canMutate}
             onClick={() => setDeleteTarget(row)}
             aria-label={`Eliminar ${row.lote}`}
@@ -591,6 +605,16 @@ export function AsignacionLotesView() {
         className="rounded p-1 text-[var(--os-text-muted)] hover:bg-[var(--os-bg)] hover:text-[var(--os-text)] disabled:cursor-not-allowed disabled:opacity-40"
       >
         <Pencil className="size-4" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        onClick={() => setHistoryTarget(row)}
+        aria-label={`Historial de ${row.lote}`}
+        title="Historial de cambios"
+        className="rounded p-1 text-[var(--os-text-muted)] hover:bg-[var(--os-bg)] hover:text-[var(--os-text)]"
+        data-testid="lote-history-open"
+      >
+        <History className="size-4" aria-hidden="true" />
       </button>
       <button
         type="button"
@@ -905,6 +929,8 @@ export function AsignacionLotesView() {
             )}
           </>
         )}
+
+        <AsignacionLoteHistoryDialog session={session} target={historyTarget} onClose={() => setHistoryTarget(null)} />
 
         <LifecycleConfirmDialog
           pending={

@@ -845,6 +845,66 @@ export async function updateWorkItemAssigneeDurable(id: string, input: UpdateWor
   });
 }
 
+export interface CorrectFinishedQtyInput {
+  finishedQty: string;
+  /** Valor que Producción tenía a la vista: si el sector registró un avance nuevo mientras tanto, se rechaza. */
+  expectedFinishedQty: string | null;
+  /** OBLIGATORIA (CAS sobre la versión de planificación). */
+  expectedVersion: number;
+  reason: string;
+  updatedBy: string;
+  updatedBySector: SectorId | string;
+}
+
+/**
+ * Corrección AUTORIZADA de la cantidad realizada (Producción). No es un avance: no cambia el estado operativo ni
+ * «último avance por», no borra nada. Deja evento FINISHED_QTY_CORRECTED con valor anterior, nuevo, actor y motivo.
+ * Doble control de concurrencia: versión del trabajo + valor visto (un avance del sector no sube la versión).
+ */
+export async function correctFinishedQtyDurable(id: string, input: CorrectFinishedQtyInput) {
+  const reason = input.reason?.trim() ?? "";
+  if (reason.length < 8) throw new PlanningValidationError("La corrección de cantidad realizada requiere un motivo (mín. 8 caracteres).");
+  const next = input.finishedQty?.trim() ?? "";
+  if (!/^\d+(\.\d+)?$/.test(next)) throw new PlanningValidationError("Cantidad realizada inválida (número ≥ 0).");
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ finishedQty: workItems.finishedQty, packagingTotalUnits: workItems.packagingTotalUnits, version: workItems.version, planningWeekId: workItems.planningWeekId, deletedAt: workItems.deletedAt })
+      .from(workItems)
+      .where(eq(workItems.id, id))
+      .limit(1);
+    if (!existing) throw new Error("Work item no encontrado.");
+    if (existing.deletedAt) throw new PlanningValidationError("Este trabajo fue borrado.");
+    assertVersionMatches(existing.version, input.expectedVersion);
+    // Mismo valor que proyecta «Mi trabajo» (native-projector): finishedQty o, si falta, las unidades informadas.
+    const current = existing.finishedQty?.trim() || (existing.packagingTotalUnits != null ? String(existing.packagingTotalUnits) : null);
+    const seen = input.expectedFinishedQty?.trim() || null;
+    if (current !== seen) {
+      throw new PlanningValidationError(
+        `El sector registró un avance nuevo mientras editabas (ahora: ${current ?? "sin avance"}) — conflicto de versión: revisá antes de corregir.`
+      );
+    }
+    if (current === next) throw new Error("No hay cambios para guardar.");
+    const [row] = await tx
+      .update(workItems)
+      .set({ finishedQty: next, updatedAt: new Date(), version: existing.version + 1 })
+      .where(and(eq(workItems.id, id), eq(workItems.version, existing.version)))
+      .returning();
+    if (!row) throw new PlanningValidationError("Este trabajo fue modificado mientras lo estabas editando (conflicto de versión) — actualizá y revisá antes de guardar.");
+    await tx.insert(operationalEvents).values({
+      workItemId: id,
+      planningWeekId: existing.planningWeekId,
+      type: "FINISHED_QTY_CORRECTED",
+      fromStatus: JSON.stringify({ finishedQty: current }),
+      toStatus: JSON.stringify({ finishedQty: next }),
+      actorEmail: input.updatedBy,
+      actorSector: String(input.updatedBySector),
+      note: reason,
+    });
+    return row;
+  });
+}
+
 export interface RescheduleWorkItemInput {
   /** Nueva fecha de producción (día destino del drop). Requerida. */
   plannedDate: string;

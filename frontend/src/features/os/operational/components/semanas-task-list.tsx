@@ -103,7 +103,7 @@ export function SemanasTaskList(props: SemanasTaskListProps) {
   const valueOf = useCallback((l: PlanTaskLine) => e.overlay[l.a1!]?.value ?? l.value, [e.overlay]);
   const lockOf = useCallback((l: PlanTaskLine | undefined): string | null => {
     if (!l) return "La planilla no tiene este dato para esta tarea (se agrega desde la planilla).";
-    if (!canEdit) return "Solo lectura: la escritura a esta planilla no está habilitada desde GENUS.";
+    if (!canEdit) return "La planilla no se escribe desde GENUS: editá el trabajo vinculado en el «Mi trabajo» del sector (o creá el trabajo desde esta tarea).";
     return l.protection ?? null;
   }, [canEdit]);
 

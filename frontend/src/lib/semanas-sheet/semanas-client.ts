@@ -19,6 +19,8 @@ export interface SemanasViewResponse {
   kind: "CALENDAR" | "FLAT";
   source?: "GOOGLE" | "PREVIEW_XLSX" | "LOCAL_FIXTURE";
   writable: boolean;
+  /** Por qué no se escribe en la planilla (null si se puede). */
+  writeBlockReason?: string | null;
   canEdit: boolean;
   weeks?: CalendarWeek[];
   /** Ancho (px) de Lun..Vie en la Sheet original. */

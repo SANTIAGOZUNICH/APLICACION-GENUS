@@ -4,8 +4,9 @@
  * No hay una segunda ruta de escritura: el servidor aplica cada celda con las funciones CANÓNICAS
  * (`updateWorkItemPlanningDurable`, `updateWorkItemLoteVtoDurable`) que ya cuidan versión
  * (concurrencia optimista), identidad OA/OE y auditoría en `operational_events`.
- * Quedan SIEMPRE fuera de la edición por celda: estado, avance informado (finishedQty,
- * packingGroups, unidades), decisiones/firmas de Calidad, cierres, entregas y Codificado.
+ * La cantidad realizada (`finishedQty`) solo se CORRIGE (motivo obligatorio, `correctFinishedQtyDurable`): no es un
+ * avance. Quedan SIEMPRE fuera de la edición por celda: estado, packingGroups/unidades, decisiones/firmas de Calidad,
+ * cierres, entregas y Codificado.
  */
 import { parseFlexibleDate } from "@/features/os/operational/lib/delivery-date";
 import { parseNonNegativeNumber } from "@/features/os/operational/lib/clipboard-import";
@@ -24,17 +25,19 @@ export const WORK_ITEM_CELL_FIELDS = [
   "packagingVto",
   /** Responsable (Elaboración: Cristian / Nicolás) o línea (Envasado: Línea N). */
   "assignee",
+  /** Corrección autorizada de la cantidad realizada (motivo obligatorio; no es un avance). */
+  "finishedQty",
 ] as const;
 export type WorkItemCellField = (typeof WORK_ITEM_CELL_FIELDS)[number];
 
 export const WORK_ITEM_CELL_KIND: Record<WorkItemCellField, "text" | "number" | "date"> = {
   client: "text", product: "text", plannedQuantity: "number", unit: "text",
-  plannedDate: "date", deliveryDate: "date", notes: "text", packagingLote: "text", packagingVto: "date", assignee: "text",
+  plannedDate: "date", deliveryDate: "date", notes: "text", packagingLote: "text", packagingVto: "date", assignee: "text", finishedQty: "number",
 };
 /** Identidad / trazabilidad (re-resuelve OA/OE o es dato de lote): confirmación reforzada. */
 export const WORK_ITEM_SENSITIVE_FIELDS: ReadonlySet<WorkItemCellField> = new Set(["product", "packagingLote", "packagingVto"]);
 /** Estas correcciones exigen motivo auditado en la función canónica. */
-export const WORK_ITEM_REASON_FIELDS: ReadonlySet<WorkItemCellField> = new Set(["packagingLote", "packagingVto"]);
+export const WORK_ITEM_REASON_FIELDS: ReadonlySet<WorkItemCellField> = new Set(["packagingLote", "packagingVto", "finishedQty"]);
 export const MIN_WORK_ITEM_REASON = 8;
 
 export function isWorkItemCellField(v: unknown): v is WorkItemCellField {
@@ -52,17 +55,23 @@ type ProtectableItem = Pick<
   "id" | "status" | "qualityStatus" | "packagingClosedAt" | "deliveredFromCodificadoAt" | "operationalCancelledAt"
 >;
 
-/** Motivo por el que la celda NO es editable (null = editable). */
+/** ¿El sector ya informó el trabajo (completo / en revisión / en Codificado)? Producción puede corregir CON motivo. */
+export function isWorkItemReported(item: Pick<WorkItem, "status">): boolean {
+  return REPORTED_STATUSES.has(item.status);
+}
+
+/** Motivo por el que la celda NO es editable (null = editable). Los cierres definitivos indican el procedimiento. */
 export function workItemCellProtection(item: ProtectableItem & { sector?: string }, field: string, sector: SectorId | string | null | undefined): string | null {
   if (!isWorkItemCellField(field)) return "Columna de solo lectura (calculada o de otro sector).";
   if (field === "assignee" && item.sector === "CODIFICADO") return "Codificado no tiene responsable ni línea asignable.";
   if (sector !== "PRODUCCION") return "Solo Producción edita la planificación de trabajos.";
   if (!isNativeWorkItemId(item.id)) return "Trabajo de la planilla Google: se edita en Producción → Semanas.";
-  if (item.operationalCancelledAt || CLOSED_STATUSES.has(item.status)) return `Trabajo ${item.status === "entregado" ? "entregado" : "cancelado"}: cerrado.`;
-  if (item.qualityStatus === "aprobado" || item.qualityStatus === "rechazado") return "Decisión de Calidad registrada: no se modifica.";
+  if (item.operationalCancelledAt || CLOSED_STATUSES.has(item.status)) {
+    return item.status === "entregado" ? "Trabajo entregado: cerrado. Para corregirlo, anulá la entrega en Entregas." : "Trabajo cancelado: restauralo antes de editarlo.";
+  }
+  if (item.qualityStatus === "aprobado" || item.qualityStatus === "rechazado") return "Calidad ya decidió: para corregir, anulá la decisión de Calidad (queda auditado).";
   if (item.packagingClosedAt) return "Envasado cerrado: no se modifica.";
   if (item.deliveredFromCodificadoAt) return "Entregado desde Codificado: no se modifica.";
-  if (REPORTED_STATUSES.has(item.status)) return "El sector ya informó el trabajo (en revisión): usá «Rehacer» para reabrirlo.";
   return null;
 }
 
@@ -103,9 +112,10 @@ export function validateWorkItemCellValue(field: WorkItemCellField, raw: unknown
   return text.length > 1000 ? { ok: false, message: "Máximo 1000 caracteres." } : { ok: true, value: text || null };
 }
 
-/** ¿Pide motivo? (campos auditables siempre; cualquier edición de un trabajo de fecha pasada). */
-export function workItemReasonRequired(item: Pick<WorkItem, "plannedDate">, field: WorkItemCellField, today: string): boolean {
+/** ¿Pide motivo? (campos auditables siempre; trabajos ya informados por el sector; trabajos de fecha pasada). */
+export function workItemReasonRequired(item: Pick<WorkItem, "plannedDate"> & { status?: WorkItem["status"] }, field: WorkItemCellField, today: string): boolean {
   if (WORK_ITEM_REASON_FIELDS.has(field)) return true;
+  if (item.status && REPORTED_STATUSES.has(item.status)) return true;
   return Boolean(item.plannedDate && item.plannedDate < today);
 }
 
@@ -117,6 +127,8 @@ export interface WorkItemCellChange {
   /** `WorkItem.version` que el usuario tenía al editar. */
   expectedVersion: number;
   reason?: string;
+  /** Valor que el usuario veía (solo `finishedQty`: detecta un avance del sector registrado mientras tanto). */
+  expectedValue?: string | null;
 }
 export type WorkItemCellResultCode = "NOT_FOUND" | "PROTECTED" | "INVALID" | "CONFLICT" | "REASON_REQUIRED" | "FORBIDDEN" | "ERROR";
 export type WorkItemCellResult =

@@ -34,6 +34,15 @@ function fakeStore(initial: WorkItem[]) {
       row.version = (row.version ?? 0) + 1;
       return { version: row.version };
     },
+    async correctFinishedQty(id, input) {
+      calls.push({ fn: "finished", id, input: input as never });
+      const row = rows.get(`native:${id}`)! as WorkItem & { finishedQty?: string | null };
+      if (input.expectedVersion !== row.version) throw new Error("conflicto de versión");
+      if ((row.finishedQty ?? null) !== (input.expectedFinishedQty ?? null)) throw new Error("El sector registró un avance nuevo mientras editabas — conflicto de versión");
+      row.finishedQty = input.finishedQty;
+      row.version = (row.version ?? 0) + 1;
+      return { version: row.version };
+    },
     async updateLoteVto(id, input) {
       calls.push({ fn: "lotevto", id, input: input as never });
       const row = rows.get(`native:${id}`)!;
@@ -73,16 +82,21 @@ describe("responsable / línea (assignee) desde «Mi trabajo»", () => {
 });
 
 describe("política de celdas de WorkItem", () => {
-  it("solo Producción; solo nativos; cerrados/informados/decididos/cerrados de envasado protegidos", () => {
+  it("solo Producción; solo nativos; cerrados/decididos/cerrados de envasado protegidos con el procedimiento; informados se corrigen con motivo", () => {
     expect(workItemCellProtection(base(), "client", "PRODUCCION")).toBeNull();
     expect(workItemCellProtection(base(), "client", "CALIDAD")).toMatch(/Solo Producción/);
     expect(workItemCellProtection(base({ id: "semanas:abc" }), "client", "PRODUCCION")).toMatch(/Semanas/);
-    for (const status of ["cancelado", "entregado"] as const) expect(workItemCellProtection(base({ status }), "client", "PRODUCCION")).toMatch(/cerrado/);
-    for (const status of ["completo", "revision", "codificado_completo", "en_codificado"] as const) expect(workItemCellProtection(base({ status }), "client", "PRODUCCION")).toMatch(/Rehacer/);
-    expect(workItemCellProtection(base({ qualityStatus: "aprobado" }), "client", "PRODUCCION")).toMatch(/Calidad/);
+    expect(workItemCellProtection(base({ status: "entregado" }), "client", "PRODUCCION")).toMatch(/anulá la entrega/);
+    expect(workItemCellProtection(base({ status: "cancelado" }), "client", "PRODUCCION")).toMatch(/restauralo/);
+    for (const status of ["completo", "revision", "codificado_completo", "en_codificado"] as const) {
+      expect(workItemCellProtection(base({ status }), "client", "PRODUCCION")).toBeNull();
+      expect(workItemReasonRequired(base({ status }), "client", "2026-10-08")).toBe(true);
+    }
+    expect(workItemCellProtection(base({ qualityStatus: "aprobado" }), "client", "PRODUCCION")).toMatch(/anulá la decisión de Calidad/);
+    expect(workItemCellProtection(base({ qualityStatus: "aprobado" }), "finishedQty", "PRODUCCION")).toMatch(/Calidad/);
     expect(workItemCellProtection(base({ packagingClosedAt: "2026-01-01" }), "client", "PRODUCCION")).toMatch(/Envasado cerrado/);
     // estado, avance y firmas nunca son editables por celda
-    for (const f of ["status", "finishedQty", "qualityStatus", "packingGroups", "operationalObservation"]) expect(workItemCellProtection(base(), f, "PRODUCCION")).toMatch(/solo lectura/);
+    for (const f of ["status", "qualityStatus", "packingGroups", "operationalObservation"]) expect(workItemCellProtection(base(), f, "PRODUCCION")).toMatch(/solo lectura/);
   });
   it("validación de tipos", () => {
     expect(validateWorkItemCellValue("plannedQuantity", "1.500,5")).toEqual({ ok: true, value: "1500.5" });
@@ -95,6 +109,7 @@ describe("política de celdas de WorkItem", () => {
   });
   it("motivo: siempre para lote/VTO; para el resto solo si el trabajo es de fecha pasada", () => {
     expect(workItemReasonRequired(base(), "packagingLote", "2026-10-08")).toBe(true);
+    expect(workItemReasonRequired(base(), "finishedQty", "2026-10-08")).toBe(true);
     expect(workItemReasonRequired(base({ plannedDate: "2026-10-20" }), "client", "2026-10-08")).toBe(false);
     expect(workItemReasonRequired(base({ plannedDate: "2026-09-01" }), "client", "2026-10-08")).toBe(true);
   });
@@ -151,7 +166,7 @@ describe("applyWorkItemCellChanges (servicio sobre funciones canónicas)", () =>
     expect(fake.rows.get("native:w1")).toMatchObject({ client: "OTRO", notes: "urgente", version: 5 });
   });
 
-  it("protegidos: estado/avance/firmas, trabajos informados/cerrados y no nativos NO llegan a la base", async () => {
+  it("protegidos: estado/firmas, informados SIN motivo, decididos/cerrados y no nativos NO llegan a la base", async () => {
     fake.rows.set("native:w2", base({ id: "native:w2", status: "revision" }));
     fake.rows.set("native:w3", base({ id: "native:w3", qualityStatus: "aprobado" }));
     for (const c of [ch("status", "completo"), ch("finishedQty", "1"), { ...ch("client", "x"), id: "native:w2" }, { ...ch("client", "x"), id: "native:w3" }, { ...ch("client", "x"), id: "semanas:z" }]) {
@@ -170,5 +185,23 @@ describe("applyWorkItemCellChanges (servicio sobre funciones canónicas)", () =>
     const r = await applyWorkItemCellChanges(produccion, [ch("client", "A")], "2026-10-08");
     expect(r.ok).toBe(false);
     expect(r.results[0]).toMatchObject({ ok: false, code: "ERROR", message: "connection terminated" });
+  });
+
+  it("trabajo informado por el sector: Producción corrige CON motivo (auditado por la función canónica)", async () => {
+    fake.rows.set("native:w2", base({ id: "native:w2", status: "revision" }));
+    const r = await applyWorkItemCellChanges(produccion, [{ ...ch("plannedQuantity", "600", { reason: "Corrección de planificación" }), id: "native:w2" }], "2026-10-08");
+    expect(r.ok).toBe(true);
+    expect(fake.calls[0]).toMatchObject({ fn: "planning", id: "w2", input: { plannedQuantity: "600", reason: "Corrección de planificación" } });
+  });
+
+  it("cantidad realizada: corrección con motivo y valor visto; si el sector registró otro avance → CONFLICT", async () => {
+    (fake.rows.get("native:w1") as WorkItem & { finishedQty?: string }).finishedQty = "100";
+    const noReason = await applyWorkItemCellChanges(produccion, [ch("finishedQty", "120", { expectedValue: "100" })], "2026-10-08");
+    expect(noReason.results[0]).toMatchObject({ ok: false, code: "REASON_REQUIRED" });
+    const stale = await applyWorkItemCellChanges(produccion, [ch("finishedQty", "120", { expectedValue: "90", reason: "Conteo físico corregido" })], "2026-10-08");
+    expect(stale.results[0]).toMatchObject({ ok: false, code: "CONFLICT" });
+    const ok = await applyWorkItemCellChanges(produccion, [ch("finishedQty", "120", { expectedValue: "100", reason: "Conteo físico corregido" })], "2026-10-08");
+    expect(ok.ok).toBe(true);
+    expect(fake.calls.at(-1)).toMatchObject({ fn: "finished", input: { finishedQty: "120", expectedFinishedQty: "100", reason: "Conteo físico corregido" } });
   });
 });
