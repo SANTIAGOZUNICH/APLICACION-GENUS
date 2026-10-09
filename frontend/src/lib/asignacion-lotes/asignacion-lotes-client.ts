@@ -21,24 +21,60 @@ function headers(session: OrdersClientSession): HeadersInit {
   };
 }
 
+/** Error al LISTAR: conserva el código del servidor (p. ej. esquema pendiente) para explicarlo en pantalla. */
+export class AsignacionLotesLoadError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string | null
+  ) {
+    super(message);
+    this.name = "AsignacionLotesLoadError";
+  }
+  /** La base no tiene la migración que necesita esta versión (0043): no es un problema de conexión. */
+  get schemaPending(): boolean {
+    return this.code === "ASIGNACION_LOTES_SCHEMA_PENDING" || this.code === "SCHEMA_PENDING";
+  }
+}
+
 export async function fetchAsignacionLotesApi(
   session: OrdersClientSession,
   options: { includeArchived?: boolean } = {}
-): Promise<{ items: AsignacionLote[]; schemaPending: boolean; writableSourceIds: string[] }> {
+): Promise<{
+  items: AsignacionLote[];
+  schemaPending: boolean;
+  writableSourceIds: string[];
+  /** Commit desplegado en el servidor ("" fuera de Vercel). */
+  build: string;
+  /** La base tiene la capa de ediciones de GENUS (0043). */
+  localEditsReady: boolean;
+}> {
   const qs = new URLSearchParams();
   if (options.includeArchived) qs.set("includeArchived", "1");
-  const res = await fetch(`/api/v1/asignacion-lotes?${qs}`, { credentials: "include", headers: headers(session) });
-  const body = (await res.json()) as {
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1/asignacion-lotes?${qs}`, { credentials: "include", headers: headers(session) });
+  } catch {
+    throw new AsignacionLotesLoadError("Sin conexión con el servidor.", 0, "OFFLINE");
+  }
+  const body = (await res.json().catch(() => ({}))) as {
     items?: AsignacionLote[];
     error?: string;
+    code?: string;
     schemaPending?: boolean;
     writableSourceIds?: string[];
+    build?: string;
+    localEditsReady?: boolean;
   };
-  if (!res.ok) throw new Error(body.error ?? "No se pudieron cargar asignaciones de lotes");
+  if (!res.ok) {
+    throw new AsignacionLotesLoadError(body.error ?? "No se pudieron cargar asignaciones de lotes", res.status, body.code ?? null);
+  }
   return {
     items: body.items ?? [],
     schemaPending: Boolean(body.schemaPending),
     writableSourceIds: body.writableSourceIds ?? [],
+    build: body.build ?? "",
+    localEditsReady: body.localEditsReady ?? false,
   };
 }
 

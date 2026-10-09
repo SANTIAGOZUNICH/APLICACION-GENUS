@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAsignacionLotesService } from "@/lib/asignacion-lotes/asignacion-lotes-service";
 import { resolveOrdersActor } from "@/lib/orders/actor";
-import { ordersErrorResponse } from "@/lib/orders/http";
+import { asignacionLotesErrorResponse } from "@/lib/asignacion-lotes/schema-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +14,6 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
     const entries = await getAsignacionLotesService().history({ email: actor.email, sector: actor.sector, displayName: actor.displayName }, id);
     return NextResponse.json({ entries });
   } catch (err) {
-    return ordersErrorResponse(err);
+    return asignacionLotesErrorResponse(err);
   }
 }

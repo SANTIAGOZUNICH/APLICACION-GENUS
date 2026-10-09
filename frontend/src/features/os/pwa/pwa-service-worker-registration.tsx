@@ -2,6 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { hasBlockingOperations, subscribeOperationGuards } from "@/lib/pwa/operation-guard";
+import { fetchServerBuild, isBuildSkew } from "@/lib/pwa/build-version";
+
+/** Cada cuánto se compara la versión de la pestaña con la del servidor (además de al volver a la pestaña). */
+const VERSION_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
 type UpdateState = "idle" | "available" | "blocked" | "applying";
 
@@ -18,6 +22,29 @@ export function PwaServiceWorkerRegistration() {
   const [blocking, setBlocking] = useState(false);
 
   useEffect(() => subscribeOperationGuards(() => setBlocking(hasBlockingOperations())), []);
+
+  // Pestaña/PWA abierta desde antes de un deploy: el SW no lo detecta (su URL lleva el build viejo y sw.js no
+  // cambia), así que se compara el commit de este bundle con el del servidor y se ofrece recargar.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let cancelled = false;
+    const check = async () => {
+      const server = await fetchServerBuild();
+      if (cancelled || !isBuildSkew(server)) return;
+      setUpdateState((prev) => (prev === "applying" ? prev : hasBlockingOperations() ? "blocked" : "available"));
+    };
+    const onVis = () => {
+      if (document.visibilityState === "visible") void check();
+    };
+    void check();
+    document.addEventListener("visibilitychange", onVis);
+    const timer = window.setInterval(() => void check(), VERSION_CHECK_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVis);
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
@@ -82,7 +109,12 @@ export function PwaServiceWorkerRegistration() {
       setUpdateState("blocked");
       return;
     }
-    if (!waitingWorker) return;
+    if (!waitingWorker) {
+      // Versión nueva detectada por /api/v1/version (sin SW en espera): recargar trae el código nuevo.
+      setUpdateState("applying");
+      window.location.reload();
+      return;
+    }
     setUpdateState("applying");
     waitingWorker.postMessage({ type: "SKIP_WAITING" });
   };

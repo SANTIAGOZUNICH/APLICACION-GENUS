@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isDatabaseConfigured } from "@/lib/db/client";
 import { SchemaPendingError, schemaPendingResponse } from "@/lib/db/feature-schema";
+import { isMissingSchemaError, sqlStateOf } from "@/lib/db/missing-schema";
 import { AuthUnauthorizedError } from "@/lib/auth/types";
 import {
   MeStockShortageError,
@@ -71,13 +72,27 @@ export function ordersErrorResponse(err: unknown): NextResponse {
       { status: 409 }
     );
   }
+  // La base no tiene una columna/tabla que este código usa (migración pendiente): 503 con motivo claro, nunca un
+  // 500 genérico que la UI no sabe explicar. Se registra el SQLSTATE (sin SQL ni datos) para diagnosticarlo.
+  if (isMissingSchemaError(err)) {
+    console.error(`[orders] schema pendiente (SQLSTATE ${sqlStateOf(err)}): falta aplicar una migración en la base`);
+    return NextResponse.json(
+      {
+        error:
+          "La base de datos todavía no tiene la estructura que necesita esta versión de GENUS (migración pendiente). Los cambios no se pueden guardar hasta que se aplique.",
+        code: "SCHEMA_PENDING",
+        schemaPending: true,
+      },
+      { status: 503 }
+    );
+  }
   const raw = err instanceof Error ? err.message : "";
   const sensitive =
     /failed query|neon|vercel|postgres|sql|drizzle|stack|ECONN|password|DATABASE_URL|relation "|column "/i.test(
       raw
     );
   if (sensitive || !raw) {
-    console.error("[orders] sanitized server error");
+    console.error(`[orders] sanitized server error${sqlStateOf(err) ? ` (SQLSTATE ${sqlStateOf(err)})` : ""}`);
     return NextResponse.json(
       {
         error: "No se pudo completar la operación. Reintentá.",

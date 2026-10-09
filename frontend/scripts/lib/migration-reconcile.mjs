@@ -133,3 +133,34 @@ export async function reconcileMigrations({ folder, query, transaction, log = ()
   }
   return { applied, skipped, rejected };
 }
+
+/**
+ * Objetos de esquema que el código desplegado NECESITA (tabla o tabla.columna), con la migración que los crea.
+ * Se verifica después de `migrate()` + reconciliación: si falta alguno, la migración quedó salteada en silencio
+ * (p. ej. Drizzle la omitió por orden de `when` y la reconciliación la rechazó con solo un aviso). En Production el
+ * build se corta: es preferible conservar el deploy anterior que publicar código que no puede listar ni guardar.
+ * Solo lectura (information_schema); nunca crea ni modifica nada.
+ */
+export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
+  { migration: "0043_asignacion_lotes_local_edits", object: "asignacion_lotes.source_lote" },
+  { migration: "0043_asignacion_lotes_local_edits", object: "asignacion_lotes.source_codigo" },
+  { migration: "0043_asignacion_lotes_local_edits", object: "asignacion_lotes.source_producto" },
+  { migration: "0043_asignacion_lotes_local_edits", object: "asignacion_lotes_cell_audit.reason" },
+  { migration: "0043_asignacion_lotes_local_edits", object: "asignacion_lotes_local_edits" },
+]);
+
+/** @param {{ query: (text: string, params?: unknown[]) => Promise<any[]>, required?: ReadonlyArray<{migration: string, object: string}> }} opts */
+export async function verifyRequiredSchema({ query, required = REQUIRED_SCHEMA_OBJECTS }) {
+  const tables = [...new Set(required.map((r) => r.object.split(".")[0]))];
+  const present = new Set();
+  for (const row of await query(
+    "select table_name as t from information_schema.tables where table_schema = current_schema() and table_name = any($1)",
+    [tables]
+  )) present.add(row.t);
+  for (const row of await query(
+    "select table_name as t, column_name as c from information_schema.columns where table_schema = current_schema() and table_name = any($1)",
+    [tables]
+  )) present.add(`${row.t}.${row.c}`);
+  const missing = required.filter((r) => !present.has(r.object));
+  return { ok: missing.length === 0, missing };
+}

@@ -5,7 +5,7 @@ import type {
 } from "@/lib/asignacion-lotes/types";
 import { isDatabaseConfigured } from "@/lib/db/client";
 import { resolveOrdersActor } from "@/lib/orders/actor";
-import { ordersErrorResponse } from "@/lib/orders/http";
+import { asignacionLotesErrorResponse, getLocalEditsSchemaStatus, serverBuildSha } from "@/lib/asignacion-lotes/schema-status";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
 import { getAsignacionLoteSourcesService } from "@/lib/asignacion-lotes/asignacion-lote-sources-service";
 import { isWritebackEnabledFor } from "@/lib/asignacion-lotes/writeback-ops";
@@ -73,14 +73,19 @@ export async function GET(request: Request) {
     const writableSourceIds = (await getAsignacionLoteSourcesService().listAllForSync())
       .filter((s) => isWritebackEnabledFor(s.spreadsheetId))
       .map((s) => s.id);
+    const schema = await getLocalEditsSchemaStatus().catch(() => null);
     return NextResponse.json({
       items,
       writableSourceIds,
       persistenceReady: isDatabaseConfigured(),
       schemaPending: !isDatabaseConfigured(),
+      // Diagnóstico (sin secretos): commit desplegado y si la capa de ediciones de GENUS (0043) está en la base.
+      // La pantalla compara `build` con el suyo para avisar si quedó abierta con una versión anterior.
+      build: serverBuildSha(),
+      localEditsReady: schema?.ready ?? false,
     });
   } catch (err) {
-    return ordersErrorResponse(err);
+    return asignacionLotesErrorResponse(err);
   }
 }
 
@@ -124,6 +129,6 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ item }, { status: body.record.id ? 200 : 201 });
   } catch (err) {
-    return ordersErrorResponse(err);
+    return asignacionLotesErrorResponse(err);
   }
 }

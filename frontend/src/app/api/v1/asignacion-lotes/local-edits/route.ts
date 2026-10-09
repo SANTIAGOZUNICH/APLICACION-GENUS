@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAsignacionLotesService } from "@/lib/asignacion-lotes/asignacion-lotes-service";
 import { resolveOrdersActor } from "@/lib/orders/actor";
-import { ordersErrorResponse } from "@/lib/orders/http";
+import { asignacionLotesErrorResponse } from "@/lib/asignacion-lotes/schema-status";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
 
 export const runtime = "nodejs";
@@ -24,6 +24,6 @@ export async function POST(request: Request) {
     );
     return NextResponse.json({ item });
   } catch (err) {
-    return ordersErrorResponse(err);
+    return asignacionLotesErrorResponse(err);
   }
 }

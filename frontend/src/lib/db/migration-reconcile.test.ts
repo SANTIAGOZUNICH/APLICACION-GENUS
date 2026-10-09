@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { ALLOWED_RECONCILE_MIGRATIONS, drizzleHash, reconcileMigrations, rejectStatement, splitStatements } from "../../../scripts/lib/migration-reconcile.mjs";
+import { ALLOWED_RECONCILE_MIGRATIONS, REQUIRED_SCHEMA_OBJECTS, drizzleHash, reconcileMigrations, rejectStatement, splitStatements, verifyRequiredSchema } from "../../../scripts/lib/migration-reconcile.mjs";
 
 const DRIZZLE_DIR = path.resolve(__dirname, "../../../drizzle");
 
@@ -171,5 +171,41 @@ describe("guardas sobre el journal real del repo", () => {
 
   it("la lista autorizada solo contiene migraciones posteriores a 0038 (las ya ejecutadas en producción no se tocan)", () => {
     for (const tag of Object.keys(ALLOWED_RECONCILE_MIGRATIONS)) expect(Number(tag.slice(0, 4))).toBeGreaterThan(38);
+  });
+});
+
+describe("verificación de esquema después del migrate (build)", () => {
+  // information_schema simulado: tablas y columnas presentes.
+  const fakeQuery = (tables: string[], columns: string[]) => async (text: string) =>
+    /information_schema\.tables/.test(text)
+      ? tables.map((t) => ({ t }))
+      : columns.map((tc) => ({ t: tc.split(".")[0], c: tc.split(".")[1] }));
+
+  it("0043 completa → ok", async () => {
+    const res = await verifyRequiredSchema({
+      query: fakeQuery(
+        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits"],
+        ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason"]
+      ),
+    });
+    expect(res).toEqual({ ok: true, missing: [] });
+  });
+
+  it("0043 salteada en silencio → informa exactamente qué falta y de qué migración", async () => {
+    const res = await verifyRequiredSchema({
+      query: fakeQuery(["asignacion_lotes", "asignacion_lotes_cell_audit"], ["asignacion_lotes.lote"]),
+    });
+    expect(res.ok).toBe(false);
+    expect(res.missing.map((m) => m.object)).toEqual(REQUIRED_SCHEMA_OBJECTS.map((r) => r.object));
+    expect(new Set(res.missing.map((m) => m.migration))).toEqual(new Set(["0043_asignacion_lotes_local_edits"]));
+  });
+
+  it("cada objeto requerido lo crea una migración del journal (y está en la lista de reconciliación)", () => {
+    for (const r of REQUIRED_SCHEMA_OBJECTS) {
+      expect(ALLOWED_RECONCILE_MIGRATIONS).toHaveProperty(r.migration);
+      const sqlText = fs.readFileSync(path.join("drizzle", `${r.migration}.sql`), "utf8");
+      const [table, column] = r.object.split(".");
+      expect(sqlText).toContain(`"${column ?? table}"`);
+    }
   });
 });

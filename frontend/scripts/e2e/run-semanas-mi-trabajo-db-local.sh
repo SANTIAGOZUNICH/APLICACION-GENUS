@@ -94,13 +94,26 @@ node scripts/e2e/setup-e2e-db.mjs
 XLSX="${GENUS_SEMANAS_FIXTURE_XLSX:-$FRONTEND_DIR/../SEMANAS 2026.xlsx}"
 [[ -f "$XLSX" ]] || { echo "[e2e] No encuentro la copia local: $XLSX" >&2; exit 1; }
 # La app ve SOLO la base de prueba y la copia local del libro: nada de credenciales Google ni variables de producción.
-setsid env -i PATH="$PATH" HOME="${HOME:-/root}" NODE_EXTRA_CA_CERTS="$NODE_EXTRA_CA_CERTS" \
-  NO_PROXY="localhost,127.0.0.1" NODE_ENV=development \
-  DATABASE_URL="$GENUS_E2E_DATABASE_URL" GENUS_AUTH_BACKEND=neon \
-  GENUS_PLANNING_SOURCE=native NEXT_PUBLIC_GENUS_PLANNING_SOURCE=native \
-  GENUS_DATA_MODE=demo NEXT_PUBLIC_GENUS_DATA_MODE=demo NEXT_TELEMETRY_DISABLED=1 \
-  GENUS_SEMANAS_FIXTURE_XLSX="$XLSX" SEMANAS_TODAY_OVERRIDE=2026-05-06 \
-  npx next dev -H 127.0.0.1 -p "$PORT" > "$STATE_DIR/next-mi-trabajo.log" 2>&1 &
+APP_ENV=(PATH="$PATH" HOME="${HOME:-/root}" NODE_EXTRA_CA_CERTS="$NODE_EXTRA_CA_CERTS"
+  NO_PROXY="localhost,127.0.0.1"
+  DATABASE_URL="$GENUS_E2E_DATABASE_URL" GENUS_AUTH_BACKEND=neon
+  GENUS_PLANNING_SOURCE=native NEXT_PUBLIC_GENUS_PLANNING_SOURCE=native NEXT_TELEMETRY_DISABLED=1
+  GENUS_SEMANAS_FIXTURE_XLSX="$XLSX" SEMANAS_TODAY_OVERRIDE=2026-05-06)
+if [[ "${GENUS_E2E_PRODUCTION_BUILD:-}" == "1" ]]; then
+  # Configuración EQUIVALENTE a Production (no es Production): build optimizado (`next build` + `next start`),
+  # NODE_ENV=production, VERCEL_ENV=production simulado (write-back a Google SIEMPRE apagado) y modo de datos real.
+  # Solo el proceso de la app ve VERCEL_ENV; la base sigue siendo la descartable de este script y no hay credenciales Google.
+  # CANONICAL_HOST=localhost: en Production el middleware redirige toda página al dominio canónico real; acá se
+  # canonicaliza a localhost para que el navegador nunca salga hacia el dominio de Production.
+  APP_ENV+=(NODE_ENV=production VERCEL_ENV=production GENUS_DATA_MODE=real NEXT_PUBLIC_GENUS_DATA_MODE=real CANONICAL_HOST=localhost
+    VERCEL_GIT_COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo e2e)")
+  echo "[e2e] next build (configuración equivalente a Production)…"
+  env -i "${APP_ENV[@]}" NODE_OPTIONS="${GENUS_E2E_BUILD_NODE_OPTIONS:---max-old-space-size=6144}" npx next build > "$STATE_DIR/next-build.log" 2>&1 || { tail -40 "$STATE_DIR/next-build.log" >&2; exit 1; }
+  setsid env -i "${APP_ENV[@]}" npx next start -H 127.0.0.1 -p "$PORT" > "$STATE_DIR/next-mi-trabajo.log" 2>&1 &
+else
+  APP_ENV+=(NODE_ENV=development GENUS_DATA_MODE=demo NEXT_PUBLIC_GENUS_DATA_MODE=demo)
+  setsid env -i "${APP_ENV[@]}" npx next dev -H 127.0.0.1 -p "$PORT" > "$STATE_DIR/next-mi-trabajo.log" 2>&1 &
+fi
 PIDS+=($!)
 for _ in $(seq 1 200); do curl -sf -o /dev/null "http://127.0.0.1:$PORT/login" && break; sleep 0.5; done
 GENUS_E2E_BASE_URL="http://localhost:$PORT" node "${GENUS_E2E_VALIDATE_SCRIPT:-scripts/e2e/semanas-mi-trabajo-validate.mjs}"
