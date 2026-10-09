@@ -18,6 +18,8 @@ import {
 } from "./calcs";
 import { normalizeOptionalReason, sanitizeOptionalReason } from "@/lib/lifecycle/reason";
 import { ME_CODIGO_REQUIRED_MSG, normalizeMeCodigo } from "./me-codigo";
+import { computeMeStock } from "./me-stock-calc";
+import { manualSalidaStockError, meSalidaMotivo } from "./me-sheet-edit";
 import {
   rebuildMeInventarioByCodigo,
   type MeInventarioRebuildReport,
@@ -249,7 +251,7 @@ export class InventoryService {
 
   upsertMeIngreso(
     actor: InventoryActor,
-    input: Partial<MeIngresoRow> & { id?: string }
+    input: Partial<MeIngresoRow> & { id?: string; permitirDuplicado?: boolean }
   ) {
     this.guard(actor, "me_ingresos", true);
     const existing = input.id ? this.repo.getMeIngreso(input.id) : null;
@@ -296,6 +298,12 @@ export class InventoryService {
       updatedAt: now,
     };
 
+    // Pegado repetido / doble carga: mismo remito + código + cantidad + fecha que un ingreso vigente → se rechaza
+    // (sumaría stock dos veces), salvo que se confirme explícitamente que es otro ingreso.
+    if (!existing && !input.permitirDuplicado && row.remitoNro.trim()) {
+      const dup = this.repo.listMeIngresos().find((r) => !r.anulado && r.id !== row.id && r.remitoNro.trim().toUpperCase() === row.remitoNro.trim().toUpperCase() && normalizeMeCodigo(r.codigo) === codigo && (r.total ?? null) === (row.total ?? null) && r.fecha === row.fecha);
+      if (dup) throw new InventoryValidationError(`Posible duplicado: ya existe el ingreso ${dup.ingresoNro} con el mismo remito, código, cantidad y fecha. No se sumó stock dos veces.`);
+    }
     // INGRESO y CONSUMO son movimientos independientes: el ingreso se persiste siempre
     // (aunque exista consumo OA previo o el saldo resulte negativo) y el stock se
     // DERIVA del ledger. Nunca se toca ni se vuelve a generar un consumo.
@@ -375,7 +383,7 @@ export class InventoryService {
       });
     }
     for (const r of this.repo.listMeSalidas()) {
-      if (r.origen !== "OA" || normalizeMeCodigo(r.codigo) !== codigo) continue;
+      if ((r.origen !== "OA" && r.descuentaStock !== true) || normalizeMeCodigo(r.codigo) !== codigo) continue;
       entries.push({
         id: r.id,
         tipo: "CONSUMO",
@@ -462,8 +470,7 @@ export class InventoryService {
   }
 
   private nextMeIngresoNro() {
-    const n = this.repo.listMeIngresos().length + 1;
-    return `ME-I-${String(n).padStart(5, "0")}`;
+    return `ME-I-${String(this.maxNro(this.repo.listMeIngresos().map((r) => r.ingresoNro), "ME-I-") + 1).padStart(5, "0")}`;
   }
 
   // ─── ME Salidas ────────────────────────────────────────────
@@ -532,14 +539,34 @@ export class InventoryService {
       reverted: input.reverted ?? existing?.reverted ?? false,
       revertedAt: input.revertedAt ?? existing?.revertedAt ?? null,
       revertReason: input.revertReason ?? existing?.revertReason ?? null,
+      motivoSalida: input.motivoSalida !== undefined ? input.motivoSalida : (existing?.motivoSalida ?? null),
+      descuentaStock: false,
       createdBy: existing?.createdBy ?? actor.email,
       updatedBy: actor.email,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
+    // Salidas MANUALES: descuentan solo si se eligió explícitamente (o el motivo lo implica) y NUNCA si son el
+    // consumo de una OA (la OA descuenta sola al entregarla: no se resta dos veces).
+    if (origen !== "OA") {
+      const motivo = meSalidaMotivo(row.motivoSalida);
+      row.descuentaStock = input.descuentaStock !== undefined ? Boolean(input.descuentaStock) : motivo ? motivo.descuenta : Boolean(existing?.descuentaStock);
+      const err = manualSalidaStockError(row);
+      if (err) throw new InventoryValidationError(err);
+    } else {
+      delete row.descuentaStock;
+    }
 
-    // Salidas MANUALES no descuentan inventario (solo OA).
     this.repo.upsertMeSalida(row);
+    // Una salida manual que descuenta (antes o ahora) cambia el saldo de su código.
+    if (origen !== "OA") {
+      for (const mid of new Set([row.materialId, existing?.materialId].filter((x): x is string => Boolean(x)))) {
+        if (this.repo.getMeMaterial(mid)) {
+          this.recalculateMeStock(mid);
+          this.syncMeAlerts(actor, mid);
+        }
+      }
+    }
     this.audit(
       actor,
       "me_salidas",
@@ -578,7 +605,7 @@ export class InventoryService {
       updatedAt: now,
     };
     this.repo.upsertMeSalida(row);
-    if (existing.origen === "OA" && existing.materialId) {
+    if ((existing.origen === "OA" || existing.descuentaStock) && existing.materialId && this.repo.getMeMaterial(existing.materialId)) {
       // Reintegro = la salida deja de contar en el ledger (una sola vez).
       this.recalculateMeStock(existing.materialId);
       this.syncMeAlerts(actor, existing.materialId);
@@ -596,8 +623,15 @@ export class InventoryService {
   }
 
   private nextMeEgresoNro() {
-    const n = this.repo.listMeSalidas().length + 1;
-    return `ME-E-${String(n).padStart(5, "0")}`;
+    return `ME-E-${String(this.maxNro(this.repo.listMeSalidas().map((r) => r.egresoNro), "ME-E-") + 1).padStart(5, "0")}`;
+  }
+
+  /** Mayor número correlativo usado (no `length + 1`: con anulados o huecos repetía números). */
+  private maxNro(values: string[], prefix: string): number {
+    return values.reduce((max, v) => {
+      const m = String(v ?? "").startsWith(prefix) ? Number(String(v).slice(prefix.length)) : NaN;
+      return Number.isFinite(m) && m > max ? m : max;
+    }, 0);
   }
 
   // ─── ME Stock / materiales ─────────────────────────────────
@@ -906,36 +940,30 @@ export class InventoryService {
     };
   }
 
-  /** STOCK = ingresos activos − salidas OA activas + ajustes (excluye anulados), por CÓDIGO. Puede ser negativo. */
+  /**
+   * STOCK por CÓDIGO — regla única en `me-stock-calc.ts`: ingresos − salidas que descuentan (OA + manuales marcadas)
+   * + ajustes de cualquier material con ese código. Puede ser negativo (se muestra así; nunca se lleva a 0 solo).
+   * El saldo es DERIVADO: cambiarlo no cambia la versión (`updatedAt`) del material, así una edición de sus datos no
+   * choca con un movimiento de stock.
+   */
   recalculateMeStock(materialId: string): MeMaterial {
     const mat = this.repo.getMeMaterial(materialId);
     if (!mat) throw new InventoryNotFoundError("Material ME no encontrado.");
     const codigo = normalizeMeCodigo(mat.codigo);
     if (!codigo) {
-      const updated: MeMaterial = { ...mat, stockActual: 0, updatedAt: nowIso() };
+      if (mat.stockActual === 0) return mat;
+      const updated: MeMaterial = { ...mat, stockActual: 0 };
       this.repo.upsertMeMaterial(updated);
       return updated;
     }
-    // Siempre por código: evita sumar movimientos de otros códigos colgados del mismo materialId.
-    const ingresos = this.repo
-      .listMeIngresos()
-      .filter((r) => !r.anulado && normalizeMeCodigo(r.codigo) === codigo)
-      .reduce((acc, r) => acc + (r.total ?? 0), 0);
-    const salidasOa = this.repo
-      .listMeSalidas()
-      .filter(
-        (r) =>
-          r.origen === "OA" &&
-          !r.reverted &&
-          normalizeMeCodigo(r.codigo) === codigo
-      )
-      .reduce((acc, r) => acc + (r.total ?? r.cantidad ?? 0), 0);
-    const ajustes = this.repo.ajustes
-      .filter((a) => a.module === "ME" && a.entityId === materialId)
-      .reduce((acc, a) => acc + a.diferencia, 0);
-    const stockActual = Number((ingresos - salidasOa + ajustes).toFixed(6));
+    const stockActual = computeMeStock(codigo, {
+      ingresos: this.repo.listMeIngresos(),
+      salidas: this.repo.listMeSalidas(),
+      ajustes: this.repo.ajustes,
+      materialIds: new Set(this.repo.listMeMaterials().filter((m) => normalizeMeCodigo(m.codigo) === codigo).map((m) => m.id)),
+    });
     if (mat.codigo === codigo && mat.stockActual === stockActual) return mat;
-    const updated: MeMaterial = { ...mat, codigo, stockActual, updatedAt: nowIso() };
+    const updated: MeMaterial = { ...mat, codigo, stockActual };
     this.repo.upsertMeMaterial(updated);
     return updated;
   }
@@ -1013,6 +1041,10 @@ export class InventoryService {
           cantidadTotal: fresh.stockActual,
           ubicacion: fresh.ubicacion,
           updatedAt: fresh.updatedAt,
+          unidad: fresh.unidad,
+          cantidadPorBulto: fresh.cantidadPorBulto,
+          stockMinimo: fresh.stockMinimo,
+          puntoReposicion: fresh.puntoReposicion,
         };
       })
       .sort((a, b) => a.codigo.localeCompare(b.codigo, "es"));

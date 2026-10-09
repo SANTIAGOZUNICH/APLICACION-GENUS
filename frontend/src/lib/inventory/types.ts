@@ -44,8 +44,16 @@ export type MeSalidaRow = {
   /** Código funcional del material (clave de conciliación). */
   codigo: string;
   unidad: string;
-  /** Solo salidas con origen OA descuentan inventario. */
+  /**
+   * OA: descuentan siempre (se generan solas al entregar la OA). MANUAL: descuentan SOLO si `descuentaStock`
+   * es true (devolución, descarte, traslado…); una salida manual que corresponde a una OA nunca descuenta
+   * (la OA ya lo hace). Las manuales históricas (sin el campo) no descuentan.
+   */
   origen: MeSalidaOrigen;
+  /** Etapa 2 — salida MANUAL que descuenta stock (elección explícita; nunca para consumos de una OA). */
+  descuentaStock?: boolean;
+  /** Etapa 2 — motivo de la salida manual (ver ME_SALIDA_MOTIVOS). */
+  motivoSalida?: string | null;
   oaId: string | null;
   oaNumber: string | null;
   oaVersion: number | null;
@@ -98,6 +106,11 @@ export type MeInventarioViewRow = {
   cantidadTotal: number;
   ubicacion: string;
   updatedAt: string;
+  /** Etapa 2 — datos del material editables en la planilla (umbrales de aviso y presentación). */
+  unidad?: string;
+  cantidadPorBulto?: number | null;
+  stockMinimo?: number | null;
+  puntoReposicion?: number | null;
 };
 
 export const ME_INVENTARIO_COLUMNS = [

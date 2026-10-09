@@ -15,6 +15,7 @@
     "test:e2e:semanas-preview": "bash scripts/e2e/run-semanas-preview-local.sh",
     "test:e2e:semanas-priorities-db": "bash scripts/e2e/run-semanas-priorities-db-local.sh",
     "test:e2e:produccion-edicion": "bash scripts/e2e/run-produccion-edicion-local.sh",
+    "test:e2e:deposito-me": "bash scripts/e2e/run-deposito-me-local.sh",
     "test:e2e:produccion-edicion-db": "bash scripts/e2e/run-semanas-priorities-db-local.sh",
     "test:e2e:semanas-sectores": "bash scripts/e2e/run-semanas-sectores-local.sh",
     "test:e2e:semanas-mi-trabajo": "bash scripts/e2e/run-semanas-mi-trabajo-db-local.sh",

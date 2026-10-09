@@ -65,3 +65,7 @@
 .genus-grid .genus-row-prio-URGENTE .dsg-cell:first-child { box-shadow: inset 4px 0 0 #ef4444; }
 .genus-grid .genus-row-prio-IMPORTANTE .dsg-cell:first-child { box-shadow: inset 4px 0 0 #f59e0b; }
 .genus-grid .genus-row-prio-NORMAL .dsg-cell:first-child { box-shadow: inset 4px 0 0 #22c55e; }
+
+/* Inventario ME: stock negativo visible en toda la fila (nunca se oculta). */
+.genus-grid .genus-row-stock-negativo .dsg-cell:first-child { box-shadow: inset 4px 0 0 #ef4444; }
+.genus-grid .genus-row-stock-negativo .dsg-cell { background: color-mix(in srgb, #ef4444 7%, transparent); }
