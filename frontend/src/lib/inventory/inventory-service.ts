@@ -1420,7 +1420,15 @@ export class InventoryService {
   upsertMpStock(actor: InventoryActor, input: Partial<MpStockRow> & { id?: string }) {
     this.guard(actor, "mp_stock", true);
     const existing = input.id ? this.repo.getMpStock(input.id) : null;
-    const cantidadKg = parseOptionalNumber(input.cantidadKg);
+    // Los kg de un lote EXISTENTE no se pisan desde el formulario: se corrigen con «Ajustar stock» (motivo, queda en
+    // el libro mayor). Antes el formulario reescribía los kg sin ajuste ni libro mayor y los dos stocks se separaban.
+    const requestedKg = input.cantidadKg === undefined ? undefined : parseOptionalNumber(input.cantidadKg);
+    if (existing && requestedKg !== undefined && (requestedKg ?? 0) !== (existing.cantidadKg ?? 0)) {
+      throw new InventoryValidationError(
+        "Los kg de un lote existente se corrigen con «Ajustar stock» (con motivo): así quedan en el libro mayor."
+      );
+    }
+    const cantidadKg = existing ? existing.cantidadKg : (requestedKg ?? null);
     const now = nowIso();
     const base: MpStockRow = {
       id: existing?.id ?? input.id ?? randomUUID(),
@@ -1464,6 +1472,21 @@ export class InventoryService {
       existing as unknown as Record<string, unknown> | null,
       row as unknown as Record<string, unknown>
     );
+    if (!existing && (cantidadKg ?? 0) !== 0) {
+      // Alta manual de un lote con kg: queda como ajuste (y, con base de datos, como movimiento del libro mayor).
+      this.repo.addAjuste({
+        id: randomUUID(),
+        module: "MP",
+        entityId: row.id,
+        cantidadAnterior: 0,
+        cantidadNueva: cantidadKg ?? 0,
+        diferencia: cantidadKg ?? 0,
+        motivo: "Alta manual de lote MP",
+        actor: actor.email,
+        actorSector: actor.sector,
+        createdAt: now,
+      });
+    }
     return row;
   }
 
@@ -1617,6 +1640,8 @@ export class InventoryService {
       id?: string;
       confirm?: boolean;
       confirmDemote?: boolean;
+      /** Motivo de la corrección (queda en la auditoría). Obligatorio en la planilla para ingresos confirmados. */
+      auditReason?: string;
     }
   ) {
     this.guard(actor, "mp_ingresos", true);
@@ -1681,6 +1706,29 @@ export class InventoryService {
       );
     } else {
       status = "BORRADOR";
+    }
+
+    // Duplicado: mismo remito, código, lote, cantidad total y fecha que otro ingreso vigente (pegar dos veces el
+    // mismo remito duplicaba el stock). Varias líneas de un remito con distinto código/lote/cantidad siguen permitidas.
+    const dupRemito = (input.remitoNro ?? existing?.remitoNro ?? "").trim().toUpperCase();
+    if (dupRemito) {
+      const dupFecha = input.fecha ?? existing?.fecha ?? todayIso();
+      const dupLote = (input.lote ?? existing?.lote ?? "").trim().toUpperCase();
+      const dup = this.repo.listMpIngresos().find(
+        (r) =>
+          r.id !== ingresoId &&
+          r.status !== "ANULADO" &&
+          r.remitoNro.trim().toUpperCase() === dupRemito &&
+          normalizeMpCodigoLocal(r.codigo) === normalizeMpCodigoLocal(codigo) &&
+          (r.lote ?? "").trim().toUpperCase() === dupLote &&
+          (r.total ?? r.cantidad ?? null) === (total ?? cantidad ?? null) &&
+          r.fecha === dupFecha
+      );
+      if (dup) {
+        throw new InventoryValidationError(
+          `Duplicado del ingreso ${dup.ingresoNro}: mismo remito, código, lote, cantidad y fecha. No se cargó de nuevo.`
+        );
+      }
     }
 
     const willImpact = status === "CONFIRMADO" && ready;
@@ -1766,7 +1814,8 @@ export class InventoryService {
       row.id,
       existing ? "update" : "create",
       existing as unknown as Record<string, unknown> | null,
-      row as unknown as Record<string, unknown>
+      row as unknown as Record<string, unknown>,
+      input.auditReason?.trim() || null
     );
     await this.syncMpIngresoLedger(actor, row, existing, {
       anular: false,
@@ -1910,8 +1959,12 @@ export class InventoryService {
     return this.anularMpIngreso(actor, id, reason);
   }
 
+  /** Próximo Nº: el mayor existente + 1 (con `cantidad + 1` se repetía tras anulaciones o altas concurrentes). */
   private nextMpIngresoNro() {
-    return `MP-I-${String(this.repo.listMpIngresos().length + 1).padStart(5, "0")}`;
+    const max = this.repo
+      .listMpIngresos()
+      .reduce((m, r) => Math.max(m, Number(/^MP-I-(\d+)$/.exec(r.ingresoNro ?? "")?.[1] ?? 0)), 0);
+    return `MP-I-${String(max + 1).padStart(5, "0")}`;
   }
 
   private resolveMpLot(actor: InventoryActor, ingreso: MpIngresoRow): MpStockRow {

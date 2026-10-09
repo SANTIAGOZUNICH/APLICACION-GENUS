@@ -16,6 +16,7 @@
     "test:e2e:semanas-priorities-db": "bash scripts/e2e/run-semanas-priorities-db-local.sh",
     "test:e2e:produccion-edicion": "bash scripts/e2e/run-produccion-edicion-local.sh",
     "test:e2e:deposito-me": "bash scripts/e2e/run-deposito-me-local.sh",
+    "test:e2e:mp-planilla": "bash scripts/e2e/run-mp-planilla-local.sh",
     "test:e2e:asignacion-lotes": "bash scripts/e2e/run-asignacion-lotes-local.sh",
     "test:e2e:asignacion-lotes-production": "GENUS_E2E_PRODUCTION_BUILD=1 GENUS_E2E_VALIDATE_SCRIPT=scripts/e2e/asignacion-lotes-production-validate.mjs bash scripts/e2e/run-semanas-mi-trabajo-db-local.sh",
     "test:e2e:produccion-edicion-db": "bash scripts/e2e/run-semanas-priorities-db-local.sh",

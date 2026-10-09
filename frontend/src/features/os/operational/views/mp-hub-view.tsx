@@ -60,6 +60,7 @@ import {
 } from "@/lib/auth/header-names";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
 import { useInventoryCellEditing } from "@/features/os/operational/hooks/use-inventory-cells";
+import { useMpSheetEditing } from "@/features/os/operational/hooks/use-mp-sheet-cells";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import {
   applySort,
@@ -109,7 +110,8 @@ const STOCK_HEADER_SHORT: Record<string, string> = {
   PROVEEDOR: "Proveedor",
   CLIENTE: "Cliente",
   "DESCRIPCIÓN MATERIA PRIMA": "Descripción",
-  "CANTIDAD (KG)": "Cantidad",
+  "CANTIDAD (KG)": "Kg lote",
+  "STOCK CÓDIGO (LIBRO MAYOR)": "Stock código",
   UBICACIÓN: "Ubicación",
   LOTE: "Lote",
   VENCIMIENTO: "Vencimiento",
@@ -126,7 +128,7 @@ const STOCK_ALWAYS = new Set([
   "ESTADO STOCK",
 ]);
 /** Esenciales desde ~1024px (1366/1440). */
-const STOCK_FROM_LG = new Set(["PRODUCTO", "CANTIDAD (KG)", "LOTE", "VENCIMIENTO"]);
+const STOCK_FROM_LG = new Set(["PRODUCTO", "CANTIDAD (KG)", "STOCK CÓDIGO (LIBRO MAYOR)", "LOTE", "VENCIMIENTO"]);
 /** Secundarias solo desde 2xl (~1536+ / 1920). */
 const STOCK_FROM_2XL = new Set([
   "PROVEEDOR",
@@ -158,6 +160,34 @@ const TAB_TO_RESOURCE = {
   "Compras MP": "mp_compras",
   "COA'S": "mp_stock",
 } as const;
+
+/** Planilla de Ingresos MP: columna → campo (INGRESO Nº y TOTAL no se editan). */
+const MP_INGRESO_CELL_FIELDS: Record<string, string> = {
+  FECHA: "fecha",
+  PROVEEDOR: "proveedor",
+  CLIENTE: "cliente",
+  "REMITO Nº": "remitoNro",
+  CÓDIGO: "codigo",
+  PRODUCTO: "producto",
+  "DESCRIPCIÓN MATERIA PRIMA": "descripcion",
+  BULTOS: "bultos",
+  "CANTIDAD (kg/u)": "cantidad",
+  UBICACIÓN: "ubicacion",
+  LOTE: "lote",
+  VENCIMIENTO: "vencimiento",
+};
+/** Planilla de Compras MP: todas las columnas. */
+const MP_COMPRA_CELL_FIELDS: Record<string, string> = {
+  FECHA: "fecha",
+  "MATERIA PRIMA": "materiaPrima",
+  CANTIDAD: "cantidad",
+  UNIDAD: "unidad",
+  PROVEEDOR: "proveedor",
+  "FECHA ENTREGA": "fechaEntrega",
+  "QUÉ PRODUCCIONES AFECTA": "produccionesAfecta",
+  ESTADO: "estado",
+  NOTA: "nota",
+};
 
 const MP_STOCK_CELL_FIELDS: Record<string, string> = {
   PROVEEDOR: "proveedor",
@@ -420,7 +450,47 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     reload
   );
 
-  const stockColumns: OperationalTableColumn<MpStockRow>[] = MP_STOCK_COLUMNS.map((label) => {
+  const ingresoCells = useMpSheetEditing<MpIngresoRow>(
+    "mp_ingresos",
+    sectorId,
+    canWrite && tab === "Ingresos MP",
+    MP_INGRESO_CELL_FIELDS,
+    ingresos,
+    reload
+  );
+  const compraCells = useMpSheetEditing<MpCompraRow>(
+    "mp_compras",
+    sectorId,
+    canWrite && tab === "Compras MP",
+    MP_COMPRA_CELL_FIELDS,
+    compras,
+    reload
+  );
+  const borradoresConfirmables = ingresos.filter(
+    (r) =>
+      r.status === "BORRADOR" &&
+      ((r.total != null && r.total > 0) || (r.cantidad != null && r.cantidad > 0))
+  );
+  /** Alta por pegado/planilla = borrador; recién al confirmar suma al stock (lote + libro mayor, en una transacción). */
+  async function confirmBorradores() {
+    try {
+      const res = await mutateInventory({
+        action: "confirm",
+        resource: "mp_ingresos",
+        payload: { items: borradoresConfirmables.map((r) => ({ id: r.id, expectedVersion: r.updatedAt })) },
+      });
+      const n = Array.isArray(res.data) ? res.data.length : borradoresConfirmables.length;
+      showToast(`${n} ingreso(s) confirmado(s): ya suman al stock.`);
+      setBanner(null);
+    } catch (e) {
+      setBanner(e instanceof InventoryClientError ? e.message : "No se pudieron confirmar los borradores.");
+    }
+    await reload();
+  }
+
+  // Columnas de la planilla original + «Stock código» (libro mayor, calculada) a la derecha de los kg del lote.
+  const stockColumnLabels: string[] = MP_STOCK_COLUMNS.flatMap((l) => (l === "CANTIDAD (KG)" ? [l, "STOCK CÓDIGO (LIBRO MAYOR)"] : [l]));
+  const stockColumns: OperationalTableColumn<MpStockRow>[] = stockColumnLabels.map((label) => {
     const map: Record<string, keyof MpStockRow> = {
       CÓDIGO: "codigo",
       PRODUCTO: "productosAsociados",
@@ -440,6 +510,26 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     const short = STOCK_HEADER_SHORT[label] ?? label;
     const collapse = stockCollapse(label);
     const mono = label === "CÓDIGO" || label === "LOTE";
+
+    if (label === "STOCK CÓDIGO (LIBRO MAYOR)") {
+      // Stock real del código (ingresos − consumos de OE ± ajustes). Negativo: visible en rojo, nunca se oculta.
+      return {
+        key: label,
+        header: short,
+        headerTitle: "Stock real del código según el libro mayor (descuenta los consumos de las OE). Kg lote = lo ingresado/ajustado en ese lote.",
+        hideOnMobile: collapse === false ? false : collapse,
+        className: "w-[7rem]",
+        render: (r: MpStockRow) => {
+          const v = r.stockLibroMayor;
+          if (v == null) return <span className="text-[var(--os-text-muted)]">—</span>;
+          return (
+            <span data-testid={`mp-stock-libro-${r.id}`} className={v < 0 ? "font-semibold text-red-700" : undefined}>
+              {v.toLocaleString("es-AR")}
+            </span>
+          );
+        },
+      } as OperationalTableColumn<MpStockRow>;
+    }
 
     if (label === "CÓDIGO") {
       return {
@@ -980,7 +1070,8 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           {pageRows.some(
             (r) =>
               (r as MpIngresoRow).status === "BORRADOR" &&
-              !(r as MpIngresoRow).stockImpacted
+              !(r as MpIngresoRow).stockImpacted &&
+              !(((r as MpIngresoRow).total ?? 0) > 0 || ((r as MpIngresoRow).cantidad ?? 0) > 0)
           ) ? (
             <div className="mb-3 rounded border border-[var(--genus-warning)]/30 bg-[var(--genus-warning-soft)] px-3 py-2 text-sm text-[var(--genus-warning)]">
               Hay borradores sin afectar Stock (falta Cantidad/Total). Completá y confirmá
@@ -988,8 +1079,24 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
               interna y aparecen en Stock con advertencia.
             </div>
           ) : null}
+          {canWrite && borradoresConfirmables.length > 0 ? (
+            <div className="mb-3 flex flex-wrap items-center gap-3 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm" data-testid="mp-ingresos-borradores">
+              <span>
+                {borradoresConfirmables.length} ingreso(s) en borrador listos para confirmar. Revisalos en la planilla:
+                recién al confirmar suman al stock.
+              </span>
+              <Button type="button" size="sm" variant="primary" onClick={() => void confirmBorradores()} data-testid="mp-ingresos-confirmar-borradores">
+                Confirmar {borradoresConfirmables.length} borrador(es)
+              </Button>
+            </div>
+          ) : null}
           <OperationalTable
-            columns={ingresoColumns}
+            tableId="mp-ingresos"
+            canEditCells={ingresoCells.canEditCells}
+            onCellsCommit={ingresoCells.onCellsCommit}
+            reasonRequired={ingresoCells.reasonRequired}
+            rowVersion={ingresoCells.rowVersion}
+            columns={ingresoColumns.map((col) => ({ ...col, edit: ingresoCells.edit(String(col.key)) }))}
             rows={pageRows as MpIngresoRow[]}
             rowKey={(r) => r.id}
             emptyMessage="Sin ingresos MP."
@@ -1008,7 +1115,11 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
 
       {tab === "Compras MP" && (
         <OperationalTable
-          columns={compraColumns}
+          tableId="mp-compras"
+          canEditCells={compraCells.canEditCells}
+          onCellsCommit={compraCells.onCellsCommit}
+          rowVersion={compraCells.rowVersion}
+          columns={compraColumns.map((col) => ({ ...col, edit: compraCells.edit(String(col.key)) }))}
           rows={pageRows as MpCompraRow[]}
           rowKey={(r) => r.id}
           emptyMessage="Sin compras MP."
@@ -1327,8 +1438,40 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         ignoreKeys={["total", "falta", "estado", "estadoStock", "diasAlVence", "estadoVencimiento"]}
         onToast={(message) => showToast(message)}
         onConfirm={async (mapped) => {
+          let pasted = 0;
+          const rejected: string[] = [];
           for (const m of mapped) {
             setFormDraft(m);
+            if (tab === "Ingresos MP") {
+              // Pegado = BORRADOR (no mueve stock hasta confirmar). Un duplicado se informa y se sigue con el resto.
+              try {
+                await mutateInventory({
+                  action: "upsert",
+                  resource: "mp_ingresos",
+                  payload: {
+                    fecha: m.fecha ?? "",
+                    ingresoNro: m.ingresoNro ?? "",
+                    proveedor: m.proveedor ?? "",
+                    cliente: m.cliente ?? "",
+                    remitoNro: m.remitoNro ?? "",
+                    pccMeNro: m.pccMeNro ?? "",
+                    codigo: m.codigo ?? "",
+                    producto: m.producto ?? "",
+                    descripcion: m.descripcion ?? "",
+                    bultos: parseOptionalNumber(m.bultos),
+                    cantidad: parseOptionalNumber(m.cantidad),
+                    ubicacion: m.ubicacion ?? "",
+                    lote: m.lote ?? "",
+                    vencimiento: m.vencimiento ?? "",
+                    status: "BORRADOR",
+                  },
+                });
+                pasted += 1;
+              } catch (e) {
+                rejected.push(e instanceof InventoryClientError ? e.message : "Error al cargar una fila.");
+              }
+              continue;
+            }
             if (tab === "Stock") {
               await mutateInventory({
                 action: "upsert",
@@ -1342,27 +1485,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                   lote: m.lote ?? "",
                   vencimiento: m.vencimiento ?? "",
                   origen: m.origen ?? "import",
-                },
-              });
-            } else if (tab === "Ingresos MP") {
-              await mutateInventory({
-                action: "upsert",
-                resource: "mp_ingresos",
-                payload: {
-                  fecha: m.fecha ?? "",
-                  ingresoNro: m.ingresoNro ?? "",
-                  proveedor: m.proveedor ?? "",
-                  cliente: m.cliente ?? "",
-                  remitoNro: m.remitoNro ?? "",
-                  pccMeNro: m.pccMeNro ?? "",
-                  codigo: m.codigo ?? "",
-                  producto: m.producto ?? "",
-                  descripcion: m.descripcion ?? "",
-                  bultos: parseOptionalNumber(m.bultos),
-                  cantidad: parseOptionalNumber(m.cantidad),
-                  ubicacion: m.ubicacion ?? "",
-                  lote: m.lote ?? "",
-                  vencimiento: m.vencimiento ?? "",
                 },
               });
             } else if (tab === "Control semanal") {
@@ -1394,6 +1516,13 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                 },
               });
             }
+          }
+          if (tab === "Ingresos MP") {
+            setBanner(
+              rejected.length
+                ? `${pasted} ingreso(s) cargado(s) como borrador · ${rejected.length} omitido(s): ${rejected.slice(0, 3).join(" · ")}`
+                : `${pasted} ingreso(s) cargado(s) como borrador. Revisalos y confirmalos para que sumen al stock.`
+            );
           }
           await reload();
         }}

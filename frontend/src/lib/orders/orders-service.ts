@@ -1070,11 +1070,18 @@ export class OrdersService {
             oeVersion: updated.version,
             oeStatus: updated.status,
             lines,
-            allowNegative: Boolean(opts?.allowNegativeMeStock),
+            // La OE ya se elaboró: su consumo de MP se registra SIEMPRE. Si deja un código en negativo, queda visible
+            // con aviso a Materia Prima y Producción. Antes, sin stock suficiente el movimiento fallaba, el error se
+            // descartaba y el consumo (y el de los códigos siguientes) se perdía en silencio.
+            allowNegative: true,
           }
         );
-      } catch {
-        /* ledger diferido si 0005 no aplicada */
+      } catch (err) {
+        // Solo un esquema pendiente (0005 sin aplicar) difiere el libro mayor; cualquier otro error queda en el log.
+        const { SchemaPendingError } = await import("@/lib/db/feature-schema");
+        if (!(err instanceof SchemaPendingError)) {
+          console.error(`[orders] consumo MP de la OE ${updated.id} no registrado:`, err instanceof Error ? err.message : err);
+        }
       }
     }
 

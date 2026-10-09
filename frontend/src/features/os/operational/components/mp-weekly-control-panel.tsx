@@ -131,9 +131,11 @@ export function MpWeeklyControlPanel() {
       method: "PATCH",
       credentials: "include",
       headers: actorHeaders(session.email, session.sector),
-      body: JSON.stringify(patch),
+      // La versión que se ve: si otro usuario guardó antes, el servidor responde conflicto y no se pisa nada.
+      body: JSON.stringify({ ...patch, expectedVersion: active.updatedAt }),
     });
     const body = (await res.json()) as { control?: MpWeeklyControl; error?: string };
+    if (res.status === 409) await reload();
     if (!res.ok) throw new Error(body.error ?? "No se pudo guardar");
     setActive(body.control!);
     await reload();

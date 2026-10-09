@@ -1,19 +1,44 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { osNotifications } from "@/lib/db/schema";
+import { mpStockBalances, osNotifications } from "@/lib/db/schema";
+import { isFeatureSchemaReady } from "@/lib/db/feature-schema";
+import type { MpStockRow } from "@/lib/inventory/types";
 import { getInventoryService, memoryInventoryRepo } from "@/lib/inventory/get-inventory-service";
 import {
   ensureInventoryPersistenceReady,
   inventoryErrorResponse,
   resolveInventoryActor,
 } from "@/lib/inventory/http";
-import { hydrateInventoryFromNeon, persistInventorySnapshot, persistMpIngresoRow, persistMpStockSnapshot, refreshMpInventoryFromNeon } from "@/lib/inventory/neon-persist";
-import type { InventoryActor } from "@/lib/inventory/inventory-service";
+import { hydrateInventoryFromNeon, persistInventorySnapshot, refreshMpInventoryFromNeon } from "@/lib/inventory/neon-persist";
+import type { InventoryActor, InventoryNotificationPayload } from "@/lib/inventory/inventory-service";
+import { confirmMpIngresos, runMpInventoryOp } from "@/lib/inventory/mp-planilla-db";
 import { ME_ALERT_NOTIFY_SECTORS } from "@/lib/inventory/rbac";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+async function insertInventoryNotification(payload: InventoryNotificationPayload) {
+  if (!isDatabaseConfigured()) return;
+  try {
+    const db = getDb();
+    await db.insert(osNotifications).values({
+      id: randomUUID(),
+      kind: payload.kind,
+      title: payload.title,
+      message: payload.message,
+      sectors: payload.sectors.length ? payload.sectors : ME_ALERT_NOTIFY_SECTORS,
+      href: payload.href ?? null,
+      orderId: null,
+      readBy: [],
+      dismissedBy: [],
+      deletedBy: [],
+      createdAt: new Date(),
+    });
+  } catch (err) {
+    console.warn("[inventory] notify failed", err);
+  }
+}
 
 async function readyService() {
   const blocked = ensureInventoryPersistenceReady();
@@ -21,29 +46,12 @@ async function readyService() {
   await hydrateInventoryFromNeon(memoryInventoryRepo, { force: true });
   await refreshMpInventoryFromNeon(memoryInventoryRepo);
   const service = getInventoryService();
-  service.onNotify(async (payload) => {
-    if (!isDatabaseConfigured()) return;
-    try {
-      const db = getDb();
-      await db.insert(osNotifications).values({
-        id: randomUUID(),
-        kind: payload.kind,
-        title: payload.title,
-        message: payload.message,
-        sectors: payload.sectors.length ? payload.sectors : ME_ALERT_NOTIFY_SECTORS,
-        href: payload.href ?? null,
-        orderId: null,
-        readBy: [],
-        dismissedBy: [],
-        deletedBy: [],
-        createdAt: new Date(),
-      });
-    } catch (err) {
-      console.warn("[inventory] notify failed", err);
-    }
-  });
+  service.onNotify(insertInventoryNotification);
   return { service } as const;
 }
+
+/** Materias Primas: toda acción corre en una transacción con el servicio sobre datos leídos en ella (ver mp-planilla-db). */
+const MP_RESOURCES = new Set(["mp_stock", "mp_ingresos", "mp_control", "mp_compras"]);
 
 export async function GET(request: Request) {
   try {
@@ -52,7 +60,8 @@ export async function GET(request: Request) {
     const actor = await resolveInventoryActor(request);
     const { searchParams } = new URL(request.url);
     const resource = searchParams.get("resource") ?? "me_ingresos";
-    const data = await listResource(ready.service, actor, resource);
+    let data = await listResource(ready.service, actor, resource);
+    if (resource === "mp_stock") data = await withLedgerStock(data as MpStockRow[]);
     return NextResponse.json({ data, persistence: true });
   } catch (err) {
     return inventoryErrorResponse(err);
@@ -76,18 +85,41 @@ export async function POST(request: Request) {
       ready.service.assertCanMutateSemanas(actor);
     }
 
-    const result = await mutateResource(ready.service, actor, body);
-    if (body.resource === "mp_ingresos") {
-      const row = result as import("@/lib/inventory/types").MpIngresoRow;
-      await persistMpIngresoRow(row);
-      await persistMpStockSnapshot(memoryInventoryRepo.mpStock);
-    } else {
-      await persistInventorySnapshot(memoryInventoryRepo);
+    if (MP_RESOURCES.has(body.resource)) {
+      if (body.resource === "mp_ingresos" && body.action === "confirm") {
+        const items = Array.isArray(body.payload?.items) ? (body.payload!.items as Array<{ id: string; expectedVersion: string }>) : [];
+        const result = await confirmMpIngresos(actor, items);
+        return NextResponse.json({ data: result.items, persistence: true });
+      }
+      const result = await runMpInventoryOp(actor, ({ service }) => mutateResource(service, actor, body), {
+        notify: insertInventoryNotification,
+      });
+      return NextResponse.json({ data: result, persistence: true });
     }
+    const result = await mutateResource(ready.service, actor, body);
+    await persistInventorySnapshot(memoryInventoryRepo);
     return NextResponse.json({ data: result, persistence: true });
   } catch (err) {
     return inventoryErrorResponse(err);
   }
+}
+
+/**
+ * Stock MP: cada lote trae el stock REAL de su código según el libro mayor (ingresos, consumos de OE, ajustes). Los kg
+ * del lote son lo ingresado/ajustado en ese lote; el consumo de producción se descuenta por código en el libro mayor.
+ */
+async function withLedgerStock(rows: MpStockRow[]): Promise<Array<MpStockRow & { stockLibroMayor: number | null }>> {
+  const byCode = new Map<string, number>();
+  try {
+    if (await isFeatureSchemaReady()) {
+      for (const b of await getDb().select({ codigo: mpStockBalances.codigo, stockActual: mpStockBalances.stockActual }).from(mpStockBalances)) {
+        byCode.set(b.codigo.trim().toUpperCase(), b.stockActual);
+      }
+    }
+  } catch {
+    /* sin libro mayor (0005 pendiente): la columna queda vacía */
+  }
+  return rows.map((r) => ({ ...r, stockLibroMayor: byCode.get((r.codigo ?? "").trim().replace(/\s+/g, " ").toUpperCase()) ?? null }));
 }
 
 async function listResource(
