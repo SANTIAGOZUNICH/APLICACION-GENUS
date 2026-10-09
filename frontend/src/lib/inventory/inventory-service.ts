@@ -72,7 +72,8 @@ function normalizeMpCodigoLocal(codigo: string): string {
 
 function isBusinessMpCodigo(codigo: string): boolean {
   const n = normalizeMpCodigoLocal(codigo);
-  return Boolean(n) && !n.startsWith(MP_INTERNAL_CODIGO_PREFIX);
+  // «..», «-», «.»: no es un código (sin letras ni números) → se trata como ingreso sin código de proveedor.
+  return /[\p{L}\p{N}]/u.test(n) && !n.startsWith(MP_INTERNAL_CODIGO_PREFIX);
 }
 
 /** Cantidad efectiva para stock: TOTAL si > 0, si no CANTIDAD. */
@@ -1453,6 +1454,7 @@ export class InventoryService {
           ? Boolean(input.codigoPendiente)
           : existing?.codigoPendiente,
       productosAsociados: existing?.productosAsociados ?? "",
+      producto: input.producto ?? existing?.producto ?? "",
       archived: existing?.archived ?? false,
       archivedAt: existing?.archivedAt ?? null,
       archivedBy: existing?.archivedBy ?? null,

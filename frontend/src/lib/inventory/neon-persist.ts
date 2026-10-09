@@ -176,6 +176,7 @@ export function normalizeMpStockPayload(raw: unknown): MpStockRow {
     codigo: r.codigo ?? "",
     codigoPendiente: Boolean(r.codigoPendiente),
     productosAsociados: r.productosAsociados ?? "",
+    producto: r.producto ?? "",
     archived: Boolean(r.archived),
     archivedAt: r.archivedAt ?? null,
     archivedBy: r.archivedBy ?? null,

@@ -179,6 +179,11 @@ export type MpStockRow = {
   codigoPendiente?: boolean;
   /** Productos destino asociados (ingresos CONFIRMADO del mismo código), unidos por " · ". */
   productosAsociados: string;
+  /**
+   * PRODUCTO escrito por Materia Prima en la planilla (dato administrativo). Si está vacío, la columna PRODUCTO
+   * muestra `productosAsociados`. Se guarda en el payload JSONB: no requiere migración.
+   */
+  producto?: string;
   /** Stock real del CÓDIGO según el libro mayor (solo lectura; lo agrega la API al listar). */
   stockLibroMayor?: number | null;
   /** Archivo lógico: oculto del listado activo; no hard-delete del historial. */

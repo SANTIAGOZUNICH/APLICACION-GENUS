@@ -67,11 +67,31 @@ describe("inventario — edición por celda", () => {
     expect(repo.ajustes.some((a) => a.entityId === lot.id && a.cantidadAnterior === 40 && a.cantidadNueva === 30.5)).toBe(true);
   });
 
-  it("MP: lotes originados en un ingreso tienen datos del documento protegidos", () => {
-    expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "lote", true)).toMatch(/ingreso/);
-    expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "cantidadKg", true)).toMatch(/Ajustar/);
-    expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "ubicacion", true)).toBeNull();
+  it("MP: en lotes creados por un ingreso solo los kg quedan protegidos (con motivo específico)", () => {
+    for (const field of ["producto", "proveedor", "cliente", "descripcion", "ubicacion", "lote", "vencimiento"]) {
+      expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, field, true)).toBeNull();
+    }
+    expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "cantidadKg", true)).toMatch(/Ajustar stock/);
+    expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "ubicacion", false)).toMatch(/sector/);
     expect(inventoryCellProtection("mp_stock", { origen: "manual", archived: true }, "ubicacion", true)).toMatch(/archivado/);
     expect(validateInventoryValue("vencimiento", "31/12/2026")).toEqual({ ok: true, value: "2026-12-31" });
+  });
+
+  it("MP: PRODUCTO, proveedor y descripción de un lote existente creado por un ingreso se editan en la celda (usuario Materia Prima)", async () => {
+    await svc.upsertMpIngreso(mp, { codigo: "MP-77", producto: "CREMA X", descripcion: "Mentol", proveedor: "P1", lote: "L1", bultos: 1, cantidad: 10, confirm: true } as never);
+    const lot = svc.listMpStock(mp).find((r) => r.codigo === "MP-77")!;
+    expect(lot.origen).toBe("ingreso");
+    expect(lot.productosAsociados).toBe("CREMA X");
+    const res = svc.patchInventoryCells(mp, "mp_stock", [
+      { id: lot.id, field: "producto", value: "CREMA X · GEL Y", expectedVersion: lot.updatedAt },
+      { id: lot.id, field: "proveedor", value: "P2", expectedVersion: lot.updatedAt },
+      { id: lot.id, field: "descripcion", value: "Mentol cristal", expectedVersion: lot.updatedAt },
+    ]);
+    expect(res.every((x) => x.ok)).toBe(true);
+    const after = svc.listMpStock(mp).find((r) => r.id === lot.id)!;
+    expect(after).toMatchObject({ producto: "CREMA X · GEL Y", proveedor: "P2", descripcion: "Mentol cristal", cantidadKg: lot.cantidadKg, codigo: "MP-77" });
+    expect(repo.audit.filter((a) => a.action === "cell_edit" && a.entityId === lot.id)).toHaveLength(3);
+    const [kg] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "cantidadKg", value: "1", expectedVersion: after.updatedAt, reason: "Conteo físico de prueba" }]);
+    expect(kg).toMatchObject({ ok: false, code: "PROTECTED" });
   });
 });

@@ -191,6 +191,7 @@ const MP_COMPRA_CELL_FIELDS: Record<string, string> = {
 };
 
 const MP_STOCK_CELL_FIELDS: Record<string, string> = {
+  PRODUCTO: "producto",
   PROVEEDOR: "proveedor",
   CLIENTE: "cliente",
   "DESCRIPCIÓN MATERIA PRIMA": "descripcion",
@@ -542,6 +543,8 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         render: (r) => {
           const pending = Boolean(r.codigoPendiente) || isMpInternalCodigo(r.codigo);
           const code = displayCell(r.codigo);
+          // «..», «-», vacío: no es un código. Se marca (no se oculta ni se borra) para que se revise.
+          const invalid = !/[\p{L}\p{N}]/u.test(code);
           return (
             <span className="inline-flex min-w-0 flex-col gap-0.5">
               <OsClampedText fullText={code} mono>
@@ -554,6 +557,15 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                   data-testid={`mp-stock-codigo-pendiente-${r.id}`}
                 >
                   Sin código proveedor
+                </span>
+              ) : null}
+              {invalid ? (
+                <span
+                  className="w-fit rounded bg-[var(--genus-warning-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--genus-warning)]"
+                  title="El código no tiene letras ni números. Revisá el origen del lote antes de usarlo (no se borra solo)."
+                  data-testid={`mp-stock-codigo-invalido-${r.id}`}
+                >
+                  Código inválido
                 </span>
               ) : null}
             </span>
@@ -576,7 +588,8 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
               ? "w-[6.5rem]"
               : undefined,
       render: (r) => {
-        const value = displayCell(r[k]);
+        // PRODUCTO: lo escrito por Materia Prima; si está vacío, los productos de los ingresos confirmados del código.
+        const value = label === "PRODUCTO" ? displayCell(r.producto) || displayCell(r.productosAsociados) : displayCell(r[k]);
         return (
           <OsClampedText fullText={value} mono={mono}>
             {value}
