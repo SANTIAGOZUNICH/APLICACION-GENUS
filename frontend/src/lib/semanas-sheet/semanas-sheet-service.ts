@@ -26,7 +26,8 @@ import type { SectorId } from "@/types/operational/sector";
 import { dayWidths, findCalendarCell, parseA1, parseWeeklyCalendar, type CalendarWeek, type SheetFormats } from "./calendar-model";
 import { loadOperationalLocks, norm, UNVERIFIABLE, type OperationalLocks } from "./operational-locks";
 import { isPriority } from "./priorities";
-import { loadPriorities, reconcilePriorities, setTaskPriority, type PrioritiesPayload } from "./semanas-priorities-service";
+import { listPriorityEvents, loadPriorities, reconcilePriorities, setTaskPriority, type PrioritiesPayload } from "./semanas-priorities-service";
+import { filterBySectors, isPlanSector, PLAN_SECTOR_TAB, projectPlanTasks, seesWholePlan, viewablePlanSectors, type PlanSector, type PlanTask } from "./plan-tasks";
 import { PREVIEW_SPREADSHEET_ID, getPreviewGateway, isPreviewSourceAllowed } from "./preview-source";
 import { findFlatCell, parseFlatTable, type FlatTable } from "./flat-model";
 
@@ -407,4 +408,57 @@ export async function reconcileSemanasPriorities(tabKeys: string[]): Promise<voi
       /* no bloquea la edición */
     }
   }
+}
+
+// ---------- planificación por sector (solo lectura) ----------
+export interface SectorPlanPayload {
+  /** Sectores incluidos en la respuesta (siempre dentro de lo que el usuario puede ver). */
+  sectors: PlanSector[];
+  /** Sectores que el usuario puede consultar (para el selector). */
+  allowed: PlanSector[];
+  weeks: Array<{ id: string; label: string; dates: (string | null)[]; hidden: boolean; tabKey: PlanTask["tabKey"] }>;
+  tasks: PlanTask[];
+  prioritiesAvailable: boolean;
+  source: SemanasViewPayload["source"];
+  readAt: string;
+  today: string;
+}
+
+/**
+ * Planificación de Semanas para una pantalla de sector (Semanas / Día a día / Modo TV). SOLO LECTURA.
+ * La autorización se decide acá (servidor), nunca por lo que pida el cliente: un sector solo recibe las tareas que le
+ * corresponden; Producción/Dirección pueden elegir cualquiera. No se envían celdas (A1) ni el resto de la planilla.
+ */
+export async function loadSectorPlan(viewer: SectorId, requested: string | null | undefined, today = todayIso()): Promise<SectorPlanPayload> {
+  const allowed = viewablePlanSectors(viewer);
+  if (allowed.length === 0) throw new OrdersForbiddenError("Tu sector no tiene planificación en Semanas.");
+  const want = (requested ?? "").trim().toUpperCase();
+  let sectors: PlanSector[];
+  if (!want || want === "ALL" || want === "TODOS") sectors = allowed;
+  else if (isPlanSector(want) && allowed.includes(want)) sectors = [want];
+  else throw new OrdersForbiddenError("No tenés permiso para ver la planificación de ese sector.");
+  const tabs = [...new Set(sectors.map((s) => PLAN_SECTOR_TAB[s]))];
+  const views = await Promise.all(tabs.map((t) => loadSemanasView(t, today)));
+  const whole = seesWholePlan(viewer) && sectors.length === allowed.length;
+  const tasks: PlanTask[] = [];
+  const weeks: SectorPlanPayload["weeks"] = [];
+  for (const v of views) {
+    const tabKey = v.tabKey as PlanTask["tabKey"];
+    tasks.push(...filterBySectors(projectPlanTasks(tabKey, v.weeks ?? [], v.tab, v.priorities), sectors, whole));
+    for (const w of v.weeks ?? []) weeks.push({ id: w.id, label: w.label, dates: w.dates, hidden: Boolean(w.hidden), tabKey });
+  }
+  return {
+    sectors, allowed, weeks, tasks,
+    prioritiesAvailable: views.every((v) => v.priorities?.available !== false),
+    source: views[0]?.source ?? "GOOGLE",
+    readAt: new Date().toISOString(),
+    today,
+  };
+}
+
+/** Historial de cambios de prioridad de una tarea (auditoría). */
+export async function loadPriorityHistory(tabKey: string, taskKey: string) {
+  if (!isSemanasTabKey(tabKey) || SEMANAS_TABS[tabKey].kind !== "CALENDAR") throw new OrdersValidationError("Solo ELABORACION y ACONDICIONAMIENTO tienen prioridades.");
+  const id = await spreadsheetId();
+  return listPriorityEvents(id, SEMANAS_TABS[tabKey].tab, taskKey);
 }

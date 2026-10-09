@@ -3,6 +3,7 @@ import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type { CalendarWeek } from "./calendar-model";
 import type { FlatTable } from "./flat-model";
 import type { PrioritiesPayload } from "./priorities";
+import type { PlanSector, PlanTask } from "./plan-tasks";
 import type { SemanasTabKey } from "./semanas-tabs";
 
 function headers(session: OrdersClientSession): HeadersInit {
@@ -118,4 +119,43 @@ export async function patchTaskPriority(
   const json = (await res.json().catch(() => ({}))) as { stored?: StoredPriorityDto; error?: string };
   if (!res.ok || !json.stored) throw new Error(json.error ?? `No se pudo guardar la prioridad (${res.status}).`);
   return json.stored;
+}
+
+export interface SectorPlanResponse {
+  sectors: PlanSector[];
+  allowed: PlanSector[];
+  weeks: Array<{ id: string; label: string; dates: (string | null)[]; hidden: boolean; tabKey: PlanTask["tabKey"] }>;
+  tasks: PlanTask[];
+  prioritiesAvailable: boolean;
+  source: "GOOGLE" | "PREVIEW_XLSX" | "LOCAL_FIXTURE";
+  readAt: string;
+  today: string;
+}
+
+/** Planificación de Semanas de un sector (solo lectura). El servidor decide qué sectores se pueden ver. */
+export async function fetchSectorPlan(session: OrdersClientSession, sector?: PlanSector | "ALL"): Promise<SectorPlanResponse> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/v1/semanas/plan${sector ? `?sector=${sector}` : ""}`, { credentials: "include", headers: headers(session) });
+  } catch {
+    throw new Error("Sin conexión con el servidor.");
+  }
+  const body = (await res.json().catch(() => ({}))) as SectorPlanResponse & { error?: string };
+  if (!res.ok) throw new Error(body.error ?? `No se pudo leer la planificación (${res.status}).`);
+  return body;
+}
+
+export interface PriorityEventDto {
+  from: "URGENTE" | "IMPORTANTE" | "NORMAL";
+  to: "URGENTE" | "IMPORTANTE" | "NORMAL";
+  actorEmail: string;
+  actorName: string;
+  actorSector: string;
+  at: string;
+}
+export async function fetchPriorityHistory(session: OrdersClientSession, tabKey: SemanasTabKey, taskKey: string): Promise<PriorityEventDto[]> {
+  const res = await fetch(`/api/v1/semanas/priorities?tabKey=${tabKey}&taskKey=${encodeURIComponent(taskKey)}`, { credentials: "include", headers: headers(session) });
+  const body = (await res.json().catch(() => ({}))) as { events?: PriorityEventDto[]; error?: string };
+  if (!res.ok) throw new Error(body.error ?? `No se pudo leer el historial (${res.status}).`);
+  return body.events ?? [];
 }

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { CalendarCell, CalendarWeek } from "./calendar-model";
 import { buildWeekModel } from "./calendar-tasks";
 import { matchPriorities } from "./priorities";
-import { getSemanasPriorityEventsMemory, loadPriorities, reconcilePriorities, resetSemanasPrioritiesMemoryForTests, setTaskPriority } from "./semanas-priorities-service";
+import { getSemanasPriorityEventsMemory, listPriorityEvents, loadPriorities, reconcilePriorities, resetSemanasPrioritiesMemoryForTests, setTaskPriority } from "./semanas-priorities-service";
 
 const COLS = "BDFHJ";
 const cell = (a1: string, value = "", extra: Partial<CalendarCell> = {}): CalendarCell => ({ a1, value, covered: false, span: 1, rowSpan: 1, protection: null, date: null, ...extra });
@@ -96,16 +96,67 @@ describe("prioridades de Semanas (persistencia en memoria = misma lógica que la
   });
 
   it("una fila huérfana nunca se asigna a dos tareas ni a una tarea que ya tiene la suya", () => {
-    const tasks = [{ key: "a", posKey: "p0" }, { key: "b", posKey: "p1" }];
+    const T = "ELABORACION|2026-05-04";
+    const tasks = [{ key: `${T}|thelma|alc|1`, posKey: "ELABORACION|2026-05-04|0|s0|0" }, { key: `${T}|unica|crema y louise|1`, posKey: "ELABORACION|2026-05-04|0|s0|1" }];
+    const row = (taskKey: string, posKey: string, priority: "URGENTE" | "IMPORTANTE" | "NORMAL") => ({ taskKey, posKey, priority, version: 1, updatedBy: "u", updatedByName: "U", updatedAt: "t" });
     const rows = [
-      { taskKey: "a", posKey: "p0", priority: "URGENTE" as const, version: 1, updatedBy: "u", updatedByName: "U", updatedAt: "t" },
-      { taskKey: "viejo", posKey: "p1", priority: "IMPORTANTE" as const, version: 1, updatedBy: "u", updatedByName: "U", updatedAt: "t" },
-      { taskKey: "viejo2", posKey: "p0", priority: "NORMAL" as const, version: 1, updatedBy: "u", updatedByName: "U", updatedAt: "t" },
+      row(tasks[0]!.key, "ELABORACION|2026-05-04|0|s0|0", "URGENTE"),
+      row(`${T}|unica|crema|1`, "ELABORACION|2026-05-04|0|s0|1", "IMPORTANTE"), // texto corregido en la misma posición
+      row(`${T}|thelma|alc viejo|1`, "ELABORACION|2026-05-04|0|s0|0", "NORMAL"), // misma posición que una tarea que ya tiene la suya
     ];
     const m = matchPriorities(tasks, rows);
-    expect(m.a!.priority).toBe("URGENTE");
-    expect(m.a!.relinked).toBeUndefined();
-    expect(m.b).toMatchObject({ priority: "IMPORTANTE", relinked: true });
+    expect(m[tasks[0]!.key]!.priority).toBe("URGENTE");
+    expect(m[tasks[0]!.key]!.relinked).toBeUndefined();
+    expect(m[tasks[1]!.key]).toMatchObject({ priority: "IMPORTANTE", relinked: true });
+  });
+
+  it("ELIMINAR una tarea no transfiere su prioridad a la que ocupa su lugar", async () => {
+    const w = weekOf(SPEC);
+    await set(w, 0, "URGENTE"); // THELMA / ALC EN GEL
+    const deleted = weekOf([{ ...SPEC[0]!, days: [["UNICA", "CREMA", "160KG"], SPEC[0]!.days[1]!, [], [], []] }, SPEC[1]!]);
+    const p = (await loadPriorities(SID, TAB, [deleted])).byTask;
+    expect(Object.keys(p)).toHaveLength(0); // UNICA sigue NORMAL aunque ahora esté en la posición 0
+    expect(await reconcilePriorities(SID, TAB, [deleted])).toBe(0);
+  });
+
+  it("REEMPLAZAR por completo el texto de una tarea no conserva la prioridad (no es inequívoco)", async () => {
+    const w = weekOf(SPEC);
+    await set(w, 0, "URGENTE");
+    const replaced = weekOf([{ ...SPEC[0]!, days: [["OTRO CLIENTE", "OTRO PRODUCTO", "", ...SPEC[0]!.days[0]!.slice(3)], SPEC[0]!.days[1]!, [], [], []] }, SPEC[1]!]);
+    expect(Object.keys((await loadPriorities(SID, TAB, [replaced])).byTask)).toHaveLength(0);
+  });
+
+  it("MOVER una tarea de día (misma semana, contenido único) conserva su prioridad; se re-asocia y se puede seguir editando", async () => {
+    const w = weekOf(SPEC);
+    await set(w, 2, "URGENTE"); // TYL / CREMA 95kg / ENTREGA (martes)
+    const moved = weekOf([{ ...SPEC[0]!, days: [SPEC[0]!.days[0]!, [], [], SPEC[0]!.days[1]!, []] }, SPEC[1]!]); // ahora el jueves
+    const t = tasksOf(moved).find((x) => x.date === "2026-05-07")!;
+    const p = (await loadPriorities(SID, TAB, [moved])).byTask;
+    expect(p[t.key]).toMatchObject({ priority: "URGENTE", relinked: true, moved: true });
+    expect(Object.keys(p)).toHaveLength(1);
+    expect(await reconcilePriorities(SID, TAB, [moved])).toBe(1);
+    const after = (await loadPriorities(SID, TAB, [moved])).byTask[t.key]!;
+    expect(after.moved).toBeUndefined();
+    // la historia (auditoría) sigue a la tarea
+    expect(await listPriorityEvents(SID, TAB, t.key)).toEqual([expect.objectContaining({ from: "NORMAL", to: "URGENTE", actorEmail: prod.email })]);
+    expect((await setTaskPriority(prod, { spreadsheetId: SID, tab: TAB, taskKey: t.key, priority: "NORMAL", expectedVersion: after.version }, [moved])).version).toBe(2);
+  });
+
+  it("MOVER es ambiguo si al guardar había otra tarea idéntica en la semana: no se transfiere", async () => {
+    const dup = [{ title: "CRISTIAN", days: [["TYL", "SANITIZANTE"], [], ["TYL", "SANITIZANTE"], [], []] }];
+    const w = weekOf(dup);
+    await set(w, 0, "URGENTE"); // el del lunes
+    // se borra el del lunes: el del miércoles ya existía y NO debe heredar URGENTE
+    const after = weekOf([{ title: "CRISTIAN", days: [[], [], ["TYL", "SANITIZANTE"], [], []] }]);
+    expect(Object.keys((await loadPriorities(SID, TAB, [after])).byTask)).toHaveLength(0);
+  });
+
+  it("MOVER a otra semana no arrastra la prioridad (otra semana = otra planificación)", async () => {
+    const w = weekOf(SPEC);
+    await set(w, 2, "URGENTE");
+    const next = { ...weekOf([{ ...SPEC[0]!, days: [SPEC[0]!.days[0]!, [], [], [], []] }, SPEC[1]!]) };
+    const other = { ...weekOf([{ title: "CRISTIAN", days: [[], SPEC[0]!.days[1]!, [], [], []] }]), id: "2", dates: ["2026-05-11", "2026-05-12", "2026-05-13", "2026-05-14", "2026-05-15"] };
+    expect(Object.keys((await loadPriorities(SID, TAB, [next, other])).byTask)).toHaveLength(0);
   });
 
   it("la prioridad es independiente del spreadsheet (copia de Preview ≠ original) y de la pestaña", async () => {
