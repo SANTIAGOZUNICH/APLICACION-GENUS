@@ -11,7 +11,7 @@
  * Fecha y responsable/línea salen de la estructura de la planilla (columna del día y banda combinada): se muestran pero
  * no se reasignan desde acá, para no romper celdas combinadas. La prioridad es un dato de GENUS (no se escribe en la Sheet).
  */
-import { memo, useCallback, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import { Fragment, memo, useCallback, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { History, Lock, Search } from "lucide-react";
 import type { CalendarWeek } from "@/lib/semanas-sheet/calendar-model";
 import { parseClipboard, validateCalendarValue, type PlannedChange, type SkippedCell } from "@/lib/semanas-sheet/calendar-grid-model";
@@ -89,7 +89,14 @@ export function SemanasTaskList(props: SemanasTaskListProps) {
         (section === "ALL" || (t.section ?? "(sin banda)") === section) &&
         (!q || t.lines.some((l) => l.value.toLowerCase().includes(q)) || (t.section ?? "").toLowerCase().includes(q))
     );
-    return sortByPriority ? byPriority(list) : list;
+    // Agrupada por DÍA (y por sector/responsable dentro del día, en el orden de la planilla). «Ordenar por prioridad»
+    // ordena dentro de cada día: el día sigue siendo el eje de la planificación semanal.
+    const dayOrder = (t: PlanTask) => t.date ?? `9999-${t.d}`;
+    const sectionOrder = new Map(all.map((t, i) => [t.key, i] as const));
+    const sorted = [...list].sort((x, y) => dayOrder(x).localeCompare(dayOrder(y)) || (sectionOrder.get(x.key)! - sectionOrder.get(y.key)!));
+    if (!sortByPriority) return sorted;
+    const days = [...new Set(sorted.map(dayOrder))];
+    return days.flatMap((d) => byPriority(sorted.filter((t) => dayOrder(t) === d)));
   }, [all, filter, section, query, sortByPriority]);
   const counts = useMemo(() => Object.fromEntries(PRIORITIES.map((p) => [p, all.filter((t) => t.priority === p).length])) as Record<Priority, number>, [all]);
 
@@ -293,6 +300,29 @@ export function SemanasTaskList(props: SemanasTaskListProps) {
           </thead>
           <tbody>
             {rows.map((t, r) => (
+              <Fragment key={t.key}>
+              {(r === 0 || rows[r - 1]!.date !== t.date) && (
+                <tr data-testid="list-day-header" data-date={t.date ?? ""}>
+                  <th colSpan={COLS.length + 1 + (links ? 1 : 0)} scope="rowgroup" className={`border-b border-[var(--os-border)] px-3 pb-2 pt-4 text-left ${t.date === today ? "text-[var(--os-teal)]" : "text-[var(--os-text)]"}`}>
+                    <span className="text-base font-extrabold tracking-tight">{formatDay(t.date, { long: true })}</span>
+                    {t.date === today && <span className="ml-2 rounded-full bg-[var(--os-teal)] px-2 py-0.5 align-middle text-[10px] font-bold uppercase tracking-wider text-[#04201e]">Hoy</span>}
+                    <span className="ml-3 text-xs font-semibold text-[var(--os-text-muted)]">
+                      {rows.filter((x) => x.date === t.date).length} tareas
+                      {PRIORITIES.filter((p) => p !== "NORMAL").map((p) => {
+                        const n = rows.filter((x) => x.date === t.date && x.priority === p).length;
+                        return n ? <span key={p} className="ml-2" style={{ color: PRIORITY_STYLE[p].accent }}>● {n} {PRIORITY_META[p].label.toLowerCase()}</span> : null;
+                      })}
+                    </span>
+                  </th>
+                </tr>
+              )}
+              {tabKey === "ACONDICIONAMIENTO" && t.sector && (r === 0 || rows[r - 1]!.date !== t.date || rows[r - 1]!.sector !== t.sector) && !sortByPriority && (
+                <tr data-testid="list-sector-header">
+                  <th colSpan={COLS.length + 1 + (links ? 1 : 0)} scope="rowgroup" className="border-b border-[var(--os-border)] bg-[var(--os-surface)]/60 px-3 py-1 text-left text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--os-text-muted)]">
+                    {PLAN_SECTOR_LABEL[t.sector]}
+                  </th>
+                </tr>
+              )}
               <TaskRow
                 key={t.key}
                 t={t}
@@ -317,6 +347,7 @@ export function SemanasTaskList(props: SemanasTaskListProps) {
                 onToggleLink={() => setLinkOpen((k) => (k === t.key ? null : t.key))}
                 linkActions={linkActions}
               />
+              </Fragment>
             ))}
           </tbody>
         </table>

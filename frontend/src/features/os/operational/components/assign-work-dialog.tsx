@@ -92,6 +92,13 @@ interface AssignWorkDialogProps {
   initialLine?: string;
   /** Idem — fecha de producción (Desde/Hasta) preseleccionada desde la celda. */
   initialPlannedDate?: string;
+  /** Prellenado desde una tarea de Semanas (editable antes de confirmar). */
+  initialValues?: { client?: string; product?: string; quantity?: string; ownerPerson?: string; notes?: string };
+  /**
+   * Tarea de Semanas desde la que se crea el trabajo: el servidor registra el vínculo en el mismo pedido
+   * (procedencia explícita, sin adivinar). Si la tarea cambió, el trabajo se crea igual y se informa que quedó sin vincular.
+   */
+  semanasTask?: { tabKey: "ELABORACION" | "ACONDICIONAMIENTO"; taskKey: string; summary: string };
 }
 
 /**
@@ -112,21 +119,25 @@ export function AssignWorkDialog({
   onAssigned,
   initialLine,
   initialPlannedDate,
+  initialValues,
+  semanasTask,
 }: AssignWorkDialogProps) {
   const native = getClientPlanningSource() === "native";
 
-  const [ownerPerson, setOwnerPerson] = useState<string>(ELABORACION_RAMAS[0]);
+  const [ownerPerson, setOwnerPerson] = useState<string>(
+    ELABORACION_RAMAS.find((r) => r.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase() === (initialValues?.ownerPerson ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()) ?? ELABORACION_RAMAS[0]
+  );
   const [line, setLine] = useState<string>(
     initialLine || (sector === "ENVASADO_MASIVO" ? MASIVO_LINES[0] : PREMIUM_LINES[0])
   );
-  const [client, setClient] = useState("");
-  const [product, setProduct] = useState("");
+  const [client, setClient] = useState(initialValues?.client ?? "");
+  const [product, setProduct] = useState(initialValues?.product ?? "");
   const [plannedDate, setPlannedDate] = useState(initialPlannedDate || todayIso());
   const [plannedDateTo, setPlannedDateTo] = useState(initialPlannedDate || todayIso());
   const [deliveryDate, setDeliveryDate] = useState(todayIso());
-  const [quantity, setQuantity] = useState("");
+  const [quantity, setQuantity] = useState(initialValues?.quantity ?? "");
   const [orderRef, setOrderRef] = useState("");
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(initialValues?.notes ?? "");
   const [packagingLote, setPackagingLote] = useState("");
   const [packagingVto, setPackagingVto] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -386,6 +397,7 @@ export function AssignWorkDialog({
       productionPedidoId: selectedPedido?.id ?? null,
       idempotencyKey: idempotencyRef.current,
       forceLink: Boolean(opts?.forceLink),
+      ...(semanasTask ? { semanasTask: { tabKey: semanasTask.tabKey, taskKey: semanasTask.taskKey } } : {}),
     };
 
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;
@@ -416,6 +428,7 @@ export function AssignWorkDialog({
         oaLinked?: boolean;
         order?: { orderNumber?: string };
         canForce?: boolean;
+        semanasLink?: { ok: boolean; error?: string };
       } = {};
       try {
         data = (await res.json()) as typeof data;
@@ -459,12 +472,18 @@ export function AssignWorkDialog({
             ? ` ${docLabel} ${data.order.orderNumber} vinculada.`
             : ""
         : "";
+      const linkPart = data.semanasLink ? (data.semanasLink.ok ? " Vinculado a la tarea de Semanas." : "") : "";
       setFeedback(
         data.replayed
-          ? "Asignación ya confirmada en Neon (sin duplicar)."
-          : `Trabajo asignado y confirmado en Neon.${oaPart}`
+          ? `Asignación ya confirmada en Neon (sin duplicar).${linkPart}`
+          : `Trabajo asignado y confirmado en Neon.${oaPart}${linkPart}`
       );
       if (data.workItem) onAssigned?.(data.workItem);
+      if (data.semanasLink && !data.semanasLink.ok) {
+        // Nunca silencioso: el trabajo existe pero NO quedó vinculado (se puede vincular luego desde Semanas → Lista).
+        setErrorMsg(`El trabajo se creó, pero NO quedó vinculado a la tarea de Semanas: ${data.semanasLink.error ?? "motivo desconocido"}`);
+        return;
+      }
       window.setTimeout(() => {
         onClose();
       }, 900);
@@ -488,6 +507,12 @@ export function AssignWorkDialog({
               mostrar éxito; doble clic o reintento reutilizan la misma clave de idempotencia.
             </DialogDescription>
           </DialogHeader>
+          {semanasTask && (
+            <p className="rounded-lg border border-[var(--os-teal)]/40 bg-[var(--os-teal-soft)] px-3 py-2 text-sm" data-testid="assign-from-semanas">
+              Desde Semanas: <b>{semanasTask.summary}</b>. Revisá los datos: al confirmar, el trabajo queda <b>vinculado a esta tarea</b> y
+              «Mi trabajo» muestra su prioridad.
+            </p>
+          )}
         </div>
 
         <form

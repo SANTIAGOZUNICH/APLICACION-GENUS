@@ -19,8 +19,10 @@ interface CtxValue {
   /** true = el servidor respondió (planificación nativa + 0042): un trabajo sin entrada está SIN VINCULAR (neutral). */
   available: boolean;
   byWorkItem: Record<string, WorkItemPriorityDto>;
+  /** Relee del servidor (p. ej. tras cambiar una prioridad desde «Mi trabajo»). */
+  reload: () => Promise<void>;
 }
-const EMPTY: CtxValue = { available: false, byWorkItem: {} };
+const EMPTY: CtxValue = { available: false, byWorkItem: {}, reload: async () => undefined };
 const Ctx = createContext<CtxValue>(EMPTY);
 
 export function WorkItemPrioritiesProvider({ session, enabled, children }: { session: OrdersClientSession; enabled: boolean; children: ReactNode }) {
@@ -28,14 +30,24 @@ export function WorkItemPrioritiesProvider({ session, enabled, children }: { ses
   const inflight = useRef(false);
   const active = enabled && getClientPlanningSource() === "native";
 
+  const again = useRef(false);
   const load = useCallback(async () => {
-    if (inflight.current) return;
+    // Si ya hay una lectura en curso, se repite al terminar (un cambio recién guardado nunca queda tapado por datos viejos).
+    if (inflight.current) {
+      again.current = true;
+      return;
+    }
     inflight.current = true;
     try {
-      const r = await fetchWorkItemPriorities(session);
-      if (r.available) setState({ available: true, byWorkItem: r.byWorkItem });
-    } catch {
-      /* sin conexión: se conserva lo último (nunca se inventa una prioridad) */
+      do {
+        again.current = false;
+        try {
+          const r = await fetchWorkItemPriorities(session);
+          if (r.available) setState((prev) => ({ ...prev, available: true, byWorkItem: r.byWorkItem }));
+        } catch {
+          /* sin conexión: se conserva lo último (nunca se inventa una prioridad) */
+        }
+      } while (again.current);
     } finally {
       inflight.current = false;
     }
@@ -44,7 +56,6 @@ export function WorkItemPrioritiesProvider({ session, enabled, children }: { ses
   useEffect(() => {
     if (!active) return;
     // Carga inicial y actualización periódica (mismo patrón que el resto de las vistas operativas).
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
     const t = setInterval(() => {
       if (document.visibilityState === "visible") void load();
@@ -52,7 +63,7 @@ export function WorkItemPrioritiesProvider({ session, enabled, children }: { ses
     return () => clearInterval(t);
   }, [active, load]);
 
-  const value = useMemo(() => (active ? state : EMPTY), [active, state]);
+  const value = useMemo(() => (active ? { ...state, reload: load } : EMPTY), [active, state, load]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
@@ -65,6 +76,10 @@ export function useWorkItemSemanasPriority(itemId: string | null | undefined): W
 /** ¿Se sabe qué trabajos están vinculados? (si no, no se muestra ni prioridad ni «sin prioridad»). */
 export function useWorkItemPrioritiesAvailable(): boolean {
   return useContext(Ctx).available;
+}
+
+export function useReloadWorkItemPriorities(): () => Promise<void> {
+  return useContext(Ctx).reload;
 }
 
 /** Mapa completo (para tablas que arman sus columnas una sola vez). */

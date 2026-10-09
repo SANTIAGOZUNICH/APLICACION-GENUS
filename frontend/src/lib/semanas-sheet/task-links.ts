@@ -194,6 +194,48 @@ export interface WorkItemPriorityDto {
   taskProducts: string[];
   taskClient: string | null;
   taskDate: string | null;
+  /** Último día de la tarea (tareas de varios días). */
+  taskEndDate: string | null;
+  taskQuantities: string[];
+  /** Responsable / línea de la tarea en la planilla (si la banda lo indica). */
+  taskAssignee: string | null;
+  /** Pestaña de la tarea (para cambiar su prioridad con la misma API que Semanas). */
+  tabKey: "ELABORACION" | "ACONDICIONAMIENTO";
+}
+
+/** Una diferencia entre el trabajo («Mi trabajo», base) y su tarea vinculada (Semanas, Google Sheets). */
+export interface PlanDivergence {
+  field: "plannedDate" | "plannedQuantity";
+  label: string;
+  /** Lo que dice Semanas. */
+  semanas: string;
+}
+
+const numbersIn = (v: string) => (v.match(/\d+(?:[.,]\d+)?/g) ?? []).map((n) => Number(n.replace(/\./g, "").replace(",", ".")));
+
+/**
+ * Diferencias INFORMATIVAS entre un trabajo vinculado y su tarea de Semanas. Los dos datos viven en sistemas distintos
+ * (base vs planilla) y NO se sincronizan solos: esto solo avisa a Producción para que decida dónde corregir.
+ *  - Fecha: el trabajo está fuera del rango de días de la tarea.
+ *  - Cantidad: la cantidad planificada del trabajo no aparece como número en ninguna línea de la tarea
+ *    (la planilla mezcla producto y cantidad: «CREMA CHICLE 95kg», «1000 x200ml»).
+ * El producto no se compara (nombres escritos a mano distinto en cada sistema darían falsas alarmas).
+ */
+export function planDivergences(wi: { plannedDate: string | null; plannedQuantity: string | null }, task: Pick<WorkItemPriorityDto, "taskDate" | "taskEndDate" | "taskProducts" | "taskQuantities">, fmtDay: (iso: string | null) => string): PlanDivergence[] {
+  const out: PlanDivergence[] = [];
+  if (wi.plannedDate && task.taskDate) {
+    const end = task.taskEndDate ?? task.taskDate;
+    if (wi.plannedDate < task.taskDate || wi.plannedDate > end) {
+      out.push({ field: "plannedDate", label: "Fecha", semanas: end !== task.taskDate ? `${fmtDay(task.taskDate)} → ${fmtDay(end)}` : fmtDay(task.taskDate) });
+    }
+  }
+  const qty = numbersIn(wi.plannedQuantity ?? "")[0];
+  if (qty !== undefined && Number.isFinite(qty)) {
+    const lines = [...task.taskProducts, ...task.taskQuantities];
+    const nums = lines.flatMap(numbersIn);
+    if (!nums.some((n) => Math.abs(n - qty) < 1e-9)) out.push({ field: "plannedQuantity", label: "Cantidad", semanas: lines.join(" · ") || "sin cantidad en la planilla" });
+  }
+  return out;
 }
 
 export interface WorkItemPrioritiesPayload {

@@ -63,11 +63,11 @@ async function seed() {
 
 const debugPages = [];
 const browser = await chromium.launch({ executablePath: process.env.GENUS_E2E_CHROMIUM_PATH || undefined });
-async function openAs(user, viewport = { width: 1500, height: 950 }) {
+async function openAs(user, viewport = { width: 1500, height: 950 }, day = DAY) {
   const ctx = await browser.newContext({ baseURL: BASE, viewport });
   const page = await ctx.newPage();
   debugPages.push(page);
-  await page.clock.setFixedTime(new Date(`${DAY}T12:00:00`));
+  await page.clock.setFixedTime(new Date(`${day}T12:00:00`));
   await page.goto("/login");
   await page.locator('input[type="email"]').fill(user.email);
   await page.locator('input[type="password"]').fill(E2E_PASSWORD);
@@ -148,7 +148,20 @@ try {
   // ================= ELABORACIÓN: «Mi trabajo» =================
   const elab = await openAs(E2E_USERS.elaboracion);
   const ep = elab.page;
-  // Vista por defecto: planilla (celdas = inputs). La columna Prioridad es de solo lectura.
+  // Vista por defecto: TARJETAS (mismo lenguaje que Semanas), con prioridad y borde lateral.
+  await ep.waitForSelector("[data-testid=work-item-card]", { timeout: 120_000 });
+  await ep.waitForFunction(() => document.querySelectorAll("[data-testid=work-item-card][data-semanas-priority=IMPORTANTE]").length > 0, null, { timeout: 60_000 });
+  const cardPrio = async (product, qty) => ep.locator("[data-testid=work-item-card]", { hasText: product }).filter({ hasText: qty ?? product }).first().getAttribute("data-semanas-priority");
+  check(
+    "Mi trabajo (tarjetas, vista por defecto): URGENTE · IMPORTANTE · NORMAL · neutral (sin vínculo y repetido)",
+    (await cardPrio("ALISADO KERATIN", "1100")) === "URGENTE" && (await cardPrio("JALEA TERMAL")) === "IMPORTANTE" && (await cardPrio("SANITIZANTE UVA")) === "NORMAL" &&
+      (await cardPrio("PRODUCTO SIN TAREA")) === "NONE" && (await cardPrio("ALISADO KERATIN", "500")) === "NONE"
+  );
+  check("tarjetas del sector: sin campos editables de planificación", (await ep.locator("[data-testid=work-item-card] [data-editable]").count()) === 0);
+  check("tarjetas del sector: acción operativa intacta en cada tarjeta", (await ep.locator("[data-testid=work-item-card]", { hasText: "Ver / Registrar avance" }).count()) === 5);
+  await ep.screenshot({ path: `${OUT}/10a-elaboracion-mi-trabajo-tarjetas.png` });
+  await ep.locator("[data-testid=work-items-view-planilla]").first().click();
+  // La columna Prioridad de la planilla es de solo lectura.
   const gridRows = () => ep.evaluate(() => [...document.querySelectorAll(".dsg-row")].map((r) => [...r.querySelectorAll("input")].map((i) => i.value).join(" | ")));
   await ep.waitForFunction(() => [...document.querySelectorAll(".dsg-row input")].some((i) => i.value.includes("ALISADO KERATIN") ) && [...document.querySelectorAll(".dsg-row input")].some((i) => i.value.includes("URGENTE")), null, { timeout: 120_000 });
   await ep.waitForFunction(() => [...document.querySelectorAll(".dsg-row input")].some((i) => i.value.includes("IMPORTANTE")), null, { timeout: 60_000 });
@@ -228,6 +241,103 @@ try {
   check("auditoría en la base: LINK, LINK, UNLINK(con motivo), LINK, LINK", ev.map((e) => e.action).join(",") === "LINK,LINK,UNLINK,LINK,LINK" && ev[2].reason === "Estaba vinculado a la tarea equivocada");
   const wi = await q("select priority, operational_status from work_items where id = $1", [String(ids.keratin).replace(/^native:/, "")]);
   check("work_items no se modificó (su campo priority heredado sigue NORMAL)", wi[0]?.priority === "NORMAL");
+
+  // ================= INTEGRACIÓN: Producción planifica desde «Mi trabajo» =================
+  const pm = await openAs(E2E_USERS.produccion);
+  const mp = pm.page;
+  await nav(mp, "Elaboración");
+  await mp.waitForSelector("[data-testid=work-item-card]", { timeout: 120_000 });
+  const pcard = (product, qty) => mp.locator("[data-testid=work-item-card]", { hasText: product }).filter({ hasText: qty ?? product }).first();
+  check("Producción en «Mi trabajo» de Elaboración: campos de planificación editables", (await pcard("ALISADO KERATIN", "1100").locator("[data-editable]").count()) >= 5);
+  // prioridad desde la tarjeta (misma tabla y API que Semanas): IMPORTANTE → URGENTE
+  await pcard("ALISADO KERATIN", "1100").locator("[data-testid=priority-chip]").click();
+  await mp.click("[data-testid=priority-option-URGENTE]");
+  await mp.waitForFunction(() => [...document.querySelectorAll("[data-testid=work-item-card]")].some((c) => c.textContent.includes("1100") && c.textContent.includes("ALISADO KERATIN") && c.getAttribute("data-semanas-priority") === "URGENTE"), null, { timeout: 30_000 }).catch(() => {});
+  check("Producción cambia la prioridad desde «Mi trabajo» (→ URGENTE)", (await pcard("ALISADO KERATIN", "1100").getAttribute("data-semanas-priority")) === "URGENTE");
+  await pp.reload();
+  await nav(pp, "Semanas");
+  await pp.waitForSelector("[data-testid=list-row]", { timeout: 120_000 });
+  check("…y se refleja en Semanas (Lista de Producción)", (await rowOf(pp, "ALISADO KERATIN 1100KG").getAttribute("data-priority")) === "URGENTE");
+  check("Lista de Producción agrupada por día (encabezados de día)", (await pp.locator("[data-testid=list-day-header]").count()) >= 3);
+  await pp.screenshot({ path: `${OUT}/13-produccion-lista-por-dia.png` });
+
+  // cantidad: 1100 → 1200 (motivo si el servidor lo exige) y aviso de diferencia con Semanas
+  const editField = async (card, testId, value, reason = "Ajuste de planificación E2E") => {
+    await card.locator(`[data-testid=${testId}]`).click();
+    const input = mp.locator("[data-testid=card-field-input]");
+    await input.fill(value);
+    await input.press("Enter");
+    const r = mp.locator("[data-testid=card-field-reason]");
+    if (await r.waitFor({ state: "visible", timeout: 6000 }).then(() => true).catch(() => false)) {
+      await r.fill(reason);
+      await mp.locator("[data-testid=card-field-save]").click();
+    }
+    await mp.waitForSelector("[data-testid=card-field-input]", { state: "detached", timeout: 20_000 }).catch(() => {});
+  };
+  await editField(pcard("ALISADO KERATIN", "1100"), "card-quantity", "1200");
+  await mp.waitForFunction(() => [...document.querySelectorAll("[data-testid=work-item-card]")].some((c) => c.textContent.includes("1200")), null, { timeout: 20_000 }).catch(() => {});
+  const k = pcard("ALISADO KERATIN", "1200");
+  const [wiK] = await q("select planned_quantity, version from work_items where id = $1", [String(ids.keratin).replace(/^native:/, "")]);
+  check("Producción edita la cantidad desde la tarjeta → persiste en la base con nueva versión", wiK?.planned_quantity === "1200" && Number(wiK?.version) > 1, JSON.stringify(wiK));
+  check("diferencia con Semanas visible (no se sincroniza sola): «Cantidad en Semanas: …1100KG»", /Cantidad en Semanas/.test(await k.locator("[data-testid=card-semanas-diff]").innerText().catch(() => "")) );
+  // responsable: JALEA Cristian → Nicolás (versión + auditoría)
+  await editField(pcard("JALEA TERMAL"), "card-assignee", "nicolas");
+  await mp.waitForFunction(() => [...document.querySelectorAll("[data-testid=work-item-card]")].some((c) => c.textContent.includes("JALEA TERMAL") && c.textContent.includes("Nicolás")), null, { timeout: 20_000 }).catch(() => {});
+  const [wiJ] = await q("select branch_owner from work_items where id = $1", [String(ids.jalea).replace(/^native:/, "")]);
+  const evJ = await q("select type, from_status, to_status, actor_sector from operational_events where work_item_id = $1 and type = 'PLANNING_FIELDS_CORRECTED' order by created_at desc limit 1", [String(ids.jalea).replace(/^native:/, "")]);
+  check("Producción cambia el responsable (Cristian → Nicolás): base + evento de auditoría con antes/después", wiJ?.branch_owner === "Nicolás" && /Cristian/.test(String(evJ[0]?.from_status)) && /Nicol/.test(String(evJ[0]?.to_status)) && evJ[0]?.actor_sector === "PRODUCCION", JSON.stringify(evJ[0] ?? {}));
+  await mp.screenshot({ path: `${OUT}/14-produccion-mi-trabajo-elaboracion.png` });
+  // concurrencia y permisos en el servidor
+  const stale = await mp.request.patch("/api/v1/work-items/cells", { data: { changes: [{ id: `native:${String(ids.keratin).replace(/^native:/, "")}`, field: "notes", value: "x", expectedVersion: 1, reason: "Prueba de versión vieja" }] } });
+  check("versión vieja → 409 (no pisa cambios)", stale.status() === 409, String(stale.status()));
+  const asSector = await er.patch("/api/v1/work-items/cells", { data: { changes: [{ id: `native:${String(ids.keratin).replace(/^native:/, "")}`, field: "product", value: "HACKEO", expectedVersion: 99 }] } });
+  check("sector intenta editar planificación → 403", asSector.status() === 403, String(asSector.status()));
+  const asSectorAssignee = await er.patch("/api/v1/work-items/cells", { data: { changes: [{ id: `native:${String(ids.keratin).replace(/^native:/, "")}`, field: "assignee", value: "Nicolás", expectedVersion: 99 }] } });
+  check("sector intenta cambiar el responsable → 403", asSectorAssignee.status() === 403);
+
+  // ================= Crear trabajo DESDE una tarea de Semanas (vínculo por procedencia) =================
+  const jojoba = rowOf(pp, "SERUM JOJOBA 50KG");
+  await jojoba.locator("[data-testid=list-link-cell]").click();
+  await pp.locator("[data-testid=link-create-from-task]").click();
+  await pp.waitForSelector("[data-testid=assign-from-semanas]", { timeout: 20_000 });
+  const prod0 = await pp.locator("#af-product").inputValue();
+  const client0 = await pp.locator("#af-client").inputValue();
+  check("«Crear trabajo» abre la asignación prellenada desde la tarea (producto y cliente)", prod0 === "SERUM JOJOBA 50KG" && client0 === "BL COSMETIC", `${prod0} / ${client0}`);
+  await pp.screenshot({ path: `${OUT}/15-produccion-crear-desde-semanas.png` });
+  if (!(await pp.locator("#af-qty").inputValue())) await pp.locator("#af-qty").fill("50");
+  await pp.locator("[data-testid=assign-submit]").click();
+  await pp.waitForFunction(() => /Vinculado a la tarea de Semanas|NO quedó vinculado/.test(document.body.innerText), null, { timeout: 30_000 }).catch(() => {});
+  check("el trabajo nace VINCULADO a su tarea (sin buscarlo ni confirmarlo aparte)", /Vinculado a la tarea de Semanas/.test(await pp.locator("body").innerText()));
+  await pp.waitForFunction(() => [...document.querySelectorAll("[data-testid=list-row]")].some((r) => r.textContent.includes("SERUM JOJOBA 50KG") && r.querySelector("[data-testid=list-link-cell][data-linked='1']")), null, { timeout: 30_000 }).catch(() => {});
+  check("la Lista muestra el trabajo vinculado a esa tarea", (await jojoba.locator("[data-testid=list-link-cell]").getAttribute("data-linked")) === "1");
+  const [newLink] = await q("select l.task_key, w.product, w.branch_owner from semanas_task_links l join work_items w on w.id = l.work_item_id where l.unlinked_at is null and w.product = 'SERUM JOJOBA 50KG'");
+  check("en la base: vínculo activo con la tarea elegida (procedencia), responsable tomado de la banda", Boolean(newLink) && /serum jojoba 50kg/.test(String(newLink.task_key)) && newLink.branch_owner === "Cristian", JSON.stringify(newLink ?? {}));
+  const elabNow = await (await er.get("/api/v1/semanas/work-item-priorities")).json();
+  check("el sector ya ve la prioridad del trabajo nuevo en «Mi trabajo» (NORMAL de su tarea)", Object.values(elabNow.byWorkItem).some((v) => /SERUM JOJOBA/.test(v.taskProducts.join(" ")) && v.priority === "NORMAL"));
+
+  // Envasado Masivo: crear desde una tarea de Acondicionamiento, prioridad URGENTE y verla en su «Mi trabajo»
+  await pp.click("[data-testid=semanas-tab-ACONDICIONAMIENTO]");
+  await pp.waitForSelector("[data-testid=list-row]", { timeout: 60_000 });
+  const masivoRow = pp.locator("[data-testid=list-row]").filter({ hasText: "Envasado Masivo" }).first();
+  const masivoDate = await masivoRow.locator("[data-testid=list-date]").innerText();
+  await masivoRow.locator("[data-testid=priority-chip]").click();
+  await pp.click("[data-testid=priority-option-URGENTE]");
+  await pp.waitForTimeout(800);
+  await masivoRow.locator("[data-testid=list-link-cell]").click();
+  await pp.locator("[data-testid=link-create-from-task]").click();
+  await pp.waitForSelector("[data-testid=assign-from-semanas]", { timeout: 20_000 });
+  if (!(await pp.locator("#af-qty").inputValue())) await pp.locator("#af-qty").fill("1000");
+  await pp.locator("[data-testid=assign-submit]").click();
+  await pp.waitForFunction(() => /Vinculado a la tarea de Semanas|NO quedó vinculado/.test(document.body.innerText), null, { timeout: 30_000 }).catch(() => {});
+  check("Envasado Masivo: trabajo creado desde Semanas y vinculado", /Vinculado a la tarea de Semanas/.test(await pp.locator("body").innerText()), masivoDate);
+  const [mRow] = await q("select w.planned_date from semanas_task_links l join work_items w on w.id = l.work_item_id where l.unlinked_at is null and w.sector = 'ENVASADO_MASIVO' order by l.created_at desc limit 1");
+  const masivoDay = mRow ? String(mRow.planned_date instanceof Date ? mRow.planned_date.toISOString().slice(0, 10) : mRow.planned_date).slice(0, 10) : DAY;
+  const env2 = await openAs(E2E_USERS.envasado, { width: 1366, height: 900 }, masivoDay);
+  await env2.page.waitForSelector("[data-testid=work-item-card][data-semanas-priority=URGENTE]", { timeout: 120_000 }).catch(() => {});
+  check("Envasado Masivo ve el trabajo URGENTE en «Mi trabajo» (tarjetas, sin edición de planificación)", (await env2.page.locator("[data-testid=work-item-card][data-semanas-priority=URGENTE]").count()) >= 1 && (await env2.page.locator("[data-testid=work-item-card] [data-editable]").count()) === 0);
+  await env2.page.screenshot({ path: `${OUT}/16-envasado-masivo-mi-trabajo.png` });
+  await env2.ctx.close();
+  await pm.ctx.close();
   await envasado.ctx.close();
   await elab.ctx.close();
   await prod.ctx.close();

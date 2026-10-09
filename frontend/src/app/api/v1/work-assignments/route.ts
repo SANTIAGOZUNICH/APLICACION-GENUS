@@ -86,6 +86,26 @@ function parseBody(raw: unknown): WorkAssignmentInput {
   };
 }
 
+/**
+ * Trabajo creado DESDE una tarea de Semanas (`semanasTask`): se registra el vínculo explícito por procedencia (la tarea
+ * la eligió Producción al crear; nada se infiere por parecido). El trabajo ya quedó confirmado; si el vínculo no se puede
+ * crear (la tarea cambió, otro sector/semana, sin permiso) se informa — nunca se da por vinculado en silencio.
+ */
+async function linkFromSemanasTask(raw: unknown, actor: { email: string; sector: string; displayName: string }, workItemId: string): Promise<{ ok: boolean; error?: string } | null> {
+  const st = (raw as { semanasTask?: { tabKey?: unknown; taskKey?: unknown } } | null)?.semanasTask;
+  if (!st || typeof st.tabKey !== "string" || typeof st.taskKey !== "string" || !st.taskKey) return null;
+  try {
+    const { linkSemanasTask } = await import("@/lib/semanas-sheet/semanas-sheet-service");
+    await linkSemanasTask({ email: actor.email, sector: actor.sector as never, displayName: actor.displayName }, { tabKey: st.tabKey, taskKey: st.taskKey, workItemId: `native:${workItemId}` });
+    return { ok: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "No se pudo vincular.";
+    // Reintento idempotente de la misma asignación: el vínculo ya existe con esta misma tarea.
+    if (/ya está vinculado con esta tarea/i.test(message)) return { ok: true };
+    return { ok: false, error: message };
+  }
+}
+
 export async function GET(request: Request) {
   const blocked = ensureNativePlanningReady();
   if (blocked) return blocked;
@@ -183,6 +203,7 @@ export async function POST(request: Request) {
 
     const input = parseBody(raw);
     const result = await assignWorkItemDurable(input, actor, operationId);
+    const semanasLink = await linkFromSemanasTask(raw, actor, result.item.id);
 
     return NextResponse.json(
       {
@@ -194,6 +215,7 @@ export async function POST(request: Request) {
         order: result.order,
         oaCreated: Boolean(result.order?.created),
         oaLinked: Boolean(result.order && !result.order.created),
+        ...(semanasLink ? { semanasLink } : {}),
       },
       { status: result.replayed ? 200 : 201 }
     );

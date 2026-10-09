@@ -16,6 +16,8 @@ import { canEditPriorities } from "@/lib/semanas-sheet/priorities-permissions";
 import type { Priority } from "@/lib/semanas-sheet/priorities";
 import { PLAN_SECTORS } from "@/lib/semanas-sheet/plan-tasks";
 import type { LinkActions } from "@/features/os/operational/components/semanas-link-panel";
+import { AssignWorkDialog } from "@/features/os/operational/components/assign-work-dialog";
+import type { PlanTask } from "@/lib/semanas-sheet/plan-tasks";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
@@ -249,6 +251,7 @@ export function SemanasGridView() {
   // Vínculos tarea ↔ trabajo operativo: cada cambio se relee del servidor (nunca un estado optimista).
   const viewTabKey = view?.tabKey;
   const canLink = Boolean(view?.canLink);
+  const [createFor, setCreateFor] = useState<PlanTask | null>(null);
   const linkActions = useMemo<LinkActions | undefined>(() => {
     if (!viewTabKey) return undefined;
     return {
@@ -262,6 +265,7 @@ export function SemanasGridView() {
         await deleteTaskLink(session, { linkId, expectedVersion, reason });
         await load(viewTabKey, true);
       },
+      createFromTask: (task) => setCreateFor(task),
     };
   }, [viewTabKey, canLink, session, load]);
 
@@ -426,6 +430,23 @@ export function SemanasGridView() {
             links={view.links}
             linkActions={linkActions}
             footnote={`Leído de ${view.source === "PREVIEW_XLSX" ? "la copia XLSX de Preview" : view.source === "LOCAL_FIXTURE" ? "la copia local" : "Google"}: ${new Date(view.readAt).toLocaleTimeString("es-AR")}.${canEdit ? " Las fechas anteriores a hoy se corrigen con motivo; encabezados, fórmulas y registros cerrados son de solo lectura." : ""}`}
+          />
+        )}
+        {createFor && createFor.sector && view && (
+          <AssignWorkDialog
+            sector={createFor.sector}
+            initialPlannedDate={createFor.date ?? undefined}
+            initialValues={{
+              client: createFor.client ?? "",
+              product: createFor.products[0] ?? "",
+              // Solo una cantidad explícita de la planilla (renglón propio); si está dentro del texto, se completa a mano.
+              quantity: (createFor.quantities[0]?.match(/\d+(?:[.,]\d+)?/)?.[0] ?? "").replace(",", "."),
+              ownerPerson: createFor.assignee?.kind === "RESPONSABLE" ? createFor.assignee.value : undefined,
+              notes: createFor.notes.join(" · "),
+            }}
+            semanasTask={{ tabKey: createFor.tabKey, taskKey: createFor.key, summary: createFor.lines.map((l) => l.value).join(" / ") }}
+            onClose={() => setCreateFor(null)}
+            onAssigned={() => void load(view.tabKey, true)}
           />
         )}
         {tvOpen && <SemanasTvMode session={session} sectors={[...PLAN_SECTORS]} initialSector={view?.tabKey === "ACONDICIONAMIENTO" ? "ENVASADO_MASIVO" : "ELABORACION"} onExit={closeTv} />}

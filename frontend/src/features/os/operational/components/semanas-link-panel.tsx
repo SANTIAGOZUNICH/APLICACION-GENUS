@@ -7,7 +7,7 @@
  * Se edita en un panel EN LÍNEA debajo de la fila (sin ventanas flotantes).
  */
 import { useEffect, useState } from "react";
-import { AlertTriangle, Link2, Unlink } from "lucide-react";
+import { AlertTriangle, Link2, Plus, Unlink } from "lucide-react";
 import { formatDay, PLAN_SECTOR_LABEL, type PlanTask } from "@/lib/semanas-sheet/plan-tasks";
 import type { LinkSuggestionsDto } from "@/lib/semanas-sheet/semanas-client";
 import { MIN_LINK_REASON, type LinkCandidate, type LinkView, type WorkItemBrief } from "@/lib/semanas-sheet/task-links";
@@ -20,6 +20,8 @@ export interface LinkActions {
   loadCandidates: (taskKey: string) => Promise<LinkSuggestionsDto>;
   link: (taskKey: string, workItemId: string, replace?: { linkId: string; expectedVersion: number }, reason?: string) => Promise<void>;
   unlink: (linkId: string, expectedVersion: number, reason: string) => Promise<void>;
+  /** Abre «Asignar trabajo» prellenado con la tarea; el trabajo nace vinculado (procedencia explícita). */
+  createFromTask?: (task: PlanTask) => void;
 }
 
 function itemLine(wi: WorkItemBrief | null): string {
@@ -186,6 +188,16 @@ export function LinkPanel({ task, links, actions, colSpan }: { task: PlanTask; l
           <section aria-label="Sugerencias">
             <h4 className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--os-text-muted)]">Trabajos de la semana · {task.sector ? PLAN_SECTOR_LABEL[task.sector] : "sin sector"}</h4>
             <p className="mb-2 text-[var(--os-text-muted)]">Sugerencias ordenadas por parecido: GENUS no vincula nada solo. Confirmá solo si es el mismo trabajo.</p>
+            {actions.canLink && actions.createFromTask && task.sector && (
+              <button
+                type="button"
+                onClick={() => actions.createFromTask!(task)}
+                className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-[var(--os-teal)] bg-[var(--os-teal-soft)] px-2.5 py-1 font-bold text-[var(--os-text)] hover:bg-[var(--os-teal)] hover:text-[#04201e]"
+                data-testid="link-create-from-task"
+              >
+                <Plus className="size-3.5" aria-hidden="true" /> Crear trabajo desde esta tarea (queda vinculado)
+              </button>
+            )}
             {!actions.canLink && <p className="text-[var(--os-text-muted)]">Solo Producción puede vincular.</p>}
             {error && <p className="mb-2 rounded border border-red-400/40 bg-red-500/10 px-2 py-1 text-red-200" role="alert" data-testid="link-error">{error}</p>}
             {actions.canLink && !data && !error && <p className="text-[var(--os-text-muted)]">Buscando trabajos…</p>}

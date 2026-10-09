@@ -165,4 +165,41 @@ describe.skipIf(Boolean(PROBLEM))(`Vínculos tarea ↔ trabajo en Postgres real$
     // reaparece la tarea del lunes (planilla completa): el trabajo terminado conserva su vínculo y su prioridad
     expect((await links.loadWorkItemPriorities("ELABORACION", SID, async () => tasks)).byWorkItem[ids.lunes]!.priority).toBe("URGENTE");
   });
+
+  it("responsable editado por Producción: versión obligatoria (CAS), auditoría antes/después, sin tocar vínculo ni prioridad", async () => {
+    const { links, tasksOf } = await mods();
+    const { updateWorkItemAssigneeDurable } = await import("@/lib/planning/work-item-progress-repository");
+    const id = ids.miercoles.slice(7);
+    const [before] = await q("select version, branch_owner from work_items where id = $1", [id]);
+    const v = Number(before!.version);
+    const by = { updatedBy: "IT Producción", updatedBySector: "PRODUCCION", reason: "IT responsable" };
+    expect(before!.branch_owner).toBe("Cristian");
+    await updateWorkItemAssigneeDurable(id, { ...by, assignee: "Nicolás", expectedVersion: v });
+    // versión vieja → conflicto (nunca pisa el cambio anterior)
+    await expect(updateWorkItemAssigneeDurable(id, { ...by, assignee: "Cristian", expectedVersion: v })).rejects.toThrow(/versi[oó]n/i);
+    // dos ediciones simultáneas con la MISMA versión: una gana, la otra es conflicto
+    const results = await Promise.allSettled([
+      updateWorkItemAssigneeDurable(id, { ...by, assignee: "Cristian", expectedVersion: v + 1 }),
+      updateWorkItemAssigneeDurable(id, { ...by, assignee: "Cristian", expectedVersion: v + 1 }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const lost = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(String(lost.reason?.message ?? lost.reason)).toMatch(/versi[oó]n/i);
+    const [after] = await q("select version, branch_owner from work_items where id = $1", [id]);
+    expect(after).toMatchObject({ branch_owner: "Cristian" });
+    expect(Number(after!.version)).toBe(v + 2);
+    // valor inválido para Elaboración → rechazado, sin cambiar la versión
+    await expect(updateWorkItemAssigneeDurable(id, { ...by, assignee: "Línea 2", expectedVersion: v + 2 })).rejects.toThrow();
+    const [same] = await q("select version from work_items where id = $1", [id]);
+    expect(Number(same!.version)).toBe(v + 2);
+    const ev = await q("select type, actor_sector, from_status, to_status from operational_events where work_item_id = $1 and type = 'PLANNING_FIELDS_CORRECTED' order by created_at", [id]);
+    expect(ev).toHaveLength(2);
+    expect(ev[0]).toMatchObject({ type: "PLANNING_FIELDS_CORRECTED", actor_sector: "PRODUCCION" });
+    expect(String(ev[0]!.from_status)).toContain("Cristian");
+    expect(String(ev[0]!.to_status)).toContain("Nicolás");
+    expect(String(ev[1]!.to_status)).toContain("Cristian");
+    // el vínculo (y por lo tanto la prioridad) sigue intacto
+    const tasks = await tasksOf(weekOf(SPEC));
+    expect((await links.loadWorkItemPriorities("ELABORACION", SID, async () => tasks)).byWorkItem[ids.miercoles]).toBeTruthy();
+  });
 });

@@ -12,8 +12,10 @@ import { workItems } from "@/lib/db/schema";
 import { mapWorkItemRow } from "@/lib/planning/drizzle-repository";
 import { projectNativeWorkItem } from "@/lib/planning/native-projector";
 import {
+  updateWorkItemAssigneeDurable,
   updateWorkItemLoteVtoDurable,
   updateWorkItemPlanningDurable,
+  type UpdateWorkItemAssigneeInput,
   type UpdateLoteVtoInput,
   type UpdateWorkItemPlanningInput,
 } from "@/lib/planning/work-item-progress-repository";
@@ -34,6 +36,7 @@ export interface WorkItemCellStore {
   load(nativeIds: string[]): Promise<Map<string, WorkItem>>;
   updatePlanning(id: string, input: UpdateWorkItemPlanningInput): Promise<{ version: number }>;
   updateLoteVto(id: string, input: UpdateLoteVtoInput): Promise<{ version: number }>;
+  updateAssignee(id: string, input: UpdateWorkItemAssigneeInput): Promise<{ version: number }>;
 }
 
 export const neonWorkItemCellStore: WorkItemCellStore = {
@@ -49,6 +52,7 @@ export const neonWorkItemCellStore: WorkItemCellStore = {
   },
   updatePlanning: (id, input) => updateWorkItemPlanningDurable(id, input),
   updateLoteVto: (id, input) => updateWorkItemLoteVtoDurable(id, input),
+  updateAssignee: (id, input) => updateWorkItemAssigneeDurable(id, input),
 };
 
 let storeOverride: WorkItemCellStore | null = null;
@@ -63,7 +67,7 @@ function classify(err: unknown): { code: "CONFLICT" | "INVALID" | "ERROR"; messa
   const message = err instanceof Error ? err.message : "Error al guardar.";
   if (/conflict/i.test(message)) return { code: "CONFLICT", message };
   if (err instanceof Error && /Validation/i.test(err.name)) return { code: "INVALID", message };
-  if (/inv[aá]lid|obligatori|debe mantenerse|no hay cambios/i.test(message)) return { code: "INVALID", message };
+  if (/inv[aá]lid|obligatori|debe mantenerse|no hay cambios|requiere|no aplica|no tiene responsable/i.test(message)) return { code: "INVALID", message };
   return { code: "ERROR", message };
 }
 
@@ -120,7 +124,9 @@ export async function applyWorkItemCellChanges(
     const by = actor.displayName || actor.email;
     try {
       const row =
-        p.change.field === "packagingLote" || p.change.field === "packagingVto"
+        p.change.field === "assignee"
+          ? await store.updateAssignee(nativeOf(key), { assignee: p.value ?? "", reason: p.change.reason ?? null, updatedBy: by, updatedBySector: actor.sector, expectedVersion: expected })
+          : p.change.field === "packagingLote" || p.change.field === "packagingVto"
           ? await store.updateLoteVto(nativeOf(key), {
               [p.change.field]: p.value,
               reason: p.change.reason ?? "",

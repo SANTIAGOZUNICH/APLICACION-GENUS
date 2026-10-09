@@ -396,7 +396,10 @@ export async function loadWorkItemPriorities(
     for (const [key, m] of byTask) {
       const t = tasks.find((x) => x.key === key)!;
       for (const l of m.links) {
-        byWorkItem[clientItemId(l.workItemId)] = { priority: t.priority, priorityInfo: t.priorityInfo, taskKey: t.key, taskProducts: t.products, taskClient: t.client, taskDate: t.date };
+        byWorkItem[clientItemId(l.workItemId)] = {
+          priority: t.priority, priorityInfo: t.priorityInfo, taskKey: t.key, taskProducts: t.products, taskClient: t.client,
+          taskDate: t.date, taskEndDate: t.endDate, taskQuantities: t.quantities, taskAssignee: t.assignee?.value ?? null, tabKey: t.tabKey,
+        };
       }
     }
   }

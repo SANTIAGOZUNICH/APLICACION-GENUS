@@ -16,6 +16,8 @@ import { useWorkItemCellEditing } from "../hooks/use-work-item-cells";
 import { formatDateDisplay } from "../lib/delivery-date";
 import { DeliveryDateBadge } from "./delivery-date-badge";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
+import { WorkItemCards } from "./work-item-cards";
+import { useWorkItemsView } from "../hooks/use-work-items-view";
 
 interface WorkItemProgressTableProps {
   items: WorkItem[];
@@ -73,6 +75,7 @@ function WorkItemProgressTableInner({
   cells: cellsIn,
 }: WorkItemProgressTableProps & { cells?: CellEditing }) {
   const cells = cellsIn ?? NO_CELL_EDITING;
+  const [view, setView] = useWorkItemsView();
   // Prioridad de Semanas (solo trabajos vinculados por Producción). Solo lectura: la cambia Producción en Semanas.
   const semanasPriorities = useWorkItemPrioritiesMap();
   // Con la función disponible se muestra siempre la columna: vinculado = prioridad; sin vínculo = indicación neutral.
@@ -95,7 +98,8 @@ function WorkItemProgressTableInner({
           }),
         ]
       : []),
-    ...(variant === "envasado" ? [excelCol<WorkItem>("linea", "Línea", (i) => displayField(i.line))] : []),
+    // Responsable (Elaboración) / Línea (Envasado): editable por Producción con versión y auditoría.
+    excelCol<WorkItem>("assignee", variant === "envasado" ? "Línea" : "Responsable", (i) => (variant === "envasado" ? (i.line ?? "") : (i.ownerPerson ?? "")), { edit: cells.edit("assignee") }),
     excelCol<WorkItem>("plannedDate", "Fecha", (i) => (i.plannedDate ? formatDateDisplay(i.plannedDate) : displayField(i.dayLabel)), { edit: cells.edit("plannedDate") }),
     excelCol<WorkItem>("deliveryDate", "Fecha de entrega", (i) => (i.deliveryDate ? formatDateDisplay(i.deliveryDate) : ""), { edit: cells.edit("deliveryDate") }),
     excelCol<WorkItem>("client", "Cliente", (i) => i.client ?? "", { edit: cells.edit("client") }),
@@ -129,7 +133,48 @@ function WorkItemProgressTableInner({
     },
   ];
 
+  const viewToggle = (
+    <div className="flex justify-end">
+      <div className="inline-flex rounded-lg border border-[var(--os-border)] p-0.5 text-xs" role="tablist" aria-label="Vista de trabajos">
+        {(["cards", "planilla"] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            role="tab"
+            aria-selected={view === v}
+            onClick={() => setView(v)}
+            data-testid={`work-items-view-${v}`}
+            className={`rounded-md px-2.5 py-1 font-semibold ${view === v ? "bg-[var(--os-teal)] text-[#04201e]" : "text-[var(--os-text-muted)] hover:text-[var(--os-text)]"}`}
+          >
+            {v === "cards" ? "Tarjetas" : "Planilla"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+  if (view === "cards") {
+    return (
+      <div className="space-y-2">
+        {viewToggle}
+        <WorkItemCards
+          items={items}
+          variant={variant}
+          getFinishedQty={getFinishedQty}
+          getObservation={getObservation}
+          onSelectItem={onSelectItem}
+          listMode={listMode}
+          onArchiveFromView={onArchiveFromView}
+          onRestoreToView={onRestoreToView}
+          archiveBusyId={archiveBusyId}
+          showPackagingColumns={showPackagingColumns}
+          cells={cells}
+        />
+      </div>
+    );
+  }
   return (
+    <div className="space-y-2">
+    {viewToggle}
     <ExcelOrList
       columns={excelColumns}
       rows={items}
@@ -313,5 +358,6 @@ function WorkItemProgressTableInner({
       </table>
     </div>
     </ExcelOrList>
+    </div>
   );
 }
