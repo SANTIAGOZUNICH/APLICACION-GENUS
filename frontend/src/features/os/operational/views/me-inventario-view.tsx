@@ -26,14 +26,19 @@ import {
   type MeInventarioViewRow,
 } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
-import { useInventoryCellEditing } from "@/features/os/operational/hooks/use-inventory-cells";
+import { useMeSheetEditing } from "@/features/os/operational/hooks/use-me-sheet-cells";
+import { MeStockDialog } from "@/features/os/operational/components/me-stock-dialog";
+import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
 import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import { applySort, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
 
-// Solo estas columnas se editan por celda. CÓDIGO (clave) y CANTIDAD TOTAL (se deriva de ingresos − salidas) NO.
-const ME_CELL_FIELDS: Record<string, string> = { CLIENTE: "cliente", INSUMO: "descripcion", UBICACIÓN: "ubicacion" };
+// Se editan los datos del material. CÓDIGO (clave) y CANTIDAD TOTAL (se calcula) NO: el stock se corrige con un
+// ajuste (motivo + historial) o corrigiendo el ingreso / la salida de origen.
+const ME_CELL_FIELDS: Record<string, string> = {
+  CLIENTE: "cliente", INSUMO: "descripcion", UBICACIÓN: "ubicacion", UNIDAD: "unidad", "CANT. POR BULTO": "cantidadPorBulto", "STOCK MÍNIMO": "stockMinimo", "PUNTO DE REPOSICIÓN": "puntoReposicion",
+};
 
 export const ME_INVENTARIO_SORT_OPTIONS: SortOption<MeInventarioViewRow>[] = [
   { key: "codigo_asc", label: "Código A-Z", compare: (a, b) => compareStrings(a.codigo, b.codigo, "asc") },
@@ -108,9 +113,13 @@ export function MeInventarioView() {
     [reload]
   );
 
-  const cells = useInventoryCellEditing<MeInventarioViewRow>("me_inventario", canWrite, ME_CELL_FIELDS, (r) => r.materialId, reload);
+  const cells = useMeSheetEditing<MeInventarioViewRow>("me_inventario", sectorId, canWrite, ME_CELL_FIELDS, reload);
+  const canAdjust = canWriteInventory(sectorId, "me_ajustes");
+  const [stockFor, setStockFor] = useState<{ materialId: string; codigo: string; insumo: string; stock: number } | null>(null);
+  const [historyFor, setHistoryFor] = useState<{ id: string; label: string } | null>(null);
+  const openStock = (row: MeInventarioViewRow) => setStockFor({ materialId: row.materialId, codigo: row.codigo, insumo: row.insumo, stock: row.cantidadTotal });
 
-  const columns: OperationalTableColumn<MeInventarioViewRow>[] = ME_INVENTARIO_COLUMNS.map(
+  const columns: OperationalTableColumn<MeInventarioViewRow>[] = [...ME_INVENTARIO_COLUMNS, "UNIDAD", "CANT. POR BULTO", "STOCK MÍNIMO", "PUNTO DE REPOSICIÓN"].map(
     (label) => {
       const map: Record<string, keyof MeInventarioViewRow> = {
         CÓDIGO: "codigo",
@@ -119,11 +128,19 @@ export function MeInventarioView() {
         BULTOS: "bultosDisplay",
         "CANTIDAD TOTAL": "cantidadTotal",
         UBICACIÓN: "ubicacion",
+        UNIDAD: "unidad",
+        "CANT. POR BULTO": "cantidadPorBulto",
+        "STOCK MÍNIMO": "stockMinimo",
+        "PUNTO DE REPOSICIÓN": "puntoReposicion",
       };
       const key = map[label];
+      const extra = ["UNIDAD", "CANT. POR BULTO", "STOCK MÍNIMO", "PUNTO DE REPOSICIÓN"].includes(label);
       return {
         key: label,
         header: label,
+        // Los umbrales viven en la planilla; la lista conserva sus columnas de siempre.
+        excelOnly: extra,
+        text: (row: MeInventarioViewRow) => (row[key] == null ? "" : String(row[key])),
         render: (row) =>
           label === "CANTIDAD TOTAL" && row.cantidadTotal < 0 ? (
             <span className="font-semibold text-red-600">
@@ -144,9 +161,9 @@ export function MeInventarioView() {
         </div>
       )}
       <p className="mb-3 text-xs text-[var(--os-text-muted)]">
-        Stock actual = Ingresos ME − cantidad utilizada en OA entregadas, agrupado únicamente por
-        CÓDIGO. Las salidas manuales no descuentan. Productos con el mismo nombre y distinto código
-        son independientes.
+        Stock actual = Ingresos ME − consumos de OA entregadas − salidas manuales que descuentan (devolución, descarte,
+        traslado, muestra) + ajustes, agrupado por CÓDIGO. El stock no se escribe a mano: abrí «Stock» para ver los
+        movimientos, corregir el de origen o registrar un ajuste con motivo. Un stock negativo se muestra tal cual.
       </p>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <input
@@ -229,6 +246,13 @@ export function MeInventarioView() {
                   key: "acciones",
                   header: "",
                   render: (row: MeInventarioViewRow) => (
+                    <span className="inline-flex items-center gap-1">
+                    <button type="button" onClick={() => openStock(row)} className={`rounded px-1.5 py-0.5 text-xs font-semibold ${row.cantidadTotal < 0 ? "bg-red-500/15 text-red-500" : "text-[var(--os-teal)] hover:underline"}`} data-testid="me-stock-open" title="Movimientos y ajuste de inventario">
+                      {row.cantidadTotal < 0 ? "Corregir" : "Stock"}
+                    </button>
+                    <button type="button" onClick={() => setHistoryFor({ id: row.materialId, label: `${row.codigo} · ${row.insumo}` })} className="rounded px-1 text-xs text-[var(--os-text-muted)] hover:underline" title="Historial de cambios del material">
+                      Historial
+                    </button>
                     <DeleteAction
                       entityLabel={row.insumo || row.codigo || row.materialId}
                       title="Eliminar material ME"
@@ -244,6 +268,7 @@ export function MeInventarioView() {
                         }
                       }}
                     />
+                    </span>
                   ),
                 } as OperationalTableColumn<MeInventarioViewRow>,
               ]
@@ -251,6 +276,7 @@ export function MeInventarioView() {
         ]}
         rows={filtered}
         rowKey={(r) => r.materialId}
+        rowClassName={(r) => (r.cantidadTotal < 0 ? "genus-row-stock-negativo" : undefined)}
         emptyMessage="Inventario ME vacío. Cargá ingresos y entregá OA para ver movimientos."
         selection={
           sel.active
@@ -258,6 +284,8 @@ export function MeInventarioView() {
             : undefined
         }
       />
+      <MeStockDialog target={stockFor} canAdjust={canAdjust} onClose={() => setStockFor(null)} onAdjusted={() => void reload()} />
+      <MeHistoryDialog target={historyFor} onClose={() => setHistoryFor(null)} />
     </TwinShell>
   );
 }

@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ClipboardPaste, Pencil, Plus, Trash2 } from "lucide-react";
+import { ClipboardPaste, History, Pencil, Plus, Trash2 } from "lucide-react";
+import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
+import { useMeSheetEditing } from "@/features/os/operational/hooks/use-me-sheet-cells";
+import { ME_SALIDA_MOTIVOS, meSalidaMotivo } from "@/lib/inventory/me-sheet-edit";
 import { Button } from "@/components/ui/button";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { LifecycleConfirmDialog } from "@/features/os/operational/components/lifecycle-confirm-dialog";
@@ -73,6 +76,8 @@ type FormState = {
   entregado: boolean;
   comentarios: string;
   materialId: string;
+  /** Motivo de la salida manual: define si descuenta stock (nunca el consumo de una OA). */
+  motivoSalida: string;
 };
 
 function emptyForm(): FormState {
@@ -88,8 +93,15 @@ function emptyForm(): FormState {
     entregado: false,
     comentarios: "",
     materialId: "",
+    motivoSalida: "",
   };
 }
+
+/** Columna de la planilla → campo de la salida (TOTAL no: es calculado). */
+const ME_SALIDA_SHEET_FIELD_OF: Record<string, string> = {
+  FECHA: "fecha", "EGRESO N.º": "egresoNro", CLIENTE: "cliente", "REMITO N.º": "remitoNro", DESCRIPCIÓN: "descripcion", BULTOS: "bultos",
+  CANTIDAD: "cantidad", CONTROL: "control", ENTREGADO: "entregado", COMENTARIOS: "comentarios", CÓDIGO: "codigo", MOTIVO: "motivoSalida", "DESCUENTA STOCK": "descuentaStock",
+};
 
 export function MeSalidasView() {
   const { sectorId } = usePreviewSession();
@@ -120,6 +132,8 @@ export function MeSalidasView() {
     setPersistence(salidas.persistence);
     setBanner(salidas.message ?? null);
   }, []);
+  const [historyFor, setHistoryFor] = useState<{ id: string; label: string } | null>(null);
+  const sheet = useMeSheetEditing<MeSalidaRow>("me_salidas", sectorId, canWrite, ME_SALIDA_SHEET_FIELD_OF, reload);
 
   useEffect(() => {
     let cancelled = false;
@@ -160,7 +174,7 @@ export function MeSalidasView() {
   const sel = useListSelectionMode(visibleIds);
 
   const ME_SALIDA_PRIMARY = new Set(["DESCRIPCIÓN", "CONTROL", "ENTREGADO"]);
-  const columns: OperationalTableColumn<MeSalidaRow>[] = ME_SALIDA_COLUMNS.map((label) => {
+  const columns: OperationalTableColumn<MeSalidaRow>[] = [...ME_SALIDA_COLUMNS, "CÓDIGO", "MOTIVO", "DESCUENTA STOCK"].map((label) => {
     const keyMap: Record<string, keyof MeSalidaRow> = {
       FECHA: "fecha",
       "EGRESO N.º": "egresoNro",
@@ -173,13 +187,28 @@ export function MeSalidasView() {
       CONTROL: "control",
       ENTREGADO: "entregado",
       COMENTARIOS: "comentarios",
+      CÓDIGO: "codigo",
+      MOTIVO: "motivoSalida",
+      "DESCUENTA STOCK": "descuentaStock",
     };
     const key = keyMap[label];
     return {
       key: label,
       header: label,
       hideOnMobile: ME_SALIDA_PRIMARY.has(label) ? false : ("xl" as const),
+      // Texto editable en la planilla (valor crudo, no el adorno de la lista).
+      text: (row: MeSalidaRow) => {
+        if (label === "DESCUENTA STOCK") return row.origen === "OA" ? "Sí (OA)" : row.descuentaStock ? "Sí" : "No";
+        if (label === "MOTIVO") return row.origen === "OA" ? "Consumo de OA" : (meSalidaMotivo(row.motivoSalida)?.label ?? "");
+        const v = row[key];
+        return typeof v === "boolean" ? (v ? "Sí" : "No") : v == null ? "" : String(v);
+      },
+      edit: sheet.edit(label),
       render: (row) => {
+        if (label === "DESCUENTA STOCK") {
+          return row.origen === "OA" ? "Sí (automática de OA)" : row.descuentaStock ? <b className="text-amber-500">Sí</b> : "No (registro)";
+        }
+        if (label === "MOTIVO") return row.origen === "OA" ? "Consumo de OA" : (meSalidaMotivo(row.motivoSalida)?.label ?? "—");
         if (label === "COMENTARIOS") {
           const oaTag =
             row.origen === "OA" && row.oaNumber
@@ -255,6 +284,8 @@ export function MeSalidasView() {
           entregado: form.entregado,
           comentarios: form.comentarios,
           materialId: form.materialId || null,
+          codigo: mat?.codigo ?? undefined,
+          motivoSalida: form.motivoSalida || null,
         },
       });
       setForm(null);
@@ -338,6 +369,11 @@ export function MeSalidasView() {
         </select>
       </div>
 
+      <p className="mb-2 rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-xs text-[var(--os-text-muted)]" data-testid="me-salidas-regla">
+        <b className="text-[var(--os-text)]">Cómo descuentan las salidas:</b> las salidas de una OA se descuentan solas al entregar la OA.
+        Una salida manual descuenta solo si su motivo lo indica (devolución, descarte, traslado, muestra). Una entrega de
+        materiales para una OA se registra como «Entrega para una OA» y no descuenta, para no restar dos veces.
+      </p>
       <OperationalTable
         columns={[
           ...columns,
@@ -386,10 +422,14 @@ export function MeSalidasView() {
                             entregado: row.entregado,
                             comentarios: row.comentarios,
                             materialId: row.materialId ?? "",
+                            motivoSalida: row.motivoSalida ?? "",
                           })
                         }
                       >
                         <Pencil className="size-4" />
+                      </button>
+                      <button type="button" aria-label="Historial" title="Historial de cambios" onClick={() => setHistoryFor({ id: row.id, label: `Salida ${row.egresoNro}` })}>
+                        <History className="size-4" />
                       </button>
                       <button
                         type="button"
@@ -413,6 +453,10 @@ export function MeSalidasView() {
         ]}
         rows={pageRows}
         rowKey={(r) => r.id}
+        tableId="me-salidas"
+        canEditCells={sheet.canEditCells}
+        onCellsCommit={sheet.onCellsCommit}
+        rowVersion={sheet.rowVersion}
         emptyMessage="Sin salidas ME."
         selection={
           sel.active
@@ -457,7 +501,7 @@ export function MeSalidasView() {
                     });
                   }}
                 >
-                  <option value="">— Seleccionar materialId (obligatorio para descontar) —</option>
+                  <option value="">— Seleccionar material —</option>
                   {materials.map((m) => (
                     <option key={m.id} value={m.id}>
                       {displayCell(m.codigo)} {m.descripcion} (stock {m.stockActual})
@@ -501,6 +545,23 @@ export function MeSalidasView() {
                   onChange={(e) => setForm({ ...form, entregado: e.target.checked })}
                 />
                 ENTREGADO
+              </label>
+              <label className="col-span-2 flex flex-col gap-1">
+                MOTIVO DE LA SALIDA
+                <select
+                  className="rounded border px-2 py-1"
+                  value={form.motivoSalida}
+                  onChange={(e) => setForm({ ...form, motivoSalida: e.target.value })}
+                  data-testid="me-salida-motivo"
+                >
+                  <option value="">— Solo registro (no descuenta) —</option>
+                  {ME_SALIDA_MOTIVOS.filter((m) => m.id !== "REGISTRO").map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}{m.descuenta ? " · descuenta stock" : ""}</option>
+                  ))}
+                </select>
+                <span className="text-xs text-[var(--os-text-muted)]">
+                  Los materiales que se entregan para una OA NO se descuentan acá: la OA los descuenta sola al entregarse.
+                </span>
               </label>
               <label className="flex flex-col gap-1">
                 TOTAL (auto)
@@ -642,6 +703,7 @@ export function MeSalidasView() {
           await reload();
         }}
       />
+      <MeHistoryDialog target={historyFor} onClose={() => setHistoryFor(null)} />
     </TwinShell>
   );
 }

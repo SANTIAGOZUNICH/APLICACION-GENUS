@@ -322,6 +322,7 @@ export function OperationalTable<T>({
   canEditCells,
   rowVersion,
   reasonRequired,
+  rowClassName,
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const { mode, toggle: toggleMode } = useTableMode();
@@ -373,6 +374,7 @@ export function OperationalTable<T>({
           canEditCells={canEditCells}
           rowVersion={rowVersion}
           reasonRequired={reasonRequired}
+          rowClassName={rowClassName}
         />
       </div>
     );

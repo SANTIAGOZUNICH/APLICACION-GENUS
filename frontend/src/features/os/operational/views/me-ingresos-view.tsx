@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ClipboardPaste, Pencil, Plus, Trash2 } from "lucide-react";
+import { ClipboardPaste, History, Pencil, Plus, Trash2 } from "lucide-react";
+import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
+import { useMeSheetEditing } from "@/features/os/operational/hooks/use-me-sheet-cells";
 import { Button } from "@/components/ui/button";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { LifecycleConfirmDialog } from "@/features/os/operational/components/lifecycle-confirm-dialog";
@@ -80,6 +82,12 @@ function emptyForm(): FormState {
   };
 }
 
+/** Columna de la planilla → campo del ingreso (TOTAL no: es calculado). */
+const ME_INGRESO_SHEET_FIELD_OF: Record<string, string> = {
+  FECHA: "fecha", "INGRESO Nº": "ingresoNro", PROVEEDOR: "proveedor", CLIENTE: "cliente", "REMITO Nº": "remitoNro", CÓDIGO: "codigo",
+  "DESCRIPCIÓN INSUMO": "descripcionInsumo", BULTOS: "bultos", CANTIDAD: "cantidad", UBICACIÓN: "ubicacion",
+};
+
 export function MeIngresosView() {
   const { sectorId } = usePreviewSession();
   const { showToast } = usePreviewContext();
@@ -102,6 +110,8 @@ export function MeIngresosView() {
     setPersistence(res.persistence);
     setBanner(res.message ?? null);
   }, []);
+  const [historyFor, setHistoryFor] = useState<{ id: string; label: string } | null>(null);
+  const sheet = useMeSheetEditing<MeIngresoRow>("me_ingresos", sectorId, canWrite, ME_INGRESO_SHEET_FIELD_OF, reload);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,6 +172,9 @@ export function MeIngresosView() {
       header: label,
       hideOnMobile: ME_INGRESO_PRIMARY.has(label) ? false : ("xl" as const),
       render: (row) => displayCell(row[key]),
+      text: (row) => (row[key] == null ? "" : String(row[key])),
+      // Planilla editable (Depósito): TOTAL se calcula (bultos × cantidad), el resto se corrige en la celda.
+      edit: sheet.edit(label),
     };
   });
 
@@ -332,6 +345,9 @@ export function MeIngresosView() {
                       >
                         <Plus className="size-4" />
                       </button>
+                      <button type="button" aria-label="Historial" title="Historial de cambios" onClick={() => setHistoryFor({ id: row.id, label: `Ingreso ${row.ingresoNro} · ${row.codigo}` })} data-testid="me-history-open">
+                        <History className="size-4" />
+                      </button>
                       <button
                         type="button"
                         aria-label="Eliminar"
@@ -355,6 +371,10 @@ export function MeIngresosView() {
         ]}
         rows={pageRows}
         rowKey={(r) => r.id}
+        tableId="me-ingresos"
+        canEditCells={sheet.canEditCells}
+        onCellsCommit={sheet.onCellsCommit}
+        rowVersion={sheet.rowVersion}
         emptyMessage="Sin ingresos ME. Las tablas comienzan vacías (sin datos históricos)."
         selection={
           sel.active
@@ -564,6 +584,7 @@ export function MeIngresosView() {
           await reload();
         }}
       />
+      <MeHistoryDialog target={historyFor} onClose={() => setHistoryFor(null)} />
     </TwinShell>
   );
 }
