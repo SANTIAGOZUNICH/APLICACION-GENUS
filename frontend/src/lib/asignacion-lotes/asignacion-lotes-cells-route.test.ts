@@ -91,9 +91,9 @@ describe("PATCH /api/v1/asignacion-lotes/cells", () => {
       { lote: "G1", fecha: "2026-08-01", producto: "X", codigo: "", cantidades: 1, updatedBy: "Sync" },
       "AGOSTO"
     );
+    // 0043: el registro de Google se edita en GENUS (no se escribe en la planilla); un sector sin permiso sigue en 403.
     const google = await patch({ changes: [{ id: record.id, field: "cantidades", value: "5", expectedVersion: record.updatedAt }] });
-    expect(google.status).toBe(403);
-    expect(((await google.json()) as { failures: { code: string }[] }).failures[0]!.code).toBe("PROTECTED_SOURCE");
+    expect(google.status).toBe(200);
   });
 
   it("400 sin changes; 403 si actorSectorId no coincide con la sesión", async () => {

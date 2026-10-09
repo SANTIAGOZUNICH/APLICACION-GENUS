@@ -15,6 +15,7 @@ import {
   ExcelImportPreviewDialog,
   type ExcelImportFieldDef,
 } from "../components/excel-import-preview-dialog";
+import { AsignacionLotesLocalEditsPanel } from "../components/asignacion-lotes-local-edits-panel";
 import { AsignacionLoteHistoryDialog } from "../components/asignacion-lote-history-dialog";
 import { LifecycleConfirmDialog } from "../components/lifecycle-confirm-dialog";
 import { syntheticLifecycleItem } from "../components/lifecycle-synthetic";
@@ -829,6 +830,8 @@ export function AsignacionLotesView() {
           </div>
         </section>
 
+        <AsignacionLotesLocalEditsPanel rows={items} session={session} canEdit={canMutate} onResolved={() => void refresh()} />
+
         {groupedByMonth ? (
           <div className="space-y-3" data-testid="asignacion-lotes-month-groups">
             {monthGroups.length === 0 && (
@@ -1010,7 +1013,8 @@ export function AsignacionLotesView() {
             </DialogHeader>
             {editing?.sourceId ? (
               <p className="text-xs text-[var(--os-text-muted)]" data-testid="asignacion-lote-origin-badge">
-                Origen: Google Sheets (sincronizado automáticamente)
+                Origen: Google Sheets (sincronizado automáticamente). Lo que cambies acá queda guardado en GENUS y la
+                sincronización no lo pisa; la planilla original no se modifica.
               </p>
             ) : null}
             <form onSubmit={saveForm} className="space-y-4">

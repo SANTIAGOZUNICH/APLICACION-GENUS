@@ -58,7 +58,7 @@ describe("WorkItemWarningBadge", () => {
       originStage: "ACONDICIONAMIENTO",
       packagingLote: null,
       packagingVto: null,
-      finishedQty: "100",
+      finishedQty: null,
       quantity: "100",
       packingGroups: [],
     });
@@ -69,8 +69,8 @@ describe("WorkItemWarningBadge", () => {
     fireEvent.click(screen.getByTestId("work-item-warning-badge"));
     expect(screen.getByTestId("work-item-warning-detail")).toBeTruthy();
 
-    fireEvent.click(screen.getByTestId("work-item-warning-item-FALTA_PACKING"));
-    expect(onSelectField).toHaveBeenCalledWith("packing");
+    fireEvent.click(screen.getByTestId("work-item-warning-item-FALTA_CANTIDAD_FINAL"));
+    expect(onSelectField).toHaveBeenCalledWith("cantidadFinal");
     expect(screen.queryByTestId("work-item-warning-detail")).toBeNull();
   });
 

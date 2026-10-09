@@ -147,7 +147,7 @@ describe("AsignacionLotesService.patchCells", () => {
     ).rejects.toThrow(OrdersForbiddenError);
   });
 
-  it("registro sincronizado desde Google Sheets: protegido (PROTECTED_SOURCE) para cualquier sector", async () => {
+  it("registro sincronizado desde Google Sheets: se edita en GENUS y queda marcado «editado en GENUS» (0043)", async () => {
     const svc = getAsignacionLotesService();
     const { record } = await svc.upsertFromSource(
       "src-google-1",
@@ -155,13 +155,10 @@ describe("AsignacionLotesService.patchCells", () => {
       { lote: "G26042", fecha: "2026-08-03", producto: "CREMA FACIAL", codigo: "", cantidades: 500, updatedBy: "Sync" },
       "AGOSTO 2026"
     );
-    for (const actor of [produccion, calidad]) {
-      const failures = await expectRejected(
-        svc.patchCells(actor, [{ id: record.id, field: "observaciones", value: "local", expectedVersion: record.updatedAt }])
-      );
-      expect(failures[0]!.code).toBe("PROTECTED_SOURCE");
-    }
-    expect((await svc.list(produccion))[0]!.observaciones).toBe("");
+    await svc.patchCells(produccion, [{ id: record.id, field: "observaciones", value: "local", expectedVersion: record.updatedAt }]);
+    const [after] = await svc.list(produccion);
+    expect(after!.observaciones).toBe("local");
+    expect(after!.localEdits?.observaciones).toMatchObject({ status: "ACTIVE", sheetValue: "", localValue: "local" });
   });
 
   it("sync de Google NO pisa ediciones locales de registros manuales (misma identidad lote/código/producto)", async () => {
@@ -282,7 +279,7 @@ describe("modal clásico (upsert) respeta la misma política que la grilla", () 
     await expect(svc.upsert(codificado, { ...base, observaciones: "ok" })).resolves.toBeTruthy();
   });
 
-  it("registro sincronizado desde Google no se edita por el modal", async () => {
+  it("registro sincronizado desde Google: el modal también edita y queda como edición de GENUS (0043)", async () => {
     const svc = getAsignacionLotesService();
     const { record } = await svc.upsertFromSource(
       "src-9",
@@ -290,8 +287,12 @@ describe("modal clásico (upsert) respeta la misma política que la grilla", () 
       { lote: "G9", fecha: "2026-08-01", producto: "X", codigo: "", cantidades: 5, updatedBy: "S" },
       "AGO"
     );
+    const saved = await svc.upsert(produccion, { id: record.id, lote: "G9", fecha: "2026-08-01", producto: "X", codigo: "", cantidades: 6, updatedBy: "P", expectedUpdatedAt: record.updatedAt });
+    expect(saved.cantidades).toBe(6);
+    expect((await svc.list(produccion)).find((r) => r.id === record.id)!.localEdits?.cantidades).toMatchObject({ status: "ACTIVE", sheetValue: "5", localValue: "6" });
+    // Codificado no puede editar cantidades (matriz de sectores)
     await expect(
-      svc.upsert(produccion, { id: record.id, lote: "G9", fecha: "2026-08-01", producto: "X", codigo: "", cantidades: 6, updatedBy: "P" })
+      svc.upsert({ ...produccion, sector: "CODIFICADO" } as never, { id: record.id, lote: "G9", fecha: "2026-08-01", producto: "X", codigo: "", cantidades: 7, updatedBy: "C" })
     ).rejects.toThrow(OrdersForbiddenError);
   });
 });

@@ -209,15 +209,18 @@ describe("write-back a Google Sheets (opción C)", () => {
     expect(next.record.cantidades).toBe(7000);
   });
 
-  it("sin habilitación/allowlist no se escribe nada (PROTECTED_SOURCE)", async () => {
+  it("sin habilitación/allowlist NUNCA se escribe en la planilla: el cambio queda en GENUS como edición local (0043)", async () => {
     const r = await seedRecord();
     vi.stubEnv("ASIGNACION_LOTES_WRITEBACK_SPREADSHEET_IDS", "OTRA-PLANILLA");
     const res = await patchCellsWithWriteback(produccion, [change(r, "7000")]);
-    expect(res.results[0]).toMatchObject({ status: "failed", code: "PROTECTED_SOURCE" });
+    expect(res.results[0]).toMatchObject({ status: "confirmed" });
     expect(sheet.writes).toHaveLength(0);
+    const after = (await getAsignacionLotesService().list(produccion)).find((x) => x.id === r.id)!;
+    expect(after.cantidades).toBe(7000);
+    expect(after.localEdits?.cantidades?.status).toBe("ACTIVE");
     vi.stubEnv("ASIGNACION_LOTES_WRITEBACK", "0");
     vi.stubEnv("ASIGNACION_LOTES_WRITEBACK_SPREADSHEET_IDS", SHEET);
-    expect((await patchCellsWithWriteback(produccion, [change(r, "7000")])).ok).toBe(false);
+    expect((await patchCellsWithWriteback(produccion, [change(after, "7100")])).ok).toBe(true);
     expect(sheet.writes).toHaveLength(0);
   });
 
@@ -267,7 +270,8 @@ describe("write-back a Google Sheets (opción C)", () => {
     const r = await seedRecord();
     vi.stubEnv("VERCEL_ENV", "production");
     const res = await patchCellsWithWriteback(produccion, [change(r, "7000")]);
-    expect(res.results[0]).toMatchObject({ status: "failed", code: "PROTECTED_SOURCE" });
+    // Se guarda en GENUS (edición local); la planilla jamás se toca en Production.
+    expect(res.results[0]).toMatchObject({ status: "confirmed" });
     expect(sheet.writes).toHaveLength(0);
   });
 
