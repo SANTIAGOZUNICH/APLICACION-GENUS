@@ -38,7 +38,7 @@ import {
 import { orderLifecycleActions } from "@/lib/lifecycle/adapters/orders";
 import { LifecycleActionsMenu } from "./lifecycle-actions-menu";
 import { canDeleteEmptyDraft } from "@/lib/orders/empty-draft";
-import { statusLabel } from "@/lib/orders/empty-draft";
+import { displaySector, statusLabel } from "@/lib/orders/empty-draft";
 import {
   formatOperationalIdCompact,
   formatOperationalIdFull,
@@ -60,13 +60,16 @@ import { fetchFormulaProductOptionsApi } from "@/lib/orders/orders-client";
 import { OaFormSections, renumberOaMaterials } from "./oa-form-sections";
 import { OaSimpleWizard } from "./oa-simple-wizard";
 import { LegalOrderPreview } from "./legal-order-preview";
+import { ajusteSinMotivo } from "@/features/os/operational/lib/oe-entrega";
+import { friendlySaveError } from "@/lib/ui/friendly-error";
 import {
   initOaSimpleFormFromLegal,
   mapOASimpleFormToLegalDocument,
   type OaSimpleForm,
 } from "@/lib/orders/oa-simple-form";
 
-type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+/** waiting = hay un ajuste sin motivo: no se autoguarda hasta completarlo (el servidor lo rechazaría). */
+type SaveState = "idle" | "dirty" | "saving" | "saved" | "error" | "waiting";
 type OaEditorMode = "simple" | "full";
 
 interface OperationalOrderEditorProps {
@@ -88,6 +91,19 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const [oaSimple, setOaSimple] = useState<OaSimpleForm | null>(null);
   const [oaMode, setOaMode] = useState<OaEditorMode>("simple");
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [delivering, setDelivering] = useState(false);
+  /** Confirmación explícita para entregar una orden con datos pendientes (evita hacerlo por accidente). */
+  const [ackPendientes, setAckPendientes] = useState(false);
+  const [forceOpen, setForceOpen] = useState<{ procedimiento?: boolean; control?: boolean }>({});
+  /** «Volver a completar»: abre las secciones con datos faltantes y lleva la vista a la primera. */
+  const setOpenSectionsFor = useCallback((missing: string[]) => {
+    const control = missing.some((m) => /Cantidad obtenida|Fecha de finalización/.test(m));
+    const procedimiento = missing.includes("Procedimiento");
+    const ajuste = missing.some((m) => /ajuste/i.test(m));
+    setForceOpen({ control, procedimiento });
+    const target = ajuste ? "oe-sec-materiales" : control ? "oe-sec-control" : procedimiento ? "oe-sec-procedimiento" : null;
+    if (target) setTimeout(() => document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<OperationalOrderRecord | null>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -188,7 +204,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
-      if (saveState === "dirty" || saveState === "saving") {
+      if (saveState === "dirty" || saveState === "saving" || saveState === "waiting") {
         e.preventDefault();
         e.returnValue = "";
       }
@@ -284,6 +300,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         setSaveState("saved");
         setConflict(null);
         setError(null);
+        return true;
       } catch (err) {
         const current = (err as { current?: OperationalOrderRecord }).current;
         if (current) {
@@ -292,8 +309,9 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           setError("Conflicto de edición: otro usuario modificó la orden.");
         } else {
           setSaveState("error");
-          setError(err instanceof Error ? err.message : "Error al guardar.");
+          setError(friendlySaveError(err));
         }
+        return false;
       }
     },
     [session, orderId]
@@ -474,8 +492,13 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       setForm((prev) => {
         if (!prev || !canEditRef.current) return prev;
         const next = normalizeOrderContent(updater(prev));
-        setSaveState("dirty");
         if (debounceRef.current) clearTimeout(debounceRef.current);
+        // Ajuste ≠ 0 sin motivo: se espera el motivo (antes: «Error al guardar» a los 900 ms, en cada tecla).
+        if (ajusteSinMotivo(next)) {
+          setSaveState("waiting");
+          return next;
+        }
+        setSaveState("dirty");
         debounceRef.current = setTimeout(() => {
           void persist(next, versionRef.current);
         }, 900);
@@ -642,7 +665,24 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     allowIncomplete = false,
     meOpts?: { allowNegativeMeStock?: boolean; negativeMeStockReason?: string }
   ) => {
-    if (!form) return;
+    if (!form || delivering) return;
+    // Se entrega lo GUARDADO en el servidor: primero se guarda lo que está en pantalla. Si no se pudo guardar, no se
+    // entrega (antes se entregaba la última versión guardada aunque la pantalla mostrara otra cosa).
+    const sinMotivo = ajusteSinMotivo(form);
+    if (sinMotivo) {
+      setError(`Falta el motivo del ajuste de «${sinMotivo}». Escribilo antes de entregar.`);
+      setDeliverOpen(false);
+      return;
+    }
+    if (saveState === "dirty" || saveState === "error" || debounceRef.current) {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+      const ok = await persist(form, versionRef.current);
+      if (!ok) {
+        setDeliverOpen(false);
+        return;
+      }
+    }
     const missing = validateDeliver(form);
     if (missing.length && !allowIncomplete) {
       setMissingFields(missing);
@@ -650,6 +690,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       return;
     }
     setMissingFields([]);
+    setDelivering(true);
     try {
       const updated = await deliverOrderApi(session, orderId, {
         allowIncomplete: allowIncomplete || missing.length > 0,
@@ -678,7 +719,9 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         setDeliverOpen(false);
         return;
       }
-      setError(err instanceof Error ? err.message : "No se pudo entregar.");
+      setError(friendlySaveError(err, "No se pudo entregar la orden."));
+    } finally {
+      setDelivering(false);
     }
   };
 
@@ -738,10 +781,12 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       : saveState === "saved"
         ? "Cambios guardados"
         : saveState === "dirty"
-          ? "Sin guardar"
-          : saveState === "error"
-            ? "Error al guardar"
-            : "Sin cambios";
+          ? "Guardando en un momento…"
+          : saveState === "waiting"
+            ? `Falta el motivo del ajuste de «${ajusteSinMotivo(form) ?? ""}»: escribilo para guardar`
+            : saveState === "error"
+              ? "No se guardó: mirá el aviso en rojo"
+              : "Sin cambios";
 
   return (
     <div className="space-y-4 rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-4">
@@ -759,7 +804,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           </h3>
           <p className="text-xs text-[var(--os-text-muted)]">
             {statusLabel(order.status)} · plantilla v{order.templateVersion} · rev {order.revision} ·
-            sector {order.assignedSector}
+            {displaySector(order.assignedSector)}
           </p>
           {order.status === "ANULADA" && (
             <p
@@ -828,8 +873,10 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           {canDeliver && (
             <Button
               type="button"
+              disabled={delivering}
               onClick={() => {
                 if (form) setMissingFields(validateDeliver(form));
+                setAckPendientes(false);
                 setDeliverOpen(true);
               }}
             >
@@ -936,7 +983,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             Vista previa PDF
           </Button>
           {canDownload && (
-            <Button type="button" onClick={() => void downloadPdf()}>
+            <Button type="button" variant="secondary" onClick={() => void downloadPdf()}>
               Descargar PDF
             </Button>
           )}
@@ -985,7 +1032,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       )}
       {locked && (
         <p className="text-sm text-[var(--os-text-muted)]">
-          Orden {order.status}: no editable directamente. Usá devolución para corrección si
+          Orden «{statusLabel(order.status)}»: no se edita directamente. Usá devolución para corrección si
           corresponde.
         </p>
       )}
@@ -994,6 +1041,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         <LegalOrderPreview order={{ ...order, formData: form }} />
       ) : form.kind === "OE" ? (
         <OeFormSections
+          forceOpen={forceOpen}
           content={form}
           hydrateKey={orderId}
           fieldMode={{
@@ -1207,9 +1255,29 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               />
             </label>
           ) : null}
+          {missingFields.length > 0 ? (
+            <label className="flex items-start gap-2 text-sm" data-testid="deliver-ack-label">
+              <input
+                type="checkbox"
+                className="mt-1 size-4"
+                checked={ackPendientes}
+                onChange={(e) => setAckPendientes(e.target.checked)}
+                data-testid="deliver-ack-pendientes"
+              />
+              <span>Entiendo que la orden queda entregada con estos datos sin completar.</span>
+            </label>
+          ) : null}
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:flex-wrap">
-            <Button type="button" variant="secondary" onClick={() => setDeliverOpen(false)}>
-              {missingFields.length > 0 ? "Volver a editar" : "Cancelar"}
+            <Button
+              type="button"
+              variant={missingFields.length > 0 ? "primary" : "secondary"}
+              data-testid="deliver-back"
+              onClick={() => {
+                setDeliverOpen(false);
+                if (missingFields.length > 0) setOpenSectionsFor(missingFields);
+              }}
+            >
+              {missingFields.length > 0 ? "Volver a completar" : "Cancelar"}
             </Button>
             {missingFields.length > 0 && (
               <Button
@@ -1227,14 +1295,16 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             {missingFields.length > 0 ? (
               <Button
                 type="button"
+                variant="secondary"
                 data-testid="deliver-incomplete"
+                disabled={!ackPendientes || delivering}
                 onClick={() => void onDeliver(true)}
               >
-                Entregar con campos pendientes
+                {delivering ? "Entregando…" : "Entregar igual, con pendientes"}
               </Button>
             ) : (
-              <Button type="button" data-testid="deliver-confirm" onClick={() => void onDeliver(false)}>
-                Entregar
+              <Button type="button" data-testid="deliver-confirm" disabled={delivering} onClick={() => void onDeliver(false)}>
+                {delivering ? "Entregando…" : "Entregar"}
               </Button>
             )}
           </DialogFooter>

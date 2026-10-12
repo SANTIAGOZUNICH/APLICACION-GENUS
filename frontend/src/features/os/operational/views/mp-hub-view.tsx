@@ -316,7 +316,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       const filtered = stock.filter(
         (r) =>
           !q ||
-          [r.descripcion, r.proveedor, r.cliente, r.lote, r.ubicacion, r.codigo, r.productosAsociados]
+          [r.descripcion, r.proveedor, r.cliente, r.lote, r.ubicacion, r.codigo, r.productosAsociados, r.producto, ...(r.codigosAnteriores ?? [])]
             .join(" ")
             .toLowerCase()
             .includes(q)
@@ -332,7 +332,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           q === status.toLowerCase();
         if (!statusVisible) return false;
         if (!q) return true;
-        return [r.ingresoNro, r.descripcion, r.proveedor, r.cliente, r.lote, r.codigo, r.producto, r.status]
+        return [r.ingresoNro, r.descripcion, r.proveedor, r.cliente, r.lote, r.codigo, r.producto, r.status, r.remitoNro, r.codigoRecibido]
           .join(" ")
           .toLowerCase()
           .includes(q);
@@ -989,15 +989,46 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             />
           ))}
         {tab !== "Control semanal" && tab !== "COA'S" ? (
-        <input
-          className="rounded border px-3 py-1.5 text-sm"
-          placeholder="Buscar…"
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(0);
-          }}
-        />
+        <span className="relative inline-flex items-center">
+          <input
+            className="min-w-[18rem] rounded border px-3 py-1.5 pr-8 text-sm"
+            placeholder={
+              tab === "Compras MP"
+                ? "Buscar materia prima, proveedor, estado…"
+                : tab === "Ingresos MP"
+                  ? "Buscar código, producto, lote, remito, proveedor…"
+                  : "Buscar código, producto, lote, proveedor…"
+            }
+            aria-label="Buscar en la planilla"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && search) {
+                setSearch("");
+                setPage(0);
+              }
+            }}
+            data-testid="mp-search"
+          />
+          {search ? (
+            <button
+              type="button"
+              className="absolute right-1.5 rounded px-1.5 text-base leading-none text-[var(--os-text-muted)] hover:bg-[var(--os-teal-soft)] hover:text-[var(--os-text)]"
+              title="Quitar búsqueda (Esc)"
+              aria-label="Quitar búsqueda"
+              onClick={() => {
+                setSearch("");
+                setPage(0);
+              }}
+              data-testid="mp-search-clear"
+            >
+              ×
+            </button>
+          ) : null}
+        </span>
         ) : null}
         {tab === "Stock" ? (
           <SortSelect

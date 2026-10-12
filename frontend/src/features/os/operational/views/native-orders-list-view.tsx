@@ -488,7 +488,7 @@ export function NativeOrdersListView({
               "ARCHIVADA",
             ].map((s) => (
               <option key={s} value={s}>
-                {s}
+                {statusLabel(s as never)}
               </option>
             ))}
           </select>

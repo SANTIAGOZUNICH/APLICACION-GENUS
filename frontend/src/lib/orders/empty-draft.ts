@@ -1,3 +1,4 @@
+import { SECTOR_LABELS } from "@/types/operational/sector";
 /**
  * Helpers de borradores vacíos OE/OA (captura vs representación).
  */
@@ -25,7 +26,8 @@ export function displayClient(value: string | null | undefined): string {
 
 export function displaySector(value: OrderAssignedSector | string | null | undefined): string {
   if (!value || value === SIN_ASIGNAR) return "Sin asignar";
-  return value;
+  // Nombre del sector para el operario (nunca el código interno «ELABORACION»).
+  return (SECTOR_LABELS as Record<string, string>)[value] ?? value;
 }
 
 export function isBlankOrderField(value: string | null | undefined): boolean {

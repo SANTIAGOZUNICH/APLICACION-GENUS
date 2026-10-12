@@ -117,8 +117,8 @@ export function WireframePlanSemanal() {
 
       {!loading && workItems.length === 0 && (
         <EmptyState
-          title="Plan sin datos"
-          message="No hay WorkItems para este sector. Configurá GENUS_DATA_MODE=real y Drive."
+          title="No hay trabajos para este día"
+          message="Probá con «Mañana» o «Ayer». Si esperabas ver trabajos acá, avisale a Producción."
         />
       )}
 

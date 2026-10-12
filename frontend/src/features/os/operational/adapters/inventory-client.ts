@@ -1,4 +1,5 @@
 /** Cliente HTTP inventario ME/MP + estado de persistencia Neon. */
+import { friendlyServerMessage } from "@/lib/ui/friendly-error";
 
 import { getCurrentAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
 
@@ -53,11 +54,11 @@ export async function fetchInventory<T>(resource: InventoryResource): Promise<{
       persistence: false,
       message:
         json.error ??
-        "Sin DATABASE_URL (Neon): vista demostrativa vacía. No se puede guardar.",
+        "No hay conexión con la base de datos: la planilla está vacía y no se puede guardar. Avisá a Sistemas.",
     };
   }
   if (!res.ok) {
-    throw new InventoryClientError(json.error ?? "Error al cargar inventario", res.status, json.code);
+    throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status, json.code);
   }
   return { data: json.data ?? [], persistence: true };
 }
@@ -83,13 +84,13 @@ export async function mutateInventory<T>(body: {
   if (res.status === 503) {
     throw new InventoryClientError(
       json.error ??
-        "Sin DATABASE_URL (Neon): no se puede guardar. Vista demostrativa vacía.",
+        "No hay conexión con la base de datos: no se puede guardar. Avisá a Sistemas.",
       503,
       "DATABASE_REQUIRED"
     );
   }
   if (!res.ok) {
-    throw new InventoryClientError(json.error ?? "Operación rechazada", res.status, json.code);
+    throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status, json.code);
   }
   return { data: json.data as T, persistence: true };
 }
@@ -111,7 +112,7 @@ export async function patchInventoryCells(
     body: JSON.stringify({ resource, changes }),
   });
   const json = (await res.json().catch(() => ({}))) as Partial<InventoryCellApiResult>;
-  if (!json.results) return { ok: false, results: [], error: json.error ?? `Error ${res.status} al guardar.` };
+  if (!json.results) return { ok: false, results: [], error: friendlyServerMessage(res.status, json.error) };
   return { ok: Boolean(json.ok), results: json.results, error: json.error };
 }
 
@@ -125,20 +126,20 @@ export interface MeAjusteResult {
 export async function postMeAjuste(body: { materialId: string; expectedStock: number; newStock: number; motivo: string; tipo: string }): Promise<MeAjusteResult> {
   const res = await fetch("/api/v1/inventory/me-ajustes", { method: "POST", headers: actorHeaders(), body: JSON.stringify(body) });
   const json = (await res.json().catch(() => ({}))) as Partial<MeAjusteResult> & { error?: string; code?: string };
-  if (!res.ok) throw new InventoryClientError(json.error ?? `Error ${res.status} al ajustar.`, res.status, json.code);
+  if (!res.ok) throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status, json.code);
   return json as MeAjusteResult;
 }
 
 export async function fetchMeMovimientos(materialId: string): Promise<{ codigo: string; stockActual: number; movimientos: import("@/lib/inventory/me-stock-calc").MeMovement[] }> {
   const res = await fetch(`/api/v1/inventory/me-movimientos?materialId=${encodeURIComponent(materialId)}`, { headers: actorHeaders(), cache: "no-store" });
   const json = (await res.json().catch(() => ({}))) as { error?: string };
-  if (!res.ok) throw new InventoryClientError(json.error ?? `Error ${res.status}`, res.status);
+  if (!res.ok) throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status);
   return json as never;
 }
 
 export async function fetchMeHistorial(id: string): Promise<import("@/lib/inventory/types").InventoryAudit[]> {
   const res = await fetch(`/api/v1/inventory/me-historial?id=${encodeURIComponent(id)}`, { headers: actorHeaders(), cache: "no-store" });
   const json = (await res.json().catch(() => ({}))) as { entries?: import("@/lib/inventory/types").InventoryAudit[]; error?: string };
-  if (!res.ok) throw new InventoryClientError(json.error ?? `Error ${res.status}`, res.status);
+  if (!res.ok) throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status);
   return json.entries ?? [];
 }

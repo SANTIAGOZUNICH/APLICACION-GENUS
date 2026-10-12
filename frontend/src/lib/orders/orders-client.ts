@@ -1,3 +1,4 @@
+import { friendlyServerMessage } from "@/lib/ui/friendly-error";
 import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
@@ -40,7 +41,7 @@ async function parseJson<T>(res: Response): Promise<T> {
   };
   if (!res.ok) {
     const err = new Error(
-      (body as { error?: string }).error ?? `HTTP ${res.status}`
+      friendlyServerMessage(res.status, (body as { error?: string }).error)
     ) as Error & {
       status?: number;
       code?: string;
@@ -334,7 +335,7 @@ export async function fetchFormulaClientOptionsApi(
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+    throw new Error(friendlyServerMessage(res.status, body.error));
   }
   return (await res.json()) as {
     clients: FormulaClientOption[];
@@ -369,7 +370,7 @@ export async function fetchFormulaProductOptionsApi(
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+    throw new Error(friendlyServerMessage(res.status, body.error));
   }
   return (await res.json()) as {
     products: FormulaProductOption[];
@@ -395,7 +396,7 @@ export async function syncFormulaDriveIndexApi(
     entryCount?: number;
     clientCount?: number;
   };
-  if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(friendlyServerMessage(res.status, body.error));
   return body as { ok: boolean; entryCount?: number; clientCount?: number };
 }
 
@@ -447,7 +448,7 @@ export async function resolveFormulaMasterApi(
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    const err = new Error(body.error ?? `HTTP ${res.status}`) as Error & {
+    const err = new Error(friendlyServerMessage(res.status, body.error)) as Error & {
       status?: number;
     };
     err.status = res.status;

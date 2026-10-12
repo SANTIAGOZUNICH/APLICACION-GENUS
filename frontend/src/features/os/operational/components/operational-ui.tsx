@@ -314,13 +314,27 @@ function ExcelView<T>({
   const dataColumns = useMemo(() => columns.filter((c) => !isActionColumn(c)), [columns]);
   const actionColumns = useMemo(() => columns.filter((c) => isActionColumn(c)), [columns]);
   const textOf = (c: OperationalTableColumn<T>, row: T) => (c.text ? c.text(row) : nodeToText(c.render(row)));
+  // Ancho según el contenido (como «autoajustar» en Excel): encabezado y textos de las primeras filas, entre 96 y
+  // 340 px. Antes todas las columnas medían 150 px y se cortaban «Producto», «Afecta a», descripciones, etc.
+  const widths = useMemo(() => {
+    const sample = rows.slice(0, 60);
+    return new Map(
+      dataColumns.map((c) => {
+        const lens = sample.map((r) => textOf(c, r).length).sort((a, b) => a - b);
+        const p90 = lens.length ? lens[Math.min(lens.length - 1, Math.floor(lens.length * 0.9))]! : 0;
+        const chars = Math.max(c.header.length + 2, p90);
+        return [c.key, Math.round(Math.min(340, Math.max(96, chars * 7.6 + 30)))] as const;
+      })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataColumns, rows]);
   const gridColumns = useMemo<GenusGridColumn<T>[]>(
     () =>
       dataColumns.map((c) => ({
         key: c.key,
         title: c.header,
         kind: c.edit?.kind ?? "text",
-        basis: 150,
+        basis: widths.get(c.key) ?? 150,
         sensitive: c.edit?.sensitive,
         getValue: (row: T) => textOf(c, row),
         protection: (row: T) => (c.edit ? (c.edit.protection?.(row) ?? null) : (c.readOnlyReason ?? "Columna de solo lectura.")),
@@ -328,7 +342,7 @@ function ExcelView<T>({
         cellNote: c.cellNote,
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dataColumns]
+    [dataColumns, widths]
   );
   return (
     <GenusGrid<T>

@@ -87,8 +87,11 @@ export function ordersErrorResponse(err: unknown): NextResponse {
     );
   }
   const raw = err instanceof Error ? err.message : "";
+  // Errores de programación (TypeError, «Cannot read properties of undefined»…) tampoco son mensajes para el operario.
+  const programming = err instanceof TypeError || err instanceof ReferenceError || err instanceof RangeError || err instanceof SyntaxError;
   const sensitive =
-    /failed query|neon|vercel|postgres|sql|drizzle|stack|ECONN|password|DATABASE_URL|relation "|column "/i.test(
+    programming ||
+    /failed query|neon|vercel|postgres|sql|drizzle|stack|ECONN|password|DATABASE_URL|relation "|column "|cannot read|is not a function|undefined/i.test(
       raw
     );
   if (sensitive || !raw) {
