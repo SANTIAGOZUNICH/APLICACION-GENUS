@@ -285,7 +285,13 @@ try {
   check("Al volver la conexión, «Reintentar» guarda el valor", await waitDb(async () => (await q("select payload->>'ubicacion' u from inv_mp_stock where payload->>'codigo' = 'UX-MP-GLI'"))[0]?.u === "E9-99"));
 
   // Edición simultánea: mensaje claro, sin «409».
-  await q("update inv_mp_stock set payload = jsonb_set(payload, '{updatedAt}', to_jsonb('2026-10-12T10:00:00.000Z'::text)), updated_at = now() where payload->>'codigo' = 'UX-MP-GLI'");
+  // Otra persona guardó antes: se simula enviando la versión que este usuario tenía ANTES (determinístico; la grilla se
+  // refresca sola y si no, la carrera dependería del momento).
+  await mp.route("**/api/v1/inventory/cells", async (route) => {
+    const body = JSON.parse(route.request().postData() ?? "{}");
+    for (const c of body.changes ?? []) c.expectedVersion = "2020-01-01T00:00:00.000Z";
+    await route.continue({ postData: JSON.stringify(body) });
+  });
   const c2 = await cell(mp, "mp-stock-grid", "UX-MP-GLI", "Ubicación");
   await c2.dblclick();
   await mp.keyboard.press("ControlOrMeta+A");
@@ -293,6 +299,7 @@ try {
   await mp.keyboard.press("Enter");
   await failed.waitFor({ timeout: 15_000 }).catch(() => {});
   const confText = await failed.innerText().catch(() => "");
+  await mp.unroute("**/api/v1/inventory/cells");
   check("Edición simultánea: explica que otro usuario lo modificó y ofrece recargar, sin «409»", /modific/i.test(confText) && !/409/.test(confText), confText.slice(0, 160));
   await mp.screenshot({ path: `${OUT}/despues-mp-4-conflicto.png` });
   const denyOe = await mp.request.post(`/api/v1/orders/${oeId}/deliver`, { data: { confirm: true } });
