@@ -157,6 +157,14 @@ export function statusLabel(status: OrderStatus): string {
       return "Devuelta para corrección";
     case "EN_PROCESO":
       return "En proceso";
+    case "PENDIENTE":
+      return "Pendiente";
+    case "COMPLETA":
+      return "Completa";
+    case "ANULADA":
+      return "Anulada";
+    case "ARCHIVADA":
+      return "Archivada";
     default:
       return status.replace(/_/g, " ");
   }

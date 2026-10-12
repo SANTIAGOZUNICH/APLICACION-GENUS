@@ -92,6 +92,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const [oaMode, setOaMode] = useState<OaEditorMode>("simple");
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [delivering, setDelivering] = useState(false);
+  /** Guardia sincrónica: un doble clic llega antes de que el botón se deshabilite en pantalla. */
+  const deliveringRef = useRef(false);
   /** Confirmación explícita para entregar una orden con datos pendientes (evita hacerlo por accidente). */
   const [ackPendientes, setAckPendientes] = useState(false);
   const [forceOpen, setForceOpen] = useState<{ procedimiento?: boolean; control?: boolean }>({});
@@ -665,7 +667,22 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     allowIncomplete = false,
     meOpts?: { allowNegativeMeStock?: boolean; negativeMeStockReason?: string }
   ) => {
-    if (!form || delivering) return;
+    if (!form || deliveringRef.current) return;
+    deliveringRef.current = true;
+    setDelivering(true);
+    try {
+      await deliverOnce(allowIncomplete, meOpts);
+    } finally {
+      deliveringRef.current = false;
+      setDelivering(false);
+    }
+  };
+
+  const deliverOnce = async (
+    allowIncomplete: boolean,
+    meOpts?: { allowNegativeMeStock?: boolean; negativeMeStockReason?: string }
+  ) => {
+    if (!form) return;
     // Se entrega lo GUARDADO en el servidor: primero se guarda lo que está en pantalla. Si no se pudo guardar, no se
     // entrega (antes se entregaba la última versión guardada aunque la pantalla mostrara otra cosa).
     const sinMotivo = ajusteSinMotivo(form);
@@ -690,7 +707,6 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       return;
     }
     setMissingFields([]);
-    setDelivering(true);
     try {
       const updated = await deliverOrderApi(session, orderId, {
         allowIncomplete: allowIncomplete || missing.length > 0,
@@ -720,8 +736,6 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         return;
       }
       setError(friendlySaveError(err, "No se pudo entregar la orden."));
-    } finally {
-      setDelivering(false);
     }
   };
 
@@ -803,7 +817,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             {formatOperationalIdCompact(order.orderNumber)} · {order.product}
           </h3>
           <p className="text-xs text-[var(--os-text-muted)]">
-            {statusLabel(order.status)} · plantilla v{order.templateVersion} · rev {order.revision} ·
+            {statusLabel(order.status)} · plantilla v{order.templateVersion} · rev {order.revision} ·{" "}
             {displaySector(order.assignedSector)}
           </p>
           {order.status === "ANULADA" && (

@@ -295,7 +295,7 @@ try {
   const confText = await failed.innerText().catch(() => "");
   check("Edición simultánea: explica que otro usuario lo modificó y ofrece recargar, sin «409»", /modific/i.test(confText) && !/409/.test(confText), confText.slice(0, 160));
   await mp.screenshot({ path: `${OUT}/despues-mp-4-conflicto.png` });
-  const denyOe = await mp.request.post(`/api/v1/orders/${oeId}/deliver`, { data: {} });
+  const denyOe = await mp.request.post(`/api/v1/orders/${oeId}/deliver`, { data: { confirm: true } });
   check("permisos: Materias Primas no entrega OE (403)", denyOe.status() === 403, String(denyOe.status()));
   await mpc.close();
 } catch (err) {
