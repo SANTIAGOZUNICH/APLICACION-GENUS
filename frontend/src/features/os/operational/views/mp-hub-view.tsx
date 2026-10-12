@@ -36,6 +36,8 @@ import {
   useListSelectionMode,
 } from "@/features/os/operational/components/list-selection-mode";
 import {
+  calcMpEstadoStock,
+  calcMpEstadoVencimiento,
   displayCell,
   multiplyTotal,
   parseOptionalNumber,
@@ -191,7 +193,9 @@ const MP_COMPRA_CELL_FIELDS: Record<string, string> = {
   NOTA: "nota",
 };
 
+/** Stock MP: TODAS las columnas se editan en la celda (las que mueven saldo, con motivo en la misma planilla). */
 const MP_STOCK_CELL_FIELDS: Record<string, string> = {
+  CÓDIGO: "codigo",
   PRODUCTO: "producto",
   PROVEEDOR: "proveedor",
   CLIENTE: "cliente",
@@ -200,7 +204,28 @@ const MP_STOCK_CELL_FIELDS: Record<string, string> = {
   UBICACIÓN: "ubicacion",
   LOTE: "lote",
   VENCIMIENTO: "vencimiento",
+  "STOCK CÓDIGO (LIBRO MAYOR)": "stockLibroMayor",
+  "ESTADO STOCK": "estadoStock",
+  "DÍAS AL VENCE": "diasAlVence",
+  "ESTADO VENCIMIENTO": "estadoVencimiento",
+  ORIGEN: "origen",
 };
+
+/** Nota de la celda en Stock MP: estados fijados a mano y códigos a revisar (no bloquea la edición). */
+function stockCellNote(label: string, r: MpStockRow): string | null {
+  if (label === "ESTADO STOCK" && r.estadoStockManual?.trim()) {
+    return `Fijado a mano en la planilla (calculado: ${calcMpEstadoStock(r.cantidadKg)}). Vaciá la celda para volver al cálculo.`;
+  }
+  if (label === "ESTADO VENCIMIENTO" && r.estadoVencimientoManual?.trim()) {
+    return `Fijado a mano en la planilla (calculado: ${calcMpEstadoVencimiento(r.diasAlVence)}). Vaciá la celda para volver al cálculo.`;
+  }
+  if (label === "CÓDIGO") {
+    const code = displayCell(r.codigo);
+    if (!/[\p{L}\p{N}]/u.test(code)) return "Código inválido: no tiene letras ni números. Corregilo en la celda (traspasa el saldo con motivo).";
+    if (r.codigosAnteriores?.length) return `Código corregido en la planilla (antes: ${r.codigosAnteriores.join(", ")}). Los movimientos históricos quedan con el código anterior y su saldo se traspasó.`;
+  }
+  return null;
+}
 
 const traceField = (f: string | undefined): MpTraceField | null =>
   f && (MP_TRACE_FIELDS as readonly string[]).includes(f) ? (f as MpTraceField) : null;
@@ -526,9 +551,10 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       return {
         key: label,
         header: short,
-        headerTitle: "Stock real del código según el libro mayor (descuenta los consumos de las OE). Kg lote = lo ingresado/ajustado en ese lote.",
+        headerTitle: "Stock real del código según el libro mayor (descuenta los consumos de las OE). Se edita en la celda: registra un ajuste por la diferencia, con motivo.",
         hideOnMobile: collapse === false ? false : collapse,
         className: "w-[7rem]",
+        text: (r: MpStockRow) => (r.stockLibroMayor == null ? "" : r.stockLibroMayor.toLocaleString("es-AR")),
         render: (r: MpStockRow) => {
           const v = r.stockLibroMayor;
           if (v == null) return <span className="text-[var(--os-text-muted)]">—</span>;
@@ -549,16 +575,8 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         hideOnMobile: false,
         className: "w-[7.5rem]",
         // Texto de la planilla: el código y, si corresponde, su marca (se ve y se copia igual que en la lista).
-        text: (r) => {
-          const code = displayCell(r.codigo);
-          return [
-            code,
-            Boolean(r.codigoPendiente) || isMpInternalCodigo(r.codigo) ? "Sin código proveedor" : "",
-            /[\p{L}\p{N}]/u.test(code) ? "" : "Código inválido",
-          ]
-            .filter(Boolean)
-            .join(" · ");
-        },
+        // Texto de la planilla = el código (se edita tal cual); sus avisos van como nota de la celda.
+        text: (r) => displayCell(r.codigo),
         render: (r) => {
           const pending = Boolean(r.codigoPendiente) || isMpInternalCodigo(r.codigo);
           const code = displayCell(r.codigo);
@@ -1034,6 +1052,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           canEditCells={stockCells.canEditCells}
           onCellsCommit={stockCells.onCellsCommit}
           reasonRequired={stockCells.reasonRequired}
+          reasonInline
           rowVersion={stockCells.rowVersion}
           columns={[
             ...stockColumns.map((col) => {
@@ -1042,7 +1061,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                 ...col,
                 edit: stockCells.edit(String(col.key)),
                 readOnlyReason: readOnlyReason("mp_stock", String(col.key)),
-                cellNote: field ? (r: MpStockRow) => stockTraceNote(r, field, originalByLot.get(r.id)) : undefined,
+                cellNote: (r: MpStockRow) => (field ? stockTraceNote(r, field, originalByLot.get(r.id)) : null) ?? stockCellNote(String(col.key), r),
               };
             }),
             ...(canWrite

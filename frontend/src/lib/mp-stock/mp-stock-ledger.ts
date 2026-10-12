@@ -19,7 +19,9 @@ export type MpStockMovementKind =
   | "INGRESO"
   | "CONSUMO_OE"
   | "AJUSTE"
-  | "REVERSO";
+  | "REVERSO"
+  /** Traspaso de saldo entre códigos al corregir el código de un lote (par salida/entrada; nunca reescribe historia). */
+  | "RECLASIFICACION";
 
 export type MpStockActor = { email: string; sector: SectorId };
 
@@ -54,6 +56,8 @@ type Mem = {
   balances: Map<string, MpStockBalance>;
   movements: MpStockMovement[];
   seededKeys: Set<string>;
+  /** código viejo → código nuevo (reclasificación completa). */
+  aliases: Map<string, string>;
 };
 
 const g = globalThis as unknown as { __genusMpStockMem?: Mem };
@@ -63,6 +67,7 @@ function mem(): Mem {
       balances: new Map(),
       movements: [],
       seededKeys: new Set(),
+      aliases: new Map(),
     };
   }
   return g.__genusMpStockMem;
@@ -146,9 +151,141 @@ async function notify(params: {
   void params.idempotencyHint;
 }
 
+/** El saldo del código cambió desde que el usuario lo vio (edición de «Stock código»). */
+export class MpLedgerConflictError extends Error {
+  status = 409;
+  code = "CONFLICT";
+  constructor(message: string) {
+    super(message);
+    this.name = "MpLedgerConflictError";
+  }
+}
+
 export class MpStockLedgerService {
+  /**
+   * Código vigente: si el código fue reclasificado COMPLETO a otro (corrección del código de su lote), los movimientos
+   * nuevos (consumo o reverso de una OE vieja, control semanal) van al código nuevo. La historia no se toca.
+   */
+  async resolveCodigo(codigo: string): Promise<string> {
+    let code = normalizeMpCodigo(codigo);
+    const seen = new Set<string>();
+    for (let i = 0; i < 8 && code && !seen.has(code); i += 1) {
+      seen.add(code);
+      let next: string | null = null;
+      if (isDatabaseConfigured()) {
+        try {
+          const db = currentTx() ?? getDb();
+          const [row] = await db.select({ payload: mpStockBalances.payload }).from(mpStockBalances).where(eq(mpStockBalances.codigo, code)).limit(1);
+          const target = (row?.payload as { reclasificadoA?: string | null } | undefined)?.reclasificadoA;
+          next = target ? normalizeMpCodigo(target) : null;
+        } catch (err) {
+          if (!isMissingSchemaError(err) || !isFeatureMemoryAllowed()) throw err;
+          next = mem().aliases.get(code) ?? null;
+        }
+      } else {
+        next = mem().aliases.get(code) ?? null;
+      }
+      if (!next || next === code) break;
+      code = next;
+    }
+    return code;
+  }
+
+  private async setAlias(from: string, to: string | null): Promise<void> {
+    if (isDatabaseConfigured()) {
+      const db = currentTx() ?? getDb();
+      if (to) {
+        await db
+          .insert(mpStockBalances)
+          .values({ codigo: from, payload: { reclasificadoA: to, reclasificadoAt: new Date().toISOString() } })
+          .onConflictDoUpdate({
+            target: mpStockBalances.codigo,
+            set: { payload: sql`coalesce(${mpStockBalances.payload}, '{}'::jsonb) || ${JSON.stringify({ reclasificadoA: to, reclasificadoAt: new Date().toISOString() })}::jsonb` },
+          });
+      } else {
+        await db.update(mpStockBalances).set({ payload: sql`coalesce(${mpStockBalances.payload}, '{}'::jsonb) - 'reclasificadoA'` }).where(eq(mpStockBalances.codigo, from));
+      }
+      return;
+    }
+    if (to) mem().aliases.set(from, to);
+    else mem().aliases.delete(from);
+  }
+
+  /** Saldo actual de un código, con el candado del código tomado si hay transacción (para leer y decidir). */
+  private async lockedBalance(code: string): Promise<number> {
+    const tx = currentTx();
+    if (isDatabaseConfigured() && tx) {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`genus-mp-stock:${code}`}))`);
+      const [row] = await tx.select({ stock: mpStockBalances.stockActual }).from(mpStockBalances).where(eq(mpStockBalances.codigo, code)).for("update");
+      return row?.stock ?? 0;
+    }
+    return (await this.getBalance(code))?.stockActual ?? 0;
+  }
+
+  /**
+   * Corrección del CÓDIGO de un lote: traspasa saldo del código viejo al nuevo con un par de movimientos
+   * RECLASIFICACION (salida / entrada), en la transacción ambiente. Si el lote era el único del código viejo
+   * (`mode: "all"`) se traspasa TODO el saldo del código y queda un alias viejo → nuevo, para que el consumo o el
+   * reverso de una OE anterior caigan en el código nuevo. Los movimientos históricos no se modifican.
+   */
+  async reclassifyCodigo(
+    actor: MpStockActor,
+    params: { from: string; to: string; mode: "all" | "quantity"; quantity?: number; reason: string; refId: string; lote?: string; descripcion?: string }
+  ): Promise<{ moved: number }> {
+    await assertFeatureWritesEnabled();
+    const from = normalizeMpCodigo(params.from);
+    const to = normalizeMpCodigo(params.to);
+    if (!from || !to || from === to) return { moved: 0 };
+    // Candados de los dos códigos en orden fijo: dos reclasificaciones cruzadas no se bloquean entre sí.
+    const [a, b] = [from, to].sort();
+    await this.lockedBalance(a!);
+    await this.lockedBalance(b!);
+    const current = await this.lockedBalance(from);
+    const moved = Math.round((params.mode === "all" ? current : Number(params.quantity ?? 0)) * 1000) / 1000;
+    const reason = `Reclasificación de código ${from} → ${to}${params.reason.trim() ? `: ${params.reason.trim()}` : ""}`;
+    if (moved !== 0) {
+      await this.applyMovement(actor, {
+        codigo: from, kind: "RECLASIFICACION", quantity: -moved, reason, idempotencyKey: `mp-reclasif:${params.refId}:salida`,
+        refType: "mp_reclasificacion", refId: params.refId, lote: params.lote, descripcion: params.descripcion, allowNegative: true, noAlias: true,
+      });
+      await this.applyMovement(actor, {
+        codigo: to, kind: "RECLASIFICACION", quantity: moved, reason, idempotencyKey: `mp-reclasif:${params.refId}:entrada`,
+        refType: "mp_reclasificacion", refId: params.refId, lote: params.lote, descripcion: params.descripcion, allowNegative: true, noAlias: true,
+      });
+    }
+    // El código destino vuelve a estar vigente (si alguna vez se había reclasificado a otro), sin ciclos.
+    await this.setAlias(to, null);
+    if (params.mode === "all") await this.setAlias(from, to);
+    return { moved };
+  }
+
+  /**
+   * Edición de «Stock código»: lleva el saldo del código al valor pedido con UN movimiento de AJUSTE por la
+   * diferencia (motivo obligatorio). Si el saldo cambió desde que el usuario lo vio → conflicto, no se pisa.
+   */
+  async adjustCodigoBalance(
+    actor: MpStockActor,
+    params: { codigo: string; target: number; expected: number | null; reason: string; refId: string }
+  ): Promise<{ delta: number; balance: number }> {
+    await assertFeatureWritesEnabled();
+    const code = await this.resolveCodigo(params.codigo);
+    if (!code) throw new Error("Código obligatorio.");
+    if (!params.reason.trim()) throw new Error("Motivo obligatorio.");
+    const current = await this.lockedBalance(code);
+    if (params.expected != null && Math.abs(current - params.expected) > 0.0005) {
+      throw new MpLedgerConflictError(`El saldo del código ${code} cambió (ahora ${current}). Recargá y reintentá.`);
+    }
+    const delta = Math.round((params.target - current) * 1000) / 1000;
+    if (delta === 0) return { delta: 0, balance: current };
+    const bal = await this.applyMovement(actor, {
+      codigo: code, kind: "AJUSTE", quantity: delta, reason: `Saldo del código fijado en ${params.target}: ${params.reason.trim()}`,
+      idempotencyKey: `mp-saldo-codigo:${params.refId}`, refType: "mp_saldo_codigo", refId: params.refId, allowNegative: true, noAlias: true,
+    });
+    return { delta, balance: bal.stockActual };
+  }
+
   async getBalance(codigo: string): Promise<MpStockBalance | null> {
-    const code = codigo.trim().toUpperCase();
+    const code = await this.resolveCodigo(codigo);
     if (!code) return null;
     if (isDatabaseConfigured()) {
       try {
@@ -662,9 +799,15 @@ export class MpStockLedgerService {
       documento?: string;
       allowNegative?: boolean;
       reverseOfKey?: string;
+      /** Usar el código tal cual (reclasificación); por defecto un código reclasificado se resuelve al vigente. */
+      noAlias?: boolean;
     }
   ): Promise<MpStockBalance> {
     await assertFeatureWritesEnabled();
+    if (!input.noAlias) {
+      const resolved = await this.resolveCodigo(input.codigo);
+      if (resolved && resolved !== input.codigo) input = { ...input, codigo: resolved };
+    }
     if (isDatabaseConfigured()) {
       try {
         return await this.applyMovementDb(actor, input);
@@ -890,6 +1033,7 @@ export function resetMpStockMemoryForTests(): void {
     balances: new Map(),
     movements: [],
     seededKeys: new Set(),
+    aliases: new Map(),
   };
   singleton = null;
 }

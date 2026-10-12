@@ -184,6 +184,11 @@ export type MpStockRow = {
    * muestra `productosAsociados`. Se guarda en el payload JSONB: no requiere migración.
    */
   producto?: string;
+  /** Estado de stock / de vencimiento fijado a mano en la planilla (vacío = calculado). Nunca cambia kg ni libro mayor. */
+  estadoStockManual?: string;
+  /** Códigos que tuvo el lote antes de una corrección de código (un ingreso nuevo con el código viejo cae acá). */
+  codigosAnteriores?: string[];
+  estadoVencimientoManual?: string;
   /** Stock real del CÓDIGO según el libro mayor (solo lectura; lo agrega la API al listar). */
   stockLibroMayor?: number | null;
   /** Archivo lógico: oculto del listado activo; no hard-delete del historial. */
@@ -207,6 +212,8 @@ export type MpIngresoRow = {
   /** PCC-ME N.º (opcional, HereLabel / trazabilidad). Persistido en payload JSONB. */
   pccMeNro?: string;
   codigo: string;
+  /** Código con el que se RECIBIÓ (si después se corrigió el código del lote en Stock MP). Trazabilidad. */
+  codigoRecibido?: string;
   /** true si codigo es identidad interna INT-MP-{id}. */
   codigoPendiente?: boolean;
   /** Producto destino opcional; no parte saldos de stock. */

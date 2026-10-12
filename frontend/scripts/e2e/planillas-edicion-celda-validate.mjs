@@ -288,7 +288,7 @@ try {
 
   await nav(mp, "Stock");
   await inCellRoundTrip(mp, { label: "Stock MP", navLabel: "Stock", gridId: "mp-stock-grid", rowValue: "PLAN-MP-LOT", column: "Ubicación", value: "E7", read: async () => (await q("select payload from inv_mp_stock where payload->>'codigo' = 'PLAN-MP-LOT'"))[0]?.payload.ubicacion });
-  check("Stock MP: «Stock código» protegido, con el motivo", /libro mayor/.test(await lockReason(mp, "mp-stock-grid", "PLAN-MP-LOT", "Stock código")));
+  check("Stock MP: «Stock código» sin candado (se edita con motivo: ajuste del libro mayor)", (await lockReason(mp, "mp-stock-grid", "PLAN-MP-LOT", "Stock código")) === "");
   await mp.screenshot({ path: `${OUT}/5-stock-mp.png` });
 
   // --- Stock MP con una fila igual a las de Production (lote creado por un ingreso confirmado), usuario Materia Prima.
@@ -321,15 +321,12 @@ try {
   check("Stock MP (fila tipo Production): los kg no cambiaron (25) y no hay movimientos del código", (await lotPayload())?.cantidadKg === 25 && (await q("select 1 from mp_stock_movements where codigo = 'PLAN-MP-PROD'")).length === 0);
   check("Stock MP (fila tipo Production): las 5 ediciones quedan auditadas", (await auditCount(prodLike.lot)) >= 5);
   {
-    const why = await lockReason(mp, "mp-stock-grid", "PLAN-MP-PROD", "Kg lote");
-    check("Stock MP: kg de un lote de ingreso protegidos con motivo específico", /Ajustar stock/.test(why), why);
-    const whyCode = await lockReason(mp, "mp-stock-grid", "PLAN-MP-PROD", "Código");
-    check("Stock MP: Código protegido con motivo específico (libro mayor)", /libro mayor/.test(whyCode), whyCode);
+    for (const col of ["Kg lote", "Código"]) {
+      check(`Stock MP: «${col}» de un lote de ingreso sin candado (se edita con motivo en la planilla)`, (await lockReason(mp, "mp-stock-grid", "PLAN-MP-PROD", col)) === "");
+    }
   }
   {
-    const flagged = await mp.locator("[data-testid=mp-stock-grid]").evaluate((g) =>
-      [...g.querySelectorAll(".dsg-row")].some((r) => /^\.\. · Código inválido$/.test([...r.querySelectorAll("input")].map((x) => x.value).find((v) => v.startsWith("..")) ?? "") || r.querySelector("[data-testid^=mp-stock-codigo-invalido-]"))
-    );
+    const flagged = /Código inválido/.test(await noteOf(mp, "mp-stock-grid", "..", "Código"));
     check("Stock MP: la fila «..» se marca «Código inválido» (no se oculta ni se borra)", flagged && (await q("select 1 from inv_mp_stock where id = $1", [prodLike.dots])).length === 1);
   }
   await (await cell(mp, "mp-stock-grid", "PLAN-MP-PROD", "Producto")).click();

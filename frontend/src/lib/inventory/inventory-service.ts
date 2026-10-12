@@ -56,6 +56,7 @@ import {
   MAX_INVENTORY_CELL_CHANGES,
   inventoryCellProtection,
   isInventoryCellField,
+  parseDisplayedNumber,
   validateInventoryValue,
   type InventoryCellChange,
   type InventoryCellResource,
@@ -127,6 +128,15 @@ function nowIso() {
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** Fecha (aaaa-mm-dd, hora local) dentro de `days` días: «Días al vence» editado → vencimiento. */
+function addDaysIso(days: number, today = new Date()): string {
+  const d = new Date(today);
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + days);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /** ISO estrictamente posterior a `prev` (la versión debe cambiar siempre, incluso dentro del mismo ms). */
@@ -705,15 +715,42 @@ export class InventoryService {
         }
         if (c.field === "cantidadKg") {
           this.adjustMpStock(actor, c.id, Number(value), sanitizeOptionalReason(c.reason));
+        } else if (c.field === "codigo") {
+          this.reclassifyMpLotCodigo(actor, current, String(value), sanitizeOptionalReason(c.reason));
+        } else if (c.field === "stockLibroMayor") {
+          // El saldo del código lo lleva el libro mayor: se registra la operación y se aplica en la misma transacción.
+          const refId = randomUUID();
+          const expected = parseDisplayedNumber(c.expectedValue);
+          this.repo.mpLedgerOps.push({ kind: "saldo_codigo", refId, lotId: c.id, codigo: current.codigo, target: Number(value), expected, reason: sanitizeOptionalReason(c.reason) });
+          this.audit(actor, "mp_stock", c.id, "saldo_codigo", { stockCodigo: expected, codigo: current.codigo }, { stockCodigo: Number(value), codigo: current.codigo }, sanitizeOptionalReason(c.reason));
+          out.push({ ok: true });
+          continue;
         } else {
+          // Columnas que dependen de otros datos: se guarda el dato del que dependen (días → vencimiento) o un
+          // estado fijado a mano (vacío = vuelve al cálculo). Nunca cambian kg ni libro mayor.
+          const patch: Partial<MpStockRow> =
+            c.field === "diasAlVence"
+              ? { vencimiento: addDaysIso(Number(value)) }
+              : c.field === "estadoStock"
+                ? { estadoStockManual: String(value) }
+                : c.field === "estadoVencimiento"
+                  ? { estadoVencimientoManual: String(value) }
+                  : { [c.field]: value };
+          const before = Object.fromEntries(
+            Object.keys(patch).map((k) => [k, (current as Record<string, unknown>)[k] ?? ""])
+          );
           const next = this.enrichMpStock({
             ...current,
-            [c.field]: value,
+            ...patch,
             updatedBy: actor.email,
             updatedAt: bumpIso(current.updatedAt),
           } as MpStockRow);
           this.repo.upsertMpStock(next);
-          this.audit(actor, "mp_stock", c.id, "cell_edit", { [c.field]: (current as Record<string, unknown>)[c.field] }, { [c.field]: value });
+          const derived = c.field === "diasAlVence" || c.field === "estadoStock" || c.field === "estadoVencimiento";
+          this.audit(actor, "mp_stock", c.id, "cell_edit", derived ? { ...before, columna: c.field } : before, derived ? { ...patch, columna: c.field } : patch);
+          versions.set(c.id, next.updatedAt);
+          out.push({ ok: true });
+          continue;
         }
         versions.set(c.id, this.repo.getMpStock(c.id)!.updatedAt);
       }
@@ -1589,14 +1626,76 @@ export class InventoryService {
     return updated;
   }
 
+  /**
+   * Corrección del CÓDIGO de un lote (reclasificación), todo en la operación de MP en curso:
+   *  - el lote pasa al código nuevo;
+   *  - los ingresos vinculados al lote pasan al código nuevo y conservan el recibido (`codigoRecibido`), así una
+   *    corrección o anulación posterior del ingreso mueve el código correcto;
+   *  - el libro mayor traspasa el saldo (par de movimientos RECLASIFICACION; la historia no se toca). Si el lote era
+   *    el único del código viejo se traspasa todo el saldo del código y queda un alias viejo → nuevo (OE y control
+   *    semanal que todavía usan el código viejo caen en el nuevo); si hay otros lotes, solo los kg de este lote.
+   */
+  reclassifyMpLotCodigo(actor: InventoryActor, lot: MpStockRow, nuevo: string, reason: string) {
+    const from = normalizeMpCodigoLocal(lot.codigo);
+    const to = normalizeMpCodigoLocal(nuevo);
+    if (!to || from === to) return lot;
+    const others = this.repo
+      .listMpStock()
+      .filter((l) => l.id !== lot.id && !l.archived && normalizeMpCodigoLocal(l.codigo) === from);
+    const mode: "all" | "quantity" = others.length === 0 ? "all" : "quantity";
+    const refId = randomUUID();
+    const updatedLot = this.enrichMpStock({
+      ...lot,
+      codigo: to,
+      codigosAnteriores: mode === "all" && from ? [...new Set([...(lot.codigosAnteriores ?? []), from])].filter((c) => c !== to) : lot.codigosAnteriores,
+      codigoPendiente: false,
+      updatedBy: actor.email,
+      updatedAt: bumpIso(lot.updatedAt),
+    });
+    this.repo.upsertMpStock(updatedLot);
+    for (const ing of this.repo.listMpIngresos()) {
+      if (ing.stockLotId !== lot.id || ing.status === "ANULADO" || normalizeMpCodigoLocal(ing.codigo) === to) continue;
+      const nextIng: MpIngresoRow = {
+        ...ing,
+        codigoRecibido: ing.codigoRecibido || ing.codigo,
+        codigo: to,
+        codigoPendiente: false,
+        updatedBy: actor.email,
+        updatedAt: bumpIso(ing.updatedAt),
+      };
+      this.repo.upsertMpIngreso(nextIng);
+      this.audit(actor, "mp_ingresos", ing.id, "reclasificacion_codigo", { codigo: ing.codigo }, { codigo: to, codigoRecibido: nextIng.codigoRecibido, lote: lot.id }, reason);
+    }
+    if (from) {
+      this.repo.mpLedgerOps.push({
+        kind: "reclasificacion",
+        refId,
+        lotId: lot.id,
+        from,
+        to,
+        mode,
+        quantity: lot.cantidadKg ?? 0,
+        reason,
+        lote: lot.lote,
+        descripcion: lot.descripcion,
+      });
+    }
+    // PRODUCTO (de los ingresos confirmados del código) se recalcula con los ingresos ya en el código nuevo.
+    this.refreshProductosAsociadosForCodigo(to);
+    if (from) this.refreshProductosAsociadosForCodigo(from);
+    this.audit(actor, "mp_stock", lot.id, "reclasificacion_codigo", { codigo: lot.codigo }, { codigo: to, traspaso: mode === "all" ? "saldo completo del código" : `${lot.cantidadKg ?? 0} kg del lote` }, reason);
+    return this.repo.getMpStock(lot.id) ?? updatedLot;
+  }
+
   private enrichMpStock(row: MpStockRow): MpStockRow {
     const dias = calcDiasAlVence(row.vencimiento || null);
     const productosAsociados = this.aggregateProductosAsociados(row.codigo);
     return {
       ...row,
-      estadoStock: calcMpEstadoStock(row.cantidadKg),
+      // Estado fijado a mano en la planilla (si hay); si no, el calculado.
+      estadoStock: row.estadoStockManual?.trim() || calcMpEstadoStock(row.cantidadKg),
       diasAlVence: dias,
-      estadoVencimiento: calcMpEstadoVencimiento(dias),
+      estadoVencimiento: row.estadoVencimientoManual?.trim() || calcMpEstadoVencimiento(dias),
       productosAsociados,
     };
   }
@@ -1782,6 +1881,13 @@ export class InventoryService {
 
     if (willImpact) {
       const lot = this.resolveMpLot(actor, row);
+      // Ingreso que llega con un código que se corrigió en Stock (reclasificado): entra con el código vigente del
+      // lote y conserva el recibido. Antes habría devuelto el lote al código viejo.
+      if (lot.codigosAnteriores?.includes(normalizeMpCodigoLocal(row.codigo)) && normalizeMpCodigoLocal(lot.codigo) !== normalizeMpCodigoLocal(row.codigo)) {
+        row.codigoRecibido = row.codigoRecibido || row.codigo;
+        row.codigo = lot.codigo;
+        codigo = lot.codigo;
+      }
       // Propagar flag de código pendiente al lote visible en Stock
       if (lot.codigoPendiente !== codigoPendiente || lot.codigo !== codigo) {
         this.repo.upsertMpStock(
@@ -1990,6 +2096,8 @@ export class InventoryService {
     if (code) {
       const byCode = this.repo.findMpStockByCodigo(code);
       if (byCode) return byCode;
+      const renamed = this.repo.listMpStock().find((l) => !l.archived && (l.codigosAnteriores ?? []).includes(code));
+      if (renamed) return renamed;
     }
     if (ingreso.lote.trim()) {
       const byLot = this.repo.findMpStockByDescLote(ingreso.descripcion, ingreso.lote);

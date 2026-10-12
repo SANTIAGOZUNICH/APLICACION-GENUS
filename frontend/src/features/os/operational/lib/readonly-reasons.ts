@@ -16,14 +16,6 @@ const REASONS: Record<string, Record<string, string>> = {
     "INGRESO Nº": "Número asignado por el sistema (único): no se edita.",
     TOTAL,
   },
-  mp_stock: {
-    CÓDIGO: "El código identifica el saldo en el libro mayor: cambiarlo movería stock entre códigos. Se corrige en el ingreso (con motivo).",
-    "STOCK CÓDIGO (LIBRO MAYOR)": "Saldo del libro mayor (ingresos − consumos de OE ± ajustes): no se edita.",
-    "ESTADO STOCK": "Se calcula a partir de los kg del lote.",
-    "DÍAS AL VENCE": "Se calcula a partir del vencimiento.",
-    "ESTADO VENCIMIENTO": "Se calcula a partir del vencimiento.",
-    ORIGEN: "Origen del lote (ingreso / manual): no se edita.",
-  },
   mp_control: {
     codigo: "Viene de la fórmula (snapshot del control): no se edita.",
     materiaPrima: "Viene de la fórmula (snapshot del control): no se edita.",

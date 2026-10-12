@@ -67,11 +67,10 @@ describe("inventario — edición por celda", () => {
     expect(repo.ajustes.some((a) => a.entityId === lot.id && a.cantidadAnterior === 40 && a.cantidadNueva === 30.5)).toBe(true);
   });
 
-  it("MP: en lotes creados por un ingreso solo los kg quedan protegidos (con motivo específico)", () => {
-    for (const field of ["producto", "proveedor", "cliente", "descripcion", "ubicacion", "lote", "vencimiento"]) {
+  it("MP: en Stock MP no hay candados permanentes: todas las columnas se editan (solo permiso y archivado)", () => {
+    for (const field of ["codigo", "producto", "proveedor", "cliente", "descripcion", "ubicacion", "lote", "vencimiento", "cantidadKg", "stockLibroMayor", "estadoStock", "diasAlVence", "estadoVencimiento", "origen"]) {
       expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, field, true)).toBeNull();
     }
-    expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "cantidadKg", true)).toMatch(/Ajustar stock/);
     expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "ubicacion", false)).toMatch(/sector/);
     expect(inventoryCellProtection("mp_stock", { origen: "manual", archived: true }, "ubicacion", true)).toMatch(/archivado/);
     expect(validateInventoryValue("vencimiento", "31/12/2026")).toEqual({ ok: true, value: "2026-12-31" });
@@ -91,8 +90,12 @@ describe("inventario — edición por celda", () => {
     const after = svc.listMpStock(mp).find((r) => r.id === lot.id)!;
     expect(after).toMatchObject({ producto: "CREMA X · GEL Y", proveedor: "P2", descripcion: "Mentol cristal", cantidadKg: lot.cantidadKg, codigo: "MP-77" });
     expect(repo.audit.filter((a) => a.action === "cell_edit" && a.entityId === lot.id)).toHaveLength(3);
+    // Kg de un lote de ingreso: también en la celda, con motivo → ajuste (queda en ajustes y va al libro mayor).
+    const [sinMotivo] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "cantidadKg", value: "1", expectedVersion: after.updatedAt }]);
+    expect(sinMotivo).toMatchObject({ ok: false, code: "INVALID" });
     const [kg] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "cantidadKg", value: "1", expectedVersion: after.updatedAt, reason: "Conteo físico de prueba" }]);
-    expect(kg).toMatchObject({ ok: false, code: "PROTECTED" });
+    expect(kg).toMatchObject({ ok: true });
+    expect(repo.ajustes.some((a) => a.entityId === lot.id && a.cantidadNueva === 1 && a.diferencia === 1 - (lot.cantidadKg ?? 0))).toBe(true);
   });
 
   it("Stock = dato vigente que usan vencimientos (días/estado); el ingreso original conserva lo recibido; código/kg intactos", async () => {
@@ -117,6 +120,58 @@ describe("inventario — edición por celda", () => {
     // La auditoría guarda antes/después de cada cambio en Stock.
     const audits = repo.audit.filter((a) => a.action === "cell_edit" && a.entityId === lot.id);
     expect(audits.map((a) => a.before)).toEqual(expect.arrayContaining([{ vencimiento: "2020-01-31" }, { lote: "L1" }, { proveedor: "P1" }]));
+  });
+
+  it("Código: corrige lote + ingresos vinculados (conservan el recibido) y deja la reclasificación para el libro mayor", async () => {
+    await svc.upsertMpIngreso(mp, { codigo: "MP-OLD", producto: "CREMA", descripcion: "Urea", lote: "L1", bultos: 1, cantidad: 9, confirm: true } as never);
+    const lot = svc.listMpStock(mp).find((r) => r.codigo === "MP-OLD")!;
+    const [sinMotivo] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "codigo", value: "mp-new", expectedVersion: lot.updatedAt }]);
+    expect(sinMotivo).toMatchObject({ ok: false, code: "INVALID" });
+    const [bad] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "codigo", value: "..", expectedVersion: lot.updatedAt, reason: "Código mal cargado" }]);
+    expect(bad).toMatchObject({ ok: false, code: "INVALID" });
+    const [ok] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "codigo", value: "mp-new", expectedVersion: lot.updatedAt, reason: "Código mal cargado" }]);
+    expect(ok).toMatchObject({ ok: true });
+    const after = repo.getMpStock(lot.id)!;
+    expect(after).toMatchObject({ codigo: "MP-NEW", cantidadKg: lot.cantidadKg, codigosAnteriores: ["MP-OLD"] });
+    expect(after.productosAsociados).toBe("CREMA");
+    const ing = repo.listMpIngresos().find((i) => i.stockLotId === lot.id)!;
+    expect(ing).toMatchObject({ codigo: "MP-NEW", codigoRecibido: "MP-OLD", status: "CONFIRMADO" });
+    expect(repo.mpLedgerOps).toEqual([expect.objectContaining({ kind: "reclasificacion", from: "MP-OLD", to: "MP-NEW", mode: "all" })]);
+    // Un ingreso nuevo que todavía llega con el código viejo entra en el mismo lote con el código vigente.
+    await svc.upsertMpIngreso(mp, { codigo: "MP-OLD", descripcion: "Urea", lote: "L2", bultos: 1, cantidad: 1, confirm: true } as never);
+    const nuevo = repo.listMpIngresos().find((i) => i.lote === "L2")!;
+    expect(nuevo).toMatchObject({ codigo: "MP-NEW", codigoRecibido: "MP-OLD", stockLotId: lot.id });
+    expect(repo.getMpStock(lot.id)!.codigo).toBe("MP-NEW");
+  });
+
+  it("Código con otros lotes del mismo código: traspasa solo los kg del lote", () => {
+    const a = svc.upsertMpStock(mp, { codigo: "DUP", descripcion: "A", cantidadKg: 4 });
+    svc.upsertMpStock(mp, { codigo: "DUP", descripcion: "B", cantidadKg: 6 });
+    svc.patchInventoryCells(mp, "mp_stock", [{ id: a.id, field: "codigo", value: "DUP-A", expectedVersion: a.updatedAt, reason: "Separar lote A" }]);
+    expect(repo.mpLedgerOps).toEqual([expect.objectContaining({ mode: "quantity", quantity: 4, from: "DUP", to: "DUP-A" })]);
+  });
+
+  it("Stock código, días al vence, estados y origen: operación segura por columna", () => {
+    const lot = svc.upsertMpStock(mp, { codigo: "DER", descripcion: "Derivados", cantidadKg: 0, vencimiento: "2020-01-01" });
+    expect(lot.estadoStock).toBe("Sin stock");
+    const res = svc.patchInventoryCells(mp, "mp_stock", [
+      { id: lot.id, field: "stockLibroMayor", value: "15", expectedVersion: lot.updatedAt, reason: "Conteo físico anual", expectedValue: "12,5" },
+      { id: lot.id, field: "diasAlVence", value: "30", expectedVersion: lot.updatedAt },
+      { id: lot.id, field: "estadoStock", value: "En cuarentena", expectedVersion: lot.updatedAt },
+      { id: lot.id, field: "origen", value: "manual", expectedVersion: lot.updatedAt },
+    ]);
+    expect(res.every((x) => x.ok)).toBe(true);
+    const after = svc.listMpStock(mp).find((r) => r.id === lot.id)!;
+    expect(after.diasAlVence).toBe(30); // el vencimiento quedó en hoy + 30
+    expect(after.estadoVencimiento).toBe("Vence pronto");
+    expect(after.estadoStock).toBe("En cuarentena"); // fijado a mano, kg intactos
+    expect(after.cantidadKg).toBe(0);
+    expect(repo.mpLedgerOps).toEqual([expect.objectContaining({ kind: "saldo_codigo", codigo: "DER", target: 15, expected: 12.5 })]);
+    // Vaciar el estado vuelve al cálculo.
+    svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "estadoStock", value: "", expectedVersion: after.updatedAt }]);
+    expect(svc.listMpStock(mp).find((r) => r.id === lot.id)!.estadoStock).toBe("Sin stock");
+    const [sinMotivo] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "stockLibroMayor", value: "1", expectedVersion: repo.getMpStock(lot.id)!.updatedAt }]);
+    expect(sinMotivo).toMatchObject({ ok: false, code: "INVALID" });
   });
 });
 
