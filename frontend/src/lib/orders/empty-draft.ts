@@ -166,6 +166,6 @@ export function statusLabel(status: OrderStatus): string {
     case "ARCHIVADA":
       return "Archivada";
     default:
-      return status.replace(/_/g, " ");
+      return String(status).replace(/_/g, " ");
   }
 }
