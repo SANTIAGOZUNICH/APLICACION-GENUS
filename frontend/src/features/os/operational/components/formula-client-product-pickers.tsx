@@ -92,6 +92,11 @@ function filterProductsLocal(
   );
 }
 
+/** Mismo cliente aunque cambie mayúsculas/acentos («FIRMEA» = «Firmea»): no invalida el producto elegido. */
+function sameClient(a: string | null, b: string): boolean {
+  return a !== null && normalizeSearchKey(a) === normalizeSearchKey(b);
+}
+
 export function FormulaClientProductPickers({
   session,
   client,
@@ -397,7 +402,7 @@ export function FormulaClientProductPickers({
             const prev = selectedClient;
             setClientQuery(opt.label);
             setSelectedClient(opt.label);
-          if (prev !== opt.label) {
+          if (!sameClient(prev, opt.label)) {
             clearProductLocal();
           }
             onClientSelected(opt.label);
@@ -413,7 +418,7 @@ export function FormulaClientProductPickers({
               const prev = selectedClient;
               setClientQuery(label);
               setSelectedClient(label);
-              if (prev !== label) clearProductLocal();
+              if (!sameClient(prev, label)) clearProductLocal();
               onClientSelected(label);
             }
           }}
