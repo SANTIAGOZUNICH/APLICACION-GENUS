@@ -703,6 +703,11 @@ export class MpStockLedgerService {
     return mem().movements.filter((m) => m.idempotencyKey.startsWith(positionKey));
   }
 
+  /** Movimientos de una referencia (p. ej. una OE), solo lectura — para auditoría. */
+  listMovementsForRef(refType: string, refId: string): Promise<MpStockMovement[]> {
+    return this.listMovementsByRef(refType, refId);
+  }
+
   private async listMovementsByRef(
     refType: string,
     refId: string

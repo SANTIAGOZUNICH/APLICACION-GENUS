@@ -14,6 +14,7 @@ import {
   assertCanAccessAssignedOrder,
   assertCanOrderAction,
   canDeleteOa,
+  canDeleteOe,
   canOrderAction,
   ORDERS_DENIED_MESSAGE,
 } from "@/lib/orders/rbac";
@@ -765,6 +766,7 @@ export class OrdersService {
   async saveProgress(id: string, input: PatchOrderInput, actor: OrdersActor) {
     const current = await this.repo.getOrder(id);
     if (!current) throw new OrdersNotFoundError("Orden no encontrada.");
+    assertOeNotDeleted(current);
     if (
       current.status === "COMPLETA" ||
       current.status === "COMPLETA_CON_PENDIENTES" ||
@@ -967,6 +969,8 @@ export class OrdersService {
     }
     const current = await this.repo.getOrder(id);
     if (!current) throw new OrdersNotFoundError("Orden no encontrada.");
+    // Una OE eliminada nunca vuelve a generar movimientos de inventario.
+    assertOeNotDeleted(current);
     assertCanAccessAssignedOrder(
       current.type,
       current.assignedSector,
@@ -1159,6 +1163,7 @@ export class OrdersService {
     }
     const order = await this.repo.getOrder(orderId);
     if (!order) throw new OrdersNotFoundError("Orden no encontrada.");
+    assertOeNotDeleted(order);
 
     const canDirect = ["CALIDAD", "PRODUCCION", "DIRECCION"].includes(actor.sector);
     if (!canDirect) {
@@ -1336,6 +1341,7 @@ export class OrdersService {
     );
     const trimmed = normalizeOptionalReason(reason);
     const current = await this.requireOrder(id);
+    assertOeNotDeleted(current);
     if (current.status !== "COMPLETA") {
       throw new OrdersValidationError("Solo se pueden devolver órdenes completas.");
     }
@@ -1416,6 +1422,7 @@ export class OrdersService {
 
   async markReviewed(id: string, actor: OrdersActor) {
     const current = await this.requireOrder(id);
+    assertOeNotDeleted(current);
     assertCanOrderAction(current.type, "review", actor);
     if (current.status !== "COMPLETA") {
       throw new OrdersValidationError("Solo se revisan órdenes completas.");
@@ -1441,6 +1448,7 @@ export class OrdersService {
 
   async archive(id: string, actor: OrdersActor) {
     const current = await this.requireOrder(id);
+    assertOeNotDeleted(current);
     assertCanOrderAction(current.type, "archive", actor);
     if (current.status === "ARCHIVADA") return current;
     if (current.status === "ANULADA") {
@@ -1473,6 +1481,7 @@ export class OrdersService {
    */
   async restore(id: string, actor: OrdersActor) {
     const current = await this.requireOrder(id);
+    assertOeNotDeleted(current);
     assertCanOrderAction(current.type, "archive", actor);
     if (current.status !== "ARCHIVADA") {
       throw new OrdersValidationError("Solo se restauran órdenes archivadas.");
@@ -1504,6 +1513,7 @@ export class OrdersService {
 
   async annul(id: string, actor: OrdersActor, reason: string) {
     const current = await this.requireOrder(id);
+    assertOeNotDeleted(current);
     assertCanOrderAction(current.type, "annul", actor);
     const trimmed = normalizeOptionalReason(reason);
     // Idempotencia: ya anulada → no repetir reversos de stock.
@@ -1684,6 +1694,80 @@ export class OrdersService {
     return updated;
   }
 
+  /**
+   * Elimina una OE en CUALQUIER estado (borrador, pendiente, en proceso, completa, entregada, archivada, anulada).
+   * Soft-delete (deletedAt/deletedBy/deleteReason), nunca DELETE físico: se conservan versiones, auditoría y el
+   * trabajo vinculado. NO toca el stock: si la OE ya descontó MP, los movimientos quedan como están (una corrección
+   * de stock se hace con un ajuste explícito). Desde acá ninguna acción la modifica (assertOeNotDeleted) y no puede
+   * volver a vincularse a un trabajo (ensure-oe-on-assign / corrección de OE del trabajo).
+   */
+  async deleteOe(id: string, actor: OrdersActor, reason: string) {
+    const current = await this.requireOrder(id);
+    if (current.type !== "OE") {
+      throw new OrdersValidationError("Esta acción solo aplica a OE.");
+    }
+    if (!canDeleteOe(actor.sector)) {
+      throw new OrdersForbiddenError(ORDERS_DENIED_MESSAGE);
+    }
+    if (!sanitizeOptionalReason(reason)) {
+      throw new OrdersValidationError("El motivo es obligatorio para eliminar una OE.");
+    }
+    const trimmed = normalizeOptionalReason(reason);
+    if (current.deletedAt) {
+      return current; // idempotente: un segundo pedido no cambia nada
+    }
+
+    // Solo informativo (auditoría): qué consumo de MP había registrado. No se revierte.
+    let stockMovementsKept: Array<{ codigo: string; kg: number }> = [];
+    try {
+      const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
+      const movs = await getMpStockLedger().listMovementsForRef("oe", id);
+      const byCode = new Map<string, number>();
+      for (const m of movs) byCode.set(m.codigo, Math.round(((byCode.get(m.codigo) ?? 0) + m.quantity) * 1000) / 1000);
+      stockMovementsKept = [...byCode].filter(([, kg]) => kg !== 0).map(([codigo, kg]) => ({ codigo, kg }));
+    } catch {
+      stockMovementsKept = [];
+    }
+
+    const updated = await this.repo.updateOrderOptimistic(id, current.version, {
+      deletedAt: nowIso(),
+      deletedBy: actor.email,
+      deleteReason: trimmed,
+      updatedBy: actor.email,
+    });
+    if (!updated) {
+      const fresh = await this.repo.getOrder(id);
+      throw new OrdersConflictError("Conflicto al eliminar.", fresh!);
+    }
+    await this.repo.appendAudit({
+      orderId: id,
+      eventType: "ORDER_OE_DELETED",
+      actor: actor.email,
+      actorSector: actor.sector,
+      metadata: {
+        reason: trimmed,
+        orderNumber: current.orderNumber,
+        lot: current.lot,
+        product: current.product,
+        client: current.client,
+        previousStatus: current.status,
+        linkedWorkItemId: current.linkedWorkItemId ?? null,
+        // Movimientos de stock MP que la OE ya había generado: se conservan sin cambios.
+        stockMovementsKept,
+        stockReverted: false,
+      },
+    });
+    const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+    recordLifecycleEvent({
+      entityKind: "oe",
+      entityId: id,
+      action: "eliminar",
+      actor: { email: actor.email, sector: actor.sector },
+      reason: trimmed,
+    });
+    return updated;
+  }
+
   async recordDownload(id: string, actor: OrdersActor, format: string) {
     const order = await this.requireOrder(id);
     assertCanAccessAssignedOrder(order.type, order.assignedSector, actor, "download");
@@ -1728,5 +1812,12 @@ export class OrdersService {
     const order = await this.repo.getOrder(id);
     if (!order) throw new OrdersNotFoundError("Orden no encontrada.");
     return order;
+  }
+}
+
+/** Una OE eliminada (soft-delete) queda solo para consulta: ninguna acción la modifica ni mueve stock. */
+function assertOeNotDeleted(order: { type: string; deletedAt?: string | null; orderNumber: string }) {
+  if (order.type === "OE" && order.deletedAt) {
+    throw new OrdersValidationError(`La ${order.orderNumber} fue eliminada: solo se puede consultar.`);
   }
 }
