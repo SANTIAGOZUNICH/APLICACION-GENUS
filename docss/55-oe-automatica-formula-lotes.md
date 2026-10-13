@@ -90,6 +90,18 @@ Todo en Postgres **descartable**: no se tocaron datos de Production.
 |---|---|
 | Unitarias (`oe-auto-prep-rules.test.ts`, `work-formula-rules.test.ts`) | 21 + 5 |
 | Integración Postgres (`oe-auto-prep.db.integration.test.ts`, dentro de `npm run test:e2e:produccion-edicion-db`) | **15/15** (suite completa 68/68) |
-| E2E `GENUS_E2E_PRODUCTION_BUILD=1 npm run test:e2e:oe-automatica` (Chromium, build de producción, usuarios reales) | ver PR |
+| E2E `GENUS_E2E_PRODUCTION_BUILD=1 npm run test:e2e:oe-automatica` (Chromium, build de producción, usuarios reales) | **40/40** |
+| Regresión E2E usabilidad Elaboración / MP (`test:e2e:usabilidad`) | 26/26 |
+| Vitest completo | 2193 OK (109 saltados: necesitan base) |
+| `next build` (misma configuración que Vercel) y despliegue de Vercel del PR | OK |
+
+El E2E verifica, entre otras cosas:
+- lotes de MP **vacíos** aunque exista un Control semanal con lotes para ese producto, y el Control semanal sin modificar;
+- **Enter** baja de fila, **↑** sube y **pegar 3 líneas** completa 3 filas (guardado en PostgreSQL);
+- cambio de cantidad antes de empezar: kg recalculados y lotes intactos;
+- cambio a una fórmula sin una MP con lote: no se aplica solo, la vista previa lo advierte, «Aplicar» queda bloqueado hasta confirmar, y lo quitado queda auditado y en el historial;
+- elaboración empezada: no se pisa nada;
+- permisos;
+- **saldo y movimiento histórico de MP sembrados, idénticos al final**.
 
 Capturas en `docss/img/oe-automatica/`.

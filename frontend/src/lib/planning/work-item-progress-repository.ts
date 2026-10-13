@@ -1,6 +1,5 @@
 import "server-only";
 
-import { prepareOeAfterWorkChange } from "@/lib/planning/oe-auto-prep";
 import { and, desc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { operationalEvents, operationalOrders, workItemDeliveries, workItems } from "@/lib/db/schema";
@@ -426,6 +425,7 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
   // OE automática: si el trabajo es de Elaboración y la elaboración no empezó, la OE vinculada se actualiza
   // (fórmula, cantidad, lote). Ya empezada, no se reemplaza nada sin la acción explícita.
   if (String(updated.sector) === "ELABORACION" && updated.orderId) {
+    const { prepareOeAfterWorkChange } = await import("@/lib/planning/oe-auto-prep");
     await prepareOeAfterWorkChange(
       updated.orderId,
       { email: input.updatedBy, sector: String(input.updatedBySector) },
@@ -803,6 +803,7 @@ export async function updateWorkItemPlanningDurable(
   // OE automática: si el trabajo es de Elaboración y la elaboración no empezó, la OE vinculada se actualiza
   // (fórmula, cantidad, lote). Ya empezada, no se reemplaza nada sin la acción explícita.
   if (String(updated.sector) === "ELABORACION" && updated.orderId) {
+    const { prepareOeAfterWorkChange } = await import("@/lib/planning/oe-auto-prep");
     await prepareOeAfterWorkChange(
       updated.orderId,
       { email: input.updatedBy, sector: String(input.updatedBySector) },
