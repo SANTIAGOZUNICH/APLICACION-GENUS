@@ -78,7 +78,7 @@ async function seed() {
     [productId, norm(CLIENT), norm(PRODUCT), CLIENT, PRODUCT, versionId]
   );
   await q(
-    `insert into formula_versions (id, product_id, version, status, source_hash, semantic_hash, validation_status, source_sheet, source_file) values ($1,$2,3,'VIGENTE','sha-e2e-v3-0123456789','sem-e2e','OK','Fórmula','CREMA AUTO E2E.xlsx')`,
+    `insert into formula_versions (id, product_id, version, status, source_hash, semantic_hash, validation_status, source_sheet, source_file) values ($1,$2,3,'VIGENTE','src-e2e','sha-e2e-v3-0123456789','OK','Fórmula','CREMA AUTO E2E.xlsx')`,
     [versionId, productId]
   );
   const rows = [["Agua purificada", "MP-E2E-AGUA", "78"], ["Glicerina", "MP-E2E-GLI", "12"], ["Alcohol cetílico", "MP-E2E-CET", "8.5"], ["Perfume floral", "MP-E2E-PERF", "1.5"]];
@@ -152,9 +152,10 @@ try {
   const { ctx: elc, page: el } = await openAs(E2E_USERS.elaboracion);
   const openOe = async (product) => {
     await nav(el, "Órdenes de Elaboración");
-    const r = el.locator("tr").filter({ hasText: product }).first();
-    await r.waitFor({ timeout: 60_000 });
-    await r.getByRole("button", { name: /^Abrir$/ }).click();
+    await el.getByPlaceholder("Número, producto, código, cliente, lote…").fill(product);
+    await el.getByText(product, { exact: true }).first().waitFor({ timeout: 60_000 });
+    await el.waitForTimeout(800);
+    await el.getByRole("button", { name: /^Abrir$/ }).first().click();
     await el.locator("[data-testid=oe-autoprep-panel]").waitFor({ timeout: 60_000 });
   };
   await openOe(PRODUCT);
