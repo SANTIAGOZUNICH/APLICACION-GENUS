@@ -49,6 +49,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { friendlySaveError } from "@/lib/ui/friendly-error";
 import { diffGridRows, previewValue, type GenusGridRow } from "./grid-changes";
 
 export interface GenusGridColumn<T> {
@@ -427,7 +428,8 @@ export function GenusGrid<T>({
         try {
           result = await onCommit(toSend);
         } catch (err) {
-          result = { ok: false, message: err instanceof Error ? err.message : "Error de red al guardar." };
+          // Sin conexión / error técnico: mensaje simple. El valor escrito queda en la barra roja con «Reintentar».
+          result = { ok: false, message: friendlySaveError(err) };
         }
         // Fallo PARCIAL (filas de Google): solo las celdas rechazadas quedan en error; las confirmadas se limpian.
         const failedKeys = new Set((result.failures ?? []).map((f) => cellKey(f.rowId, f.columnKey)));
@@ -460,7 +462,7 @@ export function GenusGrid<T>({
           }
           markSaved(changes.length);
         } else {
-          const message = result.failures?.[0]?.message ?? result.message ?? "No se pudo guardar.";
+          const message = friendlySaveError({ message: result.failures?.[0]?.message ?? result.message ?? "" }, "No se pudo guardar.");
           setSaveState("error");
           setFailed((prev) => {
             const id = opts.retryOf ?? ++batchSeq.current;

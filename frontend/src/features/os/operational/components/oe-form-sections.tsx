@@ -1,5 +1,6 @@
 "use client";
 
+import { DecimalInput } from "@/components/ui/decimal-input";
 import type { OeContent } from "@/lib/orders/types";
 import { computeKgRealUtilizado } from "@/lib/orders/content";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
@@ -20,6 +21,8 @@ export type OeFieldMode = {
 
 interface OeFormSectionsProps {
   content: OeContent;
+  /** Abre secciones plegadas (p. ej. al volver a completar los datos que faltan para entregar). */
+  forceOpen?: { procedimiento?: boolean; control?: boolean };
   /** @deprecated prefer fieldMode */
   readOnly?: boolean;
   fieldMode?: OeFieldMode;
@@ -57,6 +60,22 @@ function Field({
   type?: string;
   lockedLook?: boolean;
 }) {
+  const cls = `rounded border border-[var(--os-border)] px-2 py-1.5 text-sm disabled:opacity-70 ${
+    lockedLook ? "bg-[var(--os-bg-muted,#eef1f4)] text-[var(--os-text-muted)]" : "bg-[var(--os-surface)]"
+  }`;
+  if (type === "number") {
+    return (
+      <label className="flex flex-col gap-1 text-xs">
+        <span className="text-[var(--os-text-muted)]">{label}</span>
+        <DecimalInput
+          value={value === "" || value == null ? null : Number(value)}
+          disabled={readOnly}
+          onValue={(n) => onChange(n == null ? "" : String(n))}
+          className={cls}
+        />
+      </label>
+    );
+  }
   return (
     <label className="flex flex-col gap-1 text-xs">
       <span className="text-[var(--os-text-muted)]">{label}</span>
@@ -92,6 +111,7 @@ export function OeFormSections({
   onProductSelected,
   onCommitProductText,
   hydrateKey,
+  forceOpen,
 }: OeFormSectionsProps) {
   const mode: OeFieldMode = fieldMode ?? {
     canEditFormula: !readOnly,
@@ -238,7 +258,7 @@ export function OeFormSections({
         </div>
       </details>
 
-      <details open className="rounded border border-[var(--os-border)] p-3">
+      <details id="oe-sec-materiales" open className="rounded border border-[var(--os-border)] p-3">
         <summary className="cursor-pointer font-medium">Materias primas</summary>
         <p className="mt-1 text-[11px] text-[var(--os-text-muted)]">
           Kg a pesar = cantidad teórica. Ajuste (+/- kg) = corrección de elaboración. Kg real = Kg a
@@ -284,7 +304,7 @@ export function OeFormSections({
                         disabled={formulaLocked}
                         value={m.materiaPrima}
                         onChange={(e) => patchMaterial(m.id, { materiaPrima: e.target.value })}
-                        className={`w-full rounded border px-1 py-1 ${formulaLocked ? "bg-[var(--os-bg-muted,#eef1f4)]" : ""}`}
+                        className={`w-full rounded border px-2 py-1.5 text-sm ${formulaLocked ? "bg-[var(--os-bg-muted,#eef1f4)]" : ""}`}
                         data-testid="oe-cell-materia"
                       />
                     </td>
@@ -293,22 +313,16 @@ export function OeFormSections({
                         disabled={formulaLocked}
                         value={m.codigo}
                         onChange={(e) => patchMaterial(m.id, { codigo: e.target.value })}
-                        className={`w-full rounded border px-1 py-1 ${formulaLocked ? "bg-[var(--os-bg-muted,#eef1f4)]" : ""}`}
+                        className={`w-full rounded border px-2 py-1.5 text-sm ${formulaLocked ? "bg-[var(--os-bg-muted,#eef1f4)]" : ""}`}
                         data-testid="oe-cell-codigo"
                       />
                     </td>
                     <td className="p-1">
-                      <input
-                        type="number"
-                        step="any"
+                      <DecimalInput
                         disabled={formulaLocked}
-                        value={m.formulaPct ?? ""}
-                        onChange={(e) =>
-                          patchMaterial(m.id, {
-                            formulaPct: e.target.value === "" ? null : Number(e.target.value),
-                          })
-                        }
-                        className={`w-full rounded border px-1 py-1 ${formulaLocked ? "bg-[var(--os-bg-muted,#eef1f4)]" : ""}`}
+                        value={m.formulaPct}
+                        onValue={(n) => patchMaterial(m.id, { formulaPct: n })}
+                        className={`w-full rounded border px-2 py-1.5 text-sm ${formulaLocked ? "bg-[var(--os-bg-muted,#eef1f4)]" : ""}`}
                         data-testid="oe-cell-formula"
                       />
                     </td>
@@ -316,17 +330,12 @@ export function OeFormSections({
                       {m.kgAPesar ?? "—"}
                     </td>
                     <td className="p-1">
-                      <input
-                        type="number"
-                        step="any"
+                      <DecimalInput
                         disabled={opsLocked}
-                        value={m.ajuste ?? ""}
-                        onChange={(e) =>
-                          patchMaterial(m.id, {
-                            ajuste: e.target.value === "" ? null : Number(e.target.value),
-                          })
-                        }
-                        className="w-full rounded border px-1 py-1"
+                        value={m.ajuste}
+                        onValue={(n) => patchMaterial(m.id, { ajuste: n })}
+                        placeholder="+/- kg"
+                        className="w-full rounded border px-2 py-1.5 text-sm"
                         data-testid="oe-cell-ajuste"
                         title="Ajuste (+/- kg)"
                       />
@@ -339,7 +348,7 @@ export function OeFormSections({
                         disabled={opsLocked}
                         value={m.ajusteMotivo}
                         onChange={(e) => patchMaterial(m.id, { ajusteMotivo: e.target.value })}
-                        className="w-full rounded border px-1 py-1"
+                        className="w-full rounded border px-2 py-1.5 text-sm"
                         data-testid="oe-cell-ajuste-motivo"
                         placeholder={adjusted ? "Obligatorio" : ""}
                       />
@@ -349,7 +358,7 @@ export function OeFormSections({
                         disabled={opsLocked}
                         value={m.lote}
                         onChange={(e) => patchMaterial(m.id, { lote: e.target.value })}
-                        className="w-full rounded border px-1 py-1"
+                        className="w-full rounded border px-2 py-1.5 text-sm"
                         data-testid="oe-cell-lote"
                       />
                     </td>
@@ -394,7 +403,7 @@ export function OeFormSections({
         </p>
       </details>
 
-      <details className="rounded border border-[var(--os-border)] p-3">
+      <details id="oe-sec-procedimiento" open={forceOpen?.procedimiento || undefined} className="rounded border border-[var(--os-border)] p-3">
         <summary className="cursor-pointer font-medium">PROCEDIMIENTO DE ELABORACIÓN</summary>
         <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm">
           {content.procedureSteps.map((s, idx) => (
@@ -417,7 +426,7 @@ export function OeFormSections({
         </ol>
       </details>
 
-      <details className="rounded border border-[var(--os-border)] p-3">
+      <details id="oe-sec-control" open={forceOpen?.control || undefined} className="rounded border border-[var(--os-border)] p-3">
         <summary className="cursor-pointer font-medium">Control de proceso / calidad</summary>
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           <Field

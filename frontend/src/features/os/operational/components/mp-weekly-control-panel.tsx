@@ -77,7 +77,7 @@ export function MpWeeklyControlPanel() {
     setLoading(true);
     setError(null);
     try {
-      const quantityKg = qty === "" ? null : Number(qty);
+      const quantityKg = qty === "" ? null : Number(qty.replace(",", "."));
       const resolved = await resolveFormulaMasterApi(
         session,
         client,
@@ -144,8 +144,9 @@ export function MpWeeklyControlPanel() {
 
   async function onQtyChange(next: string) {
     setQty(next);
-    if (!active || !canWrite) return;
-    const quantityKg = next === "" ? null : Number(next);
+    // La cantidad solo recalcula el control activo si es un BORRADOR (uno completado o anulado no se toca).
+    if (!active || !canWrite || active.status !== "BORRADOR") return;
+    const quantityKg = next === "" ? null : Number(next.replace(",", "."));
     await patchActive({ quantityKg, recalcFromSnapshot: true });
   }
 
@@ -158,6 +159,9 @@ export function MpWeeklyControlPanel() {
   }
 
   const writesEnabled = canWrite && !schemaPending && active?.status === "BORRADOR";
+  // Crear un control nuevo no depende del control seleccionado: antes el formulario solo aparecía con un BORRADOR
+  // activo, y sin controles (o con uno completado) no había forma de crear uno.
+  const canCreate = canWrite && !schemaPending;
 
   const commitCells = useCallback(
     async (changes: GenusGridCellChange[]): Promise<GenusGridCommitResult> => {
@@ -320,8 +324,8 @@ export function MpWeeklyControlPanel() {
         </p>
       ) : null}
 
-      {writesEnabled ? (
-        <div className="grid gap-3 rounded border border-[var(--os-border)] p-3 sm:grid-cols-3">
+      {canCreate ? (
+        <div className="grid gap-3 rounded border border-[var(--os-border)] p-3 sm:grid-cols-3" data-testid="mp-control-create">
           <div className="sm:col-span-2">
             <FormulaClientProductPickers
               session={session}
@@ -549,7 +553,9 @@ export function MpWeeklyControlPanel() {
             </div>
           ) : (
             <p className="p-4 text-sm text-[var(--os-text-muted)]">
-              Seleccioná o creá un control.
+              {canCreate
+                ? "Elegí un control de la lista, o creá uno nuevo arriba: cliente, producto, kg y «Guardar control»."
+                : "Elegí un control de la lista."}
             </p>
           )}
         </div>

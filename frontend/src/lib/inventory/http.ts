@@ -80,5 +80,5 @@ export function inventoryErrorResponse(err: unknown): NextResponse {
     );
   }
   console.error("[inventory]", err);
-  return NextResponse.json({ error: "Error interno de inventario." }, { status: 500 });
+  return NextResponse.json({ error: "El servidor tuvo un problema y no guardó el cambio. Volvé a intentar; si sigue, avisá a Sistemas." }, { status: 500 });
 }
