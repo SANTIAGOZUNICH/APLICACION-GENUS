@@ -391,7 +391,8 @@ export function AssignWorkDialog({
       unit,
       orderNumber: orderRef.trim() || null,
       notes: notes.trim() || null,
-      packagingLote: sector === "ELABORACION" ? null : packagingLote.trim() || null,
+      // Elaboración: lote de fabricación escrito por Producción (se copia exacto a la OE).
+      packagingLote: packagingLote.trim() || null,
       packagingVto: sector === "ELABORACION" ? null : packagingVto.trim() || null,
       asignacionLoteId: sector === "ELABORACION" ? null : selectedAsignacionLoteId,
       productionPedidoId: selectedPedido?.id ?? null,
@@ -429,6 +430,7 @@ export function AssignWorkDialog({
         order?: { orderNumber?: string };
         canForce?: boolean;
         semanasLink?: { ok: boolean; error?: string };
+        oePrep?: { status: string; message: string | null; pendientes: string[]; formula: string | null };
       } = {};
       try {
         data = (await res.json()) as typeof data;
@@ -473,10 +475,21 @@ export function AssignWorkDialog({
             : ""
         : "";
       const linkPart = data.semanasLink ? (data.semanasLink.ok ? " Vinculado a la tarea de Semanas." : "") : "";
+      // OE automática: qué quedó listo y qué falta (fórmula, lote, lotes de MP).
+      const prep = data.oePrep;
+      const prepPart = !prep
+        ? ""
+        : prep.status === "applied" || prep.status === "unchanged"
+          ? prep.pendientes.length
+            ? ` OE preparada. Falta: ${prep.pendientes.join(" · ")}`
+            : " OE lista con fórmula, cantidades y lote de fabricación (los lotes de MP los carga Elaboración en la OE)."
+          : prep.message
+            ? ` ${prep.message}`
+            : "";
       setFeedback(
         data.replayed
-          ? `Asignación ya confirmada en Neon (sin duplicar).${linkPart}`
-          : `Trabajo asignado y confirmado en Neon.${oaPart}${linkPart}`
+          ? `Asignación ya confirmada en Neon (sin duplicar).${linkPart}${prepPart}`
+          : `Trabajo asignado y confirmado en Neon.${oaPart}${linkPart}${prepPart}`
       );
       if (data.workItem) onAssigned?.(data.workItem);
       if (data.semanasLink && !data.semanasLink.ok) {
@@ -484,9 +497,10 @@ export function AssignWorkDialog({
         setErrorMsg(`El trabajo se creó, pero NO quedó vinculado a la tarea de Semanas: ${data.semanasLink.error ?? "motivo desconocido"}`);
         return;
       }
+      // Con pendientes de la OE, el aviso queda unos segundos para poder leerlo.
       window.setTimeout(() => {
         onClose();
-      }, 900);
+      }, prep && prep.pendientes.length ? 4000 : 900);
     } catch {
       setFeedback(null);
       setErrorMsg(mapUserFacingError(0, undefined, !navigator.onLine));
@@ -774,6 +788,26 @@ export function AssignWorkDialog({
               </p>
             ) : null}
           </div>
+
+          {sector === "ELABORACION" ? (
+            <div className="space-y-1.5">
+              <label htmlFor="af-lote-fab" className="text-sm font-medium">
+                Lote de fabricación (opcional)
+              </label>
+              <input
+                id="af-lote-fab"
+                value={packagingLote}
+                disabled={submitting}
+                onChange={(e) => setPackagingLote(e.target.value)}
+                placeholder="Se copia tal cual a la OE"
+                className={CONTROL_CLASS}
+                data-testid="assign-lote-fabricacion"
+              />
+              <p className="text-xs text-[var(--os-text-muted)]">
+                Si lo dejás vacío, la OE queda con el lote pendiente.
+              </p>
+            </div>
+          ) : null}
 
           {sector !== "ELABORACION" ? (
             <>

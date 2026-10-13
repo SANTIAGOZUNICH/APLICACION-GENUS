@@ -113,6 +113,11 @@ export type OeContent = {
   deliveryObservation: string | null;
   deliveryObservationBy: string | null;
   deliveryObservationAt: string | null;
+  /**
+   * Preparación automática desde el trabajo asignado (fórmula, lote de fabricación, lotes MP y pendientes).
+   * Opcional: OE viejas no lo tienen. Ver lib/orders/oe-auto-prep-rules.ts.
+   */
+  autoPrep?: OeAutoPrep;
   /** Firmas físicas — siempre vacías; no se almacenan imágenes. */
   signatures: {
     pesada: null;
@@ -123,6 +128,47 @@ export type OeContent = {
     controlCalidad: null;
     direccionTecnica: null;
   };
+};
+
+export type OeAutoPrepFormulaStatus =
+  | "ok"
+  | "not_found"
+  | "ambiguous"
+  | "conflict"
+  | "incomplete"
+  | "error"
+  | "missing_input"
+  /** La OE ya tenía materias primas cargadas a mano: no se reemplazaron. */
+  | "manual_content";
+
+export type OeAutoPrep = {
+  version: 1;
+  preparedAt: string;
+  preparedBy: string;
+  reason: string;
+  workItemId: string;
+  workItemVersion: number | null;
+  formula: {
+    status: OeAutoPrepFormulaStatus;
+    message: string;
+    source?: "CACHE_NEON" | "DRIVE";
+    formulaProductId?: string;
+    formulaVersionId?: string;
+    versionHash?: string;
+    displayClient?: string;
+    displayProduct?: string;
+    driveFileId?: string;
+    driveModifiedTime?: string | null;
+    sourceSheet?: string;
+    /** Huella de las materias primas cargadas por la preparación (detecta ediciones a mano después). */
+    fingerprint?: string;
+    /** Cliente||producto normalizados para los que se cargó la fórmula. */
+    identity?: string;
+  };
+  lotFabricacion: { value: string; status: "ok" | "pendiente" };
+  quantity: { kg: number | null; planned: string; unit: string; status: "ok" | "pendiente" };
+  /** Lista legible de lo que falta, para el elaborador y Producción. */
+  pendientes: string[];
 };
 
 export type OaMaterialRow = {

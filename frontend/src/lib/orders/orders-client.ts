@@ -713,3 +713,38 @@ export async function deleteAllOsNotificationsApi(
 export function orderPdfUrl(id: string): string {
   return `/api/v1/orders/${id}/pdf`;
 }
+
+export type OeAutoPrepApiResponse = {
+  ok: boolean;
+  applied?: boolean;
+  status: string;
+  message?: string;
+  version?: number;
+  autoPrep?: import("@/lib/orders/types").OeAutoPrep;
+  /** MP con lote/ajuste del elaborador que la fórmula nueva ya no tiene (se quitarían al aplicar). */
+  lostRecords?: Array<{ materiaPrima: string; codigo: string; lote: string; ajuste: number | null }>;
+  preview?: {
+    header: import("@/lib/orders/types").OeContent["header"];
+    materials: Array<{ materiaPrima: string; codigo: string; formulaPct: number | null; kgAPesar: number | null; lote: string }>;
+    procedureSteps: number;
+  };
+};
+
+/** «Actualizar desde fórmula»: sin confirm = vista previa; con confirm = aplica (409 si la OE cambió). */
+export async function oeAutoPrepApi(
+  session: OrdersClientSession,
+  id: string,
+  opts: { confirm?: boolean; expectedVersion?: number; acceptLostRecords?: boolean } = {}
+): Promise<OeAutoPrepApiResponse> {
+  const res = await fetch(`/api/v1/orders/${id}/auto-prep`, {
+    method: "POST",
+    credentials: "include",
+    headers: actorHeaders(session),
+    body: JSON.stringify(opts),
+  });
+  if (res.status === 422) {
+    const body = (await res.json()) as OeAutoPrepApiResponse;
+    return { ...body, ok: false };
+  }
+  return parseJson<OeAutoPrepApiResponse>(res);
+}

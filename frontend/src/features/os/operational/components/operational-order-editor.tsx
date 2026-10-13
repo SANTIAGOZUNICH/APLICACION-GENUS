@@ -55,6 +55,7 @@ import {
   type FormulaAutoloadStatus,
 } from "../lib/oe-formula-autoload";
 import { OeFormSections } from "./oe-form-sections";
+import { OeAutoPrepPanel } from "./oe-auto-prep-panel";
 import type { SelectedFormulaOption } from "./formula-client-product-pickers";
 import { fetchFormulaProductOptionsApi } from "@/lib/orders/orders-client";
 import { OaFormSections, renumberOaMaterials } from "./oa-form-sections";
@@ -172,10 +173,14 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         setOaSimple(null);
       }
       versionRef.current = o.version;
+      // OE preparada automáticamente con una fórmula de Drive: las columnas uuid quedan vacías y la referencia
+      // vive en formData.autoPrep. Se usa para no volver a buscar ni ofrecer reemplazar la misma fórmula.
+      const autoFormula =
+        o.formData.kind === "OE" && o.formData.autoPrep?.formula.status === "ok" ? o.formData.autoPrep.formula : null;
       formulaSnapshotRef.current = {
-        formulaProductId: o.formulaProductId,
-        formulaVersionId: o.formulaVersionId,
-        formulaVersionHash: o.formulaVersionHash,
+        formulaProductId: o.formulaProductId ?? autoFormula?.formulaProductId ?? null,
+        formulaVersionId: o.formulaVersionId ?? autoFormula?.formulaVersionId ?? null,
+        formulaVersionHash: o.formulaVersionHash ?? autoFormula?.versionHash ?? null,
       };
       setBoundProductId(o.formulaProductId);
       setDidYouMean(null);
@@ -186,7 +191,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           client && product ? formulaIdentityKey(client, product) : null;
         if (!client) setFormulaStatus("select_client");
         else if (!product) setFormulaStatus("select_product");
-        else if (o.formulaVersionId) setFormulaStatus("found");
+        else if (o.formulaVersionId || autoFormula) setFormulaStatus("found");
         else setFormulaStatus("idle");
       } else {
         formulaIdentityRef.current = null;
@@ -1054,6 +1059,21 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       {showPreview ? (
         <LegalOrderPreview order={{ ...order, formData: form }} />
       ) : form.kind === "OE" ? (
+        <>
+        {order.type === "OE" && (form.autoPrep || order.linkedWorkItemId) ? (
+          <OeAutoPrepPanel
+            orderId={orderId}
+            version={order.version}
+            content={form}
+            canRefresh={
+              !locked &&
+              Boolean(order.linkedWorkItemId) &&
+              (sectorId === "PRODUCCION" || sectorId === "DIRECCION" || sectorId === "ELABORACION")
+            }
+            session={session}
+            onApplied={load}
+          />
+        ) : null}
         <OeFormSections
           forceOpen={forceOpen}
           content={form}
@@ -1091,6 +1111,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             })
           }
         />
+        </>
       ) : oaMode === "simple" && oaSimple ? (
         <OaSimpleWizard
           simple={oaSimple}
