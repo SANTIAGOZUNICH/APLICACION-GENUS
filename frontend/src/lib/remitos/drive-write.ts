@@ -3,6 +3,7 @@ import "server-only";
 import { Readable } from "node:stream";
 import { google } from "googleapis";
 import { createGoogleAuth, hasGoogleCredentials } from "@/lib/adapters/google/google-auth";
+import { resolveExtraFormulasFolderIds } from "@/lib/formulas/drive-formulas-diagnose";
 
 const DRIVE_WRITE_SCOPES = ["https://www.googleapis.com/auth/drive"];
 
@@ -24,7 +25,7 @@ export function assertRemitosFolderConfigured(): string {
   const formulas = process.env.GOOGLE_DRIVE_FORMULAS_FOLDER_ID?.trim();
   const coas = process.env.GOOGLE_DRIVE_COAS_FOLDER_ID?.trim();
   const elaboracion = process.env.GOOGLE_DRIVE_ELABORACION_FOLDER_ID?.trim();
-  if (id === formulas || id === coas || id === elaboracion) {
+  if (id === formulas || id === coas || id === elaboracion || resolveExtraFormulasFolderIds().includes(id)) {
     throw new Error(
       "GOOGLE_DRIVE_REMITOS_FOLDER_ID no puede ser la carpeta de fórmulas, COAs ni elaboración."
     );

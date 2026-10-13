@@ -14,6 +14,8 @@ export type DriveFormulasDiagnose = {
   googleSheetsVisible: number;
   estructuraCompatible: boolean;
   notes: string[];
+  /** Carpetas ADICIONALES de fórmulas y si la cuenta de servicio puede abrirlas (sin nombres de archivo). */
+  extraFolders?: Array<{ folderId: string; accessible: boolean }>;
 };
 
 const XLSX =
@@ -39,6 +41,30 @@ export function resolveFormulasFolderId(): {
   return { folderId: null, envKey: null };
 }
 
+/**
+ * Carpetas ADICIONALES de fórmulas (se suman a la principal; no la reemplazan).
+ *  - Fijas en el código: las que autorizó el laboratorio.
+ *  - Más las de GOOGLE_DRIVE_FORMULAS_EXTRA_FOLDER_IDS (IDs separados por coma), opcional.
+ * Si alguna coincide con la carpeta principal, se ignora (no se indexa dos veces).
+ */
+export const EXTRA_FORMULAS_FOLDER_IDS: readonly string[] = [
+  // Carpeta de fórmulas agregada el 13/10/2026.
+  "1qX-YjiHKbnymGgbqTcUtsQqWUI4L2Z2P",
+];
+
+export function resolveExtraFormulasFolderIds(): string[] {
+  const primary = resolveFormulasFolderId().folderId;
+  const fromEnv = (process.env.GOOGLE_DRIVE_FORMULAS_EXTRA_FOLDER_IDS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out: string[] = [];
+  for (const id of [...EXTRA_FORMULAS_FOLDER_IDS, ...fromEnv]) {
+    if (id && id !== primary && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
 export function getServiceAccountEmailSafe(): string | null {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim();
   return email || null;
@@ -46,6 +72,34 @@ export function getServiceAccountEmailSafe(): string | null {
 
 /** Diagnóstico READ-ONLY: solo conteos y booleans. Sin nombres de archivo ni fórmulas. */
 export async function diagnoseDriveFormulasAccess(): Promise<DriveFormulasDiagnose> {
+  const base = await diagnosePrimaryFolder();
+  const extraIds = resolveExtraFormulasFolderIds();
+  if (!extraIds.length || !base.serviceAccountConfigured) return base;
+  const gateway = new GoogleDriveGateway();
+  const extraFolders: Array<{ folderId: string; accessible: boolean }> = [];
+  for (const folderId of extraIds) {
+    let accessible = false;
+    try {
+      accessible = await gateway.canAccessFolder(folderId);
+    } catch {
+      accessible = false;
+    }
+    extraFolders.push({ folderId, accessible });
+  }
+  const notes = [...base.notes];
+  const missing = extraFolders.filter((f) => !f.accessible);
+  if (missing.length) {
+    const email = getServiceAccountEmailSafe();
+    notes.push(
+      `La cuenta de servicio no puede abrir ${missing.length === 1 ? "la carpeta adicional" : "las carpetas adicionales"} de fórmulas (${missing
+        .map((f) => f.folderId)
+        .join(", ")}): compartila${missing.length === 1 ? "" : "s"} como Lector con ${email ?? "el email de GOOGLE_SERVICE_ACCOUNT_EMAIL (Vercel)"}. Mientras tanto se sigue usando solo la carpeta principal.`
+    );
+  }
+  return { ...base, notes, extraFolders };
+}
+
+async function diagnosePrimaryFolder(): Promise<DriveFormulasDiagnose> {
   const notes: string[] = [];
   const { folderId, envKey } = resolveFormulasFolderId();
   const serviceAccountConfigured = hasGoogleCredentials();

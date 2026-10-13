@@ -16,7 +16,7 @@ describe("pickExactDriveHit — nunca por parecido", () => {
     expect(pickExactDriveHit(hits, "")).toEqual({ kind: "none" });
   });
   it("dos archivos con el mismo producto: ambiguo", () => {
-    expect(pickExactDriveHit([...hits, { productLabel: "crema corporal aloe" }], "Crema Corporal Aloe")).toEqual({ kind: "many", count: 2 });
+    expect(pickExactDriveHit([...hits, { productLabel: "crema corporal aloe" }], "Crema Corporal Aloe")).toMatchObject({ kind: "many", count: 2 });
   });
 });
 
@@ -29,5 +29,21 @@ describe("formulaIncompleteReason", () => {
     expect(formulaIncompleteReason([])).toMatch(/no tiene materias primas/);
     expect(formulaIncompleteReason([{ materiaPrima: "A", codigo: "1", formulaPct: null }])).toMatch(/sin porcentaje \(A\)/);
     expect(formulaIncompleteReason([{ materiaPrima: "A", codigo: "1", formulaPct: 80 }])).toMatch(/suman 80 %/);
+  });
+});
+
+import { resolveCrossSourceDuplicates } from "./work-formula-rules";
+
+describe("resolveCrossSourceDuplicates — mismo cliente+producto en dos carpetas", () => {
+  const a = { fileId: "a", sourceFolderId: "PRINCIPAL", primarySource: true };
+  const b = { fileId: "b", sourceFolderId: "NUEVA", primarySource: false };
+  it("contenido idéntico: no es conflicto, se usa la carpeta principal", () => {
+    expect(resolveCrossSourceDuplicates([b, a], ["x", "x"])).toEqual({ kind: "identical", hit: a });
+  });
+  it("versiones distintas: conflicto, no se elige ninguna", () => {
+    expect(resolveCrossSourceDuplicates([a, b], ["x", "y"])).toEqual({ kind: "conflict" });
+  });
+  it("todos en la misma carpeta: es la ambigüedad de siempre", () => {
+    expect(resolveCrossSourceDuplicates([a, { ...a, fileId: "c" }], ["x", "x"])).toEqual({ kind: "same_folder" });
   });
 });

@@ -12,7 +12,7 @@ import {
   OFFICE_SHEET_MIMES,
 } from "@/lib/adapters/drive/google-drive-gateway";
 import { deriveProductFromFilename, normalizeSearchKey } from "@/lib/formulas/types";
-import { resolveFormulasFolderId } from "@/lib/formulas/drive-formulas-diagnose";
+import { resolveExtraFormulasFolderIds, resolveFormulasFolderId } from "@/lib/formulas/drive-formulas-diagnose";
 import { parseWorkbookBuffer } from "@/lib/formulas/parse-workbook";
 import { emptyOeMaterial } from "@/lib/orders/content";
 
@@ -33,6 +33,10 @@ export type DriveFormulaIndexEntry = {
   modifiedTime: string | null;
   aliases: string[];
   source: "DRIVE";
+  /** Carpeta raíz de la que salió (principal o adicional). */
+  sourceFolderId: string;
+  /** true = carpeta principal (GOOGLE_DRIVE_FORMULAS_FOLDER_ID). */
+  primarySource: boolean;
 };
 
 export type DriveFormulaSearchHit = DriveFormulaIndexEntry & {
@@ -45,6 +49,8 @@ type IndexState = {
   folderEnvKey: string | null;
   entries: DriveFormulaIndexEntry[];
   clients: string[];
+  /** Carpetas recorridas y si la cuenta de servicio pudo abrirlas. */
+  sources: Array<{ folderId: string; primary: boolean; accessible: boolean }>;
 };
 
 let cache: IndexState | null = null;
@@ -147,13 +153,56 @@ async function buildIndex(): Promise<IndexState> {
     throw new Error("Sin acceso a la carpeta de fórmulas en Drive.");
   }
 
-  const folders = await gateway.listSubfolders(folderId);
+  const entries: DriveFormulaIndexEntry[] = [];
+  const sources: IndexState["sources"] = [{ folderId, primary: true, accessible: true }];
+  entries.push(...(await indexRootFolder(gateway, folderId, true, new Set())));
+
+  // Carpetas ADICIONALES: se suman a la principal. Si una no es accesible, se omite (no corta la principal).
+  const seenFileIds = new Set(entries.map((e) => e.fileId));
+  for (const extraId of resolveExtraFormulasFolderIds()) {
+    const ok = await gateway.canAccessFolder(extraId);
+    sources.push({ folderId: extraId, primary: false, accessible: ok });
+    if (!ok) continue;
+    // El mismo archivo visible desde dos carpetas (varios padres) se indexa una sola vez: se descarta ANTES de
+    // elegir el más reciente por producto, para no perder otro archivo del mismo producto en la carpeta nueva.
+    for (const entry of await indexRootFolder(gateway, extraId, false, seenFileIds)) {
+      seenFileIds.add(entry.fileId);
+      entries.push(entry);
+    }
+  }
+
+  const clients = [
+    ...new Map(
+      entries
+        .map((e) => e.client)
+        .filter((c) => c && c !== "SIN_CLIENTE")
+        .map((c) => [normalizeSearchKey(c), c] as const)
+    ).values(),
+  ].sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+
+  return {
+    builtAt: Date.now(),
+    folderEnvKey: envKey,
+    entries,
+    clients,
+    sources,
+  };
+}
+
+/** Indexa UNA carpeta raíz: subcarpetas = clientes; hojas directamente dentro de cada cliente. */
+async function indexRootFolder(
+  gateway: GoogleDriveGateway,
+  rootId: string,
+  primarySource: boolean,
+  skipFileIds: ReadonlySet<string>
+): Promise<DriveFormulaIndexEntry[]> {
+  const folders = await gateway.listSubfolders(rootId);
   const entries: DriveFormulaIndexEntry[] = [];
 
   const clientFolders =
     folders.length > 0
       ? folders
-      : [{ folderId, name: "SIN_CLIENTE" }];
+      : [{ folderId: rootId, name: "SIN_CLIENTE" }];
 
   for (const folder of clientFolders) {
     const files = await gateway.listSpreadsheetsInFolder(folder.folderId, {
@@ -163,6 +212,7 @@ async function buildIndex(): Promise<IndexState> {
     // Si hay varios archivos con mismo productLabel, quedarse con modifiedTime más reciente.
     const byLabel = new Map<string, DriveFormulaIndexEntry>();
     for (const file of files) {
+      if (skipFileIds.has(file.fileId)) continue;
       const productLabel =
         deriveProductFromFilename(file.name, folder.name) ||
         file.name.replace(/\.(xlsx|xlsm|xlsb|xls)$/i, "");
@@ -181,6 +231,8 @@ async function buildIndex(): Promise<IndexState> {
         modifiedTime: file.modifiedTime ?? null,
         aliases,
         source: "DRIVE",
+        sourceFolderId: rootId,
+        primarySource,
       };
       const key = normalizeSearchKey(productLabel);
       const prev = byLabel.get(key);
@@ -194,17 +246,12 @@ async function buildIndex(): Promise<IndexState> {
     }
     entries.push(...byLabel.values());
   }
+  return entries;
+}
 
-  const clients = [
-    ...new Set(entries.map((e) => e.client).filter((c) => c && c !== "SIN_CLIENTE")),
-  ].sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
-
-  return {
-    builtAt: Date.now(),
-    folderEnvKey: envKey,
-    entries,
-    clients,
-  };
+/** Carpetas de fórmulas recorridas en el último índice y si fueron accesibles (para el diagnóstico). */
+export function getDriveFormulasIndexSources(): IndexState["sources"] | null {
+  return cache ? cache.sources.map((s) => ({ ...s })) : null;
 }
 
 /** Lista completa de clientes del índice (precarga). */

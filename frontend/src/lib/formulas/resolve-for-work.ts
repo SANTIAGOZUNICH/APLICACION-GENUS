@@ -9,7 +9,7 @@
 import "server-only";
 import { readyFormulaBank } from "./get-formula-bank";
 import { hasGoogleCredentials } from "@/lib/adapters/google/google-auth";
-import { formulaIncompleteReason, pickExactDriveHit, type WorkFormulaResolution } from "./work-formula-rules";
+import { formulaIncompleteReason, pickExactDriveHit, resolveCrossSourceDuplicates, type WorkFormulaResolution } from "./work-formula-rules";
 
 export async function resolveFormulaForWork(args: { client: string; product: string }): Promise<WorkFormulaResolution> {
   const client = args.client.trim();
@@ -59,19 +59,36 @@ export async function resolveFormulaForWork(args: { client: string; product: str
     return { ok: false, status: "not_found", message: `No se encontró la fórmula de «${product}» (${client}). ${bankMessage}`.trim() };
   }
   try {
-    const { searchDriveProducts, resolveFormulaFromDriveFile } = await import("./drive-formulas-index");
+    const { searchDriveProducts, resolveFormulaFromDriveFile, downloadDriveFormulaBuffer } = await import("./drive-formulas-index");
     const hits = await searchDriveProducts(client, product, 50);
     const pick = pickExactDriveHit(hits, product);
+    let chosen = pick.kind === "one" ? pick.hit : null;
     if (pick.kind === "many") {
-      return { ok: false, status: "ambiguous", message: `En Drive hay ${pick.count} fórmulas de «${product}» (${client}): no se eligió ninguna.` };
+      // ¿Está en más de una carpeta de fórmulas (principal y adicional)? Se comparan los archivos (solo lectura).
+      const crossFolder = new Set(pick.hits.map((h) => h.sourceFolderId)).size > 1;
+      const checksums = crossFolder
+        ? await Promise.all(pick.hits.map(async (h) => (await downloadDriveFormulaBuffer(h.fileId, h.mimeType)).checksum))
+        : [];
+      const dup = resolveCrossSourceDuplicates(pick.hits, checksums);
+      if (dup.kind === "conflict") {
+        return {
+          ok: false,
+          status: "conflict",
+          message: `«${product}» (${client}) está en más de una carpeta de fórmulas de Drive con versiones distintas (${pick.hits.map((h) => `«${h.fileName}»`).join(", ")}): no se eligió ninguna. Dejá una sola versión o pasala al banco de fórmulas.`,
+        };
+      }
+      if (dup.kind === "same_folder") {
+        return { ok: false, status: "ambiguous", message: `En Drive hay ${pick.count} fórmulas de «${product}» (${client}): no se eligió ninguna.` };
+      }
+      chosen = dup.hit; // mismo archivo en las dos carpetas: no es conflicto
     }
-    if (pick.kind === "none") {
+    if (!chosen) {
       return { ok: false, status: "not_found", message: `No se encontró la fórmula de «${product}» (${client}) en el banco ni en Drive.` };
     }
-    const res = await resolveFormulaFromDriveFile({ fileId: pick.hit.fileId, clientHint: client, productHint: product });
+    const res = await resolveFormulaFromDriveFile({ fileId: chosen.fileId, clientHint: client, productHint: product });
     if (!res.found) return { ok: false, status: "error", message: `No se pudo leer la fórmula de Drive: ${res.message}` };
     const why = formulaIncompleteReason(res.materials);
-    if (why) return { ok: false, status: "incomplete", message: `${why} Archivo de Drive «${res.snapshot.sourceSheet || pick.hit.fileName}».` };
+    if (why) return { ok: false, status: "incomplete", message: `${why} Archivo de Drive «${res.snapshot.sourceSheet || chosen.fileName}».` };
     return {
       ok: true,
       ref: {
