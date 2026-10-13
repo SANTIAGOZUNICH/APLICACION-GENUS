@@ -70,7 +70,7 @@ const SIMULATED = {
 };
 
 async function openFormulasAdmin(page) {
-  await nav(page, "Mi trabajo").catch(() => {});
+  await nav(page, "Stock");
   const toggle = page.getByRole("button", { name: /Administración de fórmulas/ });
   await toggle.waitFor({ timeout: 60_000 });
   await toggle.scrollIntoViewIfNeeded();
@@ -79,13 +79,13 @@ async function openFormulasAdmin(page) {
 }
 
 try {
-  // ===== Producción: estado REAL del entorno de prueba (sin credenciales de Google) =====
-  const pr = await openAs(E2E_USERS.produccion);
+  // ===== Materia Prima (administra fórmulas): estado REAL del entorno de prueba (sin credenciales de Google) =====
+  const pr = await openAs(E2E_USERS.materiaPrima);
   await openFormulasAdmin(pr.page);
   const panel = pr.page.locator("[data-testid=drive-connection-panel]");
   await pr.page.locator("[data-testid=drive-status]").waitFor({ timeout: 30_000 });
   const t1 = await panel.innerText();
-  check("Producción ve el panel «Conexión con Google Drive»", /Conexión con Google Drive/.test(t1));
+  check("Materia Prima ve el panel «Conexión con Google Drive» en el módulo de fórmulas", /Conexión con Google Drive/.test(t1));
   check("Sin credenciales en el entorno: lo dice tal cual (no inventa una causa)", /Sin credenciales/.test(t1) && /No hay credenciales de la cuenta de servicio/.test(t1), t1.slice(0, 200));
   check("Botones «Verificar conexión» y «Actualizar índice»", (await pr.page.locator("[data-testid=drive-verify]").isVisible()) && (await pr.page.locator("[data-testid=drive-refresh-index]").isVisible()));
   const apiReal = await pr.page.request.get("/api/v1/formulas/drive-connection?mode=check");
@@ -118,10 +118,11 @@ try {
   const refreshElab = await el.page.request.post("/api/v1/formulas/drive-connection", { data: { action: "refresh" } });
   check("Elaboración no puede actualizar el índice (403)", refreshElab.status() === 403);
 
-  // ===== OE sin fórmula: la causa comprobada =====
+  // ===== OE sin fórmula: la causa comprobada (Producción asigna) =====
+  const prod = await openAs(E2E_USERS.produccion);
   const product = `PRODUCTO SIN FORMULA DRIVE ${Date.now().toString().slice(-5)}`;
   const today = new Date().toISOString().slice(0, 10);
-  const asg = await pr.page.request.post("/api/v1/work-assignments", {
+  const asg = await prod.page.request.post("/api/v1/work-assignments", {
     data: { sector: "ELABORACION", client: "CLIENTE DIAG E2E", product, plannedQuantity: "50", unit: "kg", plannedDate: today, branchOwner: "Cristian", orderNumber: `OE-2026-99${Date.now().toString().slice(-4)}`, packagingLote: "L-DIAG", idempotencyKey: randomUUID() },
   });
   const asgBody = await asg.json();
@@ -148,6 +149,7 @@ try {
 
   await el.ctx.close();
   await pr.ctx.close();
+  await prod.ctx.close();
 } catch (err) {
   console.error(err);
   check("ejecución sin excepciones", false, err instanceof Error ? err.message : String(err));

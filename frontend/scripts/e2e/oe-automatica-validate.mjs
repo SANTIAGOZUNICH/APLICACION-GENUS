@@ -293,7 +293,7 @@ try {
   // OE sin fórmula, vista por el elaborador.
   await openOe(OE2);
   const p2 = await el.locator("[data-testid=oe-autoprep-panel]").innerText();
-  check("OE sin fórmula: el elaborador ve el motivo y los pendientes", /Pendiente/.test(p2) && /No se encontr/.test(p2) && /Lote de fabricación/.test(p2), p2.slice(0, 200));
+  check("OE sin fórmula: el elaborador ve el motivo y los pendientes", /Pendiente/.test(p2) && /no está en el banco de fórmulas/.test(p2) && /Lote de fabricación/.test(p2), p2.slice(0, 200));
   await el.screenshot({ path: `${OUT}/09-elaborador-oe-sin-formula.png` });
 
   // ===== Permisos =====
