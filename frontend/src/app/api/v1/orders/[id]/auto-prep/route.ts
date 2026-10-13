@@ -1,7 +1,9 @@
 /**
- * «Actualizar desde fórmula y lotes» — acción EXPLÍCITA sobre una OE vinculada a un trabajo de Elaboración.
- *  - POST {} → vista previa (no guarda): qué cambiaría (fórmula, cantidades, lote de fabricación, lotes de MP).
- *  - POST { confirm: true, expectedVersion } → aplica, con auditoría. Si la OE cambió desde la vista previa → 409.
+ * «Actualizar desde fórmula» — acción EXPLÍCITA sobre una OE vinculada a un trabajo de Elaboración.
+ *  - POST {} → vista previa (no guarda): qué cambiaría (fórmula, cantidades, lote de fabricación) y qué lotes/ajustes
+ *    del elaborador se perderían porque la fórmula nueva ya no tiene esa MP (`lostRecords`).
+ *  - POST { confirm: true, expectedVersion, acceptLostRecords } → aplica, con auditoría. Si la OE cambió desde la
+ *    vista previa → 409. Si se perderían registros del elaborador y no se confirmó → 409 con la lista.
  * La usan Producción (Dirección) y Elaboración. Calidad y el resto: 403. Nunca mueve stock.
  */
 import { NextResponse } from "next/server";
@@ -24,9 +26,9 @@ export async function POST(request: Request, ctx: Ctx) {
     const { id } = await ctx.params;
     const actor = await resolveOrdersActor(request);
     if (!ALLOWED.has(actor.sector)) {
-      throw new OrdersForbiddenError("Solo Producción o Elaboración pueden actualizar la OE desde la fórmula y los lotes.");
+      throw new OrdersForbiddenError("Solo Producción o Elaboración pueden actualizar la OE desde la fórmula.");
     }
-    let body: { confirm?: boolean; expectedVersion?: number } = {};
+    let body: { confirm?: boolean; expectedVersion?: number; acceptLostRecords?: boolean } = {};
     try {
       body = (await request.json()) as typeof body;
     } catch {
@@ -36,11 +38,18 @@ export async function POST(request: Request, ctx: Ctx) {
     const outcome = await prepareOeFromWork({
       orderId: id,
       actor: { email: actor.email, sector: actor.sector },
-      reason: confirm ? "Actualización manual desde fórmula y lotes (revisada)" : "Vista previa",
+      reason: confirm ? "Actualización manual desde fórmula (revisada)" : "Vista previa",
       explicit: true,
       dryRun: !confirm,
       expectedVersion: confirm && typeof body.expectedVersion === "number" ? body.expectedVersion : undefined,
+      acceptLostRecords: confirm && body.acceptLostRecords === true,
     });
+    if (outcome.status === "needs_confirmation") {
+      return NextResponse.json(
+        { ok: false, status: outcome.status, error: outcome.message, message: outcome.message, lostRecords: outcome.lostRecords, code: "LOST_RECORDS_CONFIRMATION" },
+        { status: 409 }
+      );
+    }
     if (outcome.status === "skipped") {
       return NextResponse.json({ ok: false, status: outcome.status, message: outcome.message }, { status: 422 });
     }
@@ -52,6 +61,7 @@ export async function POST(request: Request, ctx: Ctx) {
       orderId: outcome.orderId,
       ...("version" in outcome ? { version: outcome.version } : {}),
       ...("autoPrep" in outcome ? { autoPrep: outcome.autoPrep } : {}),
+      ...("lostRecords" in outcome && outcome.lostRecords ? { lostRecords: outcome.lostRecords } : {}),
       ...(preview
         ? {
             preview: {

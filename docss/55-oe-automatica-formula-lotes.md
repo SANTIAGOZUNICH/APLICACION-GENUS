@@ -1,10 +1,11 @@
-# 55 — OE automática con fórmula y lotes
+# 55 — OE automática con fórmula y lote de fabricación
 
 Rama `claude/oe-automatica-formula-lotes`, que parte de `main` en ada8e8b (incluye #116 a #119).
 
 - **Sin migraciones.** Los datos nuevos van en el `form_data` (jsonb) de la OE, en el campo `autoPrep`.
 - **No crea una segunda OE.** Completa la OE que «Asignar trabajo» ya creaba o vinculaba, con el mismo número `OE-YYYY-######`.
-- **No escribe en Drive, en el banco de fórmulas ni en el Control semanal.**
+- **No escribe en Drive ni en el banco de fórmulas. No usa el Control semanal.**
+- **Los lotes de MP NO se asignan automáticamente**: los completa Elaboración en la tabla de la OE, a medida que elabora.
 - **No mueve stock.**
 
 ## 1. Cómo funcionaba antes (investigado en el código)
@@ -24,74 +25,62 @@ Rama `claude/oe-automatica-formula-lotes`, que parte de `main` en ada8e8b (inclu
 
 ## 2. Qué hace ahora
 
-### Asignación (Producción)
-1. El diálogo de Elaboración pide el **Lote de fabricación**, que es opcional y se copia tal cual.
-2. La transacción de siempre crea o vincula la OE, sin cambios.
-3. Después del commit, `prepareOeFromWork` (`lib/planning/oe-auto-prep.ts`) completa esa OE:
-   - **Encabezado desde el trabajo**: producto, cliente, cantidad en kg (solo si la unidad es kg, nunca se convierte) y lote de fabricación **exacto**.
-   - **Fórmula** (`lib/formulas/resolve-for-work.ts`):
-     1. Primero el banco: coincidencia exacta o alias único.
-     2. Si no está en el banco, Drive: **una única** planilla cuyo producto coincide exacto en la carpeta del cliente.
-     3. Nunca por parecido. Si es **ambigua, está en conflicto, incompleta** (falta algún %, o el total no da 100 % ± 2) **o no se puede leer**, no se usa.
-   - **Lotes de MP** (orden de búsqueda):
-     1. el Control semanal vinculado a la OE;
-     2. el que esta OE ya usó;
-     3. el **único** control activo del mismo cliente + producto + kg que ninguna otra OE haya tomado.
+### Flujo
+1. **Producción asigna el trabajo** con producto, cantidad, elaborador y **lote de fabricación** (campo nuevo en el diálogo de Elaboración, opcional).
+2. La transacción de siempre **crea o vincula la OE**, con el mismo número y sin duplicados.
+3. Después del commit, `prepareOeFromWork` (`lib/planning/oe-auto-prep.ts`) **carga la fórmula** (`lib/formulas/resolve-for-work.ts`):
+   1. primero el banco: coincidencia exacta o alias único;
+   2. si no está en el banco, Drive: **una única** planilla cuyo producto coincide exacto en la carpeta del cliente.
 
-     Con dos controles posibles, o con dos lotes distintos para el mismo código, no se elige. **Nunca se elige un lote por disponibilidad de stock.**
-   - **kg a pesar** se calculan como siempre (4 decimales).
-   - `autoPrep` registra:
-     - fórmula, origen (Banco o Drive), versión o hash, archivo, hoja y fecha;
-     - el control usado y el origen de cada lote (Control semanal, a mano o pendiente);
-     - la lista de **pendientes**.
-4. Producción ve el resultado en el mismo diálogo, por ejemplo «OE preparada. Falta: Lote de MP pendiente: Perfume floral».
+   Nunca por parecido. Si es **ambigua, está en conflicto, incompleta** (falta algún %, o el total no da 100 % ± 2) **o no se puede leer**, no se usa y la OE queda pendiente con el motivo.
+4. Completa **materias primas, códigos, % y kg a pesar** (cantidad × % / 100, 4 decimales) y el procedimiento.
+5. **Copia el lote de fabricación** del trabajo, exacto. También copia producto, cliente y cantidad en kg (solo si la unidad es kg; nunca se convierte).
+6. **Deja vacíos los lotes de MP.** El elaborador los completa en la tabla de la OE.
+
+`autoPrep` (en `form_data`) registra la fórmula, su origen (Banco o Drive), versión o hash, archivo, hoja y fecha, quién y cuándo, y los pendientes de Producción y fórmula. Producción ve el resultado en el mismo diálogo, por ejemplo «OE lista con fórmula, cantidades y lote de fabricación».
 
 Si la preparación falla, la asignación igual queda guardada y la OE se puede completar después con la acción explícita.
 
+### Lotes de MP (los carga Elaboración)
+- Llegan **vacíos**, con el texto «Completar lote». **Nunca** se toman del Control semanal ni se eligen por stock.
+- **Edición tipo Excel** en la columna «Lote N.º» de la tabla de materiales:
+  - escribir y **Enter** (o ↓) baja a la fila siguiente;
+  - **Shift+Enter** (o ↑) sube;
+  - **pegar varias líneas** copiadas de una planilla completa las filas siguientes;
+  - se guarda con el autoguardado de la OE.
+- El panel muestra «Lotes de MP: N de M cargados».
+- **Nunca se pisan**: al recargar la fórmula, cada lote sigue a su materia prima, por código y por fase si la MP aparece dos veces, aunque cambie el orden o se agreguen MP.
+- **Si la fórmula nueva ya no tiene una MP con lote o ajuste del elaborador**:
+  - la actualización automática **no se aplica**: la OE queda igual y se audita `OE_AUTOPREP_NEEDS_CONFIRMATION` con lo que se perdería;
+  - la acción explícita lo **advierte** (MP y lote) y «Aplicar» queda bloqueado hasta marcar «Entiendo que se quitan de la OE»;
+  - lo quitado queda en la auditoría y en el historial de versiones.
+
 ### Pendientes (nunca se inventa nada)
 - **Sin fórmula, ambigua o ilegible**: la OE se crea igual, sin materias primas, con el motivo.
-- **MP sin lote**: queda vacío y marcado.
 - **Sin lote de fabricación**: queda pendiente.
 - **Cantidad en unidades**: kg pendiente.
-- **Control semanal armado para otros kg**: se conservan los lotes, con el aviso «confirmá los lotes con Materias Primas».
 
 ### Cambios del trabajo
-- **Antes de empezar la elaboración** (OE en BORRADOR o PENDIENTE y sin registros del proceso: ajustes, control de proceso, calidad u observación), una corrección del trabajo **re-sincroniza la OE**. Aplica a producto, cliente, cantidad y lote, desde la tarjeta o desde la planilla.
+- **Antes de empezar la elaboración** (OE en BORRADOR o PENDIENTE y sin registros del proceso: ajustes, control de proceso, calidad u observación), una corrección del trabajo **re-sincroniza la OE**. Aplica a producto, cliente, cantidad y lote de fabricación.
   - Se recalculan los kg.
-  - Se conservan los lotes de MP escritos a mano.
-  - Si cambia el producto y no hay fórmula para el nuevo, se quitan las MP de la fórmula anterior.
-- **Después de empezar**: **no se reemplaza nada** (fórmula, lotes ni cantidades). Queda auditado `OE_AUTOPREP_SKIPPED_STARTED`.
-- **«Actualizar desde fórmula y lotes»** es la acción explícita para Producción o Elaboración:
-  - primero muestra **qué cambiaría** (vista previa, sin guardar);
-  - recién aplica al confirmar, con control de versión (409 si la OE cambió mientras se revisaba);
-  - conserva los ajustes con su motivo, los lotes escritos a mano y todos los datos del proceso;
-  - si la fórmula nueva no incluye una MP que ya tiene un ajuste registrado, no aplica.
+  - Se conservan los lotes de MP del elaborador.
+- **Después de empezar**: **no se reemplaza nada** (fórmula, cantidades ni lotes). Queda auditado `OE_AUTOPREP_SKIPPED_STARTED`.
+- **«Actualizar desde fórmula»** es la acción explícita para Producción o Elaboración:
+  - muestra **qué cambiaría** (vista previa, sin guardar) y qué se perdería;
+  - aplica al confirmar, con control de versión (409 si la OE cambió mientras se revisaba);
+  - conserva lotes, ajustes y datos del proceso.
   - Calidad y Materias Primas no pueden usarla (403).
 
-### Pantalla del elaborador
-Panel «Preparada desde el trabajo asignado» con:
-- producto, lote de fabricación y cantidad;
-- fórmula, origen, hoja, versión y fecha;
-- origen de los lotes de MP;
-- **Falta completar (N)**, calculado con lo que está en pantalla: al escribir un lote, ese pendiente desaparece.
-
-En la tabla de materiales, el lote pendiente aparece resaltado en rojo con el texto «Pendiente». El elaborador completa solo los datos del proceso, como siempre.
-
 ### Seguridad
-- **Drive y banco**: solo lectura. **Control semanal**: solo lectura (no se escribe `linked_oe_id`; Materias Primas mantiene su control).
-- **Stock**: ningún movimiento. El consumo sigue siendo una sola vez, al entregar.
-- **Concurrencia**:
-  - la preparación bloquea la fila de la OE (`FOR UPDATE`) y sube la versión;
-  - se compara contra el contenido guardado sin importar el orden de las claves (jsonb), así que **un reintento no cambia nada ni duplica la auditoría**.
+- **Drive y banco**: solo lectura. **El Control semanal no se usa.**
+- **Stock**: ningún movimiento al crear o preparar la OE. El consumo sigue siendo una sola vez, al entregar.
+- **Concurrencia**: fila de la OE bloqueada (`FOR UPDATE`) y versión +1; comparación canónica del jsonb, así que **un reintento no cambia nada ni duplica la auditoría**.
 - **Auditoría**:
   - `order_versions` guarda el snapshot completo (eventos `autoprep` / `autoprep_manual`);
-  - `order_audit_events` registra `OE_AUTOPREP_APPLIED`, `OE_AUTOPREP_SKIPPED_STARTED` y `OE_AUTOPREP_MANUAL_REFRESH`, con la referencia de la fórmula (no su contenido), los lotes antes y después y los pendientes.
-- `autoPrep` lo escribe **solo el servidor**: un guardado desde la pantalla no lo puede cambiar.
-- **Corrección del defecto latente**: los ids de Drive ya no se guardan en las columnas uuid. La referencia queda en `formula_version_hash` y en `autoPrep`.
-- **Permisos sin cambios**:
-  - solo Producción y Dirección asignan;
-  - Elaboración edita solo los datos operativos;
-  - la acción explícita es para Producción, Dirección y Elaboración.
+  - `order_audit_events` registra `OE_AUTOPREP_APPLIED`, `OE_AUTOPREP_SKIPPED_STARTED`, `OE_AUTOPREP_NEEDS_CONFIRMATION` y `OE_AUTOPREP_MANUAL_REFRESH`, con la referencia de la fórmula (no su contenido), los **lotes de MP antes y después**, lo quitado con confirmación y los pendientes.
+- `autoPrep` lo escribe **solo el servidor**: un guardado desde la pantalla no lo cambia.
+- **Corrección de un defecto latente**: los ids de Drive (`drive:…`) ya no se guardan en las columnas uuid `formula_*`, donde hacían fallar el guardado.
+- **Permisos sin cambios**.
 
 ## 3. Validación
 
@@ -99,27 +88,8 @@ Todo en Postgres **descartable**: no se tocaron datos de Production.
 
 | Prueba | Resultado |
 |---|---|
-| Unitarias nuevas (`oe-auto-prep-rules.test.ts`, `work-formula-rules.test.ts`) | 22 + 5 |
-| Integración Postgres nueva (`oe-auto-prep.db.integration.test.ts`, dentro de `npm run test:e2e:produccion-edicion-db`) | **14/14** (suite completa 67/67) |
-| E2E nuevo `GENUS_E2E_PRODUCTION_BUILD=1 npm run test:e2e:oe-automatica` (Chromium, build de producción, usuarios reales de Producción, Elaboración, Calidad y Materias Primas) | **35/35** |
-| Regresión E2E usabilidad Elaboración / MP (`test:e2e:usabilidad`) | 26/26 |
-| Vitest completo | 2194 OK (108 saltados: necesitan base) |
-| `next build` (misma configuración que Vercel) | OK |
-
-Casos de integración:
-- fórmula completa + lotes, con 5 filas (la misma MP en dos fases);
-- reintento sin duplicados;
-- control ya usado por otra OE;
-- sin fórmula;
-- fórmula incompleta;
-- ambigua e ilegible;
-- fórmula de Drive con ids no-uuid;
-- cambio del trabajo antes de empezar (cantidad con coma 1.234,5 y lote);
-- cambio después de empezar, más la acción explícita (vista previa, versión vieja → conflicto, confirmación que conserva lo registrado);
-- dos asignaciones simultáneas con el mismo N° de OE;
-- doble clic (misma clave);
-- dos preparaciones simultáneas;
-- cantidad en unidades;
-- **libro mayor y saldos de MP idénticos al final**.
+| Unitarias (`oe-auto-prep-rules.test.ts`, `work-formula-rules.test.ts`) | 21 + 5 |
+| Integración Postgres (`oe-auto-prep.db.integration.test.ts`, dentro de `npm run test:e2e:produccion-edicion-db`) | **15/15** (suite completa 68/68) |
+| E2E `GENUS_E2E_PRODUCTION_BUILD=1 npm run test:e2e:oe-automatica` (Chromium, build de producción, usuarios reales) | ver PR |
 
 Capturas en `docss/img/oe-automatica/`.

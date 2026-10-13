@@ -141,8 +141,6 @@ export type OeAutoPrepFormulaStatus =
   /** La OE ya tenía materias primas cargadas a mano: no se reemplazaron. */
   | "manual_content";
 
-export type OeAutoPrepMpLotSource = "CONTROL_SEMANAL" | "MANUAL" | "PENDIENTE";
-
 export type OeAutoPrep = {
   version: 1;
   preparedAt: string;
@@ -169,12 +167,6 @@ export type OeAutoPrep = {
   };
   lotFabricacion: { value: string; status: "ok" | "pendiente" };
   quantity: { kg: number | null; planned: string; unit: string; status: "ok" | "pendiente" };
-  mpLots: {
-    status: "ok" | "pendiente" | "sin_control" | "ambiguo";
-    message: string;
-    controlId?: string;
-    lines: Array<{ codigo: string; materiaPrima: string; lote: string; source: OeAutoPrepMpLotSource }>;
-  };
   /** Lista legible de lo que falta, para el elaborador y Producción. */
   pendientes: string[];
 };

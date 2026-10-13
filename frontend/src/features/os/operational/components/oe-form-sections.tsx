@@ -149,6 +149,35 @@ export function OeFormSections({
     });
   };
 
+  /**
+   * Lote N.º como en Excel: Enter / ↓ baja a la fila siguiente, Shift+Enter / ↑ sube; pegar varias líneas (copiadas
+   * de una planilla) completa las filas siguientes. Cada lote es un dato del elaborador: se guarda con el autoguardado.
+   */
+  const lotInputs = (from: HTMLElement) =>
+    Array.from(from.closest("tbody")?.querySelectorAll<HTMLInputElement>("[data-testid=oe-cell-lote]") ?? []);
+  const onLotKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, rowIndex: number) => {
+    const down = (e.key === "Enter" && !e.shiftKey) || e.key === "ArrowDown";
+    const up = (e.key === "Enter" && e.shiftKey) || e.key === "ArrowUp";
+    if (!down && !up) return;
+    const target = lotInputs(e.currentTarget)[rowIndex + (down ? 1 : -1)];
+    if (!target) return;
+    e.preventDefault();
+    target.focus();
+    target.select();
+  };
+  const onLotPaste = (e: React.ClipboardEvent<HTMLInputElement>, rowIndex: number) => {
+    const text = e.clipboardData.getData("text");
+    const values = text.replace(/\r/g, "").split("\n").map((l) => l.split("\t")[0].trim());
+    while (values.length > 1 && values[values.length - 1] === "") values.pop();
+    if (values.length <= 1) return; // una sola línea: pegado normal en la celda
+    e.preventDefault();
+    const byIndex = new Map(values.map((v, k) => [rowIndex + k, v]));
+    onChange({
+      ...content,
+      materials: content.materials.map((x, i) => (byIndex.has(i) ? { ...x, lote: byIndex.get(i)! } : x)),
+    });
+  };
+
   const bannerMsg = statusMessage(formulaStatus, formulaStatusDetail);
 
   return (
@@ -289,7 +318,7 @@ export function OeFormSections({
               </tr>
             </thead>
             <tbody>
-              {content.materials.map((m) => {
+              {content.materials.map((m, rowIndex) => {
                 const ajuste = m.ajuste ?? null;
                 const kgReal = computeKgRealUtilizado(m.kgAPesar, ajuste);
                 const adjusted = ajuste != null && ajuste !== 0;
@@ -358,17 +387,15 @@ export function OeFormSections({
                         disabled={opsLocked}
                         value={m.lote}
                         onChange={(e) => patchMaterial(m.id, { lote: e.target.value })}
+                        onKeyDown={(e) => onLotKeyDown(e, rowIndex)}
+                        onPaste={(e) => onLotPaste(e, rowIndex)}
                         className={`w-full rounded border px-2 py-1.5 text-sm${
                           content.autoPrep && !m.lote.trim() && (m.materiaPrima.trim() || m.codigo.trim())
-                            ? " border-rose-400 bg-rose-50 placeholder:text-rose-700"
+                            ? " border-amber-400 bg-amber-50/60 placeholder:text-amber-800"
                             : ""
                         }`}
-                        placeholder={content.autoPrep && (m.materiaPrima.trim() || m.codigo.trim()) ? "Pendiente" : undefined}
-                        title={
-                          content.autoPrep?.mpLots.lines.find((l) => l.codigo === m.codigo && l.lote && l.lote === m.lote && l.source === "CONTROL_SEMANAL")
-                            ? "Lote asignado por Materias Primas (Control semanal)"
-                            : undefined
-                        }
+                        placeholder={content.autoPrep && (m.materiaPrima.trim() || m.codigo.trim()) ? "Completar lote" : undefined}
+                        aria-label={`Lote de ${m.materiaPrima || m.codigo || "la materia prima"}`}
                         data-testid="oe-cell-lote"
                       />
                     </td>

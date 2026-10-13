@@ -721,6 +721,8 @@ export type OeAutoPrepApiResponse = {
   message?: string;
   version?: number;
   autoPrep?: import("@/lib/orders/types").OeAutoPrep;
+  /** MP con lote/ajuste del elaborador que la fórmula nueva ya no tiene (se quitarían al aplicar). */
+  lostRecords?: Array<{ materiaPrima: string; codigo: string; lote: string; ajuste: number | null }>;
   preview?: {
     header: import("@/lib/orders/types").OeContent["header"];
     materials: Array<{ materiaPrima: string; codigo: string; formulaPct: number | null; kgAPesar: number | null; lote: string }>;
@@ -728,11 +730,11 @@ export type OeAutoPrepApiResponse = {
   };
 };
 
-/** «Actualizar desde fórmula y lotes»: sin confirm = vista previa; con confirm = aplica (409 si la OE cambió). */
+/** «Actualizar desde fórmula»: sin confirm = vista previa; con confirm = aplica (409 si la OE cambió). */
 export async function oeAutoPrepApi(
   session: OrdersClientSession,
   id: string,
-  opts: { confirm?: boolean; expectedVersion?: number } = {}
+  opts: { confirm?: boolean; expectedVersion?: number; acceptLostRecords?: boolean } = {}
 ): Promise<OeAutoPrepApiResponse> {
   const res = await fetch(`/api/v1/orders/${id}/auto-prep`, {
     method: "POST",

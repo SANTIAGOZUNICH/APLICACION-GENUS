@@ -2,11 +2,12 @@
 
 /**
  * Panel de la OE preparada automáticamente desde el trabajo asignado: qué llegó listo (producto, lote de fabricación,
- * cantidad, fórmula y versión, lotes de MP) y qué falta. Lo pendiente se calcula con lo que hay HOY en pantalla:
- * si el elaborador completa un lote, deja de figurar como pendiente.
+ * cantidad, fórmula y versión) y qué falta. Los lotes de MP los completa el elaborador en la tabla, a medida que
+ * elabora: acá solo se cuenta cuántos lleva (con lo que hay HOY en pantalla).
  *
- * «Actualizar desde fórmula y lotes» (Producción / Elaboración): primero muestra qué cambiaría y recién aplica al
- * confirmar. Nunca mueve stock.
+ * «Actualizar desde fórmula» (Producción / Elaboración): primero muestra qué cambiaría y recién aplica al confirmar.
+ * Si la fórmula nueva ya no tiene una MP con lote o ajuste del elaborador, lo advierte y exige confirmarlo.
+ * Nunca mueve stock.
  */
 import { useState } from "react";
 import type { OeContent } from "@/lib/orders/types";
@@ -16,17 +17,19 @@ import { friendlySaveError } from "@/lib/ui/friendly-error";
 const fmtKg = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString("es-AR", { maximumFractionDigits: 4 });
 
+/** Lo que falta de Producción/fórmula (no incluye los lotes de MP: esos los completa el elaborador). */
 export function livePendientes(content: OeContent): string[] {
   const ap = content.autoPrep;
   if (!ap) return [];
-  const out = ap.pendientes.filter((p) => !p.startsWith("Lote de MP pendiente") && !p.startsWith("Lote de fabricación"));
+  const out = ap.pendientes.filter((p) => !p.startsWith("Lote de fabricación"));
   if (!content.header.lot.trim()) out.push("Lote de fabricación: Producción todavía no lo cargó en el trabajo.");
-  for (const m of content.materials) {
-    if ((m.materiaPrima.trim() || m.codigo.trim()) && !m.lote.trim()) {
-      out.push(`Lote de MP pendiente: ${m.materiaPrima || m.codigo}${m.codigo && m.materiaPrima ? ` (${m.codigo})` : ""}`);
-    }
-  }
   return out;
+}
+
+/** Lotes de MP cargados por el elaborador / filas de MP. */
+export function mpLotsProgress(content: OeContent): { filled: number; total: number } {
+  const rows = content.materials.filter((m) => m.materiaPrima.trim() || m.codigo.trim());
+  return { filled: rows.filter((m) => m.lote.trim()).length, total: rows.length };
 }
 
 export function OeAutoPrepPanel({
@@ -49,9 +52,11 @@ export function OeAutoPrepPanel({
   const [previewVersion, setPreviewVersion] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [acceptLoss, setAcceptLoss] = useState(false);
 
   if (!ap && !canRefresh) return null;
   const pendientes = livePendientes(content);
+  const lots = mpLotsProgress(content);
   const f = ap?.formula;
 
   const openPreview = async () => {
@@ -65,6 +70,7 @@ export function OeAutoPrepPanel({
       }
       setPreview(res);
       setPreviewVersion(version);
+      setAcceptLoss(false);
     } catch (err) {
       setMsg(friendlySaveError(err, "No se pudo actualizar la OE."));
     } finally {
@@ -76,13 +82,13 @@ export function OeAutoPrepPanel({
     setBusy(true);
     setMsg(null);
     try {
-      const res = await oeAutoPrepApi(session, orderId, { confirm: true, expectedVersion: previewVersion ?? version });
+      const res = await oeAutoPrepApi(session, orderId, { confirm: true, expectedVersion: previewVersion ?? version, acceptLostRecords: acceptLoss });
       if (!res.ok) {
         setMsg(res.message ?? "No se pudo actualizar.");
         return;
       }
       setPreview(null);
-      setMsg(res.status === "unchanged" ? "La OE ya estaba al día." : "OE actualizada desde la fórmula y los lotes.");
+      setMsg(res.status === "unchanged" ? "La OE ya estaba al día." : "OE actualizada desde la fórmula.");
       await onApplied();
     } catch (err) {
       setMsg(friendlySaveError(err, "No se pudo actualizar la OE."));
@@ -118,7 +124,7 @@ export function OeAutoPrepPanel({
             disabled={busy}
             data-testid="oe-autoprep-refresh"
           >
-            {busy && !preview ? "Revisando…" : "Actualizar desde fórmula y lotes"}
+            {busy && !preview ? "Revisando…" : "Actualizar desde fórmula"}
           </button>
         ) : null}
       </div>
@@ -173,7 +179,7 @@ export function OeAutoPrepPanel({
       ) : null}
       {ap ? (
         <p className="mt-2 text-xs text-[var(--os-text-muted)]" data-testid="oe-autoprep-mplots">
-          Lotes de MP: {ap.mpLots.message}
+          Lotes de MP: {lots.filled} de {lots.total} cargados. Los completa Elaboración en la tabla, a medida que pesa.
         </p>
       ) : null}
 
@@ -188,7 +194,7 @@ export function OeAutoPrepPanel({
         </div>
       ) : ap ? (
         <p className="mt-2 text-xs font-medium text-emerald-700" data-testid="oe-autoprep-ready">
-          ✓ Fórmula, cantidades y lotes listos: completá solo los datos del proceso.
+          ✓ Fórmula, cantidades y lote de fabricación listos: completá los lotes de MP y los datos del proceso.
         </p>
       ) : null}
 
@@ -243,15 +249,34 @@ export function OeAutoPrepPanel({
             <p className="mt-2 text-xs text-[var(--os-text-muted)]">No hay cambios: la OE ya coincide con la fórmula y los lotes.</p>
           ) : (
             <p className="mt-2 text-xs text-[var(--os-text-muted)]">
-              Las filas resaltadas cambian. Los ajustes y lotes ya escritos a mano se conservan. No se mueve stock.
+              Las filas resaltadas cambian. Los lotes y ajustes del elaborador se conservan en las MP que siguen en la
+              fórmula. No se mueve stock.
             </p>
           )}
+          {preview.lostRecords && preview.lostRecords.length > 0 ? (
+            <div className="mt-2 rounded border border-amber-400 bg-amber-50 px-2 py-1.5 text-amber-950" data-testid="oe-autoprep-lost">
+              <p className="font-semibold">Atención: la fórmula ya no tiene estas materias primas, que tienen datos del elaborador</p>
+              <ul className="ml-4 list-disc">
+                {preview.lostRecords.map((l, i) => (
+                  <li key={`${l.codigo}-${i}`}>
+                    {l.materiaPrima || l.codigo}
+                    {l.lote ? ` — lote ${l.lote}` : ""}
+                    {l.ajuste != null ? ` — ajuste ${l.ajuste} kg` : ""}
+                  </li>
+                ))}
+              </ul>
+              <label className="mt-1 flex items-center gap-2">
+                <input type="checkbox" checked={acceptLoss} onChange={(e) => setAcceptLoss(e.target.checked)} data-testid="oe-autoprep-accept-lost" />
+                Entiendo que se quitan de la OE (quedan en el historial de versiones)
+              </label>
+            </div>
+          ) : null}
           <div className="mt-2 flex gap-2">
             <button
               type="button"
               className="rounded bg-[var(--os-teal)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
               onClick={() => void confirm()}
-              disabled={busy || preview.status === "unchanged"}
+              disabled={busy || preview.status === "unchanged" || ((preview.lostRecords?.length ?? 0) > 0 && !acceptLoss)}
               data-testid="oe-autoprep-confirm"
             >
               {busy ? "Aplicando…" : "Aplicar cambios"}

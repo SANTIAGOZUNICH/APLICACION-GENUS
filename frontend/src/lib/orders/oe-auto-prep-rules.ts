@@ -5,19 +5,20 @@
  *  - Encabezado desde el trabajo: producto, cliente, cantidad (kg) y LOTE DE FABRICACIÓN copiado exacto.
  *  - Materias primas y % desde la fórmula (banco Neon o Drive, ver lib/formulas/resolve-for-work.ts);
  *    los kg a pesar los calcula recomputeOeDerived (cantidad × % / 100, 4 decimales).
- *  - Lotes de MP desde el Control semanal que Materias Primas armó para esa producción. Nunca por disponibilidad.
+ *  - Lotes de MP: NO se asignan. Quedan vacíos para que Elaboración los complete en la tabla de la OE al elaborar.
  *  - `autoPrep`: de dónde salió cada dato y qué quedó pendiente.
  *
  * Qué NO hace nunca:
  *  - inventar materias primas ni porcentajes (fórmula ausente/ambigua/incompleta → queda pendiente);
  *  - reemplazar materias primas cargadas a mano sin una confirmación explícita (`replaceManual`);
- *  - pisar un lote de MP escrito a mano;
+ *  - pisar ni borrar un lote de MP (o un ajuste) registrado por el elaborador: si la MP sigue en la fórmula
+ *    (mismo código) se conserva; si la fórmula nueva ya no la tiene, se informa en `lostRecords` y el servidor
+ *    no aplica sin una confirmación explícita;
  *  - tocar una OE cuya elaboración ya empezó (ver oeProcesoIniciado: eso decide el servidor).
  */
 import { emptyOeMaterial, recomputeOeDerived } from "@/lib/orders/content";
 import type {
   OeAutoPrep,
-  OeAutoPrepMpLotSource,
   OeContent,
   OeMaterialRow,
   OrderStatus,
@@ -36,22 +37,10 @@ export type AutoPrepWork = {
   packagingLote: string | null;
 };
 
-export type AutoPrepMpLots =
-  | {
-      status: "found";
-      controlId: string;
-      lines: Array<{ codigo: string; materiaPrima: string; lote: string }>;
-      /** El control se armó para otra cantidad (la OE cambió después): los lotes se mantienen, pero hay que confirmarlos. */
-      quantityMismatch?: { controlKg: number | null; oeKg: number | null };
-    }
-  | { status: "none"; message: string }
-  | { status: "ambiguous"; message: string };
-
 export type BuildAutoPrepInput = {
   content: OeContent;
   work: AutoPrepWork;
   formula: WorkFormulaResolution;
-  mpLots: AutoPrepMpLots;
   actorEmail: string;
   reason: string;
   now: string;
@@ -70,8 +59,11 @@ export type BuildAutoPrepResult = {
   formulaColumns: FormulaColumnsChange;
   /** false = el resultado es igual a lo que ya tiene la OE (no hace falta guardar ni auditar). */
   changed: boolean;
-  /** MP con ajustes ya registrados que la fórmula nueva no incluye: no se aplica (se perderían registros reales). */
-  lostRecords: string[];
+  /**
+   * MP con datos del elaborador (lote o ajuste) que el resultado ya no incluye (la fórmula nueva no tiene esa MP).
+   * El servidor no aplica automáticamente y la acción explícita exige confirmar la pérdida.
+   */
+  lostRecords: Array<{ materiaPrima: string; codigo: string; lote: string; ajuste: number | null }>;
 };
 
 const KG_UNITS = new Set(["kg", "kgs", "kilo", "kilos", "kilogramo", "kilogramos"]);
@@ -149,6 +141,12 @@ function mpKey(codigo: string, materiaPrima: string): string {
   return c ? `c:${c}` : `m:${normalizeSearchKey(materiaPrima ?? "")}`;
 }
 
+/** Fila con algo que escribió el elaborador (lote o ajuste): no se borra sin confirmación. */
+function hasElaboratorData(m: OeMaterialRow): boolean {
+  return (m.lote ?? "").trim() !== "" || m.ajuste != null || (m.ajusteMotivo ?? "").trim() !== "";
+}
+const lostOf = (m: OeMaterialRow) => ({ materiaPrima: m.materiaPrima, codigo: m.codigo, lote: m.lote, ajuste: m.ajuste });
+
 function occurrenceKeys(rows: Array<{ codigo: string; materiaPrima: string }>): string[] {
   const seen = new Map<string, number>();
   return rows.map((r) => {
@@ -157,19 +155,6 @@ function occurrenceKeys(rows: Array<{ codigo: string; materiaPrima: string }>): 
     seen.set(k, n);
     return `${k}#${n}`;
   });
-}
-
-/** Lote del Control semanal por MP. Si el mismo código tiene dos lotes distintos, es ambiguo (null). */
-function controlLotsByKey(lines: Array<{ codigo: string; materiaPrima: string; lote: string }>) {
-  const out = new Map<string, string | null>();
-  for (const l of lines) {
-    const lote = (l.lote ?? "").trim();
-    if (!lote) continue;
-    const k = mpKey(l.codigo, l.materiaPrima);
-    if (!out.has(k)) out.set(k, lote);
-    else if (out.get(k) !== lote) out.set(k, null);
-  }
-  return out;
 }
 
 /** JSON con claves ordenadas: Postgres (jsonb) devuelve las claves en otro orden que el objeto original. */
@@ -191,7 +176,7 @@ function stableView(content: OeContent): string {
 }
 
 export function buildAutoPreparedOe(input: BuildAutoPrepInput): BuildAutoPrepResult {
-  const { content, work, formula, mpLots } = input;
+  const { content, work, formula } = input;
   const prev = content.autoPrep;
   const identity = workIdentity(work.client, work.product);
   const pendientes: string[] = [];
@@ -215,7 +200,7 @@ export function buildAutoPreparedOe(input: BuildAutoPrepInput): BuildAutoPrepRes
 
   // 2) Fórmula.
   let formulaColumns: FormulaColumnsChange = { kind: "keep" };
-  let lostRecords: string[] = [];
+  let lostRecords: BuildAutoPrepResult["lostRecords"] = [];
   let formulaMeta: OeAutoPrep["formula"];
   const currentFp = formulaContentFingerprint(content);
   const materialsCameFromAuto =
@@ -238,9 +223,7 @@ export function buildAutoPreparedOe(input: BuildAutoPrepInput): BuildAutoPrepRes
       const previousByKey = new Map(content.materials.map((m, i) => [prevKeys[i], m]));
       const formulaKeys = occurrenceKeys(formula.materials);
       const nextKeys = new Set(formulaKeys);
-      lostRecords = content.materials
-        .filter((m, i) => (m.ajuste != null || (m.ajusteMotivo ?? "").trim() !== "") && !nextKeys.has(prevKeys[i]))
-        .map((m) => m.materiaPrima || m.codigo);
+      lostRecords = content.materials.filter((m, i) => hasElaboratorData(m) && !nextKeys.has(prevKeys[i])).map(lostOf);
       const materials: OeMaterialRow[] = formula.materials.map((m, i) => {
         const before = previousByKey.get(formulaKeys[i]);
         return emptyOeMaterial({
@@ -296,6 +279,7 @@ export function buildAutoPreparedOe(input: BuildAutoPrepInput): BuildAutoPrepRes
     formulaMeta = { ...prev.formula, message: `Se mantiene la fórmula cargada. ${formula.message}` };
   } else if (materialsCameFromAuto && prev?.formula.status === "ok") {
     // Cambió el producto y no hay fórmula para el nuevo: se quitan las MP de la fórmula anterior (no aplican).
+    lostRecords = content.materials.filter(hasElaboratorData).map(lostOf);
     next = { ...next, materials: [], procedureSteps: [] };
     formulaColumns = { kind: "clear" };
     formulaMeta = { status: formula.status, message: formula.message, identity };
@@ -311,60 +295,7 @@ export function buildAutoPreparedOe(input: BuildAutoPrepInput): BuildAutoPrepRes
     if (!manualContent) pendientes.push(`Fórmula: ${formula.message}`);
   }
 
-  // 3) Lotes de MP: del Control semanal; lo escrito a mano no se pisa.
-  const prevAutoLots = new Map(
-    (prev?.mpLots.lines ?? [])
-      .filter((l) => l.source === "CONTROL_SEMANAL")
-      .map((l) => [mpKey(l.codigo, l.materiaPrima), l.lote])
-  );
-  const fromControl = mpLots.status === "found" ? controlLotsByKey(mpLots.lines) : new Map<string, string | null>();
-  const lotLines: OeAutoPrep["mpLots"]["lines"] = [];
-  const materialsWithLots = next.materials.map((m) => {
-    const k = mpKey(m.codigo, m.materiaPrima);
-    const current = (m.lote ?? "").trim();
-    let lote = m.lote ?? "";
-    let source: OeAutoPrepMpLotSource;
-    if (current && current !== prevAutoLots.get(k)) {
-      source = "MANUAL";
-    } else if (fromControl.get(k)) {
-      lote = fromControl.get(k)!;
-      source = "CONTROL_SEMANAL";
-    } else {
-      lote = "";
-      source = "PENDIENTE";
-    }
-    if (m.materiaPrima.trim() || m.codigo.trim()) {
-      lotLines.push({ codigo: m.codigo, materiaPrima: m.materiaPrima, lote, source });
-    }
-    return { ...m, lote };
-  });
-  next = { ...next, materials: materialsWithLots };
-
-  const sinLote = lotLines.filter((l) => l.source === "PENDIENTE");
-  let mpStatus: OeAutoPrep["mpLots"]["status"];
-  let mpMessage: string;
-  if (mpLots.status === "ambiguous") {
-    mpStatus = "ambiguo";
-    mpMessage = mpLots.message;
-  } else if (mpLots.status === "none") {
-    mpStatus = sinLote.length ? "sin_control" : "ok";
-    mpMessage = mpLots.message;
-  } else {
-    mpStatus = sinLote.length ? "pendiente" : "ok";
-    mpMessage = sinLote.length
-      ? "El Control semanal no tiene lote para algunas materias primas."
-      : "Lotes de MP tomados del Control semanal.";
-    if (mpLots.quantityMismatch) {
-      const fmt = (v: number | null) => (v == null ? "sin cantidad" : `${v.toLocaleString("es-AR", { maximumFractionDigits: 4 })} kg`);
-      const warn = `El Control semanal se armó para ${fmt(mpLots.quantityMismatch.controlKg)} y la OE es de ${fmt(mpLots.quantityMismatch.oeKg)}: confirmá los lotes de MP con Materias Primas.`;
-      mpStatus = "pendiente";
-      mpMessage = warn;
-      pendientes.push(warn);
-    }
-  }
-  for (const l of sinLote) {
-    pendientes.push(`Lote de MP pendiente: ${l.materiaPrima || l.codigo}${l.codigo && l.materiaPrima ? ` (${l.codigo})` : ""}`);
-  }
+  // 3) Lotes de MP: los completa Elaboración en la OE. Nunca se asignan; los ya escritos se conservaron arriba.
 
   next = recomputeOeDerived(next);
   if (formulaMeta.status === "ok") formulaMeta = { ...formulaMeta, fingerprint: formulaContentFingerprint(next) };
@@ -384,12 +315,6 @@ export function buildAutoPreparedOe(input: BuildAutoPrepInput): BuildAutoPrepRes
       planned: work.plannedQuantity,
       unit: work.unit ?? "kg",
       status: qty.kg != null ? "ok" : "pendiente",
-    },
-    mpLots: {
-      status: mpStatus,
-      message: mpMessage,
-      ...(mpLots.status === "found" ? { controlId: mpLots.controlId } : {}),
-      lines: lotLines,
     },
     pendientes,
   };

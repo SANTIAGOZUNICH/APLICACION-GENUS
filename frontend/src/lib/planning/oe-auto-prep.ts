@@ -1,16 +1,18 @@
 /**
- * OE automática: completa la OE que «Asignar trabajo» ya creó o vinculó (ensure-oe-on-assign.ts) con la fórmula,
- * el lote de fabricación, la cantidad y los lotes de MP. NO crea otra OE ni otro número: trabaja sobre la OE
- * vinculada al trabajo.
+ * OE automática: completa la OE que «Asignar trabajo» ya creó o vinculó (ensure-oe-on-assign.ts) con la fórmula
+ * (MP, códigos, %, kg a pesar), la cantidad y el lote de fabricación del trabajo. NO crea otra OE ni otro número.
+ * Los lotes de MP NO se asignan: los completa Elaboración en la tabla de la OE al elaborar.
  *
  * Cuándo corre:
  *  - después de confirmar la asignación (y en cada reintento de la misma asignación: es idempotente);
  *  - después de que Producción corrige el trabajo (producto, cliente, cantidad, lote) ANTES de que empiece la elaboración;
- *  - a pedido, con «Actualizar desde fórmula y lotes» (acción explícita, con vista previa), también después de empezar.
+ *  - a pedido, con «Actualizar desde fórmula» (acción explícita, con vista previa), también después de empezar.
  *
  * Garantías:
- *  - solo lectura de Drive y del banco de fórmulas; nunca escribe en el Control semanal ni mueve stock
- *    (el consumo de MP sigue ocurriendo una sola vez, al entregar la OE: applyOeConsumption);
+ *  - solo lectura de Drive y del banco de fórmulas; no mueve stock (el consumo de MP sigue ocurriendo una sola vez,
+ *    al entregar la OE: applyOeConsumption);
+ *  - los lotes de MP y ajustes del elaborador se conservan si la MP sigue en la fórmula; si se perderían (la fórmula
+ *    nueva ya no tiene esa MP), la preparación automática NO aplica y la acción explícita pide confirmarlo;
  *  - fila de la OE bloqueada (FOR UPDATE) y versión +1: dos preparaciones simultáneas no se pisan;
  *  - si la elaboración empezó, no reemplaza nada sin la acción explícita;
  *  - cada cambio queda en order_versions (snapshot) y order_audit_events.
@@ -18,26 +20,17 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import {
-  mpWeeklyControlLines,
-  mpWeeklyControls,
-  operationalOrders,
-  orderAuditEvents,
-  orderVersions,
-  workItems,
-} from "@/lib/db/schema";
+import { operationalOrders, orderAuditEvents, orderVersions, workItems } from "@/lib/db/schema";
 import { computeCompletionPercentage } from "@/lib/orders/content";
 import type { OeAutoPrep, OeContent } from "@/lib/orders/types";
-import { normalizeSearchKey } from "@/lib/formulas/types";
 import type { WorkFormulaResolution } from "@/lib/formulas/work-formula-rules";
 import {
   buildAutoPreparedOe,
   oeProcesoIniciado,
-  workQuantityKg,
-  type AutoPrepMpLots,
   type AutoPrepWork,
+  type BuildAutoPrepResult,
 } from "@/lib/orders/oe-auto-prep-rules";
 
 export class OeAutoPrepConflictError extends Error {
@@ -49,11 +42,14 @@ export class OeAutoPrepConflictError extends Error {
 }
 
 export type OeAutoPrepActor = { email: string; sector: string };
+export type OeLostRecords = BuildAutoPrepResult["lostRecords"];
 
 export type OeAutoPrepOutcome =
-  | { status: "applied"; orderId: string; orderNumber: string; version: number; autoPrep: OeAutoPrep }
+  | { status: "applied"; orderId: string; orderNumber: string; version: number; autoPrep: OeAutoPrep; lostRecords?: OeLostRecords }
   | { status: "unchanged"; orderId: string; orderNumber: string; autoPrep: OeAutoPrep | null }
   | { status: "skipped_started"; orderId: string; orderNumber: string; message: string }
+  /** La fórmula nueva borraría lotes/ajustes del elaborador: no se aplicó (falta confirmación explícita). */
+  | { status: "needs_confirmation"; orderId: string; orderNumber: string; message: string; lostRecords: OeLostRecords }
   | { status: "skipped"; orderId: string; message: string };
 
 export type PrepareOeOptions = {
@@ -67,6 +63,8 @@ export type PrepareOeOptions = {
   dryRun?: boolean;
   /** Versión de la OE que vio el usuario en la vista previa: si cambió, no se aplica (409). */
   expectedVersion?: number;
+  /** El usuario confirmó que se quiten MP (con sus lotes/ajustes) que la fórmula nueva ya no tiene. */
+  acceptLostRecords?: boolean;
   /** Para pruebas: inyecta la resolución de fórmula. */
   resolveFormula?: (args: { client: string; product: string }) => Promise<WorkFormulaResolution>;
 };
@@ -80,6 +78,19 @@ type OrderRow = {
   linkedWorkItemId: string | null;
   version: number;
 };
+
+const ORDER_COLS = {
+  id: operationalOrders.id,
+  orderNumber: operationalOrders.orderNumber,
+  type: operationalOrders.type,
+  status: operationalOrders.status,
+  formData: operationalOrders.formData,
+  linkedWorkItemId: operationalOrders.linkedWorkItemId,
+  version: operationalOrders.version,
+};
+
+const lostText = (lost: OeLostRecords) =>
+  lost.map((l) => `${l.materiaPrima || l.codigo}${l.lote ? ` (lote ${l.lote})` : ""}${l.ajuste != null ? " (ajuste registrado)" : ""}`).join(", ");
 
 async function defaultResolveFormula(args: { client: string; product: string }) {
   const { resolveFormulaForWork } = await import("@/lib/formulas/resolve-for-work");
@@ -109,107 +120,11 @@ async function loadWork(orderId: string, linkedWorkItemId: string | null): Promi
   return { ...rows[0], sector: String(rows[0].sector), status: String(rows[0].status) };
 }
 
-/**
- * Lotes de MP asignados por Materias Primas para ESTA producción (solo lectura):
- *  1. Control semanal vinculado explícitamente a la OE (linked_oe_id);
- *  2. si no hay: el ÚNICO control activo y sin vincular del mismo cliente + producto (exactos) y la misma cantidad,
- *     que ninguna otra OE haya tomado. Con más de uno → ambiguo: no se elige.
- * Nunca se eligen lotes por disponibilidad de stock.
- */
-export async function resolveMpLotsForOe(args: {
-  orderId: string;
-  client: string;
-  product: string;
-  quantityKg: number | null;
-  /** Control que esta misma OE ya tomó en una preparación anterior (queda asociado aunque cambie la cantidad). */
-  previousControlId?: string | null;
-}): Promise<AutoPrepMpLots> {
-  const db = getDb();
-  const ACTIVE = sql`${mpWeeklyControls.status} in ('BORRADOR','COMPLETADO')`;
-  const cols = { id: mpWeeklyControls.id, client: mpWeeklyControls.client, product: mpWeeklyControls.product, quantityKg: mpWeeklyControls.quantityKg };
-  let controls: Array<{ id: string; client: string; product: string; quantityKg: number | null }>;
-  try {
-    controls = await db.select(cols).from(mpWeeklyControls).where(and(eq(mpWeeklyControls.linkedOeId, args.orderId), ACTIVE));
-  } catch {
-    return { status: "none", message: "No se pudo leer el Control semanal: los lotes de MP quedan pendientes." };
-  }
-  if (controls.length === 0 && args.previousControlId) {
-    // Mismo control que ya usó esta OE, si sigue activo y es del mismo cliente + producto.
-    const c = normalizeSearchKey(args.client);
-    const p = normalizeSearchKey(args.product);
-    const prev = await db.select(cols).from(mpWeeklyControls).where(and(eq(mpWeeklyControls.id, args.previousControlId), isNull(mpWeeklyControls.linkedOeId), ACTIVE));
-    controls = prev.filter((r) => normalizeSearchKey(r.client) === c && normalizeSearchKey(r.product) === p);
-  }
-  if (controls.length > 1) {
-    return { status: "ambiguous", message: `Hay ${controls.length} controles semanales vinculados a esta OE: los lotes de MP quedan pendientes hasta que Materias Primas deje uno.` };
-  }
-  if (controls.length === 0) {
-    const c = normalizeSearchKey(args.client);
-    const p = normalizeSearchKey(args.product);
-    const unlinked = await db
-      .select({ id: mpWeeklyControls.id, client: mpWeeklyControls.client, product: mpWeeklyControls.product, quantityKg: mpWeeklyControls.quantityKg })
-      .from(mpWeeklyControls)
-      .where(and(isNull(mpWeeklyControls.linkedOeId), ACTIVE));
-    const same = unlinked.filter(
-      (r) =>
-        normalizeSearchKey(r.client) === c &&
-        normalizeSearchKey(r.product) === p &&
-        args.quantityKg != null &&
-        r.quantityKg != null &&
-        Math.abs(r.quantityKg - args.quantityKg) < 0.0005
-    );
-    if (same.length === 0) {
-      return { status: "none", message: "No hay un Control semanal de Materias Primas para este producto y cantidad: los lotes de MP quedan pendientes." };
-    }
-    if (same.length > 1) {
-      return { status: "ambiguous", message: `Hay ${same.length} controles semanales para este producto y cantidad: los lotes de MP quedan pendientes (vinculá el control a la OE).` };
-    }
-    const [taken] = await db
-      .select({ orderNumber: operationalOrders.orderNumber })
-      .from(operationalOrders)
-      .where(
-        and(
-          ne(operationalOrders.id, args.orderId),
-          isNull(operationalOrders.deletedAt),
-          ne(operationalOrders.status, "ANULADA"),
-          sql`${operationalOrders.formData}->'autoPrep'->'mpLots'->>'controlId' = ${same[0].id}`
-        )
-      )
-      .limit(1);
-    if (taken) {
-      return { status: "none", message: `El Control semanal de este producto ya se usó para la ${taken.orderNumber}: los lotes de MP quedan pendientes.` };
-    }
-    controls = same;
-  }
-  const lines = await db
-    .select({ codigo: mpWeeklyControlLines.codigo, materiaPrima: mpWeeklyControlLines.materiaPrima, lote: mpWeeklyControlLines.lote })
-    .from(mpWeeklyControlLines)
-    .where(eq(mpWeeklyControlLines.controlId, controls[0].id))
-    .orderBy(mpWeeklyControlLines.sortOrder);
-  const controlKg = controls[0].quantityKg;
-  const mismatch =
-    controlKg == null || args.quantityKg == null ? controlKg !== args.quantityKg : Math.abs(controlKg - args.quantityKg) >= 0.0005;
-  return {
-    status: "found",
-    controlId: controls[0].id,
-    lines,
-    ...(mismatch ? { quantityMismatch: { controlKg, oeKg: args.quantityKg } } : {}),
-  };
-}
-
 /** Prepara (o vuelve a preparar) la OE vinculada desde su trabajo. Idempotente. */
 export async function prepareOeFromWork(opts: PrepareOeOptions): Promise<OeAutoPrepOutcome & { preview?: OeContent }> {
   const db = getDb();
   const [order] = (await db
-    .select({
-      id: operationalOrders.id,
-      orderNumber: operationalOrders.orderNumber,
-      type: operationalOrders.type,
-      status: operationalOrders.status,
-      formData: operationalOrders.formData,
-      linkedWorkItemId: operationalOrders.linkedWorkItemId,
-      version: operationalOrders.version,
-    })
+    .select(ORDER_COLS)
     .from(operationalOrders)
     .where(and(eq(operationalOrders.id, opts.orderId), isNull(operationalOrders.deletedAt)))
     .limit(1)) as OrderRow[];
@@ -239,35 +154,15 @@ export async function prepareOeFromWork(opts: PrepareOeOptions): Promise<OeAutoP
       status: "skipped_started",
       orderId: order.id,
       orderNumber: order.orderNumber,
-      message: `${started.reason} No se actualizó automáticamente: usá «Actualizar desde fórmula y lotes» para revisarlo.`,
+      message: `${started.reason} No se actualizó automáticamente: usá «Actualizar desde fórmula» para revisarlo.`,
     };
   }
 
-  // Lecturas externas FUERA de la transacción (Drive puede tardar): fórmula y lotes de MP.
+  // Lectura externa FUERA de la transacción (Drive puede tardar).
   const formula = await (opts.resolveFormula ?? defaultResolveFormula)({ client: work.client, product: work.product });
-  const qty = workQuantityKg(work.plannedQuantity, work.unit);
-  const mpLots = await resolveMpLotsForOe({
-    orderId: order.id,
-    client: work.client,
-    product: work.product,
-    quantityKg: qty.kg,
-    previousControlId: (order.formData as OeContent | null)?.autoPrep?.mpLots.controlId ?? null,
-  });
 
   return db.transaction(async (tx) => {
-    const [locked] = (await tx
-      .select({
-        id: operationalOrders.id,
-        orderNumber: operationalOrders.orderNumber,
-        type: operationalOrders.type,
-        status: operationalOrders.status,
-        formData: operationalOrders.formData,
-        linkedWorkItemId: operationalOrders.linkedWorkItemId,
-        version: operationalOrders.version,
-      })
-      .from(operationalOrders)
-      .where(eq(operationalOrders.id, order.id))
-      .for("update")) as OrderRow[];
+    const [locked] = (await tx.select(ORDER_COLS).from(operationalOrders).where(eq(operationalOrders.id, order.id)).for("update")) as OrderRow[];
     if (opts.expectedVersion != null && locked.version !== opts.expectedVersion) {
       throw new OeAutoPrepConflictError("Otra persona modificó la OE mientras revisabas los cambios. Volvé a abrir la vista previa.");
     }
@@ -290,19 +185,11 @@ export async function prepareOeFromWork(opts: PrepareOeOptions): Promise<OeAutoP
       content,
       work,
       formula,
-      mpLots,
       actorEmail: opts.actor.email,
       reason: opts.reason,
       now: new Date().toISOString(),
       replaceManual: Boolean(opts.explicit),
     });
-    if (built.lostRecords.length > 0) {
-      return {
-        status: "skipped" as const,
-        orderId: order.id,
-        message: `La fórmula actual no incluye materias primas con ajustes ya registrados (${built.lostRecords.join(", ")}): no se actualizó para no perder esos registros. Revisalo a mano.`,
-      };
-    }
     if (opts.dryRun) {
       return {
         status: built.changed ? ("applied" as const) : ("unchanged" as const),
@@ -310,8 +197,20 @@ export async function prepareOeFromWork(opts: PrepareOeOptions): Promise<OeAutoP
         orderNumber: locked.orderNumber,
         version: locked.version,
         autoPrep: built.content.autoPrep!,
+        lostRecords: built.lostRecords,
         preview: built.content,
       };
+    }
+    if (built.lostRecords.length > 0 && !opts.acceptLostRecords) {
+      const message = `La fórmula actual ya no incluye materias primas con datos del elaborador: ${lostText(built.lostRecords)}. No se actualizó: revisalo con «Actualizar desde fórmula» y confirmá si corresponde quitarlas.`;
+      await tx.insert(orderAuditEvents).values({
+        orderId: order.id,
+        eventType: "OE_AUTOPREP_NEEDS_CONFIRMATION",
+        actor: opts.actor.email,
+        actorSector: opts.actor.sector,
+        metadata: { reason: opts.reason, workItemId: work.id, workItemVersion: work.version, lostRecords: built.lostRecords },
+      });
+      return { status: "needs_confirmation" as const, orderId: order.id, orderNumber: locked.orderNumber, message, lostRecords: built.lostRecords };
     }
     if (!built.changed) {
       return { status: "unchanged" as const, orderId: order.id, orderNumber: locked.orderNumber, autoPrep: content.autoPrep ?? null };
@@ -379,8 +278,10 @@ export async function prepareOeFromWork(opts: PrepareOeOptions): Promise<OeAutoP
         },
         lotFabricacion: ap.lotFabricacion,
         quantity: ap.quantity,
-        mpLots: { status: ap.mpLots.status, controlId: ap.mpLots.controlId ?? null, lines: ap.mpLots.lines },
-        previousMpLots: content.materials.map((m) => ({ codigo: m.codigo, lote: m.lote })),
+        // Lotes de MP del elaborador antes y después (trazabilidad: nunca se cambian sin dejar registro).
+        mpLotsBefore: content.materials.map((m) => ({ codigo: m.codigo, materiaPrima: m.materiaPrima, lote: m.lote })),
+        mpLotsAfter: built.content.materials.map((m) => ({ codigo: m.codigo, materiaPrima: m.materiaPrima, lote: m.lote })),
+        removedWithConfirmation: built.lostRecords,
         pendientes: ap.pendientes,
       },
     });
@@ -403,7 +304,7 @@ export async function prepareOeAfterWorkChange(
     return await prepareOeFromWork({ orderId, actor, reason });
   } catch (err) {
     console.error("[oe-auto-prep] no se pudo preparar la OE", { orderId, error: err instanceof Error ? err.message : String(err) });
-    return { status: "error", orderId, message: "No se pudo completar la OE automáticamente. Reintentá con «Actualizar desde fórmula y lotes»." };
+    return { status: "error", orderId, message: "No se pudo completar la OE automáticamente. Reintentá con «Actualizar desde fórmula»." };
   }
 }
 

@@ -99,7 +99,14 @@ describe.skipIf(Boolean(PROBLEM))(`OE automática con fórmula y lotes en Postgr
     ]);
     await seedFormula(`GEL INCOMPLETO IT ${RUN}`, randomUUID(), [["Agua", "MP-IT-1", "70"], ["Glicerina", "MP-IT-3", null]]);
 
-    // Control semanal de Materias Primas para esa producción: lotes para 3 de las 4 MP (Perfume sin lote).
+    // Fórmula alternativa sin Carbopol (MP-IT-2): para probar que no se borran lotes del elaborador sin confirmar.
+    await seedFormula(`CREMA SIN CARBOPOL IT ${RUN}`, randomUUID(), [
+      ["Agua desmineralizada", "MP-IT-1", "80.5"],
+      ["Glicerina", "MP-IT-3", "12"],
+      ["Perfume", "MP-IT-4", "7.5"],
+    ]);
+
+    // Un Control semanal con lotes para esa producción: NO debe usarse (los lotes de MP los carga Elaboración).
     const [ctl] = await q(
       `insert into mp_weekly_controls (status, client, product, quantity_kg, created_by, updated_by) values ('BORRADOR',$1,$2,150,'it-mp@x','it-mp@x') returning id`,
       [CLIENT, PRODUCT]
@@ -121,7 +128,7 @@ describe.skipIf(Boolean(PROBLEM))(`OE automática con fórmula y lotes en Postgr
 
   const fullCase: { orderId?: string; workId?: string; key?: string; number?: string } = {};
 
-  it("fórmula completa + lotes: la OE de la asignación llega con fórmula, % , kg, lote de fabricación y lotes de MP", async () => {
+  it("fórmula completa: la OE llega con fórmula, %, kg y lote de fabricación; lotes de MP vacíos (aunque haya Control semanal)", async () => {
     const key = randomUUID();
     const { result, oePrep, input } = await assign({}, key);
     Object.assign(fullCase, { orderId: result.order!.id, workId: result.item.id, key, number: input.orderNumber });
@@ -134,10 +141,10 @@ describe.skipIf(Boolean(PROBLEM))(`OE automática con fórmula y lotes en Postgr
     const c = row.form_data as import("@/lib/orders/types").OeContent;
     expect(c.header).toMatchObject({ productName: PRODUCT, client: CLIENT, quantityKg: 150, lot: "IT-OE-L1", code: "PT-IT-1" });
     expect(c.materials.map((x) => [x.materiaPrima, x.formulaPct, x.kgAPesar, x.lote])).toEqual([
-      ["Agua desmineralizada", 40, 60, "AG-777"],
-      ["Carbopol", 0.5, 0.75, "CB-12"],
-      ["Agua desmineralizada", 40, 60, "AG-777"],
-      ["Glicerina", 12, 18, "GL-3"],
+      ["Agua desmineralizada", 40, 60, ""],
+      ["Carbopol", 0.5, 0.75, ""],
+      ["Agua desmineralizada", 40, 60, ""],
+      ["Glicerina", 12, 18, ""],
       ["Perfume", 7.5, 11.25, ""],
     ]);
     expect(c.totals.kgSum).toBe(150);
@@ -146,18 +153,15 @@ describe.skipIf(Boolean(PROBLEM))(`OE automática con fórmula y lotes en Postgr
       workItemId: result.item.id,
       formula: { status: "ok", source: "CACHE_NEON", formulaVersionId },
       lotFabricacion: { value: "IT-OE-L1", status: "ok" },
-      mpLots: { status: "pendiente" },
     });
-    // MP sin lote: pendiente y señalada.
-    expect(c.autoPrep!.pendientes).toEqual(["Lote de MP pendiente: Perfume (MP-IT-4)"]);
-    expect(c.autoPrep!.mpLots.lines.find((l) => l.codigo === "MP-IT-4")?.source).toBe("PENDIENTE");
+    expect(c.autoPrep!.pendientes).toEqual([]);
     // Auditoría: creada desde la asignación + preparada; versión con snapshot.
     expect(await audits(fullCase.orderId!, "OE_CREATED_FROM_ASSIGN")).toHaveLength(1);
     const applied = await audits(fullCase.orderId!, "OE_AUTOPREP_APPLIED");
     expect(applied).toHaveLength(1);
     expect(applied[0]!.actor).toBe(prod.email);
     expect(await q("select event from order_versions where order_id = $1 and event = 'autoprep'", [fullCase.orderId])).toHaveLength(1);
-    // El Control semanal NO se modifica (solo lectura).
+    // El Control semanal ni se usa ni se modifica.
     const [ctl] = await q("select linked_oe_id, updated_by from mp_weekly_controls where product = $1", [PRODUCT]);
     expect(ctl).toMatchObject({ linked_oe_id: null, updated_by: "it-mp@x" });
   });
@@ -172,12 +176,20 @@ describe.skipIf(Boolean(PROBLEM))(`OE automática con fórmula y lotes en Postgr
     expect(await audits(fullCase.orderId!, "OE_AUTOPREP_APPLIED")).toHaveLength(1);
   });
 
-  it("el Control semanal ya tomado por una OE no se reutiliza para otra OE del mismo producto", async () => {
-    const { result } = await assign();
-    const c = await fd(result.order!.id);
-    expect(c.materials.every((m) => m.lote === "")).toBe(true);
-    expect(c.autoPrep!.mpLots.status).toBe("sin_control");
-    expect(c.autoPrep!.mpLots.message).toContain(fullCase.number!);
+  it("el elaborador carga los lotes de MP en la OE (guardado normal de la pantalla): quedan y se auditan como siempre", async () => {
+    const { getOrdersService } = await import("@/lib/orders/get-orders-service");
+    const svc = getOrdersService();
+    const elab = { email: "it-oe-elab@laboratoriogenus.com.ar", sector: "ELABORACION" as const, displayName: "IT Elaboración" };
+    const current = await svc.getOrder(fullCase.orderId!, elab as never);
+    const form = structuredClone(current.formData) as import("@/lib/orders/types").OeContent;
+    const lots = ["AG-777", "CB-12", "AG-778", "GL-3", "PF-1"];
+    form.materials.forEach((m, i) => (m.lote = lots[i]!));
+    // Un intento de tocar autoPrep desde la pantalla se ignora.
+    form.autoPrep = { ...form.autoPrep!, reason: "HACKEO" };
+    await svc.saveProgress(fullCase.orderId!, { expectedVersion: current.version, formData: form } as never, elab as never);
+    const c = await fd(fullCase.orderId!);
+    expect(c.materials.map((m) => m.lote)).toEqual(lots);
+    expect(c.autoPrep!.reason).not.toBe("HACKEO");
   });
 
   it("sin fórmula: la OE se crea igual, sin inventar MP, y queda pendiente con el motivo", async () => {
@@ -242,9 +254,8 @@ describe.skipIf(Boolean(PROBLEM))(`OE automática con fórmula y lotes en Postgr
     let c = await fd(fullCase.orderId!);
     expect(c.header.quantityKg).toBe(1234.5);
     expect(c.materials.map((m) => m.kgAPesar)).toEqual([493.8, 6.1725, 493.8, 148.14, 92.5875]);
-    // El control (armado para 150 kg) sigue asociado: lotes conservados y aviso para confirmarlos con Materias Primas.
-    expect(c.materials.map((m) => m.lote)).toEqual(["AG-777", "CB-12", "AG-777", "GL-3", ""]);
-    expect(c.autoPrep!.pendientes).toContain("El Control semanal se armó para 150 kg y la OE es de 1.234,5 kg: confirmá los lotes de MP con Materias Primas.");
+    // Los lotes que cargó el elaborador se conservan (misma MP, mismo código y fase).
+    expect(c.materials.map((m) => m.lote)).toEqual(["AG-777", "CB-12", "AG-778", "GL-3", "PF-1"]);
     await updateWorkItemLoteVtoDurable(fullCase.workId!, { packagingLote: "IT-OE-L1-B", reason: "Lote corregido", updatedBy: prod.email, updatedBySector: "PRODUCCION" } as never);
     c = await fd(fullCase.orderId!);
     expect(c.header.lot).toBe("IT-OE-L1-B");
@@ -285,9 +296,44 @@ describe.skipIf(Boolean(PROBLEM))(`OE automática con fórmula y lotes en Postgr
     expect(c.processControl.ph).toBe("5,6");
     expect(c.materials[3]).toMatchObject({ kgAPesar: 12, ajuste: 0.3, ajusteMotivo: "Corrección de pesada" });
     expect(c.materials[4]).toMatchObject({ lote: "PF-A-MANO" });
-    expect(c.autoPrep!.mpLots.lines[4]!.source).toBe("MANUAL");
     expect((await order(fullCase.orderId!)).status).toBe("EN_PROCESO");
     expect(await audits(fullCase.orderId!, "OE_AUTOPREP_MANUAL_REFRESH")).toHaveLength(1);
+  });
+
+  it("cambio de fórmula que quita una MP con lote del elaborador: no se borra sin confirmar; con confirmación sí, auditado", async () => {
+    const { updateWorkItemPlanningDurable } = await repo();
+    const { prepareOeFromWork } = await prep();
+    const { result } = await assign({ packagingLote: "IT-OE-LOSS" });
+    const id = result.order!.id;
+    const c0 = await fd(id);
+    c0.materials.forEach((m) => (m.lote = `L-${m.codigo}`));
+    await q("update operational_orders set form_data = $2, version = version + 1 where id = $1", [id, JSON.stringify(c0)]);
+    const before = await order(id);
+    // Producción cambia el producto a uno cuya fórmula no tiene Carbopol (que ya tiene lote del elaborador).
+    const v = Number((await q("select version from work_items where id = $1", [result.item.id]))[0]!.version);
+    await updateWorkItemPlanningDurable(result.item.id, { product: `CREMA SIN CARBOPOL IT ${RUN}`, expectedVersion: v, updatedBy: prod.email, updatedBySector: "PRODUCCION", reason: "Cambio de producto" } as never);
+    const after = await order(id);
+    expect(after.version).toBe(before.version);
+    expect(after.form_data).toEqual(before.form_data);
+    const warn = await audits(id, "OE_AUTOPREP_NEEDS_CONFIRMATION");
+    expect(warn).toHaveLength(1);
+    expect(JSON.stringify(warn[0]!.metadata)).toContain("L-MP-IT-2");
+    // Vista previa: avisa qué se perdería.
+    const preview = await prepareOeFromWork({ orderId: id, actor: prod, reason: "Vista previa", explicit: true, dryRun: true });
+    // Carbopol y la segunda fase de Agua (la fórmula nueva tiene Agua una sola vez): las dos tienen lote del elaborador.
+    expect("lostRecords" in preview && preview.lostRecords?.map((l) => l.codigo)).toEqual(["MP-IT-2", "MP-IT-1"]);
+    // Confirmar SIN aceptar la pérdida → no aplica.
+    const noAccept = await prepareOeFromWork({ orderId: id, actor: prod, reason: "x", explicit: true, expectedVersion: before.version });
+    expect(noAccept.status).toBe("needs_confirmation");
+    expect((await order(id)).version).toBe(before.version);
+    // Aceptando: fórmula nueva, lotes conservados en las MP que siguen, Carbopol quitado y registrado en la auditoría.
+    const ok = await prepareOeFromWork({ orderId: id, actor: prod, reason: "Cambio de producto revisado", explicit: true, expectedVersion: before.version, acceptLostRecords: true });
+    expect(ok.status).toBe("applied");
+    const c = await fd(id);
+    expect(c.materials.map((m) => [m.codigo, m.lote])).toEqual([["MP-IT-1", "L-MP-IT-1"], ["MP-IT-3", "L-MP-IT-3"], ["MP-IT-4", "L-MP-IT-4"]]);
+    const refresh = await audits(id, "OE_AUTOPREP_MANUAL_REFRESH");
+    expect(JSON.stringify(refresh[0]!.metadata)).toContain("L-MP-IT-2");
+    expect(await q("select 1 from order_versions where order_id = $1 and event = 'autoprep_manual'", [id])).toHaveLength(1);
   });
 
   it("dos asignaciones simultáneas con el mismo N° de OE: una sola OE y un solo trabajo vinculado", async () => {

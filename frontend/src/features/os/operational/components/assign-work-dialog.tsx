@@ -482,7 +482,7 @@ export function AssignWorkDialog({
         : prep.status === "applied" || prep.status === "unchanged"
           ? prep.pendientes.length
             ? ` OE preparada. Falta: ${prep.pendientes.join(" · ")}`
-            : " OE lista con fórmula, cantidades y lotes."
+            : " OE lista con fórmula, cantidades y lote de fabricación (los lotes de MP los carga Elaboración en la OE)."
           : prep.message
             ? ` ${prep.message}`
             : "";

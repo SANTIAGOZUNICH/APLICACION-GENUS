@@ -6,7 +6,6 @@ import {
   buildAutoPreparedOe,
   oeProcesoIniciado,
   workQuantityKg,
-  type AutoPrepMpLots,
   type AutoPrepWork,
 } from "./oe-auto-prep-rules";
 
@@ -44,40 +43,36 @@ const formulaOk = (over: Partial<Extract<WorkFormulaResolution, { ok: true }>> =
   ...over,
 });
 
-const control = (lines: Array<[string, string, string]>): AutoPrepMpLots => ({
-  status: "found",
-  controlId: "c1",
-  lines: lines.map(([codigo, materiaPrima, lote]) => ({ codigo, materiaPrima, lote })),
-});
-
-const NO_CONTROL: AutoPrepMpLots = { status: "none", message: "No hay Control semanal." };
-
 const build = (content: OeContent, extra: Partial<Parameters<typeof buildAutoPreparedOe>[0]> = {}) =>
   buildAutoPreparedOe({
     content,
     work: work(),
     formula: formulaOk(),
-    mpLots: control([["MP-1", "Agua", "A-1"], ["MP-2", "Glicerina", "G-7"], ["MP-3", "Perfume", "P-3"]]),
     actorEmail: "produccion@x",
     reason: "test",
     now: "2026-10-13T10:00:00.000Z",
     ...extra,
   });
 
+/** Simula al elaborador escribiendo lotes en la tabla (por código). */
+const withLots = (c: OeContent, lots: Record<string, string>): OeContent => ({
+  ...c,
+  materials: c.materials.map((m) => (lots[m.codigo] ? { ...m, lote: lots[m.codigo] } : m)),
+});
+
 describe("buildAutoPreparedOe", () => {
-  it("fórmula completa + lotes: encabezado del trabajo, % de la fórmula, kg calculados y lotes del control", () => {
+  it("fórmula completa: encabezado del trabajo, % de la fórmula, kg calculados y lotes de MP VACÍOS (los completa Elaboración)", () => {
     const r = build(blank());
     const c = r.content;
     expect(c.header).toMatchObject({ productName: "Crema X", client: "Cliente A", quantityKg: 150, lot: "L-2610-01", code: "PT-100" });
     expect(c.materials.map((m) => [m.materiaPrima, m.formulaPct, m.kgAPesar, m.lote])).toEqual([
-      ["Agua", 80, 120, "A-1"],
-      ["Glicerina", 12.5, 18.75, "G-7"],
-      ["Perfume", 7.5, 11.25, "P-3"],
+      ["Agua", 80, 120, ""],
+      ["Glicerina", 12.5, 18.75, ""],
+      ["Perfume", 7.5, 11.25, ""],
     ]);
     expect(c.totals.kgSum).toBe(150);
     expect(c.procedureSteps).toEqual([{ id: "step-0", text: "Mezclar" }]);
     expect(c.autoPrep?.formula).toMatchObject({ status: "ok", source: "DRIVE", versionHash: "h1", driveFileId: "abc" });
-    expect(c.autoPrep?.mpLots).toMatchObject({ status: "ok", controlId: "c1" });
     expect(c.autoPrep?.pendientes).toEqual([]);
     expect(r.formulaColumns).toEqual({ kind: "set", formulaProductId: "drive:abc", formulaVersionId: "drive:abc:1234", versionHash: "h1" });
     expect(r.changed).toBe(true);
@@ -120,26 +115,6 @@ describe("buildAutoPreparedOe", () => {
     }
   });
 
-  it("MP sin lote en el control: el lote queda vacío y marcado pendiente", () => {
-    const r = build(blank(), { mpLots: control([["MP-1", "Agua", "A-1"], ["MP-2", "Glicerina", ""], ["MP-3", "Perfume", "P-3"]]) });
-    const gli = r.content.materials.find((m) => m.codigo === "MP-2")!;
-    expect(gli.lote).toBe("");
-    expect(r.content.autoPrep?.mpLots.status).toBe("pendiente");
-    expect(r.content.autoPrep?.mpLots.lines.find((l) => l.codigo === "MP-2")?.source).toBe("PENDIENTE");
-    expect(r.content.autoPrep?.pendientes).toContain("Lote de MP pendiente: Glicerina (MP-2)");
-  });
-
-  it("sin Control semanal: todos los lotes de MP pendientes, nunca elegidos por disponibilidad", () => {
-    const r = build(blank(), { mpLots: NO_CONTROL });
-    expect(r.content.materials.every((m) => m.lote === "")).toBe(true);
-    expect(r.content.autoPrep?.mpLots.status).toBe("sin_control");
-  });
-
-  it("control con dos lotes distintos para el mismo código: ambiguo → pendiente", () => {
-    const r = build(blank(), { mpLots: control([["MP-1", "Agua", "A-1"], ["MP-1", "Agua", "A-2"]]) });
-    expect(r.content.materials.find((m) => m.codigo === "MP-1")?.lote).toBe("");
-  });
-
   it("fórmula con muchas MP y la misma MP en dos fases: filas separadas, ids estables", () => {
     const f = formulaOk({
       materials: [
@@ -180,11 +155,11 @@ describe("buildAutoPreparedOe", () => {
     expect(exact.content.header.lot).toBe("lt 26/10-A");
   });
 
-  it("cambio de cantidad antes de empezar: recalcula kg y conserva lotes", () => {
-    const first = build(blank());
-    const r = build(first.content, { work: work({ plannedQuantity: "200", version: 2 }) });
+  it("cambio de cantidad antes de empezar: recalcula kg y conserva los lotes que cargó el elaborador", () => {
+    const first = withLots(build(blank()).content, { "MP-1": "A-1", "MP-3": "P-3" });
+    const r = build(first, { work: work({ plannedQuantity: "200", version: 2 }) });
     expect(r.changed).toBe(true);
-    expect(r.content.materials.map((m) => [m.kgAPesar, m.lote])).toEqual([[160, "A-1"], [25, "G-7"], [15, "P-3"]]);
+    expect(r.content.materials.map((m) => [m.kgAPesar, m.lote])).toEqual([[160, "A-1"], [25, ""], [15, "P-3"]]);
   });
 
   it("cambio de producto sin fórmula para el nuevo: quita las MP de la fórmula anterior y vacía la referencia", () => {
@@ -217,15 +192,37 @@ describe("buildAutoPreparedOe", () => {
     const replaced = build(manual, { replaceManual: true });
     expect(replaced.content.materials).toHaveLength(3);
     expect(replaced.content.materials[0].lote).toBe("MANUAL-1");
-    expect(replaced.content.autoPrep?.mpLots.lines[0].source).toBe("MANUAL");
   });
 
-  it("lote de MP escrito a mano no lo pisa el control; el que vino del control sí se actualiza", () => {
-    const first = build(blank());
-    const edited = structuredClone(first.content);
-    edited.materials[0].lote = "A-MANO";
-    const r = build(edited, { mpLots: control([["MP-1", "Agua", "A-9"], ["MP-2", "Glicerina", "G-9"], ["MP-3", "Perfume", "P-9"]]) });
-    expect(r.content.materials.map((m) => m.lote)).toEqual(["A-MANO", "G-9", "P-9"]);
+  it("lotes del elaborador: nunca se pisan ni se agregan solos; se conservan por código al recargar la fórmula", () => {
+    const first = withLots(build(blank()).content, { "MP-1": "AG-1", "MP-2": "GL-2" });
+    const again = build(first);
+    expect(again.changed).toBe(false);
+    // Fórmula nueva con las MP reordenadas y una MP nueva: los lotes siguen a su código; la nueva queda vacía.
+    const f2 = formulaOk({
+      materials: [
+        { materiaPrima: "Glicerina", codigo: "MP-2", formulaPct: 10 },
+        { materiaPrima: "Agua", codigo: "MP-1", formulaPct: 80 },
+        { materiaPrima: "Perfume", codigo: "MP-3", formulaPct: 7.5 },
+        { materiaPrima: "Conservante", codigo: "MP-9", formulaPct: 2.5 },
+      ],
+    });
+    const r = build(first, { formula: f2 });
+    expect(r.content.materials.map((m) => [m.codigo, m.lote])).toEqual([["MP-2", "GL-2"], ["MP-1", "AG-1"], ["MP-3", ""], ["MP-9", ""]]);
+    expect(r.lostRecords).toEqual([]);
+  });
+
+  it("si la fórmula nueva ya no tiene una MP con lote del elaborador: lo informa (no se borra sin confirmar)", () => {
+    const first = withLots(build(blank()).content, { "MP-2": "GL-2" });
+    const f2 = formulaOk({ materials: [{ materiaPrima: "Agua", codigo: "MP-1", formulaPct: 92.5 }, { materiaPrima: "Perfume", codigo: "MP-3", formulaPct: 7.5 }] });
+    const r = build(first, { formula: f2 });
+    expect(r.lostRecords).toEqual([{ materiaPrima: "Glicerina", codigo: "MP-2", lote: "GL-2", ajuste: null }]);
+  });
+
+  it("cambio de producto sin fórmula: si hay lotes del elaborador, también se informan antes de quitarlos", () => {
+    const first = withLots(build(blank()).content, { "MP-1": "AG-1" });
+    const r = build(first, { work: work({ product: "Gel Y" }), formula: { ok: false, status: "not_found", message: "No hay." } });
+    expect(r.lostRecords.map((l) => l.lote)).toEqual(["AG-1"]);
   });
 
   it("actualización confirmada después de empezar: conserva ajustes registrados y avisa si se perderían", () => {
@@ -240,7 +237,7 @@ describe("buildAutoPreparedOe", () => {
       replaceManual: true,
       formula: formulaOk({ materials: [{ materiaPrima: "Agua", codigo: "MP-1", formulaPct: 100 }] }),
     });
-    expect(lost.lostRecords).toEqual(["Glicerina"]);
+    expect(lost.lostRecords).toEqual([{ materiaPrima: "Glicerina", codigo: "MP-2", lote: "", ajuste: 0.2 }]);
   });
 });
 
