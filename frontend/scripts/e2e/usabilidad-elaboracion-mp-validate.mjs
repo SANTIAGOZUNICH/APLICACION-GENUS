@@ -207,6 +207,7 @@ try {
   const incomplete = dlg.locator("[data-testid=deliver-incomplete]");
   check("Entregar con faltantes: «Volver a completar» es la acción principal", (await back.innerText()) === "Volver a completar");
   check("Entregar con faltantes: «Entregar igual» deshabilitado hasta confirmar", await incomplete.isDisabled());
+  await el.waitForTimeout(800); // que termine la animación antes de la captura
   await el.screenshot({ path: `${OUT}/despues-el-3-entregar-incompleta.png` });
   await back.click();
   const controlOpen = await el.locator("#oe-sec-control").evaluate((d) => d.open);
@@ -251,6 +252,7 @@ try {
 
   await nav(mp, "Control semanal");
   check("Control semanal: se puede crear un control sin tener uno en borrador", await mp.locator("[data-testid=mp-control-create]").waitFor({ timeout: 30_000 }).then(() => true).catch(() => false));
+  await mp.waitForTimeout(800); // que termine la animación antes de la captura
   await mp.screenshot({ path: `${OUT}/despues-mp-1-control-semanal.png` });
 
   await nav(mp, "Compras MP");

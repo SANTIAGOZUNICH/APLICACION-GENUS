@@ -66,4 +66,35 @@ Ya funcionaban (revisado y probado en #116, #117 y #118): doble clic / Enter / T
 
 ## 4. Validación
 
-Ver el PR (capturas antes y después en `docss/img/usabilidad-elaboracion-mp/`).
+Todas las pruebas usaron una base Postgres **descartable**: no se modificaron datos de Production.
+
+| Prueba | Resultado |
+|---|---|
+| E2E nuevo `GENUS_E2E_PRODUCTION_BUILD=1 npm run test:e2e:usabilidad` (permisos reales de Elaboración, Materias Primas y Calidad; OE armada por Producción como en Production) | **26/26** |
+| Regresión Stock MP (edición completa) | 47/47 |
+| Regresión 7 planillas (edición en celda) | 87/87 |
+| Regresión Materias Primas / Depósito / Asignación de lotes | 24/24 · 25/25 · 30/30 |
+| Regresión Producción (edición) / Semanas y Mi trabajo | 27/27 · 50/50 |
+| Integración Postgres | 53/53 |
+| Vitest completo | 2167 OK |
+
+Qué verifica el E2E nuevo:
+
+- **Mi trabajo**: sin textos técnicos.
+- **Listado y OE**: estados y sectores legibles.
+- **Ajuste con coma y sin motivo**: no hay error; el estado avisa que falta el motivo y se guarda al completarlo (1,5 → 1.5).
+- **Entrega con faltantes**: «Volver a completar» es la acción principal y abre «Control de proceso». «Entregar igual» queda deshabilitado hasta confirmar.
+- **Cantidad obtenida** con coma se guarda.
+- **Entrega completa**: un clic, con **un solo envío** aunque se haga doble clic. La OE queda COMPLETA y Calidad la ve para revisar (flujo sin cambios).
+- **Control semanal**: se puede crear un control.
+- **Compras**: «Afecta a» se lee completo.
+- **Búsqueda** por lote; «×» la quita.
+- **Sin conexión**: mensaje simple, lo escrito queda, y «Reintentar» lo guarda al volver la conexión.
+- **Edición simultánea**: mensaje claro, sin «409».
+- **Permisos**:
+  - Elaboración no edita Stock MP (403);
+  - Materias Primas no entrega OE (403).
+
+El E2E encontró un defecto real que se corrigió: un doble clic rápido en «Entregar» enviaba dos veces.
+
+Capturas antes y después en `docss/img/usabilidad-elaboracion-mp/`. Las de «antes» son de `main` con los mismos datos.
