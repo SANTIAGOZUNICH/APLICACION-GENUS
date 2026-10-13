@@ -391,7 +391,7 @@ export function OeFormSections({
                         onPaste={(e) => onLotPaste(e, rowIndex)}
                         className={`w-full rounded border px-2 py-1.5 text-sm${
                           content.autoPrep && !m.lote.trim() && (m.materiaPrima.trim() || m.codigo.trim())
-                            ? " border-amber-400 bg-amber-50/60 placeholder:text-amber-800"
+                            ? " border-amber-400 bg-amber-400/10 placeholder:text-amber-600"
                             : ""
                         }`}
                         placeholder={content.autoPrep && (m.materiaPrima.trim() || m.codigo.trim()) ? "Completar lote" : undefined}

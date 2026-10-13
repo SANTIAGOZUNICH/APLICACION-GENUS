@@ -233,7 +233,7 @@ export function OeAutoPrepPanel({
                     before.kgAPesar !== m.kgAPesar ||
                     before.lote !== m.lote;
                   return (
-                    <tr key={`${m.codigo}-${i}`} className={changed ? "bg-amber-50" : ""}>
+                    <tr key={`${m.codigo}-${i}`} className={changed ? "bg-amber-400/15 font-medium" : ""}>
                       <td className="p-1">{m.materiaPrima}</td>
                       <td className="p-1">{m.codigo}</td>
                       <td className="p-1 text-right">{m.formulaPct ?? "—"}</td>
