@@ -38,7 +38,7 @@ export type WorkFormulaResolution =
 export function pickExactDriveHit<T extends { productLabel: string; aliases?: string[] }>(
   hits: T[],
   product: string
-): { kind: "one"; hit: T } | { kind: "none" } | { kind: "many"; count: number } {
+): { kind: "one"; hit: T } | { kind: "none" } | { kind: "many"; count: number; hits: T[] } {
   const target = normalizeSearchKey(product);
   if (!target) return { kind: "none" };
   const exact = hits.filter(
@@ -46,7 +46,25 @@ export function pickExactDriveHit<T extends { productLabel: string; aliases?: st
   );
   if (exact.length === 1) return { kind: "one", hit: exact[0]! };
   if (exact.length === 0) return { kind: "none" };
-  return { kind: "many", count: exact.length };
+  return { kind: "many", count: exact.length, hits: exact };
+}
+
+/**
+ * Mismo cliente + producto en más de una CARPETA de fórmulas (principal y adicional):
+ *  - mismo contenido (mismo checksum) → no es conflicto: se usa el de la carpeta principal (o el primero);
+ *  - contenido distinto → conflicto: no se elige ninguno.
+ * Si todos los archivos son de la misma carpeta, no aplica (es la ambigüedad de siempre).
+ */
+export function resolveCrossSourceDuplicates<T extends { sourceFolderId?: string; primarySource?: boolean }>(
+  hits: T[],
+  checksums: string[]
+): { kind: "same_folder" } | { kind: "identical"; hit: T } | { kind: "conflict" } {
+  const folders = new Set(hits.map((h) => h.sourceFolderId ?? ""));
+  if (folders.size <= 1) return { kind: "same_folder" };
+  if (checksums.length === hits.length && new Set(checksums).size === 1) {
+    return { kind: "identical", hit: hits.find((h) => h.primarySource) ?? hits[0]! };
+  }
+  return { kind: "conflict" };
 }
 
 /** null = completa; si no, por qué no se puede usar. */

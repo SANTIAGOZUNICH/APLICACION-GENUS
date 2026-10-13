@@ -2,6 +2,7 @@ import "server-only";
 
 import { google } from "googleapis";
 import { createGoogleAuth, hasGoogleCredentials } from "@/lib/adapters/google/google-auth";
+import { resolveExtraFormulasFolderIds } from "@/lib/formulas/drive-formulas-diagnose";
 
 /** Scope de escritura SOLO para COAs — no usar en fórmulas. */
 const DRIVE_WRITE_SCOPES = ["https://www.googleapis.com/auth/drive"];
@@ -23,7 +24,8 @@ export function assertCoasFolderConfigured(): string {
   }
   if (
     id === process.env.GOOGLE_DRIVE_FORMULAS_FOLDER_ID?.trim() ||
-    id === process.env.GOOGLE_DRIVE_ELABORACION_FOLDER_ID?.trim()
+    id === process.env.GOOGLE_DRIVE_ELABORACION_FOLDER_ID?.trim() ||
+    resolveExtraFormulasFolderIds().includes(id)
   ) {
     throw new Error(
       "GOOGLE_DRIVE_COAS_FOLDER_ID no puede ser la carpeta de fórmulas ni elaboración."
