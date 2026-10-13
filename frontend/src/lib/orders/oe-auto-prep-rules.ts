@@ -282,10 +282,11 @@ export function buildAutoPreparedOe(input: BuildAutoPrepInput): BuildAutoPrepRes
     lostRecords = content.materials.filter(hasElaboratorData).map(lostOf);
     next = { ...next, materials: [], procedureSteps: [] };
     formulaColumns = { kind: "clear" };
-    formulaMeta = { status: formula.status, message: formula.message, identity };
+    formulaMeta = { status: formula.status, message: formula.message, identity, ...(formula.cause ? { cause: formula.cause } : {}) };
     pendientes.push(`Fórmula: ${formula.message}`);
   } else {
     formulaMeta = {
+      ...(formula.cause && !manualContent ? { cause: formula.cause } : {}),
       status: manualContent ? "manual_content" : formula.status,
       message: manualContent
         ? `${formula.message} Se mantienen las materias primas cargadas a mano.`

@@ -70,3 +70,20 @@ export async function mutateFormulaAdminApi(
   });
   return parseJson(res);
 }
+
+export type DriveConnectionCheckDto = import("@/lib/formulas/drive-connection").DriveConnectionCheck;
+export type DriveConnectionReportDto = import("@/lib/formulas/drive-connection").DriveConnectionReport;
+
+/** «Conexión con Google Drive»: estado rápido (cuenta, carpeta, unidad, acceso, índice). Solo lectura. */
+export async function fetchDriveConnectionCheckApi(session: OrdersClientSession): Promise<DriveConnectionCheckDto> {
+  const res = await fetch("/api/v1/formulas/drive-connection?mode=check", { credentials: "include", headers: headers(session), cache: "no-store" });
+  return (await parseJson<{ check: DriveConnectionCheckDto }>(res)).check;
+}
+
+/** Diagnóstico completo (archivos omitidos, fuera de la carpeta, comparación con el banco). `refresh` rehace el índice. */
+export async function fetchDriveConnectionReportApi(session: OrdersClientSession, opts: { refresh?: boolean } = {}): Promise<DriveConnectionReportDto> {
+  const res = opts.refresh
+    ? await fetch("/api/v1/formulas/drive-connection", { method: "POST", credentials: "include", headers: headers(session), body: JSON.stringify({ action: "refresh" }) })
+    : await fetch("/api/v1/formulas/drive-connection", { credentials: "include", headers: headers(session), cache: "no-store" });
+  return (await parseJson<{ report: DriveConnectionReportDto }>(res)).report;
+}

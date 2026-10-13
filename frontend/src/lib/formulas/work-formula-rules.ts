@@ -32,7 +32,44 @@ export type WorkFormulaResolution =
       ok: false;
       status: "not_found" | "ambiguous" | "conflict" | "incomplete" | "error" | "missing_input";
       message: string;
+      /** Causa concreta (solo la que se pudo determinar), para que la OE explique por qué no hay fórmula. */
+      cause?: FormulaMissCause;
     };
+
+/**
+ * Por qué una OE no encontró su fórmula. Solo causas que se pueden comprobar; si no se pudo consultar Drive, se dice
+ * eso (no se supone que la fórmula no existe).
+ */
+export type FormulaMissCause =
+  | "SIN_DATOS"
+  | "BANCO_NO_DISPONIBLE"
+  | "BANCO_CONFLICTO"
+  | "BANCO_AMBIGUA"
+  | "BANCO_INCOMPLETA"
+  | "DRIVE_SIN_CONFIGURAR"
+  | "DRIVE_SIN_ACCESO"
+  | "DRIVE_ERROR"
+  | "NO_EN_BANCO_SIN_CARPETA_CLIENTE"
+  | "NO_EN_BANCO_SIN_ARCHIVO"
+  | "DRIVE_AMBIGUA"
+  | "DRIVE_ILEGIBLE"
+  | "DRIVE_INCOMPLETA";
+
+export const FORMULA_MISS_CAUSE_LABEL: Record<FormulaMissCause, string> = {
+  SIN_DATOS: "Faltan datos del trabajo",
+  BANCO_NO_DISPONIBLE: "No se pudo consultar el banco de fórmulas",
+  BANCO_CONFLICTO: "Conflicto de versiones en el banco",
+  BANCO_AMBIGUA: "Más de una fórmula coincide en el banco",
+  BANCO_INCOMPLETA: "Fórmula incompleta en el banco",
+  DRIVE_SIN_CONFIGURAR: "No está en el banco y Google Drive no está configurado",
+  DRIVE_SIN_ACCESO: "No está en el banco y no se pudo acceder a Google Drive",
+  DRIVE_ERROR: "No está en el banco y falló la lectura de Google Drive",
+  NO_EN_BANCO_SIN_CARPETA_CLIENTE: "No está en el banco ni hay carpeta del cliente en Drive",
+  NO_EN_BANCO_SIN_ARCHIVO: "No está en el banco ni en la carpeta del cliente en Drive",
+  DRIVE_AMBIGUA: "Más de un archivo coincide en Drive",
+  DRIVE_ILEGIBLE: "El archivo de Drive no se pudo leer como fórmula",
+  DRIVE_INCOMPLETA: "Fórmula incompleta en Drive",
+};
 
 /** Entre los archivos de Drive del cliente, el ÚNICO cuyo producto coincide exacto (sin aproximaciones). */
 export function pickExactDriveHit<T extends { productLabel: string; aliases?: string[] }>(

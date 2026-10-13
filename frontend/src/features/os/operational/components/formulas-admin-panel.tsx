@@ -19,6 +19,7 @@ import {
 } from "@/lib/formulas/formulas-client";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import { canManageFormulas } from "@/lib/formulas/formula-admin-rbac";
+import { DriveConnectionPanel } from "./drive-connection-panel";
 import { normalizeOptionalReason } from "@/lib/lifecycle";
 
 type PendingAction = {
@@ -188,6 +189,7 @@ export function FormulasAdminPanel({
 
   const body = (
     <div className="space-y-3 p-4">
+      <DriveConnectionPanel session={session} />
       {error && (
         <div
           className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900"

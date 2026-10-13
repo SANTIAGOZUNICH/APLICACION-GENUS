@@ -164,6 +164,8 @@ export type OeAutoPrep = {
     fingerprint?: string;
     /** Cliente||producto normalizados para los que se cargó la fórmula. */
     identity?: string;
+    /** Si no hay fórmula: causa comprobada (ver FormulaMissCause en lib/formulas/work-formula-rules.ts). */
+    cause?: string;
   };
   lotFabricacion: { value: string; status: "ok" | "pendiente" };
   quantity: { kg: number | null; planned: string; unit: string; status: "ok" | "pendiente" };

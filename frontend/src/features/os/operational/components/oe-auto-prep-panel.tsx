@@ -13,6 +13,7 @@ import { useState } from "react";
 import type { OeContent } from "@/lib/orders/types";
 import { oeAutoPrepApi, type OeAutoPrepApiResponse, type OrdersClientSession } from "@/lib/orders/orders-client";
 import { friendlySaveError } from "@/lib/ui/friendly-error";
+import { FORMULA_MISS_CAUSE_LABEL, type FormulaMissCause } from "@/lib/formulas/work-formula-rules";
 
 const fmtKg = (v: number | null | undefined) =>
   v == null ? "—" : v.toLocaleString("es-AR", { maximumFractionDigits: 4 });
@@ -173,9 +174,14 @@ export function OeAutoPrepPanel({
       ) : null}
 
       {ap && f && f.status !== "ok" ? (
-        <p className="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900" data-testid="oe-autoprep-formula-msg">
-          {f.message}
-        </p>
+        <div className="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-amber-900" data-testid="oe-autoprep-formula-msg">
+          {f.cause && f.cause in FORMULA_MISS_CAUSE_LABEL ? (
+            <p className="text-xs font-semibold uppercase tracking-wide" data-testid="oe-autoprep-formula-cause">
+              {FORMULA_MISS_CAUSE_LABEL[f.cause as FormulaMissCause]}
+            </p>
+          ) : null}
+          <p>{f.message}</p>
+        </div>
       ) : null}
       {ap ? (
         <p className="mt-2 text-xs text-[var(--os-text-muted)]" data-testid="oe-autoprep-mplots">

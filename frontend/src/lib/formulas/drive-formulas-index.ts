@@ -207,6 +207,12 @@ async function buildIndex(): Promise<IndexState> {
   };
 }
 
+/** Estado del índice en memoria SIN reconstruirlo (para el panel «Conexión con Google Drive»). */
+export function peekDriveFormulasIndex(): { builtAt: string; entryCount: number; clientCount: number } | null {
+  if (!cache) return null;
+  return { builtAt: new Date(cache.builtAt).toISOString(), entryCount: cache.entries.length, clientCount: cache.clients.length };
+}
+
 /** Lista completa de clientes del índice (precarga). */
 export async function listDriveClientsCached(): Promise<string[]> {
   const state = await ensureIndex(false);
