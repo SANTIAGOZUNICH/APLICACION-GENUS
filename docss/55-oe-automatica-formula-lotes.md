@@ -101,7 +101,10 @@ Todo en Postgres **descartable**: no se tocaron datos de Production.
 |---|---|
 | Unitarias nuevas (`oe-auto-prep-rules.test.ts`, `work-formula-rules.test.ts`) | 22 + 5 |
 | Integración Postgres nueva (`oe-auto-prep.db.integration.test.ts`, dentro de `npm run test:e2e:produccion-edicion-db`) | **14/14** (suite completa 67/67) |
-| E2E nuevo `GENUS_E2E_PRODUCTION_BUILD=1 npm run test:e2e:oe-automatica` (Chromium, build de producción, usuarios reales de Producción, Elaboración, Calidad y Materias Primas) | ver PR |
+| E2E nuevo `GENUS_E2E_PRODUCTION_BUILD=1 npm run test:e2e:oe-automatica` (Chromium, build de producción, usuarios reales de Producción, Elaboración, Calidad y Materias Primas) | **35/35** |
+| Regresión E2E usabilidad Elaboración / MP (`test:e2e:usabilidad`) | 26/26 |
+| Vitest completo | 2194 OK (108 saltados: necesitan base) |
+| `next build` (misma configuración que Vercel) | OK |
 
 Casos de integración:
 - fórmula completa + lotes, con 5 filas (la misma MP en dos fases);
