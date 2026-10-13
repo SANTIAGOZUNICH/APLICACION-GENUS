@@ -58,6 +58,7 @@ import { OeFormSections } from "./oe-form-sections";
 import { OeAutoPrepPanel } from "./oe-auto-prep-panel";
 import type { SelectedFormulaOption } from "./formula-client-product-pickers";
 import { fetchFormulaProductOptionsApi } from "@/lib/orders/orders-client";
+import { normalizeSearchKey } from "@/lib/formulas/types";
 import { OaFormSections, renumberOaMaterials } from "./oa-form-sections";
 import { OaSimpleWizard } from "./oa-simple-wizard";
 import { LegalOrderPreview } from "./legal-order-preview";
@@ -553,6 +554,9 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
 
   const onClientSelected = useCallback(
     (nextClient: string) => {
+      // Mismo cliente (p. ej. al salir del campo sin cambiarlo): no se borra el producto ni se guarda nada.
+      const cur = formRef.current;
+      if (cur?.kind === "OE" && normalizeSearchKey(cur.header.client) === normalizeSearchKey(nextClient)) return;
       updateForm((prev) => {
         if (prev.kind !== "OE") return prev;
         return {
