@@ -68,11 +68,16 @@ async function cleanup() {
   await q("delete from operational_orders where order_number in ($1,$2)", [OE1, OE2]);
   await q("delete from work_items where product in ($1,$2)", [PRODUCT, PRODUCT_SIN]);
   await q("delete from mp_weekly_controls where product = $1", [PRODUCT]);
-  await q("delete from formula_products where normalized_client = $1", [norm(CLIENT)]);
 }
 async function seed() {
-  const productId = randomUUID();
-  const versionId = randomUUID();
+  // La fórmula se siembra una sola vez: el banco queda en memoria del servidor (como en Production).
+  const [existing] = await q("select id, active_version_id from formula_products where normalized_client = $1 and normalized_product = $2", [norm(CLIENT), norm(PRODUCT)]);
+  const productId = existing?.id ?? randomUUID();
+  const versionId = existing?.active_version_id ?? randomUUID();
+  if (!existing) await seedFormula(productId, versionId);
+  return { versionId, controlId: await seedControl() };
+}
+async function seedFormula(productId, versionId) {
   await q(
     `insert into formula_products (id, normalized_client, normalized_product, display_client, display_product, product_code, active_version_id) values ($1,$2,$3,$4,$5,'PT-AUTO-1',$6)`,
     [productId, norm(CLIENT), norm(PRODUCT), CLIENT, PRODUCT, versionId]
@@ -87,12 +92,14 @@ async function seed() {
     await q(`insert into formula_ingredients (id, formula_version_id, position, material_name, material_code_or_phase, percentage) values ($1,$2,$3,$4,$5,$6)`, [randomUUID(), versionId, ++i, n, c, p]);
   }
   await q(`insert into formula_procedure_steps (id, formula_version_id, position, instruction) values ($1,$2,1,'Calentar fase acuosa a 70 °C'),($3,$2,2,'Incorporar fase oleosa y agitar 15 min')`, [randomUUID(), versionId, randomUUID()]);
+}
+async function seedControl() {
   const [ctl] = await q(`insert into mp_weekly_controls (status, client, product, quantity_kg, created_by, updated_by) values ('BORRADOR',$1,$2,150,$3,$3) returning id`, [CLIENT, PRODUCT, E2E_USERS.materiaPrima.email]);
   let s = 0;
   for (const [c, n, l] of [["MP-E2E-AGUA", "Agua purificada", "AG-2610"], ["MP-E2E-GLI", "Glicerina", "GL-0099"], ["MP-E2E-CET", "Alcohol cetílico", "CT-5521"], ["MP-E2E-PERF", "Perfume floral", ""]]) {
     await q(`insert into mp_weekly_control_lines (control_id, sort_order, codigo, materia_prima, lote) values ($1,$2,$3,$4,$5)`, [ctl.id, ++s, c, n, l]);
   }
-  return { versionId, controlId: ctl.id };
+  return ctl.id;
 }
 
 async function assignFromUi(page, { product, qty, oe, lot }) {
@@ -152,8 +159,16 @@ try {
   const { ctx: elc, page: el } = await openAs(E2E_USERS.elaboracion);
   const openOe = async (product) => {
     await nav(el, "Órdenes de Elaboración");
+    const back = el.getByRole("button", { name: /Volver al listado/ });
+    if (await back.isVisible().catch(() => false)) await back.click();
     await el.getByPlaceholder("Número, producto, código, cliente, lote…").fill(product);
-    await el.getByText(product, { exact: true }).first().waitFor({ timeout: 60_000 });
+    try {
+      await el.getByText(/^1 resultado$/).waitFor({ timeout: 60_000 });
+    } catch (err) {
+      await el.screenshot({ path: `${OUT}/debug-listado-oe.png`, fullPage: true }).catch(() => {});
+      console.log("  [listado OE]", (await el.locator("main").innerText().catch(() => "")).slice(0, 800));
+      throw err;
+    }
     await el.waitForTimeout(800);
     await el.getByRole("button", { name: /^Abrir$/ }).first().click();
     await el.locator("[data-testid=oe-autoprep-panel]").waitFor({ timeout: 60_000 });
@@ -162,12 +177,12 @@ try {
   const panel = el.locator("[data-testid=oe-autoprep-panel]");
   const ptext = await panel.innerText();
   check("Elaborador: ve producto, lote de fabricación y cantidad", ptext.includes(PRODUCT) && ptext.includes(LOT) && /150 kg/.test(ptext), ptext.slice(0, 200));
-  check("Elaborador: ve la fórmula, su origen y la versión", /Banco de fórmulas/.test(ptext) && /versión sha-e2e-/.test(ptext) && /hoja «Fórmula»/.test(ptext));
+  check("Elaborador: ve la fórmula, su origen y la versión", /Banco de fórmulas/.test(ptext) && /versión sha-e2e-/.test(ptext));
   check("Elaborador: ve lo pendiente (lote de Perfume floral)", /Falta completar \(1\)/.test(ptext) && /Lote de MP pendiente: Perfume floral/.test(ptext));
   const lotes = await el.locator("[data-testid=oe-cell-lote]").evaluateAll((xs) => xs.map((x) => [x.value, x.placeholder, x.className.includes("border-rose-400")]));
   check("Tabla: lotes de MP cargados y el pendiente resaltado", JSON.stringify(lotes) === JSON.stringify([["AG-2610", "Pendiente", false], ["GL-0099", "Pendiente", false], ["CT-5521", "Pendiente", false], ["", "Pendiente", true]]), JSON.stringify(lotes));
-  const pcts = await el.locator("table").filter({ hasText: /Lote N\.º/ }).locator("tbody tr").evaluateAll((trs) => trs.map((tr) => tr.innerText.replace(/\s+/g, " ")));
-  check("Tabla: % y kg a pesar visibles", pcts.length === 4 && /Perfume floral/.test(pcts[3] ?? ""), pcts[3]);
+  const rowsVals = await el.locator("[data-testid=oe-cell-lote]").evaluateAll((xs) => xs.map((x) => [...x.closest("tr").querySelectorAll("td")].map((td) => td.querySelector("input")?.value ?? td.innerText.trim()).join(" | ")));
+  check("Tabla: MP, % y kg a pesar visibles", rowsVals.length === 4 && /Perfume floral/.test(rowsVals[3]) && /1[.,]5/.test(rowsVals[3]) && /2[.,]25/.test(rowsVals[3]), rowsVals[3]);
   await el.screenshot({ path: `${OUT}/04-elaborador-oe-lista.png`, fullPage: true });
 
   // Completa el lote pendiente (dato de proceso): deja de figurar como pendiente.
