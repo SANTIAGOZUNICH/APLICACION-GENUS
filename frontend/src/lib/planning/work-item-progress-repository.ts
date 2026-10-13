@@ -1,5 +1,6 @@
 import "server-only";
 
+import { prepareOeAfterWorkChange } from "@/lib/planning/oe-auto-prep";
 import { and, desc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { operationalEvents, operationalOrders, workItemDeliveries, workItems } from "@/lib/db/schema";
@@ -328,7 +329,7 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
   }
 
   const db = getDb();
-  return db.transaction(async (tx) => {
+  const updated = await db.transaction(async (tx) => {
     const [existing] = await tx
       .select({
         packagingLote: workItems.packagingLote,
@@ -422,6 +423,16 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
 
     return row;
   });
+  // OE automática: si el trabajo es de Elaboración y la elaboración no empezó, la OE vinculada se actualiza
+  // (fórmula, cantidad, lote). Ya empezada, no se reemplaza nada sin la acción explícita.
+  if (String(updated.sector) === "ELABORACION" && updated.orderId) {
+    await prepareOeAfterWorkChange(
+      updated.orderId,
+      { email: input.updatedBy, sector: String(input.updatedBySector) },
+      `Corrección del lote del trabajo: ${reason}`
+    );
+  }
+  return updated;
 }
 
 export interface UpdateOrderRefInput {
@@ -660,7 +671,7 @@ export async function updateWorkItemPlanningDurable(
   input: UpdateWorkItemPlanningInput
 ) {
   const db = getDb();
-  return db.transaction(async (tx) => {
+  const updated = await db.transaction(async (tx) => {
     const [existing] = await tx
       .select({
         client: workItems.client,
@@ -789,6 +800,16 @@ export async function updateWorkItemPlanningDurable(
 
     return row;
   });
+  // OE automática: si el trabajo es de Elaboración y la elaboración no empezó, la OE vinculada se actualiza
+  // (fórmula, cantidad, lote). Ya empezada, no se reemplaza nada sin la acción explícita.
+  if (String(updated.sector) === "ELABORACION" && updated.orderId) {
+    await prepareOeAfterWorkChange(
+      updated.orderId,
+      { email: input.updatedBy, sector: String(input.updatedBySector) },
+      `Corrección del trabajo${input.reason?.trim() ? `: ${input.reason.trim()}` : ""}`
+    );
+  }
+  return updated;
 }
 
 export interface UpdateWorkItemAssigneeInput {

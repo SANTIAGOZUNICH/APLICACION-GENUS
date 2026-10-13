@@ -16,6 +16,7 @@ import {
 } from "@/lib/planning/work-assignment-service";
 import { projectNativeWorkItem } from "@/lib/planning/native-projector";
 import { getPlanningService } from "@/lib/planning/get-planning-service";
+import { prepareOeAfterWorkChange, summarizeOePrep } from "@/lib/planning/oe-auto-prep";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -204,6 +205,16 @@ export async function POST(request: Request) {
     const input = parseBody(raw);
     const result = await assignWorkItemDurable(input, actor, operationId);
     const semanasLink = await linkFromSemanasTask(raw, actor, result.item.id);
+    // OE automática: la OE ya quedó creada/vinculada en la transacción; ahora se completa con fórmula, lote y
+    // lotes de MP. También en un reintento (idempotente). Si falla, la asignación igual queda guardada.
+    const oePrep =
+      input.sector === "ELABORACION" && result.order?.id
+        ? await prepareOeAfterWorkChange(
+            result.order.id,
+            { email: actor.email, sector: actor.sector },
+            result.replayed ? "Reintento de la asignación" : "Asignación del trabajo a Elaboración"
+          )
+        : null;
 
     return NextResponse.json(
       {
@@ -216,6 +227,7 @@ export async function POST(request: Request) {
         oaCreated: Boolean(result.order?.created),
         oaLinked: Boolean(result.order && !result.order.created),
         ...(semanasLink ? { semanasLink } : {}),
+        ...(oePrep ? { oePrep: summarizeOePrep(oePrep) } : {}),
       },
       { status: result.replayed ? 200 : 201 }
     );

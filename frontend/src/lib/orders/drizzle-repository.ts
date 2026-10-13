@@ -32,6 +32,17 @@ import type {
 import { COMPLETE_STATUSES, PENDING_STATUSES } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * formula_product_id / formula_version_id son columnas uuid: solo guardan ids del banco de fórmulas (Neon).
+ * Una fórmula leída de Drive trae ids sintéticos («drive:<fileId>»): ahí la referencia queda en
+ * formula_version_hash y en el form_data, y estas columnas quedan vacías en vez de romper el guardado.
+ */
+function formulaUuidOrNull(value: string | null | undefined): string | null {
+  const v = value?.trim();
+  return v && UUID_RE.test(v) ? v : null;
+}
+
 function toIso(value: Date | string | null | undefined): string | null {
   if (!value) return null;
   if (typeof value === "string") return value;
@@ -332,8 +343,8 @@ export class DrizzleOrdersRepository implements OrdersRepository {
       code: order.code,
       lot: order.lot,
       assignedSector: order.assignedSector,
-      formulaProductId: order.formulaProductId,
-      formulaVersionId: order.formulaVersionId,
+      formulaProductId: formulaUuidOrNull(order.formulaProductId),
+      formulaVersionId: formulaUuidOrNull(order.formulaVersionId),
       formulaVersionHash: order.formulaVersionHash,
       status: order.status,
       formData: order.formData,
@@ -564,10 +575,10 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     if (patch.product !== undefined) setValues.product = patch.product;
     if (patch.updatedBy !== undefined) setValues.updatedBy = patch.updatedBy;
     if (patch.formulaProductId !== undefined) {
-      setValues.formulaProductId = patch.formulaProductId;
+      setValues.formulaProductId = formulaUuidOrNull(patch.formulaProductId);
     }
     if (patch.formulaVersionId !== undefined) {
-      setValues.formulaVersionId = patch.formulaVersionId;
+      setValues.formulaVersionId = formulaUuidOrNull(patch.formulaVersionId);
     }
     if (patch.formulaVersionHash !== undefined) {
       setValues.formulaVersionHash = patch.formulaVersionHash;

@@ -854,6 +854,11 @@ export class OrdersService {
         });
       }
       if (nextForm.kind === "OE") {
+        // autoPrep lo escribe solo la preparación automática (lib/planning/oe-auto-prep.ts): un guardado desde la
+        // pantalla nunca lo cambia (ni lo borra), así el origen de la fórmula y los lotes sigue siendo confiable.
+        const { autoPrep: _ignored, ...rest } = nextForm;
+        void _ignored;
+        nextForm = current.formData.autoPrep ? { ...rest, autoPrep: current.formData.autoPrep } : rest;
         assertAjusteValid(nextForm);
       }
     }

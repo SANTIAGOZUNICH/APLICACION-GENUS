@@ -358,7 +358,17 @@ export function OeFormSections({
                         disabled={opsLocked}
                         value={m.lote}
                         onChange={(e) => patchMaterial(m.id, { lote: e.target.value })}
-                        className="w-full rounded border px-2 py-1.5 text-sm"
+                        className={`w-full rounded border px-2 py-1.5 text-sm${
+                          content.autoPrep && !m.lote.trim() && (m.materiaPrima.trim() || m.codigo.trim())
+                            ? " border-rose-400 bg-rose-50 placeholder:text-rose-700"
+                            : ""
+                        }`}
+                        placeholder={content.autoPrep && (m.materiaPrima.trim() || m.codigo.trim()) ? "Pendiente" : undefined}
+                        title={
+                          content.autoPrep?.mpLots.lines.find((l) => l.codigo === m.codigo && l.lote && l.lote === m.lote && l.source === "CONTROL_SEMANAL")
+                            ? "Lote asignado por Materias Primas (Control semanal)"
+                            : undefined
+                        }
                         data-testid="oe-cell-lote"
                       />
                     </td>

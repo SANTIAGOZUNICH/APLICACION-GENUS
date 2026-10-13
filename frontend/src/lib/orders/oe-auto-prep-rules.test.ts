@@ -1,0 +1,280 @@
+import { describe, expect, it } from "vitest";
+import { createEmptyOeContent, normalizeOrderContent } from "@/lib/orders/content";
+import type { OeContent } from "@/lib/orders/types";
+import type { WorkFormulaResolution } from "@/lib/formulas/work-formula-rules";
+import {
+  buildAutoPreparedOe,
+  oeProcesoIniciado,
+  workQuantityKg,
+  type AutoPrepMpLots,
+  type AutoPrepWork,
+} from "./oe-auto-prep-rules";
+
+const blank = () =>
+  normalizeOrderContent(createEmptyOeContent({ productName: "Crema X", client: "Cliente A", date: "2026-10-13" })) as OeContent;
+
+const work = (over: Partial<AutoPrepWork> = {}): AutoPrepWork => ({
+  id: "w1",
+  version: 1,
+  product: "Crema X",
+  client: "Cliente A",
+  plannedQuantity: "150",
+  unit: "kg",
+  packagingLote: "L-2610-01",
+  ...over,
+});
+
+const formulaOk = (over: Partial<Extract<WorkFormulaResolution, { ok: true }>> = {}): WorkFormulaResolution => ({
+  ok: true,
+  ref: {
+    source: "DRIVE",
+    formulaProductId: "drive:abc",
+    formulaVersionId: "drive:abc:1234",
+    versionHash: "h1",
+    displayProduct: "Crema X",
+    productCode: "PT-100",
+    driveFileId: "abc",
+  },
+  materials: [
+    { materiaPrima: "Agua", codigo: "MP-1", formulaPct: 80 },
+    { materiaPrima: "Glicerina", codigo: "MP-2", formulaPct: 12.5 },
+    { materiaPrima: "Perfume", codigo: "MP-3", formulaPct: 7.5 },
+  ],
+  procedureSteps: [{ id: "step-0", text: "Mezclar" }],
+  ...over,
+});
+
+const control = (lines: Array<[string, string, string]>): AutoPrepMpLots => ({
+  status: "found",
+  controlId: "c1",
+  lines: lines.map(([codigo, materiaPrima, lote]) => ({ codigo, materiaPrima, lote })),
+});
+
+const NO_CONTROL: AutoPrepMpLots = { status: "none", message: "No hay Control semanal." };
+
+const build = (content: OeContent, extra: Partial<Parameters<typeof buildAutoPreparedOe>[0]> = {}) =>
+  buildAutoPreparedOe({
+    content,
+    work: work(),
+    formula: formulaOk(),
+    mpLots: control([["MP-1", "Agua", "A-1"], ["MP-2", "Glicerina", "G-7"], ["MP-3", "Perfume", "P-3"]]),
+    actorEmail: "produccion@x",
+    reason: "test",
+    now: "2026-10-13T10:00:00.000Z",
+    ...extra,
+  });
+
+describe("buildAutoPreparedOe", () => {
+  it("fórmula completa + lotes: encabezado del trabajo, % de la fórmula, kg calculados y lotes del control", () => {
+    const r = build(blank());
+    const c = r.content;
+    expect(c.header).toMatchObject({ productName: "Crema X", client: "Cliente A", quantityKg: 150, lot: "L-2610-01", code: "PT-100" });
+    expect(c.materials.map((m) => [m.materiaPrima, m.formulaPct, m.kgAPesar, m.lote])).toEqual([
+      ["Agua", 80, 120, "A-1"],
+      ["Glicerina", 12.5, 18.75, "G-7"],
+      ["Perfume", 7.5, 11.25, "P-3"],
+    ]);
+    expect(c.totals.kgSum).toBe(150);
+    expect(c.procedureSteps).toEqual([{ id: "step-0", text: "Mezclar" }]);
+    expect(c.autoPrep?.formula).toMatchObject({ status: "ok", source: "DRIVE", versionHash: "h1", driveFileId: "abc" });
+    expect(c.autoPrep?.mpLots).toMatchObject({ status: "ok", controlId: "c1" });
+    expect(c.autoPrep?.pendientes).toEqual([]);
+    expect(r.formulaColumns).toEqual({ kind: "set", formulaProductId: "drive:abc", formulaVersionId: "drive:abc:1234", versionHash: "h1" });
+    expect(r.changed).toBe(true);
+  });
+
+  it("reintento idéntico: no cambia nada (no hay que guardar ni auditar)", () => {
+    const first = build(blank());
+    const again = build(first.content, { now: "2026-10-13T11:00:00.000Z", actorEmail: "otro@x" });
+    expect(again.changed).toBe(false);
+  });
+
+  it("reintento después de guardar en Postgres (jsonb reordena las claves): sigue sin cambios", () => {
+    const first = build(blank());
+    const reorder = (v: unknown): unknown =>
+      Array.isArray(v)
+        ? v.map(reorder)
+        : v && typeof v === "object"
+          ? Object.fromEntries(Object.keys(v).reverse().map((k) => [k, reorder((v as Record<string, unknown>)[k])]))
+          : v;
+    const fromDb = reorder(JSON.parse(JSON.stringify(first.content))) as OeContent;
+    expect(build(fromDb).changed).toBe(false);
+  });
+
+  it("sin fórmula: no inventa MP ni %, queda pendiente con el motivo", () => {
+    const r = build(blank(), { formula: { ok: false, status: "not_found", message: "No hay fórmula para «Crema X»." } });
+    expect(r.content.materials).toEqual([]);
+    expect(r.content.autoPrep?.formula.status).toBe("not_found");
+    expect(r.content.autoPrep?.pendientes).toContain("Fórmula: No hay fórmula para «Crema X».");
+    expect(r.formulaColumns.kind).toBe("keep");
+    // El encabezado igual llega listo.
+    expect(r.content.header).toMatchObject({ quantityKg: 150, lot: "L-2610-01" });
+  });
+
+  it("fórmula ambigua o ilegible: no elige ninguna", () => {
+    for (const status of ["ambiguous", "incomplete", "error", "conflict"] as const) {
+      const r = build(blank(), { formula: { ok: false, status, message: `motivo ${status}` } });
+      expect(r.content.materials).toEqual([]);
+      expect(r.content.autoPrep?.formula.status).toBe(status);
+      expect(r.content.autoPrep?.pendientes.some((p) => p.includes(`motivo ${status}`))).toBe(true);
+    }
+  });
+
+  it("MP sin lote en el control: el lote queda vacío y marcado pendiente", () => {
+    const r = build(blank(), { mpLots: control([["MP-1", "Agua", "A-1"], ["MP-2", "Glicerina", ""], ["MP-3", "Perfume", "P-3"]]) });
+    const gli = r.content.materials.find((m) => m.codigo === "MP-2")!;
+    expect(gli.lote).toBe("");
+    expect(r.content.autoPrep?.mpLots.status).toBe("pendiente");
+    expect(r.content.autoPrep?.mpLots.lines.find((l) => l.codigo === "MP-2")?.source).toBe("PENDIENTE");
+    expect(r.content.autoPrep?.pendientes).toContain("Lote de MP pendiente: Glicerina (MP-2)");
+  });
+
+  it("sin Control semanal: todos los lotes de MP pendientes, nunca elegidos por disponibilidad", () => {
+    const r = build(blank(), { mpLots: NO_CONTROL });
+    expect(r.content.materials.every((m) => m.lote === "")).toBe(true);
+    expect(r.content.autoPrep?.mpLots.status).toBe("sin_control");
+  });
+
+  it("control con dos lotes distintos para el mismo código: ambiguo → pendiente", () => {
+    const r = build(blank(), { mpLots: control([["MP-1", "Agua", "A-1"], ["MP-1", "Agua", "A-2"]]) });
+    expect(r.content.materials.find((m) => m.codigo === "MP-1")?.lote).toBe("");
+  });
+
+  it("fórmula con muchas MP y la misma MP en dos fases: filas separadas, ids estables", () => {
+    const f = formulaOk({
+      materials: [
+        { materiaPrima: "Agua", codigo: "MP-1", formulaPct: 40 },
+        { materiaPrima: "Carbopol", codigo: "MP-9", formulaPct: 0.5 },
+        { materiaPrima: "Agua", codigo: "MP-1", formulaPct: 40 },
+        { materiaPrima: "Glicerina", codigo: "MP-2", formulaPct: 12 },
+        { materiaPrima: "Perfume", codigo: "MP-3", formulaPct: 7.5 },
+      ],
+    });
+    const r = build(blank(), { formula: f });
+    expect(r.content.materials).toHaveLength(5);
+    expect(r.content.materials.map((m) => m.kgAPesar)).toEqual([60, 0.75, 60, 18, 11.25]);
+    const again = build(r.content, { formula: f });
+    expect(again.changed).toBe(false);
+    expect(again.content.materials.map((m) => m.id)).toEqual(r.content.materials.map((m) => m.id));
+  });
+
+  it("precisión: 4 decimales en kg a pesar, sin redondear el %", () => {
+    const f = formulaOk({ materials: [{ materiaPrima: "A", codigo: "1", formulaPct: 33.3333 }, { materiaPrima: "B", codigo: "2", formulaPct: 66.6667 }] });
+    const r = build(blank(), { formula: f, work: work({ plannedQuantity: "1,5" }) });
+    expect(r.content.header.quantityKg).toBe(1.5);
+    expect(r.content.materials.map((m) => [m.formulaPct, m.kgAPesar])).toEqual([[33.3333, 0.5], [66.6667, 1]]);
+  });
+
+  it("cantidad en unidades (no kg): no convierte, queda pendiente", () => {
+    const r = build(blank(), { work: work({ unit: "un.", plannedQuantity: "1000" }) });
+    expect(r.content.header.quantityKg).toBeNull();
+    expect(r.content.materials.every((m) => m.kgAPesar == null)).toBe(true);
+    expect(r.content.autoPrep?.quantity.status).toBe("pendiente");
+  });
+
+  it("sin lote de fabricación en el trabajo: lote vacío y pendiente; con lote se copia exacto", () => {
+    const r = build(blank(), { work: work({ packagingLote: null }) });
+    expect(r.content.header.lot).toBe("");
+    expect(r.content.autoPrep?.lotFabricacion.status).toBe("pendiente");
+    const exact = build(blank(), { work: work({ packagingLote: "lt 26/10-A" }) });
+    expect(exact.content.header.lot).toBe("lt 26/10-A");
+  });
+
+  it("cambio de cantidad antes de empezar: recalcula kg y conserva lotes", () => {
+    const first = build(blank());
+    const r = build(first.content, { work: work({ plannedQuantity: "200", version: 2 }) });
+    expect(r.changed).toBe(true);
+    expect(r.content.materials.map((m) => [m.kgAPesar, m.lote])).toEqual([[160, "A-1"], [25, "G-7"], [15, "P-3"]]);
+  });
+
+  it("cambio de producto sin fórmula para el nuevo: quita las MP de la fórmula anterior y vacía la referencia", () => {
+    const first = build(blank());
+    const r = build(first.content, {
+      work: work({ product: "Gel Y" }),
+      formula: { ok: false, status: "not_found", message: "No hay fórmula para «Gel Y»." },
+    });
+    expect(r.content.materials).toEqual([]);
+    expect(r.formulaColumns).toEqual({ kind: "clear" });
+    expect(r.content.header.productName).toBe("Gel Y");
+  });
+
+  it("mismo producto y Drive caído: mantiene la fórmula ya cargada", () => {
+    const first = build(blank());
+    const r = build(first.content, { formula: { ok: false, status: "error", message: "No se pudo leer Drive." } });
+    expect(r.content.materials).toHaveLength(3);
+    expect(r.content.autoPrep?.formula.status).toBe("ok");
+    expect(r.formulaColumns.kind).toBe("keep");
+  });
+
+  it("MP cargadas a mano: no se reemplazan sin confirmación; con confirmación sí, conservando lotes escritos", () => {
+    const manual = blank();
+    manual.materials = [{ ...build(blank()).content.materials[0], materiaPrima: "Agua", codigo: "MP-1", formulaPct: 79, lote: "MANUAL-1" }];
+    const keep = build(manual);
+    expect(keep.content.materials).toHaveLength(1);
+    expect(keep.content.materials[0].formulaPct).toBe(79);
+    expect(keep.content.autoPrep?.formula.status).toBe("manual_content");
+    expect(keep.formulaColumns.kind).toBe("keep");
+    const replaced = build(manual, { replaceManual: true });
+    expect(replaced.content.materials).toHaveLength(3);
+    expect(replaced.content.materials[0].lote).toBe("MANUAL-1");
+    expect(replaced.content.autoPrep?.mpLots.lines[0].source).toBe("MANUAL");
+  });
+
+  it("lote de MP escrito a mano no lo pisa el control; el que vino del control sí se actualiza", () => {
+    const first = build(blank());
+    const edited = structuredClone(first.content);
+    edited.materials[0].lote = "A-MANO";
+    const r = build(edited, { mpLots: control([["MP-1", "Agua", "A-9"], ["MP-2", "Glicerina", "G-9"], ["MP-3", "Perfume", "P-9"]]) });
+    expect(r.content.materials.map((m) => m.lote)).toEqual(["A-MANO", "G-9", "P-9"]);
+  });
+
+  it("actualización confirmada después de empezar: conserva ajustes registrados y avisa si se perderían", () => {
+    const first = build(blank());
+    const started = structuredClone(first.content);
+    started.materials[1].ajuste = 0.2;
+    started.materials[1].ajusteMotivo = "Corrección de pesada";
+    const kept = build(started, { replaceManual: true, work: work({ plannedQuantity: "100" }) });
+    expect(kept.lostRecords).toEqual([]);
+    expect(kept.content.materials[1]).toMatchObject({ ajuste: 0.2, ajusteMotivo: "Corrección de pesada", kgAPesar: 12.5 });
+    const lost = build(started, {
+      replaceManual: true,
+      formula: formulaOk({ materials: [{ materiaPrima: "Agua", codigo: "MP-1", formulaPct: 100 }] }),
+    });
+    expect(lost.lostRecords).toEqual(["Glicerina"]);
+  });
+});
+
+describe("oeProcesoIniciado", () => {
+  it("BORRADOR/PENDIENTE sin registros: no empezó", () => {
+    expect(oeProcesoIniciado("BORRADOR", blank()).started).toBe(false);
+    expect(oeProcesoIniciado("PENDIENTE", blank()).started).toBe(false);
+  });
+  it("EN_PROCESO, entregada o con registros del proceso: empezó", () => {
+    expect(oeProcesoIniciado("EN_PROCESO", blank()).started).toBe(true);
+    expect(oeProcesoIniciado("COMPLETA", blank()).started).toBe(true);
+    const withAjuste = build(blank()).content;
+    withAjuste.materials[0].ajusteMotivo = "x";
+    expect(oeProcesoIniciado("BORRADOR", withAjuste).started).toBe(true);
+    const withPc = blank();
+    withPc.processControl.ph = "5,5";
+    expect(oeProcesoIniciado("BORRADOR", withPc).started).toBe(true);
+    const withQc = blank();
+    withQc.qualityControl.resultado = "OK";
+    expect(oeProcesoIniciado("PENDIENTE", withQc).started).toBe(true);
+  });
+  it("los valores de especificación precargados no cuentan como inicio", () => {
+    const c = blank();
+    expect(c.processControl.aspectoSpec).not.toBe("");
+    expect(oeProcesoIniciado("BORRADOR", c).started).toBe(false);
+  });
+});
+
+describe("workQuantityKg", () => {
+  it("acepta coma decimal y solo kg", () => {
+    expect(workQuantityKg("1.234,5", "kg").kg).toBe(1234.5);
+    expect(workQuantityKg("150", "KG").kg).toBe(150);
+    expect(workQuantityKg("150", "un.").kg).toBeNull();
+    expect(workQuantityKg("", "kg").kg).toBeNull();
+    expect(workQuantityKg("abc", "kg").kg).toBeNull();
+  });
+});
