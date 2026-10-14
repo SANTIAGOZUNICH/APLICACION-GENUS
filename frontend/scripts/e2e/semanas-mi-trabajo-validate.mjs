@@ -77,6 +77,8 @@ async function openAs(user, viewport = { width: 1500, height: 950 }, day = DAY) 
   return { ctx, page };
 }
 const nav = (page, label) => page.getByRole("button", { name: new RegExp(`^${label}$`) }).or(page.getByRole("link", { name: new RegExp(`^${label}$`) })).first().click({ timeout: 120_000 });
+/** «Semanas» ya no tiene entrada en el menú lateral: Producción la abre desde su Panel general. */
+const openSemanasProduccion = (page) => page.locator("[data-testid=produccion-open-semanas]").click({ timeout: 120_000 });
 const rowOf = (page, text) => page.locator("[data-testid=list-row]", { hasText: text }).first();
 
 try {
@@ -86,7 +88,7 @@ try {
   // ================= PRODUCCIÓN: prioridad + vínculo explícito =================
   const prod = await openAs(E2E_USERS.produccion);
   const pp = prod.page;
-  await nav(pp, "Semanas");
+  await openSemanasProduccion(pp);
   await pp.waitForSelector("[data-testid=list-row]", { timeout: 120_000 });
   const keratin = rowOf(pp, "ALISADO KERATIN 1100KG");
   await keratin.locator("[data-testid=priority-chip]").click();
@@ -218,10 +220,10 @@ try {
   await ep.waitForFunction(() => [...document.querySelectorAll("tr")].some((r) => r.textContent.includes("ALISADO KERATIN") && r.textContent.includes("1100") && r.querySelector("[data-testid=work-item-priority][data-priority=IMPORTANTE]")), null, { timeout: 90_000 }).catch(() => {});
   check("Producción cambia a IMPORTANTE → Mi trabajo lo muestra tras recargar", (await badgeOf("ALISADO KERATIN", "1100")) === "IMPORTANTE");
   // misma prioridad en Semanas del sector
-  await nav(ep, "Semanas");
-  await ep.waitForSelector("[data-testid=plan-card]", { timeout: 60_000 });
-  const card = ep.locator("[data-testid=plan-card]", { hasText: "ALISADO KERATIN 1100KG" }).first();
-  check("consistencia: Semanas del sector muestra la misma prioridad (IMPORTANTE)", (await card.getAttribute("data-priority")) === "IMPORTANTE");
+  // La vista de Semanas del sector ya no tiene entrada en el menú: se verifica la misma planificación por la API que la alimenta.
+  const sectorPlan = await (await ep.request.get("/api/v1/semanas/plan")).json();
+  const planTask = (sectorPlan.tasks ?? []).find((t) => (t.products ?? []).some((x) => x.includes("ALISADO KERATIN 1100KG")));
+  check("consistencia: la planificación de Semanas del sector muestra la misma prioridad (IMPORTANTE)", planTask?.priority === "IMPORTANTE", String(planTask?.priority));
 
   // ================= permisos en el servidor =================
   const er = ep.request;
@@ -255,7 +257,7 @@ try {
   await mp.waitForFunction(() => [...document.querySelectorAll("[data-testid=work-item-card]")].some((c) => c.textContent.includes("1100") && c.textContent.includes("ALISADO KERATIN") && c.getAttribute("data-semanas-priority") === "URGENTE"), null, { timeout: 30_000 }).catch(() => {});
   check("Producción cambia la prioridad desde «Mi trabajo» (→ URGENTE)", (await pcard("ALISADO KERATIN", "1100").getAttribute("data-semanas-priority")) === "URGENTE");
   await pp.reload();
-  await nav(pp, "Semanas");
+  await openSemanasProduccion(pp);
   await pp.waitForSelector("[data-testid=list-row]", { timeout: 120_000 });
   check("…y se refleja en Semanas (Lista de Producción)", (await rowOf(pp, "ALISADO KERATIN 1100KG").getAttribute("data-priority")) === "URGENTE");
   check("Lista de Producción agrupada por día (encabezados de día)", (await pp.locator("[data-testid=list-day-header]").count()) >= 3);
