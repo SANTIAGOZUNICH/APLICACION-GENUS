@@ -16,6 +16,7 @@ import {
   emptyOeMaterial,
   emptyOaMaterial,
   formulaFingerprint,
+  hydrateOrderContent,
   normalizeOrderContent,
   recomputeOeDerived,
   recomputeOaDerived,
@@ -163,7 +164,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     try {
       const o = await fetchOrder(session, orderId);
       setOrder(o);
-      setForm(o.formData);
+      setForm(hydrateOrderContent(o.formData));
       if (o.formData.kind === "OA") {
         setOaSimple(
           initOaSimpleFormFromLegal(o.formData, {
@@ -294,7 +295,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           formulaVersionHash: formulaSnapshotRef.current.formulaVersionHash,
         });
         setOrder(updated);
-        setForm(updated.formData);
+        setForm(hydrateOrderContent(updated.formData));
         formulaSnapshotRef.current = {
           formulaProductId: updated.formulaProductId,
           formulaVersionId: updated.formulaVersionId,
@@ -729,7 +730,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       setMpShortage(null);
       setMpShortageReason("");
       setOrder(updated);
-      setForm(updated.formData);
+      setForm(hydrateOrderContent(updated.formData));
       versionRef.current = updated.version;
       setDeliverOpen(false);
       setDeliverObservation("");
@@ -1062,7 +1063,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             className="font-medium text-[var(--os-teal)] underline"
             onClick={() => {
               setOrder(conflict);
-              setForm(conflict.formData);
+              setForm(hydrateOrderContent(conflict.formData));
               if (conflict.formData.kind === "OA") {
                 setOaSimple(
                   initOaSimpleFormFromLegal(conflict.formData, {
@@ -1567,7 +1568,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               onClick={() =>
                 void returnOrderApi(session, orderId, returnReason).then((o) => {
                   setOrder(o);
-                  setForm(o.formData);
+                  setForm(hydrateOrderContent(o.formData));
                   versionRef.current = o.version;
                   setReturnOpen(false);
                 })
