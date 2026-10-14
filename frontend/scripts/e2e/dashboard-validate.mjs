@@ -614,7 +614,7 @@ try {
     check(`${label}: nivel de servicio, lead time y reclamos «No disponible para tu sector»`, (await s.page.getByTestId("kpi-not-available").count()) === 3);
     check(`${label}: el DOM no contiene nombres de clientes`, !CLIENT_NAMES.some((c) => html.includes(c)));
     const api = await apiGet(s.ctx, `year=${YEAR}`);
-    check(`${label}: el payload del servidor no contiene nombres de clientes (recortado en servidor)`, api.status === 200 && !CLIENT_NAMES.some((c) => api.text.includes(c)) && !/"ranking":\[\{/.test(api.text));
+    check(`${label}: el payload del servidor no contiene nombres de clientes (recortado en servidor)`, api.status === 200 && !CLIENT_NAMES.some((c) => api.text.includes(c)) && api.text.includes('"clients":{"available":false'));
     const apiClient = await apiGet(s.ctx, `year=${YEAR}&client=${encodeURIComponent(BETA)}`);
     check(`${label}: filtro por cliente por API → 403`, apiClient.status === 403 && !apiClient.text.includes(ALFA));
     const put = await s.ctx.request.put("/api/v1/dashboard/targets", { data: { key: "lead_time", value: 1, direction: "max" } });
