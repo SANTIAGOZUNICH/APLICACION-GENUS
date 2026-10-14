@@ -252,6 +252,7 @@ function DeliveryCard({ delivery: d, detail, canManage, canApplyToWork, onEdit, 
         ))}
       </div>
 
+      {canManage && (
       <div>
         <button type="button" onClick={() => setPanel(panel === "history" ? null : "history")} className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--os-teal)] hover:underline" aria-expanded={panel === "history"} data-testid="entrega-history-toggle">
           <History className="size-3.5" aria-hidden="true" /> Historial de modificaciones
@@ -269,6 +270,7 @@ function DeliveryCard({ delivery: d, detail, canManage, canApplyToWork, onEdit, 
           </ul>
         )}
       </div>
+      )}
     </article>
   );
 }

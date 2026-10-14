@@ -463,6 +463,9 @@ export const entregasService = {
     assertView(actor);
     const db = requireDb();
     await this.get(actor, deliveryId); // valida visibilidad
+    // El historial guarda la entrega COMPLETA (todos los productos y sectores): solo lo ve quien administra Entregas.
+    // Envasado/Depósito consultan la entrega recortada, nunca el historial (evita filtrar productos de otro sector).
+    if (!canManageEntregas(actor.sector)) return [];
     const rows = (await db.execute(sql`
       select id, action, actor_email, actor_sector, entity_id, payload, created_at
       from feature_audit_events where domain = 'entregas' and entity_id = ${deliveryId}
