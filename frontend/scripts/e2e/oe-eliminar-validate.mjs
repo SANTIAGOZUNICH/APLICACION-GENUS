@@ -66,6 +66,20 @@ async function cleanup() {
   await q("delete from work_items where client = $1", [CLIENT]);
   await q("delete from mp_stock_movements where codigo in ($1,$2)", [COD1, COD2]);
   await q("delete from mp_stock_balances where codigo in ($1,$2)", [COD1, COD2]);
+  await q("delete from inv_mp_ingresos where payload->>'codigo' in ($1,$2)", [COD1, COD2]);
+  await q("delete from inv_mp_stock where payload->>'codigo' in ($1,$2)", [COD1, COD2]);
+}
+
+/** Stock real (ingresos confirmados de Materias Primas): crea el lote y el movimiento del libro mayor. */
+async function seedStock(page) {
+  for (const [codigo, descripcion, lote] of [[COD1, "AGUA E2E", "LA-1"], [COD2, "GLICERINA E2E", "LG-1"]]) {
+    for (const [suf, kg] of [["A", 1000], ["B", 1000]]) {
+      const r = await page.request.post("/api/v1/inventory", {
+        data: { action: "upsert", resource: "mp_ingresos", payload: { fecha: "2026-10-01", remitoNro: `E2E-DEL-${codigo}-${suf}`, codigo, descripcion, lote, proveedor: "PROV DEL", bultos: 1, cantidad: kg } },
+      });
+      if (!r.ok()) throw new Error(`ingreso ${codigo}: ${r.status()} ${await r.text()}`);
+    }
+  }
 }
 
 /** Producción asigna el trabajo (crea la OE) y carga la fórmula con códigos de MP. */
@@ -80,8 +94,9 @@ async function prepareOe(pr, number, product) {
     ...fd,
     header: { ...fd.header, productName: product, client: CLIENT, quantityKg: 100, lot: `L-${number.slice(-3)}`, date: today },
     materials: [
-      { id: randomUUID(), materiaPrima: "Agua E2E", codigo: COD1, formulaPct: 80, kgAPesar: 80, ajuste: null, ajusteMotivo: "", lote: "LA-1" },
-      { id: randomUUID(), materiaPrima: "Glicerina E2E", codigo: COD2, formulaPct: 20, kgAPesar: 20, ajuste: -0.5, ajusteMotivo: "Merma", lote: "LG-1" },
+      // Consumo REAL (lo carga Elaboración): CÓDIGO MP + KG REAL UTILIZADO + LOTE MP. El teórico (kgAPesar) no descuenta.
+      { id: randomUUID(), materiaPrima: "Agua E2E", codigo: COD1, codigoMp: COD1, formulaPct: 80, kgAPesar: 80, kgReal: 80, lote: "LA-1" },
+      { id: randomUUID(), materiaPrima: "Glicerina E2E", codigo: COD2, codigoMp: COD2, formulaPct: 20, kgAPesar: 20, kgReal: 19.5, lote: "LG-1" },
     ],
     procedureSteps: [{ id: randomUUID(), text: "Mezclar" }],
     processControl: { ...fd.processControl, cantidadObtenida: 99, fechaFin: today },
@@ -135,6 +150,8 @@ try {
   const ca = await openAs(E2E_USERS.calidad);
 
   // ===== Preparación: OE entregada (descuenta MP), OE entregada y archivada, OE en borrador =====
+  const mpUser = await openAs(E2E_USERS.materiaPrima);
+  await seedStock(mpUser.page);
   const idEntregada = await prepareOe(pr.page, OE_ENTREGADA, "CREMA ELIMINAR E2E");
   const idArchivada = await prepareOe(pr.page, OE_ARCHIVADA, "GEL ELIMINAR E2E");
   await pr.page.request.post("/api/v1/work-assignments", {

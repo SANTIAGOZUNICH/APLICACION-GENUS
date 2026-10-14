@@ -174,6 +174,8 @@ try {
   const kgReal = p.locator("[data-testid=oe-cell-kg-real]");
   const kgTeo = await p.locator("[data-testid=oe-cell-kg]").allInnerTexts();
   check("KG A PESAR teórico visible (25 · 150 · 5) y KG REAL vacío (no se copia el teórico)", JSON.stringify(kgTeo) === JSON.stringify(["25", "150", "5"]) && (await kgReal.evaluateAll((xs) => xs.map((x) => x.value))).every((v) => v === ""), JSON.stringify(kgTeo));
+  // El catálogo de Stock MP carga de forma asíncrona: se espera a que aparezcan las sugerencias antes de leerlas.
+  await p.locator("[data-testid=oe-codigo-mp-sugerido]").first().waitFor({ timeout: 60_000 }).catch(() => {});
   const sugeridos = await p.locator("[data-testid=oe-codigo-mp-sugerido]").allInnerTexts();
   check("CÓDIGO MP: sugiere solo coincidencias inequívocas (por código y por nombre)", JSON.stringify(sugeridos) === JSON.stringify([`Usar ${AGUA}`, `Usar ${GLI}`, `Usar ${AGUA}`]), JSON.stringify(sugeridos));
   for (let i = 0; i < 3; i++) await p.locator("[data-testid=oe-codigo-mp-sugerido]").first().click();
