@@ -2,25 +2,26 @@ import { NextResponse } from "next/server";
 import { canUseDriveAdapter } from "@/lib/api/bff-helpers";
 import { getServerDataMode } from "@/lib/config/data-mode";
 import { serverOperationalState } from "@/lib/live-sync/server-operational-state";
-import { validateQualityDecisionActor } from "@/features/os/operational/lib/quality-decision-rbac";
 import { validateWorkMutationActor } from "@/features/os/operational/lib/work-mutation-rbac";
-import { validateDeliveryMutationActor } from "@/features/os/operational/lib/delivery-rbac";
+import { validateDeliveryMutationActor, validateDeliverWorkActor } from "@/features/os/operational/lib/delivery-rbac";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
 import { AuthUnauthorizedError } from "@/lib/auth/types";
-import { PlanningValidationError } from "@/lib/planning/types";
+import {
+  PlanningConflictError,
+  PlanningForbiddenError,
+  PlanningNotFoundError,
+  PlanningValidationError,
+} from "@/lib/planning/types";
 import type { WorkItem } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
-import { notifyEnvasadoForApproval } from "@/lib/notifications/approval-envasado-notify";
 import { normalizeOptionalReason } from "@/lib/lifecycle";
 import {
   annulDeliveryDurable,
-  annulQualityDecisionDurable,
   archiveDeliveryDurable,
   cancelWorkDurable,
   completeWorkDurable,
-  decideQualityDurable,
   deleteDeliveryRecordDurable,
   deleteWorkItemDurable,
   deliverWorkDurable,
@@ -68,26 +69,9 @@ type OperationAction =
       bulkRemainderId?: string | null;
     }
   | {
-      action: "quality_decision";
-      itemId: string;
-      status: "aprobado" | "rechazado";
-      decidedBy?: string;
-      observation?: string;
-      actorSectorId?: SectorId;
-      product?: string | null;
-      client?: string | null;
-      plannedDate?: string | null;
-      plannedDateTo?: string | null;
-      lote?: string | null;
-      quantity?: string | null;
-      relatedWorkItemId?: string | null;
-    }
-  | {
-      action: "quality_annul";
-      itemId: string;
-      reason: string;
-      decidedBy?: string;
-      actorSectorId?: SectorId;
+      /** RETIRADA — Calidad ya no forma parte del circuito operativo. Responde 410 con un error claro. */
+      action: "quality_decision" | "quality_annul";
+      itemId?: string;
     }
   | {
       action: "rework_work";
@@ -300,76 +284,22 @@ export async function POST(request: Request) {
           ...result,
         });
       }
-      case "quality_decision": {
-        assertBodySectorMatches(body.actorSectorId, actor.sector);
-        const gate = validateQualityDecisionActor(actor.sector);
-        if (!gate.ok) {
-          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
-        }
-        const nativeQualityId = nativeIdFromItemId(body.itemId);
-        const record = nativeQualityId
-          ? await decideQualityDurable(nativeQualityId, body.status, {
-              decidedBy: body.decidedBy ?? actor.displayName ?? actor.email,
-              observation: body.observation,
-              decidedBySector: actor.sector,
-              decidedByEmail: actor.email,
-            })
-          : serverOperationalState.decideQuality(body.itemId, body.status, {
-              decidedBy: body.decidedBy ?? actor.displayName ?? actor.email,
-              observation: body.observation,
-              decidedBySector: actor.sector,
-              decidedByEmail: actor.email,
-            });
-        if (body.status === "aprobado" && (actor.sector === "CALIDAD" || actor.sector === "PRODUCCION")) {
-          await notifyEnvasadoForApproval(
-            actor,
-            {
-              itemId: body.itemId, product: body.product, client: body.client,
-              plannedDate: body.plannedDate, plannedDateTo: body.plannedDateTo,
-              lote: body.lote, quantity: body.quantity, relatedWorkItemId: body.relatedWorkItemId,
-            },
-            actor.sector
-          );
-        }
-        return NextResponse.json({
-          ok: true,
-          revision: serverOperationalState.getRevision(),
-          record,
-        });
-      }
+      case "quality_decision":
       case "quality_annul": {
-        assertBodySectorMatches(body.actorSectorId, actor.sector);
-        const gate = validateQualityDecisionActor(actor.sector);
-        if (!gate.ok) {
-          return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
-        }
-        const reason = normalizeOptionalReason(body.reason);
-        const nativeAnnulId = nativeIdFromItemId(body.itemId);
-        const record = nativeAnnulId
-          ? await annulQualityDecisionDurable(nativeAnnulId, {
-              reason,
-              decidedBy: body.decidedBy ?? actor.displayName ?? actor.email,
-              decidedBySector: actor.sector,
-              decidedByEmail: actor.email,
-            })
-          : serverOperationalState.annulQualityDecision(body.itemId, {
-              reason,
-              decidedBy: body.decidedBy ?? actor.displayName ?? actor.email,
-              decidedBySector: actor.sector,
-              decidedByEmail: actor.email,
-            });
-        return NextResponse.json({
-          ok: true,
-          revision: serverOperationalState.getRevision(),
-          record,
-        });
+        // Circuito sin Calidad: no hay aprobaciones. Las decisiones históricas se conservan (solo lectura).
+        return NextResponse.json(
+          {
+            error:
+              "La aprobación de Calidad fue retirada del circuito operativo: ya no se aprueba ni se rechaza. Los trabajos avanzan directo a Envasado, Codificado o Entrega. Las decisiones anteriores se conservan en Historial.",
+            code: "QUALITY_CIRCUIT_RETIRED",
+          },
+          { status: 410 }
+        );
       }
       case "rework_work": {
         assertBodySectorMatches(body.actorSectorId, actor.sector);
-        // Mismo conjunto de actores que Aprobar/Rechazar (CALIDAD/PRODUCCION)
-        // — Rehacer es una tercera decisión sobre el mismo work item, no una
-        // mutación de asignación (no reutiliza validateWorkMutationActor).
-        const gate = validateQualityDecisionActor(actor.sector);
+        // Circuito sin Calidad: Rehacer lo gestiona Producción (sin depender de ninguna decisión de Calidad).
+        const gate = validateWorkMutationActor(actor.sector);
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
@@ -575,16 +505,31 @@ export async function POST(request: Request) {
       }
       case "deliver_work": {
         assertBodySectorMatches(body.actorSectorId, actor.sector);
-        const gate = validateDeliveryMutationActor(actor.sector);
+        const nativeDeliveryWorkId = nativeIdFromItemId(body.workItemId);
+        // Trabajos nativos (Neon): entregan Producción/Dirección (todo) y Envasado/Codificado (solo lo suyo — el
+        // servidor valida por trabajo). Los ids legados (no nativos) conservan la regla histórica: solo Producción.
+        const gate = nativeDeliveryWorkId
+          ? validateDeliverWorkActor(actor.sector)
+          : validateDeliveryMutationActor(actor.sector);
         if (!gate.ok) {
           return NextResponse.json({ error: gate.error, code: gate.code }, { status: 403 });
         }
-        const nativeDeliveryWorkId = nativeIdFromItemId(body.workItemId);
-        const record = nativeDeliveryWorkId
-          ? toClientDeliveryRecord(
-              await deliverWorkDurable({ ...body, workItemId: nativeDeliveryWorkId })
-            )
-          : serverOperationalState.deliverWork(body);
+        if (nativeDeliveryWorkId) {
+          const result = await deliverWorkDurable(
+            { ...body, workItemId: nativeDeliveryWorkId },
+            { email: actor.email, sector: actor.sector, displayName: actor.displayName ?? actor.email }
+          );
+          return NextResponse.json({
+            ok: true,
+            revision: serverOperationalState.getRevision(),
+            record: toClientDeliveryRecord(result.delivery),
+            replayed: result.replayed,
+            complete: result.complete,
+            delivered: result.delivered,
+            pending: result.pending,
+          });
+        }
+        const record = serverOperationalState.deliverWork(body);
         return NextResponse.json({
           ok: true,
           revision: serverOperationalState.getRevision(),
@@ -715,11 +660,20 @@ export async function POST(request: Request) {
         );
     }
   } catch (err) {
-    if (err instanceof OrdersForbiddenError) {
+    if (err instanceof OrdersForbiddenError || err instanceof PlanningForbiddenError) {
       return NextResponse.json({ error: err.message, code: "ACTOR_FORBIDDEN" }, { status: 403 });
     }
+    if (err instanceof PlanningNotFoundError) {
+      return NextResponse.json({ error: err.message, code: "NOT_FOUND" }, { status: 404 });
+    }
+    if (err instanceof PlanningConflictError) {
+      return NextResponse.json({ error: err.message, code: "CONFLICT" }, { status: 409 });
+    }
+    if (err instanceof PlanningValidationError) {
+      return NextResponse.json({ error: err.message, code: "VALIDATION" }, { status: 400 });
+    }
     if (err instanceof Error) {
-      const status = /restaur|conflict|cancelado|aprobad|rechazad/i.test(err.message)
+      const status = /restaur|conflict|cancelado/i.test(err.message)
         ? 409
         : 400;
       return NextResponse.json({ error: err.message, code: "OPERATION_FAILED" }, { status });

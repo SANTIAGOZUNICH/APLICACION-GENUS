@@ -232,9 +232,14 @@ async function touchPedidoOnAssign(
 export async function assignWorkItemDurable(
   input: WorkAssignmentInput,
   actor: PlanningActor,
-  operationId: string = randomUUID()
+  operationId: string = randomUUID(),
+  /**
+   * Uso interno del circuito (Elaboración → Envasado): `tx` reutiliza la transacción del llamador (todo o nada) y
+   * `skipRoleCheck` omite el permiso de asignar (el llamador ya validó SU propio permiso). Nunca expuesto por API.
+   */
+  opts?: { tx?: Tx; skipRoleCheck?: boolean }
 ): Promise<WorkAssignmentResult> {
-  if (actor.sector !== "PRODUCCION" && actor.sector !== "DIRECCION") {
+  if (!opts?.skipRoleCheck && actor.sector !== "PRODUCCION" && actor.sector !== "DIRECCION") {
     throw new PlanningForbiddenError(
       "No tenés permiso para asignar trabajos."
     );
@@ -274,10 +279,8 @@ export async function assignWorkItemDurable(
   const scheduledItemId = input.scheduledDeliveryItemId?.trim() || null;
   const productionPedidoId = input.productionPedidoId?.trim() || null;
 
-  const db = getDb();
-
   try {
-    return await db.transaction(async (tx) => {
+    const run = async (tx: Tx): Promise<WorkAssignmentResult> => {
       const [existing] = await tx
         .select()
         .from(workItems)
@@ -820,7 +823,8 @@ export async function assignWorkItemDurable(
         order: orderMeta,
         operationId,
       };
-    });
+    };
+    return opts?.tx ? await run(opts.tx) : await getDb().transaction(run);
   } catch (err) {
     logSanitizedError(operationId, "work-assignment", err);
     throw err;

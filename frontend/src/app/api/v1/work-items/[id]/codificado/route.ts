@@ -119,6 +119,16 @@ export async function POST(
             body.sampleUnits != null ? Number(body.sampleUnits) : null,
           expectedVersion,
           idempotencyKey,
+          // Entrega parcial: unidades entregadas ahora (omitido = todo el saldo).
+          deliverQuantity:
+            body.deliverQuantity != null && String(body.deliverQuantity).trim() !== ""
+              ? Number(String(body.deliverQuantity).replace(",", "."))
+              : null,
+          remito: body.remito != null ? String(body.remito) : null,
+          receivedBy: body.receivedBy != null ? String(body.receivedBy) : null,
+          plannedDeliveryDate:
+            body.plannedDeliveryDate != null ? String(body.plannedDeliveryDate) : null,
+          actualDeliveredAt: body.actualDeliveredAt != null ? String(body.actualDeliveredAt) : null,
         },
         actor
       );
@@ -128,6 +138,12 @@ export async function POST(
         operationId: result.operationId,
         workItem: projectNativeWorkItem(result.item),
         item: result.item,
+        delivery: {
+          id: result.deliveryId,
+          complete: result.complete,
+          delivered: result.delivered,
+          pending: result.pending,
+        },
       });
     }
 

@@ -18,11 +18,12 @@ export function canSendToCodificado(status: WorkItemStatus): CodificadoTransitio
   if (status === WORK_CODIFICADO_STATUS) {
     return { ok: false, code: "ALREADY_IN_CODIFICADO", error: WORK_TRANSFER.alreadyInCodificado };
   }
-  if (status === WORK_TRANSFER_STATUS || status === WORK_CODIFICADO_DONE_STATUS || status === "completo") {
+  // `revision` = terminado y pendiente de definir (circuito sin Calidad): todavía se puede enviar a Codificado.
+  if (status === WORK_CODIFICADO_DONE_STATUS || status === "completo") {
     return {
       ok: false,
       code: "ALREADY_DELIVERED",
-      error: "Este trabajo ya fue entregado a Calidad.",
+      error: "Este trabajo ya terminó su paso por Codificado.",
     };
   }
   if (status === "cancelado" || status === "entregado" || status === "bloqueado") {
@@ -39,7 +40,7 @@ export function canDeliverFromCodificado(
   status: WorkItemStatus,
   opts?: { sector?: SectorId | null }
 ): CodificadoTransitionResult {
-  if (status === WORK_TRANSFER_STATUS || status === WORK_CODIFICADO_DONE_STATUS) {
+  if (status === WORK_CODIFICADO_DONE_STATUS || status === "entregado") {
     return {
       ok: false,
       code: "ALREADY_DELIVERED",
@@ -67,6 +68,7 @@ export interface CodificadoReopenCheckInput {
   sector: SectorId | string | null | undefined;
   deliveredFromCodificadoAt?: string | null;
   codificadoCancelledAt?: string | null;
+  /** @deprecated Ignorado: el circuito ya no depende de decisiones de Calidad (se conservan como historial). */
   qualityStatus?: string | null;
   /** Ya existe una entrega real a cliente en work_item_deliveries. */
   hasActiveClientDelivery?: boolean;
@@ -76,7 +78,8 @@ export interface CodificadoReopenCheckInput {
  * "Rehacer entrega" — misma decisión que usa reopenCodificadoDeliveryDurable
  * (server) y el botón "Rehacer entrega" (UI), extraída acá para poder
  * testearla sin DB. Bloquea explícitamente (no auto-corrige nada en
- * silencio) si Calidad ya decidió o si ya hay una entrega real a cliente.
+ * silencio) si ya hay una entrega registrada a cliente (hay que anularla
+ * primero). Las decisiones históricas de Calidad ya no bloquean.
  */
 export function canReopenCodificadoDelivery(
   input: CodificadoReopenCheckInput
@@ -98,20 +101,12 @@ export function canReopenCodificadoDelivery(
       error: "El envío a Codificado fue cancelado.",
     };
   }
-  if (input.qualityStatus && input.qualityStatus !== "pendiente") {
-    return {
-      ok: false,
-      code: "QUALITY_DECIDED",
-      error:
-        "Calidad ya tomó una decisión sobre este trabajo (aprobado/rechazado). Pedile a Calidad que anule su decisión antes de rehacer la entrega.",
-    };
-  }
   if (input.hasActiveClientDelivery) {
     return {
       ok: false,
       code: "ALREADY_DELIVERED_TO_CLIENT",
       error:
-        "Ya existe una entrega real a cliente para este trabajo — no se puede rehacer la entrega de Codificado.",
+        "Ya existe una entrega registrada para este trabajo — anulala desde Entregados antes de rehacer la entrega de Codificado.",
     };
   }
   return { ok: true };
@@ -149,8 +144,8 @@ export function nextStatusAfterSendToCodificado(): WorkItemStatus {
 }
 
 export function nextStatusAfterDeliverFromCodificado(): WorkItemStatus {
-  // PENDIENTE_CALIDAD = revision (bandeja Calidad existente)
-  return WORK_TRANSFER_STATUS;
+  // Circuito sin Calidad: Codificado ENTREGAR registra la entrega final → entregado.
+  return "entregado";
 }
 
 export function markCodificadoCompleteAlias(): WorkItemStatus {

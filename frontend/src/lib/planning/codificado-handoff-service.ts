@@ -12,7 +12,11 @@ import {
 } from "@/lib/db/schema";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 import { canReopenCodificadoDelivery } from "@/features/os/operational/lib/codificado-flow";
-import { computePackagingClose, normalizePackingGroups } from "@/lib/remitos/packing-math";
+import { parseQuantity } from "@/lib/planning/circuit/delivery-math";
+import { closeForCodificadoTransfer } from "@/lib/planning/circuit/packaging-close";
+import { recordDeliveryInTx } from "@/lib/planning/circuit/delivery-core";
+import { emitCircuitNotification } from "@/lib/planning/circuit/circuit-notifications";
+import type { CircuitMovement } from "@/lib/planning/circuit/movements";
 import type { PlanningActor, PlanningSector, PlanningWorkItemRecord } from "@/lib/planning/types";
 import {
   PlanningConflictError,
@@ -20,45 +24,6 @@ import {
   PlanningNotFoundError,
   PlanningValidationError,
 } from "@/lib/planning/types";
-
-/**
- * Valida el cierre físico (PARTE A) antes de dejar avanzar un handoff.
- * Excepción ya autorizada en el sistema existente (no se inventa una
- * nueva): si hay una observación de embalaje, se documenta el mismatch y
- * se permite continuar — mismo criterio que packaging-quantities-block.tsx
- * ya aplicaba para el guardado intermedio (requireObservationOnMismatch).
- */
-function assertPackagingCloseOrExplained(params: {
-  finishedQty: number | null | undefined;
-  sampleUnits: number | null | undefined;
-  packingGroups: unknown;
-  observation: string | null | undefined;
-}): ReturnType<typeof computePackagingClose> {
-  const groups = normalizePackingGroups(
-    (params.packingGroups as Array<{ cajas?: number; unidadesPorCaja?: number }>) ?? []
-  );
-  const close = computePackagingClose({
-    finishedQty: params.finishedQty,
-    sampleUnits: params.sampleUnits,
-    groups,
-  });
-  if (close.canValidate && !close.isValid && !params.observation?.trim()) {
-    // Regla definitiva: muestras es metadata, no compensa la diferencia
-    // entre producido y embalado — si hay muestras, hay que documentarlas
-    // en la observación igual que cualquier otra diferencia real.
-    const faltan = close.diferencia;
-    const muestrasNote =
-      close.sampleUnits > 0
-        ? ` (hay ${close.sampleUnits} muestra(s) registrada(s) — no se descuentan de lo producido, no compensan esta diferencia)`
-        : "";
-    throw new PlanningValidationError(
-      faltan > 0
-        ? `La distribución no coincide con la cantidad producida: faltan distribuir ${faltan} unidad(es) en cajas (embalado: ${close.packedUnits}, producido: ${params.finishedQty})${muestrasNote}. Indicá una observación si es una excepción justificada.`
-        : `La distribución supera la cantidad producida por ${Math.abs(faltan)} unidad(es) (embalado: ${close.packedUnits}, producido: ${params.finishedQty}). Indicá una observación si es una excepción justificada.`
-    );
-  }
-  return close;
-}
 
 export type CodificadoOriginSector = "ENVASADO_MASIVO" | "ENVASADO_PREMIUM";
 
@@ -94,7 +59,7 @@ export type CancelCodificadoInput = {
   reason?: string | null;
   expectedVersion?: number | null;
   idempotencyKey: string;
-  /** Forzar retiro aunque haya avance o entrega a Calidad (RBAC). */
+  /** Forzar retiro aunque Codificado ya haya terminado su parte, sin entrega registrada (RBAC). */
   forceWithdrawDelivery?: boolean;
 };
 
@@ -104,7 +69,7 @@ function normalizeWorkItemId(raw: string): string {
   return t;
 }
 
-function mapItem(row: typeof workItems.$inferSelect): PlanningWorkItemRecord {
+export function mapItem(row: typeof workItems.$inferSelect): PlanningWorkItemRecord {
   return {
     id: row.id,
     planningWeekId: row.planningWeekId,
@@ -187,16 +152,14 @@ function mapItem(row: typeof workItems.$inferSelect): PlanningWorkItemRecord {
   };
 }
 
-function assertEnvasadoActor(actor: PlanningActor): CodificadoOriginSector {
+/**
+ * Quién puede ENVIAR a Codificado: el Envasado (Masivo/Premium) dueño del trabajo, o Producción/Dirección (mismo
+ * criterio que el resto de las mutaciones: supervisan y pueden operar «pendientes de definir»). El resto, no.
+ */
+function assertCanSendToCodificado(actor: PlanningActor): string {
   const s = String(actor.sector ?? "").toUpperCase();
-  if (s === "ENVASADO_MASIVO" || s === "ENVASADO_PREMIUM") {
+  if (s === "ENVASADO_MASIVO" || s === "ENVASADO_PREMIUM" || s === "PRODUCCION" || s === "DIRECCION") {
     return s;
-  }
-  if (s === "PRODUCCION" || s === "DIRECCION") {
-    // Producción puede operar cancel/resend; envío originario lo hace Envasado.
-    throw new PlanningForbiddenError(
-      "El envío a Codificado debe originarse en Envasado Masivo o Premium."
-    );
   }
   throw new PlanningForbiddenError("No tenés permiso para enviar a Codificado.");
 }
@@ -234,41 +197,6 @@ async function touchPedidoEnEnvasado(
   });
 }
 
-async function touchPedidoListoParaEntregar(
-  tx: ReturnType<typeof getDb>,
-  workItemId: string,
-  pedidoId: string | null | undefined,
-  actor: PlanningActor
-) {
-  if (!pedidoId) return;
-  const [pedido] = await tx
-    .select()
-    .from(productionPedidos)
-    .where(and(eq(productionPedidos.id, pedidoId), sql`${productionPedidos.deletedAt} IS NULL`))
-    .limit(1);
-  if (!pedido || pedido.estado === "ENTREGADO") return;
-  const from = pedido.estado;
-  if (from === "LISTO_PARA_ENTREGAR") return;
-  await tx
-    .update(productionPedidos)
-    .set({
-      estado: "LISTO_PARA_ENTREGAR",
-      updatedBy: actor.email,
-      updatedAt: new Date(),
-    })
-    .where(eq(productionPedidos.id, pedidoId));
-  await tx.insert(productionPedidoStatusEvents).values({
-    pedidoId,
-    workItemId,
-    fromEstado: from,
-    toEstado: "LISTO_PARA_ENTREGAR",
-    actorEmail: actor.email,
-    actorSector: actor.sector,
-    event: "DELIVERED_TO_QUALITY",
-    motivo: normalizeOptionalReason(null),
-  });
-}
-
 /**
  * Envasado → Codificado durable. Mismo workItemId; sector actual = CODIFICADO.
  */
@@ -277,7 +205,7 @@ export async function handoffToCodificadoDurable(
   actor: PlanningActor,
   operationId: string = randomUUID()
 ): Promise<{ item: PlanningWorkItemRecord; replayed: boolean; operationId: string }> {
-  const origin = assertEnvasadoActor(actor);
+  const actorSectorUpper = assertCanSendToCodificado(actor);
   const id = normalizeWorkItemId(input.workItemId);
   if (!id) throw new PlanningValidationError("workItemId requerido.");
   if (!Number.isFinite(input.totalUnits) || input.totalUnits <= 0) {
@@ -289,7 +217,7 @@ export async function handoffToCodificadoDurable(
   }
 
   const db = getDb();
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const idemRef = `codificado:send:${key}`;
     const [priorEvent] = await tx
       .select()
@@ -323,7 +251,7 @@ export async function handoffToCodificadoDurable(
     }
     if (row.deliveredFromCodificadoAt) {
       throw new PlanningValidationError(
-        "Este trabajo ya fue entregado a Calidad desde Codificado."
+        "Este trabajo ya fue entregado desde Codificado."
       );
     }
     if (
@@ -361,13 +289,25 @@ export async function handoffToCodificadoDurable(
       );
     }
 
-    if (origin !== fromSector && !row.viaCodificado) {
-      // Solo el sector propietario puede enviar; cancel/reenviar respeta origen.
-      if (String(actor.sector).toUpperCase() !== fromSector) {
-        throw new PlanningForbiddenError(
-          "Solo el Envasado propietario puede enviar este trabajo a Codificado."
-        );
-      }
+    // Solo el Envasado propietario (o Producción/Dirección) puede enviar; reenviar respeta el origen.
+    if (
+      actorSectorUpper !== "PRODUCCION" &&
+      actorSectorUpper !== "DIRECCION" &&
+      actorSectorUpper !== fromSector
+    ) {
+      throw new PlanningForbiddenError(
+        "Solo el Envasado propietario puede enviar este trabajo a Codificado."
+      );
+    }
+
+    // Validación mínima y única del total: debe ser compatible con las cantidades disponibles del trabajo (lo
+    // producido declarado y, si todavía no se declaró, lo planificado). Sin cajas ni desglose.
+    const availableQty =
+      parseQuantity(row.finishedQty, row.unit) ?? parseQuantity(row.plannedQuantity, row.unit);
+    if (availableQty != null && availableQty > 0 && input.totalUnits > availableQty + 1e-6) {
+      throw new PlanningValidationError(
+        `La cantidad total (${input.totalUnits}) supera la cantidad disponible del trabajo (${availableQty}). Registrá primero lo realmente producido con «Guardar avance».`
+      );
     }
 
     const isResend = Boolean(row.viaCodificado && row.codificadoCancelledAt);
@@ -382,15 +322,14 @@ export async function handoffToCodificadoDurable(
       input.packingGroups != null ? input.packingGroups : row.packingGroups;
     const nextSampleUnits = input.sampleUnits != null ? input.sampleUnits : row.sampleUnits;
     const nextObservation = input.observation?.trim() || row.codificadoObservation || null;
-    // La observación que justifica un mismatch puede venir del campo general
-    // (codificadoObservation) o de la observación específica de embalaje ya
-    // guardada por PackagingQuantitiesBlock (packingMismatchObservation) —
-    // misma excepción ya autorizada, dos campos de origen distintos.
-    const close = assertPackagingCloseOrExplained({
-      finishedQty: input.totalUnits,
+    // EXCEPCIÓN DE CAJAS (solo Envasado→Codificado): NO se exigen cajas, distribución ni unidades por caja y NO se
+    // valida la distribución; alcanza la cantidad total (validada arriba: > 0). Si el trabajo trae una distribución
+    // REAL que coincide con el total se registra el cierre; si no, no se inventa ni se rechaza nada. Reglas de
+    // muestras intactas (sampleUnits se conserva como metadata).
+    const close = closeForCodificadoTransfer({
+      totalUnits: input.totalUnits,
       sampleUnits: nextSampleUnits,
       packingGroups: nextPackingGroups,
-      observation: nextObservation || row.packingMismatchObservation,
     });
     const closedByName = actor.displayName || actor.email;
 
@@ -421,9 +360,16 @@ export async function handoffToCodificadoDurable(
         packagingVto: filledVto ?? row.packagingVto,
         packingGroups: nextPackingGroups,
         sampleUnits: nextSampleUnits,
-        deliverableUnits: close.canValidate ? close.enCajas : null,
-        packagingClosedAt: close.canValidate ? now : row.packagingClosedAt,
-        packagingClosedBy: close.canValidate ? closedByName : row.packagingClosedBy,
+        deliverableUnits: close.deliverableUnits === undefined ? row.deliverableUnits : close.deliverableUnits,
+        packagingClosedAt: close.closed ? now : row.packagingClosedAt,
+        packagingClosedBy: close.closed ? closedByName : row.packagingClosedBy,
+        // Un trabajo «pendiente de definir» (terminado sin destino) que se envía a Codificado vuelve a estar en curso.
+        operationalStatus:
+          row.operationalStatus === "revision" || row.operationalStatus === "completo"
+            ? "en_curso"
+            : row.operationalStatus,
+        completedAt: row.operationalStatus === "revision" || row.operationalStatus === "completo" ? null : row.completedAt,
+        completedBy: row.operationalStatus === "revision" || row.operationalStatus === "completo" ? null : row.completedBy,
         codificadoObservation: nextObservation,
         bulkRemainderKg:
           input.bulkRemainderKg != null
@@ -484,6 +430,26 @@ export async function handoffToCodificadoDurable(
 
     return { item: mapItem(updated), replayed: false, operationId };
   });
+
+  // Aviso a Producción fuera de la transacción (un fallo del aviso nunca bloquea el envío). Se emite también en
+  // el replay: el id es determinístico, así que no duplica y recupera un aviso que hubiera fallado antes.
+  const movement: CircuitMovement = {
+    type: result.item.codificadoRevision && result.item.codificadoRevision > 1 ? "CODIFICADO_REENVIO" : "ENVASADO_A_CODIFICADO",
+    workItemId: id,
+    eventKey: key,
+    fromSector: result.item.codificadoOriginSector ?? actorSectorUpper,
+    toSector: "CODIFICADO",
+    client: result.item.client,
+    product: result.item.product,
+    quantity: input.totalUnits,
+    unit: result.item.unit,
+    lote: result.item.packagingLote ?? null,
+    at: new Date(),
+    actorName: actor.displayName || actor.email,
+    actorEmail: actor.email,
+  };
+  await emitCircuitNotification(movement);
+  return result;
 }
 
 /**
@@ -561,10 +527,26 @@ export async function cancelCodificadoHandoffDurable(
       );
     }
 
+    const [activeDelivery] = await tx
+      .select({ id: workItemDeliveries.id })
+      .from(workItemDeliveries)
+      .where(
+        and(
+          eq(workItemDeliveries.workItemId, id),
+          eq(workItemDeliveries.status, "ENTREGADO"),
+          eq(workItemDeliveries.archived, false)
+        )
+      )
+      .limit(1);
+    if (activeDelivery) {
+      throw new PlanningValidationError(
+        "El trabajo ya tiene entregas registradas. Anulá la entrega desde Entregados antes de cancelar el envío a Codificado."
+      );
+    }
     if (row.deliveredFromCodificadoAt) {
       if (!input.forceWithdrawDelivery || !isSuper) {
         throw new PlanningForbiddenError(
-          "El trabajo ya fue entregado a Calidad. Usá “Retirar entrega para corregir” (Producción/SUPERADMIN)."
+          "El trabajo ya terminó su paso por Codificado. Usá “Retirar entrega para corregir” (Producción/SUPERADMIN)."
         );
       }
     }
@@ -641,7 +623,13 @@ export async function cancelCodificadoHandoffDurable(
 }
 
 /**
- * Codificado entrega a Calidad — marca Neon + pedido LISTO_PARA_ENTREGAR.
+ * Codificado ENTREGA — circuito sin Calidad: registra AUTOMÁTICAMENTE la entrega final (sin aprobación previa),
+ * en la MISMA transacción que el cierre de Codificado. Contabiliza las unidades efectivamente entregadas, deja el
+ * trabajo en `entregado` (o con saldo si la entrega es parcial), cierra el pedido cuando corresponde, y avisa a
+ * Producción. Idempotente por `idempotencyKey` (misma clave = misma entrega).
+ *
+ * EXCEPCIÓN DE CAJAS: Codificado recibe la cantidad total y NO necesita cajas ni distribución — una distribución
+ * ausente o incompleta jamás genera un error de «distribución incorrecta».
  */
 export async function deliverFromCodificadoDurable(
   input: {
@@ -657,17 +645,27 @@ export async function deliverFromCodificadoDurable(
     sampleUnits?: number | null;
     expectedVersion?: number | null;
     idempotencyKey: string;
+    /** Entrega parcial: unidades entregadas ahora. null = todo el saldo. */
+    deliverQuantity?: number | null;
+    remito?: string | null;
+    receivedBy?: string | null;
+    plannedDeliveryDate?: string | null;
+    actualDeliveredAt?: string | null;
   },
   actor: PlanningActor,
   operationId: string = randomUUID()
-): Promise<{ item: PlanningWorkItemRecord; replayed: boolean; operationId: string }> {
+): Promise<{
+  item: PlanningWorkItemRecord;
+  replayed: boolean;
+  operationId: string;
+  complete: boolean;
+  delivered: number | null;
+  pending: number | null;
+  deliveryId: string | null;
+}> {
   const sector = String(actor.sector ?? "").toUpperCase();
-  if (
-    sector !== "CODIFICADO" &&
-    sector !== "PRODUCCION" &&
-    sector !== "DIRECCION"
-  ) {
-    throw new PlanningForbiddenError("Solo Codificado puede entregar a Calidad.");
+  if (sector !== "CODIFICADO" && sector !== "PRODUCCION" && sector !== "DIRECCION") {
+    throw new PlanningForbiddenError("Solo Codificado puede entregar.");
   }
   const id = normalizeWorkItemId(input.workItemId);
   const key = input.idempotencyKey?.trim();
@@ -676,32 +674,9 @@ export async function deliverFromCodificadoDurable(
   }
 
   const db = getDb();
-  return db.transaction(async (tx) => {
+  const outcome = await db.transaction(async (tx) => {
     const idemRef = `codificado:deliver:${key}`;
-    const [prior] = await tx
-      .select()
-      .from(operationalEvents)
-      .where(
-        and(
-          eq(operationalEvents.type, "DELIVERED_FROM_CODIFICADO"),
-          eq(operationalEvents.note, idemRef)
-        )
-      )
-      .limit(1);
-    if (prior?.workItemId) {
-      const [existing] = await tx
-        .select()
-        .from(workItems)
-        .where(eq(workItems.id, prior.workItemId))
-        .limit(1);
-      if (existing) return { item: mapItem(existing), replayed: true, operationId };
-    }
-
-    const [row] = await tx
-      .select()
-      .from(workItems)
-      .where(eq(workItems.id, id))
-      .limit(1);
+    const [row] = await tx.select().from(workItems).where(eq(workItems.id, id)).limit(1);
     if (!row) throw new PlanningNotFoundError("Trabajo no encontrado.");
     if (row.sector !== "CODIFICADO") {
       throw new PlanningValidationError("El trabajo no está en Codificado.");
@@ -709,113 +684,79 @@ export async function deliverFromCodificadoDurable(
     if (row.codificadoCancelledAt) {
       throw new PlanningValidationError("El envío a Codificado fue cancelado.");
     }
-    if (row.deliveredFromCodificadoAt) {
-      return { item: mapItem(row), replayed: true, operationId };
-    }
 
-    const now = new Date();
-    const deliveredByName = actor.displayName || actor.email;
-    const nextTotalUnits =
-      input.packagingTotalUnits != null ? input.packagingTotalUnits : row.packagingTotalUnits;
-    const nextPackingGroups =
-      input.packingGroups != null ? input.packingGroups : row.packingGroups;
-    const nextSampleUnits = input.sampleUnits != null ? input.sampleUnits : row.sampleUnits;
     const nextObservation = input.observation?.trim() || row.codificadoObservation || null;
-    const close = assertPackagingCloseOrExplained({
-      finishedQty: nextTotalUnits != null ? Number(nextTotalUnits) : null,
-      sampleUnits: nextSampleUnits,
-      packingGroups: nextPackingGroups,
-      observation: nextObservation || row.packingMismatchObservation,
-    });
-    // Lote/VTO "fill-once": si ya hay un valor persistido, se preserva tal
-    // cual (nunca se sobreescribe acá). Si está vacío, Codificado puede
-    // completarlo en el momento de entregar — se persiste en el MISMO work
-    // item, sin depender de que haya pasado antes por "Guardar avance".
-    const filledLote =
-      !row.packagingLote && input.packagingLote?.trim() ? input.packagingLote.trim() : null;
-    const filledVto =
-      !row.packagingVto && input.packagingVto?.trim() ? input.packagingVto.trim() : null;
 
-    const [updated] = await tx
-      .update(workItems)
-      .set({
-        deliveredFromCodificadoAt: now,
-        deliveredFromCodificadoBy: deliveredByName,
-        packagingLote: filledLote ?? row.packagingLote,
-        packagingVto: filledVto ?? row.packagingVto,
-        packagingTotalUnits: nextTotalUnits,
-        packingGroups: nextPackingGroups,
-        sampleUnits: nextSampleUnits,
-        deliverableUnits: close.canValidate ? close.enCajas : row.deliverableUnits,
-        packagingClosedAt: close.canValidate ? now : row.packagingClosedAt,
-        packagingClosedBy: close.canValidate ? deliveredByName : row.packagingClosedBy,
-        codificadoObservation: nextObservation,
-        // Marca el work item como "completado, pendiente de revisión" en la
-        // MISMA transacción — antes esto dependía de un POST secundario
-        // fire-and-forget (postCompleteWork) desde el cliente; si fallaba,
-        // el handoff quedaba "entregado" pero invisible para la cola de
-        // Calidad (listCompletedItems filtra por completed_at IS NOT NULL).
-        completedAt: row.completedAt ?? now,
-        completedBy: row.completedBy ?? deliveredByName,
-        operationalStatus:
-          row.operationalStatus === "entregado" || row.operationalStatus === "cancelado"
-            ? row.operationalStatus
-            : "revision",
-        finishedQty:
-          input.packagingTotalUnits != null
-            ? String(input.packagingTotalUnits)
-            : row.finishedQty,
-        operationalObservation: input.observation?.trim() || row.operationalObservation,
-        // Reenvío tras un Rehacer: se resuelve el pedido, ya no queda "pendiente".
-        reworkRequestedAt: null,
-        reworkRequestedBy: null,
-        reworkRequestedBySector: null,
-        reworkReason: null,
-        version: Number(row.version) + 1,
-        updatedAt: now,
-      })
-      .where(eq(workItems.id, id))
-      .returning();
-
-    await tx.insert(operationalEvents).values({
+    const result = await recordDeliveryInTx(tx, {
       workItemId: id,
-      planningWeekId: row.planningWeekId,
-      type: "DELIVERED_FROM_CODIFICADO",
-      fromStatus: "EN_CODIFICADO",
-      toStatus: "PENDIENTE_CALIDAD",
-      actorEmail: actor.email,
-      actorSector: actor.sector,
-      note: idemRef,
+      actor: { email: actor.email, sector: actor.sector, displayName: actor.displayName },
+      idempotencyKey: `codificado:${key}`,
+      quantity: input.deliverQuantity ?? null,
+      codigo: null,
+      plannedDeliveryDate: input.plannedDeliveryDate ?? null,
+      actualDeliveredAt: input.actualDeliveredAt ?? null,
+      remito: input.remito ?? null,
+      receivedBy: input.receivedBy ?? null,
+      observations: input.observation ?? null,
+      completion: {
+        finishedQty:
+          input.packagingTotalUnits != null ? String(input.packagingTotalUnits) : undefined,
+        observation: input.observation ?? null,
+        packagingLote: input.packagingLote ?? null,
+        packagingVto: input.packagingVto ?? null,
+        packagingTotalUnits: input.packagingTotalUnits ?? null,
+        packingGroups: input.packingGroups ?? null,
+        sampleUnits: input.sampleUnits ?? null,
+      },
+      extraItemPatch: { codificadoObservation: nextObservation },
+      skipBoxValidation: true,
+      movementType: sector === "CODIFICADO" ? "CODIFICADO_ENTREGA" : "PRODUCCION_ENTREGA",
     });
 
-    if (filledLote || filledVto) {
+    if (!result.replayed) {
       await tx.insert(operationalEvents).values({
         workItemId: id,
         planningWeekId: row.planningWeekId,
-        type: "LOTE_VTO_FILLED",
-        fromStatus: JSON.stringify({
-          lote: row.packagingLote ?? null,
-          vto: row.packagingVto ?? null,
-        }),
-        toStatus: JSON.stringify({
-          lote: updated.packagingLote ?? null,
-          vto: updated.packagingVto ?? null,
-        }),
+        type: "DELIVERED_FROM_CODIFICADO",
+        fromStatus: "EN_CODIFICADO",
+        toStatus: result.complete ? "ENTREGADO" : "ENTREGA_PARCIAL",
         actorEmail: actor.email,
         actorSector: actor.sector,
-        note: "Completado por Codificado al entregar a Calidad — Producción no lo había cargado.",
+        note: idemRef,
       });
+      const filledLote = !row.packagingLote && input.packagingLote?.trim() ? input.packagingLote.trim() : null;
+      const filledVto = !row.packagingVto && input.packagingVto?.trim() ? input.packagingVto.trim() : null;
+      if (filledLote || filledVto) {
+        await tx.insert(operationalEvents).values({
+          workItemId: id,
+          planningWeekId: row.planningWeekId,
+          type: "LOTE_VTO_FILLED",
+          fromStatus: JSON.stringify({ lote: row.packagingLote ?? null, vto: row.packagingVto ?? null }),
+          toStatus: JSON.stringify({
+            lote: result.item.packagingLote ?? null,
+            vto: result.item.packagingVto ?? null,
+          }),
+          actorEmail: actor.email,
+          actorSector: actor.sector,
+          note: "Completado por Codificado al entregar — Producción no lo había cargado.",
+        });
+      }
     }
-
-    await touchPedidoListoParaEntregar(
-      tx as unknown as ReturnType<typeof getDb>,
-      id,
-      updated.productionPedidoId,
-      actor
-    );
-
-    return { item: mapItem(updated), replayed: false, operationId };
+    return result;
   });
+
+  // Aviso a Producción fuera de la transacción: un fallo del aviso nunca bloquea la entrega.
+  if (outcome.movement) await emitCircuitNotification(outcome.movement);
+
+  return {
+    item: mapItem(outcome.item),
+    replayed: outcome.replayed,
+    operationId,
+    complete: outcome.complete,
+    delivered: outcome.delivered,
+    pending: outcome.pending,
+    deliveryId: outcome.delivery?.id ?? null,
+  };
 }
 
 export type ReopenCodificadoDeliveryInput = {
@@ -826,17 +767,13 @@ export type ReopenCodificadoDeliveryInput = {
 };
 
 /**
- * "Rehacer entrega" — deshace la entrega a Calidad hecha por Codificado y
+ * "Rehacer entrega" — deshace el cierre de Codificado (terminado sin entrega registrada) y
  * deja el trabajo editable de nuevo, SIN mover el sector (a diferencia de
  * cancelCodificadoHandoffDurable/WITHDRAW_CODIFICADO_DELIVERY, que expulsa
  * el trabajo de vuelta a Envasado). No borra cajas, muestras, lote/VTO, OA
  * ni observaciones — solo limpia las marcas de entrega y completado.
  *
  * Bloqueada explícitamente (no auto-corrige, no borra en silencio) si:
- *  - Calidad ya tomó una decisión (aprobado/rechazado) — hay que anularla
- *    primero desde Calidad (annulQualityDecisionDurable), a propósito: no
- *    existe ningún vínculo automático entre qualityStatus y este flujo, y
- *    resetearlo acá sin que Calidad lo sepa sería silencioso.
  *  - ya existe una entrega real a cliente en work_item_deliveries.
  */
 export async function reopenCodificadoDeliveryDurable(
@@ -930,9 +867,8 @@ export async function reopenCodificadoDeliveryDurable(
       .set({
         deliveredFromCodificadoAt: null,
         deliveredFromCodificadoBy: null,
-        // completedAt gatea la cola de Calidad (listCompletedItems) — se
-        // limpia junto con deliveredFromCodificadoAt para que el trabajo
-        // deje de mostrarse ahí mientras Codificado lo vuelve a editar;
+        // completedAt se limpia junto con deliveredFromCodificadoAt para que el trabajo
+        // deje de figurar como terminado mientras Codificado lo vuelve a editar;
         // deliverFromCodificadoDurable lo vuelve a fijar en la re-entrega.
         completedAt: null,
         completedBy: null,
@@ -948,7 +884,7 @@ export async function reopenCodificadoDeliveryDurable(
       workItemId: id,
       planningWeekId: row.planningWeekId,
       type: "REOPENED_CODIFICADO_DELIVERY",
-      fromStatus: "PENDIENTE_CALIDAD",
+      fromStatus: "TERMINADO_CODIFICADO",
       toStatus: "EN_CODIFICADO",
       actorEmail: actor.email,
       actorSector: actor.sector,

@@ -326,12 +326,58 @@ export const workItemDeliveries = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deletedBy: text("deleted_by"),
     deleteReason: text("delete_reason"),
+    /**
+     * Entregas parciales (0047). `quantity` acumula lo entregado; mientras
+     * `deliveryComplete` sea false quedan `pendingBalance` unidades por
+     * entregar. Filas históricas: true / null (entrega completa, sin saldo).
+     */
+    deliveryComplete: boolean("delivery_complete").notNull().default(true),
+    pendingBalance: doublePrecision("pending_balance"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("work_item_deliveries_work_item_idx").on(table.workItemId),
     index("work_item_deliveries_status_idx").on(table.status),
+  ]
+);
+
+/**
+ * Entregas físicas individuales (0047) — una línea inmutable por entrega,
+ * parcial o final, con clave de idempotencia propia (único por trabajo). La
+ * fila agregada de work_item_deliveries (única activa por trabajo) acumula la
+ * suma de las líneas ACTIVAS vinculadas por delivery_id.
+ */
+export const workItemDeliveryLines = pgTable(
+  "work_item_delivery_lines",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workItemId: uuid("work_item_id")
+      .notNull()
+      .references(() => workItems.id),
+    deliveryId: uuid("delivery_id").references(() => workItemDeliveries.id),
+    idempotencyKey: text("idempotency_key").notNull(),
+    sequence: integer("sequence").notNull().default(1),
+    quantity: doublePrecision("quantity").notNull(),
+    unit: text("unit"),
+    kind: text("kind").notNull().default("PARCIAL"),
+    status: text("status").notNull().default("ACTIVA"),
+    sourceSector: text("source_sector").notNull(),
+    deliveredBy: text("delivered_by").notNull(),
+    deliveredBySector: text("delivered_by_sector").notNull(),
+    actualDeliveredAt: timestamp("actual_delivered_at", { withTimezone: true }).notNull(),
+    remito: text("remito"),
+    receivedBy: text("received_by"),
+    observations: text("observations"),
+    cumulativeAfter: doublePrecision("cumulative_after"),
+    pendingAfter: doublePrecision("pending_after"),
+    annulledAt: timestamp("annulled_at", { withTimezone: true }),
+    annulledBy: text("annulled_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("work_item_delivery_lines_key_uidx").on(table.workItemId, table.idempotencyKey),
+    index("work_item_delivery_lines_delivery_idx").on(table.deliveryId),
   ]
 );
 

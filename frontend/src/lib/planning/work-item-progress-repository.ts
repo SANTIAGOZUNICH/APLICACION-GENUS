@@ -2,7 +2,7 @@ import "server-only";
 
 import { and, desc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
-import { operationalEvents, operationalOrders, workItemDeliveries, workItems } from "@/lib/db/schema";
+import { operationalEvents, operationalOrders, workItemDeliveries, workItemDeliveryLines, workItems } from "@/lib/db/schema";
 import type { SectorId } from "@/types/operational/sector";
 import {
   canActOnWorkItemSector,
@@ -17,6 +17,13 @@ import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-nu
 import { addDaysIso, weekStartMonday } from "@/lib/operational/operational-calendar";
 import { normalizeOaOrderNumber } from "@/lib/planning/oa-assign-helpers";
 import { loadWorkItemOperationalData } from "@/lib/planning/work-item-operational-data";
+import {
+  recordDeliveryInTx,
+  type DeliveryActor,
+  type DeliveryCompletion,
+  type RecordDeliveryResult,
+} from "@/lib/planning/circuit/delivery-core";
+import { emitCircuitNotification } from "@/lib/planning/circuit/circuit-notifications";
 import {
   computeLoteIdentityKey,
   computeProductIdentityKey,
@@ -1301,66 +1308,6 @@ export async function completeWorkDurable(
   });
 }
 
-export interface QualityDecisionInput {
-  decidedBy: string;
-  decidedBySector: SectorId | string;
-  decidedByEmail?: string;
-  observation?: string;
-}
-
-export async function decideQualityDurable(
-  id: string,
-  status: "aprobado" | "rechazado",
-  input: QualityDecisionInput
-) {
-  const db = getDb();
-  const now = new Date();
-  const [row] = await db
-    .update(workItems)
-    .set({
-      qualityStatus: status,
-      qualityDecidedAt: now,
-      qualityDecidedBy: input.decidedBy,
-      qualityDecidedBySector: String(input.decidedBySector),
-      qualityObservation: input.observation?.trim() || null,
-      qualityChangeReason: null,
-      updatedAt: now,
-    })
-    .where(eq(workItems.id, id))
-    .returning();
-  if (!row) throw new Error("Work item no encontrado.");
-  return row;
-}
-
-export async function annulQualityDecisionDurable(
-  id: string,
-  input: { reason: string; decidedBy: string; decidedBySector: SectorId | string; decidedByEmail?: string }
-) {
-  const db = getDb();
-  const now = new Date();
-  const [row] = await db
-    .update(workItems)
-    .set({
-      qualityStatus: "pendiente",
-      qualityDecidedAt: now,
-      qualityDecidedBy: input.decidedBy,
-      qualityDecidedBySector: String(input.decidedBySector),
-      qualityChangeReason: input.reason,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(workItems.id, id),
-        or(eq(workItems.qualityStatus, "aprobado"), eq(workItems.qualityStatus, "rechazado"))
-      )
-    )
-    .returning();
-  if (!row) {
-    throw new Error("Solo se pueden anular decisiones aprobadas o rechazadas.");
-  }
-  return row;
-}
-
 export interface ReworkWorkItemInput {
   requestedBy: string;
   requestedBySector: SectorId | string;
@@ -1368,16 +1315,14 @@ export interface ReworkWorkItemInput {
 }
 
 /**
- * "Rehacer" — Calidad o Producción (RBAC: quality-decision-rbac.ts, mismo
- * conjunto que Aprobar/Rechazar) devuelve el work item al sector que lo
- * envió. El sector NO cambia — solo se reabre: se limpia completedAt (sale
- * de la cola de Calidad, listCompletedItems filtra por completedAt IS NOT
- * NULL) y, si venía de una entrega de Codificado, también
- * deliveredFromCodificadoAt (sale de "codificado_completo" en
- * resolveProjectedStatus). OA/lote/VTO/packingGroups/historial quedan
- * intactos — no se toca ninguna de esas columnas. Idempotente en el sentido
- * de que reintentar sobre un item ya reabierto simplemente vuelve a fallar
- * la validación de canRequestRework (completedAt ya es null).
+ * "Rehacer" — Producción/Dirección devuelven el work item al sector que lo
+ * tiene: el trabajo se reabre para corregirlo y volver a enviarlo. El sector
+ * NO cambia — se limpia completedAt y, si venía de una entrega de Codificado,
+ * también deliveredFromCodificadoAt. OA/lote/VTO/packingGroups/historial
+ * quedan intactos. Ya NO depende de ninguna decisión de Calidad (circuito sin
+ * Calidad): solo exige que el trabajo esté terminado/pendiente de definir y
+ * que no tenga entregas registradas. Reintentar sobre un item ya reabierto
+ * vuelve a fallar la validación de canRequestRework (completedAt ya es null).
  */
 export async function reworkWorkItemDurable(id: string, input: ReworkWorkItemInput) {
   const db = getDb();
@@ -1388,7 +1333,6 @@ export async function reworkWorkItemDurable(id: string, input: ReworkWorkItemInp
         planningWeekId: workItems.planningWeekId,
         operationalStatus: workItems.operationalStatus,
         completedAt: workItems.completedAt,
-        qualityStatus: workItems.qualityStatus,
         deliveredFromCodificadoAt: workItems.deliveredFromCodificadoAt,
         deletedAt: workItems.deletedAt,
       })
@@ -1414,7 +1358,6 @@ export async function reworkWorkItemDurable(id: string, input: ReworkWorkItemInp
 
     const eligibility = canRequestRework({
       completedAt: row.completedAt ? row.completedAt.toISOString() : null,
-      qualityStatus: row.qualityStatus,
       hasActiveClientDelivery: Boolean(activeDelivery),
     });
     if (!eligibility.ok) {
@@ -1537,8 +1480,10 @@ export interface DeliverWorkInput {
   remito: string | null;
   receivedBy: string | null;
   observations: string | null;
-  deliveredBy: string;
-  deliveredBySector: SectorId;
+  /** @deprecated El responsable sale SIEMPRE de la sesión autenticada (actor), nunca del body. */
+  deliveredBy?: string;
+  /** @deprecated Ídem: el sector sale de la sesión. */
+  deliveredBySector?: SectorId;
   /**
    * @deprecated Datos canónicos del work item (product/client/lote/quantity/
    * unit y todo lo que WorkItemOperationalData cubre) — el servidor los
@@ -1549,98 +1494,67 @@ export interface DeliverWorkInput {
   product?: string;
   lote?: string | null;
   client?: string | null;
-  quantity?: string | null;
+  /**
+   * Cantidad entregada AHORA (entregas parciales). Omitida/null = todo el
+   * saldo pendiente. Distinta del `quantity` histórico del snapshot, que el
+   * servidor descarta.
+   */
+  deliverQuantity?: number | string | null;
   unit?: string | null;
+  quantity?: string | null;
+  /** Misma clave = misma entrega (doble clic / reintento). */
+  idempotencyKey?: string | null;
+  /** Cierre (lo que antes hacía «Finalizar») aplicado en la misma transacción que la entrega. */
+  completion?: DeliveryCompletion | null;
 }
 
 /**
- * Idempotente: si ya hay una entrega activa (ENTREGADO, no archivada) para
- * el work item, la devuelve.
+ * Registra una entrega final (total o parcial) de un trabajo — circuito sin
+ * Calidad: NO exige aprobación previa. Idempotente por `idempotencyKey`; una
+ * sola fila agregada ENTREGADO por trabajo + una línea por entrega física.
+ * Ver circuit/delivery-core.ts para las garantías (permiso por sector, saldo,
+ * cierre del pedido, sin tocar inventario ni consumo de MP).
  *
  * REGLA: al momento de esta entrega, el servidor toma como fuente de verdad
  * el work_item ACTUAL en Neon — nunca el body del frontend, que puede venir
  * de una pantalla abierta hace rato y no reflejar un lote/VTO/packingGroups
  * que otro sector acaba de completar (ver loadWorkItemOperationalData). El
  * frontend solo controla datos propios de ESTA acción de entrega
- * (fecha/hora real, remito, quién recibe, observaciones) — nunca puede
- * reemplazar datos canónicos del work item con un valor stale.
+ * (fecha/hora real, remito, quién recibe, observaciones, cantidad) — nunca
+ * puede reemplazar datos canónicos del work item con un valor stale.
  *
  * Es además un snapshot histórico (0028/0031): el work_item sigue siendo
  * editable después (ej. corrección de VTO por Producción), pero la entrega
  * ya confirmada conserva exactamente lo que existía en Neon en el momento
  * real de la entrega.
  */
-export async function deliverWorkDurable(input: DeliverWorkInput) {
+export async function deliverWorkDurable(
+  input: DeliverWorkInput,
+  actor: DeliveryActor
+): Promise<RecordDeliveryResult> {
   const db = getDb();
-  return db.transaction(async (tx) => {
-    const [existingActive] = await tx
-      .select()
-      .from(workItemDeliveries)
-      .where(
-        and(
-          eq(workItemDeliveries.workItemId, input.workItemId),
-          eq(workItemDeliveries.status, "ENTREGADO"),
-          eq(workItemDeliveries.archived, false)
-        )
-      )
-      .limit(1);
-    if (existingActive) return existingActive;
-
-    const canonical = await loadWorkItemOperationalData(tx, input.workItemId);
-    if (!canonical) throw new Error("Work item no encontrado.");
-
-    const [row] = await tx
-      .insert(workItemDeliveries)
-      .values({
-        workItemId: input.workItemId,
-        qualityItemId: input.qualityItemId ?? null,
-        product: canonical.product,
-        codigo: input.codigo,
-        client: canonical.client,
-        lote: canonical.packagingLote,
-        vto: canonical.packagingVto,
-        orderNumber: canonical.orderNumber,
-        packingGroups: canonical.packingGroups,
-        plannedQuantity: canonical.plannedQuantity,
-        finishedQty: canonical.finishedQty,
-        sampleUnits: canonical.sampleUnits,
-        deliverableUnits: canonical.deliverableUnits,
-        bulkRemainderKg: canonical.bulkRemainderKg,
-        bulkRemainderObservation: canonical.bulkRemainderObservation,
-        productionPedidoId: canonical.productionPedidoId,
-        pedidoOp: canonical.pedidoOp,
-        sourceSector: input.sourceSector,
-        // Cantidad "oficial" de la entrega: lo físicamente embalado
-        // (deliverableUnits) cuando hay cierre; si no, la cantidad final
-        // declarada. Nunca la cantidad cruda producida ni un valor del body.
-        quantity:
-          canonical.deliverableUnits != null
-            ? String(canonical.deliverableUnits)
-            : (canonical.finishedQty ?? canonical.plannedQuantity),
-        unit: canonical.unit,
-        plannedDeliveryDate: input.plannedDeliveryDate,
-        actualDeliveredAt: new Date(input.actualDeliveredAt),
-        remito: input.remito,
-        receivedBy: input.receivedBy,
-        observations: input.observations,
-        status: "ENTREGADO",
-        deliveredBy: input.deliveredBy,
-        deliveredBySector: input.deliveredBySector,
-      })
-      .returning();
-
-    await tx
-      .update(workItems)
-      .set({
-        operationalStatus: "entregado",
-        progressUpdatedAt: new Date(),
-        progressUpdatedBy: input.deliveredBy,
-        updatedAt: new Date(),
-      })
-      .where(eq(workItems.id, input.workItemId));
-
-    return row;
-  });
+  const result = await db.transaction(async (tx) =>
+    recordDeliveryInTx(tx, {
+      workItemId: input.workItemId,
+      actor,
+      idempotencyKey: input.idempotencyKey,
+      quantity:
+        input.deliverQuantity == null || input.deliverQuantity === ""
+          ? null
+          : Number(String(input.deliverQuantity).replace(",", ".")),
+      codigo: input.codigo,
+      qualityItemId: input.qualityItemId ?? null,
+      plannedDeliveryDate: input.plannedDeliveryDate,
+      actualDeliveredAt: input.actualDeliveredAt,
+      remito: input.remito,
+      receivedBy: input.receivedBy,
+      observations: input.observations,
+      completion: input.completion ?? null,
+    })
+  );
+  // Aviso a Producción FUERA de la transacción: un fallo de la notificación nunca bloquea la entrega.
+  if (result.movement) await emitCircuitNotification(result.movement);
+  return result;
 }
 
 export async function archiveDeliveryDurable(id: string, actorName: string) {
@@ -1692,6 +1606,11 @@ export async function annulDeliveryDurable(id: string, reason: string, actorName
     .returning();
 
   if (row) {
+    // Las líneas de la entrega anulada dejan de contar como unidades entregadas (siguen como historial).
+    await db
+      .update(workItemDeliveryLines)
+      .set({ status: "ANULADA", annulledAt: now, annulledBy: actorName })
+      .where(and(eq(workItemDeliveryLines.deliveryId, row.id), eq(workItemDeliveryLines.status, "ACTIVA")));
     await db
       .update(workItems)
       .set({
@@ -1798,11 +1717,8 @@ export function toClientDeliveryRecord(row: typeof workItemDeliveries.$inferSele
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     deletedBy: row.deletedBy,
     deleteReason: row.deleteReason,
+    // Entregas parciales (0047): quantity acumula lo entregado; si no está completa queda un saldo.
+    deliveryComplete: row.deliveryComplete ?? true,
+    pendingBalance: row.pendingBalance ?? null,
   };
-}
-
-/** Cola de Calidad nativa: work items enviados a revisión, decisión pendiente. */
-export async function listQualityQueueDurable() {
-  const db = getDb();
-  return db.select().from(workItems).where(eq(workItems.operationalStatus, "revision"));
 }
