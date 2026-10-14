@@ -12,6 +12,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
+import nodePath from "node:path";
 import { del, get, head, put } from "@vercel/blob";
 import { generateClientTokenFromReadWriteToken } from "@vercel/blob/client";
 
@@ -413,6 +414,75 @@ class MemoryFileStorage implements FileStorageAdapter {
   }
 }
 
+/**
+ * Solo E2E local (base descartable): archivos en un directorio del runner. Se activa únicamente con
+ * GENUS_E2E_LOCAL_FILE_STORAGE_DIR y NUNCA en Vercel (process.env.VERCEL), donde el disco es temporal.
+ */
+class LocalDiskE2eFileStorage implements FileStorageAdapter {
+  constructor(private readonly dir: string) {}
+
+  private pathFor(storageKey: string): string {
+    return nodePath.join(this.dir, storageKey.replace(/\.\.+/g, "_"));
+  }
+
+  sha256(bytes: Buffer | Uint8Array): string {
+    return sha256Hex(bytes);
+  }
+
+  async put(params: { storageKey: string; bytes: Buffer | Uint8Array; contentType: string; allowOverwrite?: boolean }): Promise<FilePutResult> {
+    const fs = await import("node:fs/promises");
+    const file = this.pathFor(params.storageKey);
+    if (!params.allowOverwrite && (await this.exists(params.storageKey))) {
+      throw new Error(`Blob ya existe: ${params.storageKey}`);
+    }
+    const body = Buffer.isBuffer(params.bytes) ? params.bytes : Buffer.from(params.bytes);
+    await fs.mkdir(nodePath.dirname(file), { recursive: true });
+    await fs.writeFile(file, body);
+    await fs.writeFile(`${file}.ct`, params.contentType);
+    return {
+      provider: STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE,
+      storageKey: params.storageKey,
+      url: `e2e-disk://${params.storageKey}`,
+      sizeBytes: body.length,
+      contentType: params.contentType,
+      sha256: sha256Hex(body),
+    };
+  }
+
+  async get(storageKey: string): Promise<FileGetResult> {
+    const fs = await import("node:fs/promises");
+    const file = this.pathFor(storageKey);
+    const bytes = await fs.readFile(file).catch(() => null);
+    if (!bytes) throw new Error(`Archivo no encontrado (${storageKey}).`);
+    const contentType = await fs.readFile(`${file}.ct`, "utf8").catch(() => null);
+    return { storageKey, bytes, contentType, sizeBytes: bytes.length, sha256: sha256Hex(bytes) };
+  }
+
+  async delete(storageKey: string): Promise<void> {
+    const fs = await import("node:fs/promises");
+    const file = this.pathFor(storageKey);
+    await fs.rm(file, { force: true });
+    await fs.rm(`${file}.ct`, { force: true });
+  }
+
+  async exists(storageKey: string): Promise<boolean> {
+    const fs = await import("node:fs/promises");
+    return fs.stat(this.pathFor(storageKey)).then(() => true, () => false);
+  }
+
+  async metadata(storageKey: string): Promise<FileMetadata | null> {
+    if (!(await this.exists(storageKey))) return null;
+    const got = await this.get(storageKey);
+    return { storageKey, sizeBytes: got.sizeBytes, contentType: got.contentType };
+  }
+}
+
+function e2eLocalStorageDir(): string | null {
+  const dir = process.env.GENUS_E2E_LOCAL_FILE_STORAGE_DIR?.trim();
+  if (!dir || process.env.VERCEL === "1") return null;
+  return dir;
+}
+
 const g = globalThis as unknown as {
   __genusFileStorage?: FileStorageAdapter;
   __genusMemFileStorage?: MemoryFileStorage;
@@ -422,6 +492,11 @@ export function getFileStorage(): FileStorageAdapter {
   if (process.env.VITEST === "true" || process.env.NODE_ENV === "test") {
     if (!g.__genusMemFileStorage) g.__genusMemFileStorage = new MemoryFileStorage();
     return g.__genusMemFileStorage;
+  }
+  const e2eDir = e2eLocalStorageDir();
+  if (e2eDir) {
+    if (!g.__genusFileStorage) g.__genusFileStorage = new LocalDiskE2eFileStorage(e2eDir);
+    return g.__genusFileStorage;
   }
   if (!isPrivateFileStorageConfigured()) {
     throw new Error(FILE_STORAGE_NOT_CONFIGURED);

@@ -239,3 +239,13 @@ export const OA_DELETE_SECTORS: readonly SectorId[] = ["CALIDAD", "PRODUCCION", 
 export function canDeleteOa(sectorId: SectorId | null | undefined): boolean {
   return Boolean(sectorId) && OA_DELETE_SECTORS.includes(sectorId as SectorId);
 }
+
+/**
+ * Sectores autorizados a eliminar una OE en CUALQUIER estado (soft-delete con motivo, ver deleteOe() en
+ * orders-service.ts). Mismo criterio que OA: fuera de canOrderAction a propósito.
+ */
+export const OE_DELETE_SECTORS: readonly SectorId[] = ["PRODUCCION", "DIRECCION"];
+
+export function canDeleteOe(sectorId: SectorId | null | undefined): boolean {
+  return Boolean(sectorId) && OE_DELETE_SECTORS.includes(sectorId as SectorId);
+}

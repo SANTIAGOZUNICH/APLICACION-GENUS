@@ -65,6 +65,8 @@ import {
 import { SortSelect } from "@/features/os/operational/components/sort-select";
 import { useInventoryCellEditing } from "@/features/os/operational/hooks/use-inventory-cells";
 import { useMpSheetEditing } from "@/features/os/operational/hooks/use-mp-sheet-cells";
+import { IngresoRemitoFotosButton, useIngresoAdjuntoCounts } from "@/features/os/operational/components/ingreso-remito-fotos";
+import { canManageAdjuntos, canViewAdjuntos } from "@/lib/inventory/ingreso-adjuntos-rules";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import {
   applySort,
@@ -235,6 +237,9 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   const { showToast } = usePreviewContext();
   const [tab, setTab] = useState<MpHubTab>(initialTab);
   const canWrite = canWriteInventory(sectorId, TAB_TO_RESOURCE[tab]);
+  // Fotos del remito por ingreso (tabla aparte: editar el ingreso no las pierde).
+  const fotos = useIngresoAdjuntoCounts("MP", tab === "Ingresos MP" && canViewAdjuntos(sectorId, "MP"));
+  const canManageFotos = canManageAdjuntos(sectorId, "MP");
   const [banner, setBanner] = useState<string | null>(null);
   const [persistence, setPersistence] = useState(true);
   const [schemaPending0005, setSchemaPending0005] = useState(false);
@@ -741,6 +746,13 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           ((r.total != null && r.total > 0) || (r.cantidad != null && r.cantidad > 0));
         return (
           <div className="os-row-actions">
+            <IngresoRemitoFotosButton
+              module="MP"
+              ingresoId={r.id}
+              label={`Ingreso ${r.ingresoNro || "s/n"} · Remito ${r.remitoNro || "s/n"} · ${r.proveedor || r.descripcion || ""}`}
+              canManage={canManageFotos}
+              onChanged={fotos.reload}
+            />
             <MpIngresoCrearEtiquetaButton
               row={r}
               onToast={(msg) => showToast(msg)}
@@ -1323,6 +1335,15 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
                 <span />
               )}
               <div className="flex gap-2">
+                {tab === "Ingresos MP" && formDraft.id ? (
+                  <IngresoRemitoFotosButton
+                    module="MP"
+                    ingresoId={formDraft.id}
+                    label={`Ingreso ${formDraft.ingresoNro || "s/n"} · Remito ${formDraft.remitoNro || "s/n"}`}
+                    canManage={canManageFotos}
+                    onChanged={fotos.reload}
+                  />
+                ) : null}
                 <Button type="button" variant="secondary" onClick={() => setFormOpen(false)}>
                   Cancelar
                 </Button>

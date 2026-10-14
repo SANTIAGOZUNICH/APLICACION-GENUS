@@ -10,11 +10,9 @@ import {
 } from "./lifecycle-actions-menu";
 import { LifecycleConfirmDialog } from "./lifecycle-confirm-dialog";
 
-// "eliminar_definitivo" (Eliminar OA, sin restricciones para Calidad/
-// Producción/Dirección) va primero: cuando está presente, reemplaza al
-// "Eliminar borrador" acotado como botón primario — Calidad ya no necesita
-// abrir el menú "⋮" para eliminar una OA no vacía. Solo aparece para OA con
-// canDeleteOa(sector), así que no cambia nada para OE ni para otros sectores.
+// "eliminar_definitivo" (Eliminar OA para Calidad/Producción/Dirección; Eliminar OE para Producción/Dirección,
+// en cualquier estado) va primero: cuando está presente, reemplaza al "Eliminar borrador" acotado como botón
+// primario, sin abrir el menú "⋮". Solo aparece con canDeleteOa / canDeleteOe del sector.
 const DELETE_ACTIONS: LifecycleAction[] = [
   "eliminar_definitivo",
   "eliminar",
