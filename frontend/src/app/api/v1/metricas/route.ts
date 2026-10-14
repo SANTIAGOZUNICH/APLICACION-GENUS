@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getMetricasService } from "@/lib/metricas/metricas-service";
-import { canAccessMetricas } from "@/lib/metricas/types";
+import { canAccessMetricas, MetricsConflictError } from "@/lib/metricas/types";
 import type { MetricsListFilters } from "@/lib/metricas/types";
 import {
   isProcedureMetricsSchemaReady,
@@ -17,6 +17,9 @@ export const dynamic = "force-dynamic";
 function errorResponse(err: unknown) {
   if (err instanceof ProcedureMetricsSchemaPendingError) {
     return NextResponse.json(procedureMetricsSchemaPendingResponse(), { status: 503 });
+  }
+  if (err instanceof MetricsConflictError) {
+    return NextResponse.json({ error: err.message, code: err.code }, { status: 409 });
   }
   return ordersErrorResponse(err);
 }
@@ -78,6 +81,11 @@ export async function POST(request: Request) {
       units?: number;
       responsibleDisplay?: string;
       targetSector?: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM" | null;
+      expectedUpdatedAt?: string;
+      via?: "form" | "grid";
+      rows?: unknown[];
+      batchId?: string;
+      overwrite?: Record<string, string>;
     };
     const svc = getMetricasService();
     const a = { email: actor.email, sector: actor.sector };
@@ -98,8 +106,22 @@ export async function POST(request: Request) {
         product: body.product,
         units: body.units,
         responsibleDisplay: body.responsibleDisplay,
+        expectedUpdatedAt: body.expectedUpdatedAt,
+        via: body.via === "grid" ? "grid" : "form",
       });
       return NextResponse.json({ metric });
+    }
+    if (body.action === "import_preview") {
+      const rows = await svc.importPreview(a, body.rows ?? []);
+      return NextResponse.json({ rows });
+    }
+    if (body.action === "import_commit") {
+      const result = await svc.importCommit(a, {
+        batchId: String(body.batchId ?? ""),
+        rows: body.rows ?? [],
+        overwrite: body.overwrite,
+      });
+      return NextResponse.json(result);
     }
     if (body.action === "delete" && body.id) {
       await svc.delete(a, body.id);
