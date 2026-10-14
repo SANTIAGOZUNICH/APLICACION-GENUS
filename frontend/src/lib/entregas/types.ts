@@ -15,6 +15,25 @@ export const DELIVERY_SECTOR_LABEL: Record<DeliverySector, string> = {
   ENVASADO_PREMIUM: "Envasado Premium",
 };
 
+/**
+ * Sector de un producto en el calendario. Las entregas PROGRAMADAS a mano solo son de Envasado; las entregas que se
+ * recuperan de los trabajos (histórico/futuro) pueden venir también de Elaboración o Codificado.
+ */
+export type ItemSector = DeliverySector | "ELABORACION" | "CODIFICADO";
+export const ITEM_SECTOR_LABEL: Record<ItemSector, string> = {
+  ...DELIVERY_SECTOR_LABEL,
+  ELABORACION: "Elaboración",
+  CODIFICADO: "Codificado",
+};
+
+/** De dónde sale una aparición en el calendario. */
+export type DeliveryOrigin = "programada_manual" | "desde_trabajo" | "entrega_registrada";
+export const DELIVERY_ORIGIN_LABEL: Record<DeliveryOrigin, string> = {
+  programada_manual: "Programada manual",
+  desde_trabajo: "Desde trabajo",
+  entrega_registrada: "Entrega registrada",
+};
+
 /** Estado de la entrega programada en sí (la cancelación nunca borra: queda como historial). */
 export type ScheduledDeliveryState = "programada" | "cancelada";
 
@@ -23,8 +42,8 @@ export type DeliveryDisplayStatus =
   | "programada"
   | "produccion_pendiente"
   | "produccion_en_proceso"
-  | "produccion_finalizada"
   | "lista_para_entregar"
+  | "entrega_parcial"
   | "entregada"
   | "cancelada";
 
@@ -32,13 +51,27 @@ export const DELIVERY_STATUS_LABEL: Record<DeliveryDisplayStatus, string> = {
   programada: "Entrega programada",
   produccion_pendiente: "Producción pendiente",
   produccion_en_proceso: "Producción en proceso",
-  produccion_finalizada: "Producción finalizada",
   lista_para_entregar: "Lista para entregar",
+  entrega_parcial: "Entrega parcial",
   entregada: "Entregada",
   cancelada: "Cancelada",
 };
 
-/** Dato del trabajo vinculado que alimenta el estado y la comparación (se lee fresco de work_items). */
+/** Una entrega REAL registrada (work_item_deliveries, estado ENTREGADO, no eliminada) de un trabajo. */
+export interface RealDelivery {
+  id: string;
+  /** Fecha real de entrega, día calendario en zona Argentina (yyyy-mm-dd). */
+  date: string;
+  quantity: string | null;
+  unit: string | null;
+  remito: string | null;
+  receivedBy: string | null;
+  lote: string | null;
+  vto: string | null;
+  observations: string | null;
+}
+
+/** Dato del trabajo (vinculado o recuperado) que alimenta el estado y la comparación (se lee fresco de work_items). */
 export interface LinkedWork {
   linkId: string;
   workItemId: string;
@@ -56,10 +89,21 @@ export interface LinkedWork {
   packagingLote: string | null;
   packagingVto: string | null;
   operationalStatus: string;
-  qualityStatus: string;
   finishedQty: string | null;
   orderNumber: string | null;
-  /** true solo si el flujo REAL de entrega (Entregados) registró la entrega de este trabajo. */
+  /** Responsable / línea que ejecuta el trabajo (Cristian, Nicolás, Línea 1…). */
+  responsible: string | null;
+  /** Observaciones del trabajo (nota de asignación y de avance). */
+  notes: string | null;
+  /** Cuándo terminó la PRODUCCIÓN (work_items.completed_at). No es la fecha de entrega al cliente. */
+  completedAt: string | null;
+  /** Entregas REALES registradas (flujo Entregados). La fecha real es la de acá, nunca completedAt. */
+  realDeliveries: RealDelivery[];
+  /** Suma de lo entregado realmente (null si no hay entregas o las cantidades no son numéricas). */
+  deliveredQty: number | null;
+  /** Fecha real de la última entrega registrada. */
+  deliveredAt: string | null;
+  /** true solo si el flujo REAL de entrega (Entregados) registró la entrega COMPLETA de este trabajo (no una parcial). */
   delivered: boolean;
   cancelled: boolean;
   /** Lo programado cuando se vinculó este trabajo (o cuando Producción lo dio por revisado). */
@@ -72,7 +116,7 @@ export interface ScheduledDeliveryItem {
   product: string;
   quantity: string | null;
   unit: string | null;
-  sector: DeliverySector | null;
+  sector: ItemSector | null;
   plannedProductionDate: string | null;
   lot: string | null;
   vto: string | null;
@@ -102,7 +146,12 @@ export interface ScheduledDelivery {
   updatedAt: string;
   items: ScheduledDeliveryItem[];
   status: DeliveryDisplayStatus;
+  /** Programada a mano (editable) o recuperada de los trabajos (solo lectura). Ausente = programada manual. */
+  origin?: DeliveryOrigin;
 }
+
+/** Aparición recuperada de los trabajos (no existe en scheduled_deliveries): solo lectura. */
+export const isDerivedDelivery = (d: Pick<ScheduledDelivery, "origin">): boolean => d.origin === "desde_trabajo" || d.origin === "entrega_registrada";
 
 export interface DeliveryHistoryEntry {
   id: string;
@@ -158,6 +207,28 @@ export function canViewEntregas(sector: SectorId | string): boolean {
 /** Sector al que se recortan los productos visibles (null = ve todos). */
 export function entregasVisibleSector(sector: SectorId | string): DeliverySector | null {
   return sector === "ENVASADO_MASIVO" || sector === "ENVASADO_PREMIUM" ? sector : null;
+}
+
+/**
+ * Diagnóstico de solo lectura de lo que el calendario recupera solo de los trabajos (sin carga manual).
+ * «Históricas» = entregas REALES ya hechas; «futuras» = trabajos vigentes con fecha de entrega que todavía no se entregaron.
+ */
+export interface EntregasRecoveryStats {
+  /** Trabajos con entrega real y fecha real: aparecen en el calendario (sueltos o dentro de una entrega programada). */
+  historicas: { total: number; sueltas: number; enEntregaProgramada: number };
+  /** Trabajos vigentes con fecha de entrega (hoy o después) que todavía no se entregaron del todo. */
+  futuras: { total: number; sueltas: number; enEntregaProgramada: number };
+  /** Con fecha de entrega ya vencida y sin entregar: también aparecen (en su fecha), pero se cuentan aparte. */
+  vencidasSinEntregar: number;
+  /** Trabajos que NO se pueden ubicar en el calendario y por qué. */
+  fuera: {
+    /** Marcados como entregados pero sin ninguna entrega real registrada: no hay fecha real que usar (no se inventa). */
+    entregadoSinFechaReal: number;
+    /** Vigentes sin fecha de entrega cargada (no hay fecha que usar). */
+    sinFechaDeEntrega: number;
+    /** Cancelados o eliminados con fecha de entrega y sin entrega real: no son entregas vigentes. */
+    canceladosOEliminados: number;
+  };
 }
 
 export class EntregasConflictError extends Error {

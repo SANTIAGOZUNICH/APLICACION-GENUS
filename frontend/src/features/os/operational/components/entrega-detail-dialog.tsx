@@ -15,10 +15,12 @@ import { fetchWorkItems } from "@/lib/api/operations-client";
 import { clienteRelation, productoRelation } from "@/lib/asignacion-lotes/resolve-for-work-item";
 import { longDateLabel, shortDateLabel } from "@/lib/entregas/calendar";
 import { entregasApi, type DeliveryDetailResponse } from "@/lib/entregas/entregas-client";
-import { coverageOf, MIN_ENTREGAS_REASON } from "@/lib/entregas/rules";
+import { coverageOf, itemQuantities, MIN_ENTREGAS_REASON } from "@/lib/entregas/rules";
 import {
-  DELIVERY_SECTOR_LABEL,
+  DELIVERY_ORIGIN_LABEL,
   DELIVERY_STATUS_LABEL,
+  isDerivedDelivery,
+  ITEM_SECTOR_LABEL,
   type DeliveryDisplayStatus,
   type LinkedWork,
   type ScheduledDelivery,
@@ -32,8 +34,8 @@ const STATUS_STYLE: Record<DeliveryDisplayStatus, string> = {
   programada: "border-slate-400/50 bg-slate-400/10 text-slate-200",
   produccion_pendiente: "border-amber-400/50 bg-amber-400/10 text-amber-200",
   produccion_en_proceso: "border-sky-400/50 bg-sky-400/10 text-sky-200",
-  produccion_finalizada: "border-indigo-400/50 bg-indigo-400/10 text-indigo-200",
   lista_para_entregar: "border-teal-400/60 bg-teal-400/10 text-teal-200",
+  entrega_parcial: "border-indigo-400/50 bg-indigo-400/10 text-indigo-200",
   entregada: "border-emerald-400/60 bg-emerald-400/15 text-emerald-200",
   cancelada: "border-rose-400/50 bg-rose-400/10 text-rose-200",
 };
@@ -63,14 +65,14 @@ const WORK_STATUS_LABEL: Record<string, string> = {
   bloqueado: "Bloqueado",
   completo: "Completo",
   revision: "En revisión",
-  entregado: "Entregado a Calidad",
+  entregado: "Entregado",
   cancelado: "Cancelado",
 };
 
 const Field = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div className="min-w-0">
     <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#8fb3c9]">{label}</div>
-    <div className="break-words text-[13px] font-semibold text-[#e6f0f6]">{children || <span className="font-normal italic text-white/45">Pendiente</span>}</div>
+    <div className="break-words text-[13px] font-semibold text-[#e6f0f6]">{children || <span className="font-normal italic text-white/45" data-testid="entrega-no-registrado">No registrado</span>}</div>
   </div>
 );
 
@@ -97,7 +99,8 @@ export function EntregaDetailDialog({ open, onOpenChange, client, date, deliveri
 
   const loadDetails = useCallback(async () => {
     try {
-      const results = await Promise.all(deliveries.map((d) => entregasApi.detail(d.id)));
+      // Lo recuperado de los trabajos (solo lectura) no tiene detalle propio ni historial de entrega programada.
+      const results = await Promise.all(deliveries.filter((d) => !isDerivedDelivery(d)).map((d) => entregasApi.detail(d.id)));
       setDetails(Object.fromEntries(results.map((r) => [r.delivery.id, r])));
       setLoadError(null);
     } catch (e) {
@@ -153,6 +156,8 @@ function DeliveryCard({ delivery: d, detail, canManage, canApplyToWork, onEdit, 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cancelled = d.state === "cancelada";
+  const derived = isDerivedDelivery(d);
+  const origin = d.origin ?? "programada_manual";
 
   async function run(body: Record<string, unknown>, after?: () => void) {
     if (busy) return;
@@ -177,13 +182,16 @@ function DeliveryCard({ delivery: d, detail, canManage, canApplyToWork, onEdit, 
     <article className={`space-y-3 rounded-xl border p-3.5 ${cancelled ? "border-rose-400/30 bg-[#2a1f2c]" : "border-white/10 bg-[#10304a]"}`} data-testid="entrega-card" data-delivery-id={d.id}>
       <header className="flex flex-wrap items-center gap-2">
         <DeliveryStatusChip status={d.status} />
+        <span className="rounded-full border border-white/20 px-2 py-0.5 text-[11px] font-semibold text-[#cfe0ea]" data-testid="entrega-origin" data-origin={origin}>
+          {DELIVERY_ORIGIN_LABEL[origin]}
+        </span>
         {d.rescheduleCount > 0 && (
           <span className="rounded-full border border-amber-300/40 px-2 py-0.5 text-[11px] font-semibold text-amber-200" data-testid="entrega-reprogramada">
             Reprogramada {d.rescheduleCount} {d.rescheduleCount === 1 ? "vez" : "veces"}
           </span>
         )}
-        <span className="text-xs text-[#8fb3c9]">Fecha de entrega: <b className="text-[#e6f0f6]">{shortDateLabel(d.deliveryDate)}</b></span>
-        {canManage && !cancelled && (
+        <span className="text-xs text-[#8fb3c9]">{origin === "entrega_registrada" ? "Fecha real de entrega" : "Fecha de entrega"}: <b className="text-[#e6f0f6]">{shortDateLabel(d.deliveryDate)}</b></span>
+        {canManage && !cancelled && !derived && (
           <div className="ml-auto flex flex-wrap gap-1.5">
             <Button type="button" size="sm" variant="secondary" onClick={() => onEdit(d)} data-testid="entrega-edit">
               <Pencil className="mr-1 size-3.5" aria-hidden="true" /> Modificar
@@ -242,21 +250,29 @@ function DeliveryCard({ delivery: d, detail, canManage, canApplyToWork, onEdit, 
         <p role="alert" className="text-xs text-[var(--genus-error,#e85d5d)]" data-testid="entrega-card-error">{error}</p>
       )}
 
-      <div className="grid gap-x-4 gap-y-2 sm:grid-cols-3">
-        <Field label="Responsable">{d.responsible}</Field>
-        <div className="sm:col-span-2">
-          <Field label="Observaciones">{d.notes}</Field>
+      {derived ? (
+        <p className="text-xs text-[#8fb3c9]" data-testid="entrega-derived-note">
+          {origin === "entrega_registrada"
+            ? "Entrega real ya registrada en «Entregados». Se muestra en su fecha real de entrega y no se edita desde acá."
+            : "Surge de la fecha de entrega cargada en el trabajo: si se cambia en el trabajo, el calendario se actualiza solo. Para programarla a mano, vinculala desde una entrega programada."}
+        </p>
+      ) : (
+        <div className="grid gap-x-4 gap-y-2 sm:grid-cols-3">
+          <Field label="Responsable">{d.responsible}</Field>
+          <div className="sm:col-span-2">
+            <Field label="Observaciones">{d.notes}</Field>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="space-y-2.5">
         {d.items.length === 0 && <p className="text-sm text-[#8fb3c9]">Sin productos visibles para tu sector.</p>}
         {d.items.map((it) => (
-          <ItemBlock key={it.id} delivery={d} item={it} detail={detail} canManage={canManage && !cancelled} canApplyToWork={canApplyToWork && !cancelled} onChanged={onChanged} />
+          <ItemBlock key={it.id} delivery={d} item={it} detail={detail} canManage={canManage && !cancelled && !derived} canApplyToWork={canApplyToWork && !cancelled && !derived} readOnly={derived} onChanged={onChanged} />
         ))}
       </div>
 
-      {canManage && (
+      {canManage && !derived && (
       <div>
         <button type="button" onClick={() => setPanel(panel === "history" ? null : "history")} className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--os-teal)] hover:underline" aria-expanded={panel === "history"} data-testid="entrega-history-toggle">
           <History className="size-3.5" aria-hidden="true" /> Historial de modificaciones
@@ -289,15 +305,26 @@ function HistoryDetail({ action, payload }: { action: string; payload: Record<st
   return null;
 }
 
-function ItemBlock({ delivery, item, detail, canManage, canApplyToWork, onChanged }: {
+const fmtQty = (n: number | null, unit: string | null) => (n == null ? null : `${n.toLocaleString("es-AR")}${unit ? ` ${unit}` : ""}`);
+const joinUnique = (vals: Array<string | null | undefined>) => [...new Set(vals.map((v) => (v ?? "").trim()).filter(Boolean))].join(" · ");
+
+function ItemBlock({ delivery, item, detail, canManage, canApplyToWork, readOnly, onChanged }: {
   delivery: ScheduledDelivery;
   item: ScheduledDeliveryItem;
   detail?: DeliveryDetailResponse;
   canManage: boolean;
   canApplyToWork: boolean;
+  readOnly?: boolean;
   onChanged: () => Promise<void>;
 }) {
   const [linking, setLinking] = useState(false);
+  const active = item.works.filter((w) => !w.cancelled);
+  const q = itemQuantities(item);
+  const realDates = [...new Set(active.flatMap((w) => [...w.realDeliveries.map((d) => d.date), ...(w.deliveredAt ? [w.deliveredAt] : [])]))].sort();
+  const productionDates = [...new Set(active.map((w) => (w.plannedDate ? `${shortDateLabel(w.plannedDate)}${w.plannedDateTo && w.plannedDateTo !== w.plannedDate ? ` → ${shortDateLabel(w.plannedDateTo)}` : ""}` : item.plannedProductionDate ? shortDateLabel(item.plannedProductionDate) : "")))].filter(Boolean);
+  // En una entrega registrada, la fecha programada es la que tenía el trabajo; en las demás, la de la entrega que la contiene.
+  const workDeliveryDates = [...new Set(active.map((w) => w.deliveryDate).filter((x): x is string => !!x))].sort();
+  const programmedDates = delivery.origin === "entrega_registrada" ? workDeliveryDates : [delivery.deliveryDate];
   return (
     <section className="space-y-2 rounded-lg border border-white/10 bg-black/10 p-3" data-testid="entrega-item" data-item-id={item.id}>
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -307,18 +334,25 @@ function ItemBlock({ delivery, item, detail, canManage, canApplyToWork, onChange
         </div>
         <DeliveryStatusChip status={item.status} />
       </div>
-      <div className="grid gap-x-4 gap-y-2 sm:grid-cols-4">
-        <Field label="Cantidad">{item.quantity ? <span className="text-[15px] font-extrabold text-[#5eead4]">{item.quantity}{item.unit ? ` ${item.unit}` : ""}</span> : null}</Field>
-        <Field label="Sector">{item.sector ? DELIVERY_SECTOR_LABEL[item.sector] : null}</Field>
-        <Field label="Producción planificada">{item.plannedProductionDate ? shortDateLabel(item.plannedProductionDate) : null}</Field>
+      <div className="grid gap-x-4 gap-y-2 sm:grid-cols-4" data-testid="entrega-item-detail">
+        <Field label="Cantidad planificada">{item.quantity ? <span className="text-[15px] font-extrabold text-[#5eead4]">{item.quantity}{item.unit ? ` ${item.unit}` : ""}</span> : fmtQty(q.planned, item.unit)}</Field>
+        <Field label="Producida">{fmtQty(q.produced, item.unit)}</Field>
+        <Field label="Entregada">{fmtQty(q.delivered, item.unit)}</Field>
+        <Field label="Pendiente de entregar">{fmtQty(q.pending, item.unit)}</Field>
         <Field label="Lote">{item.lot}</Field>
         <Field label="Vencimiento">{item.vto}</Field>
-        <div className="sm:col-span-3"><Field label="Observaciones del producto">{item.notes}</Field></div>
+        <Field label="Fecha de producción">{productionDates.join(" · ") || (item.plannedProductionDate ? shortDateLabel(item.plannedProductionDate) : null)}</Field>
+        <Field label="Fecha de entrega programada">{programmedDates.map(shortDateLabel).join(" · ")}</Field>
+        <Field label="Fecha real de entrega">{realDates.length ? <span data-testid="entrega-fecha-real">{realDates.map(shortDateLabel).join(" · ")}</span> : null}</Field>
+        <Field label="Sector">{item.sector ? ITEM_SECTOR_LABEL[item.sector] : null}</Field>
+        <Field label="Responsable">{joinUnique(active.map((w) => w.responsible))}</Field>
+        <Field label="N° de orden">{joinUnique(active.map((w) => w.orderNumber))}</Field>
+        <div className="sm:col-span-4"><Field label="Observaciones">{joinUnique([item.notes, ...active.map((w) => w.notes)])}</Field></div>
       </div>
 
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#8fb3c9]">Trabajos vinculados ({item.works.filter((w) => !w.cancelled).length})</span>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#8fb3c9]">{readOnly ? "Trabajo original" : `Trabajos vinculados (${item.works.filter((w) => !w.cancelled).length})`}</span>
           {canManage && (
             <button type="button" onClick={() => setLinking((v) => !v)} className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--os-teal)] hover:underline" data-testid="entrega-link-open">
               <Link2 className="size-3.5" aria-hidden="true" /> Vincular trabajo existente
@@ -388,10 +422,12 @@ function WorkRow({ work: w, divergences, deliveryId, canManage, canApplyToWork, 
   return (
     <div className={`space-y-1.5 rounded-md border px-2.5 py-2 text-xs ${w.cancelled ? "border-white/10 opacity-60" : "border-[var(--os-teal)]/30 bg-[var(--os-teal)]/5"}`} data-testid="entrega-work" data-work-id={w.workItemId}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <b className="text-[13px] text-white">{DELIVERY_SECTOR_LABEL[w.sector as keyof typeof DELIVERY_SECTOR_LABEL] ?? w.sector}{w.line ? ` · ${w.line}` : ""}</b>
+        <b className="text-[13px] text-white">{ITEM_SECTOR_LABEL[w.sector as keyof typeof ITEM_SECTOR_LABEL] ?? w.sector}{w.line ? ` · ${w.line}` : ""}</b>
         <span>Producción: {w.plannedDate ? shortDateLabel(w.plannedDate) : "—"}{w.plannedDateTo && w.plannedDateTo !== w.plannedDate ? ` → ${shortDateLabel(w.plannedDateTo)}` : ""}</span>
         <span>Cantidad: {w.plannedQuantity ?? "—"} {w.unit ?? ""}</span>
-        <span>Estado: {w.delivered ? "Entregado al cliente" : w.cancelled ? "Cancelado" : WORK_STATUS_LABEL[w.operationalStatus] ?? w.operationalStatus}{w.qualityStatus === "aprobado" ? " · Calidad aprobó" : ""}</span>
+        <span>Estado: {w.delivered ? "Entregado al cliente" : w.cancelled ? "Cancelado" : WORK_STATUS_LABEL[w.operationalStatus] ?? w.operationalStatus}</span>
+        {w.completedAt && <span data-testid="entrega-work-completed">Producción finalizada: {shortDateLabel(w.completedAt)}</span>}
+        {w.deliveredAt && <span data-testid="entrega-work-delivered-at">Entregado el {shortDateLabel(w.deliveredAt)}</span>}
         {w.orderNumber && <span data-testid="entrega-work-oa">OA/OE: <b>{w.orderNumber}</b></span>}
         {w.packagingLote && <span>Lote {w.packagingLote}</span>}
         <span className="ml-auto flex gap-2">

@@ -16,8 +16,8 @@ import { EntregaFormDialog } from "../components/entrega-form-dialog";
 import { EntregaDetailDialog } from "../components/entrega-detail-dialog";
 import { gridRange, longDateLabel, monthGrid, monthLabel, shiftMonth, WEEKDAYS_ES } from "@/lib/entregas/calendar";
 import { entregasApi } from "@/lib/entregas/entregas-client";
-import { groupDeliveriesByClient } from "@/lib/entregas/rules";
-import { canManageEntregas, canViewEntregas, type ScheduledDelivery } from "@/lib/entregas/types";
+import { clientKey, groupDeliveriesByClient } from "@/lib/entregas/rules";
+import { canManageEntregas, canViewEntregas, type EntregasRecoveryStats, type ScheduledDelivery } from "@/lib/entregas/types";
 import { friendlySaveError } from "@/lib/ui/friendly-error";
 
 const todayIso = () => {
@@ -40,6 +40,7 @@ export function EntregasView() {
   const [selectedDay, setSelectedDay] = useState<string>(today);
   const [open, setOpen] = useState<{ client: string; date: string } | null>(null);
   const [form, setForm] = useState<{ initial: ScheduledDelivery | null } | null>(null);
+  const [stats, setStats] = useState<EntregasRecoveryStats | null>(null);
 
   const range = useMemo(() => gridRange(year, month), [year, month]);
   const weeks = useMemo(() => monthGrid(year, month), [year, month]);
@@ -61,6 +62,23 @@ export function EntregasView() {
     void reload();
   }, [reload]);
 
+  // Diagnóstico discreto («N históricas · M futuras»): si no se puede calcular, simplemente no se muestra.
+  const reloadStats = useCallback(async () => {
+    if (!allowed) return;
+    try {
+      setStats(await entregasApi.recovery());
+    } catch {
+      setStats(null);
+    }
+  }, [allowed]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void reloadStats();
+  }, [reloadStats]);
+  const reloadAll = useCallback(async () => {
+    await Promise.all([reload(), reloadStats()]);
+  }, [reload, reloadStats]);
+
   const byDate = useMemo(() => {
     const map = new Map<string, ScheduledDelivery[]>();
     for (const d of deliveries) map.set(d.deliveryDate, [...(map.get(d.deliveryDate) ?? []), d]);
@@ -68,7 +86,7 @@ export function EntregasView() {
   }, [deliveries]);
 
   // La tarjeta abierta se refresca sola con los datos nuevos (tras reprogramar, vincular, etc.).
-  const openDeliveries = open ? (byDate.get(open.date) ?? []).filter((d) => d.client.trim().toLowerCase() === open.client.trim().toLowerCase()) : [];
+  const openDeliveries = open ? (byDate.get(open.date) ?? []).filter((d) => clientKey(d.client) === clientKey(open.client)) : [];
   const clientNames = useMemo(() => deliveries.map((d) => d.client), [deliveries]);
 
   if (!allowed) {
@@ -162,7 +180,7 @@ export function EntregasView() {
                     {/* Escritorio/tablet: SOLO el nombre del cliente (una vez por cliente y día). */}
                     <div className="hidden flex-col gap-1 sm:flex">
                       {groups.slice(0, CELL_VISIBLE).map((g) => (
-                        <ClientChip key={g.client} name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} onOpen={() => openClient(g.client, day.iso)} />
+                        <ClientChip key={g.client} name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} onOpen={() => openClient(g.client, day.iso)} />
                       ))}
                       {groups.length > CELL_VISIBLE && (
                         <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedDay(day.iso); }} className="text-left text-[11px] font-semibold text-[var(--os-teal)] hover:underline" data-testid="entregas-more">
@@ -192,11 +210,13 @@ export function EntregasView() {
           ) : (
             <div className="flex flex-wrap gap-2">
               {selectedClients.map((g) => (
-                <ClientChip key={g.client} name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} onOpen={() => openClient(g.client, selectedDay)} large />
+                <ClientChip key={g.client} name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} onOpen={() => openClient(g.client, selectedDay)} large />
               ))}
             </div>
           )}
         </section>
+
+        {stats && <RecoveryFooter stats={stats} />}
       </div>
 
       {open && openDeliveries.length > 0 && (
@@ -209,7 +229,7 @@ export function EntregasView() {
           canManage={canManage}
           canApplyToWork={sectorId === "PRODUCCION"}
           onEdit={(d) => setForm({ initial: d })}
-          onChanged={reload}
+          onChanged={reloadAll}
         />
       )}
       {open && openDeliveries.length === 0 && !loading && <ClosedNotice onClose={() => setOpen(null)} />}
@@ -224,7 +244,7 @@ export function EntregasView() {
             // Salta al mes y día de la entrega guardada para que se vea de inmediato.
             setYm({ year: Number(saved.deliveryDate.slice(0, 4)), month: Number(saved.deliveryDate.slice(5, 7)) });
             setSelectedDay(saved.deliveryDate);
-            await reload();
+            await reloadAll();
           }}
         />
       )}
@@ -232,7 +252,7 @@ export function EntregasView() {
   );
 }
 
-function ClientChip({ name, cancelled, onOpen, large }: { name: string; cancelled: boolean; onOpen: () => void; large?: boolean }) {
+function ClientChip({ name, cancelled, delivered, onOpen, large }: { name: string; cancelled: boolean; delivered?: boolean; onOpen: () => void; large?: boolean }) {
   return (
     <button
       type="button"
@@ -241,12 +261,36 @@ function ClientChip({ name, cancelled, onOpen, large }: { name: string; cancelle
         onOpen();
       }}
       title={cancelled ? `${name} (cancelada)` : name}
-      className={`max-w-full truncate rounded-md border px-1.5 py-0.5 text-left font-semibold transition hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--os-teal)] ${large ? "px-3 py-1.5 text-sm" : "text-[11px]"} ${cancelled ? "border-rose-400/40 bg-rose-400/10 text-rose-200 line-through" : "border-[var(--os-teal)]/50 bg-[var(--os-teal)]/15 text-[var(--os-text)]"}`}
+      className={`max-w-full truncate rounded-md border px-1.5 py-0.5 text-left font-semibold transition hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--os-teal)] ${large ? "px-3 py-1.5 text-sm" : "text-[11px]"} ${cancelled ? "border-rose-400/40 bg-rose-400/10 text-rose-200 line-through" : delivered ? "border-emerald-400/40 bg-emerald-400/10 text-[var(--os-text)]" : "border-[var(--os-teal)]/50 bg-[var(--os-teal)]/15 text-[var(--os-text)]"}`}
       data-testid="entregas-client"
       data-client={name}
+      data-delivered={delivered ? "1" : undefined}
     >
       {name}
     </button>
+  );
+}
+
+/** Pie discreto: lo que el calendario recuperó solo de los trabajos y lo que quedó afuera (con el motivo). */
+function RecoveryFooter({ stats }: { stats: EntregasRecoveryStats }) {
+  const out = stats.fuera;
+  const reasons = [
+    out.entregadoSinFechaReal > 0 && `${out.entregadoSinFechaReal} entregado(s) sin fecha real de entrega registrada`,
+    out.sinFechaDeEntrega > 0 && `${out.sinFechaDeEntrega} vigente(s) sin fecha de entrega cargada`,
+    out.canceladosOEliminados > 0 && `${out.canceladosOEliminados} cancelado(s) o eliminado(s)`,
+  ].filter(Boolean) as string[];
+  return (
+    <details className="text-xs text-[var(--os-text-muted)]" data-testid="entregas-recovery">
+      <summary className="cursor-pointer select-none" data-testid="entregas-recovery-summary">
+        {stats.historicas.total} históricas · {stats.futuras.total} futuras
+      </summary>
+      <ul className="mt-1 list-disc space-y-0.5 pl-5" data-testid="entregas-recovery-detail">
+        <li>Históricas: trabajos con entrega real, ubicados en su fecha real de entrega ({stats.historicas.sueltas} sueltas, {stats.historicas.enEntregaProgramada} dentro de una entrega programada).</li>
+        <li>Futuras: trabajos vigentes con fecha de entrega, que se recuperan solos de los trabajos ({stats.futuras.sueltas} sin cargar a mano, {stats.futuras.enEntregaProgramada} ya en una entrega programada).</li>
+        {stats.vencidasSinEntregar > 0 && <li>{stats.vencidasSinEntregar} con fecha de entrega vencida y sin entregar (se ven en su fecha).</li>}
+        {reasons.length > 0 ? <li>Fuera del calendario: {reasons.join("; ")}. No se inventan fechas.</li> : <li>No quedó ningún trabajo fuera del calendario.</li>}
+      </ul>
+    </details>
   );
 }
 
