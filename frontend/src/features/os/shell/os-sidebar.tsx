@@ -27,6 +27,7 @@ import {
   FolderOpen,
   BarChart3,
   Truck,
+  Gauge,
 } from "lucide-react";
 import type { SidebarItemId } from "@/lib/role-engine/types";
 
@@ -73,6 +74,7 @@ const ICONS = {
   procedimientos: FolderOpen,
   metricas: BarChart3,
   expedicion: Truck,
+  dashboard: Gauge,
 } as const;
 
 export const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
@@ -118,6 +120,7 @@ export const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
   procedimientos: "Procedimientos",
   metricas: "Métricas",
   expedicion: "Expedición",
+  dashboard: "Dashboard",
 };
 
 interface OsSidebarProps {

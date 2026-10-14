@@ -118,6 +118,7 @@ describe("DEPOSITO acceso y navegación", () => {
       "entregas",
       "avisos",
       "semanas_produccion",
+      "dashboard",
       "procedimientos",
       "expedicion",
     ]);
