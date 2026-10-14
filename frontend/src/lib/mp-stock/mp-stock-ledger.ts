@@ -8,7 +8,6 @@ import { isMissingSchemaError } from "@/lib/db/missing-schema";
 import {
   assertFeatureWritesEnabled,
   isFeatureMemoryAllowed,
-  isFeatureSchemaReady,
   SchemaPendingError,
 } from "@/lib/db/feature-schema";
 import { mpStockBalances, mpStockMovements, osNotifications } from "@/lib/db/schema";
@@ -50,6 +49,8 @@ export type MpStockMovement = {
   idempotencyKey: string;
   reversed: boolean;
   createdAt: string;
+  /** Datos extra del movimiento (p. ej. `lotId`: la fila de Stock MP afectada por un consumo de OE). */
+  payload?: Record<string, unknown>;
 };
 
 type Mem = {
@@ -73,28 +74,23 @@ function mem(): Mem {
   return g.__genusMpStockMem;
 }
 
-export function buildOeConsumptionKey(
-  oeId: string,
-  oeVersion: number,
-  codigo: string
-): string {
-  return `${buildOeConsumptionPositionKey(oeId, codigo)}:v${oeVersion}`;
+/**
+ * Posición de consumo de una OE: (código de Stock MP, lote). Los movimientos de una entrega llevan la versión de la
+ * OE (`:v{n}`): un reintento de la MISMA entrega no vuelve a descontar. El separador «|lote:» evita que MP1 se confunda
+ * con MP10 (antes la búsqueda por prefijo los mezclaba).
+ */
+export function buildOePositionId(codigo: string, lote: string | null | undefined): string {
+  return `${normalizeMpCodigo(codigo)}|lote:${String(lote ?? "").trim().replace(/\s+/g, " ").toUpperCase()}`;
 }
 
-/** Clave estable por OE+código (consolidado; sin línea). */
-export function buildOeConsumptionPositionKey(
-  oeId: string,
-  codigo: string
-): string {
-  return `oe-consumo:${oeId}:cod:${codigo.trim().toUpperCase()}`;
+export function buildOeConsumptionKey(oeId: string, oeVersion: number, codigo: string, lote?: string | null): string {
+  return `oe-consumo:${oeId}:cod:${buildOePositionId(codigo, lote)}:v${oeVersion}`;
 }
 
-/** Un solo reverso neto por OE+código (idempotente; no duplica reintegro). */
-export function buildOeNetReverseKey(oeId: string, codigo: string): string {
-  return `oe-reverso-neto:${oeId}:cod:${codigo.trim().toUpperCase()}`;
+export function buildOeReverseKey(oeId: string, oeVersion: number, codigo: string, lote?: string | null): string {
+  return `oe-reverso:${oeId}:cod:${buildOePositionId(codigo, lote)}:v${oeVersion}`;
 }
 
-/** @deprecated mantener compat tests antiguos — preferir clave sin lineId */
 export function buildOeConsumptionKeyLegacy(
   oeId: string,
   oeVersion: number,
@@ -440,10 +436,71 @@ export class MpStockLedgerService {
   }
 
   /**
-   * Consumo OE: solo COMPLETA / COMPLETA_CON_PENDIENTES.
-   * kgReal = kgAPesar + ajuste.
-   * Idempotente: misma OE+línea+código no descuenta dos veces;
-   * re-entrega/corrección aplica únicamente el delta.
+   * Consumo neto que una OE tiene registrado hoy en el libro mayor, por (código, lote): suma de TODOS sus movimientos
+   * (consumos, correcciones y reversos, incluidos los de versiones anteriores de GENUS sin lote). Es la verdad del
+   * saldo, no depende de marcas: así un segundo reverso o una re-entrega nunca descuentan ni devuelven de más.
+   */
+  async oeNetPositions(oeId: string): Promise<Map<string, { codigo: string; lote: string; net: number; lotId: string | null }>> {
+    const out = new Map<string, { codigo: string; lote: string; net: number; lotId: string | null }>();
+    const movs = (await this.listMovementsByRef("oe", oeId)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    for (const m of movs) {
+      if (m.kind !== "CONSUMO_OE" && m.kind !== "REVERSO") continue;
+      const lote = (m.lote ?? "").trim();
+      // Código vigente: si el código se reclasificó (alias), lo consumido con el viejo cuenta en el nuevo.
+      const codigo = await this.resolveCodigo(normalizeMpCodigo(m.codigo));
+      const key = buildOePositionId(codigo, lote);
+      const prev = out.get(key) ?? { codigo, lote, net: 0, lotId: null };
+      prev.net = Math.round((prev.net + m.quantity) * 1000) / 1000;
+      // Fila de Stock MP afectada (para devolver exactamente a la misma fila).
+      const lotId = typeof m.payload?.lotId === "string" ? m.payload.lotId : null;
+      if (lotId) prev.lotId = lotId;
+      out.set(key, prev);
+    }
+    return out;
+  }
+
+  /**
+   * Diferencias a aplicar para que la OE quede con exactamente `targets` consumidos (kg reales por código y lote).
+   * Sin escribir: sirve para validar stock antes de entregar.
+   */
+  async planOeConsumptionDeltas(
+    oeId: string,
+    targets: Array<{ codigo: string; lote: string; kg: number; lotId?: string | null }>
+  ): Promise<Array<{ codigo: string; lote: string; delta: number; net: number; lotId: string | null }>> {
+    const wanted = new Map<string, { codigo: string; lote: string; qty: number; lotId: string | null }>();
+    for (const t of targets) {
+      const codigo = await this.resolveCodigo(normalizeMpCodigo(t.codigo));
+      const key = buildOePositionId(codigo, t.lote);
+      const prev = wanted.get(key);
+      const qty = -Math.abs(t.kg);
+      wanted.set(
+        key,
+        prev
+          ? { ...prev, qty: Math.round((prev.qty + qty) * 1000) / 1000 }
+          : { codigo, lote: t.lote.trim(), qty, lotId: t.lotId ?? null }
+      );
+    }
+    const net = await this.oeNetPositions(oeId);
+    const keys = new Set([...wanted.keys(), ...net.keys()]);
+    const out: Array<{ codigo: string; lote: string; delta: number; net: number; lotId: string | null }> = [];
+    for (const key of keys) {
+      const w = wanted.get(key);
+      const n = net.get(key);
+      const target = w?.qty ?? 0;
+      const current = n?.net ?? 0;
+      const delta = Math.round((target - current) * 1000) / 1000;
+      if (delta === 0) continue;
+      out.push({ codigo: (w ?? n)!.codigo, lote: (w ?? n)!.lote, delta, net: current, lotId: n?.lotId ?? w?.lotId ?? null });
+    }
+    return out.sort((a, b) => (a.codigo + a.lote).localeCompare(b.codigo + b.lote));
+  }
+
+  /**
+   * Consumo de una OE entregada: deja registrados exactamente los kg REALES por (código, lote).
+   *  - primera entrega: un movimiento CONSUMO_OE por código y lote (las filas repetidas ya vienen sumadas);
+   *  - re-entrega tras una devolución/corrección: solo la diferencia contra lo ya registrado;
+   *  - reintento de la misma entrega (misma versión): no vuelve a descontar (clave idempotente).
+   * Si hay una transacción ambiente (entrega de OE), todo se confirma o se descarta junto.
    */
   async applyOeConsumption(
     actor: MpStockActor,
@@ -451,161 +508,72 @@ export class MpStockLedgerService {
       oeId: string;
       oeVersion: number;
       oeStatus: string;
-      lines: Array<{
-        lineId: string;
-        codigo: string;
-        kgReal: number;
-      }>;
+      lines: Array<{ codigo: string; lote: string; kg: number; lotId?: string | null }>;
       allowNegative?: boolean;
+      orderNumber?: string;
     }
-  ): Promise<{ applied: number; skippedNoCode: number; warnings: string[] }> {
-    if (
-      params.oeStatus !== "COMPLETA" &&
-      params.oeStatus !== "COMPLETA_CON_PENDIENTES"
-    ) {
-      return { applied: 0, skippedNoCode: 0, warnings: [] };
-    }
+  ): Promise<Array<{ codigo: string; lote: string; delta: number; lotId: string | null }>> {
+    if (params.oeStatus !== "COMPLETA" && params.oeStatus !== "COMPLETA_CON_PENDIENTES") return [];
     await assertFeatureWritesEnabled();
-    let applied = 0;
-    let skippedNoCode = 0;
-    const warnings: string[] = [];
-
-    // Consolidar por código (suma kg reales de líneas repetidas).
-    const byCode = new Map<string, { kgReal: number; lineIds: string[] }>();
-    for (const line of params.lines) {
-      const code = normalizeMpCodigo(line.codigo);
-      if (!code) {
-        skippedNoCode += 1;
-        warnings.push("Sin código — stock no actualizado");
-        await notify({
-          kind: "oe_mp_sin_codigo",
-          title: "OE con MP sin código",
-          message: `OE ${params.oeId}: línea sin código — stock no actualizado`,
-          sectors: ["MATERIA_PRIMA"],
-          href: "/ordenes-elaboracion",
-          idempotencyHint: `oe-sin-cod:${params.oeId}:${line.lineId}`,
-        });
-        continue;
-      }
-      const prev = byCode.get(code);
-      if (prev) {
-        prev.kgReal += Math.abs(line.kgReal);
-        prev.lineIds.push(line.lineId);
-      } else {
-        byCode.set(code, {
-          kgReal: Math.abs(line.kgReal),
-          lineIds: [line.lineId],
-        });
-      }
-    }
-
-    for (const [code, agg] of byCode) {
-      const positionKey = buildOeConsumptionPositionKey(params.oeId, code);
-      const related = await this.listMovementsByPositionPrefix(positionKey);
-      const netQty = related
-        .filter((m) => !m.reversed)
-        .reduce((s, m) => s + m.quantity, 0);
-      const targetQty = -agg.kgReal;
-      const delta = Math.round((targetQty - netQty) * 1000) / 1000;
-      if (delta === 0) continue;
-
-      const applyKey = buildOeConsumptionKey(params.oeId, params.oeVersion, code);
-      const already = await this.findByIdempotency(applyKey);
-      if (already && !already.reversed) continue;
-
+    const deltas = await this.planOeConsumptionDeltas(params.oeId, params.lines);
+    const applied: Array<{ codigo: string; lote: string; delta: number; lotId: string | null }> = [];
+    for (const d of deltas) {
+      const key = buildOeConsumptionKey(params.oeId, params.oeVersion, d.codigo, d.lote);
+      if (await this.findByIdempotency(key)) continue;
       await this.applyMovement(actor, {
-        codigo: code,
+        codigo: d.codigo,
         kind: "CONSUMO_OE",
-        quantity: delta,
+        quantity: d.delta,
         reason:
-          netQty === 0
-            ? `Consumo OE consolidado (kg real)${agg.lineIds.length > 1 ? ` · ${agg.lineIds.length} líneas` : ""}`
-            : "Corrección consumo OE (delta)",
-        idempotencyKey: applyKey,
+          d.net === 0
+            ? `Consumo ${params.orderNumber ?? "OE"} (kg real)${d.lote ? ` · lote ${d.lote}` : ""}`
+            : `Corrección consumo ${params.orderNumber ?? "OE"} (diferencia)${d.lote ? ` · lote ${d.lote}` : ""}`,
+        idempotencyKey: key,
         refType: "oe",
         refId: params.oeId,
+        lote: d.lote || undefined,
         allowNegative: params.allowNegative,
+        noAlias: true,
+        payload: d.lotId ? { lotId: d.lotId } : undefined,
       });
-      applied += 1;
+      applied.push({ codigo: d.codigo, lote: d.lote, delta: d.delta, lotId: d.lotId });
     }
-    return { applied, skippedNoCode, warnings };
+    return applied;
   }
 
   /**
-   * Revierte el consumo OE: un solo movimiento compensatorio por código
-   * con los kg reales netos consumidos. Idempotente — no duplica reintegro.
-   * Tras el reverso, un nuevo applyOeConsumption (reabrir/redeliver) vuelve a descontar.
+   * Revierte TODO el consumo registrado de una OE (devolución para corrección o anulación): deja cada (código, lote)
+   * en cero con un movimiento REVERSO por la diferencia. Idempotente por versión de la OE, y correcto en ciclos
+   * entregar → anular → reabrir → entregar → anular (cada reverso devuelve lo que realmente estaba descontado).
    */
   async reverseOeConsumption(
     actor: MpStockActor,
     oeId: string,
-    _oeVersion?: number
-  ): Promise<number> {
+    oeVersion: number,
+    orderNumber?: string
+  ): Promise<Array<{ codigo: string; lote: string; delta: number; lotId: string | null }>> {
     await assertFeatureWritesEnabled();
-    const all = await this.listMovementsByRef("oe", oeId);
-    const byCode = new Map<string, { net: number; keys: string[] }>();
-
-    for (const m of all) {
-      if (m.kind === "REVERSO") continue;
-      if (!m.idempotencyKey.startsWith(`oe-consumo:${oeId}:`)) continue;
-      if (m.reversed) continue;
-      const code = m.codigo.trim().toUpperCase();
-      if (!code) continue;
-      const agg = byCode.get(code) ?? { net: 0, keys: [] };
-      agg.net = Math.round((agg.net + m.quantity) * 1000) / 1000;
-      agg.keys.push(m.idempotencyKey);
-      byCode.set(code, agg);
-    }
-
-    let n = 0;
-    for (const [code, agg] of byCode) {
-      if (agg.net === 0) {
-        for (const key of agg.keys) await this.markMovementReversed(key);
-        continue;
-      }
-
-      const reverseKey = buildOeNetReverseKey(oeId, code);
-      const existing = await this.findByIdempotency(reverseKey);
-      if (existing && !existing.reversed) {
-        for (const key of agg.keys) await this.markMovementReversed(key);
-        continue;
-      }
-
-      // Consumo neto es negativo; reintegro = -net (kg reales).
-      const reverseQty = Math.round(-agg.net * 1000) / 1000;
+    const deltas = await this.planOeConsumptionDeltas(oeId, []);
+    const applied: Array<{ codigo: string; lote: string; delta: number; lotId: string | null }> = [];
+    for (const d of deltas) {
+      const key = buildOeReverseKey(oeId, oeVersion, d.codigo, d.lote);
+      if (await this.findByIdempotency(key)) continue;
       await this.applyMovement(actor, {
-        codigo: code,
+        codigo: d.codigo,
         kind: "REVERSO",
-        quantity: reverseQty,
-        reason: "Reverso consumo OE (anular) — consolidado por código (kg real)",
-        idempotencyKey: reverseKey,
+        quantity: d.delta,
+        reason: `Reverso consumo ${orderNumber ?? "OE"} (kg reales)${d.lote ? ` · lote ${d.lote}` : ""}`,
+        idempotencyKey: key,
         refType: "oe",
         refId: oeId,
-        reverseOfKey: agg.keys[0],
+        lote: d.lote || undefined,
         allowNegative: true,
+        noAlias: true,
+        payload: d.lotId ? { lotId: d.lotId } : undefined,
       });
-      for (const key of agg.keys.slice(1)) {
-        await this.markMovementReversed(key);
-      }
-      n += 1;
+      applied.push({ codigo: d.codigo, lote: d.lote, delta: d.delta, lotId: d.lotId });
     }
-    return n;
-  }
-
-  private async markMovementReversed(idempotencyKey: string): Promise<void> {
-    if (isDatabaseConfigured()) {
-      try {
-        const db = currentTx() ?? getDb();
-        await db
-          .update(mpStockMovements)
-          .set({ reversed: true })
-          .where(eq(mpStockMovements.idempotencyKey, idempotencyKey));
-      } catch {
-        /* memory fallback below */
-      }
-    }
-    const orig = mem().movements.find((m) => m.idempotencyKey === idempotencyKey);
-    if (orig) orig.reversed = true;
+    return applied;
   }
 
   async registerAjuste(
@@ -667,42 +635,6 @@ export class MpStockLedgerService {
     });
   }
 
-  private async listMovementsByPositionPrefix(
-    positionKey: string
-  ): Promise<MpStockMovement[]> {
-    if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
-      try {
-        const db = currentTx() ?? getDb();
-        const rows = await db
-          .select()
-          .from(mpStockMovements)
-          .where(sql`${mpStockMovements.idempotencyKey} like ${`${positionKey}%`}`);
-        return rows.map((r) => ({
-          id: r.id,
-          codigo: r.codigo,
-          kind: r.kind as MpStockMovementKind,
-          quantity: r.quantity,
-          balanceAfter: r.balanceAfter,
-          reason: r.reason,
-          refType: r.refType,
-          refId: r.refId,
-          lote: r.lote,
-          proveedor: r.proveedor,
-          documento: r.documento,
-          actorEmail: r.actorEmail,
-            actorSector: r.actorSector,
-            idempotencyKey: r.idempotencyKey,
-            reversed: r.reversed,
-            createdAt: r.createdAt.toISOString(),
-          }));
-      } catch {
-        /* fallthrough */
-      }
-    }
-    if (!isFeatureMemoryAllowed()) return [];
-    return mem().movements.filter((m) => m.idempotencyKey.startsWith(positionKey));
-  }
-
   private async listMovementsByRef(
     refType: string,
     refId: string
@@ -736,6 +668,7 @@ export class MpStockLedgerService {
           idempotencyKey: r.idempotencyKey,
           reversed: r.reversed,
           createdAt: r.createdAt.toISOString(),
+          payload: (r.payload ?? {}) as Record<string, unknown>,
         }));
       } catch {
         /* mem */
@@ -801,6 +734,7 @@ export class MpStockLedgerService {
       reverseOfKey?: string;
       /** Usar el código tal cual (reclasificación); por defecto un código reclasificado se resuelve al vigente. */
       noAlias?: boolean;
+      payload?: Record<string, unknown>;
     }
   ): Promise<MpStockBalance> {
     await assertFeatureWritesEnabled();
@@ -918,7 +852,7 @@ export class MpStockLedgerService {
         actorSector: actor.sector,
         idempotencyKey: input.idempotencyKey,
         reversed: false,
-        payload: {},
+        payload: input.payload ?? {},
       });
       if (input.reverseOfKey) {
         await tx.update(mpStockMovements).set({ reversed: true }).where(eq(mpStockMovements.idempotencyKey, input.reverseOfKey));
@@ -992,6 +926,7 @@ export class MpStockLedgerService {
       idempotencyKey: input.idempotencyKey,
       reversed: false,
       createdAt: new Date().toISOString(),
+      payload: input.payload ?? {},
     };
     const nextBal: MpStockBalance = {
       ...bal,

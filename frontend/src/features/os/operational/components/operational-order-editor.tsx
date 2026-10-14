@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { canOrderAction } from "@/lib/orders/rbac";
+import { canAuthorizeOeMpShortage, canOrderAction } from "@/lib/orders/rbac";
 import {
   emptyOeMaterial,
   emptyOaMaterial,
@@ -62,7 +62,6 @@ import { normalizeSearchKey } from "@/lib/formulas/types";
 import { OaFormSections, renumberOaMaterials } from "./oa-form-sections";
 import { OaSimpleWizard } from "./oa-simple-wizard";
 import { LegalOrderPreview } from "./legal-order-preview";
-import { ajusteSinMotivo } from "@/features/os/operational/lib/oe-entrega";
 import { friendlySaveError } from "@/lib/ui/friendly-error";
 import {
   initOaSimpleFormFromLegal,
@@ -130,6 +129,13 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const [meShortageOpen, setMeShortageOpen] = useState(false);
   const [meShortageReason, setMeShortageReason] = useState("");
   const [pendingAllowIncomplete, setPendingAllowIncomplete] = useState(false);
+  // OE: consumo de MP — filas a completar, o faltante de stock (con autorización de Producción/Dirección).
+  const [mpIssues, setMpIssues] = useState<Array<{ rowId: string; message: string }>>([]);
+  const [mpShortage, setMpShortage] = useState<{
+    shortages: Array<{ codigo: string; lote: string; disponible: number; requerido: number; faltante: number; tipo: "lote" | "codigo" }>;
+    canAuthorize: boolean;
+  } | null>(null);
+  const [mpShortageReason, setMpShortageReason] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const versionRef = useRef(1);
   const [formulaStatus, setFormulaStatus] = useState<FormulaAutoloadStatus>("idle");
@@ -247,6 +253,9 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const canEditOperational =
     !!order && order.type === "OE" && !locked && canOrderAction("OE", "edit", sectorId);
   const canDeliver = !!order && canOrderAction(order.type, "deliver", sectorId) && !locked;
+  // Producción/Dirección no entregan OE: solo pueden confirmarla autorizando un faltante de MP (con motivo).
+  const canAuthorizeMpShortage =
+    !!order && order.type === "OE" && !locked && !canDeliver && canAuthorizeOeMpShortage(sectorId);
   const canMaster =
     !!order &&
     (canOrderAction(order.type, "save_as_master", sectorId) ||
@@ -501,11 +510,6 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         if (!prev || !canEditRef.current) return prev;
         const next = normalizeOrderContent(updater(prev));
         if (debounceRef.current) clearTimeout(debounceRef.current);
-        // Ajuste ≠ 0 sin motivo: se espera el motivo (antes: «Error al guardar» a los 900 ms, en cada tecla).
-        if (ajusteSinMotivo(next)) {
-          setSaveState("waiting");
-          return next;
-        }
         setSaveState("dirty");
         debounceRef.current = setTimeout(() => {
           void persist(next, versionRef.current);
@@ -674,7 +678,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
 
   const onDeliver = async (
     allowIncomplete = false,
-    meOpts?: { allowNegativeMeStock?: boolean; negativeMeStockReason?: string }
+    meOpts?: { allowNegativeMeStock?: boolean; negativeMeStockReason?: string; allowNegativeMpStock?: boolean; negativeMpStockReason?: string }
   ) => {
     if (!form || deliveringRef.current) return;
     deliveringRef.current = true;
@@ -689,17 +693,11 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
 
   const deliverOnce = async (
     allowIncomplete: boolean,
-    meOpts?: { allowNegativeMeStock?: boolean; negativeMeStockReason?: string }
+    meOpts?: { allowNegativeMeStock?: boolean; negativeMeStockReason?: string; allowNegativeMpStock?: boolean; negativeMpStockReason?: string }
   ) => {
     if (!form) return;
     // Se entrega lo GUARDADO en el servidor: primero se guarda lo que está en pantalla. Si no se pudo guardar, no se
     // entrega (antes se entregaba la última versión guardada aunque la pantalla mostrara otra cosa).
-    const sinMotivo = ajusteSinMotivo(form);
-    if (sinMotivo) {
-      setError(`Falta el motivo del ajuste de «${sinMotivo}». Escribilo antes de entregar.`);
-      setDeliverOpen(false);
-      return;
-    }
     if (saveState === "dirty" || saveState === "error" || debounceRef.current) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = null;
@@ -721,8 +719,13 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         allowIncomplete: allowIncomplete || missing.length > 0,
         allowNegativeMeStock: meOpts?.allowNegativeMeStock,
         negativeMeStockReason: meOpts?.negativeMeStockReason,
+        allowNegativeMpStock: meOpts?.allowNegativeMpStock,
+        negativeMpStockReason: meOpts?.negativeMpStockReason,
         observation: order?.type === "OE" ? deliverObservation : null,
       });
+      setMpIssues([]);
+      setMpShortage(null);
+      setMpShortageReason("");
       setOrder(updated);
       setForm(updated.formData);
       versionRef.current = updated.version;
@@ -736,7 +739,21 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       const e = err as Error & {
         code?: string;
         shortages?: typeof meShortages;
+        issues?: Array<{ rowId: string; message: string }>;
+        canAuthorize?: boolean;
       };
+      if (e.code === "MP_CONSUMO_INCOMPLETO" && e.issues?.length) {
+        setMpIssues(e.issues);
+        setDeliverOpen(false);
+        return;
+      }
+      if (e.code === "MP_STOCK_SHORTAGE") {
+        const raw = (e.shortages ?? []) as unknown as NonNullable<typeof mpShortage>["shortages"];
+        setMpShortage({ shortages: raw, canAuthorize: Boolean(e.canAuthorize) });
+        setPendingAllowIncomplete(allowIncomplete || missing.length > 0);
+        setDeliverOpen(false);
+        return;
+      }
       if (e.code === "ME_STOCK_SHORTAGE" && e.shortages?.length) {
         setMeShortages(e.shortages);
         setPendingAllowIncomplete(allowIncomplete || missing.length > 0);
@@ -806,7 +823,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         : saveState === "dirty"
           ? "Guardando en un momento…"
           : saveState === "waiting"
-            ? `Falta el motivo del ajuste de «${ajusteSinMotivo(form) ?? ""}»: escribilo para guardar`
+            ? "Completá el dato para guardar"
             : saveState === "error"
               ? "No se guardó: mirá el aviso en rojo"
               : "Sin cambios";
@@ -904,6 +921,18 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               }}
             >
               Entregar
+            </Button>
+          )}
+          {canAuthorizeMpShortage && (
+            <Button
+              type="button"
+              variant="secondary"
+              data-testid="mp-authorize-open"
+              disabled={delivering}
+              onClick={() => void onDeliver(false)}
+              title="Revisa el stock de MP de esta OE: si falta, podés autorizar la entrega con motivo."
+            >
+              Autorizar faltante de MP
             </Button>
           )}
           {canReview && order.status === "COMPLETA" && (
@@ -1346,6 +1375,81 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
                 {delivering ? "Entregando…" : "Entregar"}
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={mpIssues.length > 0} onOpenChange={(o) => !o && setMpIssues([])}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Faltan datos para descontar las materias primas</DialogTitle>
+            <DialogDescription>
+              No se entregó ni se descontó nada. Completá estas filas de la tabla y volvé a entregar:
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="ml-4 list-disc space-y-1 text-sm" data-testid="mp-consumo-issues">
+            {mpIssues.map((i) => (
+              <li key={`${i.rowId}-${i.message}`}>{i.message}</li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button type="button" onClick={() => setMpIssues([])} data-testid="mp-consumo-issues-ok">
+              Entendido
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(mpShortage)} onOpenChange={(o) => !o && setMpShortage(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Stock de MP insuficiente</DialogTitle>
+            <DialogDescription>
+              No se entregó ni se descontó nada.{" "}
+              {mpShortage?.canAuthorize
+                ? "Podés autorizar la entrega: el stock quedará en negativo y queda registrado con tu motivo."
+                : "Avisá a Producción (puede autorizar la entrega) o a Materia Prima (para registrar el ingreso o corregir el lote)."}
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-2 text-sm" data-testid="mp-stock-shortages">
+            {mpShortage?.shortages.map((s) => (
+              <li key={`${s.tipo}-${s.codigo}-${s.lote}`} className="rounded border border-rose-300 bg-rose-500/10 px-3 py-2">
+                <span className="font-medium">{s.codigo}</span>
+                {s.tipo === "lote" ? ` · lote ${s.lote}` : " · stock del código"} — hay {s.disponible} kg, se necesitan {s.requerido} kg (faltan{" "}
+                {s.faltante} kg)
+              </li>
+            ))}
+          </ul>
+          {mpShortage?.canAuthorize ? (
+            <label className="block space-y-1 text-sm">
+              <span>Motivo de la autorización (obligatorio)</span>
+              <textarea
+                value={mpShortageReason}
+                onChange={(e) => setMpShortageReason(e.target.value)}
+                className="min-h-20 w-full rounded border px-3 py-2"
+                data-testid="mp-shortage-reason"
+              />
+            </label>
+          ) : null}
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
+            <Button type="button" variant="secondary" onClick={() => setMpShortage(null)}>
+              Cancelar
+            </Button>
+            {mpShortage?.canAuthorize ? (
+              <Button
+                type="button"
+                data-testid="mp-shortage-authorize"
+                disabled={!mpShortageReason.trim() || delivering}
+                onClick={() =>
+                  void onDeliver(pendingAllowIncomplete, {
+                    allowNegativeMpStock: true,
+                    negativeMpStockReason: mpShortageReason.trim(),
+                  })
+                }
+              >
+                Autorizar y entregar
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

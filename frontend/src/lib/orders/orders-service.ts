@@ -13,6 +13,7 @@ import type { OrdersRepository } from "@/lib/orders/repository";
 import {
   assertCanAccessAssignedOrder,
   assertCanOrderAction,
+  canAuthorizeOeMpShortage,
   canDeleteOa,
   canOrderAction,
   ORDERS_DENIED_MESSAGE,
@@ -958,6 +959,9 @@ export class OrdersService {
       includeDesechadosMe?: boolean;
       /** Observación opcional al completar OE (Elaboración). */
       observation?: string | null;
+      /** OE: entregar aunque el stock de MP quede negativo (solo Producción/Dirección, con motivo). */
+      allowNegativeMpStock?: boolean;
+      negativeMpStockReason?: string;
     }
   ) {
     if (!confirm) {
@@ -967,13 +971,20 @@ export class OrdersService {
     }
     const current = await this.repo.getOrder(id);
     if (!current) throw new OrdersNotFoundError("Orden no encontrada.");
-    assertCanAccessAssignedOrder(
-      current.type,
-      current.assignedSector,
-      actor,
-      "deliver",
-      { createdBy: current.createdBy }
-    );
+    // OE: Producción/Dirección no entregan, salvo para autorizar un faltante de MP (lo valida el descuento).
+    const mpShortageAuthorizer =
+      current.type === "OE" &&
+      !canOrderAction("OE", "deliver", actor.sector) &&
+      canAuthorizeOeMpShortage(actor.sector);
+    if (!mpShortageAuthorizer) {
+      assertCanAccessAssignedOrder(
+        current.type,
+        current.assignedSector,
+        actor,
+        "deliver",
+        { createdBy: current.createdBy }
+      );
+    }
     if (current.status === "COMPLETA" || current.status === "COMPLETA_CON_PENDIENTES") {
       throw new OrdersValidationError("La orden ya está completa.");
     }
@@ -1028,18 +1039,60 @@ export class OrdersService {
         )
       );
     }
-    const updated = await this.repo.updateOrderOptimistic(id, current.version, {
-      status,
-      completedAt: ts,
-      completedBy: actor.email,
-      updatedBy: actor.email,
-      formData: normalized,
-      completionPercentage:
-        missing.length > 0 ? computeCompletionPercentage(normalized) : 100,
-    });
-    if (!updated) {
-      const fresh = await this.repo.getOrder(id);
-      throw new OrdersConflictError("Conflicto al entregar.", fresh!);
+    const commitDelivery = async () => {
+      const u = await this.repo.updateOrderOptimistic(id, current.version, {
+        status,
+        completedAt: ts,
+        completedBy: actor.email,
+        updatedBy: actor.email,
+        formData: normalized,
+        completionPercentage:
+          missing.length > 0 ? computeCompletionPercentage(normalized) : 100,
+      });
+      if (!u) {
+        const fresh = await this.repo.getOrder(id);
+        throw new OrdersConflictError("Conflicto al entregar.", fresh!);
+      }
+      return u;
+    };
+    let updated: Awaited<ReturnType<typeof commitDelivery>>;
+    let mpConsumption: import("@/lib/orders/oe-stock-op").OeConsumptionResult | null = null;
+    if (current.type === "OE" && normalized.kind === "OE") {
+      // Descuento de MP por los KG REALES (código MP + lote), en UNA transacción con la entrega: si falta un dato o
+      // no alcanza el stock, no se entrega ni se descuenta nada. Un reintento no descuenta dos veces.
+      const oeContent = normalized;
+      const { runOeStockOp, consumeOeStock } = await import("@/lib/orders/oe-stock-op");
+      const out = await runOeStockOp(actor, async (ctx) => {
+        const r = await consumeOeStock(ctx, actor, {
+          oeId: id,
+          orderNumber: current.orderNumber,
+          materials: oeContent.materials,
+          authorizeNegative: opts?.allowNegativeMpStock ? { reason: opts.negativeMpStockReason ?? "" } : null,
+          onlyToAuthorizeShortage: mpShortageAuthorizer,
+          commitOrder: commitDelivery,
+        });
+        await this.repo.appendAudit({
+          orderId: id,
+          eventType: "OE_MP_CONSUMO",
+          actor: actor.email,
+          actorSector: actor.sector,
+          metadata: {
+            orderNumber: current.orderNumber,
+            oeVersion: r.order.version,
+            consumos: r.result.lines.map((l) => ({ codigo: l.codigo, lote: l.lote, kgReal: l.kg, materiaPrima: l.materiaPrima })),
+            movimientos: r.result.applied,
+            lotes: r.result.lots,
+            stockNegativoAutorizado: r.result.negativeAuthorized
+              ? { motivo: opts?.negativeMpStockReason?.trim() ?? "", faltantes: r.result.shortages }
+              : null,
+          },
+        });
+        return r;
+      });
+      updated = out.order;
+      mpConsumption = out.result;
+    } else {
+      updated = await commitDelivery();
     }
 
     if (updated.type === "OA" && updated.formData.kind === "OA") {
@@ -1057,37 +1110,6 @@ export class OrdersService {
         includeDesechados: opts?.includeDesechadosMe,
       });
       await persistInventorySnapshot(memoryInventoryRepo);
-    }
-
-    if (updated.type === "OE" && updated.formData.kind === "OE") {
-      try {
-        const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
-        const { computeKgRealUtilizado } = await import("@/lib/orders/content");
-        const lines = updated.formData.materials.map((m) => ({
-          lineId: m.id,
-          codigo: m.codigo ?? "",
-          kgReal: computeKgRealUtilizado(m.kgAPesar, m.ajuste) ?? 0,
-        }));
-        await getMpStockLedger().applyOeConsumption(
-          { email: actor.email, sector: actor.sector },
-          {
-            oeId: updated.id,
-            oeVersion: updated.version,
-            oeStatus: updated.status,
-            lines,
-            // La OE ya se elaboró: su consumo de MP se registra SIEMPRE. Si deja un código en negativo, queda visible
-            // con aviso a Materia Prima y Producción. Antes, sin stock suficiente el movimiento fallaba, el error se
-            // descartaba y el consumo (y el de los códigos siguientes) se perdía en silencio.
-            allowNegative: true,
-          }
-        );
-      } catch (err) {
-        // Solo un esquema pendiente (0005 sin aplicar) difiere el libro mayor; cualquier otro error queda en el log.
-        const { SchemaPendingError } = await import("@/lib/db/feature-schema");
-        if (!(err instanceof SchemaPendingError)) {
-          console.error(`[orders] consumo MP de la OE ${updated.id} no registrado:`, err instanceof Error ? err.message : err);
-        }
-      }
     }
 
     await this.repo.insertOrderVersion({
@@ -1112,6 +1134,7 @@ export class OrdersService {
         pendingFields: missing,
         status,
         meStockNegativeAllowed: Boolean(opts?.allowNegativeMeStock),
+        mpStockNegativeAuthorized: mpConsumption?.negativeAuthorized ?? false,
         deliveryObservation:
           updated.formData.kind === "OE"
             ? updated.formData.deliveryObservation
@@ -1350,18 +1373,33 @@ export class OrdersService {
       createdBy: actor.email,
       createdAt: nowIso(),
     });
-    const updated = await this.repo.updateOrderOptimistic(id, current.version, {
-      status: "DEVUELTA_PARA_CORRECCION",
-      revision: current.revision + 1,
-      updatedBy: actor.email,
-      completedAt: null,
-      completedBy: null,
-      reviewedAt: null,
-      reviewedBy: null,
-    });
-    if (!updated) {
-      const fresh = await this.repo.getOrder(id);
-      throw new OrdersConflictError("Conflicto al devolver.", fresh!);
+    const commitReturn = async () => {
+      const u = await this.repo.updateOrderOptimistic(id, current.version, {
+        status: "DEVUELTA_PARA_CORRECCION",
+        revision: current.revision + 1,
+        updatedBy: actor.email,
+        completedAt: null,
+        completedBy: null,
+        reviewedAt: null,
+        reviewedBy: null,
+      });
+      if (!u) {
+        const fresh = await this.repo.getOrder(id);
+        throw new OrdersConflictError("Conflicto al devolver.", fresh!);
+      }
+      return u;
+    };
+    let updated: Awaited<ReturnType<typeof commitReturn>>;
+    if (current.type === "OE") {
+      // Devolución = reverso EXPLÍCITO del consumo de MP (libro mayor + lotes), junto con el cambio de estado.
+      const { runOeStockOp, reverseOeStock } = await import("@/lib/orders/oe-stock-op");
+      updated = (
+        await runOeStockOp(actor, (ctx) =>
+          reverseOeStock(ctx, actor, { oeId: id, orderNumber: current.orderNumber, reason: `Devolución: ${trimmed}`, commitOrder: commitReturn })
+        )
+      ).order;
+    } else {
+      updated = await commitReturn();
     }
     if (current.type === "OA") {
       const { getInventoryService, memoryInventoryRepo } = await import(
@@ -1379,18 +1417,6 @@ export class OrdersService {
         `Devolución OA: ${trimmed}`
       );
       await persistInventorySnapshot(memoryInventoryRepo);
-    }
-    if (current.type === "OE") {
-      try {
-        const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
-        await getMpStockLedger().reverseOeConsumption(
-          { email: actor.email, sector: actor.sector },
-          id,
-          current.version
-        );
-      } catch {
-        /* schema MP diferido */
-      }
     }
     await this.repo.appendAudit({
       orderId: id,
@@ -1521,38 +1547,42 @@ export class OrdersService {
       );
     }
 
-    const updated = await this.repo.updateOrderOptimistic(id, current.version, {
-      status: "ANULADA",
-      updatedBy: actor.email,
-    });
-    if (!updated) {
-      const fresh = await this.repo.getOrder(id);
-      throw new OrdersConflictError("Conflicto al anular.", fresh!);
-    }
-
+    const commitAnnul = async () => {
+      const u = await this.repo.updateOrderOptimistic(id, current.version, {
+        status: "ANULADA",
+        updatedBy: actor.email,
+      });
+      if (!u) {
+        const fresh = await this.repo.getOrder(id);
+        throw new OrdersConflictError("Conflicto al anular.", fresh!);
+      }
+      return u;
+    };
+    let updated: Awaited<ReturnType<typeof commitAnnul>>;
     let mpReversed = 0;
     let meReversed = 0;
+    if (current.type === "OE") {
+      // Anulación = reverso EXPLÍCITO del consumo de MP (libro mayor + lotes), junto con el cambio de estado.
+      const { runOeStockOp, reverseOeStock } = await import("@/lib/orders/oe-stock-op");
+      const out = await runOeStockOp(actor, (ctx) =>
+        reverseOeStock(ctx, actor, { oeId: id, orderNumber: current.orderNumber, reason: `Anulación: ${trimmed}`, commitOrder: commitAnnul })
+      );
+      updated = out.order;
+      mpReversed = out.applied.length;
+    } else {
+      updated = await commitAnnul();
+    }
 
     if (current.type === "OE") {
-      try {
-        const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
-        const { recordLifecycleEvent } = await import("@/lib/lifecycle");
-        mpReversed = await getMpStockLedger().reverseOeConsumption(
-          { email: actor.email, sector: actor.sector },
-          id,
-          current.version
-        );
-        recordLifecycleEvent({
-          entityKind: "oe",
-          entityId: id,
-          action: "anular",
-          actor: { email: actor.email, sector: actor.sector },
-          reason: trimmed,
-          impact: { mpReversedCodes: mpReversed },
-        });
-      } catch {
-        /* ledger diferido si schema MP no listo */
-      }
+      const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+      recordLifecycleEvent({
+        entityKind: "oe",
+        entityId: id,
+        action: "anular",
+        actor: { email: actor.email, sector: actor.sector },
+        reason: trimmed,
+        impact: { mpReversedCodes: mpReversed },
+      });
     }
 
     if (current.type === "OA") {

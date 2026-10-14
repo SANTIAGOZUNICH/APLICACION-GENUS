@@ -160,6 +160,10 @@ export async function prepareOeFromWork(opts: PrepareOeOptions): Promise<OeAutoP
 
   // Lectura externa FUERA de la transacción (Drive puede tardar).
   const formula = await (opts.resolveFormula ?? defaultResolveFormula)({ client: work.client, product: work.product });
+  // Catálogo de Stock MP: para sugerir CÓDIGO MP inequívocos (solo lectura; nunca pisa uno cargado).
+  const mpCatalog = await import("@/lib/orders/mp-catalog")
+    .then((m) => m.listMpCatalogForOe())
+    .catch(() => undefined);
 
   return db.transaction(async (tx) => {
     const [locked] = (await tx.select(ORDER_COLS).from(operationalOrders).where(eq(operationalOrders.id, order.id)).for("update")) as OrderRow[];
@@ -189,6 +193,7 @@ export async function prepareOeFromWork(opts: PrepareOeOptions): Promise<OeAutoP
       reason: opts.reason,
       now: new Date().toISOString(),
       replaceManual: Boolean(opts.explicit),
+      mpCatalog,
     });
     if (opts.dryRun) {
       return {

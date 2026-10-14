@@ -26,6 +26,7 @@ import type {
 import { normalizeSearchKey } from "@/lib/formulas/types";
 import type { WorkFormulaResolution } from "@/lib/formulas/work-formula-rules";
 import { parseArDecimal } from "@/lib/utils/ar-number-parsing";
+import { fillCodigoMpSuggestions, type MpCatalogLot } from "@/lib/orders/oe-mp-consumption";
 
 export type AutoPrepWork = {
   id: string;
@@ -46,6 +47,8 @@ export type BuildAutoPrepInput = {
   now: string;
   /** Confirmación explícita: reemplazar materias primas cargadas a mano por las de la fórmula. */
   replaceManual?: boolean;
+  /** Catálogo de Stock MP: para sugerir CÓDIGO MP cuando la coincidencia es inequívoca (nunca pisa uno cargado). */
+  mpCatalog?: MpCatalogLot[];
 };
 
 /** Qué hacer con las columnas formula_* de la OE: set = guardar esta referencia; clear = vaciar; keep = no tocar. */
@@ -63,7 +66,7 @@ export type BuildAutoPrepResult = {
    * MP con datos del elaborador (lote o ajuste) que el resultado ya no incluye (la fórmula nueva no tiene esa MP).
    * El servidor no aplica automáticamente y la acción explícita exige confirmar la pérdida.
    */
-  lostRecords: Array<{ materiaPrima: string; codigo: string; lote: string; ajuste: number | null }>;
+  lostRecords: Array<{ materiaPrima: string; codigo: string; lote: string; ajuste: number | null; kgReal?: number | null }>;
 };
 
 const KG_UNITS = new Set(["kg", "kgs", "kilo", "kilos", "kilogramo", "kilogramos"]);
@@ -100,8 +103,8 @@ export function oeProcesoIniciado(
     return { started: true, reason: "La OE ya está en proceso o entregada." };
   }
   if (!content || content.kind !== "OE") return { started: false, reason: null };
-  if (content.materials.some((m) => m.ajuste != null || (m.ajusteMotivo ?? "").trim() !== "")) {
-    return { started: true, reason: "Ya hay ajustes de pesada registrados." };
+  if (content.materials.some((m) => m.kgReal != null || m.ajuste != null || (m.ajusteMotivo ?? "").trim() !== "")) {
+    return { started: true, reason: "Ya hay kg reales de pesada registrados." };
   }
   const pc = content.processControl;
   if (
@@ -141,11 +144,11 @@ function mpKey(codigo: string, materiaPrima: string): string {
   return c ? `c:${c}` : `m:${normalizeSearchKey(materiaPrima ?? "")}`;
 }
 
-/** Fila con algo que escribió el elaborador (lote o ajuste): no se borra sin confirmación. */
+/** Fila con algo que escribió el elaborador (lote, kg reales, observación): no se borra sin confirmación. */
 function hasElaboratorData(m: OeMaterialRow): boolean {
-  return (m.lote ?? "").trim() !== "" || m.ajuste != null || (m.ajusteMotivo ?? "").trim() !== "";
+  return (m.lote ?? "").trim() !== "" || m.kgReal != null || m.ajuste != null || (m.ajusteMotivo ?? "").trim() !== "";
 }
-const lostOf = (m: OeMaterialRow) => ({ materiaPrima: m.materiaPrima, codigo: m.codigo, lote: m.lote, ajuste: m.ajuste });
+const lostOf = (m: OeMaterialRow) => ({ materiaPrima: m.materiaPrima, codigo: m.codigo, lote: m.lote, ajuste: m.ajuste, kgReal: m.kgReal });
 
 function occurrenceKeys(rows: Array<{ codigo: string; materiaPrima: string }>): string[] {
   const seen = new Map<string, number>();
@@ -219,26 +222,39 @@ export function buildAutoPreparedOe(input: BuildAutoPrepInput): BuildAutoPrepRes
     } else {
       // Lo registrado por MP (lote y ajuste con su motivo) se conserva cuando la MP sigue en la fórmula.
       // Clave por aparición: la misma MP puede estar dos veces (fases).
-      const prevKeys = occurrenceKeys(content.materials);
-      const previousByKey = new Map(content.materials.map((m, i) => [prevKeys[i], m]));
+      // Solo filas de la fórmula (las de «lote adicional» viajan con su fila).
+      const prevFormulaRows = content.materials.filter((m) => !m.parentRowId);
+      const prevKeys = occurrenceKeys(prevFormulaRows);
+      const previousByKey = new Map(prevFormulaRows.map((m, i) => [prevKeys[i], m]));
       const formulaKeys = occurrenceKeys(formula.materials);
       const nextKeys = new Set(formulaKeys);
-      lostRecords = content.materials.filter((m, i) => hasElaboratorData(m) && !nextKeys.has(prevKeys[i])).map(lostOf);
-      const materials: OeMaterialRow[] = formula.materials.map((m, i) => {
+      const droppedIds = new Set(prevFormulaRows.filter((_, i) => !nextKeys.has(prevKeys[i])).map((m) => m.id));
+      lostRecords = [
+        ...prevFormulaRows.filter((m) => droppedIds.has(m.id) && hasElaboratorData(m)),
+        ...content.materials.filter((m) => m.parentRowId && droppedIds.has(m.parentRowId) && hasElaboratorData(m)),
+      ].map(lostOf);
+      const materials: OeMaterialRow[] = [];
+      formula.materials.forEach((m, i) => {
         const before = previousByKey.get(formulaKeys[i]);
-        return emptyOeMaterial({
-          // Mismo id de fila: reintentos idénticos no cambian nada.
-          ...(before ? { id: before.id } : {}),
-          materiaPrima: m.materiaPrima,
-          codigo: m.codigo,
-          formulaPct: m.formulaPct,
-          kgAPesar: null,
-          lote: before?.lote ?? "",
-          ajuste: before?.ajuste ?? null,
-          ajusteMotivo: before?.ajusteMotivo ?? "",
-          ajusteAt: before?.ajusteAt ?? null,
-          ajusteBy: before?.ajusteBy ?? null,
-        });
+        materials.push(
+          emptyOeMaterial({
+            // Mismo id de fila: reintentos idénticos no cambian nada.
+            ...(before ? { id: before.id } : {}),
+            materiaPrima: m.materiaPrima,
+            codigo: m.codigo,
+            formulaPct: m.formulaPct,
+            kgAPesar: null,
+            lote: before?.lote ?? "",
+            ajuste: before?.ajuste ?? null,
+            ajusteMotivo: before?.ajusteMotivo ?? "",
+            ajusteAt: before?.ajusteAt ?? null,
+            ajusteBy: before?.ajusteBy ?? null,
+            // Lo cargado por Elaboración/MP para esta misma MP se conserva.
+            codigoMp: before?.codigoMp ?? "",
+            kgReal: before?.kgReal ?? null,
+          })
+        );
+        if (before) materials.push(...content.materials.filter((x) => x.parentRowId === before.id));
       });
       next = {
         ...next,
@@ -250,7 +266,7 @@ export function buildAutoPreparedOe(input: BuildAutoPrepInput): BuildAutoPrepRes
               ? formula.ref.productCode || ""
               : next.header.code || formula.ref.productCode || "",
         },
-        materials,
+        materials: input.mpCatalog ? fillCodigoMpSuggestions(materials, input.mpCatalog) : materials,
         procedureSteps: formula.procedureSteps.map((s) => ({ id: s.id, text: s.text })),
       };
       formulaMeta = {
