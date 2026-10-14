@@ -603,6 +603,19 @@ export const inventoryIngresoAdjuntos = pgTable(
   ]
 );
 
+/**
+ * Objetivos de los indicadores del Dashboard operativo (0046). NO hay objetivos por defecto: la tabla nace vacía y
+ * Producción/Dirección los definen desde el Dashboard. direction 'min' = mejor cuanto más alto; 'max' = cuanto más bajo.
+ */
+export const dashboardKpiTargets = pgTable("dashboard_kpi_targets", {
+  key: text("key").primaryKey(),
+  targetValue: doublePrecision("target_value").notNull(),
+  direction: text("direction").notNull(),
+  unit: text("unit").notNull(),
+  updatedBy: text("updated_by").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const invMeSalidas = pgTable("inv_me_salidas", {
   id: uuid("id").primaryKey(),
   payload: jsonb("payload").notNull(),

@@ -49,6 +49,7 @@ import {
 } from "@/features/os/operational/views/envasado-operational-view";
 import { CodificadoOperationalView } from "@/features/os/operational/views/codificado-operational-view";
 import { ExpedicionView } from "@/features/os/operational/views/expedicion-view";
+import { DashboardView } from "@/features/os/operational/views/dashboard-view";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 
 /** Router del Digital Twin — navegación entre Home, utilidades y detalle. */
@@ -144,6 +145,8 @@ export function TwinRouter() {
       return <MetricasView />;
     case "expedicion":
       return <ExpedicionView />;
+    case "dashboard":
+      return <DashboardView />;
     case "ver-elaboracion":
       return <ElaboracionOperationalView />;
     case "ver-envasado-masivo":
