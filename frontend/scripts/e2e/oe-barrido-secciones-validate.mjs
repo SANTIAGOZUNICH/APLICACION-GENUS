@@ -101,8 +101,13 @@ await q(
 await prod.ctx.close();
 
 // --- Barrido -------------------------------------------------------------------------------------------------------
+const only = (env) => (process.env[env] ? process.env[env].split(",") : null);
+const onlyDevices = only("BARRIDO_DEVICES");
+const onlyUsers = only("BARRIDO_USERS");
 for (const [deviceName, device] of Object.entries(DEVICES)) {
+  if (onlyDevices && !onlyDevices.includes(deviceName)) continue;
   for (const [userKey, user] of Object.entries(E2E_USERS)) {
+    if (onlyUsers && !onlyUsers.includes(userKey)) continue;
     const { ctx, page, problems } = await openAs(user, device);
     await settle(page);
     const tag = `${deviceName}/${userKey}`;
@@ -118,7 +123,7 @@ for (const [deviceName, device] of Object.entries(DEVICES)) {
       const bad = await bodyBad(page);
       const newProblems = problems.slice(before);
       check(`${tag}: «${label}» carga sin error`, !bad && newProblems.length === 0, [bad, ...newProblems].filter(Boolean).join(" | "));
-      if (/orden/i.test(label)) {
+      if (/[oó]rden/i.test(label)) {
         // OE: abrir el editor de una OE nueva y de una OE legada (guardada antes de #125).
         for (const prodName of [PRODUCT, PRODUCT_LEGACY]) {
           const row = page.getByText(prodName).first();
