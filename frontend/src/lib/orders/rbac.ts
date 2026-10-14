@@ -97,6 +97,15 @@ const OA_ACTIONS: Partial<Record<SectorId, readonly OrderAction[]>> = {
   ],
 };
 
+/**
+ * Faltante de MP al entregar una OE: Producción/Dirección pueden autorizar que el stock quede negativo (con motivo).
+ * Es lo ÚNICO que habilita a esos sectores a confirmar la entrega de una OE: sin faltante, la entrega es de Elaboración.
+ */
+export const OE_MP_SHORTAGE_AUTHORIZERS = ["PRODUCCION", "DIRECCION"] as const;
+export function canAuthorizeOeMpShortage(sector: string | null | undefined): boolean {
+  return (OE_MP_SHORTAGE_AUTHORIZERS as readonly string[]).includes(String(sector ?? ""));
+}
+
 export function canOrderAction(
   type: OrderDocType,
   action: OrderAction,

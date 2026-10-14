@@ -66,6 +66,16 @@ async function cleanup() {
   await q("delete from work_items where client = $1", [CLIENT]);
   await q("delete from mp_stock_movements where codigo in ($1,$2)", [COD1, COD2]);
   await q("delete from mp_stock_balances where codigo in ($1,$2)", [COD1, COD2]);
+  await q("delete from inv_mp_ingresos where payload->>'codigo' in ($1,$2)", [COD1, COD2]);
+  await q("delete from inv_mp_stock where payload->>'codigo' in ($1,$2)", [COD1, COD2]);
+}
+
+/** Stock MP real (ingresos confirmados de MP): lote + libro mayor, para que las OE puedan entregarse. */
+async function seedStock(page) {
+  for (const [codigo, descripcion, lote] of [[COD1, "Agua E2E", "LA-1"], [COD2, "Glicerina E2E", "LG-1"]]) {
+    const r = await page.request.post("/api/v1/inventory", { data: { action: "upsert", resource: "mp_ingresos", payload: { fecha: "2026-10-01", remitoNro: `E2E-DEL-${lote}`, codigo, descripcion, lote, proveedor: "PROV E2E", bultos: 1, cantidad: 1000 } } });
+    if (!r.ok()) throw new Error(`ingreso ${codigo}: ${r.status()} ${await r.text()}`);
+  }
 }
 
 /** Producción asigna el trabajo (crea la OE) y carga la fórmula con códigos de MP. */
@@ -80,8 +90,8 @@ async function prepareOe(pr, number, product) {
     ...fd,
     header: { ...fd.header, productName: product, client: CLIENT, quantityKg: 100, lot: `L-${number.slice(-3)}`, date: today },
     materials: [
-      { id: randomUUID(), materiaPrima: "Agua E2E", codigo: COD1, formulaPct: 80, kgAPesar: 80, ajuste: null, ajusteMotivo: "", lote: "LA-1" },
-      { id: randomUUID(), materiaPrima: "Glicerina E2E", codigo: COD2, formulaPct: 20, kgAPesar: 20, ajuste: -0.5, ajusteMotivo: "Merma", lote: "LG-1" },
+      { id: randomUUID(), materiaPrima: "Agua E2E", codigo: COD1, codigoMp: COD1, formulaPct: 80, kgAPesar: 80, kgReal: 80, ajusteMotivo: "", lote: "LA-1" },
+      { id: randomUUID(), materiaPrima: "Glicerina E2E", codigo: COD2, codigoMp: COD2, formulaPct: 20, kgAPesar: 20, kgReal: 19.5, ajusteMotivo: "Merma", lote: "LG-1" },
     ],
     procedureSteps: [{ id: randomUUID(), text: "Mezclar" }],
     processControl: { ...fd.processControl, cantidadObtenida: 99, fechaFin: today },
@@ -130,6 +140,9 @@ async function deleteFromUi(page, number, reason, opts) {
 
 try {
   await cleanup();
+  const mpu = await openAs(E2E_USERS.materiaPrima);
+  await seedStock(mpu.page);
+  await mpu.ctx.close();
   const pr = await openAs(E2E_USERS.produccion);
   const el = await openAs(E2E_USERS.elaboracion);
   const ca = await openAs(E2E_USERS.calidad);

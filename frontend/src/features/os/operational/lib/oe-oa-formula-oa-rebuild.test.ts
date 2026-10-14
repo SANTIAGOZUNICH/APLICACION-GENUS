@@ -10,6 +10,7 @@ import {
   normalizeOrderContent,
   rendimientoDentroDeRango,
   recomputeOaDerived,
+  recomputeOeDerived,
 } from "@/lib/orders/content";
 import { applyElaboracionMaterialPatch, validateAjusteRows } from "@/lib/orders/oe-ajuste";
 import { buildCremaFacialLaudeOaTemplateContent } from "@/lib/orders/seed-templates";
@@ -165,7 +166,8 @@ describe("permisos de fórmula y ajuste OE", () => {
               ...m,
               materiaPrima: "HACKED",
               formulaPct: 99,
-              ajuste: 0.5,
+              kgReal: 10.5,
+              codigoMp: "MP-AGUA",
               ajusteMotivo: "Corrección de pesada",
               lote: "LOTE-REAL",
             }
@@ -181,26 +183,20 @@ describe("permisos de fórmula y ajuste OE", () => {
     if (saved.formData.kind === "OE") {
       expect(saved.formData.materials[0]!.materiaPrima).toBe(original.materials[0]!.materiaPrima);
       expect(saved.formData.materials[0]!.formulaPct).toBe(original.materials[0]!.formulaPct);
-      expect(saved.formData.materials[0]!.ajuste).toBe(0.5);
+      expect(saved.formData.materials[0]!.kgReal).toBe(10.5);
+      expect(saved.formData.materials[0]!.codigoMp).toBe("MP-AGUA");
       expect(saved.formData.materials[0]!.lote).toBe("LOTE-REAL");
       expect(saved.formData.materials[0]!.ajusteMotivo).toBe("Corrección de pesada");
     }
   });
 
-  it("ajuste calcula kg real y no modifica maestra; exige motivo si ≠ 0", async () => {
+  it("KG REAL distinto del teórico es válido sin motivo; negativo no; no modifica maestra", async () => {
     expect(computeKgRealUtilizado(10, 0.5)).toBe(10.5);
     expect(computeKgRealUtilizado(10, -1)).toBe(9);
-    const materials = [
-      emptyOeMaterial({
-        materiaPrima: "AGUA",
-        kgAPesar: 10,
-        ajuste: 1,
-        ajusteMotivo: "",
-      }),
-    ];
-    expect(validateAjusteRows(materials).length).toBeGreaterThan(0);
-    materials[0]!.ajusteMotivo = "Merma de vaso";
+    const materials = [emptyOeMaterial({ materiaPrima: "AGUA", kgAPesar: 25, kgReal: 24.8, ajusteMotivo: "" })];
     expect(validateAjusteRows(materials)).toHaveLength(0);
+    materials[0]!.kgReal = -1;
+    expect(validateAjusteRows(materials).length).toBeGreaterThan(0);
 
     const t = (await service.listTemplates("OE"))[0]!;
     const before = structuredClone(t.content);
@@ -219,7 +215,7 @@ describe("permisos de fórmula y ajuste OE", () => {
     const form = order.formData as OeContent;
     form.materials[0] = {
       ...form.materials[0]!,
-      ajuste: 0.2,
+      kgReal: 1.2,
       ajusteMotivo: "Ajuste proceso",
     };
     await service.saveProgress(
@@ -265,13 +261,31 @@ describe("permisos de fórmula y ajuste OE", () => {
     ];
     const incoming = structuredClone(current);
     incoming.materials[0]!.materiaPrima = "B";
-    incoming.materials[0]!.ajuste = -0.1;
+    incoming.materials[0]!.formulaPct = 99;
+    incoming.materials[0]!.kgReal = 4.9;
     incoming.materials[0]!.ajusteMotivo = "ok";
     incoming.materials[0]!.lote = "L9";
+    incoming.materials[0]!.codigoMp = "MP-A";
     const patched = applyElaboracionMaterialPatch(current, incoming, "e@x.com");
     expect(patched.materials[0]!.materiaPrima).toBe("A");
-    expect(patched.materials[0]!.ajuste).toBe(-0.1);
+    expect(patched.materials[0]!.formulaPct).toBe(50);
+    expect(patched.materials[0]!.kgReal).toBe(4.9);
+    expect(recomputeOeDerived(patched).materials[0]!.ajuste).toBeCloseTo(-0.1, 6);
     expect(patched.materials[0]!.lote).toBe("L9");
+    expect(patched.materials[0]!.codigoMp).toBe("MP-A");
+  });
+
+  it("Elaboración agrega una fila de lote adicional: hereda MP y códigos; no puede agregar MP a la fórmula", () => {
+    const current = createEmptyOeContent({ productName: "X" });
+    current.materials = [emptyOeMaterial({ materiaPrima: "A", codigo: "F-1", codigoMp: "MP-A", formulaPct: 50, kgAPesar: 5 })];
+    const incoming = structuredClone(current);
+    incoming.materials.push(
+      emptyOeMaterial({ materiaPrima: "OTRA", codigoMp: "MP-Z", parentRowId: current.materials[0]!.id, kgReal: 2, lote: "L2" }),
+      emptyOeMaterial({ materiaPrima: "NUEVA MP", formulaPct: 10 })
+    );
+    const patched = applyElaboracionMaterialPatch(current, incoming, "e@x.com");
+    expect(patched.materials).toHaveLength(2);
+    expect(patched.materials[1]).toMatchObject({ materiaPrima: "A", codigo: "F-1", codigoMp: "MP-A", kgReal: 2, lote: "L2", formulaPct: null });
   });
 });
 

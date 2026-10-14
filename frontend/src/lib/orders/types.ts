@@ -39,14 +39,30 @@ export type OeMaterialRow = {
   formulaPct: number | null;
   kgAPesar: number | null;
   /**
-   * Ajuste (+/- kg) respecto de kg teóricos a pesar.
-   * Kg real utilizado = kgAPesar + ajuste.
+   * Diferencia (+/- kg) entre lo realmente utilizado y los kg teóricos a pesar. Se DERIVA de `kgReal`
+   * (kgReal − kgAPesar, sumando los lotes adicionales de la misma MP); se conserva para el PDF/Excel y OE viejas.
    */
   ajuste: number | null;
+  /** Observación del elaborador sobre la diferencia (opcional). */
   ajusteMotivo: string;
   ajusteAt: string | null;
   ajusteBy: string | null;
   lote: string;
+  /**
+   * CÓDIGO MP: código de la materia prima en Stock MP (el que se descuenta). Distinto de `codigo` (código de la
+   * fórmula). Vacío hasta que se completa o se sugiere uno inequívoco del catálogo.
+   */
+  codigoMp: string;
+  /**
+   * KG REAL UTILIZADO, cargado por Elaboración. Es lo único que se descuenta del stock. Nunca se completa solo con
+   * los kg teóricos: vacío (null) = todavía no informado.
+   */
+  kgReal: number | null;
+  /**
+   * Fila de LOTE ADICIONAL de la misma MP (cuando una MP se usa desde más de un lote): id de la fila de la fórmula.
+   * Sin % ni kg a pesar propios; tiene su lote y sus kg reales.
+   */
+  parentRowId: string | null;
 };
 
 export type OeProcedureStep = {
@@ -486,6 +502,34 @@ export class OrdersValidationError extends Error {
     super(message);
     this.name = "OrdersValidationError";
     if (code) this.code = code;
+  }
+}
+
+/** Datos de consumo de MP incompletos al entregar una OE: se informa cada fila a corregir; no se descuenta nada. */
+export class MpConsumptionIncompleteError extends OrdersValidationError {
+  readonly issues: Array<{ rowId: string; rowNumber: number; materiaPrima: string; field: string; message: string }>;
+  constructor(issues: MpConsumptionIncompleteError["issues"]) {
+    super(
+      `No se puede entregar: faltan datos para descontar materias primas. ${issues.map((i) => i.message).join(" ")}`,
+      "MP_CONSUMO_INCOMPLETO"
+    );
+    this.name = "MpConsumptionIncompleteError";
+    this.issues = issues;
+  }
+}
+
+/**
+ * Stock de MP insuficiente al entregar una OE: no se entrega ni se descuenta nada. Solo Producción o Dirección pueden
+ * autorizar la entrega dejando el stock en negativo, con motivo (queda auditado).
+ */
+export class MpStockShortageError extends OrdersValidationError {
+  readonly shortages: Array<{ codigo: string; lote: string; disponible: number; requerido: number; faltante: number; tipo: "lote" | "codigo" }>;
+  readonly canAuthorize: boolean;
+  constructor(message: string, shortages: MpStockShortageError["shortages"], canAuthorize: boolean) {
+    super(message, "MP_STOCK_SHORTAGE");
+    this.name = "MpStockShortageError";
+    this.shortages = shortages;
+    this.canAuthorize = canAuthorize;
   }
 }
 
