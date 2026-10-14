@@ -141,9 +141,9 @@ for (const [deviceName, device] of Object.entries(DEVICES)) {
             continue;
           }
           const b2 = problems.length;
-          await row.click().catch(() => {});
+          await page.getByRole("button", { name: "Abrir" }).first().click().catch(() => row.click().catch(() => {}));
           await settle(page);
-          await page.waitForTimeout(1500);
+          await page.waitForTimeout(2500);
           const bad2 = await bodyBad(page);
           const tabla = await page.locator("[data-testid=oe-materials-table]").count();
           check(`${tag}: editor de OE ${prodName} abre sin error`, !bad2 && problems.slice(b2).length === 0, [bad2, ...problems.slice(b2)].filter(Boolean).join(" | "));
