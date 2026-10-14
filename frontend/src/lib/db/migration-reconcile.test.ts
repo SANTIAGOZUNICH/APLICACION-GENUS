@@ -181,10 +181,10 @@ describe("verificación de esquema después del migrate (build)", () => {
       ? tables.map((t) => ({ t }))
       : columns.map((tc) => ({ t: tc.split(".")[0], c: tc.split(".")[1] }));
 
-  it("0043 completa → ok", async () => {
+  it("0043 y 0044 completas → ok", async () => {
     const res = await verifyRequiredSchema({
       query: fakeQuery(
-        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits"],
+        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos"],
         ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason"]
       ),
     });
@@ -197,7 +197,19 @@ describe("verificación de esquema después del migrate (build)", () => {
     });
     expect(res.ok).toBe(false);
     expect(res.missing.map((m) => m.object)).toEqual(REQUIRED_SCHEMA_OBJECTS.map((r) => r.object));
-    expect(new Set(res.missing.map((m) => m.migration))).toEqual(new Set(["0043_asignacion_lotes_local_edits"]));
+    expect(new Set(res.missing.map((m) => m.migration))).toEqual(
+      new Set(["0043_asignacion_lotes_local_edits", "0044_inventory_ingreso_adjuntos"])
+    );
+  });
+
+  it("0044 salteada (fotos de remitos) → informa la tabla que falta", async () => {
+    const res = await verifyRequiredSchema({
+      query: fakeQuery(
+        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits"],
+        ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason"]
+      ),
+    });
+    expect(res).toEqual({ ok: false, missing: [{ migration: "0044_inventory_ingreso_adjuntos", object: "inventory_ingreso_adjuntos" }] });
   });
 
   it("cada objeto requerido lo crea una migración del journal (y está en la lista de reconciliación)", () => {
