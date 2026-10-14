@@ -26,6 +26,7 @@ import type { SectorId } from "@/types/operational/sector";
 import { dayWidths, findCalendarCell, parseA1, parseWeeklyCalendar, type CalendarWeek, type SheetFormats } from "./calendar-model";
 import { loadOperationalLocks, norm, UNVERIFIABLE, type OperationalLocks } from "./operational-locks";
 import { isPriority } from "./priorities";
+import { canEditPriorities } from "./priorities-permissions";
 import { loadPriorities, reconcilePriorities, setTaskPriority, taskKeysByCell, type PrioritiesPayload } from "./semanas-priorities-service";
 import { PREVIEW_SPREADSHEET_ID, getPreviewGateway, isPreviewSourceAllowed } from "./preview-source";
 import { findFlatCell, parseFlatTable, type FlatTable } from "./flat-model";
@@ -389,6 +390,8 @@ export async function updateTaskPriority(
   actor: { email: string; sector: SectorId; displayName: string },
   input: { tabKey: string; taskKey: string; priority: string; expectedVersion: number }
 ) {
+  // Permiso ANTES de leer nada (no se gasta una lectura de Google en alguien sin permiso).
+  if (!canEditPriorities(actor.sector)) throw new OrdersForbiddenError("Solo Producción puede cambiar prioridades.");
   if (!isSemanasTabKey(input.tabKey) || SEMANAS_TABS[input.tabKey].kind !== "CALENDAR") throw new OrdersValidationError("Solo ELABORACION y ACONDICIONAMIENTO tienen prioridades.");
   if (!isPriority(input.priority)) throw new OrdersValidationError("Prioridad inválida (URGENTE, IMPORTANTE o NORMAL).");
   if (!Number.isInteger(input.expectedVersion) || input.expectedVersion < 0) throw new OrdersValidationError("expectedVersion inválida.");
