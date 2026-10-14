@@ -629,7 +629,19 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
                         items={lineItems}
                         onSelectDay={calendar.selectDay}
                         hideHeader
-                        richCards
+                        cards={{
+                          variant: "envasado",
+                          listMode: "active",
+                          getFinishedQty,
+                          getObservation,
+                          onSelectItem: (item) => {
+                            setSelectedItem(item);
+                            setDrawerOpen(true);
+                          },
+                          onArchiveFromView: handleArchiveFromView,
+                          onRestoreToView: handleRestoreToView,
+                          archiveBusyId,
+                        }}
                         draggable={canAssignWork}
                         dropZoneId={bucket}
                         canCreate={canAssignWork}
@@ -925,6 +937,16 @@ export function ElaboracionOperationalView() {
             selectedDate={calendar.selectedDate}
             items={workItems}
             onSelectDay={calendar.selectDay}
+            cards={{
+              variant: "elaboracion",
+              listMode: "active",
+              getFinishedQty,
+              getObservation,
+              onSelectItem: (item) => {
+                setSelectedItem(item);
+                setDrawerOpen(true);
+              },
+            }}
             draggable={canAssignWork}
             dropZoneId="elaboracion"
             canCreate={canAssignWork}
