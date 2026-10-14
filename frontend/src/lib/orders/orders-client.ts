@@ -626,6 +626,21 @@ export async function deleteOaApi(
   return data.order;
 }
 
+export async function deleteOeApi(
+  session: OrdersClientSession,
+  id: string,
+  reason: string
+): Promise<OperationalOrderRecord> {
+  const res = await fetch(`/api/v1/orders/${id}/delete-oe`, {
+    method: "POST",
+    credentials: "include",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ reason }),
+  });
+  const data = await parseJson<{ order: OperationalOrderRecord }>(res);
+  return data.order;
+}
+
 export async function restoreOrderApi(
   session: OrdersClientSession,
   id: string

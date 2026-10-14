@@ -12,7 +12,7 @@ import {
 } from "../components/operational-ui";
 import { listDocumentsByKind } from "../adapters/order-documents-repository";
 import { canOrderDocumentAction } from "../lib/order-documents-rbac";
-import { canDeleteOa, canOrderAction } from "@/lib/orders/rbac";
+import { canDeleteOa, canDeleteOe, canOrderAction } from "@/lib/orders/rbac";
 import { displayClient, displayProduct, displaySector, statusLabel } from "@/lib/orders/empty-draft";
 import {
   formatOperationalIdCompact,
@@ -110,7 +110,7 @@ export function NativeOrdersListView({
   const canCreate = canOrderAction(type, "create", sectorId);
   const canManageTemplates = canOrderAction(type, "manage_templates", sectorId);
   const canUploadHistorical = canOrderDocumentAction(type, "upload", sectorId);
-  const canViewDeleted = type === "OA" && canDeleteOa(sectorId);
+  const canViewDeleted = type === "OA" ? canDeleteOa(sectorId) : type === "OE" && canDeleteOe(sectorId);
 
   const loadTemplates = useCallback(async () => {
     if (!session.email) return;
@@ -287,7 +287,14 @@ export function NativeOrdersListView({
       header: "Estado",
       render: (r) =>
         r.deletedAt ? (
-          <StatusChip status="ELIMINADA" />
+          <span className="flex flex-col gap-0.5" data-testid="order-deleted-info">
+            <StatusChip status="ELIMINADA" />
+            {r.type === "OE" ? (
+              <span className="text-[length:var(--os-density-font-caption)] text-[var(--os-text-muted)]">
+                {new Date(r.deletedAt).toLocaleDateString("es-AR")} · {r.deletedBy ?? "—"} · {r.deleteReason ?? "—"}
+              </span>
+            ) : null}
+          </span>
         ) : (
           <StatusChip status={statusLabel(r.status)} />
         ),
