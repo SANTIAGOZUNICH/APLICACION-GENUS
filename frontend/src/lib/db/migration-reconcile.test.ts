@@ -174,6 +174,8 @@ describe("guardas sobre el journal real del repo", () => {
   });
 });
 
+const ENTREGAS_TABLES = ["scheduled_deliveries", "scheduled_delivery_items", "scheduled_delivery_links"];
+
 describe("verificación de esquema después del migrate (build)", () => {
   // information_schema simulado: tablas y columnas presentes.
   const fakeQuery = (tables: string[], columns: string[]) => async (text: string) =>
@@ -181,10 +183,10 @@ describe("verificación de esquema después del migrate (build)", () => {
       ? tables.map((t) => ({ t }))
       : columns.map((tc) => ({ t: tc.split(".")[0], c: tc.split(".")[1] }));
 
-  it("0043 y 0044 completas → ok", async () => {
+  it("0043, 0044 y 0045 completas → ok", async () => {
     const res = await verifyRequiredSchema({
       query: fakeQuery(
-        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos"],
+        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos", ...ENTREGAS_TABLES],
         ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason"]
       ),
     });
@@ -198,14 +200,14 @@ describe("verificación de esquema después del migrate (build)", () => {
     expect(res.ok).toBe(false);
     expect(res.missing.map((m) => m.object)).toEqual(REQUIRED_SCHEMA_OBJECTS.map((r) => r.object));
     expect(new Set(res.missing.map((m) => m.migration))).toEqual(
-      new Set(["0043_asignacion_lotes_local_edits", "0044_inventory_ingreso_adjuntos"])
+      new Set(["0043_asignacion_lotes_local_edits", "0044_inventory_ingreso_adjuntos", "0045_scheduled_deliveries"])
     );
   });
 
   it("0044 salteada (fotos de remitos) → informa la tabla que falta", async () => {
     const res = await verifyRequiredSchema({
       query: fakeQuery(
-        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits"],
+        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", ...ENTREGAS_TABLES],
         ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason"]
       ),
     });

@@ -35,6 +35,7 @@ import {
   isPackagingOaSector,
   normalizeOaOrderNumber,
 } from "@/lib/planning/oa-assign-helpers";
+import { linkWorkInTx, readDeliveryItemForAssignment } from "@/lib/entregas/service";
 
 export type WorkAssignmentInput = {
   sector: PlanningSector;
@@ -65,6 +66,13 @@ export type WorkAssignmentInput = {
    * vinieron (carga manual).
    */
   asignacionLoteId?: string | null;
+  /**
+   * Producto de una ENTREGA PROGRAMADA (calendario de Entregas) que Producción eligió y confirmó para este trabajo.
+   * El servidor la relee fresca, valida que siga vigente, que el sector y cliente/producto coincidan, completa SOLO los
+   * campos que vinieron vacíos (fecha de entrega, unidad, lote, vencimiento) y registra el vínculo en la MISMA
+   * transacción. Nunca vincula sola: sin este id no hay vínculo. La fecha de entrega no define la de fabricación.
+   */
+  scheduledDeliveryItemId?: string | null;
   /** Código de producto (opcional; se copia a la OA). */
   productCode?: string | null;
   /** FK a production_pedidos — origina el trabajo desde un Pedido real (opcional). */
@@ -263,6 +271,7 @@ export async function assignWorkItemDurable(
   const orderId = input.orderId?.trim() || null;
   const forceLink = Boolean(input.forceLink);
   const productCode = input.productCode?.trim() || "";
+  const scheduledItemId = input.scheduledDeliveryItemId?.trim() || null;
   const productionPedidoId = input.productionPedidoId?.trim() || null;
 
   const db = getDb();
@@ -452,6 +461,25 @@ export async function assignWorkItemDurable(
         // Si ya no existe/no coincide (se editó/archivó mientras el
         // diálogo estaba abierto), se ignora en silencio y se cae al
         // packagingLote/packagingVto recibidos tal cual — nunca bloquea.
+      }
+
+      // Entrega programada confirmada por Producción: completa SOLO lo que quedó vacío (nunca pisa lo que el usuario
+      // cargó) y valida vigencia/sector. El vínculo se inserta más abajo, en esta misma transacción.
+      let deliveryDateEff = input.deliveryDate?.trim() || null;
+      let unitEff = input.unit;
+      if (scheduledItemId) {
+        const si = await readDeliveryItemForAssignment(tx, scheduledItemId);
+        if (!si || si.deleted) throw new PlanningValidationError("La entrega programada elegida ya no existe.");
+        if (si.state === "cancelada") throw new PlanningValidationError("La entrega programada elegida está cancelada.");
+        if (si.sector && si.sector !== input.sector) {
+          throw new PlanningValidationError("La entrega programada elegida es de otro sector de Envasado.");
+        }
+        if (!deliveryDateEff) deliveryDateEff = si.deliveryDate;
+        if (!unitEff?.trim() && si.unit) unitEff = si.unit;
+        if (input.sector !== "ELABORACION") {
+          if (!resolvedPackagingLote && si.lot) resolvedPackagingLote = si.lot;
+          if (!resolvedPackagingVto && si.vto) resolvedPackagingVto = si.vto;
+        }
       }
 
       // Identidad funcional OA/OE = PEDIDO + PRODUCTO + LOTE (ver
@@ -647,7 +675,7 @@ export async function assignWorkItemDurable(
           product: input.product.trim(),
           plannedQuantity: input.plannedQuantity.trim(),
           unit:
-            (input.unit ?? (input.sector === "ELABORACION" ? "kg" : "un.")).trim() ||
+            (unitEff ?? (input.sector === "ELABORACION" ? "kg" : "un.")).trim() ||
             "KG",
           sector: input.sector,
           line: assignment.line,
@@ -657,7 +685,7 @@ export async function assignWorkItemDurable(
           packagingLote: resolvedPackagingLote,
           packagingVto: resolvedPackagingVto,
           packagingTotalUnits: (() => {
-            const unit = input.unit ?? (input.sector === "ELABORACION" ? "kg" : "un.");
+            const unit = unitEff ?? (input.sector === "ELABORACION" ? "kg" : "un.");
             const parsed = isIntegerUnit(unit)
               ? parseArInteger(input.plannedQuantity)
               : parseArDecimal(input.plannedQuantity);
@@ -666,7 +694,7 @@ export async function assignWorkItemDurable(
           orderId: orderRow?.id ?? null,
           orderNumber: orderRow?.orderNumber ?? orderNumberRaw,
           productionPedidoId,
-          deliveryDate: input.deliveryDate?.trim() || null,
+          deliveryDate: deliveryDateEff,
           status: "PUBLICADO",
           publishedAt: now,
           createdBy: actor.email,
@@ -767,6 +795,11 @@ export async function assignWorkItemDurable(
 
       if (pedidoSnapshot) {
         await touchPedidoOnAssign(tx, inserted.id, pedidoSnapshot, actor, input.sector);
+      }
+
+      // Vínculo con la entrega programada (misma transacción: o se crea el trabajo CON su vínculo, o ninguno de los dos).
+      if (scheduledItemId) {
+        await linkWorkInTx(tx, { email: actor.email, sector: actor.sector }, { itemId: scheduledItemId, workItemId: inserted.id, requireMatch: true });
       }
 
       const [confirmed] = await tx

@@ -74,6 +74,8 @@ function parseBody(raw: unknown): WorkAssignmentInput {
       body.packagingVto != null ? String(body.packagingVto) : null,
     asignacionLoteId:
       body.asignacionLoteId != null ? String(body.asignacionLoteId).trim() || null : null,
+    scheduledDeliveryItemId:
+      body.scheduledDeliveryItemId != null ? String(body.scheduledDeliveryItemId).trim() || null : null,
     productCode:
       body.productCode != null
         ? String(body.productCode)
