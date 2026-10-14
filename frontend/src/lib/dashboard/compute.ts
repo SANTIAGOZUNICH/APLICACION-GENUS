@@ -550,14 +550,15 @@ export function computeDashboard(rows: DashboardRows, filters: DashboardFilters,
 
   // --- Resumen gerencial determinístico ----------------------------------------------------------------------------
   const summary: string[] = [];
+  const inLbl = filters.month ? periodLbl : String(filters.year);
   if (unidades.value != null && filters.sector === "ALL") {
     const parts: string[] = [];
     if (produccion.masivoShare != null) parts.push(`Masivo ${fmtInt(masivo)} (${fmtPercent(produccion.masivoShare)})`);
     if (produccion.premiumShare != null) parts.push(`Premium ${fmtInt(premium)} (${fmtPercent(produccion.premiumShare)})`);
-    summary.push(`En ${periodLbl} se produjeron ${fmtInt(unidades.value)} unidades${parts.length ? `: ${parts.join(" · ")}` : ""}.`);
+    summary.push(`En ${inLbl} se produjeron ${fmtInt(unidades.value)} unidades${parts.length ? `: ${parts.join(" · ")}` : ""}.`);
   } else if (unidades.value != null) {
     const sectorLabel = filters.sector === "ENVASADO_MASIVO" ? "Envasado Masivo" : "Envasado Premium";
-    summary.push(`En ${periodLbl} ${sectorLabel} produjo ${fmtInt(unidades.value)} unidades.`);
+    summary.push(`En ${inLbl} ${sectorLabel} produjo ${fmtInt(unidades.value)} unidades.`);
   }
   if (!filters.month && producedInYear.length > 0) {
     const best = monthly.reduce((b, m) => (m.masivo + m.premium > b.masivo + b.premium ? m : b), monthly[0]);
@@ -565,7 +566,7 @@ export function computeDashboard(rows: DashboardRows, filters: DashboardFilters,
   }
   if (pedidosInPeriod.length > 0) {
     summary.push(
-      `Hay ${fmtInt(nActivos)} pedidos activos, ${fmtInt(nDespacho)} en despacho y ${fmtInt(nEntregados)} entregados sobre ${fmtInt(pedidosInPeriod.length)} pedidos de ${periodLbl}.`
+      `Hay ${fmtInt(nActivos)} pedidos activos, ${fmtInt(nDespacho)} en despacho y ${fmtInt(nEntregados)} entregados sobre ${fmtInt(pedidosInPeriod.length)} pedidos de ${inLbl}.`
     );
   }
   if (full) {

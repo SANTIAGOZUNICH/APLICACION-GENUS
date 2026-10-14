@@ -76,7 +76,7 @@ export function DashboardClients({ block }: { block: DashboardClientsBlock }) {
         <DashboardKpiCard kpi={block.activeClients} caption="con al menos un pedido en el período" />
         <div className="lg:col-span-2">
           <Panel title="Top clientes por cantidad de pedidos" subtitle={`Fecha de pedido · ${block.periodLabel}`} testId="clients-ranking">
-            <BarList rows={top} value={(r) => r.pedidos} label={(r) => `${fmtInt(r.pedidos)} pedidos`} empty="Sin datos suficientes: no hay pedidos con cliente en el período." color="#12bfb7" />
+            <BarList rows={top} value={(r) => r.pedidos} label={(r) => `${fmtInt(r.pedidos)} ${r.pedidos === 1 ? "pedido" : "pedidos"}`} empty="Sin datos suficientes: no hay pedidos con cliente en el período." color="#12bfb7" />
           </Panel>
         </div>
       </div>

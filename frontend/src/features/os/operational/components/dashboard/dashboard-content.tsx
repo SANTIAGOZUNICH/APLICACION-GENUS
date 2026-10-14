@@ -66,7 +66,7 @@ export function DashboardContent({ payload, filters, loading, onFiltersChange, o
               Año {header.year}
             </span>
             <span className="rounded-full bg-white/[0.08] px-2.5 py-1 text-[var(--os-text)]" data-testid="dashboard-period">
-              {header.periodLabel}
+              {header.month ? header.periodLabel : "Año completo"}
             </span>
             {sectorChip ? <span className="rounded-full bg-white/[0.08] px-2.5 py-1 text-[var(--os-text)]">{sectorChip}</span> : null}
             {header.client ? <span className="max-w-full truncate rounded-full bg-white/[0.08] px-2.5 py-1 text-[var(--os-text)]">{header.client}</span> : null}

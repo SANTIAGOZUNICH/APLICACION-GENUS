@@ -36,8 +36,6 @@ export function DashboardView() {
       .then((p) => {
         setPayload(p);
         setError(null);
-        // El servidor puede haber normalizado el año (p. ej. año por defecto): se respeta lo que él devolvió.
-        setFilters((prev) => (prev.year === p.header.year ? prev : { ...prev, year: p.header.year }));
       })
       .catch((err: unknown) => {
         if (ctrl.signal.aborted) return;

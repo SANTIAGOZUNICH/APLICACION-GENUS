@@ -151,8 +151,8 @@ async function seed() {
   const ped = async (op, fecha, cliente, producto, qty, estado, deleted = false) =>
     (await q(
       `insert into production_pedidos (op, fecha, cliente, producto, s, q, ml, kg, estado, created_by, created_by_sector, deleted_at)
-       values ($1, $2, $3, $4, 'M', $5, 100, $5 * 100 / 1000.0, $6, 'e2e', 'PRODUCCION', ${deleted ? "now()" : "null"}) returning id`,
-      [op, fecha, cliente, producto, qty, estado]
+       values ($1, $2, $3, $4, 'M', $5, 100, $6, $7, 'e2e', 'PRODUCCION', ${deleted ? "now()" : "null"}) returning id`,
+      [op, fecha, cliente, producto, qty, (qty * 100) / 1000, estado]
     ))[0].id;
   const P1 = await ped("E2E-1", "2026-02-02", ALFA, "E2E Crema A", 1000, "ENTREGADO");
   const P2 = await ped("E2E-2", "2026-02-10", ALFA, "E2E Crema B", 2000, "ENTREGADO");
@@ -180,14 +180,14 @@ async function seed() {
   const W6 = await PR({ client: GAMMA, product: "E2E Serum", finished: "300", completed: "2026-06-10T15:00:00Z" });
   await M({ client: ALFA, product: "E2E Cancelado", status: "cancelado", finished: "999", completed: "2026-03-01T15:00:00Z", cancelledAt: "2026-03-02T15:00:00Z" });
   await M({ client: ALFA, product: "E2E Eliminado", finished: "888", completed: "2026-03-01T15:00:00Z", deleted: true });
-  await work({ sector: "ELABORACION", line: null, branch: "Cristian", client: ALFA, product: "E2E Granel", finished: "5000", completed: "2026-03-01T15:00:00Z" }); // kg: no cuenta
+  const W9 = await work({ sector: "ELABORACION", line: null, branch: "Cristian", client: ALFA, product: "E2E Granel", finished: "5000", completed: "2026-03-01T15:00:00Z" }); // kg: no cuenta
   await work({ sector: "CODIFICADO", line: null, client: ALFA, product: "E2E Serum", finished: "200", completed: "2026-07-01T15:00:00Z", origin: "ENVASADO_PREMIUM" }); // pasó por Codificado: cuenta Premium
   await M({ client: BETA, product: "E2E Gel", finished: "1.500", completed: "2026-09-12T15:00:00Z" }); // «1.500» = mil quinientas
 
   const del = async ({ work: w, sector, client, pedido, at, status = "ENTREGADO", deleted = false }) =>
     q(
-      `insert into work_item_deliveries (work_item_id, product, client, source_sector, production_pedido_id, actual_delivered_at, status, delivered_by, delivered_by_sector, deleted_at)
-       values ($1, 'E2E Dash producto', $2, $3, $4, $5, $6, 'e2e', 'PRODUCCION', ${deleted ? "now()" : "null"})`,
+      `insert into work_item_deliveries (work_item_id, product, client, source_sector, production_pedido_id, actual_delivered_at, status, delivered_by, delivered_by_sector, deleted_at, archived)
+       values ($1, 'E2E Dash producto', $2, $3, $4, $5, $6, 'e2e', 'PRODUCCION', ${deleted ? "now()" : "null"}, ${deleted ? "true" : "false"})`,
       [w, client, sector, pedido, at, status]
     );
   await del({ work: W1, sector: "ENVASADO_MASIVO", client: ALFA, pedido: P1, at: "2026-02-12T15:00:00Z" }); // P1: 10 días
@@ -198,7 +198,7 @@ async function seed() {
   await del({ work: W1, sector: "ENVASADO_MASIVO", client: ALFA, pedido: P1, at: "2026-12-01T15:00:00Z", status: "ANULADO" });
   await del({ work: W2, sector: "ENVASADO_MASIVO", client: ALFA, pedido: P2, at: "2026-12-02T15:00:00Z", status: "REGISTRO_ELIMINADO" });
   await del({ work: W3, sector: "ENVASADO_PREMIUM", client: BETA, pedido: P3, at: "2026-12-03T15:00:00Z", deleted: true });
-  await del({ work: W1, sector: "ELABORACION", client: ALFA, pedido: P1, at: "2026-12-04T15:00:00Z" });
+  await del({ work: W9, sector: "ELABORACION", client: ALFA, pedido: P1, at: "2026-12-04T15:00:00Z" }); // granel de Elaboración: no cuenta
   await del({ work: W6, sector: "ENVASADO_PREMIUM", client: GAMMA, pedido: null, at: "2026-06-15T15:00:00Z" }); // sin pedido: no entra al lead time
 }
 
@@ -329,7 +329,8 @@ try {
   console.log("\n== 1. Sin datos reales ==");
   await openDashboard(page);
   await setFilter(page, "filter-year", String(YEAR));
-  check("título «Dashboard Operativo» y año seleccionado", (await text(page, "dashboard-title")) === "Dashboard Operativo" && (await text(page, "dashboard-year")) === `Año ${YEAR}`);
+  await page.getByTestId("dashboard-year").filter({ hasText: `Año ${YEAR}` }).waitFor({ timeout: 30_000 }).catch(() => {});
+  check("título «Dashboard Operativo» y año seleccionado", (await text(page, "dashboard-title")) === "Dashboard Operativo" && (await text(page, "dashboard-year")) === "Año completo");
   check("fecha de última actualización visible", /Última actualización de datos/.test(await text(page, "dashboard-updated")));
   const allKeys = ["nivel_servicio", "sin_reclamos", "lead_time", "unidades_producidas", "pedidos_activos", "pedidos_entregados", "pedidos_en_despacho", "productos_distintos", "clientes_activos"];
   let allEmpty = true;
@@ -404,7 +405,7 @@ try {
   compare("año 2025", screen, e);
   check("año 2025: sin producción → unidades y lead time «Sin datos suficientes»; 1 pedido entregado", screen.unitsTotal == null && screen.leadTime == null && screen.entregados === 1);
   await resetFilters(page);
-  check("limpiar filtros vuelve al año completo", (await text(page, "dashboard-period")) === `Año ${YEAR}`);
+  check("limpiar filtros vuelve al año completo", (await text(page, "dashboard-period")) === "Año completo");
 
   // ===== 4. Semáforo y objetivos ======================================================================================
   console.log("\n== 4. Semáforo y objetivos ==");

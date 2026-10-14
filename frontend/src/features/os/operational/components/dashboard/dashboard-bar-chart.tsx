@@ -71,7 +71,8 @@ export function DashboardBarChart({ data, selectedMonth, sector, year }: Props) 
           <VerticalChart data={data} width={width} maxValue={maxValue} selectedMonth={selectedMonth} dimMasivo={dimMasivo} dimPremium={dimPremium} summary={summary} />
         )}
       </div>
-      <table className="sr-only">
+      <div className="sr-only">
+      <table>
         <caption>{summary}</caption>
         <thead>
           <tr>
@@ -90,6 +91,7 @@ export function DashboardBarChart({ data, selectedMonth, sector, year }: Props) 
           ))}
         </tbody>
       </table>
+      </div>
     </figure>
   );
 }
