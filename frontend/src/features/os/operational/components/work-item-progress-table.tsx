@@ -16,7 +16,7 @@ import { useWorkItemCellEditing } from "../hooks/use-work-item-cells";
 import { formatDateDisplay } from "../lib/delivery-date";
 import { DeliveryDateBadge } from "./delivery-date-badge";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
-import { WorkItemCards } from "./work-item-cards";
+import { NO_CELL_EDITING, WorkItemCards } from "./work-item-cards";
 import { useWorkItemsView } from "../hooks/use-work-items-view";
 
 interface WorkItemProgressTableProps {
@@ -42,13 +42,6 @@ const tdClass = "os-table-td";
 
 /** Tabla operativa — Envasado / Elaboración. La fila abre el drawer de trabajo. */
 type CellEditing = ReturnType<typeof useWorkItemCellEditing>;
-const NO_CELL_EDITING: CellEditing = {
-  canEditCells: undefined,
-  onCellsCommit: undefined,
-  rowVersion: undefined,
-  reasonRequired: undefined,
-  edit: () => undefined,
-} as unknown as CellEditing;
 
 function EditableWorkItemTable(props: WorkItemProgressTableProps) {
   const cells = useWorkItemCellEditing(props.items, props.onItemsChanged);

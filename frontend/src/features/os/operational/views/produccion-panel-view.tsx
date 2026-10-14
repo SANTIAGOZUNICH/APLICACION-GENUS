@@ -311,11 +311,19 @@ export function ProduccionPanelView() {
   return (
     <TwinShell title="Panel general">
     <div className="space-y-6">
-      <header>
-        <h2 className="text-2xl font-semibold tracking-tight">Panel general</h2>
-        <p className="text-sm text-[var(--os-text-muted)]">
-          Vista consolidada de planta — Elaboración, Envasado y Calidad.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-semibold tracking-tight">Panel general</h2>
+          <p className="text-sm text-[var(--os-text-muted)]">
+            Vista consolidada de planta — Elaboración, Envasado y Calidad.
+          </p>
+        </div>
+        {/* Semanas ya no tiene entrada propia en el menú lateral: se abre desde acá (misma pantalla, misma planilla). */}
+        {sectorId === "PRODUCCION" ? (
+          <Button size="sm" variant="secondary" onClick={() => navigateTo({ view: "semanas-planilla" })} data-testid="produccion-open-semanas">
+            Semanas
+          </Button>
+        ) : null}
       </header>
 
       {canMutateWorks ? (
