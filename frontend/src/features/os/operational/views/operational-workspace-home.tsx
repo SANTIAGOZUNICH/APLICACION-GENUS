@@ -1,7 +1,8 @@
 "use client";
 
 import { usePreviewSession } from "@/features/os/session/preview-context";
-import { CalidadOperationalView } from "./calidad-operational-view";
+import { HistorialView } from "./historial-view";
+import { historialSectorsForActor } from "@/features/os/navigation/twin-nav";
 import { DepositoOperationalView } from "./deposito-operational-view";
 import {
   ElaboracionOperationalView,
@@ -28,7 +29,9 @@ export function OperationalWorkspaceHome() {
     case "CODIFICADO":
       return <CodificadoOperationalView />;
     case "CALIDAD":
-      return <CalidadOperationalView />;
+      // Calidad salió del circuito operativo: las cuentas del sector siguen vigentes y entran a una vista de SOLO
+      // LECTURA con el historial (incluye las decisiones históricas de Calidad). Sin acciones ni aprobaciones.
+      return <HistorialView sectors={historialSectorsForActor("PRODUCCION")} title="Historial" />;
     case "MATERIA_PRIMA":
       return <MpHubView initialTab="Stock" />;
     case "PRODUCCION":

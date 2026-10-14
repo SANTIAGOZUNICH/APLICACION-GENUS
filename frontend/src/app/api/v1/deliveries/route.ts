@@ -5,6 +5,8 @@ import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types"
 import { AuthUnauthorizedError } from "@/lib/auth/types";
 import {
   listDeliveriesDurable,
+  listDeliveryLinesDurable,
+  nativeIdFromItemId,
   toClientDeliveryRecord,
 } from "@/lib/planning/work-item-progress-repository";
 
@@ -38,6 +40,12 @@ export async function GET(request: Request) {
   }
 
   try {
+    // ?workItemId=native:<uuid> → historial de entregas (parciales) de ese trabajo.
+    const workItemParam = new URL(request.url).searchParams.get("workItemId");
+    if (workItemParam) {
+      const nativeId = nativeIdFromItemId(workItemParam) ?? workItemParam;
+      return NextResponse.json({ lines: await listDeliveryLinesDurable(nativeId) });
+    }
     const rows = await listDeliveriesDurable({ includeDeleted: false });
     return NextResponse.json({ deliveries: rows.map(toClientDeliveryRecord) });
   } catch (error) {

@@ -11,7 +11,6 @@ import {
   WorkDetailView,
 } from "@/features/entities/views/detail-views";
 import {
-  TwinCalidadNavView,
   TwinConfigView,
   TwinInsumosView,
 } from "@/features/entities/views/stub-views";
@@ -19,7 +18,7 @@ import { WireframePlanSemanal } from "@/features/work/views/plan-semanal";
 import { WireframeConsulta } from "@/features/work/views/consulta";
 import { WireframeProduccion } from "@/features/sectors/wireframes/produccion";
 import { WireframeDireccion } from "@/features/sectors/wireframes/direccion";
-import { CalidadOperationalView } from "@/features/os/operational/views/calidad-operational-view";
+import { PendientesDefinirView } from "@/features/os/operational/views/pendientes-definir-view";
 import { OeListView } from "@/features/os/operational/views/oe-list-view";
 import { OaListView } from "@/features/os/operational/views/oa-list-view";
 import { HistorialView } from "@/features/os/operational/views/historial-view";
@@ -69,8 +68,6 @@ export function TwinRouter() {
       return <WireframeConsulta key={currentNav.query ?? "consulta"} initialQuery={currentNav.query} />;
     case "insumos":
       return <TwinInsumosView />;
-    case "calidad":
-      return <TwinCalidadNavView />;
     case "config":
       return <TwinConfigView />;
     case "produccion":
@@ -98,11 +95,8 @@ export function TwinRouter() {
     case "historial":
       return <HistorialView sectors={historialSectorsForActor(sectorId)} />;
     case "pendientes":
-      return <CalidadOperationalView initialTab="pendientes" />;
-    case "aprobados":
-      return <CalidadOperationalView initialTab="aprobados" />;
-    case "rechazados":
-      return <CalidadOperationalView initialTab="rechazados" />;
+      // Circuito sin Calidad: «Pendientes de definir» (trabajos terminados sin destino) — Producción/Dirección.
+      return <PendientesDefinirView />;
 
     case "stock":
       return <MpHubView key="Stock" initialTab="Stock" />;
@@ -158,8 +152,6 @@ export function TwinRouter() {
       return <EnvasadoOperationalView sectorId="ENVASADO_PREMIUM" />;
     case "ver-codificado":
       return <CodificadoOperationalView />;
-    case "ver-calidad":
-      return <CalidadOperationalView />;
     case "ver-materia-prima":
       return <MpHubView initialTab="Stock" />;
 

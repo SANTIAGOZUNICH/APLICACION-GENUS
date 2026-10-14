@@ -16,6 +16,7 @@ import {
 import type { WorkItem } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
 import type { DeliveryRecord } from "@/features/os/operational/adapters/delivery-repository";
+import type { DeliveryCompletion } from "@/lib/planning/circuit/delivery-core";
 import { normalizeOptionalReason } from "@/lib/lifecycle";
 import {
   annulDeliveryDurable,
@@ -153,9 +154,16 @@ type OperationAction =
       updatedBy?: string;
       actorSectorId?: SectorId;
     }
-  | (DeliveryRecord & {
+  | (Partial<DeliveryRecord> & {
       action: "deliver_work";
+      workItemId: string;
       actorSectorId?: SectorId;
+      /** Entrega parcial: unidades entregadas ahora (omitido = todo el saldo). */
+      deliverQuantity?: number | string | null;
+      /** Misma clave = misma entrega (doble clic / reintento). */
+      idempotencyKey?: string | null;
+      /** Cierre aplicado en la misma transacción que la entrega. */
+      completion?: DeliveryCompletion | null;
     })
   | {
       action: "archive_delivery" | "restore_delivery";
@@ -516,7 +524,17 @@ export async function POST(request: Request) {
         }
         if (nativeDeliveryWorkId) {
           const result = await deliverWorkDurable(
-            { ...body, workItemId: nativeDeliveryWorkId },
+            {
+              ...body,
+              workItemId: nativeDeliveryWorkId,
+              codigo: body.codigo ?? null,
+              sourceSector: (body.sourceSector ?? actor.sector) as SectorId,
+              plannedDeliveryDate: body.plannedDeliveryDate ?? null,
+              actualDeliveredAt: body.actualDeliveredAt ?? new Date().toISOString(),
+              remito: body.remito ?? null,
+              receivedBy: body.receivedBy ?? null,
+              observations: body.observations ?? null,
+            },
             { email: actor.email, sector: actor.sector, displayName: actor.displayName ?? actor.email }
           );
           return NextResponse.json({
@@ -529,7 +547,7 @@ export async function POST(request: Request) {
             pending: result.pending,
           });
         }
-        const record = serverOperationalState.deliverWork(body);
+        const record = serverOperationalState.deliverWork(body as DeliveryRecord);
         return NextResponse.json({
           ok: true,
           revision: serverOperationalState.getRevision(),

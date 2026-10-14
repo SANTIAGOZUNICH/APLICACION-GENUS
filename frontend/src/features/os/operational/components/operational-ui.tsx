@@ -735,31 +735,29 @@ export function ActionButton({ label, variant, onClick, disabled, title }: Actio
 
 export function StatusChip({
   status,
-  transferredInbox,
 }: {
   status: string;
-  /** Ítem en bandeja Calidad recibido por transferencia. */
+  /** @deprecated Sin efecto: el circuito ya no tiene bandeja de Calidad. Se acepta por compatibilidad de llamadas. */
   transferredInbox?: boolean;
 }) {
   const normalized = status.toLowerCase();
   let cls = "bg-[var(--os-bg)] text-[var(--os-text-muted)]";
   let label = status.replace(/_/g, " ");
 
-  if (transferredInbox && normalized === "pendiente") {
-    cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
-    label = WORK_TRANSFER.awaitingApproval;
-  } else if (normalized === "en_codificado") {
+  if (normalized === "en_codificado") {
     cls = "bg-[var(--genus-info-soft,var(--os-teal-soft))] text-[var(--genus-info,var(--os-teal))]";
     label = WORK_TRANSFER.inCodificado;
   } else if (normalized === "codificado_completo") {
     cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
     label = "Codificado completo";
   } else if (normalized === "aprobado") {
+    // Decisión histórica de Calidad (solo lectura).
     cls = "bg-[var(--genus-success-soft)] text-[var(--genus-success)]";
-  } else if (isWorkTransferredStatus(normalized) || normalized === "revision") {
-    cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
-    label = WORK_TRANSFER.pendingReview;
+    label = "Aprobado (histórico)";
   } else if (normalized === "completo") {
+    cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
+    label = WORK_TRANSFER.sentToEnvasado;
+  } else if (isWorkTransferredStatus(normalized) || normalized === "revision") {
     cls = "bg-[var(--os-teal-soft)] text-[var(--os-teal)]";
     label = WORK_TRANSFER.pendingReview;
   } else if (normalized === "rechazado" || normalized === "bloqueado") {

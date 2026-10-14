@@ -39,6 +39,9 @@ import {
 } from "../lib/work-transfer-labels";
 import { isEnvasadoWorkPending } from "../lib/envasado-pending";
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
+import { postCircuitDelivery, postSendToEnvasado } from "../adapters/circuit-client";
+import type { DeliverWorkPayload } from "../components/deliver-work-dialog";
+import type { SendToEnvasadoPayload } from "../components/send-to-envasado-dialog";
 import { postRescheduleWork } from "@/lib/api/live-sync-client";
 
 /** Sensor de drag & drop — umbral de distancia para no interferir con el click normal de "seleccionar día". */
@@ -79,7 +82,6 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   const {
     applyProgressToWorkItems,
     saveWorkProgress,
-    markWorkFinished,
     sendToCodificado,
     getFinishedQty,
     getObservation,
@@ -127,6 +129,11 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   const session = useMemo(
     () => ({ email: workspace.context.email, sector: sectorId }),
     [workspace.context.email, sectorId]
+  );
+  /** Sesión REAL del actor (su sector, no el de la vista): Producción opera vistas de Envasado. */
+  const actorSession = useMemo(
+    () => ({ email: workspace.context.email, sector: actorSectorId }),
+    [workspace.context.email, actorSectorId]
   );
 
   const refreshArchives = useCallback(async () => {
@@ -196,21 +203,28 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     [saveWorkProgress, workspace.context.displayName, sectorId, showToast]
   );
 
-  const handleFinish = useCallback(
+  /**
+   * Envasado → ENTREGAR: registra directamente la entrega final (sin aprobación). El cierre (cantidad, cajas, muestras,
+   * observaciones, sobrante) viaja en la MISMA transacción que la entrega; la clave de idempotencia la fija el diálogo.
+   * Errores: se relanzan para que el diálogo los muestre y conserve lo tipeado.
+   */
+  const handleDeliver = useCallback(
     async (
       item: WorkItem,
-      payload: {
-        finishedQty: string;
-        observation: string;
-        bulkRemainderKg?: number | null;
-        bulkRemainderObservation?: string | null;
+      payload: DeliverWorkPayload & {
+        completion: {
+          finishedQty: string;
+          observation: string;
+          packagingLote: string | null;
+          packagingVto: string | null;
+          packagingTotalUnits: number | null;
+          packingGroups: Array<{ cajas: number; unidadesPorCaja: number }>;
+          sampleUnits: number | null;
+          packingMismatchObservation: string | null;
+        };
       }
     ) => {
-      // El sobrante se registra en Depósito ANTES de completar, para poder
-      // enlazar su id al work item en el mismo llamado a completar (evita
-      // que "Entregar a Calidad" directo deje bulkRemainderKg/Id sin
-      // persistir en el work item, a diferencia de "Enviar a Codificado"
-      // que ya los enlazaba).
+      // El sobrante se registra en Depósito ANTES de entregar, para enlazar su id al work item en la misma llamada.
       let bulkId: string | null = null;
       if (hasRegistrableBulkRemainder(payload.bulkRemainderKg)) {
         try {
@@ -240,33 +254,33 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           );
         }
       }
-      try {
-        await markWorkFinished(item, {
-          finishedQty: payload.finishedQty,
-          observation: payload.observation,
-          updatedBy: workspace.context.displayName,
-          bulkRemainderKg: payload.bulkRemainderKg,
-          bulkRemainderObservation: payload.bulkRemainderObservation,
+      const result = await postCircuitDelivery(actorSession, {
+        workItemId: item.id,
+        actorSectorId: actorSectorId,
+        deliverQuantity: payload.deliverQuantity,
+        idempotencyKey: payload.idempotencyKey,
+        actualDeliveredAt: payload.actualDeliveredAt,
+        remito: payload.remito,
+        receivedBy: payload.receivedBy,
+        observations: payload.observations,
+        plannedDeliveryDate: item.deliveryDate ?? null,
+        sourceSector: sectorId,
+        completion: {
+          ...payload.completion,
+          bulkRemainderKg: payload.bulkRemainderKg ?? null,
+          bulkRemainderObservation: payload.bulkRemainderObservation ?? null,
           bulkRemainderId: bulkId,
-        });
-      } catch (err) {
-        showToast(
-          err instanceof Error
-            ? `No se guardó: ${err.message} — reintentá.`
-            : "No se pudo guardar en el servidor. Reintentá.",
-          "info"
-        );
-        return;
-      }
-      pushNotification({
-        kind: "trabajo_finalizado",
-        title: `Trabajo finalizado — ${workspace.sectorLabel}`,
-        message: `${item.product ?? "Producto"} · ${item.client ?? ""} listo para revisión de Calidad.`,
-        sectors: ["CALIDAD"],
+        },
       });
-      showToast("Trabajo enviado a Calidad.");
+      showToast(
+        result.complete
+          ? "Entrega registrada."
+          : `Entrega parcial registrada. Saldo pendiente: ${result.pending ?? "—"}.`
+      );
+      await refresh();
+      await refreshPendientes();
     },
-    [markWorkFinished, workspace.context.displayName, workspace.sectorLabel, showToast, sectorId, session]
+    [session, actorSession, sectorId, actorSectorId, workspace.context.displayName, showToast, refresh, refreshPendientes]
   );
 
   const handleSendToCodificado = useCallback(
@@ -315,7 +329,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       }
 
       try {
-        const server = await postCodificadoHandoff(session, item.id, {
+        const server = await postCodificadoHandoff(actorSession, item.id, {
           action: item.codificadoCancelledAt || item.viaCodificado ? "resend" : "send",
           totalUnits: payload.totalUnits,
           observation: payload.observation,
@@ -381,6 +395,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       sectorId,
       email,
       session,
+      actorSession,
       refresh,
       refreshPendientes,
     ]
@@ -389,7 +404,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   const handleCancelCodificado = useCallback(
     async (item: WorkItem, payload: { reason?: string }) => {
       try {
-        await postCodificadoHandoff(session, item.id, {
+        await postCodificadoHandoff(actorSession, item.id, {
           action: "cancel",
           reason: payload.reason,
           expectedVersion: item.nativeVersion ?? null,
@@ -412,7 +427,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         return { ok: false };
       }
     },
-    [session, showToast, refresh, refreshPendientes]
+    [actorSession, showToast, refresh, refreshPendientes]
   );
 
   const handleArchiveFromView = useCallback(
@@ -727,7 +742,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           await refreshPendientes();
         }}
         onSaveProgress={handleSave}
-        onMarkFinished={handleFinish}
+        onDeliver={handleDeliver}
         onSendToCodificado={handleSendToCodificado}
         onCancelCodificado={handleCancelCodificado}
       />
@@ -743,10 +758,10 @@ export function ElaboracionOperationalView() {
   const {
     applyProgressToWorkItems,
     saveWorkProgress,
-    markWorkFinished,
     getFinishedQty,
     getObservation,
   } = useOperationalStore();
+  const { email: actorEmail } = usePreviewSession();
   const canAssignWork = actorSectorId === "PRODUCCION" || actorSectorId === "DIRECCION";
 
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
@@ -801,32 +816,28 @@ export function ElaboracionOperationalView() {
     [saveWorkProgress, workItems, showToast]
   );
 
-  const handleFinish = useCallback(
-    async (item: WorkItem, payload: { finishedQty: string; observation: string }) => {
-      const rama = item.ownerPerson?.trim() || "Elaboración";
-      try {
-        await markWorkFinished(item, {
-          ...payload,
-          updatedBy: rama,
-        });
-      } catch (err) {
-        showToast(
-          err instanceof Error
-            ? `No se guardó: ${err.message} — reintentá.`
-            : "No se pudo guardar en el servidor. Reintentá.",
-          "info"
-        );
-        return;
-      }
-      pushNotification({
-        kind: "trabajo_finalizado",
-        title: "Trabajo finalizado — Elaboración",
-        message: `${item.product ?? "Producto"} · ${item.client ?? ""} listo para revisión de Calidad.`,
-        sectors: ["CALIDAD"],
+  /**
+   * Elaboración → Envasado Masivo/Premium, directo (sin Calidad ni aprobación). El servidor crea o enlaza el trabajo de
+   * Envasado, deja el evento y avisa a Producción; acá solo se refresca. Los errores se relanzan al diálogo.
+   */
+  const handleSendToEnvasado = useCallback(
+    async (item: WorkItem, payload: SendToEnvasadoPayload) => {
+      const result = await postSendToEnvasado({ email: actorEmail, sector: actorSectorId }, item.id, {
+        destination: payload.destination,
+        line: payload.line,
+        producedQuantity: payload.producedQuantity || null,
+        unitsToPackage: payload.unitsToPackage || null,
+        observation: payload.observation || null,
+        idempotencyKey: payload.idempotencyKey,
       });
-      showToast("Trabajo enviado a Calidad.");
+      showToast(
+        result.linked
+          ? `Enviado a ${result.destinationSector === "ENVASADO_MASIVO" ? "Envasado Masivo" : "Envasado Premium"} (se enlazó el trabajo existente).`
+          : `Enviado a ${result.destinationSector === "ENVASADO_MASIVO" ? "Envasado Masivo" : "Envasado Premium"}.`
+      );
+      await refresh();
     },
-    [markWorkFinished, showToast]
+    [actorEmail, actorSectorId, showToast, refresh]
   );
 
   const dndSensors = useWeekBoardDndSensors();
@@ -998,7 +1009,7 @@ export function ElaboracionOperationalView() {
           await refresh();
         }}
         onSaveProgress={handleSave}
-        onMarkFinished={handleFinish}
+        onSendToEnvasado={handleSendToEnvasado}
       />
     </TwinShell>
   );

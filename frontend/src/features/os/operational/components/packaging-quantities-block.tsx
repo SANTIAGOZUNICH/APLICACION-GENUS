@@ -215,6 +215,30 @@ export function PackagingQuantitiesBlock({
       className="space-y-2 rounded border border-[var(--os-border)] p-3 text-sm"
       data-testid="packaging-quantities-block"
     >
+      {!readOnly ? (
+        <div
+          className="rounded border border-[var(--os-border)] bg-[var(--os-surface-muted,#f8fafc)] p-2 text-xs"
+          data-testid="packaging-options-hint"
+        >
+          {(sector ?? item.sector) === "CODIFICADO" ? (
+            <p>
+              <strong>Codificado:</strong> recibís la cantidad total y NO necesitás cajas ni distribución. Al
+              «Entregar» se registra la entrega final.
+            </p>
+          ) : (
+            <ul className="space-y-1">
+              <li>
+                <strong>Enviar a Codificado:</strong> alcanza con la <em>cantidad total de unidades</em>. Las cajas, la
+                distribución y las unidades por caja son opcionales.
+              </li>
+              <li>
+                <strong>Entregar:</strong> exige cargar la distribución en cajas y que coincida con lo producido (o
+                justificar la diferencia).
+              </li>
+            </ul>
+          )}
+        </div>
+      ) : null}
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="text-xs">
           <span className="block text-[var(--os-text-muted)]">LOTE</span>

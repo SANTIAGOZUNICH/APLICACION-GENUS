@@ -1,39 +1,44 @@
-/** Copy y helpers — transferencia Envasado ↔ Codificado ↔ Calidad. */
+/** Copy y helpers — circuito operativo SIN Calidad: Elaboración → Envasado → (Codificado) → Entrega final. */
 
 export const WORK_TRANSFER = {
-  /** Acción del operario al cerrar su parte y transferir a Calidad. */
-  markFinishedAction: "Entregar a Calidad",
+  /** Acción del operario de Envasado al cerrar su parte: registra la entrega final. */
+  markFinishedAction: "Entregar",
   /** Avance parcial — el operario sigue trabajando. */
   saveProgressAction: "Guardar avance",
-  /** Enviar a cola Codificado (sin Calidad todavía). */
+  /** Elaboración termina y envía DIRECTO al Envasado Masivo/Premium. */
+  sendToEnvasadoAction: "Enviar a Envasado",
+  /** Enviar a cola Codificado (solo cantidad total; sin aprobación). */
   sendToCodificadoAction: "Enviar a Codificado",
-  /** Codificado cierra y notifica Calidad + Producción. */
-  deliverFromCodificadoAction: "Entregar a Calidad y Producción",
+  /** Codificado cierra: registra la entrega final. */
+  deliverFromCodificadoAction: "Entregar",
   /** Estado visible en la fila/card del operario tras entregar. */
-  deliveredToQuality: "Entregado a Calidad",
+  deliveredToQuality: "Entregado",
+  /** Elaboración tras enviar a Envasado. */
+  sentToEnvasado: "Enviado a Envasado",
   inCodificado: "En Codificado",
-  nextResponsibleQuality: "Próximo responsable: Calidad",
   nextResponsibleCodificado: "Próximo responsable: Codificado",
-  /** Estado del trabajo en bandeja del sector origen. */
-  pendingReview: "Pendiente de revisión",
-  /** Estado en bandeja de Calidad. */
-  awaitingApproval: "Esperando aprobación",
-  /** Banner bandeja Calidad. */
-  inboxBannerTitle: "Bandeja de transferencias",
+  nextResponsibleProduccion: "Pendiente de definir por Producción",
+  /** Terminado sin destino (incluye los que estaban pendientes en la ex-bandeja de Calidad). */
+  pendingReview: "Pendiente de definir",
+  /** Banner de la bandeja de Producción. */
+  inboxBannerTitle: "Pendientes de definir",
   /** Feed Producción. */
   recentFlowTitle: "Flujo de planta",
   /** KPI Producción. */
-  kpiDeliveredToQuality: "Entregados a Calidad",
+  kpiDeliveredToQuality: "Entregados",
   alreadyInCodificado: "Este trabajo ya está en Codificado.",
   alreadyDeliveredFromCodificado: "Este trabajo ya fue entregado desde Codificado.",
 } as const;
 
-/** Estado persistido al transferir trabajo a Calidad (directo o vía Codificado). */
+/**
+ * Estado persistido de «terminado y sin destino» (operational_status = revision). Históricamente era «en revisión de
+ * Calidad»; el nombre del valor se conserva (migración solo aditiva), el significado ahora es «pendiente de definir».
+ */
 export const WORK_TRANSFER_STATUS = "revision" as const;
 export const WORK_CODIFICADO_STATUS = "en_codificado" as const;
 export const WORK_CODIFICADO_DONE_STATUS = "codificado_completo" as const;
 
-/** Bloquea edición en Envasado (enviado a Codificado o a Calidad). */
+/** Bloquea edición en Envasado (enviado a Codificado, entregado o pendiente de definir). */
 export function isWorkTransferredStatus(status: string): boolean {
   return (
     status === WORK_TRANSFER_STATUS ||
@@ -43,13 +48,27 @@ export function isWorkTransferredStatus(status: string): boolean {
   );
 }
 
+/** Leyenda corta del destino de un trabajo ya transferido/entregado (circuito sin Calidad). */
+export function transferStatusNote(status: string): string {
+  switch (status) {
+    case "entregado":
+      return WORK_TRANSFER.deliveredToQuality;
+    case WORK_CODIFICADO_STATUS:
+      return WORK_TRANSFER.inCodificado;
+    case "completo":
+      return WORK_TRANSFER.sentToEnvasado;
+    default:
+      return WORK_TRANSFER.pendingReview;
+  }
+}
+
 /** Pendiente en bandeja de Codificado — solo cubre el flujo vía handoff desde Envasado. */
 export function isInCodificadoStatus(status: string): boolean {
   return status === WORK_CODIFICADO_STATUS;
 }
 
-/** Ya llegó a Calidad (directo o vía Codificado). */
-export function isPendingQualityStatus(status: string): boolean {
+/** Terminado sin destino definido (incluye Codificado terminado sin entrega registrada): lo resuelve Producción. */
+export function isPendingDefinitionStatus(status: string): boolean {
   return status === WORK_TRANSFER_STATUS || status === WORK_CODIFICADO_DONE_STATUS;
 }
 

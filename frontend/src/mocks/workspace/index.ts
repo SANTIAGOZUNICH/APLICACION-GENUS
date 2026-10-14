@@ -7,14 +7,12 @@ export {
 } from "./lab-context";
 
 export { produccionTasks } from "./produccion.mock";
-export { calidadTasks } from "./calidad.mock";
 export { depositoTasks } from "./deposito.mock";
 export { comercialTasks } from "./comercial.mock";
 export { direccionTasks, direccionPanorama } from "./direccion.mock";
 export { dtTasks } from "./dt.mock";
 
 import type { WorkspaceId } from "@/config/navigation";
-import { calidadTasks } from "./calidad.mock";
 import { comercialTasks } from "./comercial.mock";
 import { depositoTasks } from "./deposito.mock";
 import { direccionPanorama, direccionTasks } from "./direccion.mock";
@@ -28,8 +26,6 @@ export function getWorkspaceTasks(
   switch (id) {
     case "produccion":
       return produccionTasks;
-    case "calidad":
-      return calidadTasks;
     case "deposito":
       return depositoTasks;
     case "comercial":

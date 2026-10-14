@@ -7,8 +7,7 @@ import { SECTOR_LABELS } from "@/types/operational/sector";
 import { OperationalTabs, SyncStatusBar } from "../components/operational-ui";
 import { DeliveryDateBadge } from "../components/delivery-date-badge";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
-import { filterQualityByKind, filterQualityByStatus } from "../lib/operational-filters";
-import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-adapter";
+import { filterQualityByKind } from "../lib/operational-filters";
 import { useOperationalStore } from "../store/operational-store-context";
 import type { WorkProgressRecord } from "../store/operational-store";
 import type { QualityItem } from "../types";
@@ -20,20 +19,22 @@ import { SortSelect } from "../components/sort-select";
 import { useSortPreference } from "../lib/use-sort-preference";
 import { applySort, compareDates, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
 
-type ExpedicionTabId = "pendientes" | "aprobadas";
+type ExpedicionTabId = "listos" | "entregados";
+
+/** Etapa del trabajo para Depósito: «listos» = terminados sin entrega completa; «entregados» = entrega final cumplida. */
+export type ExpedicionStage = "listos" | "entregados";
 
 /**
- * Estados que Depósito ve en Expedición — el MISMO qualityStatus real de
- * Calidad (pendiente/aprobado), sin inventar un segundo estado paralelo.
- * "rechazado" queda fuera de ambas pestañas por construcción (filterQualityByStatus).
+ * Estado que Depósito ve en Expedición — el estado OPERATIVO real del trabajo (circuito sin Calidad): terminado y
+ * listo para entregar, o ya entregado. Sin estados paralelos ni aprobaciones.
  */
 const ESTADO_META: Record<string, { label: string; className: string }> = {
-  pendiente: {
-    label: "Pendiente de aprobación",
+  revision: {
+    label: "Listo para entregar",
     className: "bg-[var(--genus-warning-soft)] text-[var(--genus-warning)]",
   },
-  aprobado: {
-    label: "Aprobado",
+  entregado: {
+    label: "Entregado",
     className: "bg-[var(--genus-success-soft)] text-[var(--genus-success)]",
   },
 };
@@ -76,73 +77,53 @@ const progressKeyFor = qualityItemProgressKey;
 const resolveWorkItem = resolveWorkItemForQualityItem;
 
 /**
- * Contrato de scope de Expedición: SOLO Envasado Masivo/Premium/Codificado
- * ("salida" — nunca "granel"/Elaboración, ver QualityItemKind) y SOLO
- * pendiente/aprobado — rechazado/cancelado se maneja según la regla ya
- * existente en Calidad (queda fuera de ambas pestañas, igual que acá).
- * Extraída como función pura (en vez de inline en el componente) para que
- * el filtrado se pueda testear sin montar la vista completa.
+ * Contrato de scope de Expedición: SOLO Envasado Masivo/Premium/Codificado ("salida" — nunca "granel"/Elaboración,
+ * ver QualityItemKind) y SOLO trabajos «listos para entregar» (terminados, `operationalStatus = revision`) o
+ * «entregados». Cancelados u otros estados quedan fuera. Función pura para poder testear el filtrado sin montar la vista.
  */
-export function filterExpedicionItems(
-  items: QualityItem[],
-  status: "pendiente" | "aprobado"
-): QualityItem[] {
-  return filterQualityByStatus(filterQualityByKind(items, "salida"), status);
+export function filterExpedicionItems(items: QualityItem[], stage: ExpedicionStage): QualityItem[] {
+  const status = stage === "listos" ? "revision" : "entregado";
+  return filterQualityByKind(items, "salida").filter((item) => item.operationalStatus === status);
 }
 
 /**
- * Vista operativa de Depósito — SOLO trabajos de Envasado Masivo, Envasado
- * Premium y Codificado ("salida", nunca Elaboración) camino a Calidad o ya
- * aprobados. No decide Calidad: sin botones aprobar/rechazar. Reusa
- * work_items/qualityItems de Neon vía useOperationalPlan("CALIDAD") — mismo
- * patrón de lectura read-only que ya usa Producción ("ver_calidad").
+ * Vista operativa de Depósito — SOLO trabajos de Envasado Masivo, Envasado Premium y Codificado ("salida", nunca
+ * Elaboración) terminados y listos para entregar, o ya entregados. Solo lectura. Reusa work_items/qualityItems de
+ * Neon (modelo de lectura de trabajos terminados).
  */
 export function ExpedicionView() {
-  const { getQualityStatus, progressMap } = useOperationalStore();
+  const { progressMap } = useOperationalStore();
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
     useOperationalPlan("CALIDAD");
 
-  const [tab, setTab] = useState<ExpedicionTabId>("pendientes");
-  const [pendientesSort, setPendientesSort] = useSortPreference(
-    "expedicion-pendientes",
+  const [tab, setTab] = useState<ExpedicionTabId>("listos");
+  const [listosSort, setListosSort] = useSortPreference(
+    "expedicion-listos",
     "entrega_asc",
     EXPEDICION_SORT_KEYS
   );
-  const [aprobadasSort, setAprobadasSort] = useSortPreference(
-    "expedicion-aprobadas",
+  const [entregadosSort, setEntregadosSort] = useSortPreference(
+    "expedicion-entregados",
     "entrega_asc",
     EXPEDICION_SORT_KEYS
   );
 
-  const qualityItems = useMemo(() => {
-    const seed = data?.qualityItems ?? [];
-    return applyQualityDecisionsToItems(seed, getQualityStatus);
-  }, [data?.qualityItems, getQualityStatus]);
+  const qualityItems = useMemo(() => data?.qualityItems ?? [], [data?.qualityItems]);
 
   const workItems = useMemo(() => data?.workItems ?? [], [data?.workItems]);
 
-  const pendientes = useMemo(
-    () =>
-      applySort(
-        filterExpedicionItems(qualityItems, "pendiente"),
-        EXPEDICION_SORT_OPTIONS,
-        pendientesSort
-      ),
-    [qualityItems, pendientesSort]
+  const listos = useMemo(
+    () => applySort(filterExpedicionItems(qualityItems, "listos"), EXPEDICION_SORT_OPTIONS, listosSort),
+    [qualityItems, listosSort]
   );
-  const aprobadas = useMemo(
-    () =>
-      applySort(
-        filterExpedicionItems(qualityItems, "aprobado"),
-        EXPEDICION_SORT_OPTIONS,
-        aprobadasSort
-      ),
-    [qualityItems, aprobadasSort]
+  const entregados = useMemo(
+    () => applySort(filterExpedicionItems(qualityItems, "entregados"), EXPEDICION_SORT_OPTIONS, entregadosSort),
+    [qualityItems, entregadosSort]
   );
 
-  const rows = tab === "pendientes" ? pendientes : aprobadas;
-  const sortValue = tab === "pendientes" ? pendientesSort : aprobadasSort;
-  const setSortValue = tab === "pendientes" ? setPendientesSort : setAprobadasSort;
+  const rows = tab === "listos" ? listos : entregados;
+  const sortValue = tab === "listos" ? listosSort : entregadosSort;
+  const setSortValue = tab === "listos" ? setListosSort : setEntregadosSort;
 
   return (
     <TwinShell title="Expedición">
@@ -157,15 +138,14 @@ export function ExpedicionView() {
           onRefresh={refresh}
         />
         <p className="text-sm text-[var(--os-text-muted)]">
-          Envasado Masivo, Envasado Premium y Codificado camino a Calidad o ya
-          aprobados — vista para preparar la expedición. Depósito no aprueba
-          ni rechaza Calidad desde acá.
+          Envasado Masivo, Envasado Premium y Codificado: trabajos terminados listos
+          para entregar o ya entregados — vista para preparar la expedición.
         </p>
 
         <OperationalTabs
           tabs={[
-            { id: "pendientes", label: "Pendientes de aprobación", count: pendientes.length },
-            { id: "aprobadas", label: "Aprobadas", count: aprobadas.length },
+            { id: "listos", label: "Listos para entregar", count: listos.length },
+            { id: "entregados", label: "Entregados", count: entregados.length },
           ]}
           activeId={tab}
           onChange={(id) => setTab(id as ExpedicionTabId)}
@@ -182,9 +162,9 @@ export function ExpedicionView() {
 
         {rows.length === 0 ? (
           <p className="rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-border)] px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
-            {tab === "pendientes"
-              ? "Sin trabajos pendientes de aprobación."
-              : "Sin trabajos aprobados todavía."}
+            {tab === "listos"
+              ? "Sin trabajos listos para entregar."
+              : "Sin trabajos entregados todavía."}
           </p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -228,7 +208,10 @@ export function ExpedicionCard({
   const deliveryDate = workItem?.deliveryDate ?? item.deliveryDate ?? null;
   const originSector = item.receivedFrom ?? workItem?.codificadoOriginSector ?? null;
   const originLabel = originSector ? (SECTOR_LABELS[originSector] ?? originSector) : "Planilla";
-  const estado = ESTADO_META[item.status] ?? { label: item.status, className: "bg-[var(--os-bg)] text-[var(--os-text-muted)]" };
+  const estado = ESTADO_META[item.operationalStatus ?? ""] ?? {
+    label: item.operationalStatus ?? "—",
+    className: "bg-[var(--os-bg)] text-[var(--os-text-muted)]",
+  };
 
   return (
     <div

@@ -54,6 +54,9 @@ export interface DeliveryRecord {
   deletedAt?: string | null;
   deletedBy?: string | null;
   deleteReason?: string | null;
+  /** Entregas parciales (0047): false = quedan unidades por entregar. Histórico/sin dato = completa. */
+  deliveryComplete?: boolean;
+  pendingBalance?: number | null;
 }
 
 export interface DeliveryAuditStub {

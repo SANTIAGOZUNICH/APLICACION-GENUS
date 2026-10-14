@@ -6,7 +6,6 @@ import {
   Package,
   Palette,
   Search,
-  ShieldCheck,
   Stamp,
   Warehouse,
 } from "lucide-react";
@@ -14,7 +13,6 @@ import {
 export type WorkspaceId =
   | "bandeja"
   | "produccion"
-  | "calidad"
   | "deposito"
   | "comercial"
   | "direccion"
@@ -49,14 +47,6 @@ export const navigationItems: NavItem[] = [
     label: "Producción",
     href: "/produccion",
     icon: Factory,
-    enabled: true,
-    section: "primary",
-  },
-  {
-    id: "calidad",
-    label: "Calidad",
-    href: "/calidad",
-    icon: ShieldCheck,
     enabled: true,
     section: "primary",
   },

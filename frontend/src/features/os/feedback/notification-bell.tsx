@@ -4,11 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import { Bell } from "lucide-react";
 import { LifecycleConfirmDialog } from "@/features/os/operational/components/lifecycle-confirm-dialog";
 import { syntheticLifecycleItem } from "@/features/os/operational/components/lifecycle-synthetic";
-import { usePreviewSession } from "@/features/os/session/preview-context";
+import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import {
   deleteAllOsNotificationsApi,
   dismissReadOsNotificationsApi,
   fetchOsNotifications,
+  markAllOsNotificationsReadApi,
   patchOsNotificationApi,
 } from "@/lib/orders/orders-client";
 import {
@@ -17,6 +18,7 @@ import {
   dismissReadNotifications as dismissLocalReadNotifications,
   getNotificationsForSector,
   markNotificationRead as markLocalNotificationRead,
+  markSectorNotificationsRead,
   subscribeNotifications,
   type OsNotification,
 } from "./notifications-store";
@@ -32,12 +34,23 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString("es-AR");
 }
 
-type BellItem = OsNotification & { source?: "local" | "server" };
+type BellItem = OsNotification & { source?: "local" | "server"; href?: string | null };
+
+/** workItemId (con prefijo native:) del enlace de una notificación del circuito, si lo trae. */
+export function workItemIdFromNotificationHref(href: string | null | undefined): string | null {
+  if (!href) return null;
+  try {
+    return new URL(href, "http://genus.local").searchParams.get("workItemId");
+  } catch {
+    return null;
+  }
+}
 type TabId = "activas" | "archivadas";
 
 /** Campana: une notificaciones demo locales + notificaciones Neon de órdenes OE/OA. */
 export function NotificationBell() {
   const { sectorId, email } = usePreviewSession();
+  const { openWorkItem } = usePreviewContext();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<TabId>("activas");
   const [activeItems, setActiveItems] = useState<BellItem[]>([]);
@@ -85,6 +98,7 @@ export function NotificationBell() {
           read: n.readBy.includes(session.email),
           dismissed,
           source: "server" as const,
+          href: n.href ?? null,
         }));
 
       const active = all.filter((n) => !n.dismissedBy.includes(session.email));
@@ -146,6 +160,32 @@ export function NotificationBell() {
       list.map((x) => (x.id === n.id ? { ...x, read: true } : x));
     setActiveItems(mark);
     setArchivedItems(mark);
+  }
+
+  /** Marca TODAS las notificaciones del sector como leídas (servidor + locales). */
+  async function handleMarkAllRead() {
+    if (session) {
+      try {
+        await markAllOsNotificationsReadApi(session);
+      } catch {
+        // UI optimista igual: se reintenta en el próximo polling.
+      }
+    }
+    markSectorNotificationsRead(sectorId);
+    const mark = (list: BellItem[]) => list.map((x) => ({ ...x, read: true }));
+    setActiveItems(mark);
+    setArchivedItems(mark);
+    void pullServer();
+  }
+
+  /** Abre el trabajo relacionado con el movimiento (y marca la notificación como leída). */
+  async function handleOpenWork(n: BellItem) {
+    const workItemId = workItemIdFromNotificationHref(n.href);
+    await handleMarkRead(n);
+    if (workItemId) {
+      setOpen(false);
+      openWorkItem(workItemId);
+    }
   }
 
   async function handleDismiss(n: BellItem) {
@@ -249,9 +289,20 @@ export function NotificationBell() {
           >
             <div className="border-b border-[var(--os-border-subtle)] px-4 py-3">
               <p className="text-sm font-semibold text-[var(--os-text)]">Notificaciones</p>
-              <p className="mt-0.5 text-[11px] text-[var(--os-text-muted)]">
+              <p className="mt-0.5 text-[11px] text-[var(--os-text-muted)]" data-testid="bell-unread-summary">
+                {unreadCount > 0 ? `${unreadCount} sin leer · ` : "Todo leído · "}
                 Descartar no elimina la orden asociada.
               </p>
+              {unreadCount > 0 ? (
+                <button
+                  type="button"
+                  className="mt-1 text-[11px] font-medium text-[var(--os-teal)] hover:underline"
+                  onClick={() => void handleMarkAllRead()}
+                  data-testid="bell-mark-all-read"
+                >
+                  Marcar todas como leídas
+                </button>
+              ) : null}
               <div className="mt-2 flex gap-1">
                 {(["activas", "archivadas"] as const).map((t) => (
                   <button
@@ -297,6 +348,16 @@ export function NotificationBell() {
                           {n.source === "server" ? " · servidor" : " · demo"}
                         </p>
                       </button>
+                      {workItemIdFromNotificationHref(n.href) ? (
+                        <button
+                          type="button"
+                          className="mt-1 mr-3 text-[11px] font-medium text-[var(--os-teal)] hover:underline"
+                          onClick={() => void handleOpenWork(n)}
+                          data-testid="bell-open-work"
+                        >
+                          Abrir trabajo
+                        </button>
+                      ) : null}
                       {tab === "activas" ? (
                         <button
                           type="button"

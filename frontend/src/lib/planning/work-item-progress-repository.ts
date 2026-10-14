@@ -1664,6 +1664,33 @@ export async function listDeliveriesDurable(filter?: { includeDeleted?: boolean 
   return rows;
 }
 
+/** Líneas (entregas físicas, parciales o final) de un trabajo, en orden de registro — historial de entregas parciales. */
+export async function listDeliveryLinesDurable(workItemId: string) {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(workItemDeliveryLines)
+    .where(eq(workItemDeliveryLines.workItemId, workItemId))
+    .orderBy(workItemDeliveryLines.createdAt);
+  return rows.map((l) => ({
+    id: l.id,
+    deliveryId: l.deliveryId,
+    sequence: l.sequence,
+    quantity: l.quantity,
+    unit: l.unit,
+    kind: l.kind as "PARCIAL" | "FINAL",
+    status: l.status as "ACTIVA" | "ANULADA",
+    deliveredBy: l.deliveredBy,
+    deliveredBySector: l.deliveredBySector,
+    actualDeliveredAt: l.actualDeliveredAt.toISOString(),
+    remito: l.remito,
+    receivedBy: l.receivedBy,
+    observations: l.observations,
+    cumulativeAfter: l.cumulativeAfter,
+    pendingAfter: l.pendingAfter,
+  }));
+}
+
 /**
  * work_item_deliveries.work_item_id se guarda como uuid crudo (ver
  * deliverWorkDurable — nativeIdFromItemId ya le sacó el prefijo antes de

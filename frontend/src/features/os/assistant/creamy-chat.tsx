@@ -20,7 +20,7 @@ const DEFAULT_SUGGESTIONS = [
   "¿Qué está haciendo Elaboración?",
   "Buscá el producto Creamy en asignación de lotes.",
   "¿Qué lotes vencen este mes?",
-  "¿Qué trabajos esperan aprobación de Calidad?",
+  "¿Qué trabajos están pendientes de definir?",
   "¿Qué se entregó hoy?",
   "¿Qué está aprobado pero todavía no fue entregado?",
 ];
@@ -301,7 +301,7 @@ export function CreamyChat({
           <div>
             <p className="text-sm font-semibold">Creamy AI</p>
             <p className="mt-1 text-xs leading-relaxed text-white/80">
-              Conversación real con datos locales filtrados. Solo lectura; las decisiones GMP van a Calidad/Producción/DT.
+              Conversación real con datos locales filtrados. Solo lectura; las decisiones las toma Producción/DT.
             </p>
           </div>
         </div>
@@ -422,7 +422,7 @@ export function CreamyChat({
           onKeyDown={handleKeyDown}
           rows={3}
           maxLength={4000}
-          placeholder="Preguntale a Creamy por trabajos, lotes, OE/OA, MP o Calidad…"
+          placeholder="Preguntale a Creamy por trabajos, lotes, OE/OA o MP…"
           disabled={loading}
           className={`${compact ? "min-h-16" : "min-h-20"} max-h-32 w-full resize-none rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm text-[var(--os-text)] outline-none transition focus:border-[var(--os-teal)] focus:ring-2 focus:ring-[var(--os-teal-muted)] disabled:bg-[var(--os-surface-muted)]`}
         />

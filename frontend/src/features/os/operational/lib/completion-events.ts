@@ -109,7 +109,7 @@ export function buildOperationalActivityFeed(input: {
       at: event.completedAt,
       actor: event.completedBy,
       type: "transfer",
-      message: `${sectorLabel} entregó ${event.product}${event.client ? ` (${event.client})` : ""} · ${WORK_TRANSFER.nextResponsibleQuality}`,
+      message: `${sectorLabel} entregó ${event.product}${event.client ? ` (${event.client})` : ""} · ${WORK_TRANSFER.nextResponsibleProduccion}`,
     });
   }
 

@@ -24,21 +24,14 @@ export const PRODUCCION_WORKSPACE: WorkspaceDefinition = {
 
 export const CALIDAD_WORKSPACE: WorkspaceDefinition = {
   sectorId: "CALIDAD",
-  subtitle: "Tenés 5 lotes esperando liberación.",
+  subtitle: "Consulta de historial y órdenes (solo lectura).",
+  // Calidad ya no opera el circuito: las cuentas del sector entran en modo consulta (historial, OE/OA).
   primaryNav: [
-    ...BASE_NAV,
-    { id: "calidad", label: "Calidad", sidebarItemId: "calidad" as const },
+    { id: "historial", label: "Historial", sidebarItemId: "historial" as const },
+    { id: "consulta", label: "Consulta", sidebarItemId: "consulta" as const },
   ],
-  primaryActions: [
-    { id: "release-lot", label: "Liberar lote", description: "Aprobar liberación pendiente" },
-    { id: "view-analysis", label: "Ver análisis", description: "Resultados de laboratorio" },
-    { id: "register-deviation", label: "Registrar desvío", description: "Documentar no conformidad" },
-  ],
-  widgets: [
-    { id: "pending", label: "Lotes pendientes", hint: "5 en cola", status: "Pendiente" },
-    { id: "results", label: "Resultados", hint: "2 listos", status: "Revisión" },
-    { id: "blocked", label: "Bloqueados", hint: "1 alerta", status: "Atención" },
-  ],
+  primaryActions: [],
+  widgets: [],
 };
 
 export const DEPOSITO_WORKSPACE: WorkspaceDefinition = {
@@ -101,7 +94,7 @@ export const ENVASADO_MASIVO_WORKSPACE: WorkspaceDefinition = {
   primaryNav: BASE_NAV,
   primaryActions: [
     { id: "open-oa", label: "Abrir OA", description: "Ver orden de acondicionamiento" },
-    { id: "mark-done", label: "Entregar a Calidad", description: "Transferir trabajo a revisión" },
+    { id: "mark-done", label: "Entregar", description: "Registrar la entrega final o enviar a Codificado" },
     { id: "report", label: "Reportar problema", description: "Bloqueo o desvío" },
   ],
   widgets: [
@@ -117,7 +110,7 @@ export const ENVASADO_PREMIUM_WORKSPACE: WorkspaceDefinition = {
   primaryNav: BASE_NAV,
   primaryActions: [
     { id: "open-oa", label: "Abrir OA", description: "Orden premium activa" },
-    { id: "mark-done", label: "Entregar a Calidad", description: "Transferir lote a revisión" },
+    { id: "mark-done", label: "Entregar", description: "Registrar la entrega final o enviar a Codificado" },
     { id: "report", label: "Reportar problema", description: "Incidencia en línea" },
   ],
   widgets: [

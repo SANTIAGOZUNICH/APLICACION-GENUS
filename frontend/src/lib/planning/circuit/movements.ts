@@ -68,16 +68,18 @@ export function circuitMovementLabel(type: CircuitMovementType): string {
   return MOVEMENT_LABEL[type];
 }
 
-/** uuid v5-like determinístico (sha256) — mismo patrón que approval-envasado-notify. */
+/** uuid v5-like determinístico a partir de una clave (sha256) — mismo patrón que approval-envasado-notify. */
+export function uuidFromKey(key: string): string {
+  const hex = createHash("sha256").update(key).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 export function deterministicCircuitNotificationId(
   type: CircuitMovementType,
   workItemId: string,
   eventKey: string
 ): string {
-  const hex = createHash("sha256")
-    .update(`circuito:${type}:${workItemId}:${eventKey}`)
-    .digest("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+  return uuidFromKey(`circuito:${type}:${workItemId}:${eventKey}`);
 }
 
 export function formatCircuitDateTime(at: Date): string {

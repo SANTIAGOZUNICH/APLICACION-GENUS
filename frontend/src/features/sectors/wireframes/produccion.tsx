@@ -14,7 +14,6 @@ const DISPLAY_SECTORS: SectorId[] = [
   "ENVASADO_MASIVO",
   "ENVASADO_PREMIUM",
   "CODIFICADO",
-  "CALIDAD",
   "DEPOSITO",
 ];
 

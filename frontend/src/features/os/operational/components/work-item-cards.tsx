@@ -28,7 +28,7 @@ import { useReloadWorkItemPriorities, useWorkItemPrioritiesAvailable, useWorkIte
 import type { useWorkItemCellEditing } from "../hooks/use-work-item-cells";
 import { formatOperationalDifference, plannedQuantityLabel } from "../lib/operational-progress";
 import { formatDateDisplay } from "../lib/delivery-date";
-import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
+import { isWorkTransferredStatus, transferStatusNote } from "../lib/work-transfer-labels";
 import { ActionButton, StatusChip } from "./operational-ui";
 import { DeliveryDateBadge } from "./delivery-date-badge";
 import { PriorityTag } from "./plan-task-card";
@@ -506,7 +506,7 @@ export function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
       <div onClick={(e) => e.stopPropagation()}>
         <WorkItemWarningBadge item={item} onSelectField={() => onSelectItem(item)} />
       </div>
-      {transferred && <p className="text-xs font-semibold text-[var(--os-teal)]">{WORK_TRANSFER.deliveredToQuality}</p>}
+      {transferred && <p className="text-xs font-semibold text-[var(--os-teal)]">{transferStatusNote(item.status)}</p>}
 
       {!props.hideActions && <div className="mt-auto flex flex-wrap gap-1.5 border-t border-white/10 pt-2">
         <ActionButton label={archived || transferred ? "Ver detalle" : "Ver / Registrar avance"} variant="neutral" onClick={() => onSelectItem(item)} />

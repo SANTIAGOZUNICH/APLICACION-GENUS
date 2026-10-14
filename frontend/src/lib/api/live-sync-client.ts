@@ -179,55 +179,6 @@ export async function postCompleteWork(payload: {
   }
 }
 
-export async function postQualityDecision(payload: {
-  itemId: string;
-  status: "aprobado" | "rechazado";
-  decidedBy?: string;
-  observation?: string;
-  product?: string | null;
-  client?: string | null;
-  plannedDate?: string | null;
-  plannedDateTo?: string | null;
-  lote?: string | null;
-  quantity?: string | null;
-  relatedWorkItemId?: string | null;
-  /** Sector de la sesión — defensa de acción en el pipeline (no auth server completo). */
-  actorSectorId?: string;
-}): Promise<void> {
-  const response = await fetch("/api/v1/live-sync/operations", {
-    method: "POST",
-    credentials: "include",
-    headers: jsonActorHeaders(),
-    body: JSON.stringify({ action: "quality_decision", ...payload }),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    throw new Error(
-      (body as { error?: string } | null)?.error ?? "No se pudo registrar la decisión en el servidor."
-    );
-  }
-}
-
-export async function postQualityAnnul(payload: {
-  itemId: string;
-  reason: string;
-  decidedBy?: string;
-  actorSectorId?: string;
-}): Promise<void> {
-  const response = await fetch("/api/v1/live-sync/operations", {
-    method: "POST",
-    credentials: "include",
-    headers: jsonActorHeaders(),
-    body: JSON.stringify({ action: "quality_annul", ...payload }),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    throw new Error(
-      (body as { error?: string } | null)?.error ?? "No se pudo anular la decisión en el servidor."
-    );
-  }
-}
-
 export async function postCancelWork(payload: {
   itemId: string;
   reason: string;

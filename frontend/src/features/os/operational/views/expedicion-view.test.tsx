@@ -29,42 +29,41 @@ afterEach(() => {
 });
 
 /**
- * Test 7 (auditoría Depósito/Expedición): pendiente y aprobado aparecen en
- * su pestaña; rechazado queda fuera de ambas (misma regla que ya aplica en
- * Calidad); Elaboración ("granel") nunca aparece, sin importar el status —
- * "salida" es, por definición, solo Envasado Masivo/Premium/Codificado.
+ * Circuito sin Calidad (reemplaza al test 7 de la auditoría Depósito/Expedición, que probaba el filtrado por la decisión
+ * pendiente/aprobado de Calidad — comportamiento eliminado a propósito): «listos» = terminados sin entrega
+ * (operationalStatus revision) y «entregados» = entrega cumplida; Elaboración ("granel") nunca aparece; los demás
+ * estados (en curso, cancelado) quedan fuera. La decisión histórica de Calidad ya no influye.
  */
 describe("filterExpedicionItems — scope de Depósito/Expedición", () => {
   const items: QualityItem[] = [
-    qi({ id: "salida-pendiente", kind: "salida", status: "pendiente" }),
-    qi({ id: "salida-aprobado", kind: "salida", status: "aprobado" }),
-    qi({ id: "salida-rechazado", kind: "salida", status: "rechazado" }),
-    qi({ id: "granel-pendiente", kind: "granel", status: "pendiente" }),
-    qi({ id: "granel-aprobado", kind: "granel", status: "aprobado" }),
+    qi({ id: "salida-listo", kind: "salida", status: "pendiente", operationalStatus: "revision" }),
+    qi({ id: "salida-listo-aprobado-historico", kind: "salida", status: "aprobado", operationalStatus: "revision" }),
+    qi({ id: "salida-entregado", kind: "salida", status: "aprobado", operationalStatus: "entregado" }),
+    qi({ id: "salida-en-curso", kind: "salida", status: "pendiente", operationalStatus: "en_curso" }),
+    qi({ id: "salida-cancelado", kind: "salida", status: "pendiente", operationalStatus: "cancelado" }),
+    qi({ id: "granel-listo", kind: "granel", status: "pendiente", operationalStatus: "revision" }),
+    qi({ id: "granel-entregado", kind: "granel", status: "aprobado", operationalStatus: "entregado" }),
   ];
 
-  it("pendientes: solo salida+pendiente — nunca Elaboración, nunca rechazado", () => {
-    const result = filterExpedicionItems(items, "pendiente").map((i) => i.id);
-    expect(result).toEqual(["salida-pendiente"]);
+  it("listos: solo salida+revision (sin importar la decisión histórica de Calidad)", () => {
+    const result = filterExpedicionItems(items, "listos").map((i) => i.id);
+    expect(result).toEqual(["salida-listo", "salida-listo-aprobado-historico"]);
   });
 
-  it("aprobadas: solo salida+aprobado — nunca Elaboración, nunca rechazado", () => {
-    const result = filterExpedicionItems(items, "aprobado").map((i) => i.id);
-    expect(result).toEqual(["salida-aprobado"]);
+  it("entregados: solo salida+entregado", () => {
+    expect(filterExpedicionItems(items, "entregados").map((i) => i.id)).toEqual(["salida-entregado"]);
   });
 
-  it("rechazado nunca aparece en ninguna de las dos pestañas", () => {
-    const pendientes = filterExpedicionItems(items, "pendiente").map((i) => i.id);
-    const aprobadas = filterExpedicionItems(items, "aprobado").map((i) => i.id);
-    expect(pendientes).not.toContain("salida-rechazado");
-    expect(aprobadas).not.toContain("salida-rechazado");
+  it("en curso y cancelado nunca aparecen en ninguna pestaña", () => {
+    const ids = [...filterExpedicionItems(items, "listos"), ...filterExpedicionItems(items, "entregados")].map((i) => i.id);
+    expect(ids).not.toContain("salida-en-curso");
+    expect(ids).not.toContain("salida-cancelado");
   });
 
-  it("Elaboración (granel) nunca aparece, ni pendiente ni aprobado", () => {
-    const pendientes = filterExpedicionItems(items, "pendiente").map((i) => i.id);
-    const aprobadas = filterExpedicionItems(items, "aprobado").map((i) => i.id);
-    expect(pendientes).not.toContain("granel-pendiente");
-    expect(aprobadas).not.toContain("granel-aprobado");
+  it("Elaboración (granel) nunca aparece", () => {
+    const ids = [...filterExpedicionItems(items, "listos"), ...filterExpedicionItems(items, "entregados")].map((i) => i.id);
+    expect(ids).not.toContain("granel-listo");
+    expect(ids).not.toContain("granel-entregado");
   });
 });
 
@@ -136,14 +135,16 @@ describe("ExpedicionCard — datos reales, nunca inventados", () => {
     expect(screen.queryByTestId("work-item-warning-badge")).toBeNull();
   });
 
-  it("estado usa el qualityStatus real: pendiente → 'Pendiente de aprobación', aprobado → 'Aprobado'", () => {
-    const pendiente = qi({ id: "qc:wi-4", kind: "salida", status: "pendiente" });
-    const { unmount } = render(<ExpedicionCard item={pendiente} workItem={null} progress={null} />);
-    expect(screen.getByTestId("expedicion-estado").textContent).toBe("Pendiente de aprobación");
+  // Reemplaza al test que probaba «pendiente → Pendiente de aprobación / aprobado → Aprobado» (decisión de Calidad,
+  // eliminada del circuito a propósito): ahora el estado es el operativo real del trabajo.
+  it("estado usa el estado operativo real: revision → 'Listo para entregar', entregado → 'Entregado'", () => {
+    const listo = qi({ id: "qc:wi-4", kind: "salida", status: "pendiente", operationalStatus: "revision" });
+    const { unmount } = render(<ExpedicionCard item={listo} workItem={null} progress={null} />);
+    expect(screen.getByTestId("expedicion-estado").textContent).toBe("Listo para entregar");
     unmount();
 
-    const aprobado = qi({ id: "qc:wi-5", kind: "salida", status: "aprobado" });
-    render(<ExpedicionCard item={aprobado} workItem={null} progress={null} />);
-    expect(screen.getByTestId("expedicion-estado").textContent).toBe("Aprobado");
+    const entregado = qi({ id: "qc:wi-5", kind: "salida", status: "aprobado", operationalStatus: "entregado" });
+    render(<ExpedicionCard item={entregado} workItem={null} progress={null} />);
+    expect(screen.getByTestId("expedicion-estado").textContent).toBe("Entregado");
   });
 });

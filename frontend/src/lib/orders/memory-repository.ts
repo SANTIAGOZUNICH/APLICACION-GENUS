@@ -399,6 +399,19 @@ export class MemoryOrdersRepository implements OrdersRepository {
     n.dismissedBy = n.dismissedBy.filter((e) => e !== actorEmail);
   }
 
+  async markAllNotificationsRead(sector: string, actorEmail: string): Promise<number> {
+    let count = 0;
+    for (const n of this.notifications) {
+      if (!n.sectors.includes(sector as never)) continue;
+      if ((n.deletedBy ?? []).includes(actorEmail)) continue;
+      if (!n.readBy.includes(actorEmail)) {
+        n.readBy.push(actorEmail);
+        count += 1;
+      }
+    }
+    return count;
+  }
+
   async dismissReadNotifications(sector: string, actorEmail: string): Promise<void> {
     for (const n of this.notifications) {
       if (!n.sectors.includes(sector as never)) continue;

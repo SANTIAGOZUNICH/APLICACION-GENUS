@@ -19,6 +19,7 @@ import { getLatestDocumentByRef } from "../adapters/order-documents-repository";
 import {
   isInCodificadoStatus,
   isWorkTransferredStatus,
+  transferStatusNote,
   WORK_TRANSFER,
 } from "../lib/work-transfer-labels";
 import { StatusChip } from "./operational-ui";
@@ -28,7 +29,12 @@ import { WorkItemEditDeleteActions } from "./work-item-edit-delete-actions";
 import { WorkItemPlanEditor } from "./work-item-plan-editor";
 import { isNativeWorkItemId } from "@/lib/planning/work-item-cell-edit";
 import { SendToCodificadoDialog } from "./send-to-codificado-dialog";
-import { FinishToQualityDialog } from "./finish-to-quality-dialog";
+import { SendToEnvasadoDialog, type SendToEnvasadoPayload } from "./send-to-envasado-dialog";
+import { DeliverWorkDialog, type DeliverWorkPayload } from "./deliver-work-dialog";
+import { fetchDeliveryProgress, type DeliveryProgress } from "../adapters/circuit-client";
+import { resolveDeliveryTarget } from "@/lib/planning/circuit/delivery-math";
+import { summarizePackingGroups } from "@/lib/remitos/packing-math";
+import { packagingDraftFromItem, type PackagingDraft } from "./packaging-quantities-block";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
 import type { WorkItemWarningField } from "@/lib/planning/work-item-warnings";
 import {
@@ -50,15 +56,24 @@ interface WorkItemDrawerProps {
   /** Producción: tras editar la planificación desde el detalle, recargar la lista. */
   onPlanningChanged?: () => void | Promise<void>;
   onSaveProgress: (itemId: string, payload: { finishedQty: string; observation: string }) => void;
-  onMarkFinished: (
+  /** Elaboración: envía el trabajo DIRECTO a Envasado Masivo/Premium (sin Calidad). */
+  onSendToEnvasado?: (item: WorkItem, payload: SendToEnvasadoPayload) => Promise<void>;
+  /** Envasado: registra la entrega final (total o parcial) sin aprobación previa. */
+  onDeliver?: (
     item: WorkItem,
-    payload: {
-      finishedQty: string;
-      observation: string;
-      bulkRemainderKg?: number | null;
-      bulkRemainderObservation?: string | null;
+    payload: DeliverWorkPayload & {
+      completion: {
+        finishedQty: string;
+        observation: string;
+        packagingLote: string | null;
+        packagingVto: string | null;
+        packagingTotalUnits: number | null;
+        packingGroups: Array<{ cajas: number; unidadesPorCaja: number }>;
+        sampleUnits: number | null;
+        packingMismatchObservation: string | null;
+      };
     }
-  ) => void;
+  ) => Promise<void>;
   onSendToCodificado?: (
     item: WorkItem,
     payload: {
@@ -85,14 +100,18 @@ export function WorkItemDrawer({
   getObservation,
   onPlanningChanged,
   onSaveProgress,
-  onMarkFinished,
+  onSendToEnvasado,
+  onDeliver,
   onSendToCodificado,
   onCancelCodificado,
 }: WorkItemDrawerProps) {
   const { email, sectorId } = usePreviewSession();
   const [finishedQty, setFinishedQty] = useState("");
   const [observation, setObservation] = useState("");
-  const [confirmFinish, setConfirmFinish] = useState(false);
+  const [confirmSendEnvasado, setConfirmSendEnvasado] = useState(false);
+  const [confirmDeliver, setConfirmDeliver] = useState(false);
+  const [deliveryProgress, setDeliveryProgress] = useState<DeliveryProgress | null>(null);
+  const [packagingDraft, setPackagingDraft] = useState<PackagingDraft | null>(null);
   const [confirmCodificado, setConfirmCodificado] = useState(false);
   const [confirmCancelCodificado, setConfirmCancelCodificado] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
@@ -114,6 +133,8 @@ export function WorkItemDrawer({
     setLoadedItemId(item.id);
     setFinishedQty(getFinishedQty(item.id));
     setObservation(getObservation(item.id));
+    setPackagingDraft(null);
+    setDeliveryProgress(null);
   }
 
   if (!item) return null;
@@ -130,6 +151,24 @@ export function WorkItemDrawer({
   const transferred = isWorkTransferredStatus(item.status);
   const inCodificado = isInCodificadoStatus(item.status);
   const showCodificado = !isElaboracion && Boolean(onSendToCodificado);
+  const showDeliver = !isElaboracion && Boolean(onDeliver);
+  const draft = packagingDraft ?? packagingDraftFromItem(item);
+  // Cantidad objetivo de la entrega — espeja el servidor: lo embalado si hay distribución; si no, el total declarado,
+  // lo realizado o lo planificado.
+  const draftPacked = summarizePackingGroups(draft.packingGroups).totalEmbalado;
+  const deliveryTarget = resolveDeliveryTarget({
+    unit: item.unit,
+    deliverableUnits: draftPacked > 0 ? draftPacked : null,
+    packagingTotalUnits: draft.packagingTotalUnits,
+    finishedQty: finishedQty || null,
+    plannedQuantity: item.quantity,
+  });
+  function openDeliver() {
+    void fetchDeliveryProgress({ email, sector: sectorId }, item!.id)
+      .then(setDeliveryProgress)
+      .catch(() => setDeliveryProgress(null))
+      .finally(() => setConfirmDeliver(true));
+  }
   // Producción ve el editor de planificación (dato fresco del servidor): no se repite un resumen estático que podría quedar viejo.
   const planEditable = sectorId === "PRODUCCION" && isNativeWorkItemId(item.id);
 
@@ -222,6 +261,7 @@ export function WorkItemDrawer({
                 item={item}
                 actorName={email ?? "envasado"}
                 readOnly={transferred}
+                onDraftChange={setPackagingDraft}
               />
             </div>
           ) : null}
@@ -283,7 +323,8 @@ export function WorkItemDrawer({
             ) : null}
             {transferred && !inCodificado ? (
               <p className="mt-2 text-xs text-[var(--os-teal)]">
-                {WORK_TRANSFER.deliveredToQuality} · {WORK_TRANSFER.nextResponsibleQuality}
+                {transferStatusNote(item.status)}
+                {item.status === "revision" ? ` · ${WORK_TRANSFER.nextResponsibleProduccion}` : ""}
               </p>
             ) : null}
           </div>
@@ -314,42 +355,78 @@ export function WorkItemDrawer({
               Cancelar envío a Codificado
             </Button>
           ) : null}
-          <Button variant="primary" disabled={transferred} onClick={() => setConfirmFinish(true)}>
-            Finalizar y enviar a Calidad
-          </Button>
+          {isElaboracion && onSendToEnvasado ? (
+            <Button
+              variant="primary"
+              disabled={transferred}
+              onClick={() => setConfirmSendEnvasado(true)}
+              data-testid="send-to-envasado-btn"
+            >
+              {WORK_TRANSFER.sendToEnvasadoAction}
+            </Button>
+          ) : null}
+          {showDeliver ? (
+            <Button
+              variant="primary"
+              disabled={transferred}
+              onClick={openDeliver}
+              data-testid="deliver-btn"
+            >
+              {WORK_TRANSFER.markFinishedAction}
+            </Button>
+          ) : null}
         </DrawerFooter>
       </DrawerContent>
 
-      {!isElaboracion ? (
-        <FinishToQualityDialog
-          open={confirmFinish}
-          onOpenChange={setConfirmFinish}
+      {isElaboracion && onSendToEnvasado ? (
+        <SendToEnvasadoDialog
+          open={confirmSendEnvasado}
+          onOpenChange={setConfirmSendEnvasado}
           item={item}
-          finishedQty={finishedQty}
-          observation={observation}
-          onConfirm={(payload) => {
-            onMarkFinished(item, payload);
-            setConfirmFinish(false);
+          defaultProduced={finishedQty || item.quantity || ""}
+          defaultObservation={observation}
+          onConfirm={async (payload) => {
+            await onSendToEnvasado(item, payload);
             onOpenChange(false);
           }}
         />
-      ) : (
-        <FinishToQualityDialog
-          open={confirmFinish}
-          onOpenChange={setConfirmFinish}
+      ) : null}
+
+      {showDeliver && onDeliver ? (
+        <DeliverWorkDialog
+          open={confirmDeliver}
+          onOpenChange={setConfirmDeliver}
           item={item}
-          finishedQty={finishedQty}
-          observation={observation}
-          onConfirm={(payload) => {
-            onMarkFinished(item, {
-              finishedQty: payload.finishedQty,
-              observation: payload.observation,
+          title="Entregar"
+          target={deliveryTarget}
+          unit={item.unit}
+          progress={deliveryProgress}
+          showBulkRemainder
+          notice={
+            <p className="rounded border border-[var(--os-border)] bg-[var(--os-surface-muted,#f8fafc)] p-2 text-xs" data-testid="deliver-boxes-rule">
+              Entregar desde Envasado exige la distribución en cajas (cajas × unidades por caja) y que coincida con lo
+              producido. Si no tenés el desglose, usá «{WORK_TRANSFER.sendToCodificadoAction}»: ahí alcanza con la
+              cantidad total.
+            </p>
+          }
+          onConfirm={async (payload) => {
+            await onDeliver(item, {
+              ...payload,
+              completion: {
+                finishedQty: finishedQty.trim() || (draft.packagingTotalUnits != null ? String(draft.packagingTotalUnits) : ""),
+                observation,
+                packagingLote: draft.packagingLote.trim() || null,
+                packagingVto: draft.packagingVto.trim() || null,
+                packagingTotalUnits: draft.packagingTotalUnits,
+                packingGroups: draft.packingGroups,
+                sampleUnits: draft.sampleUnits,
+                packingMismatchObservation: draft.packingMismatchObservation.trim() || null,
+              },
             });
-            setConfirmFinish(false);
             onOpenChange(false);
           }}
         />
-      )}
+      ) : null}
 
       {showCodificado && onSendToCodificado ? (
         <SendToCodificadoDialog
