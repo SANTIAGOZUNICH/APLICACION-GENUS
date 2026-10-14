@@ -7,7 +7,7 @@ import { MemoryOrdersRepository } from "@/lib/orders/memory-repository";
 import { OrdersService } from "@/lib/orders/orders-service";
 import { canDeleteOe } from "@/lib/orders/rbac";
 import { normalizeOrderContent } from "@/lib/orders/content";
-import { getMpStockLedger, resetMpStockMemoryForTests } from "@/lib/mp-stock/mp-stock-ledger";
+import { getMpStockLedger } from "@/lib/mp-stock/mp-stock-ledger";
 import { seedMpStockForTests } from "@/lib/orders/oe-mp-test-fixture";
 import { buildOrderLifecycleMenuItems } from "@/features/os/operational/components/order-lifecycle-row-actions";
 import type { OeContent, OrderContent, OrdersActor } from "@/lib/orders/types";
@@ -25,9 +25,8 @@ function fillOe(form: OrderContent): OeContent {
     ...form,
     header: { ...form.header, productName: "SERUM", date: "2026-10-13", quantityKg: 100, lot: "L-1", client: "CLIENTE" },
     materials: [
-      // Consumo REAL cargado por Elaboración (CÓDIGO MP + KG REAL UTILIZADO + LOTE MP): lo único que descuenta stock.
-      { ...form.materials[0]!, materiaPrima: "Agua", codigo: "MP-AGUA", codigoMp: "MP-AGUA", formulaPct: 90, kgAPesar: 90, kgReal: 88, lote: "A1" },
-      { ...form.materials[0]!, id: "m2", materiaPrima: "Glicerina", codigo: "MP-GLI", codigoMp: "MP-GLI", formulaPct: 10, kgAPesar: 10, kgReal: 9.5, lote: "G1" },
+      { ...form.materials[0]!, materiaPrima: "Agua", codigo: "MP-AGUA", codigoMp: "MP-AGUA", formulaPct: 90, kgAPesar: 90, kgReal: 90, lote: "LA-1" },
+      { ...form.materials[0]!, id: "m2", materiaPrima: "Glicerina", codigo: "MP-GLI", codigoMp: "MP-GLI", formulaPct: 10, kgAPesar: 10, kgReal: 9.5, lote: "LG-1" },
     ],
     processControl: { ...form.processControl, cantidadObtenida: 98, fechaFin: "2026-10-13" },
     qualityControl: { ...form.qualityControl, resultado: "OK" },
@@ -41,11 +40,10 @@ describe("Eliminar OE (Producción, cualquier estado)", () => {
   beforeEach(async () => {
     repo = new MemoryOrdersRepository();
     service = new OrdersService(repo);
-    resetMpStockMemoryForTests();
-    // Stock suficiente en los lotes que usa la OE (cada entrega descuenta solo los kg reales).
+    // Stock MP (lotes + libro mayor) suficiente para entregar las OE de prueba.
     await seedMpStockForTests([
-      { codigo: "MP-AGUA", lote: "A1", kg: 10000 },
-      { codigo: "MP-GLI", lote: "G1", kg: 10000 },
+      { codigo: "MP-AGUA", lote: "LA-1", kg: 10_000 },
+      { codigo: "MP-GLI", lote: "LG-1", kg: 10_000 },
     ]);
   });
 
