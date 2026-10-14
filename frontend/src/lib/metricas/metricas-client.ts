@@ -3,6 +3,8 @@ import {
   ACTOR_SECTOR_HEADER,
 } from "@/lib/auth/header-names";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
+import type { MetricsImportRow } from "./metricas-paste";
+import type { MetricImportCommitResult, MetricImportPreviewRow } from "./metricas-service-types";
 import type {
   MetricsListFilters,
   MetricsRankingEntry,
@@ -64,4 +66,16 @@ export async function metricasActionApi(
   const body = (await res.json()) as { error?: string };
   if (!res.ok) throw new Error(body.error ?? "Acción fallida");
   return body;
+}
+
+export async function previewMetricasImport(session: OrdersClientSession, rows: MetricsImportRow[]): Promise<MetricImportPreviewRow[]> {
+  const body = (await metricasActionApi(session, "import_preview", { rows })) as { rows: MetricImportPreviewRow[] };
+  return body.rows;
+}
+
+export async function commitMetricasImport(
+  session: OrdersClientSession,
+  input: { batchId: string; rows: MetricsImportRow[]; overwrite: Record<string, string> }
+): Promise<MetricImportCommitResult> {
+  return (await metricasActionApi(session, "import_commit", input)) as MetricImportCommitResult;
 }

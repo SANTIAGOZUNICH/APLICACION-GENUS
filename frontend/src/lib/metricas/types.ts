@@ -109,3 +109,13 @@ export function computeTotals(records: PackagingMetricRecord[]): {
     recordCount: records.length,
   };
 }
+
+/** Conflicto de concurrencia / pegado repetido en Métricas (HTTP 409). */
+export class MetricsConflictError extends Error {
+  readonly status = 409;
+  readonly code = "METRICS_CONFLICT";
+  constructor(message: string) {
+    super(message);
+    this.name = "MetricsConflictError";
+  }
+}

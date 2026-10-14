@@ -7,6 +7,10 @@ import { Button } from "@/components/ui/button";
 import { LifecycleConfirmDialog } from "@/features/os/operational/components/lifecycle-confirm-dialog";
 import { syntheticLifecycleItem } from "@/features/os/operational/components/lifecycle-synthetic";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
+import { MetricasPasteDialog } from "@/features/os/operational/components/metricas-paste-dialog";
+import { parseMetricDate, parseMetricUnits } from "@/lib/metricas/metricas-paste";
+import type { GenusGridCellChange, GenusGridCommitResult } from "@/components/data-grid/genus-grid";
+import { friendlySaveError } from "@/lib/ui/friendly-error";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { fetchMetricasApi, metricasActionApi } from "@/lib/metricas/metricas-client";
 import {
@@ -62,6 +66,7 @@ export function MetricasView() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmDeleteLabel, setConfirmDeleteLabel] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
   const [sort, setSort] = useSortPreference("metricas", "fecha_desc", METRICAS_SORT_KEYS);
   const sortedMetrics = useMemo(() => applySort(metrics, METRICAS_SORT_OPTIONS, sort), [metrics, sort]);
 
@@ -97,6 +102,46 @@ export function MetricasView() {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  /**
+   * Edición directa en la planilla (y pegado de varias celdas desde Excel/Sheets sobre registros existentes).
+   * Una sola escritura por registro (aunque cambien varias celdas), con la versión que vio el usuario: si otra persona
+   * lo modificó, el servidor responde conflicto y NO se pisa. Cada cambio queda auditado en el servidor.
+   */
+  const commitCells = useCallback(
+    async (changes: GenusGridCellChange[]): Promise<GenusGridCommitResult> => {
+      const byRow = new Map<string, GenusGridCellChange[]>();
+      for (const c of changes) byRow.set(c.rowId, [...(byRow.get(c.rowId) ?? []), c]);
+      const failures: NonNullable<GenusGridCommitResult["failures"]> = [];
+      for (const [rowId, cells] of byRow) {
+        const patch: Record<string, unknown> = { id: rowId, expectedUpdatedAt: cells[0]!.rowVersion, via: "grid" };
+        let bad = false;
+        for (const c of cells) {
+          if (c.columnKey === "fecha") {
+            const d = parseMetricDate(c.newValue);
+            if (!d.ok) { failures.push({ rowId, columnKey: c.columnKey, message: d.message }); bad = true; } else patch.metricDate = d.iso;
+          } else if (c.columnKey === "unidades") {
+            const u = parseMetricUnits(c.newValue);
+            if (!u.ok) { failures.push({ rowId, columnKey: c.columnKey, message: u.message }); bad = true; } else patch.units = u.value;
+          } else if (c.columnKey === "producto") {
+            patch.product = c.newValue.trim() === "—" ? null : c.newValue.trim() || null;
+          } else if (c.columnKey === "responsable") {
+            if (!c.newValue.trim()) { failures.push({ rowId, columnKey: c.columnKey, message: "Responsable obligatorio." }); bad = true; } else patch.responsibleDisplay = c.newValue.trim();
+          }
+        }
+        if (bad) continue;
+        try {
+          await metricasActionApi(session, "update", patch);
+        } catch (e) {
+          for (const c of cells) failures.push({ rowId, columnKey: c.columnKey, message: friendlySaveError(e) });
+        }
+      }
+      await reload();
+      return failures.length === 0 ? { ok: true } : { ok: false, message: failures[0]!.message, failures };
+    },
+    [session, reload]
+  );
+  const cellLock = showArchived ? "Registro archivado: restauralo para editarlo." : schemaPending ? "Base de datos pendiente de actualización." : null;
 
   if (!canAccessMetricas(sectorId)) {
     return (
@@ -176,6 +221,14 @@ export function MetricasView() {
     <TwinShell title={`Métricas — ${SECTOR_LABELS[sectorId]}`}>
       <div className="space-y-6">
         <SchemaPendingBanner show={schemaPending} />
+        <MetricasPasteDialog
+          open={pasteOpen}
+          onOpenChange={setPasteOpen}
+          session={session}
+          isAdmin={isProdAdmin}
+          ownSector={isProdAdmin ? null : (sectorId as MetricsSector)}
+          onDone={async () => { await reload(); }}
+        />
         {error && (
           <div className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">
             {error}
@@ -269,6 +322,11 @@ export function MetricasView() {
           >
             Archivados
           </Button>
+          {!showArchived ? (
+            <Button type="button" size="sm" variant="secondary" disabled={schemaPending || busy} onClick={() => setPasteOpen(true)} data-testid="metricas-pegar-excel">
+              Pegar desde Excel
+            </Button>
+          ) : null}
           {isProdAdmin ? (
             <select
               value={filterSector}
@@ -316,12 +374,15 @@ export function MetricasView() {
           tableId="metricas"
           rows={sortedMetrics}
           rowKey={(m) => m.id}
+          canEditCells={!showArchived && !schemaPending}
+          onCellsCommit={commitCells}
+          rowVersion={(m: PackagingMetricRecord) => m.updatedAt}
           columns={[
-            excelCol("fecha", "Fecha", (m: (typeof sortedMetrics)[number]) => m.metricDate),
-            ...(isProdAdmin ? [excelCol("sector", "Sector", (m: (typeof sortedMetrics)[number]) => SECTOR_LABELS[m.sector] ?? m.sector)] : []),
-            excelCol("producto", "Producto", (m: (typeof sortedMetrics)[number]) => m.product ?? "—"),
-            excelCol("unidades", "Unidades", (m: (typeof sortedMetrics)[number]) => String(m.units)),
-            excelCol("responsable", "Responsable", (m: (typeof sortedMetrics)[number]) => m.responsibleDisplay ?? ""),
+            { ...excelCol("fecha", "Fecha", (m: (typeof sortedMetrics)[number]) => m.metricDate), edit: { kind: "date" as const, protection: () => cellLock, validate: (raw: string) => { const d = parseMetricDate(raw); return d.ok ? null : d.message; } } },
+            ...(isProdAdmin ? [{ ...excelCol("sector", "Sector", (m: (typeof sortedMetrics)[number]) => SECTOR_LABELS[m.sector] ?? m.sector), readOnlyReason: "El sector no se cambia: cargá el registro en el sector correcto." }] : []),
+            { ...excelCol("producto", "Producto", (m: (typeof sortedMetrics)[number]) => m.product ?? "—"), edit: { kind: "text" as const, protection: () => cellLock } },
+            { ...excelCol("unidades", "Unidades", (m: (typeof sortedMetrics)[number]) => String(m.units)), edit: { kind: "number" as const, protection: () => cellLock, validate: (raw: string) => { const u = parseMetricUnits(raw); return u.ok ? null : u.message; } } },
+            { ...excelCol("responsable", "Responsable", (m: (typeof sortedMetrics)[number]) => m.responsibleDisplay ?? ""), edit: { kind: "text" as const, protection: () => cellLock, validate: (raw: string) => (raw.trim() ? null : "Responsable obligatorio.") } },
             {
               key: "acciones",
               header: "",

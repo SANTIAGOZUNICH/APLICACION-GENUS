@@ -108,7 +108,7 @@ describe("DEPOSITO acceso y navegación", () => {
     expect(u?.sector).toBe("DEPOSITO");
   });
 
-  it("sidebar DEPOSITO: Ingresos ME, Salidas ME, Entregas, Avisos, Semanas", () => {
+  it("sidebar DEPOSITO: Ingresos ME, Salidas ME, Entregas, Avisos, Plan semanal", () => {
     const home = resolveSectorHome("DEPOSITO");
     expect(home.sidebarItems).toEqual([
       "ingresos_me",
@@ -118,7 +118,6 @@ describe("DEPOSITO acceso y navegación", () => {
       "entregas",
       "avisos",
       "semanas_produccion",
-      "semanas_sector",
       "procedimientos",
       "expedicion",
     ]);

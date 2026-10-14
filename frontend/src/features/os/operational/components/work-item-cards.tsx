@@ -37,6 +37,14 @@ import { priorityEdge, WorkItemPriorityBadge } from "./work-item-priority-badge"
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
 
 type CellEditing = ReturnType<typeof useWorkItemCellEditing>;
+/** Tarjeta sin edición de planificación (consulta): vista Semana y sectores que no planifican. */
+export const NO_CELL_EDITING: CellEditing = {
+  canEditCells: undefined,
+  onCellsCommit: undefined,
+  rowVersion: undefined,
+  reasonRequired: undefined,
+  edit: () => undefined,
+} as unknown as CellEditing;
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
 export interface WorkItemCardsProps {
@@ -53,6 +61,8 @@ export interface WorkItemCardsProps {
   cells: CellEditing;
   /** Dentro del detalle (editor de planificación): sin los botones de la lista. */
   hideActions?: boolean;
+  /** «compact»: la misma tarjeta, un poco más chica (vista Semana). Default «normal» (vista Día). */
+  density?: "normal" | "compact";
 }
 
 const LABEL = "text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8fb3c9]";
@@ -367,7 +377,7 @@ function SemanasDivergence({ item }: { item: WorkItem }) {
   );
 }
 
-function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
+export function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
   const { item, variant, getFinishedQty, getObservation, onSelectItem, listMode, onArchiveFromView, onRestoreToView, archiveBusyId, showPackagingColumns, cells } = props;
   const semanas = useWorkItemSemanasPriority(item.id);
   const isProduccion = Boolean(cells.canEditCells);
@@ -383,13 +393,18 @@ function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
   // Bloqueo de planificación (mismo que aplica el servidor): se dice en la tarjeta, no solo al pasar el mouse.
   const lock = isProduccion ? (cells.edit("client").protection?.(item) ?? null) : null;
   const reported = isProduccion && !lock && isWorkItemReported(item);
+  const compact = props.density === "compact";
+  // Misma tarjeta en Día y Semana: «compact» solo baja tamaños y espaciados (colores, datos y acciones no cambian).
+  const T = compact
+    ? { box: "gap-1.5 p-2.5", label: "text-[9px] font-semibold uppercase tracking-[0.12em] text-[#8fb3c9]", product: "text-[14px]", qty: "text-[15px]", fin: "text-[13px]", min: "6.5rem", base: "text-[12px]" }
+    : { box: "gap-2 p-3.5", label: LABEL, product: "text-[16px]", qty: "text-[17px]", fin: "text-[15px]", min: "8.5rem", base: "text-[13px]" };
   const showLote = showPackagingColumns || (isProduccion && variant === "envasado");
   return (
     <article
       data-testid="work-item-card"
       data-item-id={item.id}
       data-semanas-priority={semanas?.priority ?? "NONE"}
-      className={`flex flex-col gap-2 rounded-xl border p-3.5 shadow-[0_6px_18px_-12px_rgba(0,0,0,0.7)] ${transferred ? "border-[var(--os-teal)]/40 bg-[#0f2f3a]" : "border-white/10 bg-[#10304a]"}`}
+      className={`flex flex-col ${T.box} rounded-xl border shadow-[0_6px_18px_-12px_rgba(0,0,0,0.7)] ${transferred ? "border-[var(--os-teal)]/40 bg-[#0f2f3a]" : "border-white/10 bg-[#10304a]"}`}
       style={priorityEdge(semanas?.priority, 5)}
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -410,49 +425,49 @@ function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
         </p>
       )}
       <div>
-        <div className={LABEL}>Producto</div>
-        <PlanField item={item} field="product" label="producto" value={item.product ?? ""} cells={cells} className="text-[16px] font-bold leading-snug text-white" testId="card-product" />
+        <div className={T.label}>Producto</div>
+        <PlanField item={item} field="product" label="producto" value={item.product ?? ""} cells={cells} className={`${T.product} font-bold leading-snug text-white`} testId="card-product" />
       </div>
 
       <div className="flex flex-wrap items-end gap-x-5 gap-y-1">
         <div>
-          <div className={LABEL}>Cantidad planificada</div>
-          <PlanField item={item} field="plannedQuantity" label="cantidad planificada" inputType="number" value={item.quantity ?? ""} display={plannedQuantityLabel(item.quantity, item.unit)} cells={cells} className="text-[17px] font-extrabold tabular-nums text-[#5eead4]" testId="card-quantity" />
+          <div className={T.label}>Cantidad planificada</div>
+          <PlanField item={item} field="plannedQuantity" label="cantidad planificada" inputType="number" value={item.quantity ?? ""} display={plannedQuantityLabel(item.quantity, item.unit)} cells={cells} className={`${T.qty} font-extrabold tabular-nums text-[#5eead4]`} testId="card-quantity" />
         </div>
         {isProduccion && (
           <div>
-            <div className={LABEL}>Unidad</div>
+            <div className={T.label}>Unidad</div>
             <PlanField item={item} field="unit" label="unidad" value={item.unit ?? ""} cells={cells} className="text-[13px] font-semibold text-[#e6f0f6]" testId="card-unit" />
           </div>
         )}
         <div>
-          <div className={LABEL}>{variant === "envasado" ? "Realizadas" : "Kg realizados"}</div>
+          <div className={T.label}>{variant === "envasado" ? "Realizadas" : "Kg realizados"}</div>
           {/* Producción: CORRECCIÓN autorizada (motivo obligatorio, auditada). No es un avance ni borra los avances. */}
-          <PlanField item={item} field="finishedQty" label="cantidad realizada (corrección)" inputType="number" value={finished} display={finished || "—"} cells={cells} className="text-[15px] font-bold tabular-nums text-[#e6f0f6]" testId="card-finished" />
+          <PlanField item={item} field="finishedQty" label="cantidad realizada (corrección)" inputType="number" value={finished} display={finished || "—"} cells={cells} className={`${T.fin} font-bold tabular-nums text-[#e6f0f6]`} testId="card-finished" />
         </div>
         {variant === "envasado" && diff && diff !== "—" && (
           <div>
-            <div className={LABEL}>Diferencia</div>
-            <div className={`text-[15px] font-bold tabular-nums ${diff.startsWith("+") ? "text-emerald-300" : diff.startsWith("-") ? "text-rose-300" : "text-[#e6f0f6]"}`}>{diff}</div>
+            <div className={T.label}>Diferencia</div>
+            <div className={`${T.fin} font-bold tabular-nums ${diff.startsWith("+") ? "text-emerald-300" : diff.startsWith("-") ? "text-rose-300" : "text-[#e6f0f6]"}`}>{diff}</div>
           </div>
         )}
       </div>
 
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] gap-x-3 gap-y-1.5 border-t border-white/10 pt-2 text-[13px] font-semibold text-[#e6f0f6]">
+      <div className={`grid gap-x-3 gap-y-1.5 border-t border-white/10 pt-2 ${T.base} font-semibold text-[#e6f0f6]`} style={{ gridTemplateColumns: `repeat(auto-fit,minmax(${T.min},1fr))` }}>
         <div>
-          <div className={LABEL}>Fecha</div>
+          <div className={T.label}>Fecha</div>
           <PlanField item={item} field="plannedDate" label="fecha de producción" value={item.plannedDate ?? ""} display={<span className="inline-flex items-center gap-1"><CalendarDays className="size-3.5 opacity-70" aria-hidden="true" />{item.plannedDate ? formatDay(item.plannedDate) : displayField(item.dayLabel)}</span>} cells={cells} inputType="date" testId="card-date" />
         </div>
         <div>
-          <div className={LABEL}>{assigneeLabel}</div>
+          <div className={T.label}>{assigneeLabel}</div>
           <PlanField item={item} field="assignee" label={assigneeLabel.toLowerCase()} value={assignee} options={assigneeOptions(item, variant)} cells={cells} testId="card-assignee" />
         </div>
         <div>
-          <div className={LABEL}>Cliente</div>
+          <div className={T.label}>Cliente</div>
           <PlanField item={item} field="client" label="cliente" value={item.client ?? ""} cells={cells} testId="card-client" />
         </div>
         <div>
-          <div className={LABEL}>Entrega</div>
+          <div className={T.label}>Entrega</div>
           {isProduccion ? (
             <PlanField item={item} field="deliveryDate" label="fecha de entrega" value={item.deliveryDate ?? ""} display={item.deliveryDate ? formatDateDisplay(item.deliveryDate) : "—"} cells={cells} inputType="date" testId="card-delivery" />
           ) : (
@@ -462,27 +477,27 @@ function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
         {showLote && (
           <>
             <div>
-              <div className={LABEL}>Lote</div>
+              <div className={T.label}>Lote</div>
               <PlanField item={item} field="packagingLote" label="lote" value={item.packagingLote ?? ""} display={displayField(item.packagingLote ?? item.loteRef)} cells={cells} testId="card-lote" />
             </div>
             <div>
-              <div className={LABEL}>VTO</div>
+              <div className={T.label}>VTO</div>
               <PlanField item={item} field="packagingVto" label="vencimiento" inputType="date" value={item.packagingVto ?? ""} display={item.packagingVto ? formatDateDisplay(item.packagingVto) : "—"} cells={cells} testId="card-vto" />
             </div>
-            <div><div className={LABEL}>OA</div>{displayField(item.oaRef)}</div>
+            <div><div className={T.label}>OA</div>{displayField(item.oaRef)}</div>
           </>
         )}
       </div>
 
       {(isProduccion || item.notes) && (
         <div className="text-[12px] text-[#cfe0ea]">
-          <div className={LABEL}>Observación de planificación</div>
+          <div className={T.label}>Observación de planificación</div>
           <PlanField item={item} field="notes" label="observación" value={item.notes ?? ""} cells={cells} testId="card-notes" />
         </div>
       )}
       {(observation || item.reworkRequestedAt) && (
         <div className="text-[12px] text-[#cfe0ea]">
-          <div className={LABEL}>Avance informado</div>
+          <div className={T.label}>Avance informado</div>
           {item.reworkRequestedAt && <p className="font-semibold text-amber-200">Rehacer: {item.reworkReason || "Sin motivo informado"}</p>}
           {observation && <p>{observation}</p>}
         </div>
