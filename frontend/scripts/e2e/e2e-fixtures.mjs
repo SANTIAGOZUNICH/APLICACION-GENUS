@@ -4,6 +4,7 @@ export const E2E_PASSWORD = process.env.GENUS_E2E_PASSWORD || "E2e-Genus-Local-1
 export const E2E_USERS = {
   produccion: { email: "e2e-produccion@genus.test", sector: "PRODUCCION", displayName: "E2E Producción", role: "ROL-SU", roleLabel: "Supervisora", sectorLabel: "Producción" },
   envasado: { email: "e2e-envasado@genus.test", sector: "ENVASADO_MASIVO", displayName: "E2E Envasado", role: "ROL-OP", roleLabel: "Operario", sectorLabel: "Envasado Masivo" },
+  envasadoPremium: { email: "e2e-envasado-premium@genus.test", sector: "ENVASADO_PREMIUM", displayName: "E2E Envasado Premium", role: "ROL-OP", roleLabel: "Operario", sectorLabel: "Envasado Premium" },
   elaboracion: { email: "e2e-elaboracion@genus.test", sector: "ELABORACION", displayName: "E2E Elaboración", role: "ROL-OP", roleLabel: "Operario", sectorLabel: "Elaboración" },
   deposito: { email: "e2e-deposito@genus.test", sector: "DEPOSITO", displayName: "E2E Depósito", role: "ROL-OP", roleLabel: "Operario", sectorLabel: "Depósito" },
   materiaPrima: { email: "e2e-mp@genus.test", sector: "MATERIA_PRIMA", displayName: "E2E Materia Prima", role: "ROL-OP", roleLabel: "Operario", sectorLabel: "Materias Primas" },

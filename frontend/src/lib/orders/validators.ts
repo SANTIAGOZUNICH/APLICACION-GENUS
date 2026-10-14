@@ -16,8 +16,9 @@ export function validateDeliverOe(content: OeContent): string[] {
   if (!content.header.lot.trim()) missing.push("Lote");
   if (!content.header.client.trim()) missing.push("Cliente");
   if (content.materials.length === 0) missing.push("Materias primas");
+  // Las filas de «lote adicional» de una MP no llevan % ni kg teóricos (son de su MP de la fórmula).
   const invalidPct = content.materials.some(
-    (m) => m.formulaPct == null && m.kgAPesar == null
+    (m) => !m.parentRowId && m.formulaPct == null && m.kgAPesar == null
   );
   if (invalidPct) missing.push("Kg y/o porcentajes válidos");
   if (content.procedureSteps.length === 0) missing.push("Procedimiento");

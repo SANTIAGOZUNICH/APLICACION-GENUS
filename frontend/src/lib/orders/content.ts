@@ -33,13 +33,25 @@ export function parseAjusteKg(value: unknown): number | null {
   return null;
 }
 
-/** Kg real utilizado = kg teóricos + ajuste (+/-). */
+/** Kg real a partir de kg teóricos + ajuste (+/-). Solo para OE viejas que guardaban el ajuste. */
 export function computeKgRealUtilizado(
   kgAPesar: number | null,
   ajuste: number | null
 ): number | null {
   if (kgAPesar == null && ajuste == null) return null;
   return Number(((kgAPesar ?? 0) + (ajuste ?? 0)).toFixed(4));
+}
+
+/** Número con coma o punto decimal («24,8» → 24.8). Vacío o inválido → null. */
+export function parseKgInput(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const t = String(value).trim().replace(/\s+/g, "");
+  if (!t) return null;
+  // «1.234,5» (miles con punto) o «1234,5» / «1234.5».
+  const normalized = t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
 }
 
 export function emptyOeMaterial(partial?: Partial<OeMaterialRow>): OeMaterialRow {
@@ -54,6 +66,9 @@ export function emptyOeMaterial(partial?: Partial<OeMaterialRow>): OeMaterialRow
     ajusteAt: null,
     ajusteBy: null,
     lote: "",
+    codigoMp: "",
+    kgReal: null,
+    parentRowId: null,
   };
   const merged = { ...base, ...partial };
   // Compat: ajuste legacy string
@@ -254,27 +269,57 @@ function migrateOeMaterial(raw: Record<string, unknown>): OeMaterialRow {
     ajusteAt: typeof raw.ajusteAt === "string" ? raw.ajusteAt : null,
     ajusteBy: typeof raw.ajusteBy === "string" ? raw.ajusteBy : null,
     lote: String(raw.lote ?? ""),
+    codigoMp: String(raw.codigoMp ?? ""),
+    kgReal: migrateKgReal(raw),
+    parentRowId: typeof raw.parentRowId === "string" && raw.parentRowId ? raw.parentRowId : null,
   });
+}
+
+/**
+ * KG REAL: el valor cargado. OE anteriores a este campo guardaban solo el ajuste: si hubo ajuste explícito, ese era
+ * un dato medido (kg a pesar + ajuste). Sin ajuste NO se asume que lo real fue lo teórico: queda vacío.
+ */
+function migrateKgReal(raw: Record<string, unknown>): number | null {
+  if ("kgReal" in raw) return parseKgInput(raw.kgReal);
+  const ajuste = parseAjusteKg(raw.ajuste);
+  if (ajuste == null) return null;
+  const kgAPesar = typeof raw.kgAPesar === "number" ? raw.kgAPesar : parseKgInput(raw.kgAPesar);
+  return computeKgRealUtilizado(kgAPesar, ajuste);
+}
+
+/** Kg reales de una MP de la fórmula: su fila + sus filas de lote adicional. null si ninguna está informada. */
+export function kgRealTotalForRow(materials: OeMaterialRow[], row: OeMaterialRow): number | null {
+  const rows = [row, ...materials.filter((m) => m.parentRowId === row.id)];
+  if (rows.every((m) => m.kgReal == null)) return null;
+  return Number(rows.reduce((s, m) => s + (m.kgReal ?? 0), 0).toFixed(4));
 }
 
 /** Recalcula kg a pesar y totales a partir de cantidad y % fórmula. */
 export function recomputeOeDerived(content: OeContent): OeContent {
   const qty = content.header.quantityKg;
-  const materials = content.materials.map((raw) => {
+  const withKg = content.materials.map((raw) => {
     const m = migrateOeMaterial(raw as unknown as Record<string, unknown>);
+    if (m.parentRowId) {
+      // Lote adicional: sin % ni kg teóricos propios (los tiene la fila de la fórmula).
+      return { ...m, formulaPct: null, kgAPesar: null, ajuste: null };
+    }
     const kg =
       qty != null && m.formulaPct != null
         ? Number(((qty * m.formulaPct) / 100).toFixed(4))
         : m.kgAPesar;
     return { ...m, kgAPesar: kg };
   });
+  // Ajuste = kg reales (fila + lotes adicionales) − kg a pesar. Se deriva; vacío mientras no haya kg reales.
+  const materials = withKg.map((m) => {
+    if (m.parentRowId) return m;
+    const real = kgRealTotalForRow(withKg, m);
+    const ajuste = real != null && m.kgAPesar != null ? Number((real - m.kgAPesar).toFixed(4)) : null;
+    return { ...m, ajuste };
+  });
   const formulaPctSum = materials.reduce((s, m) => s + (m.formulaPct ?? 0), 0);
   const kgSum = materials.reduce((s, m) => s + (m.kgAPesar ?? 0), 0);
   const ajusteSum = materials.reduce((s, m) => s + (m.ajuste ?? 0), 0);
-  const kgRealSum = materials.reduce(
-    (s, m) => s + (computeKgRealUtilizado(m.kgAPesar, m.ajuste) ?? 0),
-    0
-  );
+  const kgRealSum = materials.reduce((s, m) => s + (m.kgReal ?? 0), 0);
   const diferenciaPct =
     kgSum > 0 ? Number((((kgRealSum - kgSum) / kgSum) * 100).toFixed(2)) : null;
   const cantidadReal = content.processControl.cantidadReal ?? content.totals.cantidadReal;

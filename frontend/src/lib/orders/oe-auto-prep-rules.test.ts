@@ -216,7 +216,7 @@ describe("buildAutoPreparedOe", () => {
     const first = withLots(build(blank()).content, { "MP-2": "GL-2" });
     const f2 = formulaOk({ materials: [{ materiaPrima: "Agua", codigo: "MP-1", formulaPct: 92.5 }, { materiaPrima: "Perfume", codigo: "MP-3", formulaPct: 7.5 }] });
     const r = build(first, { formula: f2 });
-    expect(r.lostRecords).toEqual([{ materiaPrima: "Glicerina", codigo: "MP-2", lote: "GL-2", ajuste: null }]);
+    expect(r.lostRecords).toEqual([{ materiaPrima: "Glicerina", codigo: "MP-2", lote: "GL-2", ajuste: null, kgReal: null }]);
   });
 
   it("cambio de producto sin fórmula: si hay lotes del elaborador, también se informan antes de quitarlos", () => {
@@ -225,19 +225,21 @@ describe("buildAutoPreparedOe", () => {
     expect(r.lostRecords.map((l) => l.lote)).toEqual(["AG-1"]);
   });
 
-  it("actualización confirmada después de empezar: conserva ajustes registrados y avisa si se perderían", () => {
+  it("actualización confirmada después de empezar: conserva los KG REALES registrados y avisa si se perderían", () => {
     const first = build(blank());
     const started = structuredClone(first.content);
-    started.materials[1].ajuste = 0.2;
+    started.materials[1].kgReal = 12.7;
     started.materials[1].ajusteMotivo = "Corrección de pesada";
     const kept = build(started, { replaceManual: true, work: work({ plannedQuantity: "100" }) });
     expect(kept.lostRecords).toEqual([]);
-    expect(kept.content.materials[1]).toMatchObject({ ajuste: 0.2, ajusteMotivo: "Corrección de pesada", kgAPesar: 12.5 });
+    // Los kg reales NO se recalculan con la cantidad nueva; la diferencia (ajuste) sí se deriva.
+    expect(kept.content.materials[1]).toMatchObject({ kgReal: 12.7, ajusteMotivo: "Corrección de pesada", kgAPesar: 12.5 });
+    expect(kept.content.materials[1].ajuste).toBeCloseTo(0.2, 6);
     const lost = build(started, {
       replaceManual: true,
       formula: formulaOk({ materials: [{ materiaPrima: "Agua", codigo: "MP-1", formulaPct: 100 }] }),
     });
-    expect(lost.lostRecords).toEqual([{ materiaPrima: "Glicerina", codigo: "MP-2", lote: "", ajuste: 0.2 }]);
+    expect(lost.lostRecords).toMatchObject([{ materiaPrima: "Glicerina", codigo: "MP-2", lote: "", kgReal: 12.7 }]);
   });
 });
 

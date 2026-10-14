@@ -7,6 +7,7 @@ import { buildSerumAntiageOeTemplateContent } from "@/lib/orders/seed-templates"
 import { normalizeOrderContent } from "@/lib/orders/content";
 import { validateDeliver } from "@/lib/orders/validators";
 import type { OrdersActor, OeContent, OrderContent } from "@/lib/orders/types";
+import { ampleTestLots, fillMaterialsForConsumption, seedMpStockForTests } from "@/lib/orders/oe-mp-test-fixture";
 import {
   OrdersConflictError,
   OrdersForbiddenError,
@@ -64,6 +65,8 @@ function fillOeForDeliver(form: OrderContent): OeContent {
       fechaFin: "2026-07-20",
     },
     qualityControl: { ...form.qualityControl, resultado: "OK" },
+    // Consumo real cargado por Elaboración (código de Stock MP, lote y kg reales): sin esto no se entrega.
+    materials: fillMaterialsForConsumption(form.materials),
   }) as OeContent;
 }
 
@@ -71,7 +74,8 @@ describe("operational orders RBAC + lifecycle", () => {
   let service: OrdersService;
   let repo: MemoryOrdersRepository;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await seedMpStockForTests(ampleTestLots());
     repo = new MemoryOrdersRepository();
     service = new OrdersService(repo);
   });

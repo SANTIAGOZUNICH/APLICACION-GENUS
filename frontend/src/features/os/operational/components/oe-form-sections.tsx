@@ -2,10 +2,10 @@
 
 import { DecimalInput } from "@/components/ui/decimal-input";
 import type { OeContent } from "@/lib/orders/types";
-import { computeKgRealUtilizado } from "@/lib/orders/content";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type { FormulaAutoloadStatus } from "../lib/oe-formula-autoload";
 import { statusMessage } from "../lib/oe-formula-autoload";
+import { OeMaterialsTable } from "./oe-materials-table";
 import {
   FormulaClientProductPickers,
   type SelectedFormulaOption,
@@ -131,53 +131,6 @@ export function OeFormSections({
     !!onProductSelected &&
     !!onCommitProductText;
 
-  const patchMaterial = (
-    id: string,
-    patch: Partial<OeContent["materials"][number]>
-  ) => {
-    onChange({
-      ...content,
-      materials: content.materials.map((x) => {
-        if (x.id !== id) return x;
-        const next = { ...x, ...patch };
-        if ("ajuste" in patch && mode.actorEmail) {
-          next.ajusteAt = new Date().toISOString();
-          next.ajusteBy = mode.actorEmail;
-        }
-        return next;
-      }),
-    });
-  };
-
-  /**
-   * Lote N.º como en Excel: Enter / ↓ baja a la fila siguiente, Shift+Enter / ↑ sube; pegar varias líneas (copiadas
-   * de una planilla) completa las filas siguientes. Cada lote es un dato del elaborador: se guarda con el autoguardado.
-   */
-  const lotInputs = (from: HTMLElement) =>
-    Array.from(from.closest("tbody")?.querySelectorAll<HTMLInputElement>("[data-testid=oe-cell-lote]") ?? []);
-  const onLotKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, rowIndex: number) => {
-    const down = (e.key === "Enter" && !e.shiftKey) || e.key === "ArrowDown";
-    const up = (e.key === "Enter" && e.shiftKey) || e.key === "ArrowUp";
-    if (!down && !up) return;
-    const target = lotInputs(e.currentTarget)[rowIndex + (down ? 1 : -1)];
-    if (!target) return;
-    e.preventDefault();
-    target.focus();
-    target.select();
-  };
-  const onLotPaste = (e: React.ClipboardEvent<HTMLInputElement>, rowIndex: number) => {
-    const text = e.clipboardData.getData("text");
-    const values = text.replace(/\r/g, "").split("\n").map((l) => l.split("\t")[0].trim());
-    while (values.length > 1 && values[values.length - 1] === "") values.pop();
-    if (values.length <= 1) return; // una sola línea: pegado normal en la celda
-    e.preventDefault();
-    const byIndex = new Map(values.map((v, k) => [rowIndex + k, v]));
-    onChange({
-      ...content,
-      materials: content.materials.map((x, i) => (byIndex.has(i) ? { ...x, lote: byIndex.get(i)! } : x)),
-    });
-  };
-
   const bannerMsg = statusMessage(formulaStatus, formulaStatusDetail);
 
   return (
@@ -298,131 +251,27 @@ export function OeFormSections({
             className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-950"
             data-testid="oe-formula-locked-banner"
           >
-            Fórmula teórica en solo lectura. Elaboración puede completar Ajuste (+/- kg), motivo y
-            Lote N.º.
+            Fórmula teórica en solo lectura. Elaboración completa CÓDIGO MP (si falta), KG REAL UTILIZADO y LOTE MP; al
+            entregar se descuenta del stock solo lo realmente utilizado.
           </p>
         )}
-        <div className="mt-3 overflow-x-clip">
-          <table className="min-w-full text-xs" data-testid="oe-materials-table">
-            <thead>
-              <tr className="bg-[var(--os-bg-muted,#f3f3f3)] text-left">
-                <th className="p-2">Materia prima</th>
-                <th className="p-2">Código</th>
-                <th className="p-2">Fórmula %</th>
-                <th className="p-2">kg a pesar</th>
-                <th className="p-2">Ajuste (+/- kg)</th>
-                <th className="p-2">Kg real</th>
-                <th className="p-2">Motivo ajuste</th>
-                <th className="p-2">Lote N.º</th>
-                <th className="p-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {content.materials.map((m, rowIndex) => {
-                const ajuste = m.ajuste ?? null;
-                const kgReal = computeKgRealUtilizado(m.kgAPesar, ajuste);
-                const adjusted = ajuste != null && ajuste !== 0;
-                return (
-                  <tr
-                    key={m.id}
-                    className={`border-t ${adjusted ? "bg-amber-50/80" : ""}`}
-                    data-testid={adjusted ? "oe-row-adjusted" : "oe-row"}
-                  >
-                    <td className="p-1">
-                      <input
-                        disabled={formulaLocked}
-                        value={m.materiaPrima}
-                        onChange={(e) => patchMaterial(m.id, { materiaPrima: e.target.value })}
-                        className={`w-full rounded border px-2 py-1.5 text-sm ${formulaLocked ? "bg-[var(--os-bg-muted,#eef1f4)]" : ""}`}
-                        data-testid="oe-cell-materia"
-                      />
-                    </td>
-                    <td className="p-1">
-                      <input
-                        disabled={formulaLocked}
-                        value={m.codigo}
-                        onChange={(e) => patchMaterial(m.id, { codigo: e.target.value })}
-                        className={`w-full rounded border px-2 py-1.5 text-sm ${formulaLocked ? "bg-[var(--os-bg-muted,#eef1f4)]" : ""}`}
-                        data-testid="oe-cell-codigo"
-                      />
-                    </td>
-                    <td className="p-1">
-                      <DecimalInput
-                        disabled={formulaLocked}
-                        value={m.formulaPct}
-                        onValue={(n) => patchMaterial(m.id, { formulaPct: n })}
-                        className={`w-full rounded border px-2 py-1.5 text-sm ${formulaLocked ? "bg-[var(--os-bg-muted,#eef1f4)]" : ""}`}
-                        data-testid="oe-cell-formula"
-                      />
-                    </td>
-                    <td className="p-1 font-mono" data-testid="oe-cell-kg">
-                      {m.kgAPesar ?? "—"}
-                    </td>
-                    <td className="p-1">
-                      <DecimalInput
-                        disabled={opsLocked}
-                        value={m.ajuste}
-                        onValue={(n) => patchMaterial(m.id, { ajuste: n })}
-                        placeholder="+/- kg"
-                        className="w-full rounded border px-2 py-1.5 text-sm"
-                        data-testid="oe-cell-ajuste"
-                        title="Ajuste (+/- kg)"
-                      />
-                    </td>
-                    <td className="p-1 font-mono" data-testid="oe-cell-kg-real">
-                      {kgReal ?? "—"}
-                    </td>
-                    <td className="p-1">
-                      <input
-                        disabled={opsLocked}
-                        value={m.ajusteMotivo}
-                        onChange={(e) => patchMaterial(m.id, { ajusteMotivo: e.target.value })}
-                        className="w-full rounded border px-2 py-1.5 text-sm"
-                        data-testid="oe-cell-ajuste-motivo"
-                        placeholder={adjusted ? "Obligatorio" : ""}
-                      />
-                    </td>
-                    <td className="p-1">
-                      <input
-                        disabled={opsLocked}
-                        value={m.lote}
-                        onChange={(e) => patchMaterial(m.id, { lote: e.target.value })}
-                        onKeyDown={(e) => onLotKeyDown(e, rowIndex)}
-                        onPaste={(e) => onLotPaste(e, rowIndex)}
-                        className={`w-full rounded border px-2 py-1.5 text-sm${
-                          content.autoPrep && !m.lote.trim() && (m.materiaPrima.trim() || m.codigo.trim())
-                            ? " border-amber-400 bg-amber-400/10 placeholder:text-amber-600"
-                            : ""
-                        }`}
-                        placeholder={content.autoPrep && (m.materiaPrima.trim() || m.codigo.trim()) ? "Completar lote" : undefined}
-                        aria-label={`Lote de ${m.materiaPrima || m.codigo || "la materia prima"}`}
-                        data-testid="oe-cell-lote"
-                      />
-                    </td>
-                    <td className="p-1">
-                      {!formulaLocked && (
-                        <button
-                          type="button"
-                          className="text-rose-700"
-                          onClick={() => onRemoveMaterial(m.id)}
-                        >
-                          Quitar
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <OeMaterialsTable
+          content={content}
+          onChange={onChange}
+          formulaLocked={formulaLocked}
+          opsLocked={opsLocked}
+          canEditCodigoMp={!opsLocked || !formulaLocked}
+          session={session}
+          actorEmail={mode.actorEmail}
+          onRemoveMaterial={onRemoveMaterial}
+        />
         <div
           className="mt-2 grid gap-1 text-xs text-[var(--os-text-muted)] sm:grid-cols-4"
           data-testid="oe-ajuste-summary"
         >
           <span>Total teórico: {content.totals.kgSum ?? "—"} kg</span>
-          <span>Total ajustes: {content.totals.ajusteSum ?? "—"} kg</span>
-          <span>Total real: {content.totals.kgRealSum ?? "—"} kg</span>
+          <span>Diferencia total: {content.totals.ajusteSum ?? "—"} kg</span>
+          <span>Total real utilizado: {content.totals.kgRealSum ?? "—"} kg</span>
           <span>Diferencia: {content.totals.diferenciaPct ?? "—"}%</span>
         </div>
         {!formulaLocked && (
