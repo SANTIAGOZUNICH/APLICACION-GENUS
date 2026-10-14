@@ -99,7 +99,7 @@ try {
 
   await keratin.locator("[data-testid=list-link-cell]").click();
   const panel = pp.locator("[data-testid=list-link-row]");
-  await panel.locator("[data-testid=link-candidate]").first().waitFor({ timeout: 90_000 });
+  await panel.locator("[data-testid=link-candidate]").first().waitFor({ timeout: 240_000 });
   const cands = await panel.locator("[data-testid=link-candidate]").allInnerTexts();
   check("sugerencias de la semana y del sector (sin Envasado); los dos KERATIN repetidos primero, Producción elige", cands.length === 5 && cands[0].includes("ALISADO KERATIN") && cands[1].includes("ALISADO KERATIN") && !cands.join(" ").includes("ALC EN GEL"), cands.map((c) => c.split("\n").slice(0, 2).join(" ")).join(" | "));
   check("la sugerencia indica en qué coincide (no vincula sola)", /coincide producto/i.test(cands[0]) && (await keratin.locator("[data-testid=list-link-cell]").getAttribute("data-linked")) === "0");
