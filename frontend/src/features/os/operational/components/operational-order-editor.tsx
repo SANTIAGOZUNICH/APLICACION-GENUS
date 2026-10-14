@@ -227,7 +227,9 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     return () => window.removeEventListener("beforeunload", handler);
   }, [saveState]);
 
+  const deletedOe = order?.type === "OE" && Boolean(order?.deletedAt);
   const locked =
+    deletedOe ||
     order?.status === "COMPLETA" ||
     order?.status === "COMPLETA_CON_PENDIENTES" ||
     order?.status === "ARCHIVADA" ||
@@ -1082,12 +1084,17 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           </button>
         </div>
       )}
-      {locked && (
+      {deletedOe ? (
+        <p className="rounded border border-rose-300 bg-rose-500/10 px-3 py-2 text-sm" data-testid="oe-deleted-banner">
+          OE ELIMINADA el {new Date(order.deletedAt!).toLocaleString("es-AR")} por {order.deletedBy ?? "—"}. Motivo:{" "}
+          {order.deleteReason ?? "—"}. Solo consulta: no se edita, no se entrega y no mueve stock.
+        </p>
+      ) : locked ? (
         <p className="text-sm text-[var(--os-text-muted)]">
           Orden «{statusLabel(order.status)}»: no se edita directamente. Usá devolución para corrección si
           corresponde.
         </p>
-      )}
+      ) : null}
 
       {showPreview ? (
         <LegalOrderPreview order={{ ...order, formData: form }} />

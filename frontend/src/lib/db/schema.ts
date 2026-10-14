@@ -573,6 +573,36 @@ export const invMeIngresos = pgTable("inv_me_ingresos", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * Fotos/archivos de remito adjuntos a un ingreso de MP o de ME (0044). Tabla aparte (no en el payload del ingreso):
+ * editar el ingreso reconstruye su payload y no debe perder fotos. El archivo vive en Blob privado (storage_key);
+ * quitar una foto es soft-delete (el archivo se conserva). No se relaciona con stock.
+ */
+export const inventoryIngresoAdjuntos = pgTable(
+  "inventory_ingreso_adjuntos",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    /** "MP" (Ingresos de MP) | "ME" (Ingresos de ME, Depósito). */
+    module: text("module").notNull(),
+    ingresoId: uuid("ingreso_id").notNull(),
+    storageProvider: text("storage_provider").notNull(),
+    storageKey: text("storage_key").notNull(),
+    fileName: text("file_name").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    uploadedBy: text("uploaded_by").notNull(),
+    uploadedBySector: text("uploaded_by_sector").notNull(),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: text("deleted_by"),
+  },
+  (table) => [
+    index("inventory_ingreso_adjuntos_ingreso_idx").on(table.module, table.ingresoId),
+    uniqueIndex("inventory_ingreso_adjuntos_storage_key_uidx").on(table.storageKey),
+  ]
+);
+
 export const invMeSalidas = pgTable("inv_me_salidas", {
   id: uuid("id").primaryKey(),
   payload: jsonb("payload").notNull(),

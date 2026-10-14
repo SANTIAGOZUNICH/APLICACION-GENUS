@@ -25,6 +25,8 @@ import {
 import { displayCell, multiplyTotal, parseOptionalNumber } from "@/lib/inventory/calcs";
 import { ME_INGRESO_COLUMNS, type MeIngresoRow } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
+import { IngresoRemitoFotosButton, useIngresoAdjuntoCounts } from "@/features/os/operational/components/ingreso-remito-fotos";
+import { canManageAdjuntos, canViewAdjuntos } from "@/lib/inventory/ingreso-adjuntos-rules";
 import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
@@ -93,6 +95,9 @@ export function MeIngresosView() {
   const { sectorId } = usePreviewSession();
   const { showToast } = usePreviewContext();
   const canWrite = canWriteInventory(sectorId, "me_ingresos");
+  // Fotos del remito por ingreso (tabla aparte: editar el ingreso no las pierde).
+  const fotos = useIngresoAdjuntoCounts("ME", canViewAdjuntos(sectorId, "ME"));
+  const canManageFotos = canManageAdjuntos(sectorId, "ME");
   const [rows, setRows] = useState<MeIngresoRow[]>([]);
   const [persistence, setPersistence] = useState(true);
   const [banner, setBanner] = useState<string | null>(null);
@@ -295,6 +300,21 @@ export function MeIngresosView() {
       <OperationalTable
         columns={[
           ...columns,
+          {
+            key: "remitoFotos",
+            header: "Remito",
+            // En la planilla va junto a las acciones de la fila (siempre visible, también en celular).
+            action: true,
+            render: (row: MeIngresoRow) => (
+              <IngresoRemitoFotosButton
+                module="ME"
+                ingresoId={row.id}
+                label={`Ingreso ${row.ingresoNro || "s/n"} · Remito ${row.remitoNro || "s/n"} · ${row.proveedor || row.descripcionInsumo || ""}`}
+                canManage={canManageFotos && !row.anulado}
+                onChanged={fotos.reload}
+              />
+            ),
+          },
           ...(canWrite
             ? [
                 {
