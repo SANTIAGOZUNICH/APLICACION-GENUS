@@ -17,6 +17,7 @@
     "test:e2e:produccion-edicion": "bash scripts/e2e/run-produccion-edicion-local.sh",
     "test:e2e:deposito-me": "bash scripts/e2e/run-deposito-me-local.sh",
     "test:e2e:mp-planilla": "bash scripts/e2e/run-mp-planilla-local.sh",
+    "test:e2e:entregas": "bash scripts/e2e/run-entregas-local.sh",
     "test:e2e:planillas-celda": "bash scripts/e2e/run-planillas-edicion-celda-local.sh",
     "test:e2e:stock-mp-completo": "bash scripts/e2e/run-stock-mp-edicion-completa-local.sh",
     "test:e2e:usabilidad": "bash scripts/e2e/run-usabilidad-elaboracion-mp-local.sh",

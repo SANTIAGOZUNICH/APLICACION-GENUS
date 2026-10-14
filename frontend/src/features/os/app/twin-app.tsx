@@ -39,6 +39,7 @@ import { SemanasGridView } from "@/features/os/operational/views/semanas-grid-vi
 import { SemanasSectorView } from "@/features/os/operational/views/semanas-sector-view";
 import { AsignacionLotesView } from "@/features/os/operational/views/asignacion-lotes-view";
 import { EntregadosView } from "@/features/os/operational/views/entregados-view";
+import { EntregasView } from "@/features/os/operational/views/entregas-view";
 import { RemitosView } from "@/features/os/operational/views/remitos-view";
 import { ProductionPedidosView } from "@/features/os/operational/views/production-pedidos-view";
 import { ProcedimientosView } from "@/features/os/operational/views/procedimientos-view";
@@ -130,6 +131,8 @@ export function TwinRouter() {
       return <SemanasGridView />;
     case "semanas-sector":
       return <SemanasSectorView />;
+    case "entregas":
+      return <EntregasView />;
     case "entregados":
       return <EntregadosView />;
     case "asignacion-lotes":

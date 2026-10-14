@@ -19,6 +19,8 @@ import { getClientPlanningSource } from "@/lib/planning/planning-source";
 import type { ProductionPedidoRecord } from "@/lib/production-pedidos/types";
 import { todayIso } from "../lib/delivery-date";
 import { buildAutoOrderRef } from "../lib/pedido-order-ref";
+import { AssignEntregaSuggestions } from "./assign-entrega-suggestions";
+import type { DeliverySuggestion } from "@/lib/entregas/types";
 import {
   computeLoteVtoWarning,
   LOTE_VTO_WARNING_LABEL,
@@ -172,6 +174,9 @@ export function AssignWorkDialog({
    */
   const [loteResolution, setLoteResolution] = useState<AsignacionLoteResolution | null>(null);
   const [selectedAsignacionLoteId, setSelectedAsignacionLoteId] = useState<string | null>(null);
+  /** Entrega programada elegida por Producción (calendario de Entregas). Solo vale mientras cliente y producto sigan iguales. */
+  const [entregaPick, setEntregaPick] = useState<DeliverySuggestion | null>(null);
+  const entrega = entregaPick && client === entregaPick.client && product === entregaPick.product ? entregaPick : null;
   const [loteResolutionLoading, setLoteResolutionLoading] = useState(false);
   const showsPackagingFields = sector !== "ELABORACION";
 
@@ -395,6 +400,7 @@ export function AssignWorkDialog({
       packagingLote: packagingLote.trim() || null,
       packagingVto: sector === "ELABORACION" ? null : packagingVto.trim() || null,
       asignacionLoteId: sector === "ELABORACION" ? null : selectedAsignacionLoteId,
+      scheduledDeliveryItemId: entrega?.itemId ?? null,
       productionPedidoId: selectedPedido?.id ?? null,
       idempotencyKey: idempotencyRef.current,
       forceLink: Boolean(opts?.forceLink),
@@ -698,6 +704,32 @@ export function AssignWorkDialog({
               required
             />
           </div>
+
+          <AssignEntregaSuggestions
+            sector={sector}
+            client={client}
+            product={product}
+            selected={entrega}
+            disabled={submitting}
+            onClear={() => setEntregaPick(null)}
+            onPick={(s) => {
+              // Solo se completa lo que la entrega tiene cargado (nunca se inventa ni se pisa con vacío).
+              setEntregaPick(s);
+              setClient(s.client);
+              setProduct(s.product);
+              if (s.quantity) setQuantity(s.quantity);
+              setDeliveryDate(s.deliveryDate);
+              if (sector !== "ELABORACION") {
+                if (s.lot) setPackagingLote(s.lot);
+                if (s.vto) setPackagingVto(s.vto);
+              }
+              if (s.notes) setNotes((prev) => (prev.trim() ? prev : s.notes ?? ""));
+              if (s.plannedProductionDate) {
+                setPlannedDate(s.plannedProductionDate);
+                setPlannedDateTo(s.plannedProductionDate);
+              }
+            }}
+          />
 
           <div className="space-y-1.5">
             <label htmlFor="af-date-from" className="text-sm font-medium">

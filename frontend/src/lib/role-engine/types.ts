@@ -110,6 +110,7 @@ export const SIDEBAR_ITEM_IDS = [
   "semanas_planilla",
   "semanas_sector",
   "entregados",
+  "entregas",
   "asignacion_lotes",
   "ver_elaboracion",
   "ver_envasado_masivo",

@@ -26,7 +26,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Reportar problema",
       "Registrar avance",
     ],
-    sidebarItems: ["mi_trabajo", "semanas_sector", "ordenes_acondicionamiento", "historial", "avisos", "procedimientos", "metricas"],
+    sidebarItems: ["mi_trabajo", "semanas_sector", "ordenes_acondicionamiento", "entregas", "historial", "avisos", "procedimientos", "metricas"],
     creamyContext: {
       role: "Copiloto de envasado masivo",
       topics: ["prioridades", "OA", "bloqueos", "insumos", "entregas"],
@@ -64,7 +64,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Entregar a Calidad",
       "Reportar problema",
     ],
-    sidebarItems: ["mi_trabajo", "semanas_sector", "ordenes_acondicionamiento", "historial", "avisos", "procedimientos", "metricas"],
+    sidebarItems: ["mi_trabajo", "semanas_sector", "ordenes_acondicionamiento", "entregas", "historial", "avisos", "procedimientos", "metricas"],
     creamyContext: {
       role: "Copiloto de envasado premium",
       topics: ["prioridades", "OA", "lotes premium", "insumos", "entregas"],
@@ -193,6 +193,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "salidas_me",
       "inventario_me",
       "deposito_graneles",
+      "entregas",
       "avisos",
       "semanas_produccion",
       "semanas_sector",
@@ -297,6 +298,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "semanas_planilla",
       "ordenes_elaboracion",
       "entregados",
+      "entregas",
       "asignacion_lotes",
       "ver_elaboracion",
       "ver_envasado_masivo",
@@ -344,7 +346,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     visibleEntities: ["pedido", "plan_semanal", "lote"],
     workItemSources: ["semanas_2026", "pedidos_2026"],
     allowedActions: ["Ver panorama", "Consultar pedido", "Ver alertas"],
-    sidebarItems: ["mi_trabajo", "consulta", "plan_semanal", "configuracion", "procedimientos"],
+    sidebarItems: ["mi_trabajo", "consulta", "plan_semanal", "entregas", "configuracion", "procedimientos"],
     restrictedSidebarItems: ["direccion"],
     creamyContext: {
       role: "Copiloto ejecutivo",
