@@ -50,6 +50,7 @@ async function openAs(user, device) {
   });
   page.on("response", (r) => {
     if (r.status() >= 500) problems.push(`HTTP ${r.status()} ${r.url().replace(BASE, "")}`);
+    else if (r.status() === 400) problems.push(`HTTP 400 ${r.request().method()} ${r.url().replace(BASE, "")}`);
   });
   await page.goto("/login");
   await page.locator('input[type="email"]').fill(user.email);
