@@ -32,6 +32,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0042_semanas_task_links": "028846d48272e2132b1cfa098820a13fa48f5217a21515f52066fb1b6b3507b7",
   "0043_asignacion_lotes_local_edits": "18bb43cd0bdfeac06d935dcbf23923900186b2cc4ad9b515655f8a9921171be5",
   "0044_inventory_ingreso_adjuntos": "22fffe21358b2565689f38e1407f0af382f7acc24e281735e8c5d7910cb9d201",
+  "0045_scheduled_deliveries": "ad9030f737e2811a6c6a624dc49b8bca17adb0030023542331cfd08c266233e3",
 });
 
 export const RECONCILE_LOG_TABLE = "genus_migration_reconcile_log";
@@ -149,6 +150,9 @@ export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
   { migration: "0043_asignacion_lotes_local_edits", object: "asignacion_lotes_cell_audit.reason" },
   { migration: "0043_asignacion_lotes_local_edits", object: "asignacion_lotes_local_edits" },
   { migration: "0044_inventory_ingreso_adjuntos", object: "inventory_ingreso_adjuntos" },
+  { migration: "0045_scheduled_deliveries", object: "scheduled_deliveries" },
+  { migration: "0045_scheduled_deliveries", object: "scheduled_delivery_items" },
+  { migration: "0045_scheduled_deliveries", object: "scheduled_delivery_links" },
 ]);
 
 /** @param {{ query: (text: string, params?: unknown[]) => Promise<any[]>, required?: ReadonlyArray<{migration: string, object: string}> }} opts */
