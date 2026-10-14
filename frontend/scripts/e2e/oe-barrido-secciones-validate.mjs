@@ -126,14 +126,28 @@ for (const [deviceName, device] of Object.entries(DEVICES)) {
       if (/[oó]rden/i.test(label)) {
         // OE: abrir el editor de una OE nueva y de una OE legada (guardada antes de #125).
         for (const prodName of [PRODUCT, PRODUCT_LEGACY]) {
+          await page.getByPlaceholder("Número, producto, código, cliente, lote…").fill(prodName).catch(() => {});
+          await page.waitForTimeout(1200);
+          const lista = page.getByText("Ver como lista");
+          if (await lista.isVisible().catch(() => false)) {
+            await lista.click();
+            await page.waitForTimeout(600);
+          }
           const row = page.getByText(prodName).first();
-          if (!(await row.isVisible().catch(() => false))) continue;
+          const visible = await row.isVisible().catch(() => false);
+          check(`${tag}: OE ${prodName} visible en el listado`, visible || userKey !== "produccion", "no aparece en el listado");
+          if (!visible) {
+            await page.screenshot({ path: `${OUT}/${deviceName}-${userKey}-oe-listado.png` });
+            continue;
+          }
           const b2 = problems.length;
           await row.click().catch(() => {});
           await settle(page);
-          await page.waitForTimeout(800);
+          await page.waitForTimeout(1500);
           const bad2 = await bodyBad(page);
+          const tabla = await page.locator("[data-testid=oe-materials-table]").count();
           check(`${tag}: editor de OE ${prodName} abre sin error`, !bad2 && problems.slice(b2).length === 0, [bad2, ...problems.slice(b2)].filter(Boolean).join(" | "));
+          check(`${tag}: editor de OE ${prodName} muestra la tabla de materias primas`, tabla > 0, "sin tabla de MP");
           await page.screenshot({ path: `${OUT}/${deviceName}-${userKey}-oe-${prodName.includes("LEGACY") ? "legada" : "nueva"}.png` });
           await page.goto("/").catch(() => {});
           await settle(page);
