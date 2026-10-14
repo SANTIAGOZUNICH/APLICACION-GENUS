@@ -330,7 +330,7 @@ try {
   await openDashboard(page);
   await setFilter(page, "filter-year", String(YEAR));
   await page.getByTestId("dashboard-year").filter({ hasText: `Año ${YEAR}` }).waitFor({ timeout: 30_000 }).catch(() => {});
-  check("título «Dashboard Operativo» y año seleccionado", (await text(page, "dashboard-title")) === "Dashboard Operativo" && (await text(page, "dashboard-year")) === "Año completo");
+  check("título «Dashboard Operativo» y año seleccionado", (await text(page, "dashboard-title")) === "Dashboard Operativo" && (await text(page, "dashboard-year")) === `Año ${YEAR}`);
   check("fecha de última actualización visible", /Última actualización de datos/.test(await text(page, "dashboard-updated")));
   const allKeys = ["nivel_servicio", "sin_reclamos", "lead_time", "unidades_producidas", "pedidos_activos", "pedidos_entregados", "pedidos_en_despacho", "productos_distintos", "clientes_activos"];
   let allEmpty = true;
