@@ -69,7 +69,7 @@ export function EntregaFormDialog({ open, onOpenChange, initial, defaultDate, cl
   async function save() {
     if (busy) return;
     setError(null);
-    const input = { client, deliveryDate, responsible, notes, items: items.map(({ key: _k, ...rest }) => rest) };
+    const input = { client, deliveryDate, responsible, notes, items: items.map((i) => ({ id: i.id, product: i.product, quantity: i.quantity, unit: i.unit, sector: i.sector, plannedProductionDate: i.plannedProductionDate, lot: i.lot, vto: i.vto, notes: i.notes })) };
     const v = validateDeliveryInput(input);
     if (!v.ok) {
       setError(v.message);

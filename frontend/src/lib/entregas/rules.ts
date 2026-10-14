@@ -224,33 +224,72 @@ export function matchDeliveryCandidates(
 }
 
 const norm = (v: string | null | undefined) => (v ?? "").trim();
-const numEq = (a: string | null, b: string | null) => {
+const numEq = (a: string | null | undefined, b: string | null | undefined) => {
   const x = parseQuantity(a);
   const y = parseQuantity(b);
   return typeof x === "number" && typeof y === "number" ? x === y : norm(a) === norm(b);
 };
+const textEq = (a: string | null | undefined, b: string | null | undefined) => norm(a) === norm(b);
+const unitEq = (a: string | null | undefined, b: string | null | undefined) => norm(a).toLowerCase() === norm(b).toLowerCase();
+
+/** Lo que cuenta de una entrega para detectar cambios posteriores a la asignación. */
+export function snapshotOf(
+  delivery: Pick<ScheduledDelivery, "deliveryDate">,
+  item: Pick<ScheduledDeliveryItem, "quantity" | "unit" | "lot" | "vto">
+): Record<WorkDivergence["field"], string | null> {
+  return {
+    plannedQuantity: item.quantity ?? null,
+    unit: item.unit ?? null,
+    deliveryDate: delivery.deliveryDate,
+    packagingLote: item.lot ?? null,
+    packagingVto: item.vto ?? null,
+  };
+}
 
 /**
- * Qué difiere entre lo programado (producto + fecha de entrega) y el trabajo vinculado. Solo se comparan los campos
- * que la entrega tiene cargados (lo pendiente no pisa nada). NUNCA incluye la cantidad realizada ni avances del
- * operario: son del sector. Producción confirma cada cambio antes de aplicarlo.
+ * Qué CAMBIÓ en la entrega DESPUÉS de asignar el trabajo y todavía no está reflejado en él. Un campo solo se informa si:
+ *  - la entrega lo tiene cargado (lo pendiente nunca pisa nada),
+ *  - difiere de lo que la entrega decía cuando se vinculó el trabajo (no se alerta por diferencias previas ni por lo que
+ *    el operario/Producción editaron a mano en el trabajo), y
+ *  - difiere de lo que hoy tiene el trabajo.
+ * La cantidad solo se compara si el producto lo cubre UN solo trabajo: con varios trabajos cada uno cubre una parte y la
+ * cobertura se muestra aparte. NUNCA incluye la cantidad realizada ni avances. Producción confirma antes de aplicar.
  */
 export function computeWorkDivergences(
   delivery: Pick<ScheduledDelivery, "deliveryDate">,
   item: Pick<ScheduledDeliveryItem, "quantity" | "unit" | "lot" | "vto">,
-  work: Pick<LinkedWork, "plannedQuantity" | "unit" | "deliveryDate" | "packagingLote" | "packagingVto">
+  work: Pick<LinkedWork, "plannedQuantity" | "unit" | "deliveryDate" | "packagingLote" | "packagingVto" | "snapshot">,
+  activeWorks = 1
 ): WorkDivergence[] {
   const out: WorkDivergence[] = [];
-  const add = (field: WorkDivergence["field"], label: string, itemValue: string | null, workValue: string | null, eq = (a: string | null, b: string | null) => norm(a) === norm(b)) => {
-    if (!norm(itemValue)) return;
-    if (!eq(itemValue, workValue)) out.push({ field, label, itemValue: norm(itemValue), workValue: norm(workValue) || "—" });
+  const add = (
+    field: WorkDivergence["field"],
+    label: string,
+    current: string | null,
+    workValue: string | null,
+    eq: (a: string | null | undefined, b: string | null | undefined) => boolean
+  ) => {
+    if (!norm(current)) return;
+    const snap = work.snapshot?.[field];
+    const baseline = field in (work.snapshot ?? {});
+    if (baseline && eq(current, snap)) return; // no cambió desde que se asignó
+    if (eq(current, workValue)) return; // el trabajo ya lo tiene
+    out.push({ field, label, itemValue: norm(current), workValue: norm(workValue) || "—" });
   };
-  add("plannedQuantity", "Cantidad planificada", item.quantity, work.plannedQuantity, numEq);
-  add("unit", "Unidad", item.unit, work.unit, (a, b) => norm(a).toLowerCase() === norm(b).toLowerCase());
-  add("deliveryDate", "Fecha de entrega", delivery.deliveryDate, work.deliveryDate);
-  add("packagingLote", "Lote", item.lot, work.packagingLote);
-  add("packagingVto", "Vencimiento", item.vto, work.packagingVto);
+  if (activeWorks <= 1) add("plannedQuantity", "Cantidad planificada", item.quantity, work.plannedQuantity, numEq);
+  add("unit", "Unidad", item.unit, work.unit, unitEq);
+  add("deliveryDate", "Fecha de entrega", delivery.deliveryDate, work.deliveryDate, textEq);
+  add("packagingLote", "Lote", item.lot, work.packagingLote, textEq);
+  add("packagingVto", "Vencimiento", item.vto, work.packagingVto, textEq);
   return out;
+}
+
+/** Cuánto de la cantidad programada cubren los trabajos vinculados (si ambos son números). */
+export function coverageOf(item: Pick<ScheduledDeliveryItem, "quantity" | "works">): { target: number | null; covered: number; missing: number | null } {
+  const target = parseQuantity(item.quantity);
+  const covered = item.works.filter((w) => !w.cancelled).reduce((sum, w) => sum + (parseQuantity(w.plannedQuantity) ?? 0), 0);
+  const t = typeof target === "number" ? target : null;
+  return { target: t, covered, missing: t == null ? null : Math.max(0, t - covered) };
 }
 
 /** Texto del motivo auditado cuando se reprograma/cancela: obligatorio y con largo mínimo. */

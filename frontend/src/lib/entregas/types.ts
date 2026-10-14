@@ -62,6 +62,8 @@ export interface LinkedWork {
   /** true solo si el flujo REAL de entrega (Entregados) registró la entrega de este trabajo. */
   delivered: boolean;
   cancelled: boolean;
+  /** Lo programado cuando se vinculó este trabajo (o cuando Producción lo dio por revisado). */
+  snapshot: Partial<Record<WorkDivergence["field"], string | null>>;
 }
 
 export interface ScheduledDeliveryItem {

@@ -63,6 +63,8 @@ export async function PATCH(request: Request, ctx: Ctx) {
         const r = await entregasService.applyToWork(actor, String(body.linkId ?? ""), Array.isArray(body.fields) ? body.fields.map(String) : [], body.reason);
         return NextResponse.json(r);
       }
+      case "keep":
+        return NextResponse.json({ delivery: await entregasService.keepWorkAsIs(actor, String(body.linkId ?? ""), Array.isArray(body.fields) ? body.fields.map(String) : [], body.reason) });
       default:
         throw new OrdersValidationError("action desconocida.");
     }

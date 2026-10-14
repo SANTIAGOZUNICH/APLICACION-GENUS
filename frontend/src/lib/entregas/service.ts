@@ -26,6 +26,7 @@ import {
   deriveDeliveryStatus,
   deriveItemStatus,
   matchDeliveryCandidates,
+  snapshotOf,
   validateDeliveryInput,
   validateReason,
   type CleanDelivery,
@@ -92,7 +93,7 @@ async function loadDeliveries(db: { execute: SqlTx["execute"] }, where: ReturnTy
   if (itemIds.length) {
     const itemList = sql.join(itemIds.map((i) => sql`${i}::uuid`), sql`, `);
     wRows = (await db.execute(sql`
-      select l.id as link_id, l.item_id, l.work_item_id, l.linked_at, l.linked_by,
+      select l.id as link_id, l.item_id, l.work_item_id, l.linked_at, l.linked_by, l.item_snapshot,
              w.client, w.product, w.sector, w.line,
              to_char(w.planned_date, 'YYYY-MM-DD') as planned_date, to_char(w.planned_date_to, 'YYYY-MM-DD') as planned_date_to,
              w.planned_quantity, w.unit, to_char(w.delivery_date, 'YYYY-MM-DD') as delivery_date, w.packaging_lote, w.packaging_vto,
@@ -129,6 +130,7 @@ async function loadDeliveries(db: { execute: SqlTx["execute"] }, where: ReturnTy
       orderNumber: str(r.order_number),
       delivered: Boolean(r.delivered),
       cancelled: Boolean(r.deleted_at) || Boolean(r.operational_cancelled_at) || r.operational_status === "cancelado",
+      snapshot: (r.item_snapshot ?? {}) as LinkedWork["snapshot"],
     };
     const k = String(r.item_id);
     worksByItem.set(k, [...(worksByItem.get(k) ?? []), w]);
@@ -393,7 +395,7 @@ export const entregasService = {
     for (const it of delivery.items) {
       for (const w of it.works) {
         if (w.cancelled) continue;
-        const divergences = computeWorkDivergences(delivery, it, w);
+        const divergences = computeWorkDivergences(delivery, it, w, it.works.filter((x) => !x.cancelled).length);
         if (divergences.length) out.push({ itemId: it.id, linkId: w.linkId, workItemId: w.workItemId, divergences });
       }
     }
@@ -428,7 +430,7 @@ export const entregasService = {
     const work = item?.works.find((w) => w.linkId === linkId);
     if (!item || !work) throw new OrdersNotFoundError("Vínculo no encontrado.");
 
-    const divergences = computeWorkDivergences(delivery, item, work);
+    const divergences = computeWorkDivergences(delivery, item, work, item.works.filter((x) => !x.cancelled).length);
     const chosen = divergences.filter((d) => fields.includes(d.field));
     if (chosen.length === 0) throw new OrdersValidationError("No hay diferencias para aplicar (puede que ya estén al día).");
 
@@ -450,6 +452,7 @@ export const entregasService = {
       throw new EntregasConflictError(first?.message ?? "No se pudo aplicar el cambio al trabajo.");
     }
     await db.transaction(async (tx) => {
+      await refreshSnapshot(tx, linkId, delivery, item, chosen.map((d) => d.field));
       await audit(tx, actor, {
         action: "apply_to_work",
         deliveryId,
@@ -457,6 +460,38 @@ export const entregasService = {
       });
     });
     return { applied: chosen.map((d) => d.field), delivery: await this.get(actor, deliveryId) };
+  },
+
+  /**
+   * Producción revisó las diferencias y decide MANTENER el trabajo como está: no se toca el trabajo, y esos cambios de la
+   * entrega dejan de mostrarse como pendientes (queda auditado con motivo). Si la entrega vuelve a cambiar, vuelve a avisar.
+   */
+  async keepWorkAsIs(actor: EntregasActor, linkId: string, fields: string[], reason: unknown): Promise<ScheduledDelivery> {
+    assertManage(actor);
+    const r = validateReason(reason);
+    if (!r.ok) throw new OrdersValidationError(r.message);
+    const db = requireDb();
+    const rows = (await db.execute(sql`
+      select i.delivery_id from scheduled_delivery_links l join scheduled_delivery_items i on i.id = l.item_id
+      where l.id = ${linkId}::uuid and l.unlinked_at is null
+    `)).rows as Row[];
+    if (!rows[0]) throw new OrdersNotFoundError("Vínculo no encontrado.");
+    const deliveryId = String(rows[0].delivery_id);
+    const [delivery] = await loadDeliveries(db, sql`d.id = ${deliveryId}::uuid`);
+    const item = delivery?.items.find((i) => i.works.some((w) => w.linkId === linkId));
+    const work = item?.works.find((w) => w.linkId === linkId);
+    if (!delivery || !item || !work) throw new OrdersNotFoundError("Vínculo no encontrado.");
+    const chosen = computeWorkDivergences(delivery, item, work, item.works.filter((x) => !x.cancelled).length).filter((d) => fields.includes(d.field));
+    if (chosen.length === 0) throw new OrdersValidationError("No hay diferencias para dar por revisadas.");
+    await db.transaction(async (tx) => {
+      await refreshSnapshot(tx, linkId, delivery, item, chosen.map((d) => d.field));
+      await audit(tx, actor, {
+        action: "keep_work_as_is",
+        deliveryId,
+        payload: { itemId: item.id, workItemId: work.workItemId, fields: chosen.map((d) => ({ field: d.field, from: d.workValue, to: d.itemValue })), reason: r.value },
+      });
+    });
+    return this.get(actor, deliveryId);
   },
 
   async history(actor: EntregasActor, deliveryId: string): Promise<DeliveryHistoryEntry[]> {
@@ -484,6 +519,13 @@ export const entregasService = {
 };
 
 // ───────────────────────── helpers de escritura ─────────────────────────
+
+/** Actualiza la «foto» del vínculo SOLO para los campos indicados (los demás siguen avisando). */
+async function refreshSnapshot(tx: SqlTx, linkId: string, delivery: ScheduledDelivery, item: ScheduledDeliveryItem, fields: string[]) {
+  const snap = snapshotOf(delivery, item) as Record<string, string | null>;
+  const patch = Object.fromEntries(fields.filter((f) => f in snap).map((f) => [f, snap[f]]));
+  await tx.execute(sql`update scheduled_delivery_links set item_snapshot = item_snapshot || ${JSON.stringify(patch)}::jsonb where id = ${linkId}::uuid`);
+}
 
 async function lockDelivery(tx: SqlTx, id: string): Promise<Row & { delivery_date: string }> {
   const res = (await tx.execute(sql`
@@ -532,7 +574,8 @@ export async function linkWorkInTx(
   params: { itemId: string; workItemId: string; requireMatch: boolean }
 ): Promise<string> {
   const itemRows = (await tx.execute(sql`
-    select i.id, i.product, i.sector, i.deleted_at, d.id as delivery_id, d.client, d.status
+    select i.id, i.product, i.sector, i.deleted_at, i.quantity, i.unit, i.lot, i.vto, d.id as delivery_id, d.client, d.status,
+           to_char(d.delivery_date, 'YYYY-MM-DD') as delivery_date
     from scheduled_delivery_items i join scheduled_deliveries d on d.id = i.delivery_id
     where i.id = ${params.itemId}::uuid for update of d
   `)).rows as Row[];
@@ -564,9 +607,13 @@ export async function linkWorkInTx(
     if (String(existing[0].item_id) === params.itemId) return String(item.delivery_id); // idempotente
     throw new EntregasConflictError("Este trabajo ya está vinculado a otra entrega. Desvinculalo primero.");
   }
+  const snapshot = snapshotOf(
+    { deliveryDate: String(item.delivery_date) },
+    { quantity: str(item.quantity), unit: str(item.unit), lot: str(item.lot), vto: str(item.vto) }
+  );
   await tx.execute(sql`
-    insert into scheduled_delivery_links (id, item_id, work_item_id, linked_by, linked_by_sector)
-    values (${randomUUID()}::uuid, ${params.itemId}::uuid, ${params.workItemId}::uuid, ${actor.email}, ${actor.sector})
+    insert into scheduled_delivery_links (id, item_id, work_item_id, linked_by, linked_by_sector, item_snapshot)
+    values (${randomUUID()}::uuid, ${params.itemId}::uuid, ${params.workItemId}::uuid, ${actor.email}, ${actor.sector}, ${JSON.stringify(snapshot)}::jsonb)
   `);
   await audit(tx, actor, {
     action: "link",

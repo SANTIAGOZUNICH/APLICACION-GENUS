@@ -71,6 +71,11 @@ async function openAs(user, viewport = { width: 1500, height: 1000 }) {
   return { ctx, page };
 }
 const nav = async (page, label) => {
+  // Si quedó una tarjeta/diálogo abierto, se cierra antes de usar el menú.
+  for (let i = 0; i < 3 && (await page.locator("[role=dialog]").count()) > 0; i += 1) {
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+  }
   const burger = page.getByRole("button", { name: "Abrir menú" });
   if (await burger.isVisible().catch(() => false)) await burger.click();
   await page.getByRole("button", { name: new RegExp(`^${label}$`) }).or(page.getByRole("link", { name: new RegExp(`^${label}$`) })).first().click({ timeout: 120_000 });
@@ -115,7 +120,8 @@ try {
   await openEntregas(pp);
   check("Menú lateral de Producción: pestaña «Entregas» y calendario mensual", (await pp.locator("[data-testid=entregas-month]").innerText()).length > 4);
   check("Se resalta la fecha de hoy", (await pp.locator("[data-testid=entregas-today-mark]").count()) === 1);
-  check("Cabecera lunes→domingo", JSON.stringify(await pp.getByRole("columnheader").allInnerTexts()) === JSON.stringify(["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]));
+  const heads = await pp.locator("[data-testid=entregas-view] [role=columnheader]").allInnerTexts();
+  check("Cabecera lunes→domingo", JSON.stringify(heads.map((h) => h.toLowerCase())) === JSON.stringify(["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]), JSON.stringify(heads));
   await pp.locator(`[data-testid=entregas-day][data-date='${D_DELIVERY}']`).click();
   await pp.locator("[data-testid=entregas-new]").click();
   await pp.locator("[data-testid=entrega-client]").fill(CLIENT);
@@ -233,31 +239,48 @@ try {
 
   // ===== 8. Cambio posterior de la entrega: diferencias y confirmación antes de tocar el trabajo =====
   await q("update work_items set finished_qty = '120', operational_status = 'en_curso' where id = $1", [w1.id]); // el operario ya avanzó
+  await q("update work_items set packaging_lote = 'L-MANUAL-OPERARIO' where id = $1", [w2.id]); // edición manual previa en otro trabajo
   await openEntregas(pp);
   await pp.locator(`[data-testid=entregas-day][data-date='${D_DELIVERY}'] [data-testid=entregas-client][data-client='${CLIENT}']`).click();
+  check("Sin cambios en la entrega NO hay avisos de diferencias (ni por parcialidad ni por ediciones manuales del trabajo)", (await pp.locator("[data-testid=entrega-divergences]").count()) === 0);
   await pp.locator("[data-testid=entrega-card]").first().locator("[data-testid=entrega-edit]").click();
   await pp.locator("[data-testid=entrega-item-quantity]").first().fill("1.500");
   await pp.locator("[data-testid=entrega-item-lot]").first().fill("L-E2E-9");
   await pp.locator("[data-testid=entrega-save]").click();
   await pp.waitForFunction(() => document.querySelectorAll("[data-testid=entrega-form]").length === 0);
-  await pp.locator("[data-testid=entrega-divergences]").first().waitFor({ timeout: 30_000 });
+  await pp.waitForFunction(() => /L-E2E-9/.test(document.querySelector("[data-testid=entrega-divergences]")?.textContent ?? ""), null, { timeout: 30_000 });
   const div = await pp.locator("[data-testid=entrega-divergences]").first().innerText();
-  check("Se muestra QUÉ cambió respecto del trabajo (cantidad y lote)", /Cantidad planificada/.test(div) && /Lote/.test(div) && /1\.500/.test(div) && /L-E2E-9/.test(div), div.replace(/\n/g, " ").slice(0, 160));
-  check("Editar la entrega NO modificó el trabajo (hay que confirmar)", (await q("select planned_quantity, packaging_lote from work_items where id = $1", [w1.id]))[0].planned_quantity === "700" && (await q("select packaging_lote from work_items where id = $1", [w1.id]))[0].packaging_lote === "L-E2E-1");
+  check("Se muestra QUÉ cambió después de asignar (el lote nuevo)", /Lote/.test(div) && /L-E2E-9/.test(div), div.replace(/\n/g, " ").slice(0, 160));
+  check("Con varios trabajos la cantidad no se compara por trabajo: se muestra la cobertura (faltan 300)", !/Cantidad planificada/.test(div) && /faltan 300/.test(await pp.locator("[data-testid=entrega-coverage]").first().innerText()));
+  check("Editar la entrega NO modificó los trabajos (hay que confirmar)", (await q("select packaging_lote from work_items where id = $1", [w1.id]))[0].packaging_lote === "L-E2E-1" && (await q("select packaging_lote from work_items where id = $1", [w2.id]))[0].packaging_lote === "L-MANUAL-OPERARIO");
   await pp.screenshot({ path: `${OUT}/7-diferencias.png` });
   await pp.locator("[data-testid=entrega-apply-open]").first().click();
   check("Aplicar exige motivo", await pp.locator("[data-testid=entrega-apply-confirm]").isDisabled());
-  await pp.locator("[data-testid=entrega-apply-reason]").fill("El cliente amplió el pedido");
+  await pp.locator("[data-testid=entrega-apply-reason]").fill("El cliente cambió el lote");
   await pp.locator("[data-testid=entrega-apply-confirm]").click();
-  const applied = await waitDb(async () => (await q("select planned_quantity, packaging_lote from work_items where id = $1", [w1.id]))[0].planned_quantity === "1500");
+  const applied = await waitDb(async () => (await q("select packaging_lote from work_items where id = $1", [w1.id]))[0].packaging_lote === "L-E2E-9");
   const w1b = (await q("select * from work_items where id = $1", [w1.id]))[0];
-  check("Tras confirmar se aplica al trabajo (cantidad y lote)", applied && w1b.packaging_lote === "L-E2E-9");
+  check("Tras confirmar se aplica al trabajo elegido (lote)", applied);
   check("NO se pisó el avance del operario (cantidad realizada y estado)", w1b.finished_qty === "120" && w1b.operational_status === "en_curso");
-  check("La aplicación queda auditada con motivo y valores", (await audit("apply_to_work")).some((e) => e.payload?.reason === "El cliente amplió el pedido" && e.payload?.fields?.length >= 1));
+  check("La aplicación queda auditada con motivo y valores", (await audit("apply_to_work")).some((e) => e.payload?.reason === "El cliente cambió el lote" && e.payload?.fields?.length >= 1));
+  // El otro trabajo: Producción decide mantenerlo como está.
+  await pp.locator("[data-testid=entrega-divergences]").first().waitFor({ timeout: 30_000 });
+  await pp.locator("[data-testid=entrega-keep-open]").first().click();
+  await pp.locator("[data-testid=entrega-keep-reason]").fill("Ese lote ya está etiquetado");
+  await pp.locator("[data-testid=entrega-keep-confirm]").click();
+  const keepOk = await waitDb(async () => (await audit("keep_work_as_is")).length === 1);
+  const w2Lote = (await q("select packaging_lote from work_items where id = $1", [w2.id]))[0].packaging_lote;
+  const stillShown = await waitDb(async () => (await pp.locator("[data-testid=entrega-divergences]").count()) === 0);
+  const keepErr = await pp.locator("[data-testid=entrega-work-error]").allInnerTexts();
+  check("«Mantener el trabajo como está»: no modifica el trabajo, queda auditado y deja de avisar", keepOk && w2Lote === "L-MANUAL-OPERARIO" && stillShown, JSON.stringify({ keepOk, w2Lote, stillShown, keepErr }));
   await pp.keyboard.press("Escape");
+  // Un tercer trabajo completa la cantidad programada (1.500 = 700 + 500 + 300).
+  const a3 = await asg(pp, { ...common, idempotencyKey: randomUUID(), plannedQuantity: "300", line: "Línea 3", orderNumber: "OA-2026-990205" });
+  check("Un tercer trabajo completa la cantidad programada", a3.ok() && (await q("select count(*)::int n from scheduled_delivery_links where item_id = $1 and unlinked_at is null", [items1[0].id]))[0].n === 3);
 
   // ===== 9. Estados: terminar el envasado NO es entregar =====
   const status = async () => {
+    await pp.goto("/mi-trabajo"); // recarga: el calendario lee los estados frescos de los trabajos
     await openEntregas(pp);
     await pp.locator(`[data-testid=entregas-day][data-date='${D_DELIVERY}'] [data-testid=entregas-client][data-client='${CLIENT}']`).click();
     const s = await pp.locator("[data-testid=entrega-card]").first().locator("[data-testid=entrega-item]").first().locator("[data-testid=entrega-status]").first().getAttribute("data-status");
@@ -265,15 +288,19 @@ try {
     return s;
   };
   // Cobertura parcial: 1.500 programadas, trabajos cubren 1.500 (w1 pasó a 1500) + 500 → cubierto.
-  check("Producción en proceso (trabajo en curso)", (await status()) === "produccion_en_proceso");
+  const st1 = await status();
+  check("Producción en proceso (trabajo en curso)", st1 === "produccion_en_proceso", st1);
   await q("update work_items set operational_status = 'completo' where client = $1 and product = $2", [CLIENT, P1]);
-  check("Envasado terminado ≠ entregada: «Producción finalizada»", (await status()) === "produccion_finalizada");
+  const st2 = await status();
+  check("Envasado terminado ≠ entregada: «Producción finalizada»", st2 === "produccion_finalizada", st2);
   await q("update work_items set quality_status = 'aprobado' where client = $1 and product = $2", [CLIENT, P1]);
-  check("Con Calidad aprobada: «Lista para entregar» (todavía no entregada)", (await status()) === "lista_para_entregar");
-  for (const id of [w1.id, w2.id]) {
+  const st3 = await status();
+  check("Con Calidad aprobada: «Lista para entregar» (todavía no entregada)", st3 === "lista_para_entregar", st3);
+  for (const id of (await q("select id from work_items where client = $1 and product = $2", [CLIENT, P1])).map((r) => r.id)) {
     await q("insert into work_item_deliveries (work_item_id, product, client, source_sector, quantity, actual_delivered_at, status, delivered_by, delivered_by_sector) values ($1,$2,$3,'ENVASADO_MASIVO','100', now(),'ENTREGADO','e2e','PRODUCCION')", [id, P1, CLIENT]);
   }
-  check("Solo con la entrega REAL registrada pasa a «Entregada»", (await status()) === "entregada");
+  const st4 = await status();
+  check("Solo con la entrega REAL registrada pasa a «Entregada»", st4 === "entregada", st4);
   const deliveryOfDay = await q("select status from scheduled_deliveries where id = $1", [d1.id]);
   check("La entrega programada sigue 'programada' en la base (el estado «Entregada» se deriva del flujo real, no se escribe)", deliveryOfDay[0].status === "programada");
 
@@ -301,7 +328,7 @@ try {
   await pp.locator("[data-testid=entrega-cancel-reason]").fill("El cliente suspendió el pedido");
   await pp.locator("[data-testid=entrega-cancel-confirm]").click();
   check("Cancelada: queda como historial (no se borra) con quién, cuándo y motivo", await waitDb(async () => { const r = (await deliveryRows(CLIENT2))[0]; return r?.status === "cancelada" && r.cancel_reason === "El cliente suspendió el pedido" && r.cancelled_by === E2E_USERS.produccion.email; }));
-  check("Cancelar una entrega programada no toca entregas reales ni trabajos", (await q("select count(*)::int n from work_item_deliveries where client like 'E2E %'"))[0].n === 2 && (await q("select count(*)::int n from work_items where client like 'E2E %'"))[0].n >= 3);
+  check("Cancelar una entrega programada no toca entregas reales ni trabajos", (await q("select count(*)::int n from work_item_deliveries where client like 'E2E %'"))[0].n === 3 && (await q("select count(*)::int n from work_items where client like 'E2E %'"))[0].n >= 3);
   await pp.keyboard.press("Escape").catch(() => {});
   await waitDb(async () => (await pp.locator(`[data-testid=entregas-day][data-date='${D_RESCHEDULED}'] [data-testid=entregas-client][data-client='${CLIENT2}']`).first().getAttribute("class")).includes("line-through"));
   check("La entrega cancelada se ve tachada en el calendario", (await pp.locator(`[data-testid=entregas-day][data-date='${D_RESCHEDULED}'] [data-testid=entregas-client][data-client='${CLIENT2}']`).first().getAttribute("class")).includes("line-through"));
@@ -337,6 +364,7 @@ try {
   await masivo.page.locator("[data-testid=entregas-client]").first().click();
   const mdlg = await masivo.page.locator("[data-testid=entrega-detail]").innerText();
   check("Envasado ve el detalle de lo suyo en solo lectura (sin Modificar/Reprogramar/Cancelar) y no ve el producto de Premium", !(await masivo.page.locator("[data-testid=entrega-edit]").count()) && !(await masivo.page.locator("[data-testid=entrega-cancel-open]").count()) && !mdlg.includes(P2));
+  check("Envasado no ve el historial de la entrega (contiene todos los sectores)", (await masivo.page.locator("[data-testid=entrega-history-toggle]").count()) === 0 && (await (await masivo.page.request.get(`/api/v1/entregas/${d1.id}`)).json()).history.length === 0);
   check("Envasado no ve el botón «Nueva entrega»", (await masivo.page.locator("[data-testid=entregas-new]").count()) === 0);
   check("Programar, vincular y cancelar nunca movieron stock", (await stockSnapshot()) === stock0);
 

@@ -15,7 +15,7 @@ import { fetchWorkItems } from "@/lib/api/operations-client";
 import { clienteRelation, productoRelation } from "@/lib/asignacion-lotes/resolve-for-work-item";
 import { longDateLabel, shortDateLabel } from "@/lib/entregas/calendar";
 import { entregasApi, type DeliveryDetailResponse } from "@/lib/entregas/entregas-client";
-import { MIN_ENTREGAS_REASON } from "@/lib/entregas/rules";
+import { coverageOf, MIN_ENTREGAS_REASON } from "@/lib/entregas/rules";
 import {
   DELIVERY_SECTOR_LABEL,
   DELIVERY_STATUS_LABEL,
@@ -54,6 +54,7 @@ const ACTION_LABEL: Record<string, string> = {
   link: "Trabajo vinculado",
   unlink: "Trabajo desvinculado",
   apply_to_work: "Cambios aplicados a un trabajo",
+  keep_work_as_is: "Trabajo mantenido como estaba",
 };
 
 const WORK_STATUS_LABEL: Record<string, string> = {
@@ -90,7 +91,9 @@ export interface EntregaDetailDialogProps {
 export function EntregaDetailDialog({ open, onOpenChange, client, date, deliveries, canManage, canApplyToWork, onEdit, onChanged }: EntregaDetailDialogProps) {
   const [details, setDetails] = useState<Record<string, DeliveryDetailResponse>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
-  const ids = deliveries.map((d) => `${d.id}:${d.version}:${d.items.map((i) => i.updatedAt + i.works.map((w) => w.operationalStatus + w.linkId).join()).join()}`).join("|");
+  // Cada cambio hecho desde la tarjeta fuerza recargar diferencias e historial (algunos cambios no alteran la entrega en sí).
+  const [tick, setTick] = useState(0);
+  const ids = deliveries.map((d) => `${d.id}:${d.version}:${d.items.map((i) => i.updatedAt + i.works.map((w) => w.operationalStatus + w.linkId).join()).join()}`).join("|") + `#${tick}`;
 
   const loadDetails = useCallback(async () => {
     try {
@@ -104,6 +107,7 @@ export function EntregaDetailDialog({ open, onOpenChange, client, date, deliveri
   }, [ids]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (open) void loadDetails();
   }, [open, loadDetails]);
 
@@ -125,7 +129,7 @@ export function EntregaDetailDialog({ open, onOpenChange, client, date, deliveri
             </p>
           )}
           {deliveries.map((d) => (
-            <DeliveryCard key={d.id} delivery={d} detail={details[d.id]} canManage={canManage} canApplyToWork={canApplyToWork} onEdit={onEdit} onChanged={async () => { await onChanged(); }} />
+            <DeliveryCard key={d.id} delivery={d} detail={details[d.id]} canManage={canManage} canApplyToWork={canApplyToWork} onEdit={onEdit} onChanged={async () => { await onChanged(); setTick((t) => t + 1); }} />
           ))}
         </div>
       </DialogContent>
@@ -279,6 +283,7 @@ function HistoryDetail({ action, payload }: { action: string; payload: Record<st
   const p = payload as { from?: string; to?: string; reason?: string; product?: string; fields?: Array<{ field: string; from: string; to: string }> };
   if (action === "reschedule") return <span> — {p.from ? shortDateLabel(p.from) : "—"} → {p.to ? shortDateLabel(p.to) : "—"}. Motivo: {p.reason}</span>;
   if (action === "cancel" || action === "unlink") return <span> — Motivo: {p.reason}</span>;
+  if (action === "keep_work_as_is" && p.fields) return <span> — Se mantuvo: {p.fields.map((f) => `${f.field}: trabajo ${f.from}, entrega ${f.to}`).join("; ")}. Motivo: {p.reason}</span>;
   if (action === "link") return <span> — {p.product}</span>;
   if (action === "apply_to_work" && p.fields) return <span> — {p.fields.map((f) => `${f.field}: ${f.from} → ${f.to}`).join("; ")}. Motivo: {p.reason}</span>;
   return null;
@@ -321,6 +326,14 @@ function ItemBlock({ delivery, item, detail, canManage, canApplyToWork, onChange
           )}
         </div>
         {item.works.length === 0 && <p className="text-xs italic text-white/45">Todavía no hay trabajos asignados para este producto.</p>}
+        {item.works.some((w) => !w.cancelled) && (() => {
+          const c = coverageOf(item);
+          return c.target != null ? (
+            <p className={`text-xs ${c.missing ? "text-amber-200" : "text-emerald-200"}`} data-testid="entrega-coverage">
+              Los trabajos cubren {c.covered.toLocaleString("es-AR")} de {c.target.toLocaleString("es-AR")} programadas{c.missing ? ` — faltan ${c.missing.toLocaleString("es-AR")}: podés asignar otro trabajo.` : "."}
+            </p>
+          ) : null;
+        })()}
         {item.works.map((w) => (
           <WorkRow
             key={w.linkId}
@@ -349,7 +362,7 @@ function WorkRow({ work: w, divergences, deliveryId, canManage, canApplyToWork, 
   onChanged: () => Promise<void>;
 }) {
   const { openWorkItem } = usePreviewContext();
-  const [mode, setMode] = useState<null | "apply" | "unlink">(null);
+  const [mode, setMode] = useState<null | "apply" | "keep" | "unlink">(null);
   const [fields, setFields] = useState<string[]>(divergences.map((d) => d.field));
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -420,10 +433,26 @@ function WorkRow({ work: w, divergences, deliveryId, canManage, canApplyToWork, 
                 </div>
               </form>
             ) : (
-              <Button type="button" size="sm" variant="secondary" onClick={() => { setFields(divergences.map((d) => d.field)); setMode("apply"); }} data-testid="entrega-apply-open">Revisar y aplicar al trabajo…</Button>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="secondary" onClick={() => { setFields(divergences.map((d) => d.field)); setMode("apply"); }} data-testid="entrega-apply-open">Revisar y aplicar al trabajo…</Button>
+                <Button type="button" size="sm" variant="secondary" onClick={() => { setFields(divergences.map((d) => d.field)); setMode("keep"); }} data-testid="entrega-keep-open">Mantener el trabajo como está…</Button>
+              </div>
             )
           ) : (
             <p className="text-[#cfe0ea]">Producción decide si aplica estos cambios al trabajo.</p>
+          )}
+          {canApplyToWork && mode === "keep" && (
+            <form className="space-y-1.5" onSubmit={(e) => { e.preventDefault(); void submit({ action: "keep", linkId: w.linkId, fields, reason }); }} data-testid="entrega-keep-form">
+              <label className="block space-y-1 text-[#8fb3c9]">
+                Motivo (obligatorio, queda auditado)
+                <input value={reason} onChange={(e) => setReason(e.target.value)} className="w-full rounded border border-[var(--os-border)] bg-[var(--os-bg)] px-2 py-1 text-sm text-[var(--os-text)]" data-testid="entrega-keep-reason" />
+              </label>
+              <p className="text-[#8fb3c9]">El trabajo no se modifica. Estos cambios dejan de mostrarse como pendientes (si la entrega vuelve a cambiar, se avisa de nuevo).</p>
+              <div className="flex gap-2">
+                <Button type="submit" size="sm" disabled={busy || !reasonOk} data-testid="entrega-keep-confirm">{busy ? "Guardando…" : "Mantener como está"}</Button>
+                <Button type="button" size="sm" variant="secondary" onClick={() => setMode(null)}>Volver</Button>
+              </div>
+            </form>
           )}
         </div>
       )}

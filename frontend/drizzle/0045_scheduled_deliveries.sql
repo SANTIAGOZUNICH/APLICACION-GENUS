@@ -59,7 +59,10 @@ CREATE TABLE IF NOT EXISTS "scheduled_delivery_links" (
   "linked_at" timestamp with time zone NOT NULL DEFAULT now(),
   "unlinked_at" timestamp with time zone,
   "unlinked_by" text,
-  "unlink_reason" text
+  "unlink_reason" text,
+  -- Foto de lo programado (cantidad, unidad, lote, vencimiento, fecha de entrega) cuando se vinculó el trabajo: sirve para
+  -- avisar SOLO de lo que cambió después de la asignación (nunca por diferencias previas ni por ediciones del operario).
+  "item_snapshot" jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "scheduled_delivery_links_item_idx" ON "scheduled_delivery_links" ("item_id");

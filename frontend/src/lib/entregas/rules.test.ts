@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   computeWorkDivergences,
+  coverageOf,
   deriveDeliveryStatus,
   deriveItemStatus,
   groupDeliveriesByClient,
   matchDeliveryCandidates,
   parseQuantity,
+  snapshotOf,
   validateDeliveryInput,
   validateReason,
 } from "./rules";
@@ -15,7 +17,7 @@ const work = (o: Partial<LinkedWork> = {}): LinkedWork => ({
   linkId: "l", workItemId: "w", linkedAt: "2026-10-01T00:00:00.000Z", linkedBy: "p@x", client: "FIRMEA", product: "CREMA", sector: "ENVASADO_MASIVO",
   line: "Línea 1", plannedDate: "2026-10-10", plannedDateTo: null, plannedQuantity: "1000", unit: "un.", deliveryDate: "2026-10-20",
   packagingLote: null, packagingVto: null, operationalStatus: "pendiente", qualityStatus: "pendiente", finishedQty: null, orderNumber: null,
-  delivered: false, cancelled: false, ...o,
+  delivered: false, cancelled: false, snapshot: {}, ...o,
 });
 const item = (o: Partial<ScheduledDeliveryItem> = {}): ScheduledDeliveryItem => ({
   id: "i1", deliveryId: "d1", product: "CREMA ACLARANTE", quantity: "1000", unit: "un.", sector: "ENVASADO_MASIVO", plannedProductionDate: null,
@@ -125,16 +127,40 @@ describe("matchDeliveryCandidates", () => {
   });
 });
 
-describe("computeWorkDivergences", () => {
+describe("computeWorkDivergences (solo lo que cambió DESPUÉS de asignar)", () => {
   const d = { deliveryDate: "2026-10-25" };
-  it("muestra qué cambió y nunca incluye la cantidad realizada ni lo que la entrega no tiene cargado", () => {
-    const out = computeWorkDivergences(d, { quantity: "1.500", unit: "un.", lot: "L9", vto: null }, work({ plannedQuantity: "1000", deliveryDate: "2026-10-20", packagingLote: "L1", packagingVto: "10/2028", finishedQty: "900" }));
+  const snap = { plannedQuantity: "1000", unit: "un.", deliveryDate: "2026-10-20", packagingLote: "L1", packagingVto: null as string | null };
+  it("informa lo que la entrega cambió desde la asignación y el trabajo todavía no tiene; nunca la cantidad realizada ni lo pendiente", () => {
+    const out = computeWorkDivergences(d, { quantity: "1.500", unit: "un.", lot: "L9", vto: null }, work({ plannedQuantity: "1000", deliveryDate: "2026-10-20", packagingLote: "L1", packagingVto: "10/2028", finishedQty: "900", snapshot: snap }));
     expect(out.map((x) => x.field)).toEqual(["plannedQuantity", "deliveryDate", "packagingLote"]);
-    expect(out.find((x) => x.field === "packagingVto")).toBeUndefined(); // la entrega no tiene VTO: no pisa
+    expect(out.some((x) => x.field === "packagingVto")).toBe(false); // la entrega no tiene VTO: no pisa
     expect(out.some((x) => (x.field as string) === "finishedQty")).toBe(false);
   });
-  it("sin diferencias (mismo número en otro formato) → vacío", () => {
-    expect(computeWorkDivergences({ deliveryDate: "2026-10-20" }, { quantity: "1.000", unit: "UN.", lot: null, vto: null }, work({ plannedQuantity: "1000", unit: "un.", deliveryDate: "2026-10-20" }))).toEqual([]);
+  it("sin cambios desde la asignación → vacío, aunque el trabajo difiera por una edición manual del operario", () => {
+    const out = computeWorkDivergences({ deliveryDate: "2026-10-20" }, { quantity: "1000", unit: "un.", lot: "L1", vto: null }, work({ plannedQuantity: "800", packagingLote: "L-OPERARIO", deliveryDate: "2026-10-20", snapshot: snap }));
+    expect(out).toEqual([]);
+  });
+  it("un trabajo que cubre solo una parte (varios trabajos) NO genera falsa alarma de cantidad", () => {
+    const out = computeWorkDivergences({ deliveryDate: "2026-10-20" }, { quantity: "1.500", unit: "un.", lot: "L1", vto: null }, work({ plannedQuantity: "700", snapshot: { ...snap, plannedQuantity: "1200" } }), 2);
+    expect(out.find((x) => x.field === "plannedQuantity")).toBeUndefined();
+  });
+  it("si el trabajo ya tiene el valor nuevo no avisa; el mismo número en otro formato tampoco", () => {
+    expect(computeWorkDivergences(d, { quantity: "1.000", unit: "UN.", lot: "L1", vto: null }, work({ plannedQuantity: "1000", unit: "un.", deliveryDate: "2026-10-25", snapshot: { ...snap, plannedQuantity: "900" } }))).toEqual([]);
+  });
+  it("sin foto previa (vínculo antiguo) se compara contra el trabajo", () => {
+    const out = computeWorkDivergences(d, { quantity: null, unit: null, lot: null, vto: null }, work({ deliveryDate: "2026-10-20", snapshot: {} }));
+    expect(out.map((x) => x.field)).toEqual(["deliveryDate"]);
+  });
+});
+
+describe("snapshotOf y coverageOf", () => {
+  it("la foto guarda lo programado en ese momento", () => {
+    expect(snapshotOf({ deliveryDate: "2026-10-20" }, { quantity: "1.200", unit: "un.", lot: "L1", vto: "10/2028" })).toEqual({ plannedQuantity: "1.200", unit: "un.", deliveryDate: "2026-10-20", packagingLote: "L1", packagingVto: "10/2028" });
+  });
+  it("cobertura de la cantidad con varios trabajos (los cancelados no suman)", () => {
+    const it = item({ quantity: "1.500", works: [work({ plannedQuantity: "700" }), work({ linkId: "b", plannedQuantity: "500" }), work({ linkId: "c", plannedQuantity: "300", cancelled: true })] });
+    expect(coverageOf(it)).toEqual({ target: 1500, covered: 1200, missing: 300 });
+    expect(coverageOf(item({ quantity: null, works: [work()] })).missing).toBeNull();
   });
 });
 

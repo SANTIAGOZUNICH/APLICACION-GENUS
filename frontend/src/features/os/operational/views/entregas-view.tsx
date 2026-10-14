@@ -57,6 +57,7 @@ export function EntregasView() {
   }, [allowed, range.from, range.to]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload();
   }, [reload]);
 
@@ -179,7 +180,7 @@ export function EntregasView() {
         {/* Día seleccionado: lista completa (en celular es la forma de ver y tocar los clientes). */}
         <section className="space-y-2 rounded-[var(--os-radius)] border border-[var(--os-border)] p-3" aria-live="polite" data-testid="entregas-agenda">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold capitalize">{longDateLabel(selectedDay)}</h3>
+            <h3 className="text-sm font-semibold first-letter:uppercase">{longDateLabel(selectedDay)}</h3>
             {canManage && (
               <Button type="button" size="sm" variant="secondary" onClick={() => setForm({ initial: null })} data-testid="entregas-new-on-day">
                 <Plus className="mr-1 size-3.5" aria-hidden="true" /> Entrega este día
