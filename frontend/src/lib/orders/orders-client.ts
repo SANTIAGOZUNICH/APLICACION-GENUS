@@ -52,6 +52,9 @@ async function parseJson<T>(res: Response): Promise<T> {
     err.code = (body as { code?: string }).code;
     err.current = (body as { current?: OperationalOrderRecord }).current;
     err.shortages = body.shortages;
+    // OE: datos de consumo de MP faltantes (fila por fila) y si este usuario puede autorizar stock negativo.
+    (err as Error & { issues?: unknown; canAuthorize?: boolean }).issues = (body as { issues?: unknown }).issues;
+    (err as Error & { issues?: unknown; canAuthorize?: boolean }).canAuthorize = (body as { canAuthorize?: boolean }).canAuthorize;
     throw err;
   }
   return body;
@@ -508,6 +511,8 @@ export async function deliverOrderApi(
     negativeMeStockReason?: string;
     includeDesechadosMe?: boolean;
     observation?: string | null;
+    allowNegativeMpStock?: boolean;
+    negativeMpStockReason?: string;
   }
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}/deliver`, {
@@ -521,6 +526,8 @@ export async function deliverOrderApi(
       negativeMeStockReason: opts?.negativeMeStockReason,
       includeDesechadosMe: Boolean(opts?.includeDesechadosMe),
       observation: opts?.observation ?? null,
+      allowNegativeMpStock: Boolean(opts?.allowNegativeMpStock),
+      negativeMpStockReason: opts?.negativeMpStockReason,
     }),
   });
   const data = await parseJson<{ order: OperationalOrderRecord }>(res);
@@ -617,6 +624,21 @@ export async function deleteOaApi(
   reason: string
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}/delete-oa`, {
+    method: "POST",
+    credentials: "include",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ reason }),
+  });
+  const data = await parseJson<{ order: OperationalOrderRecord }>(res);
+  return data.order;
+}
+
+export async function deleteOeApi(
+  session: OrdersClientSession,
+  id: string,
+  reason: string
+): Promise<OperationalOrderRecord> {
+  const res = await fetch(`/api/v1/orders/${id}/delete-oe`, {
     method: "POST",
     credentials: "include",
     headers: actorHeaders(session),
@@ -747,4 +769,17 @@ export async function oeAutoPrepApi(
     return { ...body, ok: false };
   }
   return parseJson<OeAutoPrepApiResponse>(res);
+}
+
+/** Catálogo de Stock MP (códigos y lotes) para completar CÓDIGO MP y LOTE MP en la OE. */
+export async function fetchMpCatalogApi(
+  session: OrdersClientSession
+): Promise<import("@/lib/orders/oe-mp-consumption").MpCatalogLot[]> {
+  const res = await fetch("/api/v1/orders/mp-catalog", {
+    credentials: "include",
+    headers: actorHeaders(session),
+    cache: "no-store",
+  });
+  const data = await parseJson<{ lots: import("@/lib/orders/oe-mp-consumption").MpCatalogLot[] }>(res);
+  return data.lots ?? [];
 }

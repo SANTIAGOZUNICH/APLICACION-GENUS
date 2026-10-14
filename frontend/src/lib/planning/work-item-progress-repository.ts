@@ -491,6 +491,7 @@ export async function updateWorkItemOrderRefDurable(id: string, input: UpdateOrd
         orderNumber: operationalOrders.orderNumber,
         type: operationalOrders.type,
         linkedWorkItemId: operationalOrders.linkedWorkItemId,
+        deletedAt: operationalOrders.deletedAt,
       })
       .from(operationalOrders)
       .where(eq(operationalOrders.orderNumber, normalized))
@@ -499,6 +500,9 @@ export async function updateWorkItemOrderRefDurable(id: string, input: UpdateOrd
       throw new PlanningValidationError(
         `No se encontró la ${isElaboracion ? "OE" : "OA"} ${normalized}. Debe existir antes de vincularla — esta corrección no crea órdenes nuevas.`
       );
+    }
+    if (isElaboracion && target.deletedAt) {
+      throw new PlanningValidationError(`La ${normalized} fue eliminada: no se puede vincular a un trabajo.`);
     }
     const expectedType = isElaboracion ? "OE" : "OA";
     if (target.type !== expectedType) {

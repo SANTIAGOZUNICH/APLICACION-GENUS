@@ -11,7 +11,7 @@ describe("libro mayor: corrección de código y saldo del código (Stock MP)", (
     const l = getMpStockLedger();
     await l.registerAjuste(mp, { codigo: "VIEJO", quantity: 50, reason: "alta" });
     const before = await l.history("VIEJO");
-    await l.applyOeConsumption(prod, { oeId: "oe1", oeVersion: 1, oeStatus: "COMPLETA", lines: [{ lineId: "a", codigo: "VIEJO", kgReal: 10 }], allowNegative: true });
+    await l.applyOeConsumption(prod, { oeId: "oe1", oeVersion: 1, oeStatus: "COMPLETA", lines: [{ codigo: "VIEJO", lote: "L1", kg: 10 }], allowNegative: true });
     const viejoAntes = (await l.history("VIEJO")).length;
     const { moved } = await l.reclassifyCodigo(mp, { from: "VIEJO", to: "NUEVO", mode: "all", reason: "código mal cargado", refId: "r1" });
     expect(moved).toBe(40);
@@ -21,9 +21,9 @@ describe("libro mayor: corrección de código y saldo del código (Stock MP)", (
     expect(hist.length).toBe(viejoAntes + 1);
     expect(hist.filter((m) => m.kind !== "RECLASIFICACION").map((m) => m.idempotencyKey)).toEqual(expect.arrayContaining(before.map((m) => m.idempotencyKey)));
     // Alias: el reverso de la OE vieja y un consumo nuevo con el código viejo caen en el código nuevo.
-    await l.reverseOeConsumption(prod, "oe1");
+    await l.reverseOeConsumption(prod, "oe1", 2);
     expect((await l.getBalance("NUEVO"))?.stockActual).toBe(50);
-    await l.applyOeConsumption(prod, { oeId: "oe2", oeVersion: 1, oeStatus: "COMPLETA", lines: [{ lineId: "b", codigo: "VIEJO", kgReal: 5 }], allowNegative: true });
+    await l.applyOeConsumption(prod, { oeId: "oe2", oeVersion: 1, oeStatus: "COMPLETA", lines: [{ codigo: "VIEJO", lote: "L1", kg: 5 }], allowNegative: true });
     expect((await l.getBalance("NUEVO"))?.stockActual).toBe(45);
     expect((await l.getBalance("VIEJO"))?.stockActual).toBe(45); // getBalance del código viejo = el vigente
   });

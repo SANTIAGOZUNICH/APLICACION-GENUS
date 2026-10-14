@@ -49,7 +49,7 @@ describe.skipIf(Boolean(PROBLEM))(`Stock MP: edición completa en Postgres real$
     );
     ingresoId = ing.id;
     lotId = String(ing.stockLotId);
-    await (await ledger()).applyOeConsumption(prod, { oeId: "it-rc-oe1", oeVersion: 1, oeStatus: "COMPLETA", lines: [{ lineId: "a", codigo: "IT-RC-OLD", kgReal: 10 }], allowNegative: true });
+    await (await ledger()).applyOeConsumption(prod, { oeId: "it-rc-oe1", oeVersion: 1, oeStatus: "COMPLETA", lines: [{ codigo: "IT-RC-OLD", lote: "L1", kg: 10 }], allowNegative: true });
     expect(await balance("IT-RC-OLD")).toBe(30);
     const historia = await movs("IT-RC-OLD");
     const lot = await lotById(lotId);
@@ -76,7 +76,7 @@ describe.skipIf(Boolean(PROBLEM))(`Stock MP: edición completa en Postgres real$
 
   it("después de corregir el código: el reverso de la OE vieja y un ingreso con el código viejo caen en el código nuevo", async () => {
     const { runMpInventoryOp } = await db();
-    await (await ledger()).reverseOeConsumption(prod, "it-rc-oe1");
+    await (await ledger()).reverseOeConsumption(prod, "it-rc-oe1", 2);
     expect(await balance("IT-RC-NEW")).toBe(40);
     expect(await balance("IT-RC-OLD")).toBe(0);
     const nuevo = await runMpInventoryOp(mp, ({ service }) =>

@@ -209,11 +209,11 @@ describe.skipIf(Boolean(PROBLEM))(`Materias Primas: planillas transaccionales en
     expect((await lotsOf("IT-MP-RACE"))[0]!.proveedor).toBe("OTRO");
   });
 
-  it("consumo de OE sin stock suficiente: se registra igual (negativo visible), ya no se pierde en silencio", async () => {
+  it("consumo de OE sin stock suficiente con autorización explícita: queda negativo visible", async () => {
     const l = await ledger();
     await l.applyOeConsumption(
       { email: produccion.email, sector: produccion.sector },
-      { oeId: `oe-it-${randomUUID()}`, oeVersion: 1, oeStatus: "COMPLETA", lines: [{ lineId: "l1", codigo: "IT-MP-ALC", kgReal: 20 }], allowNegative: true }
+      { oeId: `oe-it-${randomUUID()}`, oeVersion: 1, oeStatus: "COMPLETA", lines: [{ codigo: "IT-MP-ALC", lote: "L1", kg: 20 }], allowNegative: true }
     );
     expect(await balance("IT-MP-ALC")).toBe(-5);
   });

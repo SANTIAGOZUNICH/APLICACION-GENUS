@@ -84,6 +84,7 @@ type FoundOrderRow = {
   formData: unknown;
   status: string;
   version: number;
+  deletedAt: Date | null;
 };
 
 const FOUND_ORDER_COLUMNS = {
@@ -99,6 +100,7 @@ const FOUND_ORDER_COLUMNS = {
   formData: operationalOrders.formData,
   status: operationalOrders.status,
   version: operationalOrders.version,
+  deletedAt: operationalOrders.deletedAt,
 } as const;
 
 function stubConflictItem(
@@ -353,6 +355,12 @@ export async function ensureOeForAssignment(
     .limit(1);
 
   if (byNumber) {
+    // Una OE eliminada no se reutiliza ni se vuelve a vincular (no puede volver a generar movimientos).
+    if (byNumber.deletedAt) {
+      throw new PlanningValidationError(
+        `La ${orderNumber} fue eliminada. Usá otro número de OE para este trabajo.`
+      );
+    }
     return linkExisting(tx, input, orderNumber, byNumber, false);
   }
 

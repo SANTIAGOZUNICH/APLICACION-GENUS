@@ -269,7 +269,7 @@ describe.skipIf(Boolean(PROBLEM))(`OE automática con fórmula y lotes en Postgr
     // El elaborador registró pH y un ajuste con motivo; la OE pasó a EN_PROCESO.
     const c0 = await fd(fullCase.orderId!);
     c0.processControl.ph = "5,6";
-    c0.materials[3]!.ajuste = 0.3;
+    c0.materials[3]!.kgReal = 12.3;
     c0.materials[3]!.ajusteMotivo = "Corrección de pesada";
     c0.materials[4]!.lote = "PF-A-MANO";
     await q("update operational_orders set form_data = $2, status = 'EN_PROCESO', version = version + 1 where id = $1", [fullCase.orderId, JSON.stringify(c0)]);
@@ -288,13 +288,14 @@ describe.skipIf(Boolean(PROBLEM))(`OE automática con fórmula y lotes en Postgr
     expect((await order(fullCase.orderId!)).version).toBe(before.version);
     // Confirmación con versión vieja → conflicto.
     await expect(prepareOeFromWork({ orderId: fullCase.orderId!, actor: prod, reason: "x", explicit: true, expectedVersion: before.version - 1 })).rejects.toBeInstanceOf(OeAutoPrepConflictError);
-    // Confirmación correcta: recalcula kg, conserva pH, ajuste con motivo y el lote escrito a mano.
+    // Confirmación correcta: recalcula kg teóricos, conserva pH, KG REAL con su observación y el lote escrito a mano.
     const applied = await prepareOeFromWork({ orderId: fullCase.orderId!, actor: prod, reason: "Actualización manual", explicit: true, expectedVersion: before.version });
     expect(applied.status).toBe("applied");
     const c = await fd(fullCase.orderId!);
     expect(c.header.quantityKg).toBe(100);
     expect(c.processControl.ph).toBe("5,6");
-    expect(c.materials[3]).toMatchObject({ kgAPesar: 12, ajuste: 0.3, ajusteMotivo: "Corrección de pesada" });
+    expect(c.materials[3]).toMatchObject({ kgAPesar: 12, kgReal: 12.3, ajusteMotivo: "Corrección de pesada" });
+    expect(c.materials[3]!.ajuste).toBeCloseTo(0.3, 6);
     expect(c.materials[4]).toMatchObject({ lote: "PF-A-MANO" });
     expect((await order(fullCase.orderId!)).status).toBe("EN_PROCESO");
     expect(await audits(fullCase.orderId!, "OE_AUTOPREP_MANUAL_REFRESH")).toHaveLength(1);

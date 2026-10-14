@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import type { LifecycleAction } from "@/lib/lifecycle";
 import { orderLifecycleActions } from "@/lib/lifecycle/adapters/orders";
-import { canDeleteOa, canOrderAction } from "@/lib/orders/rbac";
+import { canDeleteOa, canDeleteOe, canOrderAction } from "@/lib/orders/rbac";
 import type { OperationalOrderRecord } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
 import type { OrdersClientSession } from "@/lib/orders/orders-client";
@@ -12,15 +12,21 @@ import {
   archiveOrderApi,
   deleteEmptyDraftApi,
   deleteOaApi,
+  deleteOeApi,
   restoreOrderApi,
 } from "@/lib/orders/orders-client";
 import type { LifecycleMenuItem } from "./lifecycle-actions-menu";
 import { LifecycleRowActions } from "./lifecycle-row-actions";
 
 function buildOrderLifecycleMenuItems(
-  order: Pick<OperationalOrderRecord, "id" | "type" | "status" | "lot" | "product" | "client">,
+  order: Pick<OperationalOrderRecord, "id" | "type" | "status" | "lot" | "product" | "client"> & {
+    deletedAt?: string | null;
+    orderNumber?: string;
+  },
   sectorId: SectorId
 ): LifecycleMenuItem[] {
+  // Ya eliminada: solo consulta (Abrir), ninguna acción.
+  if (order.deletedAt) return [];
   const decisions = orderLifecycleActions(order);
   const items: LifecycleMenuItem[] = [];
 
@@ -89,6 +95,31 @@ function buildOrderLifecycleMenuItems(
     });
   }
 
+  // Eliminar OE — cualquier estado (también archivada, entregada o anulada). Soft-delete con motivo obligatorio;
+  // la autoridad real es OrdersService.deleteOe(). Nunca modifica el stock de MP ya descontado.
+  if (order.type === "OE" && canDeleteOe(sectorId)) {
+    items.push({
+      action: "eliminar_definitivo",
+      label: "Eliminar OE",
+      requireReasonMandatory: true,
+      decision: {
+        action: "eliminar_definitivo",
+        allowed: true,
+        requireReason: true,
+        requireDoubleConfirm: true,
+        reason: "La OE dejará de aparecer en los listados operativos. Se conserva su historial para auditoría.",
+      },
+      impact: {
+        summary: `${order.orderNumber ? `${order.orderNumber} · ` : ""}Lote: ${order.lot || "—"} · Producto: ${order.product || "—"} · Cliente: ${order.client || "—"}`,
+        preservesAudit: true,
+        references: [],
+        warnings: [
+          "El stock de MP no se modifica: si la OE ya descontó materias primas, esos movimientos se conservan (una corrección se hace con un ajuste de stock).",
+        ],
+      },
+    });
+  }
+
   return items;
 }
 
@@ -139,7 +170,8 @@ export function OrderLifecycleRowActions({
         return;
       }
       if (action === "eliminar_definitivo") {
-        await deleteOaApi(session, order.id, reason);
+        if (order.type === "OE") await deleteOeApi(session, order.id, reason);
+        else await deleteOaApi(session, order.id, reason);
         onChanged?.();
       }
     } catch (e) {

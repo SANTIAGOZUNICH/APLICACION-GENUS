@@ -9,7 +9,7 @@ import {
 } from "@/lib/lifecycle";
 
 export function orderToLifecycleState(
-  order: Pick<OperationalOrderRecord, "id" | "type" | "status">
+  order: Pick<OperationalOrderRecord, "id" | "type" | "status"> & { deletedAt?: string | null }
 ): LifecycleEntityState {
   return {
     kind: order.type === "OE" ? "oe" : "oa",
@@ -17,11 +17,14 @@ export function orderToLifecycleState(
     status: order.status,
     isDraft: order.status === "BORRADOR",
     archived: order.status === "ARCHIVADA",
-    deleted: false,
+    // Eliminada (soft-delete): ninguna acción de ciclo de vida aplica.
+    deleted: Boolean(order.deletedAt),
   };
 }
 
-export function orderLifecycleActions(order: Pick<OperationalOrderRecord, "id" | "type" | "status">): {
+export function orderLifecycleActions(
+  order: Pick<OperationalOrderRecord, "id" | "type" | "status"> & { deletedAt?: string | null }
+): {
   eliminar: LifecycleDecision;
   anular: LifecycleDecision;
   archivar: LifecycleDecision;

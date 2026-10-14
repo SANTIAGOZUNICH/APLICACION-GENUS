@@ -1,6 +1,6 @@
 // E2E (Chromium real, build de producción) de la usabilidad de Elaboración y Materias Primas con los permisos REALES
-// de cada sector y datos como los de Production en una base DESCARTABLE: OE de punta a punta (ajuste con coma y
-// motivo, entrega segura, sin doble envío), Calidad intacto, Control semanal, búsqueda, anchos, sin conexión,
+// de cada sector y datos como los de Production en una base DESCARTABLE: OE de punta a punta (KG REAL UTILIZADO con
+// coma, lotes de MP, entrega segura que descuenta los kg reales, sin doble envío), Calidad intacto, Control semanal, búsqueda, anchos, sin conexión,
 // conflicto y permisos.
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -143,15 +143,28 @@ async function cleanup() {
   await q("delete from operational_orders where product like 'CREMA UX%'").catch(() => {});
   await q("delete from inv_mp_compras where payload->>'materiaPrima' like 'UX %'");
   await q("delete from inv_mp_stock where payload->>'codigo' like 'UX-MP-%'");
+  await q("delete from inv_mp_stock where payload->>'codigo' like 'UX-OE-%'");
+  await q("delete from inv_mp_ingresos where payload->>'codigo' like 'UX-OE-%'");
+  await q("delete from mp_stock_movements where codigo like 'UX-OE-%'");
+  await q("delete from mp_stock_balances where codigo like 'UX-OE-%'");
 }
+/** Stock MP real (ingresos confirmados de MP): lotes + libro mayor, como en Production. */
+async function seedMpLots(page) {
+  for (const [codigo, descripcion, lote, kg] of [["UX-OE-AGUA", "Agua purificada", "AG-UX-1", 500], ["UX-OE-GLI", "Glicerina", "GL-UX-1", 100]]) {
+    const r = await page.request.post("/api/v1/inventory", { data: { action: "upsert", resource: "mp_ingresos", payload: { fecha: "2026-10-01", remitoNro: `UX-R-${lote}`, codigo, descripcion, lote, proveedor: "PROV UX", bultos: 1, cantidad: kg } } });
+    if (!r.ok()) throw new Error(`seed MP ${codigo}: ${r.status()} ${await r.text()}`);
+  }
+}
+const ledgerKg = async (codigo) => Number((await q("select stock_actual from mp_stock_balances where codigo = $1", [codigo]))[0]?.stock_actual ?? NaN);
+const lotKg = async (codigo, lote) => (await q("select payload from inv_mp_stock where payload->>'codigo' = $1 and payload->>'lote' = $2", [codigo, lote]))[0]?.payload?.cantidadKg;
 async function seedOe(page) {
   const res = await page.request.post("/api/v1/orders", { data: { type: "OE", fromScratch: true, product: "CREMA UX", code: "PT-UX-1", client: "CLIENTE UX", lot: "L-UX-1", assignedSector: "ELABORACION" } });
   const o = (await res.json()).order;
   const fd = o.formData;
   fd.header = { ...fd.header, productName: "CREMA UX", code: "PT-UX-1", date: today, quantityKg: 100, lot: "L-UX-1", client: "CLIENTE UX" };
   fd.materials = [
-    { id: "m1", materiaPrima: "Agua purificada", codigo: "UX-MP-AGUA", formulaPct: 80, kgAPesar: 80, ajuste: null, ajusteMotivo: "", ajusteAt: null, ajusteBy: null, lote: "" },
-    { id: "m2", materiaPrima: "Glicerina", codigo: "UX-MP-GLI", formulaPct: 20, kgAPesar: 20, ajuste: null, ajusteMotivo: "", ajusteAt: null, ajusteBy: null, lote: "" },
+    { id: "m1", materiaPrima: "Agua purificada", codigo: "UX-MP-AGUA", codigoMp: "UX-OE-AGUA", formulaPct: 80, kgAPesar: 80, kgReal: null, ajuste: null, ajusteMotivo: "", ajusteAt: null, ajusteBy: null, lote: "" },
+    { id: "m2", materiaPrima: "Glicerina", codigo: "UX-MP-GLI", codigoMp: "UX-OE-GLI", formulaPct: 20, kgAPesar: 20, kgReal: null, ajuste: null, ajusteMotivo: "", ajusteAt: null, ajusteBy: null, lote: "" },
   ];
   fd.procedureSteps = [{ id: "p1", text: "Calentar fase acuosa a 70 °C" }, { id: "p2", text: "Incorporar glicerina y agitar 10 min" }];
   const up = await page.request.patch(`/api/v1/orders/${o.id}`, { data: { expectedVersion: o.version, formData: fd } });
@@ -162,6 +175,9 @@ const oeRow = async (id) => (await q("select status, form_data from operational_
 
 try {
   await cleanup();
+  const mpSeed = await openAs(E2E_USERS.materiaPrima);
+  await seedMpLots(mpSeed.page);
+  await mpSeed.ctx.close();
   // ===== Producción arma la OE (como en Production) =====
   const pr = await openAs(E2E_USERS.produccion);
   const oeId = await seedOe(pr.page);
@@ -180,24 +196,25 @@ try {
   const estados = await el.locator("select").first().locator("option").allInnerTexts();
   check("Filtro de estado con nombres legibles", !estados.some((t) => /_/.test(t)) && estados.some((t) => /Completa con pendientes/.test(t)), estados.join(" | "));
   await el.getByRole("button", { name: /^Abrir$/ }).first().click();
-  await el.locator("[data-testid=oe-cell-ajuste]").first().waitFor({ timeout: 60_000 });
+  await el.locator("[data-testid=oe-cell-kg-real]").first().waitFor({ timeout: 60_000 });
   const sub = await el.locator("h3 + p").first().innerText();
   check("OE abierta: subtítulo legible (sin «sector ELABORACION»)", !/ELABORACION/.test(sub) && /Elaboración/.test(sub), sub);
 
-  // Ajuste con coma decimal y SIN motivo todavía: no aparece «Error al guardar»; se espera el motivo.
-  const ajuste = el.locator("[data-testid=oe-cell-ajuste]").first();
-  await ajuste.fill("1,5");
+  // KG REAL UTILIZADO con coma decimal, sin motivo obligatorio: se guarda solo (autoguardado), sin «Error al guardar».
+  const kgReal = el.locator("[data-testid=oe-cell-kg-real]");
+  check("KG REAL vacío al abrir (no se copia el teórico)", (await kgReal.first().inputValue()) === "" && (await kgReal.nth(1).inputValue()) === "");
+  await kgReal.first().fill("80,5");
   await el.waitForTimeout(2500);
   const body1 = await el.locator("main").innerText();
-  check("Ajuste sin motivo: no muestra «Error al guardar»", !/Error al guardar|No se guardó/.test(body1));
-  check("Ajuste sin motivo: indica que falta el motivo para guardar", /Falta el motivo del ajuste de «Agua purificada»/.test(body1));
-  await el.screenshot({ path: `${OUT}/despues-el-2-ajuste-espera-motivo.png` });
-  const motivo = el.locator("table").filter({ hasText: /Motivo ajuste/ }).locator("tbody tr").first().locator("input").nth(4);
-  await motivo.fill("Corrección por humedad");
-  check("Al completar el motivo se guarda (ajuste 1,5 → 1.5 y motivo en PostgreSQL)", await waitDb(async () => {
-    const m = (await oeRow(oeId))?.form_data?.materials?.[0];
-    return m?.ajuste === 1.5 && m?.ajusteMotivo === "Corrección por humedad";
-  }), JSON.stringify((await oeRow(oeId))?.form_data?.materials?.[0] ?? {}).slice(0, 160));
+  check("KG REAL distinto del teórico: no muestra «Error al guardar» ni pide motivo", !/Error al guardar|No se guardó|Falta el motivo/.test(body1));
+  check("Se guarda 80,5 → 80.5 en PostgreSQL", await waitDb(async () => (await oeRow(oeId))?.form_data?.materials?.[0]?.kgReal === 80.5), JSON.stringify((await oeRow(oeId))?.form_data?.materials?.[0] ?? {}).slice(0, 160));
+  check("Dif. visible (+0,5) y KG A PESAR intacto (80)", (await el.locator("[data-testid=oe-cell-dif]").first().innerText()) === "+0,5" && (await el.locator("[data-testid=oe-cell-kg]").first().innerText()) === "80");
+  check("Antes de entregar: indica qué falta (kg real y lote por fila)", /Fila 1 — Agua purificada: falta LOTE MP/.test(await el.locator("[data-testid=oe-consumo-pendientes]").innerText()));
+  await el.screenshot({ path: `${OUT}/despues-el-2-kg-real.png` });
+  await kgReal.nth(1).fill("19,8");
+  await el.locator("[data-testid=oe-cell-lote]").first().fill("AG-UX-1");
+  await el.locator("[data-testid=oe-cell-lote]").nth(1).fill("GL-UX-1");
+  check("Lotes y kg reales guardados", await waitDb(async () => JSON.stringify((await oeRow(oeId))?.form_data?.materials?.map((m) => [m.kgReal, m.lote])) === JSON.stringify([[80.5, "AG-UX-1"], [19.8, "GL-UX-1"]])));
 
   // Entregar incompleta: la acción principal es volver a completar; entregar igual exige confirmación explícita.
   await el.getByRole("button", { name: /^Entregar$/ }).first().click();
@@ -227,6 +244,11 @@ try {
   el.on("request", (r) => { if (r.url().includes(`/orders/${oeId}/deliver`)) delivers += 1; });
   await confirm.dblclick();
   check("OE entregada: estado COMPLETA en PostgreSQL", await waitDb(async () => (await oeRow(oeId))?.status === "COMPLETA"), (await oeRow(oeId))?.status);
+  check(
+    "Al entregar se descontaron los kg REALES (80,5 y 19,8) del lote y del código",
+    (await lotKg("UX-OE-AGUA", "AG-UX-1")) === 419.5 && (await lotKg("UX-OE-GLI", "GL-UX-1")) === 80.2 && (await ledgerKg("UX-OE-AGUA")) === 419.5 && (await ledgerKg("UX-OE-GLI")) === 80.2,
+    JSON.stringify([await lotKg("UX-OE-AGUA", "AG-UX-1"), await lotKg("UX-OE-GLI", "GL-UX-1"), await ledgerKg("UX-OE-AGUA"), await ledgerKg("UX-OE-GLI")])
+  );
   await el.waitForTimeout(1000);
   check("Doble clic en «Entregar»: un solo envío", delivers === 1, String(delivers));
   const after = await el.locator("main").innerText();
