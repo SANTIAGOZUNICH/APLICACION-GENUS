@@ -7,9 +7,10 @@
  * `docss/58-dashboard-operativo.md` (criterio propuesto, pendiente de validar contra la planilla).
  */
 import { normalizeStatus } from "@/lib/production-pedidos/types";
-import { fmtDays, fmtInt, fmtPercent, monthName, periodText } from "./format";
+import { fmtDays, fmtInt, fmtPercent, periodText } from "./format";
 import { DASHBOARD_KPI_DEFINITIONS, TARGETABLE_INDICATORS, type TargetableKey } from "./kpi-definitions";
 import { CLIENTS_NOT_AVAILABLE_REASON, NOT_AVAILABLE_FOR_SECTOR, resolveDashboardPermissions } from "./permissions";
+import { computeProductividad } from "./productividad";
 import { LIGHT_LABELS, evaluateLight } from "./semaforo";
 import type {
   DashboardAccessLevel,
@@ -20,10 +21,8 @@ import type {
   DashboardKpi,
   DashboardKpiKey,
   DashboardLight,
-  DashboardMonthlyPoint,
   DashboardPayload,
   DashboardPedidoRow,
-  DashboardProduction,
   DashboardRows,
   DashboardTarget,
   DashboardWorkRow,
@@ -117,6 +116,8 @@ export type DashboardComputeContext = {
   lastDataChangeAt: string | null;
   targetsSchemaPending: boolean;
   dataSource: "database" | "memory" | "none";
+  /** true si la tabla de Métricas todavía no existe en la base. */
+  metricsSchemaPending?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -208,37 +209,16 @@ export function computeDashboard(rows: DashboardRows, filters: DashboardFilters,
     }
     produced.push({ sector: String(w.productionSector), date, qty, productKey: normKey(w.product), clientKey: ck });
   }
-  const producedInYear = produced.filter((r) => r.date.slice(0, 4) === yearStr);
   const producedInPeriod = produced.filter((r) => inPeriod(r.date));
   const sumQty = (list: ProducedRow[], sector?: string) =>
     list.reduce((s, r) => (sector && r.sector !== sector ? s : s + r.qty), 0);
 
-  const monthly: DashboardMonthlyPoint[] = Array.from({ length: 12 }, (_, i) => {
-    const mm = String(i + 1).padStart(2, "0");
-    const inMonth = producedInYear.filter((r) => r.date.slice(5, 7) === mm);
-    return { month: i + 1, masivo: sumQty(inMonth, "ENVASADO_MASIVO"), premium: sumQty(inMonth, "ENVASADO_PREMIUM") };
-  });
-  const masivo = sumQty(producedInPeriod, "ENVASADO_MASIVO");
-  const premium = sumQty(producedInPeriod, "ENVASADO_PREMIUM");
-  const totalBoth = masivo + premium;
   const prodNotes: string[] = [];
   if (excludedWithoutDate > 0)
     prodNotes.push(`${excludedWithoutDate} trabajo(s) terminado(s) sin fecha de cierre no se pudieron ubicar en el tiempo y no se suman.`);
   if (excludedWithoutQty > 0)
     prodNotes.push(`${excludedWithoutQty} trabajo(s) terminado(s) sin cantidad final cargada no se suman.`);
-  const produccion: DashboardProduction = {
-    masivo,
-    premium,
-    total: totalBoth,
-    masivoShare: totalBoth > 0 ? round1((masivo / totalBoth) * 100) : null,
-    premiumShare: totalBoth > 0 ? round1((premium / totalBoth) * 100) : null,
-    monthly,
-    periodLabel: periodLbl,
-    dateBasis: "produccion",
-    excludedWithoutDate,
-    excludedWithoutQty,
-    notes: prodNotes,
-  };
+  prodNotes.push("Son unidades producidas según los TRABAJOS; las unidades envasadas oficiales son las de Métricas (ver «Productividad de Envasado»).");
 
   // Unidades / productos distintos respetan el filtro de sector.
   const sectorScoped = filters.sector === "ALL" ? producedInPeriod : producedInPeriod.filter((r) => r.sector === filters.sector);
@@ -548,21 +528,29 @@ export function computeDashboard(rows: DashboardRows, filters: DashboardFilters,
     indicators = [unitsRow];
   }
 
+  // --- Productividad de Envasado: fuente única = Métricas (no work_items) ---------------------------------------------
+  const productividad = computeProductividad(rows.metrics, filters, { responsiblesScope: perm.responsiblesScope, schemaPending: ctx.metricsSchemaPending });
+  if (clientKeyFilter) productividad.notes.push("El filtro de cliente no aplica a Métricas (los registros de Envasado no tienen cliente): estas cifras son de todo el período y sector.");
+
   // --- Resumen gerencial determinístico ----------------------------------------------------------------------------
   const summary: string[] = [];
   const inLbl = filters.month ? periodLbl : String(filters.year);
-  if (unidades.value != null && filters.sector === "ALL") {
+  const kp = productividad.kpis;
+  if (kp.total.value != null) {
+    const sectorLabel = filters.sector === "ENVASADO_MASIVO" ? "Envasado Masivo" : filters.sector === "ENVASADO_PREMIUM" ? "Envasado Premium" : null;
     const parts: string[] = [];
-    if (produccion.masivoShare != null) parts.push(`Masivo ${fmtInt(masivo)} (${fmtPercent(produccion.masivoShare)})`);
-    if (produccion.premiumShare != null) parts.push(`Premium ${fmtInt(premium)} (${fmtPercent(produccion.premiumShare)})`);
-    summary.push(`En ${inLbl} se produjeron ${fmtInt(unidades.value)} unidades${parts.length ? `: ${parts.join(" · ")}` : ""}.`);
-  } else if (unidades.value != null) {
-    const sectorLabel = filters.sector === "ENVASADO_MASIVO" ? "Envasado Masivo" : "Envasado Premium";
-    summary.push(`En ${inLbl} ${sectorLabel} produjo ${fmtInt(unidades.value)} unidades.`);
+    if (!sectorLabel && kp.pctMasivo.value != null) parts.push(`Masivo ${fmtInt(kp.masivo.value ?? 0)} (${fmtPercent(kp.pctMasivo.value)})`);
+    if (!sectorLabel && kp.pctPremium.value != null) parts.push(`Premium ${fmtInt(kp.premium.value ?? 0)} (${fmtPercent(kp.pctPremium.value)})`);
+    summary.push(
+      `En ${inLbl}${sectorLabel ? ` ${sectorLabel}` : ""} se envasaron ${fmtInt(kp.total.value)} unidades según Métricas${parts.length ? `: ${parts.join(" · ")}` : ""}.`
+    );
+    if (kp.dailyAverage.value != null) summary.push(`El promedio diario de envasado es ${fmtInt(kp.dailyAverage.value)} unidades por día con registros (${fmtInt(productividad.activeDays)} días).`);
   }
-  if (!filters.month && producedInYear.length > 0) {
-    const best = monthly.reduce((b, m) => (m.masivo + m.premium > b.masivo + b.premium ? m : b), monthly[0]);
-    if (best.masivo + best.premium > 0) summary.push(`El mes de mayor producción fue ${monthName(best.month)} con ${fmtInt(best.masivo + best.premium)} unidades.`);
+  if (kp.bestMonth.value != null && kp.bestMonth.valueLabel) {
+    summary.push(`El mes más productivo de ${filters.year} fue ${kp.bestMonth.valueLabel} con ${fmtInt(kp.bestMonth.value)} unidades envasadas.`);
+  }
+  if (unidades.value != null) {
+    summary.push(`Los trabajos de Envasado terminados suman ${fmtInt(unidades.value)} unidades producidas (trabajos) en ${inLbl}; no es el mismo dato que las unidades envasadas de Métricas.`);
   }
   if (pedidosInPeriod.length > 0) {
     summary.push(
@@ -610,7 +598,7 @@ export function computeDashboard(rows: DashboardRows, filters: DashboardFilters,
     },
     main: { nivelServicio, sinReclamos, leadTime, unidades },
     pedidos,
-    produccion,
+    productividad,
     clients,
     indicators,
     summary,

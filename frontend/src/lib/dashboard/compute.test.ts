@@ -103,9 +103,10 @@ describe("sin datos: nada inventado", () => {
     expect(p.pedidos.entregados.value).toBeNull();
     expect(p.pedidos.enDespacho.value).toBeNull();
     expect(p.pedidos.productosDistintos.value).toBeNull();
-    expect(p.produccion.total).toBe(0);
-    expect(p.produccion.masivoShare).toBeNull();
-    expect(p.produccion.premiumShare).toBeNull();
+    expect(p.productividad.kpis.total.value).toBeNull();
+    expect(p.productividad.kpis.pctMasivo.value).toBeNull();
+    expect(p.productividad.kpis.pctPremium.value).toBeNull();
+    expect(p.productividad.kpis.dailyAverage.value).toBeNull();
     expect(p.summary).toEqual([]);
     if (p.clients.available) {
       expect(p.clients.ranking).toEqual([]);
@@ -132,8 +133,8 @@ describe("sin datos: nada inventado", () => {
   });
 });
 
-describe("producción Masivo vs Premium", () => {
-  it("suma unidades por sector, participación y total", () => {
+describe("unidades producidas (trabajos; NO son las envasadas de Métricas)", () => {
+  it("suma las unidades de los trabajos terminados", () => {
     const p = computeDashboard(
       rows({
         works: [
@@ -144,42 +145,20 @@ describe("producción Masivo vs Premium", () => {
       F(),
       ctx()
     );
-    expect(p.produccion.masivo).toBe(600);
-    expect(p.produccion.premium).toBe(400);
-    expect(p.produccion.total).toBe(1000);
-    expect(p.produccion.masivoShare).toBe(60);
-    expect(p.produccion.premiumShare).toBe(40);
     expect(p.main.unidades.value).toBe(1000);
+    expect(p.main.unidades.label).toBe("Unidades producidas (trabajos)");
+    // los trabajos NO alimentan los KPIs de Métricas
+    expect(p.productividad.kpis.total.value).toBeNull();
     expect(p.main.unidades.sampleSize).toBe(2);
   });
 
-  it("evolución mensual: meses sin producción quedan en 0 y se ubican por fecha de cierre", () => {
-    const p = computeDashboard(
-      rows({
-        works: [
-          work({ finishedQty: "100", completedAt: "2026-01-10T12:00:00.000Z" }),
-          work({ finishedQty: "50", productionSector: "ENVASADO_PREMIUM", completedAt: "2026-01-20T12:00:00.000Z" }),
-          work({ finishedQty: "70", completedAt: "2026-03-05T12:00:00.000Z" }),
-        ],
-      }),
-      F(),
-      ctx()
-    );
-    expect(p.produccion.monthly).toHaveLength(12);
-    expect(p.produccion.monthly[0]).toEqual({ month: 1, masivo: 100, premium: 50 });
-    expect(p.produccion.monthly[1]).toEqual({ month: 2, masivo: 0, premium: 0 });
-    expect(p.produccion.monthly[2]).toEqual({ month: 3, masivo: 70, premium: 0 });
-  });
-
-  it("filtro de mes acota los totales pero el gráfico sigue siendo del año completo", () => {
+  it("filtro de mes acota los totales", () => {
     const w = [
       work({ finishedQty: "100", completedAt: "2026-01-10T12:00:00.000Z" }),
       work({ finishedQty: "70", completedAt: "2026-03-05T12:00:00.000Z" }),
     ];
     const p = computeDashboard(rows({ works: w }), F({ month: 3 }), ctx());
-    expect(p.produccion.masivo).toBe(70);
     expect(p.main.unidades.value).toBe(70);
-    expect(p.produccion.monthly[0].masivo).toBe(100);
     expect(p.header.periodLabel).toBe("Marzo 2026");
   });
 
@@ -199,8 +178,6 @@ describe("producción Masivo vs Premium", () => {
     expect(p.pedidos.productosDistintos.value).toBe(1);
     expect(p.pedidos.activos.value).toBe(1);
     expect(p.pedidos.activos.notes.join(" ")).toMatch(/no aplica a pedidos/);
-    // el bloque Masivo vs Premium sigue mostrando ambos
-    expect(p.produccion.masivo).toBe(100);
   });
 
   it("excluye trabajos cancelados, eliminados, sin terminar, de otros sectores y sin cantidad", () => {
@@ -217,9 +194,8 @@ describe("producción Masivo vs Premium", () => {
     ];
     const p = computeDashboard(rows({ works: w }), F(), ctx());
     expect(p.main.unidades.value).toBe(100);
-    expect(p.produccion.excludedWithoutQty).toBe(1);
-    expect(p.produccion.excludedWithoutDate).toBe(1);
-    expect(p.produccion.notes.join(" ")).toMatch(/sin fecha de cierre/);
+    expect(p.main.unidades.notes.join(" ")).toMatch(/sin fecha de cierre/);
+    expect(p.main.unidades.notes.join(" ")).toMatch(/sin cantidad final/);
   });
 
   it("usa las unidades embaladas cuando no hay cantidad final, y acepta miles con punto", () => {
@@ -233,10 +209,6 @@ describe("producción Masivo vs Premium", () => {
     expect(p.pedidos.productosDistintos.value).toBe(2);
   });
 
-  it("participación con total 0 no divide por cero", () => {
-    const p = computeDashboard(rows({ works: [] }), F(), ctx());
-    expect(p.produccion.masivoShare).toBeNull();
-  });
 });
 
 describe("gestión de pedidos (fecha de pedido)", () => {
@@ -551,12 +523,12 @@ describe("nivel agregado: el payload no contiene datos que el sector no puede ve
     expect(isNotAvailable(p.main.leadTime)).toBe(true);
     expect(isNotAvailable(p.main.sinReclamos)).toBe(true);
     expect(p.filterOptions.clients).toEqual([]);
-    expect(p.permissions).toEqual({ level: "aggregate", canEditTargets: false, canFilterClient: false, ownSector: "ENVASADO_MASIVO" });
+    expect(p.permissions).toEqual({ level: "aggregate", canEditTargets: false, canFilterClient: false, ownSector: "ENVASADO_MASIVO", responsiblesScope: "ENVASADO_MASIVO" });
     // sí ve los agregados
     expect(p.main.unidades.value).toBe(100);
     expect(p.pedidos.entregados.value).toBe(1);
     expect(p.pedidos.activos.value).toBe(1);
-    expect(p.produccion.monthly).toHaveLength(12);
+    expect(p.productividad.monthly).toHaveLength(12);
     expect(p.pedidos.productosDistintos.value).toBe(1);
     // solo el indicador de unidades con semáforo
     expect((p.indicators as DashboardIndicatorRow[]).map((i) => i.key)).toEqual(["unidades_producidas"]);
@@ -662,8 +634,8 @@ describe("resumen gerencial y cabecera", () => {
       ctx()
     );
     const text = p.summary.join("\n");
-    expect(text).toMatch(/se produjeron 100 unidades/);
-    expect(text).toMatch(/mayor producción fue Abril/);
+    expect(text).toMatch(/100 unidades producidas \(trabajos\)/);
+    expect(text).not.toMatch(/se envasaron/); // sin registros de Métricas no se inventa nada
     expect(text).toMatch(/1 entregados sobre 1 pedidos/);
     expect(text).toMatch(/nivel de servicio promedio es 100,0 %/);
     expect(text).toMatch(/lead time promedio es 22,0 días/);

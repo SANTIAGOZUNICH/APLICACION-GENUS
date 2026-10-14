@@ -3,6 +3,7 @@ import "server-only";
 import { OrdersForbiddenError, OrdersValidationError } from "@/lib/orders/types";
 import { computeDashboard } from "./compute";
 import { loadDashboardData } from "./data-source";
+import { loadDashboardMetrics } from "./metrics-source";
 import { dashboardLevelFor } from "./permissions";
 import { listDashboardTargets, type DashboardActor } from "./targets-service";
 import { DASHBOARD_SECTOR_FILTERS, type DashboardFilters, type DashboardPayload, type DashboardSectorFilter } from "./types";
@@ -50,13 +51,15 @@ export async function getDashboard(actor: DashboardActor, query: DashboardQuery)
   if (level !== "full" && filters.client) {
     throw new OrdersForbiddenError("El filtro por cliente es solo para Producción y Dirección.");
   }
-  const [data, targets] = await Promise.all([loadDashboardData(), listDashboardTargets()]);
-  return computeDashboard(data.rows, filters, {
+  const [data, targets, metrics] = await Promise.all([loadDashboardData(), listDashboardTargets(), loadDashboardMetrics(filters.year)]);
+  const lastDataChangeAt = [data.lastDataChangeAt, metrics.lastChangeAt].filter((v): v is string => Boolean(v)).sort().at(-1) ?? null;
+  return computeDashboard({ ...data.rows, metrics: metrics.rows }, filters, {
     level,
     sector: actor.sector,
     targets: targets.targets,
     generatedAt,
-    lastDataChangeAt: data.lastDataChangeAt,
+    lastDataChangeAt,
+    metricsSchemaPending: metrics.schemaPending,
     targetsSchemaPending: targets.schemaPending,
     dataSource: data.dataSource,
   });

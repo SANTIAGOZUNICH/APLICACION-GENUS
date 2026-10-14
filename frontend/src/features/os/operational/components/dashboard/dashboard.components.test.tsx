@@ -10,6 +10,7 @@ import type { DashboardFilters, DashboardRows, DashboardTarget } from "@/lib/das
 import { DashboardBarChart } from "./dashboard-bar-chart";
 import { DashboardContent } from "./dashboard-content";
 import { DashboardFiltersBar } from "./dashboard-filters";
+import { DashboardPodium } from "./dashboard-podium";
 import { DashboardSemaforo } from "./dashboard-semaforo";
 
 afterEach(() => cleanup());
@@ -28,6 +29,10 @@ const ctx = (over: Partial<DashboardComputeContext> = {}): DashboardComputeConte
 });
 
 const DATA: DashboardRows = {
+  metrics: [
+    { sector: "ENVASADO_MASIVO", metricDate: "2026-03-18", units: 900, responsibleKey: "ana pérez", responsibleDisplay: "Ana Pérez" },
+    { sector: "ENVASADO_PREMIUM", metricDate: "2026-05-18", units: 300, responsibleKey: "luis gómez", responsibleDisplay: "Luis Gómez" },
+  ],
   pedidos: [
     { id: "p1", fecha: "2026-03-10", cliente: "E2E Alfa", producto: "Crema", estado: "ENTREGADO", q: 1000 },
     { id: "p2", fecha: "2026-03-12", cliente: "E2E Beta", producto: "Tónico", estado: "EN_ENVASADO", q: 500 },
@@ -49,12 +54,13 @@ function renderContent(rows: DashboardRows, c: DashboardComputeContext, filters:
 describe("«Sin datos suficientes»", () => {
   it("sin datos reales ninguna tarjeta muestra un número: dice Sin datos suficientes con motivo y qué registrar", () => {
     renderContent({ pedidos: [], works: [], deliveries: [] }, ctx({ lastDataChangeAt: null }));
-    for (const id of ["kpi-nivel_servicio", "kpi-sin_reclamos", "kpi-lead_time", "kpi-unidades_producidas", "kpi-pedidos_activos", "kpi-pedidos_entregados", "kpi-pedidos_en_despacho", "kpi-productos_distintos"]) {
+    for (const id of ["kpi-nivel_servicio", "kpi-sin_reclamos", "kpi-lead_time", "kpi-unidades_producidas", "kpi-pedidos_activos", "kpi-pedidos_entregados", "kpi-pedidos_en_despacho", "kpi-productos_distintos", "kpi-envasado_total", "kpi-envasado_masivo", "kpi-envasado_premium", "kpi-envasado_pct_masivo", "kpi-envasado_pct_premium", "kpi-envasado_promedio_diario", "kpi-envasado_mes_mas_productivo"]) {
       const card = screen.getByTestId(id);
       expect(card.getAttribute("data-has-value")).toBe("0");
       expect(within(card).getByTestId("sin-datos-suficientes").textContent).toMatch(/Sin datos suficientes/);
       expect(within(card).queryByTestId(`${id}-value`)).toBeNull();
     }
+    expect(screen.getByTestId("podium-empty")).toBeTruthy();
     expect(screen.getByTestId("kpi-sin_reclamos").textContent).toMatch(/no registra reclamos/i);
     expect(screen.getByTestId("kpi-sin_reclamos").textContent).toMatch(/Para calcularlo/);
     expect(screen.getByTestId("dashboard-summary").textContent).toMatch(/Sin datos suficientes para generar el resumen/);
@@ -74,7 +80,8 @@ describe("«Sin datos suficientes»", () => {
     expect(within(screen.getByTestId("kpi-lead_time")).getByTestId("kpi-period").textContent).toBe("Año 2026");
     expect(screen.getByTestId("dashboard-title").textContent).toBe("Dashboard Operativo");
     expect(screen.getByTestId("dashboard-year").textContent).toBe("Año 2026");
-    expect(screen.getByTestId("prod-masivo-share").textContent).toBe("75,0 %");
+    expect(screen.getByTestId("kpi-envasado_pct_masivo-value").textContent).toBe("75,0 %");
+    expect(screen.getByTestId("kpi-envasado_total-value").textContent).toBe("1.200");
   });
 
   it("el criterio de cada tarjeta se despliega y aclara que está pendiente de validar", () => {
@@ -181,7 +188,10 @@ describe("permisos en pantalla (el payload ya viene recortado)", () => {
     const html = document.body.innerHTML;
     expect(html).not.toMatch(/E2E Alfa/);
     expect(html).not.toMatch(/E2E Beta/);
-    expect(screen.getByTestId("prod-masivo").textContent).toMatch(/Tu sector/);
+    expect(screen.getByTestId("kpi-envasado_masivo").textContent).toMatch(/Tu sector/);
+    // Envasado Masivo ve solo los responsables de su sector (Métricas): Luis (Premium) no viaja ni se muestra.
+    expect(html).toMatch(/Ana Pérez/);
+    expect(html).not.toMatch(/Luis Gómez/);
     expect(screen.queryByTestId("filter-client")).toBeNull();
   });
 });
@@ -205,5 +215,76 @@ describe("gráfico SVG propio", () => {
   it("no se mueve el filtro de sector: la otra serie queda atenuada, no oculta", () => {
     render(<DashboardBarChart data={monthly} selectedMonth={3} sector="ENVASADO_MASIVO" year={2026} />);
     expect(screen.getByTestId("dashboard-bar-chart").textContent).toMatch(/300/);
+  });
+});
+
+describe("productividad de Envasado (Métricas)", () => {
+  it("tarjetas con el valor de Métricas, «Ver criterio» con fuente y glosario de unidades", () => {
+    renderContent(DATA, ctx());
+    expect(screen.getByTestId("kpi-envasado_masivo-value").textContent).toBe("900");
+    expect(screen.getByTestId("kpi-envasado_premium-value").textContent).toBe("300");
+    expect(screen.getByTestId("kpi-envasado_pct_premium-value").textContent).toBe("25,0 %");
+    expect(screen.getByTestId("kpi-envasado_promedio_diario-value").textContent).toBe("600,0");
+    expect(screen.getByTestId("kpi-envasado_mes_mas_productivo-value").textContent).toBe("Marzo");
+    expect(within(screen.getByTestId("kpi-envasado_total")).getByTestId("kpi-date-basis").textContent).toBe("Fecha de la métrica");
+    fireEvent.click(screen.getByRole("button", { name: /Ver criterio de Total envasado/ }));
+    expect(screen.getByTestId("kpi-envasado_total").textContent).toMatch(/entregadas[\s\S]*pendientes[\s\S]*consumo de materia prima/);
+    expect(screen.getByTestId("unit-concepts").textContent).toMatch(/Unidades envasadas/);
+    expect(screen.getByTestId("unit-concepts").textContent).toMatch(/Consumo de materia prima/);
+    // las unidades de los trabajos se rotulan distinto
+    expect(screen.getByTestId("kpi-unidades_producidas").textContent).toMatch(/Unidades producidas \(trabajos\)/);
+  });
+
+  it("Producción ve insights, podio y ranking completo con «Sin responsable» identificado", () => {
+    const data: DashboardRows = {
+      ...DATA,
+      metrics: [
+        ...(DATA.metrics ?? []),
+        { sector: "ENVASADO_MASIVO", metricDate: "2026-03-19", units: 50, responsibleKey: "", responsibleDisplay: "  " },
+      ],
+    };
+    renderContent(data, ctx());
+    expect(screen.getByTestId("insight-best-name").textContent).toBe("Ana Pérez");
+    expect(screen.getByTestId("insight-worst-name").textContent).toBe("Luis Gómez");
+    expect(screen.getByTestId("podium-1-name").textContent).toBe("Ana Pérez");
+    expect(screen.getByTestId("podium-2-name").textContent).toBe("Luis Gómez");
+    expect(screen.queryByTestId("podium-3")).toBeNull();
+    const rows = screen.getAllByTestId("ranking-row");
+    expect(rows.map((r) => r.getAttribute("data-unassigned"))).toEqual(["0", "0", "1"]);
+    expect(rows[2].textContent).toMatch(/Sin responsable/);
+    expect(screen.getByTestId("podium").textContent).not.toMatch(/Sin responsable/);
+  });
+
+  it("sectores sin permiso de nombres: ven totales pero «No disponible» y ningún nombre en el DOM", () => {
+    renderContent(DATA, ctx({ level: "aggregate", sector: "CALIDAD" }));
+    expect(screen.getByTestId("kpi-envasado_total-value").textContent).toBe("1.200");
+    expect(screen.getByTestId("responsables-not-available").textContent).toMatch(/No disponible para tu sector/);
+    expect(screen.queryByTestId("podium")).toBeNull();
+    expect(document.body.innerHTML).not.toMatch(/Ana Pérez|Luis Gómez/);
+  });
+
+  it("tendencia mensual: tarjetas por mes con SUBE/BAJA y total acumulado", () => {
+    const data: DashboardRows = {
+      ...DATA,
+      metrics: [
+        { sector: "ENVASADO_MASIVO", metricDate: "2026-01-10", units: 100, responsibleKey: "ana", responsibleDisplay: "Ana" },
+        { sector: "ENVASADO_MASIVO", metricDate: "2026-02-10", units: 150, responsibleKey: "ana", responsibleDisplay: "Ana" },
+        { sector: "ENVASADO_PREMIUM", metricDate: "2026-03-10", units: 75, responsibleKey: "luis", responsibleDisplay: "Luis" },
+      ],
+    };
+    renderContent(data, ctx());
+    expect(within(screen.getByTestId("trend-card-2")).getByTestId("trend-SUBE").textContent).toMatch(/\+50,0 %/);
+    expect(within(screen.getByTestId("trend-card-3")).getByTestId("trend-BAJA").textContent).toMatch(/-50,0 %/);
+    expect(screen.getByTestId("trend-card-total").textContent).toMatch(/Total acumulado: 325/);
+  });
+});
+
+describe("podio", () => {
+  it("1.º, 2.º y 3.º con unidades y participación", () => {
+    const row = (key: string, name: string, units: number, share: number) => ({ key, name, units, share, records: 1, unassigned: false });
+    render(<DashboardPodium podium={[row("a", "Ana", 500, 50), row("b", "Beto", 300, 30), row("c", "Cora", 200, 20)]} />);
+    expect(screen.getByTestId("podium-1-name").textContent).toBe("Ana");
+    expect(screen.getByTestId("podium-2-units").textContent).toBe("300");
+    expect(screen.getByTestId("podium-3-share").textContent).toBe("20,0 %");
   });
 });
