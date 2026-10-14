@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
+import { currentTx } from "@/lib/db/tx-context";
 import {
   operationalOrders,
   orderAuditEvents,
@@ -117,7 +118,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
    */
   async ensureSeed(): Promise<void> {
     if (this.seeded) return;
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     for (const t of seedTemplateRecords()) {
       const existing = await db
         .select({ id: orderTemplates.id })
@@ -170,7 +171,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
 
   async listTemplates(type?: OrderDocType): Promise<OrderTemplateRecord[]> {
     await this.ensureSeed();
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = type
       ? await db
           .select()
@@ -190,7 +191,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     type: OrderDocType
   ): Promise<OrderTemplateRecord[]> {
     await this.ensureSeed();
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = await db
       .select()
       .from(orderTemplates)
@@ -201,7 +202,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
 
   async listAllTemplates(type?: OrderDocType): Promise<OrderTemplateRecord[]> {
     await this.ensureSeed();
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = type
       ? await db
           .select()
@@ -217,7 +218,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
 
   async getTemplate(id: string): Promise<OrderTemplateRecord | null> {
     await this.ensureSeed();
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = await db.select().from(orderTemplates).where(eq(orderTemplates.id, id)).limit(1);
     return rows[0] ? mapTemplate(rows[0]) : null;
   }
@@ -227,7 +228,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     type: OrderDocType
   ): Promise<OrderTemplateRecord | null> {
     await this.ensureSeed();
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = await db
       .select()
       .from(orderTemplates)
@@ -244,7 +245,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async insertTemplate(template: OrderTemplateRecord): Promise<OrderTemplateRecord> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     await db.insert(orderTemplates).values({
       id: template.id,
       type: template.type,
@@ -266,7 +267,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async markTemplateObsolete(id: string): Promise<void> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     await db
       .update(orderTemplates)
       .set({ status: "OBSOLETA", updatedAt: new Date() })
@@ -274,7 +275,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async markTemplateVigente(id: string): Promise<void> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     await db
       .update(orderTemplates)
       .set({ status: "VIGENTE", updatedAt: new Date() })
@@ -290,7 +291,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
       >
     >
   ): Promise<OrderTemplateRecord | null> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const existing = await this.getTemplate(id);
     if (!existing) return null;
     await db
@@ -309,7 +310,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async nextOrderNumber(type: OrderDocType, year: number): Promise<string> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     return db.transaction(async (tx) => {
       await tx
         .insert(orderNumberSequences)
@@ -330,7 +331,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async insertOrder(order: OperationalOrderRecord): Promise<OperationalOrderRecord> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     await db.insert(operationalOrders).values({
       id: order.id,
       orderNumber: order.orderNumber,
@@ -365,7 +366,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async getOrder(id: string): Promise<OperationalOrderRecord | null> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = await db
       .select()
       .from(operationalOrders)
@@ -375,7 +376,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async deleteOrder(id: string): Promise<boolean> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const deleted = await db
       .delete(operationalOrders)
       .where(eq(operationalOrders.id, id))
@@ -396,7 +397,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     id: string;
     orderNumber: string;
   }): Promise<OaReferenceSummary> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const linkedWorkItems = await db
       .select({
         id: workItems.id,
@@ -435,7 +436,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     pendingCount: number;
     completeCount: number;
   }> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const conditions = [];
     if (!filters.includeDeleted) {
       conditions.push(isNull(operationalOrders.deletedAt));
@@ -559,7 +560,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     expectedVersion: number,
     patch: Partial<OperationalOrderRecord>
   ): Promise<OperationalOrderRecord | null> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const setValues: Record<string, unknown> = {
       version: sql`${operationalOrders.version} + 1`,
       updatedAt: new Date(),
@@ -609,7 +610,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async insertOrderVersion(version: OrderVersionRecord): Promise<OrderVersionRecord> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     await db.insert(orderVersions).values({
       id: version.id,
       orderId: version.orderId,
@@ -624,7 +625,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async listOrderVersions(orderId: string): Promise<OrderVersionRecord[]> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = await db
       .select()
       .from(orderVersions)
@@ -645,7 +646,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   async insertProposal(
     proposal: TemplateChangeProposalRecord
   ): Promise<TemplateChangeProposalRecord> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     await db.insert(templateChangeProposals).values({
       id: proposal.id,
       templateId: proposal.templateId,
@@ -662,7 +663,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async getProposal(id: string): Promise<TemplateChangeProposalRecord | null> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = await db
       .select()
       .from(templateChangeProposals)
@@ -688,7 +689,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     id: string,
     patch: Partial<TemplateChangeProposalRecord>
   ): Promise<TemplateChangeProposalRecord | null> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = await db
       .update(templateChangeProposals)
       .set({
@@ -704,7 +705,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async listProposals(status?: string): Promise<TemplateChangeProposalRecord[]> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = status
       ? await db
           .select()
@@ -728,7 +729,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   async appendAudit(
     event: Omit<OrderAuditEventRecord, "id" | "timestamp"> & { timestamp?: string }
   ): Promise<OrderAuditEventRecord> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const id = randomUUID();
     const timestamp = event.timestamp ?? new Date().toISOString();
     await db.insert(orderAuditEvents).values({
@@ -746,7 +747,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   async insertNotification(
     notification: OsNotificationRecord
   ): Promise<OsNotificationRecord> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     await db.insert(osNotifications).values({
       id: notification.id,
       kind: notification.kind,
@@ -768,7 +769,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     actorEmail: string,
     options?: { includeDismissed?: boolean; allForSector?: boolean }
   ): Promise<OsNotificationRecord[]> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     // Filtro por sector en SQL + límite: evita dump completo de os_notifications.
     const rows = await db
       .select()
@@ -808,7 +809,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async markNotificationRead(id: string, actorEmail: string): Promise<void> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = await db
       .select()
       .from(osNotifications)
@@ -821,7 +822,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async dismissNotification(id: string, actorEmail: string): Promise<void> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = await db
       .select()
       .from(osNotifications)
@@ -839,7 +840,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async restoreNotification(id: string, actorEmail: string): Promise<void> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = await db
       .select()
       .from(osNotifications)
@@ -858,7 +859,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async dismissReadNotifications(sector: string, actorEmail: string): Promise<void> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = await db.select().from(osNotifications);
     for (const r of rows) {
       const sectors = r.sectors as SectorId[];
@@ -876,7 +877,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
   }
 
   async deleteAllNotificationsForActor(sector: string, actorEmail: string): Promise<number> {
-    const db = getDb();
+    const db = currentTx() ?? getDb();
     const rows = await db.select().from(osNotifications);
     let count = 0;
     for (const r of rows) {

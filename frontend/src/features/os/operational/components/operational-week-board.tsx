@@ -20,6 +20,7 @@ import { isWorkItemReschedulable } from "../lib/work-transfer-labels";
 import { StatusChip } from "./operational-ui";
 import { DeliveryDateBadge } from "./delivery-date-badge";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
+import { NO_CELL_EDITING, WorkItemCard, type WorkItemCardsProps } from "./work-item-cards";
 
 /** Id del día destino codificado en el droppable — `${zone}::${day}`. */
 export function weekBoardDropId(zone: string, day: string): string {
@@ -74,6 +75,12 @@ interface OperationalWeekBoardProps {
   onCreateSlot?: (day: string, zone: string) => void;
   /** Producción: botón «Editar» en cada tarjeta → abre el detalle con la planificación editable. */
   onEditItem?: (item: WorkItem) => void;
+  /**
+   * Vista Semana unificada: cada trabajo se dibuja con la MISMA tarjeta que la vista Día (`WorkItemCard`, tamaño
+   * compacto), agrupada por día. Es de consulta (la edición de planificación sigue en el detalle) y conserva las
+   * acciones de la tarjeta: ver detalle / registrar avance, archivar y restaurar.
+   */
+  cards?: Pick<WorkItemCardsProps, "variant" | "getFinishedQty" | "getObservation" | "onSelectItem" | "listMode" | "onArchiveFromView" | "onRestoreToView" | "archiveBusyId" | "showPackagingColumns">;
 }
 
 /** Botón discreto de edición; no inicia el arrastre ni selecciona el día. */
@@ -285,6 +292,7 @@ interface WeekBoardDayCellProps {
   onSelectDay: (iso: string) => void;
   onCreateSlot?: (day: string, zone: string) => void;
   onEditItem?: (item: WorkItem) => void;
+  cards?: OperationalWeekBoardProps["cards"];
 }
 
 function WeekBoardDayCell({
@@ -301,6 +309,7 @@ function WeekBoardDayCell({
   onSelectDay,
   onCreateSlot,
   onEditItem,
+  cards,
 }: WeekBoardDayCellProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: weekBoardDropId(dropZoneId, day),
@@ -345,6 +354,28 @@ function WeekBoardDayCell({
           {dayConsulta.length > 6 && (
             <li className="text-[0.65rem] text-[var(--os-text-muted)]">+{dayConsulta.length - 6} más</li>
           )}
+        </ul>
+      ) : cards ? (
+        <ul
+          className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(min(100%,15.5rem),1fr))]"
+          data-testid="week-board-cards"
+        >
+          {dayItems.map((item) => {
+            const card = (
+              <WorkItemCard {...cards} item={item} cells={NO_CELL_EDITING} density="compact" items={[]} />
+            );
+            return (
+              <li key={item.id} className="min-w-0" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                {draggable ? (
+                  <DraggableCard id={item.id} disabled={!isWorkItemReschedulable(item.status)}>
+                    {card}
+                  </DraggableCard>
+                ) : (
+                  card
+                )}
+              </li>
+            );
+          })}
         </ul>
       ) : richCards ? (
         <ul className="space-y-2">
@@ -405,7 +436,7 @@ function WeekBoardDayCell({
     </>
   );
 
-  if (!draggable && !canCreate) {
+  if (!draggable && !canCreate && !cards) {
     return (
       <button type="button" onClick={() => onSelectDay(day)} className={className}>
         {body}
@@ -449,6 +480,7 @@ export function OperationalWeekBoard({
   canCreate = false,
   onCreateSlot,
   onEditItem,
+  cards,
 }: OperationalWeekBoardProps) {
   const weekStart = weekDays[0] ?? weekStartMonday(today);
   const end = weekDays[weekDays.length - 1];
@@ -493,7 +525,7 @@ export function OperationalWeekBoard({
         </header>
       )}
 
-      <div className={`${mode === "consulta" ? "hidden md:grid" : "grid"} gap-3 md:grid-cols-5`}>
+      <div className={`${mode === "consulta" ? "hidden md:grid" : "grid"} gap-3 ${cards && mode === "operational" ? "" : "md:grid-cols-5"}`}>
         {weekDays.map((day) => (
           <WeekBoardDayCell
             key={day}
@@ -510,6 +542,7 @@ export function OperationalWeekBoard({
             onSelectDay={onSelectDay}
             onCreateSlot={onCreateSlot}
             onEditItem={onEditItem}
+            cards={cards}
           />
         ))}
       </div>

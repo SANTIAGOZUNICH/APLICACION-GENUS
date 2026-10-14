@@ -5,6 +5,8 @@ import { isMissingSchemaError, sqlStateOf } from "@/lib/db/missing-schema";
 import { AuthUnauthorizedError } from "@/lib/auth/types";
 import {
   MeStockShortageError,
+  MpConsumptionIncompleteError,
+  MpStockShortageError,
   OrdersConflictError,
   OrdersForbiddenError,
   OrdersNotFoundError,
@@ -39,6 +41,15 @@ export function ordersErrorResponse(err: unknown): NextResponse {
   }
   if (err instanceof SchemaPendingError) {
     return NextResponse.json(schemaPendingResponse(), { status: 503 });
+  }
+  if (err instanceof MpConsumptionIncompleteError) {
+    return NextResponse.json({ error: err.message, code: err.code, issues: err.issues, legallyOperational: false }, { status: 400 });
+  }
+  if (err instanceof MpStockShortageError) {
+    return NextResponse.json(
+      { error: err.message, code: err.code, shortages: err.shortages, canAuthorize: err.canAuthorize, legallyOperational: false },
+      { status: 400 }
+    );
   }
   if (err instanceof MeStockShortageError) {
     return NextResponse.json(

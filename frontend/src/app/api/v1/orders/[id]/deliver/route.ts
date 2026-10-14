@@ -21,6 +21,8 @@ export async function POST(request: Request, ctx: Ctx) {
       negativeMeStockReason?: string;
       includeDesechadosMe?: boolean;
       observation?: string | null;
+      allowNegativeMpStock?: boolean;
+      negativeMpStockReason?: string;
     };
     const order = await getOrdersService().deliver(id, actor, Boolean(body.confirm), {
       allowIncomplete: Boolean(body.allowIncomplete),
@@ -28,6 +30,8 @@ export async function POST(request: Request, ctx: Ctx) {
       negativeMeStockReason: body.negativeMeStockReason,
       includeDesechadosMe: Boolean(body.includeDesechadosMe),
       observation: body.observation,
+      allowNegativeMpStock: Boolean(body.allowNegativeMpStock),
+      negativeMpStockReason: body.negativeMpStockReason,
     });
     return NextResponse.json({ order, legallyOperational: true });
   } catch (err) {

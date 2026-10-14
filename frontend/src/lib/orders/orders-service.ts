@@ -13,7 +13,9 @@ import type { OrdersRepository } from "@/lib/orders/repository";
 import {
   assertCanAccessAssignedOrder,
   assertCanOrderAction,
+  canAuthorizeOeMpShortage,
   canDeleteOa,
+  canDeleteOe,
   canOrderAction,
   ORDERS_DENIED_MESSAGE,
 } from "@/lib/orders/rbac";
@@ -765,6 +767,7 @@ export class OrdersService {
   async saveProgress(id: string, input: PatchOrderInput, actor: OrdersActor) {
     const current = await this.repo.getOrder(id);
     if (!current) throw new OrdersNotFoundError("Orden no encontrada.");
+    assertOeNotDeleted(current);
     if (
       current.status === "COMPLETA" ||
       current.status === "COMPLETA_CON_PENDIENTES" ||
@@ -958,6 +961,9 @@ export class OrdersService {
       includeDesechadosMe?: boolean;
       /** Observación opcional al completar OE (Elaboración). */
       observation?: string | null;
+      /** OE: entregar aunque el stock de MP quede negativo (solo Producción/Dirección, con motivo). */
+      allowNegativeMpStock?: boolean;
+      negativeMpStockReason?: string;
     }
   ) {
     if (!confirm) {
@@ -967,13 +973,22 @@ export class OrdersService {
     }
     const current = await this.repo.getOrder(id);
     if (!current) throw new OrdersNotFoundError("Orden no encontrada.");
-    assertCanAccessAssignedOrder(
-      current.type,
-      current.assignedSector,
-      actor,
-      "deliver",
-      { createdBy: current.createdBy }
-    );
+    // Una OE eliminada nunca vuelve a generar movimientos de inventario.
+    assertOeNotDeleted(current);
+    // OE: Producción/Dirección no entregan, salvo para autorizar un faltante de MP (lo valida el descuento).
+    const mpShortageAuthorizer =
+      current.type === "OE" &&
+      !canOrderAction("OE", "deliver", actor.sector) &&
+      canAuthorizeOeMpShortage(actor.sector);
+    if (!mpShortageAuthorizer) {
+      assertCanAccessAssignedOrder(
+        current.type,
+        current.assignedSector,
+        actor,
+        "deliver",
+        { createdBy: current.createdBy }
+      );
+    }
     if (current.status === "COMPLETA" || current.status === "COMPLETA_CON_PENDIENTES") {
       throw new OrdersValidationError("La orden ya está completa.");
     }
@@ -1028,18 +1043,60 @@ export class OrdersService {
         )
       );
     }
-    const updated = await this.repo.updateOrderOptimistic(id, current.version, {
-      status,
-      completedAt: ts,
-      completedBy: actor.email,
-      updatedBy: actor.email,
-      formData: normalized,
-      completionPercentage:
-        missing.length > 0 ? computeCompletionPercentage(normalized) : 100,
-    });
-    if (!updated) {
-      const fresh = await this.repo.getOrder(id);
-      throw new OrdersConflictError("Conflicto al entregar.", fresh!);
+    const commitDelivery = async () => {
+      const u = await this.repo.updateOrderOptimistic(id, current.version, {
+        status,
+        completedAt: ts,
+        completedBy: actor.email,
+        updatedBy: actor.email,
+        formData: normalized,
+        completionPercentage:
+          missing.length > 0 ? computeCompletionPercentage(normalized) : 100,
+      });
+      if (!u) {
+        const fresh = await this.repo.getOrder(id);
+        throw new OrdersConflictError("Conflicto al entregar.", fresh!);
+      }
+      return u;
+    };
+    let updated: Awaited<ReturnType<typeof commitDelivery>>;
+    let mpConsumption: import("@/lib/orders/oe-stock-op").OeConsumptionResult | null = null;
+    if (current.type === "OE" && normalized.kind === "OE") {
+      // Descuento de MP por los KG REALES (código MP + lote), en UNA transacción con la entrega: si falta un dato o
+      // no alcanza el stock, no se entrega ni se descuenta nada. Un reintento no descuenta dos veces.
+      const oeContent = normalized;
+      const { runOeStockOp, consumeOeStock } = await import("@/lib/orders/oe-stock-op");
+      const out = await runOeStockOp(actor, async (ctx) => {
+        const r = await consumeOeStock(ctx, actor, {
+          oeId: id,
+          orderNumber: current.orderNumber,
+          materials: oeContent.materials,
+          authorizeNegative: opts?.allowNegativeMpStock ? { reason: opts.negativeMpStockReason ?? "" } : null,
+          onlyToAuthorizeShortage: mpShortageAuthorizer,
+          commitOrder: commitDelivery,
+        });
+        await this.repo.appendAudit({
+          orderId: id,
+          eventType: "OE_MP_CONSUMO",
+          actor: actor.email,
+          actorSector: actor.sector,
+          metadata: {
+            orderNumber: current.orderNumber,
+            oeVersion: r.order.version,
+            consumos: r.result.lines.map((l) => ({ codigo: l.codigo, lote: l.lote, kgReal: l.kg, materiaPrima: l.materiaPrima })),
+            movimientos: r.result.applied,
+            lotes: r.result.lots,
+            stockNegativoAutorizado: r.result.negativeAuthorized
+              ? { motivo: opts?.negativeMpStockReason?.trim() ?? "", faltantes: r.result.shortages }
+              : null,
+          },
+        });
+        return r;
+      });
+      updated = out.order;
+      mpConsumption = out.result;
+    } else {
+      updated = await commitDelivery();
     }
 
     if (updated.type === "OA" && updated.formData.kind === "OA") {
@@ -1057,37 +1114,6 @@ export class OrdersService {
         includeDesechados: opts?.includeDesechadosMe,
       });
       await persistInventorySnapshot(memoryInventoryRepo);
-    }
-
-    if (updated.type === "OE" && updated.formData.kind === "OE") {
-      try {
-        const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
-        const { computeKgRealUtilizado } = await import("@/lib/orders/content");
-        const lines = updated.formData.materials.map((m) => ({
-          lineId: m.id,
-          codigo: m.codigo ?? "",
-          kgReal: computeKgRealUtilizado(m.kgAPesar, m.ajuste) ?? 0,
-        }));
-        await getMpStockLedger().applyOeConsumption(
-          { email: actor.email, sector: actor.sector },
-          {
-            oeId: updated.id,
-            oeVersion: updated.version,
-            oeStatus: updated.status,
-            lines,
-            // La OE ya se elaboró: su consumo de MP se registra SIEMPRE. Si deja un código en negativo, queda visible
-            // con aviso a Materia Prima y Producción. Antes, sin stock suficiente el movimiento fallaba, el error se
-            // descartaba y el consumo (y el de los códigos siguientes) se perdía en silencio.
-            allowNegative: true,
-          }
-        );
-      } catch (err) {
-        // Solo un esquema pendiente (0005 sin aplicar) difiere el libro mayor; cualquier otro error queda en el log.
-        const { SchemaPendingError } = await import("@/lib/db/feature-schema");
-        if (!(err instanceof SchemaPendingError)) {
-          console.error(`[orders] consumo MP de la OE ${updated.id} no registrado:`, err instanceof Error ? err.message : err);
-        }
-      }
     }
 
     await this.repo.insertOrderVersion({
@@ -1112,6 +1138,7 @@ export class OrdersService {
         pendingFields: missing,
         status,
         meStockNegativeAllowed: Boolean(opts?.allowNegativeMeStock),
+        mpStockNegativeAuthorized: mpConsumption?.negativeAuthorized ?? false,
         deliveryObservation:
           updated.formData.kind === "OE"
             ? updated.formData.deliveryObservation
@@ -1159,6 +1186,7 @@ export class OrdersService {
     }
     const order = await this.repo.getOrder(orderId);
     if (!order) throw new OrdersNotFoundError("Orden no encontrada.");
+    assertOeNotDeleted(order);
 
     const canDirect = ["CALIDAD", "PRODUCCION", "DIRECCION"].includes(actor.sector);
     if (!canDirect) {
@@ -1336,6 +1364,7 @@ export class OrdersService {
     );
     const trimmed = normalizeOptionalReason(reason);
     const current = await this.requireOrder(id);
+    assertOeNotDeleted(current);
     if (current.status !== "COMPLETA") {
       throw new OrdersValidationError("Solo se pueden devolver órdenes completas.");
     }
@@ -1350,18 +1379,33 @@ export class OrdersService {
       createdBy: actor.email,
       createdAt: nowIso(),
     });
-    const updated = await this.repo.updateOrderOptimistic(id, current.version, {
-      status: "DEVUELTA_PARA_CORRECCION",
-      revision: current.revision + 1,
-      updatedBy: actor.email,
-      completedAt: null,
-      completedBy: null,
-      reviewedAt: null,
-      reviewedBy: null,
-    });
-    if (!updated) {
-      const fresh = await this.repo.getOrder(id);
-      throw new OrdersConflictError("Conflicto al devolver.", fresh!);
+    const commitReturn = async () => {
+      const u = await this.repo.updateOrderOptimistic(id, current.version, {
+        status: "DEVUELTA_PARA_CORRECCION",
+        revision: current.revision + 1,
+        updatedBy: actor.email,
+        completedAt: null,
+        completedBy: null,
+        reviewedAt: null,
+        reviewedBy: null,
+      });
+      if (!u) {
+        const fresh = await this.repo.getOrder(id);
+        throw new OrdersConflictError("Conflicto al devolver.", fresh!);
+      }
+      return u;
+    };
+    let updated: Awaited<ReturnType<typeof commitReturn>>;
+    if (current.type === "OE") {
+      // Devolución = reverso EXPLÍCITO del consumo de MP (libro mayor + lotes), junto con el cambio de estado.
+      const { runOeStockOp, reverseOeStock } = await import("@/lib/orders/oe-stock-op");
+      updated = (
+        await runOeStockOp(actor, (ctx) =>
+          reverseOeStock(ctx, actor, { oeId: id, orderNumber: current.orderNumber, reason: `Devolución: ${trimmed}`, commitOrder: commitReturn })
+        )
+      ).order;
+    } else {
+      updated = await commitReturn();
     }
     if (current.type === "OA") {
       const { getInventoryService, memoryInventoryRepo } = await import(
@@ -1379,18 +1423,6 @@ export class OrdersService {
         `Devolución OA: ${trimmed}`
       );
       await persistInventorySnapshot(memoryInventoryRepo);
-    }
-    if (current.type === "OE") {
-      try {
-        const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
-        await getMpStockLedger().reverseOeConsumption(
-          { email: actor.email, sector: actor.sector },
-          id,
-          current.version
-        );
-      } catch {
-        /* schema MP diferido */
-      }
     }
     await this.repo.appendAudit({
       orderId: id,
@@ -1416,6 +1448,7 @@ export class OrdersService {
 
   async markReviewed(id: string, actor: OrdersActor) {
     const current = await this.requireOrder(id);
+    assertOeNotDeleted(current);
     assertCanOrderAction(current.type, "review", actor);
     if (current.status !== "COMPLETA") {
       throw new OrdersValidationError("Solo se revisan órdenes completas.");
@@ -1441,6 +1474,7 @@ export class OrdersService {
 
   async archive(id: string, actor: OrdersActor) {
     const current = await this.requireOrder(id);
+    assertOeNotDeleted(current);
     assertCanOrderAction(current.type, "archive", actor);
     if (current.status === "ARCHIVADA") return current;
     if (current.status === "ANULADA") {
@@ -1473,6 +1507,7 @@ export class OrdersService {
    */
   async restore(id: string, actor: OrdersActor) {
     const current = await this.requireOrder(id);
+    assertOeNotDeleted(current);
     assertCanOrderAction(current.type, "archive", actor);
     if (current.status !== "ARCHIVADA") {
       throw new OrdersValidationError("Solo se restauran órdenes archivadas.");
@@ -1504,6 +1539,7 @@ export class OrdersService {
 
   async annul(id: string, actor: OrdersActor, reason: string) {
     const current = await this.requireOrder(id);
+    assertOeNotDeleted(current);
     assertCanOrderAction(current.type, "annul", actor);
     const trimmed = normalizeOptionalReason(reason);
     // Idempotencia: ya anulada → no repetir reversos de stock.
@@ -1521,38 +1557,42 @@ export class OrdersService {
       );
     }
 
-    const updated = await this.repo.updateOrderOptimistic(id, current.version, {
-      status: "ANULADA",
-      updatedBy: actor.email,
-    });
-    if (!updated) {
-      const fresh = await this.repo.getOrder(id);
-      throw new OrdersConflictError("Conflicto al anular.", fresh!);
-    }
-
+    const commitAnnul = async () => {
+      const u = await this.repo.updateOrderOptimistic(id, current.version, {
+        status: "ANULADA",
+        updatedBy: actor.email,
+      });
+      if (!u) {
+        const fresh = await this.repo.getOrder(id);
+        throw new OrdersConflictError("Conflicto al anular.", fresh!);
+      }
+      return u;
+    };
+    let updated: Awaited<ReturnType<typeof commitAnnul>>;
     let mpReversed = 0;
     let meReversed = 0;
+    if (current.type === "OE") {
+      // Anulación = reverso EXPLÍCITO del consumo de MP (libro mayor + lotes), junto con el cambio de estado.
+      const { runOeStockOp, reverseOeStock } = await import("@/lib/orders/oe-stock-op");
+      const out = await runOeStockOp(actor, (ctx) =>
+        reverseOeStock(ctx, actor, { oeId: id, orderNumber: current.orderNumber, reason: `Anulación: ${trimmed}`, commitOrder: commitAnnul })
+      );
+      updated = out.order;
+      mpReversed = out.applied.length;
+    } else {
+      updated = await commitAnnul();
+    }
 
     if (current.type === "OE") {
-      try {
-        const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
-        const { recordLifecycleEvent } = await import("@/lib/lifecycle");
-        mpReversed = await getMpStockLedger().reverseOeConsumption(
-          { email: actor.email, sector: actor.sector },
-          id,
-          current.version
-        );
-        recordLifecycleEvent({
-          entityKind: "oe",
-          entityId: id,
-          action: "anular",
-          actor: { email: actor.email, sector: actor.sector },
-          reason: trimmed,
-          impact: { mpReversedCodes: mpReversed },
-        });
-      } catch {
-        /* ledger diferido si schema MP no listo */
-      }
+      const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+      recordLifecycleEvent({
+        entityKind: "oe",
+        entityId: id,
+        action: "anular",
+        actor: { email: actor.email, sector: actor.sector },
+        reason: trimmed,
+        impact: { mpReversedCodes: mpReversed },
+      });
     }
 
     if (current.type === "OA") {
@@ -1684,6 +1724,80 @@ export class OrdersService {
     return updated;
   }
 
+  /**
+   * Elimina una OE en CUALQUIER estado (borrador, pendiente, en proceso, completa, entregada, archivada, anulada).
+   * Soft-delete (deletedAt/deletedBy/deleteReason), nunca DELETE físico: se conservan versiones, auditoría y el
+   * trabajo vinculado. NO toca el stock: si la OE ya descontó MP, los movimientos quedan como están (una corrección
+   * de stock se hace con un ajuste explícito). Desde acá ninguna acción la modifica (assertOeNotDeleted) y no puede
+   * volver a vincularse a un trabajo (ensure-oe-on-assign / corrección de OE del trabajo).
+   */
+  async deleteOe(id: string, actor: OrdersActor, reason: string) {
+    const current = await this.requireOrder(id);
+    if (current.type !== "OE") {
+      throw new OrdersValidationError("Esta acción solo aplica a OE.");
+    }
+    if (!canDeleteOe(actor.sector)) {
+      throw new OrdersForbiddenError(ORDERS_DENIED_MESSAGE);
+    }
+    if (!sanitizeOptionalReason(reason)) {
+      throw new OrdersValidationError("El motivo es obligatorio para eliminar una OE.");
+    }
+    const trimmed = normalizeOptionalReason(reason);
+    if (current.deletedAt) {
+      return current; // idempotente: un segundo pedido no cambia nada
+    }
+
+    // Solo informativo (auditoría): qué consumo de MP había registrado. No se revierte.
+    let stockMovementsKept: Array<{ codigo: string; kg: number }> = [];
+    try {
+      const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
+      const movs = await getMpStockLedger().listMovementsForRef("oe", id);
+      const byCode = new Map<string, number>();
+      for (const m of movs) byCode.set(m.codigo, Math.round(((byCode.get(m.codigo) ?? 0) + m.quantity) * 1000) / 1000);
+      stockMovementsKept = [...byCode].filter(([, kg]) => kg !== 0).map(([codigo, kg]) => ({ codigo, kg }));
+    } catch {
+      stockMovementsKept = [];
+    }
+
+    const updated = await this.repo.updateOrderOptimistic(id, current.version, {
+      deletedAt: nowIso(),
+      deletedBy: actor.email,
+      deleteReason: trimmed,
+      updatedBy: actor.email,
+    });
+    if (!updated) {
+      const fresh = await this.repo.getOrder(id);
+      throw new OrdersConflictError("Conflicto al eliminar.", fresh!);
+    }
+    await this.repo.appendAudit({
+      orderId: id,
+      eventType: "ORDER_OE_DELETED",
+      actor: actor.email,
+      actorSector: actor.sector,
+      metadata: {
+        reason: trimmed,
+        orderNumber: current.orderNumber,
+        lot: current.lot,
+        product: current.product,
+        client: current.client,
+        previousStatus: current.status,
+        linkedWorkItemId: current.linkedWorkItemId ?? null,
+        // Movimientos de stock MP que la OE ya había generado: se conservan sin cambios.
+        stockMovementsKept,
+        stockReverted: false,
+      },
+    });
+    const { recordLifecycleEvent } = await import("@/lib/lifecycle");
+    recordLifecycleEvent({
+      entityKind: "oe",
+      entityId: id,
+      action: "eliminar",
+      actor: { email: actor.email, sector: actor.sector },
+      reason: trimmed,
+    });
+    return updated;
+  }
+
   async recordDownload(id: string, actor: OrdersActor, format: string) {
     const order = await this.requireOrder(id);
     assertCanAccessAssignedOrder(order.type, order.assignedSector, actor, "download");
@@ -1728,5 +1842,12 @@ export class OrdersService {
     const order = await this.repo.getOrder(id);
     if (!order) throw new OrdersNotFoundError("Orden no encontrada.");
     return order;
+  }
+}
+
+/** Una OE eliminada (soft-delete) queda solo para consulta: ninguna acción la modifica ni mueve stock. */
+function assertOeNotDeleted(order: { type: string; deletedAt?: string | null; orderNumber: string }) {
+  if (order.type === "OE" && order.deletedAt) {
+    throw new OrdersValidationError(`La ${order.orderNumber} fue eliminada: solo se puede consultar.`);
   }
 }

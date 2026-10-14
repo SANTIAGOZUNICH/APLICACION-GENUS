@@ -2144,6 +2144,37 @@ export class InventoryService {
     );
   }
 
+  /**
+   * Consumo (o reverso) de una OE sobre los LOTES de Stock MP: suma `delta` kg a cada lote y deja auditoría con la OE.
+   * Lo llama la entrega/anulación/devolución de la OE (los permisos los valida OrdersService); el libro mayor por
+   * código lo escribe el mismo flujo con el mismo delta — por eso NO se registra como «ajuste» (sería doble).
+   */
+  applyOeLotDeltas(
+    actor: InventoryActor,
+    params: { oeId: string; orderNumber: string; reason: string; deltas: Array<{ lotId: string; delta: number }> }
+  ): Array<{ lotId: string; codigo: string; lote: string; antes: number; despues: number }> {
+    const out: Array<{ lotId: string; codigo: string; lote: string; antes: number; despues: number }> = [];
+    for (const d of params.deltas) {
+      if (!d.delta) continue;
+      const lot = this.repo.getMpStock(d.lotId);
+      if (!lot) throw new InventoryNotFoundError("Lote MP no encontrado.");
+      const antes = Number((lot.cantidadKg ?? 0).toFixed(4));
+      const despues = Number((antes + d.delta).toFixed(4));
+      this.repo.upsertMpStock(this.enrichMpStock({ ...lot, cantidadKg: despues, updatedAt: nowIso() }));
+      this.audit(
+        actor,
+        "mp_stock",
+        lot.id,
+        d.delta < 0 ? "consumo_oe" : "reverso_consumo_oe",
+        { cantidadKg: antes },
+        { cantidadKg: despues, oeId: params.oeId, orderNumber: params.orderNumber, delta: d.delta },
+        params.reason
+      );
+      out.push({ lotId: lot.id, codigo: lot.codigo, lote: lot.lote, antes, despues });
+    }
+    return out;
+  }
+
   // ─── MP Control ────────────────────────────────────────────
 
   listMpControl(actor: InventoryActor) {

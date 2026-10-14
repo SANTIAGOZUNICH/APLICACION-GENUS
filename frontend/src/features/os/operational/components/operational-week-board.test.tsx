@@ -3,7 +3,7 @@
  */
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DndContext } from "@dnd-kit/core";
@@ -330,5 +330,63 @@ describe("OperationalWeekBoard — botón + de asignación directa por celda", (
       />
     );
     expect(screen.queryByTestId(`week-board-create-${weekBoardDropId("1", "2026-08-26")}`)).toBeNull();
+  });
+});
+
+describe("OperationalWeekBoard — tarjetas unificadas (misma tarjeta que la vista Día)", () => {
+  const item = createTestWorkItem({
+    id: "wi-u1",
+    sector: "ENVASADO_PREMIUM",
+    plannedDate: "2026-08-25",
+    product: "CREMA ACLARANTE",
+    client: "Cliente Uno",
+    quantity: "3000",
+    unit: "un.",
+    line: "Línea 2",
+    status: "pendiente",
+  });
+
+  it("usa la tarjeta de Producción en tamaño compacto, agrupada por día, con sus acciones", async () => {
+    const onSelectItem = vi.fn();
+    render(
+      <OperationalWeekBoard
+        weekDays={weekDays}
+        today="2026-08-24"
+        selectedDate="2026-08-24"
+        items={[item]}
+        onSelectDay={() => {}}
+        cards={{ variant: "envasado", listMode: "active", getFinishedQty: () => "", getObservation: () => "", onSelectItem }}
+      />
+    );
+    const card = screen.getByTestId("work-item-card");
+    // Mismo azul y mismo borde que la vista Día.
+    expect(card.className).toContain("bg-[#10304a]");
+    expect(card.className).toContain("rounded-xl");
+    // Compacta: padding reducido.
+    expect(card.className).toContain("p-2.5");
+    expect(screen.getByText("CREMA ACLARANTE")).toBeTruthy();
+    expect(screen.getByText("Cliente Uno")).toBeTruthy();
+    // El trabajo aparece UNA vez, bajo su día.
+    expect(screen.getAllByTestId("work-item-card")).toHaveLength(1);
+    // Sin tope «+N más» ni edición de planificación (consulta): no hay lápices de edición.
+    expect(screen.queryByTestId("card-product")?.getAttribute("data-locked")).toBeNull();
+    await userEvent.click(within(card).getByRole("button", { name: /Ver \/ Registrar avance/ }));
+    expect(onSelectItem).toHaveBeenCalledWith(item);
+  });
+
+  it("muestra todos los trabajos del día (sin «+N más»)", () => {
+    const many = Array.from({ length: 9 }, (_, i) => createTestWorkItem({ id: `m${i}`, sector: "ENVASADO_MASIVO", plannedDate: "2026-08-24", product: `P${i}`, status: "pendiente" }));
+    render(
+      <OperationalWeekBoard
+        weekDays={weekDays}
+        today="2026-08-24"
+        selectedDate="2026-08-24"
+        items={many}
+        onSelectDay={() => {}}
+        cards={{ variant: "envasado", listMode: "active", getFinishedQty: () => "", getObservation: () => "", onSelectItem: () => {} }}
+      />
+    );
+    expect(screen.getAllByTestId("work-item-card")).toHaveLength(9);
+    expect(screen.queryByText(/más$/)).toBeNull();
   });
 });
