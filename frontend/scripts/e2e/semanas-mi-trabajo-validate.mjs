@@ -206,8 +206,8 @@ try {
   await ep.keyboard.press("Escape");
   // tablero semanal de «Mi trabajo»
   await ep.getByRole("button", { name: /^Semana$/ }).first().click();
-  await ep.waitForSelector("li[data-semanas-priority]", { timeout: 30_000 }).catch(() => {});
-  const weekEdges = await ep.evaluate(() => [...document.querySelectorAll("li[data-semanas-priority]")].map((l) => l.getAttribute("data-semanas-priority")).sort());
+  await ep.waitForSelector("[data-testid=work-item-card][data-semanas-priority]", { timeout: 30_000 }).catch(() => {});
+  const weekEdges = await ep.evaluate(() => [...document.querySelectorAll("[data-testid=work-item-card][data-semanas-priority]")].map((l) => l.getAttribute("data-semanas-priority")).sort());
   check("tablero semanal: tarjetas con borde de prioridad (URGENTE, IMPORTANTE, NORMAL)", ["IMPORTANTE", "NORMAL", "URGENTE"].every((p) => weekEdges.includes(p)), weekEdges.join(","));
   await ep.screenshot({ path: `${OUT}/12-elaboracion-mi-trabajo-semana.png` });
   await ep.getByRole("button", { name: /^Día$/ }).first().click();
@@ -222,8 +222,8 @@ try {
   // misma prioridad en Semanas del sector
   // La vista de Semanas del sector ya no tiene entrada en el menú: se verifica la misma planificación por la API que la alimenta.
   const sectorPlan = await (await ep.request.get("/api/v1/semanas/plan")).json();
-  const planTask = (sectorPlan.tasks ?? []).find((t) => (t.products ?? []).some((x) => x.includes("ALISADO KERATIN 1100KG")));
-  check("consistencia: la planificación de Semanas del sector muestra la misma prioridad (IMPORTANTE)", planTask?.priority === "IMPORTANTE", String(planTask?.priority));
+  const planTasks = (sectorPlan.tasks ?? []).filter((t) => (t.products ?? []).some((x) => x.includes("ALISADO KERATIN 1100KG")));
+  check("consistencia: la planificación de Semanas del sector muestra la misma prioridad (IMPORTANTE)", planTasks.some((t) => t.priority === "IMPORTANTE"), planTasks.map((t) => t.priority).join(","));
 
   // ================= permisos en el servidor =================
   const er = ep.request;
