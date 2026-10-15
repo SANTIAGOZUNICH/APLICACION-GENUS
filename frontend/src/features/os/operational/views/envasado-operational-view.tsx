@@ -649,9 +649,12 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
               {/* Totales por día (todas las líneas). Escritorio: alineados con las 5 columnas. Celular: selector de día. */}
               <div className="mb-2 hidden gap-2 lg:grid lg:grid-cols-5" data-testid="week-day-totals">
                 {calendar.weekDays.map((day) => (
-                  <div
+                  <button
+                    type="button"
                     key={day}
-                    className={`flex items-center justify-between rounded-md px-2 py-1 text-xs font-semibold ${day === calendar.today ? "bg-[var(--os-teal)]/15 text-[var(--os-teal)]" : "bg-[var(--os-surface)] text-[var(--os-text)]"}`}
+                    onClick={() => calendar.selectDay(day)}
+                    title={`Ver ${shortDayLabel(day)} en vista Día`}
+                    className={`flex items-center justify-between rounded-md px-2 py-1 text-xs font-semibold hover:ring-1 hover:ring-[var(--os-teal)]/50 ${day === calendar.today ? "bg-[var(--os-teal)]/15 text-[var(--os-teal)]" : "bg-[var(--os-surface)] text-[var(--os-text)]"}`}
                     data-testid="week-day-total"
                     data-day={day}
                     data-count={weekDayCounts.get(day) ?? 0}
@@ -660,7 +663,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
                     <span className="tabular-nums text-[var(--os-text-muted)]">
                       {weekDayCounts.get(day) ?? 0} trabajo{(weekDayCounts.get(day) ?? 0) === 1 ? "" : "s"}
                     </span>
-                  </div>
+                  </button>
                 ))}
               </div>
               <div className="mb-2 flex gap-1 overflow-x-auto md:hidden" role="tablist" aria-label="Día" data-testid="week-day-picker">
@@ -686,11 +689,11 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
                   return (
                     <section
                       key={bucket}
-                      className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-2"
+                      className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] px-2 pb-2 pt-1.5"
                       data-testid="week-line"
                       data-line={bucket}
                     >
-                      <h4 className="mb-1.5 flex items-center gap-2 px-0.5 text-xs font-semibold uppercase tracking-wide text-[var(--os-text)]">
+                      <h4 className="mb-1 flex items-center gap-2 px-0.5 text-xs font-semibold uppercase tracking-wide text-[var(--os-text)]">
                         {LINE_TAB_LABELS[bucket]}
                         <span className="rounded-full bg-[var(--os-bg)] px-2 py-0.5 text-[11px] font-normal normal-case text-[var(--os-text-muted)]">
                           {lineItems.length} trabajo{lineItems.length === 1 ? "" : "s"}
@@ -699,6 +702,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
                       <OperationalWeekBoard
                         layout="columns"
                         mobileDay={mobileDay}
+                        dayHeadersInParent
                         weekDays={calendar.weekDays}
                         today={calendar.today}
                         selectedDate={calendar.selectedDate}

@@ -90,6 +90,8 @@ interface OperationalWeekBoardProps {
   layout?: "stack" | "columns";
   /** Día visible en celular con `layout="columns"`. */
   mobileDay?: string;
+  /** Con `layout="columns"`: el padre ya muestra día y contador alineados en escritorio (no se repiten por celda). */
+  dayHeadersInParent?: boolean;
 }
 
 /** Botón discreto de edición; no inicia el arrastre ni selecciona el día. */
@@ -509,14 +511,14 @@ function WeekJobCard({
           open();
         }
       }}
-      className="cursor-pointer rounded-md border border-white/10 bg-[#10304a] px-2 py-1.5 text-left shadow-[0_4px_12px_-10px_rgba(0,0,0,0.7)] transition hover:border-[var(--os-teal)]/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--os-teal)]"
+      className="cursor-pointer rounded-md border border-white/10 bg-[#10304a] px-2 py-1 text-left shadow-[0_4px_12px_-10px_rgba(0,0,0,0.7)] transition hover:border-[var(--os-teal)]/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--os-teal)]"
       style={priorityEdge(semanas?.priority, 4)}
       data-testid="week-job-card"
       data-item-id={item.id}
       data-semanas-priority={semanas?.priority ?? "NONE"}
     >
       <div className="flex items-start justify-between gap-1">
-        <p className="line-clamp-2 text-[13px] font-semibold leading-tight text-white" title={item.product ?? ""}>
+        <p className="truncate text-[13px] font-semibold leading-tight text-white" title={item.product ?? ""}>
           {displayField(item.product)}
         </p>
         {semanas?.priority ? <WorkItemPriorityBadge itemId={item.id} tone="solid" className="shrink-0" /> : null}
@@ -531,10 +533,12 @@ function WeekJobCard({
         {finished && String(finished).trim() && String(finished).trim() !== "0" ? (
           <span className="text-[11px] tabular-nums text-[#cfe0ea]" title="Cantidad realizada">· hecho {finished}</span>
         ) : null}
-        <StatusChip status={item.status} />
+        <span className="ml-auto origin-right scale-90">
+          <StatusChip status={item.status} />
+        </span>
       </div>
       {(onEditItem || archiveAction) && (
-        <div className="mt-1 flex flex-wrap items-center gap-1">
+        <div className="flex flex-wrap items-center justify-end gap-1">
           <CardEditButton item={item} onEditItem={onEditItem} />
           {archiveAction ? (
             <button
@@ -546,7 +550,7 @@ function WeekJobCard({
                 void archiveAction(item);
               }}
               disabled={cards.archiveBusyId === item.id}
-              className="rounded px-1.5 py-0.5 text-[0.65rem] font-semibold text-[#9fc0d4] hover:bg-white/10 hover:text-white disabled:opacity-50"
+              className="rounded px-1 text-[0.6rem] font-semibold leading-4 text-[#9fc0d4] hover:bg-white/10 hover:text-white disabled:opacity-50"
               data-testid={archived ? "week-job-restore" : "week-job-archive"}
             >
               {archived ? "Restaurar" : "Archivar"}
@@ -571,11 +575,14 @@ function WeekColumnCell({
   onCreateSlot,
   onEditItem,
   cards,
+  compactHeader = false,
 }: {
   day: string;
   dayItems: WorkItem[];
   isToday: boolean;
   hiddenOnMobile: boolean;
+  /** Escritorio: oculta el encabezado de la celda (el padre muestra la fila de totales por día alineada). */
+  compactHeader?: boolean;
   draggable: boolean;
   dropZoneId: string;
   canCreate: boolean;
@@ -599,7 +606,7 @@ function WeekColumnCell({
       <button
         type="button"
         onClick={() => onSelectDay(day)}
-        className="mb-1 flex w-full items-center justify-between gap-1 rounded px-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--os-text-muted)] hover:text-[var(--os-text)]"
+        className={`mb-1 flex w-full items-center justify-between gap-1 rounded px-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--os-text-muted)] hover:text-[var(--os-text)] ${compactHeader ? "lg:hidden" : ""}`}
         title={`Ver ${dayOfWeekName(day)} en vista Día`}
       >
         <span className={isToday ? "text-[var(--os-teal)]" : undefined}>
@@ -615,7 +622,7 @@ function WeekColumnCell({
         </span>
       </button>
       {count === 0 ? (
-        <p className="px-1 py-1 text-[11px] text-[var(--os-text-muted)]" data-testid="week-board-empty-day">
+        <p className="px-1 py-0.5 text-[11px] text-[var(--os-text-muted)]" data-testid="week-board-empty-day">
           {draggable ? "Sin trabajos — soltá acá" : "Sin trabajos"}
         </p>
       ) : (
@@ -670,6 +677,7 @@ export function OperationalWeekBoard({
   cards,
   layout = "stack",
   mobileDay,
+  dayHeadersInParent = false,
 }: OperationalWeekBoardProps) {
   const weekStart = weekDays[0] ?? weekStartMonday(today);
   const end = weekDays[weekDays.length - 1];
@@ -697,7 +705,7 @@ export function OperationalWeekBoard({
 
   if (layout === "columns" && cards && mode === "operational") {
     return (
-      <div className="grid gap-2 md:grid-cols-3 lg:grid-cols-5" data-testid="week-board-columns" data-zone={dropZoneId}>
+      <div className="grid items-start gap-2 md:grid-cols-3 lg:grid-cols-5" data-testid="week-board-columns" data-zone={dropZoneId}>
         {weekDays.map((day) => (
           <WeekColumnCell
             key={day}
@@ -712,6 +720,7 @@ export function OperationalWeekBoard({
             onCreateSlot={onCreateSlot}
             onEditItem={onEditItem}
             cards={cards}
+            compactHeader={Boolean(dayHeadersInParent)}
           />
         ))}
       </div>

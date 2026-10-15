@@ -91,7 +91,10 @@ const weekIds = (page, day) =>
 /** IDs que la vista Día muestra en `day`, recorriendo todas las pestañas de línea. */
 async function dayIds(page, day) {
   // Desde la Semana: el encabezado de la columna abre ese día en la vista Día.
-  await page.locator(`[data-testid^='week-board-daycell-'][data-day='${day}'] button[title^='Ver ']`).first().click();
+  // Escritorio: la fila de totales; tablet/celular: el encabezado de la columna.
+  const total = page.locator(`[data-testid=week-day-total][data-day='${day}']`);
+  if (await total.isVisible().catch(() => false)) await total.click();
+  else await page.locator(`[data-testid^='week-board-daycell-'][data-day='${day}'] button[title^='Ver ']`).first().click();
   await page.getByRole("tab", { name: /^Línea 1/ }).first().waitFor({ timeout: 30_000 });
   await page.waitForTimeout(600);
   const tabs = page.getByRole("tab", { name: /^Línea / });
