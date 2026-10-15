@@ -276,6 +276,20 @@ function migrateOeMaterial(raw: Record<string, unknown>): OeMaterialRow {
 }
 
 /**
+ * Completa los campos que las OE guardadas ANTES de CÓDIGO MP / KG REAL / lotes adicionales no tienen (codigoMp,
+ * kgReal, parentRowId, ajusteMotivo, lote…), sin recalcular nada ni tocar valores existentes. La UI lee esos campos
+ * como texto (`.trim()`): un dato legado con `undefined` rompía la pantalla de la OE en Production.
+ * Idempotente y solo en memoria (no escribe nada: se guarda recién cuando el usuario edita).
+ */
+export function hydrateOrderContent<T extends OrderContent>(content: T): T {
+  if (!content || content.kind !== "OE" || !Array.isArray(content.materials)) return content;
+  return {
+    ...content,
+    materials: content.materials.map((m) => migrateOeMaterial(m as unknown as Record<string, unknown>)),
+  };
+}
+
+/**
  * KG REAL: el valor cargado. OE anteriores a este campo guardaban solo el ajuste: si hubo ajuste explícito, ese era
  * un dato medido (kg a pesar + ajuste). Sin ajuste NO se asume que lo real fue lo teórico: queda vacío.
  */

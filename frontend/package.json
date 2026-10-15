@@ -38,7 +38,8 @@
     "db:migrate-0005-dry-run": "node scripts/migration-0005-dry-run.mjs",
     "formulas:scan": "tsx scripts/formulas-cli.ts scan",
     "formulas:import": "tsx scripts/formulas-cli.ts import",
-    "formulas:diagnose": "tsx scripts/formulas-diagnose.ts"
+    "formulas:diagnose": "tsx scripts/formulas-diagnose.ts",
+    "test:e2e:barrido": "bash scripts/e2e/run-oe-barrido-local.sh"
   },
   "engines": {
     "node": ">=20"
