@@ -15,7 +15,8 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const from = url.searchParams.get("from") ?? "";
     const to = url.searchParams.get("to") ?? "";
-    const deliveries = await entregasService.list(actor, { from, to });
+    // includeHidden=1: Producción ve también las apariciones «Desde trabajo» que quitó (para restaurarlas).
+    const deliveries = await entregasService.list(actor, { from, to }, { includeHidden: url.searchParams.get("includeHidden") === "1" });
     return NextResponse.json({ deliveries });
   } catch (err) {
     return entregasErrorResponse(err);

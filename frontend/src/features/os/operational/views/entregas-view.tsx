@@ -8,7 +8,7 @@
  * Programar una entrega no mueve stock ni toca trabajos por sí sola.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { Button } from "@/components/ui/button";
 import { usePreviewSession } from "@/features/os/session/preview-context";
@@ -17,7 +17,7 @@ import { EntregaDetailDialog } from "../components/entrega-detail-dialog";
 import { gridRange, longDateLabel, monthGrid, monthLabel, shiftMonth, WEEKDAYS_ES } from "@/lib/entregas/calendar";
 import { entregasApi } from "@/lib/entregas/entregas-client";
 import { clientKey, groupDeliveriesByClient } from "@/lib/entregas/rules";
-import { canManageEntregas, canViewEntregas, type EntregasRecoveryStats, type ScheduledDelivery } from "@/lib/entregas/types";
+import { canManageEntregas, canViewEntregas, type EntregasDateAudit, type EntregasRecoveryStats, type ScheduledDelivery } from "@/lib/entregas/types";
 import { friendlySaveError } from "@/lib/ui/friendly-error";
 
 const todayIso = () => {
@@ -41,6 +41,8 @@ export function EntregasView() {
   const [open, setOpen] = useState<{ client: string; date: string } | null>(null);
   const [form, setForm] = useState<{ initial: ScheduledDelivery | null } | null>(null);
   const [stats, setStats] = useState<EntregasRecoveryStats | null>(null);
+  // Producción: ver también las entregas «Desde trabajo» que quitó del calendario (para restaurarlas).
+  const [showHidden, setShowHidden] = useState(false);
 
   const range = useMemo(() => gridRange(year, month), [year, month]);
   const weeks = useMemo(() => monthGrid(year, month), [year, month]);
@@ -48,14 +50,14 @@ export function EntregasView() {
   const reload = useCallback(async () => {
     if (!allowed) return;
     try {
-      setDeliveries(await entregasApi.list(range.from, range.to));
+      setDeliveries(await entregasApi.list(range.from, range.to, { includeHidden: canManage && showHidden }));
       setError(null);
     } catch (e) {
       setError(friendlySaveError(e, "No se pudieron cargar las entregas."));
     } finally {
       setLoading(false);
     }
-  }, [allowed, range.from, range.to]);
+  }, [allowed, range.from, range.to, canManage, showHidden]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -124,7 +126,13 @@ export function EntregasView() {
             <ChevronRight className="size-4" aria-hidden="true" />
           </Button>
           {canManage && (
-            <Button type="button" className="ml-auto" onClick={() => setForm({ initial: null })} data-testid="entregas-new">
+            <label className="ml-auto inline-flex items-center gap-1.5 text-xs text-[var(--os-text-muted)]">
+              <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} data-testid="entregas-show-hidden" />
+              Ver quitadas del calendario
+            </label>
+          )}
+          {canManage && (
+            <Button type="button" onClick={() => setForm({ initial: null })} data-testid="entregas-new">
               <Plus className="mr-1 size-4" aria-hidden="true" /> Nueva entrega
             </Button>
           )}
@@ -180,7 +188,7 @@ export function EntregasView() {
                     {/* Escritorio/tablet: SOLO el nombre del cliente (una vez por cliente y día). */}
                     <div className="hidden flex-col gap-1 sm:flex">
                       {groups.slice(0, CELL_VISIBLE).map((g) => (
-                        <ClientChip key={g.client} name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} onOpen={() => openClient(g.client, day.iso)} />
+                        <ClientChip key={g.client} name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} hidden={isAllHidden(g.deliveries)} review={needsReview(g.deliveries)} onOpen={() => openClient(g.client, day.iso)} />
                       ))}
                       {groups.length > CELL_VISIBLE && (
                         <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedDay(day.iso); }} className="text-left text-[11px] font-semibold text-[var(--os-teal)] hover:underline" data-testid="entregas-more">
@@ -210,13 +218,14 @@ export function EntregasView() {
           ) : (
             <div className="flex flex-wrap gap-2">
               {selectedClients.map((g) => (
-                <ClientChip key={g.client} name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} onOpen={() => openClient(g.client, selectedDay)} large />
+                <ClientChip key={g.client} name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} hidden={isAllHidden(g.deliveries)} review={needsReview(g.deliveries)} onOpen={() => openClient(g.client, selectedDay)} large />
               ))}
             </div>
           )}
         </section>
 
         {stats && <RecoveryFooter stats={stats} />}
+        {canManage && <DateAuditPanel />}
       </div>
 
       {open && openDeliveries.length > 0 && (
@@ -252,7 +261,12 @@ export function EntregasView() {
   );
 }
 
-function ClientChip({ name, cancelled, delivered, onOpen, large }: { name: string; cancelled: boolean; delivered?: boolean; onOpen: () => void; large?: boolean }) {
+/** Todas las apariciones del cliente ese día son entregas «Desde trabajo» quitadas por Producción (se ven solo con «Ver quitadas»). */
+const isAllHidden = (ds: ScheduledDelivery[]) => ds.length > 0 && ds.every((d) => d.items.length > 0 && d.items.every((i) => i.hidden));
+/** Alguna fecha contradictoria marcada para revisión. */
+const needsReview = (ds: ScheduledDelivery[]) => ds.some((d) => d.items.some((i) => i.reviewFlags?.length));
+
+function ClientChip({ name, cancelled, delivered, hidden, review, onOpen, large }: { name: string; cancelled: boolean; delivered?: boolean; hidden?: boolean; review?: boolean; onOpen: () => void; large?: boolean }) {
   return (
     <button
       type="button"
@@ -260,12 +274,15 @@ function ClientChip({ name, cancelled, delivered, onOpen, large }: { name: strin
         e.stopPropagation();
         onOpen();
       }}
-      title={cancelled ? `${name} (cancelada)` : name}
-      className={`max-w-full truncate rounded-md border px-1.5 py-0.5 text-left font-semibold transition hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--os-teal)] ${large ? "px-3 py-1.5 text-sm" : "text-[11px]"} ${cancelled ? "border-rose-400/40 bg-rose-400/10 text-rose-200 line-through" : delivered ? "border-emerald-400/40 bg-emerald-400/10 text-[var(--os-text)]" : "border-[var(--os-teal)]/50 bg-[var(--os-teal)]/15 text-[var(--os-text)]"}`}
+      title={cancelled ? `${name} (cancelada)` : hidden ? `${name} (quitada del calendario)` : review ? `${name} — revisar fecha` : name}
+      className={`max-w-full truncate rounded-md border px-1.5 py-0.5 text-left font-semibold transition hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--os-teal)] ${large ? "px-3 py-1.5 text-sm" : "text-[11px]"} ${hidden ? "border-dashed border-white/30 bg-transparent text-[var(--os-text-muted)] line-through" : cancelled ? "border-rose-400/40 bg-rose-400/10 text-rose-200 line-through" : delivered ? "border-emerald-400/40 bg-emerald-400/10 text-[var(--os-text)]" : "border-[var(--os-teal)]/50 bg-[var(--os-teal)]/15 text-[var(--os-text)]"}`}
       data-testid="entregas-client"
       data-client={name}
       data-delivered={delivered ? "1" : undefined}
+      data-hidden={hidden ? "1" : undefined}
+      data-review={review ? "1" : undefined}
     >
+      {review && <AlertTriangle className="mr-1 inline size-3 text-amber-300" aria-label="Revisar fecha" />}
       {name}
     </button>
   );
@@ -290,6 +307,52 @@ function RecoveryFooter({ stats }: { stats: EntregasRecoveryStats }) {
         {stats.vencidasSinEntregar > 0 && <li>{stats.vencidasSinEntregar} con fecha de entrega vencida y sin entregar (se ven en su fecha).</li>}
         {reasons.length > 0 ? <li>Fuera del calendario: {reasons.join("; ")}. No se inventan fechas.</li> : <li>No quedó ningún trabajo fuera del calendario.</li>}
       </ul>
+    </details>
+  );
+}
+
+/**
+ * Revisión de fechas (solo Producción, SOLO LECTURA): por cada causa de fecha incorrecta o contradictoria, cuántos casos hay y
+ * ejemplos. Se calcula al abrirlo; no corrige nada (las contradicciones quedan marcadas «Revisar fecha» en el calendario).
+ */
+function DateAuditPanel() {
+  const [audit, setAudit] = useState<EntregasDateAudit | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const load = async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      setAudit(await entregasApi.audit());
+      setError(null);
+    } catch (e) {
+      setError(friendlySaveError(e, "No se pudo calcular la revisión de fechas."));
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <details className="text-xs text-[var(--os-text-muted)]" data-testid="entregas-audit" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open && !audit) void load(); }}>
+      <summary className="cursor-pointer select-none" data-testid="entregas-audit-summary">Revisión de fechas (auditoría de solo lectura)</summary>
+      {loading && <p className="mt-1">Calculando…</p>}
+      {error && <p role="alert" className="mt-1 text-[var(--genus-error)]">{error}</p>}
+      {audit && (
+        <ul className="mt-1 space-y-1.5" data-testid="entregas-audit-list">
+          {audit.categories.map((c) => (
+            <li key={c.key} className="rounded border border-[var(--os-border)] px-2 py-1" data-testid="entregas-audit-category" data-key={c.key} data-count={c.count}>
+              <b className="text-[var(--os-text)]">{c.label}: {c.count}</b> — {c.explanation}
+              {c.samples.length > 0 && (
+                <ul className="mt-0.5 list-disc pl-5">
+                  {c.samples.slice(0, 10).map((s, i) => (
+                    <li key={`${s.workItemId}-${i}`}>{s.client ?? "Sin cliente"} · {s.product ?? "Sin producto"} — {s.detail}</li>
+                  ))}
+                  {c.count > 10 && <li>…y {c.count - 10} más.</li>}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </details>
   );
 }

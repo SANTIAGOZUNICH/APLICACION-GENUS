@@ -17,7 +17,8 @@ export async function GET(request: Request, ctx: Ctx) {
     const { id } = await ctx.params;
     const delivery = await entregasService.get(actor, id);
     const history = await entregasService.history(actor, id);
-    return NextResponse.json({ delivery, divergences: entregasService.divergencesFor(delivery), history });
+    const deletedItems = await entregasService.deletedItems(actor, id);
+    return NextResponse.json({ delivery, divergences: entregasService.divergencesFor(delivery), history, deletedItems });
   } catch (err) {
     return entregasErrorResponse(err);
   }
@@ -35,7 +36,7 @@ type Body = {
   fields?: string[];
 };
 
-/** Modificar, reprogramar, cancelar, vincular/desvincular trabajos y aplicar cambios a un trabajo (con confirmación). */
+/** Modificar, reprogramar (la entrega o un solo producto), cancelar/restaurar, quitar/restaurar productos, vincular/desvincular trabajos y aplicar cambios a un trabajo (con confirmación). */
 export async function PATCH(request: Request, ctx: Ctx) {
   try {
     const actor = await resolveOrdersActor(request);
@@ -55,6 +56,16 @@ export async function PATCH(request: Request, ctx: Ctx) {
         return NextResponse.json({ delivery: await entregasService.reschedule(actor, id, String(body.newDate ?? ""), body.reason, needVersion()) });
       case "cancel":
         return NextResponse.json({ delivery: await entregasService.cancel(actor, id, body.reason, needVersion()) });
+      case "restore":
+        return NextResponse.json({ delivery: await entregasService.restore(actor, id, body.reason, needVersion()) });
+      case "move_item": {
+        const r = await entregasService.moveItem(actor, id, String(body.itemId ?? ""), String(body.newDate ?? ""), body.reason, needVersion());
+        return NextResponse.json({ delivery: r.source, target: r.target });
+      }
+      case "delete_item":
+        return NextResponse.json({ delivery: await entregasService.deleteItem(actor, id, String(body.itemId ?? ""), body.reason, needVersion()) });
+      case "restore_item":
+        return NextResponse.json({ delivery: await entregasService.restoreItem(actor, id, String(body.itemId ?? ""), body.reason) });
       case "link":
         return NextResponse.json({ delivery: await entregasService.linkWork(actor, String(body.itemId ?? ""), String(body.workItemId ?? "")) });
       case "unlink":

@@ -69,6 +69,31 @@ export interface RealDelivery {
   lote: string | null;
   vto: string | null;
   observations: string | null;
+  /**
+   * La hora registrada es EXACTAMENTE 00:00:00 UTC: típico de una fecha cargada sin hora y guardada como medianoche UTC,
+   * que en Argentina cae el día ANTERIOR. No se corrige sola: se marca para que Producción la revise.
+   */
+  utcMidnight?: boolean;
+}
+
+/**
+ * Motivos por los que una fecha del calendario queda MARCADA para revisión de Producción (nunca se corrigen solas).
+ *  - entrega_hora_utc_medianoche: entrega real guardada a las 00:00 UTC (puede estar un día corrida).
+ *  - entrega_antes_de_produccion: la fecha de entrega del trabajo es anterior a su fecha de producción.
+ *  - trabajo_con_otra_fecha: el trabajo vinculado tiene una fecha de entrega distinta de la entrega programada que lo contiene.
+ */
+export type DateReviewFlag = "entrega_hora_utc_medianoche" | "entrega_antes_de_produccion" | "trabajo_con_otra_fecha";
+export const DATE_REVIEW_LABEL: Record<DateReviewFlag, string> = {
+  entrega_hora_utc_medianoche: "Entrega real guardada a las 00:00 UTC: puede figurar un día antes. Revisá la fecha real en Entregados.",
+  entrega_antes_de_produccion: "La fecha de entrega es anterior a la fecha de producción del trabajo.",
+  trabajo_con_otra_fecha: "El trabajo vinculado tiene otra fecha de entrega que la entrega programada.",
+};
+
+/** Quitada del calendario por Producción (solo la aparición «Desde trabajo»; el trabajo no se toca). */
+export interface CalendarHidden {
+  reason: string;
+  by: string;
+  at: string;
 }
 
 /** Dato del trabajo (vinculado o recuperado) que alimenta el estado y la comparación (se lee fresco de work_items). */
@@ -127,6 +152,14 @@ export interface ScheduledDeliveryItem {
   updatedAt: string;
   works: LinkedWork[];
   status: DeliveryDisplayStatus;
+  /** Fechas contradictorias detectadas (se muestran como «Revisar fecha»; no se corrigen solas). */
+  reviewFlags?: DateReviewFlag[];
+  /** Solo apariciones «Desde trabajo» quitadas por Producción (se listan si se piden las quitadas, para restaurarlas). */
+  hidden?: CalendarHidden | null;
+  /** Producto dado de baja (lógica) — solo en el detalle de Producción, para restaurarlo. */
+  deletedAt?: string | null;
+  deletedBy?: string | null;
+  deletedReason?: string | null;
 }
 
 export interface ScheduledDelivery {
@@ -229,6 +262,26 @@ export interface EntregasRecoveryStats {
     /** Cancelados o eliminados con fecha de entrega y sin entrega real: no son entregas vigentes. */
     canceladosOEliminados: number;
   };
+}
+
+/** Auditoría de fechas del calendario (solo lectura): cuántos casos hay de cada causa y ejemplos para revisar. */
+export interface EntregasDateAuditCategory {
+  key:
+    | "parciales_en_un_solo_dia"
+    | "entrega_hora_utc_medianoche"
+    | "entrega_antes_de_produccion"
+    | "trabajo_con_otra_fecha"
+    | "entregado_sin_fecha_real";
+  label: string;
+  /** Qué mostraba mal el calendario (o por qué hay que revisarlo) y qué se hizo. */
+  explanation: string;
+  count: number;
+  samples: Array<{ workItemId: string; client: string | null; product: string | null; detail: string }>;
+}
+export interface EntregasDateAudit {
+  generatedAt: string;
+  today: string;
+  categories: EntregasDateAuditCategory[];
 }
 
 export class EntregasConflictError extends Error {

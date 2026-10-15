@@ -28,6 +28,7 @@ import {
   type WorkDivergence,
 } from "@/lib/entregas/types";
 import { friendlySaveError } from "@/lib/ui/friendly-error";
+import { DeletedItemsList, DerivedWorkActions, RestoreDeliveryAction, ReviewFlagsNote, ScheduledItemActions } from "./entrega-corrections";
 import type { WorkItem } from "@/types/operational/work-item";
 
 const STATUS_STYLE: Record<DeliveryDisplayStatus, string> = {
@@ -57,6 +58,11 @@ const ACTION_LABEL: Record<string, string> = {
   unlink: "Trabajo desvinculado",
   apply_to_work: "Cambios aplicados a un trabajo",
   keep_work_as_is: "Trabajo mantenido como estaba",
+  restore: "Restaurada",
+  move_item_out: "Producto pasado a otra fecha",
+  move_item_in: "Producto recibido de otra fecha",
+  delete_item: "Producto quitado",
+  restore_item: "Producto restaurado",
 };
 
 const WORK_STATUS_LABEL: Record<string, string> = {
@@ -211,6 +217,7 @@ function DeliveryCard({ delivery: d, detail, canManage, canApplyToWork, onEdit, 
           Entrega cancelada el {d.cancelledAt ? new Date(d.cancelledAt).toLocaleDateString("es-AR") : "—"} por {d.cancelledBy ?? "—"}. Motivo: {d.cancelReason ?? "—"}. Queda como historial (no se borra).
         </p>
       )}
+      {cancelled && canManage && !derived && <RestoreDeliveryAction delivery={d} onChanged={onChanged} />}
 
       {panel === "reschedule" && (
         <form className="space-y-2 rounded-md border border-[var(--os-border)] p-2.5" onSubmit={(e) => { e.preventDefault(); void run({ action: "reschedule", newDate, reason }); }} data-testid="entrega-reschedule-form">
@@ -253,8 +260,8 @@ function DeliveryCard({ delivery: d, detail, canManage, canApplyToWork, onEdit, 
       {derived ? (
         <p className="text-xs text-[#8fb3c9]" data-testid="entrega-derived-note">
           {origin === "entrega_registrada"
-            ? "Entrega real ya registrada en «Entregados». Se muestra en su fecha real de entrega y no se edita desde acá."
-            : "Surge de la fecha de entrega cargada en el trabajo: si se cambia en el trabajo, el calendario se actualiza solo. Para programarla a mano, vinculala desde una entrega programada."}
+            ? "Entrega real ya registrada en «Entregados». Se muestra en su fecha real de entrega y no se edita ni se borra desde acá: una entrega física solo se corrige con la anulación auditada de «Entregados»."
+            : "Surge de la fecha de entrega cargada en el trabajo. Producción puede editarla (se guarda en el trabajo) o quitarla del calendario con motivo. Para programarla a mano, vinculala desde una entrega programada."}
         </p>
       ) : (
         <div className="grid gap-x-4 gap-y-2 sm:grid-cols-3">
@@ -268,9 +275,21 @@ function DeliveryCard({ delivery: d, detail, canManage, canApplyToWork, onEdit, 
       <div className="space-y-2.5">
         {d.items.length === 0 && <p className="text-sm text-[#8fb3c9]">Sin productos visibles para tu sector.</p>}
         {d.items.map((it) => (
-          <ItemBlock key={it.id} delivery={d} item={it} detail={detail} canManage={canManage && !cancelled && !derived} canApplyToWork={canApplyToWork && !cancelled && !derived} readOnly={derived} onChanged={onChanged} />
+          <ItemBlock
+            key={it.id}
+            delivery={d}
+            item={it}
+            detail={detail}
+            canManage={canManage && !cancelled && !derived}
+            canApplyToWork={canApplyToWork && !cancelled && !derived}
+            canCorrectDerived={canManage && origin === "desde_trabajo"}
+            canEditWork={canApplyToWork}
+            readOnly={derived}
+            onChanged={onChanged}
+          />
         ))}
       </div>
+      {canManage && !derived && detail?.deletedItems?.length ? <DeletedItemsList delivery={d} items={detail.deletedItems} onChanged={onChanged} /> : null}
 
       {canManage && !derived && (
       <div>
@@ -298,7 +317,12 @@ function DeliveryCard({ delivery: d, detail, canManage, canApplyToWork, onEdit, 
 function HistoryDetail({ action, payload }: { action: string; payload: Record<string, unknown> }) {
   const p = payload as { from?: string; to?: string; reason?: string; product?: string; fields?: Array<{ field: string; from: string; to: string }> };
   if (action === "reschedule") return <span> — {p.from ? shortDateLabel(p.from) : "—"} → {p.to ? shortDateLabel(p.to) : "—"}. Motivo: {p.reason}</span>;
-  if (action === "cancel" || action === "unlink") return <span> — Motivo: {p.reason}</span>;
+  if (action === "cancel" || action === "unlink" || action === "restore" || action === "delete_item" || action === "restore_item") {
+    return <span> — {p.product ? `${p.product}. ` : ""}Motivo: {p.reason}</span>;
+  }
+  if (action === "move_item_out" || action === "move_item_in") {
+    return <span> — {p.product}: {p.from ? shortDateLabel(p.from) : "—"} → {p.to ? shortDateLabel(p.to) : "—"}. Motivo: {p.reason}</span>;
+  }
   if (action === "keep_work_as_is" && p.fields) return <span> — Se mantuvo: {p.fields.map((f) => `${f.field}: trabajo ${f.from}, entrega ${f.to}`).join("; ")}. Motivo: {p.reason}</span>;
   if (action === "link") return <span> — {p.product}</span>;
   if (action === "apply_to_work" && p.fields) return <span> — {p.fields.map((f) => `${f.field}: ${f.from} → ${f.to}`).join("; ")}. Motivo: {p.reason}</span>;
@@ -308,12 +332,16 @@ function HistoryDetail({ action, payload }: { action: string; payload: Record<st
 const fmtQty = (n: number | null, unit: string | null) => (n == null ? null : `${n.toLocaleString("es-AR")}${unit ? ` ${unit}` : ""}`);
 const joinUnique = (vals: Array<string | null | undefined>) => [...new Set(vals.map((v) => (v ?? "").trim()).filter(Boolean))].join(" · ");
 
-function ItemBlock({ delivery, item, detail, canManage, canApplyToWork, readOnly, onChanged }: {
+function ItemBlock({ delivery, item, detail, canManage, canApplyToWork, canCorrectDerived, canEditWork, readOnly, onChanged }: {
   delivery: ScheduledDelivery;
   item: ScheduledDeliveryItem;
   detail?: DeliveryDetailResponse;
   canManage: boolean;
   canApplyToWork: boolean;
+  /** Producción en una entrega «Desde trabajo»: editar / quitar del calendario / restaurar. */
+  canCorrectDerived?: boolean;
+  /** La edición del trabajo usa la edición canónica (solo Producción). */
+  canEditWork?: boolean;
   readOnly?: boolean;
   onChanged: () => Promise<void>;
 }) {
@@ -334,6 +362,9 @@ function ItemBlock({ delivery, item, detail, canManage, canApplyToWork, readOnly
         </div>
         <DeliveryStatusChip status={item.status} />
       </div>
+      <ReviewFlagsNote flags={item.reviewFlags} />
+      {!readOnly && canManage && <ScheduledItemActions delivery={delivery} item={item} onChanged={onChanged} />}
+      {readOnly && canCorrectDerived && <DerivedWorkActions item={item} canEditWork={Boolean(canEditWork)} onChanged={onChanged} />}
       <div className="grid gap-x-4 gap-y-2 sm:grid-cols-4" data-testid="entrega-item-detail">
         <Field label="Cantidad planificada">{item.quantity ? <span className="text-[15px] font-extrabold text-[#5eead4]">{item.quantity}{item.unit ? ` ${item.unit}` : ""}</span> : fmtQty(q.planned, item.unit)}</Field>
         <Field label="Producida">{fmtQty(q.produced, item.unit)}</Field>
