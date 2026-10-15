@@ -12,6 +12,7 @@ import {
   summarizeRealDeliveries,
   validateDeliveryInput,
   validateReason,
+  optionalReason,
 } from "./rules";
 import type { LinkedWork, ScheduledDelivery, ScheduledDeliveryItem } from "./types";
 
@@ -174,9 +175,13 @@ describe("snapshotOf y coverageOf", () => {
 });
 
 describe("validateReason y agrupación por cliente", () => {
-  it("el motivo es obligatorio (mín. 8)", () => {
-    expect(validateReason("corto").ok).toBe(false);
+  it("bajas lógicas: motivo obligatorio sin largo mínimo arbitrario; fechas: motivo opcional (nunca inventado)", () => {
+    expect(validateReason("x").ok).toBe(true);
+    expect(validateReason("   ").ok).toBe(false);
     expect(validateReason(undefined).ok).toBe(false);
+    expect(optionalReason(undefined)).toEqual({ ok: true, value: null });
+    expect(optionalReason("  ")).toEqual({ ok: true, value: null });
+    expect(optionalReason(" completado ")).toEqual({ ok: true, value: "completado" });
     expect(validateReason("  Cliente pidió otra fecha  ")).toEqual({ ok: true, value: "Cliente pidió otra fecha" });
   });
   it("un cliente con varias entregas el mismo día aparece UNA vez", () => {

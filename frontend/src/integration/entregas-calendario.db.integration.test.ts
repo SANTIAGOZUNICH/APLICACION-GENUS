@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { assertMarkedDatabase, e2eEnvironmentProblem } from "../../scripts/e2e/e2e-safety.mjs";
+import { itemQuantities } from "@/lib/entregas/rules";
 
 const PROBLEM = e2eEnvironmentProblem() ?? (process.env.GENUS_E2E_DATABASE_URL ? null : "falta GENUS_E2E_DATABASE_URL");
 const prod = { email: "it-cal-prod@laboratoriogenus.com.ar", sector: "PRODUCCION", displayName: "IT Producción" };
@@ -103,7 +104,7 @@ describe.skipIf(Boolean(PROBLEM))(`Calendario de Entregas en Postgres real${PROB
     // Caso real (LUCENT · SERUM ADN 1% · OA-2026-26362): Envasado CERRADO, 200 de 500 ya entregados, resto pendiente.
     await mk("cerrado", "SERUM ADN 1% IT", { deliveryDate: "2026-10-16" });
     await q(
-      "update work_items set operational_status = 'completo', finished_qty = '500', packaging_closed_at = now(), packaging_closed_by = 'IT' where id = $1",
+      "update work_items set operational_status = 'completo', planned_quantity = '500', finished_qty = '500', packaging_closed_at = now(), packaging_closed_by = 'IT' where id = $1",
       [ids.cerrado]
     );
     await realDelivery(ids.cerrado!, "SERUM ADN 1% IT", [{ at: "2026-10-12T15:00:00Z", qty: 200 }]);
@@ -114,24 +115,18 @@ describe.skipIf(Boolean(PROBLEM))(`Calendario de Entregas en Postgres real${PROB
     await pool?.end();
   });
 
-  it("entregas PARCIALES: cada envío en su fecha real (zona Argentina), no todos en el día del último", async () => {
+  it("agenda de PENDIENTES: una entrega completada (100 + 50 de 150) ya no aparece; sus líneas siguen en la base", async () => {
     const list = forClient(await (await svc()).list(prod, OCT));
-    const reg = list.filter((d) => d.origin === "entrega_registrada" && d.items.some((i) => i.product === "SHAMPOO PARCIAL IT"));
-    expect(reg.map((d) => [d.deliveryDate, d.items.map((i) => i.works[0]!.realDeliveries.length)])).toEqual([
-      ["2026-10-10", [2]],
-      ["2026-10-14", [2]],
-    ]);
-    // 22:30 del 14/10 en Argentina NO se corre al 15 (UTC).
-    expect(list.some((d) => d.deliveryDate === "2026-10-15")).toBe(false);
-    // Suma entregada = acumulado (100 + 50): la entrega queda completa.
-    expect(reg[0]!.items[0]!.works[0]!.deliveredQty).toBe(150);
+    expect(list.some((d) => d.items.some((i) => i.product === "SHAMPOO PARCIAL IT"))).toBe(false);
+    expect(list.some((d) => d.origin === "entrega_registrada")).toBe(false);
+    // Nada se borra: los envíos siguen registrados (Entregados / historial / auditoría).
+    const lines = await q("select quantity from work_item_delivery_lines where work_item_id = $1 and status = 'ACTIVA' order by sequence", [ids.parcial]);
+    expect(lines.map((l) => Number(l.quantity))).toEqual([100, 50]);
   });
 
-  it("entrega guardada a las 00:00 UTC: se muestra en su día argentino y queda MARCADA «Revisar fecha» (no se corrige sola)", async () => {
-    const list = forClient(await (await svc()).list(prod, OCT));
-    const d = list.find((x) => x.origin === "entrega_registrada" && x.items.some((i) => i.product === "CREMA MEDIANOCHE IT"))!;
-    expect(d.deliveryDate).toBe("2026-10-19");
-    expect(d.items[0]!.reviewFlags).toContain("entrega_hora_utc_medianoche");
+  it("entrega a las 00:00 UTC ya completada: fuera de la agenda; la auditoría de fechas la sigue marcando (no se corrige sola)", async () => {
+    const s = await svc();
+    expect(forClient(await s.list(prod, OCT)).some((x) => x.items.some((i) => i.product === "CREMA MEDIANOCHE IT"))).toBe(false);
     const [row] = await q("select actual_delivered_at from work_item_deliveries where work_item_id = $1", [ids.medianoche]);
     expect(new Date(String(row!.actual_delivered_at)).toISOString()).toBe("2026-10-20T00:00:00.000Z");
   });
@@ -172,20 +167,25 @@ describe.skipIf(Boolean(PROBLEM))(`Calendario de Entregas en Postgres real${PROB
       ))[0];
     const before = await snap();
     // Lo que envía el formulario: fecha nueva + cantidad y observaciones sin cambios; motivo «completado».
-    const r = await s.editWork(prod, ids.cerrado!, { deliveryDate: "2026-10-20", plannedQuantity: "150", notes: null }, "completado");
+    // Sin motivo: reprogramar la entrega no lo exige.
+    const r = await s.editWork(prod, ids.cerrado!, { deliveryDate: "2026-10-20", plannedQuantity: "500", notes: null }, "");
     expect(r.applied).toEqual(["deliveryDate"]);
     // Persistida (lectura nueva = «recargar la página») y sin tocar estado, unidades ni el cierre de Envasado.
     expect(await snap()).toEqual({ ...before, d: "2026-10-20" });
     const list = forClient(await s.list(prod, OCT));
     const days = list.filter((d) => d.origin !== "entrega_registrada" && d.items.some((i) => i.product === "SERUM ADN 1% IT")).map((d) => d.deliveryDate);
     expect(days).toEqual(["2026-10-20"]);
-    // La entrega REAL de 200 sigue en su fecha histórica.
-    const real = list.filter((d) => d.origin === "entrega_registrada" && d.items.some((i) => i.product === "SERUM ADN 1% IT")).map((d) => d.deliveryDate);
-    expect(real).toEqual(["2026-10-12"]);
+    // Agenda: solo el SALDO (500 − 200 entregadas = 300); la entrega real de 200 no se muestra como pendiente.
+    const item = list.find((d) => d.deliveryDate === "2026-10-20")!.items.find((i) => i.product === "SERUM ADN 1% IT")!;
+    expect(itemQuantities(item)).toMatchObject({ planned: 500, delivered: 200, pending: 300 });
+    expect(list.some((d) => d.origin === "entrega_registrada")).toBe(false);
+    const [real] = await q("select to_char(actual_delivered_at at time zone 'UTC','YYYY-MM-DD') d, quantity from work_item_deliveries where work_item_id = $1", [ids.cerrado]);
+    expect(real).toMatchObject({ d: "2026-10-12", quantity: "200" });
     // Lo productivo sigue protegido y el error es el REAL (no se atribuye al motivo).
     await expect(s.editWork(prod, ids.cerrado!, { plannedQuantity: "450" }, "completado")).rejects.toThrow(/Envasado cerrado/);
-    // Motivo corto: el error SÍ es del motivo.
-    await expect(s.editWork(prod, ids.cerrado!, { deliveryDate: "2026-10-21" }, "ok")).rejects.toThrow(/motivo/);
+    // Cambiar de nuevo la fecha, otra vez sin motivo: válido.
+    await s.editWork(prod, ids.cerrado!, { deliveryDate: "2026-10-21" }, undefined);
+    expect((await snap())!.d).toBe("2026-10-21");
     const hist = await s.workHistory(prod, ids.cerrado!);
     expect(hist[0]).toMatchObject({ action: "work_edit", actorEmail: prod.email });
   });
@@ -209,11 +209,11 @@ describe.skipIf(Boolean(PROBLEM))(`Calendario de Entregas en Postgres real${PROB
     expect(await q("select restored_at is not null as r from delivery_calendar_hidden where work_item_id = $1", [ids.futuroB])).toEqual([{ r: true }]);
   });
 
-  it("una entrega REAL no se puede quitar desde el calendario: quitar la aparición del trabajo no la oculta", async () => {
+  it("quitar la aparición de un trabajo nunca toca sus entregas reales", async () => {
     const s = await svc();
+    const before = await q("select id, quantity, actual_delivered_at, status from work_item_delivery_lines where work_item_id = $1 order by id", [ids.parcial]);
     await s.hideWork(prod, ids.parcial!, "Prueba: no debe ocultar entregas reales");
-    const list = forClient(await s.list(prod, OCT));
-    expect(list.filter((d) => d.origin === "entrega_registrada" && d.items.some((i) => i.product === "SHAMPOO PARCIAL IT"))).toHaveLength(2);
+    expect(await q("select id, quantity, actual_delivered_at, status from work_item_delivery_lines where work_item_id = $1 order by id", [ids.parcial])).toEqual(before);
     await s.restoreWork(prod, ids.parcial!, "Fin de la prueba de entregas reales");
   });
 
@@ -232,7 +232,8 @@ describe.skipIf(Boolean(PROBLEM))(`Calendario de Entregas en Postgres real${PROB
     } as never);
     ids.prog = created.id;
     const x = created.items.find((i) => i.product === "ACOND X IT")!;
-    const { source, target } = await s.moveItem(prod, created.id, x.id, "2026-11-12", "El cliente adelantó solo el X", created.version);
+    // Sin motivo: mover un producto a otra fecha no lo exige.
+    const { source, target } = await s.moveItem(prod, created.id, x.id, "2026-11-12", "", created.version);
     expect(source.deliveryDate).toBe("2026-11-10");
     expect(source.items.map((i) => i.product)).toEqual(["ACOND Y IT", "ACOND Z IT"]);
     expect(target.deliveryDate).toBe("2026-11-12");
@@ -288,8 +289,9 @@ describe.skipIf(Boolean(PROBLEM))(`Calendario de Entregas en Postgres real${PROB
     const d0 = await s.get(prod, ids.prog!);
     const c = await s.cancel(prod, d0.id, "El cliente suspendió la entrega", d0.version);
     expect(c.state).toBe("cancelada");
-    // Cancelada sigue visible (tachada) para conservar el historial.
-    expect(forClient(await s.list(prod, NOV)).find((d) => d.id === d0.id)?.state).toBe("cancelada");
+    // Cancelada: fuera de la agenda; se ve con «Ver quitadas» para restaurarla (el historial se conserva).
+    expect(forClient(await s.list(prod, NOV)).find((d) => d.id === d0.id)).toBeUndefined();
+    expect(forClient(await s.list(prod, NOV, { includeHidden: true })).find((d) => d.id === d0.id)?.state).toBe("cancelada");
     const r = await s.restore(prod, c.id, "El cliente confirmó de nuevo", c.version);
     expect(r.state).toBe("programada");
     expect(r.items.map((i) => i.product)).toEqual(["ACOND Z IT"]);

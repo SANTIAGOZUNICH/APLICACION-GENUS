@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 describe("entregasService.list — une programadas + recuperadas de los trabajos", () => {
-  it("devuelve el trabajo con fecha de entrega aunque nunca se cargó en Entregas (y la entrega real en su fecha real)", async () => {
+  it("devuelve el trabajo con fecha de entrega aunque nunca se cargó en Entregas; lo ya entregado NO aparece (agenda de pendientes)", async () => {
     queue.push({ rows: [] }); // scheduled_deliveries del rango: ninguna cargada a mano
     queue.push({
       rows: [
@@ -34,19 +34,15 @@ describe("entregasService.list — une programadas + recuperadas de los trabajos
       ],
     });
     const out = await entregasService.list(produccion, { from: "2026-10-01", to: "2026-10-31" });
-    expect(out.map((d) => [d.origin, d.deliveryDate, d.client])).toEqual([
-      ["entrega_registrada", "2026-10-03", "FIRMEA"],
-      ["desde_trabajo", "2026-10-15", "FIRMEA"],
-    ]);
-    const real = out[0]!.items[0]!.works[0]!;
-    expect(real).toMatchObject({ deliveredAt: "2026-10-03", completedAt: "2026-10-02", delivered: true, deliveredQty: 1000 });
+    expect(out.map((d) => [d.origin, d.deliveryDate, d.client])).toEqual([["desde_trabajo", "2026-10-15", "FIRMEA"]]);
   });
 
-  it("también acepta real_deliveries como texto JSON", async () => {
+  it("también acepta real_deliveries como texto JSON (parcial: queda el saldo en su fecha)", async () => {
     queue.push({ rows: [] });
-    queue.push({ rows: [row({ delivery_date: null, real_deliveries: JSON.stringify([{ id: "r1", date: "2026-10-03", quantity: "1000" }]) })] });
+    queue.push({ rows: [row({ delivery_date: "2026-10-20", real_deliveries: JSON.stringify([{ id: "r1", date: "2026-10-03", quantity: "400" }]) })] });
     const out = await entregasService.list(produccion, { from: "2026-10-01", to: "2026-10-31" });
-    expect(out[0]!.deliveryDate).toBe("2026-10-03");
+    expect(out.map((d) => [d.origin, d.deliveryDate])).toEqual([["desde_trabajo", "2026-10-20"]]);
+    expect(out[0]!.items[0]!.works[0]!.deliveredQty).toBe(400);
   });
 
   it("Envasado ve solo lo de su sector; Depósito ve todo; Calidad no tiene acceso", async () => {

@@ -227,13 +227,13 @@ function DeliveryCard({ delivery: d, detail, canManage, canApplyToWork, onEdit, 
               <input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} className="w-full rounded border border-[var(--os-border)] bg-[var(--os-bg)] px-2 py-1 text-sm text-[var(--os-text)]" data-testid="entrega-reschedule-date" />
             </label>
             <label className="space-y-1 text-xs text-[#8fb3c9]">
-              Motivo (obligatorio, queda auditado)
+              Motivo (opcional)
               <input value={reason} onChange={(e) => setReason(e.target.value)} className="w-full rounded border border-[var(--os-border)] bg-[var(--os-bg)] px-2 py-1 text-sm text-[var(--os-text)]" data-testid="entrega-reschedule-reason" />
             </label>
           </div>
           <p className="text-[11px] text-[#8fb3c9]">Los trabajos vinculados no se modifican solos: después vas a ver qué cambió y confirmás si lo aplicás.</p>
           <div className="flex gap-2">
-            <Button type="submit" size="sm" disabled={busy || !reasonOk || newDate === d.deliveryDate} data-testid="entrega-reschedule-confirm">
+            <Button type="submit" size="sm" disabled={busy || !newDate || newDate === d.deliveryDate} data-testid="entrega-reschedule-confirm">
               {busy ? "Guardando…" : "Reprogramar"}
             </Button>
             <Button type="button" size="sm" variant="secondary" onClick={() => setPanel(null)}>Cerrar</Button>
@@ -316,16 +316,16 @@ function DeliveryCard({ delivery: d, detail, canManage, canApplyToWork, onEdit, 
 
 function HistoryDetail({ action, payload }: { action: string; payload: Record<string, unknown> }) {
   const p = payload as { from?: string; to?: string; reason?: string; product?: string; fields?: Array<{ field: string; from: string; to: string }> };
-  if (action === "reschedule") return <span> — {p.from ? shortDateLabel(p.from) : "—"} → {p.to ? shortDateLabel(p.to) : "—"}. Motivo: {p.reason}</span>;
+  if (action === "reschedule") return <span> — {p.from ? shortDateLabel(p.from) : "—"} → {p.to ? shortDateLabel(p.to) : "—"}{p.reason ? `. Motivo: ${p.reason}` : ""}</span>;
   if (action === "cancel" || action === "unlink" || action === "restore" || action === "delete_item" || action === "restore_item") {
     return <span> — {p.product ? `${p.product}. ` : ""}Motivo: {p.reason}</span>;
   }
   if (action === "move_item_out" || action === "move_item_in") {
-    return <span> — {p.product}: {p.from ? shortDateLabel(p.from) : "—"} → {p.to ? shortDateLabel(p.to) : "—"}. Motivo: {p.reason}</span>;
+    return <span> — {p.product}: {p.from ? shortDateLabel(p.from) : "—"} → {p.to ? shortDateLabel(p.to) : "—"}{p.reason ? `. Motivo: ${p.reason}` : ""}</span>;
   }
-  if (action === "keep_work_as_is" && p.fields) return <span> — Se mantuvo: {p.fields.map((f) => `${f.field}: trabajo ${f.from}, entrega ${f.to}`).join("; ")}. Motivo: {p.reason}</span>;
+  if (action === "keep_work_as_is" && p.fields) return <span> — Se mantuvo: {p.fields.map((f) => `${f.field}: trabajo ${f.from}, entrega ${f.to}`).join("; ")}{p.reason ? `. Motivo: ${p.reason}` : ""}</span>;
   if (action === "link") return <span> — {p.product}</span>;
-  if (action === "apply_to_work" && p.fields) return <span> — {p.fields.map((f) => `${f.field}: ${f.from} → ${f.to}`).join("; ")}. Motivo: {p.reason}</span>;
+  if (action === "apply_to_work" && p.fields) return <span> — {p.fields.map((f) => `${f.field}: ${f.from} → ${f.to}`).join("; ")}{p.reason ? `. Motivo: ${p.reason}` : ""}</span>;
   return null;
 }
 
@@ -362,6 +362,11 @@ function ItemBlock({ delivery, item, detail, canManage, canApplyToWork, canCorre
         </div>
         <DeliveryStatusChip status={item.status} />
       </div>
+      {q.delivered != null && q.delivered > 0 && q.pending != null && (
+        <p className="rounded-md bg-amber-400/10 px-2 py-1 text-sm font-semibold text-amber-100" data-testid="entrega-item-pending" data-pending={q.pending}>
+          Pendiente de entregar: {fmtQty(q.pending, item.unit)} <span className="font-normal text-amber-100/80">(ya entregadas {fmtQty(q.delivered, item.unit)} de {fmtQty(q.planned, item.unit)})</span>
+        </p>
+      )}
       <ReviewFlagsNote flags={item.reviewFlags} />
       {!readOnly && canManage && <ScheduledItemActions delivery={delivery} item={item} onChanged={onChanged} />}
       {readOnly && canCorrectDerived && <DerivedWorkActions item={item} canEditWork={Boolean(canEditWork)} onChanged={onChanged} />}
@@ -433,6 +438,8 @@ function WorkRow({ work: w, divergences, deliveryId, canManage, canApplyToWork, 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reasonOk = reason.trim().length >= MIN_ENTREGAS_REASON;
+  // Lote/VTO son trazabilidad: aplicar esos datos al trabajo sí pide motivo (mismo criterio que el servidor).
+  const applyNeedsReason = fields.some((f) => f === "packagingLote" || f === "packagingVto");
 
   async function submit(body: Record<string, unknown>) {
     if (busy) return;
@@ -490,12 +497,12 @@ function WorkRow({ work: w, divergences, deliveryId, canManage, canApplyToWork, 
             mode === "apply" ? (
               <form className="space-y-1.5" onSubmit={(e) => { e.preventDefault(); void submit({ action: "apply_to_work", linkId: w.linkId, fields, reason }); }} data-testid="entrega-apply-form">
                 <label className="block space-y-1 text-[#8fb3c9]">
-                  Motivo (obligatorio, queda auditado)
+                  {applyNeedsReason ? "Motivo (obligatorio al aplicar lote o VTO: trazabilidad)" : "Motivo (opcional)"}
                   <input value={reason} onChange={(e) => setReason(e.target.value)} className="w-full rounded border border-[var(--os-border)] bg-[var(--os-bg)] px-2 py-1 text-sm text-[var(--os-text)]" data-testid="entrega-apply-reason" />
                 </label>
                 <p className="text-[#8fb3c9]">Solo se cambia lo tildado. Nunca se tocan avances, cantidades realizadas ni datos cargados por el operario.</p>
                 <div className="flex gap-2">
-                  <Button type="submit" size="sm" disabled={busy || fields.length === 0 || !reasonOk} data-testid="entrega-apply-confirm">{busy ? "Aplicando…" : "Confirmar y aplicar al trabajo"}</Button>
+                  <Button type="submit" size="sm" disabled={busy || fields.length === 0 || (applyNeedsReason && !reasonOk)} data-testid="entrega-apply-confirm">{busy ? "Aplicando…" : "Confirmar y aplicar al trabajo"}</Button>
                   <Button type="button" size="sm" variant="secondary" onClick={() => setMode(null)}>Volver</Button>
                 </div>
               </form>
@@ -511,12 +518,12 @@ function WorkRow({ work: w, divergences, deliveryId, canManage, canApplyToWork, 
           {canApplyToWork && mode === "keep" && (
             <form className="space-y-1.5" onSubmit={(e) => { e.preventDefault(); void submit({ action: "keep", linkId: w.linkId, fields, reason }); }} data-testid="entrega-keep-form">
               <label className="block space-y-1 text-[#8fb3c9]">
-                Motivo (obligatorio, queda auditado)
+                Motivo (opcional)
                 <input value={reason} onChange={(e) => setReason(e.target.value)} className="w-full rounded border border-[var(--os-border)] bg-[var(--os-bg)] px-2 py-1 text-sm text-[var(--os-text)]" data-testid="entrega-keep-reason" />
               </label>
               <p className="text-[#8fb3c9]">El trabajo no se modifica. Estos cambios dejan de mostrarse como pendientes (si la entrega vuelve a cambiar, se avisa de nuevo).</p>
               <div className="flex gap-2">
-                <Button type="submit" size="sm" disabled={busy || !reasonOk} data-testid="entrega-keep-confirm">{busy ? "Guardando…" : "Mantener como está"}</Button>
+                <Button type="submit" size="sm" disabled={busy} data-testid="entrega-keep-confirm">{busy ? "Guardando…" : "Mantener como está"}</Button>
                 <Button type="button" size="sm" variant="secondary" onClick={() => setMode(null)}>Volver</Button>
               </div>
             </form>

@@ -90,7 +90,7 @@ describe("política de celdas de WorkItem", () => {
     expect(workItemCellProtection(base({ status: "cancelado" }), "client", "PRODUCCION")).toMatch(/restauralo/);
     for (const status of ["completo", "revision", "codificado_completo", "en_codificado"] as const) {
       expect(workItemCellProtection(base({ status }), "client", "PRODUCCION")).toBeNull();
-      expect(workItemReasonRequired(base({ status }), "client", "2026-10-08")).toBe(true);
+      expect(workItemReasonRequired(base({ status }), "client", "2026-10-08")).toBe(false);
     }
     expect(workItemCellProtection(base({ qualityStatus: "aprobado" }), "client", "PRODUCCION")).toMatch(/anulá la decisión de Calidad/);
     expect(workItemCellProtection(base({ qualityStatus: "aprobado" }), "finishedQty", "PRODUCCION")).toMatch(/Calidad/);
@@ -123,7 +123,10 @@ describe("política de celdas de WorkItem", () => {
     expect(workItemReasonRequired(base(), "packagingLote", "2026-10-08")).toBe(true);
     expect(workItemReasonRequired(base(), "finishedQty", "2026-10-08")).toBe(true);
     expect(workItemReasonRequired(base({ plannedDate: "2026-10-20" }), "client", "2026-10-08")).toBe(false);
-    expect(workItemReasonRequired(base({ plannedDate: "2026-09-01" }), "client", "2026-10-08")).toBe(true);
+    // Fecha pasada o trabajo informado: organizar no pide motivo (fechas, cantidades, cliente, observaciones).
+    expect(workItemReasonRequired(base({ plannedDate: "2026-09-01" }), "client", "2026-10-08")).toBe(false);
+    expect(workItemReasonRequired(base({ plannedDate: "2026-09-01" }), "plannedDate", "2026-10-08")).toBe(false);
+    expect(workItemReasonRequired(base({ plannedDate: "2026-09-01" }), "deliveryDate", "2026-10-08")).toBe(false);
   });
 });
 
@@ -178,10 +181,9 @@ describe("applyWorkItemCellChanges (servicio sobre funciones canónicas)", () =>
     expect(fake.rows.get("native:w1")).toMatchObject({ client: "OTRO", notes: "urgente", version: 5 });
   });
 
-  it("protegidos: estado/firmas, informados SIN motivo, decididos/cerrados y no nativos NO llegan a la base", async () => {
-    fake.rows.set("native:w2", base({ id: "native:w2", status: "revision" }));
+  it("protegidos: estado/firmas, corrección de realizadas SIN motivo, decididos/cerrados y no nativos NO llegan a la base", async () => {
     fake.rows.set("native:w3", base({ id: "native:w3", qualityStatus: "aprobado" }));
-    for (const c of [ch("status", "completo"), ch("finishedQty", "1"), { ...ch("client", "x"), id: "native:w2" }, { ...ch("client", "x"), id: "native:w3" }, { ...ch("client", "x"), id: "semanas:z" }]) {
+    for (const c of [ch("status", "completo"), ch("finishedQty", "1"), { ...ch("client", "x"), id: "native:w3" }, { ...ch("client", "x"), id: "semanas:z" }]) {
       const r = await applyWorkItemCellChanges(produccion, [c as never], "2026-10-08");
       expect(r.ok).toBe(false);
     }

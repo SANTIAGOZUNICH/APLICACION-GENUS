@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildDerivedDeliveries, computeRecoveryStats, type WorkFacts } from "./derive";
-import { groupDeliveriesByClient } from "./rules";
+import { groupDeliveriesByClient, itemQuantities } from "./rules";
 import type { RealDelivery } from "./types";
 
 const ev = (o: Partial<RealDelivery> = {}): RealDelivery => ({
@@ -14,9 +14,26 @@ const work = (o: Partial<WorkFacts> = {}): WorkFacts => ({
 });
 const RANGE = { from: "2026-09-01", to: "2026-10-31" };
 
+describe("buildDerivedDeliveries — agenda de PENDIENTES (calendario)", () => {
+  it("entrega completa: no aparece (ni su entrega real ni el trabajo)", () => {
+    const w = work({ deliveryDate: "2026-10-20", realDeliveries: [ev({ date: "2026-10-05", quantity: "1000" })] });
+    expect(buildDerivedDeliveries([w], RANGE)).toEqual([]);
+  });
+  it("entrega parcial 300 de 500: solo el trabajo en su fecha programada, con saldo 200 (lo entregado no se repite)", () => {
+    const w = work({ plannedQuantity: "500", finishedQty: null, deliveryDate: "2026-10-20", realDeliveries: [ev({ quantity: "300", date: "2026-10-05" })] });
+    const out = buildDerivedDeliveries([w], RANGE);
+    expect(out.map((d) => [d.origin, d.deliveryDate, d.status])).toEqual([["desde_trabajo", "2026-10-20", "entrega_parcial"]]);
+    expect(itemQuantities(out[0]!.items[0]!)).toMatchObject({ planned: 500, delivered: 300, pending: 200 });
+  });
+  it("al completar el saldo desaparece", () => {
+    const w = work({ plannedQuantity: "500", finishedQty: null, deliveryDate: "2026-10-20", realDeliveries: [ev({ quantity: "300", date: "2026-10-05" }), ev({ id: "e2", quantity: "200", date: "2026-10-19" })] });
+    expect(buildDerivedDeliveries([w], RANGE)).toEqual([]);
+  });
+});
+
 describe("buildDerivedDeliveries — histórico", () => {
   it("un trabajo entregado se ubica en su FECHA REAL de entrega, no en la de fin de producción", () => {
-    const [d] = buildDerivedDeliveries([work({ completedAt: "2026-09-18", realDeliveries: [ev({ date: "2026-09-25" })] })], RANGE);
+    const [d] = buildDerivedDeliveries([work({ completedAt: "2026-09-18", realDeliveries: [ev({ date: "2026-09-25" })] })], RANGE, { includeRealDeliveries: true });
     expect(d!.deliveryDate).toBe("2026-09-25");
     expect(d!.origin).toBe("entrega_registrada");
     expect(d!.items[0]!.works[0]!.completedAt).toBe("2026-09-18");
@@ -26,13 +43,13 @@ describe("buildDerivedDeliveries — histórico", () => {
   });
 
   it("entregado sin entrega real registrada (solo con fecha de fin de producción): NO se ubica, no se inventa fecha", () => {
-    const out = buildDerivedDeliveries([work({ operationalStatus: "entregado", completedAt: "2026-09-18", realDeliveries: [], deliveryDate: null })], RANGE);
+    const out = buildDerivedDeliveries([work({ operationalStatus: "entregado", completedAt: "2026-09-18", realDeliveries: [], deliveryDate: null })], RANGE, { includeRealDeliveries: true });
     expect(out).toEqual([]);
   });
 
   it("entrega parcial: se muestra la entrega real como parcial y el saldo sigue pendiente en su fecha de entrega", () => {
     const w = work({ plannedQuantity: "1000", finishedQty: null, deliveryDate: "2026-10-20", operationalStatus: "completo", realDeliveries: [ev({ quantity: "400", date: "2026-10-05" })] });
-    const out = buildDerivedDeliveries([w], RANGE);
+    const out = buildDerivedDeliveries([w], RANGE, { includeRealDeliveries: true });
     expect(out.map((d) => [d.origin, d.deliveryDate, d.status])).toEqual([
       ["entrega_registrada", "2026-10-05", "entrega_parcial"],
       ["desde_trabajo", "2026-10-20", "entrega_parcial"],
@@ -41,19 +58,19 @@ describe("buildDerivedDeliveries — histórico", () => {
 
   it("entrega completa: deja de aparecer como pendiente en su fecha programada", () => {
     const w = work({ deliveryDate: "2026-10-20", realDeliveries: [ev({ date: "2026-10-05", quantity: "1000" })] });
-    expect(buildDerivedDeliveries([w], RANGE).map((d) => d.origin)).toEqual(["entrega_registrada"]);
+    expect(buildDerivedDeliveries([w], RANGE, { includeRealDeliveries: true }).map((d) => d.origin)).toEqual(["entrega_registrada"]);
   });
 
   it("un trabajo cancelado/eliminado conserva su entrega real histórica pero no aparece como entrega futura", () => {
     const w = work({ cancelled: true, deliveryDate: "2026-10-20", realDeliveries: [ev({ date: "2026-10-05", quantity: "400" })], plannedQuantity: "1000", finishedQty: null });
-    expect(buildDerivedDeliveries([w], RANGE).map((d) => d.origin)).toEqual(["entrega_registrada"]);
-    expect(buildDerivedDeliveries([work({ cancelled: true, deliveryDate: "2026-10-20" })], RANGE)).toEqual([]);
+    expect(buildDerivedDeliveries([w], RANGE, { includeRealDeliveries: true }).map((d) => d.origin)).toEqual(["entrega_registrada"]);
+    expect(buildDerivedDeliveries([work({ cancelled: true, deliveryDate: "2026-10-20" })], RANGE, { includeRealDeliveries: true })).toEqual([]);
   });
 
   it("las fechas fuera del rango pedido no aparecen", () => {
     const w = work({ realDeliveries: [ev({ date: "2025-01-10" })] });
-    expect(buildDerivedDeliveries([w], RANGE)).toEqual([]);
-    expect(buildDerivedDeliveries([w], { from: "2025-01-01", to: "2025-01-31" })).toHaveLength(1);
+    expect(buildDerivedDeliveries([w], RANGE, { includeRealDeliveries: true })).toEqual([]);
+    expect(buildDerivedDeliveries([w], { from: "2025-01-01", to: "2025-01-31" }, { includeRealDeliveries: true })).toHaveLength(1);
   });
 });
 
@@ -124,7 +141,7 @@ describe("agrupación por cliente + fecha", () => {
 
   it("entrega registrada y futura del mismo cliente el mismo día: un solo cliente en el calendario, con origen distinto en la tarjeta", () => {
     const ws = [work({ workItemId: "a", deliveryDate: "2026-10-15" }), work({ workItemId: "b", realDeliveries: [ev({ date: "2026-10-15" })] })];
-    const out = buildDerivedDeliveries(ws, RANGE);
+    const out = buildDerivedDeliveries(ws, RANGE, { includeRealDeliveries: true });
     expect(out.map((d) => d.origin).sort()).toEqual(["desde_trabajo", "entrega_registrada"]);
     expect(groupDeliveriesByClient(out)).toHaveLength(1);
   });

@@ -222,7 +222,7 @@ export function EditAssignmentDialog({
                 disabled={busy}
               />
               <p className="text-xs text-[var(--os-text-muted)]">
-                Debe mantenerse dentro de la semana ya planificada.
+                Cualquier día (también de otra semana o mes).
               </p>
             </div>
           </div>

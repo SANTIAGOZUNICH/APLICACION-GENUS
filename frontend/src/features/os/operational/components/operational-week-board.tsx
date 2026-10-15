@@ -92,6 +92,8 @@ interface OperationalWeekBoardProps {
   mobileDay?: string;
   /** Con `layout="columns"`: el padre ya muestra día y contador alineados en escritorio (no se repiten por celda). */
   dayHeadersInParent?: boolean;
+  /** Producción: elegir cualquier fecha (otra semana/mes) desde la tarjeta; el padre pide confirmación antes de guardar. */
+  onRequestDate?: (item: WorkItem, plannedDate: string) => void;
 }
 
 /** Botón discreto de edición; no inicia el arrastre ni selecciona el día. */
@@ -486,10 +488,12 @@ function WeekJobCard({
   item,
   cards,
   onEditItem,
+  onRequestDate,
 }: {
   item: WorkItem;
   cards: NonNullable<OperationalWeekBoardProps["cards"]>;
   onEditItem?: (item: WorkItem) => void;
+  onRequestDate?: (item: WorkItem, plannedDate: string) => void;
 }) {
   const semanas = useWorkItemSemanasPriority(item.id);
   const finished = item.finishedQty ?? cards.getFinishedQty(item.id);
@@ -537,8 +541,30 @@ function WeekJobCard({
           <StatusChip status={item.status} />
         </span>
       </div>
-      {(onEditItem || archiveAction) && (
+      {(onEditItem || archiveAction || onRequestDate) && (
         <div className="flex flex-wrap items-center justify-end gap-1">
+          {onRequestDate ? (
+            <label
+              className="mr-auto inline-flex items-center gap-1 text-[0.6rem] font-semibold text-[#9fc0d4]"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+              title="Cambiar la fecha (cualquier día, otra semana o mes)"
+            >
+              Fecha
+              <input
+                type="date"
+                value={item.plannedDate ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (/^\d{4}-\d{2}-\d{2}$/.test(v) && v >= "2000-01-01" && v !== item.plannedDate) onRequestDate(item, v);
+                }}
+                className="rounded border border-white/15 bg-transparent px-1 text-[0.65rem] text-white [color-scheme:dark]"
+                aria-label={`Fecha de ${item.product ?? "trabajo"}`}
+                data-testid="week-job-date"
+              />
+            </label>
+          ) : null}
           <CardEditButton item={item} onEditItem={onEditItem} />
           {archiveAction ? (
             <button
@@ -576,6 +602,7 @@ function WeekColumnCell({
   onEditItem,
   cards,
   compactHeader = false,
+  onRequestDate,
 }: {
   day: string;
   dayItems: WorkItem[];
@@ -583,6 +610,7 @@ function WeekColumnCell({
   hiddenOnMobile: boolean;
   /** Escritorio: oculta el encabezado de la celda (el padre muestra la fila de totales por día alineada). */
   compactHeader?: boolean;
+  onRequestDate?: (item: WorkItem, plannedDate: string) => void;
   draggable: boolean;
   dropZoneId: string;
   canCreate: boolean;
@@ -628,7 +656,7 @@ function WeekColumnCell({
       ) : (
         <ul className="space-y-1.5 overflow-y-auto pr-0.5" style={{ maxHeight: "min(22rem, 50vh)" }} data-testid="week-board-cards">
           {dayItems.map((item) => {
-            const card = <WeekJobCard item={item} cards={cards} onEditItem={onEditItem} />;
+            const card = <WeekJobCard item={item} cards={cards} onEditItem={onEditItem} onRequestDate={draggable && isWorkItemReschedulable(item.status) ? onRequestDate : undefined} />;
             return (
               <li key={item.id} className="min-w-0">
                 {draggable ? (
@@ -678,6 +706,7 @@ export function OperationalWeekBoard({
   layout = "stack",
   mobileDay,
   dayHeadersInParent = false,
+  onRequestDate,
 }: OperationalWeekBoardProps) {
   const weekStart = weekDays[0] ?? weekStartMonday(today);
   const end = weekDays[weekDays.length - 1];
@@ -721,6 +750,7 @@ export function OperationalWeekBoard({
             onEditItem={onEditItem}
             cards={cards}
             compactHeader={Boolean(dayHeadersInParent)}
+            onRequestDate={onRequestDate}
           />
         ))}
       </div>

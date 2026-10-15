@@ -182,15 +182,10 @@ try {
 
   await openEntregas(pp);
   // ===== 1. Fechas: parciales en su fecha real y zona argentina =====
-  check("Parciales: el envío del día 8 aparece el día 8", await waitChip(pp, day(8), CLIENT_P));
-  check("Parciales: el envío de las 23:00 del día 13 aparece el 13 (no el 14 en UTC)", (await waitChip(pp, day(13), CLIENT_P)) && !(await chips(pp, day(14))).includes(CLIENT_P));
-  check("Medianoche UTC: la entrega del 18 00:00 UTC se ve el 17 (Argentina)", await waitChip(pp, day(17), CLIENT_M));
-  const mChip = pp.locator(`[data-testid=entregas-day][data-date='${day(17)}'] [data-testid=entregas-client][data-client='${CLIENT_M}']`);
-  check("…y queda marcada «Revisar fecha» en el calendario", (await mChip.getAttribute("data-review")) === "1");
-  await openChip(pp, day(17), CLIENT_M);
-  check("…el detalle explica qué revisar", /00:00 UTC/.test(await pp.locator("[data-testid=entrega-review-flag]").first().innerText()));
-  await closeDialog(pp);
-
+  // Agenda de PENDIENTES: lo ya entregado por completo no aparece (sigue en Entregados / historial / auditoría).
+  await pp.waitForTimeout(1500);
+  check("Agenda: la entrega parcial ya completada (300 + 200) no aparece", (await pp.locator(`[data-testid=entregas-client][data-client='${CLIENT_P}']`).count()) === 0);
+  check("Agenda: la entrega guardada a las 00:00 UTC (entregada) no aparece", (await pp.locator(`[data-testid=entregas-client][data-client='${CLIENT_M}']`).count()) === 0);
   // ===== 2. «Desde trabajo»: editar UN producto; el otro del mismo cliente queda en su fecha =====
   check("Dos productos del mismo cliente el mismo día: un solo nombre de cliente", (await chips(pp, D_A)).filter((c) => c === CLIENT).length === 1);
   await openChip(pp, D_A, CLIENT);
@@ -199,8 +194,8 @@ try {
   await boxA.locator("[data-testid=entrega-work-edit-date]").fill(D_A2);
   await boxA.locator("[data-testid=entrega-work-edit-qty]").fill("480");
   await boxA.locator("[data-testid=entrega-work-edit-notes]").fill("Retira el cliente");
-  await boxA.locator("[data-testid=entrega-work-edit-reason]").fill("corto");
-  check("Editar: sin motivo suficiente no se puede guardar", await boxA.locator("[data-testid=entrega-work-edit-confirm]").isDisabled());
+  await boxA.locator("[data-testid=entrega-work-edit-reason]").fill("");
+  check("Editar: el motivo es opcional (se puede guardar vacío)", await boxA.locator("[data-testid=entrega-work-edit-confirm]").isEnabled());
   await boxA.locator("[data-testid=entrega-work-edit-reason]").fill("El cliente pidió pasarla al día 23");
   await pr.page.screenshot({ path: `${OUT}/01-editar-desde-trabajo.png` });
   await boxA.locator("[data-testid=entrega-work-edit-confirm]").click();

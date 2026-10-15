@@ -27,7 +27,7 @@ describe("pestaña «Dashboard» en el menú lateral", () => {
 
   it("agregar el ítem no quitó ninguno de los existentes de Producción", () => {
     const items = resolveSectorHome("PRODUCCION").sidebarItems;
-    for (const keep of ["semanas_planilla", "pedidos", "ordenes_elaboracion", "entregados", "remitos", "metricas", "procedimientos"]) {
+    for (const keep of ["pedidos", "ordenes_elaboracion", "entregados", "remitos", "metricas", "procedimientos"]) {
       expect(items).toContain(keep);
     }
   });

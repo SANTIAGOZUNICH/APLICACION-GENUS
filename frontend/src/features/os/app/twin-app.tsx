@@ -34,7 +34,6 @@ import {
   SharedWeeklyPlanViewForMateriaPrima,
 } from "@/features/os/operational/views/shared-weekly-plan-view";
 import { MpHubView } from "@/features/os/operational/views/mp-hub-view";
-import { SemanasGridView } from "@/features/os/operational/views/semanas-grid-view";
 import { SemanasSectorView } from "@/features/os/operational/views/semanas-sector-view";
 import { AsignacionLotesView } from "@/features/os/operational/views/asignacion-lotes-view";
 import { EntregadosView } from "@/features/os/operational/views/entregados-view";
@@ -123,7 +122,8 @@ export function TwinRouter() {
       return <SemanasProduccionView />;
 
     case "semanas-planilla":
-      return <SemanasGridView />;
+      // Pestaña general «Semanas» retirada: enlaces viejos vuelven al inicio del sector.
+      return renderSectorHome(sectorId, SECTOR_VIEW_REGISTRY);
     case "semanas-sector":
       return <SemanasSectorView />;
     case "entregas":

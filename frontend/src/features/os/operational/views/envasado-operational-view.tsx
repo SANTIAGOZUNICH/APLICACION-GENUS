@@ -43,7 +43,7 @@ import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
 import { postCircuitDelivery, postSendToEnvasado } from "../adapters/circuit-client";
 import type { DeliverWorkPayload } from "../components/deliver-work-dialog";
 import type { SendToEnvasadoPayload } from "../components/send-to-envasado-dialog";
-import { postRescheduleWork } from "@/lib/api/live-sync-client";
+import { MoveConfirmDialog, usePendingMove } from "../components/move-confirm";
 
 /** Sensor de drag & drop — umbral de distancia para no interferir con el click normal de "seleccionar día". */
 function useWeekBoardDndSensors() {
@@ -496,6 +496,16 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
   }));
 
   const dndSensors = useWeekBoardDndSensors();
+  const move = usePendingMove({
+    actorSectorId: actorSectorId as SectorId,
+    updatedBy: workspace.context.displayName,
+    onSaved: () => {
+      showToast("Planificación actualizada.");
+      void refresh();
+      void refreshPendientes();
+    },
+    onError: (m) => showToast(m, "info"),
+  });
 
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
@@ -510,28 +520,10 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       const sameDay = item.plannedDate === target.day;
       const sameLine = (resolveLineBucket(item.line) ?? "1") === target.zone;
       if (sameDay && sameLine) return;
-
-      try {
-        const res = await postRescheduleWork({
-          itemId,
-          plannedDate: target.day,
-          line: newLine,
-          updatedBy: workspace.context.displayName,
-          actorSectorId: actorSectorId as SectorId,
-        });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as { error?: string };
-          showToast(body.error ?? "No se pudo mover el trabajo. Reintentá.", "info");
-          return;
-        }
-        showToast("Planificación actualizada.");
-        void refresh();
-        void refreshPendientes();
-      } catch {
-        showToast("No se pudo mover el trabajo. Reintentá.", "info");
-      }
+      // No se guarda al soltar: CONFIRMAR / CANCELAR (sin motivo).
+      move.request({ item, plannedDate: target.day, line: newLine, lineLabel: sameLine ? undefined : newLine ?? undefined });
     },
-    [canAssignWork, workItems, workspace.context.displayName, actorSectorId, showToast, refresh, refreshPendientes]
+    [canAssignWork, workItems, move]
   );
 
   const listTabs = [
@@ -702,6 +694,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
                       <OperationalWeekBoard
                         layout="columns"
                         mobileDay={mobileDay}
+                        onRequestDate={canAssignWork ? (item, plannedDate) => move.request({ item, plannedDate }) : undefined}
                         dayHeadersInParent
                         weekDays={calendar.weekDays}
                         today={calendar.today}
@@ -794,6 +787,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         </>
       )}
 
+      <MoveConfirmDialog pending={move.pending} busy={move.busy} onConfirm={() => void move.confirm()} onCancel={move.cancel} />
       <WorkItemDrawer
         item={selectedItem}
         open={drawerOpen}
@@ -906,6 +900,15 @@ export function ElaboracionOperationalView() {
   );
 
   const dndSensors = useWeekBoardDndSensors();
+  const moveEl = usePendingMove({
+    actorSectorId: actorSectorId as SectorId,
+    updatedBy: "Producción",
+    onSaved: () => {
+      showToast("Planificación actualizada.");
+      void refresh();
+    },
+    onError: (m) => showToast(m, "info"),
+  });
 
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
@@ -916,26 +919,10 @@ export function ElaboracionOperationalView() {
       const itemId = String(active.id);
       const item = workItems.find((w) => w.id === itemId);
       if (!item || item.plannedDate === target.day) return;
-
-      try {
-        const res = await postRescheduleWork({
-          itemId,
-          plannedDate: target.day,
-          updatedBy: item.ownerPerson?.trim() || "Elaboración",
-          actorSectorId: actorSectorId as SectorId,
-        });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as { error?: string };
-          showToast(body.error ?? "No se pudo mover el trabajo. Reintentá.", "info");
-          return;
-        }
-        showToast("Planificación actualizada.");
-        void refresh();
-      } catch {
-        showToast("No se pudo mover el trabajo. Reintentá.", "info");
-      }
+      // No se guarda al soltar: CONFIRMAR / CANCELAR (sin motivo).
+      moveEl.request({ item, plannedDate: target.day });
     },
-    [canAssignWork, workItems, actorSectorId, showToast, refresh]
+    [canAssignWork, workItems, moveEl]
   );
 
   return (
@@ -1076,6 +1063,7 @@ export function ElaboracionOperationalView() {
         onSaveProgress={handleSave}
         onSendToEnvasado={handleSendToEnvasado}
       />
+      <MoveConfirmDialog pending={moveEl.pending} busy={moveEl.busy} onConfirm={() => void moveEl.confirm()} onCancel={moveEl.cancel} />
     </TwinShell>
   );
 }

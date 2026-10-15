@@ -288,10 +288,9 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     // a propósito para Producción — la infraestructura de OA (auto-creación
     // 1 trabajo = 1 OA, /oa/[id], uso desde Envasado/Codificado/remitos)
     // sigue intacta; solo se retira el listado independiente de este menú.
-    // Sin «Panel general» (ex mi_trabajo de Producción, retirado): la planilla Semanas, que solo se abría desde ese
-    // panel, pasa a tener entrada propia y es la primera sección (donde aterriza Producción).
+    // Sin «Panel general» ni la pestaña general «Semanas» (retiradas): Producción aterriza en Pedidos. Las vistas
+    // semanales de cada sector (Envasado, Elaboración, Codificado…) siguen dentro de su «Mi trabajo» / «Ver …».
     sidebarItems: [
-      "semanas_planilla",
       "pedidos",
       "ordenes_elaboracion",
       "pendientes",

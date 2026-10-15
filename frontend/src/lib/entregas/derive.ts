@@ -118,7 +118,7 @@ function makeItem(w: WorkFacts, kind: "registrada" | "programada", event?: WorkF
 export function buildDerivedDeliveries(
   works: readonly WorkFacts[],
   range: { from: string; to: string },
-  opts: { includeHidden?: boolean } = {}
+  opts: { includeHidden?: boolean; includeRealDeliveries?: boolean } = {}
 ): ScheduledDelivery[] {
   const groups = new Map<string, ScheduledDelivery>();
   const add = (w: WorkFacts, date: string, origin: DeliveryOrigin, item: ScheduledDeliveryItem) => {
@@ -155,8 +155,12 @@ export function buildDerivedDeliveries(
   for (const w of works) {
     if (w.linked) continue; // ya tiene contenedor: no se duplica
     const summary = summarizeRealDeliveries(w);
-    for (const ev of w.realDeliveries) {
-      if (inRange(ev.date, range)) add(w, ev.date, "entrega_registrada", makeItem(w, "registrada", ev));
+    // El calendario es una AGENDA de lo pendiente: las entregas físicas ya hechas se consultan en Entregados/Historial
+    // (no se borran). Solo se listan si se piden explícitamente.
+    if (opts.includeRealDeliveries) {
+      for (const ev of w.realDeliveries) {
+        if (inRange(ev.date, range)) add(w, ev.date, "entrega_registrada", makeItem(w, "registrada", ev));
+      }
     }
     // «Quitada del calendario» por Producción: no vuelve a aparecer (solo se lista si se piden las quitadas, para restaurar).
     if (w.hidden && !opts.includeHidden) continue;

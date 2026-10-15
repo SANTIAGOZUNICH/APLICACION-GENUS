@@ -316,16 +316,11 @@ describe("updateWorkItemPlanningDurable — Fecha de producción y patch parcial
     expect(JSON.parse(event.toStatus)).toMatchObject({ plannedDate: "2026-08-27" });
   });
 
-  it("10) rechaza plannedDate fuera de la semana ya planificada, sin mutar la fila", async () => {
-    await expect(
-      updateWorkItemPlanningDurable("wi-1", {
-        plannedDate: "2026-09-02",
-        reason: "Intento de mover a otra semana",
-        ...actorArgs,
-      })
-    ).rejects.toMatchObject({ name: "PlanningValidationError" });
-    expect(fakeDbHandle.workItems.get("wi-1")!.plannedDate).toBe("2026-08-25");
-    expect(fakeDbHandle.operationalEvents).toHaveLength(0);
+  it("10) mueve plannedDate a otra semana y a otro mes (sin motivo) y lo audita", async () => {
+    const row = await updateWorkItemPlanningDurable("wi-1", { plannedDate: "2026-09-02", reason: null, ...actorArgs });
+    expect(row.plannedDate).toBe("2026-09-02");
+    expect(fakeDbHandle.workItems.get("wi-1")!.plannedDate).toBe("2026-09-02");
+    expect(fakeDbHandle.operationalEvents).toHaveLength(1);
   });
 
   it("11) patch parcial: editar solo notes no toca client/product/cantidad/fecha de entrega ni plannedDate", async () => {

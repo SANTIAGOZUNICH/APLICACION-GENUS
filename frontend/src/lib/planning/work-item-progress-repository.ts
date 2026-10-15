@@ -14,7 +14,6 @@ import { canRequestRework } from "@/features/os/operational/lib/rework-flow";
 import { isWorkItemReschedulable } from "@/features/os/operational/lib/work-transfer-labels";
 import { resolveDirectCompletePackedUnits, type PackingGroup } from "@/lib/remitos/packing-math";
 import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
-import { addDaysIso, weekStartMonday } from "@/lib/operational/operational-calendar";
 import { normalizeOaOrderNumber } from "@/lib/planning/oa-assign-helpers";
 import { loadWorkItemOperationalData } from "@/lib/planning/work-item-operational-data";
 import {
@@ -718,13 +717,8 @@ export async function updateWorkItemPlanningDurable(
       if (!nextDate || !/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) {
         throw new PlanningValidationError("Fecha de producción inválida.");
       }
-      const weekStart = weekStartMonday(String(existing.plannedDate));
-      const weekEnd = addDaysIso(weekStart, 6);
-      if (nextDate < weekStart || nextDate > weekEnd) {
-        throw new PlanningValidationError(
-          `La fecha de producción debe mantenerse dentro de la semana ya planificada (${weekStart} a ${weekEnd}). Para moverlo a otra semana, reasigná el trabajo.`
-        );
-      }
+      // Sin restricción de semana: Producción mueve el trabajo a cualquier día (otra semana o mes). Las vistas
+      // Semana/Día lo ubican por su fecha (no por la semana de planificación de origen).
       const currentFrom = String(existing.plannedDate);
       const currentTo = existing.plannedDateTo ? String(existing.plannedDateTo) : currentFrom;
       if (nextDate !== currentFrom || nextDate !== currentTo) {
@@ -896,7 +890,7 @@ export interface CorrectFinishedQtyInput {
  */
 export async function correctFinishedQtyDurable(id: string, input: CorrectFinishedQtyInput) {
   const reason = input.reason?.trim() ?? "";
-  if (reason.length < 8) throw new PlanningValidationError("La corrección de cantidad realizada requiere un motivo (mín. 8 caracteres).");
+  if (!reason) throw new PlanningValidationError("La corrección de cantidad realizada requiere un motivo.");
   const next = input.finishedQty?.trim() ?? "";
   if (!/^\d+(\.\d+)?$/.test(next)) throw new PlanningValidationError("Cantidad realizada inválida (número ≥ 0).");
   const db = getDb();

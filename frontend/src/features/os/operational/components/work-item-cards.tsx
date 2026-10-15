@@ -22,7 +22,7 @@ import { planDivergences } from "@/lib/semanas-sheet/task-links";
 import { isNativeWorkItemId, isWorkItemReported, MIN_WORK_ITEM_REASON, workItemReasonRequired, type WorkItemCellField } from "@/lib/planning/work-item-cell-edit";
 import { VIEW_ARCHIVE_TOOLTIP } from "@/lib/work-view-archive";
 import type { WorkItem } from "@/types/operational/work-item";
-import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
+import { usePreviewSession } from "@/features/os/session/preview-context";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { useReloadWorkItemPriorities, useWorkItemPrioritiesAvailable, useWorkItemSemanasPriority } from "../hooks/use-work-item-priorities";
 import type { useWorkItemCellEditing } from "../hooks/use-work-item-cells";
@@ -112,7 +112,7 @@ function PlanField({ item, field, value, display, cells, className, inputType = 
     const invalid = spec?.validate?.(next, item);
     if (invalid) { setError(invalid); return; }
     const why = reason.trim();
-    if (showReason && why.length < MIN_WORK_ITEM_REASON) { setAskReason(true); setError(`Escribí el motivo (mín. ${MIN_WORK_ITEM_REASON} caracteres): queda auditado.`); return; }
+    if (showReason && why.length < MIN_WORK_ITEM_REASON) { setAskReason(true); setError("Escribí el motivo: queda auditado."); return; }
     setBusy(true);
     setError(null);
     const res = await cells.onCellsCommit!([
@@ -218,21 +218,13 @@ function CardPriority({ item, canEdit }: { item: WorkItem; canEdit: boolean }) {
     return (
       <span className="inline-flex flex-wrap items-center gap-1.5">
         <WorkItemPriorityBadge itemId={item.id} />
-        {canEdit && (isPlanSector(item.sector) ? <LinkTaskPicker item={item} /> : <LinkInSemanas />)}
+        {canEdit && isPlanSector(item.sector) ? <LinkTaskPicker item={item} /> : null}
       </span>
     );
   }
   return canEdit ? <EditablePriority item={item} /> : <WorkItemPriorityBadge itemId={item.id} />;
 }
 
-function LinkInSemanas() {
-  const { navigateSidebar } = usePreviewContext();
-  return (
-    <button type="button" onClick={(e) => { e.stopPropagation(); navigateSidebar("semanas_planilla"); }} className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--os-teal)] hover:underline" data-testid="card-link-semanas" title="La prioridad se asigna a una tarea de Semanas: vinculá este trabajo desde Semanas → Lista.">
-      <Link2 className="size-3" aria-hidden="true" /> Vincular en Semanas
-    </button>
-  );
-}
 
 const foldText = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 const words = (t: string) => new Set(foldText(t).split(/[^a-z0-9]+/).filter((w) => w.length > 2));

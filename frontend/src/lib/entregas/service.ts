@@ -36,6 +36,7 @@ import {
   snapshotOf,
   validateDeliveryInput,
   validateReason,
+  optionalReason,
   type CleanDelivery,
   type DeliveryInput,
 } from "./rules";
@@ -464,6 +465,26 @@ const isoDate = (v: string, label: string) => {
   return v;
 };
 
+/**
+ * Agenda de entregas PENDIENTES: se ocultan los productos ya entregados por completo y las entregas sin nada pendiente
+ * (siguen en la base, en Entregados, el historial y la auditoría). Las canceladas solo se listan con «Ver quitadas»
+ * (para poder restaurarlas). Una entrega parcial queda, con su saldo pendiente en el detalle.
+ */
+function pendingAgenda(deliveries: ScheduledDelivery[], includeHidden: boolean): ScheduledDelivery[] {
+  const out: ScheduledDelivery[] = [];
+  for (const d of deliveries) {
+    if (d.state === "cancelada") {
+      if (includeHidden) out.push(d);
+      continue;
+    }
+    const items = d.items.filter((it) => it.status !== "entregada");
+    if (items.length === 0) continue;
+    const next = { ...d, items };
+    out.push({ ...next, status: deriveDeliveryStatus(next) });
+  }
+  return out;
+}
+
 export const entregasService = {
   /**
    * Entregas con fecha entre `from` y `to` (inclusive). Une, SIN copiar nada (se calcula en cada lectura, así que cualquier
@@ -481,7 +502,7 @@ export const entregasService = {
     // Las apariciones quitadas por Producción solo se listan para quien puede restaurarlas.
     const includeHidden = Boolean(opts.includeHidden) && canManageEntregas(actor.sector);
     const derived = buildDerivedDeliveries(await loadUnlinkedWorks(db, from, to), { from, to }, { includeHidden });
-    return restrictForActor(actor, [...scheduled, ...derived]);
+    return restrictForActor(actor, [...pendingAgenda(scheduled, includeHidden), ...derived]);
   },
 
   /** Diagnóstico de lo recuperado automáticamente. Solo quien ve todo (Envasado ve el calendario recortado: sin cifras). */
@@ -583,8 +604,7 @@ export const entregasService = {
   async reschedule(actor: EntregasActor, id: string, newDate: string, reason: unknown, expectedVersion: number): Promise<ScheduledDelivery> {
     assertManage(actor);
     const date = isoDate(newDate, "La nueva fecha");
-    const r = validateReason(reason);
-    if (!r.ok) throw new OrdersValidationError(r.message);
+    const r = optionalReason(reason);
     const db = requireDb();
     await db.transaction(async (tx) => {
       const cur = await lockDelivery(tx, id);
@@ -689,8 +709,7 @@ export const entregasService = {
     reason: unknown
   ): Promise<{ applied: string[]; delivery: ScheduledDelivery }> {
     assertManage(actor);
-    const r = validateReason(reason);
-    if (!r.ok) throw new OrdersValidationError(r.message);
+    const r = optionalReason(reason);
     const db = requireDb();
     const linkRows = (await db.execute(sql`
       select l.id, i.delivery_id, l.work_item_id from scheduled_delivery_links l join scheduled_delivery_items i on i.id = l.item_id
@@ -717,7 +736,7 @@ export const entregasService = {
       field: d.field,
       value: d.itemValue,
       expectedVersion: version,
-      reason: `Entrega programada ${delivery.client} (${delivery.deliveryDate}): ${r.value}`,
+      reason: r.value ? `Entrega programada ${delivery.client} (${delivery.deliveryDate}): ${r.value}` : undefined,
     }));
     const { results, ok } = await applyWorkItemCellChanges(
       { email: actor.email, sector: actor.sector, displayName: actor.displayName ?? actor.email },
@@ -744,8 +763,7 @@ export const entregasService = {
    */
   async keepWorkAsIs(actor: EntregasActor, linkId: string, fields: string[], reason: unknown): Promise<ScheduledDelivery> {
     assertManage(actor);
-    const r = validateReason(reason);
-    if (!r.ok) throw new OrdersValidationError(r.message);
+    const r = optionalReason(reason);
     const db = requireDb();
     const rows = (await db.execute(sql`
       select i.delivery_id from scheduled_delivery_links l join scheduled_delivery_items i on i.id = l.item_id
@@ -809,8 +827,7 @@ export const entregasService = {
   ): Promise<{ source: ScheduledDelivery; target: ScheduledDelivery }> {
     assertManage(actor);
     const date = isoDate(newDate, "La nueva fecha");
-    const r = validateReason(reason);
-    if (!r.ok) throw new OrdersValidationError(r.message);
+    const r = optionalReason(reason);
     const db = requireDb();
     let targetId = deliveryId;
     await db.transaction(async (tx) => {
@@ -967,8 +984,7 @@ export const entregasService = {
     reason: unknown
   ): Promise<{ workItemId: string; applied: string[] }> {
     assertManage(actor);
-    const r = validateReason(reason);
-    if (!r.ok) throw new OrdersValidationError(r.message);
+    const r = optionalReason(reason);
     const db = requireDb();
     const row = ((await db.execute(sql`
       select w.version, to_char(w.delivery_date, 'YYYY-MM-DD') as delivery_date, w.planned_quantity, w.notes,
@@ -1001,7 +1017,7 @@ export const entregasService = {
       field: f.field,
       value: f.value ?? "",
       expectedVersion: Number(row.version),
-      reason: `Calendario de Entregas: ${r.value}`,
+      reason: r.value ? `Calendario de Entregas: ${r.value}` : undefined,
     }));
     const { results, ok } = await applyWorkItemCellChanges(
       { email: actor.email, sector: actor.sector, displayName: actor.displayName ?? actor.email },
