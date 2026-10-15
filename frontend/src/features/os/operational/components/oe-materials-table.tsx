@@ -10,7 +10,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { DecimalInput } from "@/components/ui/decimal-input";
-import { emptyOeMaterial } from "@/lib/orders/content";
+import { emptyOeMaterial, hydrateOrderContent } from "@/lib/orders/content";
 import {
   buildOeConsumptionPlan,
   codeExistsInCatalog,
@@ -63,7 +63,8 @@ export function OeMaterialsTable({
   onRemoveMaterial: (id: string) => void;
 }) {
   const catalog = useMpCatalog(session);
-  const materials = content.materials;
+  // Defensa: plantillas/OE guardadas antes de CÓDIGO MP / KG REAL no tienen esos campos (la tabla los lee como texto).
+  const materials = useMemo(() => hydrateOrderContent(content).materials, [content]);
   const byId = useMemo(() => new Map(materials.map((m) => [m.id, m])), [materials]);
   const plan = useMemo(() => (catalog ? buildOeConsumptionPlan(materials, catalog) : null), [materials, catalog]);
   const issuesByRow = useMemo(() => {

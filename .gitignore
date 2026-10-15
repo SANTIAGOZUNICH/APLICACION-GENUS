@@ -1,2 +1,5 @@
 .vercel
 .env*
+
+# worktrees auxiliares de Claude Code
+.claude/worktrees/
