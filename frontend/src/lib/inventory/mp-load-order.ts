@@ -79,7 +79,7 @@ export async function backfillMpLoadOrderTable(tx: DbTx, table: MpLoadOrderTable
   return { reordenadas: res.rows.length, porFecha, sinFecha: res.rows.length - porFecha };
 }
 
-/** Variante dentro de una transacción ya abierta con el candado de MP (la usa `runMpInventoryOp`). */
+/** Variante dentro de una transacción ya abierta con el candado de MP. */
 export async function ensureMpLoadOrderBackfillInTx(tx: DbTx): Promise<MpLoadOrderBackfillResult> {
   const out = {} as MpLoadOrderBackfillResult;
   for (const table of MP_LOAD_ORDER_TABLES) out[table] = await backfillMpLoadOrderTable(tx, table);
@@ -87,16 +87,31 @@ export async function ensureMpLoadOrderBackfillInTx(tx: DbTx): Promise<MpLoadOrd
 }
 
 /**
- * Garantiza (como máximo cada 30 s por proceso) que las filas históricas tengan orden. Toma el mismo candado que las operaciones de MP,
- * así que nunca se cruza con una carga en curso. Sin base de datos no hace nada (el repositorio en memoria ya conserva el
- * orden de inserción).
+ * Garantiza (como máximo cada 30 s por proceso) que las filas históricas tengan orden. Camino de LECTURA: nunca espera el
+ * candado de MP (esperar ocuparía una conexión del pool y, con cargas simultáneas, puede bloquear a quien tiene el candado):
+ *  - si no hay filas pendientes (lo normal después de la primera vez), no abre transacción ni toma candado;
+ *  - si las hay, intenta tomar el candado SIN esperar y las ordena en una transacción CORTA y propia; si el candado está
+ *    ocupado, no hace nada: lo intenta la próxima lectura u operación de MP (que lo llama con `force` antes de abrir la suya).
+ *  Nunca corre dentro de la transacción de una operación de MP: así las filas históricas no quedan bloqueadas mientras dura.
+ * Sin base de datos no hace nada (el repositorio en memoria ya conserva el orden de inserción).
  */
-export async function ensureMpLoadOrderBackfill(): Promise<MpLoadOrderBackfillResult | null> {
-  if (!isDatabaseConfigured() || Date.now() - lastCheckAt < CHECK_EVERY_MS) return null;
-  const result = await getDb().transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('genus-mp-inventory'))`);
+export async function ensureMpLoadOrderBackfill(opts: { force?: boolean } = {}): Promise<MpLoadOrderBackfillResult | null> {
+  if (!isDatabaseConfigured()) return null;
+  if (!opts.force && Date.now() - lastCheckAt < CHECK_EVERY_MS) return null;
+  lastCheckAt = Date.now(); // evita que muchas lecturas simultáneas repitan la verificación
+  const db = getDb();
+  const pending = (await db.execute(
+    sql.raw(MP_LOAD_ORDER_TABLES.map((t) => `select 1 as n from "${t}" where seq_criterio is null`).join(" union all ") + " limit 1")
+  )) as unknown as { rows: unknown[] };
+  if (pending.rows.length === 0) return null;
+  return db.transaction(async (tx) => {
+    const got = (await tx.execute(sql`select pg_try_advisory_xact_lock(hashtext('genus-mp-inventory')) as ok`)) as unknown as {
+      rows: Array<{ ok: boolean }>;
+    };
+    if (!got.rows[0]?.ok) {
+      lastCheckAt = 0; // se reintenta en la próxima lectura
+      return null;
+    }
     return ensureMpLoadOrderBackfillInTx(tx);
   });
-  lastCheckAt = Date.now();
-  return result;
 }

@@ -26,6 +26,7 @@ vi.mock("@/lib/db/client", () => {
         },
       }),
       // Backfill del orden de carga de MP: sin filas históricas pendientes.
+      execute: async () => ({ rows: [] }),
       transaction: async (fn: (tx: unknown) => unknown) => fn({ execute: async () => ({ rows: [] }) }),
       insert: (t: object) => ({
         values: (v: { id?: string; payload: unknown }) => ({

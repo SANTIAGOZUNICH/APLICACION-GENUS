@@ -75,7 +75,17 @@ Por eso esas filas quedan con `seq_criterio = NULL` y un servicio idempotente (`
 3. Se **permutan las mismas posiciones** que ya tenían (no se crean ni pierden posiciones, no se tocan las de filas nuevas, así
    que las nuevas siempre quedan después). Dos `UPDATE` (liberar con signo negativo y repartir) en una transacción, bajo el
    mismo candado de MP. **No se toca `payload`, kg, lote, `updated_at`, movimientos ni saldos.**
-4. Corre al leer (como máximo cada 30 s por proceso) y al escribir; es idempotente (`seq_criterio IS NULL` ya no queda).
+4. Corre al leer (como máximo cada 30 s por proceso) y antes de cada operación de MP, siempre en una transacción CORTA y
+   propia que **no espera** el candado (si está ocupado, lo hace la próxima lectura u operación). Nunca dentro de la
+   transacción de una operación: así las filas históricas no quedan bloqueadas mientras dura. Es idempotente
+   (`seq_criterio IS NULL` ya no queda).
+
+### Cargas simultáneas (corrección de un bloqueo)
+Con muchas operaciones de MP a la vez, todas las conexiones del pool (10) quedaban ocupadas por transacciones esperando el
+candado de MP, y la que lo tenía pedía una conexión más para el chequeo de esquema (`isFeatureSchemaReady`) → bloqueo
+permanente (el E2E de 40 altas simultáneas quedaba colgado con build de producción). Corregido: el chequeo de esquema se hace
+ANTES de abrir la transacción y, una vez que el esquema está listo, no se vuelve a consultar; y la ordenación histórica ya no
+espera el candado ni corre dentro de la operación.
 
 **Certeza:** el orden histórico es el de la fecha de creación registrada en cada fila — es el mejor dato recuperable, pero
 **no se afirma que sea el orden original exacto** (filas sin `createdAt`, o creadas el mismo milisegundo, usan un criterio de
