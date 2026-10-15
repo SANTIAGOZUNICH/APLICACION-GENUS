@@ -18,8 +18,9 @@
  */
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
+import { isFeatureSchemaReady } from "@/lib/db/feature-schema";
 import { invAjustes, invAudit, invMpCompras, invMpControl, invMpIngresos, invMpStock } from "@/lib/db/schema";
 import { runWithTx, type DbTx } from "@/lib/db/tx-context";
 import { MAX_INVENTORY_CELL_CHANGES, type InventoryCellChange, type InventoryCellResult } from "./cell-edit";
@@ -31,6 +32,7 @@ import {
   type InventoryService,
 } from "./inventory-service";
 import { MemoryInventoryRepo } from "./memory-repo";
+import { ensureMpLoadOrderBackfill, MP_SEQ_ALTA } from "./mp-load-order";
 import {
   MAX_MP_SHEET_CHANGES,
   MIN_MP_CORRECCION_MOTIVO,
@@ -95,14 +97,20 @@ export async function runMpInventoryOp<T>(
   options: { notify?: (payload: InventoryNotificationPayload) => Promise<void> | void } = {}
 ): Promise<T> {
   const notifications: InventoryNotificationPayload[] = [];
+  // Antes de ocupar una conexión con la transacción: el chequeo de esquema (si hace falta) usa su propia conexión y NO debe
+  // pedirse con el candado de MP tomado (con el pool lleno de operaciones esperando ese candado, nunca la obtendría).
+  await isFeatureSchemaReady();
+  // Orden de carga: las filas históricas sin ordenar se ordenan una vez, en una transacción corta y PROPIA (idempotente, sin
+  // esperar el candado). Dentro de la operación bloquearía esas filas hasta el final de la operación.
+  await ensureMpLoadOrderBackfill({ force: true });
   const result = await getDb().transaction((tx) =>
     runWithTx(tx, async () => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('genus-mp-inventory'))`);
       const [stock, ingresos, compras, control] = await Promise.all([
-        tx.select().from(invMpStock),
-        tx.select().from(invMpIngresos),
-        tx.select().from(invMpCompras),
-        tx.select().from(invMpControl),
+        tx.select().from(invMpStock).orderBy(asc(invMpStock.loadSeq)),
+        tx.select().from(invMpIngresos).orderBy(asc(invMpIngresos.loadSeq)),
+        tx.select().from(invMpCompras).orderBy(asc(invMpCompras.loadSeq)),
+        tx.select().from(invMpControl).orderBy(asc(invMpControl.loadSeq)),
       ]);
       const repo = new MemoryInventoryRepo();
       repo.mpStock = stock.map((r) => normalizeMpStockPayload(r.payload));
@@ -172,7 +180,7 @@ export async function runMpInventoryOp<T>(
               .returning({ id: table.id });
             if (res.length === 0) throw new MpConflictError();
           } else {
-            await tx.insert(table).values({ id: row.id, payload: row as never, updatedAt: now });
+            await tx.insert(table).values({ id: row.id, payload: row as never, updatedAt: now, seqCriterio: MP_SEQ_ALTA });
           }
         }
       }

@@ -35,6 +35,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0045_scheduled_deliveries": "5e0e8f0f071ac386f5d6fad39ae1e623ec930565c2dd76f94f7956a690ecbbc7",
   "0046_dashboard_kpi_targets": "aef737a752f0556501448cfd6377c47ebdc02e834a494534b3fa7f7135c9b9c7",
   "0047_work_item_delivery_lines": "8e087db051df1b9ce194103839561404f88fb1df77f9eba002b0179252cd0fc5",
+  "0049_mp_load_order": "d34b39584f6cae250bbc72a6d29676a78d4c9c369ffffe0458b0c9583c7ed059",
 });
 
 export const RECONCILE_LOG_TABLE = "genus_migration_reconcile_log";
@@ -159,6 +160,14 @@ export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
   { migration: "0047_work_item_delivery_lines", object: "work_item_delivery_lines" },
   { migration: "0047_work_item_delivery_lines", object: "work_item_deliveries.delivery_complete" },
   { migration: "0047_work_item_delivery_lines", object: "work_item_deliveries.pending_balance" },
+  { migration: "0049_mp_load_order", object: "inv_mp_stock.load_seq" },
+  { migration: "0049_mp_load_order", object: "inv_mp_stock.seq_criterio" },
+  { migration: "0049_mp_load_order", object: "inv_mp_ingresos.load_seq" },
+  { migration: "0049_mp_load_order", object: "inv_mp_ingresos.seq_criterio" },
+  { migration: "0049_mp_load_order", object: "inv_mp_compras.load_seq" },
+  { migration: "0049_mp_load_order", object: "inv_mp_compras.seq_criterio" },
+  { migration: "0049_mp_load_order", object: "inv_mp_control.load_seq" },
+  { migration: "0049_mp_load_order", object: "inv_mp_control.seq_criterio" },
 ]);
 
 /** @param {{ query: (text: string, params?: unknown[]) => Promise<any[]>, required?: ReadonlyArray<{migration: string, object: string}> }} opts */

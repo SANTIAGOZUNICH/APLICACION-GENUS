@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Rows3, Table2 } from "lucide-react";
 import {
   GenusGrid,
@@ -158,7 +158,41 @@ interface OperationalTableProps<T> {
   reasonInline?: boolean;
   /** Clase CSS opcional por fila en la planilla (p. ej. borde de prioridad). */
   rowClassName?: (row: T) => string | undefined;
+  /**
+   * Hoja continua (Materias Primas): SIN paginación; todos los registros en una sola hoja con encabezados fijos que se
+   * desplaza dentro de su marco (alto = el de la ventana) y, si hace falta, también en horizontal. La planilla virtualiza
+   * las filas; la lista clásica las dibuja de a tandas mientras se baja (carga progresiva). El orden es el de `rows`.
+   */
+  continuous?: boolean;
 }
+
+/**
+ * Alto de una hoja continua: lo que queda de la ventana debajo del lugar donde empieza (mín. 360 px), para que la hoja
+ * entre en pantalla y se desplace dentro de su marco. Se recalcula al girar/redimensionar y cuando cambia el contenido.
+ */
+export function useViewportSheetHeight(enabled: boolean, extra: number, deps: ReadonlyArray<unknown> = []) {
+  const [height, setHeight] = useState(560);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!enabled) return;
+    const calc = () => {
+      const top = ref.current?.getBoundingClientRect().top ?? 200;
+      setHeight(Math.max(360, Math.round(window.innerHeight - Math.max(0, top) - extra)));
+    };
+    calc();
+    const t = window.setTimeout(calc, 400);
+    window.addEventListener("resize", calc);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener("resize", calc);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, extra, ...deps]);
+  return { height, ref };
+}
+
+/** Filas que la lista clásica dibuja de entrada y cuántas suma cada vez que se llega al final (carga progresiva). */
+export const LIST_CHUNK = 250;
 
 /**
  * Preferencia planilla/lista.
@@ -310,7 +344,8 @@ function ExcelView<T>({
   reasonRequired,
   reasonInline,
   rowClassName,
-}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName">) {
+  maxHeight,
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName"> & { maxHeight?: number }) {
   const dataColumns = useMemo(() => columns.filter((c) => !isActionColumn(c)), [columns]);
   const actionColumns = useMemo(() => columns.filter((c) => isActionColumn(c)), [columns]);
   const textOf = (c: OperationalTableColumn<T>, row: T) => (c.text ? c.text(row) : nodeToText(c.render(row)));
@@ -367,7 +402,7 @@ function ExcelView<T>({
           : undefined
       }
       rowActionsWidth={actionColumns.length ? 128 : undefined}
-      maxHeight={560}
+      maxHeight={maxHeight ?? 560}
       testId={tableId ? `${tableId}-grid` : "os-table-grid"}
       rowClassName={rowClassName}
     />
@@ -389,10 +424,16 @@ export function OperationalTable<T>({
   reasonRequired,
   reasonInline,
   rowClassName,
+  continuous = false,
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [shown, setShown] = useState(LIST_CHUNK);
+  // Carga progresiva (solo lista clásica continua): al acercarse al final se suma otra tanda; nunca se oculta nada.
+  const shownRows = continuous ? Math.min(rows.length, Math.max(shown, LIST_CHUNK)) : rows.length;
   const editableTable = Boolean(canEditCells && onCellsCommit && allColumns.some((c) => c.edit));
   const { mode, toggle: toggleMode } = useTableMode(tableId, editableTable);
+  // Hoja continua: alto = lo que queda de la ventana (la planilla agrega ~100 px de barra de estado y avisos sobre la grilla).
+  const { height: sheetHeight, ref: sheetRef } = useViewportSheetHeight(continuous, mode === "excel" && !selection?.active ? 100 : 24, [rows.length]);
   // Las columnas `excelOnly` existen solo en la planilla; la lista clásica queda exactamente como antes.
   const columns = useMemo(() => allColumns.filter((c) => !c.excelOnly), [allColumns]);
   const secondaryMeta = columns
@@ -420,7 +461,7 @@ export function OperationalTable<T>({
   const showExcel = excel && mode === "excel" && !selectionActive;
   if (showExcel) {
     return (
-      <div className="space-y-1" data-testid={tableId ? `${tableId}-excel` : "os-table-excel"}>
+      <div className="space-y-1" data-testid={tableId ? `${tableId}-excel` : "os-table-excel"} ref={sheetRef}>
         <div className="flex justify-end">
           <button
             type="button"
@@ -443,13 +484,29 @@ export function OperationalTable<T>({
           reasonRequired={reasonRequired}
       reasonInline={reasonInline}
           rowClassName={rowClassName}
+          maxHeight={continuous ? sheetHeight : undefined}
         />
       </div>
     );
   }
 
   return (
-    <div className="os-table-wrap max-w-full min-w-0 overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)]">
+    <div
+      ref={sheetRef}
+      className={`os-table-wrap max-w-full min-w-0 rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)] ${
+        continuous ? "overflow-auto" : "overflow-x-clip"
+      }`}
+      style={continuous ? { maxHeight: sheetHeight } : undefined}
+      data-testid={continuous && tableId ? `${tableId}-list-sheet` : undefined}
+      onScroll={
+        continuous
+          ? (e) => {
+              const el = e.currentTarget;
+              if (el.scrollTop + el.clientHeight >= el.scrollHeight - 600) setShown((n) => (n < rows.length ? n + Math.max(LIST_CHUNK, n) : n));
+            }
+          : undefined
+      }
+    >
       {excel && !selectionActive && mode === "list" && editableTable && process.env.NODE_ENV !== "test" ? (
         <div className="border-b border-[var(--os-border)] p-2">
           <EditInSheetHint onClick={toggleMode} />
@@ -498,7 +555,7 @@ export function OperationalTable<T>({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => {
+          {(continuous ? rows.slice(0, shownRows) : rows).map((row) => {
             const id = rowKey(row);
             const isOpen = Boolean(expanded[id]);
             const rowSelected = Boolean(selectionActive && selection?.isSelected(id));

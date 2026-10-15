@@ -37,6 +37,10 @@ export function resetFeatureSchemaCache(): void {
 export async function isFeatureSchemaReady(): Promise<boolean> {
   if (isFeatureMemoryAllowed()) return true;
   if (!isDatabaseConfigured()) return false;
+  // Una vez lista, el esquema no se «desaplica»: no se vuelve a consultar. Esto importa dentro de una operación que ya tiene
+  // el candado de MP: una consulta por fuera de la transacción necesita otra conexión del pool y, con todas ocupadas por
+  // operaciones que esperan ese candado, nunca la obtendría (bloqueo con cargas simultáneas).
+  if (cachedReady === true) return true;
   const now = Date.now();
   if (cachedReady != null && now - cachedAt < TTL_MS) return cachedReady;
   try {

@@ -3,7 +3,9 @@
  */
 import "server-only";
 
+import { asc } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
+import { ensureMpLoadOrderBackfill, MP_SEQ_ALTA } from "./mp-load-order";
 import {
   invAjustes,
   invAudit,
@@ -59,6 +61,8 @@ export async function hydrateInventoryFromNeon(
   }
   hydratePromise = (async () => {
     const db = getDb();
+    // Orden de carga de MP: las filas históricas se ordenan una vez (idempotente, bajo el candado de MP).
+    await ensureMpLoadOrderBackfill();
 
     const [
       ingresos,
@@ -78,10 +82,10 @@ export async function hydrateInventoryFromNeon(
       db.select().from(invMeMaterials),
       db.select().from(invMeAlerts),
       db.select().from(invMeAlertReads),
-      db.select().from(invMpStock),
-      db.select().from(invMpIngresos),
-      db.select().from(invMpControl),
-      db.select().from(invMpCompras),
+      db.select().from(invMpStock).orderBy(asc(invMpStock.loadSeq)),
+      db.select().from(invMpIngresos).orderBy(asc(invMpIngresos.loadSeq)),
+      db.select().from(invMpControl).orderBy(asc(invMpControl.loadSeq)),
+      db.select().from(invMpCompras).orderBy(asc(invMpCompras.loadSeq)),
       db.select().from(invAjustes),
       db.select().from(invAudit),
     ]);
@@ -211,8 +215,8 @@ export async function refreshMpInventoryFromNeon(
   const run = (async () => {
     const db = getDb();
     const [mpStock, mpIngresos] = await Promise.all([
-      db.select().from(invMpStock),
-      db.select().from(invMpIngresos),
+      db.select().from(invMpStock).orderBy(asc(invMpStock.loadSeq)),
+      db.select().from(invMpIngresos).orderBy(asc(invMpIngresos.loadSeq)),
     ]);
     repo.mpStock = mpStock.map((r) => normalizeMpStockPayload(r.payload));
     repo.mpIngresos = mpIngresos.map((r) => normalizeMpIngresoPayload(r.payload));
@@ -238,7 +242,7 @@ export async function persistMpIngresoRow(row: MpIngresoRow): Promise<void> {
   const db = getDb();
   await db
     .insert(invMpIngresos)
-    .values({ id: row.id, payload: row, updatedAt: new Date() })
+    .values({ id: row.id, payload: row, updatedAt: new Date(), seqCriterio: MP_SEQ_ALTA })
     .onConflictDoUpdate({
       target: invMpIngresos.id,
       set: { payload: row, updatedAt: new Date() },
@@ -251,7 +255,7 @@ export async function persistMpStockRow(row: MpStockRow): Promise<void> {
   const db = getDb();
   await db
     .insert(invMpStock)
-    .values({ id: row.id, payload: row, updatedAt: new Date() })
+    .values({ id: row.id, payload: row, updatedAt: new Date(), seqCriterio: MP_SEQ_ALTA })
     .onConflictDoUpdate({
       target: invMpStock.id,
       set: { payload: row, updatedAt: new Date() },
@@ -304,12 +308,14 @@ export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promi
       | typeof invMpIngresos
       | typeof invMpControl
       | typeof invMpCompras,
-    rows: Array<{ id: string }>
+    rows: Array<{ id: string }>,
+    /** Tablas de MP: la fila nueva queda con orden de carga real (load_seq lo asigna la base; editar NO lo toca). */
+    withLoadOrder = false
   ) {
     for (const row of rows) {
       await db
         .insert(table)
-        .values({ id: row.id, payload: row, updatedAt: now } as never)
+        .values({ id: row.id, payload: row, updatedAt: now, ...(withLoadOrder ? { seqCriterio: MP_SEQ_ALTA } : {}) } as never)
         .onConflictDoUpdate({
           target: table.id,
           set: { payload: row as never, updatedAt: now },
@@ -322,10 +328,10 @@ export async function persistInventorySnapshot(repo: MemoryInventoryRepo): Promi
   await upsertIdPayload(invMeMaterials, meMaterials);
   await upsertIdPayload(invMeAlerts, meAlerts);
   markHydrated([...meIngresos, ...meSalidas, ...meMaterials, ...meAlerts]);
-  await upsertIdPayload(invMpStock, mpStock);
-  await upsertIdPayload(invMpIngresos, mpIngresos);
-  await upsertIdPayload(invMpControl, mpControl);
-  await upsertIdPayload(invMpCompras, mpCompras);
+  await upsertIdPayload(invMpStock, mpStock, true);
+  await upsertIdPayload(invMpIngresos, mpIngresos, true);
+  await upsertIdPayload(invMpControl, mpControl, true);
+  await upsertIdPayload(invMpCompras, mpCompras, true);
   markHydrated([...mpStock, ...mpIngresos, ...mpControl, ...mpCompras]);
 
   for (const row of meAlertReads) {
