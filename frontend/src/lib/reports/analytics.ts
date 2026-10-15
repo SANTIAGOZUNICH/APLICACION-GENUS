@@ -17,14 +17,12 @@
  *    un registro histórico). Lo que sí es real y se reporta es el lead time
  *    calendario createdAt→completedAt, etiquetado como tal — nunca como
  *    "horas trabajadas".
- *  - Motivos de rechazo de Calidad = texto libre tal cual quedó registrado
- *    (qualityObservation) — no se inventan categorías.
+ *  - Circuito sin Calidad: los indicadores salen del estado operativo real de cada trabajo.
  *  - Unidades/hora excluye divisiones por 0/NaN/Infinity.
  */
 import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
 import { resolveWorkItemDeliverableUnits } from "@/lib/remitos/packing-math";
 import type {
-  CalidadRow,
   ClienteRow,
   DatoRow,
   DeliveryReportRow,
@@ -236,30 +234,18 @@ export function buildManagementReport(
       const h = hoursBetween(row.sentToCodificadoAt, row.deliveredFromCodificadoAt);
       return h != null ? round2(h) : null;
     })(),
-    calidadDecisionHoras: (() => {
-      const h = hoursBetween(row.completedAt, row.qualityDecidedAt);
-      return h != null ? round2(h) : null;
-    })(),
   }));
 
-  // ---- CALIDAD -----------------------------------------------------------
-  const decided = workItems.filter((r) => r.qualityStatus === "aprobado" || r.qualityStatus === "rechazado");
-  const aprobados = decided.filter((r) => r.qualityStatus === "aprobado").length;
-  const tasaAprobacionPct = decided.length > 0 ? round2((aprobados / decided.length) * 100) : null;
-  const primeraDecisionAprobados = decided.filter(
-    (r) => r.qualityStatus === "aprobado" && !r.qualityChangeReason
+  // ---- CIRCUITO (sin Calidad) ---------------------------------------------
+  // Indicadores del circuito operativo: estado OPERATIVO real de cada trabajo. Las decisiones históricas de Calidad
+  // quedan en la base y en Historial, pero ya no son un indicador de gestión.
+  const entregados = workItems.filter((r) => r.operationalStatus === "entregado").length;
+  const pendientesEntregar = workItems.filter((r) => r.operationalStatus === "revision").length;
+  const enCodificado = workItems.filter(
+    (r) => r.sector === "CODIFICADO" && r.operationalStatus !== "entregado" && r.operationalStatus !== "cancelado" && r.operationalStatus !== "revision"
   ).length;
-  const firstPassQualityPct =
-    decided.length > 0 ? round2((primeraDecisionAprobados / decided.length) * 100) : null;
-
-  const calidad: CalidadRow[] = decided.map((row) => ({
-    workItemId: row.id,
-    cliente: row.client,
-    producto: row.product,
-    qualityStatus: row.qualityStatus,
-    primeraDecision: !row.qualityChangeReason,
-    observacion: row.qualityObservation?.trim() || null,
-  }));
+  const noCancelados = workItems.filter((r) => r.operationalStatus !== "cancelado").length;
+  const tasaEntregaPct = noCancelados > 0 ? round2((entregados / noCancelados) * 100) : null;
 
   // ---- MUESTRAS ------------------------------------------------------
   const muestrasMap = new Map<string, { muestras: number; producido: number }>();
@@ -330,7 +316,7 @@ export function buildManagementReport(
     producto: row.product,
     sector: row.sector,
     status: row.status,
-    qualityStatus: row.qualityStatus,
+    estadoOperativo: row.operationalStatus,
     plannedDate: row.plannedDate,
     deliveryDate: row.deliveryDate,
     unidadesAcondicionadas: acondicionadoUnits(row),
@@ -383,21 +369,16 @@ export function buildManagementReport(
       disponible: top3Share != null,
       motivoNoDisponible: top3Share == null ? "Sin unidades entregables en el período." : undefined,
     },
+    { categoria: "Circuito", indicador: "Trabajos entregados", valor: entregados, unidad: "trabajos", disponible: true },
+    { categoria: "Circuito", indicador: "Pendientes de entregar (terminados sin entrega)", valor: pendientesEntregar, unidad: "trabajos", disponible: true },
+    { categoria: "Circuito", indicador: "En Codificado", valor: enCodificado, unidad: "trabajos", disponible: true },
     {
-      categoria: "Calidad",
-      indicador: "Tasa de aprobación",
-      valor: tasaAprobacionPct,
+      categoria: "Circuito",
+      indicador: "Tasa de entrega (entregados sobre trabajos no cancelados)",
+      valor: tasaEntregaPct,
       unidad: "%",
-      disponible: tasaAprobacionPct != null,
-      motivoNoDisponible: tasaAprobacionPct == null ? "Sin decisiones de Calidad en el período." : undefined,
-    },
-    {
-      categoria: "Calidad",
-      indicador: "First-pass quality (aprobado sin corrección previa)",
-      valor: firstPassQualityPct,
-      unidad: "%",
-      disponible: firstPassQualityPct != null,
-      motivoNoDisponible: firstPassQualityPct == null ? "Sin decisiones de Calidad en el período." : undefined,
+      disponible: tasaEntregaPct != null,
+      motivoNoDisponible: tasaEntregaPct == null ? "Sin trabajos en el período." : undefined,
     },
     {
       categoria: "Tiempos",
@@ -417,13 +398,13 @@ export function buildManagementReport(
       motivoNoDisponible: "No hay datos de capacidad/dotación por sector en el sistema.",
     },
     {
-      categoria: "Calidad",
+      categoria: "Circuito",
       indicador: "Tasa de retrabajo",
       valor: null,
       unidad: "%",
       disponible: false,
       motivoNoDisponible:
-        "No existe un flag de \"retrabajo\" distinto del rechazo de Calidad. Ver codificadoRevision por trabajo en la hoja DATOS como indicador relacionado (reenvíos a Codificado).",
+        "No existe un flag de \"retrabajo\" separado. Ver codificadoRevision por trabajo (reenvíos a Codificado) y los eventos REWORK_REQUESTED como indicadores relacionados.",
     },
   ];
 
@@ -434,7 +415,9 @@ export function buildManagementReport(
       totalTrabajos: workItems.length,
       totalEntregable: round2(totalEntregable),
       totalMuestras,
-      tasaAprobacionCalidadPct: tasaAprobacionPct,
+      tasaEntregaPct,
+      pendientesEntregar,
+      enCodificado,
       topCliente,
       topProducto,
     },
@@ -445,7 +428,6 @@ export function buildManagementReport(
     empleados,
     productividad,
     tiempos,
-    calidad,
     pedidos,
     entregas,
     inventario: dataset.meMaterials,
