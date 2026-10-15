@@ -352,7 +352,9 @@ export class DrizzlePlanningRepository implements PlanningRepository {
       );
     }
     if (filters.weekStart) {
-      conditions.push(eq(planningWeeks.weekStart, filters.weekStart));
+      // MISMA regla que la vista Día (cubre planned_date … planned_date_to), aplicada a L–V. NO se filtra por la semana
+      // de planificación a la que pertenece el trabajo (planning_week_id): un trabajo reprogramado a otra semana, o cuyo
+      // rango cruza a la siguiente, conserva su semana de origen y desaparecía de «Semanas» aunque Día a día lo mostrara.
       const weekEnd = addDaysIso(filters.weekStart, 4);
       conditions.push(
         sql`(${workItems.plannedDate} <= ${weekEnd} AND coalesce(${workItems.plannedDateTo}, ${workItems.plannedDate}) >= ${filters.weekStart})`

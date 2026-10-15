@@ -73,17 +73,18 @@ describe.skipIf(Boolean(PROBLEM))(`Calendario de Entregas en Postgres real${PROB
     const { PlanningService } = await import("@/lib/planning/planning-service");
     const { DrizzlePlanningRepository } = await import("@/lib/planning/drizzle-repository");
     const planning = new PlanningService(new DrizzlePlanningRepository());
-    const weekStart = "2026-10-05";
+    // Semana propia lejana: las fechas se fijan por SQL; no comparte semana con otras pruebas que publican la actual.
+    const weekStart = "2039-01-03";
     const week = (await planning.listWeeks(weekStart))[0] ?? (await planning.createWeek({ weekStart, label: "IT calendario" }, prod as never));
     const mk = async (key: string, product: string, dates: { deliveryDate: string; plannedDate?: string }) => {
       const it = await planning.createItem(
         week.id,
-        { plannedDate: "2026-10-06", client: CLIENT, product, plannedQuantity: "150", unit: "un", sector: "ENVASADO_MASIVO", line: "Línea 1" },
+        { plannedDate: "2039-01-04", client: CLIENT, product, plannedQuantity: "150", unit: "un", sector: "ENVASADO_MASIVO", line: "Línea 1" },
         prod as never
       );
       ids[key] = it.id;
       // Fechas de entrega/producción como las dejan la asignación o la edición (base DESCARTABLE de prueba).
-      await q("update work_items set delivery_date = $2::date, planned_date = coalesce($3::date, planned_date) where id = $1", [it.id, dates.deliveryDate, dates.plannedDate ?? null]);
+      await q("update work_items set delivery_date = $2::date, planned_date = coalesce($3::date, '2026-10-06'::date) where id = $1", [it.id, dates.deliveryDate, dates.plannedDate ?? null]);
     };
     await mk("parcial", "SHAMPOO PARCIAL IT", { deliveryDate: "2026-10-09" });
     await mk("medianoche", "CREMA MEDIANOCHE IT", { deliveryDate: "2026-10-18" });

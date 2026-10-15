@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import type { WorkItem } from "@/types/operational/work-item";
+import { groupWorkItemsByDay } from "@/lib/operational/work-item-filters";
 import type { SectorId } from "@/types/operational/sector";
 import { Button } from "@/components/ui/button";
 import { TwinShell } from "@/features/os/shell/twin-shell";
@@ -21,7 +22,7 @@ import { WorkItemProgressTable } from "../components/work-item-progress-table";
 import { WorkItemDrawer } from "../components/work-item-drawer";
 import { SyncStatusBar, OperationalTabs } from "../components/operational-ui";
 import { OperationalDayNav } from "../components/operational-day-nav";
-import { OperationalWeekBoard, parseWeekBoardDropId } from "../components/operational-week-board";
+import { OperationalWeekBoard, parseWeekBoardDropId, shortDayLabel } from "../components/operational-week-board";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { useOperationalCalendar } from "../hooks/use-operational-calendar";
 import { nativeDayEmptyMessage, nativeEmptyPlanMessage } from "../lib/native-empty-copy";
@@ -181,6 +182,33 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     () => onlyArchivedFromView(itemsForActiveLine, archivedIds).length,
     [itemsForActiveLine, archivedIds]
   );
+
+  // Vista Semana: misma selección que Día (mismos trabajos, sin archivados) agrupada por línea y por día.
+  const weekLineItems = useMemo(() => {
+    const map = new Map<LineBucket, WorkItem[]>();
+    for (const bucket of availableLines) {
+      map.set(
+        bucket,
+        excludeArchivedFromView(
+          sortByDeliveryDateNearest(workItems.filter((item) => (resolveLineBucket(item.line) ?? "1") === bucket)),
+          archivedIds
+        )
+      );
+    }
+    return map;
+  }, [availableLines, workItems, archivedIds]);
+  const weekDayCounts = useMemo(() => {
+    const all = [...weekLineItems.values()].flat();
+    return new Map([...groupWorkItemsByDay(all, calendar.weekDays)].map(([day, list]) => [day, list.length]));
+  }, [weekLineItems, calendar.weekDays]);
+  /** Celular: día visible de la semana (hoy si cae en la semana; si no, el lunes). */
+  const [mobileDayState, setMobileDayState] = useState<string | null>(null);
+  const mobileDay =
+    mobileDayState && calendar.weekDays.includes(mobileDayState)
+      ? mobileDayState
+      : calendar.weekDays.includes(calendar.today)
+        ? calendar.today
+        : (calendar.weekDays[0] ?? calendar.today);
 
   const handleSave = useCallback(
     async (itemId: string, payload: { finishedQty: string; observation: string }) => {
@@ -614,30 +642,67 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           {!loading && calendar.viewMode === "week" && (
             <DndContext sensors={dndSensors} onDragEnd={(e) => void handleDragEnd(e)}>
               {canAssignWork && (
-                <p className="mb-3 text-xs text-[var(--os-text-muted)]" data-testid="dnd-hint">
+                <p className="mb-2 text-xs text-[var(--os-text-muted)]" data-testid="dnd-hint">
                   Arrastrá una tarjeta a otro día o línea para replanificarla.
                 </p>
               )}
-              <div className="space-y-6">
+              {/* Totales por día (todas las líneas). Escritorio: alineados con las 5 columnas. Celular: selector de día. */}
+              <div className="mb-2 hidden gap-2 lg:grid lg:grid-cols-5" data-testid="week-day-totals">
+                {calendar.weekDays.map((day) => (
+                  <button
+                    type="button"
+                    key={day}
+                    onClick={() => calendar.selectDay(day)}
+                    title={`Ver ${shortDayLabel(day)} en vista Día`}
+                    className={`flex items-center justify-between rounded-md px-2 py-1 text-xs font-semibold hover:ring-1 hover:ring-[var(--os-teal)]/50 ${day === calendar.today ? "bg-[var(--os-teal)]/15 text-[var(--os-teal)]" : "bg-[var(--os-surface)] text-[var(--os-text)]"}`}
+                    data-testid="week-day-total"
+                    data-day={day}
+                    data-count={weekDayCounts.get(day) ?? 0}
+                  >
+                    <span>{shortDayLabel(day)}</span>
+                    <span className="tabular-nums text-[var(--os-text-muted)]">
+                      {weekDayCounts.get(day) ?? 0} trabajo{(weekDayCounts.get(day) ?? 0) === 1 ? "" : "s"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div className="mb-2 flex gap-1 overflow-x-auto md:hidden" role="tablist" aria-label="Día" data-testid="week-day-picker">
+                {calendar.weekDays.map((day) => (
+                  <button
+                    key={day}
+                    type="button"
+                    role="tab"
+                    aria-selected={day === mobileDay}
+                    onClick={() => setMobileDayState(day)}
+                    className={`flex min-w-[4.25rem] flex-col items-center rounded-lg border px-2 py-1 text-[11px] font-semibold ${day === mobileDay ? "border-[var(--os-teal)] bg-[var(--os-teal)]/15 text-[var(--os-teal)]" : "border-[var(--os-border)] text-[var(--os-text-muted)]"}`}
+                    data-testid="week-day-pick"
+                    data-day={day}
+                  >
+                    <span>{shortDayLabel(day)}</span>
+                    <span className="tabular-nums">{weekDayCounts.get(day) ?? 0}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="space-y-2">
                 {availableLines.map((bucket) => {
-                  const lineItems = excludeArchivedFromView(
-                    sortByDeliveryDateNearest(
-                      workItems.filter((item) => (resolveLineBucket(item.line) ?? "1") === bucket)
-                    ),
-                    archivedIds
-                  );
+                  const lineItems = weekLineItems.get(bucket) ?? [];
                   return (
                     <section
                       key={bucket}
-                      className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4"
+                      className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] px-2 pb-2 pt-1.5"
+                      data-testid="week-line"
+                      data-line={bucket}
                     >
-                      <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[var(--os-text)]">
+                      <h4 className="mb-1 flex items-center gap-2 px-0.5 text-xs font-semibold uppercase tracking-wide text-[var(--os-text)]">
                         {LINE_TAB_LABELS[bucket]}
-                        <span className="rounded-full bg-[var(--os-bg)] px-2 py-0.5 text-xs font-normal normal-case text-[var(--os-text-muted)]">
+                        <span className="rounded-full bg-[var(--os-bg)] px-2 py-0.5 text-[11px] font-normal normal-case text-[var(--os-text-muted)]">
                           {lineItems.length} trabajo{lineItems.length === 1 ? "" : "s"}
                         </span>
                       </h4>
                       <OperationalWeekBoard
+                        layout="columns"
+                        mobileDay={mobileDay}
+                        dayHeadersInParent
                         weekDays={calendar.weekDays}
                         today={calendar.today}
                         selectedDate={calendar.selectedDate}

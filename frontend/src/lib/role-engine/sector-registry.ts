@@ -288,8 +288,10 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     // a propósito para Producción — la infraestructura de OA (auto-creación
     // 1 trabajo = 1 OA, /oa/[id], uso desde Envasado/Codificado/remitos)
     // sigue intacta; solo se retira el listado independiente de este menú.
+    // Sin «Panel general» (ex mi_trabajo de Producción, retirado): la planilla Semanas, que solo se abría desde ese
+    // panel, pasa a tener entrada propia y es la primera sección (donde aterriza Producción).
     sidebarItems: [
-      "mi_trabajo",
+      "semanas_planilla",
       "pedidos",
       "ordenes_elaboracion",
       "pendientes",
@@ -308,7 +310,6 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "procedimientos",
       "metricas",
     ],
-    sidebarLabelOverrides: { mi_trabajo: "Panel general" },
     creamyContext: {
       role: "Copiloto de producción",
       topics: [

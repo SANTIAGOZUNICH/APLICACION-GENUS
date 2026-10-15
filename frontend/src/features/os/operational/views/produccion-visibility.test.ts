@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { PRODUCING_SECTORS as PANEL_SECTORS } from "./produccion-panel-view";
 import { PRODUCING_SECTORS as ENTREGADOS_SECTORS } from "./entregados-view";
 
 /**
@@ -11,10 +10,6 @@ import { PRODUCING_SECTORS as ENTREGADOS_SECTORS } from "./entregados-view";
  * real aunque la API ya lo devolviera.
  */
 describe("Listas de sectores visibles para Producción incluyen CODIFICADO", () => {
-  it("Panel general (produccion-panel-view.tsx)", () => {
-    expect(PANEL_SECTORS).toContain("CODIFICADO");
-  });
-
   it("Filtro de sector en Entregados (entregados-view.tsx)", () => {
     expect(ENTREGADOS_SECTORS).toContain("CODIFICADO");
   });

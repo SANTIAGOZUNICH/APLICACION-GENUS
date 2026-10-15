@@ -14,6 +14,7 @@ import {
   PlanningValidationError,
 } from "@/lib/planning/types";
 import { validateCreateWorkItem } from "@/lib/planning/validators";
+import { addDaysIso } from "@/lib/operational/operational-calendar";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -118,11 +119,13 @@ export class MemoryPlanningRepository implements PlanningRepository {
       });
     }
     if (filters.weekStart) {
-      const week = [...this.weeks.values()].find(
-        (w) => w.weekStart === filters.weekStart
-      );
-      if (!week) return [];
-      list = list.filter((i) => i.planningWeekId === week.id);
+      // Misma regla que la vista Día, aplicada a L–V (ver drizzle-repository): no depende de la semana de origen.
+      const weekStart = filters.weekStart;
+      const weekEnd = addDaysIso(weekStart, 4);
+      list = list.filter((i) => {
+        const end = i.plannedDateTo ?? i.plannedDate;
+        return i.plannedDate <= weekEnd && end >= weekStart;
+      });
     }
     list = list
       .sort((a, b) => a.plannedDate.localeCompare(b.plannedDate) || a.product.localeCompare(b.product))

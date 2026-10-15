@@ -56,6 +56,15 @@ export function filterWorkItemsByDate(items: WorkItem[], date: string): WorkItem
 }
 
 /**
+ * Reparte los trabajos por día con la MISMA regla que la vista Día (`filterWorkItemsByDate`): la columna de un día en
+ * «Semanas» es exactamente lo que «Día a día» muestra ese día. Un trabajo con rango aparece en cada día que cubre (es el
+ * mismo registro, no una copia).
+ */
+export function groupWorkItemsByDay(items: WorkItem[], days: string[]): Map<string, WorkItem[]> {
+  return new Map(days.map((day) => [day, filterWorkItemsByDate(items, day)]));
+}
+
+/**
  * Filtra trabajos que solapan la semana L–V.
  * Incluye weekStart/weekId legacy y rangos plannedDate…plannedDateTo.
  */

@@ -77,8 +77,12 @@ async function openAs(user, viewport = { width: 1500, height: 950 }, day = DAY) 
   return { ctx, page };
 }
 const nav = (page, label) => page.getByRole("button", { name: new RegExp(`^${label}$`) }).or(page.getByRole("link", { name: new RegExp(`^${label}$`) })).first().click({ timeout: 120_000 });
-/** «Semanas» ya no tiene entrada en el menú lateral: Producción la abre desde su Panel general. */
-const openSemanasProduccion = (page) => page.locator("[data-testid=produccion-open-semanas]").click({ timeout: 120_000 });
+/** Producción: «Semanas» es una entrada del menú lateral (el Panel general, desde donde se abría antes, se retiró). */
+const openSemanasProduccion = async (page) => {
+  const burger = page.getByRole("button", { name: "Abrir menú" });
+  if (await burger.isVisible().catch(() => false)) await burger.click();
+  await nav(page, "Semanas");
+};
 const rowOf = (page, text) => page.locator("[data-testid=list-row]", { hasText: text }).first();
 
 try {
