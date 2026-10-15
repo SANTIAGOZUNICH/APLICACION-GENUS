@@ -306,8 +306,17 @@ try {
   for (const w of p1Works) {
     await q("insert into work_item_deliveries (work_item_id, product, client, source_sector, quantity, actual_delivered_at, status, delivered_by, delivered_by_sector) values ($1,$2,$3,'ENVASADO_MASIVO',$4, now(),'ENTREGADO','e2e','PRODUCCION')", [w.id, P1, CLIENT, String(w.qty)]);
   }
-  const st4 = await status();
-  check("Solo con la entrega REAL completa registrada pasa a «Entregada»", st4 === "entregada", st4);
+  // Agenda de PENDIENTES: con la entrega REAL completa, el producto sale del calendario (sigue en la base y en Entregados).
+  await pp.goto("/mi-trabajo");
+  await openEntregas(pp);
+  const chipP1 = pp.locator(`[data-testid=entregas-day][data-date='${D_DELIVERY}'] [data-testid=entregas-client][data-client='${CLIENT}']`);
+  let p1Visible = false;
+  if (await chipP1.count()) {
+    await chipP1.first().click();
+    p1Visible = (await pp.locator("[data-testid=entrega-item-name]").allInnerTexts()).includes(P1);
+    await pp.keyboard.press("Escape");
+  }
+  check("Con la entrega REAL completa, el producto deja de figurar como pendiente en Entregas", !p1Visible);
   const deliveryOfDay = await q("select status from scheduled_deliveries where id = $1", [d1.id]);
   check("La entrega programada sigue 'programada' en la base (el estado «Entregada» se deriva del flujo real, no se escribe)", deliveryOfDay[0].status === "programada");
 
@@ -317,7 +326,7 @@ try {
   const cardCav = pp.locator("[data-testid=entrega-card]").first();
   await cardCav.locator("[data-testid=entrega-reschedule-open]").click();
   await pp.locator("[data-testid=entrega-reschedule-date]").fill(D_RESCHEDULED);
-  check("Reprogramar exige motivo", await pp.locator("[data-testid=entrega-reschedule-confirm]").isDisabled());
+  check("Reprogramar NO exige motivo", await pp.locator("[data-testid=entrega-reschedule-confirm]").isEnabled());
   await pp.locator("[data-testid=entrega-reschedule-reason]").fill("Pedido del cliente");
   await pp.locator("[data-testid=entrega-reschedule-confirm]").click();
   check("Reprogramada: cambia de fecha, cuenta la reprogramación y audita desde/hasta/motivo", await waitDb(async () => {
@@ -337,8 +346,13 @@ try {
   check("Cancelada: queda como historial (no se borra) con quién, cuándo y motivo", await waitDb(async () => { const r = (await deliveryRows(CLIENT2))[0]; return r?.status === "cancelada" && r.cancel_reason === "El cliente suspendió el pedido" && r.cancelled_by === E2E_USERS.produccion.email; }));
   check("Cancelar una entrega programada no toca entregas reales ni trabajos", (await q("select count(*)::int n from work_item_deliveries where client ilike 'E2E %'"))[0].n === 3 && (await q("select count(*)::int n from work_items where client ilike 'E2E %'"))[0].n >= 3);
   await pp.keyboard.press("Escape").catch(() => {});
-  await waitDb(async () => (await pp.locator(`[data-testid=entregas-day][data-date='${D_RESCHEDULED}'] [data-testid=entregas-client][data-client='${CLIENT2}']`).first().getAttribute("class")).includes("line-through"));
-  check("La entrega cancelada se ve tachada en el calendario", (await pp.locator(`[data-testid=entregas-day][data-date='${D_RESCHEDULED}'] [data-testid=entregas-client][data-client='${CLIENT2}']`).first().getAttribute("class")).includes("line-through"));
+  // Agenda de PENDIENTES: la cancelada sale del calendario; con «Ver quitadas» se ve tachada (para restaurarla).
+  const cavChip = () => pp.locator(`[data-testid=entregas-day][data-date='${D_RESCHEDULED}'] [data-testid=entregas-client][data-client='${CLIENT2}']`);
+  check("La entrega cancelada sale de la agenda de pendientes", await waitDb(async () => (await cavChip().count()) === 0));
+  await pp.locator("[data-testid=entregas-show-hidden]").check();
+  await cavChip().first().waitFor({ timeout: 30_000 }).catch(() => {});
+  check("…y con «Ver quitadas» se ve tachada (historial)", ((await cavChip().first().getAttribute("class").catch(() => "")) ?? "").includes("line-through"));
+  await pp.locator("[data-testid=entregas-show-hidden]").uncheck();
   const sug = await (await pp.request.get(`/api/v1/entregas/suggestions?client=${encodeURIComponent(CLIENT2)}&product=${encodeURIComponent(P1)}&sector=ENVASADO_MASIVO`)).json();
   check("Una entrega cancelada ya no se sugiere al asignar trabajos", (sug.suggestions ?? []).length === 0);
   const stale = await pp.request.patch(`/api/v1/entregas/${d1.id}`, { data: { action: "reschedule", newDate: addDays(D_DELIVERY, 3), reason: "Prueba de versión vieja", expectedVersion: 1 } });
@@ -406,32 +420,32 @@ try {
   const mv = await pp.request.patch("/api/v1/work-items/cells", { data: { changes: [{ id: `native:${wF1}`, field: "deliveryDate", value: FUT2, expectedVersion: vF1, reason: "Cliente pidió adelantar la entrega" }] } });
   await pp.goto("/mi-trabajo");
   await openEntregas(pp);
-  const chips2 = await chips(pp, FUT2);
-  check("Reprogramar la fecha de entrega en el trabajo → el calendario se actualiza (aparece el día nuevo)", mv.ok() && chips2.some((c) => /e2e futuro/i.test(c)), `${mv.status()} ${chips2.join("|")}`);
+  const mvBody = await mv.json().catch(() => ({}));
+  const saved = await waitDb(async () => (await q("select to_char(delivery_date,'YYYY-MM-DD') d from work_items where id = $1", [wF1]))[0].d === FUT2);
+  let chips2 = [];
+  await waitDb(async () => (chips2 = await chips(pp, FUT2)).some((c) => /e2e futuro/i.test(c)), 30_000);
+  check("Reprogramar la fecha de entrega en el trabajo → el calendario se actualiza (aparece el día nuevo)", mv.ok() && mvBody.ok !== false && saved && chips2.some((c) => /e2e futuro/i.test(c)), `${mv.status()} ${JSON.stringify(mvBody).slice(0, 160)} ${chips2.join("|")}`);
   await pp.locator(`[data-testid=entregas-day][data-date='${FUT}'] [data-testid=entregas-client]`).first().click();
   const left = await pp.locator("[data-testid=entrega-detail] [data-testid=entrega-item-name]").allInnerTexts();
   check("…y el producto reprogramado sale del día anterior (quedan los otros 2)", left.length === 2 && !left.includes("E2E FUT CREMA"), left.join(" | "));
   await pp.keyboard.press("Escape");
-  // Histórico: en la FECHA REAL de entrega (no en la de fin de producción).
-  check("Histórico: el trabajo entregado aparece en su FECHA REAL (hora Argentina) y no en la de fin de producción", (await chips(pp, H_REAL)).includes(HIST_CLIENT) && !(await chips(pp, H_PROD)).includes(HIST_CLIENT) && !(await chips(pp, DAY(7))).includes(HIST_CLIENT));
-  await pp.locator(`[data-testid=entregas-day][data-date='${H_REAL}'] [data-testid=entregas-client][data-client='${HIST_CLIENT}']`).click();
-  const hdlg = await pp.locator("[data-testid=entrega-detail]").innerText();
-  check("Detalle histórico: «Entrega registrada», fecha real, fin de producción distinto y estado «Entregada»", /Entrega registrada/.test(hdlg) && new RegExp(`Fecha real de entrega[\\s\\S]*${H_REAL.split("-").reverse().join("/")}`).test(hdlg) && new RegExp(`Producción finalizada: ${H_PROD.split("-").reverse().join("/")}`).test(hdlg) && /Entregada/.test(hdlg));
-  await pp.screenshot({ path: `${OUT}/11-historico-entrega-registrada.png` });
-  await pp.keyboard.press("Escape");
+  // Agenda de PENDIENTES: lo entregado por completo no aparece (sigue en Entregados / historial).
+  check("Entregado por completo: no figura en la agenda de Entregas", !(await pp.locator(`[data-testid=entregas-client][data-client='${HIST_CLIENT}']`).count()));
   check("Entregado SIN fecha real registrada: no se ubica en el calendario (no se inventa fecha)", !(await pp.locator(`[data-testid=entregas-client][data-client='${NOREAL_CLIENT}']`).count()));
-  // Entrega parcial: lo entregado en su fecha real + el saldo pendiente en su fecha programada.
-  check("Entrega parcial: aparece la entrega real (parcial) y el saldo pendiente en su fecha de entrega", (await chips(pp, PART_REAL)).includes(PART_CLIENT) && (await chips(pp, FUT_PART)).includes(PART_CLIENT));
+  // Entrega parcial: SOLO el saldo pendiente, en su fecha programada (lo entregado no se repite).
+  check("Entrega parcial: solo el saldo en su fecha programada (la entrega real no se muestra como pendiente)", !(await chips(pp, PART_REAL)).includes(PART_CLIENT) && (await chips(pp, FUT_PART)).includes(PART_CLIENT));
   await pp.locator(`[data-testid=entregas-day][data-date='${FUT_PART}'] [data-testid=entregas-client][data-client='${PART_CLIENT}']`).click();
   const ptxt = await pp.locator("[data-testid=entrega-detail]").innerText();
   const pst = await pp.locator("[data-testid=entrega-detail] [data-testid=entrega-item] [data-testid=entrega-status]").first().getAttribute("data-status");
-  check("Parcial: estado «Entrega parcial», entregada 400 y pendiente 600 (no «Entregada» hasta completar)", pst === "entrega_parcial" && /Entregada\s*\n?\s*400/i.test(ptxt) && /Pendiente de entregar\s*\n?\s*600/i.test(ptxt), `${pst} ${ptxt.replace(/\n/g, " ").slice(0, 200)}`);
+  const pendAttr = await pp.locator("[data-testid=entrega-detail] [data-testid=entrega-item-pending]").first().getAttribute("data-pending").catch(() => null);
+  check("Parcial: «Entrega parcial», pendiente 600 (ya entregadas 400)", pst === "entrega_parcial" && pendAttr === "600" && /Pendiente de entregar\s*\n?\s*600/i.test(ptxt), `${pst} ${pendAttr}`);
   await pp.keyboard.press("Escape");
   // Un trabajo vinculado NO duplica: aparece una sola vez, dentro de su entrega programada.
   await pp.locator(`[data-testid=entregas-day][data-date='${D_DELIVERY}'] [data-testid=entregas-client][data-client='${CLIENT}']`).click();
   const ldlg = pp.locator("[data-testid=entrega-detail]");
   const names = await ldlg.locator("[data-testid=entrega-item-name]").allInnerTexts();
-  check("Vinculado: el trabajo aparece UNA sola vez (en su entrega programada), no como «Desde trabajo»", (await ldlg.locator(`[data-testid=entrega-work][data-work-id='${w1.id}']`).count()) === 1 && names.filter((n) => n === P1).length === 1);
+  // P1 ya se entregó por completo (paso 9): no figura en la agenda, ni dentro de su entrega ni como «Desde trabajo».
+  check("Vinculado y entregado por completo: no aparece duplicado ni como pendiente", (await ldlg.locator(`[data-testid=entrega-work][data-work-id='${w1.id}']`).count()) === 0 && names.filter((n) => n === P1).length === 0);
   const origins = (await ldlg.locator("[data-testid=entrega-origin]").allInnerTexts()).sort().join();
   check("El trabajo sin vincular del mismo cliente y día sí aparece como «Desde trabajo» (producto P3)", names.includes(P3) && origins === "Desde trabajo,Programada manual,Programada manual", origins);
   await pp.keyboard.press("Escape");
@@ -461,9 +475,9 @@ try {
   check("Envasado Masivo ve SOLO los productos de su sector (no el Serum de Premium)", lm.length > 0 && lm.flatMap((d) => d.items).every((i) => i.sector === "ENVASADO_MASIVO") && !JSON.stringify(lm).includes(P2));
   const lp = await listAs(premium);
   check("Envasado Premium ve solo lo suyo", lp.flatMap((d) => d.items).every((i) => i.sector === "ENVASADO_PREMIUM") && JSON.stringify(lp).includes(P2) && !JSON.stringify(lp).includes(P1));
-  check("Recortado por sector: Masivo ve lo histórico de su sector y NO el serum Premium «Desde trabajo»; Premium al revés", JSON.stringify(lm).includes("E2E HIST SHAMPOO") && !JSON.stringify(lm).includes("E2E FUT SERUM") && JSON.stringify(lp).includes("E2E FUT SERUM") && !JSON.stringify(lp).includes("E2E HIST SHAMPOO"));
+  check("Recortado por sector: Masivo NO ve el serum Premium «Desde trabajo»; Premium sí (lo entregado no figura en ninguno)", !JSON.stringify(lm).includes("E2E FUT SERUM") && JSON.stringify(lp).includes("E2E FUT SERUM") && !JSON.stringify(lm).includes("E2E HIST SHAMPOO") && !JSON.stringify(lp).includes("E2E HIST SHAMPOO"));
   const ld = await listAs(deposito);
-  check("Depósito consulta todo", JSON.stringify(ld).includes(P1) && JSON.stringify(ld).includes(P2));
+  check("Depósito consulta todo lo pendiente (Masivo y Premium)", JSON.stringify(ld).includes(P3) && JSON.stringify(ld).includes(P2));
   check("Calidad y Elaboración no acceden a Entregas (403)", (await calidad.page.request.get(`/api/v1/entregas?${range}`)).status() === 403 && (await elab.page.request.get(`/api/v1/entregas?${range}`)).status() === 403);
   const newDelivery = { client: "E2E INTRUSO", deliveryDate: D_DELIVERY, items: [{ product: "X" }] };
   const denied = await Promise.all([masivo, premium, deposito].map((u) => u.page.request.post("/api/v1/entregas", { data: newDelivery })));

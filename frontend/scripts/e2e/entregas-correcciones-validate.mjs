@@ -290,6 +290,12 @@ try {
   await pp.locator("[data-testid=entrega-cancel-confirm]").click();
   await pp.waitForTimeout(1000);
   check("Cancelar: queda cancelada (historial, no se borra)", (await q("select status from scheduled_deliveries where client = $1 and delivery_date = $2", [CLIENT_S, D_PROG]))[0].status === "cancelada");
+  // Cancelada: sale de la agenda de pendientes; se ve con «Ver quitadas» para restaurarla.
+  await closeDialog(pp);
+  await pp.waitForTimeout(800);
+  check("Cancelada: no figura en la agenda de pendientes", (await pp.locator(`[data-testid=entregas-day][data-date='${D_PROG}'] [data-testid=entregas-client][data-client='${CLIENT_S}']`).count()) === 0);
+  await pp.locator("[data-testid=entregas-show-hidden]").check();
+  await openChip(pp, D_PROG, CLIENT_S);
   await pp.locator("[data-testid=entrega-restore-open]").click();
   await pp.locator("[data-testid=entrega-restore-reason]").fill("El cliente confirmó de nuevo");
   await pp.locator("[data-testid=entrega-restore-confirm]").click();

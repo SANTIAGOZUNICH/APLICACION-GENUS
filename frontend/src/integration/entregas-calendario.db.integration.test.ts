@@ -310,8 +310,8 @@ describe.skipIf(Boolean(PROBLEM))(`Calendario de Entregas en Postgres real${PROB
     const seen = forClient(await s.list(envasado, OCT, { includeHidden: true })).flatMap((x) => x.items);
     expect(seen.some((i) => i.product === "SERUM A IT")).toBe(false);
     await s.restoreWork(prod, ids.futuroA!, "Fin de la prueba de permisos");
-    // Motivo obligatorio.
-    await expect(s.hideWork(prod, ids.futuroA!, "corto")).rejects.toThrow();
+    // Quitar del calendario (baja lógica) pide motivo, sin mínimo arbitrario.
+    await expect(s.hideWork(prod, ids.futuroA!, "  ")).rejects.toThrow(/motivo/);
   });
 
   it("auditoría de fechas (solo lectura): cuenta los casos sembrados", async () => {

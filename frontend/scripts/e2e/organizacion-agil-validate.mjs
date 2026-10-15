@@ -177,13 +177,13 @@ try {
   await pp.locator("[data-testid=move-confirm-cancel]").click();
   await pp.waitForTimeout(800);
   check("CANCELAR: la tarjeta vuelve a su fecha original", (await cardDay(pp, "E2E AGIL ARRASTRAR")) === d[1] && (await q("select to_char(planned_date,'YYYY-MM-DD') d from work_items where id = $1", [id.drag]))[0].d === d[1]);
-  const v0 = Number((await q("select version from work_items where id = $1", [id.drag]))[0].version);
   await dragCard(pp, "E2E AGIL ARRASTRAR", d[4]);
   await pp.locator("[data-testid=move-confirm]").waitFor({ timeout: 15_000 });
   await pp.locator("[data-testid=move-confirm-ok]").dblclick();
   check("CONFIRMAR: se guarda la nueva fecha", await waitDb(async () => (await q("select to_char(planned_date,'YYYY-MM-DD') d from work_items where id = $1", [id.drag]))[0].d === d[4]));
   await pp.waitForTimeout(1200);
-  check("…una sola vez aunque se haga doble clic", Number((await q("select version from work_items where id = $1", [id.drag]))[0].version) === v0 + 1);
+  const moves = await q("select count(*)::int n from operational_events where work_item_id = $1 and to_status like $2", [id.drag, `%${d[4]}%`]);
+  check("…una sola vez aunque se haga doble clic (un único evento auditado)", moves[0].n === 1, String(moves[0].n));
   check("…y la tarjeta queda en el nuevo día", (await cardDay(pp, "E2E AGIL ARRASTRAR")) === d[4]);
 
   // ===== Permisos: el operario de Envasado no mueve =====
