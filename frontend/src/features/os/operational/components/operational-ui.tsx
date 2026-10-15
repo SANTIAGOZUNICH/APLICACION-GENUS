@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Rows3, Table2 } from "lucide-react";
 import {
   GenusGrid,
@@ -166,17 +166,29 @@ interface OperationalTableProps<T> {
   continuous?: boolean;
 }
 
-/** Alto máximo de una hoja continua: lo que queda de la ventana (mín. 440 px). Se recalcula al girar/redimensionar. */
-export function useViewportSheetHeight(enabled: boolean, reserve = 270): number {
-  const [h, setH] = useState(560);
+/**
+ * Alto de una hoja continua: lo que queda de la ventana debajo del lugar donde empieza (mín. 360 px), para que la hoja
+ * entre en pantalla y se desplace dentro de su marco. Se recalcula al girar/redimensionar y cuando cambia el contenido.
+ */
+export function useViewportSheetHeight(enabled: boolean, extra: number, deps: ReadonlyArray<unknown> = []) {
+  const [height, setHeight] = useState(560);
+  const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!enabled) return;
-    const calc = () => setH(Math.max(440, Math.round(window.innerHeight - reserve)));
+    const calc = () => {
+      const top = ref.current?.getBoundingClientRect().top ?? 200;
+      setHeight(Math.max(360, Math.round(window.innerHeight - Math.max(0, top) - extra)));
+    };
     calc();
+    const t = window.setTimeout(calc, 400);
     window.addEventListener("resize", calc);
-    return () => window.removeEventListener("resize", calc);
-  }, [enabled, reserve]);
-  return h;
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener("resize", calc);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, extra, ...deps]);
+  return { height, ref };
 }
 
 /** Filas que la lista clásica dibuja de entrada y cuántas suma cada vez que se llega al final (carga progresiva). */
@@ -415,12 +427,13 @@ export function OperationalTable<T>({
   continuous = false,
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const sheetHeight = useViewportSheetHeight(continuous);
   const [shown, setShown] = useState(LIST_CHUNK);
   // Carga progresiva (solo lista clásica continua): al acercarse al final se suma otra tanda; nunca se oculta nada.
   const shownRows = continuous ? Math.min(rows.length, Math.max(shown, LIST_CHUNK)) : rows.length;
   const editableTable = Boolean(canEditCells && onCellsCommit && allColumns.some((c) => c.edit));
   const { mode, toggle: toggleMode } = useTableMode(tableId, editableTable);
+  // Hoja continua: alto = lo que queda de la ventana (la planilla agrega ~100 px de barra de estado y avisos sobre la grilla).
+  const { height: sheetHeight, ref: sheetRef } = useViewportSheetHeight(continuous, mode === "excel" && !selection?.active ? 100 : 24, [rows.length]);
   // Las columnas `excelOnly` existen solo en la planilla; la lista clásica queda exactamente como antes.
   const columns = useMemo(() => allColumns.filter((c) => !c.excelOnly), [allColumns]);
   const secondaryMeta = columns
@@ -448,7 +461,7 @@ export function OperationalTable<T>({
   const showExcel = excel && mode === "excel" && !selectionActive;
   if (showExcel) {
     return (
-      <div className="space-y-1" data-testid={tableId ? `${tableId}-excel` : "os-table-excel"}>
+      <div className="space-y-1" data-testid={tableId ? `${tableId}-excel` : "os-table-excel"} ref={sheetRef}>
         <div className="flex justify-end">
           <button
             type="button"
@@ -479,6 +492,7 @@ export function OperationalTable<T>({
 
   return (
     <div
+      ref={sheetRef}
       className={`os-table-wrap max-w-full min-w-0 rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)] ${
         continuous ? "overflow-auto" : "overflow-x-clip"
       }`}

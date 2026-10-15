@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applySort } from "@/lib/sorting/sort-contract";
 import type { MpCompraRow, MpIngresoRow, MpStockRow } from "@/lib/inventory/types";
-import { MP_COMPRA_SORT_OPTIONS, MP_INGRESO_SORT_OPTIONS, MP_STOCK_SORT_OPTIONS } from "./mp-hub-view";
+import { MP_COMPRA_SORT_OPTIONS, MP_INGRESO_SORT_OPTIONS, MP_ORDEN_CARGA_KEY, MP_STOCK_SORT_OPTIONS } from "./mp-hub-view";
 
 /**
  * AUDIT_ORDENAMIENTO_GLOBAL — Stock/Ingresos MP/Compras MP en MpHubView no
@@ -146,5 +146,40 @@ describe("mp-hub-view — MP_COMPRA_SORT_OPTIONS", () => {
       compraRow({ id: "b", cantidad: 9 }),
     ];
     expect(applySort(rows, MP_COMPRA_SORT_OPTIONS, "cantidad_asc").map((r) => r.id)).toEqual(["b", "a"]);
+  });
+});
+
+describe("hoja única de Materias Primas: orden de carga por defecto", () => {
+  const stock = ["Glicerina", "Ácido hialurónico", "Fragancia", "Alcohol cetílico", "Vitamina E"].map((descripcion, i) =>
+    stockRow({ id: `s${i}`, descripcion, codigo: `C${5 - i}`, cantidadKg: 100 - i })
+  );
+  const ids = ["s0", "s1", "s2", "s3", "s4"];
+
+  it("la primera opción de cada hoja es el orden de carga y NO reordena (ni por nombre, código, cantidad ni fecha)", () => {
+    for (const options of [MP_STOCK_SORT_OPTIONS, MP_INGRESO_SORT_OPTIONS, MP_COMPRA_SORT_OPTIONS] as Array<readonly { key: string; label: string }[]>) {
+      expect(options[0]!.key).toBe(MP_ORDEN_CARGA_KEY);
+      expect(options[0]!.label).toMatch(/Orden de carga/);
+    }
+    expect(applySort(stock, MP_STOCK_SORT_OPTIONS, MP_ORDEN_CARGA_KEY).map((r) => r.descripcion)).toEqual([
+      "Glicerina",
+      "Ácido hialurónico",
+      "Fragancia",
+      "Alcohol cetílico",
+      "Vitamina E",
+    ]);
+  });
+
+  it("una clave desconocida (p. ej. una preferencia vieja) cae en el orden de carga, no en un orden alfabético", () => {
+    expect(applySort(stock, MP_STOCK_SORT_OPTIONS, "codigo_asc_viejo").map((r) => r.id)).toEqual(ids);
+  });
+
+  it("ordenar por una columna es explícito y volver al orden de carga recupera EXACTAMENTE el original", () => {
+    expect(applySort(stock, MP_STOCK_SORT_OPTIONS, "descripcion_asc").map((r) => r.id)).not.toEqual(ids);
+    expect(applySort(stock, MP_STOCK_SORT_OPTIONS, MP_ORDEN_CARGA_KEY).map((r) => r.id)).toEqual(ids);
+  });
+
+  it("filtrar y limpiar el filtro conserva el orden relativo de carga", () => {
+    const filtradas = stock.filter((r) => /a/i.test(r.descripcion));
+    expect(applySort(filtradas, MP_STOCK_SORT_OPTIONS, MP_ORDEN_CARGA_KEY).map((r) => r.id)).toEqual(filtradas.map((r) => r.id));
   });
 });
