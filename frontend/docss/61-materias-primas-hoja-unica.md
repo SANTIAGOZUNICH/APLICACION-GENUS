@@ -93,7 +93,22 @@ El criterio queda auditable en `seq_criterio`.
 
 ## 5. Rendimiento (build de producción, Chromium, base descartable)
 
-Ver la sección «Medición» más abajo (la completa el E2E `mp-hoja-unica-validate.mjs` en cada corrida).
+Medido por `mp-hoja-unica-validate.mjs` (sembrando filas `inv_mp_stock` por SQL; escritorio 1280x800; `next build` + `next start`; sandbox sin GPU, así que son cifras conservadoras):
+
+| Filas | API `GET` (ms / KB) | Render inicial (clic en «Stock» → filas visibles) | Filas en el DOM | Recorrer TODA la hoja (60 saltos) | Cuadro p95 | Lista clásica: 1.ª tanda / hasta el final |
+|---|---|---|---|---|---|---|
+| 1.088 | 206 / 670 | 802 ms | 17-18 | 5,5 s, llega a la última fila | 147 ms | 46 ms (250 filas) / 6,3 s |
+| 5.088 | 1.563 / 3.137 | 2.645 ms | 17-18 | 5,8 s, llega a la última fila | 152 ms | 28 ms (250 filas) / ~33 s |
+
+Presupuesto fijado (falla el E2E si se excede): render inicial ≤ 5 s (1.000 filas) / ≤ 8 s (5.000), < 120 filas en DOM,
+cuadro p95 ≤ 400 ms y recorrido completo ≤ 12 s, lista clásica con primera tanda de 250 y llegada a la última fila.
+La **planilla** (modo por defecto) virtualiza: el costo no crece con la cantidad de filas; lo que crece con N es el
+`GET` (JSON completo, ~0,6 KB por fila), que es el cuello de botella con miles de filas (ver Limitaciones).
+
+Limitaciones: la API sigue devolviendo todas las filas en un solo `GET` (como antes); con decenas de miles convendría
+paginar en el servidor por `load_seq` (keyset) manteniendo la hoja continua. La lista clásica carga de a tandas que
+se duplican (250, 500, 1.000…), por eso llegar al final con 5.000 filas lleva decenas de segundos de scroll automático
+(en la práctica nadie baja a mano 5.000 filas en lista; la planilla es el modo por defecto).
 
 ## 6. Qué NO se tocó
 
