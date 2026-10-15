@@ -502,7 +502,7 @@ export function OperationalTable<T>({
         continuous
           ? (e) => {
               const el = e.currentTarget;
-              if (el.scrollTop + el.clientHeight >= el.scrollHeight - 600) setShown((n) => (n < rows.length ? n + LIST_CHUNK : n));
+              if (el.scrollTop + el.clientHeight >= el.scrollHeight - 600) setShown((n) => (n < rows.length ? n + Math.max(LIST_CHUNK, n) : n));
             }
           : undefined
       }

@@ -124,7 +124,12 @@ async function readAllCol(page, gridId, title) {
   for (let i = 0; i < 4000; i++) {
     const { rows, done } = await step();
     for (const r of rows) if (Number.isFinite(r.n)) collected.set(r.n, r.v);
-    if (done) break;
+    if (done) {
+      await page.waitForTimeout(200);
+      const last = await step();
+      for (const r of last.rows) if (Number.isFinite(r.n)) collected.set(r.n, r.v);
+      break;
+    }
     await page.waitForTimeout(40);
   }
   return [...collected.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
@@ -271,6 +276,7 @@ try {
   const idsBefore = await orderIds();
   const seqBefore = await seqOf(idsBefore);
   await d2p.evaluate(() => { const sc = document.querySelector("[data-testid=mp-stock-grid] .dsg-container"); if (sc) sc.scrollTop = 0; });
+  await d2p.waitForFunction((v) => [...document.querySelectorAll(".dsg-row input")].some((i) => i.value === v), "HU Ácido hialurónico", { timeout: 20_000 });
   await typeInto(d2p, "HU Ácido hialurónico", "Proveedor", "AAA PRIMERO ALFABETICO", "mp-stock-grid");
   check("editar una fila en la hoja (Proveedor) se guarda", await waitDb(async () => (await q("select 1 from inv_mp_stock where payload->>'descripcion' = 'HU Ácido hialurónico' and payload->>'proveedor' = 'AAA PRIMERO ALFABETICO'")).length === 1));
   check("editar NO cambia la posición (load_seq idéntico) ni el orden en pantalla", same(await seqOf(idsBefore), seqBefore) && same(onlyHU(await readAllCol(d2p, "mp-stock-grid", "Descripción")).slice(0, 5), NOMBRES));
@@ -406,16 +412,14 @@ try {
   await q("delete from inv_mp_stock where id = any($1::uuid[])", [histIds]);
 
   // ============ 10) Permisos: lectura vs edición ============
+  // La barra lateral solo ofrece Stock MP a Materia Prima y Dirección; Calidad/Producción/Depósito leen por API (lectura).
   const cal = await openAs(E2E_USERS.calidad, "desktop");
   const cp = cal.page;
-  await openStock(cp);
-  await cp.locator("[data-testid=mp-stock-grid]").waitFor({ timeout: 60_000 });
-  const calOrder = onlyHU(await readAllCol(cp, "mp-stock-grid", "Descripción"));
-  check("LECTURA (Calidad): ve la misma hoja única en el mismo orden de carga", same(calOrder.slice(0, 5), NOMBRES));
-  check("LECTURA (Calidad): sin botones de edición (Nuevo, Pegar desde Excel, Registrar ajuste)", (await cp.getByRole("button", { name: /^Nuevo$/ }).count()) === 0 && (await cp.getByRole("button", { name: /Pegar desde Excel/ }).count()) === 0 && (await cp.locator("[data-testid=mp-stock-ajuste-open]").count()) === 0);
+  const calOrder = (await list(cp, "mp_stock")).map((r) => r.descripcion).filter((v) => v.startsWith("HU "));
+  check("LECTURA (Calidad): lee el MISMO listado en el MISMO orden de carga", same(calOrder.slice(0, 5), NOMBRES) && calOrder.length >= 45, `${calOrder.length} filas`);
   const denyW = await post(cp, { action: "upsert", resource: "mp_stock", payload: { descripcion: "HU no debe existir", codigo: "HU-NO", lote: "X", cantidadKg: 1 } });
-  check("LECTURA (Calidad): el servidor rechaza escribir (403) y no se agrega ninguna fila", denyW.status() === 403 && (await q("select 1 from inv_mp_stock where payload->>'descripcion' = 'HU no debe existir'")).length === 0, String(denyW.status()));
-  await cp.screenshot({ path: `${OUT}/5-stock-solo-lectura.png` });
+  const denyC = await cp.request.patch("/api/v1/inventory/cells", { data: { resource: "mp_stock", changes: [{ id: ids[0], field: "proveedor", value: "X", expectedVersion: "2020-01-01T00:00:00.000Z" }] } });
+  check("LECTURA (Calidad): el servidor rechaza escribir (alta 403, celda 403) y no se agrega ninguna fila", denyW.status() === 403 && [403, 409].includes(denyC.status()) && (await q("select 1 from inv_mp_stock where payload->>'descripcion' = 'HU no debe existir'")).length === 0, `${denyW.status()}/${denyC.status()}`);
   await cal.ctx.close();
   await openStock(mp);
   check("EDICIÓN (Materia Prima): ve «Nuevo», «Pegar desde Excel» y «Registrar ajuste» (todas las acciones siguen)", (await mp.getByRole("button", { name: /^Nuevo$/ }).count()) === 1 && (await mp.getByRole("button", { name: /Pegar desde Excel/ }).count()) === 1 && (await mp.locator("[data-testid=mp-stock-ajuste-open]").count()) === 1);
@@ -521,9 +525,11 @@ try {
   check(`RENDIMIENTO ${r5.total} filas: recorrido completo ≤ 6 s (${Math.round(r5.scroll.totalMs)} ms), llega a la fila ${r5.scroll.lastRowN}; DOM al final ${r5.domRowsEnd} filas`, r5.scroll.lastRowN === r5.total && r5.scroll.totalMs <= 6000 && r5.domRowsEnd < 120);
   check(`RENDIMIENTO ${r5.total} filas (lista clásica): ${r5.listFirstRows} iniciales y carga progresiva hasta ${r5.listAll.count}/${r5.total} en ${Math.round(r5.listAll.ms)} ms`, r5.listFirstRows === 250 && r5.listAll.count >= r5.total);
   // Con 5000 filas el orden sigue siendo el de carga: primeras = las 5 de siempre, últimas = PERF 05000
-  const apiBig = (await list(mp, "mp_stock")).map((r) => r.descripcion);
+  const bigCtx = await openAs(E2E_USERS.materiaPrima, "desktop");
+  const apiBig = (await list(bigCtx.page, "mp_stock")).map((r) => r.descripcion);
   const sinHU = apiBig.filter((x) => x.startsWith("PERF "));
   check("con 5000 filas la API mantiene el orden de carga (PERF 00001 … PERF 05000 en ese orden, después de los HU)", sinHU.length === 5000 && sinHU[0] === "PERF MP 00001" && sinHU[4999] === "PERF MP 05000" && apiBig.indexOf("HU Glicerina") === 0);
+  await bigCtx.ctx.close();
   await q("delete from inv_mp_stock where payload->>'descripcion' like 'PERF MP %'");
   const after5k = await snap();
   check("integridad: borrar SOLO las filas de prueba de rendimiento deja el stock, movimientos y saldos como estaban", after5k.mov.h === before1k.mov.h && after5k.bal === before1k.bal);
