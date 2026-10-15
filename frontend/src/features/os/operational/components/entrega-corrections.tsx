@@ -69,8 +69,14 @@ function ReasonForm({
         Motivo (obligatorio, mín. {MIN_ENTREGAS_REASON} caracteres, queda auditado)
         <input value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls} data-testid={`${testId}-reason`} />
       </label>
+      {reason.trim().length > 0 && reason.trim().length < MIN_ENTREGAS_REASON && (
+        <p className="text-[11px] text-amber-300" data-testid={`${testId}-reason-short`}>
+          Al motivo le faltan {MIN_ENTREGAS_REASON - reason.trim().length} caracteres.
+        </p>
+      )}
       {hint && <p className="text-[11px] text-[#8fb3c9]">{hint}</p>}
-      {error && <p role="alert" className="text-xs text-[var(--genus-error,#e85d5d)]" data-testid={`${testId}-error`}>{error}</p>}
+      {/* Error REAL del servidor (no del motivo, que ya se valida arriba). */}
+      {error && <p role="alert" className="text-xs text-[var(--genus-error,#e85d5d)]" data-testid={`${testId}-error`}>No se guardó: {error}</p>}
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={!ok || busy} data-testid={`${testId}-confirm`}>{busy ? "Guardando…" : submitLabel}</Button>
         <Button type="button" size="sm" variant="secondary" onClick={onClose}>Volver</Button>

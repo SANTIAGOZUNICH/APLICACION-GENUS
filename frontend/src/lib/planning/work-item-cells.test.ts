@@ -95,6 +95,18 @@ describe("política de celdas de WorkItem", () => {
     expect(workItemCellProtection(base({ qualityStatus: "aprobado" }), "client", "PRODUCCION")).toMatch(/anulá la decisión de Calidad/);
     expect(workItemCellProtection(base({ qualityStatus: "aprobado" }), "finishedQty", "PRODUCCION")).toMatch(/Calidad/);
     expect(workItemCellProtection(base({ packagingClosedAt: "2026-01-01" }), "client", "PRODUCCION")).toMatch(/Envasado cerrado/);
+    // Regresión (LUCENT · SERUM ADN 1% · OA-2026-26362): la FECHA DE ENTREGA es logística → se reprograma aunque
+    // Envasado esté cerrado, Calidad haya decidido o haya salido de Codificado, mientras quede algo por entregar.
+    expect(workItemCellProtection(base({ status: "completo", packagingClosedAt: "2026-10-15" }), "deliveryDate", "PRODUCCION")).toBeNull();
+    expect(workItemCellProtection(base({ qualityStatus: "aprobado" }), "deliveryDate", "PRODUCCION")).toBeNull();
+    expect(workItemCellProtection(base({ deliveredFromCodificadoAt: "2026-10-15" }), "deliveryDate", "PRODUCCION")).toBeNull();
+    // …pero los datos productivos del trabajo cerrado siguen protegidos, y entregado del todo / cancelado no se reprograma.
+    for (const f of ["plannedQuantity", "plannedDate", "finishedQty", "product"]) {
+      expect(workItemCellProtection(base({ packagingClosedAt: "2026-10-15" }), f, "PRODUCCION")).toMatch(/Envasado cerrado/);
+    }
+    expect(workItemCellProtection(base({ status: "entregado" }), "deliveryDate", "PRODUCCION")).toMatch(/anulá la entrega/);
+    expect(workItemCellProtection(base({ status: "cancelado" }), "deliveryDate", "PRODUCCION")).toMatch(/restauralo/);
+    expect(workItemCellProtection(base({ packagingClosedAt: "2026-10-15" }), "deliveryDate", "ENVASADO_MASIVO")).toMatch(/Solo Producción/);
     // estado, avance y firmas nunca son editables por celda
     for (const f of ["status", "qualityStatus", "packingGroups", "operationalObservation"]) expect(workItemCellProtection(base(), f, "PRODUCCION")).toMatch(/solo lectura/);
   });
