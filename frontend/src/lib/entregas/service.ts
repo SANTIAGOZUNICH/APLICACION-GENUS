@@ -15,7 +15,10 @@ import {
   type DeliveryHistoryEntry,
   type DeliverySector,
   type DeliverySuggestion,
+  type EntregasDateAudit,
+  type EntregasDateAuditCategory,
   type EntregasRecoveryStats,
+  type DateReviewFlag,
   type ItemSector,
   type LinkedWork,
   type RealDelivery,
@@ -23,7 +26,7 @@ import {
   type ScheduledDeliveryItem,
   type WorkDivergence,
 } from "./types";
-import { buildDerivedDeliveries, computeRecoveryStats, toLinkedWork, type WorkFacts } from "./derive";
+import { buildDerivedDeliveries, computeRecoveryStats, toLinkedWork, workReviewFlags, type WorkFacts } from "./derive";
 import {
   clientKey,
   computeWorkDivergences,
@@ -88,11 +91,30 @@ const WORK_FACT_COLS = sql`
   to_char(w.completed_at at time zone 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') as completed_on,
   nullif(concat_ws(' · ', nullif(trim(w.notes), ''), nullif(trim(w.operational_observation), '')), '') as notes,
   (w.deleted_at is not null or w.operational_cancelled_at is not null or w.operational_status = 'cancelado' or w.status = 'CANCELADO') as is_cancelled,
-  (select coalesce(json_agg(json_build_object(
-      'id', wd.id, 'date', to_char(wd.actual_delivered_at at time zone 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD'),
-      'quantity', wd.quantity, 'unit', wd.unit, 'remito', wd.remito, 'receivedBy', wd.received_by, 'lote', wd.lote, 'vto', wd.vto,
-      'observations', wd.observations) order by wd.actual_delivered_at, wd.id), '[]'::json)
-     from work_item_deliveries wd where wd.work_item_id = w.id and wd.status = 'ENTREGADO' and wd.deleted_at is null) as real_deliveries
+  (select coalesce(json_agg(x.j order by x.at, x.id), '[]'::json) from (
+      -- Entregas PARCIALES (0047): cada envío físico es una línea con su propia fecha real. La fila agregada de
+      -- work_item_deliveries guarda solo la ÚLTIMA fecha y el acumulado: leerla ubicaba todos los envíos en el día del último.
+      select l.id, l.actual_delivered_at as at, json_build_object(
+          'id', l.id, 'date', to_char(l.actual_delivered_at at time zone 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD'),
+          'quantity', l.quantity::text, 'unit', coalesce(l.unit, wd.unit), 'remito', coalesce(l.remito, wd.remito),
+          'receivedBy', coalesce(l.received_by, wd.received_by), 'lote', wd.lote, 'vto', wd.vto,
+          'observations', coalesce(l.observations, wd.observations),
+          'utcMidnight', (l.actual_delivered_at at time zone 'UTC')::time = time '00:00:00') as j
+        from work_item_delivery_lines l join work_item_deliveries wd on wd.id = l.delivery_id
+       where l.work_item_id = w.id and l.status = 'ACTIVA' and wd.status = 'ENTREGADO' and wd.deleted_at is null
+      union all
+      -- Entregas sin líneas (históricas, anteriores a 0047): la fila agregada es la única fuente.
+      select wd.id, wd.actual_delivered_at as at, json_build_object(
+          'id', wd.id, 'date', to_char(wd.actual_delivered_at at time zone 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD'),
+          'quantity', wd.quantity, 'unit', wd.unit, 'remito', wd.remito, 'receivedBy', wd.received_by, 'lote', wd.lote, 'vto', wd.vto,
+          'observations', wd.observations,
+          'utcMidnight', (wd.actual_delivered_at at time zone 'UTC')::time = time '00:00:00') as j
+        from work_item_deliveries wd
+       where wd.work_item_id = w.id and wd.status = 'ENTREGADO' and wd.deleted_at is null
+         and not exists (select 1 from work_item_delivery_lines l2 where l2.delivery_id = wd.id and l2.status = 'ACTIVA')
+    ) x) as real_deliveries,
+  (select json_build_object('reason', h.reason, 'by', h.hidden_by, 'at', h.hidden_at)
+     from delivery_calendar_hidden h where h.work_item_id = w.id and h.restored_at is null limit 1) as calendar_hidden
 `;
 
 function parseRealDeliveries(raw: unknown): RealDelivery[] {
@@ -111,7 +133,18 @@ function parseRealDeliveries(raw: unknown): RealDelivery[] {
     lote: str(d.lote),
     vto: str(d.vto),
     observations: str(d.observations),
+    ...(d.utcMidnight === true || d.utcMidnight === "true" ? { utcMidnight: true } : {}),
   }));
+}
+
+function parseHidden(raw: unknown): WorkFacts["hidden"] {
+  let v: unknown = raw;
+  if (typeof raw === "string") {
+    try { v = JSON.parse(raw); } catch { v = null; }
+  }
+  if (!v || typeof v !== "object") return null;
+  const h = v as Row;
+  return { reason: String(h.reason ?? ""), by: String(h.by ?? ""), at: h.at ? iso(h.at) : "" };
 }
 
 /** Fila (WORK_FACT_COLS) → hechos del trabajo. Los campos de vínculo se completan aparte. */
@@ -142,6 +175,7 @@ function factsFromRow(r: Row): WorkFacts {
     linked: Boolean(r.is_linked),
     containerDate: str(r.container_date),
     containerCancelled: r.container_status === "cancelada",
+    hidden: parseHidden(r.calendar_hidden),
   };
 }
 
@@ -188,6 +222,7 @@ async function loadDeliveries(db: { execute: SqlTx["execute"] }, where: ReturnTy
     worksByItem.set(k, [...(worksByItem.get(k) ?? []), w]);
   }
 
+  const dateById = new Map(dRows.map((r) => [String(r.id), String(r.delivery_date)]));
   const itemsByDelivery = new Map<string, ScheduledDeliveryItem[]>();
   for (const r of iRows) {
     const item: ScheduledDeliveryItem = {
@@ -209,6 +244,13 @@ async function loadDeliveries(db: { execute: SqlTx["execute"] }, where: ReturnTy
       status: "programada",
     };
     item.status = deriveItemStatus(item);
+    // Fechas contradictorias de sus trabajos (se marcan para Producción; nunca se corrigen solas).
+    const flags = new Set<DateReviewFlag>();
+    for (const w of item.works) {
+      if (w.cancelled) continue;
+      for (const f of workReviewFlags(w, { containerDate: dateById.get(String(r.delivery_id)) ?? null, delivered: w.delivered })) flags.add(f);
+    }
+    if (flags.size) item.reviewFlags = [...flags];
     const k = String(r.delivery_id);
     itemsByDelivery.set(k, [...(itemsByDelivery.get(k) ?? []), item]);
   }
@@ -252,8 +294,14 @@ async function loadUnlinkedWorks(db: { execute: SqlTx["execute"] }, from: string
     where ${NOT_LINKED} and (
       (w.delivery_date between ${from}::date and ${to}::date and ${NOT_CANCELLED_WORK})
       or exists (
+        select 1 from work_item_delivery_lines l join work_item_deliveries wd on wd.id = l.delivery_id
+        where l.work_item_id = w.id and l.status = 'ACTIVA' and wd.status = 'ENTREGADO' and wd.deleted_at is null
+          and (l.actual_delivered_at at time zone ${TZ})::date between ${from}::date and ${to}::date
+      )
+      or exists (
         select 1 from work_item_deliveries wd
         where wd.work_item_id = w.id and wd.status = 'ENTREGADO' and wd.deleted_at is null
+          and not exists (select 1 from work_item_delivery_lines l2 where l2.delivery_id = wd.id and l2.status = 'ACTIVA')
           and (wd.actual_delivered_at at time zone ${TZ})::date between ${from}::date and ${to}::date
       )
     )
@@ -289,6 +337,114 @@ export async function entregasRecoveryStats(): Promise<EntregasRecoveryStats> {
   return computeRecoveryStats(rows.map(factsFromRow), today, Number(noDate[0]?.n ?? 0));
 }
 
+/**
+ * Auditoría de fechas (SOLO LECTURA: no escribe ni corrige nada). Cada categoría trae la cantidad de casos y hasta 50
+ * ejemplos. Las fechas contradictorias que no se pueden resolver con certeza quedan marcadas en el calendario
+ * («Revisar fecha») para que Producción decida.
+ */
+export async function entregasDateAudit(): Promise<EntregasDateAudit> {
+  const db = requireDb();
+  const LIMIT = 50;
+  const ar = (col: string) => sql.raw(`to_char(${col} at time zone '${TZ}', 'YYYY-MM-DD')`);
+  const run = async (q: ReturnType<typeof sql>) => (await db.execute(q)).rows as Row[];
+  const category = (
+    key: EntregasDateAuditCategory["key"],
+    label: string,
+    explanation: string,
+    rows: Row[]
+  ): EntregasDateAuditCategory => ({
+    key,
+    label,
+    explanation,
+    count: Number(rows[0]?.total ?? 0),
+    samples: rows.map((r) => ({ workItemId: String(r.id), client: str(r.client), product: str(r.product), detail: String(r.detail ?? "") })),
+  });
+
+  const parciales = await run(sql`
+    select w.id, w.client, w.product, count(*) over () as total,
+           string_agg(distinct ${ar("l.actual_delivered_at")}, ', ') as detail
+    from work_items w join work_item_delivery_lines l on l.work_item_id = w.id and l.status = 'ACTIVA'
+    group by w.id, w.client, w.product
+    having count(distinct ${ar("l.actual_delivered_at")}) > 1
+    order by w.id limit ${LIMIT}
+  `);
+  const medianoche = await run(sql`
+    select w.id, w.client, w.product, count(*) over () as total,
+           'Entregado ' || to_char(x.at at time zone 'UTC', 'YYYY-MM-DD HH24:MI') || ' UTC = ' || ${ar("x.at")} || ' en Argentina' as detail
+    from work_items w
+    join (
+      select l.work_item_id, l.actual_delivered_at as at from work_item_delivery_lines l where l.status = 'ACTIVA'
+      union all
+      select wd.work_item_id, wd.actual_delivered_at from work_item_deliveries wd
+      where wd.status = 'ENTREGADO' and wd.deleted_at is null
+        and not exists (select 1 from work_item_delivery_lines l2 where l2.delivery_id = wd.id and l2.status = 'ACTIVA')
+    ) x on x.work_item_id = w.id
+    where (x.at at time zone 'UTC')::time = time '00:00:00'
+    order by x.at desc limit ${LIMIT}
+  `);
+  const antes = await run(sql`
+    select w.id, w.client, w.product, count(*) over () as total,
+           'Entrega ' || to_char(w.delivery_date, 'YYYY-MM-DD') || ' · producción ' || to_char(w.planned_date, 'YYYY-MM-DD') as detail
+    from work_items w
+    where w.delivery_date is not null and w.planned_date is not null and w.delivery_date < w.planned_date and ${NOT_CANCELLED_WORK}
+    order by w.delivery_date desc limit ${LIMIT}
+  `);
+  const otraFecha = await run(sql`
+    select w.id, w.client, w.product, count(*) over () as total,
+           'Trabajo ' || to_char(w.delivery_date, 'YYYY-MM-DD') || ' · entrega programada ' || to_char(d.delivery_date, 'YYYY-MM-DD') as detail
+    from scheduled_delivery_links l
+    join scheduled_delivery_items i on i.id = l.item_id and i.deleted_at is null
+    join scheduled_deliveries d on d.id = i.delivery_id and d.status = 'programada'
+    join work_items w on w.id = l.work_item_id
+    where l.unlinked_at is null and w.delivery_date is not null and w.delivery_date <> d.delivery_date
+      and ${NOT_CANCELLED_WORK} and w.operational_status <> 'entregado'
+    order by d.delivery_date desc limit ${LIMIT}
+  `);
+  const sinFecha = await run(sql`
+    select w.id, w.client, w.product, count(*) over () as total, 'Estado entregado sin entrega real registrada' as detail
+    from work_items w
+    where w.operational_status = 'entregado' and ${NOT_CANCELLED_WORK} and not ${HAS_REAL_DELIVERY}
+    order by w.updated_at desc limit ${LIMIT}
+  `);
+  const today = String(((await run(sql`select to_char(now() at time zone ${TZ}, 'YYYY-MM-DD') as t`))[0]?.t) ?? "");
+  return {
+    generatedAt: new Date().toISOString(),
+    today,
+    categories: [
+      category(
+        "parciales_en_un_solo_dia",
+        "Entregas parciales en distintos días",
+        "La fila resumen de la entrega guarda solo la fecha del ÚLTIMO envío: el calendario mostraba todos los envíos ese día. Corregido: ahora cada envío aparece en su fecha real.",
+        parciales
+      ),
+      category(
+        "entrega_hora_utc_medianoche",
+        "Entregas guardadas a las 00:00 UTC",
+        "Fecha cargada sin hora y guardada como medianoche UTC: en Argentina cae el día anterior. No se corrige sola: quedan marcadas «Revisar fecha».",
+        medianoche
+      ),
+      category(
+        "entrega_antes_de_produccion",
+        "Fecha de entrega anterior a la de producción",
+        "Fechas contradictorias del trabajo: quedan marcadas «Revisar fecha» para que Producción decida.",
+        antes
+      ),
+      category(
+        "trabajo_con_otra_fecha",
+        "Trabajo vinculado con otra fecha",
+        "El calendario muestra el trabajo en la fecha de su entrega programada (la decisión manual de Producción), pero el trabajo tiene otra fecha de entrega. Queda marcado «Revisar fecha».",
+        otraFecha
+      ),
+      category(
+        "entregado_sin_fecha_real",
+        "Entregados sin entrega real registrada",
+        "El trabajo figura entregado pero no tiene entrega real: no se ubica en el calendario (nunca se inventa una fecha).",
+        sinFecha
+      ),
+    ],
+  };
+}
+
 /** Recorta lo que el sector no puede ver (Envasado: solo los productos de su sector). El recorte es del SERVIDOR. */
 function restrictForActor(actor: EntregasActor, deliveries: ScheduledDelivery[]): ScheduledDelivery[] {
   const only = entregasVisibleSector(actor.sector);
@@ -316,13 +472,15 @@ export const entregasService = {
    *  - lo recuperado de los trabajos NO vinculados: entregas reales en su fecha real («Entrega registrada») y trabajos
    *    vigentes con fecha de entrega («Desde trabajo»). Un trabajo vinculado ya aparece dentro de su entrega programada.
    */
-  async list(actor: EntregasActor, range: { from: string; to: string }): Promise<ScheduledDelivery[]> {
+  async list(actor: EntregasActor, range: { from: string; to: string }, opts: { includeHidden?: boolean } = {}): Promise<ScheduledDelivery[]> {
     assertView(actor);
     const db = requireDb();
     const from = isoDate(range.from, "Desde");
     const to = isoDate(range.to, "Hasta");
     const scheduled = await loadDeliveries(db, sql`d.delivery_date between ${from}::date and ${to}::date`);
-    const derived = buildDerivedDeliveries(await loadUnlinkedWorks(db, from, to), { from, to });
+    // Las apariciones quitadas por Producción solo se listan para quien puede restaurarlas.
+    const includeHidden = Boolean(opts.includeHidden) && canManageEntregas(actor.sector);
+    const derived = buildDerivedDeliveries(await loadUnlinkedWorks(db, from, to), { from, to }, { includeHidden });
     return restrictForActor(actor, [...scheduled, ...derived]);
   },
 
@@ -610,6 +768,323 @@ export const entregasService = {
       });
     });
     return this.get(actor, deliveryId);
+  },
+
+  /** Restaura una entrega programada CANCELADA (motivo obligatorio y auditado). Vuelve con sus productos y vínculos. */
+  async restore(actor: EntregasActor, id: string, reason: unknown, expectedVersion: number): Promise<ScheduledDelivery> {
+    assertManage(actor);
+    const r = validateReason(reason);
+    if (!r.ok) throw new OrdersValidationError(r.message);
+    const db = requireDb();
+    await db.transaction(async (tx) => {
+      const cur = await lockDelivery(tx, id);
+      if (cur.status !== "cancelada") throw new OrdersValidationError("La entrega no está cancelada.");
+      if (Number(cur.version) !== expectedVersion) throw new EntregasConflictError("Otra persona modificó esta entrega. Recargá y volvé a aplicar tu cambio.");
+      const prev = ((await tx.execute(sql`select cancelled_at, cancelled_by, cancel_reason from scheduled_deliveries where id = ${id}::uuid`)).rows as Row[])[0] ?? {};
+      await tx.execute(sql`
+        update scheduled_deliveries set status = 'programada', cancelled_at = null, cancelled_by = null, cancel_reason = null,
+          version = version + 1, updated_at = now() where id = ${id}::uuid
+      `);
+      await audit(tx, actor, {
+        action: "restore",
+        deliveryId: id,
+        payload: { reason: r.value, cancelledAt: prev.cancelled_at ? iso(prev.cancelled_at) : null, cancelledBy: str(prev.cancelled_by), cancelReason: str(prev.cancel_reason) },
+      });
+    });
+    return this.get(actor, id);
+  },
+
+  /**
+   * Cambia la fecha de UN producto sin mover los demás del mismo cliente: el producto (con sus trabajos vinculados) pasa a la
+   * entrega programada del mismo cliente en la nueva fecha (se crea si no existe). Si es el único producto, se reprograma la
+   * entrega entera. Motivo obligatorio; queda en el historial de las dos entregas.
+   */
+  async moveItem(
+    actor: EntregasActor,
+    deliveryId: string,
+    itemId: string,
+    newDate: string,
+    reason: unknown,
+    expectedVersion: number
+  ): Promise<{ source: ScheduledDelivery; target: ScheduledDelivery }> {
+    assertManage(actor);
+    const date = isoDate(newDate, "La nueva fecha");
+    const r = validateReason(reason);
+    if (!r.ok) throw new OrdersValidationError(r.message);
+    const db = requireDb();
+    let targetId = deliveryId;
+    await db.transaction(async (tx) => {
+      const cur = await lockDelivery(tx, deliveryId);
+      if (cur.status === "cancelada") throw new EntregasConflictError("La entrega está cancelada: no se puede reprogramar.");
+      if (Number(cur.version) !== expectedVersion) throw new EntregasConflictError("Otra persona modificó esta entrega. Recargá y volvé a aplicar tu cambio.");
+      if (date === cur.delivery_date) throw new OrdersValidationError("La nueva fecha es igual a la actual.");
+      const items = (await tx.execute(sql`
+        select id, product from scheduled_delivery_items where delivery_id = ${deliveryId}::uuid and deleted_at is null order by position
+      `)).rows as Row[];
+      const item = items.find((i) => String(i.id) === itemId);
+      if (!item) throw new OrdersNotFoundError("El producto ya no está en esta entrega. Recargá.");
+      if (items.length === 1) {
+        // Único producto: es la entrega entera.
+        await tx.execute(sql`
+          update scheduled_deliveries set delivery_date = ${date}::date, reschedule_count = reschedule_count + 1, version = version + 1, updated_at = now()
+          where id = ${deliveryId}::uuid
+        `);
+        await audit(tx, actor, { action: "reschedule", deliveryId, payload: { from: cur.delivery_date, to: date, reason: r.value, itemId, product: String(item.product) } });
+        return;
+      }
+      const head = ((await tx.execute(sql`select client, client_key, responsible from scheduled_deliveries where id = ${deliveryId}::uuid`)).rows as Row[])[0]!;
+      const existing = ((await tx.execute(sql`
+        select id from scheduled_deliveries
+        where client_key = ${String(head.client_key)} and delivery_date = ${date}::date and status = 'programada' and id <> ${deliveryId}::uuid
+        order by created_at limit 1 for update
+      `)).rows as Row[])[0];
+      if (existing) {
+        targetId = String(existing.id);
+        await tx.execute(sql`update scheduled_deliveries set version = version + 1, updated_at = now() where id = ${targetId}::uuid`);
+      } else {
+        targetId = randomUUID();
+        await tx.execute(sql`
+          insert into scheduled_deliveries (id, client, client_key, delivery_date, responsible, notes, created_by, created_by_sector)
+          values (${targetId}::uuid, ${String(head.client)}, ${String(head.client_key)}, ${date}::date, ${str(head.responsible)}, null, ${actor.email}, ${actor.sector})
+        `);
+        await audit(tx, actor, { action: "create", deliveryId: targetId, payload: { origin: "move_item", sourceDeliveryId: deliveryId, reason: r.value } });
+      }
+      const pos = ((await tx.execute(sql`
+        select coalesce(max(position) + 1, 0) as p from scheduled_delivery_items where delivery_id = ${targetId}::uuid and deleted_at is null
+      `)).rows as Row[])[0]?.p;
+      await tx.execute(sql`
+        update scheduled_delivery_items set delivery_id = ${targetId}::uuid, position = ${Number(pos ?? 0)}, version = version + 1, updated_at = now()
+        where id = ${itemId}::uuid
+      `);
+      await tx.execute(sql`update scheduled_deliveries set version = version + 1, updated_at = now() where id = ${deliveryId}::uuid`);
+      const payload = { itemId, product: String(item.product), from: cur.delivery_date, to: date, reason: r.value };
+      await audit(tx, actor, { action: "move_item_out", deliveryId, payload: { ...payload, targetDeliveryId: targetId } });
+      await audit(tx, actor, { action: "move_item_in", deliveryId: targetId, payload: { ...payload, sourceDeliveryId: deliveryId } });
+    });
+    return { source: await this.get(actor, deliveryId), target: await this.get(actor, targetId) };
+  },
+
+  /**
+   * Quita (baja LÓGICA, con motivo) un producto de una entrega programada. No se puede con trabajos vinculados (las
+   * entregas físicas y sus trabajos nunca se borran desde acá) ni si es el único producto (para eso: cancelar la entrega).
+   */
+  async deleteItem(actor: EntregasActor, deliveryId: string, itemId: string, reason: unknown, expectedVersion: number): Promise<ScheduledDelivery> {
+    assertManage(actor);
+    const r = validateReason(reason);
+    if (!r.ok) throw new OrdersValidationError(r.message);
+    const db = requireDb();
+    await db.transaction(async (tx) => {
+      const cur = await lockDelivery(tx, deliveryId);
+      if (cur.status === "cancelada") throw new EntregasConflictError("La entrega está cancelada: no se puede modificar.");
+      if (Number(cur.version) !== expectedVersion) throw new EntregasConflictError("Otra persona modificó esta entrega. Recargá y volvé a aplicar tu cambio.");
+      const items = (await tx.execute(sql`
+        select id, product from scheduled_delivery_items where delivery_id = ${deliveryId}::uuid and deleted_at is null
+      `)).rows as Row[];
+      const item = items.find((i) => String(i.id) === itemId);
+      if (!item) throw new OrdersNotFoundError("El producto ya no está en esta entrega. Recargá.");
+      const links = (await tx.execute(sql`select 1 from scheduled_delivery_links where item_id = ${itemId}::uuid and unlinked_at is null limit 1`)).rows;
+      if (links.length) throw new EntregasConflictError(`«${String(item.product)}» tiene trabajos vinculados: desvinculalos antes de quitarlo.`);
+      if (items.length === 1) throw new EntregasConflictError("Es el único producto de la entrega: para quitarla usá «Cancelar entrega».");
+      await tx.execute(sql`
+        update scheduled_delivery_items set deleted_at = now(), deleted_by = ${actor.email}, deleted_reason = ${r.value}, updated_at = now()
+        where id = ${itemId}::uuid
+      `);
+      await tx.execute(sql`update scheduled_deliveries set version = version + 1, updated_at = now() where id = ${deliveryId}::uuid`);
+      await audit(tx, actor, { action: "delete_item", deliveryId, payload: { itemId, product: String(item.product), reason: r.value } });
+    });
+    return this.get(actor, deliveryId);
+  },
+
+  /** Restaura un producto quitado (motivo obligatorio). La entrega tiene que estar vigente. */
+  async restoreItem(actor: EntregasActor, deliveryId: string, itemId: string, reason: unknown): Promise<ScheduledDelivery> {
+    assertManage(actor);
+    const r = validateReason(reason);
+    if (!r.ok) throw new OrdersValidationError(r.message);
+    const db = requireDb();
+    await db.transaction(async (tx) => {
+      const cur = await lockDelivery(tx, deliveryId);
+      if (cur.status === "cancelada") throw new EntregasConflictError("La entrega está cancelada: restaurala primero.");
+      const row = ((await tx.execute(sql`
+        select id, product, deleted_at, deleted_reason from scheduled_delivery_items where id = ${itemId}::uuid and delivery_id = ${deliveryId}::uuid
+      `)).rows as Row[])[0];
+      if (!row) throw new OrdersNotFoundError("Producto no encontrado.");
+      if (!row.deleted_at) return; // idempotente
+      const pos = ((await tx.execute(sql`
+        select coalesce(max(position) + 1, 0) as p from scheduled_delivery_items where delivery_id = ${deliveryId}::uuid and deleted_at is null
+      `)).rows as Row[])[0]?.p;
+      await tx.execute(sql`
+        update scheduled_delivery_items set deleted_at = null, deleted_by = null, deleted_reason = null, position = ${Number(pos ?? 0)},
+          version = version + 1, updated_at = now() where id = ${itemId}::uuid
+      `);
+      await tx.execute(sql`update scheduled_deliveries set version = version + 1, updated_at = now() where id = ${deliveryId}::uuid`);
+      await audit(tx, actor, { action: "restore_item", deliveryId, payload: { itemId, product: String(row.product), reason: r.value, deletedReason: str(row.deleted_reason) } });
+    });
+    return this.get(actor, deliveryId);
+  },
+
+  /** Productos quitados de una entrega (solo Producción, para restaurarlos). */
+  async deletedItems(actor: EntregasActor, deliveryId: string): Promise<ScheduledDeliveryItem[]> {
+    assertView(actor);
+    if (!canManageEntregas(actor.sector)) return [];
+    const db = requireDb();
+    const rows = (await db.execute(sql`
+      select i.id, i.delivery_id, i.product, i.quantity, i.unit, i.sector, to_char(i.planned_production_date, 'YYYY-MM-DD') as planned_production_date,
+             i.lot, i.vto, i.notes, i.position, i.version, i.created_at, i.updated_at, i.deleted_at, i.deleted_by, i.deleted_reason
+      from scheduled_delivery_items i where i.delivery_id = ${deliveryId}::uuid and i.deleted_at is not null order by i.deleted_at desc
+    `)).rows as Row[];
+    return rows.map((r) => ({
+      id: String(r.id),
+      deliveryId: String(r.delivery_id),
+      product: String(r.product),
+      quantity: str(r.quantity),
+      unit: str(r.unit),
+      sector: (str(r.sector) as ItemSector | null) ?? null,
+      plannedProductionDate: str(r.planned_production_date),
+      lot: str(r.lot),
+      vto: str(r.vto),
+      notes: str(r.notes),
+      position: Number(r.position ?? 0),
+      version: Number(r.version ?? 1),
+      createdAt: iso(r.created_at),
+      updatedAt: iso(r.updated_at),
+      works: [],
+      status: "programada",
+      deletedAt: iso(r.deleted_at),
+      deletedBy: str(r.deleted_by),
+      deletedReason: str(r.deleted_reason),
+    }));
+  },
+
+  /**
+   * Edita, desde el calendario, una entrega «Desde trabajo» (un trabajo sin entrega programada): fecha de entrega, cantidad
+   * programada y observaciones. Se hace con la edición canónica del trabajo (validación, versión, protecciones, motivo e
+   * historial del trabajo), así que el cambio queda en el propio trabajo: persiste y nada lo vuelve a pisar.
+   */
+  async editWork(
+    actor: EntregasActor,
+    workItemId: string,
+    changes: { deliveryDate?: string | null; plannedQuantity?: string | null; notes?: string | null },
+    reason: unknown
+  ): Promise<{ workItemId: string; applied: string[] }> {
+    assertManage(actor);
+    const r = validateReason(reason);
+    if (!r.ok) throw new OrdersValidationError(r.message);
+    const db = requireDb();
+    const row = ((await db.execute(sql`
+      select w.version, to_char(w.delivery_date, 'YYYY-MM-DD') as delivery_date, w.planned_quantity, w.notes,
+             (${NOT_CANCELLED_WORK}) as vigente,
+             exists (select 1 from scheduled_delivery_links l where l.work_item_id = w.id and l.unlinked_at is null) as linked
+      from work_items w where w.id = ${workItemId}::uuid
+    `)).rows as Row[])[0];
+    if (!row) throw new OrdersNotFoundError("Trabajo no encontrado.");
+    if (!row.vigente) throw new EntregasConflictError("El trabajo está cancelado o eliminado: no se edita desde el calendario.");
+    const fields: Array<{ field: "deliveryDate" | "plannedQuantity" | "notes"; value: string | null; from: string | null }> = [];
+    if (changes.deliveryDate !== undefined) {
+      const v = changes.deliveryDate?.trim() || null;
+      if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new OrdersValidationError("La fecha de entrega no es válida.");
+      if (row.linked && v !== str(row.delivery_date)) {
+        throw new EntregasConflictError("El trabajo está dentro de una entrega programada: cambiá la fecha de esa entrega (o del producto).");
+      }
+      if (v !== str(row.delivery_date)) fields.push({ field: "deliveryDate", value: v, from: str(row.delivery_date) });
+    }
+    if (changes.plannedQuantity !== undefined) {
+      const v = changes.plannedQuantity?.trim() || null;
+      if (v !== str(row.planned_quantity)) fields.push({ field: "plannedQuantity", value: v, from: str(row.planned_quantity) });
+    }
+    if (changes.notes !== undefined) {
+      const v = changes.notes?.trim() || null;
+      if (v !== str(row.notes)) fields.push({ field: "notes", value: v, from: str(row.notes) });
+    }
+    if (fields.length === 0) throw new OrdersValidationError("No hay cambios para guardar.");
+    const cellChanges: WorkItemCellChange[] = fields.map((f) => ({
+      id: `native:${workItemId}`,
+      field: f.field,
+      value: f.value ?? "",
+      expectedVersion: Number(row.version),
+      reason: `Calendario de Entregas: ${r.value}`,
+    }));
+    const { results, ok } = await applyWorkItemCellChanges(
+      { email: actor.email, sector: actor.sector, displayName: actor.displayName ?? actor.email },
+      cellChanges
+    );
+    if (!ok) {
+      const first = results.find((x) => !x.ok) as { message?: string } | undefined;
+      throw new EntregasConflictError(first?.message ?? "No se pudo guardar el cambio en el trabajo.");
+    }
+    await db.transaction(async (tx) => {
+      await audit(tx, actor, {
+        action: "work_edit",
+        deliveryId: `work:${workItemId}`,
+        payload: { workItemId, fields: fields.map((f) => ({ field: f.field, from: f.from, to: f.value })), reason: r.value },
+      });
+    });
+    return { workItemId, applied: fields.map((f) => f.field) };
+  },
+
+  /**
+   * Quita del calendario la aparición «Desde trabajo» de un trabajo (baja LÓGICA con motivo; no reaparece aunque el trabajo
+   * conserve su fecha). El trabajo NO se toca y sus entregas REALES siguen apareciendo (no se borran entregas físicas).
+   */
+  async hideWork(actor: EntregasActor, workItemId: string, reason: unknown): Promise<void> {
+    assertManage(actor);
+    const r = validateReason(reason);
+    if (!r.ok) throw new OrdersValidationError(r.message);
+    const db = requireDb();
+    await db.transaction(async (tx) => {
+      const exists = ((await tx.execute(sql`select 1 from work_items where id = ${workItemId}::uuid`)).rows as Row[]).length;
+      if (!exists) throw new OrdersNotFoundError("Trabajo no encontrado.");
+      const res = (await tx.execute(sql`
+        insert into delivery_calendar_hidden (id, work_item_id, reason, hidden_by, hidden_by_sector)
+        values (${randomUUID()}::uuid, ${workItemId}::uuid, ${r.value}, ${actor.email}, ${actor.sector})
+        on conflict do nothing returning id
+      `)).rows as Row[];
+      if (res.length === 0) return; // ya estaba quitada: idempotente
+      await audit(tx, actor, { action: "hide_work", deliveryId: `work:${workItemId}`, payload: { workItemId, reason: r.value } });
+    });
+  },
+
+  /** Vuelve a mostrar en el calendario un trabajo quitado (motivo obligatorio). */
+  async restoreWork(actor: EntregasActor, workItemId: string, reason: unknown): Promise<void> {
+    assertManage(actor);
+    const r = validateReason(reason);
+    if (!r.ok) throw new OrdersValidationError(r.message);
+    const db = requireDb();
+    await db.transaction(async (tx) => {
+      const res = (await tx.execute(sql`
+        update delivery_calendar_hidden set restored_at = now(), restored_by = ${actor.email}, restore_reason = ${r.value}
+        where work_item_id = ${workItemId}::uuid and restored_at is null returning reason
+      `)).rows as Row[];
+      if (res.length === 0) return; // no estaba quitada: idempotente
+      await audit(tx, actor, { action: "restore_work", deliveryId: `work:${workItemId}`, payload: { workItemId, reason: r.value, hiddenReason: str(res[0]!.reason) } });
+    });
+  },
+
+  /** Historial de las correcciones hechas desde el calendario sobre un trabajo (solo Producción). */
+  async workHistory(actor: EntregasActor, workItemId: string): Promise<DeliveryHistoryEntry[]> {
+    assertView(actor);
+    if (!canManageEntregas(actor.sector)) return [];
+    const db = requireDb();
+    const rows = (await db.execute(sql`
+      select id, action, actor_email, actor_sector, entity_id, payload, created_at
+      from feature_audit_events where domain = 'entregas' and entity_id = ${`work:${workItemId}`}
+      order by created_at desc, id desc limit 200
+    `)).rows as Row[];
+    return rows.map((r) => ({
+      id: String(r.id),
+      action: String(r.action),
+      actorEmail: String(r.actor_email),
+      actorSector: String(r.actor_sector),
+      entityId: str(r.entity_id),
+      payload: (r.payload ?? {}) as Record<string, unknown>,
+      createdAt: iso(r.created_at),
+    }));
+  },
+
+  /** Auditoría de fechas del calendario (SOLO LECTURA, no escribe nada). Ver `entregasDateAudit`. */
+  async dateAudit(actor: EntregasActor): Promise<EntregasDateAudit> {
+    assertView(actor);
+    if (!canManageEntregas(actor.sector)) throw new OrdersForbiddenError("Solo Producción ve la auditoría de fechas.");
+    return entregasDateAudit();
   },
 
   async history(actor: EntregasActor, deliveryId: string): Promise<DeliveryHistoryEntry[]> {

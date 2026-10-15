@@ -11,6 +11,8 @@
  */
 import { clientKey, deriveDeliveryStatus, deriveItemStatus, summarizeRealDeliveries } from "./rules";
 import type {
+  CalendarHidden,
+  DateReviewFlag,
   DeliveryOrigin,
   EntregasRecoveryStats,
   ItemSector,
@@ -34,7 +36,27 @@ export type WorkFacts = Omit<LinkedWork, "linkId" | "linkedAt" | "linkedBy" | "s
   containerDate: string | null;
   /** Estado de la entrega programada que lo contiene. */
   containerCancelled: boolean;
+  /** Producción quitó del calendario su aparición «Desde trabajo» (activo = no se muestra). */
+  hidden?: CalendarHidden | null;
 };
+
+/**
+ * Fechas contradictorias de un trabajo (solo se MARCAN para Producción; nunca se corrigen solas):
+ *  - una entrega real guardada exactamente a las 00:00 UTC (fecha sin hora → en Argentina cae el día anterior);
+ *  - fecha de entrega anterior a la de producción;
+ *  - trabajo vinculado con una fecha de entrega distinta de la de su entrega programada (y todavía sin entregar).
+ */
+export function workReviewFlags(
+  w: Pick<WorkFacts, "realDeliveries" | "deliveryDate" | "plannedDate">,
+  opts: { containerDate?: string | null; delivered?: boolean; event?: WorkFacts["realDeliveries"][number] } = {}
+): DateReviewFlag[] {
+  const flags: DateReviewFlag[] = [];
+  const events = opts.event ? [opts.event] : w.realDeliveries;
+  if (events.some((e) => e.utcMidnight)) flags.push("entrega_hora_utc_medianoche");
+  if (!opts.event && w.deliveryDate && w.plannedDate && w.deliveryDate < w.plannedDate) flags.push("entrega_antes_de_produccion");
+  if (!opts.event && !opts.delivered && opts.containerDate && w.deliveryDate && w.deliveryDate !== opts.containerDate) flags.push("trabajo_con_otra_fecha");
+  return flags;
+}
 
 const inRange = (iso: string | null, range: { from: string; to: string }): iso is string => !!iso && iso >= range.from && iso <= range.to;
 
@@ -49,6 +71,7 @@ export function toLinkedWork(
   delete rest.linked;
   delete rest.containerDate;
   delete rest.containerCancelled;
+  delete rest.hidden;
   return {
     ...(rest as Omit<WorkFacts, "deliverableUnits" | "linked" | "containerDate" | "containerCancelled">),
     ...(opts.link ?? { linkId: `derived:${w.workItemId}`, linkedAt: "", linkedBy: "", snapshot: {} }),
@@ -80,6 +103,9 @@ function makeItem(w: WorkFacts, kind: "registrada" | "programada", event?: WorkF
   };
   // Con entrega real registrada nunca queda «lista»: es entregada (o parcial si falta entregar saldo).
   item.status = kind === "registrada" ? (work.delivered ? "entregada" : "entrega_parcial") : deriveItemStatus(item);
+  const flags = workReviewFlags(w, { event });
+  if (flags.length) item.reviewFlags = flags;
+  if (kind === "programada" && w.hidden) item.hidden = w.hidden;
   return item;
 }
 
@@ -89,7 +115,11 @@ function makeItem(w: WorkFacts, kind: "registrada" | "programada", event?: WorkF
  *  - «Desde trabajo»: el trabajo vigente que todavía no se entregó completo, en su fecha de entrega programada.
  * Agrupadas por cliente normalizado + fecha + origen (el calendario muestra al cliente una sola vez por día).
  */
-export function buildDerivedDeliveries(works: readonly WorkFacts[], range: { from: string; to: string }): ScheduledDelivery[] {
+export function buildDerivedDeliveries(
+  works: readonly WorkFacts[],
+  range: { from: string; to: string },
+  opts: { includeHidden?: boolean } = {}
+): ScheduledDelivery[] {
   const groups = new Map<string, ScheduledDelivery>();
   const add = (w: WorkFacts, date: string, origin: DeliveryOrigin, item: ScheduledDeliveryItem) => {
     const client = w.client?.trim() || NO_CLIENT_LABEL;
@@ -128,6 +158,8 @@ export function buildDerivedDeliveries(works: readonly WorkFacts[], range: { fro
     for (const ev of w.realDeliveries) {
       if (inRange(ev.date, range)) add(w, ev.date, "entrega_registrada", makeItem(w, "registrada", ev));
     }
+    // «Quitada del calendario» por Producción: no vuelve a aparecer (solo se lista si se piden las quitadas, para restaurar).
+    if (w.hidden && !opts.includeHidden) continue;
     if (!w.cancelled && !summary.delivered && inRange(w.deliveryDate, range)) add(w, w.deliveryDate!, "desde_trabajo", makeItem(w, "programada"));
   }
 

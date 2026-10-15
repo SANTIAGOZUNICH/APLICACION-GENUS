@@ -49,6 +49,8 @@ async function cleanup() {
   await q("delete from scheduled_delivery_links where item_id in (select i.id from scheduled_delivery_items i join scheduled_deliveries d on d.id = i.delivery_id where d.client ilike 'E2E %')");
   await q("delete from scheduled_delivery_items where delivery_id in (select id from scheduled_deliveries where client ilike 'E2E %')");
   await q("delete from scheduled_deliveries where client ilike 'E2E %'");
+  await q("delete from delivery_calendar_hidden where work_item_id in (select id from work_items where client ilike 'E2E %')").catch(() => {});
+  await q("delete from work_item_delivery_lines where work_item_id in (select id from work_items where client ilike 'E2E %')").catch(() => {});
   await q("delete from work_item_deliveries where client ilike 'E2E %'");
   await q("delete from operational_events where work_item_id in (select id from work_items where client ilike 'E2E %')");
   const wi = await q("select id from work_items where client ilike 'E2E %'");
