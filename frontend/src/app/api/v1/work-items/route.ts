@@ -18,7 +18,13 @@ import { getPlanningSource } from "@/lib/planning/planning-source";
 import { CURRENT_SECTOR_OPTIONS, type CurrentSectorId } from "@/types/operational/sector";
 import type { SectorId } from "@/types/operational/sector";
 
-/** Sectores válidos en API /work-items. DEPOSITO pendiente de modelado — PR posterior. */
+/**
+ * Sectores que existen pero NO tienen trabajos (work_items solo admite Elaboración/Envasado/Codificado): la pantalla
+ * de Depósito igual consulta «sus» trabajos y recibía 400. Se responde una lista vacía (200), no un error.
+ */
+const SECTORS_WITHOUT_WORK_ITEMS = new Set(["DEPOSITO", "COMERCIAL"]);
+
+/** Sectores válidos en API /work-items. */
 function parseSector(value: string | null): SectorId | null {
   if (!value) return null;
   const normalized = value.trim().toUpperCase();
@@ -136,6 +142,21 @@ export async function GET(request: Request) {
   const ownerPerson = url.searchParams.get("ownerPerson")?.trim() || null;
   const date = parseIsoDateParam(url.searchParams.get("date"));
   const weekStart = parseIsoDateParam(url.searchParams.get("weekStart"));
+
+  const rawSector = url.searchParams.get("sector")?.trim().toUpperCase() ?? "";
+  if (!sector && SECTORS_WITHOUT_WORK_ITEMS.has(rawSector)) {
+    return NextResponse.json({
+      sector: rawSector,
+      ownerPerson,
+      source: "native" as const,
+      scannedAt: new Date().toISOString(),
+      workItems: [],
+      qualityItems: [],
+      counts: { total: 0, hoy: 0, semana: 0, pendientes: 0, bloqueados: 0 },
+      message: "Este sector no tiene trabajos asignados.",
+      planningSource: "native",
+    });
+  }
 
   if (!sector) {
     return NextResponse.json(
