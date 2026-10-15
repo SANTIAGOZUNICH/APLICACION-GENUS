@@ -25,6 +25,8 @@ const VALID_OPERATIONAL_STATUSES: ReadonlySet<string> = new Set([
  * durable en Neon — 0023), no un valor fijo.
  */
 function resolveProjectedStatus(item: PlanningWorkItemRecord): WorkItemStatus {
+  // Entrega final registrada (circuito sin Calidad): manda sobre cualquier marca de Codificado.
+  if (item.operationalStatus === "entregado") return "entregado";
   if (item.deliveredFromCodificadoAt) return "codificado_completo";
   if (
     item.sector === "CODIFICADO" &&
@@ -231,6 +233,11 @@ export function projectQualityItem(item: PlanningWorkItemRecord): {
   packagingClosedAt: string | null;
   packagingClosedBy: string | null;
   reworkReason: string | null;
+  /** Estado operativo real (Neon): `revision` = terminado y pendiente de definir/entregar. */
+  operationalStatus: string | null;
+  qualityDecidedAt: string | null;
+  qualityDecidedBy: string | null;
+  qualityDecidedBySector: string | null;
 } {
   const orderNumber = item.orderNumber?.trim() || null;
   const packagingLote = item.packagingLote?.trim() || null;
@@ -277,6 +284,10 @@ export function projectQualityItem(item: PlanningWorkItemRecord): {
     packagingClosedAt: item.packagingClosedAt ?? null,
     packagingClosedBy: item.packagingClosedBy ?? null,
     reworkReason: item.reworkReason ?? null,
+    operationalStatus: item.operationalStatus ?? null,
+    qualityDecidedAt: item.qualityDecidedAt ?? null,
+    qualityDecidedBy: item.qualityDecidedBy ?? null,
+    qualityDecidedBySector: item.qualityDecidedBySector ?? null,
   };
 }
 

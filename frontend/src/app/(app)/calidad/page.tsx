@@ -1,17 +1,9 @@
-import type { Metadata } from "next";
-import { ActionableWorkspaceView } from "@/components/patterns/actions/actionable-workspace-view";
-import { MockRoleSwitcher } from "@/components/patterns/actions/mock-role-switcher";
-import { calidadWorkspace } from "@/config/workspaces";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = {
-  title: "Calidad",
-};
-
+/**
+ * Calidad salió del circuito operativo: ya no hay bandeja de aprobaciones. La ruta se conserva solo para no romper
+ * enlaces viejos y lleva a la app principal (las cuentas de Calidad entran en modo consulta/historial).
+ */
 export default function CalidadPage() {
-  return (
-    <>
-      <MockRoleSwitcher />
-      <ActionableWorkspaceView config={calidadWorkspace} />
-    </>
-  );
+  redirect("/mi-trabajo");
 }

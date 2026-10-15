@@ -227,13 +227,12 @@ export const PRODUCCION_SECTORS = [
   { id: "masivo", label: "Masivo", delayed: true, stopped: false, fill: 4 },
   { id: "premium", label: "Premium", delayed: false, stopped: true, fill: 3 },
   { id: "codificado", label: "Codificado", delayed: false, stopped: false, fill: 4 },
-  { id: "calidad", label: "Calidad", delayed: true, stopped: false, fill: 2 },
 ];
 
 export const PRODUCCION_PROBLEMS = [
   { type: "atrasado", text: "Masivo — L2 detenida 40 min" },
   { type: "bloqueado", text: "Pedido Icono — esperando Elaboración" },
-  { type: "bloqueado", text: "L-2026-0891 — esperando Calidad" },
+  { type: "bloqueado", text: "L-2026-0891 — pendiente de definir" },
   { type: "insumo", text: "Faltan envases — Thelma y Louise" },
   { type: "urgente", text: "Thelma y Louise — entrega HOY" },
   { type: "accion", text: "Comenzar ahora — OA-2205 Masivo L2" },

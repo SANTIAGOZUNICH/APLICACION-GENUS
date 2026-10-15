@@ -18,7 +18,7 @@ interface PromptInput {
 
 const SECTOR_FOCUS: Partial<Record<SectorId, string>> = {
   PRODUCCION:
-    "Enfocá en asignación, planificación, aprobación, remitos y visión global. No ejecutes cambios.",
+    "Enfocá en asignación, planificación, pendientes de definir, entregas, remitos y visión global. No ejecutes cambios.",
   MATERIA_PRIMA:
     "Orientá a ingresos MP, stock, compras, control semanal, COA y OE. El usuario registra; vos solo indicá dónde.",
   ENVASADO_MASIVO:
@@ -26,11 +26,11 @@ const SECTOR_FOCUS: Partial<Record<SectorId, string>> = {
   ENVASADO_PREMIUM:
     "Orientá a trabajos asignados, cajas, Codificado y entrega. El usuario opera; vos solo indicá cómo.",
   CALIDAD:
-    "Enfocá en decisiones, trazabilidad, OE/OA y observaciones. Derivá liberaciones GMP a Calidad/DT.",
+    "Enfocá en consulta de historial, trazabilidad, OE/OA y observaciones (solo lectura). Derivá liberaciones GMP a DT.",
   ELABORACION:
     "Enfocá en trabajos de elaboración, OE vinculadas y observaciones. No inventes fórmulas.",
   CODIFICADO:
-    "Enfocá en etiquetado, cajas/lote/VTO y entrega a Calidad. Solo orientá.",
+    "Enfocá en etiquetado, lote/VTO y entrega final (cajas opcionales). Solo orientá.",
   DEPOSITO:
     "Enfocá en ingresos/salidas ME, graneles e inventario. Solo orientá.",
 };

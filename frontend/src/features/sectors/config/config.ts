@@ -47,13 +47,6 @@ export const PREVIEW_SCREENS: PreviewScreenMeta[] = [
     viewType: "lista",
   },
   {
-    id: "calidad",
-    label: "Calidad",
-    sector: "CALIDAD",
-    description: "Mesa de laboratorio — lotes y liberaciones.",
-    viewType: "mesa",
-  },
-  {
     id: "deposito",
     label: "Depósito",
     sector: "DEPOSITO",
@@ -93,7 +86,6 @@ export const OS_NAV_ITEMS = [
   { id: "plan-semanal", label: "Plan semanal", icon: "calendar" as const },
   { id: "consulta", label: "Consulta", icon: "search" as const },
   { id: "insumos", label: "Insumos", icon: "package" as const },
-  { id: "calidad", label: "Calidad", icon: "shield" as const },
   { id: "config", label: "Configuración", icon: "settings" as const },
 ];
 

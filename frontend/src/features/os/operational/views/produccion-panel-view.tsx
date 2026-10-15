@@ -15,7 +15,7 @@ import { getFormulaForProduct } from "../adapters/formula-repository";
 import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { getTotalStockByCodigo } from "../adapters/materia-prima-repository";
 import type { DeliveryRecord } from "../adapters/delivery-repository";
-import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-adapter";
+import { isReadyForDelivery } from "../lib/pending-delivery";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { OperationalTable, StatusChip, type OperationalTableColumn } from "../components/operational-ui";
 import { AssignedWorkLifecycleActions } from "../components/assigned-work-lifecycle-actions";
@@ -90,7 +90,7 @@ export function ProduccionPanelView() {
   );
   const workspace = useRequiredWorkspace();
   const canMutateWorks = canMutateAssignedWork(sectorId);
-  const { getQualityStatus, getFinishedQty, refreshDecisions } = useOperationalStore();
+  const { getFinishedQty, refreshDecisions } = useOperationalStore();
   const [panelTick, setPanelTick] = useState(0);
   const [deliveredWorkItemIds, setDeliveredWorkItemIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
@@ -104,7 +104,8 @@ export function ProduccionPanelView() {
         if (cancelled) return;
         const ids = new Set(
           (data.deliveries ?? [])
-            .filter((d) => d.status === "ENTREGADO" && !d.annulledAt)
+            // Solo cuentan como entregadas las entregas COMPLETAS: una parcial deja saldo pendiente.
+            .filter((d) => d.status === "ENTREGADO" && !d.annulledAt && d.deliveryComplete !== false)
             .map((d) => d.workItemId)
         );
         setDeliveredWorkItemIds(ids);
@@ -136,18 +137,21 @@ export function ProduccionPanelView() {
     [elaboracion.data, masivo.data, premium.data, codificado.data, panelTick]
   );
 
-  const qualityItems = calidad.data?.qualityItems ?? [];
-  const qualityWithDecisions = applyQualityDecisionsToItems(qualityItems, getQualityStatus);
-  const aprobadosItems = qualityWithDecisions.filter((q) => q.status === "aprobado");
-  const pendientesEntrega = aprobadosItems.filter(
-    (q) => q.relatedWorkItemId && !deliveredWorkItemIds.has(q.relatedWorkItemId)
+  // Trabajos terminados (fuente: GET /work-items?sector=CALIDAD, el modelo de lectura legado de «terminados»).
+  // El circuito ya no tiene aprobaciones: lo que cuenta es el estado operativo real (`revision` = pendiente de
+  // definir/entregar). Las decisiones históricas de Calidad solo se leen en Historial.
+  const finishedItems = calidad.data?.qualityItems ?? [];
+  const pendientesEntrega = finishedItems.filter(
+    (q) => isReadyForDelivery(q) && q.relatedWorkItemId && !deliveredWorkItemIds.has(q.relatedWorkItemId)
   );
-  const aprobados = aprobadosItems.length;
-  const rechazados = qualityItems.filter((q) => getQualityStatus(q.id, q.status) === "rechazado").length;
 
   const pendientes = allActiveItems.filter((i) => i.status === "pendiente").length;
   const enProceso = allActiveItems.filter((i) => i.status === "en_curso").length;
-  const esperandoCalidad = allActiveItems.filter((i) => isWorkTransferredStatus(i.status)).length;
+  const enCodificado = allActiveItems.filter((i) => i.status === "en_codificado").length;
+  const pendientesDefinir = allActiveItems.filter(
+    (i) => i.status === "revision" || i.status === "codificado_completo"
+  ).length;
+  const entregadosCount = deliveredWorkItemIds.size;
 
   const faltantesRefs = useMemo(() => {
     const refs = new Set<string>();
@@ -189,13 +193,6 @@ export function ProduccionPanelView() {
       progreso: items.length > 0 ? Math.round((done / items.length) * 100) : 0,
     };
   });
-
-  const calidadSummary = {
-    pendientes: qualityItems.filter((q) => getQualityStatus(q.id, q.status) === "pendiente").length,
-    enProceso: 0,
-    progreso:
-      qualityItems.length > 0 ? Math.round(((aprobados + rechazados) / qualityItems.length) * 100) : 0,
-  };
 
   const activeRowsUnfiltered: ActiveRow[] = allActiveItems
     .filter((i) => i.status !== "cancelado")
@@ -299,13 +296,12 @@ export function ProduccionPanelView() {
 
   const sectorViewMap: Record<
     string,
-    "ver-elaboracion" | "ver-envasado-masivo" | "ver-envasado-premium" | "ver-codificado" | "ver-calidad"
+    "ver-elaboracion" | "ver-envasado-masivo" | "ver-envasado-premium" | "ver-codificado"
   > = {
     ELABORACION: "ver-elaboracion",
     ENVASADO_MASIVO: "ver-envasado-masivo",
     ENVASADO_PREMIUM: "ver-envasado-premium",
     CODIFICADO: "ver-codificado",
-    CALIDAD: "ver-calidad",
   };
 
   return (
@@ -315,7 +311,7 @@ export function ProduccionPanelView() {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">Panel general</h2>
           <p className="text-sm text-[var(--os-text-muted)]">
-            Vista consolidada de planta — Elaboración, Envasado y Calidad.
+            Vista consolidada de planta — Elaboración, Envasado y Codificado.
           </p>
         </div>
         {/* Semanas ya no tiene entrada propia en el menú lateral: se abre desde acá (misma pantalla, misma planilla). */}
@@ -337,27 +333,27 @@ export function ProduccionPanelView() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
         <KpiTile label="Pendientes" value={pendientes} />
         <KpiTile label="En proceso" value={enProceso} tone="warn" />
-        <KpiTile label="Esperando Calidad" value={esperandoCalidad} tone="warn" />
-        <KpiTile label="Aprobados" value={aprobados} tone="ok" />
-        <KpiTile label="Pend. entrega" value={pendientesEntrega.length} tone="warn" />
-        <KpiTile label="Rechazados" value={rechazados} tone="danger" />
+        <KpiTile label="En Codificado" value={enCodificado} tone="warn" />
+        <KpiTile label="Pendientes de definir" value={pendientesDefinir} tone="warn" />
+        <KpiTile label="Pendientes de entregar" value={pendientesEntrega.length} tone="warn" />
+        <KpiTile label="Entregados" value={entregadosCount} tone="ok" />
         <KpiTile label="Con faltantes" value={faltantesRefs.length} tone="danger" />
       </div>
       {pendientesEntrega.length > 0 && (
         <section className="space-y-3 rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h3 className="text-sm font-semibold text-[var(--os-text)]">Aprobados pendientes de entrega</h3>
+              <h3 className="text-sm font-semibold text-[var(--os-text)]">Pendientes de entregar</h3>
               <p className="text-xs text-[var(--os-text-muted)]">
-                Solo Producción puede confirmar la entrega real.
+                Trabajos terminados sin entrega completa. Producción o el sector registran la entrega.
               </p>
             </div>
             <button
               type="button"
-              onClick={() => navigateTo({ view: "entregados" })}
+              onClick={() => navigateTo({ view: "pendientes" })}
               className="text-sm font-medium text-[var(--os-teal)] hover:underline"
             >
-              Ir a Entregados →
+              Ir a Pendientes de definir →
             </button>
           </div>
           <ul className="divide-y divide-[var(--os-border-subtle)]">
@@ -369,8 +365,8 @@ export function ProduccionPanelView() {
                     {item.client} · {item.lote ?? "Sin lote"}
                   </p>
                 </div>
-                <Button size="sm" variant="primary" onClick={() => navigateTo({ view: "entregados" })}>
-                  Marcar como entregado
+                <Button size="sm" variant="primary" onClick={() => navigateTo({ view: "pendientes" })}>
+                  Definir
                 </Button>
               </li>
             ))}
@@ -383,13 +379,7 @@ export function ProduccionPanelView() {
           Estado por sector
         </h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[...sectorSummaries.map((s) => ({ ...s, label: SECTOR_LABELS[s.sector], key: s.sector as string })), {
-            key: "CALIDAD",
-            label: "Calidad",
-            pendientes: calidadSummary.pendientes,
-            enProceso: calidadSummary.enProceso,
-            progreso: calidadSummary.progreso,
-          }].map((s) => (
+          {sectorSummaries.map((s) => ({ ...s, label: SECTOR_LABELS[s.sector], key: s.sector as string })).map((s) => (
             <div key={s.key} className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4">
               <p className="font-medium">{s.label}</p>
               <div className="mt-2 flex items-center justify-between text-xs text-[var(--os-text-muted)]">
@@ -469,8 +459,8 @@ export function ProduccionPanelView() {
               {atrasados.length === 1 ? "" : "s"} atrasado{atrasados.length === 1 ? "" : "s"}
             </p>
             <p>
-              <span className="font-medium text-[var(--genus-error)]">{rechazados}</span> rechazo
-              {rechazados === 1 ? "" : "s"} de Calidad
+              <span className="font-medium text-amber-700">{pendientesDefinir}</span> trabajo
+              {pendientesDefinir === 1 ? "" : "s"} pendiente{pendientesDefinir === 1 ? "" : "s"} de definir
             </p>
           </div>
 

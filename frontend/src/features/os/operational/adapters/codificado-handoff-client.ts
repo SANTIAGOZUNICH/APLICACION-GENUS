@@ -8,6 +8,8 @@ export type CodificadoHandoffResult = {
   replayed: boolean;
   operationId: string;
   workItem: WorkItem;
+  /** Solo en `deliver`: estado de la entrega registrada (parcial si complete=false). */
+  delivery?: { id: string | null; complete: boolean; delivered: number | null; pending: number | null };
 };
 
 function authHeaders(session: {
@@ -41,6 +43,12 @@ export async function postCodificadoHandoff(
     bulkRemainderObservation?: string | null;
     bulkRemainderId?: string | null;
     reason?: string | null;
+    /** deliver — entrega parcial: unidades entregadas ahora (omitido = todo el saldo). */
+    deliverQuantity?: number | null;
+    remito?: string | null;
+    receivedBy?: string | null;
+    plannedDeliveryDate?: string | null;
+    actualDeliveredAt?: string | null;
     forceWithdrawDelivery?: boolean;
     expectedVersion?: number | null;
     idempotencyKey: string;
@@ -61,6 +69,7 @@ export async function postCodificadoHandoff(
     replayed?: boolean;
     operationId?: string;
     workItem?: WorkItem;
+    delivery?: CodificadoHandoffResult["delivery"];
   };
   if (!res.ok || !json.ok || !json.workItem) {
     throw new Error(json.error || `No se pudo completar la acción (${res.status}).`);
@@ -70,5 +79,6 @@ export async function postCodificadoHandoff(
     replayed: Boolean(json.replayed),
     operationId: String(json.operationId ?? ""),
     workItem: json.workItem,
+    delivery: json.delivery,
   };
 }

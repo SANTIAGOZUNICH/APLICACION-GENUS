@@ -89,6 +89,8 @@ export interface OrdersRepository {
   dismissNotification(id: string, actorEmail: string): Promise<void>;
   restoreNotification(id: string, actorEmail: string): Promise<void>;
   dismissReadNotifications(sector: string, actorEmail: string): Promise<void>;
+  /** Marca como leídas TODAS las notificaciones del sector para el actor (devuelve cuántas cambiaron). */
+  markAllNotificationsRead(sector: string, actorEmail: string): Promise<number>;
   /** Eliminación definitiva para el actor (Activas+Archivadas) + tombstones. */
   deleteAllNotificationsForActor(sector: string, actorEmail: string): Promise<number>;
 

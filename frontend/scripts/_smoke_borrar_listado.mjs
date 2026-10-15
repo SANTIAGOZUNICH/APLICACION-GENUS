@@ -1,3 +1,6 @@
+// OBSOLETO PARCIAL (circuito sin Calidad, docss/59): las acciones `quality_annul` ya no existen; el servidor responde
+// 410 QUALITY_CIRCUIT_RETIRED. Los pasos de este script que las usan dejaron de ser válidos y se conservan solo
+// como referencia histórica. El flujo vigente se valida con `npm run test:e2e:circuito`.
 /**
  * Smoke funcional Borrar desde listado en Preview + cleanup TEST_*.
  * Casos: borrador, confirmado/anular, OE reverso, OA reverso, legal/archivar,

@@ -10,7 +10,7 @@ import {
   formatOperationalDifference,
   plannedQuantityLabel,
 } from "../lib/operational-progress";
-import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
+import { isWorkTransferredStatus, transferStatusNote } from "../lib/work-transfer-labels";
 import { ActionButton, ExcelOrList, excelCol, StatusChip } from "./operational-ui";
 import { useWorkItemCellEditing } from "../hooks/use-work-item-cells";
 import { formatDateDisplay } from "../lib/delivery-date";
@@ -297,7 +297,7 @@ function WorkItemProgressTableInner({
                     <div className="space-y-1">
                       <StatusChip status={item.status} />
                       <p className="text-xs font-medium text-[var(--os-teal)]">
-                        {WORK_TRANSFER.deliveredToQuality}
+                        {transferStatusNote(item.status)}
                       </p>
                     </div>
                   ) : (

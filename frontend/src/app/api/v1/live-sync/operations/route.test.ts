@@ -9,11 +9,18 @@ vi.mock("@/lib/api/bff-helpers", () => ({
 }));
 
 const mutateMock = vi.fn();
-const notifyMock = vi.fn();
+const deliverMock = vi.fn();
 
-vi.mock("@/lib/notifications/approval-envasado-notify", () => ({
-  notifyEnvasadoForApproval: (...args: unknown[]) => notifyMock(...args),
-}));
+// deliver_work nativo: el servicio durable se mockea; acá se prueba el RBAC de la ruta y la retirada de Calidad.
+vi.mock("@/lib/planning/work-item-progress-repository", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/planning/work-item-progress-repository")>(
+    "@/lib/planning/work-item-progress-repository"
+  );
+  return {
+    ...actual,
+    deliverWorkDurable: (...args: unknown[]) => deliverMock(...args),
+  };
+});
 
 vi.mock("@/lib/live-sync/server-operational-state", () => ({
   serverOperationalState: {
@@ -47,7 +54,7 @@ vi.mock("@/lib/orders/actor", () => ({
 describe("POST /api/v1/live-sync/operations RBAC", () => {
   beforeEach(() => {
     mutateMock.mockReset();
-    notifyMock.mockReset();
+    deliverMock.mockReset();
   });
 
   async function post(body: Record<string, unknown>, headers: Record<string, string>) {
@@ -78,21 +85,43 @@ describe("POST /api/v1/live-sync/operations RBAC", () => {
     expect(mutateMock).not.toHaveBeenCalled();
   });
 
-  it("403 quality_decision si actor no es CALIDAD/PRODUCCION", async () => {
-    const res = await post(
-      {
-        action: "quality_decision",
-        itemId: "q1",
-        status: "aprobado",
-        actorSectorId: "ELABORACION",
-      },
-      {
-        "x-genus-actor-email": "elaboracion@laboratoriogenus.com.ar",
-        "x-genus-actor-sector": "ELABORACION",
+  // Reemplaza al test «403 quality_decision si actor no es CALIDAD/PRODUCCION»: la aprobación de Calidad se retiró.
+  it("quality_decision y quality_annul están retiradas: 410 QUALITY_CIRCUIT_RETIRED para cualquier sector, sin mutar nada", async () => {
+    for (const sector of ["CALIDAD", "PRODUCCION", "ELABORACION"]) {
+      for (const action of ["quality_decision", "quality_annul"]) {
+        const res = await post(
+          { action, itemId: "q1", status: "aprobado", actorSectorId: sector },
+          { "x-genus-actor-email": `${sector.toLowerCase()}@laboratoriogenus.com.ar`, "x-genus-actor-sector": sector }
+        );
+        const body = (await res.json()) as { code?: string; error?: string };
+        expect(res.status).toBe(410);
+        expect(body.code).toBe("QUALITY_CIRCUIT_RETIRED");
+        expect(body.error).toMatch(/Calidad/);
       }
-    );
-    expect(res.status).toBe(403);
+    }
     expect(mutateMock).not.toHaveBeenCalled();
+  });
+
+  it("deliver_work nativo: Elaboración y Calidad no entregan (403); Envasado, Codificado, Producción y Dirección pasan el gate", async () => {
+    for (const sector of ["ELABORACION", "CALIDAD"]) {
+      const res = await post(
+        { action: "deliver_work", workItemId: "native:w1", actorSectorId: sector },
+        { "x-genus-actor-email": `${sector.toLowerCase()}@laboratoriogenus.com.ar`, "x-genus-actor-sector": sector }
+      );
+      expect(res.status).toBe(403);
+    }
+    expect(deliverMock).not.toHaveBeenCalled();
+    deliverMock.mockResolvedValue({ delivery: { id: "d1", workItemId: "w1", actualDeliveredAt: new Date(), createdAt: new Date(), updatedAt: new Date(), status: "ENTREGADO" }, replayed: false, complete: true, delivered: 10, pending: 0 });
+    for (const sector of ["ENVASADO_MASIVO", "CODIFICADO", "PRODUCCION", "DIRECCION"]) {
+      const res = await post(
+        { action: "deliver_work", workItemId: "native:w1", actorSectorId: sector, deliverQuantity: 10, idempotencyKey: "k-123456789" },
+        { "x-genus-actor-email": `${sector.toLowerCase()}@laboratoriogenus.com.ar`, "x-genus-actor-sector": sector }
+      );
+      expect(res.status).toBe(200);
+    }
+    expect(deliverMock).toHaveBeenCalledTimes(4);
+    expect(deliverMock.mock.calls[0][0]).toMatchObject({ workItemId: "w1", deliverQuantity: 10, idempotencyKey: "k-123456789" });
+    expect(deliverMock.mock.calls[0][1]).toMatchObject({ sector: "ENVASADO_MASIVO" });
   });
 
   it("403 archive_delivery con body sector distinto al header", async () => {
@@ -161,22 +190,5 @@ describe("POST /api/v1/live-sync/operations RBAC", () => {
     const body = (await res.json()) as { code?: string };
     expect(res.status).toBe(400);
     expect(body.code).toBe("NOT_NATIVE");
-  });
-
-  it("notifica Envasado solo al aprobar", async () => {
-    mutateMock.mockReturnValue({ id: "q1" });
-    const approved = await post(
-      { action: "quality_decision", itemId: "q1", status: "aprobado", actorSectorId: "PRODUCCION", product: "Producto", client: "Cliente", plannedDate: "2026-08-03" },
-      { "x-genus-actor-email": "produccion@laboratoriogenus.com.ar", "x-genus-actor-sector": "PRODUCCION" }
-    );
-    expect(approved.status).toBe(200);
-    expect(notifyMock).toHaveBeenCalledWith(expect.objectContaining({ sector: "PRODUCCION" }), expect.objectContaining({ itemId: "q1" }), "PRODUCCION");
-
-    notifyMock.mockReset();
-    await post(
-      { action: "quality_decision", itemId: "q1", status: "rechazado", actorSectorId: "PRODUCCION" },
-      { "x-genus-actor-email": "produccion@laboratoriogenus.com.ar", "x-genus-actor-sector": "PRODUCCION" }
-    );
-    expect(notifyMock).not.toHaveBeenCalled();
   });
 });

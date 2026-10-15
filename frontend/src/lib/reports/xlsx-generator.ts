@@ -77,10 +77,9 @@ function buildResumenSheet(wb: ExcelJS.Workbook, data: ManagementReportData): vo
     ["Trabajos en el período", data.resumen.totalTrabajos],
     ["Unidades entregables totales", data.resumen.totalEntregable],
     ["Muestras totales", data.resumen.totalMuestras],
-    [
-      "Tasa de aprobación de Calidad",
-      data.resumen.tasaAprobacionCalidadPct != null ? `${data.resumen.tasaAprobacionCalidadPct}%` : "Sin datos",
-    ],
+    ["Pendientes de entregar", data.resumen.pendientesEntregar],
+    ["En Codificado", data.resumen.enCodificado],
+    ["Tasa de entrega", data.resumen.tasaEntregaPct != null ? `${data.resumen.tasaEntregaPct}%` : "Sin datos"],
     ["Cliente principal", data.resumen.topCliente ?? "Sin datos"],
     ["Producto principal", data.resumen.topProducto ?? "Sin datos"],
   ];
@@ -215,7 +214,6 @@ export function buildManagementReportWorkbook(data: ManagementReportData): Excel
     { key: "producto", header: "Producto", width: 22 },
     { key: "leadTimeCalendarioHoras", header: "Lead time calendario (h)", width: 22, numFmt: "#,##0.00" },
     { key: "codificadoDwellHoras", header: "Permanencia en Codificado (h)", width: 26, numFmt: "#,##0.00" },
-    { key: "calidadDecisionHoras", header: "Tiempo hasta decisión de Calidad (h)", width: 30, numFmt: "#,##0.00" },
   ]);
   if (tiemposWs) {
     tiemposWs.getCell(tiemposWs.rowCount + 2, 1).value =
@@ -223,14 +221,6 @@ export function buildManagementReportWorkbook(data: ManagementReportData): Excel
       "\"Lead time calendario\" es tiempo transcurrido, no horas efectivas trabajadas.";
     tiemposWs.getCell(tiemposWs.rowCount, 1).font = { italic: true, color: { argb: "FF6B7280" } };
   }
-
-  addTableSheet(wb, "CALIDAD", data.calidad, [
-    { key: "cliente", header: "Cliente", width: 22 },
-    { key: "producto", header: "Producto", width: 22 },
-    { key: "qualityStatus", header: "Estado", width: 14 },
-    { key: "primeraDecision", header: "Primera decisión", width: 16 },
-    { key: "observacion", header: "Observación registrada", width: 50 },
-  ]);
 
   addTableSheet(wb, "PEDIDOS", data.pedidos, [
     { key: "estado", header: "Estado", width: 20 },
@@ -264,7 +254,7 @@ export function buildManagementReportWorkbook(data: ManagementReportData): Excel
     { key: "producto", header: "Producto", width: 22 },
     { key: "sector", header: "Sector", width: 18 },
     { key: "status", header: "Estado asignación", width: 16 },
-    { key: "qualityStatus", header: "Estado Calidad", width: 14 },
+    { key: "estadoOperativo", header: "Estado operativo", width: 16 },
     { key: "plannedDate", header: "Fecha planificada", width: 16 },
     { key: "deliveryDate", header: "Fecha de entrega", width: 16 },
     { key: "unidadesAcondicionadas", header: "Acondicionado (cajas+muestras)", width: 26, numFmt: "#,##0.00" },

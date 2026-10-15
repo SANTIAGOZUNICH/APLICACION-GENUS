@@ -8,7 +8,6 @@ export type TwinView =
   | "plan-semanal"
   | "consulta"
   | "insumos"
-  | "calidad"
   | "config"
   | "produccion"
   | "direccion"
@@ -17,8 +16,6 @@ export type TwinView =
   | "ordenes"
   | "historial"
   | "pendientes"
-  | "aprobados"
-  | "rechazados"
   | "stock"
   | "control-mp"
   | "mp-ingresos"
@@ -39,7 +36,6 @@ export type TwinView =
   | "ver-envasado-masivo"
   | "ver-envasado-premium"
   | "ver-codificado"
-  | "ver-calidad"
   | "ver-materia-prima"
   | "remitos"
   | "pedidos"
@@ -66,7 +62,6 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   plan_semanal: "plan-semanal",
   consulta: "consulta",
   insumos: "insumos",
-  calidad: "calidad",
   configuracion: "config",
   produccion: "produccion",
   direccion: "direccion",
@@ -75,8 +70,6 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   ordenes: "ordenes",
   historial: "historial",
   pendientes: "pendientes",
-  aprobados: "aprobados",
-  rechazados: "rechazados",
   stock: "stock",
   control_mp: "control-mp",
   mp_ingresos: "mp-ingresos",
@@ -97,7 +90,6 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   ver_envasado_masivo: "ver-envasado-masivo",
   ver_envasado_premium: "ver-envasado-premium",
   ver_codificado: "ver-codificado",
-  ver_calidad: "ver-calidad",
   ver_materia_prima: "ver-materia-prima",
   remitos: "remitos",
   pedidos: "pedidos",
@@ -113,8 +105,7 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     "plan-semanal": "plan_semanal",
     consulta: "consulta",
     insumos: "insumos",
-    calidad: "calidad",
-    config: "configuracion",
+      config: "configuracion",
     produccion: "produccion",
     direccion: "direccion",
     "ordenes-elaboracion": "ordenes_elaboracion",
@@ -122,8 +113,6 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     ordenes: "ordenes",
     historial: "historial",
     pendientes: "pendientes",
-    aprobados: "aprobados",
-    rechazados: "rechazados",
     stock: "stock",
     "control-mp": "control_mp",
     "mp-ingresos": "mp_ingresos",
@@ -144,7 +133,6 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     "ver-envasado-masivo": "ver_envasado_masivo",
     "ver-envasado-premium": "ver_envasado_premium",
     "ver-codificado": "ver_codificado",
-    "ver-calidad": "ver_calidad",
     "ver-materia-prima": "ver_materia_prima",
     remitos: "remitos",
     pedidos: "pedidos",
@@ -171,7 +159,6 @@ export function viewTitle(view: TwinView): string {
     "plan-semanal": "Plan semanal",
     consulta: "Consulta",
     insumos: "Insumos",
-    calidad: "Calidad",
     config: "Configuración",
     produccion: "Control de planta",
     direccion: "Dirección",
@@ -179,9 +166,7 @@ export function viewTitle(view: TwinView): string {
     "ordenes-acondicionamiento": "Órdenes de Acondicionamiento",
     ordenes: "Órdenes",
     historial: "Historial",
-    pendientes: "Pendientes",
-    aprobados: "Aprobados",
-    rechazados: "Rechazados",
+    pendientes: "Pendientes de definir",
     stock: "Stock",
     "control-mp": "Control semanal",
     "mp-ingresos": "Ingresos MP",
@@ -202,7 +187,6 @@ export function viewTitle(view: TwinView): string {
     "ver-envasado-masivo": "Envasado Masivo",
     "ver-envasado-premium": "Envasado Premium",
     "ver-codificado": "Codificado",
-    "ver-calidad": "Calidad",
     "ver-materia-prima": "Materias Primas",
     remitos: "Remitos",
     pedidos: "Pedidos",

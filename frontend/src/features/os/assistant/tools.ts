@@ -117,14 +117,15 @@ const HELP_CATALOG = [
   },
   {
     id: "help-calidad",
-    label: "Ayuda · Calidad",
-    keywords: ["calidad", "aprobar", "rechazar", "decision", "gmp", "liberar", "pendiente calidad"],
+    label: "Ayuda · Circuito sin Calidad",
+    keywords: ["calidad", "aprobar", "rechazar", "decision", "gmp", "liberar", "pendiente calidad", "pendientes de definir"],
     text:
-      "Calidad recibe trabajos terminados y registra decisiones (aprobar/rechazar). " +
-      "Creamy puede listar pendientes de Calidad; las decisiones GMP deben derivarse a Calidad, Producción o DT. " +
-      "Para ver pendientes: pedí a Creamy 'trabajos pendientes de Calidad'.",
-    navHint: "Menú lateral → Calidad",
-    hrefView: "/calidad",
+      "Calidad ya no forma parte del circuito operativo: los trabajos no esperan aprobaciones. " +
+      "Elaboración envía directo a Envasado Masivo/Premium; Envasado elige Enviar a Codificado (alcanza con la cantidad total) o Entregar; " +
+      "Codificado entrega. Los trabajos terminados sin destino quedan en «Pendientes de definir» para Producción. " +
+      "Las decisiones anteriores de Calidad se conservan en Historial (solo lectura).",
+    navHint: "Menú lateral → Pendientes de definir (Producción) · Historial",
+    hrefView: "/mi-trabajo",
   },
   {
     id: "help-entregas",
@@ -132,7 +133,7 @@ const HELP_CATALOG = [
     keywords: ["entrega", "remito", "despacho", "cliente", "entregar", "historial entregas"],
     text:
       "El módulo de Entregas registra lo que fue despachado a clientes. " +
-      "Podés consultar: historial por cliente, entregas fuera de fecha, o pendientes de entrega (aprobados sin entregar). " +
+      "Podés consultar: historial por cliente, entregas fuera de fecha, o pendientes de entrega (terminados sin entrega completa). " +
       "Para archivar una entrega: 1) Abrí Entregas. 2) Buscá la entrega. 3) Usá Archivar en opciones.",
     navHint: "Menú lateral → Entregas",
     hrefView: "/entregas",

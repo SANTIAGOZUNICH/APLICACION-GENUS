@@ -11,18 +11,8 @@ import {
 } from "react";
 import type { WorkItem, WorkItemStatus } from "@/types/operational/work-item";
 import type { SectorId } from "@/types/operational/sector";
-import {
-  postCompleteWork,
-  postQualityAnnul,
-  postQualityDecision,
-  postSaveProgress,
-} from "@/lib/api/live-sync-client";
-import type { CompletionEvent, QualityDecisionStatus, OperationalOverlay, QualityItem } from "../types";
-import {
-  gateQualityDecision,
-  type QualityDecisionAttempt,
-} from "../lib/quality-decision-rbac";
-import { normalizeOptionalReason } from "@/lib/lifecycle";
+import { postCompleteWork, postSaveProgress } from "@/lib/api/live-sync-client";
+import type { CompletionEvent, QualityDecisionStatus, OperationalOverlay } from "../types";
 import {
   applyWorkProgressToItems,
   getEffectiveQualityStatus,
@@ -33,7 +23,6 @@ import {
   readCompletionEvents,
   readDecisionMap,
   readProgressMap,
-  recordQualityDecision,
   recordWorkCompletion,
   recordWorkPackaging,
   recordWorkProgress,
@@ -47,41 +36,14 @@ import {
   type WorkProgressRecord,
 } from "./operational-store";
 
-export type QualityDecisionOptions = {
-  /** Sector de la sesión activa — obligatorio para RBAC de decisión. */
-  actorSectorId: SectorId;
-  decidedBy?: string;
-  decidedByEmail?: string;
-  observation?: string;
-  changeReason?: string;
-  /** Client snapshot only for server-side approval matching; never authorizes the actor. */
-  itemSnapshot?: QualityItem;
-};
-
-export type QualityAnnulOptions = {
-  reason: string;
-  actorSectorId: SectorId;
-  actorName?: string;
-  actorEmail?: string;
-};
-
 interface OperationalStoreValue {
   decisionMap: DecisionMap;
   progressMap: ProgressMap;
   completionEvents: CompletionEvent[];
   revision: number;
+  /** SOLO LECTURA — decisiones históricas de Calidad (el circuito ya no genera nuevas). */
   getQualityStatus: (itemId: string, seedStatus: QualityDecisionStatus) => QualityDecisionStatus;
   getQualityObservation: (itemId: string) => string;
-  /** Resuelve cuando el servidor confirmó la decisión; ok:false si falló (dato local no se pierde). */
-  approveQualityItem: (
-    itemId: string,
-    options: QualityDecisionOptions
-  ) => Promise<QualityDecisionAttempt>;
-  rejectQualityItem: (
-    itemId: string,
-    options: QualityDecisionOptions
-  ) => Promise<QualityDecisionAttempt>;
-  annulQualityItem: (itemId: string, options: QualityAnnulOptions) => Promise<QualityDecisionAttempt>;
   getWorkStatus: (itemId: string, seedStatus: WorkItemStatus) => WorkItemStatus;
   getFinishedQty: (itemId: string) => string;
   getObservation: (itemId: string) => string;
@@ -193,107 +155,6 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
   const getQualityObs = useCallback(
     (itemId: string) => getQualityObservation(itemId),
     [decisionMap]
-  );
-
-  const applyQualityDecision = useCallback(
-    async (
-      itemId: string,
-      status: QualityDecisionStatus,
-      options: QualityDecisionOptions
-    ): Promise<QualityDecisionAttempt> => {
-      const gate = gateQualityDecision(options.actorSectorId);
-      if (!gate.ok) {
-        return gate;
-      }
-
-      recordQualityDecision(itemId, status, {
-        decidedBy: options.decidedBy,
-        decidedBySector: options.actorSectorId,
-        decidedByEmail: options.decidedByEmail,
-        observation: options.observation,
-        changeReason: options.changeReason,
-      });
-      syncFromStorage();
-      if (status === "aprobado" || status === "rechazado") {
-        const item = options.itemSnapshot;
-        try {
-          await postQualityDecision({
-            itemId,
-            status,
-            decidedBy: options.decidedBy,
-            observation: options.observation,
-            actorSectorId: options.actorSectorId,
-            product: item?.product,
-            client: item?.client,
-            plannedDate: item?.deliveryDate ?? null,
-            plannedDateTo: null,
-            lote: item?.lote,
-            quantity: item?.quantity,
-            relatedWorkItemId: item?.relatedWorkItemId,
-          });
-        } catch (err) {
-          return {
-            ok: false,
-            error:
-              err instanceof Error
-                ? err.message
-                : "No se pudo registrar la decisión en el servidor.",
-            code: "SERVER_ERROR",
-          };
-        }
-      }
-      return { ok: true };
-    },
-    [syncFromStorage]
-  );
-
-  const approveQualityItem = useCallback(
-    (itemId: string, options: QualityDecisionOptions) =>
-      applyQualityDecision(itemId, "aprobado", options),
-    [applyQualityDecision]
-  );
-
-  const rejectQualityItem = useCallback(
-    (itemId: string, options: QualityDecisionOptions) =>
-      applyQualityDecision(itemId, "rechazado", options),
-    [applyQualityDecision]
-  );
-
-  const annulQualityItem = useCallback(
-    async (itemId: string, options: QualityAnnulOptions): Promise<QualityDecisionAttempt> => {
-      const gate = gateQualityDecision(options.actorSectorId);
-      if (!gate.ok) {
-        return gate;
-      }
-      const reason = normalizeOptionalReason(options.reason);
-
-      const previous = readDecisionMap()[itemId];
-      recordQualityDecision(itemId, "pendiente", {
-        decidedBy: options.actorName,
-        decidedBySector: options.actorSectorId,
-        decidedByEmail: options.actorEmail,
-        observation: previous?.observation,
-        changeReason: reason,
-      });
-      syncFromStorage();
-      try {
-        await postQualityAnnul({
-          itemId,
-          reason,
-          decidedBy: options.actorName,
-          actorSectorId: options.actorSectorId,
-        });
-      } catch (err) {
-        return {
-          ok: false,
-          error:
-            err instanceof Error ? err.message : "No se pudo anular la decisión en el servidor.",
-          code: "SERVER_ERROR",
-        };
-      }
-      return { ok: true };
-    },
-    [syncFromStorage]
   );
 
   const getWorkStatus = useCallback(
@@ -577,9 +438,6 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       revision,
       getQualityStatus,
       getQualityObservation: getQualityObs,
-      approveQualityItem,
-      rejectQualityItem,
-      annulQualityItem,
       getWorkStatus,
       getFinishedQty,
       getObservation,
@@ -599,9 +457,6 @@ export function OperationalStoreProvider({ children }: { children: ReactNode }) 
       revision,
       getQualityStatus,
       getQualityObs,
-      approveQualityItem,
-      rejectQualityItem,
-      annulQualityItem,
       getWorkStatus,
       getFinishedQty,
       getObservation,

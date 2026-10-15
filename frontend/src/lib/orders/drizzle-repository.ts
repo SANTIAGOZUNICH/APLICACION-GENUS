@@ -858,6 +858,27 @@ export class DrizzleOrdersRepository implements OrdersRepository {
       .where(eq(osNotifications.id, id));
   }
 
+  async markAllNotificationsRead(sector: string, actorEmail: string): Promise<number> {
+    const db = currentTx() ?? getDb();
+    const rows = await db
+      .select()
+      .from(osNotifications)
+      .where(sql`${osNotifications.sectors} @> ${JSON.stringify([sector])}::jsonb`);
+    let count = 0;
+    for (const r of rows) {
+      const deletedBy = (r.deletedBy as string[]) ?? [];
+      if (deletedBy.includes(actorEmail)) continue;
+      const readBy = (r.readBy as string[]) ?? [];
+      if (readBy.includes(actorEmail)) continue;
+      await db
+        .update(osNotifications)
+        .set({ readBy: [...readBy, actorEmail] })
+        .where(eq(osNotifications.id, r.id));
+      count += 1;
+    }
+    return count;
+  }
+
   async dismissReadNotifications(sector: string, actorEmail: string): Promise<void> {
     const db = currentTx() ?? getDb();
     const rows = await db.select().from(osNotifications);

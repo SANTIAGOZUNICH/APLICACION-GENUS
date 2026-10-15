@@ -143,16 +143,6 @@ export type TiempoRow = {
   producto: string;
   leadTimeCalendarioHoras: number | null;
   codificadoDwellHoras: number | null;
-  calidadDecisionHoras: number | null;
-};
-
-export type CalidadRow = {
-  workItemId: string;
-  cliente: string;
-  producto: string;
-  qualityStatus: string;
-  primeraDecision: boolean;
-  observacion: string | null;
 };
 
 export type PedidoAgregadoRow = {
@@ -181,7 +171,7 @@ export type DatoRow = {
   producto: string;
   sector: string;
   status: string;
-  qualityStatus: string;
+  estadoOperativo: string;
   plannedDate: string;
   deliveryDate: string | null;
   unidadesAcondicionadas: number | null;
@@ -198,7 +188,9 @@ export type ManagementReportData = {
     totalTrabajos: number;
     totalEntregable: number;
     totalMuestras: number;
-    tasaAprobacionCalidadPct: number | null;
+    tasaEntregaPct: number | null;
+    pendientesEntregar: number;
+    enCodificado: number;
     topCliente: string | null;
     topProducto: string | null;
   };
@@ -209,7 +201,6 @@ export type ManagementReportData = {
   empleados: EmpleadoRow[];
   productividad: ProductividadRow[];
   tiempos: TiempoRow[];
-  calidad: CalidadRow[];
   pedidos: PedidoAgregadoRow[];
   entregas: EntregaAgregadaRow[];
   inventario: MeMaterialReportRow[];

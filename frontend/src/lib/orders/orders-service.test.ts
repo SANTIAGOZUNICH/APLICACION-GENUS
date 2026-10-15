@@ -307,10 +307,15 @@ describe("operational orders RBAC + lifecycle", () => {
     expect(returned.revision).toBe(done.revision + 1);
     const versions = await repo.listOrderVersions(done.id);
     expect(versions.some((v) => v.event === "return_keep_delivered")).toBe(true);
-    const notifs = await service.listNotifications(calidad);
+    // Circuito sin Calidad: el aviso operativo de OE completada/devuelta va a Producción, ya no a Calidad.
+    const notifs = await service.listNotifications(produccion);
     expect(notifs.some((n) => n.kind === "oe_completada" || n.kind === "order_returned")).toBe(
       true
     );
+    const calidadNotifs = await service.listNotifications(calidad);
+    expect(
+      calidadNotifs.some((n) => n.kind === "oe_completada" || n.kind === "order_returned")
+    ).toBe(false);
   });
 
   it("conflicto de edición y actorSector ausente/rechazo no muta", async () => {

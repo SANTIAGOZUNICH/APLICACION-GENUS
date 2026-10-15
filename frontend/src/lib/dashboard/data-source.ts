@@ -69,7 +69,8 @@ export async function loadDashboardData(): Promise<DashboardLoadedData> {
                d.actual_delivered_at, d.status::text as status, d.updated_at
         from work_item_deliveries d
         join work_items w on w.id = d.work_item_id
-        where d.status = 'ENTREGADO' and d.deleted_at is null and w.deleted_at is null
+        where d.status = 'ENTREGADO' and d.delivery_complete = true and d.deleted_at is null and w.deleted_at is null
+          -- solo entregas COMPLETAS: una parcial (delivery_complete = false) no es «entregado» ni cierra el lead time
       `),
     ]);
     let last: string | null = null;

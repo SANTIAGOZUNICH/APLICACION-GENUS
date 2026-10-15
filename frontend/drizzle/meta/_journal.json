@@ -316,6 +316,13 @@
       "when": 1791700000000,
       "tag": "0046_dashboard_kpi_targets",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1791800000000,
+      "tag": "0047_work_item_delivery_lines",
+      "breakpoints": true
     }
   ]
 }

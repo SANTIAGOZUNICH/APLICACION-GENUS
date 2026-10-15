@@ -100,6 +100,11 @@ APP_ENV=(PATH="$PATH" HOME="${HOME:-/root}" NODE_EXTRA_CA_CERTS="$NODE_EXTRA_CA_
   GENUS_E2E_LOCAL_FILE_STORAGE_DIR="$STATE_DIR/files"
   GENUS_PLANNING_SOURCE=native NEXT_PUBLIC_GENUS_PLANNING_SOURCE=native NEXT_TELEMETRY_DISABLED=1
   GENUS_SEMANAS_FIXTURE_XLSX="$XLSX" SEMANAS_TODAY_OVERRIDE=2026-05-06)
+# Opt-in (circuito): /api/v1/live-sync/operations exige "modo real + adaptador Drive configurado". Se habilita con valores
+# FICTICIOS (sin red ni credenciales reales) solo para que la ruta acepte las mutaciones que escriben en la base descartable.
+if [[ "${GENUS_E2E_FAKE_LIVE_SYNC:-}" == "1" ]]; then
+  APP_ENV+=(GOOGLE_SERVICE_ACCOUNT_EMAIL=e2e-fake@invalid.local GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=e2e-fake GOOGLE_DRIVE_GENUS_FOLDER_ID=e2e-fake-folder)
+fi
 if [[ "${GENUS_E2E_PRODUCTION_BUILD:-}" == "1" ]]; then
   # Configuración EQUIVALENTE a Production (no es Production): build optimizado (`next build` + `next start`),
   # NODE_ENV=production, VERCEL_ENV=production simulado (write-back a Google SIEMPRE apagado) y modo de datos real.

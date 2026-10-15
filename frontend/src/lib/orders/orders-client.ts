@@ -708,6 +708,18 @@ export async function patchOsNotificationApi(
   await parseJson(res);
 }
 
+/** Marca como leídas todas las notificaciones del sector del actor. */
+export async function markAllOsNotificationsReadApi(session: OrdersClientSession): Promise<number> {
+  const res = await fetch("/api/v1/notifications", {
+    method: "PATCH",
+    credentials: "include",
+    headers: actorHeaders(session),
+    body: JSON.stringify({ action: "read_all" }),
+  });
+  const data = await parseJson<{ updated?: number }>(res);
+  return data.updated ?? 0;
+}
+
 export async function dismissReadOsNotificationsApi(
   session: OrdersClientSession
 ): Promise<void> {

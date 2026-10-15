@@ -50,6 +50,14 @@ export interface QualityItem {
   packagingClosedAt?: string | null;
   packagingClosedBy?: string | null;
   reworkReason?: string | null;
+  /**
+   * Estado operativo real del trabajo (Neon). `revision` = terminado y pendiente de definir/entregar (circuito sin
+   * Calidad). Las decisiones de Calidad (`status`) son HISTÓRICAS y de solo lectura.
+   */
+  operationalStatus?: string | null;
+  qualityDecidedAt?: string | null;
+  qualityDecidedBy?: string | null;
+  qualityDecidedBySector?: string | null;
 }
 
 /** Registro de transferencia de trabajo — demo localStorage; futuro POST Sheets. */

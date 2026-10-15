@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// OBSOLETO PARCIAL (circuito sin Calidad, docss/59): las acciones `quality_decision` ya no existen; el servidor responde
+// 410 QUALITY_CIRCUIT_RETIRED. Los pasos de este script que las usan dejaron de ser válidos y se conservan solo
+// como referencia histórica. El flujo vigente se valida con `npm run test:e2e:circuito`.
 /**
  * Gate multi-browser — Francisco / Agustina / Santiago con snapshot caliente.
  *

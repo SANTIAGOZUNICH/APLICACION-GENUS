@@ -383,11 +383,18 @@ export class DrizzlePlanningRepository implements PlanningRepository {
    * por estado de calidad (pendiente/aprobado/rechazado) queda del lado del
    * caller, igual que hace hoy CalidadOperationalView con qualityItems.
    */
-  async listCompletedItems(filters: { limit?: number | null }): Promise<PlanningWorkItemRecord[]> {
+  async listCompletedItems(filters: { limit?: number | null; operationalStatus?: string | null }): Promise<PlanningWorkItemRecord[]> {
     const limit =
       typeof filters.limit === "number" && filters.limit > 0
-        ? Math.min(Math.floor(filters.limit), 1000)
-        : 500;
+        ? Math.min(Math.floor(filters.limit), filters.operationalStatus ? 5000 : 1000)
+        : filters.operationalStatus
+          ? 5000
+          : 500;
+    // Filtro por estado operativo EN LA CONSULTA (no en memoria): con un tope fijo, los pendientes más viejos
+    // quedaban fuera cuando había muchos trabajos completados.
+    const statusFilter = filters.operationalStatus
+      ? sql`${workItems.operationalStatus} = ${filters.operationalStatus}`
+      : sql`TRUE`;
 
     const rows = await this.db
       .select(WORK_ITEM_SELECT_COLUMNS)
@@ -399,7 +406,8 @@ export class DrizzlePlanningRepository implements PlanningRepository {
           eq(workItems.status, "PUBLICADO"),
           eq(planningWeeks.status, "PUBLISHED"),
           isNull(workItems.deletedAt),
-          sql`${workItems.completedAt} IS NOT NULL`
+          sql`${workItems.completedAt} IS NOT NULL`,
+          statusFilter
         )
       )
       .orderBy(desc(workItems.completedAt))

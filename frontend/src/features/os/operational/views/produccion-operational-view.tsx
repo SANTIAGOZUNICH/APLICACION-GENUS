@@ -7,7 +7,6 @@ import { usePreviewContext, usePreviewSession } from "@/features/os/session/prev
 import { buildProductionOverview } from "@/lib/operational/build-production-overview";
 import { displayField } from "@/lib/operational/display-fields";
 import { SECTOR_LABELS } from "@/types/operational/sector";
-import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-adapter";
 import { OperationalActivityFeed } from "../components/operational-activity-feed";
 import {
   OperationalTabs,
@@ -21,7 +20,6 @@ import { useWorkItemCellEditing } from "../hooks/use-work-item-cells";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { buildOperationalActivityFeed } from "../lib/completion-events";
 import {
-  filterQualityByStatus,
   filterWorkItemsPendingElaboracion,
   filterWorkItemsPendingEnvasado,
   filterWorkItemsTransferredElaboracion,
@@ -36,6 +34,7 @@ import { Button } from "@/components/ui/button";
 import {
   collectSameClientDateApprovedPackaging,
   isPackagingQualityItem,
+  isRemitoEligibleQualityItem,
 } from "@/lib/remitos/from-quality";
 import {
   buildComposeLinesFromQuality,
@@ -77,8 +76,7 @@ const CONTROL_CLASS =
   "w-full rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--ig-control-bg,var(--os-surface))] px-3 py-2 text-sm text-[var(--ig-control-fg,var(--os-text))]";
 
 const PRODUCCION_TABS = [
-  { id: "rechazados", label: "Rechazados" },
-  { id: "aprobados", label: "Aprobados" },
+  { id: "listos", label: "Listos / entregados" },
   { id: "elaboracion", label: "Elaboración" },
   { id: "envasados", label: "Envasados" },
   { id: "kpis", label: "KPIs completos" },
@@ -166,10 +164,7 @@ export function ProduccionOperationalView({
     return applyProgressToWorkItems(base);
   }, [data?.workItems, applyEffectiveStatus, applyProgressToWorkItems]);
 
-  const qualityItems = useMemo(() => {
-    const seed = data?.qualityItems ?? [];
-    return applyQualityDecisionsToItems(seed, getQualityStatus);
-  }, [data?.qualityItems, getQualityStatus]);
+  const qualityItems = useMemo(() => data?.qualityItems ?? [], [data?.qualityItems]);
 
   const qualityLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -196,12 +191,9 @@ export function ProduccionOperationalView({
     [completionEvents, decisionMap, qualityLabelById]
   );
 
-  const rechazados = useMemo(
-    () => filterQualityByStatus(qualityItems, "rechazado"),
-    [qualityItems]
-  );
+  // Trabajos terminados aptos para remito: listos para entregar o ya entregados (sin aprobación de Calidad).
   const aprobados = useMemo(
-    () => filterQualityByStatus(qualityItems, "aprobado"),
+    () => qualityItems.filter(isRemitoEligibleQualityItem),
     [qualityItems]
   );
   const pendienteElaboracion = useMemo(
@@ -265,7 +257,7 @@ export function ProduccionOperationalView({
   }, [aprobados, sectorId, session]);
 
   useEffect(() => {
-    if (activeTab === "aprobados") void refreshRemitoStatuses();
+    if (activeTab === "listos") void refreshRemitoStatuses();
   }, [activeTab, refreshRemitoStatuses]);
 
   const openLoteVtoCorrection = useCallback((item: WorkItem) => {
@@ -481,7 +473,7 @@ export function ProduccionOperationalView({
       {
         key: "status",
         header: "Estado",
-        render: (row) => <StatusChip status={row.status} />,
+        render: (row) => <StatusChip status={row.operationalStatus ?? row.status} />,
       },
       {
         key: "observation",
@@ -527,7 +519,7 @@ export function ProduccionOperationalView({
         key: "remito",
         header: "Remito",
         render: (row) => {
-          if (!isPackagingQualityItem(row) || row.status !== "aprobado") {
+          if (!isPackagingQualityItem(row) || !isRemitoEligibleQualityItem(row)) {
             return <span className="text-xs text-[var(--os-text-muted)]">—</span>;
           }
           const wid = workIdFromQuality(row);
@@ -661,10 +653,7 @@ export function ProduccionOperationalView({
   const tabs = PRODUCCION_TABS.map((tab) => {
     let count: number | undefined;
     switch (tab.id) {
-      case "rechazados":
-        count = rechazados.length;
-        break;
-      case "aprobados":
+      case "listos":
         count = aprobados.length;
         break;
       case "elaboracion":
@@ -740,20 +729,12 @@ export function ProduccionOperationalView({
       />
 
       <div className="mt-4">
-        {activeTab === "rechazados" && (
-          <OperationalTable
-            columns={qualityColumns.filter((c) => c.key !== "remito")}
-            rows={rechazados}
-            rowKey={(row) => row.id}
-            emptyMessage="Sin rechazos registrados."
-          />
-        )}
-        {activeTab === "aprobados" && (
+        {activeTab === "listos" && (
           <OperationalTable
             columns={qualityColumns}
             rows={aprobados}
             rowKey={(row) => row.id}
-            emptyMessage="Sin aprobaciones registradas."
+            emptyMessage="Sin trabajos listos para entregar ni entregados."
           />
         )}
         {activeTab === "elaboracion" && (
@@ -761,9 +742,9 @@ export function ProduccionOperationalView({
             {transferidoElaboracion.length > 0 && (
               <p className="mb-3 text-sm text-[var(--os-text-muted)]">
                 {transferidoElaboracion.length} elaboración
-                {transferidoElaboracion.length === 1 ? "" : "es"}{" "}
-                {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
-                {WORK_TRANSFER.pendingReview.toLowerCase()}.
+                {transferidoElaboracion.length === 1 ? "" : "es"} ya enviada
+                {transferidoElaboracion.length === 1 ? "" : "s"} a Envasado o pendiente
+                {transferidoElaboracion.length === 1 ? "" : "s"} de definir.
               </p>
             )}
             <OperationalTable
@@ -784,9 +765,9 @@ export function ProduccionOperationalView({
             {transferidoEnvasado.length > 0 && (
               <p className="mb-3 text-sm text-[var(--os-text-muted)]">
                 {transferidoEnvasado.length} envasado
-                {transferidoEnvasado.length === 1 ? "" : "s"}{" "}
-                {WORK_TRANSFER.deliveredToQuality.toLowerCase()} —{" "}
-                {WORK_TRANSFER.pendingReview.toLowerCase()}.
+                {transferidoEnvasado.length === 1 ? "" : "s"} ya entregado
+                {transferidoEnvasado.length === 1 ? "" : "s"}, en Codificado o pendiente
+                {transferidoEnvasado.length === 1 ? "" : "s"} de definir.
               </p>
             )}
             <OperationalTable
@@ -813,9 +794,8 @@ export function ProduccionOperationalView({
               <KpiCard label="Total trabajos en plan" value={workItems.length} />
               <KpiCard label={WORK_TRANSFER.kpiDeliveredToQuality} value={entregadosCalidad} />
               <KpiCard label="En curso" value={enCurso} />
-              <KpiCard label="Transferencias en bandeja Calidad" value={completionEvents.length} />
-              <KpiCard label="Aprobados calidad" value={aprobados.length} />
-              <KpiCard label="Rechazados calidad" value={rechazados.length} />
+              <KpiCard label="Transferencias registradas" value={completionEvents.length} />
+              <KpiCard label="Listos / entregados" value={aprobados.length} />
               <KpiCard label="Bloqueos" value={overview.blockers.length} />
               <KpiCard label="Sectores activos" value={overview.sectors?.length ?? 0} />
               {overview.priorities &&

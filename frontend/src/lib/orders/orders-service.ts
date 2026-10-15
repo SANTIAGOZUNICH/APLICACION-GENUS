@@ -1163,7 +1163,8 @@ export class OrdersService {
             ? "OA entregada con pendientes"
             : "OA completada",
       message: `${updated.orderNumber} · ${updated.product || "Sin completar"} · ${actor.sector}`,
-      sectors: ["CALIDAD", "PRODUCCION"],
+      // Circuito sin Calidad: el aviso operativo de OE/OA completada va a Producción (Calidad ya no es destinataria).
+      sectors: ["PRODUCCION"],
       href: `/os?view=${current.type === "OE" ? "ordenes-elaboracion" : "ordenes-acondicionamiento"}&orderId=${id}`,
       orderId: id,
     });
@@ -1437,7 +1438,6 @@ export class OrdersService {
       message: `${updated.orderNumber}: ${trimmed}`,
       sectors: [
         ...(updated.assignedSector !== SIN_ASIGNAR ? [updated.assignedSector] : []),
-        "CALIDAD",
         "PRODUCCION",
       ],
       href: `/os?orderId=${id}`,
@@ -1635,7 +1635,6 @@ export class OrdersService {
       message: `${updated.orderNumber}: ${trimmed}`,
       sectors: [
         ...(updated.assignedSector !== SIN_ASIGNAR ? [updated.assignedSector] : []),
-        "CALIDAD",
         "PRODUCCION",
       ],
       href: null,
@@ -1828,6 +1827,10 @@ export class OrdersService {
 
   restoreNotification(id: string, actor: OrdersActor) {
     return this.repo.restoreNotification(id, actor.email);
+  }
+
+  markAllNotificationsRead(actor: OrdersActor) {
+    return this.repo.markAllNotificationsRead(actor.sector, actor.email);
   }
 
   dismissReadNotifications(actor: OrdersActor) {

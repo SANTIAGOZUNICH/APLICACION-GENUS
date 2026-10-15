@@ -222,7 +222,20 @@ export function qualityRemitoGroupKey(item: QualityItem, workItems: WorkItem[] =
   return `${normalizeClientId(input.clientId)}|${input.deliveryDate}`;
 }
 
-/** Todos los aprobados packaging del mismo cliente+fecha. */
+/**
+ * ¿Un trabajo terminado es apto para remito? Circuito sin Calidad: lo es si está listo para entregar (`revision`) o ya
+ * entregado. Para fuentes legadas sin estado operativo se conserva el criterio histórico (decisión «aprobado»).
+ */
+export function isRemitoEligibleQualityItem(
+  item: Pick<QualityItem, "operationalStatus" | "status">
+): boolean {
+  if (item.operationalStatus != null) {
+    return item.operationalStatus === "revision" || item.operationalStatus === "entregado";
+  }
+  return item.status === "aprobado";
+}
+
+/** Todos los trabajos aptos para remito (packaging) del mismo cliente+fecha. */
 export function collectSameClientDateApprovedPackaging(
   seed: QualityItem,
   allApproved: QualityItem[],
@@ -231,7 +244,7 @@ export function collectSameClientDateApprovedPackaging(
   const key = qualityRemitoGroupKey(seed, workItems);
   if (!key) return [];
   return allApproved.filter((item) => {
-    if (item.status !== "aprobado") return false;
+    if (!isRemitoEligibleQualityItem(item)) return false;
     if (!isPackagingQualityItem(item)) return false;
     return qualityRemitoGroupKey(item, workItems) === key;
   });

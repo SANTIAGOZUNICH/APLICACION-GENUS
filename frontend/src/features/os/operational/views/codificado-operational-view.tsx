@@ -17,11 +17,14 @@ import {
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { mergeManualWorkItems } from "../adapters/manual-work-items-repository";
 import { useOperationalStore } from "../store/operational-store-context";
-import { pushNotification } from "@/features/os/feedback/notifications-store";
 import { canDeliverFromCodificado, canReopenCodificadoDelivery } from "../lib/codificado-flow";
 import { canEditInCodificado, codificadoOriginLabel, WORK_TRANSFER } from "../lib/work-transfer-labels";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
+import { fetchDeliveryProgress, type DeliveryProgress } from "../adapters/circuit-client";
+import { DeliverWorkDialog, type DeliverWorkPayload } from "../components/deliver-work-dialog";
+import { resolveDeliveryTarget } from "@/lib/planning/circuit/delivery-math";
+import { summarizePackingGroups } from "@/lib/remitos/packing-math";
 import { AssignWorkDialog } from "../components/assign-work-dialog";
 import { WorkItemWarningBadge } from "../components/work-item-warning-badge";
 import { WorkItemPlanEditor } from "../components/work-item-plan-editor";
@@ -30,8 +33,9 @@ import { WorkItemEditDeleteActions } from "../components/work-item-edit-delete-a
 type TabId = "pendientes" | "entregados";
 
 /**
- * Mi trabajo — Codificado: recibe desde Envasado Masivo/Premium,
- * informa cantidad/cajas/lote/VTO y entrega una sola vez a Calidad + Producción.
+ * Mi trabajo — Codificado: recibe desde Envasado Masivo/Premium (o asignación directa de Producción), informa
+ * cantidad/lote/VTO y ENTREGA: registra la entrega final al cliente (total o parcial) sin aprobación previa.
+ * Las cajas NO son obligatorias: Codificado recibe la cantidad total.
  */
 export function CodificadoOperationalView() {
   const workspace = useRequiredWorkspace();
@@ -47,9 +51,10 @@ export function CodificadoOperationalView() {
   const canAssignWork = actorSectorId === "PRODUCCION" || actorSectorId === "DIRECCION";
   const [showAssignDialog, setShowAssignDialog] = useState(false);
 
+  // Sesión REAL del actor: Producción también opera esta vista y su sector no es CODIFICADO.
   const session = useMemo(
-    () => ({ email: workspace.context.email, sector: "CODIFICADO" as const }),
-    [workspace.context.email]
+    () => ({ email: workspace.context.email, sector: actorSectorId }),
+    [workspace.context.email, actorSectorId]
   );
   const { data, loading, refresh: refreshMasivo } = useOperationalPlan("ENVASADO_MASIVO", {});
   const { data: dataPremium, refresh: refreshPremium } = useOperationalPlan("ENVASADO_PREMIUM", {});
@@ -66,6 +71,7 @@ export function CodificadoOperationalView() {
   const [draft, setDraft] = useState<PackagingDraft | null>(null);
   const [obs, setObs] = useState("");
   const [confirmDeliver, setConfirmDeliver] = useState(false);
+  const [deliveryProgress, setDeliveryProgress] = useState<DeliveryProgress | null>(null);
   const [missingWarn, setMissingWarn] = useState(false);
   const [packagingError, setPackagingError] = useState<string | null>(null);
   const [confirmReopen, setConfirmReopen] = useState(false);
@@ -135,7 +141,6 @@ export function CodificadoOperationalView() {
     canReopenCodificadoDelivery({
       sector: selected?.sector,
       deliveredFromCodificadoAt: selectedDeliveredAt,
-      qualityStatus: selected?.qualityStatus,
     }).ok;
 
   const enrichSelected = useCallback(
@@ -175,12 +180,7 @@ export function CodificadoOperationalView() {
   const persistPackaging = useCallback(
     (extraObs?: string) => {
       if (!selected || !draft) return false;
-      if (!draft.mismatchOk && !draft.packingMismatchObservation.trim()) {
-        setPackagingError(
-          "Indicá una observación si producido y embalado no coinciden."
-        );
-        return false;
-      }
+      // Codificado recibe la cantidad total: las cajas son opcionales y NO se valida la distribución.
       setPackagingError(null);
       // No bloqueamos la UI en el resultado del servidor acá (persistPackaging
       // es síncrono por diseño para la validación de mismatch), pero un fallo
@@ -229,96 +229,79 @@ export function CodificadoOperationalView() {
 
   const tryDeliver = useCallback(() => {
     if (!selected || !draft) return;
-    if (!draft.packagingLote.trim() || !draft.packagingVto.trim()) {
-      setMissingWarn(true);
-      setConfirmDeliver(true);
-      return;
-    }
-    setMissingWarn(false);
-    setConfirmDeliver(true);
-  }, [selected, draft]);
-
-  const confirmDeliverAction = useCallback(async () => {
-    if (!selected || !draft) return;
     const gate = canDeliverFromCodificado(selected.status, { sector: selected.sector });
     if (!gate.ok) {
       showToast(gate.error, "info");
-      setConfirmDeliver(false);
       return;
     }
-    if (!draft.mismatchOk && !draft.packingMismatchObservation.trim()) {
-      setPackagingError(
-        "Indicá una observación si producido y embalado no coinciden."
-      );
-      setConfirmDeliver(false);
-      return;
-    }
-    try {
+    setMissingWarn(!draft.packagingLote.trim() || !draft.packagingVto.trim());
+    void fetchDeliveryProgress(session, selected.id)
+      .then(setDeliveryProgress)
+      .catch(() => setDeliveryProgress(null))
+      .finally(() => setConfirmDeliver(true));
+  }, [selected, draft, session, showToast]);
+
+  // Cantidad objetivo: lo embalado si hay distribución real; si no, el total declarado / realizado / planificado.
+  const deliverTarget = useMemo(() => {
+    if (!selected || !draft) return null;
+    const packed = summarizePackingGroups(draft.packingGroups).totalEmbalado;
+    return resolveDeliveryTarget({
+      unit: selected.unit,
+      deliverableUnits: packed > 0 && draft.packagingTotalUnits === packed ? packed : null,
+      packagingTotalUnits: draft.packagingTotalUnits ?? selected.packagingTotalUnits ?? null,
+      finishedQty: getFinishedQty(selected.id) || selected.finishedQty || null,
+      plannedQuantity: selected.quantity,
+    });
+  }, [selected, draft, getFinishedQty]);
+
+  /** ENTREGAR: registra la entrega final (total o parcial). Los errores se relanzan al diálogo. */
+  const confirmDeliverAction = useCallback(
+    async (payload: DeliverWorkPayload) => {
+      if (!selected || !draft) return;
       const server = await postCodificadoHandoff(session, selected.id, {
         action: "deliver",
-        observation: obs,
+        observation: payload.observations || obs,
         packagingLote: draft.packagingLote.trim() || null,
         packagingVto: draft.packagingVto.trim() || null,
         packagingTotalUnits: draft.packagingTotalUnits,
         packingGroups: draft.packingGroups,
         sampleUnits: draft.sampleUnits,
-        expectedVersion: selected.nativeVersion ?? null,
-        idempotencyKey:
-          typeof crypto !== "undefined" && "randomUUID" in crypto
-            ? crypto.randomUUID()
-            : `deliver-${selected.id}-${Date.now()}`,
+        expectedVersion: null,
+        idempotencyKey: payload.idempotencyKey,
+        deliverQuantity: payload.deliverQuantity,
+        remito: payload.remito || null,
+        receivedBy: payload.receivedBy || null,
+        actualDeliveredAt: payload.actualDeliveredAt,
+        plannedDeliveryDate: selected.deliveryDate ?? null,
       });
-      const result = deliverFromCodificado(server.workItem, {
-        updatedBy: actorName,
-        observation: obs,
-        packagingLote: draft.packagingLote.trim() || null,
-        packagingVto: draft.packagingVto.trim() || null,
-        packagingTotalUnits: draft.packagingTotalUnits,
-        packagingCajas: draft.packagingCajas,
-        packagingUnidadesPorCaja: draft.packagingUnidadesPorCaja,
-        packingGroups: draft.packingGroups,
-        packingMismatchObservation: draft.packingMismatchObservation,
-      });
-      if (server.replayed || result.already) {
+      if (server.replayed) {
         showToast(WORK_TRANSFER.alreadyDeliveredFromCodificado, "info");
-        setConfirmDeliver(false);
         await refresh();
         return;
       }
-      pushNotification({
-        kind: "trabajo_finalizado",
-        title: "Codificado entregó a Calidad",
-        message: `${selected.product ?? "Producto"} · ${selected.client ?? ""} — lote ${draft.packagingLote || "s/d"}`,
-        sectors: ["CALIDAD", "PRODUCCION"],
-      });
-      pushNotification({
-        kind: "trabajo_asignado",
-        title: "Trabajo listo desde Codificado",
-        message: `${selected.product ?? "Producto"} disponible para remito manual en Producción.`,
-        sectors: ["PRODUCCION"],
-      });
-      showToast("Entregado a Calidad y Producción.");
-      setConfirmDeliver(false);
-      setSelected(null);
-      setDraft(null);
+      if (server.delivery?.complete !== false) {
+        deliverFromCodificado(server.workItem, {
+          updatedBy: actorName,
+          observation: obs,
+          packagingLote: draft.packagingLote.trim() || null,
+          packagingVto: draft.packagingVto.trim() || null,
+          packagingTotalUnits: draft.packagingTotalUnits,
+          packagingCajas: draft.packagingCajas,
+          packagingUnidadesPorCaja: draft.packagingUnidadesPorCaja,
+          packingGroups: draft.packingGroups,
+          packingMismatchObservation: draft.packingMismatchObservation,
+        });
+        showToast("Entrega registrada.");
+        setSelected(null);
+        setDraft(null);
+      } else {
+        showToast(`Entrega parcial registrada. Saldo pendiente: ${server.delivery?.pending ?? "—"}.`);
+        setSelected(server.workItem);
+      }
       await refresh();
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : "No se pudo entregar a Calidad.",
-        "info"
-      );
-      setConfirmDeliver(false);
-    }
-  }, [
-    selected,
-    draft,
-    deliverFromCodificado,
-    actorName,
-    obs,
-    showToast,
-    session,
-    refresh,
-  ]);
+    },
+    [selected, draft, session, obs, deliverFromCodificado, actorName, showToast, refresh]
+  );
 
   const confirmReopenAction = useCallback(async () => {
     if (!selected) return;
@@ -391,12 +374,7 @@ export function CodificadoOperationalView() {
       <OperationalTabs
         tabs={[
           { id: "pendientes", label: "Pendientes", count: pendientes.length },
-          // "Entregado a Calidad" (no "Entregados" a secas): esto es Codificado
-          // cerrando su parte y notificando a Calidad/Producción — nada llegó
-          // todavía al cliente final. Con la etiqueta genérica "Entregados",
-          // que coincide con el nombre de la pantalla real de entregas, un
-          // trabajo recién finalizado por Codificado parecía "ya entregado"
-          // sin que Producción hubiera ejecutado la entrega real (BUG 3).
+          // Circuito sin Calidad: «Entregar» en Codificado registra la entrega final al cliente.
           { id: "entregados", label: WORK_TRANSFER.deliveredToQuality, count: entregados.length },
         ]}
         activeId={tab}
@@ -540,7 +518,7 @@ export function CodificadoOperationalView() {
                 {selectedDeliveredAt ? (
                   <div className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-bg)] px-3 py-2 text-xs">
                     <p className="font-medium text-[var(--os-text)]">
-                      Entregado a Calidad · {new Date(selectedDeliveredAt).toLocaleString("es-AR")}
+                      Entregado · {new Date(selectedDeliveredAt).toLocaleString("es-AR")}
                     </p>
                     {selected.deliveredFromCodificadoBy ? (
                       <p className="text-[var(--os-text-muted)]">
@@ -609,26 +587,25 @@ export function CodificadoOperationalView() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={confirmDeliver} onOpenChange={setConfirmDeliver}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Entregar a Calidad y Producción</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm">
-            {missingWarn
-              ? "Falta Lote y/o VTO. Podés cargarlos arriba antes de entregar, o continuar igual — quedará registrado en auditoría."
-              : "Se enviará una única finalización a Calidad y se notificará a Producción. No se genera remito."}
-          </p>
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setConfirmDeliver(false)}>
-              Cancelar
-            </Button>
-            <Button variant="primary" onClick={confirmDeliverAction}>
-              Confirmar entrega
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {selected && draft ? (
+        <DeliverWorkDialog
+          open={confirmDeliver}
+          onOpenChange={setConfirmDeliver}
+          item={selected}
+          title="Entregar"
+          target={deliverTarget}
+          unit={selected.unit}
+          progress={deliveryProgress}
+          notice={
+            missingWarn ? (
+              <p className="rounded bg-[var(--genus-warning-soft)] px-2 py-1 text-xs text-[var(--genus-warning)]">
+                Falta Lote y/o VTO. Podés cargarlos antes de entregar, o continuar igual — queda registrado en auditoría.
+              </p>
+            ) : null
+          }
+          onConfirm={confirmDeliverAction}
+        />
+      ) : null}
 
       <Dialog open={confirmReopen} onOpenChange={setConfirmReopen}>
         <DialogContent>

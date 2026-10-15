@@ -15,7 +15,11 @@ import { TwinShell } from "@/features/os/shell/twin-shell";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { useRequiredWorkspace } from "@/features/os/workspace/workspace-provider";
 import { pushNotification } from "@/features/os/feedback/notifications-store";
-import { postAnnulDelivery, postArchiveDelivery, postDeleteDeliveryRecord, postDeliverWork, postRestoreDelivery } from "@/lib/api/live-sync-client";
+import { postAnnulDelivery, postArchiveDelivery, postDeleteDeliveryRecord, postRestoreDelivery } from "@/lib/api/live-sync-client";
+import { postCircuitDelivery, fetchDeliveryProgress, type DeliveryProgress } from "../adapters/circuit-client";
+import { DeliverWorkDialog, type DeliverWorkPayload } from "../components/deliver-work-dialog";
+import { isReadyForDelivery } from "../lib/pending-delivery";
+import { resolveDeliveryTarget } from "@/lib/planning/circuit/delivery-math";
 import { deliveryLifecycleActions } from "@/lib/lifecycle/adapters/common";
 import type { LifecycleAction } from "@/lib/lifecycle";
 import { SECTOR_LABELS, type SectorId } from "@/types/operational/sector";
@@ -33,7 +37,7 @@ import { applyQualityDecisionsToItems } from "../adapters/operational-sheets-ada
 import { getAllAsignacionLotes } from "../adapters/asignacion-lotes-repository";
 import { listAllManualWorkItems } from "../adapters/manual-work-items-repository";
 import type { DeliveryRecord } from "../adapters/delivery-repository";
-import { canMutateDeliveries, gateDeliveryMutation } from "../lib/delivery-rbac";
+import { canDeliverWork, canMutateDeliveries, validateDeliverWorkActor } from "../lib/delivery-rbac";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { useOperationalStore } from "../store/operational-store-context";
 import { getWorkProgress, recordWorkProgress } from "../store/operational-store";
@@ -101,13 +105,6 @@ export const ENTREGADOS_SORT_OPTIONS: SortOption<DeliveryRecord>[] = [
 ];
 const ENTREGADOS_SORT_KEYS = ENTREGADOS_SORT_OPTIONS.map((o) => o.key);
 
-interface DeliveryForm {
-  actualDeliveredAt: string;
-  remito: string;
-  receivedBy: string;
-  observations: string;
-}
-
 const TABS = [
   { id: "entregados", label: "Entregados" },
   { id: "archivados", label: "Archivados" },
@@ -119,17 +116,6 @@ export const PRODUCING_SECTORS: SectorId[] = [...PRODUCTION_MANAGED_SECTORS];
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
-}
-
-function nowDatetimeLocal(): string {
-  const date = new Date();
-  const offsetMs = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
-}
-
-function toIsoFromDatetimeLocal(value: string): string {
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString();
 }
 
 function formatDate(value: string | null | undefined): string {
@@ -220,13 +206,11 @@ export function EntregadosView() {
   const [sort, setSort] = useSortPreference("entregados", "actual_desc", ENTREGADOS_SORT_KEYS);
   const [page, setPage] = useState(1);
   const [deliveryTarget, setDeliveryTarget] = useState<QualityItem | null>(null);
-  const [form, setForm] = useState<DeliveryForm>({
-    actualDeliveredAt: nowDatetimeLocal(),
-    remito: "",
-    receivedBy: "",
-    observations: "",
-  });
+  const [deliveryProgress, setDeliveryProgress] = useState<DeliveryProgress | null>(null);
   const [detail, setDetail] = useState<DeliveryRecord | null>(null);
+  const [detailLines, setDetailLines] = useState<
+    Array<{ id: string; sequence: number; quantity: number; unit: string | null; kind: string; status: string; actualDeliveredAt: string; remito: string | null }>
+  >([]);
   const [filesRef, setFilesRef] = useState<string | null>(null);
   const [deleteGuideTarget, setDeleteGuideTarget] = useState<DeliveryRecord | null>(null);
   const [deleteGuideStep, setDeleteGuideStep] = useState<"explain" | "reason" | "confirm">("explain");
@@ -252,6 +236,26 @@ export function EntregadosView() {
     codificado.data?.workItems,
     tick,
   ]);
+
+  // Historial de entregas (parciales) del detalle abierto.
+  useEffect(() => {
+    if (!detail) {
+      setDetailLines([]);
+      return;
+    }
+    let cancelled = false;
+    void fetch(`/api/v1/deliveries?workItemId=${encodeURIComponent(detail.workItemId)}`, { credentials: "include", cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { lines?: typeof detailLines } | null) => {
+        if (!cancelled) setDetailLines(data?.lines ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setDetailLines([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detail]);
 
   const lotsByLote = useMemo(() => {
     if (tick < 0) return new Map<string, ReturnType<typeof getAllAsignacionLotes>[number]>();
@@ -307,20 +311,22 @@ export function EntregadosView() {
     };
   }, [fetchDeliveries, tick]);
 
+  // Solo las entregas COMPLETAS sacan un trabajo de «Pendientes de entrega»: una entrega parcial deja saldo pendiente.
   const deliveryByWorkItemId = useMemo(() => {
     const map = new Map<string, DeliveryRecord>();
     for (const record of deliveries) {
-      if (record.status === "ENTREGADO" && !record.annulledAt) {
+      if (record.status === "ENTREGADO" && !record.annulledAt && record.deliveryComplete !== false) {
         map.set(record.workItemId, record);
       }
     }
     return map;
   }, [deliveries]);
 
+  // Circuito sin Calidad: pendiente de entrega = terminado (`revision`) sin entrega completa, ya no «aprobado».
   const pendingApproved = useMemo(() => {
     if (tick < 0) return [];
     return qualityItems
-      .filter((item) => item.status === "aprobado" && item.relatedWorkItemId)
+      .filter((item) => isReadyForDelivery(item) && item.relatedWorkItemId)
       .filter((item) => !deliveryByWorkItemId.has(item.relatedWorkItemId!))
       .sort((a, b) => (a.deliveryDate ?? "").localeCompare(b.deliveryDate ?? ""));
   }, [qualityItems, tick, deliveryByWorkItemId]);
@@ -385,11 +391,22 @@ export function EntregadosView() {
   const deliveredToday = activeDeliveries.filter((record) => record.actualDeliveredAt.slice(0, 10) === todayIso()).length;
   const lateCount = filteredDeliveries.filter(isLateDelivery).length;
 
-  const openDeliveryModal = useCallback((item: QualityItem) => {
-    setDeliveryTarget(item);
-    setForm({ actualDeliveredAt: nowDatetimeLocal(), remito: "", receivedBy: "", observations: "" });
-    setActionError(null);
-  }, []);
+  const openDeliveryModal = useCallback(
+    (item: QualityItem) => {
+      setActionError(null);
+      const open = () => setDeliveryTarget(item);
+      if (!item.relatedWorkItemId) {
+        setDeliveryProgress(null);
+        open();
+        return;
+      }
+      void fetchDeliveryProgress({ email: workspace.context.email, sector: sectorId }, item.relatedWorkItemId)
+        .then(setDeliveryProgress)
+        .catch(() => setDeliveryProgress(null))
+        .finally(open);
+    },
+    [workspace.context.email, sectorId]
+  );
 
   const selectedPendingMeta = useMemo(() => {
     if (!deliveryTarget) return null;
@@ -417,65 +434,41 @@ export function EntregadosView() {
     };
   }, [deliveryTarget, lotsByLote, workItemsById]);
 
-  const confirmDelivery = useCallback(async () => {
-    if (!deliveryTarget || !deliveryTarget.relatedWorkItemId || !selectedPendingMeta) return;
-    if (!form.actualDeliveredAt) {
-      setActionError("La fecha y hora real de entrega son obligatorias.");
-      return;
-    }
-    const gate = gateDeliveryMutation(sectorId);
-    if (!gate.ok) {
-      setActionError(gate.error);
-      showToast(gate.error, "info");
-      return;
-    }
-    const now = new Date().toISOString();
-    const result = await postDeliverWork({
-      id: (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `delivery-${Date.now()}`),
-      workItemId: deliveryTarget.relatedWorkItemId,
-      qualityItemId: deliveryTarget.id,
-      product: selectedPendingMeta.product,
-      codigo: selectedPendingMeta.codigo,
-      client: selectedPendingMeta.client,
-      lote: selectedPendingMeta.lote,
-      sourceSector: selectedPendingMeta.sourceSector,
-      quantity: selectedPendingMeta.quantity,
-      unit: selectedPendingMeta.unit,
-      plannedDeliveryDate: selectedPendingMeta.plannedDeliveryDate,
-      actualDeliveredAt: toIsoFromDatetimeLocal(form.actualDeliveredAt),
-      remito: form.remito,
-      receivedBy: form.receivedBy,
-      observations: form.observations,
-      status: "ENTREGADO",
-      deliveredBy: workspace.context.displayName,
-      deliveredBySector: sectorId,
-      createdAt: now,
-      updatedAt: now,
-      actorSectorId: sectorId,
-    });
-    if (!result.ok) {
-      setActionError(result.error);
-      showToast(result.error, "info");
-      return;
-    }
-    const existingProgress = getWorkProgress(deliveryTarget.relatedWorkItemId);
-    recordWorkProgress(deliveryTarget.relatedWorkItemId, {
-      finishedQty: existingProgress?.finishedQty ?? "",
-      observation: existingProgress?.observation ?? "",
-      status: "entregado",
-      updatedBy: workspace.context.displayName,
-    });
-    refreshDecisions();
-    pushNotification({
-      kind: "trabajo_entregado",
-      title: "Trabajo entregado",
-      message: `${result.record.product} · ${result.record.client ?? "Sin cliente"} fue marcado como entregado.`,
-      sectors: Array.from(new Set(["PRODUCCION", result.record.sourceSector])),
-    });
-    setDeliveryTarget(null);
-    setTick((value) => value + 1);
-    showToast("Entrega confirmada.");
-  }, [deliveryTarget, form, refreshDecisions, sectorId, selectedPendingMeta, showToast, workspace.context.displayName]);
+  /** Registra la entrega (total o parcial) con el diálogo compartido. Errores: se relanzan al diálogo. */
+  const confirmDelivery = useCallback(
+    async (payload: DeliverWorkPayload) => {
+      if (!deliveryTarget || !deliveryTarget.relatedWorkItemId || !selectedPendingMeta) return;
+      const gate = validateDeliverWorkActor(sectorId);
+      if (!gate.ok) {
+        showToast(gate.error, "info");
+        throw new Error(gate.error);
+      }
+      const result = await postCircuitDelivery(
+        { email: workspace.context.email, sector: sectorId },
+        {
+          workItemId: deliveryTarget.relatedWorkItemId,
+          actorSectorId: sectorId,
+          deliverQuantity: payload.deliverQuantity,
+          idempotencyKey: payload.idempotencyKey,
+          actualDeliveredAt: payload.actualDeliveredAt,
+          remito: payload.remito,
+          receivedBy: payload.receivedBy,
+          observations: payload.observations,
+          plannedDeliveryDate: selectedPendingMeta.plannedDeliveryDate,
+          codigo: selectedPendingMeta.codigo,
+          sourceSector: selectedPendingMeta.sourceSector,
+        }
+      );
+      refreshDecisions();
+      setTick((value) => value + 1);
+      showToast(
+        result.complete
+          ? "Entrega confirmada."
+          : `Entrega parcial registrada. Saldo pendiente: ${result.pending ?? "—"}.`
+      );
+    },
+    [deliveryTarget, refreshDecisions, sectorId, selectedPendingMeta, showToast, workspace.context.email]
+  );
 
   const executeArchive = useCallback(async (record: DeliveryRecord) => {
     const result = await postArchiveDelivery({ id: record.id, actorSectorId: sectorId });
@@ -615,7 +608,20 @@ export function EntregadosView() {
       hideOnMobile: true,
       render: (record) => SECTOR_LABELS[record.sourceSector],
     },
-    { key: "status", header: "Estado", render: (record) => <StatusChip status={isLateDelivery(record) ? "fuera_fecha" : "en_fecha"} /> },
+    {
+      key: "status",
+      header: "Estado",
+      render: (record) => (
+        <div className="space-y-1">
+          <StatusChip status={isLateDelivery(record) ? "fuera_fecha" : "en_fecha"} />
+          {record.deliveryComplete === false ? (
+            <p className="text-xs font-medium text-[var(--genus-warning)]" data-testid="delivery-partial-badge">
+              Parcial · saldo {record.pendingBalance ?? "—"} {record.unit ?? ""}
+            </p>
+          ) : null}
+        </div>
+      ),
+    },
     {
       key: "actions",
       header: "Acción",
@@ -663,7 +669,7 @@ export function EntregadosView() {
       hideOnMobile: true,
       render: (item) => <span className="font-mono text-xs">{displayField(getQualityRef(item))}</span>,
     },
-    { key: "status", header: "Estado", render: () => <StatusChip status="aprobado" /> },
+    { key: "status", header: "Estado", render: () => <StatusChip status="revision" /> },
     {
       key: "warning",
       header: "",
@@ -677,9 +683,9 @@ export function EntregadosView() {
     {
       key: "actions",
       header: "Acción",
-      render: (item) => canMutate ? (
+      render: (item) => canDeliverWork(sectorId) ? (
         <Button size="sm" variant="primary" onClick={() => openDeliveryModal(item)}>
-          Marcar como entregado
+          Registrar entrega
         </Button>
       ) : (
         <span className="text-xs text-[var(--os-text-muted)]">Solo Producción</span>
@@ -741,7 +747,7 @@ export function EntregadosView() {
         <header className="space-y-2">
           <h2 className="text-2xl font-semibold tracking-tight">Entregados</h2>
           <p className="text-sm text-[var(--os-text-muted)]">
-            Producción confirma entregas aprobadas por Calidad, archiva registros y puede anular una entrega para devolverla a pendientes.
+            Producción registra las entregas (totales o parciales) sin aprobación previa, archiva registros y puede anular una entrega para devolverla a pendientes.
           </p>
           <p className="text-sm text-[var(--os-text-muted)]">
             <strong className="font-medium text-[var(--os-text)]">Descartar notificación</strong> solo oculta el
@@ -870,57 +876,39 @@ export function EntregadosView() {
         )}
 
         {tab === "pendientes" && (
-          <OperationalTable columns={pendingColumns} rows={pendingApproved} rowKey={(item) => item.id} emptyMessage={calidad.loading ? "Cargando aprobados de Calidad..." : "No hay trabajos aprobados pendientes de entrega."} />
+          <OperationalTable columns={pendingColumns} rows={pendingApproved} rowKey={(item) => item.id} emptyMessage={calidad.loading ? "Cargando trabajos terminados..." : "No hay trabajos pendientes de entrega."} />
         )}
       </div>
 
-      <Dialog open={deliveryTarget !== null} onOpenChange={(open) => !open && setDeliveryTarget(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Marcar como entregado</DialogTitle>
-            <DialogDescription>
-              ¿Confirmás que este trabajo fue entregado?
-            </DialogDescription>
-          </DialogHeader>
-          {selectedPendingMeta && (
-            <div className="space-y-4">
-              <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3">
-                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Producto</dt><dd className="font-medium">{selectedPendingMeta.product}</dd></div>
-                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Código</dt><dd className="font-mono text-xs">{displayField(selectedPendingMeta.codigo)}</dd></div>
-                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Cliente</dt><dd>{displayField(selectedPendingMeta.client)}</dd></div>
-                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Lote</dt><dd className="font-mono text-xs">{displayField(selectedPendingMeta.lote)}</dd></div>
-                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Origen</dt><dd>{SECTOR_LABELS[selectedPendingMeta.sourceSector]}</dd></div>
-                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Cantidad</dt><dd>{[selectedPendingMeta.quantity, selectedPendingMeta.unit].filter(Boolean).join(" ") || "—"}</dd></div>
-                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Entrega planificada</dt><dd>{formatDate(selectedPendingMeta.plannedDeliveryDate)}</dd></div>
-                <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">OE/OA</dt><dd className="font-mono text-xs">{displayField(selectedPendingMeta.ref)}</dd></div>
-              </dl>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <label className="space-y-1 text-sm font-medium">
-                  Fecha y hora real *
-                  <input type="datetime-local" required value={form.actualDeliveredAt} onChange={(e) => setForm((prev) => ({ ...prev, actualDeliveredAt: e.target.value }))} className="w-full rounded border border-[var(--os-border)] px-3 py-2 text-sm" />
-                </label>
-                <label className="space-y-1 text-sm font-medium">
-                  Remito
-                  <input value={form.remito} onChange={(e) => setForm((prev) => ({ ...prev, remito: e.target.value }))} className="w-full rounded border border-[var(--os-border)] px-3 py-2 text-sm" />
-                </label>
-                <label className="space-y-1 text-sm font-medium">
-                  Recibido por
-                  <input value={form.receivedBy} onChange={(e) => setForm((prev) => ({ ...prev, receivedBy: e.target.value }))} className="w-full rounded border border-[var(--os-border)] px-3 py-2 text-sm" />
-                </label>
-                <label className="space-y-1 text-sm font-medium md:col-span-2">
-                  Observaciones
-                  <textarea rows={2} value={form.observations} onChange={(e) => setForm((prev) => ({ ...prev, observations: e.target.value }))} className="w-full rounded border border-[var(--os-border)] px-3 py-2 text-sm" />
-                </label>
-              </div>
-              {actionError && <p role="alert" className="text-sm text-[var(--genus-error)]">{actionError}</p>}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setDeliveryTarget(null)}>Cancelar</Button>
-            <Button variant="primary" onClick={confirmDelivery} disabled={!form.actualDeliveredAt}>Confirmar entrega</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {deliveryTarget && selectedPendingMeta ? (
+        <DeliverWorkDialog
+          open
+          onOpenChange={(open) => !open && setDeliveryTarget(null)}
+          item={selectedPendingMeta.work}
+          productLabel={selectedPendingMeta.product}
+          clientLabel={selectedPendingMeta.client}
+          title="Registrar entrega"
+          target={resolveDeliveryTarget({
+            unit: selectedPendingMeta.unit,
+            deliverableUnits: selectedPendingMeta.work ? resolveWorkItemPackedUnits(selectedPendingMeta.work) : null,
+            packagingTotalUnits: selectedPendingMeta.work?.packagingTotalUnits ?? null,
+            finishedQty: deliveryTarget.finishedQty ?? deliveryTarget.quantity ?? null,
+            plannedQuantity: deliveryTarget.plannedQuantity ?? selectedPendingMeta.work?.quantity ?? null,
+          })}
+          unit={selectedPendingMeta.unit}
+          progress={deliveryProgress}
+          notice={
+            <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-3">
+              <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Código</dt><dd className="font-mono text-xs">{displayField(selectedPendingMeta.codigo)}</dd></div>
+              <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Lote</dt><dd className="font-mono text-xs">{displayField(selectedPendingMeta.lote)}</dd></div>
+              <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Origen</dt><dd>{SECTOR_LABELS[selectedPendingMeta.sourceSector]}</dd></div>
+              <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Entrega planificada</dt><dd>{formatDate(selectedPendingMeta.plannedDeliveryDate)}</dd></div>
+              <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">OE/OA</dt><dd className="font-mono text-xs">{displayField(selectedPendingMeta.ref)}</dd></div>
+            </dl>
+          }
+          onConfirm={confirmDelivery}
+        />
+      ) : null}
 
       <Dialog open={detail !== null} onOpenChange={(open) => !open && setDetail(null)}>
         <DialogContent className="max-w-2xl">
@@ -948,6 +936,26 @@ export function EntregadosView() {
                 <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Remito</dt><dd>{displayField(detail.remito)}</dd></div>
                 <div><dt className="text-xs uppercase text-[var(--os-text-muted)]">Recibido por</dt><dd>{displayField(detail.receivedBy)}</dd></div>
               </dl>
+              {detail.deliveryComplete === false ? (
+                <p className="rounded bg-[var(--genus-warning-soft)] px-3 py-2 text-sm text-[var(--genus-warning)]" data-testid="detail-partial">
+                  Entrega PARCIAL: saldo pendiente de {detail.pendingBalance ?? "—"} {detail.unit ?? ""}. El trabajo no se marca
+                  como entregado hasta completar la cantidad.
+                </p>
+              ) : null}
+              {detailLines.length > 0 ? (
+                <div data-testid="detail-delivery-lines">
+                  <p className="text-xs uppercase text-[var(--os-text-muted)]">Historial de entregas</p>
+                  <ul className="mt-1 space-y-0.5 text-sm">
+                    {detailLines.map((l) => (
+                      <li key={l.id} className="font-mono text-xs">
+                        #{l.sequence} · {formatDateTime(l.actualDeliveredAt)} · {l.quantity} {l.unit ?? ""}
+                        {l.status === "ANULADA" ? " (anulada)" : l.kind === "FINAL" ? " (final)" : " (parcial)"}
+                        {l.remito ? ` · remito ${l.remito}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               {detail.packingGroups && detail.packingGroups.length > 0 && (
                 <div>
                   <p className="text-xs uppercase text-[var(--os-text-muted)]">Packing</p>
