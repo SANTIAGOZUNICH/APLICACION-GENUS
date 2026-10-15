@@ -96,7 +96,9 @@ describe("WorkspaceResolver", () => {
     expect(resolved.title).toBe(buildWorkspaceGreeting(extractFirstName("Agustina Zunich")));
     expect(resolved.subtitle).toBe("Tenés 8 órdenes para trabajar hoy.");
     expect(resolved.context.displayName).toBe("Agustina Zunich");
-    expect(resolved.navigation).toContain("mi_trabajo");
+    // «Panel general» (mi_trabajo de Producción) se retiró; Semanas tiene entrada propia.
+    expect(resolved.navigation).not.toContain("mi_trabajo");
+    expect(resolved.navigation).toContain("semanas_planilla");
     expect(resolved.navigation).toContain("ver_envasado_masivo");
   });
 

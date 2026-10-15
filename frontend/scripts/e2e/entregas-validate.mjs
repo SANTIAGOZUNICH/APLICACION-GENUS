@@ -236,8 +236,9 @@ try {
   const cardTxt = await pp.locator("[data-testid=work-item-card]", { hasText: P1 }).first().innerText().catch(() => "");
   check("La tarjeta muestra cantidad, fecha de entrega y lote/VTO", /700/.test(cardTxt) && new RegExp(D_DELIVERY.split("-").reverse().join("/")).test(cardTxt), cardTxt.replace(/\n/g, " ").slice(0, 140));
   await pp.getByRole("tab", { name: /^Semana$/ }).or(pp.getByRole("button", { name: /^Semana$/ })).first().click();
-  await pp.locator("[data-testid=work-item-card]", { hasText: P1 }).first().waitFor({ timeout: 30_000 }).catch(() => {});
-  check("Aparece en la vista Semana (tarjetas por día)", (await pp.locator("[data-testid=week-board-cards] [data-testid=work-item-card]", { hasText: P1 }).count()) >= 1);
+  // Vista Semana de Envasado: tarjetas compactas por día (week-job-card).
+  await pp.locator("[data-testid=week-job-card]", { hasText: P1 }).first().waitFor({ timeout: 30_000 }).catch(() => {});
+  check("Aparece en la vista Semana (tarjetas por día)", (await pp.locator("[data-testid=week-board-cards] [data-testid=week-job-card]", { hasText: P1 }).count()) >= 1);
   await pp.screenshot({ path: `${OUT}/6-semana-con-trabajos.png` });
 
   // ===== 8. Cambio posterior de la entrega: diferencias y confirmación antes de tocar el trabajo =====

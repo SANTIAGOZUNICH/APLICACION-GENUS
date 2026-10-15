@@ -16,6 +16,7 @@ import {
 } from "@/lib/operational/operational-calendar";
 import { displayField } from "@/lib/operational/display-fields";
 import { workItemCoversDate } from "@/lib/operational/work-item-date-range";
+import { groupWorkItemsByDay } from "@/lib/operational/work-item-filters";
 import { isWorkItemReschedulable } from "../lib/work-transfer-labels";
 import { StatusChip } from "./operational-ui";
 import { DeliveryDateBadge } from "./delivery-date-badge";
@@ -81,6 +82,14 @@ interface OperationalWeekBoardProps {
    * acciones de la tarjeta: ver detalle / registrar avance, archivar y restaurar.
    */
   cards?: Pick<WorkItemCardsProps, "variant" | "getFinishedQty" | "getObservation" | "onSelectItem" | "listMode" | "onArchiveFromView" | "onRestoreToView" | "archiveBusyId" | "showPackagingColumns">;
+  /**
+   * «columns» (Envasado): los 5 días en columnas (3 en tablet), tarjetas compactas, contador por día y desplazamiento
+   * INTERNO si un día tiene muchos trabajos (la columna no estira la página). Requiere `cards`. En celular se ve solo el
+   * día `mobileDay` (el padre muestra el selector de días). Default «stack»: sin cambios para los demás llamadores.
+   */
+  layout?: "stack" | "columns";
+  /** Día visible en celular con `layout="columns"`. */
+  mobileDay?: string;
 }
 
 /** Botón discreto de edición; no inicia el arrastre ni selecciona el día. */
@@ -464,6 +473,184 @@ function WeekBoardDayCell({
   );
 }
 
+/** «LUN 28/09» — encabezado corto de columna. */
+export function shortDayLabel(iso: string): string {
+  const p = parseIsoDate(iso);
+  return `${dayOfWeekName(iso).slice(0, 3).toUpperCase()} ${p?.day ?? ""}/${p?.month ?? ""}`;
+}
+
+/** Tarjeta compacta de la vista semanal: lo esencial de un vistazo; el detalle completo se abre al tocarla. */
+function WeekJobCard({
+  item,
+  cards,
+  onEditItem,
+}: {
+  item: WorkItem;
+  cards: NonNullable<OperationalWeekBoardProps["cards"]>;
+  onEditItem?: (item: WorkItem) => void;
+}) {
+  const semanas = useWorkItemSemanasPriority(item.id);
+  const finished = item.finishedQty ?? cards.getFinishedQty(item.id);
+  const archived = cards.listMode === "archived";
+  const archiveAction = archived ? cards.onRestoreToView : cards.onArchiveFromView;
+  const open = () => cards.onSelectItem?.(item);
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        open();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          open();
+        }
+      }}
+      className="cursor-pointer rounded-md border border-white/10 bg-[#10304a] px-2 py-1.5 text-left shadow-[0_4px_12px_-10px_rgba(0,0,0,0.7)] transition hover:border-[var(--os-teal)]/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--os-teal)]"
+      style={priorityEdge(semanas?.priority, 4)}
+      data-testid="week-job-card"
+      data-item-id={item.id}
+      data-semanas-priority={semanas?.priority ?? "NONE"}
+    >
+      <div className="flex items-start justify-between gap-1">
+        <p className="line-clamp-2 text-[13px] font-semibold leading-tight text-white" title={item.product ?? ""}>
+          {displayField(item.product)}
+        </p>
+        {semanas?.priority ? <WorkItemPriorityBadge itemId={item.id} tone="solid" className="shrink-0" /> : null}
+      </div>
+      <p className="truncate text-[11px] leading-tight text-[#9fc0d4]" title={item.client ?? ""}>
+        {displayField(item.client)}
+      </p>
+      <div className="mt-1 flex flex-wrap items-center gap-1">
+        <span className="text-[12px] font-semibold tabular-nums text-[var(--os-teal)]" data-testid="week-job-qty">
+          {displayField(item.quantity)} {item.unit ?? ""}
+        </span>
+        {finished && String(finished).trim() && String(finished).trim() !== "0" ? (
+          <span className="text-[11px] tabular-nums text-[#cfe0ea]" title="Cantidad realizada">· hecho {finished}</span>
+        ) : null}
+        <StatusChip status={item.status} />
+      </div>
+      {(onEditItem || archiveAction) && (
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          <CardEditButton item={item} onEditItem={onEditItem} />
+          {archiveAction ? (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                void archiveAction(item);
+              }}
+              disabled={cards.archiveBusyId === item.id}
+              className="rounded px-1.5 py-0.5 text-[0.65rem] font-semibold text-[#9fc0d4] hover:bg-white/10 hover:text-white disabled:opacity-50"
+              data-testid={archived ? "week-job-restore" : "week-job-archive"}
+            >
+              {archived ? "Restaurar" : "Archivar"}
+            </button>
+          ) : null}
+        </div>
+      )}
+    </article>
+  );
+}
+
+/** Columna de un día (layout «columns»): encabezado de una línea con contador, lista con desplazamiento interno. */
+function WeekColumnCell({
+  day,
+  dayItems,
+  isToday,
+  hiddenOnMobile,
+  draggable,
+  dropZoneId,
+  canCreate,
+  onSelectDay,
+  onCreateSlot,
+  onEditItem,
+  cards,
+}: {
+  day: string;
+  dayItems: WorkItem[];
+  isToday: boolean;
+  hiddenOnMobile: boolean;
+  draggable: boolean;
+  dropZoneId: string;
+  canCreate: boolean;
+  onSelectDay: (iso: string) => void;
+  onCreateSlot?: (day: string, zone: string) => void;
+  onEditItem?: (item: WorkItem) => void;
+  cards: NonNullable<OperationalWeekBoardProps["cards"]>;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: weekBoardDropId(dropZoneId, day), disabled: !draggable });
+  const count = dayItems.length;
+  return (
+    <div
+      ref={setNodeRef}
+      className={`${hiddenOnMobile ? "hidden md:flex" : "flex"} min-w-0 flex-col rounded-lg border p-1.5 transition ${
+        isToday ? "border-[var(--os-teal)]/70 bg-[var(--os-teal)]/[0.06]" : "border-[var(--os-border)] bg-[var(--os-bg)]/40"
+      } ${draggable && isOver ? "ring-2 ring-[var(--os-teal)] ring-offset-1" : ""}`}
+      data-testid={`week-board-daycell-${weekBoardDropId(dropZoneId, day)}`}
+      data-day={day}
+      data-count={count}
+    >
+      <button
+        type="button"
+        onClick={() => onSelectDay(day)}
+        className="mb-1 flex w-full items-center justify-between gap-1 rounded px-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--os-text-muted)] hover:text-[var(--os-text)]"
+        title={`Ver ${dayOfWeekName(day)} en vista Día`}
+      >
+        <span className={isToday ? "text-[var(--os-teal)]" : undefined}>
+          {shortDayLabel(day)}
+          {isToday ? " · hoy" : ""}
+        </span>
+        <span
+          className={`rounded-full px-1.5 text-[10px] tabular-nums ${count ? "bg-[var(--os-teal)]/20 text-[var(--os-teal)]" : "bg-white/5"}`}
+          data-testid="week-col-count"
+          aria-label={`${count} trabajo${count === 1 ? "" : "s"}`}
+        >
+          {count}
+        </span>
+      </button>
+      {count === 0 ? (
+        <p className="px-1 py-1 text-[11px] text-[var(--os-text-muted)]" data-testid="week-board-empty-day">
+          {draggable ? "Sin trabajos — soltá acá" : "Sin trabajos"}
+        </p>
+      ) : (
+        <ul className="space-y-1.5 overflow-y-auto pr-0.5" style={{ maxHeight: "min(22rem, 50vh)" }} data-testid="week-board-cards">
+          {dayItems.map((item) => {
+            const card = <WeekJobCard item={item} cards={cards} onEditItem={onEditItem} />;
+            return (
+              <li key={item.id} className="min-w-0">
+                {draggable ? (
+                  <DraggableCard id={item.id} disabled={!isWorkItemReschedulable(item.status)}>
+                    {card}
+                  </DraggableCard>
+                ) : (
+                  card
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {canCreate && onCreateSlot ? (
+        <button
+          type="button"
+          onClick={() => onCreateSlot(day, dropZoneId)}
+          className="mt-1 flex w-full items-center justify-center rounded border border-dashed border-[var(--os-teal)]/40 py-0.5 text-xs font-semibold text-[var(--os-teal)] transition hover:border-[var(--os-teal)] hover:bg-[var(--os-teal)]/10"
+          aria-label={`Asignar trabajo — ${dayOfWeekName(day)}`}
+          data-testid={`week-board-create-${weekBoardDropId(dropZoneId, day)}`}
+        >
+          +
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 /** Vista Semana operativa — L–V con resalte de Hoy. */
 export function OperationalWeekBoard({
   weekDays,
@@ -481,6 +668,8 @@ export function OperationalWeekBoard({
   onCreateSlot,
   onEditItem,
   cards,
+  layout = "stack",
+  mobileDay,
 }: OperationalWeekBoardProps) {
   const weekStart = weekDays[0] ?? weekStartMonday(today);
   const end = weekDays[weekDays.length - 1];
@@ -502,12 +691,31 @@ export function OperationalWeekBoard({
       }
     }
   } else {
-    for (const item of items) {
-      for (const day of weekDays) {
-        if (!workItemCoversDate(item, day)) continue;
-        byDate.get(day)!.push(item);
-      }
-    }
+    // Misma regla que la vista Día (Día a día): ver groupWorkItemsByDay.
+    for (const [day, dayItems] of groupWorkItemsByDay(items, weekDays)) byDate.set(day, dayItems);
+  }
+
+  if (layout === "columns" && cards && mode === "operational") {
+    return (
+      <div className="grid gap-2 md:grid-cols-3 lg:grid-cols-5" data-testid="week-board-columns" data-zone={dropZoneId}>
+        {weekDays.map((day) => (
+          <WeekColumnCell
+            key={day}
+            day={day}
+            dayItems={byDate.get(day) ?? []}
+            isToday={day === today}
+            hiddenOnMobile={day !== (mobileDay ?? weekDays[0])}
+            draggable={draggable}
+            dropZoneId={dropZoneId}
+            canCreate={canCreate}
+            onSelectDay={onSelectDay}
+            onCreateSlot={onCreateSlot}
+            onEditItem={onEditItem}
+            cards={cards}
+          />
+        ))}
+      </div>
+    );
   }
 
   return (
