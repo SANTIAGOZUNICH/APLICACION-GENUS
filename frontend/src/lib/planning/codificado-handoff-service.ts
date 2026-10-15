@@ -14,7 +14,7 @@ import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 import { canReopenCodificadoDelivery } from "@/features/os/operational/lib/codificado-flow";
 import { parseQuantity } from "@/lib/planning/circuit/delivery-math";
 import { closeForCodificadoTransfer } from "@/lib/planning/circuit/packaging-close";
-import { recordDeliveryInTx } from "@/lib/planning/circuit/delivery-core";
+import { recordDeliveryInTx, sumActiveDeliveredUnits } from "@/lib/planning/circuit/delivery-core";
 import { emitCircuitNotification } from "@/lib/planning/circuit/circuit-notifications";
 import type { CircuitMovement } from "@/lib/planning/circuit/movements";
 import type { PlanningActor, PlanningSector, PlanningWorkItemRecord } from "@/lib/planning/types";
@@ -240,14 +240,42 @@ export async function handoffToCodificadoDurable(
       }
     }
 
+    // FOR UPDATE: serializa con una entrega concurrente; sin esto podía pisarse un `entregado` recién commiteado
+    // con el operationalStatus viejo.
     const [row] = await tx
       .select()
       .from(workItems)
       .where(eq(workItems.id, id))
+      .for("update")
       .limit(1);
     if (!row) throw new PlanningNotFoundError("Trabajo no encontrado.");
     if (row.status !== "PUBLICADO") {
       throw new PlanningValidationError("Solo se pueden enviar trabajos publicados.");
+    }
+    if (row.operationalStatus === "entregado") {
+      throw new PlanningValidationError("Este trabajo ya está entregado: no se puede enviar a Codificado.");
+    }
+    const [activeDelivery] = await tx
+      .select({ id: workItemDeliveries.id, deliveryComplete: workItemDeliveries.deliveryComplete })
+      .from(workItemDeliveries)
+      .where(
+        and(
+          eq(workItemDeliveries.workItemId, id),
+          eq(workItemDeliveries.status, "ENTREGADO"),
+          eq(workItemDeliveries.archived, false)
+        )
+      )
+      .limit(1);
+    if (activeDelivery && activeDelivery.deliveryComplete) {
+      throw new PlanningValidationError("Este trabajo ya tiene su entrega completa: no se puede enviar a Codificado.");
+    }
+    // Con una parcial ya entregada desde Envasado, lo que se envía a Codificado es el RESTO: el total no puede ser
+    // menor a lo ya entregado (se perderían unidades de la cuenta) y el saldo debe quedar coherente.
+    const alreadyDelivered = activeDelivery ? await sumActiveDeliveredUnits(tx, id) : 0;
+    if (alreadyDelivered > 0 && input.totalUnits < alreadyDelivered - 1e-6) {
+      throw new PlanningValidationError(
+        `La cantidad total (${input.totalUnits}) es menor a lo ya entregado desde Envasado (${alreadyDelivered}). Indicá un total igual o mayor.`
+      );
     }
     if (row.deliveredFromCodificadoAt) {
       throw new PlanningValidationError(

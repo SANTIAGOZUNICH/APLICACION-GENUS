@@ -24,6 +24,8 @@ export async function GET(request: Request) {
     if (sector !== "PRODUCCION" && sector !== "DIRECCION") {
       throw new PlanningForbiddenError("Solo Producción y Dirección ven los trabajos pendientes de definir.");
     }
+    // NOTA: este GET hace una escritura idempotente (backfill auditable QUALITY_CIRCUIT_RETIRED por trabajo, ids
+    // determinísticos + onConflictDoNothing). Si esa escritura falla NUNCA rompe la lectura: se loguea y se sigue.
     let retirement = { candidates: 0, recorded: 0 };
     try {
       retirement = await retireQualityCircuitDurable();
@@ -31,8 +33,8 @@ export async function GET(request: Request) {
       // La reubicación es un efecto auditable idempotente: si falla, la lista igual se muestra.
       console.error("[circuito] reubicación de pendientes de Calidad falló", error);
     }
-    const rows = await getPlanningService().listCompletedItems({ limit: 1000 });
-    const pendingRows = rows.filter((r) => (r.operationalStatus ?? "") === "revision");
+    // El filtro por estado va en la consulta (sin tope que deje pendientes afuera).
+    const pendingRows = await getPlanningService().listCompletedItems({ operationalStatus: "revision" });
     const workItems = projectNativeWorkItems(pendingRows);
     const items = workItems.map((workItem) => ({
       workItem,

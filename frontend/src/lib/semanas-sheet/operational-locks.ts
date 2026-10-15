@@ -104,6 +104,8 @@ export async function loadOperationalLocks(): Promise<OperationalLocks> {
         .where(
           and(
             eq(workItemDeliveries.status, "ENTREGADO"),
+            // Una entrega PARCIAL no bloquea la celda de la planilla: solo la entrega completa.
+            eq(workItemDeliveries.deliveryComplete, true),
             eq(workItemDeliveries.archived, false),
             isNull(workItemDeliveries.annulledAt),
             isNull(workItemDeliveries.deletedAt)

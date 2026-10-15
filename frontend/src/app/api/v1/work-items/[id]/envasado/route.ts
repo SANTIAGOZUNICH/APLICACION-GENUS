@@ -18,9 +18,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
   const blocked = ensureNativePlanningReady();
   if (blocked) return blocked;
   try {
-    await resolvePlanningActor(request);
+    const actor = await resolvePlanningActor(request);
     const { id } = await ctx.params;
-    const suggestion = await suggestEnvasadoDestinationForItem(id);
+    const suggestion = await suggestEnvasadoDestinationForItem(id, actor.sector);
     return NextResponse.json({ ok: true, ...suggestion });
   } catch (err) {
     return planningErrorResponse(err);

@@ -177,7 +177,7 @@ export class PlanningService {
     return this.repo.listPublishedItems(filters);
   }
 
-  listCompletedItems(filters: { limit?: number | null }) {
+  listCompletedItems(filters: { limit?: number | null; operationalStatus?: string | null }) {
     return this.repo.listCompletedItems(filters);
   }
 }

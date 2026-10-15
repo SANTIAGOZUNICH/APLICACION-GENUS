@@ -1424,3 +1424,92 @@ describe("deliverWorkDurable — el servidor relee TODO dato canónico de Neon, 
     ).rejects.toThrow("Trabajo no encontrado.");
   });
 });
+
+/**
+ * Revisión independiente (bordes del circuito): re-entrega tras anular, parciales que no se archivan y envío a
+ * Codificado con parciales ya entregadas. Mismo fake tx que el bloque anterior.
+ */
+describe("circuito sin Calidad — bordes de entregas (fake tx)", () => {
+  let deliverWorkDurable: typeof import("./work-item-progress-repository").deliverWorkDurable;
+  let archiveDeliveryDurable: typeof import("./work-item-progress-repository").archiveDeliveryDurable;
+  const actor = { email: "produccion@laboratoriogenus.com.ar", sector: "PRODUCCION", displayName: "Producción" };
+  const input = {
+    workItemId: "wi-edge",
+    qualityItemId: "qc-1",
+    codigo: "COD-1",
+    sourceSector: "ENVASADO_MASIVO" as const,
+    plannedDeliveryDate: null,
+    actualDeliveredAt: "2026-09-12T12:00:00.000Z",
+    remito: null,
+    receivedBy: null,
+    observations: null,
+    deliveredBy: "produccion@laboratoriogenus.com.ar",
+    deliveredBySector: "PRODUCCION" as const,
+  };
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.doMock("@/lib/planning/circuit/circuit-notifications", () => ({ emitCircuitNotification: vi.fn() }));
+    fakeDbHandle = createFakeDb();
+    ({ deliverWorkDurable, archiveDeliveryDurable } = await import("./work-item-progress-repository"));
+    fakeDbHandle.workItems.set("wi-edge", {
+      id: "wi-edge",
+      sector: "ENVASADO_MASIVO",
+      operationalStatus: "en_curso",
+      version: 1,
+      client: "Cliente",
+      product: "Producto",
+      unit: "un.",
+      plannedQuantity: "100",
+      finishedQty: "100",
+      packagingTotalUnits: 100,
+      packingGroups: [{ cajas: 1, unidadesPorCaja: 100 }],
+      deliverableUnits: 100,
+    });
+  });
+
+  function annulAll() {
+    for (const d of fakeDbHandle.workItemDeliveries.values()) Object.assign(d, { status: "ANULADO" });
+    for (const l of fakeDbHandle.workItemDeliveryLines.values()) Object.assign(l, { status: "ANULADA" });
+    fakeDbHandle.workItems.get("wi-edge")!.operationalStatus = "en_curso";
+  }
+
+  it("4a) re-entregar con la MISMA clave tras anular NO es un replay: registra la entrega de nuevo", async () => {
+    const first = await deliverWorkDurable({ ...input, deliverQuantity: 40 } as never, actor);
+    expect(first.replayed).toBe(false);
+    annulAll();
+
+    const again = await deliverWorkDurable({ ...input, deliverQuantity: 40 } as never, actor);
+    expect(again.replayed).toBe(false);
+    expect(again.delivered).toBe(40);
+    const lines = [...fakeDbHandle.workItemDeliveryLines.values()];
+    expect(lines.filter((l) => l.status === "ACTIVA")).toHaveLength(1);
+    expect(lines.filter((l) => l.status === "ANULADA")).toHaveLength(1);
+    expect(new Set(lines.map((l) => l.idempotencyKey)).size).toBe(2);
+  });
+
+  it("4b) re-entrega tras anular con clave explícita: cuenta una sola vez las unidades activas", async () => {
+    await deliverWorkDurable({ ...input, deliverQuantity: 40, idempotencyKey: "k1" } as never, actor);
+    annulAll();
+    const redo = await deliverWorkDurable({ ...input, deliverQuantity: 40, idempotencyKey: "k1" } as never, actor);
+    expect(redo.replayed).toBe(false);
+    const activeTotal = [...fakeDbHandle.workItemDeliveryLines.values()]
+      .filter((l) => l.status === "ACTIVA")
+      .reduce((s, l) => s + Number(l.quantity), 0);
+    expect(activeTotal).toBe(40);
+  });
+
+  it("4c) una entrega PARCIAL no se puede archivar (evita volver a contar desde 0); la completa sí", async () => {
+    const partial = await deliverWorkDurable({ ...input, deliverQuantity: 30 } as never, actor);
+    const id = (partial.delivery as { id: string }).id;
+    // El fake no aplica el DEFAULT false de la columna `archived` (en Postgres sí).
+    for (const d of fakeDbHandle.workItemDeliveries.values()) d.archived = false;
+    await expect(archiveDeliveryDurable(id, "Producción")).rejects.toMatchObject({ name: "PlanningValidationError" });
+    expect(fakeDbHandle.workItemDeliveries.get(id)!.archived).not.toBe(true);
+
+    const done = await deliverWorkDurable({ ...input, idempotencyKey: "resto" } as never, actor);
+    expect(done.complete).toBe(true);
+    const archived = await archiveDeliveryDurable(id, "Producción");
+    expect(archived).toBeTruthy();
+  });
+});

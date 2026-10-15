@@ -204,7 +204,7 @@ vi.mock("@/lib/db/schema", () => {
     operationalEvents: table("operationalEvents", eventCols),
     productionPedidos: table("productionPedidos", ["id", "estado", "deletedAt", "op"]),
     productionPedidoStatusEvents: table("productionPedidoStatusEvents", []),
-    workItemDeliveries: table("workItemDeliveries", ["id", "workItemId", "status", "archived"]),
+    workItemDeliveries: table("workItemDeliveries", ["id", "workItemId", "status", "archived", "deliveryComplete"]),
     workItemDeliveryLines: table("workItemDeliveryLines", ["id", "workItemId", "deliveryId", "idempotencyKey", "status", "quantity"]),
   };
 });
@@ -314,6 +314,55 @@ describe("handoffToCodificadoDurable — Lote/VTO fill-once", () => {
     expect(result.item.packagingVto).toBe("2028-08");
     expect(fakeDbHandle.workItems.get("wi-handoff")!.packagingLote).toBe("L26099");
     expect(fakeDbHandle.operationalEvents.some((e) => e.type === "LOTE_VTO_FILLED")).toBe(false);
+  });
+
+  it("2b) rechaza enviar a Codificado un trabajo ya ENTREGADO (no pisa el estado con el viejo)", async () => {
+    fakeDbHandle.workItems.get("wi-handoff")!.operationalStatus = "entregado";
+    await expect(
+      handoffToCodificadoDurable({ workItemId: "wi-handoff", totalUnits: 100, idempotencyKey: "test-handoff-edge-2b-001" }, actor)
+    ).rejects.toMatchObject({ name: "PlanningValidationError", message: expect.stringMatching(/ya está entregado/) });
+    expect(fakeDbHandle.workItems.get("wi-handoff")!.sector).toBe("ENVASADO_MASIVO");
+  });
+
+  it("2b') rechaza enviar si ya hay una entrega activa COMPLETA", async () => {
+    fakeDbHandle.workItemDeliveries.set("dlv-1", {
+      id: "dlv-1",
+      workItemId: "wi-handoff",
+      status: "ENTREGADO",
+      archived: false,
+      deliveryComplete: true,
+    });
+    await expect(
+      handoffToCodificadoDurable({ workItemId: "wi-handoff", totalUnits: 100, idempotencyKey: "test-handoff-edge-2b2-001" }, actor)
+    ).rejects.toMatchObject({ name: "PlanningValidationError", message: expect.stringMatching(/entrega completa/) });
+  });
+
+  it("2c) con una parcial ya entregada (30 de 100): un total menor a lo entregado se rechaza; uno igual o mayor se acepta", async () => {
+    fakeDbHandle.workItemDeliveries.set("dlv-p", {
+      id: "dlv-p",
+      workItemId: "wi-handoff",
+      status: "ENTREGADO",
+      archived: false,
+      deliveryComplete: false,
+    });
+    fakeDbHandle.workItemDeliveryLines.set("l-1", {
+      id: "l-1",
+      workItemId: "wi-handoff",
+      deliveryId: "dlv-p",
+      status: "ACTIVA",
+      quantity: 30,
+    });
+    await expect(
+      handoffToCodificadoDurable({ workItemId: "wi-handoff", totalUnits: 20, idempotencyKey: "test-handoff-edge-2c-a1" }, actor)
+    ).rejects.toMatchObject({ name: "PlanningValidationError", message: expect.stringMatching(/menor a lo ya entregado/) });
+    expect(fakeDbHandle.workItems.get("wi-handoff")!.sector).toBe("ENVASADO_MASIVO");
+
+    const ok = await handoffToCodificadoDurable(
+      { workItemId: "wi-handoff", totalUnits: 100, idempotencyKey: "test-handoff-edge-2c-b1" },
+      actor
+    );
+    expect(ok.item.sector).toBe("CODIFICADO");
+    expect(fakeDbHandle.workItems.get("wi-handoff")!.packagingTotalUnits).toBe(100);
   });
 
   it("F) cambio de estado sin mandar Lote/VTO — no los clobberea (quedan en null, no se inventan)", async () => {

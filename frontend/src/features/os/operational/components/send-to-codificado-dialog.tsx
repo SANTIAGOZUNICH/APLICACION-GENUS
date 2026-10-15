@@ -45,6 +45,29 @@ export function SendToCodificadoDialog({
   const [bulkKg, setBulkKg] = useState("");
   const [bulkObs, setBulkObs] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** Unidades ya entregadas desde Envasado (parciales activas): el total enviado no puede ser menor. */
+  const [deliveredSoFar, setDeliveredSoFar] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!open || !item.id.startsWith("native:")) {
+      setDeliveredSoFar(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/v1/deliveries?workItemId=${encodeURIComponent(item.id)}`, { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: { lines?: Array<{ quantity: number | string; status: string }> } | null) => {
+        if (cancelled || !body?.lines) return;
+        const sum = body.lines
+          .filter((l) => l.status === "ACTIVA")
+          .reduce((acc, l) => acc + Number(l.quantity), 0);
+        setDeliveredSoFar(sum > 0 ? sum : null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, item.id]);
 
   useEffect(() => {
     if (!open) return;
@@ -64,6 +87,10 @@ export function SendToCodificadoDialog({
     });
     if (!resolved.ok) {
       setError(resolved.error);
+      return;
+    }
+    if (deliveredSoFar != null && resolved.total < deliveredSoFar - 1e-6) {
+      setError(`El total (${resolved.total}) no puede ser menor a lo ya entregado (${deliveredSoFar}).`);
       return;
     }
     const bulk = parseBulkRemainderKg(bulkKg);
@@ -92,6 +119,15 @@ export function SendToCodificadoDialog({
         <WorkItemWarningBadge item={item} className="mb-1" />
 
         <div className="max-h-[60vh] space-y-3 overflow-y-auto overflow-x-hidden text-sm">
+          {deliveredSoFar != null ? (
+            <p
+              className="rounded border border-[var(--os-border)] px-3 py-2 text-xs"
+              data-testid="codificado-delivered-so-far"
+            >
+              Ya entregado desde Envasado: <strong>{deliveredSoFar}</strong> un. El total que envíes debe ser igual o
+              mayor; Codificado entregará el resto.
+            </p>
+          ) : null}
           <div>
             <p className="text-xs uppercase text-[var(--os-text-muted)]">Producto</p>
             <p className="font-medium">{displayField(item.product)}</p>

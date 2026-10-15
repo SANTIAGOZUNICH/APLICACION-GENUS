@@ -169,13 +169,15 @@ try {
   const p1b = await json(p1);
   const bAfter1 = await wi(b.id);
   check("Entrega PARCIAL (400 de 1000): saldo 600, el trabajo NO se marca entregado", p1.ok() && p1b.complete === false && Number(p1b.pending) === 600 && bAfter1.operational_status !== "entregado", String(p1.status()) + (p1b.error ?? ""));
-  const agg1 = (await q("select quantity, delivery_complete, pending_balance from work_item_deliveries where work_item_id = $1 and status = 'ENTREGADO'", [b.id]))[0];
+  const agg1 = (await q("select id, quantity, delivery_complete, pending_balance from work_item_deliveries where work_item_id = $1 and status = 'ENTREGADO'", [b.id]))[0];
   check("Agregado acumula lo entregado y conserva el saldo pendiente", agg1 && agg1.quantity === "400" && agg1.delivery_complete === false && Number(agg1.pending_balance) === 600);
   const p1r = await live(masivo, { action: "deliver_work", workItemId: `native:${b.id}`, actorSectorId: "ENVASADO_MASIVO", idempotencyKey: kp1, deliverQuantity: 400, sourceSector: "ENVASADO_MASIVO", actualDeliveredAt: new Date().toISOString() });
   check("Doble clic/reintento (misma clave): una sola entrega parcial", p1r.ok() && (await json(p1r)).replayed === true && (await lines(b.id)).length === 1);
   const tooMuch = await live(masivo, { action: "deliver_work", workItemId: `native:${b.id}`, actorSectorId: "ENVASADO_MASIVO", idempotencyKey: randomUUID(), deliverQuantity: 700, sourceSector: "ENVASADO_MASIVO", actualDeliveredAt: new Date().toISOString() });
   check("No se puede entregar más que el saldo (sin 'stock negativo')", tooMuch.status() === 400 && /saldo/i.test((await json(tooMuch)).error ?? ""));
   check("Pedido NO queda ENTREGADO con una parcial pendiente ni con otro trabajo sin entregar", (await q("select estado from production_pedidos where id = $1", [pedido3]))[0].estado !== "ENTREGADO");
+  const arch = await live(produccion, { action: "archive_delivery", id: agg1.id, actorSectorId: "PRODUCCION", actorName: "E2E" });
+  check("Una entrega PARCIAL no se puede archivar (400) y sigue vigente", arch.status() === 400 && (await q("select archived from work_item_deliveries where id = $1", [agg1.id]))[0].archived === false, String(arch.status()));
   const p2 = await live(masivo, { action: "deliver_work", workItemId: `native:${b.id}`, actorSectorId: "ENVASADO_MASIVO", idempotencyKey: randomUUID(), sourceSector: "ENVASADO_MASIVO", actualDeliveredAt: new Date().toISOString() });
   const p2b = await json(p2);
   check("Parcial posterior por el saldo completa la cantidad: trabajo entregado", p2.ok() && p2b.complete === true && (await wi(b.id)).operational_status === "entregado" && (await lines(b.id)).length === 2 && (await lines(b.id)).reduce((s, l) => s + Number(l.quantity), 0) === 1000);
@@ -193,6 +195,11 @@ try {
   check("Calidad no entrega (403)", (await perm(calidad, "CALIDAD")) === 403);
   check("Nada se entregó con los intentos no autorizados", (await lines(c.id)).length === 0);
   check("Envasado Masivo sí entrega lo suyo", (await perm(masivo, "ENVASADO_MASIVO")) === 200);
+
+  const getForeign = await premium.page.request.get(`/api/v1/work-items/${e1.item.id}/envasado`);
+  check("GET destino de Envasado: un sector ajeno al trabajo recibe 403", getForeign.status() === 403, String(getForeign.status()));
+  const handoffDelivered = await post(produccion, `/api/v1/work-items/${destM}/codificado`, { action: "send", totalUnits: 1000, idempotencyKey: randomUUID() });
+  check("No se puede enviar a Codificado un trabajo ya entregado (400)", handoffDelivered.status() === 400, String(handoffDelivered.status()));
 
   // ===== 6. Calidad fuera del circuito =====
   for (const action of ["quality_decision", "quality_annul"]) {

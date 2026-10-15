@@ -168,50 +168,62 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
   }
 
   const requested = params.quantity != null && Number.isFinite(Number(params.quantity)) ? Number(params.quantity) : null;
-  const key =
+  let key =
     nonEmpty(params.idempotencyKey) ??
     defaultDeliveryKey({ workItemId: params.workItemId, alreadyDelivered, requested });
   if (key.length > 160) throw new PlanningValidationError("idempotencyKey demasiado larga.");
 
-  // Replay: misma clave → misma entrega.
+  // Replay: misma clave → misma entrega (solo si esa línea sigue ACTIVA).
   const [priorLine] = await tx
     .select()
     .from(workItemDeliveryLines)
     .where(and(eq(workItemDeliveryLines.workItemId, params.workItemId), eq(workItemDeliveryLines.idempotencyKey, key)))
     .limit(1);
-  if (priorLine) {
+  if (priorLine && priorLine.status !== "ACTIVA") {
+    // La entrega con esa clave fue ANULADA: re-entregar es una entrega NUEVA (no un replay). El índice único
+    // (trabajo, clave) incluye las anuladas, así que se deriva una clave de «generación» a partir de cuántas líneas
+    // (de cualquier estado) tiene el trabajo; es determinística para los reintentos de ESTA re-entrega.
+    const all = await tx
+      .select({ id: workItemDeliveryLines.id })
+      .from(workItemDeliveryLines)
+      .where(eq(workItemDeliveryLines.workItemId, params.workItemId));
+    key = `${key}~g${all.length}`;
+    if (key.length > 160) throw new PlanningValidationError("idempotencyKey demasiado larga.");
+  }
+  const replayLine = priorLine && priorLine.status === "ACTIVA" ? priorLine : null;
+  if (replayLine) {
     const [delivery] = await tx
       .select()
       .from(workItemDeliveries)
-      .where(eq(workItemDeliveries.id, priorLine.deliveryId ?? active?.id ?? ""))
+      .where(eq(workItemDeliveries.id, replayLine.deliveryId ?? active?.id ?? ""))
       .limit(1);
-    const priorComplete = priorLine.kind === "FINAL";
+    const priorComplete = replayLine.kind === "FINAL";
     return {
       delivery: delivery ?? active,
-      line: priorLine,
+      line: replayLine,
       item: row,
       replayed: true,
       complete: delivery ? Boolean(delivery.deliveryComplete) : true,
-      delivered: priorLine.cumulativeAfter ?? null,
-      pending: priorLine.pendingAfter ?? null,
+      delivered: replayLine.cumulativeAfter ?? null,
+      pending: replayLine.pendingAfter ?? null,
       target: null,
       // Se reconstruye el movimiento para que el reintento pueda re-emitir el aviso (idempotente por id).
       movement: {
         type: params.movementType ?? defaultMovementType(actor.sector),
         workItemId: params.workItemId,
         eventKey: key,
-        fromSector: priorLine.sourceSector,
+        fromSector: replayLine.sourceSector,
         toSector: null,
         client: row.client,
         product: row.product,
-        quantity: isIntegerUnit(row.unit) ? String(Math.round(priorLine.quantity)) : formatQty(priorLine.quantity),
+        quantity: isIntegerUnit(row.unit) ? String(Math.round(replayLine.quantity)) : formatQty(replayLine.quantity),
         unit: row.unit,
         lote: row.packagingLote ?? null,
-        at: priorLine.createdAt,
-        actorName: priorLine.deliveredBy,
+        at: replayLine.createdAt,
+        actorName: replayLine.deliveredBy,
         actorEmail: actor.email,
-        delivered: priorLine.cumulativeAfter ?? null,
-        pending: priorLine.pendingAfter ?? null,
+        delivered: replayLine.cumulativeAfter ?? null,
+        pending: replayLine.pendingAfter ?? null,
         complete: priorComplete,
       },
     };
@@ -520,6 +532,9 @@ export async function closePedidoIfAllDelivered(
     .select()
     .from(productionPedidos)
     .where(and(eq(productionPedidos.id, pedidoId), sql`${productionPedidos.deletedAt} IS NULL`))
+    // Serializa entregas finales concurrentes de trabajos hermanos: la segunda espera el commit de la primera y
+    // entonces ve a la hermana ya `entregado` (sin esto ninguna de las dos cerraba el pedido).
+    .for("update")
     .limit(1);
   if (!pedido || pedido.estado === "ENTREGADO") return false;
 

@@ -33,7 +33,7 @@ export interface PlanningRepository {
   }): Promise<PlanningWorkItemRecord[]>;
 
   /** Cola de Calidad — items con completedAt IS NOT NULL, cualquier sector. */
-  listCompletedItems(filters: { limit?: number | null }): Promise<PlanningWorkItemRecord[]>;
+  listCompletedItems(filters: { limit?: number | null; operationalStatus?: string | null }): Promise<PlanningWorkItemRecord[]>;
 
   createItem(
     week: PlanningWeekRecord,

@@ -1560,12 +1560,28 @@ export async function deliverWorkDurable(
 export async function archiveDeliveryDurable(id: string, actorName: string) {
   const db = getDb();
   const now = new Date();
-  const [row] = await db
-    .update(workItemDeliveries)
-    .set({ archived: true, archivedAt: now, archivedBy: actorName, updatedAt: now })
-    .where(eq(workItemDeliveries.id, id))
-    .returning();
-  return row ?? null;
+  return db.transaction(async (tx) => {
+    // Decisión (seguridad contable): una entrega PARCIAL no se archiva. Archivarla liberaría el índice único de la
+    // entrega vigente y una nueva entrega arrancaría de 0, duplicando el conteo de unidades. Para corregirla se
+    // ANULA (las líneas quedan como historial y el saldo vuelve a estar pendiente) y se registra de nuevo.
+    const [current] = await tx
+      .select({ status: workItemDeliveries.status, deliveryComplete: workItemDeliveries.deliveryComplete })
+      .from(workItemDeliveries)
+      .where(eq(workItemDeliveries.id, id))
+      .for("update")
+      .limit(1);
+    if (current && current.status === "ENTREGADO" && current.deliveryComplete === false) {
+      throw new PlanningValidationError(
+        "Una entrega parcial no se puede archivar: anulala (queda en el historial) o completá la entrega."
+      );
+    }
+    const [row] = await tx
+      .update(workItemDeliveries)
+      .set({ archived: true, archivedAt: now, archivedBy: actorName, updatedAt: now })
+      .where(eq(workItemDeliveries.id, id))
+      .returning();
+    return row ?? null;
+  });
 }
 
 export async function restoreDeliveryDurable(id: string) {

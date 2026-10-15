@@ -134,7 +134,7 @@ export class MemoryPlanningRepository implements PlanningRepository {
     return list.slice(0, limit);
   }
 
-  async listCompletedItems(filters: { limit?: number | null }): Promise<PlanningWorkItemRecord[]> {
+  async listCompletedItems(filters: { limit?: number | null; operationalStatus?: string | null }): Promise<PlanningWorkItemRecord[]> {
     const publishedWeekIds = new Set(
       [...this.weeks.values()].filter((w) => w.status === "PUBLISHED").map((w) => w.id)
     );
@@ -147,7 +147,8 @@ export class MemoryPlanningRepository implements PlanningRepository {
         (i) =>
           i.status === "PUBLICADO" &&
           publishedWeekIds.has(i.planningWeekId) &&
-          Boolean(i.completedAt)
+          Boolean(i.completedAt) &&
+          (!filters.operationalStatus || (i.operationalStatus ?? "") === filters.operationalStatus)
       )
       .sort((a, b) => (b.completedAt ?? "").localeCompare(a.completedAt ?? ""))
       .map((i) => ({ ...i }))

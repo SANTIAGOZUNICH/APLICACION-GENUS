@@ -78,6 +78,23 @@ KPI «Esperando Calidad» y `analytics.ts` reemplazados por indicadores del circ
 - La E2E `entregas` no puede correr en modo desarrollo en este sandbox (`next/font/google` se cuelga sin red) y en build de producción el override de fecha `SEMANAS_TODAY_OVERRIDE` no aplica, por lo que 3 chequeos dependientes de "hoy" fallan fuera de la fecha fija; no son del circuito.
 - Rollback: la migración 0047 es aditiva; no hay que revertir datos. Para volver al circuito anterior basta desplegar el código previo (las tablas nuevas quedan sin uso).
 
+## 8b. Bordes corregidos tras la revisión independiente
+
+- **Cierre del pedido bajo concurrencia:** `closePedidoIfAllDelivered` bloquea el pedido (`FOR UPDATE`) antes de leer a las hermanas; dos entregas finales simultáneas de trabajos hermanos se serializan y la segunda cierra el pedido.
+- **Enviar a Codificado:** la fila se lee `FOR UPDATE`; se rechaza un trabajo ya `entregado` o con entrega completa; con parciales ya entregadas el total no puede ser menor a lo entregado (el acumulado se muestra en el diálogo) y Codificado entrega el resto.
+- **Parciales vs. consumidores:** la planilla (`operational-locks`) y el Dashboard (KPI «entregado» y lead time) cuentan solo entregas con `delivery_complete = true`. El calendario de Entregas y los reportes por fecha real siguen contando cualquier entrega registrada (una parcial es una entrega real con fecha).
+- **Re-entrega tras anular:** el replay por `idempotencyKey` solo aplica a líneas ACTIVAS; si la línea con esa clave fue ANULADA se registra una entrega nueva con una clave de «generación» derivada (`<clave>~g<n>`), porque el índice único incluye las anuladas.
+- **Archivar parciales:** decisión de seguridad contable — una entrega parcial NO se puede archivar (liberaría el índice único y una nueva entrega arrancaría de 0, duplicando el conteo). Se corrige anulándola (queda en el historial).
+- **Pendientes de definir:** el filtro por `operationalStatus = revision` va en la consulta (sin tope que deje pendientes afuera). El GET hace una escritura idempotente (backfill auditable); si falla, se loguea y la lectura sigue.
+- **GET `/work-items/[id]/envasado`:** exige que el sector pueda actuar sobre el trabajo (misma regla que el POST).
+- Scripts legados que llaman `quality_decision`/`quality_annul` quedaron marcados como obsoletos (no se borraron).
+
+## 8c. Decisiones y limitaciones conocidas
+
+- **Producción/Dirección entregan sin exigir cajas** un trabajo de Envasado: coincide con el comportamiento previo; solo el actor de Envasado debe cumplir la validación de cajas.
+- **Enlace a hermano por pedido+producto** en Elaboración→Envasado: si ya existe un trabajo de Envasado del mismo pedido y producto se enlaza sin sumar la cantidad producida.
+- **`closePedidoIfAllDelivered` cuenta solo hermanos existentes** al momento de la entrega: un trabajo de despacho creado después de cerrar el pedido no lo reabre (el estado es monótono).
+
 ## 9. Pruebas
 
 - Unit/integración: `src/lib/planning/circuit/*.test.ts`, `work-item-progress-repository.test.ts`, `work-item-end-to-end.test.ts`, `codificado-handoff-service.lote-vto.test.ts`, `live-sync/operations/route.test.ts`.

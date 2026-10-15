@@ -81,12 +81,17 @@ export interface SendToEnvasadoResult {
 
 /** Sugerencia de destino para el diálogo (solo lectura). */
 export async function suggestEnvasadoDestinationForItem(
-  workItemId: string
+  workItemId: string,
+  actorSector?: string | null
 ): Promise<DestinationSuggestion & { pedidoOp: string | null; unitsHint: string | null }> {
   const id = normalizeId(workItemId);
   const db = getDb();
   const [row] = await db.select().from(workItems).where(eq(workItems.id, id)).limit(1);
   if (!row) throw new PlanningNotFoundError("Trabajo no encontrado.");
+  // Misma regla de sector que el POST: solo quien puede actuar sobre el trabajo ve destino/OP/unidades.
+  if (actorSector !== undefined && !canActOnWorkItemSector(String(actorSector ?? "").toUpperCase(), row.sector)) {
+    throw new PlanningForbiddenError("No tenés permiso para ver este trabajo — no está asignado a tu sector.");
+  }
   return suggestForRow(db, row);
 }
 
