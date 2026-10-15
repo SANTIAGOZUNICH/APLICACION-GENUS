@@ -3,16 +3,19 @@
 import { Info } from "lucide-react";
 import { useId, useState } from "react";
 import { DASHBOARD_KPI_DEFINITIONS } from "@/lib/dashboard/kpi-definitions";
-import { fmtDays, fmtInt, fmtPercent } from "@/lib/dashboard/format";
+import { fmtDays, fmtDec1, fmtInt, fmtPercent } from "@/lib/dashboard/format";
 import { DATE_BASIS_LABELS, isNotAvailable, type DashboardKpi, type NotAvailable } from "@/lib/dashboard/types";
 
 export function formatKpiValue(kpi: DashboardKpi): string {
   if (kpi.value == null) return "";
+  if (kpi.valueLabel) return kpi.valueLabel;
   switch (kpi.unit) {
     case "percent":
       return fmtPercent(kpi.value);
     case "days":
       return fmtDays(kpi.value);
+    case "decimal":
+      return fmtDec1(kpi.value);
     default:
       return fmtInt(kpi.value);
   }
@@ -60,10 +63,12 @@ type Props = {
   /** Resalta el valor (indicador principal). */
   emphasis?: boolean;
   testId?: string;
+  /** Color de acento de la tarjeta (tarjetas coloreadas de productividad). Funciona en tema claro y oscuro. */
+  accent?: string;
 };
 
 /** Tarjeta de indicador: valor, período, tipo de fecha, muestra y criterio desplegable. */
-export function DashboardKpiCard({ kpi, caption, emphasis, testId }: Props) {
+export function DashboardKpiCard({ kpi, caption, emphasis, testId, accent }: Props) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const def = DASHBOARD_KPI_DEFINITIONS[kpi.key];
@@ -74,6 +79,16 @@ export function DashboardKpiCard({ kpi, caption, emphasis, testId }: Props) {
   return (
     <article
       className="flex min-w-0 flex-col gap-2 rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4 shadow-[var(--os-shadow-sm)]"
+      style={
+        accent
+          ? {
+              background: `color-mix(in srgb, ${accent} 13%, var(--os-surface))`,
+              borderColor: `color-mix(in srgb, ${accent} 45%, var(--os-border))`,
+              borderTopWidth: 3,
+              borderTopColor: accent,
+            }
+          : undefined
+      }
       data-testid={testId ?? `kpi-${kpi.key}`}
       data-has-value={hasValue ? "1" : "0"}
     >
@@ -125,7 +140,7 @@ export function DashboardKpiCard({ kpi, caption, emphasis, testId }: Props) {
             <span className="font-semibold text-[var(--os-text)]">Fuente: </span>
             {def.source}
           </p>
-          <p className="italic">Criterio propuesto, pendiente de validar contra la planilla.</p>
+          <p className="italic">{def.footnote ?? "Criterio propuesto, pendiente de validar contra la planilla."}</p>
           {kpi.notes.length ? (
             <ul className="list-disc space-y-0.5 pl-4">
               {kpi.notes.map((n) => (

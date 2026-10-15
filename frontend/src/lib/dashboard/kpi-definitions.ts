@@ -22,15 +22,31 @@ export type DashboardKpiDefinition = {
   accuracy: DashboardAccuracy;
   /** Qué parte de la planilla habría que confirmar. */
   pendingValidation: string;
+  /** Pie del «Ver criterio» (por defecto: criterio propuesto, pendiente de validar). */
+  footnote?: string;
 };
+
+/**
+ * Glosario: cuatro conceptos que NO se mezclan en el Dashboard. Se muestra en la sección de productividad y en cada
+ * criterio, para que nadie compare unidades envasadas con entregadas, pendientes o consumo de materia prima.
+ */
+export const UNIT_CONCEPTS = [
+  { label: "Unidades envasadas", source: "Métricas (packaging_metrics)", text: "lo que Envasado registra como envasado, por fecha, producto y responsable. Es la fuente única de esta sección." },
+  { label: "Unidades entregadas", source: "Entregas reales", text: "lo que efectivamente se entregó (fecha de entrega real). Solo se usa para el lead time." },
+  { label: "Unidades pendientes", source: "Pedidos y trabajos", text: "lo pedido o planificado que todavía no se terminó o entregó (pedidos activos). No son unidades envasadas." },
+  { label: "Consumo de materia prima", source: "Inventario", text: "kilos/litros que salen del stock de MP. No se convierte en unidades ni se suma acá." },
+] as const;
+
+const METRICS_FOOTNOTE =
+  "Dato exacto: suma directa de los registros activos de Métricas (los eliminados no cuentan), con los mismos filtros de período y sector.";
 
 export const DASHBOARD_KPI_DEFINITIONS: Record<DashboardKpiKey, DashboardKpiDefinition> = {
   nivel_servicio: {
     key: "nivel_servicio",
     label: "Nivel de servicio",
     criterion:
-      "Promedio, por pedido, de (unidades producidas ÷ unidades pedidas), en %. Solo pedidos con cantidad pedida (Q) y " +
-      "con TODOS sus trabajos de Envasado terminados; las unidades producidas son la suma de la cantidad final de esos " +
+      "Promedio, por pedido, de (unidades producidas por los trabajos ÷ unidades pedidas), en %. Solo pedidos con cantidad pedida (Q) y " +
+      "con TODOS sus trabajos de Envasado terminados; las unidades producidas (trabajos, no Métricas) son la suma de la cantidad final de esos " +
       "trabajos. No se limita a 100 %. El período usa la fecha en que terminó el último trabajo del pedido.",
     source: "production_pedidos (q) + work_items de Envasado vinculados por production_pedido_id",
     dateBasis: "produccion",
@@ -67,9 +83,10 @@ export const DASHBOARD_KPI_DEFINITIONS: Record<DashboardKpiKey, DashboardKpiDefi
   },
   unidades_producidas: {
     key: "unidades_producidas",
-    label: "Unidades producidas",
+    label: "Unidades producidas (trabajos)",
     criterion:
-      "Suma de la cantidad final de los trabajos de Envasado Masivo y Premium terminados (incluye los que pasaron por " +
+      "NO son las unidades envasadas de Métricas: salen de los TRABAJOS terminados y pueden diferir. Para las unidades " +
+      "envasadas que registra Envasado ver «Total envasado» (Métricas). Suma de la cantidad final de los trabajos de Envasado Masivo y Premium terminados (incluye los que pasaron por " +
       "Codificado, que cuentan para su sector de origen). Sin trabajos cancelados ni eliminados. Elaboración (kg) y " +
       "Codificado no suman: no son unidades nuevas. El período usa la fecha de cierre de la producción.",
     source: "work_items (finished_qty o packaging_total_units, completed_at, sector de producción)",
@@ -113,7 +130,7 @@ export const DASHBOARD_KPI_DEFINITIONS: Record<DashboardKpiKey, DashboardKpiDefi
   },
   productos_distintos: {
     key: "productos_distintos",
-    label: "Productos distintos producidos",
+    label: "Productos distintos (trabajos)",
     criterion:
       "Cantidad de nombres de producto distintos (sin distinguir mayúsculas, tildes ni espacios extra) entre los trabajos " +
       "de Envasado terminados del período. El producto es texto libre: dos escrituras distintas del mismo producto cuentan como dos.",
@@ -134,6 +151,84 @@ export const DASHBOARD_KPI_DEFINITIONS: Record<DashboardKpiKey, DashboardKpiDefi
     accuracy: "adaptado",
     pendingValidation: "La planilla cuenta los clientes de una lista fija (CALCULOS_CLIENTES); confirmar qué es «activo».",
   },
+  envasado_total: {
+    key: "envasado_total",
+    label: "Total envasado (Métricas)",
+    criterion:
+      "Suma de las unidades de los registros activos de Métricas (Envasado Masivo + Premium) con fecha dentro del período y del " +
+      "filtro de sector. Es exactamente el total que muestra Métricas para el mismo período. Unidades ENVASADAS: no son " +
+      "entregadas (entregas reales), ni pendientes (pedidos/trabajos), ni consumo de materia prima (inventario).",
+    source: "packaging_metrics (units, metric_date, sector; deleted_at nulo) vía el servicio de Métricas",
+    dateBasis: "metrica",
+    accuracy: "exacto",
+    pendingValidation: "Ninguna: es la suma directa del módulo Métricas.",
+    footnote: METRICS_FOOTNOTE,
+  },
+  envasado_masivo: {
+    key: "envasado_masivo",
+    label: "Total Masivo",
+    criterion: "Suma de unidades de los registros activos de Métricas del sector Envasado Masivo en el período.",
+    source: "packaging_metrics (sector = ENVASADO_MASIVO)",
+    dateBasis: "metrica",
+    accuracy: "exacto",
+    pendingValidation: "Ninguna.",
+    footnote: METRICS_FOOTNOTE,
+  },
+  envasado_premium: {
+    key: "envasado_premium",
+    label: "Total Premium",
+    criterion: "Suma de unidades de los registros activos de Métricas del sector Envasado Premium en el período.",
+    source: "packaging_metrics (sector = ENVASADO_PREMIUM)",
+    dateBasis: "metrica",
+    accuracy: "exacto",
+    pendingValidation: "Ninguna.",
+    footnote: METRICS_FOOTNOTE,
+  },
+  envasado_pct_masivo: {
+    key: "envasado_pct_masivo",
+    label: "% Masivo",
+    criterion: "Total Masivo ÷ Total envasado × 100. Sin unidades en el período no se calcula (no hay división por cero).",
+    source: "packaging_metrics",
+    dateBasis: "metrica",
+    accuracy: "exacto",
+    pendingValidation: "Ninguna.",
+    footnote: METRICS_FOOTNOTE,
+  },
+  envasado_pct_premium: {
+    key: "envasado_pct_premium",
+    label: "% Premium",
+    criterion: "Total Premium ÷ Total envasado × 100. Sin unidades en el período no se calcula (no hay división por cero).",
+    source: "packaging_metrics",
+    dateBasis: "metrica",
+    accuracy: "exacto",
+    pendingValidation: "Ninguna.",
+    footnote: METRICS_FOOTNOTE,
+  },
+  envasado_promedio_diario: {
+    key: "envasado_promedio_diario",
+    label: "Promedio diario de envasado",
+    criterion:
+      "Total envasado ÷ cantidad de FECHAS DISTINTAS con registros válidos de Métricas en el período. Masivo y Premium el mismo " +
+      "día cuentan como 1 día. No usa días calendario ni hábiles: solo los días en que hubo registros. Con filtro de sector, " +
+      "solo ese sector. Un registro válido es uno activo, con fecha y unidades numéricas (un registro en 0 cuenta como día con registro).",
+    source: "packaging_metrics (metric_date distintas, units)",
+    dateBasis: "metrica",
+    accuracy: "exacto",
+    pendingValidation: "Confirmar si un registro con 0 unidades debería contar como día trabajado.",
+    footnote: METRICS_FOOTNOTE,
+  },
+  envasado_mes_mas_productivo: {
+    key: "envasado_mes_mas_productivo",
+    label: "Mes más productivo",
+    criterion:
+      "Mes del año seleccionado con más unidades envasadas en Métricas (con el filtro de sector; el filtro de mes no aplica). " +
+      "Si hay empate gana el mes más temprano.",
+    source: "packaging_metrics (suma de units por mes)",
+    dateBasis: "metrica",
+    accuracy: "exacto",
+    pendingValidation: "Ninguna.",
+    footnote: METRICS_FOOTNOTE,
+  },
 };
 
 /** Definición de objetivos para el semáforo: qué indicadores admiten objetivo y en qué sentido se sugiere. */
@@ -141,7 +236,7 @@ export const TARGETABLE_INDICATORS = {
   nivel_servicio: { label: "Nivel de servicio", unit: "percent", defaultDirection: "min" },
   sin_reclamos: { label: "% de pedidos sin reclamos", unit: "percent", defaultDirection: "min" },
   lead_time: { label: "Lead time promedio", unit: "days", defaultDirection: "max" },
-  unidades_producidas: { label: "Unidades producidas (año completo)", unit: "units", defaultDirection: "min" },
+  unidades_producidas: { label: "Unidades producidas (trabajos, año completo)", unit: "units", defaultDirection: "min" },
 } as const;
 
 export type TargetableKey = keyof typeof TARGETABLE_INDICATORS;

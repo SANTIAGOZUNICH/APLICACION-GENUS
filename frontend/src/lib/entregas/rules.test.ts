@@ -5,9 +5,11 @@ import {
   deriveDeliveryStatus,
   deriveItemStatus,
   groupDeliveriesByClient,
+  itemQuantities,
   matchDeliveryCandidates,
   parseQuantity,
   snapshotOf,
+  summarizeRealDeliveries,
   validateDeliveryInput,
   validateReason,
 } from "./rules";
@@ -16,8 +18,8 @@ import type { LinkedWork, ScheduledDelivery, ScheduledDeliveryItem } from "./typ
 const work = (o: Partial<LinkedWork> = {}): LinkedWork => ({
   linkId: "l", workItemId: "w", linkedAt: "2026-10-01T00:00:00.000Z", linkedBy: "p@x", client: "FIRMEA", product: "CREMA", sector: "ENVASADO_MASIVO",
   line: "Línea 1", plannedDate: "2026-10-10", plannedDateTo: null, plannedQuantity: "1000", unit: "un.", deliveryDate: "2026-10-20",
-  packagingLote: null, packagingVto: null, operationalStatus: "pendiente", qualityStatus: "pendiente", finishedQty: null, orderNumber: null,
-  delivered: false, cancelled: false, snapshot: {}, ...o,
+  packagingLote: null, packagingVto: null, operationalStatus: "pendiente", finishedQty: null, orderNumber: null, responsible: "Línea 1", notes: null, completedAt: null,
+  realDeliveries: [], deliveredQty: null, deliveredAt: null, delivered: false, cancelled: false, snapshot: {}, ...o,
 });
 const item = (o: Partial<ScheduledDeliveryItem> = {}): ScheduledDeliveryItem => ({
   id: "i1", deliveryId: "d1", product: "CREMA ACLARANTE", quantity: "1000", unit: "un.", sector: "ENVASADO_MASIVO", plannedProductionDate: null,
@@ -65,24 +67,31 @@ describe("estados derivados", () => {
     expect(deriveItemStatus(item({ works: [work()] }))).toBe("produccion_pendiente");
     expect(deriveItemStatus(item({ works: [work({ operationalStatus: "en_curso" })] }))).toBe("produccion_en_proceso");
   });
-  it("terminó el envasado NO es entregada: finalizada; con Calidad aprobada: lista para entregar", () => {
-    expect(deriveItemStatus(item({ works: [work({ operationalStatus: "completo" })] }))).toBe("produccion_finalizada");
-    expect(deriveItemStatus(item({ works: [work({ operationalStatus: "completo", qualityStatus: "aprobado" })] }))).toBe("lista_para_entregar");
-    expect(deriveItemStatus(item({ works: [work({ operationalStatus: "entregado", qualityStatus: "aprobado" })] }))).toBe("lista_para_entregar");
+  it("SIN Calidad en el circuito: trabajo terminado y no entregado = «Lista para entregar» (no depende de qualityStatus)", () => {
+    for (const st of ["completo", "revision", "entregado", "codificado_completo"]) {
+      expect(deriveItemStatus(item({ works: [work({ operationalStatus: st })] }))).toBe("lista_para_entregar");
+    }
+    // Un trabajo en curso o pendiente todavía no está listo.
+    expect(deriveItemStatus(item({ works: [work({ operationalStatus: "en_curso" })] }))).toBe("produccion_en_proceso");
+    expect(deriveItemStatus(item({ works: [work({ operationalStatus: "bloqueado" })] }))).toBe("produccion_pendiente");
   });
-  it("«Entregada» solo con la entrega REAL registrada", () => {
-    expect(deriveItemStatus(item({ works: [work({ operationalStatus: "completo", qualityStatus: "aprobado", delivered: true })] }))).toBe("entregada");
+  it("«Entregada» solo con la entrega REAL registrada y completa", () => {
+    expect(deriveItemStatus(item({ works: [work({ operationalStatus: "completo", delivered: true, deliveredQty: 1000 })] }))).toBe("entregada");
   });
-  it("cantidad cubierta a medias: nunca pasa de «en proceso» aunque lo cubierto esté terminado", () => {
-    const w = work({ plannedQuantity: "400", operationalStatus: "completo", qualityStatus: "aprobado", delivered: true });
-    expect(deriveItemStatus(item({ quantity: "1000", works: [w] }))).toBe("produccion_en_proceso");
+  it("entrega parcial: se entregó parte y queda saldo → «Entrega parcial», nunca «Entregada»", () => {
+    // Un trabajo con entrega real que no completa lo producido.
+    expect(deriveItemStatus(item({ works: [work({ operationalStatus: "entregado", delivered: false, deliveredQty: 400, realDeliveries: [{ id: "r", date: "2026-10-10", quantity: "400", unit: "un.", remito: null, receivedBy: null, lote: null, vto: null, observations: null }] })] }))).toBe("entrega_parcial");
+    // Varios trabajos: uno entregado y el otro no.
+    const a = work({ linkId: "a", plannedQuantity: "600", operationalStatus: "completo", delivered: true, deliveredQty: 600 });
+    const b = work({ linkId: "b", workItemId: "w2", plannedQuantity: "400", operationalStatus: "completo", delivered: false });
+    expect(deriveItemStatus(item({ works: [a, b] }))).toBe("entrega_parcial");
+    expect(deriveItemStatus(item({ works: [a, { ...b, delivered: true, deliveredQty: 400 }] }))).toBe("entregada");
+  });
+  it("cantidad cubierta a medias: aunque lo cubierto esté entregado NO es «Entregada» (faltan trabajos): es parcial; sin entregas, nunca pasa de «en proceso»", () => {
+    const w = work({ plannedQuantity: "400", operationalStatus: "completo", delivered: true, deliveredQty: 400 });
+    expect(deriveItemStatus(item({ quantity: "1000", works: [w] }))).toBe("entrega_parcial");
+    expect(deriveItemStatus(item({ quantity: "1000", works: [work({ plannedQuantity: "400", operationalStatus: "completo" })] }))).toBe("produccion_en_proceso");
     expect(deriveItemStatus(item({ quantity: "1000", works: [work({ plannedQuantity: "400" })] }))).toBe("produccion_pendiente");
-  });
-  it("varios trabajos completan una entrega: todos deben estar entregados", () => {
-    const a = work({ linkId: "a", plannedQuantity: "600", operationalStatus: "completo", qualityStatus: "aprobado", delivered: true });
-    const b = work({ linkId: "b", workItemId: "w2", plannedQuantity: "400", operationalStatus: "completo", qualityStatus: "aprobado", delivered: false });
-    expect(deriveItemStatus(item({ works: [a, b] }))).toBe("lista_para_entregar");
-    expect(deriveItemStatus(item({ works: [a, { ...b, delivered: true }] }))).toBe("entregada");
   });
   it("trabajos cancelados no cuentan", () => {
     expect(deriveItemStatus(item({ works: [work({ cancelled: true, operationalStatus: "completo" })] }))).toBe("programada");
@@ -174,5 +183,35 @@ describe("validateReason y agrupación por cliente", () => {
     const g = groupDeliveriesByClient([delivery({ id: "a", client: "FIRMEA" }), delivery({ id: "b", client: "firmea " }), delivery({ id: "c", client: "CAV" }), delivery({ id: "d", client: "TSU" })]);
     expect(g.map((x) => x.client)).toEqual(["CAV", "FIRMEA", "TSU"]);
     expect(g.find((x) => x.client === "FIRMEA")!.deliveries).toHaveLength(2);
+  });
+});
+
+describe("summarizeRealDeliveries (fecha real y cantidad entregada)", () => {
+  const ev = (o: Partial<LinkedWork["realDeliveries"][number]> = {}) => ({ id: "r1", date: "2026-10-12", quantity: "1000", unit: "un.", remito: null, receivedBy: null, lote: null, vto: null, observations: null, ...o });
+  it("sin entregas reales: no entregado y sin fecha", () => {
+    expect(summarizeRealDeliveries({ plannedQuantity: "1000", finishedQty: null, realDeliveries: [] })).toEqual({ deliveredQty: null, deliveredAt: null, delivered: false });
+  });
+  it("completa cuando lo entregado alcanza lo embalado / producido / planificado (en ese orden)", () => {
+    expect(summarizeRealDeliveries({ plannedQuantity: "1000", finishedQty: "980", realDeliveries: [ev({ quantity: "980" })] }).delivered).toBe(true);
+    expect(summarizeRealDeliveries({ plannedQuantity: "1000", finishedQty: null, deliverableUnits: 960, realDeliveries: [ev({ quantity: "960" })] }).delivered).toBe(true);
+    const part = summarizeRealDeliveries({ plannedQuantity: "1000", finishedQty: null, realDeliveries: [ev({ quantity: "400" })] });
+    expect(part).toEqual({ deliveredQty: 400, deliveredAt: "2026-10-12", delivered: false });
+  });
+  it("varias entregas se suman y la fecha es la última", () => {
+    const r = summarizeRealDeliveries({ plannedQuantity: "1000", finishedQty: null, realDeliveries: [ev({ id: "a", date: "2026-10-05", quantity: "400" }), ev({ id: "b", date: "2026-10-09", quantity: "600" })] });
+    expect(r).toEqual({ deliveredQty: 1000, deliveredAt: "2026-10-09", delivered: true });
+  });
+  it("cantidades no numéricas: cualquier entrega real cuenta como completa (no se puede comparar)", () => {
+    expect(summarizeRealDeliveries({ plannedQuantity: "a convenir", finishedQty: null, realDeliveries: [ev({ quantity: null })] }).delivered).toBe(true);
+  });
+});
+
+describe("itemQuantities", () => {
+  it("planificada, producida, entregada y pendiente; faltantes quedan en null", () => {
+    const w = work({ plannedQuantity: "1000", finishedQty: "950", deliveredQty: 400 });
+    expect(itemQuantities(item({ quantity: "1000", works: [w] }))).toEqual({ planned: 1000, produced: 950, delivered: 400, pending: 600 });
+    expect(itemQuantities(item({ quantity: null, works: [] }))).toEqual({ planned: null, produced: null, delivered: null, pending: null });
+    // Sin cantidad en el producto: se toma lo planificado en los trabajos.
+    expect(itemQuantities(item({ quantity: null, works: [work({ plannedQuantity: "300" }), work({ linkId: "b", plannedQuantity: "200" })] })).planned).toBe(500);
   });
 });

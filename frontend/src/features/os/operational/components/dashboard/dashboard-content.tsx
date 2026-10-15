@@ -1,13 +1,12 @@
 "use client";
 
 import { RefreshCw } from "lucide-react";
-import { fmtInt, fmtPercent } from "@/lib/dashboard/format";
 import { isNotAvailable, type DashboardFilters, type DashboardPayload } from "@/lib/dashboard/types";
 import { SECTOR_LABELS } from "@/types/operational/sector";
-import { DashboardBarChart, MASIVO_COLOR, PREMIUM_COLOR } from "./dashboard-bar-chart";
 import { DashboardClients } from "./dashboard-clients";
 import { DashboardFiltersBar } from "./dashboard-filters";
 import { DashboardIndicators } from "./dashboard-indicators";
+import { DashboardProductividadBlock } from "./dashboard-productividad";
 import { DashboardKpiCard, KpiOrBlocked } from "./dashboard-kpi-card";
 
 const SOURCE_LABEL: Record<DashboardPayload["dataSource"], string> = {
@@ -48,11 +47,10 @@ type Props = {
 
 /** Contenido del Dashboard a partir de un payload YA recortado por el servidor (nunca decide permisos). */
 export function DashboardContent({ payload, filters, loading, onFiltersChange, onRefresh, onSaveTarget, onClearTarget }: Props) {
-  const { header, permissions, main, pedidos, produccion, clients, indicators, summary } = payload;
+  const { header, permissions, main, pedidos, productividad, clients, indicators, summary } = payload;
   const updated = fmtDateTime(header.lastDataChangeAt);
   const calculated = fmtDateTime(header.generatedAt);
   const sectorChip = header.sector === "ALL" ? null : SECTOR_LABELS[header.sector];
-  const own = permissions.ownSector;
 
   return (
     <div className={`min-w-0 space-y-6 ${loading ? "opacity-70 transition-opacity" : ""}`} data-testid="dashboard-root" aria-busy={loading ? true : undefined}>
@@ -99,7 +97,7 @@ export function DashboardContent({ payload, filters, loading, onFiltersChange, o
           <KpiOrBlocked title="Nivel de servicio" kpi={main.nivelServicio} emphasis />
           <KpiOrBlocked title="% de pedidos sin reclamos" kpi={main.sinReclamos} emphasis />
           <KpiOrBlocked title="Lead time promedio" kpi={main.leadTime} emphasis />
-          <DashboardKpiCard kpi={{ ...main.unidades, label: "Unidades producidas por año" }} emphasis testId="kpi-unidades_producidas" caption={filters.month ? "en el mes seleccionado" : "en el año"} />
+          <DashboardKpiCard kpi={{ ...main.unidades, label: "Unidades producidas (trabajos)" }} emphasis testId="kpi-unidades_producidas" caption={filters.month ? "según trabajos · en el mes" : "según trabajos · en el año"} />
         </div>
       </Section>
 
@@ -108,43 +106,12 @@ export function DashboardContent({ payload, filters, loading, onFiltersChange, o
           <DashboardKpiCard kpi={pedidos.activos} caption="Ingreso, elaboración, envasado y codificado" />
           <DashboardKpiCard kpi={pedidos.entregados} caption="Estado «Entregado»" />
           <DashboardKpiCard kpi={pedidos.enDespacho} caption="Listos para entregar" />
-          <DashboardKpiCard kpi={pedidos.productosDistintos} caption="Ítems distintos producidos" />
+          <DashboardKpiCard kpi={pedidos.productosDistintos} caption="Ítems distintos en trabajos terminados" />
         </div>
       </Section>
 
-      <Section title="Producción · Consumo Masivo vs Premium" subtitle={`Unidades por fecha de producción · ${produccion.periodLabel}`} testId="section-produccion">
-        <div className="grid gap-4 lg:grid-cols-3">
-          <div className="grid min-w-0 gap-4 sm:grid-cols-3 lg:grid-cols-1" data-testid="produccion-sectores">
-            <SectorCard label="Consumo Masivo" color={MASIVO_COLOR} units={produccion.masivo} share={produccion.masivoShare} highlight={own === "ENVASADO_MASIVO"} testId="prod-masivo" />
-            <SectorCard label="Productos Premium" color={PREMIUM_COLOR} units={produccion.premium} share={produccion.premiumShare} highlight={own === "ENVASADO_PREMIUM"} testId="prod-premium" />
-            <article className="rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4" data-testid="prod-total">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">Total {filters.month ? "del mes" : "anual"}</h3>
-              {produccion.total > 0 ? (
-                <p className="mt-1 text-2xl font-bold tabular-nums text-[var(--os-text)]">{fmtInt(produccion.total)}</p>
-              ) : (
-                <p className="mt-1 text-base font-semibold text-[var(--os-text)]">Sin datos suficientes</p>
-              )}
-              <p className="mt-0.5 text-xs text-[var(--os-text-muted)]">unidades · {produccion.periodLabel}</p>
-            </article>
-          </div>
-          <div className="min-w-0 rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-4 lg:col-span-2" data-testid="produccion-chart">
-            <h3 className="mb-2 text-sm font-semibold text-[var(--os-text)]">Evolución mensual · {header.year}</h3>
-            {produccion.monthly.every((m) => m.masivo === 0 && m.premium === 0) ? (
-              <p className="py-8 text-center text-sm text-[var(--os-text-muted)]" data-testid="chart-sin-datos">
-                Sin datos suficientes: no hay trabajos de Envasado terminados con fecha de cierre y cantidad final en {header.year}.
-              </p>
-            ) : (
-              <DashboardBarChart data={produccion.monthly} selectedMonth={header.month} sector={header.sector} year={header.year} />
-            )}
-            {produccion.notes.length ? (
-              <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs text-[var(--os-text-muted)]">
-                {produccion.notes.map((n) => (
-                  <li key={n}>{n}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        </div>
+      <Section title="Productividad de Envasado · Métricas" subtitle={`Unidades envasadas registradas en Métricas · ${productividad.periodLabel}`} testId="section-productividad">
+        <DashboardProductividadBlock data={productividad} filters={filters} permissions={permissions} />
       </Section>
 
       <Section title="Clientes" subtitle="Solo Producción y Dirección" testId="section-clientes">
@@ -188,35 +155,5 @@ export function DashboardContent({ payload, filters, loading, onFiltersChange, o
         el criterio, la fuente y el tipo de fecha. El Dashboard es de solo lectura: no modifica pedidos, trabajos, entregas, stock ni remitos.
       </p>
     </div>
-  );
-}
-
-function SectorCard({ label, color, units, share, highlight, testId }: { label: string; color: string; units: number; share: number | null; highlight: boolean; testId: string }) {
-  return (
-    <article
-      className={`rounded-[var(--os-radius)] border bg-[var(--os-surface)] p-4 ${highlight ? "border-[var(--os-teal)]" : "border-[var(--os-border)]"}`}
-      data-testid={testId}
-    >
-      <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--os-text-muted)]">
-        <span className="size-2.5 rounded-sm" style={{ background: color }} aria-hidden="true" />
-        {label}
-        {highlight ? <span className="rounded bg-[var(--os-teal-muted)] px-1.5 py-0.5 text-[10px] normal-case text-[var(--os-teal-glow)]">Tu sector</span> : null}
-      </h3>
-      {share != null ? (
-        <>
-          <p className="mt-1 text-2xl font-bold tabular-nums text-[var(--os-text)]" data-testid={`${testId}-units`}>
-            {fmtInt(units)}
-          </p>
-          <p className="text-xs text-[var(--os-text-muted)]">
-            unidades · <span data-testid={`${testId}-share`}>{fmtPercent(share)}</span> del total
-          </p>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/[0.07]" aria-hidden="true">
-            <div className="h-full rounded-full" style={{ width: `${share}%`, background: color }} />
-          </div>
-        </>
-      ) : (
-        <p className="mt-1 text-base font-semibold text-[var(--os-text)]">Sin datos suficientes</p>
-      )}
-    </article>
   );
 }

@@ -49,7 +49,7 @@ export function DashboardBarChart({ data, selectedMonth, sector, year }: Props) 
   const dimMasivo = sector === "ENVASADO_PREMIUM";
   const dimPremium = sector === "ENVASADO_MASIVO";
   const horizontal = width < 520;
-  const summary = `Evolución mensual ${year} de unidades producidas, Masivo contra Premium. Total del año: ${fmtInt(total)} unidades.`;
+  const summary = `Evolución mensual ${year} de unidades envasadas (Métricas), Masivo contra Premium. Total del año: ${fmtInt(total)} unidades.`;
 
   return (
     <figure className="min-w-0" data-testid="dashboard-bar-chart">
@@ -62,7 +62,7 @@ export function DashboardBarChart({ data, selectedMonth, sector, year }: Props) 
           <span className="size-3 rounded-sm" style={{ background: PREMIUM_COLOR, opacity: dimPremium ? 0.3 : 1 }} aria-hidden="true" />
           Premium
         </span>
-        <span>Unidades por mes · fecha de producción</span>
+        <span>Unidades envasadas por mes · Métricas</span>
       </figcaption>
       <div ref={ref} className="w-full min-w-0">
         {horizontal ? (

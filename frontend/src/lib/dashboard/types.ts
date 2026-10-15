@@ -21,12 +21,13 @@ export type DashboardFilters = {
 };
 
 /** Qué fecha usa el indicador para ubicarse en el período. */
-export type DashboardDateBasis = "pedido" | "produccion" | "entrega";
+export type DashboardDateBasis = "pedido" | "produccion" | "entrega" | "metrica";
 
 export const DATE_BASIS_LABELS: Record<DashboardDateBasis, string> = {
   pedido: "Fecha de pedido",
   produccion: "Fecha de producción",
   entrega: "Fecha de entrega",
+  metrica: "Fecha de la métrica",
 };
 
 /**
@@ -36,7 +37,7 @@ export const DATE_BASIS_LABELS: Record<DashboardDateBasis, string> = {
  */
 export type DashboardAccuracy = "exacto" | "adaptado" | "sin_datos";
 
-export type DashboardUnit = "percent" | "days" | "units" | "count";
+export type DashboardUnit = "percent" | "days" | "units" | "count" | "decimal";
 
 export type DashboardKpiKey =
   | "nivel_servicio"
@@ -47,7 +48,15 @@ export type DashboardKpiKey =
   | "pedidos_entregados"
   | "pedidos_en_despacho"
   | "productos_distintos"
-  | "clientes_activos";
+  | "clientes_activos"
+  // Productividad de Envasado (fuente única: módulo Métricas / packaging_metrics)
+  | "envasado_total"
+  | "envasado_masivo"
+  | "envasado_premium"
+  | "envasado_pct_masivo"
+  | "envasado_pct_premium"
+  | "envasado_promedio_diario"
+  | "envasado_mes_mas_productivo";
 
 export type DashboardKpi = {
   key: DashboardKpiKey;
@@ -69,23 +78,91 @@ export type DashboardKpi = {
   appliedFilters: { period: boolean; sector: boolean; client: boolean };
   /** Aclaraciones (registros excluidos, etc.). */
   notes: string[];
+  /** Texto a mostrar en lugar del número (p. ej. el nombre del mes más productivo). */
+  valueLabel?: string;
 };
 
 export type DashboardMonthlyPoint = { month: number; masivo: number; premium: number };
 
-export type DashboardProduction = {
+/** Clave reservada de los registros de Métricas sin responsable válido (no se asignan a nadie). */
+export const SIN_RESPONSABLE_KEY = "__sin_responsable__";
+export const OTROS_RESPONSABLES_KEY = "__otros__";
+export const SIN_RESPONSABLE_LABEL = "Sin responsable";
+
+export type DashboardResponsibleRow = {
+  /** responsible_key normalizado por Métricas (o SIN_RESPONSABLE_KEY). */
+  key: string;
+  name: string;
+  units: number;
+  /** % sobre el total de unidades del alcance visible (0–100, 1 decimal). */
+  share: number;
+  records: number;
+  /** true = «Sin responsable» (nunca entra al podio ni a mayor/menor productividad). */
+  unassigned: boolean;
+};
+
+export type DashboardResponsibleColumn = {
+  key: string;
+  name: string;
+  /** Total acumulado del año (con el filtro de sector) y su %. */
+  yearUnits: number;
+  yearShare: number;
+};
+
+export type DashboardTrend = "SUBE" | "BAJA" | "IGUAL";
+
+export type DashboardProductividadMonth = {
+  month: number;
   masivo: number;
   premium: number;
   total: number;
-  /** Participación 0–100; null si el total es 0. */
-  masivoShare: number | null;
-  premiumShare: number | null;
-  monthly: DashboardMonthlyPoint[];
+  /** Cantidad de registros de Métricas del mes (0 = sin datos). */
+  records: number;
+  /** Variación % vs el mes calendario anterior; null si no hay mes anterior con datos o este mes no tiene datos. */
+  variationPct: number | null;
+  trend: DashboardTrend | null;
+  /** Unidades por columna de responsable (solo si el sector puede ver nombres). */
+  byResponsible: Record<string, number>;
+};
+
+export type DashboardResponsibles =
+  | {
+      available: true;
+      /** Alcance de los nombres: todos los sectores o solo el propio. */
+      scopeLabel: string;
+      podium: DashboardResponsibleRow[];
+      ranking: DashboardResponsibleRow[];
+      /** Mayor/menor productividad entre responsables identificados (menor: null si hay menos de 2). */
+      best: DashboardResponsibleRow | null;
+      worst: DashboardResponsibleRow | null;
+      columns: DashboardResponsibleColumn[];
+      totalUnits: number;
+      unassignedUnits: number;
+    }
+  | { available: false; reason: string };
+
+export type DashboardProductividad = {
+  /** Siempre «metricas»: unidades ENVASADAS registradas en el módulo Métricas. */
+  source: "metricas";
   periodLabel: string;
-  dateBasis: DashboardDateBasis;
-  /** Trabajos terminados que no se pudieron ubicar en el tiempo o sin cantidad (se informan, no se suman). */
-  excludedWithoutDate: number;
-  excludedWithoutQty: number;
+  year: number;
+  sector: DashboardSectorFilter;
+  /** true si la tabla de Métricas todavía no está disponible en la base. */
+  schemaPending: boolean;
+  recordCount: number;
+  activeDays: number;
+  kpis: {
+    total: DashboardKpi;
+    masivo: DashboardKpi;
+    premium: DashboardKpi;
+    pctMasivo: DashboardKpi;
+    pctPremium: DashboardKpi;
+    dailyAverage: DashboardKpi;
+    bestMonth: DashboardKpi;
+  };
+  /** 12 meses del año (con el filtro de sector, sin el de mes). */
+  monthly: DashboardProductividadMonth[];
+  responsibles: DashboardResponsibles;
   notes: string[];
 };
 
@@ -149,6 +226,11 @@ export type DashboardPermissions = {
   canFilterClient: boolean;
   /** Sector propio de Envasado (para resaltarlo en pantalla); null en el resto. */
   ownSector: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM" | null;
+  /**
+   * Alcance de los NOMBRES de responsables de Métricas: «all» (Producción/Dirección), el sector propio (Envasado)
+   * o null (el resto: solo ven totales agregados).
+   */
+  responsiblesScope: "all" | "ENVASADO_MASIVO" | "ENVASADO_PREMIUM" | null;
 };
 
 export type DashboardPayload = {
@@ -180,7 +262,8 @@ export type DashboardPayload = {
     productosDistintos: DashboardKpi;
     sinEstado: number;
   };
-  produccion: DashboardProduction;
+  /** Unidades ENVASADAS (módulo Métricas): KPIs, participación, tendencia mensual y ranking de responsables. */
+  productividad: DashboardProductividad;
   clients: DashboardClientsBlock;
   indicators: DashboardIndicatorRow[] | NotAvailable;
   /** Resumen gerencial determinístico (nada de IA); omite lo que no tiene datos. */
@@ -244,7 +327,21 @@ export type DashboardDeliveryRow = {
   deletedAt?: string | null;
 };
 
+/** Registro activo de Métricas (packaging_metrics) tal como lo devuelve MetricasService.list. */
+export type DashboardMetricRow = {
+  sector: "ENVASADO_MASIVO" | "ENVASADO_PREMIUM";
+  /** YYYY-MM-DD */
+  metricDate: string;
+  units: number;
+  responsibleKey: string;
+  responsibleDisplay: string;
+  updatedAt?: string;
+  deletedAt?: string | null;
+};
+
 export type DashboardRows = {
+  /** Fuente única de unidades envasadas. Opcional: ausente = sin registros de Métricas. */
+  metrics?: DashboardMetricRow[];
   pedidos: DashboardPedidoRow[];
   works: DashboardWorkRow[];
   deliveries: DashboardDeliveryRow[];

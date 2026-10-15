@@ -5,10 +5,12 @@
 import { clienteRelation, productoRelation } from "@/lib/asignacion-lotes/resolve-for-work-item";
 import {
   DELIVERY_SECTORS,
+  isDerivedDelivery,
   type DeliveryDisplayStatus,
   type DeliverySector,
   type DeliverySuggestion,
   type LinkedWork,
+  type RealDelivery,
   type ScheduledDelivery,
   type ScheduledDeliveryItem,
   type WorkDivergence,
@@ -130,22 +132,47 @@ export function validateDeliveryInput(input: DeliveryInput): { ok: true; value: 
 
 // ───────────────────────── Estados ─────────────────────────
 
-const FINISHED_WORK = new Set(["completo", "revision", "entregado"]);
+/** Estados del trabajo que indican que la producción/envasado terminó (ya no hay nada más que fabricar). */
+export const FINISHED_WORK = new Set(["completo", "revision", "entregado", "codificado_completo"]);
 
 const STAGE_ORDER: DeliveryDisplayStatus[] = [
   "programada",
   "produccion_pendiente",
   "produccion_en_proceso",
-  "produccion_finalizada",
   "lista_para_entregar",
+  "entrega_parcial",
   "entregada",
 ];
 
+const EPS = 1e-6;
+
 /**
- * Estado de un producto según sus trabajos vinculados (los cancelados no cuentan).
- * - «Entregada» SOLO si el flujo real de entrega lo registró en TODOS los trabajos y la cantidad programada está cubierta.
- * - Terminó el envasado ≠ entregada: «Producción finalizada»; con Calidad aprobada en todos: «Lista para entregar».
- * - Si los trabajos cubren menos que la cantidad programada, todavía falta producir: nunca pasa de «en proceso».
+ * Cuánto se entregó REALMENTE de un trabajo y si esa entrega lo completa. Se mira lo mismo que usa el flujo de entrega
+ * para fijar la cantidad entregada: lo embalado (unidades entregables), si no la cantidad final declarada y si no la
+ * planificada. Si las cantidades no son numéricas, cualquier entrega real cuenta como completa (no se puede comparar).
+ */
+export function summarizeRealDeliveries(w: {
+  plannedQuantity: string | null;
+  finishedQty: string | null;
+  deliverableUnits?: number | null;
+  realDeliveries: readonly RealDelivery[];
+}): { deliveredQty: number | null; deliveredAt: string | null; delivered: boolean } {
+  if (w.realDeliveries.length === 0) return { deliveredQty: null, deliveredAt: null, delivered: false };
+  const nums = w.realDeliveries.map((d) => parseQuantity(d.quantity)).filter((n): n is number => typeof n === "number");
+  const deliveredQty = nums.length ? nums.reduce((a, b) => a + b, 0) : null;
+  const deliveredAt = w.realDeliveries.map((d) => d.date).sort().at(-1) ?? null;
+  const targetRaw = w.deliverableUnits ?? parseQuantity(w.finishedQty) ?? parseQuantity(w.plannedQuantity);
+  const target = typeof targetRaw === "number" ? targetRaw : null;
+  const delivered = deliveredQty == null || target == null || target <= 0 || deliveredQty + EPS >= target;
+  return { deliveredQty, deliveredAt, delivered };
+}
+
+/**
+ * Estado de un producto según sus trabajos vinculados (los cancelados no cuentan). La aprobación de Calidad NO interviene.
+ * - «Entregada» SOLO si existe la entrega real de TODOS los trabajos y la cantidad programada está cubierta.
+ * - Con entregas reales pero faltando entregar (saldo pendiente): «Entrega parcial». Nunca «Entregada» hasta completar.
+ * - Trabajos terminados (completo/revisión/entregado/codificado completo) y sin entregar: «Lista para entregar».
+ * - Si los trabajos cubren menos que la cantidad programada, todavía falta producir: «en proceso» como máximo.
  */
 export function deriveItemStatus(item: Pick<ScheduledDeliveryItem, "quantity" | "works">): DeliveryDisplayStatus {
   const works = item.works.filter((w) => !w.cancelled);
@@ -156,15 +183,36 @@ export function deriveItemStatus(item: Pick<ScheduledDeliveryItem, "quantity" | 
 
   const anyStarted = works.some((w) => w.operationalStatus === "en_curso" || FINISHED_WORK.has(w.operationalStatus));
   const allFinished = works.every((w) => FINISHED_WORK.has(w.operationalStatus));
-  const allApproved = works.every((w) => w.qualityStatus === "aprobado");
   const allDelivered = works.every((w) => w.delivered);
+  const anyDelivered = works.some((w) => w.delivered || (w.deliveredQty ?? 0) > 0 || w.realDeliveries.length > 0);
 
+  if (allDelivered && fullyCovered) return "entregada";
+  if (anyDelivered) return "entrega_parcial";
   if (!fullyCovered) return anyStarted ? "produccion_en_proceso" : "produccion_pendiente";
-  if (allDelivered) return "entregada";
-  if (allFinished && allApproved) return "lista_para_entregar";
-  if (allFinished) return "produccion_finalizada";
+  if (allFinished) return "lista_para_entregar";
   if (anyStarted) return "produccion_en_proceso";
   return "produccion_pendiente";
+}
+
+/** Cantidades de un producto: planificada, producida, entregada y pendiente (null = no registrado / no numérico). */
+export function itemQuantities(item: Pick<ScheduledDeliveryItem, "quantity" | "works">): {
+  planned: number | null;
+  produced: number | null;
+  delivered: number | null;
+  pending: number | null;
+} {
+  const works = item.works.filter((w) => !w.cancelled);
+  const fromWorks = works.map((w) => parseQuantity(w.plannedQuantity)).filter((n): n is number => typeof n === "number");
+  const itemQty = parseQuantity(item.quantity);
+  const planned = typeof itemQty === "number" ? itemQty : fromWorks.length ? fromWorks.reduce((a, b) => a + b, 0) : null;
+  const sum = (vals: Array<number | null>) => {
+    const nums = vals.filter((n): n is number => typeof n === "number");
+    return nums.length ? nums.reduce((a, b) => a + b, 0) : null;
+  };
+  const produced = sum(works.map((w) => { const q = parseQuantity(w.finishedQty); return typeof q === "number" ? q : null; }));
+  const delivered = sum(works.map((w) => w.deliveredQty));
+  const pending = planned == null ? null : Math.max(0, planned - (delivered ?? 0));
+  return { planned, produced, delivered, pending };
 }
 
 /** Estado de la entrega completa: cancelada, o la etapa MÁS ATRASADA entre sus productos. */
@@ -191,7 +239,7 @@ export function matchDeliveryCandidates(
   if (!criteria.client.trim() || !criteria.product.trim()) return [];
   const out: DeliverySuggestion[] = [];
   for (const d of deliveries) {
-    if (d.state === "cancelada") continue;
+    if (d.state === "cancelada" || isDerivedDelivery(d)) continue; // lo recuperado de los trabajos no se «vincula»
     const clientRel = clienteRelation(criteria.client, d.client);
     if (clientRel === "NONE") continue;
     for (const it of d.items) {
@@ -208,7 +256,7 @@ export function matchDeliveryCandidates(
         product: it.product,
         quantity: it.quantity,
         unit: it.unit,
-        sector: it.sector,
+        sector: it.sector as DeliverySector | null,
         plannedProductionDate: it.plannedProductionDate,
         lot: it.lot,
         vto: it.vto,
