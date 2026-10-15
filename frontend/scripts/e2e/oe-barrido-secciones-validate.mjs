@@ -114,6 +114,12 @@ for (const [deviceName, device] of Object.entries(DEVICES)) {
     const tag = `${deviceName}/${userKey}`;
     check(`${tag}: pantalla inicial sin error`, !(await bodyBad(page)) && problems.length === 0, problems.join(" | ") || (await bodyBad(page)));
     const labels = await navLabels(page);
+    // Circuito sin Calidad: ningún sector ve aprobaciones; Producción/Dirección ven «Pendientes de definir» (el barrido
+    // abre cada sección, incluida esa, y falla ante cualquier excepción/5xx).
+    check(`${tag}: la navegación no ofrece Calidad/Aprobados/Rechazados`, !labels.some((l) => /^(calidad|aprobados|rechazados|ver calidad|pendientes de aprobaci)/i.test(l)), labels.join(" | "));
+    if (userKey === "produccion" || userKey === "direccion") {
+      check(`${tag}: navegación con «Pendientes de definir»`, labels.some((l) => /^Pendientes de definir/.test(l)), labels.join(" | "));
+    }
     for (const label of labels) {
       const before = problems.length;
       const target = page.locator("nav, aside").getByText(label, { exact: true }).first();
