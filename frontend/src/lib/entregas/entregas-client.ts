@@ -1,4 +1,4 @@
-import type { DeliveryHistoryEntry, ScheduledDelivery, WorkDivergence } from "./types";
+import type { DeliveryHistoryEntry, EntregasRecoveryStats, ScheduledDelivery, WorkDivergence } from "./types";
 import type { DeliveryInput } from "./rules";
 
 /** Cliente HTTP de Entregas (navegador). Los errores del servidor ya vienen explicados en castellano. */
@@ -29,6 +29,7 @@ export interface DeliveryDetailResponse {
 
 export const entregasApi = {
   list: (from: string, to: string) => call<{ deliveries: ScheduledDelivery[] }>(`/api/v1/entregas?from=${from}&to=${to}`).then((r) => r.deliveries),
+  recovery: () => call<{ stats: EntregasRecoveryStats | null }>("/api/v1/entregas/recovery").then((r) => r.stats),
   detail: (id: string) => call<DeliveryDetailResponse>(`/api/v1/entregas/${id}`),
   create: (input: DeliveryInput) => call<{ delivery: ScheduledDelivery }>("/api/v1/entregas", { method: "POST", body: JSON.stringify(input) }).then((r) => r.delivery),
   patch: <T = { delivery: ScheduledDelivery }>(id: string, body: Record<string, unknown>) => call<T>(`/api/v1/entregas/${id}`, { method: "PATCH", body: JSON.stringify(body) }),

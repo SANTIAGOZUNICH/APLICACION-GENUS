@@ -46,16 +46,16 @@ const P2 = "E2E SERUM FACIAL VITAMINA C";
 const P3 = "E2E GEL DE BAÑO";
 
 async function cleanup() {
-  await q("delete from scheduled_delivery_links where item_id in (select i.id from scheduled_delivery_items i join scheduled_deliveries d on d.id = i.delivery_id where d.client like 'E2E %')");
-  await q("delete from scheduled_delivery_items where delivery_id in (select id from scheduled_deliveries where client like 'E2E %')");
-  await q("delete from scheduled_deliveries where client like 'E2E %'");
-  await q("delete from work_item_deliveries where client like 'E2E %'");
-  await q("delete from operational_events where work_item_id in (select id from work_items where client like 'E2E %')");
-  const wi = await q("select id from work_items where client like 'E2E %'");
+  await q("delete from scheduled_delivery_links where item_id in (select i.id from scheduled_delivery_items i join scheduled_deliveries d on d.id = i.delivery_id where d.client ilike 'E2E %')");
+  await q("delete from scheduled_delivery_items where delivery_id in (select id from scheduled_deliveries where client ilike 'E2E %')");
+  await q("delete from scheduled_deliveries where client ilike 'E2E %'");
+  await q("delete from work_item_deliveries where client ilike 'E2E %'");
+  await q("delete from operational_events where work_item_id in (select id from work_items where client ilike 'E2E %')");
+  const wi = await q("select id from work_items where client ilike 'E2E %'");
   for (const w of wi) {
     await q("delete from operational_orders where linked_work_item_id = $1", [String(w.id)]).catch(() => {});
   }
-  await q("delete from work_items where client like 'E2E %'");
+  await q("delete from work_items where client ilike 'E2E %'");
   await q("delete from feature_audit_events where domain = 'entregas'");
 }
 
@@ -139,7 +139,7 @@ try {
   check("Entrega creada con 2 productos; cantidades, sector y fecha de producción guardados", items1.length === 2 && items1[0].quantity === "1.200" && items1[0].sector === "ENVASADO_MASIVO" && items1[0].pd === D_PRODUCTION && items1[0].lot === "L-E2E-1", JSON.stringify(items1.map((i) => [i.product, i.quantity, i.sector])));
   check("Lo que no se conocía queda PENDIENTE (null), nada inventado", items1[1].quantity === null && items1[1].lot === null && items1[1].vto === null && items1[1].planned_production_date === null);
   check("Auditoría: alta con quién y qué", (await audit("create")).length === 1 && (await audit("create"))[0].actor_email === E2E_USERS.produccion.email);
-  check("Programar una entrega NO toca stock ni trabajos", (await stockSnapshot()) === stock0 && (await q("select count(*)::int n from work_items where client like 'E2E %'"))[0].n === 0);
+  check("Programar una entrega NO toca stock ni trabajos", (await stockSnapshot()) === stock0 && (await q("select count(*)::int n from work_items where client ilike 'E2E %'"))[0].n === 0);
 
   // ===== 2. Mismo cliente, mismo día: una sola entrada; otro cliente =====
   await pp.locator("[data-testid=entregas-new]").click();
@@ -165,7 +165,8 @@ try {
   const txt = await dlg.innerText();
   check("Al tocar el cliente se ven TODAS sus entregas del día (2) con sus 3 productos", (await dlg.locator("[data-testid=entrega-card]").count()) === 2 && (await dlg.locator("[data-testid=entrega-item-name]").count()) === 3);
   check("Detalle: producto, cantidad y unidad, sector, lote, vencimiento, producción planificada, responsable, observaciones", /1\.200 un\./.test(txt) && /Envasado Masivo/.test(txt) && /L-E2E-1/.test(txt) && /10\/2028/.test(txt) && /Ana/.test(txt) && /Retira el cliente/.test(txt) && new RegExp(D_PRODUCTION.split("-").reverse().join("/")).test(txt));
-  check("Estado inicial «Entrega programada»; lo pendiente se muestra como Pendiente", /Entrega programada/.test(txt) && /Pendiente/.test(txt));
+  check("Estado inicial «Entrega programada»; lo que falta se muestra como «No registrado»", /Entrega programada/.test(txt) && /No registrado/.test(txt));
+  check("Origen visible en la tarjeta: «Programada manual»", /Programada manual/.test(txt));
   check("Hay historial de modificaciones", (await dlg.locator("[data-testid=entrega-history-toggle]").count()) === 2);
   await pp.screenshot({ path: `${OUT}/3-tarjeta-detalle.png` });
   await pp.keyboard.press("Escape");
@@ -292,15 +293,18 @@ try {
   check("Producción en proceso (trabajo en curso)", st1 === "produccion_en_proceso", st1);
   await q("update work_items set operational_status = 'completo' where client = $1 and product = $2", [CLIENT, P1]);
   const st2 = await status();
-  check("Envasado terminado ≠ entregada: «Producción finalizada»", st2 === "produccion_finalizada", st2);
-  await q("update work_items set quality_status = 'aprobado' where client = $1 and product = $2", [CLIENT, P1]);
+  check("Envasado terminado y sin entregar: «Lista para entregar» (sin aprobación de Calidad en el circuito)", st2 === "lista_para_entregar", st2);
+  // Entrega PARCIAL: se entrega solo una parte de lo producido; queda saldo pendiente → nunca «Entregada» hasta completar.
+  const p1Works = (await q("select id, coalesce(finished_qty, planned_quantity) as qty from work_items where client = $1 and product = $2 order by created_at", [CLIENT, P1]));
+  await q("insert into work_item_deliveries (work_item_id, product, client, source_sector, quantity, actual_delivered_at, status, delivered_by, delivered_by_sector) values ($1,$2,$3,'ENVASADO_MASIVO','100', now(),'ENTREGADO','e2e','PRODUCCION')", [p1Works[0].id, P1, CLIENT]);
   const st3 = await status();
-  check("Con Calidad aprobada: «Lista para entregar» (todavía no entregada)", st3 === "lista_para_entregar", st3);
-  for (const id of (await q("select id from work_items where client = $1 and product = $2", [CLIENT, P1])).map((r) => r.id)) {
-    await q("insert into work_item_deliveries (work_item_id, product, client, source_sector, quantity, actual_delivered_at, status, delivered_by, delivered_by_sector) values ($1,$2,$3,'ENVASADO_MASIVO','100', now(),'ENTREGADO','e2e','PRODUCCION')", [id, P1, CLIENT]);
+  check("Entrega parcial (100 de lo producido): «Entrega parcial», no «Entregada»", st3 === "entrega_parcial", st3);
+  await q("delete from work_item_deliveries where work_item_id = $1", [p1Works[0].id]);
+  for (const w of p1Works) {
+    await q("insert into work_item_deliveries (work_item_id, product, client, source_sector, quantity, actual_delivered_at, status, delivered_by, delivered_by_sector) values ($1,$2,$3,'ENVASADO_MASIVO',$4, now(),'ENTREGADO','e2e','PRODUCCION')", [w.id, P1, CLIENT, String(w.qty)]);
   }
   const st4 = await status();
-  check("Solo con la entrega REAL registrada pasa a «Entregada»", st4 === "entregada", st4);
+  check("Solo con la entrega REAL completa registrada pasa a «Entregada»", st4 === "entregada", st4);
   const deliveryOfDay = await q("select status from scheduled_deliveries where id = $1", [d1.id]);
   check("La entrega programada sigue 'programada' en la base (el estado «Entregada» se deriva del flujo real, no se escribe)", deliveryOfDay[0].status === "programada");
 
@@ -328,7 +332,7 @@ try {
   await pp.locator("[data-testid=entrega-cancel-reason]").fill("El cliente suspendió el pedido");
   await pp.locator("[data-testid=entrega-cancel-confirm]").click();
   check("Cancelada: queda como historial (no se borra) con quién, cuándo y motivo", await waitDb(async () => { const r = (await deliveryRows(CLIENT2))[0]; return r?.status === "cancelada" && r.cancel_reason === "El cliente suspendió el pedido" && r.cancelled_by === E2E_USERS.produccion.email; }));
-  check("Cancelar una entrega programada no toca entregas reales ni trabajos", (await q("select count(*)::int n from work_item_deliveries where client like 'E2E %'"))[0].n === 3 && (await q("select count(*)::int n from work_items where client like 'E2E %'"))[0].n >= 3);
+  check("Cancelar una entrega programada no toca entregas reales ni trabajos", (await q("select count(*)::int n from work_item_deliveries where client ilike 'E2E %'"))[0].n === 3 && (await q("select count(*)::int n from work_items where client ilike 'E2E %'"))[0].n >= 3);
   await pp.keyboard.press("Escape").catch(() => {});
   await waitDb(async () => (await pp.locator(`[data-testid=entregas-day][data-date='${D_RESCHEDULED}'] [data-testid=entregas-client][data-client='${CLIENT2}']`).first().getAttribute("class")).includes("line-through"));
   check("La entrega cancelada se ve tachada en el calendario", (await pp.locator(`[data-testid=entregas-day][data-date='${D_RESCHEDULED}'] [data-testid=entregas-client][data-client='${CLIENT2}']`).first().getAttribute("class")).includes("line-through"));
@@ -336,6 +340,111 @@ try {
   check("Una entrega cancelada ya no se sugiere al asignar trabajos", (sug.suggestions ?? []).length === 0);
   const stale = await pp.request.patch(`/api/v1/entregas/${d1.id}`, { data: { action: "reschedule", newDate: addDays(D_DELIVERY, 3), reason: "Prueba de versión vieja", expectedVersion: 1 } });
   check("Versión vieja → 409 (nunca se pisa lo que cambió otra persona)", stale.status() === 409, String(stale.status()));
+
+  // ===== 10b. Recuperación automática: histórico (fecha REAL de entrega) + futuro (fecha de entrega del trabajo) =====
+  // Nada de esto se carga en la pestaña Entregas: sale de work_items / work_item_deliveries. Fechas dentro del mes actual.
+  const DAY = (n) => `${MONTH}${String(n).padStart(2, "0")}`;
+  const H_PROD = DAY(2); // fin de producción (completed_at): NO es la entrega
+  const H_REAL = DAY(6); // entrega real (actual_delivered_at, 22:30 hora Argentina = 01:30 UTC del día siguiente)
+  const PART_REAL = DAY(7);
+  const FUT = DAY(25);
+  const FUT2 = DAY(26);
+  const FUT_PART = DAY(27);
+  const HIST_CLIENT = "E2E TSU";
+  const FUT_CLIENT = "E2E FUTURO";
+  const PART_CLIENT = "E2E PARCIAL";
+  const NOREAL_CLIENT = "E2E SINFECHA";
+  const stats0 = (await (await pp.request.get("/api/v1/entregas/recovery")).json()).stats;
+  const scheduledBefore = (await q("select count(*)::int n from scheduled_deliveries"))[0].n;
+  const mk = async (data, oa) => {
+    const r = await asg(pp, { unit: "un.", plannedDate: TODAY, plannedDateTo: TODAY, sector: "ENVASADO_MASIVO", line: "Línea 1", idempotencyKey: randomUUID(), orderNumber: oa, ...data });
+    if (!r.ok()) throw new Error(`No se pudo sembrar ${data.product}: ${r.status()} ${await r.text()}`);
+    return (await q("select id from work_items where client = $1 and product = $2", [data.client, data.product]))[0].id;
+  };
+  const realDelivery = (workId, client, product, qty, ts) => q("insert into work_item_deliveries (work_item_id, product, client, source_sector, quantity, actual_delivered_at, status, delivered_by, delivered_by_sector, remito, received_by) values ($1,$2,$3,'ENVASADO_MASIVO',$4,$5::timestamptz,'ENTREGADO','e2e','PRODUCCION','R-E2E-1','Recibe E2E')", [workId, product, client, qty, ts]);
+  // Histórico: entregado de verdad (fecha real ≠ fin de producción).
+  const wH = await mk({ client: HIST_CLIENT, product: "E2E HIST SHAMPOO", plannedQuantity: "800" }, "OA-2026-990301");
+  await q("update work_items set operational_status = 'entregado', finished_qty = '800', completed_at = $2::timestamptz, delivery_date = null where id = $1", [wH, `${H_PROD}T12:00:00-03:00`]);
+  await realDelivery(wH, HIST_CLIENT, "E2E HIST SHAMPOO", "800", `${H_REAL}T22:30:00-03:00`);
+  // Marcado entregado pero SIN entrega real registrada: no hay fecha real → no se ubica (no se inventa).
+  const wN = await mk({ client: NOREAL_CLIENT, product: "E2E ENTREGADO SIN FECHA", plannedQuantity: "100" }, "OA-2026-990302");
+  await q("update work_items set operational_status = 'entregado', completed_at = $2::timestamptz, delivery_date = null where id = $1", [wN, `${H_PROD}T12:00:00-03:00`]);
+  // Entrega parcial: se entregaron 400 de 1.000 y queda saldo con fecha de entrega futura.
+  const wP = await mk({ client: PART_CLIENT, product: "E2E PARCIAL CREMA", plannedQuantity: "1000", deliveryDate: FUT_PART }, "OA-2026-990303");
+  await q("update work_items set operational_status = 'completo', finished_qty = '1000' where id = $1", [wP]);
+  await realDelivery(wP, PART_CLIENT, "E2E PARCIAL CREMA", "400", `${PART_REAL}T12:00:00-03:00`);
+  // Futuro: 3 productos del mismo cliente el mismo día (nunca cargados en Entregas) + uno cancelado.
+  const wF1 = await mk({ client: FUT_CLIENT, product: "E2E FUT CREMA", plannedQuantity: "500", deliveryDate: FUT }, "OA-2026-990304");
+  const wF2 = await mk({ client: FUT_CLIENT.toLowerCase(), product: "E2E FUT SERUM", plannedQuantity: "300", deliveryDate: FUT, sector: "ENVASADO_PREMIUM" }, "OA-2026-990305");
+  const wF3 = await mk({ client: FUT_CLIENT.replace("FUTURO", "FUTÚRO"), product: "E2E FUT GEL", plannedQuantity: "200", deliveryDate: FUT }, "OA-2026-990306");
+  const wF4 = await mk({ client: FUT_CLIENT, product: "E2E FUT CANCELADO", plannedQuantity: "50", deliveryDate: FUT }, "OA-2026-990307");
+  await q("update work_items set operational_status = 'en_curso' where id = $1", [wF2]);
+  await q("update work_items set operational_status = 'completo', packaging_lote = null, packaging_vto = null, order_number = null where id = $1", [wF3]); // campos faltantes
+  await q("update work_items set operational_status = 'cancelado', operational_cancelled_at = now() where id = $1", [wF4]);
+  await pp.goto("/mi-trabajo");
+  await openEntregas(pp);
+  const futChips = await chips(pp, FUT);
+  check("Futuro: 3 productos del mismo cliente (distinta tilde/mayúscula) el mismo día → UNA sola aparición en el día", futChips.length === 1 && futChips[0].toLowerCase().replace("ú", "u") === "e2e futuro", futChips.join(" | "));
+  check("No se cargó nada a mano: scheduled_deliveries no cambió", (await q("select count(*)::int n from scheduled_deliveries"))[0].n === scheduledBefore);
+  await pp.locator(`[data-testid=entregas-day][data-date='${FUT}'] [data-testid=entregas-client]`).first().click();
+  const fdlg = pp.locator("[data-testid=entrega-detail]");
+  await fdlg.waitFor();
+  const fnames = await fdlg.locator("[data-testid=entrega-item-name]").allInnerTexts();
+  const ftxt = await fdlg.innerText();
+  check("Al tocar el cliente se listan sus 3 productos (el cancelado no)", fnames.length === 3 && ["E2E FUT CREMA", "E2E FUT SERUM", "E2E FUT GEL"].every((n) => fnames.includes(n)) && !ftxt.includes("E2E FUT CANCELADO"), fnames.join(" | "));
+  check("Origen «Desde trabajo» y solo lectura (sin Modificar/Reprogramar/Cancelar/Vincular/Historial)", (await fdlg.locator("[data-testid=entrega-origin]").first().innerText()) === "Desde trabajo" && (await fdlg.locator("[data-testid=entrega-edit], [data-testid=entrega-reschedule-open], [data-testid=entrega-cancel-open], [data-testid=entrega-link-open], [data-testid=entrega-history-toggle]").count()) === 0);
+  check("Detalle por producto: planificada/pendiente, producción, entrega programada, sector, responsable, orden y enlace al trabajo", /Cantidad planificada/i.test(ftxt) && /Pendiente de entregar/i.test(ftxt) && /Fecha de producción/i.test(ftxt) && /Fecha de entrega programada/i.test(ftxt) && /Envasado Premium/i.test(ftxt) && /Línea 1/i.test(ftxt) && /OA-2026-990304/i.test(ftxt) && (await fdlg.locator("[data-testid=entrega-work-open]").count()) === 3);
+  check("Campos faltantes → «No registrado» y el trabajo NO se descarta", (await fdlg.locator("[data-testid=entrega-no-registrado]").count()) > 0);
+  check("Estados derivados sin Calidad: pendiente / en proceso / lista para entregar", JSON.stringify((await fdlg.locator("[data-testid=entrega-item] [data-testid=entrega-status]").evaluateAll((els) => els.map((e) => e.getAttribute("data-status")))).sort()) === JSON.stringify(["lista_para_entregar", "produccion_en_proceso", "produccion_pendiente"]));
+  await pp.screenshot({ path: `${OUT}/10-futuro-desde-trabajo.png` });
+  await pp.keyboard.press("Escape");
+  // Reprogramar la fecha EN EL TRABAJO (edición por celda canónica): el calendario lo refleja.
+  const vF1 = Number((await q("select version from work_items where id = $1", [wF1]))[0].version);
+  const mv = await pp.request.patch("/api/v1/work-items/cells", { data: { changes: [{ id: `native:${wF1}`, field: "deliveryDate", value: FUT2, expectedVersion: vF1, reason: "Cliente pidió adelantar la entrega" }] } });
+  await pp.goto("/mi-trabajo");
+  await openEntregas(pp);
+  const chips2 = await chips(pp, FUT2);
+  check("Reprogramar la fecha de entrega en el trabajo → el calendario se actualiza (aparece el día nuevo)", mv.ok() && chips2.some((c) => /e2e futuro/i.test(c)), `${mv.status()} ${chips2.join("|")}`);
+  await pp.locator(`[data-testid=entregas-day][data-date='${FUT}'] [data-testid=entregas-client]`).first().click();
+  const left = await pp.locator("[data-testid=entrega-detail] [data-testid=entrega-item-name]").allInnerTexts();
+  check("…y el producto reprogramado sale del día anterior (quedan los otros 2)", left.length === 2 && !left.includes("E2E FUT CREMA"), left.join(" | "));
+  await pp.keyboard.press("Escape");
+  // Histórico: en la FECHA REAL de entrega (no en la de fin de producción).
+  check("Histórico: el trabajo entregado aparece en su FECHA REAL (hora Argentina) y no en la de fin de producción", (await chips(pp, H_REAL)).includes(HIST_CLIENT) && !(await chips(pp, H_PROD)).includes(HIST_CLIENT) && !(await chips(pp, DAY(7))).includes(HIST_CLIENT));
+  await pp.locator(`[data-testid=entregas-day][data-date='${H_REAL}'] [data-testid=entregas-client][data-client='${HIST_CLIENT}']`).click();
+  const hdlg = await pp.locator("[data-testid=entrega-detail]").innerText();
+  check("Detalle histórico: «Entrega registrada», fecha real, fin de producción distinto y estado «Entregada»", /Entrega registrada/.test(hdlg) && new RegExp(`Fecha real de entrega[\\s\\S]*${H_REAL.split("-").reverse().join("/")}`).test(hdlg) && new RegExp(`Producción finalizada: ${H_PROD.split("-").reverse().join("/")}`).test(hdlg) && /Entregada/.test(hdlg));
+  await pp.screenshot({ path: `${OUT}/11-historico-entrega-registrada.png` });
+  await pp.keyboard.press("Escape");
+  check("Entregado SIN fecha real registrada: no se ubica en el calendario (no se inventa fecha)", !(await pp.locator(`[data-testid=entregas-client][data-client='${NOREAL_CLIENT}']`).count()));
+  // Entrega parcial: lo entregado en su fecha real + el saldo pendiente en su fecha programada.
+  check("Entrega parcial: aparece la entrega real (parcial) y el saldo pendiente en su fecha de entrega", (await chips(pp, PART_REAL)).includes(PART_CLIENT) && (await chips(pp, FUT_PART)).includes(PART_CLIENT));
+  await pp.locator(`[data-testid=entregas-day][data-date='${FUT_PART}'] [data-testid=entregas-client][data-client='${PART_CLIENT}']`).click();
+  const ptxt = await pp.locator("[data-testid=entrega-detail]").innerText();
+  const pst = await pp.locator("[data-testid=entrega-detail] [data-testid=entrega-item] [data-testid=entrega-status]").first().getAttribute("data-status");
+  check("Parcial: estado «Entrega parcial», entregada 400 y pendiente 600 (no «Entregada» hasta completar)", pst === "entrega_parcial" && /Entregada\s*\n?\s*400/i.test(ptxt) && /Pendiente de entregar\s*\n?\s*600/i.test(ptxt), `${pst} ${ptxt.replace(/\n/g, " ").slice(0, 200)}`);
+  await pp.keyboard.press("Escape");
+  // Un trabajo vinculado NO duplica: aparece una sola vez, dentro de su entrega programada.
+  await pp.locator(`[data-testid=entregas-day][data-date='${D_DELIVERY}'] [data-testid=entregas-client][data-client='${CLIENT}']`).click();
+  const ldlg = pp.locator("[data-testid=entrega-detail]");
+  const names = await ldlg.locator("[data-testid=entrega-item-name]").allInnerTexts();
+  check("Vinculado: el trabajo aparece UNA sola vez (en su entrega programada), no como «Desde trabajo»", (await ldlg.locator(`[data-testid=entrega-work][data-work-id='${w1.id}']`).count()) === 1 && names.filter((n) => n === P1).length === 1);
+  const origins = (await ldlg.locator("[data-testid=entrega-origin]").allInnerTexts()).sort().join();
+  check("El trabajo sin vincular del mismo cliente y día sí aparece como «Desde trabajo» (producto P3)", names.includes(P3) && origins === "Desde trabajo,Programada manual,Programada manual", origins);
+  await pp.keyboard.press("Escape");
+  // Diagnóstico (solo lectura): deltas exactos sobre lo sembrado.
+  const stats1 = (await (await pp.request.get("/api/v1/entregas/recovery")).json()).stats;
+  const futurasEsperadas = [FUT, FUT, FUT2, FUT_PART].filter((d) => d >= TODAY).length; // wF1 (FUT2), wF2, wF3 (FUT) + saldo del parcial
+  const vencidasEsperadas = 4 - futurasEsperadas;
+  check("Diagnóstico: +2 históricas (entregado y parcial)", stats1.historicas.total - stats0.historicas.total === 2 && stats1.historicas.sueltas - stats0.historicas.sueltas === 2, JSON.stringify(stats1.historicas));
+  check("Diagnóstico: futuras incorporadas sin cargar a mano", stats1.futuras.sueltas - stats0.futuras.sueltas === futurasEsperadas && stats1.vencidasSinEntregar - stats0.vencidasSinEntregar === vencidasEsperadas, JSON.stringify(stats1.futuras));
+  check("Diagnóstico: quedan fuera 1 entregado sin fecha real y 1 cancelado (con motivo)", stats1.fuera.entregadoSinFechaReal - stats0.fuera.entregadoSinFechaReal === 1 && stats1.fuera.canceladosOEliminados - stats0.fuera.canceladosOEliminados === 1, JSON.stringify(stats1.fuera));
+  await pp.goto("/mi-trabajo");
+  await openEntregas(pp);
+  const foot = await pp.locator("[data-testid=entregas-recovery-summary]").innerText();
+  check("Pie discreto «N históricas · M futuras» en el calendario", foot === `${stats1.historicas.total} históricas · ${stats1.futuras.total} futuras`, foot);
+  console.log(`RECUPERACION ${JSON.stringify(stats1)}`);
+  check("Nada de esto tocó stock", (await stockSnapshot()) === stock0);
 
   // ===== 11. Permisos (servidor) =====
   const masivo = await openAs(E2E_USERS.envasado);
@@ -349,6 +458,7 @@ try {
   check("Envasado Masivo ve SOLO los productos de su sector (no el Serum de Premium)", lm.length > 0 && lm.flatMap((d) => d.items).every((i) => i.sector === "ENVASADO_MASIVO") && !JSON.stringify(lm).includes(P2));
   const lp = await listAs(premium);
   check("Envasado Premium ve solo lo suyo", lp.flatMap((d) => d.items).every((i) => i.sector === "ENVASADO_PREMIUM") && JSON.stringify(lp).includes(P2) && !JSON.stringify(lp).includes(P1));
+  check("Recortado por sector: Masivo ve lo histórico de su sector y NO el serum Premium «Desde trabajo»; Premium al revés", JSON.stringify(lm).includes("E2E HIST SHAMPOO") && !JSON.stringify(lm).includes("E2E FUT SERUM") && JSON.stringify(lp).includes("E2E FUT SERUM") && !JSON.stringify(lp).includes("E2E HIST SHAMPOO"));
   const ld = await listAs(deposito);
   check("Depósito consulta todo", JSON.stringify(ld).includes(P1) && JSON.stringify(ld).includes(P2));
   check("Calidad y Elaboración no acceden a Entregas (403)", (await calidad.page.request.get(`/api/v1/entregas?${range}`)).status() === 403 && (await elab.page.request.get(`/api/v1/entregas?${range}`)).status() === 403);
@@ -357,6 +467,7 @@ try {
   check("Envasado y Depósito NO pueden crear entregas (403)", denied.every((r) => r.status() === 403) && (await deliveryRows("E2E INTRUSO")).length === 0);
   const deniedPatch = await masivo.page.request.patch(`/api/v1/entregas/${d1.id}`, { data: { action: "cancel", reason: "Intento no autorizado", expectedVersion: 99 } });
   check("Envasado no puede cancelar ni reprogramar (403)", deniedPatch.status() === 403);
+  check("El diagnóstico de recuperación es de solo lectura: Envasado no recibe cifras globales y Calidad no accede", (await (await masivo.page.request.get("/api/v1/entregas/recovery")).json()).stats === null && (await calidad.page.request.get("/api/v1/entregas/recovery")).status() === 403);
   const deniedSug = await masivo.page.request.get(`/api/v1/entregas/suggestions?client=${CLIENT}&product=${P1}`);
   check("Las sugerencias de «Asignar trabajo» son solo de Producción (403)", deniedSug.status() === 403);
   await masivo.page.goto("/mi-trabajo");
@@ -381,6 +492,15 @@ try {
     const box = await r.page.locator("[data-testid=entrega-detail]").boundingBox();
     check(`${name}: la tarjeta flotante entra en pantalla`, box && box.width <= vp.width);
     await r.page.screenshot({ path: `${OUT}/8-${name}-tarjeta.png` });
+    await r.page.keyboard.press("Escape");
+    await r.page.locator(`[data-testid=entregas-day][data-date='${FUT}']`).click();
+    const futAgenda = await r.page.locator("[data-testid=entregas-agenda] [data-testid=entregas-client]").allInnerTexts();
+    await r.page.locator("[data-testid=entregas-agenda] [data-testid=entregas-client]").first().click();
+    await r.page.locator("[data-testid=entrega-detail]").waitFor();
+    const fbox = await r.page.locator("[data-testid=entrega-detail]").boundingBox();
+    const fcount = await r.page.locator("[data-testid=entrega-detail] [data-testid=entrega-item-name]").count();
+    check(`${name}: el cliente con varios productos del mismo día aparece una vez y, al tocarlo, lista sus productos sin salirse de pantalla`, futAgenda.length === 1 && fcount === 2 && fbox && fbox.width <= vp.width && !(await r.page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)), `${futAgenda.join("|")} ${fcount}`);
+    await r.page.screenshot({ path: `${OUT}/8-${name}-futuro.png` });
     await r.page.keyboard.press("Escape");
     await r.page.screenshot({ path: `${OUT}/8-${name}-calendario.png` });
     await r.ctx.close();

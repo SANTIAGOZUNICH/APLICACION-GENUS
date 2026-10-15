@@ -15,11 +15,15 @@ import {
   type DeliveryHistoryEntry,
   type DeliverySector,
   type DeliverySuggestion,
+  type EntregasRecoveryStats,
+  type ItemSector,
   type LinkedWork,
+  type RealDelivery,
   type ScheduledDelivery,
   type ScheduledDeliveryItem,
   type WorkDivergence,
 } from "./types";
+import { buildDerivedDeliveries, computeRecoveryStats, toLinkedWork, type WorkFacts } from "./derive";
 import {
   clientKey,
   computeWorkDivergences,
@@ -67,6 +71,80 @@ async function audit(
   `);
 }
 
+/** Zona de «hoy» y de la fecha real de entrega (un timestamptz se muestra como día calendario argentino). */
+const TZ = "America/Argentina/Buenos_Aires";
+
+/**
+ * Datos de un trabajo para el calendario (lectura fresca de work_items) más sus entregas REALES (ENTREGADO, no eliminadas).
+ * Alias `w` = work_items. La fecha real es la de la entrega (actual_delivered_at), nunca completed_at.
+ */
+const WORK_FACT_COLS = sql`
+  w.id as work_id, w.client, w.product,
+  case when w.sector = 'CODIFICADO' then coalesce(w.codificado_origin_sector, w.sector::text) else w.sector::text end as sector,
+  w.line, coalesce(w.branch_owner, w.line) as responsible,
+  to_char(w.planned_date, 'YYYY-MM-DD') as planned_date, to_char(w.planned_date_to, 'YYYY-MM-DD') as planned_date_to,
+  w.planned_quantity, w.unit, to_char(w.delivery_date, 'YYYY-MM-DD') as delivery_date, w.packaging_lote, w.packaging_vto,
+  w.operational_status, w.finished_qty, w.deliverable_units, w.order_number,
+  to_char(w.completed_at at time zone 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD') as completed_on,
+  nullif(concat_ws(' · ', nullif(trim(w.notes), ''), nullif(trim(w.operational_observation), '')), '') as notes,
+  (w.deleted_at is not null or w.operational_cancelled_at is not null or w.operational_status = 'cancelado' or w.status = 'CANCELADO') as is_cancelled,
+  (select coalesce(json_agg(json_build_object(
+      'id', wd.id, 'date', to_char(wd.actual_delivered_at at time zone 'America/Argentina/Buenos_Aires', 'YYYY-MM-DD'),
+      'quantity', wd.quantity, 'unit', wd.unit, 'remito', wd.remito, 'receivedBy', wd.received_by, 'lote', wd.lote, 'vto', wd.vto,
+      'observations', wd.observations) order by wd.actual_delivered_at, wd.id), '[]'::json)
+     from work_item_deliveries wd where wd.work_item_id = w.id and wd.status = 'ENTREGADO' and wd.deleted_at is null) as real_deliveries
+`;
+
+function parseRealDeliveries(raw: unknown): RealDelivery[] {
+  let arr: unknown = raw;
+  if (typeof raw === "string") {
+    try { arr = JSON.parse(raw); } catch { arr = []; }
+  }
+  if (!Array.isArray(arr)) return [];
+  return (arr as Row[]).map((d) => ({
+    id: String(d.id),
+    date: String(d.date),
+    quantity: str(d.quantity),
+    unit: str(d.unit),
+    remito: str(d.remito),
+    receivedBy: str(d.receivedBy),
+    lote: str(d.lote),
+    vto: str(d.vto),
+    observations: str(d.observations),
+  }));
+}
+
+/** Fila (WORK_FACT_COLS) → hechos del trabajo. Los campos de vínculo se completan aparte. */
+function factsFromRow(r: Row): WorkFacts {
+  const del = r.deliverable_units;
+  return {
+    workItemId: String(r.work_id),
+    client: str(r.client),
+    product: str(r.product),
+    sector: String(r.sector),
+    line: str(r.line),
+    responsible: str(r.responsible),
+    plannedDate: str(r.planned_date),
+    plannedDateTo: str(r.planned_date_to),
+    plannedQuantity: str(r.planned_quantity),
+    unit: str(r.unit),
+    deliveryDate: str(r.delivery_date),
+    packagingLote: str(r.packaging_lote),
+    packagingVto: str(r.packaging_vto),
+    operationalStatus: String(r.operational_status ?? "pendiente"),
+    finishedQty: str(r.finished_qty),
+    deliverableUnits: del == null ? null : Number(del),
+    orderNumber: str(r.order_number),
+    notes: str(r.notes),
+    completedAt: str(r.completed_on),
+    realDeliveries: parseRealDeliveries(r.real_deliveries),
+    cancelled: Boolean(r.is_cancelled),
+    linked: Boolean(r.is_linked),
+    containerDate: str(r.container_date),
+    containerCancelled: r.container_status === "cancelada",
+  };
+}
+
 const DELIVERY_COLS = sql`
   d.id, d.client, to_char(d.delivery_date, 'YYYY-MM-DD') as delivery_date, d.responsible, d.notes, d.status, d.reschedule_count,
   d.version, d.cancelled_at, d.cancelled_by, d.cancel_reason, d.created_by, d.created_at, d.updated_at
@@ -93,12 +171,7 @@ async function loadDeliveries(db: { execute: SqlTx["execute"] }, where: ReturnTy
   if (itemIds.length) {
     const itemList = sql.join(itemIds.map((i) => sql`${i}::uuid`), sql`, `);
     wRows = (await db.execute(sql`
-      select l.id as link_id, l.item_id, l.work_item_id, l.linked_at, l.linked_by, l.item_snapshot,
-             w.client, w.product, w.sector, w.line,
-             to_char(w.planned_date, 'YYYY-MM-DD') as planned_date, to_char(w.planned_date_to, 'YYYY-MM-DD') as planned_date_to,
-             w.planned_quantity, w.unit, to_char(w.delivery_date, 'YYYY-MM-DD') as delivery_date, w.packaging_lote, w.packaging_vto,
-             w.operational_status, w.quality_status, w.finished_qty, w.order_number, w.deleted_at, w.operational_cancelled_at,
-             exists (select 1 from work_item_deliveries wd where wd.work_item_id = w.id and wd.status = 'ENTREGADO') as delivered
+      select l.id as link_id, l.item_id, l.linked_at, l.linked_by, l.item_snapshot, true as is_linked, ${WORK_FACT_COLS}
       from scheduled_delivery_links l
       join work_items w on w.id = l.work_item_id
       where l.unlinked_at is null and l.item_id in (${itemList})
@@ -108,30 +181,9 @@ async function loadDeliveries(db: { execute: SqlTx["execute"] }, where: ReturnTy
 
   const worksByItem = new Map<string, LinkedWork[]>();
   for (const r of wRows) {
-    const w: LinkedWork = {
-      linkId: String(r.link_id),
-      workItemId: String(r.work_item_id),
-      linkedAt: iso(r.linked_at),
-      linkedBy: String(r.linked_by),
-      client: str(r.client),
-      product: str(r.product),
-      sector: String(r.sector),
-      line: str(r.line),
-      plannedDate: str(r.planned_date),
-      plannedDateTo: str(r.planned_date_to),
-      plannedQuantity: str(r.planned_quantity),
-      unit: str(r.unit),
-      deliveryDate: str(r.delivery_date),
-      packagingLote: str(r.packaging_lote),
-      packagingVto: str(r.packaging_vto),
-      operationalStatus: String(r.operational_status ?? "pendiente"),
-      qualityStatus: String(r.quality_status ?? "pendiente"),
-      finishedQty: str(r.finished_qty),
-      orderNumber: str(r.order_number),
-      delivered: Boolean(r.delivered),
-      cancelled: Boolean(r.deleted_at) || Boolean(r.operational_cancelled_at) || r.operational_status === "cancelado",
-      snapshot: (r.item_snapshot ?? {}) as LinkedWork["snapshot"],
-    };
+    const w = toLinkedWork(factsFromRow(r), {
+      link: { linkId: String(r.link_id), linkedAt: iso(r.linked_at), linkedBy: String(r.linked_by), snapshot: (r.item_snapshot ?? {}) as LinkedWork["snapshot"] },
+    });
     const k = String(r.item_id);
     worksByItem.set(k, [...(worksByItem.get(k) ?? []), w]);
   }
@@ -144,7 +196,7 @@ async function loadDeliveries(db: { execute: SqlTx["execute"] }, where: ReturnTy
       product: String(r.product),
       quantity: str(r.quantity),
       unit: str(r.unit),
-      sector: (str(r.sector) as DeliverySector | null) ?? null,
+      sector: (str(r.sector) as ItemSector | null) ?? null,
       plannedProductionDate: str(r.planned_production_date),
       lot: str(r.lot),
       vto: str(r.vto),
@@ -185,6 +237,58 @@ async function loadDeliveries(db: { execute: SqlTx["execute"] }, where: ReturnTy
   });
 }
 
+const NOT_CANCELLED_WORK = sql`w.deleted_at is null and w.operational_cancelled_at is null and w.operational_status <> 'cancelado' and w.status <> 'CANCELADO'`;
+const NOT_LINKED = sql`not exists (select 1 from scheduled_delivery_links l where l.work_item_id = w.id and l.unlinked_at is null)`;
+const HAS_REAL_DELIVERY = sql`exists (select 1 from work_item_deliveries wd where wd.work_item_id = w.id and wd.status = 'ENTREGADO' and wd.deleted_at is null)`;
+
+/**
+ * Trabajos SIN vínculo activo que tienen algo para mostrar en [from, to]: una entrega real con fecha real en el rango
+ * o (si siguen vigentes) su fecha de entrega programada en el rango. Los vinculados no se traen: su contenedor ya los muestra.
+ */
+async function loadUnlinkedWorks(db: { execute: SqlTx["execute"] }, from: string, to: string): Promise<WorkFacts[]> {
+  const rows = (await db.execute(sql`
+    select ${WORK_FACT_COLS}, false as is_linked, null::text as container_date, null::text as container_status
+    from work_items w
+    where ${NOT_LINKED} and (
+      (w.delivery_date between ${from}::date and ${to}::date and ${NOT_CANCELLED_WORK})
+      or exists (
+        select 1 from work_item_deliveries wd
+        where wd.work_item_id = w.id and wd.status = 'ENTREGADO' and wd.deleted_at is null
+          and (wd.actual_delivered_at at time zone ${TZ})::date between ${from}::date and ${to}::date
+      )
+    )
+  `)).rows as Row[];
+  return rows.map(factsFromRow);
+}
+
+/**
+ * Diagnóstico de solo lectura (no escribe nada): cuántas entregas HISTÓRICAS y FUTURAS se recuperan solas de los trabajos y
+ * cuántos trabajos quedan fuera del calendario (sin fecha real / sin fecha de entrega / cancelados) y por qué.
+ */
+export async function entregasRecoveryStats(): Promise<EntregasRecoveryStats> {
+  const db = requireDb();
+  const rows = (await db.execute(sql`
+    select ${WORK_FACT_COLS}, (lk.delivery_id is not null) as is_linked,
+           to_char(d.delivery_date, 'YYYY-MM-DD') as container_date, d.status as container_status,
+           to_char(now() at time zone ${TZ}, 'YYYY-MM-DD') as today
+    from work_items w
+    left join lateral (
+      select i.delivery_id from scheduled_delivery_links l join scheduled_delivery_items i on i.id = l.item_id
+      where l.work_item_id = w.id and l.unlinked_at is null limit 1
+    ) lk on true
+    left join scheduled_deliveries d on d.id = lk.delivery_id
+    where w.delivery_date is not null or w.operational_status = 'entregado' or ${HAS_REAL_DELIVERY}
+  `)).rows as Row[];
+  const noDate = (await db.execute(sql`
+    select count(*)::int as n, to_char(now() at time zone ${TZ}, 'YYYY-MM-DD') as today
+    from work_items w
+    where w.delivery_date is null and ${NOT_CANCELLED_WORK} and w.operational_status <> 'entregado'
+      and ${NOT_LINKED} and not ${HAS_REAL_DELIVERY}
+  `)).rows as Row[];
+  const today = String(noDate[0]?.today ?? rows[0]?.today ?? new Date().toISOString().slice(0, 10));
+  return computeRecoveryStats(rows.map(factsFromRow), today, Number(noDate[0]?.n ?? 0));
+}
+
 /** Recorta lo que el sector no puede ver (Envasado: solo los productos de su sector). El recorte es del SERVIDOR. */
 function restrictForActor(actor: EntregasActor, deliveries: ScheduledDelivery[]): ScheduledDelivery[] {
   const only = entregasVisibleSector(actor.sector);
@@ -205,14 +309,28 @@ const isoDate = (v: string, label: string) => {
 };
 
 export const entregasService = {
-  /** Entregas con fecha entre `from` y `to` (inclusive). Incluye canceladas (se ven tachadas) para conservar historial. */
+  /**
+   * Entregas con fecha entre `from` y `to` (inclusive). Une, SIN copiar nada (se calcula en cada lectura, así que cualquier
+   * cambio en un trabajo se ve al instante):
+   *  - las entregas programadas a mano (incluye canceladas: se ven tachadas para conservar historial), y
+   *  - lo recuperado de los trabajos NO vinculados: entregas reales en su fecha real («Entrega registrada») y trabajos
+   *    vigentes con fecha de entrega («Desde trabajo»). Un trabajo vinculado ya aparece dentro de su entrega programada.
+   */
   async list(actor: EntregasActor, range: { from: string; to: string }): Promise<ScheduledDelivery[]> {
     assertView(actor);
     const db = requireDb();
     const from = isoDate(range.from, "Desde");
     const to = isoDate(range.to, "Hasta");
-    const all = await loadDeliveries(db, sql`d.delivery_date between ${from}::date and ${to}::date`);
-    return restrictForActor(actor, all);
+    const scheduled = await loadDeliveries(db, sql`d.delivery_date between ${from}::date and ${to}::date`);
+    const derived = buildDerivedDeliveries(await loadUnlinkedWorks(db, from, to), { from, to });
+    return restrictForActor(actor, [...scheduled, ...derived]);
+  },
+
+  /** Diagnóstico de lo recuperado automáticamente. Solo quien ve todo (Envasado ve el calendario recortado: sin cifras). */
+  async recoveryStats(actor: EntregasActor): Promise<EntregasRecoveryStats | null> {
+    assertView(actor);
+    if (entregasVisibleSector(actor.sector)) return null;
+    return entregasRecoveryStats();
   },
 
   async get(actor: EntregasActor, id: string): Promise<ScheduledDelivery> {
