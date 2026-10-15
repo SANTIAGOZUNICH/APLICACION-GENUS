@@ -21,7 +21,7 @@ export type WorkItemReportRow = {
   sector: string;
   status: string;
   operationalStatus: string;
-  estadoOperativo: string;
+  qualityStatus: string;
   plannedDate: string;
   deliveryDate: string | null;
   createdAt: Date;

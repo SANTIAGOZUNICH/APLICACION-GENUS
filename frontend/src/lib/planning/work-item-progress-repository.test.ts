@@ -1420,7 +1420,7 @@ describe("deliverWorkDurable — el servidor relee TODO dato canónico de Neon, 
 
   it("rechaza si el work item no existe", async () => {
     await expect(
-      deliverWorkDurable({ ...baseInput, workItemId: "wi-inexistente" } as never)
+      deliver({ ...baseInput, workItemId: "wi-inexistente" } as never)
     ).rejects.toThrow("Trabajo no encontrado.");
   });
 });
