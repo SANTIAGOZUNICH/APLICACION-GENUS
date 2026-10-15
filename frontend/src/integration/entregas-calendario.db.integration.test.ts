@@ -100,6 +100,13 @@ describe.skipIf(Boolean(PROBLEM))(`Calendario de Entregas en Postgres real${PROB
     ]);
     // Fecha cargada sin hora → medianoche UTC (en Argentina es el 19/10 a las 21:00).
     await realDelivery(ids.medianoche!, "CREMA MEDIANOCHE IT", [{ at: "2026-10-20T00:00:00Z", qty: 150 }]);
+    // Caso real (LUCENT · SERUM ADN 1% · OA-2026-26362): Envasado CERRADO, 200 de 500 ya entregados, resto pendiente.
+    await mk("cerrado", "SERUM ADN 1% IT", { deliveryDate: "2026-10-16" });
+    await q(
+      "update work_items set operational_status = 'completo', finished_qty = '500', packaging_closed_at = now(), packaging_closed_by = 'IT' where id = $1",
+      [ids.cerrado]
+    );
+    await realDelivery(ids.cerrado!, "SERUM ADN 1% IT", [{ at: "2026-10-15T15:00:00Z", qty: 200 }]);
     inventoryBefore = await inventoryFingerprint();
   }, 120_000);
 
@@ -153,6 +160,33 @@ describe.skipIf(Boolean(PROBLEM))(`Calendario de Entregas en Postgres real${PROB
     expect(list.find((x) => x.deliveryDate === "2026-10-28")!.items.map((i) => i.product)).toEqual(["SERUM B IT"]);
     expect(list.find((x) => x.deliveryDate === "2026-10-30")!.items.map((i) => i.product)).toEqual(["SERUM A IT"]);
     const hist = await s.workHistory(prod, ids.futuroA!);
+    expect(hist[0]).toMatchObject({ action: "work_edit", actorEmail: prod.email });
+  });
+
+  it("Envasado CERRADO con entrega pendiente: Producción reprograma la FECHA DE ENTREGA sin reabrir ni tocar lo productivo", async () => {
+    const s = await svc();
+    const snap = async () =>
+      (await q(
+        "select to_char(delivery_date,'YYYY-MM-DD') d, operational_status, finished_qty, planned_quantity, packaging_closed_at is not null as cerrado from work_items where id = $1",
+        [ids.cerrado]
+      ))[0];
+    const before = await snap();
+    // Lo que envía el formulario: fecha nueva + cantidad y observaciones sin cambios; motivo «completado».
+    const r = await s.editWork(prod, ids.cerrado!, { deliveryDate: "2026-10-20", plannedQuantity: "150", notes: null }, "completado");
+    expect(r.applied).toEqual(["deliveryDate"]);
+    // Persistida (lectura nueva = «recargar la página») y sin tocar estado, unidades ni el cierre de Envasado.
+    expect(await snap()).toEqual({ ...before, d: "2026-10-20" });
+    const list = forClient(await s.list(prod, OCT));
+    const days = list.filter((d) => d.origin !== "entrega_registrada" && d.items.some((i) => i.product === "SERUM ADN 1% IT")).map((d) => d.deliveryDate);
+    expect(days).toEqual(["2026-10-20"]);
+    // La entrega REAL de 200 sigue en su fecha histórica.
+    const real = list.filter((d) => d.origin === "entrega_registrada" && d.items.some((i) => i.product === "SERUM ADN 1% IT")).map((d) => d.deliveryDate);
+    expect(real).toEqual(["2026-10-15"]);
+    // Lo productivo sigue protegido y el error es el REAL (no se atribuye al motivo).
+    await expect(s.editWork(prod, ids.cerrado!, { plannedQuantity: "450" }, "completado")).rejects.toThrow(/Envasado cerrado/);
+    // Motivo corto: el error SÍ es del motivo.
+    await expect(s.editWork(prod, ids.cerrado!, { deliveryDate: "2026-10-21" }, "ok")).rejects.toThrow(/motivo/);
+    const hist = await s.workHistory(prod, ids.cerrado!);
     expect(hist[0]).toMatchObject({ action: "work_edit", actorEmail: prod.email });
   });
 

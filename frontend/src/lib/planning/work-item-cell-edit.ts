@@ -69,6 +69,10 @@ export function workItemCellProtection(item: ProtectableItem & { sector?: string
   if (item.operationalCancelledAt || CLOSED_STATUSES.has(item.status)) {
     return item.status === "entregado" ? "Trabajo entregado: cerrado. Para corregirlo, anulá la entrega en Entregas." : "Trabajo cancelado: restauralo antes de editarlo.";
   }
+  // La FECHA DE ENTREGA es programación logística, no un dato productivo: mientras quede algo por entregar (no cancelado
+  // ni entregado por completo) Producción la reprograma aunque Envasado esté cerrado, Calidad haya decidido o haya salido
+  // de Codificado. No reabre Envasado ni toca estado, unidades, entregas reales ni stock (solo work_items.delivery_date).
+  if (field === "deliveryDate") return null;
   if (item.qualityStatus === "aprobado" || item.qualityStatus === "rechazado") return "Calidad ya decidió: para corregir, anulá la decisión de Calidad (queda auditado).";
   if (item.packagingClosedAt) return "Envasado cerrado: no se modifica.";
   if (item.deliveredFromCodificadoAt) return "Entregado desde Codificado: no se modifica.";
