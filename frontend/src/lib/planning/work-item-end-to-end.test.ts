@@ -20,6 +20,7 @@ function createFakeDb() {
   const workItems = new Map<string, FakeRow>();
   const workItemDeliveries = new Map<string, FakeRow>();
   const productionPedidos = new Map<string, FakeRow>();
+  const workItemDeliveryLines = new Map<string, FakeRow>();
   const operationalEvents: Record<string, unknown>[] = [];
 
   function matchCond(row: Record<string, unknown>, cond: unknown): boolean {
@@ -32,6 +33,7 @@ function createFakeDb() {
 
   function tableFor(name: string): Map<string, FakeRow> {
     if (name === "workItemDeliveries") return workItemDeliveries;
+    if (name === "workItemDeliveryLines") return workItemDeliveryLines;
     if (name === "productionPedidos") return productionPedidos;
     return workItems;
   }
@@ -48,6 +50,14 @@ function createFakeDb() {
         where(c: unknown) {
           cond = c;
           return api;
+        },
+        for() {
+          return api;
+        },
+        then(resolve: (v: FakeRow[]) => unknown) {
+          return Promise.resolve(
+            resolve([...target.values()].filter((r) => matchCond(r, cond)).map((r) => ({ ...r })))
+          );
         },
         limit(n: number) {
           return Promise.resolve(
@@ -92,7 +102,7 @@ function createFakeDb() {
     insert(t: { __name: string }) {
       return {
         values(row: Record<string, unknown>) {
-          if (t.__name === "operationalEvents") {
+          if (t.__name === "operationalEvents" || t.__name === "productionPedidoStatusEvents") {
             operationalEvents.push(row);
             return Promise.resolve();
           }
@@ -247,6 +257,8 @@ vi.mock("@/lib/db/schema", () => {
     "observations",
     "deliveredBy",
     "deliveredBySector",
+    "deliveryComplete",
+    "pendingBalance",
   ];
   const eventCols = ["workItemId", "type", "note", "actorEmail", "actorSector"];
   const table = (name: string, cols: string[]) => {
@@ -261,8 +273,24 @@ vi.mock("@/lib/db/schema", () => {
     operationalOrders: table("operationalOrders", ["id", "orderNumber", "type", "linkedWorkItemId", "version"]),
     productionPedidos: table("productionPedidos", ["id", "op", "estado", "deletedAt"]),
     productionPedidoStatusEvents: table("productionPedidoStatusEvents", []),
+    workItemDeliveryLines: table("workItemDeliveryLines", [
+      "id", "workItemId", "deliveryId", "idempotencyKey", "status", "quantity",
+    ]),
   };
 });
+
+/** Entrega con el actor autenticado (Producción) y devuelve la fila agregada de work_item_deliveries. */
+async function deliverAs(
+  fn: (input: never, actor: { email: string; sector: string; displayName: string }) => Promise<{ delivery: unknown }>,
+  input: unknown
+): Promise<Record<string, unknown> & { id: string }> {
+  const out = await fn(input as never, {
+    email: "produccion@laboratoriogenus.com.ar",
+    sector: "PRODUCCION",
+    displayName: "Producción",
+  });
+  return out.delivery as Record<string, unknown> & { id: string };
+}
 
 function baseWorkItem(overrides: Partial<FakeRow> = {}): FakeRow {
   return {
@@ -336,7 +364,6 @@ describe("ROUND TRIP 1 — Producción carga lote/VTO/cantidad; el mismo dato so
   let saveWorkProgressDurable: typeof import("./work-item-progress-repository").saveWorkProgressDurable;
   let handoffToCodificadoDurable: typeof import("./codificado-handoff-service").handoffToCodificadoDurable;
   let deliverFromCodificadoDurable: typeof import("./codificado-handoff-service").deliverFromCodificadoDurable;
-  let decideQualityDurable: typeof import("./work-item-progress-repository").decideQualityDurable;
   let deliverWorkDurable: typeof import("./work-item-progress-repository").deliverWorkDurable;
 
   const masivo = { email: "envasado@laboratoriogenus.com.ar", displayName: "Envasado", sector: "ENVASADO_MASIVO" };
@@ -345,8 +372,9 @@ describe("ROUND TRIP 1 — Producción carga lote/VTO/cantidad; el mismo dato so
 
   beforeEach(async () => {
     vi.resetModules();
+    vi.doMock("@/lib/planning/circuit/circuit-notifications", () => ({ emitCircuitNotification: vi.fn() }));
     fakeDbHandle = createFakeDb();
-    ({ saveWorkProgressDurable, decideQualityDurable, deliverWorkDurable } = await import(
+    ({ saveWorkProgressDurable, deliverWorkDurable } = await import(
       "./work-item-progress-repository"
     ));
     ({ handoffToCodificadoDurable, deliverFromCodificadoDurable } = await import(
@@ -416,15 +444,8 @@ describe("ROUND TRIP 1 — Producción carga lote/VTO/cantidad; el mismo dato so
     ]);
     expect(persisted.sampleUnits).toBe(3);
     expect(persisted.deliverableUnits).not.toBeNull();
-
-    // CALIDAD aprueba.
-    await decideQualityDurable("wi-e2e", "aprobado", {
-      decidedBy: calidad.email,
-      decidedBySector: calidad.sector,
-    });
     // SEGUNDA LECTURA desde "Producción" (misma fila canónica).
     persisted = fakeDbHandle.workItems.get("wi-e2e")!;
-    expect(persisted.qualityStatus).toBe("aprobado");
     expect(persisted.packagingLote).toBe("L26055");
     expect(persisted.packagingVto).toBe("09/2028");
     expect(persisted.packingGroups).toEqual([
@@ -434,7 +455,7 @@ describe("ROUND TRIP 1 — Producción carga lote/VTO/cantidad; el mismo dato so
 
     // EXPEDICIÓN entrega al cliente — con un body de frontend que NO manda
     // estos datos (simula un caller mínimo), el servidor los relee de Neon.
-    const delivery = await deliverWorkDurable({
+    const delivery = await deliverAs(deliverWorkDurable, {
       workItemId: "wi-e2e",
       qualityItemId: "qc-1",
       codigo: null,
@@ -466,7 +487,6 @@ describe("ROUND TRIP 2 — Lote/VTO cargados recién por Codificado sobreviven h
   let saveWorkProgressDurable: typeof import("./work-item-progress-repository").saveWorkProgressDurable;
   let handoffToCodificadoDurable: typeof import("./codificado-handoff-service").handoffToCodificadoDurable;
   let deliverFromCodificadoDurable: typeof import("./codificado-handoff-service").deliverFromCodificadoDurable;
-  let decideQualityDurable: typeof import("./work-item-progress-repository").decideQualityDurable;
   let deliverWorkDurable: typeof import("./work-item-progress-repository").deliverWorkDurable;
 
   const masivo = { email: "envasado@laboratoriogenus.com.ar", displayName: "Envasado", sector: "ENVASADO_MASIVO" };
@@ -475,8 +495,9 @@ describe("ROUND TRIP 2 — Lote/VTO cargados recién por Codificado sobreviven h
 
   beforeEach(async () => {
     vi.resetModules();
+    vi.doMock("@/lib/planning/circuit/circuit-notifications", () => ({ emitCircuitNotification: vi.fn() }));
     fakeDbHandle = createFakeDb();
-    ({ saveWorkProgressDurable, decideQualityDurable, deliverWorkDurable } = await import(
+    ({ saveWorkProgressDurable, deliverWorkDurable } = await import(
       "./work-item-progress-repository"
     ));
     ({ handoffToCodificadoDurable, deliverFromCodificadoDurable } = await import(
@@ -532,11 +553,6 @@ describe("ROUND TRIP 2 — Lote/VTO cargados recién por Codificado sobreviven h
       { cajas: 5, unidadesPorCaja: 50 },
     ]);
 
-    await decideQualityDurable("wi-e2e-2", "aprobado", {
-      decidedBy: calidad.email,
-      decidedBySector: calidad.sector,
-    });
-
     // SEGUNDA LECTURA desde "Producción" — mismos valores.
     persisted = fakeDbHandle.workItems.get("wi-e2e-2")!;
     expect(persisted.packagingLote).toBe("L26099");
@@ -547,7 +563,7 @@ describe("ROUND TRIP 2 — Lote/VTO cargados recién por Codificado sobreviven h
     ]);
 
     // EXPEDICIÓN → REMITO: el snapshot de entrega debe usar L26099/10-2028.
-    const delivery = await deliverWorkDurable({
+    const delivery = await deliverAs(deliverWorkDurable, {
       workItemId: "wi-e2e-2",
       qualityItemId: "qc-2",
       codigo: null,
@@ -573,7 +589,6 @@ describe("ROUND TRIP 2 — Lote/VTO cargados recién por Codificado sobreviven h
 describe("ROUND TRIP 3 — NO-CLOBBER: ninguna operación de lifecycle borra un campo no relacionado", () => {
   let saveWorkProgressDurable: typeof import("./work-item-progress-repository").saveWorkProgressDurable;
   let completeWorkDurable: typeof import("./work-item-progress-repository").completeWorkDurable;
-  let decideQualityDurable: typeof import("./work-item-progress-repository").decideQualityDurable;
   let reworkWorkItemDurable: typeof import("./work-item-progress-repository").reworkWorkItemDurable;
   let deliverWorkDurable: typeof import("./work-item-progress-repository").deliverWorkDurable;
   let handoffToCodificadoDurable: typeof import("./codificado-handoff-service").handoffToCodificadoDurable;
@@ -595,8 +610,9 @@ describe("ROUND TRIP 3 — NO-CLOBBER: ninguna operación de lifecycle borra un 
 
   beforeEach(async () => {
     vi.resetModules();
+    vi.doMock("@/lib/planning/circuit/circuit-notifications", () => ({ emitCircuitNotification: vi.fn() }));
     fakeDbHandle = createFakeDb();
-    ({ saveWorkProgressDurable, completeWorkDurable, decideQualityDurable, reworkWorkItemDurable, deliverWorkDurable } =
+    ({ saveWorkProgressDurable, completeWorkDurable, reworkWorkItemDurable, deliverWorkDurable } =
       await import("./work-item-progress-repository"));
     ({ handoffToCodificadoDurable, deliverFromCodificadoDurable } = await import("./codificado-handoff-service"));
     fakeDbHandle.workItems.set(
@@ -647,14 +663,9 @@ describe("ROUND TRIP 3 — NO-CLOBBER: ninguna operación de lifecycle borra un 
       actorArgs.sector
     );
     assertCanonicalIntact(fakeDbHandle.workItems.get("wi-noclobber")!);
-
-    await decideQualityDurable("wi-noclobber", "aprobado", {
-      decidedBy: "calidad@laboratoriogenus.com.ar",
-      decidedBySector: "CALIDAD",
-    });
     assertCanonicalIntact(fakeDbHandle.workItems.get("wi-noclobber")!);
 
-    const delivery = await deliverWorkDurable({
+    const delivery = await deliverAs(deliverWorkDurable, {
       workItemId: "wi-noclobber",
       qualityItemId: "qc-3",
       codigo: null,
@@ -701,7 +712,6 @@ describe("BLINDAJE DEFINITIVO LOTE/VTO — un valor stale INCORRECTO (no solo va
   let saveWorkProgressDurable: typeof import("./work-item-progress-repository").saveWorkProgressDurable;
   let handoffToCodificadoDurable: typeof import("./codificado-handoff-service").handoffToCodificadoDurable;
   let deliverFromCodificadoDurable: typeof import("./codificado-handoff-service").deliverFromCodificadoDurable;
-  let decideQualityDurable: typeof import("./work-item-progress-repository").decideQualityDurable;
   let deliverWorkDurable: typeof import("./work-item-progress-repository").deliverWorkDurable;
 
   const masivo = { email: "envasado@laboratoriogenus.com.ar", displayName: "Envasado", sector: "ENVASADO_MASIVO" };
@@ -709,8 +719,9 @@ describe("BLINDAJE DEFINITIVO LOTE/VTO — un valor stale INCORRECTO (no solo va
 
   beforeEach(async () => {
     vi.resetModules();
+    vi.doMock("@/lib/planning/circuit/circuit-notifications", () => ({ emitCircuitNotification: vi.fn() }));
     fakeDbHandle = createFakeDb();
-    ({ saveWorkProgressDurable, decideQualityDurable, deliverWorkDurable } = await import(
+    ({ saveWorkProgressDurable, deliverWorkDurable } = await import(
       "./work-item-progress-repository"
     ));
     ({ handoffToCodificadoDurable, deliverFromCodificadoDurable } = await import(
@@ -789,12 +800,8 @@ describe("BLINDAJE DEFINITIVO LOTE/VTO — un valor stale INCORRECTO (no solo va
       { workItemId: "wi-stale-wrong", idempotencyKey: "stale-wrong-deliver-002" },
       codificado
     );
-    await decideQualityDurable("wi-stale-wrong", "aprobado", {
-      decidedBy: "calidad@laboratoriogenus.com.ar",
-      decidedBySector: "CALIDAD",
-    });
 
-    const delivery = await deliverWorkDurable({
+    const delivery = await deliverAs(deliverWorkDurable, {
       workItemId: "wi-stale-wrong",
       qualityItemId: "qc-stale-wrong",
       codigo: null,
@@ -837,12 +844,12 @@ describe("BLINDAJE DEFINITIVO LOTE/VTO — un valor stale INCORRECTO (no solo va
 describe("BLINDAJE DEFINITIVO LOTE/VTO — corrección explícita audita el cambio y no toca snapshots históricos", () => {
   let updateWorkItemLoteVtoDurable: typeof import("./work-item-progress-repository").updateWorkItemLoteVtoDurable;
   let deliverWorkDurable: typeof import("./work-item-progress-repository").deliverWorkDurable;
-  let decideQualityDurable: typeof import("./work-item-progress-repository").decideQualityDurable;
 
   beforeEach(async () => {
     vi.resetModules();
+    vi.doMock("@/lib/planning/circuit/circuit-notifications", () => ({ emitCircuitNotification: vi.fn() }));
     fakeDbHandle = createFakeDb();
-    ({ updateWorkItemLoteVtoDurable, deliverWorkDurable, decideQualityDurable } = await import(
+    ({ updateWorkItemLoteVtoDurable, deliverWorkDurable } = await import(
       "./work-item-progress-repository"
     ));
     fakeDbHandle.workItems.set(
@@ -885,11 +892,7 @@ describe("BLINDAJE DEFINITIVO LOTE/VTO — corrección explícita audita el camb
   });
 
   it("una entrega ya confirmada ANTES de la corrección conserva su snapshot histórico (L26099), aunque el WorkItem pase a L26100", async () => {
-    await decideQualityDurable("wi-correction", "aprobado", {
-      decidedBy: "calidad@laboratoriogenus.com.ar",
-      decidedBySector: "CALIDAD",
-    });
-    const delivery = await deliverWorkDurable({
+    const delivery = await deliverAs(deliverWorkDurable, {
       workItemId: "wi-correction",
       qualityItemId: "qc-correction",
       codigo: null,
@@ -947,6 +950,7 @@ describe("BLINDAJE DEFINITIVO LOTE/VTO — se completan en momentos independient
 
   beforeEach(async () => {
     vi.resetModules();
+    vi.doMock("@/lib/planning/circuit/circuit-notifications", () => ({ emitCircuitNotification: vi.fn() }));
     fakeDbHandle = createFakeDb();
     ({ saveWorkProgressDurable } = await import("./work-item-progress-repository"));
     ({ handoffToCodificadoDurable, deliverFromCodificadoDurable } = await import(
@@ -1040,6 +1044,7 @@ describe("BLINDAJE DEFINITIVO LOTE/VTO — los warnings siguen al WorkItem canó
 
   beforeEach(async () => {
     vi.resetModules();
+    vi.doMock("@/lib/planning/circuit/circuit-notifications", () => ({ emitCircuitNotification: vi.fn() }));
     fakeDbHandle = createFakeDb();
     ({ saveWorkProgressDurable } = await import("./work-item-progress-repository"));
     ({ handoffToCodificadoDurable, deliverFromCodificadoDurable } = await import(

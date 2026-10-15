@@ -226,19 +226,10 @@ describe("canReopenCodificadoDelivery — Rehacer entrega", () => {
     if (!result.ok) expect(result.code).toBe("HANDOFF_CANCELLED");
   });
 
-  it("bloquea si Calidad ya aprobó — no se auto-corrige la decisión en silencio", () => {
-    const result = canReopenCodificadoDelivery({ ...deliveredItem, qualityStatus: "aprobado" });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.code).toBe("QUALITY_DECIDED");
-      expect(result.error).toMatch(/anule su decisión/i);
-    }
-  });
-
-  it("bloquea si Calidad ya rechazó", () => {
-    const result = canReopenCodificadoDelivery({ ...deliveredItem, qualityStatus: "rechazado" });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe("QUALITY_DECIDED");
+  // Reemplaza a «bloquea si Calidad ya aprobó/rechazó»: las decisiones históricas de Calidad ya NO bloquean.
+  it("una decisión histórica de Calidad (aprobado/rechazado) ya no bloquea rehacer la entrega", () => {
+    expect(canReopenCodificadoDelivery({ ...deliveredItem, qualityStatus: "aprobado" }).ok).toBe(true);
+    expect(canReopenCodificadoDelivery({ ...deliveredItem, qualityStatus: "rechazado" }).ok).toBe(true);
   });
 
   it("bloquea si ya existe una entrega real a cliente en work_item_deliveries", () => {

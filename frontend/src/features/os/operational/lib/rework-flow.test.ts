@@ -16,22 +16,10 @@ describe("canRequestRework", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("bloquea si Calidad ya aprobó — hay que anular la decisión primero", () => {
-    const result = canRequestRework({
-      completedAt: "2026-08-12T10:00:00.000Z",
-      qualityStatus: "aprobado",
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe("QUALITY_DECIDED");
-  });
-
-  it("bloquea si Calidad ya rechazó — hay que anular la decisión primero", () => {
-    const result = canRequestRework({
-      completedAt: "2026-08-12T10:00:00.000Z",
-      qualityStatus: "rechazado",
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe("QUALITY_DECIDED");
+  // Reemplaza a «bloquea si Calidad ya aprobó/rechazó»: Rehacer (Producción) ya no depende de Calidad.
+  it("una decisión histórica de Calidad (aprobado/rechazado) no bloquea Rehacer", () => {
+    expect(canRequestRework({ completedAt: "2026-08-12T10:00:00.000Z", qualityStatus: "aprobado" }).ok).toBe(true);
+    expect(canRequestRework({ completedAt: "2026-08-12T10:00:00.000Z", qualityStatus: "rechazado" }).ok).toBe(true);
   });
 
   it("bloquea si ya existe una entrega comercial real — no revierte un hecho irreversible", () => {

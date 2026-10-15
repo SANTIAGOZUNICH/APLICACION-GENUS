@@ -293,7 +293,7 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
     patch.deliverableUnits = close.packedUnits;
     patch.packagingClosedAt = now;
     patch.packagingClosedBy = actorName;
-  } else if (hasRealPackingGroups(nextGroups) && finishedNum != null) {
+  } else if (c && hasRealPackingGroups(nextGroups) && finishedNum != null) {
     const packed = summarizePackingGroups(normalizePackingGroups(nextGroups as never)).totalEmbalado;
     // Trabajos históricos (Producción registra la entrega): lo entregable es lo físicamente embalado. Trabajos
     // enviados a Codificado sin desglose completo: la cantidad total declarada manda; una distribución parcial NO

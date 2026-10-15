@@ -36,9 +36,12 @@ function createFakeDb() {
   }
 
   const productionPedidos = new Map<string, FakeRow>();
+  const workItemDeliveryLines = new Map<string, FakeRow>();
+  const productionPedidoStatusEvents: Record<string, unknown>[] = [];
 
   function tableFor(name: string): Map<string, FakeRow> {
     if (name === "operationalOrders") return operationalOrders;
+    if (name === "workItemDeliveryLines") return workItemDeliveryLines;
     if (name === "workItemDeliveries") return workItemDeliveries;
     if (name === "productionPedidos") return productionPedidos;
     return workItems;
@@ -55,6 +58,13 @@ function createFakeDb() {
         },
         where(c: unknown) {
           cond = c;
+          return api;
+        },
+        // FOR UPDATE / ORDER BY: sin efecto en el fake (un solo hilo).
+        for() {
+          return api;
+        },
+        orderBy() {
           return api;
         },
         limit(n: number) {
@@ -110,6 +120,10 @@ function createFakeDb() {
             operationalEvents.push(row);
             return Promise.resolve();
           }
+          if (table.__name === "productionPedidoStatusEvents") {
+            productionPedidoStatusEvents.push(row);
+            return Promise.resolve();
+          }
           const target = tableFor(table.__name);
           const id = (row.id as string | undefined) ?? `${table.__name}-${target.size + 1}`;
           const stored = { ...row, id };
@@ -130,7 +144,7 @@ function createFakeDb() {
     },
   };
 
-  return { tx, workItems, operationalOrders, workItemDeliveries, operationalEvents, productionPedidos };
+  return { tx, workItems, operationalOrders, workItemDeliveries, workItemDeliveryLines, operationalEvents, productionPedidos, productionPedidoStatusEvents };
 }
 
 let fakeDbHandle: ReturnType<typeof createFakeDb>;
@@ -194,6 +208,7 @@ vi.mock("@/lib/db/schema", () => {
     "productionPedidoId",
     "finishedQty",
     "version",
+    "status",
   ];
   const orderCols = [
     "id",
@@ -243,8 +258,11 @@ vi.mock("@/lib/db/schema", () => {
     "observations",
     "deliveredBy",
     "deliveredBySector",
+    "deliveryComplete",
+    "pendingBalance",
   ];
-  const pedidoCols = ["id", "op"];
+  const pedidoCols = ["id", "op", "estado", "deletedAt"];
+  const lineCols = ["id", "workItemId", "deliveryId", "idempotencyKey", "status", "quantity"];
   const table = (name: string, cols: string[]) => {
     const t: Record<string, unknown> = { __name: name };
     for (const c of cols) t[c] = { name: c };
@@ -256,6 +274,8 @@ vi.mock("@/lib/db/schema", () => {
     operationalEvents: table("operationalEvents", []),
     operationalOrders: table("operationalOrders", orderCols),
     productionPedidos: table("productionPedidos", pedidoCols),
+    workItemDeliveryLines: table("workItemDeliveryLines", lineCols),
+    productionPedidoStatusEvents: table("productionPedidoStatusEvents", []),
   };
 });
 
@@ -1286,12 +1306,21 @@ describe("deliverWorkDurable — el servidor relee TODO dato canónico de Neon, 
     deliveredBySector: "DEPOSITO" as const,
   };
 
+  const actor = { email: "produccion@laboratoriogenus.com.ar", sector: "PRODUCCION", displayName: "Producción" };
+  // Circuito sin Calidad: devuelve la fila agregada de la entrega (work_item_deliveries).
+  const deliver = async (input: Parameters<typeof deliverWorkDurable>[0]) =>
+    (await deliverWorkDurable(input, actor)).delivery as Record<string, unknown> & { id: string };
+
   beforeEach(async () => {
     vi.resetModules();
+    vi.doMock("@/lib/planning/circuit/circuit-notifications", () => ({ emitCircuitNotification: vi.fn() }));
     fakeDbHandle = createFakeDb();
     ({ deliverWorkDurable } = await import("./work-item-progress-repository"));
     fakeDbHandle.workItems.set("wi-deliver", {
       id: "wi-deliver",
+      sector: "CODIFICADO",
+      operationalStatus: "revision",
+      version: 1,
       client: "Cliente Real",
       product: "Producto Real",
       unit: "u",
@@ -1316,7 +1345,7 @@ describe("deliverWorkDurable — el servidor relee TODO dato canónico de Neon, 
   });
 
   it("TEST CRÍTICO — el frontend manda lote/vto/packingGroups viejos o vacíos; el resultado conserva lo que está en Neon (test obligatorio #8)", async () => {
-    const row = await deliverWorkDurable({
+    const row = await deliver({
       ...baseInput,
       // Frontend "stale": manda valores viejos/vacíos para datos que YA
       // pertenecen al work item — el servidor debe ignorarlos por completo.
@@ -1359,14 +1388,14 @@ describe("deliverWorkDurable — el servidor relee TODO dato canónico de Neon, 
   it("preserva muestras y sobrante de granel (ELABORACION) en el snapshot de entrega", async () => {
     fakeDbHandle.workItems.get("wi-deliver")!.bulkRemainderKg = 4.5;
     fakeDbHandle.workItems.get("wi-deliver")!.bulkRemainderObservation = "Sobrante de mezcla";
-    const row = await deliverWorkDurable(baseInput as never);
+    const row = await deliver(baseInput as never);
     expect(row.sampleUnits).toBe(3);
     expect(row.bulkRemainderKg).toBe(4.5);
     expect(row.bulkRemainderObservation).toBe("Sobrante de mezcla");
   });
 
   it("no reconstruye packingGroups desde un total — preserva el array de grupos EXACTO (10×100, 2×50, nunca 1200 plano)", async () => {
-    const row = await deliverWorkDurable(baseInput as never);
+    const row = await deliver(baseInput as never);
     expect(row.packingGroups).toEqual([
       { cajas: 10, unidadesPorCaja: 100 },
       { cajas: 2, unidadesPorCaja: 50 },
@@ -1382,8 +1411,9 @@ describe("deliverWorkDurable — el servidor relee TODO dato canónico de Neon, 
       status: "ENTREGADO",
       archived: false,
       lote: "L26099",
+      deliveryComplete: true,
     });
-    const row = await deliverWorkDurable(baseInput as never);
+    const row = await deliver(baseInput as never);
     expect(row.id).toBe("dlv-existing");
     expect(fakeDbHandle.workItemDeliveries.size).toBe(1);
   });
@@ -1391,6 +1421,6 @@ describe("deliverWorkDurable — el servidor relee TODO dato canónico de Neon, 
   it("rechaza si el work item no existe", async () => {
     await expect(
       deliverWorkDurable({ ...baseInput, workItemId: "wi-inexistente" } as never)
-    ).rejects.toThrow("Work item no encontrado.");
+    ).rejects.toThrow("Trabajo no encontrado.");
   });
 });

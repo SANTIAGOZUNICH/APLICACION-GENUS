@@ -19,6 +19,9 @@ type FakeRow = Record<string, unknown> & { id: string };
 
 function createFakeDb() {
   const workItems = new Map<string, FakeRow>();
+  const workItemDeliveries = new Map<string, FakeRow>();
+  const workItemDeliveryLines = new Map<string, FakeRow>();
+  const productionPedidos = new Map<string, FakeRow>();
   const operationalEvents: Record<string, unknown>[] = [];
 
   function matchCond(row: Record<string, unknown>, cond: unknown): boolean {
@@ -32,7 +35,11 @@ function createFakeDb() {
   }
 
   function tableFor(name: string): Map<string, FakeRow> | null {
-    return name === "workItems" ? workItems : null;
+    if (name === "workItems") return workItems;
+    if (name === "workItemDeliveries") return workItemDeliveries;
+    if (name === "workItemDeliveryLines") return workItemDeliveryLines;
+    if (name === "productionPedidos") return productionPedidos;
+    return null;
   }
 
   const tx = {
@@ -42,16 +49,25 @@ function createFakeDb() {
       const api = {
         from(t: { __name: string }) {
           target =
-            t.__name === "workItems"
-              ? [...workItems.values()]
-              : t.__name === "operationalEvents"
-                ? [...operationalEvents]
+            t.__name === "operationalEvents"
+              ? [...operationalEvents]
+              : tableFor(t.__name)
+                ? [...tableFor(t.__name)!.values()]
                 : [];
           return api;
         },
         where(c: unknown) {
           cond = c;
           return api;
+        },
+        for() {
+          return api;
+        },
+        orderBy() {
+          return api;
+        },
+        then(resolve: (v: Record<string, unknown>[]) => unknown) {
+          return Promise.resolve(resolve(target.filter((r) => matchCond(r, cond)).map((r) => ({ ...r }))));
         },
         limit(n: number) {
           return Promise.resolve(
@@ -88,8 +104,19 @@ function createFakeDb() {
     insert(t: { __name: string }) {
       return {
         values(row: Record<string, unknown>) {
-          if (t.__name === "operationalEvents") operationalEvents.push(row);
-          return Promise.resolve();
+          if (t.__name === "operationalEvents" || t.__name === "productionPedidoStatusEvents") {
+            operationalEvents.push(row);
+            return Promise.resolve();
+          }
+          const target = tableFor(t.__name);
+          if (!target) return Promise.resolve();
+          const id = (row.id as string | undefined) ?? `${t.__name}-${target.size + 1}`;
+          const stored = { ...row, id };
+          target.set(id, stored);
+          return {
+            returning: () => Promise.resolve([{ ...stored }]),
+            then: (resolve: (v: undefined) => unknown) => Promise.resolve(resolve(undefined)),
+          };
         },
       };
     },
@@ -98,7 +125,7 @@ function createFakeDb() {
     },
   };
 
-  return { tx, workItems, operationalEvents };
+  return { tx, workItems, workItemDeliveries, workItemDeliveryLines, productionPedidos, operationalEvents };
 }
 
 let fakeDbHandle: ReturnType<typeof createFakeDb>;
@@ -175,9 +202,10 @@ vi.mock("@/lib/db/schema", () => {
   return {
     workItems: table("workItems", workItemCols),
     operationalEvents: table("operationalEvents", eventCols),
-    productionPedidos: table("productionPedidos", ["id", "estado", "deletedAt"]),
+    productionPedidos: table("productionPedidos", ["id", "estado", "deletedAt", "op"]),
     productionPedidoStatusEvents: table("productionPedidoStatusEvents", []),
-    workItemDeliveries: table("workItemDeliveries", []),
+    workItemDeliveries: table("workItemDeliveries", ["id", "workItemId", "status", "archived"]),
+    workItemDeliveryLines: table("workItemDeliveryLines", ["id", "workItemId", "deliveryId", "idempotencyKey", "status", "quantity"]),
   };
 });
 
@@ -188,6 +216,7 @@ describe("handoffToCodificadoDurable — Lote/VTO fill-once", () => {
 
   beforeEach(async () => {
     vi.resetModules();
+    vi.doMock("@/lib/planning/circuit/circuit-notifications", () => ({ emitCircuitNotification: vi.fn() }));
     fakeDbHandle = createFakeDb();
     ({ handoffToCodificadoDurable } = await import("./codificado-handoff-service"));
     fakeDbHandle.workItems.set("wi-handoff", {
@@ -305,6 +334,7 @@ describe("deliverFromCodificadoDurable — Lote/VTO fill-once", () => {
 
   beforeEach(async () => {
     vi.resetModules();
+    vi.doMock("@/lib/planning/circuit/circuit-notifications", () => ({ emitCircuitNotification: vi.fn() }));
     fakeDbHandle = createFakeDb();
     ({ deliverFromCodificadoDurable } = await import("./codificado-handoff-service"));
     fakeDbHandle.workItems.set("wi-deliver", {
@@ -363,7 +393,7 @@ describe("deliverFromCodificadoDurable — Lote/VTO fill-once", () => {
     });
   });
 
-  it("C) Producción dejó Lote/VTO vacíos — Codificado los completa al entregar a Calidad, y quedan persistidos en el MISMO work item", async () => {
+  it("C) Producción dejó Lote/VTO vacíos — Codificado los completa al entregar, y quedan persistidos en el MISMO work item", async () => {
     const result = await deliverFromCodificadoDurable(
       {
         workItemId: "wi-deliver",

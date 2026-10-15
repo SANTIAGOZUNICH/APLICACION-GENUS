@@ -67,10 +67,11 @@ describe("WorkspaceDefinition", () => {
     ]);
   });
 
-  it("Calidad expone liberación y análisis", () => {
+  // Reemplaza a «Calidad expone liberación y análisis»: Calidad salió del circuito; el sector queda en modo consulta.
+  it("Calidad queda en modo consulta: sin acciones de liberar/aprobar", () => {
     const definition = getWorkspaceDefinition("CALIDAD");
-    expect(definition?.subtitle).toBe("Tenés 5 lotes esperando liberación.");
-    expect(definition?.primaryActions[0]?.label).toBe("Liberar lote");
+    expect(definition?.subtitle).toBe("Consulta de historial y órdenes (solo lectura).");
+    expect(definition?.primaryActions).toEqual([]);
   });
 
   it("Depósito expone movimientos pendientes", () => {
@@ -119,7 +120,7 @@ describe("WorkspaceResolver", () => {
     const resolved = resolveWorkspaceFromAuthSession(session);
 
     expect(resolved.context.firstName).toBe("Lucía");
-    expect(resolved.subtitle).toBe("Tenés 5 lotes esperando liberación.");
+    expect(resolved.subtitle).toBe("Consulta de historial y órdenes (solo lectura).");
     expect(resolved.definition.sectorId).toBe("CALIDAD");
   });
 
