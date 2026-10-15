@@ -7,13 +7,15 @@
  * cancelan; Depósito y Envasado consultan (Envasado ve solo los productos de su sector: el recorte lo hace el servidor).
  * Programar una entrega no mueve stock ni toca trabajos por sí sola.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DndContext, DragOverlay, MeasuringStrategy, MouseSensor, pointerWithin, rectIntersection, TouchSensor, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
 import { AlertTriangle, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { Button } from "@/components/ui/button";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { EntregaFormDialog } from "../components/entrega-form-dialog";
 import { EntregaDetailDialog } from "../components/entrega-detail-dialog";
+import { DraggableChip, DropDay, DropMonthNav, EntregaMoveDialog, dragChipId, moveOptions, parseDragChipId, type PendingDrop } from "../components/entrega-drag";
 import { gridRange, longDateLabel, monthGrid, monthLabel, shiftMonth, WEEKDAYS_ES } from "@/lib/entregas/calendar";
 import { entregasApi } from "@/lib/entregas/entregas-client";
 import { clientKey, groupDeliveriesByClient } from "@/lib/entregas/rules";
@@ -43,6 +45,18 @@ export function EntregasView() {
   const [stats, setStats] = useState<EntregasRecoveryStats | null>(null);
   // Producción: ver también las entregas «Desde trabajo» que quitó del calendario (para restaurarlas).
   const [showHidden, setShowHidden] = useState(false);
+  // Arrastrar y soltar (Producción): nada se guarda hasta CONFIRMAR en el diálogo.
+  const [pendingDrop, setPendingDrop] = useState<PendingDrop | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [navHover, setNavHover] = useState<string | null>(null);
+  const navTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mouse: arrastra al moverse 6 px (el clic sigue abriendo el detalle). Táctil (tablets): mantener apretado ~¼ s.
+  // El día que cuenta es el que está BAJO el dedo/puntero (no el que más se superpone con la tarjeta).
+  const collision: CollisionDetection = (args) => {
+    const hits = pointerWithin(args);
+    return hits.length ? hits : rectIntersection(args);
+  };
+  const sensors = useSensors(useSensor(MouseSensor, { activationConstraint: { distance: 6 } }), useSensor(TouchSensor, { activationConstraint: { delay: 220, tolerance: 8 } }));
 
   const range = useMemo(() => gridRange(year, month), [year, month]);
   const weeks = useMemo(() => monthGrid(year, month), [year, month]);
@@ -91,6 +105,65 @@ export function EntregasView() {
   const openDeliveries = open ? (byDate.get(open.date) ?? []).filter((d) => clientKey(d.client) === clientKey(open.client)) : [];
   const clientNames = useMemo(() => deliveries.map((d) => d.client), [deliveries]);
 
+  const clearNavTimer = () => {
+    if (navTimer.current) clearTimeout(navTimer.current);
+    navTimer.current = null;
+  };
+  // Los productos movibles se toman AL EMPEZAR: si durante el arrastre se cambia de mes, el día de origen ya no está cargado.
+  const dragOptions = useRef<ReturnType<typeof moveOptions>>([]);
+  const onDragStart = (e: DragStartEvent) => {
+    const src = parseDragChipId(String(e.active.id));
+    dragOptions.current = src ? moveOptions((byDate.get(src.date) ?? []).filter((d) => clientKey(d.client) === clientKey(src.client))) : [];
+    setDragging(src?.client ?? null);
+  };
+  // Dejar la tarjeta sobre «‹» / «›» un instante cambia de mes sin soltarla.
+  // Mantener la tarjeta sobre «‹» / «›» un instante cambia de mes sin soltarla (un cambio por cada entrada al botón).
+  // Se compara la posición REAL del puntero/dedo con la de los botones (no depende de la detección de colisiones).
+  const navOver = useRef<string | null>(null);
+  // Posición REAL del puntero/dedo (el desplazamiento automático de la página no la altera).
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!dragging) return;
+    const onMouse = (ev: MouseEvent) => { pointer.current = { x: ev.clientX, y: ev.clientY }; };
+    const onTouch = (ev: TouchEvent) => { const t = ev.touches[0]; if (t) pointer.current = { x: t.clientX, y: t.clientY }; };
+    window.addEventListener("mousemove", onMouse, true);
+    window.addEventListener("touchmove", onTouch, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("mousemove", onMouse, true);
+      window.removeEventListener("touchmove", onTouch, true);
+      pointer.current = null;
+    };
+  }, [dragging]);
+  const onDragMove = () => {
+    if (!pointer.current) return;
+    const { x, y } = pointer.current;
+    const hit = (["prev", "next"] as const).find((k) => {
+      const r = document.querySelector(`[data-testid=entregas-${k}]`)?.getBoundingClientRect();
+      return r ? x >= r.left - 6 && x <= r.right + 6 && y >= r.top - 6 && y <= r.bottom + 6 : false;
+    });
+    const over = hit ? `nav|${hit}` : null;
+    if (over === navOver.current) return;
+    clearNavTimer();
+    navOver.current = over;
+    setNavHover(over);
+    if (over) navTimer.current = setTimeout(() => setYm((v) => shiftMonth(v.year, v.month, over === "nav|next" ? 1 : -1)), 650);
+  };
+  const onDragEnd = (e: DragEndEvent) => {
+    clearNavTimer();
+    navOver.current = null;
+    setNavHover(null);
+    setDragging(null);
+    const src = parseDragChipId(String(e.active.id));
+    const over = String(e.over?.id ?? "");
+    if (!src || !over.startsWith("day|")) return;
+    const to = over.slice(4);
+    if (to === src.date) return;
+    const options = dragOptions.current;
+    dragOptions.current = [];
+    if (options.length === 0) return;
+    setPendingDrop({ client: src.client, from: src.date, to, options });
+  };
+
   if (!allowed) {
     return (
       <TwinShell title="Entregas">
@@ -104,12 +177,15 @@ export function EntregasView() {
 
   return (
     <TwinShell title="Entregas">
+      <DndContext sensors={sensors} collisionDetection={collision} onDragStart={onDragStart} onDragMove={onDragMove} onDragEnd={onDragEnd} onDragCancel={() => { clearNavTimer(); navOver.current = null; setNavHover(null); setDragging(null); }} measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}>
       <div className="space-y-4" data-testid="entregas-view">
         <header className="flex flex-wrap items-center gap-2">
           <h2 className="mr-2 text-xl font-semibold capitalize tracking-tight" data-testid="entregas-month">{monthLabel(year, month)}</h2>
-          <Button type="button" size="sm" variant="secondary" onClick={() => setYm((v) => shiftMonth(v.year, v.month, -1))} aria-label="Mes anterior" data-testid="entregas-prev">
-            <ChevronLeft className="size-4" aria-hidden="true" />
-          </Button>
+          <DropMonthNav id="nav|prev" active={navHover === "nav|prev"}>
+            <Button type="button" size="sm" variant="secondary" onClick={() => setYm((v) => shiftMonth(v.year, v.month, -1))} aria-label="Mes anterior" data-testid="entregas-prev">
+              <ChevronLeft className="size-4" aria-hidden="true" />
+            </Button>
+          </DropMonthNav>
           <Button
             type="button"
             size="sm"
@@ -122,9 +198,11 @@ export function EntregasView() {
           >
             Hoy
           </Button>
-          <Button type="button" size="sm" variant="secondary" onClick={() => setYm((v) => shiftMonth(v.year, v.month, 1))} aria-label="Mes siguiente" data-testid="entregas-next">
-            <ChevronRight className="size-4" aria-hidden="true" />
-          </Button>
+          <DropMonthNav id="nav|next" active={navHover === "nav|next"}>
+            <Button type="button" size="sm" variant="secondary" onClick={() => setYm((v) => shiftMonth(v.year, v.month, 1))} aria-label="Mes siguiente" data-testid="entregas-next">
+              <ChevronRight className="size-4" aria-hidden="true" />
+            </Button>
+          </DropMonthNav>
           {canManage && (
             <label className="ml-auto inline-flex items-center gap-1.5 text-xs text-[var(--os-text-muted)]">
               <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} data-testid="entregas-show-hidden" />
@@ -157,8 +235,10 @@ export function EntregasView() {
                 const isToday = day.iso === today;
                 const isSelected = day.iso === selectedDay;
                 return (
-                  <div
+                  <DropDay
                     key={day.iso}
+                    iso={day.iso}
+                    enabled={canManage}
                     role="gridcell"
                     tabIndex={0}
                     onClick={() => setSelectedDay(day.iso)}
@@ -188,7 +268,9 @@ export function EntregasView() {
                     {/* Escritorio/tablet: SOLO el nombre del cliente (una vez por cliente y día). */}
                     <div className="hidden flex-col gap-1 sm:flex">
                       {groups.slice(0, CELL_VISIBLE).map((g) => (
-                        <ClientChip key={g.client} name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} hidden={isAllHidden(g.deliveries)} review={needsReview(g.deliveries)} onOpen={() => openClient(g.client, day.iso)} />
+                        <DraggableChip key={g.client} id={dragChipId(day.iso, g.client)} disabled={!canManage || moveOptions(g.deliveries).length === 0}>
+                          <ClientChip name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} hidden={isAllHidden(g.deliveries)} review={needsReview(g.deliveries)} onOpen={() => openClient(g.client, day.iso)} />
+                        </DraggableChip>
                       ))}
                       {groups.length > CELL_VISIBLE && (
                         <button type="button" onClick={(e) => { e.stopPropagation(); setSelectedDay(day.iso); }} className="text-left text-[11px] font-semibold text-[var(--os-teal)] hover:underline" data-testid="entregas-more">
@@ -196,7 +278,7 @@ export function EntregasView() {
                         </button>
                       )}
                     </div>
-                  </div>
+                  </DropDay>
                 );
               })}
             </div>
@@ -218,7 +300,9 @@ export function EntregasView() {
           ) : (
             <div className="flex flex-wrap gap-2">
               {selectedClients.map((g) => (
-                <ClientChip key={g.client} name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} hidden={isAllHidden(g.deliveries)} review={needsReview(g.deliveries)} onOpen={() => openClient(g.client, selectedDay)} large />
+                <DraggableChip key={g.client} id={dragChipId(selectedDay, g.client)} disabled={!canManage || moveOptions(g.deliveries).length === 0}>
+                  <ClientChip name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} hidden={isAllHidden(g.deliveries)} review={needsReview(g.deliveries)} onOpen={() => openClient(g.client, selectedDay)} large />
+                </DraggableChip>
               ))}
             </div>
           )}
@@ -227,6 +311,20 @@ export function EntregasView() {
         {stats && <RecoveryFooter stats={stats} />}
         {canManage && <DateAuditPanel />}
       </div>
+      <DragOverlay dropAnimation={null}>
+        {dragging ? <span className="inline-block rounded-md border border-[var(--os-teal)] bg-[var(--os-teal)]/30 px-2 py-1 text-xs font-semibold text-[var(--os-text)] shadow-lg" data-testid="entregas-drag-overlay">{dragging}</span> : null}
+      </DragOverlay>
+      </DndContext>
+      {pendingDrop && (
+        <EntregaMoveDialog
+          pending={pendingDrop}
+          onClose={() => setPendingDrop(null)}
+          onSaved={async (to) => {
+            setSelectedDay(to);
+            await reloadAll();
+          }}
+        />
+      )}
 
       {open && openDeliveries.length > 0 && (
         <EntregaDetailDialog
