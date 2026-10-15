@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import type { WorkItem } from "@/types/operational/work-item";
 import { groupWorkItemsByDay } from "@/lib/operational/work-item-filters";
 import type { SectorId } from "@/types/operational/sector";
@@ -22,7 +22,7 @@ import { WorkItemProgressTable } from "../components/work-item-progress-table";
 import { WorkItemDrawer } from "../components/work-item-drawer";
 import { SyncStatusBar, OperationalTabs } from "../components/operational-ui";
 import { OperationalDayNav } from "../components/operational-day-nav";
-import { OperationalWeekBoard, parseWeekBoardDropId, shortDayLabel } from "../components/operational-week-board";
+import { OperationalWeekBoard, parseWeekBoardDropId, shortDayLabel, WeekBoardDndContext } from "../components/operational-week-board";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { useOperationalCalendar } from "../hooks/use-operational-calendar";
 import { nativeDayEmptyMessage, nativeEmptyPlanMessage } from "../lib/native-empty-copy";
@@ -632,7 +632,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
           {loading && !data && <div className="os-skeleton h-48 rounded-[var(--os-radius)]" />}
 
           {!loading && calendar.viewMode === "week" && (
-            <DndContext sensors={dndSensors} onDragEnd={(e) => void handleDragEnd(e)}>
+            <WeekBoardDndContext sensors={dndSensors} items={workItems} onDragEnd={(e) => void handleDragEnd(e)}>
               {canAssignWork && (
                 <p className="mb-2 text-xs text-[var(--os-text-muted)]" data-testid="dnd-hint">
                   Arrastrá una tarjeta a otro día o línea para replanificarla.
@@ -727,7 +727,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
                   );
                 })}
               </div>
-            </DndContext>
+            </WeekBoardDndContext>
           )}
 
           {!loading && calendar.viewMode === "day" && (
@@ -988,7 +988,7 @@ export function ElaboracionOperationalView() {
       {loading && !data && <div className="os-skeleton h-40 rounded-[var(--os-radius)]" />}
 
       {!loading && calendar.viewMode === "week" && (
-        <DndContext sensors={dndSensors} onDragEnd={(e) => void handleDragEnd(e)}>
+        <WeekBoardDndContext sensors={dndSensors} items={workItems} onDragEnd={(e) => void handleDragEnd(e)}>
           {canAssignWork && (
             <p className="mb-3 text-xs text-[var(--os-text-muted)]" data-testid="dnd-hint">
               Arrastrá una tarjeta a otro día para replanificarla.
@@ -1016,7 +1016,7 @@ export function ElaboracionOperationalView() {
             onCreateSlot={(day) => setAssignSlot({ plannedDate: day })}
             onEditItem={actorSectorId === "PRODUCCION" ? (item) => { setSelectedItem(item); setDrawerOpen(true); } : undefined}
           />
-        </DndContext>
+        </WeekBoardDndContext>
       )}
 
       {!loading && calendar.viewMode === "day" && (

@@ -2,10 +2,10 @@
 
 import { priorityEdge, WorkItemPriorityBadge } from "./work-item-priority-badge";
 import { useWorkItemSemanasPriority } from "../hooks/use-work-item-priorities";
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Pencil } from "lucide-react";
-import { useDraggable, useDroppable } from "@dnd-kit/core";
-import { CSS } from "@dnd-kit/utilities";
+import { DndContext, DragOverlay, pointerWithin, rectIntersection, useDraggable, useDroppable, type CollisionDetection, type DragEndEvent, type SensorDescriptor, type SensorOptions } from "@dnd-kit/core";
 import type { WorkItem } from "@/types/operational/work-item";
 import type { WeeklyPlanItemDto } from "@/lib/planning/weekly-plan-dto";
 import {
@@ -117,7 +117,11 @@ function CardEditButton({ item, onEditItem }: { item: WorkItem; onEditItem?: (it
   );
 }
 
-/** Envuelve una tarjeta con drag & drop — no-op visual si `disabled`. */
+/**
+ * Envuelve una tarjeta con drag & drop. La tarjeta NO se mueve con `transform` dentro de su columna (la lista tiene
+ * desplazamiento interno y eso la recortaba: parecía «encerrada»); mientras se arrastra queda tenue en su lugar y lo que
+ * sigue al puntero es la copia del `DragOverlay` (ver WeekBoardDndContext), dibujada por encima de todo.
+ */
 function DraggableCard({
   id,
   disabled,
@@ -127,28 +131,76 @@ function DraggableCard({
   disabled: boolean;
   children: ReactNode;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id,
-    disabled,
-  });
-  const style: CSSProperties = transform
-    ? {
-        transform: CSS.Translate.toString(transform),
-        zIndex: 20,
-        position: "relative",
-        opacity: isDragging ? 0.85 : 1,
-      }
-    : {};
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id, disabled });
   return (
     <div
       ref={setNodeRef}
-      style={style}
+      style={isDragging ? { opacity: 0.35 } : undefined}
       {...(disabled ? {} : { ...attributes, ...listeners })}
       className={disabled ? undefined : "cursor-grab touch-none active:cursor-grabbing"}
       data-testid="week-board-draggable-card"
     >
       {children}
     </div>
+  );
+}
+
+/** El día de destino es el que está BAJO el puntero/dedo (no el que más se superpone con la tarjeta). */
+export const weekBoardCollision: CollisionDetection = (args) => {
+  const hits = pointerWithin(args);
+  return hits.length ? hits : rectIntersection(args);
+};
+
+/** Copia de la tarjeta que acompaña al puntero/dedo mientras se arrastra. */
+function WeekDragPreview({ item }: { item: WorkItem }) {
+  return (
+    <div className="w-56 cursor-grabbing rounded-md border border-[var(--os-teal)] bg-[#10304a] px-2 py-1.5 text-left shadow-2xl ring-2 ring-[var(--os-teal)]/40" data-testid="week-drag-overlay">
+      <p className="truncate text-[13px] font-semibold leading-tight text-white">{displayField(item.product)}</p>
+      <p className="truncate text-[11px] leading-tight text-[#9fc0d4]">{displayField(item.client)}</p>
+      <p className="text-[12px] font-semibold tabular-nums text-[var(--os-teal)]">
+        {displayField(item.quantity)} {item.unit ?? ""}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Contexto de arrastre del tablero semanal: detección por puntero y la tarjeta en un `DragOverlay` montado en
+ * `document.body` (ningún `overflow`/`transform` de las columnas la puede recortar). Nada se guarda al soltar: el
+ * padre recibe `onDragEnd` y pide CONFIRMAR / CANCELAR.
+ */
+export function WeekBoardDndContext({
+  sensors,
+  items,
+  onDragEnd,
+  children,
+}: {
+  sensors: SensorDescriptor<SensorOptions>[];
+  items: WorkItem[];
+  onDragEnd: (event: DragEndEvent) => void;
+  children: ReactNode;
+}) {
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const active = activeId ? items.find((i) => i.id === activeId) ?? null : null;
+  const overlay = (
+    <DragOverlay dropAnimation={null} zIndex={60}>
+      {active ? <WeekDragPreview item={active} /> : null}
+    </DragOverlay>
+  );
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={weekBoardCollision}
+      onDragStart={(e) => setActiveId(String(e.active.id))}
+      onDragCancel={() => setActiveId(null)}
+      onDragEnd={(e) => {
+        setActiveId(null);
+        onDragEnd(e);
+      }}
+    >
+      {children}
+      {typeof document === "undefined" ? overlay : createPortal(overlay, document.body)}
+    </DndContext>
   );
 }
 
@@ -630,6 +682,7 @@ function WeekColumnCell({
       data-testid={`week-board-daycell-${weekBoardDropId(dropZoneId, day)}`}
       data-day={day}
       data-count={count}
+      data-over={draggable && isOver ? "1" : undefined}
     >
       <button
         type="button"
