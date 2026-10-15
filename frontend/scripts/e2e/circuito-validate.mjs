@@ -132,7 +132,7 @@ try {
   const kc = `cod-${randomUUID()}`;
   const toCod = await post(masivo, `/api/v1/work-items/${destM}/codificado`, { action: "send", totalUnits: 1000, idempotencyKey: kc });
   const afterCod = await wi(destM);
-  check("Envasado → Codificado SIN cajas, distribución ni unidades por caja: solo cantidad total (backend)", toCod.ok() && afterCod.sector === "CODIFICADO" && afterCod.packaging_total_units === 1000 && (afterCod.packing_groups === null || (Array.isArray(afterCod.packing_groups) && afterCod.packing_groups.length === 0)), String(toCod.status()) + (await json(toCod)).error);
+  check("Envasado → Codificado SIN cajas, distribución ni unidades por caja: solo cantidad total (backend)", toCod.ok() && afterCod.sector === "CODIFICADO" && Number(afterCod.packaging_total_units) === 1000 && (afterCod.packing_groups === null || (Array.isArray(afterCod.packing_groups) && afterCod.packing_groups.length === 0)), `${toCod.status()} sector=${afterCod.sector} total=${afterCod.packaging_total_units} groups=${JSON.stringify(afterCod.packing_groups)}`);
   const toCodR = await post(masivo, `/api/v1/work-items/${destM}/codificado`, { action: "send", totalUnits: 1000, idempotencyKey: kc });
   check("Reintento del envío a Codificado: no duplica ni cambia unidades", toCodR.ok() && (await json(toCodR)).replayed === true);
   check("No se cuentan unidades entregadas por enviar a Codificado", (await lines(destM)).length === 0 && (await q("select count(*)::int n from work_item_deliveries where work_item_id = $1", [destM]))[0].n === 0);
