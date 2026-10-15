@@ -106,7 +106,7 @@ describe.skipIf(Boolean(PROBLEM))(`Calendario de Entregas en Postgres real${PROB
       "update work_items set operational_status = 'completo', finished_qty = '500', packaging_closed_at = now(), packaging_closed_by = 'IT' where id = $1",
       [ids.cerrado]
     );
-    await realDelivery(ids.cerrado!, "SERUM ADN 1% IT", [{ at: "2026-10-15T15:00:00Z", qty: 200 }]);
+    await realDelivery(ids.cerrado!, "SERUM ADN 1% IT", [{ at: "2026-10-12T15:00:00Z", qty: 200 }]);
     inventoryBefore = await inventoryFingerprint();
   }, 120_000);
 
@@ -181,7 +181,7 @@ describe.skipIf(Boolean(PROBLEM))(`Calendario de Entregas en Postgres real${PROB
     expect(days).toEqual(["2026-10-20"]);
     // La entrega REAL de 200 sigue en su fecha histórica.
     const real = list.filter((d) => d.origin === "entrega_registrada" && d.items.some((i) => i.product === "SERUM ADN 1% IT")).map((d) => d.deliveryDate);
-    expect(real).toEqual(["2026-10-15"]);
+    expect(real).toEqual(["2026-10-12"]);
     // Lo productivo sigue protegido y el error es el REAL (no se atribuye al motivo).
     await expect(s.editWork(prod, ids.cerrado!, { plannedQuantity: "450" }, "completado")).rejects.toThrow(/Envasado cerrado/);
     // Motivo corto: el error SÍ es del motivo.
