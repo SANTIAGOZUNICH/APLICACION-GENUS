@@ -69,7 +69,7 @@ describe("GET /api/v1/dashboard — matriz de permisos (el servidor recorta el p
     const res = await get(sector, "year=2026");
     expect(res.status).toBe(200);
     const body = (await res.json()) as DashboardPayload;
-    expect(body.permissions).toEqual({ level: "full", canEditTargets: true, canFilterClient: true, ownSector: null });
+    expect(body.permissions).toEqual({ level: "full", canEditTargets: true, canFilterClient: true, ownSector: null, responsiblesScope: "all" });
     expect(body.clients.available).toBe(true);
     if (body.clients.available) expect(body.clients.ranking.map((r) => r.client)).toContain("E2E Cliente Reservado SA");
     expect(body.filterOptions.clients).toContain("E2E Otro Cliente");
@@ -98,7 +98,7 @@ describe("GET /api/v1/dashboard — matriz de permisos (el servidor recorta el p
     expect(body.main.unidades.value).toBe(900);
     expect(body.pedidos.entregados.value).toBe(1);
     expect(body.pedidos.activos.value).toBe(1);
-    expect(body.produccion.monthly).toHaveLength(12);
+    expect(body.productividad.monthly).toHaveLength(12);
     expect(body.pedidos.productosDistintos.value).toBe(1);
   });
 

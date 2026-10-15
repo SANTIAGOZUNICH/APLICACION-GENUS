@@ -21,9 +21,9 @@
 |---|---|
 | Encabezado | «Dashboard Operativo», año seleccionado, período, fecha de **última actualización de los datos** (último `updated_at` de las fuentes) y momento del cálculo; fuente de datos (real / demo en memoria / sin base). |
 | Filtros | Año, mes/período, sector (Envasado Masivo / Premium) y cliente (solo Producción/Dirección). Cada indicador muestra **su** período y **qué fecha usa** (pedido / producción / entrega) y si el filtro de sector aplica. |
-| Indicadores principales | Nivel de servicio · % de pedidos sin reclamos · Lead time promedio · Unidades producidas por año. |
+| Indicadores principales | Nivel de servicio · % de pedidos sin reclamos · Lead time promedio · Unidades producidas (trabajos) por año. |
 | Gestión de pedidos | Pedidos activos · entregados · en despacho · productos distintos producidos. |
-| Producción Masivo vs Premium | Unidades de cada sector, participación %, total, evolución mensual (gráfico de barras SVG propio, accesible). |
+| Productividad de Envasado (Métricas) | KPIs coloreados (Total envasado, Masivo, Premium, % Masivo, % Premium, Promedio diario, Mes más productivo), participación Masivo/Premium, mayor/menor productividad por responsable, podio 1.º/2.º/3.º, ranking completo, tendencia mensual comparativa (variación vs mes anterior, SUBE/BAJA, columnas por responsable y total acumulado con %). Ver sección propia. |
 | Clientes | Top por cantidad de pedidos, menor lead time promedio, clientes activos y comparación entre clientes. |
 | Indicadores operativos | Resultado actual, objetivo, estado y **semáforo** (con texto, no solo color). |
 | Resumen gerencial | Texto determinístico armado con los números calculados (sin IA); omite lo que no tiene datos. |
@@ -58,19 +58,78 @@ Estado: **exacto** = el dato existe tal cual en GENUS OS · **adaptado** = crite
 | Nivel de servicio | Promedio por pedido de (unidades producidas ÷ unidades pedidas) × 100. Solo pedidos con Q > 0 y con **todos** sus trabajos de Envasado terminados (con fecha de cierre y cantidad). No se limita a 100 %. | `production_pedidos.q` + `work_items` (Envasado) por `production_pedido_id` | Producción (último cierre del pedido) | Adaptado |
 | % de pedidos sin reclamos | **Sin datos suficientes siempre**: GENUS OS no registra reclamos de clientes. Los rechazos/«rehacer» de Calidad son internos y no se usan. | — | Pedido | Sin datos |
 | Lead time promedio | Promedio de días entre `fecha` del pedido y la **última entrega real** del pedido (entregas de Envasado/Codificado). Solo plazos > 0 y < 100 días (como la planilla local); el resto se informa como excluido. | `production_pedidos.fecha` + `work_item_deliveries.actual_delivered_at` | Entrega | Adaptado |
-| Unidades producidas | Suma de cantidad final de trabajos de Envasado Masivo+Premium terminados. | `work_items` | Producción | Adaptado |
+| Unidades producidas (trabajos) | Suma de cantidad final de trabajos de Envasado Masivo+Premium terminados. **No es la unidad envasada de Métricas** y puede diferir de ella; el rótulo lo aclara. Alimenta el semáforo de «unidades» (objetivo anual) y el nivel de servicio. | `work_items` | Producción | Adaptado |
 | Pedidos activos | Estado `INGRESO`, `EN_ELABORACION`, `EN_ENVASADO` o `EN_CODIFICADO`. | `production_pedidos.estado` | Pedido | Exacto |
 | Pedidos entregados | Estado `ENTREGADO`. | `production_pedidos.estado` | Pedido | Exacto |
 | Pedidos en despacho | Estado `LISTO_PARA_ENTREGAR` (no hay un estado «en despacho» separado). | `production_pedidos.estado` | Pedido | Adaptado |
 | Productos distintos | Nombres de producto distintos (normalizados) entre los trabajos de Envasado terminados. Texto libre: dos escrituras del mismo producto cuentan como dos. | `work_items.product` | Producción | Adaptado |
 | Clientes activos | Clientes distintos con ≥ 1 pedido en el período. | `production_pedidos.cliente` | Pedido | Adaptado |
-| Masivo vs Premium | Unidades producidas por sector, participación sobre el total (null si el total es 0) y evolución mensual (12 meses del año). | `work_items` | Producción | Adaptado |
+| Productividad de Envasado | Ver «Productividad de Envasado (fuente única: Métricas)». Reemplaza al antiguo bloque «Masivo vs Premium» calculado desde `work_items`. | `packaging_metrics` | Fecha de la métrica | Exacto |
 
 Activos + En despacho + Entregados = total de pedidos del período (los pedidos sin estado reconocible se informan aparte).
 
-**Filtros:** el de **sector** aplica a unidades y productos distintos (el bloque Masivo vs Premium siempre muestra ambos y
-atenúa el otro). El de **cliente** aplica a todo. El de **mes** acota los indicadores; el gráfico mensual siempre muestra el
+**Filtros:** el de **sector** aplica a unidades y productos distintos (en Productividad de Envasado el filtro de sector se aplica a todo: el sector excluido queda «fuera del filtro»). El de **cliente** aplica a todo. El de **mes** acota los indicadores; el gráfico mensual siempre muestra el
 año completo (con el mes resaltado). El sector **no** aplica a pedidos, nivel de servicio ni lead time (cada tarjeta lo aclara).
+
+## Productividad de Envasado (fuente única: Métricas)
+
+Indicadores del «Dashboard de Productividad 2026», calculados **solo** con el módulo **Métricas** (`packaging_metrics`,
+servicio `src/lib/metricas/metricas-service.ts`). **No se calcula nada desde `work_items`.**
+
+- **Fuente y frescura.** `src/lib/dashboard/metrics-source.ts` llama a `MetricasService.list` (la misma función que usa la
+  pantalla de Métricas) con una identidad interna de Producción, solo lectura. Excluye `deleted_at` no nulo (el mismo criterio
+  de «activos» de Métricas). **No hay caché**: la API responde `Cache-Control: no-store` y se recalcula en cada consulta, así que
+  altas, ediciones, importaciones (pegado), bajas y restauraciones de Métricas se ven al instante (botón «Actualizar»).
+  Los totales se suman con `computeTotals` de Métricas, por eso coinciden **exactamente** con lo que Métricas muestra para el
+  mismo período/sector (prueba `metricas-consistency.test.ts` y E2E con SQL independiente).
+- **Filtros.** Año, mes y sector del Dashboard (el de cliente no aplica: los registros de Métricas no tienen cliente; se avisa).
+  Con filtro de sector todo se limita a ese sector y el otro queda «Fuera del filtro de sector».
+
+| Indicador | Cálculo |
+|---|---|
+| TOTAL ENVASADO | Suma de `units` de los registros activos del período y sector (Masivo + Premium). |
+| TOTAL MASIVO / TOTAL PREMIUM | Suma de `units` del sector. |
+| % MASIVO / % PREMIUM | sector ÷ total envasado × 100 (1 decimal). Sin unidades: «Sin datos suficientes» (nunca divide por cero). |
+| PROMEDIO DIARIO DE ENVASADO | total envasado ÷ cantidad de **fechas distintas** con registros válidos en el período. Masivo + Premium el mismo día cuenta **1 día**; no usa días calendario ni hábiles. Sin registros: «Sin datos suficientes». Con filtro de sector, solo ese sector. Un registro válido es activo, con fecha y unidades numéricas ≥ 0 (un registro en 0 cuenta como día con registro: a confirmar). |
+| MES MÁS PRODUCTIVO | Mes del año seleccionado con más unidades (con filtro de sector; el de mes no aplica). Empate: el más temprano. |
+| Tendencia mensual | 12 meses: Masivo, Premium, total, **variación % vs el mes calendario anterior** y **SUBE / BAJA / IGUAL**. Enero no tiene mes anterior; un mes sin registros (o con anterior sin registros) no se compara. |
+| MAYOR / MENOR productividad | Responsable con más / menos unidades en el período. «Menor» exige al menos 2 responsables identificados. |
+| Podio y ranking | Unidades por responsable, de mayor a menor, con cantidad y % de participación; podio visual 1.º/2.º/3.º arriba y ranking completo debajo; filtrable por período y sector. Empates: por nombre. |
+| Columnas por responsable + total acumulado | En la tendencia: los 4 responsables con más unidades del año, «Otros» y «Sin responsable»; fila de total acumulado con su %. |
+
+**Responsables (campo RESPONSABLE).** Se agrupan por `responsible_key`, la normalización que ya usa Métricas (minúsculas, espacios
+colapsados). **No** se unifican tildes ni apodos: «José Díaz» y «Jose Diaz» quedan como dos personas antes que unir a dos
+personas distintas por error (si son la misma, se corrige el dato en Métricas). Un registro sin responsable válido (vacío, solo
+signos, «sin responsable», «n/a», «s/r»…) se agrupa en **«Sin responsable»**: aparece identificado al final del ranking, cuenta en
+los totales y en el % pero **nunca** entra al podio ni a mayor/menor productividad.
+
+### Unidades: envasadas, entregadas, pendientes y consumo de MP
+
+Un glosario desplegable en la sección y el «Ver criterio» de cada tarjeta distinguen cuatro conceptos que **no se mezclan**:
+
+| Concepto | Fuente | Dónde se usa |
+|---|---|---|
+| **Unidades envasadas** | Métricas | Toda la sección «Productividad de Envasado». |
+| **Unidades entregadas** | Entregas reales | Solo el lead time. |
+| **Unidades pendientes** | Pedidos y trabajos | Pedidos activos / en despacho (no son unidades envasadas). |
+| **Consumo de materia prima** | Inventario | No se muestra ni se convierte en unidades. |
+
+Los KPIs que antes decían «unidades producidas» y se calculan desde trabajos se **renombraron**: «Unidades producidas (trabajos)»,
+«Productos distintos (trabajos)», columna de unidades por cliente y el objetivo «Unidades producidas (trabajos, año completo)»
+(el semáforo y los objetivos ya guardados conservan su clave `unidades_producidas`). El bloque «Masivo vs Premium» y su gráfico
+(que salían de trabajos) se reemplazaron por los de Métricas para que el mismo concepto no muestre dos valores.
+
+**Permisos (mínimo privilegio).** Métricas sigue accesible solo para Envasado + Producción (`canAccessMetricas`); **no se amplió ningún
+permiso de lectura ni de edición de Métricas**. El Dashboard lee con identidad interna y el servidor recorta el payload:
+
+| Sector | Totales agregados (KPIs, participación, promedio, tendencia, mes más productivo) | Nombres de responsables (podio, ranking, mayor/menor, columnas) |
+|---|---|---|
+| PRODUCCION, DIRECCION | Sí | Todos los registros (Dirección: solo lectura, ya ve clientes) |
+| ENVASADO_MASIVO / ENVASADO_PREMIUM | Sí (toda la planta) | Solo los registros de **su** sector (lo mismo que ya ve en Métricas); si filtra el otro sector: «No disponible» |
+| ELABORACION, CODIFICADO, CALIDAD, MATERIA_PRIMA, DEPOSITO, COMERCIAL | Sí | No: «No disponible para tu sector» (los nombres no viajan en el payload) |
+
+El % de participación de un sector de Envasado se calcula sobre el total de **su** alcance visible, así que no deja inferir a los
+responsables ocultos.
 
 ## Semáforo y objetivos
 
@@ -100,7 +159,7 @@ no puede ver no viajan; no se ocultan en la UI).
 | Sector | Nivel | Qué recibe |
 |---|---|---|
 | PRODUCCION, DIRECCION | `full` | Todo: nivel de servicio, lead time, reclamos (sin datos), ranking/comparación de clientes, lead time por cliente, filtro por cliente, lista de clientes, edición de objetivos. |
-| ENVASADO_MASIVO, ENVASADO_PREMIUM | `aggregate` | Unidades de Masivo y Premium (con su sector propio resaltado), productos distintos, pedidos activos/despacho/entregados agregados, evolución mensual, objetivo de unidades (solo lectura). **Sin** clientes y **sin** nivel de servicio / lead time / reclamos («No disponible para tu sector»). |
+| ENVASADO_MASIVO, ENVASADO_PREMIUM | `aggregate` | Unidades envasadas (Métricas) de planta y trabajos, KPIs de productividad, tendencia mensual y **los responsables de SU sector** (con su sector propio resaltado), productos distintos, pedidos activos/despacho/entregados agregados, evolución mensual, objetivo de unidades (solo lectura). **Sin** clientes y **sin** nivel de servicio / lead time / reclamos («No disponible para tu sector»). |
 | ELABORACION, CODIFICADO, CALIDAD, MATERIA_PRIMA, DEPOSITO, COMERCIAL | `aggregate` | Igual que Envasado (sin sector propio resaltado). |
 
 - Filtro por cliente: solo `full`. Un sector `aggregate` que lo pida por API recibe **403** (no se ignora en silencio).
@@ -145,11 +204,11 @@ Observadas en la copia local `PEDIDOS 2026 (1).xlsx` (puede no coincidir con la 
 ## Arquitectura
 
 - `src/lib/dashboard/` — `types.ts`, `kpi-definitions.ts` (definición textual de cada KPI), `compute.ts` (funciones **puras**),
-  `semaforo.ts`, `permissions.ts`, `data-source.ts` (lectura SQL de solo lectura / memoria para demo y tests), `targets-service.ts`,
+  `productividad.ts` (cálculo puro de Productividad), `metrics-source.ts` (lectura de Métricas), `semaforo.ts`, `permissions.ts` (incluye `responsiblesScopeFor`), `data-source.ts` (lectura SQL de solo lectura / memoria para demo y tests), `targets-service.ts`,
   `service.ts`, `dashboard-client.ts`, `format.ts`.
 - API: `GET /api/v1/dashboard?year&month&sector&client`; `GET/PUT/DELETE /api/v1/dashboard/targets`.
 - UI: `src/features/os/operational/views/dashboard-view.tsx` + `components/dashboard/*` (tarjetas, gráfico SVG, semáforo,
-  clientes, indicadores, filtros). Sin librerías de gráficos nuevas.
+  clientes, indicadores, filtros, `dashboard-productividad.tsx`, `dashboard-podium.tsx`). Sin librerías de gráficos nuevas.
 - Navegación: ítem `dashboard` en `SidebarItemId`, `sector-registry.ts` (todos los sectores), `twin-nav.ts`, `os-sidebar.tsx`,
   `twin-app.tsx`.
 - Modo demo/memoria: sin base y con `isFeatureMemoryAllowed()` lee filas de memoria (vacías por defecto ⇒ «Sin datos
@@ -172,8 +231,14 @@ Dashboard igual funciona (lectura) y avisa que los objetivos no se pueden guarda
 - Permisos de la API (`src/app/api/v1/dashboard/route.test.ts`): cada sector, payload sin nombres de clientes, 403 en filtro por
   cliente y edición de objetivos, auditoría.
 - Componentes (happy-dom): «Sin datos suficientes», semáforo con/sin objetivo, filtros, gráfico accesible, permisos en pantalla.
+- Productividad (Métricas): `productividad.test.ts` (total/masivo/premium/%, promedio diario con día compartido y sin datos, ranking, orden,
+  «Sin responsable», normalización, filtros período+sector, variación/SUBE-BAJA, permisos de nombres) y `metricas-consistency.test.ts`
+  (Dashboard == Métricas con la misma función de totales, refleja alta/edición/importación/baja/restauración, permisos por sector).
+  Componentes: tarjetas, podio, ranking, «No disponible».
 - Menú: `src/features/os/navigation/dashboard-nav.test.ts` (los 10 sectores).
 - E2E con Postgres **descartable** (Chromium): `flock -w 3600 /tmp/e2e.lock npm run test:e2e:dashboard`
   (`run-dashboard-local.sh` + `dashboard-validate.mjs`). Siembra datos de prueba («E2E Dash …») solo en la base descartable,
   compara la pantalla con un cálculo independiente por SQL, permisos por sector, filtros, objetivos/auditoría, solo lectura y
-  capturas 1440/820/390 sin scroll horizontal. Usa los puertos 443 y 3280.
+  capturas 1440/820/390 sin scroll horizontal. Usa los puertos 443 y 3280. Además siembra `packaging_metrics`, compara Dashboard vs
+un cálculo SQL independiente de Métricas y verifica que alta/edición/importación/baja/restauración por `/api/v1/metricas` cambian el Dashboard.
+(`GENUS_E2E_PRODUCTION_BUILD=1 flock -w 3600 /tmp/e2e.lock npm run test:e2e:dashboard`).
