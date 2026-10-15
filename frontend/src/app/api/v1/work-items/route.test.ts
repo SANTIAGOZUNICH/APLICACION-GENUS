@@ -108,3 +108,30 @@ describe("GET /api/v1/work-items — sector CALIDAD usa la fuente correcta", () 
     expect(body.qualityItems).toEqual([]);
   });
 });
+
+/**
+ * Regresión (barrido E2E): la pantalla de Depósito consulta GET /work-items?sector=DEPOSITO. Depósito no tiene
+ * trabajos (work_items solo admite Elaboración/Envasado/Codificado) y la ruta respondía 400 en cada pantalla.
+ */
+describe("GET /api/v1/work-items — sectores sin trabajos", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listPublishedItems.mockResolvedValue([]);
+    listCompletedItems.mockResolvedValue([]);
+  });
+
+  it.each(["DEPOSITO", "deposito", "COMERCIAL"])("sector=%s responde 200 con lista vacía y no consulta trabajos", async (s) => {
+    const res = await GET(req(`?sector=${s}`));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { workItems: unknown[]; counts: { total: number } };
+    expect(body.workItems).toEqual([]);
+    expect(body.counts.total).toBe(0);
+    expect(listPublishedItems).not.toHaveBeenCalled();
+    expect(listCompletedItems).not.toHaveBeenCalled();
+  });
+
+  it("un sector inexistente o ausente sigue dando 400", async () => {
+    expect((await GET(req("?sector=NOEXISTE"))).status).toBe(400);
+    expect((await GET(req(""))).status).toBe(400);
+  });
+});
