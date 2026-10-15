@@ -158,7 +158,29 @@ interface OperationalTableProps<T> {
   reasonInline?: boolean;
   /** Clase CSS opcional por fila en la planilla (p. ej. borde de prioridad). */
   rowClassName?: (row: T) => string | undefined;
+  /**
+   * Hoja continua (Materias Primas): SIN paginación; todos los registros en una sola hoja con encabezados fijos que se
+   * desplaza dentro de su marco (alto = el de la ventana) y, si hace falta, también en horizontal. La planilla virtualiza
+   * las filas; la lista clásica las dibuja de a tandas mientras se baja (carga progresiva). El orden es el de `rows`.
+   */
+  continuous?: boolean;
 }
+
+/** Alto máximo de una hoja continua: lo que queda de la ventana (mín. 440 px). Se recalcula al girar/redimensionar. */
+export function useViewportSheetHeight(enabled: boolean, reserve = 270): number {
+  const [h, setH] = useState(560);
+  useEffect(() => {
+    if (!enabled) return;
+    const calc = () => setH(Math.max(440, Math.round(window.innerHeight - reserve)));
+    calc();
+    window.addEventListener("resize", calc);
+    return () => window.removeEventListener("resize", calc);
+  }, [enabled, reserve]);
+  return h;
+}
+
+/** Filas que la lista clásica dibuja de entrada y cuántas suma cada vez que se llega al final (carga progresiva). */
+export const LIST_CHUNK = 250;
 
 /**
  * Preferencia planilla/lista.
@@ -310,7 +332,8 @@ function ExcelView<T>({
   reasonRequired,
   reasonInline,
   rowClassName,
-}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName">) {
+  maxHeight,
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName"> & { maxHeight?: number }) {
   const dataColumns = useMemo(() => columns.filter((c) => !isActionColumn(c)), [columns]);
   const actionColumns = useMemo(() => columns.filter((c) => isActionColumn(c)), [columns]);
   const textOf = (c: OperationalTableColumn<T>, row: T) => (c.text ? c.text(row) : nodeToText(c.render(row)));
@@ -367,7 +390,7 @@ function ExcelView<T>({
           : undefined
       }
       rowActionsWidth={actionColumns.length ? 128 : undefined}
-      maxHeight={560}
+      maxHeight={maxHeight ?? 560}
       testId={tableId ? `${tableId}-grid` : "os-table-grid"}
       rowClassName={rowClassName}
     />
@@ -389,8 +412,13 @@ export function OperationalTable<T>({
   reasonRequired,
   reasonInline,
   rowClassName,
+  continuous = false,
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const sheetHeight = useViewportSheetHeight(continuous);
+  const [shown, setShown] = useState(LIST_CHUNK);
+  // Carga progresiva (solo lista clásica continua): al acercarse al final se suma otra tanda; nunca se oculta nada.
+  const shownRows = continuous ? Math.min(rows.length, Math.max(shown, LIST_CHUNK)) : rows.length;
   const editableTable = Boolean(canEditCells && onCellsCommit && allColumns.some((c) => c.edit));
   const { mode, toggle: toggleMode } = useTableMode(tableId, editableTable);
   // Las columnas `excelOnly` existen solo en la planilla; la lista clásica queda exactamente como antes.
@@ -443,13 +471,28 @@ export function OperationalTable<T>({
           reasonRequired={reasonRequired}
       reasonInline={reasonInline}
           rowClassName={rowClassName}
+          maxHeight={continuous ? sheetHeight : undefined}
         />
       </div>
     );
   }
 
   return (
-    <div className="os-table-wrap max-w-full min-w-0 overflow-x-clip rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)]">
+    <div
+      className={`os-table-wrap max-w-full min-w-0 rounded-[var(--os-radius-sm)] border border-[var(--os-border)] bg-[var(--os-surface)] shadow-[var(--os-shadow-sm)] ${
+        continuous ? "overflow-auto" : "overflow-x-clip"
+      }`}
+      style={continuous ? { maxHeight: sheetHeight } : undefined}
+      data-testid={continuous && tableId ? `${tableId}-list-sheet` : undefined}
+      onScroll={
+        continuous
+          ? (e) => {
+              const el = e.currentTarget;
+              if (el.scrollTop + el.clientHeight >= el.scrollHeight - 600) setShown((n) => (n < rows.length ? n + LIST_CHUNK : n));
+            }
+          : undefined
+      }
+    >
       {excel && !selectionActive && mode === "list" && editableTable && process.env.NODE_ENV !== "test" ? (
         <div className="border-b border-[var(--os-border)] p-2">
           <EditInSheetHint onClick={toggleMode} />
@@ -498,7 +541,7 @@ export function OperationalTable<T>({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => {
+          {(continuous ? rows.slice(0, shownRows) : rows).map((row) => {
             const id = rowKey(row);
             const isOpen = Boolean(expanded[id]);
             const rowSelected = Boolean(selectionActive && selection?.isSelected(id));

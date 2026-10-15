@@ -698,24 +698,40 @@ export const invMpStock = pgTable("inv_mp_stock", {
   id: uuid("id").primaryKey(),
   payload: jsonb("payload").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Orden de carga estable (0049): IDENTITY asignado por la base al insertar; nunca cambia al editar la fila. */
+  loadSeq: bigint("load_seq", { mode: "number" }).generatedByDefaultAsIdentity(),
+  /** NULL = fila histórica sin ordenar todavía; 'alta' = fila nueva; 'historico:*' = ordenada por el servicio de backfill. */
+  seqCriterio: text("seq_criterio"),
 });
 
 export const invMpIngresos = pgTable("inv_mp_ingresos", {
   id: uuid("id").primaryKey(),
   payload: jsonb("payload").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Orden de carga estable (0049): IDENTITY asignado por la base al insertar; nunca cambia al editar la fila. */
+  loadSeq: bigint("load_seq", { mode: "number" }).generatedByDefaultAsIdentity(),
+  /** NULL = fila histórica sin ordenar todavía; 'alta' = fila nueva; 'historico:*' = ordenada por el servicio de backfill. */
+  seqCriterio: text("seq_criterio"),
 });
 
 export const invMpControl = pgTable("inv_mp_control", {
   id: uuid("id").primaryKey(),
   payload: jsonb("payload").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Orden de carga estable (0049): IDENTITY asignado por la base al insertar; nunca cambia al editar la fila. */
+  loadSeq: bigint("load_seq", { mode: "number" }).generatedByDefaultAsIdentity(),
+  /** NULL = fila histórica sin ordenar todavía; 'alta' = fila nueva; 'historico:*' = ordenada por el servicio de backfill. */
+  seqCriterio: text("seq_criterio"),
 });
 
 export const invMpCompras = pgTable("inv_mp_compras", {
   id: uuid("id").primaryKey(),
   payload: jsonb("payload").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Orden de carga estable (0049): IDENTITY asignado por la base al insertar; nunca cambia al editar la fila. */
+  loadSeq: bigint("load_seq", { mode: "number" }).generatedByDefaultAsIdentity(),
+  /** NULL = fila histórica sin ordenar todavía; 'alta' = fila nueva; 'historico:*' = ordenada por el servicio de backfill. */
+  seqCriterio: text("seq_criterio"),
 });
 
 export const invAjustes = pgTable("inv_ajustes", {

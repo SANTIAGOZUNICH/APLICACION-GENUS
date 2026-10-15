@@ -67,7 +67,6 @@ import { useInventoryCellEditing } from "@/features/os/operational/hooks/use-inv
 import { useMpSheetEditing } from "@/features/os/operational/hooks/use-mp-sheet-cells";
 import { IngresoRemitoFotosButton, useIngresoAdjuntoCounts } from "@/features/os/operational/components/ingreso-remito-fotos";
 import { canManageAdjuntos, canViewAdjuntos } from "@/lib/inventory/ingreso-adjuntos-rules";
-import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import {
   applySort,
   compareDates,
@@ -77,16 +76,26 @@ import {
   type SortOption,
 } from "@/lib/sorting/sort-contract";
 
+/**
+ * Orden por defecto de TODA la hoja de Materias Primas: el orden en que se cargaron los registros (la API ya los trae
+ * ordenados por `load_seq`). `Array.sort` es estable y este comparador devuelve 0, así que NO reordena nada: elegir otra
+ * opción es una decisión explícita del usuario y volver acá recupera exactamente el orden de carga.
+ */
+export const MP_ORDEN_CARGA_KEY = "carga";
+export const MP_ORDEN_CARGA_LABEL = "Orden de carga (original)";
+const ordenCarga = <T,>(): SortOption<T> => ({ key: MP_ORDEN_CARGA_KEY, label: MP_ORDEN_CARGA_LABEL, compare: () => 0 });
+
 export const MP_STOCK_SORT_OPTIONS: SortOption<MpStockRow>[] = [
+  ordenCarga<MpStockRow>(),
   { key: "codigo_asc", label: "Código A-Z", compare: (a, b) => compareStrings(a.codigo, b.codigo, "asc") },
   { key: "descripcion_asc", label: "Descripción A-Z", compare: (a, b) => compareStrings(a.descripcion, b.descripcion, "asc") },
   { key: "cantidad_desc", label: "Cantidad mayor a menor", compare: (a, b) => compareNumbers(a.cantidadKg, b.cantidadKg, "desc") },
   { key: "cantidad_asc", label: "Cantidad menor a mayor", compare: (a, b) => compareNumbers(a.cantidadKg, b.cantidadKg, "asc") },
   { key: "vto_asc", label: "VTO más próximo", compare: (a, b) => compareVtoNearest(a.vencimiento, b.vencimiento) },
 ];
-const MP_STOCK_SORT_KEYS = MP_STOCK_SORT_OPTIONS.map((o) => o.key);
 
 export const MP_INGRESO_SORT_OPTIONS: SortOption<MpIngresoRow>[] = [
+  ordenCarga<MpIngresoRow>(),
   { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.fecha, b.fecha, "desc") },
   { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.fecha, b.fecha, "asc") },
   { key: "codigo_asc", label: "Código A-Z", compare: (a, b) => compareStrings(a.codigo, b.codigo, "asc") },
@@ -95,9 +104,9 @@ export const MP_INGRESO_SORT_OPTIONS: SortOption<MpIngresoRow>[] = [
   { key: "total_asc", label: "Total menor a mayor", compare: (a, b) => compareNumbers(a.total, b.total, "asc") },
   { key: "vto_asc", label: "VTO más próximo", compare: (a, b) => compareVtoNearest(a.vencimiento, b.vencimiento) },
 ];
-const MP_INGRESO_SORT_KEYS = MP_INGRESO_SORT_OPTIONS.map((o) => o.key);
 
 export const MP_COMPRA_SORT_OPTIONS: SortOption<MpCompraRow>[] = [
+  ordenCarga<MpCompraRow>(),
   { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.fecha, b.fecha, "desc") },
   { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.fecha, b.fecha, "asc") },
   { key: "entrega_asc", label: "Entrega más próxima", compare: (a, b) => compareDates(a.fechaEntrega, b.fechaEntrega, "asc") },
@@ -105,7 +114,6 @@ export const MP_COMPRA_SORT_OPTIONS: SortOption<MpCompraRow>[] = [
   { key: "cantidad_desc", label: "Cantidad mayor a menor", compare: (a, b) => compareNumbers(a.cantidad, b.cantidad, "desc") },
   { key: "cantidad_asc", label: "Cantidad menor a mayor", compare: (a, b) => compareNumbers(a.cantidad, b.cantidad, "asc") },
 ];
-const MP_COMPRA_SORT_KEYS = MP_COMPRA_SORT_OPTIONS.map((o) => o.key);
 
 export type MpHubTab = (typeof MP_TABS)[number];
 
@@ -257,11 +265,11 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
   const [bulkPending, setBulkPending] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [page, setPage] = useState(0);
-  const pageSize = 25;
-  const [stockSort, setStockSort] = useSortPreference("mp-hub-stock", "codigo_asc", MP_STOCK_SORT_KEYS);
-  const [ingresoSort, setIngresoSort] = useSortPreference("mp-hub-ingresos", "fecha_desc", MP_INGRESO_SORT_KEYS);
-  const [compraSort, setCompraSort] = useSortPreference("mp-hub-compras", "fecha_desc", MP_COMPRA_SORT_KEYS);
+  // Hoja única continua: SIN paginación y SIN orden automático. El orden elegido NO se recuerda entre visitas: al entrar
+  // siempre se ve el orden de carga; ordenar por una columna es una opción explícita de esta sesión.
+  const [stockSort, setStockSort] = useState(MP_ORDEN_CARGA_KEY);
+  const [ingresoSort, setIngresoSort] = useState(MP_ORDEN_CARGA_KEY);
+  const [compraSort, setCompraSort] = useState(MP_ORDEN_CARGA_KEY);
   const formulaSession = useMemo(
     () => ({ email: email ?? "", sector: sectorId }),
     [email, sectorId]
@@ -361,7 +369,15 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     return applySort(filteredCompras, MP_COMPRA_SORT_OPTIONS, compraSort);
   }, [tab, stock, ingresos, control, compras, search, stockSort, ingresoSort, compraSort]);
 
-  const pageRows = rows.slice(page * pageSize, page * pageSize + pageSize);
+  // Hoja única: todas las filas (la planilla las virtualiza; la lista clásica las carga de a tandas al bajar).
+  const pageRows = rows;
+  const sortKey = tab === "Stock" ? stockSort : tab === "Ingresos MP" ? ingresoSort : tab === "Compras MP" ? compraSort : MP_ORDEN_CARGA_KEY;
+  const totalForTab = tab === "Stock" ? stock.length : tab === "Ingresos MP" ? ingresos.length : tab === "Compras MP" ? compras.length : rows.length;
+  const resetOrden = () => {
+    setStockSort(MP_ORDEN_CARGA_KEY);
+    setIngresoSort(MP_ORDEN_CARGA_KEY);
+    setCompraSort(MP_ORDEN_CARGA_KEY);
+  };
   const visibleIds = useMemo(() => rows.map((r) => r.id), [rows]);
   const sel = useListSelectionMode(visibleIds);
   const showBulkSelection =
@@ -957,7 +973,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             }`}
             onClick={() => {
               setTab(t);
-              setPage(0);
             }}
           >
             {t}
@@ -1015,12 +1030,10 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
-              setPage(0);
             }}
             onKeyDown={(e) => {
               if (e.key === "Escape" && search) {
                 setSearch("");
-                setPage(0);
               }
             }}
             data-testid="mp-search"
@@ -1033,7 +1046,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
               aria-label="Quitar búsqueda"
               onClick={() => {
                 setSearch("");
-                setPage(0);
               }}
               data-testid="mp-search-clear"
             >
@@ -1047,7 +1059,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             value={stockSort}
             onChange={(key) => {
               setStockSort(key);
-              setPage(0);
             }}
             options={MP_STOCK_SORT_OPTIONS}
             testId="mp-stock-sort"
@@ -1058,7 +1069,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             value={ingresoSort}
             onChange={(key) => {
               setIngresoSort(key);
-              setPage(0);
             }}
             options={MP_INGRESO_SORT_OPTIONS}
             testId="mp-ingresos-sort"
@@ -1069,13 +1079,35 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             value={compraSort}
             onChange={(key) => {
               setCompraSort(key);
-              setPage(0);
             }}
             options={MP_COMPRA_SORT_OPTIONS}
             testId="mp-compras-sort"
           />
         ) : null}
       </div>
+
+      {tab === "Stock" || tab === "Ingresos MP" || tab === "Compras MP" ? (
+        <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--os-text-muted)]" data-testid="mp-sheet-status">
+          <span data-testid="mp-sheet-count">
+            {search.trim() && rows.length !== totalForTab
+              ? `${rows.length} de ${totalForTab} registros (búsqueda activa)`
+              : `${rows.length} registro${rows.length === 1 ? "" : "s"}`}
+          </span>
+          <span data-testid="mp-sheet-order">
+            {sortKey === MP_ORDEN_CARGA_KEY ? "Orden de carga: el de incorporación a la hoja" : "Ordenada por una columna (elegida por vos)"}
+          </span>
+          {sortKey !== MP_ORDEN_CARGA_KEY ? (
+            <button
+              type="button"
+              className="rounded border border-[var(--os-border)] px-2 py-0.5 text-[var(--os-text)] hover:bg-[var(--os-teal-soft)]/50"
+              onClick={resetOrden}
+              data-testid="mp-sheet-order-reset"
+            >
+              Volver al orden de carga
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {tab === "Stock" ? <SchemaPendingBanner show={schemaPending0005} /> : null}
 
@@ -1092,6 +1124,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         ) : null}
         <OperationalTable
           tableId="mp-stock"
+          continuous
           canEditCells={stockCells.canEditCells}
           onCellsCommit={stockCells.onCellsCommit}
           reasonRequired={stockCells.reasonRequired}
@@ -1195,6 +1228,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           ) : null}
           <OperationalTable
             tableId="mp-ingresos"
+            continuous
             canEditCells={ingresoCells.canEditCells}
             onCellsCommit={ingresoCells.onCellsCommit}
             reasonRequired={ingresoCells.reasonRequired}
@@ -1229,6 +1263,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       {tab === "Compras MP" && (
         <OperationalTable
           tableId="mp-compras"
+          continuous
           canEditCells={compraCells.canEditCells}
           onCellsCommit={compraCells.onCellsCommit}
           rowVersion={compraCells.rowVersion}
@@ -1243,23 +1278,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           }
         />
       )}
-
-      <div className="mt-3 flex gap-2 text-sm">
-        <Button type="button" variant="secondary" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
-          Anterior
-        </Button>
-        <span>
-          Página {page + 1} / {Math.max(1, Math.ceil(rows.length / pageSize))}
-        </span>
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={(page + 1) * pageSize >= rows.length}
-          onClick={() => setPage((p) => p + 1)}
-        >
-          Siguiente
-        </Button>
-      </div>
 
       {formOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

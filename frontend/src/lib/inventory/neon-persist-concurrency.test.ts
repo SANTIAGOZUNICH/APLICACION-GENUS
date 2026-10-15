@@ -18,9 +18,15 @@ vi.mock("@/lib/db/client", () => {
   return {
     isDatabaseConfigured: () => true,
     getDb: () => ({
+      // Las lecturas de MP piden `orderBy(load_seq)`: el mock devuelve el orden de inserción (igual que la secuencia).
       select: () => ({
-        from: async (t: object) => [...tableRows(t).values()].map((r) => ({ ...r })),
+        from: (t: object) => {
+          const rows = Promise.resolve([...tableRows(t).values()].map((r) => ({ ...r })));
+          return Object.assign(rows, { orderBy: () => rows });
+        },
       }),
+      // Backfill del orden de carga de MP: sin filas históricas pendientes.
+      transaction: async (fn: (tx: unknown) => unknown) => fn({ execute: async () => ({ rows: [] }) }),
       insert: (t: object) => ({
         values: (v: { id?: string; payload: unknown }) => ({
           onConflictDoUpdate: async () => {
