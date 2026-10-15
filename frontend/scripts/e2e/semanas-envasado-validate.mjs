@@ -117,14 +117,14 @@ try {
   // ================= Producción: Panel general retirado =================
   const pr = await openAs(E2E_USERS.produccion);
   const pp = pr.page;
-  const SEMANAS = "[data-testid^=semanas-tab-]";
-  // Mi trabajo de Producción (antes «Panel general»; enlaces viejos y el inicio de sesión estándar) → primera sección.
+  // Sin «Panel general» ni pestaña general «Semanas»: /mi-trabajo de Producción lleva a su primera sección (Pedidos).
   await pp.goto("/mi-trabajo");
-  await pp.locator(SEMANAS).first().waitFor({ timeout: 120_000 });
-  check("Producción en /mi-trabajo aterriza en Semanas (sección válida), sin «Panel general»", (await pp.locator(SEMANAS).count()) > 0 && !/Panel general/i.test(await pp.locator("main").innerText()));
+  await pp.waitForTimeout(2500);
+  check("Producción en /mi-trabajo aterriza en una sección válida, sin «Panel general»", /Pedidos/i.test(await pp.locator("main").innerText()) && !/Panel general/i.test(await pp.locator("main").innerText()));
   const menu = await menuLabels(pp);
-  check("menú de Producción sin «Panel general»", !/Panel general/i.test(menu), menu.replace(/\s+/g, " ").slice(0, 160));
-  check("menú de Producción con «Semanas» y «Dashboard»", /Semanas/.test(menu) && /Dashboard/.test(menu));
+  const items = menu.split("\n").map((x) => x.trim());
+  check("menú de Producción sin «Panel general» ni «Semanas» general", !items.includes("Panel general") && !items.includes("Semanas"), items.join(" | ").slice(0, 160));
+  check("menú de Producción con «Dashboard» y las vistas de Envasado", items.includes("Dashboard") && items.includes("Envasado Masivo") && items.includes("Envasado Premium"));
   await nav(pp, "Dashboard");
   await pp.waitForTimeout(2500);
   check("Dashboard sigue disponible", (await pp.locator("[data-testid=dashboard-error]").count()) === 0 && /Dashboard/i.test(await pp.locator("main").innerText()));
@@ -193,9 +193,14 @@ try {
       await openWeek(s.page, W0);
       const cells = await s.page.$$eval("[data-testid=week-line][data-line='1'] [data-testid^='week-board-daycell-']", (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y) }; }));
       check("escritorio: 5 columnas en una fila", cells.length === 5 && new Set(cells.map((c) => c.y)).size === 1 && new Set(cells.map((c) => c.x)).size === 5, JSON.stringify(cells));
-      await s.page.evaluate(() => { document.querySelector("main")?.scrollTo(0, 0); window.scrollTo(0, 0); });
-      const bottom = await s.page.$$eval("[data-testid=week-line]", (els) => Math.max(...els.map((e) => e.getBoundingClientRect().bottom)));
-      check("escritorio 1440×900: la semana completa (3 líneas) entra sin desplazar la página", bottom <= 900, `fondo=${Math.round(bottom)}px`);
+      // El tablero semanal (totales + 3 líneas) entra en una pantalla de 900 px: al llegar a él no hace falta desplazarse
+      // para ver los 5 días. (El encabezado de la página, previo a este cambio, queda arriba.)
+      const span = await s.page.evaluate(() => {
+        const top = document.querySelector("[data-testid=week-day-totals]")?.getBoundingClientRect().top ?? 0;
+        const bottom = Math.max(...[...document.querySelectorAll("[data-testid=week-line]")].map((e) => e.getBoundingClientRect().bottom));
+        return Math.round(bottom - top);
+      });
+      check("escritorio 1440×900: la semana completa (totales + 3 líneas) entra en una pantalla", span <= 900, `alto=${span}px`);
       const tot = await s.page.$$eval("[data-testid=week-day-total]", (els) => els.map((e) => [e.getAttribute("data-day"), Number(e.getAttribute("data-count"))]));
       const expected = await Promise.all(days(W0).map(async (d) => [d, (await weekIds(s.page, d)).length]));
       check("contador por día = trabajos visibles", JSON.stringify(tot) === JSON.stringify(expected), JSON.stringify(tot));

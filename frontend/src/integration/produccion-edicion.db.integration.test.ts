@@ -94,15 +94,17 @@ describe.skipIf(Boolean(PROBLEM))(`Producción edita planificación en Postgres 
     expect(ev.map((e) => e.note)).toEqual(["Asignación de lote", "Vencimiento del lote", "Reasignación de lote", "Desasignar: lote equivocado"]);
   });
 
-  it("trabajo informado por el sector: Producción corrige SOLO con motivo; decidido por Calidad → bloqueado con el procedimiento", async () => {
+  it("trabajo informado por el sector: Producción corrige sin motivo obligatorio; decidido por Calidad → bloqueado con el procedimiento", async () => {
     const { completeWorkDurable } = await repo();
     const apply = await cells();
     await completeWorkDurable(ids.elab, { finishedQty: "500", observation: "Terminado IT", completedBy: "IT Elaboración" }, "ELABORACION");
     const [st] = await q("select operational_status from work_items where id = $1", [ids.elab]);
     const v = await version(ids.elab);
     const id = `native:${ids.elab}`;
-    expect((await apply(prod, [{ id, field: "notes", value: "Corrección", expectedVersion: v }], "2026-11-01")).results[0]).toMatchObject({ ok: false, code: "REASON_REQUIRED" });
-    const ok = await apply(prod, [{ id, field: "plannedQuantity", value: "520", expectedVersion: v, reason: "Se planificó mal la cantidad" }], "2026-11-01");
+    // Organizar (observaciones, cantidad planificada) ya no exige motivo aunque el sector haya informado el trabajo.
+    const notes = await apply(prod, [{ id, field: "notes", value: "Corrección", expectedVersion: v }], "2026-11-01");
+    expect(notes.results[0]).toMatchObject({ ok: true });
+    const ok = await apply(prod, [{ id, field: "plannedQuantity", value: "520", expectedVersion: await version(ids.elab) }], "2026-11-01");
     expect(ok.ok).toBe(true);
     const [row] = await q("select planned_quantity, operational_status from work_items where id = $1", [ids.elab]);
     expect(row).toMatchObject({ planned_quantity: "520", operational_status: st!.operational_status });

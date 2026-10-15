@@ -29,6 +29,7 @@ function ReasonForm({
   submitLabel,
   extra,
   canSubmit = true,
+  optional = false,
   onSubmit,
   onClose,
 }: {
@@ -38,13 +39,15 @@ function ReasonForm({
   submitLabel: string;
   extra?: React.ReactNode;
   canSubmit?: boolean;
+  /** Motivo opcional (fechas, mover, editar): organizar el trabajo no exige escribir nada. */
+  optional?: boolean;
   onSubmit: (reason: string) => Promise<void>;
   onClose: () => void;
 }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ok = reason.trim().length >= MIN_ENTREGAS_REASON && canSubmit;
+  const ok = (optional || reason.trim().length >= MIN_ENTREGAS_REASON) && canSubmit;
   return (
     <form
       className="space-y-2 rounded-md border border-[var(--os-border)] p-2.5"
@@ -66,14 +69,9 @@ function ReasonForm({
       <p className="text-xs font-semibold text-[#e6f0f6]">{title}</p>
       {extra}
       <label className="block space-y-1 text-xs text-[#8fb3c9]">
-        Motivo (obligatorio, mín. {MIN_ENTREGAS_REASON} caracteres, queda auditado)
+        {optional ? "Motivo (opcional)" : "Motivo (obligatorio, queda auditado)"}
         <input value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls} data-testid={`${testId}-reason`} />
       </label>
-      {reason.trim().length > 0 && reason.trim().length < MIN_ENTREGAS_REASON && (
-        <p className="text-[11px] text-amber-300" data-testid={`${testId}-reason-short`}>
-          Al motivo le faltan {MIN_ENTREGAS_REASON - reason.trim().length} caracteres.
-        </p>
-      )}
       {hint && <p className="text-[11px] text-[#8fb3c9]">{hint}</p>}
       {/* Error REAL del servidor (no del motivo, que ya se valida arriba). */}
       {error && <p role="alert" className="text-xs text-[var(--genus-error,#e85d5d)]" data-testid={`${testId}-error`}>No se guardó: {error}</p>}
@@ -145,6 +143,7 @@ export function ScheduledItemActions({ delivery, item, onChanged }: { delivery: 
       {mode === "move" && (
         <ReasonForm
           testId="entrega-item-move"
+          optional
           title={many ? `Nueva fecha para «${item.product}» (los demás productos quedan el ${shortDateLabel(delivery.deliveryDate)})` : "Nueva fecha de la entrega"}
           hint="Los trabajos vinculados acompañan al producto; si su fecha queda distinta vas a ver la diferencia para confirmarla."
           submitLabel="Cambiar fecha"
@@ -260,6 +259,7 @@ export function DerivedWorkActions({ item, canEditWork, onChanged }: { item: Sch
       {mode === "edit" && (
         <ReasonForm
           testId="entrega-work-edit"
+          optional
           title="Editar la entrega (se guarda en el trabajo)"
           hint="Cambia solo este trabajo: los demás productos del cliente quedan en su fecha. Queda en el historial del trabajo."
           submitLabel="Guardar"

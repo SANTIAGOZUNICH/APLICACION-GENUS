@@ -98,7 +98,7 @@ describe("WorkspaceResolver", () => {
     expect(resolved.context.displayName).toBe("Agustina Zunich");
     // «Panel general» (mi_trabajo de Producción) se retiró; Semanas tiene entrada propia.
     expect(resolved.navigation).not.toContain("mi_trabajo");
-    expect(resolved.navigation).toContain("semanas_planilla");
+    expect(resolved.navigation).not.toContain("semanas_planilla");
     expect(resolved.navigation).toContain("ver_envasado_masivo");
   });
 

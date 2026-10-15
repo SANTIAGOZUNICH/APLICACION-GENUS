@@ -104,7 +104,7 @@ export async function applyWorkItemCellChanges(
     const v = validateWorkItemCellValue(c.field, c.value);
     if (!v.ok) return fail("INVALID", v.message);
     if (workItemReasonRequired(item, c.field, today) && (c.reason ?? "").trim().length < MIN_WORK_ITEM_REASON) {
-      return fail("REASON_REQUIRED", `Esta edición requiere un motivo (mín. ${MIN_WORK_ITEM_REASON} caracteres).`);
+      return fail("REASON_REQUIRED", "Esta corrección (lote, VTO o realizadas) requiere un motivo.");
     }
     plan.push({ index, change: c, value: v.value, item });
   });

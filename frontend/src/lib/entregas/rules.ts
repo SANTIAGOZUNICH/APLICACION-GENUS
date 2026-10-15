@@ -17,7 +17,7 @@ import {
 } from "./types";
 
 export const MAX_DELIVERY_ITEMS = 40;
-export const MIN_ENTREGAS_REASON = 8;
+export const MIN_ENTREGAS_REASON = 1;
 
 export interface DeliveryItemInput {
   /** Si viene, se actualiza ese producto; si no, es uno nuevo. */
@@ -340,11 +340,21 @@ export function coverageOf(item: Pick<ScheduledDeliveryItem, "quantity" | "works
   return { target: t, covered, missing: t == null ? null : Math.max(0, t - covered) };
 }
 
-/** Texto del motivo auditado cuando se reprograma/cancela: obligatorio y con largo mínimo. */
+/** Motivo de bajas lógicas (cancelar, quitar, desvincular, restaurar): obligatorio, sin largo mínimo arbitrario. */
 export function validateReason(reason: unknown): { ok: true; value: string } | { ok: false; message: string } {
   const t = typeof reason === "string" ? reason.trim() : "";
-  if (t.length < MIN_ENTREGAS_REASON) return { ok: false, message: `Escribí el motivo (mín. ${MIN_ENTREGAS_REASON} caracteres): queda auditado.` };
+  if (t.length < MIN_ENTREGAS_REASON) return { ok: false, message: "Escribí el motivo: queda auditado." };
   return { ok: true, value: t };
+}
+
+/**
+ * Motivo OPCIONAL (reprogramar, mover un producto, cambiar fechas/cantidades, aplicar o mantener datos): organizar el día
+ * a día no exige escribir nada. La auditoría registra igual usuario, fecha y hora, operación y valor anterior/nuevo; si
+ * no hay motivo queda vacío (nunca uno inventado).
+ */
+export function optionalReason(reason: unknown): { ok: true; value: string | null } {
+  const t = typeof reason === "string" ? reason.trim() : "";
+  return { ok: true, value: t || null };
 }
 
 /** Agrupa las entregas de un día por cliente (una sola entrada por cliente, aunque tenga varios productos/entregas). */

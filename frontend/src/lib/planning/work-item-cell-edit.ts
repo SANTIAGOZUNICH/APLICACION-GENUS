@@ -38,7 +38,8 @@ export const WORK_ITEM_CELL_KIND: Record<WorkItemCellField, "text" | "number" | 
 export const WORK_ITEM_SENSITIVE_FIELDS: ReadonlySet<WorkItemCellField> = new Set(["product", "packagingLote", "packagingVto"]);
 /** Estas correcciones exigen motivo auditado en la función canónica. */
 export const WORK_ITEM_REASON_FIELDS: ReadonlySet<WorkItemCellField> = new Set(["packagingLote", "packagingVto", "finishedQty"]);
-export const MIN_WORK_ITEM_REASON = 8;
+/** Lote/VTO y corrección de realizadas (trazabilidad) piden motivo; sin largo mínimo arbitrario. */
+export const MIN_WORK_ITEM_REASON = 1;
 
 export function isWorkItemCellField(v: unknown): v is WorkItemCellField {
   return typeof v === "string" && (WORK_ITEM_CELL_FIELDS as readonly string[]).includes(v);
@@ -116,11 +117,13 @@ export function validateWorkItemCellValue(field: WorkItemCellField, raw: unknown
   return text.length > 1000 ? { ok: false, message: "Máximo 1000 caracteres." } : { ok: true, value: text || null };
 }
 
-/** ¿Pide motivo? (campos auditables siempre; trabajos ya informados por el sector; trabajos de fecha pasada). */
-export function workItemReasonRequired(item: Pick<WorkItem, "plannedDate"> & { status?: WorkItem["status"] }, field: WorkItemCellField, today: string): boolean {
-  if (WORK_ITEM_REASON_FIELDS.has(field)) return true;
-  if (item.status && REPORTED_STATUSES.has(item.status)) return true;
-  return Boolean(item.plannedDate && item.plannedDate < today);
+/**
+ * ¿Pide motivo? Solo los campos de trazabilidad (lote, VTO, corrección de realizadas). Organizar el trabajo (fechas,
+ * cantidades planificadas, cliente, observaciones, línea) no pide motivo aunque el trabajo esté informado o sea de una
+ * fecha pasada: la auditoría registra igual usuario, fecha y hora, valor anterior y nuevo.
+ */
+export function workItemReasonRequired(_item: Pick<WorkItem, "plannedDate"> & { status?: WorkItem["status"] }, field: WorkItemCellField, _today: string): boolean {
+  return WORK_ITEM_REASON_FIELDS.has(field);
 }
 
 export interface WorkItemCellChange {
