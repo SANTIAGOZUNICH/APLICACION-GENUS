@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { PortalProductView } from "@/lib/portal/overview";
-import { logout, usePortalData, type ClientPayload, type Contact } from "./dashboard";
+import { DemoBanner, logout, usePortalData, type ClientPayload, type Contact } from "./dashboard";
 import { fmtDate, fmtDateTime, fmtQty } from "./format";
 import { ProductCard } from "./product-card";
 import { ReceiptDialog } from "./receipt-dialog";
@@ -15,8 +15,9 @@ export function ProductDetail({ initial, productId, contact }: { initial: Client
   const p: PortalProductView | undefined = data.products.find((x) => x.id === productId);
   return (
     <>
-      <PortalHeader right={<button className="gp-btn gp-btn-ghost gp-btn-sm" onClick={() => void logout()}>Salir</button>} />
+      <PortalHeader demo={data.demo} right={<button className="gp-btn gp-btn-ghost gp-btn-sm" onClick={() => void logout()}>{data.demo ? "Salir de la demo" : "Salir"}</button>} />
       <main className="gp-wrap">
+        {data.demo ? <DemoBanner onReset={() => void refresh()} /> : null}
         <a className="gp-back" href="/entregas" data-testid="back">← Volver a mis productos</a>
         {!p ? (
           <div className="gp-empty" style={{ marginTop: 18 }}>Este producto ya no está disponible en tu portal.</div>
@@ -58,7 +59,7 @@ export function ProductDetail({ initial, productId, contact }: { initial: Client
           </div>
         )}
       </main>
-      {dialog ? <ReceiptDialog deliveryId={dialog} onClose={() => setDialog(null)} onConfirmed={() => void refresh()} /> : null}
+      {dialog ? <ReceiptDialog demo={data.demo} deliveryId={dialog} onClose={() => setDialog(null)} onConfirmed={() => void refresh()} /> : null}
     </>
   );
 }

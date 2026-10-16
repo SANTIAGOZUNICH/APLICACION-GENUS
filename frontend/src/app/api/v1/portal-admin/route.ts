@@ -5,6 +5,7 @@ import {
   addClientAlias, addClientEmail, clientActivity, createClient, inviteClientEmail, linkingProblems, listClients, listHolidayOverrides,
   previewClient, removeClientAlias, removeClientEmail, setClientStatus, setHolidayOverride, type Staff,
 } from "@/lib/portal/admin-service";
+import { createDemoToken } from "@/lib/portal/demo-service";
 import { PortalError } from "@/lib/portal/store";
 
 export const runtime = "nodejs";
@@ -56,6 +57,8 @@ export async function POST(request: Request) {
       case "add_email": return NextResponse.json(await addClientEmail(staff, clientId, b.email));
       case "remove_email": await removeClientEmail(staff, clientId, b.email); return NextResponse.json({ ok: true });
       case "invite": return NextResponse.json(await inviteClientEmail(staff, clientId, b.email));
+      // Portal de prueba: token temporal de un solo uso para el usuario interno autorizado (la URL lleva el token en el fragmento).
+      case "demo_launch": return NextResponse.json(await createDemoToken(staff));
       case "holiday": await setHolidayOverride(staff, { date: b.date, name: b.name, action: b.holidayAction, remove: b.remove }); return NextResponse.json({ ok: true });
       default: throw new PortalError("Acción desconocida.", 400, "VALIDATION");
     }

@@ -1,5 +1,6 @@
 import { confirmReceipt, getReceiptPreview } from "@/lib/portal/data-service";
-import { assertSameOrigin, errorResponse, jsonResponse, readJson, requireSession } from "@/lib/portal/http";
+import { demoConfirmReceipt, demoReceiptPreview } from "@/lib/portal/demo-service";
+import { assertSameOrigin, demoSessionFrom, errorResponse, jsonResponse, readJson, requireSession } from "@/lib/portal/http";
 import { clientIpHash } from "@/lib/portal/security";
 
 export const runtime = "nodejs";
@@ -10,8 +11,13 @@ const idOf = (v: unknown) => (typeof v === "string" && /^[a-f0-9]{24}$/.test(v) 
 /** Datos para el diálogo «Confirmar recepción» (producto, pedido, cantidad, fecha de entrega registrada). */
 export async function GET(request: Request) {
   try {
-    const { session } = await requireSession(request);
+    const demo = await demoSessionFrom(request);
     const id = idOf(new URL(request.url).searchParams.get("id"));
+    if (demo) {
+      const dv = id ? await demoReceiptPreview(demo.demo, id) : null;
+      return dv ? jsonResponse({ ok: true, delivery: dv }) : jsonResponse({ ok: false, error: "Entrega no encontrada.", code: "NOT_FOUND" }, 404);
+    }
+    const { session } = await requireSession(request);
     if (!id) return jsonResponse({ ok: false, error: "Entrega no encontrada.", code: "NOT_FOUND" }, 404);
     const view = await getReceiptPreview(session, id);
     if (!view) return jsonResponse({ ok: false, error: "Entrega no encontrada.", code: "NOT_FOUND" }, 404);
@@ -24,9 +30,16 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
-    const { session } = await requireSession(request);
+    const demo = await demoSessionFrom(request);
     const body = await readJson(request);
     const id = idOf(body.id);
+    if (demo) {
+      // Confirmación SIMULADA: solo cambia el estado ficticio de la demostración.
+      const dr = id ? await demoConfirmReceipt(demo.demo, id) : ({ ok: false, reason: "not_found" } as const);
+      if (!dr.ok) return dr.reason === "already_confirmed" ? jsonResponse({ ok: false, error: "Esta entrega ya tiene la recepción confirmada.", code: "ALREADY_CONFIRMED" }, 409) : jsonResponse({ ok: false, error: "Entrega no encontrada.", code: "NOT_FOUND" }, 404);
+      return jsonResponse({ ok: true, confirmation: dr.confirmation, demo: true });
+    }
+    const { session } = await requireSession(request);
     if (!id) return jsonResponse({ ok: false, error: "Entrega no encontrada.", code: "NOT_FOUND" }, 404);
     const r = await confirmReceipt(session, id, clientIpHash(request.headers));
     if (!r.ok) {

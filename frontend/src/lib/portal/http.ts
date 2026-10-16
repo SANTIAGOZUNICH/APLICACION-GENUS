@@ -3,7 +3,8 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { resolvePortalSession, type PortalSession } from "./auth-service";
-import { parsePortalCookie } from "./cookies";
+import { parseDemoCookie, parsePortalCookie } from "./cookies";
+import { resolveDemoSession, type DemoSession } from "./demo-service";
 import { isAllowedOrigin } from "./security";
 import { PortalError } from "./store";
 
@@ -34,6 +35,14 @@ export async function requireSession(request: Request): Promise<{ session: Porta
   const session = await resolvePortalSession(token);
   if (!token || !session) throw new PortalError("Tu sesión venció. Ingresá de nuevo.", 401, "NO_SESSION");
   return { session, token };
+}
+
+/** Sesión de demostración (cookie propia). Si existe una vigente, tiene prioridad sobre la de un cliente real en ESTE navegador. */
+export async function demoSessionFrom(request: Request): Promise<{ demo: DemoSession; token: string } | null> {
+  const token = parseDemoCookie(request.headers.get("cookie"));
+  if (!token) return null;
+  const demo = await resolveDemoSession(token);
+  return demo ? { demo, token } : null;
 }
 
 /** Convierte cualquier error en una respuesta segura (sin detalles internos). */

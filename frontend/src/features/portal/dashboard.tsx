@@ -8,8 +8,28 @@ import { ProductCard } from "./product-card";
 import { ReceiptDialog } from "./receipt-dialog";
 import { PortalHeader } from "./shell";
 
-export type ClientPayload = Omit<PortalOverviewData, "ready"> & { client: { name: string; code: string }; notifications: PortalNotificationView[] };
+export type ClientPayload = Omit<PortalOverviewData, "ready"> & { client: { name: string; code: string }; notifications: PortalNotificationView[]; demo?: boolean };
 export type Contact = { email: string; whatsappUrl: string; whatsappLabel: string };
+
+/** Banner discreto del modo demostración: avisa que los datos son ficticios y permite reiniciar la simulación. */
+export function DemoBanner({ onReset }: { onReset: () => void }) {
+  const [busy, setBusy] = useState(false);
+  async function reset() {
+    setBusy(true);
+    try {
+      await fetch("/entregas/api/demo/reset", { method: "POST", credentials: "same-origin" });
+      onReset();
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="gp-demo-banner" role="note" data-testid="demo-banner">
+      <span>Estás viendo datos <b>ficticios</b> de demostración. Nada de lo que hagas acá afecta a GENUS OS ni a clientes reales.</span>
+      <button type="button" className="gp-link-btn" onClick={() => void reset()} disabled={busy} data-testid="demo-reset">Reiniciar demostración</button>
+    </div>
+  );
+}
 
 export async function logout() {
   try {
@@ -109,17 +129,19 @@ export function Dashboard({ initial, contact }: { initial: ClientPayload; contac
   return (
     <>
       <PortalHeader
+        demo={data.demo}
         right={
           <>
             <Bell notifications={notifications} onRead={() => setLocalRead(true)} />
-            <button className="gp-btn gp-btn-ghost gp-btn-sm" onClick={() => void logout()} data-testid="logout">Salir</button>
+            <button className="gp-btn gp-btn-ghost gp-btn-sm" onClick={() => void logout()} data-testid="logout">{data.demo ? "Salir de la demo" : "Salir"}</button>
           </>
         }
       />
       <main className="gp-wrap" id="contenido">
+        {data.demo ? <DemoBanner onReset={() => void refresh()} /> : null}
         <section className="gp-hero">
           <h1 data-testid="welcome">Hola, {data.client.name}</h1>
-          <p><span className="gp-tagline">Tu producción, en buenas manos.</span> Código de cliente {data.client.code}</p>
+          <p><span className="gp-tagline">Tu producción, en buenas manos.</span>{data.demo ? "" : ` Código de cliente ${data.client.code}`}</p>
         </section>
 
         <section className="gp-summary" aria-label="Resumen">
@@ -157,7 +179,7 @@ export function Dashboard({ initial, contact }: { initial: ClientPayload; contac
 
         <footer className="gp-footer" data-testid="disclaimer">{data.disclaimer}</footer>
       </main>
-      {dialog ? <ReceiptDialog deliveryId={dialog} onClose={() => setDialog(null)} onConfirmed={() => void refresh()} /> : null}
+      {dialog ? <ReceiptDialog demo={data.demo} deliveryId={dialog} onClose={() => setDialog(null)} onConfirmed={() => void refresh()} /> : null}
     </>
   );
 }
