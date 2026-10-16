@@ -65,7 +65,7 @@ const before = await fingerprint();
 const openDrawer = async (page, finished) => {
   if (finished) {
     await page.getByRole("tab", { name: /^Pendientes/ }).first().click({ timeout: 120000 });
-    await page.getByRole("button", { name: /Ver detalle/ }).first().click({ timeout: 120000 });
+    await page.getByRole("button", { name: /Ver detalle|Registrar avance/ }).first().click({ timeout: 120000 });
   } else {
     await page.getByRole("button", { name: /Registrar avance/ }).first().click({ timeout: 120000 });
   }
