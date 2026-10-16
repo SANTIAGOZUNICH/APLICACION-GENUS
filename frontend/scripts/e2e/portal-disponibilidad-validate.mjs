@@ -64,7 +64,7 @@ const before = await fingerprint();
 // En «Mi trabajo» de Envasado: trabajo en curso → «Ver / Registrar avance»; trabajo terminado → pestaña «Pendientes» → «Ver detalle».
 const openDrawer = async (page, finished) => {
   if (finished) {
-    await page.getByRole("button", { name: /^Pendientes/ }).first().click({ timeout: 120000 });
+    await page.getByRole("tab", { name: /^Pendientes/ }).first().click({ timeout: 120000 });
     await page.getByRole("button", { name: /Ver detalle/ }).first().click({ timeout: 120000 });
   } else {
     await page.getByRole("button", { name: /Registrar avance/ }).first().click({ timeout: 120000 });
