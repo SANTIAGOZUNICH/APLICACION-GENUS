@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveProductStage, workTarget, type DeliveryFact, type WorkFact } from "./stage-rules";
+import { deriveProductStage, workTarget, type DeliveryFact, type MarkFact, type WorkFact } from "./stage-rules";
 
 const NOW = new Date("2026-10-19T15:00:00Z");
 const HOURS = (h: number) => new Date(NOW.getTime() - h * 3_600_000).toISOString();
@@ -24,11 +24,13 @@ function work(over: Partial<WorkFact> = {}): WorkFact {
     deliverableUnits: null,
     packagingTotalUnits: null,
     deliveries: [],
+    marks: [],
     ...over,
   };
 }
+const mark = (id: string, quantity: number, at = "2026-10-19T14:00:00Z"): MarkFact => ({ id, quantity, at });
 const delivery = (key: string, quantity: number, at = "2026-10-19T12:00:00Z"): DeliveryFact => ({ key, at, quantity, unit: "un." });
-const derive = (works: WorkFact[]) => deriveProductStage(works, { now: NOW })!;
+const derive = (works: WorkFact[]) => deriveProductStage(works)!;
 
 describe("etapas del cliente", () => {
   it("asignado a Elaboración → Elaboración, con el ingreso real de la asignación", () => {
@@ -69,18 +71,72 @@ describe("etapas del cliente", () => {
     expect(s.quantities.delivered).toBe(0);
   });
 
-  it("Envasado recién terminado: espera la ventana antes de mostrarse «Listo» (podría pasar a Codificado)", () => {
-    const fresh = work({ sector: "ENVASADO_PREMIUM", status: "revision", completedAt: HOURS(0.2) });
-    expect(derive([fresh])).toMatchObject({ stage: "ENVASADO", substage: "FINALIZACION" });
-    const settled = work({ sector: "ENVASADO_PREMIUM", status: "revision", completedAt: HOURS(3) });
-    expect(derive([settled])).toMatchObject({ stage: "LISTO", substage: null });
+  it("Envasado/Codificado TERMINADO pero sin confirmación explícita: NO es «Listo» (no hay inferencia ni plazos)", () => {
+    for (const hours of [0.1, 3, 500]) {
+      const done = work({ sector: "ENVASADO_PREMIUM", status: "revision", completedAt: HOURS(hours) });
+      expect(derive([done])).toMatchObject({ stage: "ENVASADO", substage: "FINALIZACION" });
+      expect(derive([done]).readyWorks).toEqual([]);
+      expect(derive([done]).quantities.available).toBe(0);
+    }
+    const cod = work({ sector: "CODIFICADO", status: "revision", viaCodificado: true, completedAt: HOURS(48) });
+    expect(derive([cod])).toMatchObject({ stage: "ENVASADO", substage: "FINALIZACION" });
   });
 
-  it("Codificado terminado (solo falta entregar) → Listo para entregar de inmediato", () => {
-    const cod = work({ sector: "CODIFICADO", status: "revision", viaCodificado: true, completedAt: HOURS(0.1) });
-    const s = derive([cod]);
+  it("Envasado confirma explícitamente toda la cantidad → Listo para entregar", () => {
+    const m = mark("m1", 5000);
+    const env = work({ sector: "ENVASADO_MASIVO", status: "revision", completedAt: HOURS(0.1), marks: [m] });
+    const s = derive([env]);
     expect(s.stage).toBe("LISTO");
-    expect(s.readyWorks).toEqual([{ workItemId: cod.id, available: 5000, readySince: cod.completedAt }]);
+    expect(s.quantities).toMatchObject({ requested: 5000, delivered: 0, available: 5000, pending: 0 });
+    expect(s.readyWorks).toEqual([{ workItemId: env.id, markId: "m1", available: 5000, readySince: m.at }]);
+    expect(s.availableSince).toBe(m.at);
+  });
+
+  it("Codificado confirma explícitamente → Listo para entregar", () => {
+    const cod = work({ sector: "CODIFICADO", status: "revision", viaCodificado: true, completedAt: HOURS(0.1), marks: [mark("mc", 5000)] });
+    expect(derive([cod]).stage).toBe("LISTO");
+  });
+
+  it("marca parcial (2.000 de 5.000): NO se marca todo el pedido como listo; se ve lo disponible y lo pendiente", () => {
+    const env = work({ sector: "ENVASADO_MASIVO", status: "en_curso", finishedQty: "2000", marks: [mark("m1", 2000)] });
+    const s = derive([env]);
+    expect(s.stage).toBe("ENVASADO");
+    expect(s.quantities).toMatchObject({ requested: 5000, delivered: 0, available: 2000, pending: 3000 });
+    expect(s.readyWorks.map((r) => [r.markId, r.available])).toEqual([["m1", 2000]]);
+  });
+
+  it("nueva disponibilidad sobre el mismo trabajo: dos marcas, sin duplicar las primeras 2.000", () => {
+    const env = work({ sector: "ENVASADO_MASIVO", status: "revision", marks: [mark("m1", 2000, "2026-10-19T10:00:00Z"), mark("m2", 3000, "2026-10-19T16:00:00Z")] });
+    const s = derive([env]);
+    expect(s.stage).toBe("LISTO");
+    expect(s.quantities).toMatchObject({ available: 5000, pending: 0 });
+    expect(s.readyWorks.map((r) => [r.markId, r.available])).toEqual([["m1", 2000], ["m2", 3000]]);
+    expect(s.availableSince).toBe("2026-10-19T10:00:00Z");
+  });
+
+  it("entrega parcial posterior: lo entregado se descuenta de la disponibilidad (más antigua primero)", () => {
+    const env = work({ sector: "ENVASADO_MASIVO", status: "revision", marks: [mark("m1", 2000, "2026-10-19T10:00:00Z"), mark("m2", 3000, "2026-10-19T16:00:00Z")], markBase: 0, deliveries: [delivery("line:1", 2500)] });
+    const s = derive([env]);
+    expect(s.quantities).toMatchObject({ requested: 5000, delivered: 2500, available: 2500, pending: 0 });
+    expect(s.partialDelivery).toBe(true);
+    expect(s.readyWorks.map((r) => [r.markId, r.available])).toEqual([["m2", 2500]]);
+    expect(s.stage).toBe("LISTO");
+  });
+
+  it("entregas históricas (anteriores a la confirmación) no restan disponibilidad: 2.000 entregadas antes + 3.000 confirmadas = 3.000 disponibles", () => {
+    const env = work({ sector: "ENVASADO_MASIVO", status: "revision", marks: [mark("m1", 3000)], markBase: 2000, deliveries: [delivery("line:1", 2000, "2026-10-01T12:00:00Z")] });
+    const s = derive([env]);
+    expect(s.stage).toBe("LISTO");
+    expect(s.quantities).toMatchObject({ requested: 5000, delivered: 2000, available: 3000, pending: 0 });
+    expect(s.readyWorks.map((r) => [r.markId, r.available])).toEqual([["m1", 3000]]);
+  });
+
+  it("entrega de TODA la disponibilidad pero falta producir el resto: vuelve a «en proceso» sin disponibilidad", () => {
+    const env = work({ sector: "ENVASADO_MASIVO", status: "en_curso", finishedQty: "2000", marks: [mark("m1", 2000)], markBase: 0, deliveries: [delivery("line:1", 2000)] });
+    const s = derive([env]);
+    expect(s.stage).toBe("ENVASADO");
+    expect(s.quantities).toMatchObject({ delivered: 2000, available: 0, pending: 3000 });
+    expect(s.readyWorks).toEqual([]);
   });
 
   it("entrega final completa → Entregado, con la fecha de la última entrega", () => {
@@ -103,21 +159,29 @@ describe("etapas del cliente", () => {
     expect(s.quantities).toMatchObject({ requested: 5000, delivered: 2000, pending: 3000, available: 0 });
   });
 
-  it("entrega parcial con el resto ya terminado: Listo, con 3.000 disponibles", () => {
-    const env = work({ sector: "ENVASADO_MASIVO", status: "revision", completedAt: HOURS(5), deliveries: [delivery("line:1", 2000)] });
+  it("entrega parcial con el resto confirmado como disponible: Listo, con 3.000 disponibles", () => {
+    const env = work({ sector: "ENVASADO_MASIVO", status: "revision", completedAt: HOURS(5), marks: [mark("m1", 5000)], markBase: 0, deliveries: [delivery("line:1", 2000)] });
     const s = derive([env]);
     expect(s.stage).toBe("LISTO");
-    expect(s.quantities).toMatchObject({ delivered: 2000, pending: 3000, available: 3000 });
+    expect(s.quantities).toMatchObject({ delivered: 2000, pending: 0, available: 3000 });
     expect(s.partialDelivery).toBe(true);
   });
 
-  it("dos tandas: una lista y otra en proceso → etapa menos avanzada, con lo ya disponible aparte", () => {
-    const a = work({ sector: "ENVASADO_MASIVO", status: "revision", plannedQuantity: "2000", completedAt: HOURS(6) });
+  it("dos tandas: una confirmada y otra en proceso → etapa menos avanzada, con lo ya disponible aparte", () => {
+    const a = work({ sector: "ENVASADO_MASIVO", status: "revision", plannedQuantity: "2000", completedAt: HOURS(6), marks: [mark("ma", 2000)] });
     const b = work({ sector: "ENVASADO_MASIVO", status: "en_curso", plannedQuantity: "3000" });
     const s = derive([a, b]);
     expect(s.stage).toBe("ENVASADO");
-    expect(s.quantities).toMatchObject({ requested: 5000, available: 2000, pending: 5000 });
+    expect(s.quantities).toMatchObject({ requested: 5000, available: 2000, pending: 3000 });
     expect(s.readyWorks.map((r) => r.workItemId)).toEqual([a.id]);
+  });
+
+  it("dos tandas terminadas pero solo una confirmada: la otra queda en finalización, no «lista»", () => {
+    const a = work({ sector: "ENVASADO_MASIVO", status: "revision", plannedQuantity: "2000", marks: [mark("ma", 2000)] });
+    const b = work({ sector: "ENVASADO_MASIVO", status: "revision", plannedQuantity: "3000" });
+    const s = derive([a, b]);
+    expect(s).toMatchObject({ stage: "ENVASADO", substage: "FINALIZACION" });
+    expect(s.quantities).toMatchObject({ available: 2000, pending: 3000 });
   });
 
   it("no suma entre unidades distintas (kg y unidades)", () => {
@@ -143,11 +207,12 @@ describe("etapas del cliente", () => {
       receivedFromElaboracionAt: "2026-10-14T10:00:05Z",
       completedAt: "2026-10-18T09:00:00Z",
       deliveries: [delivery("line:1", 5000, "2026-10-19T12:00:00Z")],
+      marks: [mark("m1", 5000, "2026-10-18T10:30:00Z")],
     });
     expect(derive([elab, env]).milestones).toEqual({
       elaboracion: "2026-10-05T13:00:00Z",
       envasado: "2026-10-14T10:00:05Z",
-      listo: "2026-10-18T09:00:00Z",
+      listo: "2026-10-18T10:30:00Z",
       entregado: "2026-10-19T12:00:00Z",
     });
     const imported = derive([work({ source: "import_sheets", assignedAt: null })]);
@@ -155,6 +220,6 @@ describe("etapas del cliente", () => {
   });
 
   it("sin trabajos no hay etapa", () => {
-    expect(deriveProductStage([], { now: NOW })).toBeNull();
+    expect(deriveProductStage([])).toBeNull();
   });
 });

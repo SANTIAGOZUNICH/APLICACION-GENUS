@@ -11,6 +11,7 @@ import { hmac } from "./security";
 import {
   ESTIMATE_DISCLAIMER,
   FINALIZATION_MESSAGE,
+  PARTIAL_READY_MESSAGE,
   STAGE_ESTIMATE_DAYS,
   STAGE_LABELS,
   STAGE_MESSAGES,
@@ -48,6 +49,7 @@ export type RawWorkRow = {
   /** production_pedidos.producto (nombre del producto tal como lo pidió el cliente). */
   pedidoProducto: string | null;
 };
+export type RawMarkRow = { id: string; workItemId: string; quantity: number; at: string; /** Entregado al confirmar (base). */ deliveredBefore?: number; retracted?: boolean };
 export type RawDeliveryRow = { key: string; workItemId: string; at: string; quantity: number | null; unit: string | null };
 export type RawEventRow = { workItemId: string; type: string; at: string };
 export type ConfirmationInfo = { at: string; by: string };
@@ -92,6 +94,8 @@ export type PortalProductView = {
   /** Avance visual de 0 a 100. */
   progressPct: number;
   lastDeliveryAt: string | null;
+  /** Fecha y hora en que un usuario autorizado confirmó la primera disponibilidad vigente (null = nada confirmado). */
+  availableSince: string | null;
   timeline: PortalTimelineStep[];
   deliveries: PortalDeliveryView[];
 };
@@ -103,8 +107,8 @@ export type PortalOverviewData = {
   deliveries: PortalDeliveryView[];
   summary: PortalSummary;
   disclaimer: string;
-  /** Trabajos con producto disponible (insumo del aviso «listo»). No se envía al navegador. */
-  ready: Array<{ productId: string; product: string; workItemId: string; available: number | null; unit: string | null; readySince: string | null }>;
+  /** Marcas de disponibilidad con cantidad aún sin entregar (insumo del aviso «listo»). No se envía al navegador. */
+  ready: Array<{ productId: string; product: string; workItemId: string; markId: string; available: number; unit: string | null; readySince: string }>;
 };
 
 export const opaque = (clientId: string, label: string, value: string) => hmac(label, `${clientId}:${value}`).slice(0, 24);
@@ -136,10 +140,10 @@ function timelineOf(stage: PortalStageId, m: Milestones): PortalTimelineStep[] {
   }));
 }
 
-function messageFor(stage: PortalStageId, substage: PortalSubstage, partial: boolean, available: number): string {
+function messageFor(stage: PortalStageId, substage: PortalSubstage, available: number): string {
   if (stage === "ELABORACION" && substage === "TERMINADA_EN_TRASPASO") return "Finalizó la elaboración de tu producto. Estamos preparando el paso a envasado.";
   if (stage === "ENVASADO" && substage === "FINALIZACION") return FINALIZATION_MESSAGE;
-  if (stage === "ENVASADO" && partial && available > 0) return "Una parte de tu pedido ya está lista para entregar; el resto sigue en proceso.";
+  if (stage === "ENVASADO" && available > 0) return PARTIAL_READY_MESSAGE;
   return STAGE_MESSAGES[stage];
 }
 
@@ -148,16 +152,19 @@ export function buildOverview(input: {
   works: RawWorkRow[];
   deliveries: RawDeliveryRow[];
   events: RawEventRow[];
+  /** Marcas de disponibilidad vigentes (no retiradas). Sin marca explícita no hay «Listo para entregar». */
+  marks?: RawMarkRow[];
   confirmations: ReadonlyMap<string, ConfirmationInfo>;
   now: Date;
   calendar?: BusinessCalendarOptions;
-  readyStableMinutes?: number;
 }): PortalOverviewData {
   const { clientId, now } = input;
   const eventsByWork = new Map<string, RawEventRow[]>();
   for (const e of input.events) eventsByWork.set(e.workItemId, [...(eventsByWork.get(e.workItemId) ?? []), e]);
   const delByWork = new Map<string, RawDeliveryRow[]>();
   for (const d of input.deliveries) delByWork.set(d.workItemId, [...(delByWork.get(d.workItemId) ?? []), d]);
+  const marksByWork = new Map<string, RawMarkRow[]>();
+  for (const m of input.marks ?? []) marksByWork.set(m.workItemId, [...(marksByWork.get(m.workItemId) ?? []), m]);
   const first = (events: RawEventRow[] | undefined, type: string) => (events ?? []).filter((e) => e.type === type).map((e) => e.at).sort()[0] ?? null;
 
   type Group = { key: string; rows: RawWorkRow[]; facts: WorkFact[] };
@@ -182,6 +189,12 @@ export function buildOverview(input: {
       deliverableUnits: w.deliverableUnits,
       packagingTotalUnits: w.packagingTotalUnits,
       deliveries: (delByWork.get(w.id) ?? []).map((d): DeliveryFact => ({ key: d.key, at: d.at, quantity: d.quantity, unit: d.unit })),
+      marks: (marksByWork.get(w.id) ?? []).filter((m) => !m.retracted).map((m) => ({ id: m.id, quantity: m.quantity, at: m.at })),
+      // Base: entregado al hacerse la PRIMERA confirmación del trabajo (aunque después se haya retirado).
+      markBase: (() => {
+        const all = [...(marksByWork.get(w.id) ?? [])].sort((a, b) => (a.at < b.at ? -1 : 1));
+        return all.length ? (all[0]!.deliveredBefore ?? 0) : null;
+      })(),
     };
     // Cada fila de pedido-producto es UN producto del cliente; sin pedido (trabajos manuales) se agrupa por nombre.
     const key = w.productionPedidoId ? `p:${w.productionPedidoId}` : `n:${clientKey(w.product)}`;
@@ -196,7 +209,7 @@ export function buildOverview(input: {
   const ready: PortalOverviewData["ready"] = [];
 
   for (const g of groups.values()) {
-    const stage = deriveProductStage(g.facts, { now, readyStableMinutes: input.readyStableMinutes });
+    const stage = deriveProductStage(g.facts);
     if (!stage) continue;
     const down = g.rows.filter((r) => r.sector !== "ELABORACION");
     const label = g.rows.find((r) => r.pedidoProducto)?.pedidoProducto ?? (down[0] ?? g.rows[0]!).product;
@@ -221,7 +234,7 @@ export function buildOverview(input: {
       });
     deliveriesAll.push(...dels);
 
-    for (const r of stage.readyWorks) ready.push({ productId: id, product: label, workItemId: r.workItemId, available: r.available, unit: stage.quantities.unit, readySince: r.readySince });
+    for (const r of stage.readyWorks) ready.push({ productId: id, product: label, workItemId: r.workItemId, markId: r.markId, available: r.available, unit: stage.quantities.unit, readySince: r.readySince });
 
     products.push({
       id,
@@ -231,12 +244,13 @@ export function buildOverview(input: {
       stageLabel: STAGE_LABELS[stage.stage],
       substage: stage.substage,
       stageIndex: stageIndex(stage.stage),
-      message: messageFor(stage.stage, stage.substage, stage.partialDelivery, stage.quantities.available),
+      message: messageFor(stage.stage, stage.substage, stage.quantities.available),
       quantities: stage.quantities,
       partialDelivery: stage.partialDelivery,
       countdown,
       progressPct: visualProgress(stage.stage, stage.substage, countdown),
       lastDeliveryAt: stage.lastDeliveryAt,
+      availableSince: stage.availableSince,
       timeline: timelineOf(stage.stage, stage.milestones),
       deliveries: dels,
     });

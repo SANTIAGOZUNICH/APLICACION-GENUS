@@ -1,6 +1,10 @@
 /**
  * Avisos del portal: «producto listo» (en el portal y por correo), entregas registradas y reintentos de correo.
  *
+ * El ÚNICO disparador del aviso «listo» es la confirmación explícita de disponibilidad («Marcar listo para entregar») de un
+ * usuario autorizado del último sector: un aviso por MARCA (cantidad realmente disponible de esa confirmación). El simple
+ * cierre de Envasado o Codificado no avisa nada. Una nueva disponibilidad posterior es otra marca y genera su propio aviso.
+ *
  * Sin duplicados: cada aviso tiene una clave de deduplicación única en base (cliente + clave) y cada correo otra
  * (clave + destinatario). Un aviso viejo (producto que ya estaba listo antes de habilitar el portal, o más viejo que
  * EMAIL_MAX_AGE_HOURS) se registra como leído y NO se envía: evita una avalancha de correos vencidos al activar el envío.
@@ -62,7 +66,7 @@ export async function scanPortalNotifications(now: Date = new Date(), db: SqlExe
 
     for (const r of overview.ready) {
       const qty = fmtQty(r.available, r.unit);
-      const key = `ready:${r.workItemId}:${r.available ?? "s"}`;
+      const key = `ready:${r.markId}`;
       const fresh = r.readySince != null && now.getTime() - new Date(r.readySince).getTime() <= maxAgeMs;
       const ins = (await db.execute(sql`
         insert into portal_notifications (client_id, kind, dedupe_key, title, body, payload, read_at)

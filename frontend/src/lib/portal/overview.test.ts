@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOverview, toClientPayload, type RawDeliveryRow, type RawEventRow, type RawWorkRow } from "./overview";
+import { buildOverview, toClientPayload, type RawDeliveryRow, type RawEventRow, type RawMarkRow, type RawWorkRow } from "./overview";
 
 const NOW = new Date("2026-10-19T15:00:00Z"); // lunes, Buenos Aires
 const CLIENT = "00000000-0000-4000-8000-0000000000c1";
@@ -29,8 +29,8 @@ function row(over: Partial<RawWorkRow> = {}): RawWorkRow {
   };
 }
 const assigned = (id: string, at = "2026-10-05T13:00:00Z"): RawEventRow => ({ workItemId: id, type: "ITEM_ASSIGNED", at });
-const build = (works: RawWorkRow[], extra: { deliveries?: RawDeliveryRow[]; events?: RawEventRow[]; confirmations?: Map<string, { at: string; by: string }> } = {}) =>
-  buildOverview({ clientId: CLIENT, works, deliveries: extra.deliveries ?? [], events: extra.events ?? [], confirmations: extra.confirmations ?? new Map(), now: NOW });
+const build = (works: RawWorkRow[], extra: { deliveries?: RawDeliveryRow[]; events?: RawEventRow[]; marks?: RawMarkRow[]; confirmations?: Map<string, { at: string; by: string }> } = {}) =>
+  buildOverview({ clientId: CLIENT, works, deliveries: extra.deliveries ?? [], events: extra.events ?? [], marks: extra.marks ?? [], confirmations: extra.confirmations ?? new Map(), now: NOW });
 
 describe("vista del cliente", () => {
   it("un pedido con varios productos: una tarjeta por producto, cada una con su propia etapa", () => {
@@ -116,12 +116,36 @@ describe("vista del cliente", () => {
     expect(Object.keys(toClientPayload(o)).sort()).toEqual(["deliveries", "disclaimer", "products", "summary"]);
   });
 
-  it("un trabajo listo genera el insumo del aviso con lo disponible", () => {
+  it("una confirmación explícita de disponibilidad genera el insumo del aviso con la cantidad confirmada", () => {
     const v = row({ id: "w-v", sector: "CODIFICADO", operationalStatus: "revision", viaCodificado: true, completedAt: "2026-10-18T09:00:00Z" });
-    const o = build([v]);
+    const o = build([v], { marks: [{ id: "mark-1", workItemId: "w-v", quantity: 5000, at: "2026-10-19T14:00:00Z" }] });
     expect(o.products[0]!.stage).toBe("LISTO");
-    expect(o.ready).toEqual([expect.objectContaining({ workItemId: "w-v", available: 5000, product: "Shampoo Plus 500 ml" })]);
+    expect(o.products[0]!.availableSince).toBe("2026-10-19T14:00:00Z");
+    expect(o.ready).toEqual([expect.objectContaining({ workItemId: "w-v", markId: "mark-1", available: 5000, product: "Shampoo Plus 500 ml", readySince: "2026-10-19T14:00:00Z" })]);
     expect(o.summary.listos).toBe(1);
+  });
+
+  it("trabajo terminado SIN confirmación: no es «Listo», no hay insumo de aviso y se ve «en proceso de finalización»", () => {
+    for (const sector of ["ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO"] as const) {
+      const v = row({ id: "w-v", sector, operationalStatus: "revision", completedAt: "2026-10-17T09:00:00Z" });
+      const o = build([v]);
+      expect(o.products[0]).toMatchObject({ stage: "ENVASADO", substage: "FINALIZACION", message: "Tu producto está en proceso de finalización.", availableSince: null });
+      expect(o.ready).toEqual([]);
+      expect(o.summary.listos).toBe(0);
+    }
+  });
+
+  it("disponibilidad parcial: 5.000 pedidas, 2.000 entregadas, 1.500 disponibles y 1.500 pendientes — no figura como pedido listo", () => {
+    const v = row({ id: "w-v", sector: "ENVASADO_MASIVO", operationalStatus: "en_curso", finishedQty: "3500" });
+    const o = build([v], {
+      marks: [{ id: "mk", workItemId: "w-v", quantity: 1500, at: "2026-10-19T14:00:00Z", deliveredBefore: 2000 }],
+      deliveries: [{ key: "line:1", workItemId: "w-v", at: "2026-10-16T12:00:00Z", quantity: 2000, unit: "un." }],
+    });
+    const p = o.products[0]!;
+    expect(p.stage).toBe("ENVASADO");
+    expect(p.quantities).toMatchObject({ requested: 5000, delivered: 2000, available: 1500, pending: 1500 });
+    expect(p.message).toBe("Una parte de tu pedido ya está lista para entregar; el resto sigue en proceso.");
+    expect(o.summary.listos).toBe(0);
   });
 
   it("sin número de pedido no se inventa uno ni se muestra el de la OE interna", () => {

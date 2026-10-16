@@ -31,6 +31,7 @@ import {
 } from "../adapters/circuit-client";
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
 import { DeliverWorkDialog, type DeliverWorkPayload } from "../components/deliver-work-dialog";
+import { MarkReadyPanel } from "../components/mark-ready-panel";
 import { SendToCodificadoDialog } from "../components/send-to-codificado-dialog";
 import { SendToEnvasadoDialog, type SendToEnvasadoPayload } from "../components/send-to-envasado-dialog";
 import { StatusChip } from "../components/operational-ui";
@@ -292,6 +293,12 @@ export function PendientesDefinirView() {
                           </Button>
                         ))}
                       </div>
+                      {/* Trabajo terminado del último sector (Envasado/Codificado): confirmación explícita de disponibilidad. */}
+                      {item.sector !== "ELABORACION" ? (
+                        <div className="mt-2 min-w-[16rem]">
+                          <MarkReadyPanel workItemId={item.id} orderFallback={item.oaRef ?? null} />
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 );

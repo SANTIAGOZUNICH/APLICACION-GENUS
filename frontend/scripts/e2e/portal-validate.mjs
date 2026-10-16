@@ -71,6 +71,8 @@ const daysAgo = (n) => new Date(Date.now() - n * 86_400_000).toISOString();
 await q("update work_items set production_pedido_id = $2::uuid, operational_status = 'en_curso' where id = $1", [wElab, pA1]);
 await q("insert into operational_events (work_item_id, type, actor_email, actor_sector, created_at) values ($1,'ITEM_ASSIGNED','e2e','PRODUCCION',$2)", [wElab, daysAgo(4)]);
 await q("update work_items set production_pedido_id = $2::uuid, operational_status = 'revision', completed_at = $3 where id = $1", [wEnv, pA2, daysAgo(1)]);
+// «Listo para entregar» = confirmación EXPLÍCITA del último sector (sin ella un trabajo terminado no figura como listo).
+await q("insert into portal_availability_marks (work_item_id, quantity, unit, delivered_before, client_name, product, sector, marked_by, idempotency_key) values ($1, 5000, 'un', 0, $2, 'CREMA NUTRITIVA', 'ENVASADO_MASIVO', 'e2e-envasado@genus.test', $3)", [wEnv, NAME_A, `e2e-mark-${RUN}`]);
 await q("update work_items set production_pedido_id = $2::uuid, operational_status = 'entregado' where id = $1", [wDel, pA3]);
 await q("update work_items set production_pedido_id = $2::uuid, operational_status = 'en_curso' where id = $1", [wB, pB]);
 const [wd] = await q("insert into work_item_deliveries (work_item_id, product, client, source_sector, quantity, unit, actual_delivered_at, delivered_by, delivered_by_sector, status) values ($1,'SERUM ENTREGADO',$2,'ENVASADO_MASIVO','1200','un',$3,'E2E','ENVASADO_MASIVO','ENTREGADO') returning id::text as id", [wDel, NAME_A, daysAgo(2)]);

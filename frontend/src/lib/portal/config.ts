@@ -44,11 +44,5 @@ export function emailProviderConfig(): { provider: "resend"; apiKey: string; fro
   return { provider: "resend", apiKey, from };
 }
 
-/** Antes de avisar «listo» el producto tiene que mantenerse terminado este tiempo (evita avisar y retroceder). */
-export function readyStableMinutes(): number {
-  const n = Number(process.env.PORTAL_READY_STABLE_MINUTES);
-  return Number.isFinite(n) && n >= 0 ? n : 60;
-}
-
 /** Los correos en cola más viejos que esto no se envían al configurar el proveedor (serían avisos vencidos). */
 export const EMAIL_MAX_AGE_HOURS = 48;
