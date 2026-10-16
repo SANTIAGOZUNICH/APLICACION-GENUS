@@ -15,7 +15,7 @@ export function ProductDetail({ initial, productId, contact }: { initial: Client
   const p: PortalProductView | undefined = data.products.find((x) => x.id === productId);
   return (
     <>
-      <PortalHeader demo={data.demo} right={<button className="gp-btn gp-btn-ghost gp-btn-sm" onClick={() => void logout()}>{data.demo ? "Salir de la demo" : "Salir"}</button>} />
+      <PortalHeader demo={data.demo} right={<button className="gp-btn gp-btn-ghost gp-btn-sm" onClick={() => void logout()}>Salir</button>} />
       <main className="gp-wrap">
         {data.demo ? <DemoBanner onReset={() => void refresh()} /> : null}
         <a className="gp-back" href="/entregas" data-testid="back">← Volver a mis productos</a>

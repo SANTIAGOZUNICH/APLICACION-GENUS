@@ -191,7 +191,7 @@ for (const [name, opts] of [
   await p.getByTestId("receipt-dialog").getByRole("button", { name: "Cerrar" }).tap();
   await p.getByTestId("logout").tap();
   await p.getByRole("button", { name: "Enviarme un código" }).waitFor();
-  check(`${name}: «Salir de la demo» cierra la sesión`, (await ctx.request.get("/entregas/api/overview")).status() === 401);
+  check(`${name}: «Salir» cierra la sesión de la demo`, (await ctx.request.get("/entregas/api/overview")).status() === 401);
   await ctx.close();
 }
 

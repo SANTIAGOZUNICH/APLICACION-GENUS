@@ -133,7 +133,7 @@ export function Dashboard({ initial, contact }: { initial: ClientPayload; contac
         right={
           <>
             <Bell notifications={notifications} onRead={() => setLocalRead(true)} />
-            <button className="gp-btn gp-btn-ghost gp-btn-sm" onClick={() => void logout()} data-testid="logout">{data.demo ? "Salir de la demo" : "Salir"}</button>
+            <button className="gp-btn gp-btn-ghost gp-btn-sm" onClick={() => void logout()} data-testid="logout">Salir</button>
           </>
         }
       />
