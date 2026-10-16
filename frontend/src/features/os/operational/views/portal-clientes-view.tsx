@@ -37,6 +37,34 @@ export function PortalClientesView() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [form, setForm] = useState({ name: "", aliases: "", emails: "" });
   const [hol, setHol] = useState({ date: "", name: "", action: "AGREGAR" });
+  const [demoLink, setDemoLink] = useState<string | null>(null);
+  const [demoBusy, setDemoBusy] = useState(false);
+
+  /** Portal de prueba: pide un token temporal de un solo uso y abre el portal real en otra pestaña con una sesión demo. */
+  async function openDemo() {
+    setDemoBusy(true);
+    setDemoLink(null);
+    // La pestaña se abre en el mismo gesto del clic (evita el bloqueo de ventanas emergentes) y después se la dirige a la URL.
+    const tab = window.open("about:blank", "_blank");
+    try {
+      const r = await api("", { action: "demo_launch" });
+      if (!r.ok) {
+        tab?.close();
+        return setMsg({ kind: "err", text: String(r.data.error ?? "No se pudo abrir el portal de prueba.") });
+      }
+      const url = String(r.data.url);
+      if (tab) {
+        tab.opener = null;
+        tab.location.href = url;
+        setMsg({ kind: "ok", text: "Portal de prueba abierto en otra pestaña. El enlace sirve una sola vez y vence en 2 minutos." });
+      } else {
+        setDemoLink(url);
+        setMsg({ kind: "ok", text: "Tu navegador bloqueó la pestaña nueva: usá el enlace de abajo (sirve una sola vez y vence en 2 minutos)." });
+      }
+    } finally {
+      setDemoBusy(false);
+    }
+  }
 
   const load = useCallback(async () => {
     const r = await api("?view=clients");
@@ -77,6 +105,16 @@ export function PortalClientesView() {
             Habilitá clientes para que sigan sus pedidos en <strong>laboratoriogenus.com.ar/entregas</strong>. Cada cliente entra con su código + un correo autorizado + un código temporal. Los datos salen de GENUS OS; nada se carga dos veces.
           </p>
         </header>
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--os-border)] bg-[var(--os-surface)] p-4" data-testid="portal-demo">
+          <div className="max-w-2xl space-y-1">
+            <h3 className="font-semibold">Portal de prueba</h3>
+            <p className="text-sm text-[var(--os-text-muted)]">
+              Abre el portal real (laboratoriogenus.com.ar/entregas) con datos <strong>ficticios</strong>, sin crear clientes ni mandar correos. Entrás con tu sesión de GENUS OS; nada de lo que hagas ahí modifica pedidos, entregas ni stock reales.
+            </p>
+            {demoLink ? <p className="break-all text-sm"><a className="underline" href={demoLink} target="_blank" rel="noopener noreferrer" data-testid="demo-link">Abrir portal de prueba (enlace de un solo uso)</a></p> : null}
+          </div>
+          <Button onClick={() => void openDemo()} disabled={demoBusy} data-testid="open-demo">{demoBusy ? "Abriendo…" : "Abrir portal de prueba"}</Button>
+        </section>
         {msg ? <div role="status" className={`rounded-lg px-3 py-2 text-sm ${msg.kind === "ok" ? "bg-emerald-500/10 text-emerald-700" : "bg-red-500/10 text-red-700"}`}>{msg.text}</div> : null}
 
         <section className="space-y-3 rounded-xl border border-[var(--os-border)] p-4">

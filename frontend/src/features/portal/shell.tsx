@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 
-export function PortalHeader({ right }: { right?: ReactNode }) {
+export function PortalHeader({ right, demo = false }: { right?: ReactNode; demo?: boolean }) {
   return (
     <header className="gp-header">
       <div className="gp-wrap gp-header-in">
@@ -12,6 +12,7 @@ export function PortalHeader({ right }: { right?: ReactNode }) {
           <b>GENUS | Portal de Clientes</b>
           <span>Tu producción, en buenas manos.</span>
         </div>
+        {demo ? <span className="gp-demo-badge" data-testid="demo-badge" title="Los datos de esta pantalla son ficticios">Modo demostración</span> : null}
         <div className="gp-spacer" />
         {right}
       </div>

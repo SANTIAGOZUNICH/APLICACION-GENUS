@@ -107,7 +107,7 @@ export type PortalOverviewData = {
   ready: Array<{ productId: string; product: string; workItemId: string; available: number | null; unit: string | null; readySince: string | null }>;
 };
 
-const opaque = (clientId: string, label: string, value: string) => hmac(label, `${clientId}:${value}`).slice(0, 24);
+export const opaque = (clientId: string, label: string, value: string) => hmac(label, `${clientId}:${value}`).slice(0, 24);
 
 /** Etapa → avance visual base; la cuenta regresiva suma hasta 28 puntos dentro de Elaboración y Envasado. */
 function visualProgress(stage: PortalStageId, substage: PortalSubstage, countdown: PortalCountdownView | null): number {

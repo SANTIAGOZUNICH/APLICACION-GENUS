@@ -7,7 +7,7 @@ import { fmtDate, fmtDateTime, fmtQty } from "./format";
 type Confirmation = { confirmedAt: string; product: string; orderRef: string | null; quantity: number | null; unit: string | null; deliveredAt: string };
 
 /** «Confirmar recepción»: solo para entregas finales registradas por GENUS OS. Muestra el detalle y recién confirma al aceptar. */
-export function ReceiptDialog({ deliveryId, onClose, onConfirmed }: { deliveryId: string; onClose: () => void; onConfirmed: () => void }) {
+export function ReceiptDialog({ deliveryId, onClose, onConfirmed, demo = false }: { deliveryId: string; onClose: () => void; onConfirmed: () => void; demo?: boolean }) {
   const [delivery, setDelivery] = useState<PortalDeliveryView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -59,7 +59,7 @@ export function ReceiptDialog({ deliveryId, onClose, onConfirmed }: { deliveryId
       <div className="gp-dialog" role="dialog" aria-modal="true" aria-labelledby="gp-rcpt-title" tabIndex={-1} ref={ref} data-testid="receipt-dialog">
         {done ? (
           <>
-            <h2 id="gp-rcpt-title">Recepción confirmada</h2>
+            <h2 id="gp-rcpt-title">{demo ? "Recepción confirmada (simulada)" : "Recepción confirmada"}</h2>
             <p className="gp-stamp" data-testid="receipt-stamp">Constancia registrada el {fmtDateTime(done.confirmedAt)}</p>
             <dl className="gp-dl">
               <div><dt>Producto</dt><dd>{done.product}</dd></div>
@@ -67,7 +67,7 @@ export function ReceiptDialog({ deliveryId, onClose, onConfirmed }: { deliveryId
               <div><dt>Cantidad recibida</dt><dd>{fmtQty(done.quantity, done.unit)}</dd></div>
               <div><dt>Fecha de entrega registrada</dt><dd>{fmtDate(done.deliveredAt)}</dd></div>
             </dl>
-            <p className="gp-note">Avisamos a nuestro equipo de Producción. ¡Gracias por confiar en Laboratorio Genus!</p>
+            <p className="gp-note">{demo ? "Simulación: solo cambió el estado ficticio de la demostración. No se avisó a nadie ni se modificó GENUS OS." : "Avisamos a nuestro equipo de Producción. ¡Gracias por confiar en Laboratorio Genus!"}</p>
             <div className="gp-dialog-actions" style={{ marginTop: 16 }}><button className="gp-btn gp-btn-primary" onClick={onClose}>Cerrar</button></div>
           </>
         ) : (
@@ -82,7 +82,7 @@ export function ReceiptDialog({ deliveryId, onClose, onConfirmed }: { deliveryId
               </dl>
             ) : error ? null : <p className="gp-meta">Cargando…</p>}
             {error ? <div className="gp-msg err" role="alert" data-testid="receipt-error">{error}</div> : null}
-            <p className="gp-note" style={{ marginBottom: 14 }}>Al confirmar, queda registrada la fecha y hora en que recibiste este producto.</p>
+            <p className="gp-note" style={{ marginBottom: 14 }}>{demo ? "Demostración: la confirmación es simulada y no genera avisos ni cambios reales." : "Al confirmar, queda registrada la fecha y hora en que recibiste este producto."}</p>
             <div className="gp-dialog-actions">
               <button className="gp-btn gp-btn-ghost" onClick={onClose} disabled={busy}>CANCELAR</button>
               <button className="gp-btn gp-btn-primary" onClick={confirm} disabled={busy || !delivery}>{busy ? "Confirmando…" : "CONFIRMAR RECEPCIÓN"}</button>

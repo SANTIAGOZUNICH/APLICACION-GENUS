@@ -155,3 +155,10 @@
 @media (prefers-reduced-motion: reduce) {
   .gp *, .gp *::before, .gp *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Modo demostración */
+.gp-demo-badge { background: #fff4d6; color: #8a5a00; border: 1px solid #f0d58a; border-radius: 999px; padding: 4px 12px; font-size: 12px; font-weight: 800; letter-spacing: .02em; white-space: nowrap; }
+.gp-demo-banner { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; background: #fffaf0; border: 1px dashed #f0d58a; color: #6b4a00; border-radius: 14px; padding: 9px 14px; font-size: 13px; }
+@media (max-width: 560px) { .gp-demo-badge { font-size: 11px; padding: 3px 9px; } .gp-brand { display: none; } }
+.gp-header .gp-btn-sm { white-space: nowrap; }
+@media (max-width: 560px) { .gp-header-in { gap: 8px; } .gp-header .gp-btn-sm { padding: 8px 12px; } }

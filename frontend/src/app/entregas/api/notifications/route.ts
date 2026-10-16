@@ -1,5 +1,5 @@
 import { markNotificationsRead } from "@/lib/portal/data-service";
-import { assertSameOrigin, errorResponse, jsonResponse, requireSession } from "@/lib/portal/http";
+import { assertSameOrigin, demoSessionFrom, errorResponse, jsonResponse, requireSession } from "@/lib/portal/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,6 +8,8 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
+    // En la demostración los avisos son ficticios: no hay nada que marcar en la base.
+    if (await demoSessionFrom(request)) return jsonResponse({ ok: true });
     const { session } = await requireSession(request);
     await markNotificationsRead(session.clientId);
     return jsonResponse({ ok: true });

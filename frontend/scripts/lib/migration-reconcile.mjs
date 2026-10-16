@@ -39,6 +39,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0050_entregas_correcciones": "48d39276bc1d97698ef8ff9f5d06ccba68b4c1ce18dfe8a3094c204044195ec4",
   "0051_formula_drive_index": "fd438ee5d8cd4a95ab853aca736ddb9d05ef9047318b08259337bc91a2093380",
   "0052_portal_clientes": "3d48d8521e8e79b650abc2447b89be852c71fb3923f7760a83729d141bb6d963",
+  "0053_portal_demo": "220318a3a2141c735a393975d980cbf3d34ee5a964b69d30b8ed402c28641f28",
 });
 
 export const RECONCILE_LOG_TABLE = "genus_migration_reconcile_log";
@@ -187,6 +188,8 @@ export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
   { migration: "0052_portal_clientes", object: "portal_receipt_confirmations" },
   { migration: "0052_portal_clientes", object: "portal_audit_events" },
   { migration: "0052_portal_clientes", object: "portal_holiday_overrides" },
+  { migration: "0053_portal_demo", object: "portal_demo_tokens" },
+  { migration: "0053_portal_demo", object: "portal_demo_sessions" },
 ]);
 
 /** @param {{ query: (text: string, params?: unknown[]) => Promise<any[]>, required?: ReadonlyArray<{migration: string, object: string}> }} opts */
