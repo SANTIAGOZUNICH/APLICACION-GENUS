@@ -18,7 +18,7 @@ import {
   BLOCK_MESSAGES,
   canActorMark,
   canActorRetract,
-  canRetractWithoutAffectingDeliveries,
+  canRetractMark,
   checkRequestedQuantity,
   evaluateAvailability,
   type AvailabilityBlock,
@@ -163,7 +163,7 @@ async function buildState(tx: Exec, work: Row, actor: AvailabilityActor): Promis
     available: ev.available,
     marks: marks.map((m) => {
       const permitted = canActorRetract(actor.sector, String(m.sector));
-      const safe = canRetractWithoutAffectingDeliveries(marked, Number(m.quantity), delivered, base);
+      const safe = canRetractMark(marks.map((x) => ({ id: String(x.id), quantity: Number(x.quantity) })), String(m.id), availabilityFigures({ marked, delivered, markBase: base }).deliveredSince);
       return {
         id: String(m.id),
         quantity: Number(m.quantity),
@@ -268,7 +268,7 @@ export async function retractAvailability(actor: AvailabilityActor, input: { mar
     const marked = marks.reduce((s, m) => s + Number(m.quantity), 0);
     const base = await markBase(tx, String(work.id));
     const q = Number(mark.quantity);
-    if (!canRetractWithoutAffectingDeliveries(marked, q, delivered, base)) {
+    if (!canRetractMark(marks.map((x) => ({ id: String(x.id), quantity: Number(x.quantity) })), input.markId, availabilityFigures({ marked, delivered, markBase: base }).deliveredSince)) {
       throw new AvailabilityError("Ya hay entregas registradas sobre estas unidades: no se puede retirar la disponibilidad ni alterar esas entregas.", 409, "DELIVERED");
     }
 

@@ -139,8 +139,16 @@ export function checkRequestedQuantity(requested: unknown, ev: AvailabilityEvalu
   return { ok: true, quantity: q };
 }
 
-/** ¿Se puede retirar esta marca sin tocar lo ya entregado? Las unidades entregadas desde la confirmación siguen cubiertas por las demás marcas. */
-export function canRetractWithoutAffectingDeliveries(marked: number, markQuantity: number, delivered: number, markBase: number | null = null): boolean {
-  const { deliveredSince } = availabilityFigures({ marked, delivered, markBase });
-  return marked - markQuantity + EPS >= deliveredSince;
+/**
+ * ¿Se puede retirar esta marca sin afectar lo ya entregado? Lo entregado desde la primera confirmación consume primero las
+ * marcas MÁS ANTIGUAS: una marca solo se puede retirar si ninguna de sus unidades quedó cubierta por una entrega, es decir,
+ * si lo entregado no supera la suma de las marcas anteriores a ella.
+ */
+export function canRetractMark(marksOldestFirst: ReadonlyArray<{ id: string; quantity: number }>, markId: string, deliveredSince: number): boolean {
+  let older = 0;
+  for (const m of marksOldestFirst) {
+    if (m.id === markId) return deliveredSince <= older + EPS;
+    older += m.quantity;
+  }
+  return false;
 }

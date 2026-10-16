@@ -330,6 +330,19 @@ describe.skipIf(Boolean(PROBLEM))(`Listo para entregar (disponibilidad explícit
     expect(await q("select 1 from portal_availability_marks where id = $1::uuid and retracted_at is null", [m.markId])).toHaveLength(1);
   });
 
+  it("14b · con dos marcas y una entrega parcial: la marca entregada NO se retira, la nueva SÍ (lo entregado consume primero la más antigua)", async () => {
+    const w = await mkWork("DOS MARCAS", "ENVASADO_MASIVO", { status: "en_curso", finished: "2000" });
+    const s = await svc();
+    const m1 = await s.markReadyForDelivery(masivo, { workItemId: w, quantity: 2000, idempotencyKey: key() });
+    await q("update work_items set finished_qty = '5000', operational_status = 'revision', completed_at = now() where id = $1", [w]);
+    const m2 = await s.markReadyForDelivery(masivo, { workItemId: w, idempotencyKey: key() });
+    await deliverReal(w, 2000);
+    await rejects(s.retractAvailability(masivo, { markId: m1.markId, reason: "intento sobre lo entregado" }), 409, "DELIVERED");
+    const r = await s.retractAvailability(masivo, { markId: m2.markId, reason: "Las 3.000 no estaban terminadas" });
+    expect(r.state).toMatchObject({ marked: 2000, delivered: 2000, available: 0 });
+    expect(await product("DOS MARCAS")).toMatchObject({ stage: "ENVASADO" });
+  });
+
   // ───────────────────────── Concurrencia ─────────────────────────
   it("15 · dos usuarios confirmando a la vez: una sola confirmación gana, sin superar lo terminado", async () => {
     const w = await mkWork("CONCURRENTE", "ENVASADO_MASIVO", { status: "revision", completedAt: new Date().toISOString() });

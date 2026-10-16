@@ -145,7 +145,7 @@ await ep.getByTestId("mark-ready-btn").waitFor();
 await ep.getByTestId("mark-ready-btn").click();
 check("la cantidad ofrecida es solo la NUEVA (3.000), sin repetir las primeras 2.000", (await ep.getByTestId("mark-ready-qty").inputValue()) === "3000");
 await ep.getByTestId("mark-ready-dialog").getByRole("button", { name: "Confirmar disponibilidad" }).click();
-await ep.getByTestId("mark-ready-marks").locator("li").nth(1).waitFor();
+await ep.waitForFunction(() => document.querySelectorAll('[data-testid="mark-ready-marks"] > li').length >= 3, null, { timeout: 30000 });
 check("dos marcas (2.000 + 3.000), sin duplicar", (await q("select quantity from portal_availability_marks where work_item_id = $1 order by marked_at", [workId])).map((r) => r.quantity).join() === "2000,3000");
 await pp.reload();
 check("portal: todo confirmado → «Listo para entregar» con 5.000 disponibles", (await pcard().getByTestId("stage-pill").innerText()) === "Listo para entregar" && (await pcard().getByTestId("stage-message").innerText()) === "¡Tu producto está listo! Podés coordinar la entrega con nuestro equipo." && (await pcard().getByTestId("fact-available").innerText()).includes("5.000"));

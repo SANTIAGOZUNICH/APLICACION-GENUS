@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canActorMark, canActorRetract, canRetractWithoutAffectingDeliveries, checkRequestedQuantity, evaluateAvailability, type AvailabilityInput } from "./availability-rules";
+import { canActorMark, canActorRetract, canRetractMark, checkRequestedQuantity, evaluateAvailability, type AvailabilityInput } from "./availability-rules";
 
 const base = (over: Partial<AvailabilityInput> = {}): AvailabilityInput => ({
   sector: "ENVASADO_MASIVO", status: "en_curso", unit: "un.", plannedQuantity: "5000", finishedQty: null, deliverableUnits: null,
@@ -94,12 +94,16 @@ describe("validación de la cantidad pedida", () => {
 });
 
 describe("rectificación", () => {
-  it("se puede retirar si lo entregado sigue cubierto por las otras marcas; no si ya se entregó esa disponibilidad", () => {
-    expect(canRetractWithoutAffectingDeliveries(5000, 3000, 0, 0)).toBe(true);
-    expect(canRetractWithoutAffectingDeliveries(5000, 3000, 2000, 0)).toBe(true);
-    expect(canRetractWithoutAffectingDeliveries(5000, 3000, 2500, 0)).toBe(false);
-    expect(canRetractWithoutAffectingDeliveries(2000, 2000, 2000, 0)).toBe(false);
-    // entregas previas a la confirmación no bloquean la rectificación
-    expect(canRetractWithoutAffectingDeliveries(3000, 3000, 2000, 2000)).toBe(true);
+  const marks = [{ id: "m1", quantity: 2000 }, { id: "m2", quantity: 3000 }];
+  it("sin entregas se puede retirar cualquier marca", () => {
+    expect(canRetractMark(marks, "m1", 0)).toBe(true);
+    expect(canRetractMark(marks, "m2", 0)).toBe(true);
   });
+  it("lo entregado consume primero las marcas más antiguas: la entregada no se puede retirar, la nueva sí", () => {
+    expect(canRetractMark(marks, "m1", 2000)).toBe(false);
+    expect(canRetractMark(marks, "m2", 2000)).toBe(true);
+    expect(canRetractMark(marks, "m2", 2500)).toBe(false); // entrega parcial ya tocó a la segunda
+    expect(canRetractMark(marks, "m2", 5000)).toBe(false);
+  });
+  it("una marca desconocida no se puede retirar", () => expect(canRetractMark(marks, "zz", 0)).toBe(false));
 });
