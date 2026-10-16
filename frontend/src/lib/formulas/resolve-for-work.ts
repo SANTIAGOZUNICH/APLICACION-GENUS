@@ -17,7 +17,7 @@ import { readyFormulaBank } from "./get-formula-bank";
 import { hasGoogleCredentials } from "@/lib/adapters/google/google-auth";
 import { formulaIncompleteReason, pickExactDriveHit, resolveCrossSourceDuplicates, type WorkFormulaResolution } from "./work-formula-rules";
 
-export async function resolveFormulaForWork(args: { client: string; product: string }): Promise<WorkFormulaResolution> {
+export async function resolveFormulaForWork(args: { client: string; product: string; actor?: { email: string; sector: string } }): Promise<WorkFormulaResolution> {
   const client = args.client.trim();
   const product = args.product.trim();
   if (!client || !product) {
@@ -25,7 +25,7 @@ export async function resolveFormulaForWork(args: { client: string; product: str
   }
 
   const src = await import("./drive-formula-source");
-  if (await src.isNewFormulaSourceValidated()) return resolveFromNewDriveSource(client, product);
+  if (await src.isNewFormulaSourceValidated()) return resolveFromNewDriveSource(client, product, args.actor);
 
   // --- Ubicación anterior (solo hasta validar la carpeta nueva) ---
   // 1) Banco de fórmulas (versión VIGENTE, sin revisión pendiente).
@@ -122,14 +122,15 @@ export async function resolveFormulaForWork(args: { client: string; product: str
 }
 
 /** Carpeta nueva: vínculo vigente → índice (coincidencia fuerte y única). */
-async function resolveFromNewDriveSource(client: string, product: string): Promise<WorkFormulaResolution> {
+async function resolveFromNewDriveSource(client: string, product: string, actor?: { email: string; sector: string }): Promise<WorkFormulaResolution> {
   const src = await import("./drive-formula-source");
   let lookup: Awaited<ReturnType<typeof src.lookupFormulaForWork>>;
   try {
     lookup = await src.lookupFormulaForWork(client, product);
     // ¿Se agregó el archivo hace poco? Si no aparece, se actualiza el índice (si tiene más de 10 minutos) y se reintenta.
     if (lookup.kind === "match" && lookup.decision.kind === "none") {
-      await src.ensureFreshIndex(10 * 60 * 1000);
+      // Sin carpeta del cliente puede ser una carpeta recién agregada: se reindexa si el índice tiene más de 2 minutos.
+      await src.ensureFreshIndex((lookup.decision.clientFolders.length ? 10 : 2) * 60 * 1000);
       lookup = await src.lookupFormulaForWork(client, product);
     }
   } catch {
@@ -160,6 +161,8 @@ async function resolveFromNewDriveSource(client: string, product: string): Promi
     if (!res.found) return { ok: false, status: "error", message: `No se pudo leer la fórmula del archivo «${file.fileName}»: ${res.message}` };
     const why = formulaIncompleteReason(res.materials);
     if (why) return { ok: false, status: "incomplete", message: `${why} Archivo de Drive «${file.fileName}».` };
+    // Única coincidencia segura → queda vinculada para las próximas asignaciones del mismo cliente + producto.
+    if (lookup.kind === "match" && actor) await src.autoLinkFormula(actor, { client, product, fileId: file.fileId }).catch(() => false);
     return {
       ok: true,
       ref: {

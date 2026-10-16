@@ -407,7 +407,8 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           client,
           product,
           productId,
-          driveFileId
+          driveFileId,
+          orderId
         );
         if (seq !== formulaResolveSeq.current) return;
 
@@ -499,7 +500,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         );
       }
     },
-    [canEditFormula, locked, session, applyResolvedFormula]
+    [canEditFormula, locked, session, applyResolvedFormula, orderId]
   );
 
   const canEditRef = useRef(false);

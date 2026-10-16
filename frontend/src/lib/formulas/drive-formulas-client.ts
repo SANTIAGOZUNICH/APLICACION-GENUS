@@ -24,5 +24,8 @@ export const driveFormulasApi = {
     call<FormulaLinkResponse>("/api/v1/formulas/drive-links", { method: "POST", body: JSON.stringify(body) }),
   unlink: (id: string, reason: string) => call<{ ok: true }>(`/api/v1/formulas/drive-links?id=${encodeURIComponent(id)}&reason=${encodeURIComponent(reason)}`, { method: "DELETE" }),
   sync: () => call<{ result: { ok: boolean; fileCount?: number; clientCount?: number; added?: number; removed?: number; error?: string } }>("/api/v1/formulas/drive-index", { method: "POST" }),
+  /** Vuelve a preparar la OE del trabajo si quedó con la fórmula pendiente (no reemplaza una fórmula cargada). */
+  retryOe: (workItemId: string) =>
+    call<{ pending: { checked: number; resolved: number; orderNumbers: string[] }; info: WorkFormulaInfo }>(`/api/v1/formulas/work/${workItemId}`, { method: "POST" }),
   downloadUrl: (fileId: string) => `/api/v1/formulas/drive-file/${encodeURIComponent(fileId)}`,
 };

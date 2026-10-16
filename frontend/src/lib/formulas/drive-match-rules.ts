@@ -193,38 +193,106 @@ export function markDuplicates<T extends { clientFolderId: string; productKey: s
   );
 }
 
-/** Carpetas de cliente que corresponden al cliente del trabajo (+ sugerencias si no hay ninguna). */
+/**
+ * Regla de texto de la búsqueda MANUAL (selector de fórmulas de Órdenes de Elaboración): empieza con / alguna palabra
+ * empieza con / contiene / todas las palabras. La búsqueda automática usa la MISMA regla para encontrar carpetas.
+ */
+export type TextRank = "exact_prefix" | "word_prefix" | "contains" | "fuzzy";
+export function rankText(queryNorm: string, candidateNorm: string): TextRank | null {
+  if (!queryNorm || !candidateNorm) return null;
+  if (candidateNorm.startsWith(queryNorm)) return "exact_prefix";
+  const words = candidateNorm.split(" ").filter(Boolean);
+  if (words.some((w) => w.startsWith(queryNorm))) return "word_prefix";
+  if (candidateNorm.includes(queryNorm)) return "contains";
+  const qTokens = queryNorm.split(" ").filter((t) => t.length >= 2);
+  if (qTokens.length && qTokens.every((t) => candidateNorm.includes(t))) return "fuzzy";
+  return null;
+}
+
+export type ClientFolderMatch = {
+  /** Carpeta(s) del cliente, seguras para usar sin intervención. */
+  exact: Array<{ id: string; name: string }>;
+  /** Cómo se identificó: vínculo guardado por Producción, mismo nombre o nombre que contiene al cliente como palabra. */
+  how: "vinculo" | "nombre" | "contiene" | null;
+  /** Carpetas parecidas (regla de la búsqueda manual): solo para mostrar opciones, nunca se usan solas. */
+  suggestions: Array<{ id: string; name: string }>;
+};
+
+/**
+ * Carpeta(s) de cliente para el cliente del trabajo. Orden:
+ *  1. las carpetas de los archivos que Producción ya vinculó para ese cliente (vínculo validado);
+ *  2. mismo nombre normalizado (tildes, mayúsculas, guiones, puntos, «S.A.»…; «T.R.C.» = «TRC»);
+ *  3. una ÚNICA carpeta cuyo nombre contiene al cliente como palabra(s) completa(s) («TRC» → «TRC HAIR CARE»,
+ *     «LABORATORIO TRC»), o al revés. Si hay varias, ninguna es segura.
+ * El resto de lo que encuentra la búsqueda manual (empieza con, contiene, iniciales) son solo sugerencias.
+ */
 export function matchClientFolders(
   client: string,
-  folders: Array<{ id: string; name: string }>
-): { exact: Array<{ id: string; name: string }>; suggestions: Array<{ id: string; name: string }> } {
+  folders: Array<{ id: string; name: string }>,
+  learnedFolderIds: ReadonlyArray<string> = []
+): ClientFolderMatch {
   const ck = clientKey(client);
-  if (!ck) return { exact: [], suggestions: [] };
-  const exact = folders.filter((f) => {
+  if (!ck) return { exact: [], how: null, suggestions: [] };
+  const learned = folders.filter((f) => learnedFolderIds.includes(f.id));
+  if (learned.length) return { exact: learned, how: "vinculo", suggestions: [] };
+  const same = folders.filter((f) => {
     const fk = clientKey(f.name);
     return fk === ck || compact(fk) === compact(ck);
   });
-  if (exact.length) return { exact, suggestions: [] };
+  if (same.length) return { exact: same, how: "nombre", suggestions: [] };
+
+  const ckc = compact(ck);
+  const asWords = folders.filter((f) => {
+    const fk = clientKey(f.name);
+    // Palabra completa en cualquiera de los dos sentidos; también «T.R.C.» (letras sueltas) contra «TRC».
+    return hasPhrase(fk, ck) || hasPhrase(ck, fk) || hasCompactWords(fk, ckc) || hasCompactWords(ck, compact(fk));
+  });
+  if (asWords.length === 1) return { exact: asWords, how: "contiene", suggestions: [] };
+
   const initials = (s: string) => tokens(s).map((t) => t[0]).join("");
   const ct = new Set(tokenSet(ck));
   const suggestions = folders.filter((f) => {
+    if (asWords.includes(f)) return true;
     const fk = clientKey(f.name);
+    if (rankText(ck, fk) || rankText(fk, ck)) return true; // misma regla que la búsqueda manual
     const a = compact(fk);
-    const b = compact(ck);
-    if (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a))) return true;
-    if (b.length >= 2 && b === initials(fk)) return true;
+    if (a.length >= 3 && ckc.length >= 3 && (a.startsWith(ckc) || ckc.startsWith(a))) return true;
+    if (ckc.length >= 2 && ckc === initials(fk)) return true;
     if (a.length >= 2 && a === initials(ck)) return true;
     const ft = tokenSet(fk);
     const common = ft.filter((t) => ct.has(t) && t.length >= 3).length;
     return common > 0 && common / Math.max(ft.length, ct.size) >= 0.5;
   });
-  return { exact: [], suggestions };
+  return { exact: [], how: null, suggestions };
+}
+
+/** ¿Alguna secuencia contigua de palabras de `key`, pegada, es exactamente `target`? («t r c» contiene «trc»). */
+function hasCompactWords(key: string, target: string): boolean {
+  if (!target) return false;
+  const t = tokens(key);
+  for (let i = 0; i < t.length; i++) {
+    let acc = "";
+    for (let j = i; j < t.length && acc.length < target.length; j++) {
+      acc += t[j];
+      if (acc === target && j > i) return true;
+    }
+  }
+  return false;
 }
 
 /** Puntaje de un archivo para el producto del trabajo (0 = no corresponde). */
 export function scoreProduct(product: string, client: string, file: DriveIndexFile): { score: number; reason: MatchReason } | null {
-  const wk = productKeyOf(product, client);
-  const fk = file.productKey || productKeyOf(file.productLabel, file.clientFolderName);
+  // El nombre del cliente (como figura en el trabajo o en la carpeta) no es parte del producto.
+  const strip = (k: string) => [clientKey(client), clientKey(file.clientFolderName)].reduce((acc, ph) => removePhrase(acc, ph), k).replace(/\s+/g, " ").trim();
+  const stripCompact = (k: string) => {
+    let out = strip(k);
+    for (const c of [compact(clientKey(client)), compact(clientKey(file.clientFolderName))]) {
+      if (c.length >= 2) out = tokens(out).filter((w) => w !== c).join(" ");
+    }
+    return out;
+  };
+  const wk = stripCompact(productKeyOf(product, client));
+  const fk = stripCompact(file.productKey || productKeyOf(file.productLabel, file.clientFolderName));
   if (!wk || !fk) return null;
   const wCode = extractProductCode(product);
   const fCode = file.productCode;
@@ -275,10 +343,11 @@ export function scoreProduct(product: string, client: string, file: DriveIndexFi
 export function decideDriveFormula(
   client: string,
   product: string,
-  files: DriveIndexFile[]
+  files: DriveIndexFile[],
+  opts: { learnedFolderIds?: ReadonlyArray<string> } = {}
 ): DriveMatchDecision {
   const folders = [...new Map(files.map((f) => [f.clientFolderId, { id: f.clientFolderId, name: f.clientFolderName }])).values()];
-  const { exact, suggestions } = matchClientFolders(client, folders);
+  const { exact, suggestions } = matchClientFolders(client, folders, opts.learnedFolderIds ?? []);
   const scopeIds = new Set((exact.length ? exact : suggestions).map((f) => f.id));
   const scored: DriveCandidate[] = [];
   for (const f of files) {

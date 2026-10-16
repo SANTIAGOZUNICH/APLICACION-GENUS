@@ -408,7 +408,9 @@ export async function resolveFormulaMasterApi(
   client: string,
   product: string,
   productId?: string,
-  driveFileId?: string
+  driveFileId?: string,
+  /** OE desde la que se elige: el servidor guarda el vínculo con el cliente + producto de su trabajo. */
+  orderId?: string
 ): Promise<{
   found: boolean;
   conflict?: boolean;
@@ -442,7 +444,7 @@ export async function resolveFormulaMasterApi(
     headers: actorHeaders(session),
     body: JSON.stringify(
       driveFileId
-        ? { driveFileId, client, product }
+        ? { driveFileId, client, product, orderId }
         : productId
           ? { productId, client, product }
           : { client, product }

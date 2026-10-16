@@ -66,7 +66,7 @@ export type PrepareOeOptions = {
   /** El usuario confirmó que se quiten MP (con sus lotes/ajustes) que la fórmula nueva ya no tiene. */
   acceptLostRecords?: boolean;
   /** Para pruebas: inyecta la resolución de fórmula. */
-  resolveFormula?: (args: { client: string; product: string }) => Promise<WorkFormulaResolution>;
+  resolveFormula?: (args: { client: string; product: string; actor?: OeAutoPrepActor }) => Promise<WorkFormulaResolution>;
 };
 
 type OrderRow = {
@@ -92,7 +92,7 @@ const ORDER_COLS = {
 const lostText = (lost: OeLostRecords) =>
   lost.map((l) => `${l.materiaPrima || l.codigo}${l.lote ? ` (lote ${l.lote})` : ""}${l.ajuste != null ? " (ajuste registrado)" : ""}`).join(", ");
 
-async function defaultResolveFormula(args: { client: string; product: string }) {
+async function defaultResolveFormula(args: { client: string; product: string; actor?: OeAutoPrepActor }) {
   const { resolveFormulaForWork } = await import("@/lib/formulas/resolve-for-work");
   return resolveFormulaForWork(args);
 }
@@ -159,7 +159,7 @@ export async function prepareOeFromWork(opts: PrepareOeOptions): Promise<OeAutoP
   }
 
   // Lectura externa FUERA de la transacción (Drive puede tardar).
-  const formula = await (opts.resolveFormula ?? defaultResolveFormula)({ client: work.client, product: work.product });
+  const formula = await (opts.resolveFormula ?? defaultResolveFormula)({ client: work.client, product: work.product, actor: opts.actor });
   // Catálogo de Stock MP: para sugerir CÓDIGO MP inequívocos (solo lectura; nunca pisa uno cargado).
   const mpCatalog = await import("@/lib/orders/mp-catalog")
     .then((m) => m.listMpCatalogForOe())

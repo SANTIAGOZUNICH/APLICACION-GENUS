@@ -35,6 +35,8 @@ export async function POST(request: Request) {
       product?: string;
       productId?: string;
       driveFileId?: string;
+      /** OE desde la que se eligió la fórmula: el vínculo se guarda con el cliente + producto de SU trabajo. */
+      orderId?: string;
     };
     const driveFileId = (body.driveFileId ?? "").trim();
     const productId = (body.productId ?? "").trim();
@@ -63,10 +65,14 @@ export async function POST(request: Request) {
           persistenceReady: isDatabaseConfigured(),
         });
       }
+      // Producción eligió a mano el archivo de la carpeta de fórmulas para una OE: queda vinculado al cliente + producto
+      // del trabajo de esa OE, así las próximas asignaciones lo reutilizan sin volver a buscarlo.
+      const linkedFor = await rememberManualChoice(actor, fileId, (body.orderId ?? "").trim()).catch(() => null);
       return NextResponse.json({
         found: true,
         source: "DRIVE",
         message: "Fórmula encontrada en Drive",
+        linkedFor,
         snapshot: result.snapshot,
         materials: result.materials,
         procedureSteps: result.procedureSteps,
@@ -79,6 +85,33 @@ export async function POST(request: Request) {
         { error: "driveFileId, productId o (client y product) son obligatorios" },
         { status: 400 }
       );
+    }
+
+    // Búsqueda por nombre: con la carpeta nueva validada se usa la MISMA búsqueda que la OE automática.
+    if (!productId) {
+      const src = await import("@/lib/formulas/drive-formula-source");
+      if (await src.isNewFormulaSourceValidated()) {
+        const { resolveFormulaForWork } = await import("@/lib/formulas/resolve-for-work");
+        const r = await resolveFormulaForWork({ client, product });
+        if (!r.ok) {
+          return NextResponse.json({
+            found: false,
+            reason: r.status === "ambiguous" ? "ambiguous" : "name_mismatch",
+            message: r.message,
+            source: "DRIVE",
+            persistenceReady: isDatabaseConfigured(),
+          });
+        }
+        return NextResponse.json({
+          found: true,
+          source: "DRIVE",
+          message: "Fórmula encontrada en Drive",
+          snapshot: { ...r.ref, driveChecksum: r.ref.versionHash },
+          materials: r.materials,
+          procedureSteps: r.procedureSteps,
+          persistenceReady: isDatabaseConfigured(),
+        });
+      }
     }
 
     const bank = await readyFormulaBank();
@@ -149,4 +182,22 @@ export async function POST(request: Request) {
     const message = err instanceof Error ? err.message : "Error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+/** Guarda el vínculo cliente + producto (del trabajo de la OE) → archivo elegido a mano. Solo Producción/Dirección. */
+async function rememberManualChoice(actor: { email: string; sector: string }, fileId: string, orderId: string) {
+  if (!orderId || !["PRODUCCION", "DIRECCION"].includes(actor.sector)) return null;
+  const src = await import("@/lib/formulas/drive-formula-source");
+  if (!(await src.isNewFormulaSourceValidated())) return null;
+  const f = await src.getIndexedFile(fileId);
+  if (!f || f.removedAt) return null;
+  const { getDb } = await import("@/lib/db/client");
+  const { sql } = await import("drizzle-orm");
+  const [w] = (await getDb().execute(sql`
+    select w.client, w.product from operational_orders o
+      join work_items w on (w.id::text = o.linked_work_item_id or (coalesce(o.linked_work_item_id, '') = '' and w.order_id = o.id))
+     where o.id = ${orderId}::uuid and o.type = 'OE' limit 1`)).rows as Array<{ client: string | null; product: string | null }>;
+  if (!w?.client?.trim() || !w.product?.trim()) return null;
+  const link = await src.linkFormula(actor, { client: w.client, product: w.product, fileId, note: "Elegida desde la OE" });
+  return { client: link.clientLabel, product: link.productLabel, fileName: link.fileName };
 }
