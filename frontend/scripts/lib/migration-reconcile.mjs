@@ -37,6 +37,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0047_work_item_delivery_lines": "8e087db051df1b9ce194103839561404f88fb1df77f9eba002b0179252cd0fc5",
   "0049_mp_load_order": "d34b39584f6cae250bbc72a6d29676a78d4c9c369ffffe0458b0c9583c7ed059",
   "0050_entregas_correcciones": "48d39276bc1d97698ef8ff9f5d06ccba68b4c1ce18dfe8a3094c204044195ec4",
+  "0051_formula_drive_index": "fd438ee5d8cd4a95ab853aca736ddb9d05ef9047318b08259337bc91a2093380",
 });
 
 export const RECONCILE_LOG_TABLE = "genus_migration_reconcile_log";
@@ -171,6 +172,9 @@ export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
   { migration: "0049_mp_load_order", object: "inv_mp_control.seq_criterio" },
   { migration: "0050_entregas_correcciones", object: "delivery_calendar_hidden" },
   { migration: "0050_entregas_correcciones", object: "scheduled_delivery_items.deleted_reason" },
+  { migration: "0051_formula_drive_index", object: "formula_drive_sync_runs" },
+  { migration: "0051_formula_drive_index", object: "formula_drive_index" },
+  { migration: "0051_formula_drive_index", object: "formula_drive_links" },
 ]);
 
 /** @param {{ query: (text: string, params?: unknown[]) => Promise<any[]>, required?: ReadonlyArray<{migration: string, object: string}> }} opts */

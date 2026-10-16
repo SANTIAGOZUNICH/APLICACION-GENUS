@@ -105,6 +105,10 @@ APP_ENV=(PATH="$PATH" HOME="${HOME:-/root}" NODE_EXTRA_CA_CERTS="$NODE_EXTRA_CA_
 if [[ "${GENUS_E2E_FAKE_LIVE_SYNC:-}" == "1" ]]; then
   APP_ENV+=(GOOGLE_SERVICE_ACCOUNT_EMAIL=e2e-fake@invalid.local GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=e2e-fake GOOGLE_DRIVE_GENUS_FOLDER_ID=e2e-fake-folder)
 fi
+# Opt-in (fórmulas): una carpeta del DISCO hace de la carpeta de fórmulas de Drive (sin red ni credenciales).
+if [[ -n "${GENUS_E2E_FAKE_FORMULAS_DRIVE_DIR:-}" ]]; then
+  APP_ENV+=(GENUS_E2E_FAKE_FORMULAS_DRIVE_DIR="$GENUS_E2E_FAKE_FORMULAS_DRIVE_DIR")
+fi
 if [[ "${GENUS_E2E_PRODUCTION_BUILD:-}" == "1" ]]; then
   # Configuración EQUIVALENTE a Production (no es Production): build optimizado (`next build` + `next start`),
   # NODE_ENV=production, VERCEL_ENV=production simulado (write-back a Google SIEMPRE apagado) y modo de datos real.

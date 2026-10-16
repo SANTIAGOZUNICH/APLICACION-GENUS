@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/asignacion-lotes-sync",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/cron/formulas-drive-sync",
+      "schedule": "17 * * * *"
     }
   ]
 }

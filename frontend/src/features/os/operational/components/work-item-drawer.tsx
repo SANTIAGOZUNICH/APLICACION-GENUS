@@ -27,6 +27,7 @@ import { PackagingQuantitiesBlock } from "./packaging-quantities-block";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { WorkItemEditDeleteActions } from "./work-item-edit-delete-actions";
 import { WorkItemPlanEditor } from "./work-item-plan-editor";
+import { WorkFormulaPanel } from "./work-formula-panel";
 import { isNativeWorkItemId } from "@/lib/planning/work-item-cell-edit";
 import { SendToCodificadoDialog } from "./send-to-codificado-dialog";
 import { SendToEnvasadoDialog, type SendToEnvasadoPayload } from "./send-to-envasado-dialog";
@@ -223,6 +224,8 @@ export function WorkItemDrawer({
             </div>
           </dl>
           )}
+
+          {isElaboracion && isNativeWorkItemId(item.id) && <WorkFormulaPanel key={item.id} workItemId={item.id} />}
 
           <div>
             <p className="mb-1.5 text-xs uppercase text-[var(--os-text-muted)]">

@@ -123,7 +123,8 @@ export async function syncDriveFormulasIndex(force = false): Promise<{
 }
 
 async function ensureIndex(force = false): Promise<IndexState> {
-  if (!force && cache && Date.now() - cache.builtAt < TTL_MS) {
+  const ttl = cache?.folderEnvKey === "FORMULAS_ROOT_FOLDER_ID" ? 60_000 : TTL_MS;
+  if (!force && cache && Date.now() - cache.builtAt < ttl) {
     return cache;
   }
   if (building) return building;
@@ -140,7 +141,37 @@ async function ensureIndex(force = false): Promise<IndexState> {
   return building;
 }
 
+/**
+ * Carpeta NUEVA ya validada (índice persistente con una actualización «ok»): se lee de la base, sin recorrer Drive y
+ * sin la ubicación anterior. Los archivos repetidos NO se colapsan (Producción elige entre ellos).
+ */
+async function buildIndexFromNewSource(): Promise<IndexState | null> {
+  const src = await import("@/lib/formulas/drive-formula-source");
+  if (!(await src.isNewFormulaSourceValidated())) return null;
+  const files = await src.loadIndexFiles();
+  const root = src.formulasRootId();
+  const entries: DriveFormulaIndexEntry[] = files.map((f) => ({
+    fileId: f.fileId,
+    folderId: f.clientFolderId,
+    client: f.clientFolderName,
+    fileName: f.fileName,
+    productLabel: f.productLabel,
+    mimeType: f.mimeType,
+    modifiedTime: f.modifiedTime,
+    aliases: uniqAliases([f.productLabel, f.fileName, f.fileName.replace(/\.(xlsx|xlsm|xlsb|xls)$/i, "")]),
+    source: "DRIVE",
+    sourceFolderId: root,
+    primarySource: true,
+  }));
+  const clients = [
+    ...new Map(entries.filter((e) => e.client !== "(sin carpeta de cliente)").map((e) => [normalizeSearchKey(e.client), e.client] as const)).values(),
+  ].sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+  return { builtAt: Date.now(), folderEnvKey: "FORMULAS_ROOT_FOLDER_ID", entries, clients, sources: [{ folderId: root, primary: true, accessible: true }] };
+}
+
 async function buildIndex(): Promise<IndexState> {
+  const fromNew = await buildIndexFromNewSource().catch(() => null);
+  if (fromNew) return fromNew;
   const { folderId, envKey } = resolveFormulasFolderId();
   if (!folderId) {
     throw new Error(
@@ -351,6 +382,12 @@ export async function downloadDriveFormulaBuffer(
   fileId: string,
   mimeType: string
 ): Promise<{ buffer: Buffer; checksum: string }> {
+  // Archivos de la carpeta nueva en pruebas locales (Drive simulado en disco).
+  if (fileId.startsWith("local:")) {
+    const { readIndexedFile } = await import("@/lib/formulas/drive-formula-source");
+    const r = await readIndexedFile(fileId);
+    return { buffer: r.buffer, checksum: r.checksum };
+  }
   const auth = createGoogleAuth();
   const drive = google.drive({ version: "v3", auth });
   let data: ArrayBuffer;
@@ -437,7 +474,30 @@ export async function resolveFormulaFromDriveFile(args: {
     mimeType
   );
 
-  const knownClients = state?.clients ?? (client ? [client] : []);
+  return parseDriveFormulaBuffer({
+    buffer,
+    checksum,
+    fileId: args.fileId,
+    fileName,
+    modifiedTime,
+    client,
+    productHint: args.productHint,
+    knownClients: state?.clients ?? (client ? [client] : []),
+  });
+}
+
+/** Parsea el archivo de una fórmula de Drive (ya descargado). No muta el banco Neon. */
+export function parseDriveFormulaBuffer(args: {
+  buffer: Buffer;
+  checksum: string;
+  fileId: string;
+  fileName: string;
+  modifiedTime: string | null;
+  client: string;
+  productHint?: string;
+  knownClients: string[];
+}): DriveResolveResult | { found: false; message: string } {
+  const { buffer, checksum, fileName, modifiedTime, client, knownClients } = args;
   const drafts = parseWorkbookBuffer(buffer, {
     sourceFile: fileName,
     sourceModifiedAt: modifiedTime,

@@ -210,7 +210,23 @@ export function buildAutoPreparedOe(input: BuildAutoPrepInput): BuildAutoPrepRes
     Boolean(prev?.formula.fingerprint) && prev!.formula.fingerprint === currentFp;
   const manualContent = hasFormulaContent(content) && !materialsCameFromAuto;
 
-  if (formula.ok) {
+  // La OE ya tiene la fórmula de ESTE producto cargada automáticamente y aparece otra versión/archivo: una preparación
+  // automática (reasignación, corrección del trabajo, vinculación) NO la reemplaza. Solo «Actualizar desde fórmula».
+  const keepIssuedFormula =
+    formula.ok &&
+    !input.replaceManual &&
+    materialsCameFromAuto &&
+    prev?.formula.status === "ok" &&
+    prev.formula.identity === identity &&
+    Boolean(prev.formula.versionHash) &&
+    prev.formula.versionHash !== formula.ref.versionHash;
+
+  if (keepIssuedFormula) {
+    formulaMeta = {
+      ...prev!.formula,
+      message: `Se mantiene la fórmula ya cargada en la OE. Hay otra versión disponible${formula.ok && formula.ref.displayProduct ? ` («${formula.ref.displayProduct}»)` : ""}: para cambiarla usá «Actualizar desde fórmula».`,
+    };
+  } else if (formula.ok) {
     if (manualContent && !input.replaceManual) {
       formulaMeta = {
         status: "manual_content",
