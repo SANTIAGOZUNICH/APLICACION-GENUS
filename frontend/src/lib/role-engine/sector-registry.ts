@@ -297,6 +297,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "entregados",
       "entregas",
       "asignacion_lotes",
+      "portal_clientes",
       "ver_elaboracion",
       "ver_envasado_masivo",
       "ver_envasado_premium",
@@ -342,7 +343,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     visibleEntities: ["pedido", "plan_semanal", "lote"],
     workItemSources: ["semanas_2026", "pedidos_2026"],
     allowedActions: ["Ver panorama", "Consultar pedido", "Ver alertas"],
-    sidebarItems: ["mi_trabajo", "consulta", "plan_semanal", "pendientes", "entregas", "configuracion", "dashboard", "procedimientos"],
+    sidebarItems: ["mi_trabajo", "consulta", "plan_semanal", "pendientes", "entregas", "portal_clientes", "configuracion", "dashboard", "procedimientos"],
     restrictedSidebarItems: ["direccion"],
     creamyContext: {
       role: "Copiloto ejecutivo",

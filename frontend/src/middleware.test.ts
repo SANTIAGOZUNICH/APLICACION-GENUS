@@ -84,3 +84,23 @@ describe("middleware — /api/cron/* nunca sufre el redirect de host canónico",
     }
   });
 });
+
+describe("middleware — Portal de Clientes (/entregas) es público y no usa la sesión interna", () => {
+  it.each(["/entregas", "/entregas/acceso", "/entregas/producto/abc", "/entregas/api/overview", "/entregas/api/auth/request"])(
+    "%s sin cookie interna sigue de largo, con noindex y sin caché",
+    (path) => {
+      const res = middleware(req(path));
+      expect(isPassThrough(res)).toBe(true);
+      expect(res.headers.get("x-robots-tag")).toContain("noindex");
+      expect(res.headers.get("cache-control")).toContain("no-store");
+    }
+  );
+  it("no redirige a otro host ni siquiera en un alias distinto del canónico", () => {
+    const res = middleware(req("/entregas", { host: "www.laboratoriogenus.com.ar" }));
+    expect(isPassThrough(res)).toBe(true);
+  });
+  it("el resto de GENUS OS sigue protegido por la sesión interna", () => {
+    expect(isPassThrough(middleware(req("/mi-trabajo")))).toBe(false);
+    expect(middleware(req("/api/v1/portal-admin")).status).toBe(401);
+  });
+});

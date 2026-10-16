@@ -36,6 +36,7 @@ import {
 import { MpHubView } from "@/features/os/operational/views/mp-hub-view";
 import { SemanasSectorView } from "@/features/os/operational/views/semanas-sector-view";
 import { AsignacionLotesView } from "@/features/os/operational/views/asignacion-lotes-view";
+import { PortalClientesView } from "@/features/os/operational/views/portal-clientes-view";
 import { EntregadosView } from "@/features/os/operational/views/entregados-view";
 import { EntregasView } from "@/features/os/operational/views/entregas-view";
 import { RemitosView } from "@/features/os/operational/views/remitos-view";
@@ -132,6 +133,8 @@ export function TwinRouter() {
       return <EntregadosView />;
     case "asignacion-lotes":
       return <AsignacionLotesView />;
+    case "portal-clientes":
+      return <PortalClientesView />;
     case "remitos":
       return <RemitosView />;
     case "pedidos":

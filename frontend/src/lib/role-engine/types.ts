@@ -109,6 +109,7 @@ export const SIDEBAR_ITEM_IDS = [
   "entregados",
   "entregas",
   "asignacion_lotes",
+  "portal_clientes",
   "ver_elaboracion",
   "ver_envasado_masivo",
   "ver_envasado_premium",
