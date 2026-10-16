@@ -61,6 +61,15 @@ const fingerprint = async () =>
   ]));
 const before = await fingerprint();
 
+// En «Mi trabajo» de Envasado: trabajo en curso → «Ver / Registrar avance»; trabajo terminado → pestaña «Pendientes» → «Ver detalle».
+const openDrawer = async (page, finished) => {
+  if (finished) {
+    await page.getByRole("button", { name: /^Pendientes/ }).first().click({ timeout: 120000 });
+    await page.getByRole("button", { name: /Ver detalle/ }).first().click({ timeout: 120000 });
+  } else {
+    await page.getByRole("button", { name: /Registrar avance/ }).first().click({ timeout: 120000 });
+  }
+};
 const browser = await chromium.launch({ executablePath: process.env.GENUS_E2E_CHROMIUM_PATH || undefined });
 async function portalLogin(page) {
   await page.goto("/entregas");
@@ -95,7 +104,7 @@ await ep.locator('input[type="password"]').fill(E2E_PASSWORD);
 await ep.locator('button[type="submit"]').click();
 await ep.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 60000 });
 if (!ep.url().includes("/mi-trabajo")) await ep.goto("/mi-trabajo");
-await ep.getByRole("button", { name: /Registrar avance/ }).first().click({ timeout: 120000 });
+await openDrawer(ep, false);
 const panel = ep.getByTestId("mark-ready-panel");
 await panel.waitFor({ timeout: 30000 });
 check("GENUS OS: Envasado Masivo ve «Marcar listo para entregar» en su trabajo", (await ep.getByTestId("mark-ready-btn").innerText()).trim() === "Marcar listo para entregar");
@@ -132,7 +141,7 @@ check("la confirmación en sí no manda correos reales (el aviso sale en el esca
 // ── El sector termina el resto y confirma las 3.000 nuevas ──
 await q("update work_items set finished_qty = '5000', operational_status = 'revision', completed_at = now() where id = $1", [workId]);
 await ep.reload();
-await ep.getByRole("button", { name: /Registrar avance/ }).first().click({ timeout: 120000 });
+await openDrawer(ep, true);
 await ep.getByTestId("mark-ready-btn").waitFor();
 await ep.getByTestId("mark-ready-btn").click();
 check("la cantidad ofrecida es solo la NUEVA (3.000), sin repetir las primeras 2.000", (await ep.getByTestId("mark-ready-qty").inputValue()) === "3000");
@@ -158,7 +167,7 @@ await pp.reload();
 const dnote = await pcard().getByTestId("fact-available").innerText();
 check("entrega parcial posterior: el portal muestra 3.000 disponibles y 2.000 entregados (la disponibilidad no es entrega)", dnote.includes("3.000") && (await pcard().getByTestId("fact-delivered").innerText()).includes("2.000"));
 await ep.reload();
-await ep.getByRole("button", { name: /Registrar avance/ }).first().click({ timeout: 120000 });
+await openDrawer(ep, true);
 await ep.getByTestId("mark-ready-marks").waitFor();
 const retractBtns = await ep.getByTestId("retract-mark-btn").count();
 check("rectificar: solo queda la marca de 3.000 (la de 2.000 ya fue entregada: sin «Retirar»)", retractBtns === 1);
@@ -205,7 +214,7 @@ for (const [name, opts] of [["tablet", { viewport: { width: 820, height: 1180 },
   await page.locator('button[type="submit"]').click();
   await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 60000 });
   if (!page.url().includes("/mi-trabajo")) await page.goto("/mi-trabajo");
-  await page.getByRole("button", { name: /Registrar avance/ }).first().click({ timeout: 120000 });
+  await openDrawer(page, true);
   await page.getByTestId("mark-ready-panel").waitFor({ timeout: 30000 });
   await page.getByTestId("mark-ready-btn").tap();
   await page.getByTestId("mark-ready-dialog").waitFor();
