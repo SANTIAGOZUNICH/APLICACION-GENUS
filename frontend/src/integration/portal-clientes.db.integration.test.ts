@@ -111,6 +111,9 @@ describe.skipIf(Boolean(PROBLEM))(`Portal de Clientes en Postgres real${PROBLEM 
     ids.a1elab = await mkWork(NAME_A, "SHAMPOO A1", "ELABORACION", { status: "en_curso", pedido: pedA1, qty: "300" });
     await event(ids.a1elab, "ITEM_ASSIGNED", "2026-10-05T13:00:00Z");
     ids.a2env = await mkWork(NAME_A, "CREMA A2", "ENVASADO_MASIVO", { status: "revision", pedido: pedA2, qty: "5000", completedAt: HOURS(5) });
+    // «Listo para entregar» es una confirmación EXPLÍCITA del último sector: sin ella un trabajo terminado NO figura como listo.
+    const { markReadyForDelivery } = await import("@/lib/portal/availability-service");
+    ids.markCrema = (await markReadyForDelivery({ email: "it-env@laboratoriogenus.com.ar", sector: "ENVASADO_MASIVO", displayName: "IT Envasado" }, { workItemId: ids.a2env, idempotencyKey: `it-portal-${RUN}-crema` })).markId;
     ids.cancelado = await mkWork(NAME_A, "PRODUCTO CANCELADO A", "ENVASADO_MASIVO", { status: "pendiente" });
     await q("update work_items set operational_status = 'cancelado', operational_cancelled_at = now() where id = $1", [ids.cancelado]);
     // Cliente B: un producto con una entrega final y datos internos que NO deben filtrarse.
@@ -269,7 +272,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal de Clientes en Postgres real${PROBLEM 
     expect(a.products.some((p) => b.products.some((x) => x.id === p.id))).toBe(false);
   });
 
-  it("etapas reales: Elaboración con su fecha de asignación; Envasado terminado hace horas = Listo; pedido con varios productos", async () => {
+  it("etapas reales: Elaboración con su fecha de asignación; Envasado confirmado como disponible = Listo; pedido con varios productos", async () => {
     const { loadPortalOverview } = await data();
     const { overview } = await loadPortalOverview(A.id, new Date());
     const shampoo = overview.products.find((p) => p.product === "SHAMPOO A1")!;
@@ -305,6 +308,10 @@ describe.skipIf(Boolean(PROBLEM))(`Portal de Clientes en Postgres real${PROBLEM 
     expect(s2.quantities.delivered).toBe(0);
     // Codificado termina: solo falta entregar → Listo para entregar.
     await q("update work_items set operational_status = 'revision', completed_at = $2::timestamptz where id = $1", [env, HOURS(0.05)]);
+    // Codificado terminó, pero SIN confirmación explícita todavía no es «Listo» (no hay inferencia por cierre de tareas).
+    expect(await stageOf()).toMatchObject({ stage: "ENVASADO", substage: "FINALIZACION" });
+    const { markReadyForDelivery } = await import("@/lib/portal/availability-service");
+    await markReadyForDelivery({ email: "it-cod@laboratoriogenus.com.ar", sector: "CODIFICADO" }, { workItemId: env, idempotencyKey: `it-portal-${RUN}-flow` });
     expect((await stageOf()).stage).toBe("LISTO");
     ids.flowEnv = env;
   });
@@ -394,7 +401,7 @@ describe.skipIf(Boolean(PROBLEM))(`Portal de Clientes en Postgres real${PROBLEM 
 
   it("producto que ya estaba listo hace días (más de 48 h): queda registrado en silencio, sin correo", async () => {
     const { scanPortalNotifications } = await notify();
-    await q("update work_items set completed_at = now() - interval '10 days' where id = $1", [ids.a2env]);
+    await q("update portal_availability_marks set marked_at = now() - interval '10 days' where id = $1::uuid", [ids.markCrema]);
     await q("delete from portal_notifications where client_id = $1::uuid", [A.id]);
     await q("delete from portal_email_outbox where client_id = $1::uuid and kind = 'LISTO_PARA_ENTREGAR'", [A.id]);
     sent.length = 0;

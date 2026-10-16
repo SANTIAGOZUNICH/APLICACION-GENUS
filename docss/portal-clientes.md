@@ -18,8 +18,17 @@ usuarios internos ni ids internos: ids opacos por cliente, lista blanca de campo
 - «Entregado» solo con una entrega física final registrada. Los traspasos entre sectores no cuentan.
 - Cuenta regresiva en días hábiles de Argentina (feriados nacionales calculados; excepciones por decreto en el panel), desde el ingreso real
   verificable a la etapa; sin fecha verificable no se inventa. Nunca negativa.
-- **A confirmar con Producción:** «Listo para entregar» = trabajo terminado (completo/revisión) de Codificado, o de Envasado que se mantiene terminado
-  60 min (`PORTAL_READY_STABLE_MINUTES`). No existe un marcador explícito de «listo para retirar» en GENUS OS.
+- «Listo para entregar» **nunca se infiere**: depende de la confirmación explícita («Marcar listo para entregar») de un usuario autorizado del último sector. Ver la sección siguiente.
+
+## Listo para entregar (disponibilidad explícita)
+- **Quién marca:** el sector que tiene el trabajo HOY y es el último del recorrido: Envasado Masivo o Envasado Premium (si no pasa a Codificado) y Codificado (cuando el trabajo ya está en Codificado; al enviarlo a Codificado, Envasado deja de poder marcarlo). Elaboración nunca. Producción y Dirección no marcan, pero sí pueden rectificar (junto con el sector que confirmó). Se valida en el servidor (`POST /api/v1/disponibilidad`).
+- **Dónde:** panel «Disponibilidad para el cliente» → botón «Marcar listo para entregar», dentro del detalle del trabajo de Envasado (Mi trabajo → Registrar avance) y de Codificado.
+- **Cantidades:** se puede marcar hasta lo realmente terminado y no cubierto: trabajo terminado → cantidad entregable (misma regla que la entrega); trabajo en curso → lo informado en «Guardar avance». Sin cantidad verificable no se puede marcar. Disponible = marcado − entregado desde la confirmación; las entregas anteriores a la primera confirmación (trabajos históricos) no restan disponibilidad. Clave de idempotencia y bloqueo de la fila del trabajo: doble clic o dos usuarios a la vez no duplican.
+- **Portal:** estado «Listo para entregar» solo cuando TODO lo pendiente está confirmado; con una parte confirmada se ve «solicitado / disponible / entregado / pendiente» y «Disponible desde …». Un trabajo terminado sin confirmar queda «en proceso de finalización».
+- **Aviso por correo:** una vez por confirmación, con la cantidad confirmada. Nada por el simple cierre de Envasado o Codificado.
+- **Rectificar:** «Retirar disponibilidad» (motivo obligatorio), solo si esas unidades no fueron entregadas; no borra nada (marca retirada + auditoría con valores anteriores y nuevos). Si el cliente ya había sido avisado, ve una corrección en su portal y queda una incidencia auditada (sin correo nuevo).
+- **Trabajos históricos:** no se convierten solos en «listo» ni generan avisos. Para regularizarlos, el sector responsable usa el mismo botón sobre cada trabajo (procedimiento controlado y auditado).
+- No registra la entrega física: eso sigue en el circuito de Entregas de GENUS OS. No toca stock, movimientos, consumos de MP ni lotes.
 
 ## Confirmar recepción
 Solo con entrega final registrada. Guarda fecha/hora, correo autenticado, entrega y cantidad; audita; avisa a Producción (aviso interno `PORTAL_RECEPCION`).
@@ -37,7 +46,7 @@ Cron `/api/cron/portal-sync` cada 15 min (requiere `CRON_SECRET`).
 
 ## Variables de entorno
 `PORTAL_AUTH_SECRET` (obligatoria en producción: firma de hashes), `PORTAL_PUBLIC_BASE_URL` (default `https://www.laboratoriogenus.com.ar/entregas`),
-`PORTAL_EMAIL_MODE`, `RESEND_API_KEY`, `PORTAL_EMAIL_FROM`, `PORTAL_CONTACT_EMAIL`, `PORTAL_CONTACT_WHATSAPP(_LABEL)`, `PORTAL_READY_STABLE_MINUTES`.
+`PORTAL_EMAIL_MODE`, `RESEND_API_KEY`, `PORTAL_EMAIL_FROM`, `PORTAL_CONTACT_EMAIL`, `PORTAL_CONTACT_WHATSAPP(_LABEL)`.
 
 ## Crear el primer cliente y probar
 1. GENUS OS → Producción → «Portal de Clientes» → Nuevo cliente (nombre, nombre exacto en GENUS OS, correo). Se muestra el código `GEN-…`.

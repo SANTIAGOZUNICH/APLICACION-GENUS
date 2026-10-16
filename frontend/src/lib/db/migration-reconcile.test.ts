@@ -188,6 +188,7 @@ const CAL_COLUMNS = ["scheduled_delivery_items.deleted_reason"];
 const FORMULA_TABLES = ["formula_drive_sync_runs", "formula_drive_index", "formula_drive_links"];
 // 0052 (Portal de Clientes): tablas nuevas.
 const DEMO_TABLES = ["portal_demo_tokens", "portal_demo_sessions"];
+const AVAIL_TABLES = ["portal_availability_marks", "portal_availability_audit"];
 const PORTAL_TABLES = ["portal_clients", "portal_client_aliases", "portal_authorized_emails", "portal_login_challenges", "portal_sessions", "portal_rate_limits", "portal_email_outbox", "portal_notifications", "portal_receipt_confirmations", "portal_audit_events", "portal_holiday_overrides"];
 
 describe("verificación de esquema después del migrate (build)", () => {
@@ -200,7 +201,7 @@ describe("verificación de esquema después del migrate (build)", () => {
   it("0043 a 0052 completas → ok", async () => {
     const res = await verifyRequiredSchema({
       query: fakeQuery(
-        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos", ...ENTREGAS_TABLES, "dashboard_kpi_targets", ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...CAL_TABLES, ...FORMULA_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES],
+        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos", ...ENTREGAS_TABLES, "dashboard_kpi_targets", ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...CAL_TABLES, ...FORMULA_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES, ...AVAIL_TABLES],
         ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason", ...ENTREGAS_PARCIALES_COLUMNS, ...MP_ORDEN_COLUMNS, ...CAL_COLUMNS]
       ),
     });
@@ -214,14 +215,14 @@ describe("verificación de esquema después del migrate (build)", () => {
     expect(res.ok).toBe(false);
     expect(res.missing.map((m) => m.object)).toEqual(REQUIRED_SCHEMA_OBJECTS.map((r) => r.object));
     expect(new Set(res.missing.map((m) => m.migration))).toEqual(
-      new Set(["0043_asignacion_lotes_local_edits", "0044_inventory_ingreso_adjuntos", "0045_scheduled_deliveries", "0046_dashboard_kpi_targets", "0047_work_item_delivery_lines", "0049_mp_load_order", "0050_entregas_correcciones", "0051_formula_drive_index", "0052_portal_clientes", "0053_portal_demo"])
+      new Set(["0043_asignacion_lotes_local_edits", "0044_inventory_ingreso_adjuntos", "0045_scheduled_deliveries", "0046_dashboard_kpi_targets", "0047_work_item_delivery_lines", "0049_mp_load_order", "0050_entregas_correcciones", "0051_formula_drive_index", "0052_portal_clientes", "0053_portal_demo", "0054_portal_disponibilidad"])
     );
   });
 
   it("0044 salteada (fotos de remitos) → informa la tabla que falta", async () => {
     const res = await verifyRequiredSchema({
       query: fakeQuery(
-        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", ...ENTREGAS_TABLES, "dashboard_kpi_targets", ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...CAL_TABLES, ...FORMULA_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES],
+        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", ...ENTREGAS_TABLES, "dashboard_kpi_targets", ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...CAL_TABLES, ...FORMULA_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES, ...AVAIL_TABLES],
         ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason", ...ENTREGAS_PARCIALES_COLUMNS, ...MP_ORDEN_COLUMNS, ...CAL_COLUMNS]
       ),
     });
@@ -231,7 +232,7 @@ describe("verificación de esquema después del migrate (build)", () => {
   it("0046 salteada (objetivos del Dashboard) → informa la tabla que falta", async () => {
     const res = await verifyRequiredSchema({
       query: fakeQuery(
-        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos", ...ENTREGAS_TABLES, ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...CAL_TABLES, ...FORMULA_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES],
+        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos", ...ENTREGAS_TABLES, ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...CAL_TABLES, ...FORMULA_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES, ...AVAIL_TABLES],
         ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason", ...ENTREGAS_PARCIALES_COLUMNS, ...MP_ORDEN_COLUMNS, ...CAL_COLUMNS]
       ),
     });
@@ -241,7 +242,7 @@ describe("verificación de esquema después del migrate (build)", () => {
   it("0049 salteada (orden de carga de MP) → informa las columnas que faltan", async () => {
     const res = await verifyRequiredSchema({
       query: fakeQuery(
-        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos", ...ENTREGAS_TABLES, "dashboard_kpi_targets", ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...CAL_TABLES, ...FORMULA_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES],
+        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos", ...ENTREGAS_TABLES, "dashboard_kpi_targets", ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...CAL_TABLES, ...FORMULA_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES, ...AVAIL_TABLES],
         ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason", ...ENTREGAS_PARCIALES_COLUMNS, ...CAL_COLUMNS]
       ),
     });
@@ -253,7 +254,7 @@ describe("verificación de esquema después del migrate (build)", () => {
   it("0050 salteada (correcciones del calendario) → informa la tabla y la columna que faltan", async () => {
     const res = await verifyRequiredSchema({
       query: fakeQuery(
-        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos", ...ENTREGAS_TABLES, "dashboard_kpi_targets", ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...FORMULA_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES],
+        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos", ...ENTREGAS_TABLES, "dashboard_kpi_targets", ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...FORMULA_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES, ...AVAIL_TABLES],
         ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason", ...ENTREGAS_PARCIALES_COLUMNS, ...MP_ORDEN_COLUMNS]
       ),
     });
@@ -269,7 +270,7 @@ describe("verificación de esquema después del migrate (build)", () => {
   it("0051 salteada (índice de fórmulas de Drive) → informa las tres tablas que faltan", async () => {
     const res = await verifyRequiredSchema({
       query: fakeQuery(
-        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos", ...ENTREGAS_TABLES, "dashboard_kpi_targets", ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...CAL_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES],
+        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos", ...ENTREGAS_TABLES, "dashboard_kpi_targets", ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...CAL_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES, ...AVAIL_TABLES],
         ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason", ...ENTREGAS_PARCIALES_COLUMNS, ...MP_ORDEN_COLUMNS, ...CAL_COLUMNS]
       ),
     });
@@ -288,6 +289,7 @@ describe("verificación de esquema después del migrate (build)", () => {
       missing: [
         ...PORTAL_TABLES.map((object) => ({ migration: "0052_portal_clientes", object })),
         ...DEMO_TABLES.map((object) => ({ migration: "0053_portal_demo", object })),
+        ...AVAIL_TABLES.map((object) => ({ migration: "0054_portal_disponibilidad", object })),
       ],
     });
   });
@@ -299,7 +301,23 @@ describe("verificación de esquema después del migrate (build)", () => {
         ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason", ...ENTREGAS_PARCIALES_COLUMNS, ...MP_ORDEN_COLUMNS, ...CAL_COLUMNS]
       ),
     });
-    expect(res).toEqual({ ok: false, missing: DEMO_TABLES.map((object) => ({ migration: "0053_portal_demo", object })) });
+    expect(res).toEqual({
+      ok: false,
+      missing: [
+        ...DEMO_TABLES.map((object) => ({ migration: "0053_portal_demo", object })),
+        ...AVAIL_TABLES.map((object) => ({ migration: "0054_portal_disponibilidad", object })),
+      ],
+    });
+  });
+
+  it("0054 salteada (disponibilidad explícita) → informa las tablas que faltan", async () => {
+    const res = await verifyRequiredSchema({
+      query: fakeQuery(
+        ["asignacion_lotes", "asignacion_lotes_cell_audit", "asignacion_lotes_local_edits", "inventory_ingreso_adjuntos", ...ENTREGAS_TABLES, "dashboard_kpi_targets", ...ENTREGAS_PARCIALES_TABLES, ...MP_ORDEN_TABLES, ...CAL_TABLES, ...FORMULA_TABLES, ...PORTAL_TABLES, ...DEMO_TABLES],
+        ["asignacion_lotes.source_lote", "asignacion_lotes.source_codigo", "asignacion_lotes.source_producto", "asignacion_lotes_cell_audit.reason", ...ENTREGAS_PARCIALES_COLUMNS, ...MP_ORDEN_COLUMNS, ...CAL_COLUMNS]
+      ),
+    });
+    expect(res).toEqual({ ok: false, missing: AVAIL_TABLES.map((object) => ({ migration: "0054_portal_disponibilidad", object })) });
   });
 
   it("cada objeto requerido lo crea una migración del journal (y está en la lista de reconciliación)", () => {

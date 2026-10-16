@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { postCodificadoHandoff } from "../adapters/codificado-handoff-client";
 import { fetchDeliveryProgress, type DeliveryProgress } from "../adapters/circuit-client";
 import { DeliverWorkDialog, type DeliverWorkPayload } from "../components/deliver-work-dialog";
+import { MarkReadyPanel } from "../components/mark-ready-panel";
 import { resolveDeliveryTarget } from "@/lib/planning/circuit/delivery-math";
 import { summarizePackingGroups } from "@/lib/remitos/packing-math";
 import { AssignWorkDialog } from "../components/assign-work-dialog";
@@ -557,6 +558,8 @@ export function CodificadoOperationalView() {
                     {packagingError}
                   </p>
                 ) : null}
+                {/* Último sector del recorrido: confirmación explícita de disponibilidad (Codificado). */}
+                <MarkReadyPanel workItemId={selected.id} orderFallback={selected.oaRef ?? null} />
               </div>
               {selectedEditable ? (
                 <DialogFooter className="flex flex-wrap gap-2">

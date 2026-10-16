@@ -5,7 +5,7 @@
  * (buildOverview), para que las tarjetas, el camión, los plazos y las entregas se comporten igual.
  */
 import { businessCalendar, addDaysIso, toBuenosAiresDate, type BusinessCalendarOptions } from "./business-days";
-import { buildOverview, opaque, toClientPayload, type ConfirmationInfo, type RawDeliveryRow, type RawEventRow, type RawWorkRow } from "./overview";
+import { buildOverview, opaque, toClientPayload, type ConfirmationInfo, type RawDeliveryRow, type RawEventRow, type RawMarkRow, type RawWorkRow } from "./overview";
 
 export const DEMO_CLIENT_NAME = "Cliente de demostración";
 export const DEMO_CLIENT_CODE = "DEMO";
@@ -59,10 +59,10 @@ export function buildDemoOverview(sessionId: string, now: Date, state: DemoState
     baseWork({ id: "demo-w1", product: "Crema facial hidratante", pedidoProducto: "Crema facial hidratante", pedidoOp: "DEMO-1001", productionPedidoId: "demo-p1", sector: "ELABORACION", operationalStatus: "en_curso", plannedQuantity: "300", unit: "kg", createdAt: ago(now, 72) }),
     // 2) Shampoo en envasado, 3 días hábiles restantes (5 − 2).
     baseWork({ id: "demo-w2", product: "Shampoo reparador", pedidoProducto: "Shampoo reparador", pedidoOp: "DEMO-1002", productionPedidoId: "demo-p2", sector: "ENVASADO_MASIVO", operationalStatus: "en_curso", plannedQuantity: "3000", createdAt: ago(now, 96) }),
-    // 3) Sérum listo para entregar (terminado hace horas).
+    // 3) Sérum listo para entregar: el último sector CONFIRMÓ la disponibilidad (ver marcas más abajo).
     baseWork({ id: "demo-w3", product: "Sérum antiedad", pedidoProducto: "Sérum antiedad", pedidoOp: "DEMO-1003", productionPedidoId: "demo-p3", sector: "ENVASADO_MASIVO", operationalStatus: "revision", plannedQuantity: "1500", createdAt: ago(now, 200), completedAt: ago(now, 6) }),
-    // 4) Entrega parcial: 5.000 solicitadas, 2.000 entregadas, 3.000 pendientes.
-    baseWork({ id: "demo-w4", product: "Acondicionador nutritivo", pedidoProducto: "Acondicionador nutritivo", pedidoOp: "DEMO-1004", productionPedidoId: "demo-p4", sector: "ENVASADO_MASIVO", operationalStatus: "en_curso", plannedQuantity: "5000", createdAt: ago(now, 300) }),
+    // 4) Disponibilidad y entrega parciales: 5.000 solicitadas · 2.000 entregadas · 1.500 disponibles · 1.500 pendientes.
+    baseWork({ id: "demo-w4", product: "Acondicionador nutritivo", pedidoProducto: "Acondicionador nutritivo", pedidoOp: "DEMO-1004", productionPedidoId: "demo-p4", sector: "ENVASADO_MASIVO", operationalStatus: "en_curso", plannedQuantity: "5000", finishedQty: "3500", createdAt: ago(now, 300) }),
     // 5) Entregado, recepción pendiente de confirmar.
     baseWork({ id: "demo-w5", product: "Tónico capilar", pedidoProducto: "Tónico capilar", pedidoOp: "DEMO-1005", productionPedidoId: "demo-p5", sector: "ENVASADO_PREMIUM", operationalStatus: "entregado", plannedQuantity: "800", createdAt: ago(now, 400), completedAt: ago(now, 60) }),
     // 6) Entregado, recepción ya confirmada.
@@ -77,9 +77,14 @@ export function buildDemoOverview(sessionId: string, now: Date, state: DemoState
     { key: DEMO_DELIVERY_KEYS.pendiente, workItemId: "demo-w5", at: ago(now, 48), quantity: 800, unit: "un." },
     { key: DEMO_DELIVERY_KEYS.confirmada, workItemId: "demo-w6", at: ago(now, 216), quantity: 1200, unit: "un." },
   ];
+  // Confirmaciones EXPLÍCITAS de «Listo para entregar» (ficticias): sin una marca no hay disponibilidad en el portal.
+  const marks: RawMarkRow[] = [
+    { id: "demo-m3", workItemId: "demo-w3", quantity: 1500, at: ago(now, 5) },
+    { id: "demo-m4", workItemId: "demo-w4", quantity: 1500, at: ago(now, 30), deliveredBefore: 2000 },
+  ];
   const confirmations = new Map<string, ConfirmationInfo>([[DEMO_DELIVERY_KEYS.confirmada, { at: ago(now, 192), by: "demostracion@genus.demo" }]]);
   for (const [key, at] of Object.entries(state.confirmations)) confirmations.set(key, { at, by: "demostracion@genus.demo" });
-  const overview = buildOverview({ clientId, works, deliveries, events, confirmations, now, calendar });
+  const overview = buildOverview({ clientId, works, deliveries, events, marks, confirmations, now, calendar });
 
   const sorted = (id: string) => overview.products.find((p) => p.product === id);
   const ready = sorted("Sérum antiedad");

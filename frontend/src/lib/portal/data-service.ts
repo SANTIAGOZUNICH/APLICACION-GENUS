@@ -16,7 +16,6 @@ import { clientKey, parseQuantity } from "@/lib/entregas/rules";
 import { getDb } from "@/lib/db/client";
 import { osNotifications } from "@/lib/db/schema";
 import type { BusinessCalendarOptions } from "./business-days";
-import { readyStableMinutes } from "./config";
 import {
   buildOverview,
   type ConfirmationInfo,
@@ -24,6 +23,7 @@ import {
   type PortalOverviewData,
   type RawDeliveryRow,
   type RawEventRow,
+  type RawMarkRow,
   type RawWorkRow,
 } from "./overview";
 import type { PortalSession } from "./auth-service";
@@ -55,11 +55,11 @@ export async function findClientWorkIds(db: SqlExec, clientId: string): Promise<
   return pairs.filter((p) => keys.has(clientKey(String(p.client ?? "")))).map((p) => String(p.id));
 }
 
-export type ClientFacts = { works: RawWorkRow[]; deliveries: RawDeliveryRow[]; events: RawEventRow[] };
+export type ClientFacts = { works: RawWorkRow[]; deliveries: RawDeliveryRow[]; events: RawEventRow[]; marks: RawMarkRow[] };
 
 /** Trae las filas operativas de esos trabajos. Lista blanca de columnas: nada confidencial se selecciona. */
 export async function loadFacts(db: SqlExec, workIds: string[]): Promise<ClientFacts> {
-  if (!workIds.length) return { works: [], deliveries: [], events: [] };
+  if (!workIds.length) return { works: [], deliveries: [], events: [], marks: [] };
   const list = inList(workIds);
   const works = (await db.execute(sql`
     select w.id::text as id, w.client, w.product, w.sector::text as sector, w.operational_status, w.source, w.created_at, w.completed_at,
@@ -84,7 +84,13 @@ export async function loadFacts(db: SqlExec, workIds: string[]): Promise<ClientF
      where d.work_item_id in (${list}) and d.status::text = 'ENTREGADO' and d.deleted_at is null
        and not exists (select 1 from work_item_delivery_lines l2 where l2.delivery_id = d.id and l2.status = 'ACTIVA')`)).rows as Row[];
 
+  // Confirmaciones explícitas de «Listo para entregar» (las retiradas no cuentan, pero la primera fija la base de entregas previas).
+  const marks = (await db.execute(sql`
+    select id::text as id, work_item_id::text as work_item_id, quantity, marked_at, delivered_before, retracted_at from portal_availability_marks
+     where work_item_id in (${list})`)).rows as Row[];
+
   return {
+    marks: marks.map((r): RawMarkRow => ({ id: String(r.id), workItemId: String(r.work_item_id), quantity: Number(r.quantity), at: isoOrNull(r.marked_at)!, deliveredBefore: Number(r.delivered_before ?? 0), retracted: r.retracted_at != null })),
     works: works.map(
       (r): RawWorkRow => ({
         id: String(r.id),
@@ -129,7 +135,7 @@ export type LoadedOverview = { overview: PortalOverviewData; facts: ClientFacts 
 export async function loadPortalOverview(clientId: string, now: Date = new Date(), db: SqlExec = requireDb()): Promise<LoadedOverview> {
   const ids = await findClientWorkIds(db, clientId);
   const [facts, confirmations, calendar] = await Promise.all([loadFacts(db, ids), loadConfirmations(db, clientId), loadCalendarOptions(db)]);
-  const overview = buildOverview({ clientId, works: facts.works, deliveries: facts.deliveries, events: facts.events, confirmations, now, calendar, readyStableMinutes: readyStableMinutes() });
+  const overview = buildOverview({ clientId, works: facts.works, deliveries: facts.deliveries, events: facts.events, marks: facts.marks, confirmations, now, calendar });
   return { overview, facts };
 }
 

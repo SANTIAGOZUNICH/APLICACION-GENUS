@@ -24,7 +24,8 @@ describe("modo demostración — datos ficticios", () => {
     expect(byName(p, "Sérum antiedad").quantities.available).toBe(1500);
     const parcial = byName(p, "Acondicionador nutritivo");
     expect(parcial.partialDelivery).toBe(true);
-    expect(parcial.quantities).toMatchObject({ requested: 5000, delivered: 2000, pending: 3000 });
+    expect(parcial.quantities).toMatchObject({ requested: 5000, delivered: 2000, available: 1500, pending: 1500 });
+    expect(parcial.stage).toBe("ENVASADO");
     const pendiente = byName(p, "Tónico capilar");
     expect(pendiente.stage).toBe("ENTREGADO");
     expect(pendiente.deliveries[0]!.canConfirm).toBe(true);

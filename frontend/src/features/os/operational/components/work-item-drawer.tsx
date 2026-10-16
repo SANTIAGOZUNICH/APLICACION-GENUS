@@ -25,6 +25,7 @@ import {
 import { StatusChip } from "./operational-ui";
 import { PackagingQuantitiesBlock } from "./packaging-quantities-block";
 import { usePreviewSession } from "@/features/os/session/preview-context";
+import { MarkReadyPanel } from "./mark-ready-panel";
 import { WorkItemEditDeleteActions } from "./work-item-edit-delete-actions";
 import { WorkItemPlanEditor } from "./work-item-plan-editor";
 import { WorkFormulaPanel } from "./work-formula-panel";
@@ -331,6 +332,8 @@ export function WorkItemDrawer({
               </p>
             ) : null}
           </div>
+          {/* Último sector del recorrido: confirmación explícita de disponibilidad (Envasado sin Codificado). */}
+          {!isElaboracion && !inCodificado ? <MarkReadyPanel workItemId={item.id} orderFallback={item.oaRef ?? null} /> : null}
         </DrawerBody>
 
         <DrawerFooter className="flex flex-wrap gap-2">

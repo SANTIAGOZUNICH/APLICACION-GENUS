@@ -11,13 +11,16 @@
  * Reglas (por producto = conjunto de trabajos vivos de un mismo pedido-producto):
  *  1. Si hay trabajos de Envasado/Codificado, mandan ellos (la Elaboración ya se envió: su estado «completo» es traspaso).
  *  2. ENTREGADO: todos los trabajos de Envasado/Codificado tienen su entrega final completa.
- *  3. LISTO: los trabajos que faltan entregar terminaron (completo/revisión). Es la misma regla que ya usa el calendario
- *     interno de Entregas (FINISHED_WORK). Como un Envasado terminado todavía puede pasar a Codificado, un Envasado
- *     recién terminado espera `readyStableMinutes` antes de mostrarse como LISTO (evita avisar «listo» y retroceder).
+ *  3. LISTO: SOLO por confirmación EXPLÍCITA («Marcar listo para entregar») de un usuario autorizado del último sector.
+ *     Que un sector haya terminado su tarea NO alcanza (ni hay plazos automáticos): un trabajo terminado sin confirmación
+ *     queda «en proceso de finalización». La disponibilidad son marcas con cantidad (`marks`): disponible = marcado −
+ *     entregado. Con una parte lista y otra pendiente el producto NO es LISTO: muestra lo disponible y lo pendiente.
  *  4. Con varios trabajos se muestra la etapa MENOS avanzada, y la cantidad ya disponible aparte (entrega parcial).
- *  5. Entrega parcial: cantidad solicitada, entregada, pendiente y disponible; no es «entregado» hasta completar.
+ *  5. Cantidades: solicitada, disponible (marcada y aún sin entregar), entregada y pendiente de producción o finalización
+ *     (solicitada − entregada − disponible, nunca negativa); no es «entregado» hasta completar.
  */
 import { parseQuantity } from "@/lib/entregas/rules";
+import { availabilityFigures } from "./availability-rules";
 
 export type PortalStageId = "ELABORACION" | "ENVASADO" | "LISTO" | "ENTREGADO";
 /** FINALIZACION = en Codificado (o recién terminado en Envasado, a la espera de definir destino). */
@@ -27,7 +30,6 @@ export type PortalWorkSector = "ELABORACION" | "ENVASADO_MASIVO" | "ENVASADO_PRE
 export const STAGE_ORDER: readonly PortalStageId[] = ["ELABORACION", "ENVASADO", "LISTO", "ENTREGADO"];
 /** Días hábiles estimados por etapa (solo orientativos; no son una fecha de entrega comprometida). */
 export const STAGE_ESTIMATE_DAYS: Partial<Record<PortalStageId, number>> = { ELABORACION: 10, ENVASADO: 5 };
-export const DEFAULT_READY_STABLE_MINUTES = 60;
 
 export type DeliveryFact = {
   /** `line:<id>` (envío físico) o `delivery:<id>` (registro histórico sin líneas). Único por entrega. */
@@ -60,7 +62,13 @@ export type WorkFact = {
   packagingTotalUnits: number | null;
   /** Entregas finales vigentes (no anuladas) de este trabajo. */
   deliveries: DeliveryFact[];
+  /** Marcas de disponibilidad vigentes (no retiradas): confirmaciones explícitas de «Listo para entregar». */
+  marks: MarkFact[];
+  /** Unidades ya entregadas al hacerse la primera confirmación del trabajo (null = nunca hubo una). */
+  markBase?: number | null;
 };
+
+export type MarkFact = { id: string; quantity: number; at: string };
 
 export type StartSource = "asignacion" | "ingreso_envasado" | "carga_nativa";
 
@@ -78,9 +86,9 @@ export type ProductStage = {
     /** Cantidad solicitada (suma de lo planificado en los trabajos de la etapa vigente). */
     requested: number | null;
     delivered: number;
-    /** Lo que todavía no se entregó (solicitado − entregado, nunca negativo). */
+    /** Lo que falta producir o finalizar: solicitado − entregado − disponible (nunca negativo). */
     pending: number | null;
-    /** Lo que ya está disponible para entregar ahora. */
+    /** Lo que un usuario autorizado confirmó como disponible y todavía no se entregó. */
     available: number;
     /** true si hay trabajos con unidades distintas: no se suma entre unidades. */
     mixedUnits: boolean;
@@ -89,8 +97,10 @@ export type ProductStage = {
   /** Fecha de la última entrega final registrada. */
   lastDeliveryAt: string | null;
   milestones: Milestones;
-  /** Trabajos de Envasado/Codificado con producto ya disponible (para avisar «listo»). */
-  readyWorks: Array<{ workItemId: string; available: number | null; readySince: string | null }>;
+  /** Marcas de disponibilidad con cantidad aún sin entregar (disparan el aviso «listo», una vez por marca). */
+  readyWorks: Array<{ workItemId: string; markId: string; available: number; readySince: string }>;
+  /** Fecha y hora de la primera disponibilidad vigente (null si no hay). */
+  availableSince: string | null;
 };
 
 const FINISHED = new Set(["completo", "revision", "entregado"]);
@@ -101,9 +111,15 @@ const num = (raw: string | null | undefined): number | null => {
   return typeof n === "number" ? n : null;
 };
 
-/** Cantidad total a entregar de un trabajo: unidades entregables → embaladas → final declarada → planificada. */
-export function workTarget(w: Pick<WorkFact, "deliverableUnits" | "packagingTotalUnits" | "finishedQty" | "plannedQuantity">): number | null {
+/**
+ * Cantidad total a entregar de un trabajo. Terminado: unidades entregables → embaladas → final declarada → planificada
+ * (misma regla que la entrega). En curso: lo PEDIDO (planificada) manda: «Guardar avance» informa lo realizado hasta ahora,
+ * no el total que pidió el cliente.
+ */
+export function workTarget(w: Pick<WorkFact, "deliverableUnits" | "packagingTotalUnits" | "finishedQty" | "plannedQuantity"> & { status?: string }): number | null {
+  const inProgress = w.status != null && !FINISHED.has(w.status);
   const candidates = [
+    inProgress ? num(w.plannedQuantity) : null,
     w.deliverableUnits != null && Number.isFinite(w.deliverableUnits) ? w.deliverableUnits : null,
     w.packagingTotalUnits != null && Number.isFinite(w.packagingTotalUnits) ? w.packagingTotalUnits : null,
     num(w.finishedQty),
@@ -125,7 +141,6 @@ function isDeliveredComplete(w: WorkFact): boolean {
   return target == null || delivered + EPS >= target || w.deliveries.every((d) => d.quantity == null);
 }
 
-const iso = (v: string | null | undefined) => (v ? v : null);
 const earliest = (values: Array<string | null>): string | null => {
   const v = values.filter((x): x is string => Boolean(x) && !Number.isNaN(new Date(x as string).getTime())).sort();
   return v[0] ?? null;
@@ -147,10 +162,9 @@ function envasadoStart(w: WorkFact): { at: string | null; source: StartSource | 
   return { at: null, source: null };
 }
 
-const readySinceOf = (w: WorkFact) => iso(w.completedAt) ?? iso(w.progressUpdatedAt);
 
 function milestonesOf(elab: readonly WorkFact[], down: readonly WorkFact[], entregadoAt: string | null): Milestones {
-  const readySinces = down.filter((w) => FINISHED.has(w.status)).map(readySinceOf);
+  const readySinces = down.flatMap((w) => w.marks.map((m) => m.at));
   return {
     elaboracion: earliest(elab.map((w) => elaboracionStart(w).at)),
     envasado: earliest(down.map((w) => envasadoStart(w).at)),
@@ -159,14 +173,13 @@ function milestonesOf(elab: readonly WorkFact[], down: readonly WorkFact[], entr
   };
 }
 
-export type DeriveOptions = { now: Date; readyStableMinutes?: number };
 
 /**
  * Etapa de un producto a partir de sus trabajos VIVOS (sin cancelados ni borrados). null si no hay trabajos.
  */
-export function deriveProductStage(works: readonly WorkFact[], opts: DeriveOptions): ProductStage | null {
+// Sin reloj: ninguna regla depende del tiempo transcurrido (la disponibilidad es una confirmación explícita).
+export function deriveProductStage(works: readonly WorkFact[]): ProductStage | null {
   if (works.length === 0) return null;
-  const stable = (opts.readyStableMinutes ?? DEFAULT_READY_STABLE_MINUTES) * 60_000;
   const elab = works.filter((w) => w.sector === "ELABORACION");
   const down = works.filter((w) => w.sector !== "ELABORACION");
 
@@ -193,6 +206,7 @@ export function deriveProductStage(works: readonly WorkFact[], opts: DeriveOptio
       lastDeliveryAt: null,
       milestones: milestonesOf(elab, [], null),
       readyWorks: [],
+      availableSince: null,
     };
   }
 
@@ -216,33 +230,45 @@ export function deriveProductStage(works: readonly WorkFact[], opts: DeriveOptio
       lastDeliveryAt,
       milestones: milestonesOf(elab, down, lastDeliveryAt),
       readyWorks: [],
+      availableSince: null,
     };
   }
 
   const open = down.filter((w) => !isDeliveredComplete(w));
-  type Cls = { w: WorkFact; kind: "ready" | "stabilizing" | "codificado" | "envasado"; available: number | null };
+  type Base = "envasado" | "codificado" | "finalizing";
+  type Cls = { w: WorkFact; kind: "ready" | "partial" | Base; base: Base; available: number };
   const classified: Cls[] = open.map((w) => {
     const target = workTarget(w);
     const deliveredHere = sumDelivered(w);
-    const remaining = target == null ? null : Math.max(0, target - deliveredHere);
-    if (FINISHED.has(w.status)) {
-      const since = readySinceOf(w);
-      const isEnvasado = w.sector !== "CODIFICADO";
-      if (isEnvasado && since) {
-        const age = opts.now.getTime() - new Date(since).getTime();
-        if (!Number.isNaN(age) && age < stable) return { w, kind: "stabilizing", available: null };
-      }
-      return { w, kind: "ready", available: remaining };
-    }
-    return { w, kind: w.sector === "CODIFICADO" ? "codificado" : "envasado", available: null };
+    const marked = w.marks.reduce((s, m) => s + m.quantity, 0);
+    // Disponible = marcado − entregado desde la confirmación, sin pasar de lo que falta entregar. Sin marca explícita NO hay disponibilidad.
+    const figs = availabilityFigures({ marked, delivered: deliveredHere, markBase: w.markBase ?? null });
+    let available = figs.available;
+    if (target != null) available = Math.min(available, Math.max(0, target - deliveredHere));
+    const pendingUnits = target == null ? 0 : Math.max(0, target - figs.covered);
+    // Un trabajo terminado pero sin confirmar sigue «en finalización»; el que no terminó, en su sector.
+    const base: Base = FINISHED.has(w.status) ? "finalizing" : w.sector === "CODIFICADO" ? "codificado" : "envasado";
+    if (available > EPS) return { w, kind: pendingUnits <= EPS ? "ready" : "partial", base, available };
+    return { w, kind: base, base, available: 0 };
   });
 
-  const ready = classified.filter((c) => c.kind === "ready");
-  const available = ready.reduce((s, c) => s + (c.available ?? 0), 0);
-  const allReady = ready.length === classified.length;
+  const withStock = classified.filter((c) => c.available > EPS);
+  const available = withStock.reduce((s, c) => s + c.available, 0);
+  const allReady = classified.every((c) => c.kind === "ready");
   const partialDelivery = delivered > EPS;
-  const pending = requested == null ? null : Math.max(0, requested - delivered);
-  const readyWorks = ready.map((c) => ({ workItemId: c.w.id, available: c.available, readySince: readySinceOf(c.w) }));
+  const pending = requested == null ? null : Math.max(0, requested - delivered - available);
+  // Marcas con unidades aún sin entregar: lo entregado se descuenta de las marcas más antiguas.
+  const readyWorks: ProductStage["readyWorks"] = [];
+  for (const c of withStock) {
+    let toDeduct = availabilityFigures({ marked: c.w.marks.reduce((s2, m) => s2 + m.quantity, 0), delivered: sumDelivered(c.w), markBase: c.w.markBase ?? null }).deliveredSince;
+    for (const m of [...c.w.marks].sort((a, b) => (a.at < b.at ? -1 : 1))) {
+      const used = Math.min(toDeduct, m.quantity);
+      toDeduct -= used;
+      const left = m.quantity - used;
+      if (left > EPS) readyWorks.push({ workItemId: c.w.id, markId: m.id, available: left, readySince: m.at });
+    }
+  }
+  const availableSince = readyWorks.map((r) => r.readySince).sort()[0] ?? null;
 
   if (allReady) {
     return {
@@ -255,12 +281,14 @@ export function deriveProductStage(works: readonly WorkFact[], opts: DeriveOptio
       lastDeliveryAt,
       milestones: milestonesOf(elab, down, null),
       readyWorks,
+      availableSince,
     };
   }
 
-  // Todavía hay algo en proceso: etapa 2 (Envasado). Finalización si lo que falta está en Codificado o por definir destino.
+  // Todavía hay algo sin confirmar o en proceso: etapa 2 (Envasado). «Finalización» si lo que falta está en Codificado o
+  // terminó y espera la confirmación de disponibilidad.
   const notReady = classified.filter((c) => c.kind !== "ready");
-  const finalizing = notReady.every((c) => c.kind === "codificado" || c.kind === "stabilizing");
+  const finalizing = notReady.every((c) => c.base === "codificado" || c.base === "finalizing");
   const starts = notReady
     .map((c) => envasadoStart(c.w))
     .filter((s) => s.at)
@@ -276,6 +304,7 @@ export function deriveProductStage(works: readonly WorkFact[], opts: DeriveOptio
     lastDeliveryAt,
     milestones: milestonesOf(elab, down, null),
     readyWorks,
+    availableSince,
   };
 }
 
@@ -293,6 +322,7 @@ export const STAGE_MESSAGES: Record<PortalStageId, string> = {
 };
 
 export const FINALIZATION_MESSAGE = "Tu producto está en proceso de finalización.";
+export const PARTIAL_READY_MESSAGE = "Una parte de tu pedido ya está lista para entregar; el resto sigue en proceso.";
 export const ESTIMATE_DISCLAIMER = "Los tiempos son estimativos y pueden variar según las características de cada producción.";
 
 export const STAGE_LABELS: Record<PortalStageId, string> = {
