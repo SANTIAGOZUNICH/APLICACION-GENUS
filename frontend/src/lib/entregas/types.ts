@@ -230,16 +230,17 @@ export function canManageEntregas(sector: SectorId | string): boolean {
 }
 
 /**
- * Quién ve el calendario (consulta): Producción y Dirección (todo), Depósito (despacho: todo) y Envasado Masivo/Premium
- * (SOLO los productos de su sector: el servidor recorta el resto). Los demás sectores no ven Entregas.
+ * Quién ve el calendario (consulta): Producción y Dirección, Depósito (despacho), Envasado Masivo/Premium y Codificado.
+ * Todos ven el MISMO calendario completo de pendientes (todos los clientes, productos y sectores); solo Producción y
+ * Dirección lo modifican (canManageEntregas). Los demás sectores no ven Entregas.
  */
 export function canViewEntregas(sector: SectorId | string): boolean {
-  return canManageEntregas(sector) || sector === "DEPOSITO" || sector === "ENVASADO_MASIVO" || sector === "ENVASADO_PREMIUM";
+  return canManageEntregas(sector) || sector === "DEPOSITO" || sector === "ENVASADO_MASIVO" || sector === "ENVASADO_PREMIUM" || sector === "CODIFICADO";
 }
 
-/** Sector al que se recortan los productos visibles (null = ve todos). */
-export function entregasVisibleSector(sector: SectorId | string): DeliverySector | null {
-  return sector === "ENVASADO_MASIVO" || sector === "ENVASADO_PREMIUM" ? sector : null;
+/** Sectores operativos que consultan el calendario sin recibir el diagnóstico global de recuperación (solo lectura). */
+export function isEntregasConsultaOperativa(sector: SectorId | string): boolean {
+  return sector === "ENVASADO_MASIVO" || sector === "ENVASADO_PREMIUM" || sector === "CODIFICADO";
 }
 
 /**

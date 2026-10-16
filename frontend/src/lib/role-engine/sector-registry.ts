@@ -120,7 +120,7 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     visibleEntities: ["work_item", "oa", "lote", "pedido"],
     workItemSources: ["semanas_2026"],
     allowedActions: ["Marcar codificado", "Reportar problema", "Consultar lote", "Gestionar asignación de lotes"],
-    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "asignacion_lotes", "consulta", "plan_semanal", "avisos", "dashboard", "procedimientos"],
+    sidebarItems: ["mi_trabajo", "ordenes_acondicionamiento", "asignacion_lotes", "consulta", "plan_semanal", "entregas", "avisos", "dashboard", "procedimientos"],
     creamyContext: {
       role: "Copiloto de codificado",
       topics: ["cola de codificación", "lotes", "OA", "asignación de lotes"],

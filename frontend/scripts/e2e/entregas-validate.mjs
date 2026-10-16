@@ -400,6 +400,7 @@ try {
   await q("update work_items set operational_status = 'cancelado', operational_cancelled_at = now() where id = $1", [wF4]);
   await pp.goto("/mi-trabajo");
   await openEntregas(pp);
+  await pp.locator(`[data-testid=entregas-day][data-date='${FUT}'] [data-testid=entregas-client]`).first().waitFor({ timeout: 30_000 }).catch(() => {});
   const futChips = await chips(pp, FUT);
   check("Futuro: 3 productos del mismo cliente (distinta tilde/mayúscula) el mismo día → UNA sola aparición en el día", futChips.length === 1 && futChips[0].toLowerCase().replace("ú", "u") === "e2e futuro", futChips.join(" | "));
   check("No se cargó nada a mano: scheduled_deliveries no cambió", (await q("select count(*)::int n from scheduled_deliveries"))[0].n === scheduledBefore);
@@ -471,29 +472,60 @@ try {
   const elab = await openAs(E2E_USERS.elaboracion);
   const range = `from=${addDays(TODAY, -40)}&to=${addDays(TODAY, 40)}`;
   const listAs = async (u) => (await (await u.page.request.get(`/api/v1/entregas?${range}`)).json()).deliveries ?? [];
+  // Un trabajo de Codificado con fecha de entrega (cliente y día propios, para no alterar lo anterior).
+  const D_CODIF = addDays(TODAY, 33);
+  const wC = await mk({ client: "E2E CODIF CLIENTE", product: "E2E CODIF ETIQUETA", plannedQuantity: "250", deliveryDate: D_CODIF }, "OA-2026-990308");
+  await q("update work_items set sector = 'CODIFICADO', line = null, codificado_origin_sector = null where id = $1", [wC]);
+  const codificado = await openAs(E2E_USERS.codificado);
+  // Vista comparable: entrega + productos (cantidad pendiente incluida); el orden no importa.
+  const norm = (list) => JSON.stringify(list.map((d) => ({ id: d.id, date: d.deliveryDate, client: d.client, items: d.items.map((i) => [i.id, i.product, i.quantity, i.status, i.sector]).sort() })).sort((x, y) => (x.id < y.id ? -1 : 1)));
+  const lprod = await listAs(pr);
   const lm = await listAs(masivo);
-  check("Envasado Masivo ve SOLO los productos de su sector (no el Serum de Premium)", lm.length > 0 && lm.flatMap((d) => d.items).every((i) => i.sector === "ENVASADO_MASIVO") && !JSON.stringify(lm).includes(P2));
   const lp = await listAs(premium);
-  check("Envasado Premium ve solo lo suyo", lp.flatMap((d) => d.items).every((i) => i.sector === "ENVASADO_PREMIUM") && JSON.stringify(lp).includes(P2) && !JSON.stringify(lp).includes(P1));
-  check("Recortado por sector: Masivo NO ve el serum Premium «Desde trabajo»; Premium sí (lo entregado no figura en ninguno)", !JSON.stringify(lm).includes("E2E FUT SERUM") && JSON.stringify(lp).includes("E2E FUT SERUM") && !JSON.stringify(lm).includes("E2E HIST SHAMPOO") && !JSON.stringify(lp).includes("E2E HIST SHAMPOO"));
+  const lc = await listAs(codificado);
+  const has = (l, s) => JSON.stringify(l).includes(s);
+  check("Producción sigue viendo todo (Masivo, Premium y Codificado)", has(lprod, P3) && has(lprod, P2) && has(lprod, "E2E FUT SERUM") && has(lprod, "E2E CODIF ETIQUETA"));
+  check("Masivo ve también las entregas de Premium y Codificado", has(lm, P2) && has(lm, "E2E FUT SERUM") && has(lm, "E2E CODIF ETIQUETA"));
+  check("Premium ve también las entregas de Masivo y Codificado", has(lp, P3) && has(lp, "E2E FUT CREMA") && has(lp, "E2E CODIF ETIQUETA"));
+  check("Codificado ve las entregas de Masivo y Premium", has(lc, P3) && has(lc, "E2E FUT CREMA") && has(lc, P2) && has(lc, "E2E FUT SERUM"));
+  check("Masivo, Premium y Codificado ven EXACTAMENTE el mismo calendario que Producción (fechas, clientes, productos, cantidades)", [lm, lp, lc].every((l) => norm(l) === norm(lprod)), `${lprod.length}/${lm.length}/${lp.length}/${lc.length}`);
+  check("Lo entregado por completo no figura para nadie; la parcial muestra solo su saldo", [lprod, lm, lp, lc].every((l) => !has(l, "E2E HIST SHAMPOO")) && [lm, lp, lc].every((l) => { const it = l.flatMap((d) => d.items).find((i) => i.product === "E2E PARCIAL CREMA"); return it && it.works[0]?.deliveredQty === 400; }));
+  check("Sin duplicados en la vista de los sectores", [lm, lp, lc].every((l) => { const ids = l.flatMap((d) => d.items.map((i) => `${d.id}:${i.id}`)); return new Set(ids).size === ids.length; }));
   const ld = await listAs(deposito);
   check("Depósito consulta todo lo pendiente (Masivo y Premium)", JSON.stringify(ld).includes(P3) && JSON.stringify(ld).includes(P2));
   check("Calidad y Elaboración no acceden a Entregas (403)", (await calidad.page.request.get(`/api/v1/entregas?${range}`)).status() === 403 && (await elab.page.request.get(`/api/v1/entregas?${range}`)).status() === 403);
   const newDelivery = { client: "E2E INTRUSO", deliveryDate: D_DELIVERY, items: [{ product: "X" }] };
-  const denied = await Promise.all([masivo, premium, deposito].map((u) => u.page.request.post("/api/v1/entregas", { data: newDelivery })));
-  check("Envasado y Depósito NO pueden crear entregas (403)", denied.every((r) => r.status() === 403) && (await deliveryRows("E2E INTRUSO")).length === 0);
+  const denied = await Promise.all([masivo, premium, codificado, deposito].map((u) => u.page.request.post("/api/v1/entregas", { data: newDelivery })));
+  check("Envasado, Codificado y Depósito NO pueden crear entregas (403)", denied.every((r) => r.status() === 403) && (await deliveryRows("E2E INTRUSO")).length === 0);
   const deniedPatch = await masivo.page.request.patch(`/api/v1/entregas/${d1.id}`, { data: { action: "cancel", reason: "Intento no autorizado", expectedVersion: 99 } });
   check("Envasado no puede cancelar ni reprogramar (403)", deniedPatch.status() === 403);
-  check("El diagnóstico de recuperación es de solo lectura: Envasado no recibe cifras globales y Calidad no accede", (await (await masivo.page.request.get("/api/v1/entregas/recovery")).json()).stats === null && (await calidad.page.request.get("/api/v1/entregas/recovery")).status() === 403);
+  const firstItem = d1.items?.[0]?.id ?? (await q("select id from scheduled_delivery_items where delivery_id = $1 limit 1", [d1.id]))[0].id;
+  const dates0 = JSON.stringify(await q("select id, to_char(delivery_date,'YYYY-MM-DD') d, version from scheduled_deliveries order by id"));
+  const wcDate0 = (await q("select to_char(delivery_date,'YYYY-MM-DD') d from work_items where id = $1", [wC]))[0].d;
+  const tries = [];
+  for (const u of [masivo, premium, codificado]) {
+    tries.push(await u.page.request.patch(`/api/v1/entregas/${d1.id}`, { data: { action: "reschedule", newDate: addDays(D_DELIVERY, 2), expectedVersion: d1.version ?? 1 } }));
+    tries.push(await u.page.request.patch(`/api/v1/entregas/${d1.id}`, { data: { action: "move_item", itemId: firstItem, newDate: addDays(D_DELIVERY, 3), expectedVersion: d1.version ?? 1 } }));
+    tries.push(await u.page.request.patch(`/api/v1/entregas/work/${wC}`, { data: { action: "edit", deliveryDate: addDays(D_CODIF, 1) } }));
+  }
+  check("Masivo, Premium y Codificado: la API rechaza reprogramar, mover productos o cambiar la fecha de un trabajo desde Entregas (403) y nada cambió", tries.every((r) => r.status() === 403) && JSON.stringify(await q("select id, to_char(delivery_date,'YYYY-MM-DD') d, version from scheduled_deliveries order by id")) === dates0 && (await q("select to_char(delivery_date,'YYYY-MM-DD') d from work_items where id = $1", [wC]))[0].d === wcDate0, tries.map((r) => r.status()).join(","));
+  check("El diagnóstico de recuperación es de solo lectura: Envasado no recibe cifras globales y Calidad no accede", (await (await masivo.page.request.get("/api/v1/entregas/recovery")).json()).stats === null && (await (await codificado.page.request.get("/api/v1/entregas/recovery")).json()).stats === null && (await calidad.page.request.get("/api/v1/entregas/recovery")).status() === 403);
   const deniedSug = await masivo.page.request.get(`/api/v1/entregas/suggestions?client=${CLIENT}&product=${P1}`);
   check("Las sugerencias de «Asignar trabajo» son solo de Producción (403)", deniedSug.status() === 403);
   await masivo.page.goto("/mi-trabajo");
   await openEntregas(masivo.page);
   await masivo.page.locator("[data-testid=entregas-client]").first().click();
   const mdlg = await masivo.page.locator("[data-testid=entrega-detail]").innerText();
-  check("Envasado ve el detalle de lo suyo en solo lectura (sin Modificar/Reprogramar/Cancelar) y no ve el producto de Premium", !(await masivo.page.locator("[data-testid=entrega-edit]").count()) && !(await masivo.page.locator("[data-testid=entrega-cancel-open]").count()) && !mdlg.includes(P2));
+  check("Envasado ve el detalle en solo lectura (sin Modificar/Reprogramar/Cancelar)", mdlg.length > 0 && !(await masivo.page.locator("[data-testid=entrega-edit]").count()) && !(await masivo.page.locator("[data-testid=entrega-cancel-open]").count()));
   check("Envasado no ve el historial de la entrega (contiene todos los sectores)", (await masivo.page.locator("[data-testid=entrega-history-toggle]").count()) === 0 && (await (await masivo.page.request.get(`/api/v1/entregas/${d1.id}`)).json()).history.length === 0);
   check("Envasado no ve el botón «Nueva entrega»", (await masivo.page.locator("[data-testid=entregas-new]").count()) === 0);
+  check("Envasado no puede arrastrar entregas (sin tarjetas arrastrables)", (await masivo.page.locator("[data-testid=entregas-drag]").count()) === 0);
+  await codificado.page.goto("/mi-trabajo");
+  await openEntregas(codificado.page);
+  await codificado.page.locator(`[data-testid=entregas-day][data-date='${D_DELIVERY}'] [data-testid=entregas-client]`).first().waitFor({ timeout: 30_000 }).catch(() => {});
+  const cChips = await codificado.page.locator("[data-testid=entregas-client]").count();
+  check("Codificado abre la pestaña Entregas y ve el calendario, sin «Nueva entrega» ni arrastre", cChips > 0 && (await codificado.page.locator("[data-testid=entregas-new]").count()) === 0 && (await codificado.page.locator("[data-testid=entregas-drag]").count()) === 0, String(cChips));
+  await codificado.page.screenshot({ path: `${OUT}/11-codificado-entregas.png` });
   check("Programar, vincular y cancelar nunca movieron stock", (await stockSnapshot()) === stock0);
 
   // ===== 12. Responsive: tablet y celular =====

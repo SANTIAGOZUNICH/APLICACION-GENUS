@@ -45,17 +45,26 @@ describe("entregasService.list — une programadas + recuperadas de los trabajos
     expect(out[0]!.items[0]!.works[0]!.deliveredQty).toBe(400);
   });
 
-  it("Envasado ve solo lo de su sector; Depósito ve todo; Calidad no tiene acceso", async () => {
-    const rows = [row({ work_id: "a", sector: "ENVASADO_MASIVO" }), row({ work_id: "b", sector: "ENVASADO_PREMIUM", product: "PREMIUM" }), row({ work_id: "c", sector: "ELABORACION", product: "GRANEL" })];
-    queue.push({ rows: [] }, { rows });
-    const masivo = await entregasService.list({ email: "m@x", sector: "ENVASADO_MASIVO" }, { from: "2026-10-01", to: "2026-10-31" });
-    expect(masivo.flatMap((d) => d.items.map((i) => i.product))).toEqual(["CREMA"]);
-
-    queue.push({ rows: [] }, { rows });
-    const deposito = await entregasService.list({ email: "d@x", sector: "DEPOSITO" }, { from: "2026-10-01", to: "2026-10-31" });
-    expect(deposito.flatMap((d) => d.items.map((i) => i.product)).sort()).toEqual(["CREMA", "GRANEL", "PREMIUM"]);
+  it("Masivo, Premium, Codificado, Depósito y Producción ven el MISMO calendario completo; Calidad no tiene acceso", async () => {
+    const rows = [
+      row({ work_id: "a", sector: "ENVASADO_MASIVO" }),
+      row({ work_id: "b", sector: "ENVASADO_PREMIUM", product: "PREMIUM" }),
+      row({ work_id: "c", sector: "CODIFICADO", product: "CODIF" }),
+      row({ work_id: "d", sector: "ELABORACION", product: "GRANEL" }),
+    ];
+    for (const sector of ["PRODUCCION", "ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO", "DEPOSITO"]) {
+      queue.push({ rows: [] }, { rows });
+      const out = await entregasService.list({ email: "x@x", sector }, { from: "2026-10-01", to: "2026-10-31" });
+      expect(out.flatMap((d) => d.items.map((i) => i.product)).sort(), sector).toEqual(["CODIF", "CREMA", "GRANEL", "PREMIUM"]);
+    }
 
     await expect(entregasService.list({ email: "q@x", sector: "CALIDAD" }, { from: "2026-10-01", to: "2026-10-31" })).rejects.toThrow(/acceso/);
+  });
+
+  it("Masivo, Premium y Codificado solo consultan: no crean ni reprograman entregas", async () => {
+    for (const sector of ["ENVASADO_MASIVO", "ENVASADO_PREMIUM", "CODIFICADO"]) {
+      await expect(entregasService.create({ email: "x@x", sector }, { client: "C", deliveryDate: "2026-10-20", items: [{ product: "P" }] } as never)).rejects.toThrow(/Solo Producción/);
+    }
   });
 });
 

@@ -4,7 +4,7 @@
  * Entregas — calendario MENSUAL de entregas programadas a clientes (estilo Google Calendar).
  * En cada fecha aparece SOLO el nombre del cliente (una sola vez aunque tenga varios productos o entregas ese día);
  * al tocarlo se abre la tarjeta flotante con todo el detalle. Producción/Dirección crean, modifican, reprograman y
- * cancelan; Depósito y Envasado consultan (Envasado ve solo los productos de su sector: el recorte lo hace el servidor).
+ * cancelan; Depósito, Envasado Masivo/Premium y Codificado consultan el calendario completo (solo lectura).
  * Programar una entrega no mueve stock ni toca trabajos por sí sola.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
