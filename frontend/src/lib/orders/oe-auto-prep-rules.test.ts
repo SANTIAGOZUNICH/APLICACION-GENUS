@@ -181,6 +181,25 @@ describe("buildAutoPreparedOe", () => {
     expect(r.formulaColumns.kind).toBe("keep");
   });
 
+  it("OE ya preparada y aparece OTRA versión de la fórmula del mismo producto: no se reemplaza sin la acción explícita", () => {
+    const first = build(blank());
+    const otherVersion = formulaOk({
+      ref: { ...(formulaOk() as Extract<WorkFormulaResolution, { ok: true }>).ref, versionHash: "h2", formulaVersionId: "drive:abc:9999" },
+      materials: [
+        { materiaPrima: "Agua", codigo: "MP-1", formulaPct: 70 },
+        { materiaPrima: "Aceite", codigo: "MP-9", formulaPct: 30 },
+      ],
+    });
+    const auto = build(first.content, { formula: otherVersion, work: work({ plannedQuantity: "200", version: 2 }) });
+    expect(auto.content.materials.map((m) => m.codigo)).toEqual(["MP-1", "MP-2", "MP-3"]);
+    expect(auto.content.autoPrep?.formula.versionHash).toBe("h1");
+    expect(auto.content.autoPrep?.formula.message).toMatch(/Se mantiene la fórmula ya cargada/);
+    expect(auto.formulaColumns.kind).toBe("keep");
+    const explicit = build(first.content, { formula: otherVersion, replaceManual: true });
+    expect(explicit.content.materials.map((m) => m.codigo)).toEqual(["MP-1", "MP-9"]);
+    expect(explicit.content.autoPrep?.formula.versionHash).toBe("h2");
+  });
+
   it("MP cargadas a mano: no se reemplazan sin confirmación; con confirmación sí, conservando lotes escritos", () => {
     const manual = blank();
     manual.materials = [{ ...build(blank()).content.materials[0], materiaPrima: "Agua", codigo: "MP-1", formulaPct: 79, lote: "MANUAL-1" }];

@@ -1,10 +1,16 @@
 /**
- * Fórmula para la OE automática de un trabajo asignado a Elaboración (servidor). Reutiliza el banco de fórmulas
- * (Neon) y el índice de Google Drive existentes, SOLO LECTURA (nunca modifica Drive ni el banco):
- *  1. banco: coincidencia exacta cliente + producto o alias único (`resolveLookup`); «ambigua» o «en conflicto» → se
- *     informa y no se elige;
- *  2. si el banco no la tiene: Drive, solo con UNA coincidencia exacta del producto en la carpeta del cliente;
+ * Fórmula para la OE automática de un trabajo asignado a Elaboración (servidor). SOLO LECTURA (nunca modifica Drive,
+ * el banco ni permisos).
+ *
+ * Fuente: carpeta NUEVA de Drive («ORDEN DE ELABORACION», ver drive-formula-source.ts), una vez validada su indexación:
+ *  1. vínculo explícito cliente + producto → archivo (elegido por Producción), si el archivo sigue vigente y accesible;
+ *     si no, se avisa (nunca se usa otro archivo en silencio);
+ *  2. si no hay vínculo: búsqueda en el índice (cliente primero, después producto); se usa SOLO con una coincidencia
+ *     fuerte y única; varias (copias, versiones) o parecidas → «ambigua»/«no encontrada» y Producción elige y vincula;
  *  3. fórmula incompleta (sin % o total ≠ 100 %) o ilegible → no se usa: la OE queda «pendiente de completar».
+ *
+ * Mientras la carpeta nueva no se haya indexado bien al menos una vez, se mantiene la búsqueda anterior (banco de
+ * fórmulas + carpeta configurada en memoria), para no dejar a Elaboración sin OE durante el cambio.
  */
 import "server-only";
 import { readyFormulaBank } from "./get-formula-bank";
@@ -18,6 +24,10 @@ export async function resolveFormulaForWork(args: { client: string; product: str
     return { ok: false, status: "missing_input", message: "El trabajo no tiene cliente y producto: no se puede buscar la fórmula." };
   }
 
+  const src = await import("./drive-formula-source");
+  if (await src.isNewFormulaSourceValidated()) return resolveFromNewDriveSource(client, product);
+
+  // --- Ubicación anterior (solo hasta validar la carpeta nueva) ---
   // 1) Banco de fórmulas (versión VIGENTE, sin revisión pendiente).
   let bankMessage = "";
   try {
@@ -108,5 +118,67 @@ export async function resolveFormulaForWork(args: { client: string; product: str
     };
   } catch {
     return { ok: false, status: "error", message: "No se pudo leer Google Drive para buscar la fórmula. La OE queda pendiente; reintentá más tarde." };
+  }
+}
+
+/** Carpeta nueva: vínculo vigente → índice (coincidencia fuerte y única). */
+async function resolveFromNewDriveSource(client: string, product: string): Promise<WorkFormulaResolution> {
+  const src = await import("./drive-formula-source");
+  let lookup: Awaited<ReturnType<typeof src.lookupFormulaForWork>>;
+  try {
+    lookup = await src.lookupFormulaForWork(client, product);
+    // ¿Se agregó el archivo hace poco? Si no aparece, se actualiza el índice (si tiene más de 10 minutos) y se reintenta.
+    if (lookup.kind === "match" && lookup.decision.kind === "none") {
+      await src.ensureFreshIndex(10 * 60 * 1000);
+      lookup = await src.lookupFormulaForWork(client, product);
+    }
+  } catch {
+    return { ok: false, status: "error", message: "No se pudo consultar el índice de fórmulas. La OE queda pendiente; reintentá más tarde." };
+  }
+  if (lookup.kind === "link_invalid") {
+    return { ok: false, status: "error", message: `Fórmula vinculada «${lookup.link.fileName}»: ${lookup.message}` };
+  }
+  let file: { fileId: string; fileName: string; clientFolderName: string; modifiedTime: string | null };
+  if (lookup.kind === "linked") file = lookup.file;
+  else if (lookup.decision.kind === "one") file = lookup.decision.file;
+  else if (lookup.decision.kind === "ambiguous") return { ok: false, status: "ambiguous", message: lookup.decision.message };
+  else return { ok: false, status: "not_found", message: lookup.decision.message };
+
+  try {
+    const { parseDriveFormulaBuffer } = await import("./drive-formulas-index");
+    const data = await src.readIndexedFile(file.fileId);
+    const res = parseDriveFormulaBuffer({
+      buffer: data.buffer,
+      checksum: data.checksum,
+      fileId: file.fileId,
+      fileName: file.fileName,
+      modifiedTime: file.modifiedTime,
+      client: file.clientFolderName,
+      productHint: product,
+      knownClients: [file.clientFolderName],
+    });
+    if (!res.found) return { ok: false, status: "error", message: `No se pudo leer la fórmula del archivo «${file.fileName}»: ${res.message}` };
+    const why = formulaIncompleteReason(res.materials);
+    if (why) return { ok: false, status: "incomplete", message: `${why} Archivo de Drive «${file.fileName}».` };
+    return {
+      ok: true,
+      ref: {
+        source: "DRIVE",
+        formulaProductId: res.snapshot.formulaProductId,
+        formulaVersionId: res.snapshot.formulaVersionId,
+        versionHash: res.snapshot.versionHash,
+        displayClient: res.snapshot.displayClient,
+        displayProduct: res.snapshot.displayProduct,
+        productCode: res.snapshot.productCode,
+        driveFileId: res.snapshot.driveFileId,
+        driveModifiedTime: res.snapshot.driveModifiedTime,
+        sourceSheet: res.snapshot.sourceSheet,
+      },
+      materials: res.materials,
+      procedureSteps: res.procedureSteps,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    return { ok: false, status: "error", message: `No se pudo abrir el archivo «${file.fileName}» de Drive. ${msg}`.trim() };
   }
 }
