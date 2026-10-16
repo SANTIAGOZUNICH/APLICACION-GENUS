@@ -25,6 +25,7 @@ import {
   decideDriveFormula,
   extractProductCode,
   markDuplicates,
+  matchClientFolders,
   productKeyOf,
   productLabelOf,
   type DriveIndexFile,
@@ -598,7 +599,89 @@ export async function lookupFormulaForWork(client: string, product: string): Pro
     const file = await getIndexedFile(link.fileId);
     return { kind: "linked", link, file: file! };
   }
-  return { kind: "match", decision: decideDriveFormula(client, product, await loadIndexFiles()) };
+  const learnedFolderIds = await learnedClientFolderIds(client);
+  return { kind: "match", decision: decideDriveFormula(client, product, await loadIndexFiles(), { learnedFolderIds }) };
+}
+
+/** Diagnóstico: cómo se identifica la carpeta del cliente en el índice (misma regla que la búsqueda automática). */
+export async function loadClientFolderMatch(client: string) {
+  const files = await loadIndexFiles();
+  const folders = [...new Map(files.map((f) => [f.clientFolderId, { id: f.clientFolderId, name: f.clientFolderName }])).values()];
+  const m = matchClientFolders(client, folders, await learnedClientFolderIds(client));
+  return { totalClientFolders: folders.length, how: m.how, exact: m.exact.map((f) => f.name), suggestions: m.suggestions.map((f) => f.name) };
+}
+
+/**
+ * Carpetas de cliente que Producción ya confirmó para este cliente (archivos vinculados y vigentes). Así, una vez que
+ * se vinculó una fórmula de «TRC» desde la carpeta «TRC HAIR CARE», los demás productos de TRC se buscan ahí.
+ */
+export async function learnedClientFolderIds(client: string): Promise<string[]> {
+  const ck = clientKey(client);
+  if (!ck) return [];
+  const rows = (await requireDb().execute(sql`
+    select distinct i.client_folder_id from formula_drive_links l
+      join formula_drive_index i on i.file_id = l.file_id
+     where l.client_key = ${ck} and l.ended_at is null and i.removed_at is null and i.root_folder_id = ${effectiveRootId()}`)).rows as Row[];
+  return rows.map((r) => String(r.client_folder_id));
+}
+
+/**
+ * Coincidencia ÚNICA y segura usada para una OE: se guarda como vínculo (si todavía no hay uno) para que las próximas
+ * asignaciones del mismo cliente + producto usen el mismo archivo. Nunca reemplaza un vínculo existente.
+ */
+export async function autoLinkFormula(actor: Actor, input: { client: string; product: string; fileId: string }): Promise<boolean> {
+  const client = input.client.trim();
+  const product = input.product.trim();
+  const { ck, pk } = linkKeys(client, product);
+  if (!ck || !pk) return false;
+  const file = await getIndexedFile(input.fileId);
+  if (!file || file.removedAt) return false;
+  const id = randomUUID();
+  const rows = (await requireDb().execute(sql`
+    insert into formula_drive_links (id, client_key, product_key, client_label, product_label, file_id, file_name, client_folder_name, note,
+      linked_by, linked_by_sector, last_validated_at, last_validation)
+    values (${id}::uuid, ${ck}, ${pk}, ${client}, ${product}, ${file.fileId}, ${file.fileName}, ${file.clientFolderName},
+      'Vinculada automáticamente: única coincidencia segura', ${actor.email}, ${actor.sector}, now(), 'ok')
+    on conflict do nothing returning id`)).rows;
+  if (!rows.length) return false;
+  await auditLink(actor, "auto_link", id, { client, product, fileId: file.fileId, fileName: file.fileName, clientFolder: file.clientFolderName });
+  return true;
+}
+
+/**
+ * OE de Elaboración que quedaron con la fórmula pendiente (sin empezar): se vuelven a preparar con la búsqueda actual.
+ * Usa la preparación automática existente (misma OE, mismo número; no reemplaza fórmulas ya cargadas, no toca lotes,
+ * cantidades, consumos ni stock). Devuelve cuántas quedaron con fórmula.
+ */
+export async function retryPendingOeFormulas(actor: Actor, opts: { limit?: number; workItemIds?: string[] } = {}): Promise<{ checked: number; resolved: number; orderNumbers: string[] }> {
+  const db = requireDb();
+  const ids = opts.workItemIds?.length ? opts.workItemIds : null;
+  const rows = (await db.execute(sql`
+    select distinct on (o.created_at, o.id) o.id, o.order_number from operational_orders o
+      join work_items w on (w.id::text = o.linked_work_item_id or (coalesce(o.linked_work_item_id, '') = '' and w.order_id = o.id))
+     where o.type = 'OE' and o.deleted_at is null and o.status::text in ('BORRADOR', 'PENDIENTE')
+       and w.sector::text = 'ELABORACION' and w.status::text <> 'CANCELADO'
+       and coalesce(o.form_data->'autoPrep'->'formula'->>'status', '') not in ('ok', 'manual_content')
+       ${ids ? sql`and w.id::text in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})` : sql``}
+     order by o.created_at desc, o.id limit ${opts.limit ?? 25}`)).rows as Row[];
+  const { prepareOeFromWork } = await import("@/lib/planning/oe-auto-prep");
+  let resolved = 0;
+  const orderNumbers: string[] = [];
+  for (const r of rows) {
+    try {
+      // Primero se mira sin guardar: si la fórmula sigue sin aparecer, la OE no se toca (ni versión ni mensaje).
+      const preview = await prepareOeFromWork({ orderId: String(r.id), actor, reason: "Fórmula encontrada en la carpeta de Drive", dryRun: true });
+      if (preview.status !== "applied" || preview.autoPrep.formula.status !== "ok") continue;
+      const out = await prepareOeFromWork({ orderId: String(r.id), actor, reason: "Fórmula encontrada en la carpeta de Drive", expectedVersion: preview.version });
+      if (out.status === "applied" && out.autoPrep.formula.status === "ok") {
+        resolved++;
+        orderNumbers.push(String(r.order_number));
+      }
+    } catch {
+      /* se reintenta en la próxima actualización */
+    }
+  }
+  return { checked: rows.length, resolved, orderNumbers };
 }
 
 /** Contenido del archivo (para la OE y para «Descargar»). Solo archivos del índice: nunca es un proxy genérico de Drive. */

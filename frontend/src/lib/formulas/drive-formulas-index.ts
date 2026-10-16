@@ -12,6 +12,7 @@ import {
   OFFICE_SHEET_MIMES,
 } from "@/lib/adapters/drive/google-drive-gateway";
 import { deriveProductFromFilename, normalizeSearchKey } from "@/lib/formulas/types";
+import { rankText } from "@/lib/formulas/drive-match-rules";
 import { resolveExtraFormulasFolderIds, resolveFormulasFolderId } from "@/lib/formulas/drive-formulas-diagnose";
 import { parseWorkbookBuffer } from "@/lib/formulas/parse-workbook";
 import { emptyOeMaterial } from "@/lib/orders/content";
@@ -63,20 +64,9 @@ const RANK_SCORE = {
   fuzzy: 100,
 } as const;
 
-function rankQuery(
-  queryNorm: string,
-  candidateNorm: string
-): DriveFormulaSearchHit["rank"] | null {
-  if (!queryNorm || !candidateNorm) return null;
-  if (candidateNorm.startsWith(queryNorm)) return "exact_prefix";
-  const words = candidateNorm.split(" ").filter(Boolean);
-  if (words.some((w) => w.startsWith(queryNorm))) return "word_prefix";
-  if (candidateNorm.includes(queryNorm)) return "contains";
-  const qTokens = queryNorm.split(" ").filter((t) => t.length >= 2);
-  if (qTokens.length && qTokens.every((t) => candidateNorm.includes(t))) {
-    return "fuzzy";
-  }
-  return null;
+/** Misma regla de texto que la búsqueda automática (drive-match-rules.ts#rankText). */
+function rankQuery(queryNorm: string, candidateNorm: string): DriveFormulaSearchHit["rank"] | null {
+  return rankText(queryNorm, candidateNorm);
 }
 
 function uniqAliases(values: string[]): string[] {

@@ -9,6 +9,7 @@ import {
   matchClientFolders,
   productKeyOf,
   productLabelOf,
+  rankText,
   type DriveIndexFile,
 } from "./drive-match-rules";
 
@@ -124,5 +125,50 @@ describe("decisión: cliente primero, después producto", () => {
     const d = decideDriveFormula("LUCENT", "GEL FRIO", files);
     expect(d.kind).toBe("ambiguous");
     expect(d.candidates.find((c) => c.subPath)!.flags).toEqual(expect.arrayContaining(["subcarpeta", "carpeta_antigua"]));
+  });
+});
+
+describe("carpeta del cliente con nombre distinto al del trabajo (caso TRC)", () => {
+  const trc = (folder: string, extra: DriveIndexFile[] = []) => index([file(folder, "SHAMPOO PLUS - TRC.xlsx"), file("OTRO CLIENTE", "SHAMPOO PLUS.xlsx"), ...extra]);
+
+  it.each(["TRC", "TRC HAIR CARE", "LABORATORIO TRC", "T.R.C.", "TRC S.R.L.", "trc cosmetica"])("cliente «TRC» → carpeta «%s»: encuentra SHAMPOO PLUS (sin tomar el de otro cliente)", (folder) => {
+    const d = decideDriveFormula("TRC", "SHAMPOO PLUS", trc(folder));
+    expect(d.kind).toBe("one");
+    if (d.kind === "one") {
+      expect(d.file.clientFolderName).toBe(folder);
+      expect(d.file.fileName).toBe("SHAMPOO PLUS - TRC.xlsx");
+    }
+  });
+
+  it("dos carpetas que contienen al cliente como palabra → ninguna es segura: solo opciones", () => {
+    const files = index([file("TRC HAIR CARE", "SHAMPOO PLUS.xlsx"), file("TRC PROFESIONAL", "SHAMPOO PLUS.xlsx")]);
+    const d = decideDriveFormula("TRC", "SHAMPOO PLUS", files);
+    expect(d.kind).toBe("none");
+    if (d.kind === "none") expect(d.clientSuggestions.sort()).toEqual(["TRC HAIR CARE", "TRC PROFESIONAL"]);
+    expect(d.candidates).toHaveLength(2);
+  });
+
+  it("parte de otra palabra no alcanza («TRC» ≠ «ELECTRCO»): solo sugerencia, nunca se usa", () => {
+    const d = decideDriveFormula("TRC", "SHAMPOO PLUS", index([file("ELECTRCO", "SHAMPOO PLUS.xlsx")]));
+    expect(d.kind).toBe("none");
+  });
+
+  it("carpeta aprendida de un vínculo de Producción: se usa aunque el nombre no se parezca", () => {
+    const files = index([file("TRICOLOGIA CAPILAR", "SHAMPOO PLUS.xlsx"), file("TRICOLOGIA CAPILAR", "ACONDICIONADOR PLUS.xlsx")]);
+    expect(decideDriveFormula("TRC", "ACONDICIONADOR PLUS", files).kind).toBe("none");
+    const learned = decideDriveFormula("TRC", "ACONDICIONADOR PLUS", files, { learnedFolderIds: [files[0]!.clientFolderId] });
+    expect(learned.kind).toBe("one");
+  });
+
+  it("la búsqueda manual y la automática usan la misma regla de texto", () => {
+    expect(rankText("trc", "trc hair care")).toBe("exact_prefix");
+    expect(rankText("trc", "laboratorio trc")).toBe("word_prefix");
+    expect(matchClientFolders("TRC", [{ id: "1", name: "TRC HAIR CARE" }])).toMatchObject({ how: "contiene" });
+    expect(matchClientFolders("TRC", [{ id: "1", name: "T.R.C." }])).toMatchObject({ how: "nombre" });
+  });
+
+  it("copias del mismo producto en la carpeta encontrada → sigue siendo ambiguo", () => {
+    const d = decideDriveFormula("TRC", "SHAMPOO PLUS", trc("TRC HAIR CARE", [file("TRC HAIR CARE", "Copia de SHAMPOO PLUS - TRC.xlsx")]));
+    expect(d.kind).toBe("ambiguous");
   });
 });

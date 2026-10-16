@@ -40,7 +40,7 @@ export function WorkFormulaPanel({ workItemId }: { workItemId: string }) {
   const [oeOpen, setOeOpen] = useState(false);
   const [choosing, setChoosing] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"link" | "sync" | "unlink" | null>(null);
+  const [busy, setBusy] = useState<"link" | "sync" | "unlink" | "retry" | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -114,7 +114,23 @@ export function WorkFormulaPanel({ workItemId }: { workItemId: string }) {
     }
   };
 
+  const retryOe = async () => {
+    if (!info) return;
+    setBusy("retry");
+    setNotice(null);
+    try {
+      const r = await driveFormulasApi.retryOe(info.work.id);
+      setInfo(r.info);
+      setNotice(r.pending.resolved ? `La OE ${r.pending.orderNumbers.join(", ")} quedó con la fórmula cargada.` : r.info.oe?.formulaMessage ?? "La OE sigue sin fórmula: revisá el aviso.");
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "No se pudo preparar la OE.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const doc = info?.document ?? null;
+  const oePending = Boolean(info?.oe && info.oe.formulaStatus !== "ok" && info.oe.formulaStatus !== "manual_content" && ["BORRADOR", "PENDIENTE"].includes(info.oe.status));
   const showWarning = info && info.status !== "ok";
   const candidates = info?.candidates ?? [];
   const canChoose = Boolean(info?.canLink && candidates.length);
@@ -150,6 +166,15 @@ export function WorkFormulaPanel({ workItemId }: { workItemId: string }) {
               </a>
             )}
           </div>
+
+          {info.canLink && oePending && info.status === "ok" && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md bg-sky-500/10 px-2 py-1.5 text-xs text-[var(--os-text)]" data-testid="work-formula-oe-pending">
+              <span>La OE {info.oe!.number} todavía no tiene la fórmula cargada.</span>
+              <Button type="button" size="sm" onClick={() => void retryOe()} disabled={busy !== null} data-testid="work-formula-retry">
+                {busy === "retry" ? "Cargando…" : "Cargar fórmula en la OE"}
+              </Button>
+            </div>
+          )}
 
           {doc && (
             <p className="flex items-center gap-1.5 text-xs text-[var(--os-text-muted)]" data-testid="work-formula-doc">

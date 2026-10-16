@@ -57,6 +57,10 @@ put("E2E ALL BEAUTY/Copia de CREMA DE ORDEÑE - E2E ALL BEAUTY.xlsx", "CREMA DE 
 put("E2E FIRMEA/SERUM-ADN 1%.xls", "SERUM ADN 1%");
 put("E2E FIRMEA/EMULSION CORPORAL- E2E ALL BEAUTY.xlsx", "EMULSION CORPORAL");
 put("E2E LUCENT/__sin_acceso/GEL FRIO.xlsx", "GEL FRIO");
+// Caso TRC: el trabajo dice «E2E TRC» y la carpeta se llama «E2E TRC HAIR CARE» (la búsqueda manual la encuentra).
+put("E2E TRC HAIR CARE/SHAMPOO PLUS - E2E TRC.xlsx", "SHAMPOO PLUS", [["Agua E2E", "MP-E2E-1", 85], ["Tensioactivo E2E", "MP-E2E-5", 15]]);
+put("E2E FIRMEA/SHAMPOO PLUS.xlsx", "SHAMPOO PLUS", [["Agua E2E", "MP-E2E-1", 90], ["Sal E2E", "MP-E2E-6", 10]]); // de otro cliente
+put("E2E TRICOLOGIA/SERUM CAPILAR.xlsx", "SERUM CAPILAR", [["Agua E2E", "MP-E2E-1", 95], ["Silicona E2E", "MP-E2E-9", 5]]);
 
 async function openAs(user, viewport = { width: 1440, height: 950 }) {
   const ctx = await browser.newContext({ baseURL: BASE, viewport, acceptDownloads: true });
@@ -107,7 +111,7 @@ try {
   // ===== Índice: primera actualización (valida la carpeta nueva) =====
   const sync1 = await pp.request.post("/api/v1/formulas/drive-index");
   const s1 = await sync1.json();
-  check("Producción actualiza el índice: clientes y archivos de la carpeta nueva (incluye .xls y subcarpetas)", sync1.ok() && s1.result.ok && s1.result.clientCount === 3 && s1.result.fileCount === 6, JSON.stringify(s1.result));
+  check("Producción actualiza el índice: clientes y archivos de la carpeta nueva (incluye .xls y subcarpetas)", sync1.ok() && s1.result.ok && s1.result.clientCount === 5 && s1.result.fileCount === 9, JSON.stringify(s1.result));
   const st = await (await pp.request.get("/api/v1/formulas/drive-index")).json();
   check("Estado del índice: validado (la ubicación anterior ya no se consulta) y con revisión de repetidos/otro cliente", st.status.validated === true && st.review.duplicates.length === 1 && st.review.otherClient.length === 1, JSON.stringify({ d: st.review?.duplicates?.length, o: st.review?.otherClient?.length }));
 
@@ -142,7 +146,7 @@ try {
   check("…en la base: la OE tiene la fórmula del archivo elegido", oeDup2.form_data.autoPrep?.formula?.status === "ok" && oeDup2.form_data.materials.length === 3);
   const docName = await panel.locator("[data-testid=work-formula-doc-name]").innerText();
   check("El detalle muestra el documento vinculado", docName === "CREMA DE ORDEÑE - E2E ALL BEAUTY.xlsx", docName);
-  const links = await q("select * from formula_drive_links where client_key = 'e2e all beauty' and ended_at is null");
+  const links = await q("select * from formula_drive_links where client_key = 'e2e all beauty' and product_key = 'crema de ordene' and ended_at is null");
   const linkAudit = await q("select * from feature_audit_events where domain = 'formulas_drive' and action = 'link' and entity_id = $1", [links[0]?.id]);
   check("Vínculo explícito guardado (uno activo) y auditado", links.length === 1 && links[0].file_name === "CREMA DE ORDEÑE - E2E ALL BEAUTY.xlsx" && linkAudit.length === 1);
   await pp.screenshot({ path: `${OUT}/2-produccion-vinculada.png` });
@@ -179,6 +183,61 @@ try {
   await pp.request.post("/api/v1/formulas/drive-index");
   const after = await oeOf(wExact.order_id);
   check("OE emitida: actualizar el índice con otra versión no la modifica", after.version === before.version && JSON.stringify(after.form_data) === JSON.stringify(before.form_data));
+
+  // ===== Caso TRC: carpeta con otro nombre, vínculo reutilizado, OE pendiente, elección manual =====
+  const manualClients = await (await pp.request.get("/api/v1/formulas/options?scope=clients&q=E2E%20TRC&limit=10")).json();
+  check("Búsqueda manual: «E2E TRC» encuentra la carpeta «E2E TRC HAIR CARE»", (manualClients.clients ?? []).some((c) => c.client === "E2E TRC HAIR CARE"), JSON.stringify(manualClients.clients?.map((c) => c.client)));
+  const diag = await (await pp.request.get("/api/v1/formulas/drive-index?client=E2E%20TRC&product=SHAMPOO%20PLUS")).json();
+  check("Diagnóstico: la búsqueda automática identifica la MISMA carpeta (por contener el nombre del cliente)", diag.diagnose?.folders?.how === "contiene" && diag.diagnose.folders.exact[0] === "E2E TRC HAIR CARE", JSON.stringify(diag.diagnose?.folders));
+  const wTrc = await assign(pp, "E2E TRC", "SHAMPOO PLUS");
+  const oeTrc = await oeOf(wTrc.order_id);
+  const trcFile = (await q("select file_id from formula_drive_index where client_folder_name = 'E2E TRC HAIR CARE' and file_name = 'SHAMPOO PLUS - E2E TRC.xlsx'"))[0];
+  check("TRC / SHAMPOO PLUS: al asignar a Elaboración la OE trae la fórmula de su carpeta (no la de otro cliente)", oeTrc.form_data.autoPrep?.formula?.status === "ok" && oeTrc.form_data.autoPrep.formula.driveFileId === trcFile.file_id && oeTrc.form_data.materials.some((m) => m.materiaPrima === "Tensioactivo E2E"), oeTrc.form_data.autoPrep?.formula?.message);
+  const autoLinks = await q("select * from formula_drive_links where client_key = 'e2e trc' and ended_at is null");
+  check("…y queda vinculada automáticamente (única coincidencia segura)", autoLinks.length === 1 && autoLinks[0].file_id === trcFile.file_id);
+  put("E2E TRC HAIR CARE/Copia de SHAMPOO PLUS - E2E TRC.xlsx", "SHAMPOO PLUS", [["Agua E2E", "MP-E2E-1", 50], ["Otro E2E", "MP-E2E-7", 50]]);
+  await pp.request.post("/api/v1/formulas/drive-index");
+  const wTrc2 = await assign(pp, "e2e trc", "Shampoo Plus");
+  const oeTrc2 = await oeOf(wTrc2.order_id);
+  check("Nueva asignación del mismo cliente y producto: reutiliza el vínculo aunque ahora haya una copia", oeTrc2.form_data.autoPrep?.formula?.driveFileId === trcFile.file_id);
+
+  // OE pendiente → se resuelve desde la pantalla con «Actualizar índice» (misma OE, sin duplicar).
+  const wPend = await assign(pp, "E2E TRC", "ACONDICIONADOR PLUS");
+  const oePend0 = await oeOf(wPend.order_id);
+  check("Producto sin fórmula todavía: la OE queda pendiente con un mensaje claro", oePend0.form_data.autoPrep?.formula?.status === "not_found" && /ACONDICIONADOR PLUS/.test(oePend0.form_data.autoPrep.formula.message), oePend0.form_data.autoPrep?.formula?.message);
+  put("E2E TRC HAIR CARE/ACONDICIONADOR PLUS.xlsx", "ACONDICIONADOR PLUS", [["Agua E2E", "MP-E2E-1", 92], ["Cetílico E2E", "MP-E2E-8", 8]]);
+  await pp.reload();
+  await nav(pp, "Elaboración");
+  panel = await openWork(pp, "ACONDICIONADOR PLUS");
+  await panel.locator("[data-testid=work-formula-sync]").click();
+  await pp.waitForFunction(() => /Índice actualizado/.test(document.querySelector("[data-testid=work-formula-notice]")?.textContent ?? ""), null, { timeout: 60_000 });
+  const oePend1 = await oeOf(wPend.order_id);
+  const sameOe = (await q("select count(*)::int n from operational_orders where order_number = $1", [oePend0.order_number]))[0].n;
+  check("OE pendiente: al actualizar el índice se completa la MISMA OE (sin duplicar) y conserva su lote", oePend1.form_data.autoPrep?.formula?.status === "ok" && sameOe === 1 && oePend1.form_data.header?.lot === oePend0.form_data.header?.lot, oePend1.form_data.autoPrep?.formula?.message);
+  await closeDrawer(pp);
+
+  // Elección manual desde la OE (selector de Órdenes de Elaboración) en una carpeta con otro nombre → queda vinculada.
+  const wMan = await assign(pp, "E2E TRC", "SERUM CAPILAR");
+  const oeMan = await oeOf(wMan.order_id);
+  check("Carpeta con otro nombre («E2E TRICOLOGIA»): la OE automática no adivina", oeMan.form_data.autoPrep?.formula?.status === "not_found");
+  const tricFile = (await q("select file_id from formula_drive_index where client_folder_name = 'E2E TRICOLOGIA' and file_name = 'SERUM CAPILAR.xlsx'"))[0];
+  const manual = await pp.request.post("/api/v1/formulas/resolve", { data: { driveFileId: tricFile.file_id, client: "E2E TRICOLOGIA", product: "SERUM CAPILAR", orderId: oeMan.id } });
+  const manualBody = await manual.json();
+  check("Elección manual en la OE: carga la fórmula y guarda el vínculo con el cliente/producto del trabajo", manual.ok() && manualBody.found && manualBody.linkedFor?.client === "E2E TRC" && manualBody.linkedFor?.product === "SERUM CAPILAR", JSON.stringify(manualBody.linkedFor));
+  const wMan2 = await assign(pp, "E2E TRC", "SERUM CAPILAR");
+  const oeMan2 = await oeOf(wMan2.order_id);
+  check("La próxima asignación reutiliza el vínculo elegido a mano (sin volver a buscar)", oeMan2.form_data.autoPrep?.formula?.status === "ok" && oeMan2.form_data.autoPrep.formula.driveFileId === tricFile.file_id);
+  const retryDenied = await (await openAs(E2E_USERS.elaboracion)).page.request.post(`/api/v1/formulas/work/${wMan.id}`);
+  const retryOk = await pp.request.post(`/api/v1/formulas/work/${wMan.id}`);
+  const retryBody = await retryOk.json();
+  check("«Cargar fórmula en la OE»: Producción completa la OE pendiente con el vínculo; Elaboración no puede (403)", retryDenied.status() === 403 && retryOk.ok() && retryBody.pending.resolved === 1 && (await oeOf(wMan.order_id)).form_data.autoPrep.formula.status === "ok", JSON.stringify(retryBody.pending));
+  await pp.reload();
+  await nav(pp, "Elaboración");
+  panel = await openWork(pp, "SERUM CAPILAR");
+  const persisted = await panel.locator("[data-testid=work-formula-doc]").innerText();
+  check("Después de recargar: el detalle muestra la fórmula de la OE (persistido)", /SERUM CAPILAR\.xlsx/.test(persisted) && /usada en la OE/.test(persisted), persisted);
+  await pp.screenshot({ path: `${OUT}/7-trc-persistido.png` });
+  await closeDrawer(pp);
 
   // ===== ELABORACIÓN abre «Ver OE / Fórmula» =====
   const el = await openAs(E2E_USERS.elaboracion);

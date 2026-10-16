@@ -302,6 +302,91 @@ describe.skipIf(Boolean(PROBLEM))(`Fórmulas: carpeta nueva de Drive en Postgres
     await expect(getWorkFormulaInfo({ email: "x@x", sector: "ENVASADO_MASIVO" }, result.item.id)).rejects.toThrow(/no ve las fórmulas/);
   });
 
+  // ---------- Caso TRC: el cliente del trabajo no se llama igual que su carpeta de Drive ----------
+  const assignElab = async (client: string, product: string) => {
+    const { assignWorkItemDurable } = await import("@/lib/planning/work-assignment-service");
+    const { prepareOeAfterWorkChange } = await import("@/lib/planning/oe-auto-prep");
+    const orderNumber = `OE-2026-${String(OE_BASE + ++oeSeq).padStart(6, "0")}`;
+    const result = await assignWorkItemDurable(
+      { sector: "ELABORACION", client, product, plannedQuantity: "200", unit: "kg", plannedDate: "2026-11-24", branchOwner: "Cristian", orderNumber, packagingLote: "IT-TRC-L1", notes: NOTE, idempotencyKey: randomUUID() } as never,
+      prod,
+      randomUUID()
+    );
+    await prepareOeAfterWorkChange(result.order!.id, prod, "Asignación del trabajo a Elaboración");
+    const [o] = await q("select id, order_number, version, lot, form_data from operational_orders where id = $1", [result.order!.id]);
+    return { workId: result.item.id, order: o!, orderNumber };
+  };
+  const fstatus = (o: Record<string, unknown>) => (o.form_data as { autoPrep?: { formula?: { status?: string; driveFileId?: string } } }).autoPrep?.formula;
+
+  it("TRC / SHAMPOO PLUS: la OE automática encuentra la carpeta «TRC HAIR CARE» (misma regla que la búsqueda manual) y vincula", async () => {
+    const trc = drive.folder(ROOT, "TRC HAIR CARE");
+    ids.trc = trc;
+    ids.trcShampoo = drive.file(trc, "SHAMPOO PLUS - TRC.xlsx", formulaXlsx("SHAMPOO PLUS", [["Agua", "MP-1", 85], ["Tensioactivo", "MP-5", 15]]));
+    drive.file(ids.fi!, "SHAMPOO PLUS.xlsx", formulaXlsx("SHAMPOO PLUS", [["Agua", "MP-1", 90], ["Sal", "MP-6", 10]])); // otro cliente: nunca
+    expect((await src.syncFormulaIndex({ trigger: "manual" })).ok).toBe(true);
+    // Búsqueda manual (selector de Órdenes de Elaboración) sobre el MISMO índice.
+    const idx = await import("@/lib/formulas/drive-formulas-index");
+    idx.resetDriveFormulasIndexForTests();
+    expect((await idx.searchDriveClients("TRC", 5)).map((c) => c.client)).toContain("TRC HAIR CARE");
+    // Automática.
+    const a = await assignElab("TRC", "SHAMPOO PLUS");
+    expect(fstatus(a.order)).toMatchObject({ status: "ok", driveFileId: ids.trcShampoo });
+    const links = await q("select * from formula_drive_links where client_key = 'trc' and ended_at is null");
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ file_id: ids.trcShampoo, note: "Vinculada automáticamente: única coincidencia segura" });
+    // Elaboración la consulta enseguida.
+    const { getWorkFormulaInfo } = await import("@/lib/formulas/work-formula-info");
+    expect((await getWorkFormulaInfo(elab, a.workId)).document).toMatchObject({ fileId: ids.trcShampoo, via: "oe" });
+  });
+
+  it("vínculo guardado: una nueva asignación lo reutiliza aunque después aparezca una copia del archivo", async () => {
+    drive.file(ids.trc!, "Copia de SHAMPOO PLUS - TRC.xlsx", formulaXlsx("SHAMPOO PLUS", [["Agua", "MP-1", 50], ["Otro", "MP-7", 50]]));
+    expect((await src.syncFormulaIndex({ trigger: "manual" })).ok).toBe(true);
+    const b = await assignElab("trc", "Shampoo Plus");
+    expect(fstatus(b.order)).toMatchObject({ status: "ok", driveFileId: ids.trcShampoo });
+  });
+
+  it("OE que quedó pendiente (la carpeta todavía no estaba) → al actualizar el índice se completa: misma OE, sin duplicar", async () => {
+    const before = await assignElab("TRC", "ACONDICIONADOR PLUS");
+    expect(fstatus(before.order)?.status).not.toBe("ok");
+    const ordersForWork = async () => (await q("select count(*)::int n from operational_orders where order_number = $1", [before.orderNumber]))[0]!.n;
+    ids.trcAcond = drive.file(ids.trc!, "ACONDICIONADOR PLUS.xlsx", formulaXlsx("ACONDICIONADOR PLUS", [["Agua", "MP-1", 92], ["Cetílico", "MP-8", 8]]));
+    expect((await src.syncFormulaIndex({ trigger: "manual" })).ok).toBe(true);
+    const r = await src.retryPendingOeFormulas(prod, { workItemIds: [before.workId] }); // solo esta corrida (otras pruebas corren en paralelo)
+    expect(r.orderNumbers).toContain(before.orderNumber);
+    const [after] = await q("select id, order_number, lot, form_data from operational_orders where id = $1", [before.order.id]);
+    expect(fstatus(after!)).toMatchObject({ status: "ok", driveFileId: ids.trcAcond });
+    expect(after!.lot).toBe(before.order.lot);
+    expect(await ordersForWork()).toBe(1);
+    // Una OE ya preparada no se toca al reintentar.
+    const again = await src.retryPendingOeFormulas(prod, { workItemIds: [before.workId] });
+    expect(again.orderNumbers).not.toContain(before.orderNumber);
+  });
+
+  it("producto sin fórmula: queda pendiente con un mensaje claro (no se toma otro producto)", async () => {
+    const c = await assignElab("TRC", "MASCARA INEXISTENTE");
+    const f = fstatus(c.order) as { status?: string; message?: string };
+    expect(f.status).toBe("not_found");
+    expect(f.message).toMatch(/MASCARA INEXISTENTE/);
+  });
+
+  it("elección manual de Producción en una carpeta con otro nombre → queda como vínculo y también enseña la carpeta del cliente", async () => {
+    const tric = drive.folder(ROOT, "TRICOLOGIA PROFESIONAL");
+    ids.tricSerum = drive.file(tric, "SERUM CAPILAR.xlsx", formulaXlsx("SERUM CAPILAR", [["Agua", "MP-1", 95], ["Silicona", "MP-9", 5]]));
+    ids.tricMasc = drive.file(tric, "MASCARA NUTRITIVA.xlsx", formulaXlsx("MASCARA NUTRITIVA", [["Agua", "MP-1", 80], ["Manteca", "MP-10", 20]]));
+    expect((await src.syncFormulaIndex({ trigger: "manual" })).ok).toBe(true);
+    const d = await assignElab("TRC BEAUTY", "SERUM CAPILAR");
+    expect(fstatus(d.order)?.status).toBe("not_found"); // «TRICOLOGIA PROFESIONAL» no se parece a «TRC BEAUTY»
+    await src.linkFormula(prod, { client: "TRC BEAUTY", product: "SERUM CAPILAR", fileId: ids.tricSerum! });
+    const e = await assignElab("TRC BEAUTY", "SERUM CAPILAR");
+    expect(fstatus(e.order)).toMatchObject({ status: "ok", driveFileId: ids.tricSerum });
+    // La carpeta quedó aprendida para el cliente: otro producto suyo se encuentra solo.
+    const m = await assignElab("TRC BEAUTY", "MASCARA NUTRITIVA");
+    expect(fstatus(m.order)).toMatchObject({ status: "ok", driveFileId: ids.tricMasc });
+    const diag = await src.loadClientFolderMatch("TRC BEAUTY");
+    expect(diag).toMatchObject({ how: "vinculo", exact: ["TRICOLOGIA PROFESIONAL"] });
+  });
+
   it("nada de esto tocó stock, consumos de MP, lotes ni otras órdenes", async () => {
     expect(await integritySnapshot()).toBe(snapshot);
     // Las órdenes que ya existían (OE/OA emitidas antes) siguen idénticas.
