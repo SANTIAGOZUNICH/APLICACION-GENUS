@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ensureClientIdentitySafe } from "@/lib/portal/client-identity";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
@@ -521,6 +522,7 @@ export const entregasService = {
       await insertItems(tx, id, c.items, 0);
       await audit(tx, actor, { action: "create", deliveryId: id, payload: { after: snapshot(c) } });
     });
+    await ensureClientIdentitySafe(c.client, "entrega", actor.email);
     return this.get(actor, id);
   },
 

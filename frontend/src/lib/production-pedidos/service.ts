@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ensureClientIdentitySafe } from "@/lib/portal/client-identity";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
@@ -314,6 +315,7 @@ export class ProductionPedidosService {
         ${now}::timestamptz
       )
     `);
+    await ensureClientIdentitySafe(record.cliente, "pedido", a.email);
     recordLifecycleEvent({
       entityKind: "pedido",
       entityId: record.id,
@@ -386,6 +388,7 @@ export class ProductionPedidosService {
       action: "editar",
       actor: { email: a.email, sector: a.sector as SectorId },
     });
+    await ensureClientIdentitySafe(fields.cliente, "pedido", a.email);
     const refreshed = await db.execute(sql`
       select * from production_pedidos where id = ${id}::uuid limit 1
     `);
@@ -490,6 +493,11 @@ export class ProductionPedidosService {
           }
         }
       });
+    }
+    for (const [, edits] of touched) {
+      for (const e of edits) {
+        if (e.field === "cliente") await ensureClientIdentitySafe(e.newValue, "pedido", a.email);
+      }
     }
     for (const [id, edits] of touched) {
       for (const e of edits) {
@@ -717,6 +725,14 @@ export class ProductionPedidosService {
             .catch(() => undefined);
         }
       });
+      // Ya confirmada la importación: cada cliente distinto recibe su código (una sola vez por nombre).
+      const seen = new Set<string>();
+      for (const c of created) {
+        const k = String(c.cliente ?? "").trim().toLowerCase();
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        await ensureClientIdentitySafe(c.cliente, "importacion_pedidos", a.email);
+      }
     }
 
     const result: ImportManyResult = {

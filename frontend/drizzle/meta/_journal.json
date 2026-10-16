@@ -365,6 +365,13 @@
       "when": 1792500000000,
       "tag": "0054_portal_disponibilidad",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792600000000,
+      "tag": "0055_portal_codigos_automaticos",
+      "breakpoints": true
     }
   ]
 }

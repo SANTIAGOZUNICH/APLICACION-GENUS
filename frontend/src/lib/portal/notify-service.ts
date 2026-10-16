@@ -54,7 +54,7 @@ export type ScanSummary = { clients: number; readyNotified: number; readySilence
 /** Recorre los clientes activos y genera los avisos pendientes. Idempotente: se puede ejecutar tantas veces como se quiera. */
 export async function scanPortalNotifications(now: Date = new Date(), db: SqlExec = requireDb()): Promise<ScanSummary> {
   const summary: ScanSummary = { clients: 0, readyNotified: 0, readySilenced: 0, emailsQueued: 0, deliveryNotices: 0 };
-  const clients = (await db.execute(sql`select id::text as id, display_name from portal_clients where status = 'ACTIVO'`)).rows as Row[];
+  const clients = (await db.execute(sql`select id::text as id, display_name from portal_clients where status = 'ACTIVO' and access_enabled`)).rows as Row[];
   const maxAgeMs = EMAIL_MAX_AGE_HOURS * 3_600_000;
   for (const c of clients) {
     const clientId = String(c.id);
@@ -137,12 +137,13 @@ export async function retryPendingEmails(db: SqlExec = requireDb()): Promise<{ a
 /** Invitación a un correo autorizado (acción de Producción/Dirección). Registra el envío; sin proveedor queda pendiente. */
 export async function sendInvitation(args: { clientId: string; email: string; actor: string }, db: SqlExec = requireDb()): Promise<{ status: DeliveryResult["status"] }> {
   const rows = (await db.execute(sql`
-    select c.display_name, c.public_code, c.status as client_status from portal_clients c
+    select c.display_name, c.public_code, c.status as client_status, c.access_enabled from portal_clients c
       join portal_authorized_emails e on e.client_id = c.id and e.removed_at is null and e.email = ${args.email}
      where c.id = ${args.clientId}::uuid`)).rows as Row[];
   const r = rows[0];
   if (!r) throw new PortalError("El correo no está autorizado para ese cliente.", 404, "NOT_FOUND");
   if (r.client_status !== "ACTIVO") throw new PortalError("El cliente está suspendido: reactivalo antes de invitar.", 409, "SUSPENDED");
+  if (r.access_enabled === false) throw new PortalError("El acceso del cliente no está habilitado: habilitalo antes de invitar.", 409, "ACCESS_DISABLED");
   const sent = await enqueueAndSend(db, {
     clientId: args.clientId,
     kind: "INVITACION",

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ensureClientIdentitySafe } from "@/lib/portal/client-identity";
 import { and, asc, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { getDb, type GenusDb } from "@/lib/db/client";
 import {
@@ -445,6 +446,7 @@ export class DrizzlePlanningRepository implements PlanningRepository {
         originRef: input.originRef ?? null,
       })
       .returning();
+    await ensureClientIdentitySafe(input.client, "planificacion", actor.email);
     return mapItem(row);
   }
 
