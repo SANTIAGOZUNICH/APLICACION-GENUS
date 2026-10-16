@@ -11,7 +11,7 @@ import {
   canViewEntregas,
   DELIVERY_SECTOR_LABEL,
   EntregasConflictError,
-  entregasVisibleSector,
+  isEntregasConsultaOperativa,
   type DeliveryHistoryEntry,
   type DeliverySector,
   type DeliverySuggestion,
@@ -446,20 +446,6 @@ export async function entregasDateAudit(): Promise<EntregasDateAudit> {
   };
 }
 
-/** Recorta lo que el sector no puede ver (Envasado: solo los productos de su sector). El recorte es del SERVIDOR. */
-function restrictForActor(actor: EntregasActor, deliveries: ScheduledDelivery[]): ScheduledDelivery[] {
-  const only = entregasVisibleSector(actor.sector);
-  if (!only) return deliveries;
-  return deliveries
-    .map((d) => {
-      const items = d.items.filter((i) => i.sector === only);
-      const next: ScheduledDelivery = { ...d, items };
-      next.status = deriveDeliveryStatus(next);
-      return next;
-    })
-    .filter((d) => d.items.length > 0);
-}
-
 const isoDate = (v: string, label: string) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new OrdersValidationError(`${label} no es una fecha válida.`);
   return v;
@@ -502,20 +488,20 @@ export const entregasService = {
     // Las apariciones quitadas por Producción solo se listan para quien puede restaurarlas.
     const includeHidden = Boolean(opts.includeHidden) && canManageEntregas(actor.sector);
     const derived = buildDerivedDeliveries(await loadUnlinkedWorks(db, from, to), { from, to }, { includeHidden });
-    return restrictForActor(actor, [...pendingAgenda(scheduled, includeHidden), ...derived]);
+    return [...pendingAgenda(scheduled, includeHidden), ...derived];
   },
 
-  /** Diagnóstico de lo recuperado automáticamente. Solo quien ve todo (Envasado ve el calendario recortado: sin cifras). */
+  /** Diagnóstico de lo recuperado automáticamente. Envasado y Codificado consultan el calendario, sin estas cifras. */
   async recoveryStats(actor: EntregasActor): Promise<EntregasRecoveryStats | null> {
     assertView(actor);
-    if (entregasVisibleSector(actor.sector)) return null;
+    if (isEntregasConsultaOperativa(actor.sector)) return null;
     return entregasRecoveryStats();
   },
 
   async get(actor: EntregasActor, id: string): Promise<ScheduledDelivery> {
     assertView(actor);
     const db = requireDb();
-    const [d] = restrictForActor(actor, await loadDeliveries(db, sql`d.id = ${id}::uuid`));
+    const [d] = await loadDeliveries(db, sql`d.id = ${id}::uuid`);
     if (!d) throw new OrdersNotFoundError("Entrega no encontrada.");
     return d;
   },

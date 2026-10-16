@@ -8,7 +8,7 @@ import type { DeliveryInput } from "@/lib/entregas/rules";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Entregas programadas entre `from` y `to` (la grilla del mes). El servidor recorta lo que el sector no puede ver. */
+/** Entregas programadas entre `from` y `to` (la grilla del mes). Todos los sectores con acceso ven el calendario completo; solo Producción/Dirección modifican. */
 export async function GET(request: Request) {
   try {
     const actor = await resolveOrdersActor(request);
