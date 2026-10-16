@@ -38,6 +38,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0049_mp_load_order": "d34b39584f6cae250bbc72a6d29676a78d4c9c369ffffe0458b0c9583c7ed059",
   "0050_entregas_correcciones": "48d39276bc1d97698ef8ff9f5d06ccba68b4c1ce18dfe8a3094c204044195ec4",
   "0051_formula_drive_index": "fd438ee5d8cd4a95ab853aca736ddb9d05ef9047318b08259337bc91a2093380",
+  "0052_portal_clientes": "3d48d8521e8e79b650abc2447b89be852c71fb3923f7760a83729d141bb6d963",
 });
 
 export const RECONCILE_LOG_TABLE = "genus_migration_reconcile_log";
@@ -175,6 +176,17 @@ export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
   { migration: "0051_formula_drive_index", object: "formula_drive_sync_runs" },
   { migration: "0051_formula_drive_index", object: "formula_drive_index" },
   { migration: "0051_formula_drive_index", object: "formula_drive_links" },
+  { migration: "0052_portal_clientes", object: "portal_clients" },
+  { migration: "0052_portal_clientes", object: "portal_client_aliases" },
+  { migration: "0052_portal_clientes", object: "portal_authorized_emails" },
+  { migration: "0052_portal_clientes", object: "portal_login_challenges" },
+  { migration: "0052_portal_clientes", object: "portal_sessions" },
+  { migration: "0052_portal_clientes", object: "portal_rate_limits" },
+  { migration: "0052_portal_clientes", object: "portal_email_outbox" },
+  { migration: "0052_portal_clientes", object: "portal_notifications" },
+  { migration: "0052_portal_clientes", object: "portal_receipt_confirmations" },
+  { migration: "0052_portal_clientes", object: "portal_audit_events" },
+  { migration: "0052_portal_clientes", object: "portal_holiday_overrides" },
 ]);
 
 /** @param {{ query: (text: string, params?: unknown[]) => Promise<any[]>, required?: ReadonlyArray<{migration: string, object: string}> }} opts */

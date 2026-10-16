@@ -29,6 +29,21 @@ export function middleware(request: NextRequest) {
    */
   const isCronEndpoint = pathname.startsWith("/api/cron/");
 
+  /**
+   * Portal de Clientes (https://laboratoriogenus.com.ar/entregas): superficie PÚBLICA con su propia autenticación
+   * (código de cliente + correo autorizado + código temporal, sesión `genus_portal_session`). No usa la sesión interna
+   * `genus_session` ni sus redirects al login de GENUS OS. Cada ruta valida la sesión del portal en el servidor.
+   */
+  if (pathname === "/entregas" || pathname.startsWith("/entregas/")) {
+    const res = NextResponse.next();
+    res.headers.set("X-Robots-Tag", "noindex, nofollow");
+    res.headers.set("Referrer-Policy", "same-origin");
+    res.headers.set("X-Content-Type-Options", "nosniff");
+    res.headers.set("X-Frame-Options", "DENY");
+    res.headers.set("Cache-Control", "private, no-store");
+    return res;
+  }
+
   // Dominio canónico único en Production — ver canonical-host.ts. Corre
   // ANTES que todo lo demás: la cookie de sesión es host-only, así que un
   // link/bookmark a otro alias de Vercel del mismo deployment deja al login
