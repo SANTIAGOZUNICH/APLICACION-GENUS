@@ -3,6 +3,7 @@ import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
 import {
   addClientAlias, addClientEmail, clientActivity, createClient, inviteClientEmail, linkingProblems, listClients, listHolidayOverrides,
+  historyGenerate, historyPreview, renameClient, setClientAccess,
   previewClient, removeClientAlias, removeClientEmail, setClientStatus, setHolidayOverride, type Staff,
 } from "@/lib/portal/admin-service";
 import { createDemoToken } from "@/lib/portal/demo-service";
@@ -31,6 +32,7 @@ export async function GET(request: Request) {
     const view = url.searchParams.get("view") ?? "clients";
     const clientId = id(url.searchParams.get("clientId"));
     if (view === "clients") return NextResponse.json({ clients: await listClients(staff), holidays: await listHolidayOverrides(staff) });
+    if (view === "history_preview") return NextResponse.json(await historyPreview(staff));
     if (view === "problems") return NextResponse.json(await linkingProblems(staff));
     if (!clientId) throw new PortalError("Cliente inválido.", 400, "VALIDATION");
     if (view === "preview") return NextResponse.json(await previewClient(staff, clientId));
@@ -50,6 +52,10 @@ export async function POST(request: Request) {
     const clientId = id(b.clientId);
     switch (b.action) {
       case "create_client": return NextResponse.json(await createClient(staff, b as { displayName: unknown }), { status: 201 });
+      case "enable_access": return NextResponse.json(await setClientAccess(staff, clientId, true));
+      case "disable_access": return NextResponse.json(await setClientAccess(staff, clientId, false));
+      case "rename_client": await renameClient(staff, clientId, b.name); return NextResponse.json({ ok: true });
+      case "history_generate": return NextResponse.json(await historyGenerate(staff, b as { previewToken: unknown; expectedCount: unknown }));
       case "suspend": return NextResponse.json(await setClientStatus(staff, clientId, "SUSPENDIDO", b.reason));
       case "activate": return NextResponse.json(await setClientStatus(staff, clientId, "ACTIVO", null));
       case "add_alias": await addClientAlias(staff, clientId, b.name); return NextResponse.json({ ok: true });

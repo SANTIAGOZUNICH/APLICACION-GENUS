@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ensureClientIdentitySafe } from "@/lib/portal/client-identity";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
@@ -824,7 +825,11 @@ export async function assignWorkItemDurable(
         operationId,
       };
     };
-    return opts?.tx ? await run(opts.tx) : await getDb().transaction(run);
+    if (opts?.tx) return await run(opts.tx);
+    const done = await getDb().transaction(run);
+    // Fuera de una transacción ajena: la identidad (código) del cliente se asigna ya confirmado el alta.
+    await ensureClientIdentitySafe(done.item?.client, "asignacion", null);
+    return done;
   } catch (err) {
     logSanitizedError(operationId, "work-assignment", err);
     throw err;

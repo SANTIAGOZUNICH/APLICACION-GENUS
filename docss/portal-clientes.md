@@ -56,3 +56,34 @@ Cron `/api/cron/portal-sync` cada 15 min (requiere `CRON_SECRET`).
 
 ## Pruebas
 `npm run test:e2e:portal-db` (integración en Postgres descartable, 16 casos) y `npm run test:e2e:portal` (Chromium real, escritorio y móvil, build de producción).
+
+## Códigos de cliente automáticos (GEN-XXXXXX)
+
+**Qué hace.** GENUS OS no tiene tabla de clientes: el cliente es el texto que figura en trabajos, pedidos y entregas. La identidad del portal (`portal_clients` + alias) es lo que le da un código estable. Desde la migración 0055 esa identidad se crea **sola** al aparecer un cliente nuevo; Producción no tiene que entrar al panel.
+
+**Dónde se dispara** (todos llaman al mismo servicio central, `src/lib/portal/client-identity.ts`):
+- alta y asignación de trabajos (Planificación / `assignWorkItemDurable`),
+- alta y edición de pedidos, edición por celda e importación de pedidos,
+- alta de entregas programadas,
+- red de seguridad: el cron `/api/cron/portal-sync` (cada 15 min) toma cualquier cliente nuevo que haya entrado por otro camino (sincronizaciones, procesos futuros).
+
+**Garantías.**
+- Un nombre = un cliente = un código. La clave es el nombre normalizado (mayúsculas, acentos y espacios no cuentan). Si ya existe, se reutiliza su código.
+- Atómico y sin duplicados con operaciones simultáneas: transacción + `pg_advisory_xact_lock` por nombre + índices únicos de respaldo.
+- El alta del cliente nunca rompe el flujo operativo (los ganchos son «best effort» después de confirmar el pedido/trabajo; si fallan, la conciliación lo recupera).
+- Cambiar el nombre comercial (acción «Renombrar») solo cambia `display_name`; el código y el vínculo con los pedidos no cambian.
+- Un pedido, producto u orden **nunca** genera un código propio.
+- Los nombres vacíos o marcadores (`s/d`, `n/a`, números sueltos) se ignoran.
+
+**Seguridad.** Un código generado automáticamente nace con `access_enabled = false`: **no** activa el acceso, **no** envía correos ni invitaciones. Para que el cliente ingrese hay que (1) cargar un correo autorizado y (2) pulsar «Habilitar acceso». El código solo nunca autentica (siempre hace falta correo autorizado + código temporal). «Deshabilitar acceso» cierra sus sesiones. Los clientes dados de alta a mano desde el panel siguen quedando habilitados (acción explícita de Producción).
+
+**Fecha de corte.** La conciliación solo considera clientes que aparecieron **desde el primer uso** (`portal_auto_code_settings.auto_since`, una hora antes). Los clientes históricos no reciben código por sorpresa.
+
+**Generación masiva de históricos (manual).** Panel «Portal de Clientes» → «Clientes históricos sin código»:
+1. «Ver vista previa»: lista (solo lectura) de clientes sin código, con cantidad de trabajos/pedidos/entregas y avisos de nombres parecidos (`ACME` vs `ACME S.A.` son clientes distintos).
+2. Tildar/destildar los que no corresponden.
+3. «Generar códigos»: pide confirmación; el servidor exige el token de la vista previa vigente y la cantidad exacta (si los datos cambiaron, hay que revisarla de nuevo). Máximo 2000 por vez, idempotente. Quedan con acceso deshabilitado y origen «generación histórica».
+
+**Panel.** Cada cliente muestra el código con botón «Copiar», «Acceso habilitado / NO habilitado», «Correo autorizado (n) / Sin correo autorizado» y el origen (manual / automático + flujo / histórico).
+
+**Pruebas.** `src/integration/portal-codigos.db.integration.test.ts` (Postgres descartable: `npm run test:e2e:portal-db`), `client-identity-rules.test.ts`, `migration-reconcile.test.ts` y el E2E de navegador `scripts/e2e/portal-validate.mjs`.

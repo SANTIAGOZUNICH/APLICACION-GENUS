@@ -39,7 +39,7 @@ async function findTarget(db: SqlExec, publicCode: string | null, email: string 
     select c.id as client_id, c.display_name, e.email
       from portal_clients c
       join portal_authorized_emails e on e.client_id = c.id and e.email = ${email} and e.removed_at is null and e.status = 'ACTIVO'
-     where c.public_code = ${publicCode} and c.status = 'ACTIVO'
+     where c.public_code = ${publicCode} and c.status = 'ACTIVO' and c.access_enabled
      limit 1`)).rows as Row[];
   const r = rows[0];
   return r ? { clientId: String(r.client_id), clientName: String(r.display_name), email: String(r.email) } : null;
@@ -188,7 +188,7 @@ export async function verifyLoginLink(input: { token: unknown; headers: Headers 
   const info = (await db.execute(sql`
     select c.id as client_id, c.display_name, c.public_code, e.email
       from portal_clients c join portal_authorized_emails e on e.client_id = c.id and e.email = ${String(rows[0].email)} and e.removed_at is null and e.status = 'ACTIVO'
-     where c.id = ${String(rows[0].client_id)}::uuid and c.status = 'ACTIVO' limit 1`)).rows as Row[];
+     where c.id = ${String(rows[0].client_id)}::uuid and c.status = 'ACTIVO' and c.access_enabled limit 1`)).rows as Row[];
   if (!info[0]) return fail("cliente_o_correo_inhabilitado", String(rows[0].client_id));
   return createSession(db, { clientId: String(info[0].client_id), clientName: String(info[0].display_name), email: String(info[0].email), publicCode: String(info[0].public_code) }, ipHash, input.headers.get("user-agent"));
 }
@@ -200,7 +200,7 @@ export async function resolvePortalSession(token: string | null): Promise<Portal
   const rows = (await db.execute(sql`
     select s.id, s.client_id, s.email, s.last_seen_at, c.display_name, c.public_code
       from portal_sessions s
-      join portal_clients c on c.id = s.client_id and c.status = 'ACTIVO'
+      join portal_clients c on c.id = s.client_id and c.status = 'ACTIVO' and c.access_enabled
       join portal_authorized_emails e on e.client_id = s.client_id and e.email = s.email and e.removed_at is null and e.status = 'ACTIVO'
      where s.token_hash = ${sha256(token)} and s.revoked_at is null and s.expires_at > now()
      limit 1`)).rows as Row[];

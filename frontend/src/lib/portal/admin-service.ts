@@ -7,6 +7,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { clientKey } from "@/lib/entregas/rules";
+import { generateHistoricalClients, previewHistoricalClients } from "./client-identity";
 import { revokeSessions } from "./auth-service";
 import { loadPortalOverview } from "./data-service";
 import { sendInvitation } from "./notify-service";
@@ -29,11 +30,12 @@ export type AdminClient = {
   aliases: Array<{ name: string }>;
   emails: Array<{ email: string; status: string; invitedAt: string | null; lastLoginAt: string | null }>;
   confirmations: number; liveSessions: number;
+  accessEnabled: boolean; origin: "MANUAL" | "AUTOMATICO" | "HISTORICO"; originDetail: string | null; activeEmails: number;
 };
 
 export async function listClients(staff: Staff, db: SqlExec = requireDb()): Promise<AdminClient[]> {
   need(staff);
-  const clients = (await db.execute(sql`select id::text as id, public_code, display_name, status, suspend_reason, created_at from portal_clients order by display_name`)).rows as Row[];
+  const clients = (await db.execute(sql`select id::text as id, public_code, display_name, status, suspend_reason, created_at, access_enabled, origin, origin_detail from portal_clients order by display_name`)).rows as Row[];
   const aliases = (await db.execute(sql`select client_id::text as cid, name_label from portal_client_aliases where removed_at is null order by name_label`)).rows as Row[];
   const emails = (await db.execute(sql`select client_id::text as cid, email, status, invited_at, last_login_at from portal_authorized_emails where removed_at is null order by email`)).rows as Row[];
   const conf = (await db.execute(sql`select client_id::text as cid, count(*)::int as n from portal_receipt_confirmations group by client_id`)).rows as Row[];
@@ -46,6 +48,8 @@ export async function listClients(staff: Staff, db: SqlExec = requireDb()): Prom
       emails: emails.filter((e) => e.cid === id).map((e) => ({ email: String(e.email), status: String(e.status), invitedAt: isoOrNull(e.invited_at), lastLoginAt: isoOrNull(e.last_login_at) })),
       confirmations: Number(conf.find((x) => x.cid === id)?.n ?? 0),
       liveSessions: Number(sess.find((x) => x.cid === id)?.n ?? 0),
+      accessEnabled: c.access_enabled !== false, origin: (String(c.origin ?? "MANUAL") as AdminClient["origin"]), originDetail: c.origin_detail ? String(c.origin_detail) : null,
+      activeEmails: emails.filter((e) => e.cid === id && e.status === "ACTIVO").length,
     };
   });
 }
@@ -60,8 +64,8 @@ async function addAliasTx(db: SqlExec, clientId: string, name: string, actor: st
   const key = clientKey(name);
   if (!key) throw new PortalError("Nombre de cliente inválido.", 400, "VALIDATION");
   const owner = (await db.execute(sql`
-    select c.display_name from portal_client_aliases a join portal_clients c on c.id = a.client_id where a.name_key = ${key} and a.removed_at is null`)).rows as Row[];
-  if (owner[0]) throw new PortalError(`Ese nombre ya está asignado a «${String(owner[0].display_name)}». Un nombre pertenece a un solo cliente del portal.`, 409, "ALIAS_TAKEN");
+    select c.display_name, c.public_code from portal_client_aliases a join portal_clients c on c.id = a.client_id where a.name_key = ${key} and a.removed_at is null`)).rows as Row[];
+  if (owner[0]) throw new PortalError(`Ese nombre ya está asignado a «${String(owner[0].display_name)}» (código ${String(owner[0].public_code)}). Un nombre pertenece a un solo cliente del portal.`, 409, "ALIAS_TAKEN");
   await db.execute(sql`insert into portal_client_aliases (client_id, name_key, name_label, created_by) values (${clientId}::uuid, ${key}, ${name}, ${actor})`);
 }
 
@@ -79,7 +83,7 @@ export async function createClient(staff: Staff, input: { displayName: unknown; 
     if (!taken.length) code = candidate;
   }
   if (!code) throw new PortalError("No se pudo generar un código único. Reintentá.", 500, "CODE_GENERATION");
-  await db.execute(sql`insert into portal_clients (id, public_code, display_name, created_by) values (${id}::uuid, ${code}, ${displayName}, ${who(staff)})`);
+  await db.execute(sql`insert into portal_clients (id, public_code, display_name, created_by, access_enabled, origin) values (${id}::uuid, ${code}, ${displayName}, ${who(staff)}, true, 'MANUAL')`);
   for (const a of aliasNames) await addAliasTx(db, id, a, who(staff));
   for (const e of emails as string[]) {
     await db.execute(sql`insert into portal_authorized_emails (client_id, email, added_by) values (${id}::uuid, ${e}, ${who(staff)}) on conflict do nothing`);
@@ -214,4 +218,35 @@ export async function setHolidayOverride(staff: Staff, input: { date: unknown; n
   await db.execute(sql`update portal_holiday_overrides set removed_at = now() where holiday_date = ${date}::date and removed_at is null`);
   await db.execute(sql`insert into portal_holiday_overrides (holiday_date, name, action, created_by) values (${date}::date, ${name}, ${action}, ${who(staff)})`);
   await audit(db, { type: "FERIADO_EXCEPCION", kind: "STAFF", actor: who(staff), detail: { date, name, action } });
+}
+
+/** Habilita o deshabilita el ingreso del cliente al portal. Deshabilitar revoca las sesiones vivas. El código solo nunca autentica. */
+export async function setClientAccess(staff: Staff, clientId: string, enabled: boolean, db: SqlExec = requireDb()) {
+  need(staff);
+  const rows = (await db.execute(sql`update portal_clients set access_enabled = ${enabled}, version = version + 1, modified_at = now() where id = ${clientId}::uuid returning id`)).rows;
+  if (!rows.length) throw new PortalError("Cliente no encontrado.", 404, "NOT_FOUND");
+  const revoked = enabled ? 0 : await revokeSessions(db, { clientId }, "acceso_deshabilitado");
+  await audit(db, { clientId, type: enabled ? "ACCESO_HABILITADO" : "ACCESO_DESHABILITADO", kind: "STAFF", actor: who(staff), detail: { sessionsRevoked: revoked } });
+  return { revoked };
+}
+
+/** Cambia solo el nombre comercial visible. El código y los alias (vínculo con pedidos) no se tocan. */
+export async function renameClient(staff: Staff, clientId: string, name: unknown, db: SqlExec = requireDb()) {
+  need(staff);
+  const n = cleanName(name, "Nombre");
+  const rows = (await db.execute(sql`update portal_clients set display_name = ${n}, version = version + 1, modified_at = now() where id = ${clientId}::uuid returning id`)).rows;
+  if (!rows.length) throw new PortalError("Cliente no encontrado.", 404, "NOT_FOUND");
+  await audit(db, { clientId, type: "CLIENTE_RENOMBRADO", kind: "STAFF", actor: who(staff), detail: { name: n } });
+}
+
+/** Vista previa (no escribe nada) de los clientes históricos que aún no tienen código. */
+export async function historyPreview(staff: Staff, db: SqlExec = requireDb()) {
+  need(staff);
+  return previewHistoricalClients(db);
+}
+
+/** Generación masiva confirmada manualmente (token de la vista previa + cantidad). No habilita accesos ni envía correos. */
+export async function historyGenerate(staff: Staff, input: { previewToken: unknown; expectedCount: unknown; excludeKeys?: unknown }, db: SqlExec = requireDb()) {
+  need(staff);
+  return generateHistoricalClients(who(staff), input, db);
 }

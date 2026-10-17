@@ -41,6 +41,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0052_portal_clientes": "3d48d8521e8e79b650abc2447b89be852c71fb3923f7760a83729d141bb6d963",
   "0053_portal_demo": "220318a3a2141c735a393975d980cbf3d34ee5a964b69d30b8ed402c28641f28",
   "0054_portal_disponibilidad": "4804620344578a89c7d0bb6bb91d2d648734cde3084020c6bc609b660786364d",
+  "0055_portal_codigos_automaticos": "cf5d091671a794dc1a2d1fdb5140c37a5d60e94e9a682b8ef7d8a478fb47b206",
 });
 
 export const RECONCILE_LOG_TABLE = "genus_migration_reconcile_log";
@@ -193,6 +194,9 @@ export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
   { migration: "0053_portal_demo", object: "portal_demo_sessions" },
   { migration: "0054_portal_disponibilidad", object: "portal_availability_marks" },
   { migration: "0054_portal_disponibilidad", object: "portal_availability_audit" },
+  { migration: "0055_portal_codigos_automaticos", object: "portal_clients.access_enabled" },
+  { migration: "0055_portal_codigos_automaticos", object: "portal_clients.origin" },
+  { migration: "0055_portal_codigos_automaticos", object: "portal_auto_code_settings" },
 ]);
 
 /** @param {{ query: (text: string, params?: unknown[]) => Promise<any[]>, required?: ReadonlyArray<{migration: string, object: string}> }} opts */

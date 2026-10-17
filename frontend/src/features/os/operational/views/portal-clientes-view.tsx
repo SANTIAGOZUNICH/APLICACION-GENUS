@@ -19,6 +19,10 @@ type Activity = {
 };
 type Preview = { client: { name: string; code: string }; summary: { inProcess: number; elaboracion: number; envasado: number; listos: number }; products: Array<{ id: string; product: string; orderRef: string | null; stageLabel: string; message: string; quantities: { requested: number | null; delivered: number; pending: number | null; available: number; unit: string | null } }>; deliveries: unknown[] };
 
+type HistItem = { key: string; name: string; works: number; pedidos: number; entregas: number; similarTo: string[] };
+type HistPreview = { total: number; items: HistItem[]; previewToken: string };
+const ORIGIN: Record<string, string> = { MANUAL: "alta manual", AUTOMATICO: "generado automáticamente", HISTORICO: "generación histórica" };
+
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" }) : "—");
 const input = "rounded-lg border border-[var(--os-border)] bg-[var(--os-surface)] px-3 py-2 text-sm";
 
@@ -39,6 +43,53 @@ export function PortalClientesView() {
   const [hol, setHol] = useState({ date: "", name: "", action: "AGREGAR" });
   const [demoLink, setDemoLink] = useState<string | null>(null);
   const [demoBusy, setDemoBusy] = useState(false);
+  const [hist, setHist] = useState<HistPreview | null>(null);
+  const [histExclude, setHistExclude] = useState<Set<string>>(new Set());
+  const [histBusy, setHistBusy] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  async function copyCode(code: string) {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(code);
+      setTimeout(() => setCopied((c) => (c === code ? null : c)), 2000);
+    } catch {
+      setMsg({ kind: "err", text: "No se pudo copiar automáticamente. Seleccioná el código y copialo a mano." });
+    }
+  }
+
+  async function loadHistory() {
+    setHistBusy(true);
+    try {
+      const r = await api("?view=history_preview");
+      if (!r.ok) return setMsg({ kind: "err", text: String(r.data.error ?? "No se pudo armar la vista previa.") });
+      setHist(r.data as unknown as HistPreview);
+      setHistExclude(new Set());
+    } finally {
+      setHistBusy(false);
+    }
+  }
+
+  async function confirmHistory() {
+    if (!hist) return;
+    const selected = hist.items.filter((i) => !histExclude.has(i.key));
+    if (!selected.length) return;
+    if (!window.confirm(`Se van a generar ${selected.length} códigos de cliente. Quedan con el acceso al portal DESHABILITADO y no se envía ningún correo. ¿Confirmás?`)) return;
+    setHistBusy(true);
+    try {
+      const r = await api("", { action: "history_generate", previewToken: hist.previewToken, expectedCount: selected.length, excludeKeys: [...histExclude] });
+      if (!r.ok) {
+        setMsg({ kind: "err", text: String(r.data.error ?? "No se pudo generar.") });
+        if (r.data.code === "PREVIEW_STALE" || r.data.code === "COUNT_MISMATCH") setHist(null);
+        return;
+      }
+      setMsg({ kind: "ok", text: `Códigos generados: ${String(r.data.created)} (ya existentes: ${String(r.data.skippedExisting)}, con error: ${String(r.data.failed)}).` });
+      setHist(null);
+      await load();
+    } finally {
+      setHistBusy(false);
+    }
+  }
 
   /** Portal de prueba: pide un token temporal de un solo uso y abre el portal real en otra pestaña con una sesión demo. */
   async function openDemo() {
@@ -127,6 +178,35 @@ export function PortalClientesView() {
           <Button onClick={() => void createClient()} disabled={form.name.trim().length < 2}>Crear cliente y generar código</Button>
         </section>
 
+        <section className="space-y-3 rounded-xl border border-[var(--os-border)] p-4" data-testid="history-codes">
+          <h3 className="font-semibold">Clientes históricos sin código</h3>
+          <p className="text-sm text-[var(--os-text-muted)]">
+            Los clientes nuevos reciben su código solos. Acá podés generar el de los clientes que ya existían en GENUS OS: primero ves la lista (no se escribe nada) y recién después confirmás. Los códigos quedan con el acceso <strong>deshabilitado</strong> y no se envía ningún correo.
+          </p>
+          {!hist ? <Button onClick={() => void loadHistory()} disabled={histBusy} data-testid="history-preview-btn">{histBusy ? "Calculando…" : "Ver vista previa"}</Button> : (
+            <div className="space-y-2">
+              <p className="text-sm" data-testid="history-total">Sin código: {hist.total} · seleccionados: {hist.items.length - histExclude.size}</p>
+              <ul className="max-h-72 space-y-1 overflow-auto text-sm" data-testid="history-list">
+                {hist.items.map((i) => (
+                  <li key={i.key} className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={!histExclude.has(i.key)} onChange={(e) => setHistExclude((prev) => { const n = new Set(prev); if (e.target.checked) n.delete(i.key); else n.add(i.key); return n; })} />
+                      <span>{i.name}</span>
+                    </label>
+                    <span className="text-xs text-[var(--os-text-muted)]">trabajos {i.works} · pedidos {i.pedidos} · entregas {i.entregas}</span>
+                    {i.similarTo.length ? <span className="text-xs text-amber-700">¿Parecido a: {i.similarTo.join(", ")}?</span> : null}
+                  </li>
+                ))}
+                {hist.items.length === 0 ? <li className="text-[var(--os-text-muted)]">No hay clientes pendientes.</li> : null}
+              </ul>
+              <div className="flex gap-2">
+                <Button onClick={() => void confirmHistory()} disabled={histBusy || hist.items.length - histExclude.size === 0} data-testid="history-confirm">Generar códigos ({hist.items.length - histExclude.size})</Button>
+                <Button onClick={() => setHist(null)}>Cancelar</Button>
+              </div>
+            </div>
+          )}
+        </section>
+
         <section className="space-y-3">
           <h3 className="font-semibold">Clientes habilitados ({clients.length})</h3>
           {clients.length === 0 ? <p className="text-sm text-[var(--os-text-muted)]">Todavía no hay clientes en el portal.</p> : null}
@@ -135,12 +215,19 @@ export function PortalClientesView() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <div className="text-lg font-semibold">{c.displayName} <span className={`ml-2 rounded-full px-2 py-0.5 text-xs ${c.status === "ACTIVO" ? "bg-emerald-500/15 text-emerald-700" : "bg-red-500/15 text-red-700"}`}>{c.status}</span></div>
-                  <div className="text-sm text-[var(--os-text-muted)]">Código de cliente: <code className="font-mono text-base text-[var(--os-text)]" data-testid="client-code">{c.publicCode}</code> · sesiones activas: {c.liveSessions} · recepciones confirmadas: {c.confirmations}</div>
+                  <div className="text-sm text-[var(--os-text-muted)]">Código de cliente: <code className="font-mono text-base text-[var(--os-text)]" data-testid="client-code">{c.publicCode}</code> <button className="text-xs underline" data-testid="copy-code" onClick={() => void copyCode(c.publicCode)}>{copied === c.publicCode ? "¡Copiado!" : "Copiar"}</button> · sesiones activas: {c.liveSessions} · recepciones confirmadas: {c.confirmations}</div>
+                  <div className="mt-1 flex flex-wrap gap-2 text-xs" data-testid="client-flags">
+                    <span data-testid="flag-access" className={`rounded-full px-2 py-0.5 ${c.accessEnabled ? "bg-emerald-500/15 text-emerald-700" : "bg-amber-500/15 text-amber-700"}`}>{c.accessEnabled ? "Acceso habilitado" : "Acceso NO habilitado"}</span>
+                    <span data-testid="flag-email" className={`rounded-full px-2 py-0.5 ${c.activeEmails > 0 ? "bg-emerald-500/15 text-emerald-700" : "bg-amber-500/15 text-amber-700"}`}>{c.activeEmails > 0 ? `Correo autorizado (${c.activeEmails})` : "Sin correo autorizado"}</span>
+                    <span className="rounded-full bg-[var(--os-border)] px-2 py-0.5 text-[var(--os-text-muted)]">Origen: {ORIGIN[c.origin] ?? c.origin}{c.originDetail ? ` · ${c.originDetail}` : ""}</span>
+                  </div>
                   {c.suspendReason ? <div className="text-sm text-red-700">Suspendido: {c.suspendReason}</div> : null}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button onClick={async () => { const r = await api(`?view=preview&clientId=${c.id}`); if (r.ok) setPreview(r.data as unknown as Preview); else setMsg({ kind: "err", text: String(r.data.error) }); }}>Ver como cliente</Button>
                   <Button onClick={async () => { const r = await api(`?view=activity&clientId=${c.id}`); if (r.ok) setActivity({ client: c, data: r.data as unknown as Activity }); }}>Actividad</Button>
+                  <Button data-testid="toggle-access" onClick={() => void act({ action: c.accessEnabled ? "disable_access" : "enable_access", clientId: c.id }, c.accessEnabled ? "Acceso deshabilitado y sesiones cerradas." : "Acceso habilitado. Ahora puede ingresar con un correo autorizado.")}>{c.accessEnabled ? "Deshabilitar acceso" : "Habilitar acceso"}</Button>
+                  <Button onClick={() => { const name = window.prompt("Nuevo nombre comercial (el código y los pedidos vinculados no cambian):", c.displayName); if (name && name.trim() !== c.displayName) void act({ action: "rename_client", clientId: c.id, name }, "Nombre actualizado. El código no cambió."); }}>Renombrar</Button>
                   {c.status === "ACTIVO" ? (
                     <Button onClick={() => { const reason = window.prompt("Motivo de la suspensión (se cierran sus sesiones):"); if (reason) void act({ action: "suspend", clientId: c.id, reason }, "Cliente suspendido y sesiones cerradas."); }}>Suspender</Button>
                   ) : (
