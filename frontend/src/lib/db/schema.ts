@@ -642,10 +642,81 @@ export const inventoryIngresoAdjuntos = pgTable(
     uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deletedBy: text("deleted_by"),
+    /** 0056 — recepción con remito a la que pertenece el archivo (borrador o confirmada). null = foto suelta de un ingreso. */
+    receiptId: uuid("receipt_id"),
   },
   (table) => [
     index("inventory_ingreso_adjuntos_ingreso_idx").on(table.module, table.ingresoId),
     uniqueIndex("inventory_ingreso_adjuntos_storage_key_uidx").on(table.storageKey),
+    index("inventory_ingreso_adjuntos_receipt_idx").on(table.receiptId),
+    index("inventory_ingreso_adjuntos_sha_idx").on(table.module, table.sha256),
+  ]
+);
+
+/**
+ * Recepciones con foto de remito (0056): el borrador de revisión y, una vez confirmada, el vínculo con los ingresos de
+ * stock que se crearon por el mecanismo existente (MP: servicio + libro mayor; ME: inv_me_ingresos). El stock NO vive acá.
+ */
+export const inventoryReceipts = pgTable(
+  "inventory_receipts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    module: text("module").notNull(),
+    status: text("status").notNull().default("BORRADOR"),
+    supplier: text("supplier").notNull().default(""),
+    supplierKey: text("supplier_key").notNull().default(""),
+    remitoNumber: text("remito_number").notNull().default(""),
+    remitoKey: text("remito_key").notNull().default(""),
+    remitoDate: text("remito_date").notNull().default(""),
+    receivedDate: text("received_date").notNull().default(""),
+    notes: text("notes").notNull().default(""),
+    payload: jsonb("payload").notNull().default({}),
+    version: integer("version").notNull().default(1),
+    parentReceiptId: uuid("parent_receipt_id"),
+    confirmKey: text("confirm_key"),
+    ingresoIds: jsonb("ingreso_ids").notNull().default([]),
+    createdBy: text("created_by").notNull(),
+    createdBySector: text("created_by_sector").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    confirmedBy: text("confirmed_by"),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    discardedBy: text("discarded_by"),
+    discardedAt: timestamp("discarded_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("inventory_receipts_remito_idx").on(table.module, table.supplierKey, table.remitoKey),
+    index("inventory_receipts_status_idx").on(table.module, table.status, table.createdAt),
+    uniqueIndex("inventory_receipts_confirm_key_uidx").on(table.confirmKey).where(sql`${table.confirmKey} is not null`),
+  ]
+);
+
+export const inventoryReceiptLines = pgTable(
+  "inventory_receipt_lines",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    receiptId: uuid("receipt_id").notNull(),
+    module: text("module").notNull(),
+    lineNo: integer("line_no").notNull(),
+    supplierCode: text("supplier_code").notNull().default(""),
+    supplierCodeKey: text("supplier_code_key").notNull().default(""),
+    description: text("description").notNull().default(""),
+    materialCode: text("material_code").notNull(),
+    materialLabel: text("material_label").notNull().default(""),
+    remitoQuantity: doublePrecision("remito_quantity"),
+    quantity: doublePrecision("quantity").notNull(),
+    unit: text("unit").notNull().default(""),
+    packages: doublePrecision("packages"),
+    lote: text("lote").notNull().default(""),
+    vencimiento: text("vencimiento").notNull().default(""),
+    notes: text("notes").notNull().default(""),
+    ingresoId: uuid("ingreso_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("inventory_receipt_lines_receipt_idx").on(table.receiptId, table.lineNo),
+    uniqueIndex("inventory_receipt_lines_ingreso_uidx").on(table.module, table.ingresoId),
+    index("inventory_receipt_lines_material_idx").on(table.module, table.materialCode),
   ]
 );
 

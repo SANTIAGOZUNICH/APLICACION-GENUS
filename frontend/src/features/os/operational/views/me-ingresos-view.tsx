@@ -27,6 +27,7 @@ import { ME_INGRESO_COLUMNS, type MeIngresoRow } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
 import { IngresoRemitoFotosButton, useIngresoAdjuntoCounts } from "@/features/os/operational/components/ingreso-remito-fotos";
 import { canManageAdjuntos, canViewAdjuntos } from "@/lib/inventory/ingreso-adjuntos-rules";
+import { IngresoConRemitoButtons } from "@/features/os/operational/components/ingreso-con-remito";
 import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
@@ -254,9 +255,10 @@ export function MeIngresosView() {
         </div>
       )}
       <div className="mb-4 flex flex-wrap items-center gap-2">
+        <IngresoConRemitoButtons module="ME" canWrite={canWrite} onChanged={() => { void reload(); fotos.reload(); }} />
         {canWrite && (
           <>
-            <Button type="button" onClick={() => setForm(emptyForm())}>
+            <Button type="button" variant="secondary" onClick={() => setForm(emptyForm())}>
               <Plus className="mr-1 size-4" /> Nuevo ingreso
             </Button>
             <Button type="button" variant="secondary" onClick={() => setPasteOpen(true)}>

@@ -17,6 +17,8 @@
     "test:e2e:portal-disponibilidad": "bash scripts/e2e/run-portal-disponibilidad-e2e-local.sh",
     "test:e2e:portal-demo": "bash scripts/e2e/run-portal-demo-e2e-local.sh",
     "test:e2e:portal-db": "bash scripts/e2e/run-portal-db-local.sh",
+    "test:e2e:ingreso-remito-db": "bash scripts/e2e/run-ingreso-remito-db-local.sh",
+    "test:e2e:ingreso-remito": "bash scripts/e2e/run-ingreso-remito-e2e-local.sh",
     "test:e2e:semanas-priorities-db": "bash scripts/e2e/run-semanas-priorities-db-local.sh",
     "test:e2e:produccion-edicion": "bash scripts/e2e/run-produccion-edicion-local.sh",
     "test:e2e:deposito-me": "bash scripts/e2e/run-deposito-me-local.sh",

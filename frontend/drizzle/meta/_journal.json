@@ -372,6 +372,13 @@
       "when": 1792600000000,
       "tag": "0055_portal_codigos_automaticos",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1792700000000,
+      "tag": "0056_ingreso_con_remito",
+      "breakpoints": true
     }
   ]
 }

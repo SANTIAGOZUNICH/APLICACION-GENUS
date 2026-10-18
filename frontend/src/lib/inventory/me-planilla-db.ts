@@ -75,7 +75,7 @@ function assertRead(actor: InventoryActor, module: Parameters<typeof canReadInve
 }
 
 /** Candado transaccional por código: todo lo que cambia el stock de un código se serializa. */
-async function lockCodigos(tx: Tx, codigos: Iterable<string>) {
+export async function lockCodigos(tx: Tx, codigos: Iterable<string>) {
   for (const c of [...new Set([...codigos].map(normalizeMeCodigo).filter(Boolean))].sort()) {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`genus-me-stock:${c}`}))`);
   }
@@ -102,7 +102,7 @@ function stockOf(codigo: string, data: LedgerInputs) {
   return { stock: computeMeStock(c, { ...data, materialIds }), materialIds };
 }
 
-function auditRow(actor: InventoryActor, module: string, entityId: string, action: string, before: Record<string, unknown> | null, after: Record<string, unknown> | null, reason: string | null): InventoryAudit {
+export function auditRow(actor: InventoryActor, module: string, entityId: string, action: string, before: Record<string, unknown> | null, after: Record<string, unknown> | null, reason: string | null): InventoryAudit {
   return { id: randomUUID(), module, entityId, action, actor: actor.email, actorSector: actor.sector, reason, before, after, createdAt: new Date().toISOString() };
 }
 

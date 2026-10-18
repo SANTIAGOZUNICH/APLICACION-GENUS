@@ -42,6 +42,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0053_portal_demo": "220318a3a2141c735a393975d980cbf3d34ee5a964b69d30b8ed402c28641f28",
   "0054_portal_disponibilidad": "4804620344578a89c7d0bb6bb91d2d648734cde3084020c6bc609b660786364d",
   "0055_portal_codigos_automaticos": "cf5d091671a794dc1a2d1fdb5140c37a5d60e94e9a682b8ef7d8a478fb47b206",
+  "0056_ingreso_con_remito": "c40657cdbe9c1e19491674e8cba1d1ea8b3c4cb34857677a4e40f2d5e70182f1",
 });
 
 export const RECONCILE_LOG_TABLE = "genus_migration_reconcile_log";
@@ -197,6 +198,9 @@ export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
   { migration: "0055_portal_codigos_automaticos", object: "portal_clients.access_enabled" },
   { migration: "0055_portal_codigos_automaticos", object: "portal_clients.origin" },
   { migration: "0055_portal_codigos_automaticos", object: "portal_auto_code_settings" },
+  { migration: "0056_ingreso_con_remito", object: "inventory_receipts" },
+  { migration: "0056_ingreso_con_remito", object: "inventory_receipt_lines" },
+  { migration: "0056_ingreso_con_remito", object: "inventory_ingreso_adjuntos.receipt_id" },
 ]);
 
 /** @param {{ query: (text: string, params?: unknown[]) => Promise<any[]>, required?: ReadonlyArray<{migration: string, object: string}> }} opts */
