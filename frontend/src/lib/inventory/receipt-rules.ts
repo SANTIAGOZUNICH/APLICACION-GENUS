@@ -54,7 +54,10 @@ export type ReceiptLineDraft = {
   notes: string;
   /** Campos que la lectura automática marcó como ilegibles/ambiguos («Revisar»). */
   review: string[];
-  matchSource?: "previo" | "codigo" | "manual" | "";
+  /** Cómo se eligió el material: uso previo, código interno impreso, nombre parecido (automáticos) o a mano. */
+  matchSource?: "previo" | "codigo" | "nombre" | "manual" | "";
+  /** Motivo de la preselección automática (se muestra para que la persona la verifique). */
+  matchReason?: string;
 };
 
 export type ReceiptDraftPayload = {
@@ -278,6 +281,63 @@ export function suggestMaterials(line: { supplier: string; supplierCode: string;
   return out.sort((a, b) => b.score - a.score || a.code.localeCompare(b.code)).slice(0, limit);
 }
 
+export type AutoMatch = { code: string; source: "previo" | "codigo" | "nombre"; reason: string };
+
+/**
+ * Preselección AUTOMÁTICA, solo cuando la coincidencia es inequívoca (si hay dudas queda sin elegir y se muestran las opciones):
+ *  1) uso previo confirmado: mismo proveedor + mismo código del proveedor → ese material;
+ *  2) el código impreso coincide EXACTO con un único código interno y la descripción no lo contradice;
+ *  3) por nombre: un candidato claramente mejor que el resto y con unidad compatible.
+ * Nunca crea materiales ni mueve stock: es solo la opción marcada de entrada.
+ */
+export function autoMatchMaterial(
+  line: { supplier: string; supplierCode: string; description: string; unit: string },
+  catalog: Map<string, CatalogItem>,
+  history: MappingHistory,
+  module: ReceiptModule
+): AutoMatch | null {
+  const prevCode = preselectFromHistory(line, history);
+  if (prevCode && catalog.has(normalizeMaterialCode(prevCode))) {
+    return { code: normalizeMaterialCode(prevCode), source: "previo", reason: "ya se usó con este proveedor y este código" };
+  }
+  const unitOk = (m: CatalogItem) => !line.unit.trim() || convertQuantity(1, line.unit, module === "MP" ? "kg" : m.unit).ok;
+  const want = new Set(tokens(line.description));
+  const overlap = (m: CatalogItem) => {
+    if (!want.size) return 1; // sin descripción legible no hay nada que contradiga
+    const have = new Set(tokens(`${m.description} ${m.code}`));
+    let inter = 0;
+    for (const t of want) if (have.has(t)) inter++;
+    return inter / Math.min(want.size, have.size || 1);
+  };
+  const key = codeKey(line.supplierCode);
+  if (key.length >= 3) {
+    const same = [...catalog.values()].filter((m) => codeKey(m.code) === key);
+    if (same.length === 1 && unitOk(same[0]!) && overlap(same[0]!) >= 0.2) {
+      return { code: same[0]!.code, source: "codigo", reason: "el código del remito coincide con el código interno" };
+    }
+  }
+  if (want.size) {
+    // Cuánto del NOMBRE del material aparece en la descripción del remito (el remito suele agregar presentación: «x 25 kg», «bidón»…).
+    const scored = [...catalog.values()]
+      .filter(unitOk)
+      .map((m) => {
+        const name = tokens(m.description);
+        const have = new Set(name);
+        let inter = 0;
+        for (const t of have) if (want.has(t)) inter++;
+        const need = have.size >= 2 ? 2 : 1;
+        return { m, inter, score: have.size ? inter / have.size : 0, ok: inter >= need };
+      })
+      .filter((x) => x.ok)
+      .sort((a, b) => b.score - a.score || a.m.code.localeCompare(b.m.code));
+    const [top, second] = scored;
+    if (top && top.score >= 0.8 && (!second || top.score - second.score >= 0.3)) {
+      return { code: top.m.code, source: "nombre", reason: "la descripción coincide con el nombre del material" };
+    }
+  }
+  return null;
+}
+
 /** Solo un uso previo confirmado se pre-selecciona. Todo lo demás queda como sugerencia a elegir. */
 export function preselectFromHistory(line: { supplier: string; supplierCode: string }, history: MappingHistory): string {
   return line.supplierCode.trim() ? history.get(mappingKey(line.supplier, line.supplierCode))?.code ?? "" : "";
@@ -372,6 +432,7 @@ const isoOrEmpty = (v: unknown) => {
  * «Revisar»; las fechas/cantidades inválidas se descartan (no se inventan). Devuelve null si no es un remito legible.
  */
 export function sanitizeExtraction(raw: unknown): ExtractedRemito | null {
+  if (Array.isArray(raw)) raw = { lines: raw }; // algunos modelos devuelven solo la lista de líneas
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   const lowConf = (c: unknown) => typeof c === "number" && c < 0.6;

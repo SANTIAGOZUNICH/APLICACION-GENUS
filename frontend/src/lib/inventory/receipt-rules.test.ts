@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canonicalUnit, classifyDuplicates, convertQuantity, parseNumber, preselectFromHistory, remitoKey, sanitizeExtraction, splitPackages, suggestMaterials, supplierKey,
-  validateReceipt, emptyHeader, emptyLine, canWriteReceipts, type CatalogItem, type MappingHistory, type ReceiptDraftPayload, mappingKey,
+  validateReceipt, autoMatchMaterial, emptyHeader, emptyLine, canWriteReceipts, type CatalogItem, type MappingHistory, type ReceiptDraftPayload, mappingKey,
 } from "./receipt-rules";
 
 const catalogMP = new Map<string, CatalogItem>([
@@ -149,5 +149,37 @@ describe("permisos por sector", () => {
     expect(canWriteReceipts("PRODUCCION", "ME")).toBe(false);
     expect(canWriteReceipts("DIRECCION", "MP")).toBe(true);
     expect(canWriteReceipts("DIRECCION", "ME")).toBe(true);
+  });
+});
+
+describe("preselección automática (solo si es inequívoca)", () => {
+  const cat = new Map<string, CatalogItem>([
+    ["GLI-001", { code: "GLI-001", description: "GLICERINA VEGETAL USP", unit: "kg" }],
+    ["GLI-002", { code: "GLI-002", description: "GLICERINA TRIPLE REFINADA", unit: "kg" }],
+    ["ALC-010", { code: "ALC-010", description: "ALCOHOL CETILICO", unit: "kg" }],
+    ["FR-250", { code: "FR-250", description: "FRASCO PET 250 ML", unit: "u" }],
+  ]);
+  const none: MappingHistory = new Map();
+  const base = { supplier: "Droguería Sur", supplierCode: "", description: "", unit: "kg" };
+  it("1) uso previo confirmado del mismo proveedor + código", () => {
+    const h: MappingHistory = new Map([[mappingKey("Droguería Sur", "AB-77"), { code: "GLI-002", count: 2 }]]);
+    expect(autoMatchMaterial({ ...base, supplierCode: "AB-77", description: "Glicerina" }, cat, h, "MP")).toMatchObject({ code: "GLI-002", source: "previo" });
+  });
+  it("2) código impreso = código interno exacto (y la descripción no lo contradice)", () => {
+    expect(autoMatchMaterial({ ...base, supplierCode: "ALC-010", description: "Alcohol cetilico x 25 kg" }, cat, none, "MP")).toMatchObject({ code: "ALC-010", source: "codigo" });
+    // El código coincide pero la descripción es de OTRA cosa → no se preselecciona (podría ser un código del proveedor que casualmente se parece).
+    expect(autoMatchMaterial({ ...base, supplierCode: "ALC-010", description: "Tambor de plástico vacío" }, cat, none, "MP")).toBeNull();
+  });
+  it("3) por nombre: solo si un candidato es claramente mejor y la unidad es compatible", () => {
+    expect(autoMatchMaterial({ ...base, description: "Alcohol cetilico" }, cat, none, "MP")).toMatchObject({ code: "ALC-010", source: "nombre" });
+    // «Glicerina» parece a dos materiales → ambiguo: no se elige, se muestran opciones.
+    expect(autoMatchMaterial({ ...base, description: "Glicerina" }, cat, none, "MP")).toBeNull();
+    // Unidad incompatible con el material (ME en unidades vs kg)
+    expect(autoMatchMaterial({ ...base, description: "Frasco PET 250 ml", unit: "kg" }, cat, none, "ME")).toBeNull();
+    expect(autoMatchMaterial({ ...base, description: "Frasco PET 250 ml", unit: "un" }, cat, none, "ME")).toMatchObject({ code: "FR-250" });
+  });
+  it("sin datos suficientes: no elige nada y nunca crea", () => {
+    expect(autoMatchMaterial({ ...base, description: "" }, cat, none, "MP")).toBeNull();
+    expect(autoMatchMaterial({ ...base, supplierCode: "XX-1", description: "Cosa rara" }, cat, none, "MP")).toBeNull();
   });
 });
