@@ -8,9 +8,9 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { invMeIngresos, invMpIngresos, inventoryIngresoAdjuntos } from "@/lib/db/schema";
+import { invMeIngresos, invMpIngresos, inventoryIngresoAdjuntos, inventoryReceiptLines, inventoryReceipts } from "@/lib/db/schema";
 import { getFileStorage, safeFileName, STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE } from "@/lib/storage/file-storage";
 import { InventoryForbiddenError, InventoryNotFoundError, InventoryValidationError } from "@/lib/inventory/inventory-service";
 import type { SectorId } from "@/types/operational/sector";
@@ -26,7 +26,7 @@ import {
 
 export type AdjuntoActor = { email: string; sector: SectorId };
 
-type Row = IngresoAdjunto & { storageKey: string; sha256: string; deletedAt: string | null; deletedBy: string | null };
+type Row = IngresoAdjunto & { storageKey: string; sha256: string; deletedAt: string | null; deletedBy: string | null; receiptId?: string | null };
 
 /** Persistencia: Neon en la app; memoria en las pruebas unitarias. */
 export interface AdjuntosStore {
@@ -38,6 +38,8 @@ export interface AdjuntosStore {
   insert(row: Row): Promise<void>;
   get(id: string): Promise<Row | null>;
   softDelete(id: string, by: string): Promise<void>;
+  /** ¿El archivo pertenece a una recepción ya confirmada? (el comprobante de un ingreso confirmado no se quita). */
+  receiptConfirmed?(receiptId: string): Promise<boolean>;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -133,6 +135,9 @@ export class IngresoAdjuntosService {
     if (!row) throw new InventoryNotFoundError("Foto no encontrada.");
     if (!canManageAdjuntos(actor.sector, row.module)) throw new InventoryForbiddenError("No tenés permiso para quitar esta foto.");
     if (row.deletedAt) return; // idempotente
+    if (row.receiptId && (await this.store.receiptConfirmed?.(row.receiptId))) {
+      throw new InventoryValidationError("El comprobante de un ingreso confirmado no se puede quitar. Podés agregar otras fotos.");
+    }
     await this.store.softDelete(id, actor.email);
   }
 }
@@ -144,10 +149,12 @@ class DbAdjuntosStore implements AdjuntosStore {
     return Boolean(row);
   }
   async list(module: IngresoAdjuntoModule, ingresoId: string) {
+    // Incluye el comprobante de la recepción con remito que originó este ingreso (si la hubo).
+    const viaReceipt = sql`${inventoryIngresoAdjuntos.receiptId} = (select l.receipt_id from ${inventoryReceiptLines} l where l.module = ${module} and l.ingreso_id = ${ingresoId}::uuid limit 1)`;
     const rows = await getDb()
       .select()
       .from(inventoryIngresoAdjuntos)
-      .where(and(eq(inventoryIngresoAdjuntos.module, module), eq(inventoryIngresoAdjuntos.ingresoId, ingresoId)))
+      .where(and(eq(inventoryIngresoAdjuntos.module, module), or(eq(inventoryIngresoAdjuntos.ingresoId, ingresoId), viaReceipt)))
       .orderBy(asc(inventoryIngresoAdjuntos.uploadedAt));
     return rows.map(fromDb);
   }
@@ -170,7 +177,20 @@ class DbAdjuntosStore implements AdjuntosStore {
       .from(inventoryIngresoAdjuntos)
       .where(and(eq(inventoryIngresoAdjuntos.module, module), isNull(inventoryIngresoAdjuntos.deletedAt)))
       .groupBy(inventoryIngresoAdjuntos.ingresoId);
-    return Object.fromEntries(rows.map((r) => [r.ingresoId, Number(r.n)]));
+    const out: Record<string, number> = Object.fromEntries(rows.map((r) => [r.ingresoId, Number(r.n)]));
+    // Cada ingreso creado desde una recepción con remito hereda el conteo de los archivos de esa recepción.
+    const viaReceipt = await getDb().execute(sql`
+      select l.ingreso_id::text as ingreso_id, count(f.id)::int as n
+        from ${inventoryReceiptLines} l
+        join ${inventoryIngresoAdjuntos} f on f.receipt_id = l.receipt_id and f.deleted_at is null
+       where l.module = ${module}
+       group by l.ingreso_id`);
+    for (const r of viaReceipt.rows as Array<{ ingreso_id: string; n: number }>) out[r.ingreso_id] = (out[r.ingreso_id] ?? 0) + Number(r.n);
+    return out;
+  }
+  async receiptConfirmed(receiptId: string) {
+    const [r] = await getDb().select({ status: inventoryReceipts.status }).from(inventoryReceipts).where(eq(inventoryReceipts.id, receiptId)).limit(1);
+    return r?.status === "CONFIRMADO";
   }
   async insert(row: Row) {
     await getDb().insert(inventoryIngresoAdjuntos).values({
@@ -186,6 +206,7 @@ class DbAdjuntosStore implements AdjuntosStore {
       uploadedBy: row.uploadedBy,
       uploadedBySector: row.uploadedBySector,
       uploadedAt: new Date(row.uploadedAt),
+      receiptId: row.receiptId ?? null,
     });
   }
   async get(id: string) {
@@ -215,6 +236,7 @@ function fromDb(r: typeof inventoryIngresoAdjuntos.$inferSelect): Row {
     uploadedAt: r.uploadedAt.toISOString(),
     deletedAt: r.deletedAt ? r.deletedAt.toISOString() : null,
     deletedBy: r.deletedBy,
+    receiptId: r.receiptId,
   };
 }
 

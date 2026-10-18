@@ -18,7 +18,7 @@ export async function GET(request: Request, ctx: Ctx) {
       headers: {
         "Content-Type": adjunto.contentType,
         "Content-Length": String(bytes.length),
-        "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(adjunto.fileName)}`,
+        "Content-Disposition": `${new URL(request.url).searchParams.get("download") === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(adjunto.fileName)}`,
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
       },

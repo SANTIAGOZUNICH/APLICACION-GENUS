@@ -213,7 +213,7 @@ function IngresoRemitoFotosDialog({
   useEffect(() => {
     let cancelled = false;
     for (const it of items) {
-      if (urlsRef.current[it.id]) continue;
+      if (urlsRef.current[it.id] || it.contentType === "application/pdf") continue;
       void fetch(`${API}/${it.id}`, { headers: authHeaders(), cache: "no-store" })
         .then((r) => (r.ok ? r.blob() : null))
         .then((blob) => {
@@ -358,8 +358,10 @@ function IngresoRemitoFotosDialog({
           <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3" data-testid="ingreso-fotos-lista">
             {items.map((it, i) => (
               <li key={it.id} className="overflow-hidden rounded border border-[var(--os-border)]" data-testid="ingreso-foto">
-                <button type="button" className="block aspect-[4/3] w-full bg-[var(--os-bg)]" onClick={() => setViewer(i)} title="Ampliar">
-                  {urls[it.id] && it.contentType !== "image/heic" ? (
+                <button type="button" className="block aspect-[4/3] w-full bg-[var(--os-bg)]" onClick={() => (it.contentType === "application/pdf" ? window.open(`${API}/${it.id}`, "_blank", "noopener") : setViewer(i))} title="Ampliar">
+                  {it.contentType === "application/pdf" ? (
+                    <span className="flex h-full items-center justify-center text-xs text-[var(--os-text-muted)]">PDF · tocar para abrir</span>
+                  ) : urls[it.id] && it.contentType !== "image/heic" ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={urls[it.id]} alt={it.fileName} className="h-full w-full object-cover" />
                   ) : (

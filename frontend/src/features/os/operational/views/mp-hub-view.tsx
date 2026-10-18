@@ -66,6 +66,7 @@ import { SortSelect } from "@/features/os/operational/components/sort-select";
 import { useInventoryCellEditing } from "@/features/os/operational/hooks/use-inventory-cells";
 import { useMpSheetEditing } from "@/features/os/operational/hooks/use-mp-sheet-cells";
 import { IngresoRemitoFotosButton, useIngresoAdjuntoCounts } from "@/features/os/operational/components/ingreso-remito-fotos";
+import { IngresoConRemitoButtons } from "@/features/os/operational/components/ingreso-con-remito";
 import { canManageAdjuntos, canViewAdjuntos } from "@/lib/inventory/ingreso-adjuntos-rules";
 import {
   applySort,
@@ -981,9 +982,10 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       </div>
 
       <div className="mb-3 flex flex-wrap gap-2">
+        {tab === "Ingresos MP" ? <IngresoConRemitoButtons module="MP" canWrite={canWrite} onChanged={() => { void reload(); fotos.reload(); }} /> : null}
         {canWrite && tab !== "Control semanal" && tab !== "COA'S" && (
           <>
-            <Button type="button" onClick={openNew}>
+            <Button type="button" variant={tab === "Ingresos MP" ? "secondary" : undefined} onClick={openNew}>
               <Plus className="mr-1 size-4" /> Nuevo
             </Button>
             <Button type="button" variant="secondary" onClick={() => setPasteOpen(true)}>
