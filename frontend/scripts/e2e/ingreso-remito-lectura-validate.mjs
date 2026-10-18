@@ -37,7 +37,7 @@ const MP_CODE2 = `E2E-LEC-ALC-${RUN}`;
 const ME_CODE = `E2E-LEC-FR-${RUN}`;
 const SUPPLIER = `Droguería Lectura ${RUN}`;
 const REM = `0001-${RUN}01`;
-const state = { mode: "ok", delayMs: 1500, requests: [] };
+const state = { mode: "ok", delayMs: 1500, requests: [], lists: 0 };
 const remitoMP = {
   supplier: SUPPLIER, remitoNumber: REM, remitoDate: "2026-10-14", notes: "Entrega parcial 1 de 2", unclearFields: [],
   lines: [
@@ -52,13 +52,21 @@ const gem = http.createServer((req, res) => {
   req.on("end", async () => {
     const body = raw ? JSON.parse(raw) : {};
     const parts = body.contents?.[0]?.parts ?? [];
-    state.requests.push({ url: req.url, key: req.headers["x-goog-api-key"], mimes: parts.filter((p) => p.inline_data).map((p) => p.inline_data.mime_type), textOnly: parts.every((p) => p.text), gen: body.generationConfig });
+    const model = /models\/([^:/?]+):generateContent/.exec(req.url ?? "")?.[1] ?? null;
+    state.requests.push({ url: req.url, model, key: req.headers["x-goog-api-key"], mimes: parts.filter((p) => p.inline_data).map((p) => p.inline_data.mime_type), textOnly: parts.every((p) => p.text), gen: body.generationConfig });
     const send = (status, obj) => {
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify(obj));
     };
     if (req.headers["x-goog-api-key"] !== FAKE_KEY) return send(403, { error: { code: 403, message: "bad key" } });
-    if (parts.every((p) => p.text)) return send(200, { candidates: [{ content: { parts: [{ text: "OK" }] } }] }); // prueba de configuración
+    if (req.method === "GET" && /^\/v1beta\/models/.test(req.url ?? "")) {
+      state.lists += 1;
+      return send(200, { models: ["gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-3.5-flash-preview-tts", "embedding-001", "gemini-2.5-pro"].map((n) => ({ name: `models/${n}`, supportedGenerationMethods: n === "embedding-001" ? ["embedContent"] : ["generateContent"] })) });
+    }
+    if (model === "gemini-2.0-flash-retirado") return send(404, { error: { code: 404, status: "NOT_FOUND", message: "models/gemini-2.0-flash-retirado is not found for API version v1beta, or is not supported for generateContent." } });
+    if (state.mode === "keyinvalid") return send(400, { error: { code: 400, status: "INVALID_ARGUMENT", message: "API key not valid. Please pass a valid API key." } });
+    if (state.mode === "quota") return send(429, { error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "You exceeded your current quota" } });
+    if (parts.every((p) => p.text) && req.method === "POST" && state.mode !== "textfail") return send(200, { candidates: [{ content: { parts: [{ text: "OK" }] } }] }); // prueba de configuración
     await new Promise((r) => setTimeout(r, state.delayMs));
     if (state.mode === "garbage") return send(200, { candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Lo siento, no puedo ayudar con eso" }] } }] });
     if (state.mode === "403") return send(403, { error: { code: 403, message: "PERMISSION_DENIED" } });
@@ -127,9 +135,11 @@ try {
   await mp.screenshot({ path: `${OUT}/01-mp-analizando.png` });
   await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
   check("Al terminar pasa solo a la revisión, con el aviso «Remito analizado. Revisá los datos antes de confirmar.»", (await mp.getByText("Remito analizado. Revisá los datos antes de confirmar.").count()) === 1);
-  const reqs = state.requests.filter((r) => !r.textOnly);
+  const reqs = state.requests.filter((r) => !r.textOnly && r.model === "gemini-3.5-flash");
   check("Una sola llamada a Gemini con las 2 hojas (JPG + PDF), clave en cabecera y sin salir de la URL local", reqs.length === 1 && reqs[0].mimes.join() === "image/jpeg,application/pdf" && reqs[0].key === FAKE_KEY && !reqs[0].url.includes(FAKE_KEY), JSON.stringify(reqs[0]?.mimes));
-  check("Pidió respuesta JSON, temperatura 0 y sin «thinking»", reqs[0]?.gen?.responseMimeType === "application/json" && reqs[0]?.gen?.temperature === 0 && reqs[0]?.gen?.thinkingConfig?.thinkingBudget === 0);
+  const genReqs = state.requests.filter((r) => r.model);
+  check("El modelo configurado NO EXISTE (404): GENUS OS consultó qué modelos tiene la clave y siguió con el mejor (gemini-3.5-flash), sin error para el operario", genReqs[0]?.model === "gemini-2.0-flash-retirado" && genReqs[1]?.model === "gemini-3.5-flash" && state.lists === 1, JSON.stringify(genReqs.map((r) => r.model)));
+  check("Pidió respuesta JSON y temperatura 0, sin opciones propias de otros modelos (thinking solo en 2.5-flash)", reqs[0]?.gen?.responseMimeType === "application/json" && reqs[0]?.gen?.temperature === 0 && reqs[0]?.gen?.thinkingConfig === undefined);
   check("El formulario se completó SOLO (sin recargar): proveedor, n.º y fecha del remito", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-numero]").inputValue()) === REM && (await mp.locator("[data-testid=remito-fecha]").inputValue()) === "2026-10-14");
   check("La fecha de recepción sigue siendo la de hoy (distinta de la del remito)", (await mp.locator("[data-testid=remito-recepcion]").inputValue()) === new Date().toISOString().slice(0, 10));
   const lines = mp.locator("[data-testid=remito-linea]");
@@ -188,7 +198,7 @@ try {
   await dlg(mp).waitFor();
   await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
   await mp.locator("[data-testid=remito-lectura-fallo]").waitFor({ timeout: 60_000 });
-  check("Clave sin autorización: el mensaje dice que avise a Sistemas y que se puede cargar a mano", /Avisá a Sistemas/.test(await mp.locator("[data-testid=remito-lectura-fallo]").innerText()));
+  check("Permisos insuficientes: el mensaje lo dice y pide avisar a Sistemas (no confunde con modelo ni clave)", /no tiene permiso/.test(await mp.locator("[data-testid=remito-lectura-fallo]").innerText()) && !/modelo/.test(await mp.locator("[data-testid=remito-lectura-fallo]").innerText()));
   await mp.keyboard.press("Escape");
   state.mode = "ok";
 
@@ -219,10 +229,21 @@ try {
 
   // ===== Prueba de configuración (sin enviar remitos) y permisos =====
   const dir = await openAs(E2E_USERS.direccion, false);
+  state.mode = "ok";
   const health = await dir.page.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health");
   const hb = await health.json();
-  const probeReq = state.requests.at(-1);
-  check("Dirección puede probar la configuración: Gemini responde y no se envió ningún documento", health.status() === 200 && hb.health.ok === true && probeReq.textOnly === true && !JSON.stringify(hb).includes(FAKE_KEY));
+  check("Dirección prueba la configuración (solo texto, sin documentos): informa modelo configurado, efectivo, modelos de la clave e intentos", health.status() === 200 && hb.health.ok === true && hb.health.configuredModel === "gemini-2.0-flash-retirado" && hb.health.effectiveModel === "gemini-3.5-flash" && hb.health.listing.candidates[0] === "gemini-3.5-flash" && !hb.health.listing.candidates.includes("embedding-001") && !JSON.stringify(hb).includes(FAKE_KEY), JSON.stringify({ c: hb.health.configuredModel, e: hb.health.effectiveModel, l: hb.health.listing?.candidates }));
+  const textOnlyCalls = state.requests.filter((r) => r.model && r.textOnly);
+  check("La prueba de texto no envió ningún documento", textOnlyCalls.length >= 1);
+  const imgHealth = await (await dir.page.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health&image=1")).json();
+  check("Prueba con IMAGEN (remito ficticio incorporado): el modelo analizó la imagen y encontró renglones", imgHealth.health.ok === true && imgHealth.health.image?.ok === true && imgHealth.health.image.read.lines >= 1, imgHealth.health.message);
+  state.mode = "keyinvalid";
+  const hKey = await (await dir.page.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health")).json();
+  check("Diagnóstico: clave inválida se distingue del modelo inexistente", hKey.health.ok === false && hKey.health.text.kind === "key" && /clave de Gemini/.test(hKey.health.text.message));
+  state.mode = "quota";
+  const hQuota = await (await dir.page.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health")).json();
+  check("Diagnóstico: límite de uso se distingue", hQuota.health.ok === false && hQuota.health.text.kind === "limit");
+  state.mode = "ok";
   check("Un operario no puede usar la prueba de configuración (403)", (await mp.request.get("/api/v1/inventory/receipts?module=MP&view=extraction_health")).status() === 403);
   const cfg = await (await mp.request.get("/api/v1/inventory/receipts?module=MP&view=config")).json();
   check("La configuración que ve la pantalla no expone la clave", cfg.extraction.available === true && !JSON.stringify(cfg).includes(FAKE_KEY));

@@ -13,10 +13,13 @@ const KEY = process.env.GEMINI_API_KEY?.trim();
 const env = { INGRESO_REMITO_EXTRACTION: "gemini", GEMINI_API_KEY: KEY, INGRESO_REMITO_GEMINI_MODEL: process.env.INGRESO_REMITO_GEMINI_MODEL } as Partial<NodeJS.ProcessEnv>;
 
 describe.skipIf(!KEY)("Gemini REAL: lectura de un remito de prueba (ficticio)", () => {
-  it("la clave y el modelo responden", async () => {
-    const p = await probeExtraction({ env });
-    expect(p).toMatchObject({ ok: true });
-  }, 60_000);
+  it("la clave responde, se descubre un modelo vigente y ese modelo analiza una IMAGEN", async () => {
+    const p = await probeExtraction({ env, image: true });
+    console.log("[gemini real] configuración:", JSON.stringify({ configuredModel: p.configuredModel, effectiveModel: p.effectiveModel, modelosDeLaClave: p.listing.candidates, intentos: p.attempts, texto: p.text.message, imagen: p.image }));
+    expect(p.text.ok, p.text.message).toBe(true);
+    expect(p.effectiveModel).toBeTruthy();
+    expect(p.image?.ok, p.image?.message).toBe(true);
+  }, 120_000);
 
   it("foto → Gemini → encabezado y renglones", async () => {
     const bytes = new Uint8Array(readFileSync(path.join(process.cwd(), "src/lib/inventory/__fixtures__/remito-prueba.png")));
