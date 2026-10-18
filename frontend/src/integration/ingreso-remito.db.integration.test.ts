@@ -329,14 +329,14 @@ describe.skipIf(Boolean(PROBLEM))(`Ingreso con remito en Postgres real${PROBLEM 
     expect(res0).toMatchObject({ applied: false });
     expect(res0.message).toMatch(/no está activada/);
 
-    const failing = new ReceiptService({ extractionConfig: () => ({ available: true, provider: "gemini", model: "m", code: "ok", reason: "" }), extract: async () => ({ ok: false, kind: "unavailable", message: "Servicio caído" }) });
+    const failing = new ReceiptService({ extractionConfig: () => ({ available: true, provider: "gemini", model: "m", modelSource: "INGRESO_REMITO_GEMINI_MODEL" as const, code: "ok", reason: "" }), extract: async () => ({ ok: false, kind: "unavailable", message: "Servicio caído" }) });
     const res1 = await failing.extract(mp as never, r0.id, "MP");
     expect(res1).toMatchObject({ applied: false, message: "Servicio caído" });
 
     const readerFor = (supplierCode: string) => new ReceiptService({
-      extractionConfig: () => ({ available: true, provider: "gemini", model: "m", code: "ok", reason: "" }),
+      extractionConfig: () => ({ available: true, provider: "gemini", model: "m", modelSource: "INGRESO_REMITO_GEMINI_MODEL" as const, code: "ok", reason: "" }),
       extract: async () => ({
-        ok: true, provider: "gemini:test",
+        ok: true, provider: "gemini:test", model: "test",
         data: { supplier: `Proveedor IT ${RUN} SA`, remitoNumber: `R-${RUN}-16`, remitoDate: "2026-10-01", notes: "", headerReview: [], lines: [{ supplierCode, description: "Glicerina", quantity: "20", unit: "kg", packages: "", lote: "LE-1", vencimiento: "", notes: "", review: ["vencimiento"] }] },
       }),
     });
@@ -359,9 +359,9 @@ describe.skipIf(Boolean(PROBLEM))(`Ingreso con remito en Postgres real${PROBLEM 
   it("lectura automática (Gemini simulado): completa encabezado y TODAS las líneas, elige el material solo si es inequívoco, no pisa lo manual y no mueve stock", async () => {
     const { ReceiptService } = await lib();
     const svcRead = new ReceiptService({
-      extractionConfig: () => ({ available: true, provider: "gemini", model: "m", code: "ok", reason: "" }),
+      extractionConfig: () => ({ available: true, provider: "gemini", model: "m", modelSource: "INGRESO_REMITO_GEMINI_MODEL" as const, code: "ok", reason: "" }),
       extract: async () => ({
-        ok: true, provider: "gemini:test",
+        ok: true, provider: "gemini:test", model: "test",
         data: {
           supplier: `Proveedor IT ${RUN} SA`, remitoNumber: `R-${RUN}-30`, remitoDate: "2026-10-15", notes: "Entrega 1 de 2", headerReview: [],
           lines: [
@@ -409,11 +409,11 @@ describe.skipIf(Boolean(PROBLEM))(`Ingreso con remito en Postgres real${PROBLEM 
     const { ReceiptService } = await lib();
     let calls = 0;
     const flaky = new ReceiptService({
-      extractionConfig: () => ({ available: true, provider: "gemini", model: "m", code: "ok", reason: "" }),
+      extractionConfig: () => ({ available: true, provider: "gemini", model: "m", modelSource: "INGRESO_REMITO_GEMINI_MODEL" as const, code: "ok", reason: "" }),
       extract: async () => {
         calls++;
         if (calls === 1) return { ok: false as const, kind: "unreadable" as const, message: "No pudimos interpretar automáticamente este remito. Podés reintentar o completar los datos manualmente." };
-        return { ok: true as const, provider: "gemini:test", data: { supplier: `Proveedor IT ${RUN} SA`, remitoNumber: `R-${RUN}-31`, remitoDate: "", notes: "", headerReview: ["remitoDate"], lines: [{ supplierCode: "", description: "Alcohol cetilico", quantity: "10", unit: "kg", packages: "", lote: "", vencimiento: "", notes: "", review: ["lote", "vencimiento"] }] } };
+        return { ok: true as const, provider: "gemini:test", model: "test", data: { supplier: `Proveedor IT ${RUN} SA`, remitoNumber: `R-${RUN}-31`, remitoDate: "", notes: "", headerReview: ["remitoDate"], lines: [{ supplierCode: "", description: "Alcohol cetilico", quantity: "10", unit: "kg", packages: "", lote: "", vencimiento: "", notes: "", review: ["lote", "vencimiento"] }] } };
       },
     });
     const r = await draft("MP", mp, "", [], { files: 1, header: { supplier: "", remitoNumber: "", remitoDate: "" } });

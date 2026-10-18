@@ -22,15 +22,19 @@
 
 **Identificación del material** (solo si es inequívoca; si no, se muestran opciones y la línea queda en «Revisar»): 1) uso previo confirmado (mismo proveedor + mismo código del proveedor); 2) el código impreso coincide exacto con un único código interno y la descripción no lo contradice; 3) por nombre, con un candidato claramente mejor y unidad compatible. Nunca se crea un material.
 
+**Modelo de Gemini.** Google retira modelos con frecuencia, así que GENUS OS **no depende de un nombre fijo**: si `INGRESO_REMITO_GEMINI_MODEL` no está definida (lo recomendado), le pregunta a Google qué modelos tiene la clave (`ListModels`), elige el mejor estable con entrada de imágenes (flash más nuevo → alias `-latest` → lite → preview → pro; ignora embeddings, audio e imagen), lo usa y lo recuerda 6 h. Si hay un modelo definido y deja de existir (404), descubre otro y reintenta solo. **Ya no hereda `CREAMY_GEMINI_MODEL`** (Creamy tiene su propio respaldo de modelo/proveedor, que puede ocultar un modelo muerto). Las fallas se distinguen: modelo inexistente, clave inválida, permisos (API no habilitada / facturación / restricciones), región y límite de uso, cada una con su mensaje.
+
 **Activación (Vercel → Settings → Environment Variables, entorno Production):**
-1. `GEMINI_API_KEY` — la misma clave que ya usa Creamy (si Creamy funciona en producción, ya existe).
-2. `INGRESO_REMITO_EXTRACTION=gemini` — autoriza enviar los remitos a Gemini. Sin esta variable la lectura está APAGADA aunque exista la clave (la pantalla lo dice).
-3. (Opcional) `INGRESO_REMITO_GEMINI_MODEL` (por defecto `gemini-2.5-flash`).
-4. Redeploy. Luego, logueado como Dirección o Producción, abrir `/api/v1/inventory/receipts?module=MP&view=extraction_health`: `{"health":{"ok":true,…}}` confirma clave + modelo + red **sin enviar ningún remito**.
+1. `GEMINI_API_KEY` — la misma clave que ya usa Creamy.
+2. `INGRESO_REMITO_EXTRACTION=gemini` — autoriza enviar los remitos a Gemini. Sin esta variable la lectura está APAGADA aunque exista la clave.
+3. `INGRESO_REMITO_GEMINI_MODEL` — **dejala sin definir** (o borrala si tiene un valor viejo). Solo usarla para forzar un modelo concreto que figure en la lista de «modelos de la clave» del diagnóstico.
+4. Redeploy. Luego, logueado como Dirección o Producción:
+   - `/api/v1/inventory/receipts?module=MP&view=extraction_health` → modelo configurado, modelo efectivo, modelos que ve la clave, intentos y causa del fallo (sin enviar documentos).
+   - `/api/v1/inventory/receipts?module=MP&view=extraction_health&image=1` → además lee un **remito ficticio incorporado** y confirma que el modelo puede analizar una imagen.
 
 La clave nunca se muestra, se registra ni viaja en la URL (cabecera `x-goog-api-key`); los fallos quedan en los logs del servidor (sin claves ni contenido del remito).
 
-**Probar con Gemini real** (documento de prueba ficticio incluido): `GEMINI_API_KEY=… npx vitest run src/integration/ingreso-remito-gemini-real.integration.test.ts`.
+**Probar con Gemini real** (documento de prueba ficticio incluido): `GEMINI_API_KEY=… npx vitest run src/integration/ingreso-remito-gemini-real.integration.test.ts` (descubre el modelo vigente y lee la imagen de prueba y el remito ficticio).
 
 ## Pruebas
 `src/lib/inventory/receipt-rules.test.ts`, `receipt-extraction.test.ts`, E2E con Gemini simulado `scripts/e2e/ingreso-remito-lectura-validate.mjs` (`npm run test:e2e:ingreso-remito-lectura`), `src/integration/ingreso-remito.db.integration.test.ts` (`npm run test:e2e:ingreso-remito-db`), E2E de navegador `scripts/e2e/ingreso-remito-validate.mjs` (`npm run test:e2e:ingreso-remito`), `migration-reconcile.test.ts`.

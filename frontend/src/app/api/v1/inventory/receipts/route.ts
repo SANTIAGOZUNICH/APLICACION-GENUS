@@ -37,9 +37,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ extraction: { available: cfg.available, reason: cfg.reason, code: cfg.code } });
     }
     if (view === "extraction_health") {
-      // Solo supervisión (Dirección / Producción / superadmin): prueba la clave y el modelo SIN enviar ningún remito.
+      // Solo supervisión (Dirección / Producción / superadmin): prueba clave y modelo SIN enviar ningún remito real (con &image=1 lee un remito ficticio incorporado).
       if (!actor.isSuperadmin && actor.sector !== "DIRECCION" && actor.sector !== "PRODUCCION") throw new InventoryForbiddenError("Solo Dirección o Producción pueden probar la lectura automática.");
-      return NextResponse.json({ health: await probeExtraction() });
+      return NextResponse.json({ health: await probeExtraction({ image: url.searchParams.get("image") === "1" }) });
     }
     if (view === "catalog") return NextResponse.json({ items: await svc.catalog(actor, mod, url.searchParams.get("q") ?? "") });
     if (view === "get") return NextResponse.json({ receipt: await svc.get(actor, id, mod) });

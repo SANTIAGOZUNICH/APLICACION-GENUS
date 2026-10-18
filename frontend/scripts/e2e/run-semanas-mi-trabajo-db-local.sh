@@ -101,7 +101,7 @@ APP_ENV=(PATH="$PATH" HOME="${HOME:-/root}" NODE_EXTRA_CA_CERTS="$NODE_EXTRA_CA_
   GENUS_PLANNING_SOURCE=native NEXT_PUBLIC_GENUS_PLANNING_SOURCE=native NEXT_TELEMETRY_DISABLED=1
   GENUS_SEMANAS_FIXTURE_XLSX="$XLSX" SEMANAS_TODAY_OVERRIDE=2026-05-06)
 # Lectura automática de remitos (E2E con Gemini SIMULADO): solo se pasan si el script que invoca las definió.
-for v in INGRESO_REMITO_EXTRACTION GEMINI_API_KEY INGRESO_REMITO_GEMINI_BASE_URL; do
+for v in INGRESO_REMITO_EXTRACTION GEMINI_API_KEY INGRESO_REMITO_GEMINI_BASE_URL INGRESO_REMITO_GEMINI_MODEL; do
   if [[ -n "${!v:-}" ]]; then APP_ENV+=("$v=${!v}"); fi
 done
 # Opt-in (circuito): /api/v1/live-sync/operations exige "modo real + adaptador Drive configurado". Se habilita con valores
