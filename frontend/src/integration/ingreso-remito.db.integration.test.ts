@@ -329,12 +329,12 @@ describe.skipIf(Boolean(PROBLEM))(`Ingreso con remito en Postgres real${PROBLEM 
     expect(res0).toMatchObject({ applied: false });
     expect(res0.message).toMatch(/no está activada/);
 
-    const failing = new ReceiptService({ extractionConfig: () => ({ available: true, provider: "gemini", model: "m", reason: "" }), extract: async () => ({ ok: false, message: "Servicio caído" }) });
+    const failing = new ReceiptService({ extractionConfig: () => ({ available: true, provider: "gemini", model: "m", code: "ok", reason: "" }), extract: async () => ({ ok: false, kind: "unavailable", message: "Servicio caído" }) });
     const res1 = await failing.extract(mp as never, r0.id, "MP");
     expect(res1).toMatchObject({ applied: false, message: "Servicio caído" });
 
     const readerFor = (supplierCode: string) => new ReceiptService({
-      extractionConfig: () => ({ available: true, provider: "gemini", model: "m", reason: "" }),
+      extractionConfig: () => ({ available: true, provider: "gemini", model: "m", code: "ok", reason: "" }),
       extract: async () => ({
         ok: true, provider: "gemini:test",
         data: { supplier: `Proveedor IT ${RUN} SA`, remitoNumber: `R-${RUN}-16`, remitoDate: "2026-10-01", notes: "", headerReview: [], lines: [{ supplierCode, description: "Glicerina", quantity: "20", unit: "kg", packages: "", lote: "LE-1", vencimiento: "", notes: "", review: ["vencimiento"] }] },
@@ -343,7 +343,8 @@ describe.skipIf(Boolean(PROBLEM))(`Ingreso con remito en Postgres real${PROBLEM 
     const ok = readerFor("NUEVO-1"); // código del proveedor nunca usado antes → sin material pre-seleccionado
     const res2 = await ok.extract(mp as never, r0.id, "MP");
     expect(res2.applied).toBe(true);
-    expect(res2.receipt.draft.lines[0]).toMatchObject({ description: "Glicerina", quantity: "20", materialCode: "", review: ["vencimiento"] });
+    expect(res2.receipt.draft.lines[0]).toMatchObject({ description: "Glicerina", quantity: "20", materialCode: "" });
+    expect(res2.receipt.draft.lines[0]!.review).toEqual(expect.arrayContaining(["vencimiento", "materialCode"])); // sin material inequívoco: queda marcado «Revisar»
     expect(res2.receipt.draft.header.remitoDate).toBe(tomorrow()); // lo que ya escribió la persona no se pisa
     expect(res2.receipt.status).toBe("BORRADOR");
     expect(await q("select 1 from inv_mp_ingresos where payload->>'remitoNro' = $1", [`R-${RUN}-16`])).toHaveLength(0);
@@ -353,6 +354,78 @@ describe.skipIf(Boolean(PROBLEM))(`Ingreso con remito en Postgres real${PROBLEM 
     const r3 = await draft("MP", mp, `R-${RUN}-17`, [], { files: 1 });
     const res3 = await readerFor("AB-77").extract(mp as never, r3.id, "MP"); // AB-77 ya se usó (test 1) con este proveedor
     expect(res3.receipt.draft.lines[0]!.materialCode).toBe(MP_CODE);
+  });
+
+  it("lectura automática (Gemini simulado): completa encabezado y TODAS las líneas, elige el material solo si es inequívoco, no pisa lo manual y no mueve stock", async () => {
+    const { ReceiptService } = await lib();
+    const svcRead = new ReceiptService({
+      extractionConfig: () => ({ available: true, provider: "gemini", model: "m", code: "ok", reason: "" }),
+      extract: async () => ({
+        ok: true, provider: "gemini:test",
+        data: {
+          supplier: `Proveedor IT ${RUN} SA`, remitoNumber: `R-${RUN}-30`, remitoDate: "2026-10-15", notes: "Entrega 1 de 2", headerReview: [],
+          lines: [
+            { supplierCode: "NUEVO-9", description: "Glicerina vegetal USP bidón x 25 kg", quantity: "250", unit: "kg", packages: "10", lote: "LG-9", vencimiento: "2029-01-31", notes: "", review: [] },
+            { supplierCode: "ZZ-2", description: "Insumo sin identificar", quantity: "40", unit: "kg", packages: "", lote: "", vencimiento: "", notes: "", review: ["lote", "vencimiento"] },
+            { supplierCode: MP_CODE, description: "glicerina", quantity: "5", unit: "kg", packages: "", lote: "LG-10", vencimiento: "2029-02-28", notes: "", review: [] },
+          ],
+        },
+      }),
+    });
+    const r0 = await draft("MP", mp, "", [], { files: 1, header: { supplier: "", remitoNumber: "", remitoDate: "" } });
+    const stockBefore = await balance(MP_CODE);
+    const res = await svcRead.extract(mp as never, r0.id, "MP");
+    expect(res).toMatchObject({ applied: true, kind: "ok", message: "Remito analizado. Revisá los datos antes de confirmar." });
+    const d = res.receipt.draft;
+    expect(d.header).toMatchObject({ supplier: `Proveedor IT ${RUN} SA`, remitoNumber: `R-${RUN}-30`, remitoDate: "2026-10-15", notes: "Entrega 1 de 2" });
+    expect(d.header.receivedDate).toBeTruthy(); // la fecha de recepción sigue siendo aparte
+    expect(d.lines).toHaveLength(3); // una línea por renglón del remito
+    expect(d.lines[0]).toMatchObject({ materialCode: MP_CODE, matchSource: "nombre", quantity: "250", unit: "kg", packages: "10", lote: "LG-9", vencimiento: "2029-01-31", supplierCode: "NUEVO-9" });
+    expect(d.lines[1]).toMatchObject({ materialCode: "", matchSource: "" }); // ambiguo/insuficiente: no se elige
+    expect(d.lines[1]!.review).toEqual(expect.arrayContaining(["lote", "vencimiento", "materialCode"]));
+    expect(d.lines[2]).toMatchObject({ materialCode: MP_CODE, matchSource: "codigo" }); // el código impreso es un código interno exacto
+    // Al mismo tiempo devuelve las sugerencias para que la pantalla las muestre sin pedir nada más.
+    expect(res.analysis).toBeTruthy();
+    expect(Array.isArray(res.analysis!.suggestions[d.lines[1]!.id])).toBe(true);
+    expect(res.analysis!.suggestions[d.lines[0]!.id]!.map((x) => x.code)).toContain(MP_CODE);
+    expect(res.analysis!.validation.ok).toBe(false); // falta elegir material, lote y vencimiento de la línea 2
+    // La lectura no tocó nada de inventario.
+    expect(await balance(MP_CODE)).toBe(stockBefore);
+    expect(await q("select 1 from inv_mp_ingresos where payload->>'remitoNro' = $1", [`R-${RUN}-30`])).toHaveLength(0);
+    // Una segunda lectura NO pisa lo que la persona ya modificó (encabezado ni líneas).
+    const edited = await svcRead.saveDraft(mp as never, r0.id, "MP", { expectedVersion: res.receipt.version, header: { ...d.header, supplier: "Proveedor corregido a mano" }, lines: d.lines.map((l, i) => (i === 0 ? { ...l, quantity: "260" } : l)) });
+    const again = await svcRead.extract(mp as never, r0.id, "MP");
+    expect(again.applied).toBe(true);
+    expect(again.message).toMatch(/no se tocaron/);
+    expect(again.receipt.draft.header.supplier).toBe("Proveedor corregido a mano");
+    expect(again.receipt.draft.lines[0]!.quantity).toBe("260");
+    expect(again.receipt.version).toBeGreaterThan(edited.version);
+    // Sin elegir el material de la línea 2 (ni lote/vencimiento) la confirmación sigue bloqueada.
+    await rejects(confirm("MP", mp, again.receipt), 422, "INVALID");
+    expect(await balance(MP_CODE)).toBe(stockBefore);
+  });
+
+  it("lectura automática: un fallo se informa con el motivo y deja el borrador intacto (Reintentar funciona)", async () => {
+    const { ReceiptService } = await lib();
+    let calls = 0;
+    const flaky = new ReceiptService({
+      extractionConfig: () => ({ available: true, provider: "gemini", model: "m", code: "ok", reason: "" }),
+      extract: async () => {
+        calls++;
+        if (calls === 1) return { ok: false as const, kind: "unreadable" as const, message: "No pudimos interpretar automáticamente este remito. Podés reintentar o completar los datos manualmente." };
+        return { ok: true as const, provider: "gemini:test", data: { supplier: `Proveedor IT ${RUN} SA`, remitoNumber: `R-${RUN}-31`, remitoDate: "", notes: "", headerReview: ["remitoDate"], lines: [{ supplierCode: "", description: "Alcohol cetilico", quantity: "10", unit: "kg", packages: "", lote: "", vencimiento: "", notes: "", review: ["lote", "vencimiento"] }] } };
+      },
+    });
+    const r = await draft("MP", mp, "", [], { files: 1, header: { supplier: "", remitoNumber: "", remitoDate: "" } });
+    const first = await flaky.extract(mp as never, r.id, "MP");
+    expect(first).toMatchObject({ applied: false, kind: "unreadable" });
+    expect(first.message).toMatch(/reintentar o completar los datos manualmente/);
+    expect(first.receipt.draft.extraction).toMatchObject({ ok: false });
+    expect(first.receipt.draft.lines).toHaveLength(0);
+    const retry = await flaky.extract(mp as never, r.id, "MP");
+    expect(retry.applied).toBe(true);
+    expect(retry.receipt.draft.lines[0]).toMatchObject({ materialCode: MP_CODE2, matchSource: "nombre" });
+    expect(retry.receipt.draft.extraction).toMatchObject({ ok: true, note: "Revisar: remitoDate" });
   });
 
   it("consulta posterior: la recepción confirmada se lee con quién, cuándo, líneas, archivos y movimiento; el historial la lista", async () => {

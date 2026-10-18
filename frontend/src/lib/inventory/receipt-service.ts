@@ -42,6 +42,7 @@ import {
   emptyLine,
   isIsoDate,
   mappingKey,
+  autoMatchMaterial,
   normalizeMaterialCode,
   preselectFromHistory,
   remitoKey,
@@ -488,28 +489,42 @@ export class ReceiptService {
   // ── Lectura automática (sugerencia) ──
 
   /**
-   * Lee el remito con el servicio configurado y COMPLETA el borrador (sin pisar lo que ya escribió la persona, salvo `replace`).
-   * Es una sugerencia: nada confirma ni mueve stock. Sin servicio activo o ante un error devuelve el motivo y el borrador intacto.
+   * Lee el remito con el servicio configurado y COMPLETA el borrador: encabezado (solo campos vacíos), una línea por renglón del remito
+   * y, cuando es inequívoco, el material del catálogo. NO pisa lo que ya escribió la persona (salvo `replace`). Es una sugerencia: nada
+   * confirma ni mueve stock. Si el servicio está apagado, falla o no entiende el remito, devuelve el motivo y el borrador intacto.
    */
-  async extract(actor: InventoryActor, id: string, module: ReceiptModule, opts: { replace?: boolean } = {}): Promise<{ receipt: Receipt; applied: boolean; message: string }> {
+  async extract(actor: InventoryActor, id: string, module: ReceiptModule, opts: { replace?: boolean } = {}): Promise<{ receipt: Receipt; applied: boolean; message: string; kind: string; analysis: Analysis | null }> {
     assertWrite(actor, module);
     const db = getDb();
     const row = await requireRow(db, id, module);
     if (row.status !== "BORRADOR") throw new ReceiptError("Esta recepción ya no es un borrador.", 409, "NOT_DRAFT");
     const cfg = this.config();
-    if (!cfg.available) return { receipt: await toReceipt(db, row), applied: false, message: cfg.reason };
+    const fail = async (message: string, kind: string, persist: boolean) => {
+      let current = row;
+      if (persist) {
+        const next = { ...readDraft(row), extraction: { provider: cfg.provider ?? "", at: new Date().toISOString(), ok: false, note: message } };
+        await db.update(inventoryReceipts).set({ payload: next, updatedAt: new Date() }).where(eq(inventoryReceipts.id, id));
+        current = { ...row, payload: next };
+      }
+      return { receipt: await toReceipt(db, current), applied: false, message, kind, analysis: null as Analysis | null };
+    };
+    if (!cfg.available) return fail(cfg.reason, cfg.code, false);
     const files = await db.select().from(inventoryIngresoAdjuntos).where(and(eq(inventoryIngresoAdjuntos.receiptId, id), isNull(inventoryIngresoAdjuntos.deletedAt))).orderBy(asc(inventoryIngresoAdjuntos.uploadedAt));
-    if (!files.length) return { receipt: await toReceipt(db, row), applied: false, message: "Primero sacá o subí la foto del remito." };
+    if (!files.length) return fail("Primero sacá o subí la foto del remito.", "no_files", false);
     const storage = getFileStorage();
-    const loaded = await Promise.all(files.map(async (f) => ({ bytes: (await storage.get(f.storageKey)).bytes, contentType: f.contentType })));
-    const out = await (this.deps.extract ?? extractRemito)(loaded);
-    const draft = readDraft(row);
-    if (!out.ok) {
-      const next = { ...draft, extraction: { provider: cfg.provider ?? "", at: new Date().toISOString(), ok: false, note: out.message } };
-      await db.update(inventoryReceipts).set({ payload: next, updatedAt: new Date() }).where(eq(inventoryReceipts.id, id));
-      return { receipt: await toReceipt(db, { ...row, payload: next }), applied: false, message: out.message };
+    let loaded: Array<{ bytes: Uint8Array; contentType: string }>;
+    try {
+      loaded = await Promise.all(files.map(async (f) => ({ bytes: (await storage.get(f.storageKey)).bytes, contentType: f.contentType })));
+    } catch (err) {
+      console.warn("[ingreso-remito] no se pudo leer el archivo guardado para la lectura automática", err instanceof Error ? err.message : err);
+      return fail("No se pudo abrir la foto guardada para leerla. Reintentá o completá los datos manualmente.", "storage", true);
     }
+    const out = await (this.deps.extract ?? extractRemito)(loaded);
+    if (!out.ok) return fail(out.message, "kind" in out ? out.kind : "unavailable", true);
+
+    const draft = readDraft(row);
     const history = await loadHistory(db, module);
+    const catalog = await loadCatalog(db, module);
     const d = out.data;
     const base = opts.replace ? { header: { ...emptyHeader(), receivedDate: draft.header.receivedDate }, lines: [] as ReceiptLineDraft[] } : draft;
     const header = { ...base.header };
@@ -518,15 +533,22 @@ export class ReceiptService {
     header.remitoNumber = pick(header.remitoNumber, d.remitoNumber);
     header.remitoDate = pick(header.remitoDate, d.remitoDate);
     header.notes = pick(header.notes, d.notes);
-    const keepLines = base.lines.some((l) => l.description || l.quantity || l.materialCode);
+    const keepLines = base.lines.some((l) => l.description || l.quantity || l.materialCode || l.supplierCode);
     const lines = keepLines
       ? base.lines
-      : d.lines.map((l, i): ReceiptLineDraft => ({
-          ...emptyLine(`x${i}-${randomUUID().slice(0, 6)}`), supplierCode: l.supplierCode, description: l.description, quantity: l.quantity, unit: l.unit, packages: l.packages, lote: l.lote,
-          vencimiento: l.vencimiento, notes: l.notes, review: l.review, remitoQuantity: l.quantity,
-          materialCode: normalizeMaterialCode(preselectFromHistory({ supplier: header.supplier, supplierCode: l.supplierCode }, history)), matchSource: "previo",
-        })).map((l) => (l.materialCode ? l : { ...l, matchSource: "" as const }));
-    const next: ReceiptDraftPayload = { header, lines, extraction: { provider: out.provider, at: new Date().toISOString(), ok: true, note: d.headerReview.length ? `Revisar: ${d.headerReview.join(", ")}` : undefined } };
+      : d.lines.map((l, i): ReceiptLineDraft => {
+          const match = autoMatchMaterial({ supplier: header.supplier, supplierCode: l.supplierCode, description: l.description, unit: l.unit }, catalog, history, module);
+          return {
+            ...emptyLine(`x${i}-${randomUUID().slice(0, 6)}`), supplierCode: l.supplierCode, description: l.description, quantity: l.quantity, unit: l.unit, packages: l.packages, lote: l.lote,
+            vencimiento: l.vencimiento, notes: l.notes, remitoQuantity: l.quantity,
+            // «Revisar» siempre incluye lo que el servicio no pudo leer; un material elegido automáticamente se marca aparte.
+            review: match ? l.review : [...new Set([...l.review, "materialCode"])],
+            materialCode: match?.code ?? "", matchSource: match?.source ?? "", matchReason: match?.reason ?? "",
+          };
+        });
+    const review = [...d.headerReview];
+    const note = review.length ? `Revisar: ${review.join(", ")}` : undefined;
+    const next: ReceiptDraftPayload = { header, lines, extraction: { provider: out.provider, at: new Date().toISOString(), ok: true, note } };
     const h = next.header;
     const [upd] = await db
       .update(inventoryReceipts)
@@ -536,7 +558,13 @@ export class ReceiptService {
       })
       .where(and(eq(inventoryReceipts.id, id), eq(inventoryReceipts.status, "BORRADOR")))
       .returning();
-    return { receipt: await toReceipt(db, upd ?? row), applied: true, message: "Datos leídos del remito. Son una sugerencia: revisalos antes de confirmar." };
+    const finalRow = upd ?? row;
+    const message = keepLines
+      ? "Se completaron los datos faltantes del encabezado. Tus materiales no se tocaron."
+      : lines.length
+        ? "Remito analizado. Revisá los datos antes de confirmar."
+        : "Se leyó el encabezado pero no se detectaron materiales. Agregalos a mano.";
+    return { receipt: await toReceipt(db, finalRow), applied: true, message, kind: "ok", analysis: await this.analyzeRow(db, finalRow, module) };
   }
 
   // ── Revisión (sin escribir) ──
@@ -755,7 +783,8 @@ export function sanitizeDraft(headerIn: unknown, linesIn: unknown, extraction: R
       id: t(l.id, 40) || `l${i}`, supplierCode: t(l.supplierCode, 60), description: t(l.description, 200), materialCode: normalizeMaterialCode(t(l.materialCode, 60)),
       quantity: t(l.quantity, 24), remitoQuantity: t(l.remitoQuantity, 24), unit: t(l.unit, 20), packages: t(l.packages, 12), lote: t(l.lote, 60), vencimiento: date(l.vencimiento),
       noExpiry: l.noExpiry === true, notes: t(l.notes, 300), review: Array.isArray(l.review) ? l.review.map((x) => t(x, 30)).filter(Boolean).slice(0, 12) : [],
-      matchSource: l.matchSource === "previo" || l.matchSource === "codigo" || l.matchSource === "manual" ? l.matchSource : "",
+      matchSource: l.matchSource === "previo" || l.matchSource === "codigo" || l.matchSource === "nombre" || l.matchSource === "manual" ? l.matchSource : "",
+      matchReason: t(l.matchReason, 160),
     };
   });
   return { header, lines, extraction };

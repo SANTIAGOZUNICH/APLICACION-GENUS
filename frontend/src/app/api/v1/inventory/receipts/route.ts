@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { inventoryErrorResponse, resolveInventoryActor } from "@/lib/inventory/http";
-import { InventoryValidationError } from "@/lib/inventory/inventory-service";
+import { InventoryForbiddenError, InventoryValidationError } from "@/lib/inventory/inventory-service";
+import { probeExtraction } from "@/lib/inventory/receipt-extraction";
 import { parseReceiptModule } from "@/lib/inventory/receipt-rules";
 import { getReceiptService, ReceiptError } from "@/lib/inventory/receipt-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+/** La lectura del remito con Gemini puede tardar: sin esto Vercel corta la función antes de que responda. */
+export const maxDuration = 60;
 
 function fail(err: unknown) {
   if (err instanceof ReceiptError) return NextResponse.json({ error: err.message, code: err.code, ...err.details }, { status: err.status });
@@ -31,7 +34,12 @@ export async function GET(request: Request) {
     const id = url.searchParams.get("id") ?? "";
     if (view === "config") {
       const cfg = svc.config();
-      return NextResponse.json({ extraction: { available: cfg.available, reason: cfg.reason } });
+      return NextResponse.json({ extraction: { available: cfg.available, reason: cfg.reason, code: cfg.code } });
+    }
+    if (view === "extraction_health") {
+      // Solo supervisión (Dirección / Producción / superadmin): prueba la clave y el modelo SIN enviar ningún remito.
+      if (!actor.isSuperadmin && actor.sector !== "DIRECCION" && actor.sector !== "PRODUCCION") throw new InventoryForbiddenError("Solo Dirección o Producción pueden probar la lectura automática.");
+      return NextResponse.json({ health: await probeExtraction() });
     }
     if (view === "catalog") return NextResponse.json({ items: await svc.catalog(actor, mod, url.searchParams.get("q") ?? "") });
     if (view === "get") return NextResponse.json({ receipt: await svc.get(actor, id, mod) });

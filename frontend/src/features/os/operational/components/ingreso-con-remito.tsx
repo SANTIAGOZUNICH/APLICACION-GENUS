@@ -120,13 +120,22 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [ack, setAck] = useState(false);
   const [parentId, setParentId] = useState<string>("");
-  const [extraction, setExtraction] = useState<{ available: boolean; reason: string } | null>(null);
+  const [extraction, setExtraction] = useState<{ available: boolean; reason: string; code?: string } | null>(null);
+  /** La última lectura automática falló: se muestra el motivo con «Reintentar lectura». */
+  const [readFailed, setReadFailed] = useState<string | null>(null);
   const [showPhoto, setShowPhoto] = useState(false);
   const confirmKey = useRef(uid());
   const cameraRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
   const urlsRef = useRef<string[]>([]);
   const receiptRef = useRef<Receipt | null>(null);
+  const draftRef = useRef<ReceiptDraftPayload>(draft);
+  /** Configuración de lectura automática: se guarda en ref para que una subida iniciada antes de que cargue igual pueda arrancar la lectura. */
+  const extractionRef = useRef<{ available: boolean; reason: string; code?: string } | null>(null);
+  const configLoad = useRef<Promise<void> | null>(null);
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
 
   const trackUrl = (u: string) => {
     urlsRef.current.push(u);
@@ -148,7 +157,13 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
   // Configuración de lectura automática + retomar un borrador (si se vino desde «Remitos recibidos»).
   useEffect(() => {
     let alive = true;
-    void call<{ extraction: { available: boolean; reason: string } }>(`${API}?module=${module}&view=config`).then((c) => alive && setExtraction(c.extraction)).catch(() => alive && setExtraction({ available: false, reason: "" }));
+    const setCfg = (c: { available: boolean; reason: string; code?: string }) => {
+      extractionRef.current = c;
+      if (alive) setExtraction(c);
+    };
+    configLoad.current = call<{ extraction: { available: boolean; reason: string; code?: string } }>(`${API}?module=${module}&view=config`)
+      .then((c) => setCfg(c.extraction))
+      .catch(() => setCfg({ available: false, reason: "No se pudo comprobar si la lectura automática está disponible. Cargá los datos a mano." }));
     const resume = resumeRef.id;
     resumeRef.id = null;
     if (resume) {
@@ -184,7 +199,9 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     const files = Array.from(list ?? []);
     if (!files.length) return;
     setError(null);
+    setReadFailed(null);
     setBusy("Subiendo…");
+    let uploaded = false;
     try {
       const r = await ensureDraft();
       for (const raw of files) {
@@ -204,10 +221,18 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
           setError(e instanceof Error ? e.message : `No se pudo subir «${raw.name}».`);
         }
       }
+      uploaded = true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo iniciar el ingreso.");
     } finally {
       setBusy(null);
+    }
+    // Lectura automática: arranca sola al terminar de subir (sin segundo botón), salvo que ya haya datos cargados a mano.
+    if (uploaded && !extractionRef.current) await configLoad.current;
+    if (uploaded && extractionRef.current?.available) {
+      const hasManual = draftRef.current.lines.some((l) => l.description || l.quantity || l.materialCode);
+      if (!hasManual) await runExtract(false);
+      else setNotice("Subido. Como ya cargaste datos, la lectura no se hizo sola: usá «Leer remito automáticamente» si querés completar lo que falta.");
     }
   }
 
@@ -238,20 +263,34 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
   async function runExtract(replace: boolean) {
     setError(null);
     setNotice(null);
-    setBusy("Leyendo el remito…");
+    setReadFailed(null);
+    setBusy("Analizando remito…");
     try {
       const r = await ensureDraft();
       // Guarda lo escrito antes: la lectura no pisa lo que ya cargó la persona.
-      if (receiptRef.current && (draft.header.supplier || draft.lines.length)) await saveDraft();
-      const res = await post<{ receipt: Receipt; applied: boolean; message: string }>({ action: "extract", module, id: (receiptRef.current ?? r).id, replace });
+      const cur = draftRef.current;
+      if (receiptRef.current && (cur.header.supplier || cur.lines.length)) await saveDraft(cur);
+      const res = await post<{ receipt: Receipt; applied: boolean; message: string; kind: string; analysis: Analysis | null }>({ action: "extract", module, id: (receiptRef.current ?? r).id, replace });
       applyReceipt(res.receipt);
-      setNotice(res.message);
-      if (res.applied) setStep("revision");
+      if (res.analysis) setAnalysis(res.analysis);
+      if (res.applied) {
+        setNotice(res.message);
+        setStep("revision");
+      } else {
+        setReadFailed(res.message);
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo leer el remito. Cargá los datos a mano.");
+      setReadFailed(e instanceof Error ? e.message : "No pudimos interpretar automáticamente este remito. Podés reintentar o completar los datos manualmente.");
     } finally {
       setBusy(null);
     }
+  }
+
+  function retryRead() {
+    const cur = draftRef.current;
+    const hasContent = cur.lines.some((l) => l.description || l.quantity || l.materialCode);
+    if (hasContent && !window.confirm("Volver a leer reemplaza los datos cargados por los del remito. ¿Continuar?")) return;
+    void runExtract(hasContent);
   }
 
   async function goReview() {
@@ -263,6 +302,8 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
         setDraft(next);
         await saveDraft(next);
       } else await saveDraft();
+      const rc = receiptRef.current;
+      if (rc) await call<{ analysis: Analysis }>(`${API}?module=${module}&view=analyze&id=${rc.id}`).then((a) => setAnalysis(a.analysis)).catch(() => undefined);
       setStep("revision");
     } finally {
       setBusy(null);
@@ -363,16 +404,28 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
             </div>
             <p className="text-xs text-[var(--os-text-muted)]">Si el remito tiene varias hojas, agregá una foto por hoja (o un PDF). JPG, PNG, HEIC o PDF, hasta 4 MB cada uno.</p>
             <ThumbGrid thumbs={thumbs} onRemove={(th) => void removeThumb(th)} />
+            {readFailed ? (
+              <div className="space-y-2 rounded-lg border border-rose-500/40 bg-rose-500/10 p-3 text-sm" role="alert" data-testid="remito-lectura-fallo">
+                <p>{readFailed}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="secondary" onClick={retryRead} disabled={Boolean(busy)} data-testid="remito-reintentar">Reintentar lectura</Button>
+                </div>
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-center gap-2 border-t border-[var(--os-border)] pt-3">
               {extraction?.available ? (
                 <Button type="button" variant="secondary" disabled={!thumbs.length || Boolean(busy)} onClick={() => void runExtract(false)} data-testid="remito-leer">
-                  <ScanLine className="mr-1 size-4" /> Leer remito automáticamente
+                  <ScanLine className="mr-1 size-4" /> {readFailed ? "Reintentar lectura" : "Leer remito automáticamente"}
                 </Button>
               ) : null}
               <Button type="button" disabled={Boolean(busy)} onClick={() => void goReview()} data-testid="remito-cargar-manual">
-                {thumbs.length ? "Cargar datos del remito" : "Cargar manualmente (sin foto por ahora)"}
+                {thumbs.length ? "Cargar los datos a mano" : "Cargar manualmente (sin foto por ahora)"}
               </Button>
-              {extraction?.available ? <p className="w-full text-xs text-[var(--os-text-muted)]">«Leer remito» envía la imagen al servicio de lectura configurado por Sistemas. Es una sugerencia: siempre la revisás vos.</p> : extraction && extraction.reason ? <p className="w-full text-xs text-[var(--os-text-muted)]">{extraction.reason}</p> : null}
+              {extraction?.available ? (
+                <p className="w-full text-xs text-[var(--os-text-muted)]">Al subir la foto, GENUS OS analiza el remito solo y completa el formulario. La imagen se envía al servicio de lectura configurado por Sistemas. Es una sugerencia: siempre la revisás vos antes de confirmar.</p>
+              ) : extraction && extraction.reason ? (
+                <p className="w-full rounded-lg bg-amber-500/10 px-3 py-2 text-xs" data-testid="remito-lectura-apagada">{extraction.reason}</p>
+              ) : null}
             </div>
           </section>
         ) : null}
@@ -383,6 +436,17 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
               <PhotoViewer thumbs={thumbs} idx={viewIdx} onIdx={setViewIdx} current={current} />
             </div>
             <div className="space-y-4">
+              {draft.extraction?.ok ? (
+                <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm" data-testid="remito-lectura-ok">
+                  Datos leídos automáticamente del remito. Revisá todo, en especial lo marcado «Revisar», antes de confirmar.
+                </p>
+              ) : null}
+              {(readFailed || (draft.extraction && !draft.extraction.ok)) && thumbs.length ? (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm" role="alert" data-testid="remito-lectura-fallo">
+                  <span className="flex-1">{readFailed ?? draft.extraction?.note}</span>
+                  {extraction?.available ? <Button type="button" variant="secondary" onClick={retryRead} disabled={Boolean(busy)} data-testid="remito-reintentar">Reintentar lectura</Button> : null}
+                </div>
+              ) : null}
               <button type="button" className="text-sm underline lg:hidden" onClick={() => setShowPhoto((v) => !v)}>
                 {showPhoto ? "Ocultar foto" : "Ver foto del remito"}
               </button>
@@ -408,7 +472,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
               <div className="flex flex-wrap justify-between gap-2 border-t border-[var(--os-border)] pt-3">
                 <Button type="button" variant="secondary" onClick={() => setStep("foto")}>Volver a la foto</Button>
                 <div className="flex gap-2">
-                  {extraction?.available && thumbs.length ? <Button type="button" variant="secondary" onClick={() => void runExtract(true)} disabled={Boolean(busy)}>Volver a leer</Button> : null}
+                  {extraction?.available && thumbs.length ? <Button type="button" variant="secondary" onClick={retryRead} disabled={Boolean(busy)} data-testid="remito-releer">Reintentar lectura</Button> : null}
                   <Button type="button" onClick={() => void goSummary()} disabled={Boolean(busy)} data-testid="remito-revisar">Revisar y confirmar</Button>
                 </div>
               </div>
@@ -556,7 +620,10 @@ function LineCard({
         <label className="text-sm">Código del proveedor (impreso en el remito)<input className={field} value={line.supplierCode} onChange={(e) => set({ supplierCode: e.target.value })} data-testid="linea-codigo-proveedor" /></label>
         <label className="text-sm">Descripción del remito<input className={`${field} ${flag("description")}`} value={line.description} onChange={(e) => set({ description: e.target.value, ...dismiss("description") })} data-testid="linea-descripcion" />{hint("description")}</label>
       </div>
-      <MaterialPicker module={module} supplier={supplier} line={line} suggestions={suggestions} bad={issueMap.has(`${index}:materialCode`)} issue={issueMap.get(`${index}:materialCode`)} onPick={(code) => set({ materialCode: code, matchSource: "manual" })} />
+      {line.matchSource === "previo" || line.matchSource === "codigo" || line.matchSource === "nombre" ? (
+        <p className="text-xs text-sky-700 dark:text-sky-300" data-testid="linea-preseleccion">Material preseleccionado automáticamente: {line.matchReason || "coincidencia"}. Verificá que sea el correcto.</p>
+      ) : null}
+      <MaterialPicker module={module} supplier={supplier} line={line} suggestions={suggestions} bad={issueMap.has(`${index}:materialCode`) || line.review.includes("materialCode")} issue={issueMap.get(`${index}:materialCode`)} onPick={(code) => set({ materialCode: code, matchSource: "manual", matchReason: "", review: line.review.filter((x) => x !== "materialCode") })} />
       <div className="grid gap-3 sm:grid-cols-4">
         <label className="text-sm">Cantidad recibida<input inputMode="decimal" className={`${field} ${flag("quantity")}`} value={line.quantity} onChange={(e) => set({ quantity: e.target.value, ...dismiss("quantity") })} data-testid="linea-cantidad" />{hint("quantity")}</label>
         <label className="text-sm">Unidad<input className={`${field} ${flag("unit")}`} placeholder={module === "MP" ? "kg" : "un"} value={line.unit} onChange={(e) => set({ unit: e.target.value, ...dismiss("unit") })} data-testid="linea-unidad" />{hint("unit")}</label>

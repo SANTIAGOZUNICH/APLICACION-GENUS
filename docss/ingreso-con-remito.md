@@ -17,8 +17,20 @@
 - **Trazabilidad**: `inventory_receipts` + `inventory_receipt_lines` (línea ↔ ingreso, proveedor, remito, lote, usuario, fecha) + archivos en `inventory_ingreso_adjuntos.receipt_id`. El comprobante de un ingreso confirmado no se puede quitar; agregar fotos al ingreso no genera movimientos. Correcciones de cantidad: ajuste con motivo (mecanismo existente).
 - **Permisos (servidor)**: MP = Materia Prima y Dirección; ME = Depósito y Dirección. Producción y otros sectores con lectura solo consultan lo confirmado.
 
-## Lectura automática (OCR / visión)
-Desactivada por defecto. Reutiliza Gemini (`GEMINI_API_KEY`, ya presente para Creamy) pero solo se activa con **`INGRESO_REMITO_EXTRACTION=gemini`** (opcional `INGRESO_REMITO_GEMINI_MODEL`): enviar el remito a un servicio externo requiere esa autorización explícita. La respuesta se sanea (`sanitizeExtraction`): nunca se inventa, lo ausente queda vacío y «Revisar», y solo completa el formulario (no pisa lo ya escrito). Si falla o está apagada, la carga manual con foto funciona igual.
+## Lectura automática del remito (Gemini)
+**Cómo funciona.** Al subir o fotografiar el remito, GENUS OS lo analiza **solo** (sin segundo botón): muestra «Analizando remito…», y al terminar completa el formulario visible (encabezado, **una línea por renglón**, lote, vencimiento, bultos, observaciones) y avisa «Remito analizado. Revisá los datos antes de confirmar.». Lo ilegible queda vacío y marcado «Revisar». No pisa lo que la persona ya escribió. Si falla, muestra el motivo con **«Reintentar lectura»** (y la carga manual sigue disponible). Gemini solo sugiere: nunca confirma ni mueve stock; la confirmación del operario y todos los controles (duplicados, lotes, permisos, auditoría, libro mayor) siguen igual.
+
+**Identificación del material** (solo si es inequívoca; si no, se muestran opciones y la línea queda en «Revisar»): 1) uso previo confirmado (mismo proveedor + mismo código del proveedor); 2) el código impreso coincide exacto con un único código interno y la descripción no lo contradice; 3) por nombre, con un candidato claramente mejor y unidad compatible. Nunca se crea un material.
+
+**Activación (Vercel → Settings → Environment Variables, entorno Production):**
+1. `GEMINI_API_KEY` — la misma clave que ya usa Creamy (si Creamy funciona en producción, ya existe).
+2. `INGRESO_REMITO_EXTRACTION=gemini` — autoriza enviar los remitos a Gemini. Sin esta variable la lectura está APAGADA aunque exista la clave (la pantalla lo dice).
+3. (Opcional) `INGRESO_REMITO_GEMINI_MODEL` (por defecto `gemini-2.5-flash`).
+4. Redeploy. Luego, logueado como Dirección o Producción, abrir `/api/v1/inventory/receipts?module=MP&view=extraction_health`: `{"health":{"ok":true,…}}` confirma clave + modelo + red **sin enviar ningún remito**.
+
+La clave nunca se muestra, se registra ni viaja en la URL (cabecera `x-goog-api-key`); los fallos quedan en los logs del servidor (sin claves ni contenido del remito).
+
+**Probar con Gemini real** (documento de prueba ficticio incluido): `GEMINI_API_KEY=… npx vitest run src/integration/ingreso-remito-gemini-real.integration.test.ts`.
 
 ## Pruebas
-`src/lib/inventory/receipt-rules.test.ts`, `src/integration/ingreso-remito.db.integration.test.ts` (`npm run test:e2e:ingreso-remito-db`), E2E de navegador `scripts/e2e/ingreso-remito-validate.mjs` (`npm run test:e2e:ingreso-remito`), `migration-reconcile.test.ts`.
+`src/lib/inventory/receipt-rules.test.ts`, `receipt-extraction.test.ts`, E2E con Gemini simulado `scripts/e2e/ingreso-remito-lectura-validate.mjs` (`npm run test:e2e:ingreso-remito-lectura`), `src/integration/ingreso-remito.db.integration.test.ts` (`npm run test:e2e:ingreso-remito-db`), E2E de navegador `scripts/e2e/ingreso-remito-validate.mjs` (`npm run test:e2e:ingreso-remito`), `migration-reconcile.test.ts`.
