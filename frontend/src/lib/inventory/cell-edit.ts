@@ -55,7 +55,20 @@ const DATES = new Set<string>(["vencimiento"]);
 export const INVENTORY_SENSITIVE_FIELDS: ReadonlySet<string> = new Set();
 /** Exigen motivo (corrección de stock). */
 export const INVENTORY_REASON_FIELDS: ReadonlySet<string> = new Set(["cantidadKg", "codigo", "stockLibroMayor"]);
-export const MAX_INVENTORY_CELL_CHANGES = 200;
+/**
+ * Columnas de Stock MP donde el RELLENO arrastrando no escribe (sí la edición directa de la celda, con su motivo
+ * cuando mueve saldo): mueven stock o son calculadas.
+ */
+export const INVENTORY_NO_FILL: Readonly<Record<string, string>> = {
+  codigo: "Identifica el saldo en el libro mayor: se corrige celda por celda, con motivo.",
+  cantidadKg: "Mueve el stock: se corrige celda por celda, con motivo.",
+  stockLibroMayor: "Lo lleva el libro mayor: se fija celda por celda, con motivo.",
+  diasAlVence: "Columna calculada a partir del vencimiento.",
+  estadoStock: "Columna calculada a partir de los kg.",
+  estadoVencimiento: "Columna calculada a partir del vencimiento.",
+};
+/** Hasta 1000 celdas por solicitud: pegar o rellenar rangos grandes en una sola operación atómica. */
+export const MAX_INVENTORY_CELL_CHANGES = 1000;
 
 export function inventoryFieldKind(field: string): "text" | "number" | "date" {
   return NUMERIC.has(field) ? "number" : DATES.has(field) ? "date" : "text";

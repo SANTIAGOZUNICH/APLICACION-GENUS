@@ -16,8 +16,10 @@ import { TwinShell } from "@/features/os/shell/twin-shell";
 import {
   fetchInventory,
   mutateInventory,
+  patchInventoryCells,
   InventoryClientError,
 } from "@/features/os/operational/adapters/inventory-client";
+import type { GenusGridRowDelete } from "@/components/data-grid/genus-grid";
 import { ExcelPasteDialog } from "@/features/os/operational/components/excel-paste-dialog";
 import { MpWeeklyControlPanel } from "@/features/os/operational/components/mp-weekly-control-panel";
 import { MpCoasPanel } from "@/features/os/operational/components/mp-coas-panel";
@@ -522,6 +524,126 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     MP_COMPRA_CELL_FIELDS,
     compras,
     reload
+  );
+  // ---- Eliminar filas desde la planilla (sin motivo ni confirmación; con Deshacer donde se puede) ----
+  const errText = (e: unknown) => (e instanceof Error ? e.message : "Error");
+  const stockRowDelete = useMemo<GenusGridRowDelete | undefined>(
+    () =>
+      canWrite && tab === "Stock"
+        ? {
+            check: (id) =>
+              ingresos.some((i) => i.stockLotId === id && i.status !== "ANULADO")
+                ? "Vinculado a un ingreso activo: anulá el ingreso o usá Ajuste (el historial no se borra)."
+                : null,
+            onDelete: async (ids) => {
+              const done: string[] = [];
+              let failed = 0;
+              let firstError = "";
+              for (const id of ids) {
+                try {
+                  await mutateInventory({ action: "delete", resource: "mp_stock", id });
+                  done.push(id);
+                } catch (e) {
+                  failed += 1;
+                  firstError ||= errText(e);
+                }
+              }
+              await reload();
+              return {
+                ok: done.length > 0,
+                message: `${done.length} fila${done.length === 1 ? "" : "s"} eliminada${done.length === 1 ? "" : "s"} de Stock (se archivan: el saldo del libro mayor y los movimientos no cambian)${failed ? ` · ${failed} con error: ${firstError}` : ""}.`,
+                undo: done.length
+                  ? async () => {
+                      for (const id of done) await mutateInventory({ action: "restore", resource: "mp_stock", id });
+                      await reload();
+                      showToast("Eliminación deshecha: las filas volvieron a Stock.");
+                    }
+                  : undefined,
+              };
+            },
+          }
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canWrite, tab, ingresos]
+  );
+  const ingresoRowDelete = useMemo<GenusGridRowDelete | undefined>(
+    () =>
+      canWrite && tab === "Ingresos MP"
+        ? {
+            check: (id) => {
+              const r = ingresos.find((x) => x.id === id);
+              if (!r) return "El ingreso ya no existe.";
+              if (r.status === "ANULADO") return "Ya está anulado.";
+              if (r.status === "CONFIRMADO") return "Está confirmado y mueve el stock: se anula con «Anular» y motivo (revierte el stock con auditoría).";
+              return null;
+            },
+            onDelete: async (ids) => {
+              let done = 0;
+              let failed = 0;
+              let firstError = "";
+              for (const id of ids) {
+                try {
+                  await mutateInventory({ action: "anular", resource: "mp_ingresos", id });
+                  done += 1;
+                } catch (e) {
+                  failed += 1;
+                  firstError ||= errText(e);
+                }
+              }
+              await reload();
+              return {
+                ok: done > 0,
+                message: `${done} borrador${done === 1 ? "" : "es"} descartado${done === 1 ? "" : "s"} (quedan anulados en el historial; no afectaron stock)${failed ? ` · ${failed} con error: ${firstError}` : ""}.`,
+              };
+            },
+          }
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canWrite, tab, ingresos]
+  );
+  const compraRowDelete = useMemo<GenusGridRowDelete | undefined>(
+    () =>
+      canWrite && tab === "Compras MP"
+        ? {
+            check: (id) => {
+              const r = compras.find((x) => x.id === id);
+              if (!r) return "La compra ya no existe.";
+              return String(r.estado ?? "").toLowerCase() === "cancelada" ? "Ya está cancelada." : null;
+            },
+            onDelete: async (ids) => {
+              const undoList: Array<{ id: string; estado: string; version: string }> = [];
+              let failed = 0;
+              let firstError = "";
+              for (const id of ids) {
+                const before = compras.find((x) => x.id === id);
+                try {
+                  const res = await mutateInventory<MpCompraRow>({ action: "delete", resource: "mp_compras", id });
+                  undoList.push({ id, estado: before?.estado ?? "", version: res.data.updatedAt });
+                } catch (e) {
+                  failed += 1;
+                  firstError ||= errText(e);
+                }
+              }
+              await reload();
+              return {
+                ok: undoList.length > 0,
+                message: `${undoList.length} compra${undoList.length === 1 ? "" : "s"} cancelada${undoList.length === 1 ? "" : "s"} (queda en el historial)${failed ? ` · ${failed} con error: ${firstError}` : ""}.`,
+                undo: undoList.length
+                  ? async () => {
+                      await patchInventoryCells(
+                        "mp_compras",
+                        undoList.map((u) => ({ id: u.id, field: "estado", value: u.estado, expectedVersion: u.version }))
+                      );
+                      await reload();
+                      showToast("Cancelación deshecha.");
+                    }
+                  : undefined,
+              };
+            },
+          }
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canWrite, tab, compras]
   );
   const borradoresConfirmables = ingresos.filter(
     (r) =>
@@ -1127,6 +1249,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         <OperationalTable
           tableId="mp-stock"
           continuous
+          rowDelete={stockRowDelete}
           canEditCells={stockCells.canEditCells}
           onCellsCommit={stockCells.onCellsCommit}
           reasonRequired={stockCells.reasonRequired}
@@ -1231,9 +1354,11 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           <OperationalTable
             tableId="mp-ingresos"
             continuous
+            rowDelete={ingresoRowDelete}
             canEditCells={ingresoCells.canEditCells}
             onCellsCommit={ingresoCells.onCellsCommit}
             reasonRequired={ingresoCells.reasonRequired}
+            reasonInline
             rowVersion={ingresoCells.rowVersion}
             columns={ingresoColumns.map((col) => {
               const field = traceField(MP_INGRESO_CELL_FIELDS[String(col.key)]);
@@ -1266,6 +1391,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         <OperationalTable
           tableId="mp-compras"
           continuous
+          rowDelete={compraRowDelete}
           canEditCells={compraCells.canEditCells}
           onCellsCommit={compraCells.onCellsCommit}
           rowVersion={compraCells.rowVersion}
