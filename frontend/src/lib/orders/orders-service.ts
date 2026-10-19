@@ -20,6 +20,7 @@ import {
   ORDERS_DENIED_MESSAGE,
 } from "@/lib/orders/rbac";
 import { applyElaboracionMaterialPatch, assertAjusteValid, didFormulaChange } from "@/lib/orders/oe-ajuste";
+import { consumptionMaterials, mergeSheets } from "@/lib/orders/oe-sheets";
 import { seedTemplateRecords } from "@/lib/orders/seed-templates";
 import {
   canDeleteEmptyDraft,
@@ -862,6 +863,13 @@ export class OrdersService {
         const { autoPrep: _ignored, ...rest } = nextForm;
         void _ignored;
         nextForm = current.formData.autoPrep ? { ...rest, autoPrep: current.formData.autoPrep } : rest;
+        // Hojas de elaboración (tambores/ollas): la estructura sale SIEMPRE de la fórmula de la OE y solo se aceptan
+        // datos operativos. Materia Prima (solo fórmula) no toca las hojas: conserva las actuales.
+        if (current.formData.kind === "OE") {
+          const incomingSheets = isMpFormulaOnly ? current.formData.sheets : (input.formData as OeContent).sheets;
+          const merged = mergeSheets({ ...current.formData, materials: nextForm.materials }, incomingSheets, actor.email);
+          nextForm = { ...nextForm, sheets: merged };
+        }
         assertAjusteValid(nextForm);
       }
     }
@@ -1070,7 +1078,7 @@ export class OrdersService {
         const r = await consumeOeStock(ctx, actor, {
           oeId: id,
           orderNumber: current.orderNumber,
-          materials: oeContent.materials,
+          materials: consumptionMaterials(oeContent),
           authorizeNegative: opts?.allowNegativeMpStock ? { reason: opts.negativeMpStockReason ?? "" } : null,
           onlyToAuthorizeShortage: mpShortageAuthorizer,
           commitOrder: commitDelivery,

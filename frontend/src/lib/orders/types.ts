@@ -65,6 +65,35 @@ export type OeMaterialRow = {
   parentRowId: string | null;
 };
 
+export type OeSheetKind = "tambor" | "olla" | "otro";
+export type OeSheetStatus = "pendiente" | "en_elaboracion" | "elaborado" | "observado" | "aprobado";
+
+/**
+ * Hoja de elaboración dentro de UNA misma OE (un tambor, una olla u otra preparación). Misma fórmula que la OE
+ * principal; sus propios kg, MP reales, lotes, responsable, incidencias e historial. Vive en form_data (sin
+ * migración): las OE existentes no la tienen y siguen funcionando con la «hoja principal» de siempre.
+ */
+export type OeSheet = {
+  /** Identificador interno único y permanente (nunca se reutiliza). */
+  id: string;
+  kind: OeSheetKind;
+  /** Número/identificación libre («1», «A»). */
+  number: string;
+  name: string;
+  kgPlanificados: number | null;
+  kgElaborados: number | null;
+  status: OeSheetStatus;
+  operario: string;
+  inicioAt: string;
+  finAt: string;
+  incidencias: string;
+  observaciones: string;
+  materials: OeMaterialRow[];
+  createdAt: string;
+  createdBy: string;
+  history: Array<{ at: string; by: string; text: string }>;
+};
+
 export type OeProcedureStep = {
   id: string;
   text: string;
@@ -86,6 +115,8 @@ export type OeContent = {
     equipoCalefactor: string;
   };
   materials: OeMaterialRow[];
+  /** Hojas de elaboración (tambores/ollas) de esta OE. Opcional: OE viejas no la tienen. */
+  sheets?: OeSheet[];
   totals: {
     formulaPctSum: number | null;
     kgSum: number | null;

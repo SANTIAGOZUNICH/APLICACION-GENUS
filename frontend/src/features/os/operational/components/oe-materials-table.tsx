@@ -8,7 +8,7 @@
  * Lo único que se descuenta del stock al entregar son los KG REAL UTILIZADO, del CÓDIGO MP y LOTE MP de cada fila.
  * «+ lote» agrega una fila de lote adicional para la misma MP (cuando se usó de más de un lote).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DecimalInput } from "@/components/ui/decimal-input";
 import { emptyOeMaterial, hydrateOrderContent } from "@/lib/orders/content";
 import {
@@ -21,6 +21,28 @@ import {
 } from "@/lib/orders/oe-mp-consumption";
 import { fetchMpCatalogApi, type OrdersClientSession } from "@/lib/orders/orders-client";
 import type { OeContent, OeMaterialRow } from "@/lib/orders/types";
+
+/** Texto largo que baja de línea y hace crecer la fila (nunca se corta ni usa «…»). */
+function AutoTextarea({ value, onChange, disabled, className, testId }: { value: string; onChange: (v: string) => void; disabled?: boolean; className?: string; testId?: string }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + (el.offsetHeight - el.clientHeight)}px`;
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      disabled={disabled}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={`${className ?? ""} resize-none overflow-hidden whitespace-pre-wrap break-words leading-snug`}
+      data-testid={testId}
+    />
+  );
+}
 
 const fmt = (n: number | null | undefined) => (n == null ? "—" : String(Number(n.toFixed(4))).replace(".", ","));
 
@@ -159,7 +181,7 @@ export function OeMaterialsTable({
         <table className="min-w-full text-xs" data-testid="oe-materials-table">
           <thead>
             <tr className="bg-[var(--os-bg-muted,#f3f3f3)] text-left">
-              <th className="p-2">Materia prima</th>
+              <th className="min-w-[16rem] p-2">Materia prima</th>
               <th className="p-2">Código</th>
               <th className="p-2" title="Código de la materia prima en Stock MP (el que se descuenta)">CÓDIGO MP</th>
               <th className="p-2">%</th>
@@ -190,17 +212,17 @@ export function OeMaterialsTable({
               const dif = !child && m.ajuste != null ? m.ajuste : null;
               const cellCls = (bad: boolean) => `w-full rounded border px-2 py-1.5 text-sm ${bad ? "border-rose-500 bg-rose-500/10" : ""}`;
               return (
-                <tr key={m.id} className={`border-t ${child ? "bg-[var(--os-bg-muted,#f7f7f7)]/50" : ""}`} data-testid={child ? "oe-row-lote-adicional" : "oe-row"}>
+                <tr key={m.id} className={`border-t align-top ${child ? "bg-[var(--os-bg-muted,#f7f7f7)]/50" : ""}`} data-testid={child ? "oe-row-lote-adicional" : "oe-row"}>
                   <td className="p-1">
                     {child ? (
-                      <span className="pl-3 text-[var(--os-text-muted)]">↳ lote adicional · {parent?.materiaPrima || m.materiaPrima}</span>
+                      <span className="whitespace-normal break-words pl-3 text-[var(--os-text-muted)]">↳ lote adicional · {parent?.materiaPrima || m.materiaPrima}</span>
                     ) : (
-                      <input
+                      <AutoTextarea
                         disabled={formulaLocked}
                         value={m.materiaPrima}
-                        onChange={(e) => patch(m.id, { materiaPrima: e.target.value })}
+                        onChange={(v) => patch(m.id, { materiaPrima: v })}
                         className={`w-full rounded border px-2 py-1.5 text-sm ${formulaLocked ? "bg-[var(--os-bg-muted,#eef1f4)]" : ""}`}
-                        data-testid="oe-cell-materia"
+                        testId="oe-cell-materia"
                       />
                     )}
                   </td>

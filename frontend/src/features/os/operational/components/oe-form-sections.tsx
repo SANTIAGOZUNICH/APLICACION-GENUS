@@ -6,6 +6,7 @@ import type { OrdersClientSession } from "@/lib/orders/orders-client";
 import type { FormulaAutoloadStatus } from "../lib/oe-formula-autoload";
 import { statusMessage } from "../lib/oe-formula-autoload";
 import { OeMaterialsTable } from "./oe-materials-table";
+import { OeSheetsPanel } from "./oe-sheets-panel";
 import {
   FormulaClientProductPickers,
   type SelectedFormulaOption,
@@ -287,6 +288,15 @@ export function OeFormSections({
         <p className="mt-2 text-xs text-[var(--os-text-muted)]">
           Firma pesada: espacio en blanco para firma física (no digital).
         </p>
+      </details>
+
+      <details id="oe-sec-hojas" open className="rounded border border-[var(--os-border)] p-3">
+        <summary className="cursor-pointer font-medium">Hojas de elaboración (tambores / ollas)</summary>
+        <p className="mt-1 text-[11px] text-[var(--os-text-muted)]">
+          Repartí la OE en varias preparaciones sin crear órdenes nuevas: misma fórmula, kg propios y lotes propios por
+          tambor. El stock se descuenta una sola vez, al entregar la OE, con los kg reales de las hojas.
+        </p>
+        <OeSheetsPanel content={content} onChange={onChange} opsLocked={opsLocked} session={session} actorEmail={mode.actorEmail} />
       </details>
 
       <details id="oe-sec-procedimiento" open={forceOpen?.procedimiento || undefined} className="rounded border border-[var(--os-border)] p-3">

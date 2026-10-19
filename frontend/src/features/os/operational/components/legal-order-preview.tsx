@@ -70,7 +70,7 @@ export function LegalOrderPreview({ order }: { order: OperationalOrderRecord }) 
             <tbody>
               {c.materials.map((m) => (
                 <tr key={m.id}>
-                  <td className="border p-1">{m.materiaPrima}</td>
+                  <td className="border p-1 whitespace-normal break-words">{m.materiaPrima}</td>
                   <td className="border p-1">{m.codigo}</td>
                   <td className="border p-1">{m.formulaPct}</td>
                   <td className="border p-1">{m.kgAPesar}</td>
