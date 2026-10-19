@@ -4,7 +4,7 @@
 -- individuales opcionales en las notificaciones (null = todo el sector, como hasta ahora). No toca avisos existentes.
 CREATE TABLE IF NOT EXISTS "os_internal_message_users" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-  "message_id" uuid NOT NULL REFERENCES "os_internal_messages"("id") ON DELETE CASCADE,
+  "message_id" uuid NOT NULL,
   "user_email" text NOT NULL,
   "user_name" text NOT NULL DEFAULT '',
   "sector" text NOT NULL,

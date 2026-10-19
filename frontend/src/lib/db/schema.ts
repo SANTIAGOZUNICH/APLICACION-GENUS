@@ -591,9 +591,7 @@ export const osInternalMessageUsers = pgTable(
   "os_internal_message_users",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    messageId: uuid("message_id")
-      .notNull()
-      .references(() => osInternalMessages.id, { onDelete: "cascade" }),
+    messageId: uuid("message_id").notNull(),
     userEmail: text("user_email").notNull(),
     userName: text("user_name").notNull().default(""),
     sector: text("sector").notNull(),

@@ -195,12 +195,19 @@ const RECEIPT_COLUMNS = ["inventory_ingreso_adjuntos.receipt_id"];
 const PORTAL_COLUMNS = ["portal_clients.access_enabled", "portal_clients.origin"];
 const PORTAL_TABLES = ["portal_clients", "portal_client_aliases", "portal_authorized_emails", "portal_login_challenges", "portal_sessions", "portal_rate_limits", "portal_email_outbox", "portal_notifications", "portal_receipt_confirmations", "portal_audit_events", "portal_holiday_overrides"];
 
+/** Objetos de 0057–0061 (Control semanal, cajas por entrega, avisos por usuario, programaciones). */
+const NEW_TABLES = ["mp_master_links", "mp_weekly_row_state", "mp_weekly_production_exclusions", "os_internal_message_users"];
+const NEW_COLUMNS = ["work_item_delivery_lines.packing_groups", "os_notifications.target_emails", "work_items.schedule_root_id", "work_items.schedule_total"];
+
 describe("verificación de esquema después del migrate (build)", () => {
   // information_schema simulado: tablas y columnas presentes.
-  const fakeQuery = (tables: string[], columns: string[]) => async (text: string) =>
-    /information_schema\.tables/.test(text)
-      ? tables.map((t) => ({ t }))
-      : columns.map((tc) => ({ t: tc.split(".")[0], c: tc.split(".")[1] }));
+  const fakeQuery = (tables: string[], columns: string[], withNew = true) => async (text: string) => {
+    const allTables = withNew ? [...tables, ...NEW_TABLES] : tables;
+    const allColumns = withNew ? [...columns, ...NEW_COLUMNS] : columns;
+    return /information_schema\.tables/.test(text)
+      ? allTables.map((t) => ({ t }))
+      : allColumns.map((tc) => ({ t: tc.split(".")[0], c: tc.split(".")[1] }));
+  };
 
   it("0043 a 0052 completas → ok", async () => {
     const res = await verifyRequiredSchema({
@@ -214,12 +221,12 @@ describe("verificación de esquema después del migrate (build)", () => {
 
   it("0043 salteada en silencio → informa exactamente qué falta y de qué migración", async () => {
     const res = await verifyRequiredSchema({
-      query: fakeQuery(["asignacion_lotes", "asignacion_lotes_cell_audit"], ["asignacion_lotes.lote"]),
+      query: fakeQuery(["asignacion_lotes", "asignacion_lotes_cell_audit"], ["asignacion_lotes.lote"], false),
     });
     expect(res.ok).toBe(false);
     expect(res.missing.map((m) => m.object)).toEqual(REQUIRED_SCHEMA_OBJECTS.map((r) => r.object));
     expect(new Set(res.missing.map((m) => m.migration))).toEqual(
-      new Set(["0043_asignacion_lotes_local_edits", "0044_inventory_ingreso_adjuntos", "0045_scheduled_deliveries", "0046_dashboard_kpi_targets", "0047_work_item_delivery_lines", "0049_mp_load_order", "0050_entregas_correcciones", "0051_formula_drive_index", "0052_portal_clientes", "0053_portal_demo", "0054_portal_disponibilidad", "0055_portal_codigos_automaticos", "0056_ingreso_con_remito"])
+      new Set(["0043_asignacion_lotes_local_edits", "0044_inventory_ingreso_adjuntos", "0045_scheduled_deliveries", "0046_dashboard_kpi_targets", "0047_work_item_delivery_lines", "0049_mp_load_order", "0050_entregas_correcciones", "0051_formula_drive_index", "0052_portal_clientes", "0053_portal_demo", "0054_portal_disponibilidad", "0055_portal_codigos_automaticos", "0056_ingreso_con_remito", "0057_mp_master_links", "0058_mp_weekly_row_state", "0059_delivery_line_packing", "0060_aviso_user_recipients", "0061_work_item_schedules"])
     );
   });
 
