@@ -56,6 +56,13 @@ export const INVENTORY_SENSITIVE_FIELDS: ReadonlySet<string> = new Set();
 /** Exigen motivo (corrección de stock). */
 export const INVENTORY_REASON_FIELDS: ReadonlySet<string> = new Set(["cantidadKg", "codigo", "stockLibroMayor"]);
 /**
+ * De las anteriores, las que la planilla NO le pide al usuario: se guardan directo con un motivo automático que queda
+ * en el libro mayor y en la auditoría (usuario, fecha, valor anterior y nuevo) y se pueden deshacer. El código
+ * (identificador) sigue pidiendo motivo.
+ */
+export const INVENTORY_AUTO_REASON_FIELDS: ReadonlySet<string> = new Set(["cantidadKg", "stockLibroMayor"]);
+export const INVENTORY_AUTO_REASON = "Edición directa en la planilla de Stock";
+/**
  * Columnas de Stock MP donde el RELLENO arrastrando no escribe (sí la edición directa de la celda, con su motivo
  * cuando mueve saldo): mueven stock o son calculadas.
  */
@@ -84,12 +91,17 @@ export function isInventoryCellField(resource: InventoryCellResource, f: unknown
 /** Motivo por el que la celda NO se edita (null = editable). */
 export function inventoryCellProtection(
   resource: InventoryCellResource,
-  row: { archived?: boolean; origen?: string },
+  row: { archived?: boolean; origen?: string; codigo?: string },
   field: string,
   canWrite: boolean
 ): string | null {
   if (!canWrite) return "Tu sector no puede editar este inventario.";
   if (row.archived) return "Registro archivado: no se edita.";
+  // «Stock código» es el saldo del libro mayor de ESE código: una fila sin código no tiene saldo que fijar (antes el
+  // guardado fallaba con «Error al guardar»). Se asigna primero el código de la fila.
+  if (resource === "mp_stock" && field === "stockLibroMayor" && !String(row.codigo ?? "").trim()) {
+    return "Esta fila no tiene código: asignale un código (columna Código) para llevar su saldo.";
+  }
   return null;
 }
 

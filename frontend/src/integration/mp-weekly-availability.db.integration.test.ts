@@ -204,4 +204,89 @@ describe.skipIf(Boolean(PROBLEM))(`Control semanal de MP en Postgres real${PROBL
     expect(c.lines[1]!.estado).toBe("Sin stock");
     await q("delete from mp_weekly_controls where id = $1", [c.id]);
   });
+  it("observaciones y gestión se guardan por MP y semana, sin mezclar semanas ni tocar stock/fórmula/necesidad", async () => {
+    const { saveRowNote } = await import("@/lib/mp-control/weekly-availability-service");
+    const before = rowOf(await avail(), "Glicerina")!;
+    await saveRowNote({ week: WEEK, rowKey: before.key, label: before.materiaPrima, observacion: "Pedir al proveedor B", gestion: "comprar", by: prod.email });
+    const after = rowOf(await avail(), "Glicerina")!;
+    expect(after.state.observacion).toBe("Pedir al proveedor B");
+    expect(after.state.gestion).toBe("comprar");
+    expect(after.state.observacionBy).toBe(prod.email);
+    expect([after.requerido, after.stockUtilizable, after.estado, after.saldoProyectado]).toEqual([before.requerido, before.stockUtilizable, before.estado, before.saldoProyectado]);
+    const { getWeeklyAvailability } = await import("@/lib/mp-control/weekly-availability-service");
+    const otra = await getWeeklyAvailability("2031-03-10");
+    expect(otra.rows.every((r) => r.state.observacion === "")).toBe(true);
+    await saveRowNote({ week: WEEK, rowKey: before.key, label: before.materiaPrima, observacion: "", gestion: "", by: prod.email });
+    expect(rowOf(await avail(), "Glicerina")!.state.observacion).toBe("");
+  });
+
+  it("quitar una MP del control la oculta de forma persistente, no toca el inventario y, si aparece una necesidad nueva, vuelve marcada", async () => {
+    const { excludeRowsByKeys, restoreRows } = await import("@/lib/mp-control/weekly-availability-service");
+    const [lotsBefore] = await q("select count(*)::int n, coalesce(sum((payload->>'cantidadKg')::numeric),0)::float kg from inv_mp_stock where payload->>'createdBy' = $1", [NOTE]);
+    const g = rowOf(await avail(), "Glicerina")!;
+    expect(await excludeRowsByKeys(WEEK, [g.key], prod.email)).toBe(1);
+    const res = await avail();
+    expect(rowOf(res, "Glicerina")).toBeUndefined();
+    expect(res.excludedRows.some((r) => r.key === g.key && r.state.excludedBy === prod.email)).toBe(true);
+    // "Recargar": nueva lectura desde la base, sigue oculta.
+    expect(rowOf(await avail(), "Glicerina")).toBeUndefined();
+    const [lotsAfter] = await q("select count(*)::int n, coalesce(sum((payload->>'cantidadKg')::numeric),0)::float kg from inv_mp_stock where payload->>'createdBy' = $1", [NOTE]);
+    expect(lotsAfter).toEqual(lotsBefore);
+    const [m] = await q("select count(*)::int n from mp_stock_movements");
+    expect(Number(m!.n)).toBe(movsBefore);
+    // Una producción nueva con glicerina después de la exclusión: la necesidad NO se oculta en silencio.
+    const nueva = await assign(`CREMA B WK ${RUN}`, "50");
+    const res2 = await avail();
+    const vuelve = rowOf(res2, "Glicerina");
+    expect(vuelve?.state.exclusionToReview).toBe(true);
+    await q("update work_items set deleted_at = now() where id = $1", [nueva.workId]);
+    await restoreRows({ week: WEEK, rowKeys: [g.key] });
+    const res3 = await avail();
+    expect(rowOf(res3, "Glicerina")?.state.excluded).toBe(false);
+  });
+
+  it("eliminar/anular un control saca SOLO las necesidades de ese control, las otras producciones siguen y al restaurar vuelven", async () => {
+    const { excludeProductionsForControl, restoreProductionsForControl } = await import("@/lib/mp-control/weekly-availability-service");
+    const a = await assign(`CREMA A WK ${RUN}`, "100");
+    const b = await assign(`CREMA B WK ${RUN}`, "100");
+    const base = rowOf(await avail(), "Glicerina")!;
+    const baseReq = base.requerido;
+    const ctlId = randomUUID();
+    const dropped = await excludeProductionsForControl({ id: ctlId, client: CLIENT, product: `CREMA A WK ${RUN}`, linkedOeId: a.orderId, quantityKg: 100, createdAt: `${WEEK}T10:00:00.000Z` }, prod.email);
+    expect(dropped).toContain(a.workId);
+    expect(dropped).not.toContain(b.workId);
+    const res = await avail();
+    expect(res.productions.some((p) => p.id === a.workId)).toBe(false);
+    expect(res.productions.some((p) => p.id === b.workId)).toBe(true);
+    const g = rowOf(res, "Glicerina")!;
+    expect(g.requerido).toBeCloseTo(baseReq - 12, 6); // 12 % de 100 kg de la producción A
+    expect(g.needs.every((n) => n.productionId !== a.workId)).toBe(true);
+    // "Recargar": sigue sin aparecer.
+    expect(rowOf(await avail(), "Glicerina")!.requerido).toBeCloseTo(baseReq - 12, 6);
+    await restoreProductionsForControl(ctlId);
+    expect(rowOf(await avail(), "Glicerina")!.requerido).toBeCloseTo(baseReq, 6);
+    await q("update work_items set deleted_at = now() where id = any($1)", [[a.workId, b.workId]]);
+  });
+
+  it("eliminar un borrador desde el servicio de controles quita sus necesidades de la semana", async () => {
+    const { getMpControlService } = await import("@/lib/mp-control/mp-control-service");
+    const mp = { email: "it-wk-mp@laboratoriogenus.com.ar", sector: "MATERIA_PRIMA" as const };
+    const a = await assign(`CREMA A WK ${RUN}`, "200");
+    const baseReq = rowOf(await avail(), "Glicerina")!.requerido;
+    const c = await getMpControlService().create(mp, {
+      client: CLIENT,
+      product: `CREMA A WK ${RUN}`,
+      quantityKg: 200,
+      snapshot: { client: CLIENT, product: `CREMA A WK ${RUN}`, source: "CACHE_NEON", capturedAt: new Date().toISOString(), materials: [{ materiaPrima: GLI, codigo: `F-GLI${RUN}`, formulaPct: 12 }] },
+    });
+    await q("update mp_weekly_controls set created_at = $2 where id = $1", [c.id, `${WEEK}T10:00:00.000Z`]);
+    await getMpControlService().deleteDraft(mp, c.id);
+    const res = await avail();
+    expect(res.productions.some((p) => p.id === a.workId)).toBe(false);
+    expect(rowOf(res, "Glicerina")!.requerido).toBeCloseTo(baseReq - 24, 6);
+    const left = await q("select id from mp_weekly_controls where id = $1", [c.id]);
+    expect(left).toHaveLength(0);
+    await q("delete from mp_weekly_production_exclusions where work_item_id = $1", [a.workId]);
+    await q("update work_items set deleted_at = now() where id = $1", [a.workId]);
+  });
 });
