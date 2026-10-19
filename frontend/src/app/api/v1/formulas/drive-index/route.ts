@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { OrdersForbiddenError } from "@/lib/orders/types";
-import { getIndexStatus, loadClientFolderMatch, lookupFormulaForWork, retryPendingOeFormulas, reviewReport, syncFormulaIndex } from "@/lib/formulas/drive-formula-source";
+import { getIndexStatus, loadClientFolderMatch, searchDriveLiveByName, lookupFormulaForWork, retryPendingOeFormulas, reviewReport, syncFormulaIndex } from "@/lib/formulas/drive-formula-source";
 import { clientKey } from "@/lib/formulas/drive-match-rules";
 import { formulasErrorResponse } from "@/lib/formulas/formulas-http";
 
@@ -20,6 +20,8 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const client = url.searchParams.get("client")?.trim();
     const product = url.searchParams.get("product")?.trim();
+    const find = url.searchParams.get("find")?.trim();
+    if (find) return NextResponse.json({ status, find, hits: await searchDriveLiveByName(find) });
     // Diagnóstico de una búsqueda (la misma que usa la OE automática): qué carpeta de cliente y qué archivos encuentra.
     if (client && product && status.validated) {
       const lookup = await lookupFormulaForWork(client, product);

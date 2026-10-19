@@ -238,7 +238,7 @@ function requireDb() {
 }
 
 export type SyncResult =
-  | { ok: true; runId: string; clientCount: number; fileCount: number; added: number; updated: number; removed: number; finishedAt: string }
+  | { ok: true; runId: string; clientCount: number; fileCount: number; added: number; updated: number; removed: number; finishedAt: string; newFiles: Array<{ client: string; fileName: string }>; removedFiles: number }
   | { ok: false; runId: string | null; error: string; running?: boolean };
 
 type CollectedFile = Omit<DriveIndexFile, "flags" | "otherClient" | "productKey" | "productLabel" | "productCode"> & { md5: string | null };
@@ -337,6 +337,7 @@ export async function syncFormulaIndex(opts: { trigger: "manual" | "cron" | "aut
 
   let added = 0;
   let updated = 0;
+  const newFiles: Array<{ client: string; fileName: string }> = [];
   for (const f of files) {
     const r = (await db.execute(sql`
       insert into formula_drive_index (file_id, root_folder_id, client_folder_id, client_folder_name, client_key, sub_path, file_name,
@@ -351,7 +352,10 @@ export async function syncFormulaIndex(opts: { trigger: "manual" | "cron" | "aut
         modified_time = excluded.modified_time, md5 = excluded.md5, flags = excluded.flags, last_run_id = excluded.last_run_id,
         last_seen_at = now(), removed_at = null
       returning (xmax = 0) as inserted`)).rows as Row[];
-    if (r[0]?.inserted === true || r[0]?.inserted === "t") added++;
+    if (r[0]?.inserted === true || r[0]?.inserted === "t") {
+      added++;
+      if (newFiles.length < 30) newFiles.push({ client: f.clientFolderName, fileName: f.fileName });
+    }
     else updated++;
   }
   const removed = (await db.execute(sql`
@@ -363,7 +367,7 @@ export async function syncFormulaIndex(opts: { trigger: "manual" | "cron" | "aut
       added_count = ${added}, updated_count = ${updated}, removed_count = ${removed}
      where id = ${runId}::uuid`);
   resetLegacyCacheSafe();
-  return { ok: true, runId, clientCount: clientFolders.length, fileCount: files.length, added, updated, removed, finishedAt: new Date().toISOString() };
+  return { ok: true, runId, clientCount: clientFolders.length, fileCount: files.length, added, updated, removed, finishedAt: new Date().toISOString(), newFiles, removedFiles: removed };
 }
 
 function resetLegacyCacheSafe() {
@@ -725,4 +729,46 @@ export async function reviewReport(): Promise<{
     otherClient: files.filter((f) => f.flags.includes("otro_cliente")).map((f) => ({ clientFolder: f.clientFolderName, fileId: f.fileId, fileName: f.fileName, otherClient: f.otherClient ?? null })),
     loose: files.filter((f) => f.clientFolderName === "(sin carpeta de cliente)").map((f) => ({ fileId: f.fileId, fileName: f.fileName })),
   };
+}
+
+export type LiveDriveHit = { fileId: string; name: string; mimeType: string; parentName: string | null; underFormulasRoot: boolean; indexed: boolean };
+
+/**
+ * DIAGNÓSTICO: busca por nombre EN VIVO en todo lo que la cuenta de servicio ve en Drive (no solo la carpeta de
+ * fórmulas) y dice, por cada archivo, si está debajo de la carpeta de fórmulas configurada y si ya está en el índice.
+ * Así se distingue «no está indexado todavía» de «está en otra carpeta» o «la cuenta de servicio no lo ve».
+ */
+export async function searchDriveLiveByName(term: string): Promise<LiveDriveHit[]> {
+  const t = term.replace(/['\\]/g, " ").trim();
+  if (t.length < 2 || !hasGoogleCredentials()) return [];
+  const drive = google.drive({ version: "v3", auth: createGoogleAuth() });
+  const r = await drive.files.list({
+    q: `name contains '${t}' and trashed=false and mimeType != '${FOLDER}'`,
+    fields: "files(id,name,mimeType,parents)",
+    pageSize: 25,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
+  const root = effectiveRootId();
+  const indexedIds = new Set((await loadIndexFiles()).map((f) => f.fileId));
+  const out: LiveDriveHit[] = [];
+  for (const f of r.data.files ?? []) {
+    if (!f.id || !f.name) continue;
+    let parentName: string | null = null;
+    let under = false;
+    let cur = f.parents?.[0] ?? null;
+    for (let depth = 0; cur && depth < 6; depth++) {
+      if (cur === root) {
+        under = true;
+        break;
+      }
+      const p = await drive.files.get({ fileId: cur, fields: "id,name,parents", supportsAllDrives: true }).catch(() => null);
+      if (!p) break;
+      if (depth === 0) parentName = p.data.name ?? null;
+      cur = p.data.parents?.[0] ?? null;
+    }
+    if (f.parents?.[0] === root) parentName = parentName ?? "(carpeta raíz)";
+    out.push({ fileId: f.id, name: f.name, mimeType: f.mimeType ?? "", parentName, underFormulasRoot: under, indexed: indexedIds.has(f.id) });
+  }
+  return out;
 }
