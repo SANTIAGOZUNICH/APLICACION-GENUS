@@ -33,6 +33,7 @@ import { isNativeWorkItemId } from "@/lib/planning/work-item-cell-edit";
 import { SendToCodificadoDialog } from "./send-to-codificado-dialog";
 import { SendToEnvasadoDialog, type SendToEnvasadoPayload } from "./send-to-envasado-dialog";
 import { DeliverWorkDialog, type DeliverWorkPayload } from "./deliver-work-dialog";
+import { WorkSchedulesPanel } from "./work-schedules-panel";
 import { fetchDeliveryProgress, type DeliveryProgress } from "../adapters/circuit-client";
 import { resolveDeliveryTarget } from "@/lib/planning/circuit/delivery-math";
 import { summarizePackingGroups } from "@/lib/remitos/packing-math";
@@ -198,6 +199,18 @@ export function WorkItemDrawer({
         </DrawerHeader>
 
         <DrawerBody className="space-y-6">
+          {isNativeWorkItemId(item.id) && item.sector !== "CODIFICADO" ? (
+            <WorkSchedulesPanel
+              itemId={item.id}
+              plannedDate={item.plannedDate}
+              quantity={item.quantity}
+              unit={item.unit}
+              email={email ?? ""}
+              sector={sectorId}
+              canManage={sectorId === "PRODUCCION"}
+              onChanged={() => onPlanningChanged?.()}
+            />
+          ) : null}
           <WorkItemPlanEditor item={item} variant={variant} onChanged={onPlanningChanged} />
           {!planEditable && (
           <dl className="grid grid-cols-2 gap-4 text-sm">

@@ -11,6 +11,7 @@ export type BulkDeleteVerdictCode =
   | "BLOCKED_DELIVERED"
   | "BLOCKED_HAS_DELIVERIES"
   | "BLOCKED_IN_REMITO"
+  | "BLOCKED_HAS_SCHEDULES"
   | "VERSION_CONFLICT";
 
 export interface BulkDeleteVerdict {
@@ -30,6 +31,7 @@ export const BULK_DELETE_VERDICT_REASON: Record<Exclude<BulkDeleteVerdictCode, "
   BLOCKED_DELIVERED: "Ya figura como entregado: se conserva por historial.",
   BLOCKED_HAS_DELIVERIES: "Tiene entregas registradas: se conserva por historial.",
   BLOCKED_IN_REMITO: "Está incluido en un remito: se conserva por historial.",
+  BLOCKED_HAS_SCHEDULES: "Es la programación original de una orden con otras programaciones: quitá primero las demás.",
   VERSION_CONFLICT: "Fue modificado mientras lo seleccionabas: actualizá y revisá.",
 };
 
@@ -41,6 +43,8 @@ export interface BulkDeleteFacts {
   version: number;
   activeDeliveries: number;
   remitoLinks: number;
+  /** Programaciones vigentes de la misma orden que dependen de este trabajo (fuera de la selección). */
+  liveSchedules?: number;
 }
 
 /** Regla única de elegibilidad — mismas piezas que protegen el historial en el borrado individual. */
@@ -50,6 +54,7 @@ export function classifyBulkDelete(facts: BulkDeleteFacts, expectedVersion?: num
   if (facts.operationalStatus === "entregado") return "BLOCKED_DELIVERED";
   if (facts.activeDeliveries > 0) return "BLOCKED_HAS_DELIVERIES";
   if (facts.remitoLinks > 0) return "BLOCKED_IN_REMITO";
+  if ((facts.liveSchedules ?? 0) > 0) return "BLOCKED_HAS_SCHEDULES";
   return "ELIGIBLE";
 }
 

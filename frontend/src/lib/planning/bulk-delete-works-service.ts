@@ -133,6 +133,17 @@ export async function bulkDeleteWorkItemsDurable(input: BulkDeleteWorksInput): P
       }
     }
 
+    // Programaciones vigentes que cuelgan de cada trabajo (la original no se elimina dejando a las demás sin raíz).
+    const liveSchedules = new Map<string, number>();
+    if (rows.length > 0) {
+      const children = await tx
+        .select({ root: workItems.scheduleRootId, id: workItems.id })
+        .from(workItems)
+        .where(and(inArray(workItems.scheduleRootId, rows.map((r) => r.id)), isNull(workItems.deletedAt)));
+      const inBatch = new Set(rows.map((r) => r.id));
+      for (const c of children) if (c.root && !inBatch.has(c.id)) liveSchedules.set(c.root, (liveSchedules.get(c.root) ?? 0) + 1);
+    }
+
     const verdicts: BulkDeleteVerdict[] = [];
     const eligible: typeof rows = [];
     for (const p of parsed) {
@@ -152,6 +163,7 @@ export async function bulkDeleteWorkItemsDurable(input: BulkDeleteWorksInput): P
           version: row.version,
           activeDeliveries: deliveryCounts.get(row.id) ?? 0,
           remitoLinks: remitoCounts.get(row.id) ?? 0,
+          liveSchedules: liveSchedules.get(row.id) ?? 0,
         },
         input.expectedVersions?.[p.id]
       );

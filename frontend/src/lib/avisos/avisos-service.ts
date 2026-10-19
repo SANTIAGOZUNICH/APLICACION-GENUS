@@ -60,7 +60,7 @@ function normalizePriority(p: string): AvisoPriority {
 
 function resolveTargets(input: CreateAvisoInput, fromSector: SectorId): SectorId[] {
   const all = [...AVISO_PARTICIPANT_SECTORS] as SectorId[];
-  let targets = input.toAll
+  const targets = input.toAll
     ? all
     : [...new Set(input.toSectors.filter((s) => canUseAvisos(s)))];
   if (targets.length === 0) {

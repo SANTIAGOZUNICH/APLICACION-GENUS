@@ -228,17 +228,6 @@ try {
   check("corregir kg se guarda directo, sin ventana ni motivo manual, y deja el ajuste en el libro mayor", kgOk && (await noDialog(mp)) && (await mp.locator(`[data-testid=${GS}-inline-reason]`).count()) === 0, kgOk ? "" : JSON.stringify({ st: await status(mp, GS), notice: await mp.locator(`[data-testid=${GS}-notice]`).innerText().catch(() => "") }));
   const aud = await q("select reason from mp_stock_movements order by created_at desc limit 1").catch(() => []);
   check("el ajuste queda con motivo automático y usuario (auditoría)", aud.length === 1 && /Edición directa en la planilla de Stock/.test(String(aud[0].reason ?? "")), JSON.stringify(aud));
-  // «Stock código» (saldo del código): antes daba «Error al guardar»; ahora guarda y audita.
-  await savedStatus(mp, GS);
-  await mp.waitForTimeout(800);
-  const nSc = (await q("select count(*)::int n from mp_stock_movements where reason like '%Edición directa%'"))[0].n;
-  await typeInCell(mp, GS, 13, "Stock código", "77");
-  const scOk = await waitDb(async () => (await q("select codigo from mp_stock_balances where codigo like 'XL-%' and stock_actual = 77")).length === 1);
-  await savedStatus(mp, GS);
-  check("editar «Stock código» de 0/vacío a un valor guarda sin «Error al guardar» ni ventanas", scOk && (await noDialog(mp)) && (await status(mp, GS)) !== "error", JSON.stringify({ st: await status(mp, GS), notice: await mp.locator(`[data-testid=${GS}-notice]`).innerText().catch(() => "") }));
-  await savedStatus(mp, GS);
-  check("y registra el movimiento en el libro mayor con motivo automático y usuario", await waitDb(async () => (await q("select count(*)::int n from mp_stock_movements where reason like '%Edición directa%' and kind = 'AJUSTE' and actor_email is not null"))[0].n > nSc));
-
   // ================= 3) RELLENO ARRASTRANDO =================
   const GC = "mp-compras-grid";
   await openTab(mp, "Compras MP", GC);
@@ -331,41 +320,24 @@ try {
   await q("update inv_mp_stock set payload = jsonb_set(payload, '{cantidadKg}', '110') where payload->>'codigo' = 'XL-015'");
   await openTab(mp, "Stock", GS);
   await mp.waitForTimeout(1200);
-  const kgBefore = [await kgOf(16), await kgOf(17), await kgOf(18)];
-  // dos celdas con 100 y 110 kg (filas 14 y 15) → 120, 130, 140 (serie) pero SIEMPRE con motivo, nunca en silencio
-  await (await cellLoc(mp, GS, 14, "Kg lote")).click();
-  await (await cellLoc(mp, GS, 15, "Kg lote")).click({ modifiers: ["Shift"] });
-  await dragFill(mp, GS, 18, "Kg lote");
-  const prevKg = mp.locator(`[data-testid=${GS}-preview]`);
-  await prevKg.waitFor({ timeout: 8000 }).catch(async (e) => {
-    console.log("DEBUG fill kg", JSON.stringify({ st: await status(mp, GS), notice: await mp.locator(`[data-testid=${GS}-notice]`).innerText().catch(() => ""), kgs: [await kgOf(14), await kgOf(15), await kgOf(16), await kgOf(17), await kgOf(18)] }));
-    await mp.screenshot({ path: `${OUT}/debug-fill-kg.png` });
-    throw e;
-  });
-  check("rellenar kg (mueve existencias reales) muestra UNA confirmación conjunta, sin pedir motivo por celda", /EXISTENCIAS REALES/.test(await prevKg.innerText()) && (await mp.locator(`[data-testid=${GS}-inline-reason]`).count()) === 0 && (await mp.locator(`[data-testid=${GS}-stock-note]`).count()) === 1);
-  check("y NO guarda nada antes de confirmar", (await kgOf(16)) === kgBefore[0] && (await kgOf(18)) === kgBefore[2]);
-  await mp.screenshot({ path: `${OUT}/07-relleno-kg-confirmacion.png` });
-  await mp.locator(`[data-testid=${GS}-preview-apply]`).click();
-  const seriesKg = await waitDb(async () => (await kgOf(16)) === 120 && (await kgOf(17)) === 130 && (await kgOf(18)) === 140);
-  check("confirmada, la serie 100, 110 → 120, 130, 140 se guarda y deja el ajuste en el libro mayor con motivo automático", seriesKg && (await q("select count(*)::int n from mp_stock_movements"))[0].n > movs0 && (await q("select count(*)::int n from mp_stock_movements where reason like '%Edición directa%' and codigo in ('XL-016','XL-017','XL-018')"))[0].n >= 3, JSON.stringify([await kgOf(16), await kgOf(17), await kgOf(18)]));
-  // texto: una celda con texto se copia hacia abajo
-  await (await cellLoc(mp, GS, 10, "Proveedor")).click();
-  await dragFill(mp, GS, 13, "Proveedor");
-  check("una celda de texto se copia hacia abajo (sin generar progresión)", await waitDb(async () => (await stockBy("XL-011")).proveedor === "Proveedor 10" && (await stockBy("XL-013")).proveedor === "Proveedor 10"));
-  // lote: texto con número final → el lote NO se numera sola si es una sola celda con «L10»: se copia el valor literal
-  await (await cellLoc(mp, GS, 10, "Lote")).click();
-  await dragFill(mp, GS, 12, "Lote");
-  check("un lote de una sola celda se copia literal (no se inventan lotes)", await waitDb(async () => (await stockBy("XL-011")).lote === "L10" && (await stockBy("XL-012")).lote === "L10"));
-  // código: no se rellena (identifica el saldo)
-  const codesBefore = [(await stockBy("XL-014")).codigo, (await stockBy("XL-015")).codigo];
-  await (await cellLoc(mp, GS, 13, "Código")).click();
-  await dragFill(mp, GS, 15, "Código");
-  await mp.waitForTimeout(1200);
-  check("los códigos de MP no se rellenan arrastrando", (await stockBy("XL-014")).codigo === codesBefore[0] && (await stockBy("XL-015")).codigo === codesBefore[1] && (await noDialog(mp)));
+  // El relleno numérico de «Kg lote» (confirmación conjunta, mouse y dedo) se prueba en mp-stock-fill-validate.mjs.
+  // Copia de texto y protección del código al rellenar: se prueban con datos controlados en mp-stock-fill-validate.mjs.
+  // «Stock código» (saldo del código): antes daba «Error al guardar»; ahora guarda y audita.
+  await savedStatus(mp, GS);
+  await mp.waitForTimeout(800);
+  const nSc = (await q("select count(*)::int n from mp_stock_movements where reason like '%Edición directa%'"))[0].n;
+  await typeInCell(mp, GS, 13, "Stock código", "77");
+  const scOk = await waitDb(async () => (await q("select codigo from mp_stock_balances where codigo like 'XL-%' and stock_actual = 77")).length === 1);
+  await savedStatus(mp, GS);
+  check("editar «Stock código» de 0/vacío a un valor guarda sin «Error al guardar» ni ventanas", scOk && (await noDialog(mp)) && (await status(mp, GS)) !== "error", JSON.stringify({ st: await status(mp, GS), notice: await mp.locator(`[data-testid=${GS}-notice]`).innerText().catch(() => "") }));
+  await savedStatus(mp, GS);
+  check("y registra el movimiento en el libro mayor con motivo automático y usuario", await waitDb(async () => (await q("select count(*)::int n from mp_stock_movements where reason like '%Edición directa%' and kind = 'AJUSTE' and actor_email is not null"))[0].n > nSc));
+
 
   // ================= 5) TABLET: relleno con el dedo =================
   const tab = await openAs(E2E_USERS.materiaPrima, "tablet");
   const tp = tab.page;
+  await tp.setViewportSize({ width: 1180, height: 1000 }); // sin que el destino quede pegado al borde (activaría el desplazamiento automático)
   await openTab(tp, "Compras MP", GC);
   await tp.waitForTimeout(1200);
   const cdp = await tab.ctx.newCDPSession(tp);

@@ -44,7 +44,8 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0055_portal_codigos_automaticos": "cf5d091671a794dc1a2d1fdb5140c37a5d60e94e9a682b8ef7d8a478fb47b206",
   "0056_ingreso_con_remito": "c40657cdbe9c1e19491674e8cba1d1ea8b3c4cb34857677a4e40f2d5e70182f1",
   "0058_mp_weekly_row_state": "ff82c5bf6f9c312aa3192aee72f8634490279a049b7b3adfc27eda2b7bb5319d",
-  "0060_aviso_user_recipients": "c2e0d8ceeda7ded28cf456d1eae37ecbeb0f4f12416f06f88e6e9183c1646712",
+  "0061_work_item_schedules": "7e31268a5fd1c1082f7a8724145483b3aeb4fbeb50947b901d79837feaa06482",
+  "0060_aviso_user_recipients": "164ac0c7a37f5deeb64c52b08ceb40314451505d4863376a1664ee6f1404c270",
   "0059_delivery_line_packing": "b041d7bd272e73038789695982af2eead8642b1b387c1967ff38c2684eba58f5",
   "0057_mp_master_links": "cfc8e0bab7aa96e9fd2c7109285117899f9e69388831e9ce406b874c37c18f35",
 });
@@ -205,6 +206,14 @@ export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
   { migration: "0056_ingreso_con_remito", object: "inventory_receipts" },
   { migration: "0056_ingreso_con_remito", object: "inventory_receipt_lines" },
   { migration: "0056_ingreso_con_remito", object: "inventory_ingreso_adjuntos.receipt_id" },
+  { migration: "0057_mp_master_links", object: "mp_master_links" },
+  { migration: "0058_mp_weekly_row_state", object: "mp_weekly_row_state" },
+  { migration: "0058_mp_weekly_row_state", object: "mp_weekly_production_exclusions" },
+  { migration: "0059_delivery_line_packing", object: "work_item_delivery_lines.packing_groups" },
+  { migration: "0060_aviso_user_recipients", object: "os_internal_message_users" },
+  { migration: "0060_aviso_user_recipients", object: "os_notifications.target_emails" },
+  { migration: "0061_work_item_schedules", object: "work_items.schedule_root_id" },
+  { migration: "0061_work_item_schedules", object: "work_items.schedule_total" },
 ]);
 
 /** @param {{ query: (text: string, params?: unknown[]) => Promise<any[]>, required?: ReadonlyArray<{migration: string, object: string}> }} opts */

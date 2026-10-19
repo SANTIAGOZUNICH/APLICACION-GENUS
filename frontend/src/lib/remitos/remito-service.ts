@@ -436,7 +436,9 @@ export class RemitoService {
       clientDisplay,
       deliveryDate,
       status: "BORRADOR",
-      version: generated ? generated.version + 1 : 1,
+      // La versión siguiente a CUALQUIER remito del mismo cliente y fecha (también anulados): la numeración anulada no se reutiliza.
+      version:
+        all.filter((r) => remitoGroupKey(r.clientIdNormalized, r.deliveryDate) === group).reduce((m, r) => Math.max(m, r.version), 0) + 1,
       totalUnits: totals.totalUnits,
       totalCajas: totals.totalCajas,
       totalBultos: totals.totalBultos,
@@ -647,6 +649,8 @@ export class RemitoService {
       throw err;
     }
 
+    const { linkRemitoNumberToDeliveries } = await import("./delivery-remito-sync");
+    await linkRemitoNumberToDeliveries(withMeta);
     return this.attachVersions(withMeta);
   }
 
@@ -960,6 +964,8 @@ export class RemitoService {
     remito.updatedBy = actor.email;
     remito.updatedAt = new Date().toISOString();
     await this.persistRemito(remito);
+    const { unlinkRemitoNumberFromDeliveries } = await import("./delivery-remito-sync");
+    await unlinkRemitoNumberFromDeliveries(remito);
     const { recordLifecycleEvent, normalizeOptionalReason } = await import("@/lib/lifecycle");
     recordLifecycleEvent({
       entityKind: "remito",

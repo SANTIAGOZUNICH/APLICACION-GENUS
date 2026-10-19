@@ -113,10 +113,28 @@ try {
   const serumLine = (await q("select l.id from work_item_delivery_lines l where l.work_item_id = $1", [ids.serum]))[0].id;
   const dup = await api.post("/api/v1/remitos/deliveries", { data: { action: "create", lineIds: [serumLine] } });
   check("reintento sobre una entrega ya remitida: rechazado, sin duplicar", dup.status() >= 400 && (await q("select count(*)::int n from remito_work_links where work_item_id = $1", [`dl:${serumLine}`]))[0].n === 1);
-  // Borrar el borrador libera las entregas.
-  await page.locator("[data-testid=remitos-tab-borradores]").click();
-  await page.waitForTimeout(800);
-  await page.locator("tr, li, [role=row]", { hasText: A }).first().click().catch(() => undefined);
+  // ── Ciclo de vida del remito (datos descartables) ───────────────────────────────────────────────────────────────────
+  const mov0 = (await q("select count(*)::int n from mp_stock_movements"))[0].n;
+  const deliv0 = (await q("select coalesce(sum(quantity),0)::float8 n from work_item_delivery_lines where status = 'ACTIVA' and work_item_id = any($1::uuid[])", [Object.values(ids)]))[0].n;
+  const gen = await api.patch(`/api/v1/remitos/${rem[0].id}`, { data: { action: "generate", displayName: "Remito Pilar E2E" } });
+  const genBody = gen.ok() ? await gen.json() : { error: await gen.text() };
+  const number1 = genBody.remito?.remitoNumber;
+  check("generar el remito deja número y estado GENERADO", gen.ok() && /^R-\d{8}-/.test(number1 ?? "") && genBody.remito.status === "GENERADO", gen.ok() ? number1 : JSON.stringify(genBody).slice(0, 200));
+  const lineNums = await q("select remito from work_item_delivery_lines where id in (select (payload->'trace'->>'deliveryLineId')::uuid from remito_lines where remito_id = $1)", [rem[0].id]);
+  check("el número del remito queda asociado a sus 3 entregas", lineNums.length === 3 && lineNums.every((r) => r.remito === number1));
+  check("generar un remito no mueve stock ni cambia lo entregado", (await q("select count(*)::int n from mp_stock_movements"))[0].n === mov0 && (await q("select coalesce(sum(quantity),0)::float8 n from work_item_delivery_lines where status = 'ACTIVA' and work_item_id = any($1::uuid[])", [Object.values(ids)]))[0].n === deliv0);
+  const del1 = await api.delete(`/api/v1/remitos/${rem[0].id}`);
+  check("un remito GENERADO no se puede borrar (solo anular)", del1.status() >= 400 && (await q("select 1 from remitos where id = $1", [rem[0].id])).length === 1);
+  const ann = await api.patch(`/api/v1/remitos/${rem[0].id}`, { data: { action: "annul", motivo: "E2E" } });
+  check("anular un remito generado (queda ANULADO, no se borra)", ann.ok() && (await q("select status from remitos where id = $1", [rem[0].id]))[0].status === "ANULADO");
+  check("al anular, las entregas se liberan (sin ese número) y vuelven a ofrecerse", (await q("select count(*)::int n from work_item_delivery_lines where remito = $1", [number1]))[0].n === 0 && (await (await api.get("/api/v1/remitos/deliveries")).json()).deliveries.filter((d) => d.client === A).length >= 3);
+  const again = await api.post("/api/v1/remitos/deliveries", { data: { action: "create", lineIds: (await (await api.get("/api/v1/remitos/deliveries")).json()).deliveries.filter((d) => d.client === A).map((d) => d.deliveryLineId) } });
+  const againBody = await again.json();
+  check("un remito nuevo para las mismas entregas NO reutiliza la numeración anulada", again.status() === 201 && againBody.remitos.length === 1 && againBody.remitos[0].version === 2, JSON.stringify(againBody).slice(0, 200));
+  const draft2 = againBody.remitos?.[0]?.id;
+  const delDraft = await api.delete(`/api/v1/remitos/${draft2}`);
+  check("un BORRADOR sí se elimina y libera sus entregas", delDraft.ok() && (await q("select 1 from remitos where id = $1", [draft2])).length === 0 && (await (await api.get("/api/v1/remitos/deliveries")).json()).deliveries.filter((d) => d.client === A).length >= 3);
+  check("el remito anulado se conserva para auditoría", (await q("select status from remitos where id = $1", [rem[0].id]))[0].status === "ANULADO");
   await ctx.close();
 
   // Permisos: solo Producción crea; Administración consulta pero no escribe; el resto no accede.

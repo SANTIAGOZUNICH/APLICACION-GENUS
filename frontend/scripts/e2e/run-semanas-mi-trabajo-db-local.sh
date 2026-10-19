@@ -109,6 +109,11 @@ done
 if [[ "${GENUS_E2E_FAKE_LIVE_SYNC:-}" == "1" ]]; then
   APP_ENV+=(GOOGLE_SERVICE_ACCOUNT_EMAIL=e2e-fake@invalid.local GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY=e2e-fake GOOGLE_DRIVE_GENUS_FOLDER_ID=e2e-fake-folder)
 fi
+# Opt-in (remitos): hace pasar la comprobación «hay Blob privado» con un token FICTICIO; los archivos van igual al disco del runner
+# (GENUS_E2E_LOCAL_FILE_STORAGE_DIR tiene prioridad) y jamás a Vercel Blob.
+if [[ "${GENUS_E2E_FAKE_BLOB_TOKEN:-}" == "1" ]]; then
+  APP_ENV+=(BLOB_READ_WRITE_TOKEN=e2e-fake-token)
+fi
 # Opt-in (fórmulas): una carpeta del DISCO hace de la carpeta de fórmulas de Drive (sin red ni credenciales).
 if [[ -n "${GENUS_E2E_FAKE_FORMULAS_DRIVE_DIR:-}" ]]; then
   APP_ENV+=(GENUS_E2E_FAKE_FORMULAS_DRIVE_DIR="$GENUS_E2E_FAKE_FORMULAS_DRIVE_DIR")
