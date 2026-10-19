@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import type { GenusGridCellChange, GenusGridCommitResult } from "@/components/data-grid/genus-grid";
 import {
+  INVENTORY_FILL_WITH_REASON,
   INVENTORY_NO_FILL,
   INVENTORY_REASON_FIELDS,
   INVENTORY_SENSITIVE_FIELDS,
@@ -62,6 +63,7 @@ export function useInventoryCellEditing<R extends { id?: string; updatedAt: stri
         kind: inventoryFieldKind(field),
         sensitive: INVENTORY_SENSITIVE_FIELDS.has(field),
         noFill: resource === "mp_stock" ? INVENTORY_NO_FILL[field] : undefined,
+        fillWithReason: resource === "mp_stock" && INVENTORY_FILL_WITH_REASON.has(field),
         protection: (r: R) => inventoryCellProtection(resource, r, field, canWrite),
         validate: (raw: string) => {
           const v = validateInventoryValue(field, raw);

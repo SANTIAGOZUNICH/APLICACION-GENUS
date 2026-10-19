@@ -351,7 +351,7 @@ export function useSheetGestures({ wrapRef, gridRef, rowHeight, rowCount, colCou
       {canFill && handle ? (
         <div
           className="genus-sheet-handle"
-          style={{ left: handle.left - 14, top: handle.top - 14 }}
+          style={{ left: handle.left, top: handle.top }}
           onPointerDown={onHandleDown}
           onPointerMove={onHandleMove}
           onPointerUp={(e) => finish(e, false)}

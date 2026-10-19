@@ -76,6 +76,11 @@ export interface GenusGridColumn<T> {
   cellNote?: (row: T) => string | null;
   /** Modo planilla: motivo por el que el relleno arrastrando NO escribe en esta columna (calculada, mueve stock…). */
   noFill?: string;
+  /**
+   * Con `noFill`: el relleno arrastrando SÍ escribe en esta columna, pero pasa por la confirmación con motivo (mueve
+   * stock). Borrar (Delete) sigue bloqueado. Sin esto una serie 1, 2 → 3, 4… sobre kg se descartaba sin explicación.
+   */
+  fillWithReason?: boolean;
 }
 
 export interface GenusGridCellChange {
@@ -803,12 +808,12 @@ export function GenusGrid<T>({
           skipped.push({ rowLabel: row.__id, columnTitle: col.title, reason: prot });
           continue;
         }
-        if (col.noFill) {
+        if (col.noFill && !col.fillWithReason) {
           omitted += 1;
           continue;
         }
         const probe: GenusGridCellChange = { rowId: row.__id, columnKey: cand.key, columnTitle: col.title, rowLabel: row.__id, oldValue: current, newValue: cand.value, rowVersion: row.__version };
-        if (reasonRequired?.([probe])) {
+        if (reasonRequired?.([probe]) && !col.fillWithReason) {
           omitted += 1; // mueve stock: no se rellena arrastrando (se edita la celda con su motivo)
           continue;
         }

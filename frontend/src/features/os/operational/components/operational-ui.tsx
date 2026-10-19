@@ -98,6 +98,8 @@ export interface OperationalTableColumn<T> {
     sensitive?: boolean;
     /** Hoja continua (planilla): por qué el relleno arrastrando NO escribe en esta columna (calculada, mueve stock…). */
     noFill?: string;
+    /** Con `noFill`: el relleno arrastrando escribe igual, pero pide confirmación y motivo (mueve stock). */
+    fillWithReason?: boolean;
   };
   /**
    * Por qué esta columna NO se edita en la planilla (p. ej. «TOTAL = bultos × cantidad: se calcula»). Se muestra en
@@ -379,6 +381,7 @@ function ExcelView<T>({
         basis: widths.get(c.key) ?? 150,
         sensitive: c.edit?.sensitive,
         noFill: c.edit ? c.edit.noFill : c.readOnlyReason ?? "Columna de solo lectura.",
+        fillWithReason: c.edit?.fillWithReason,
         getValue: (row: T) => textOf(c, row),
         protection: (row: T) => (c.edit ? (c.edit.protection?.(row) ?? null) : (c.readOnlyReason ?? "Columna de solo lectura.")),
         validate: c.edit?.validate,
