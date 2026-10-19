@@ -231,6 +231,10 @@ export const workItems = pgTable(
     reworkRequestedBy: text("rework_requested_by"),
     reworkRequestedBySector: text("rework_requested_by_sector"),
     reworkReason: text("rework_reason"),
+    /** 0061 — programación de la MISMA OE/OA en otro día: apunta a la programación original. null = original/única. */
+    scheduleRootId: uuid("schedule_root_id"),
+    /** 0061 — solo en la original: cantidad total de la orden a repartir entre sus programaciones. */
+    scheduleTotal: text("schedule_total"),
   },
   (table) => [
     check(

@@ -12,6 +12,7 @@
 import "server-only";
 
 import { and, eq, inArray, isNull, lte, gte, or, sql } from "drizzle-orm";
+import { weekShare } from "@/lib/planning/work-schedules";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { invMpStock, mpMasterLinks, mpStockMovements, mpWeeklyProductionExclusions, mpWeeklyRowState, operationalOrders, workItems } from "@/lib/db/schema";
 import { normalizeMpStockPayload } from "@/lib/inventory/neon-persist";
@@ -208,6 +209,29 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
     }
   }
 
+  // Programaciones de la MISMA orden en varios días/semanas: la necesidad de MP de la orden se reparte en proporción a lo
+  // planificado en cada semana (suma 1), en vez de contarse completa en cada una. Solo si hay más de una programación vigente.
+  const rootIds = [...new Set(works.map((w) => w.scheduleRootId ?? w.id))];
+  const siblings = await db
+    .select()
+    .from(workItems)
+    .where(and(isNull(workItems.deletedAt), eq(workItems.sector, "ELABORACION"), or(inArray(workItems.id, rootIds), inArray(workItems.scheduleRootId, rootIds))));
+  const groups = new Map<string, typeof siblings>();
+  for (const s of siblings) {
+    const k = s.scheduleRootId ?? s.id;
+    groups.set(k, [...(groups.get(k) ?? []), s]);
+  }
+  const shareOf = (w: (typeof works)[number]): number | null => {
+    const members = groups.get(w.scheduleRootId ?? w.id) ?? [];
+    if (members.length < 2) return null;
+    return weekShare(
+      members.map((m) => ({
+        qty: toKg(parseArDecimal(m.plannedQuantity).value, m.unit),
+        inPeriod: String(m.plannedDate) <= weekEnd && String(m.plannedDateTo ?? m.plannedDate) >= weekStart,
+      }))
+    );
+  };
+
   const inputs: ProductionInput[] = [];
   const meta: WeeklyAvailability["productions"] = [];
   const seenOe = new Set<string>();
@@ -235,7 +259,9 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
 
     if (oe) {
       const fd = oe.formData as { header?: { quantityKg?: number | null }; materials?: OeMat[] };
-      const qty = fd.header?.quantityKg != null && Number(fd.header.quantityKg) > 0 ? Number(fd.header.quantityKg) : toKg(qtyRaw, w.unit);
+      const share = shareOf(w);
+      const fullQty = fd.header?.quantityKg != null && Number(fd.header.quantityKg) > 0 ? Number(fd.header.quantityKg) : toKg(qtyRaw, w.unit);
+      const qty = fullQty != null && share != null ? round3(fullQty * share) : fullQty;
       const per = consumed.get(oe.id);
       const mats = (fd.materials ?? []).filter((m) => !m.parentRowId);
       const reliable = qty != null && qty > 0 && mats.length > 0 && mats.every((m) => m.formulaPct != null);
@@ -249,9 +275,9 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
           const need = reliable ? round3(((m.formulaPct ?? 0) * qty!) / 100) : null;
           return { materiaPrima: m.materiaPrima ?? "", codigo: m.codigo ?? "", codigoMp: m.codigoMp ?? "", kg: need };
         }),
-        consumedByCode: per ? Object.fromEntries([...per].filter(([, kg]) => kg > 0)) : undefined,
+        consumedByCode: per ? Object.fromEntries([...per].filter(([, kg]) => kg > 0).map(([code, kg]) => [code, share != null ? round3(kg * share) : kg])) : undefined,
       });
-      meta.push({ id: w.id, label, kg: qty ?? null, days, source: "OE", oeNumber: oe.orderNumber });
+      meta.push({ id: w.id, label, kg: qty ?? null, days, source: "OE", oeNumber: oe.orderNumber, note: share != null ? `Orden repartida en varias programaciones: esta semana corresponde el ${Math.round(share * 100)} % de la necesidad.` : undefined });
       continue;
     }
 

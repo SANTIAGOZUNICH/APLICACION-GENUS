@@ -407,6 +407,13 @@
       "when": 1793000000000,
       "tag": "0060_aviso_user_recipients",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1793100000000,
+      "tag": "0061_work_item_schedules",
+      "breakpoints": true
     }
   ]
 }
