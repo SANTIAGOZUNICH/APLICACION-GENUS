@@ -63,7 +63,7 @@ const DATE_FIELDS = new Set(["fecha", "vencimiento", "fechaEntrega"]);
 /** En un ingreso confirmado, estos campos mueven el stock: corrección con motivo. */
 export const MP_INGRESO_STOCK_FIELDS: ReadonlySet<string> = new Set(["codigo", "bultos", "cantidad", "lote"]);
 export const MIN_MP_CORRECCION_MOTIVO = 8;
-export const MAX_MP_SHEET_CHANGES = 200;
+export const MAX_MP_SHEET_CHANGES = 1000;
 
 export function mpSheetFieldKind(field: string): "text" | "number" | "date" {
   return NUMBER_FIELDS.has(field) ? "number" : DATE_FIELDS.has(field) ? "date" : "text";

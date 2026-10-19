@@ -7,6 +7,7 @@ import {
   type GenusGridCellChange,
   type GenusGridColumn,
   type GenusGridCommitResult,
+  type GenusGridRowDelete,
 } from "@/components/data-grid/genus-grid";
 import { nodeToText } from "@/lib/utils/node-text";
 import {
@@ -95,6 +96,8 @@ export interface OperationalTableColumn<T> {
     validate?: (raw: string, row: T) => string | null;
     /** Identidad/trazabilidad: la edición siempre pide confirmación. */
     sensitive?: boolean;
+    /** Hoja continua (planilla): por qué el relleno arrastrando NO escribe en esta columna (calculada, mueve stock…). */
+    noFill?: string;
   };
   /**
    * Por qué esta columna NO se edita en la planilla (p. ej. «TOTAL = bultos × cantidad: se calcula»). Se muestra en
@@ -164,6 +167,8 @@ interface OperationalTableProps<T> {
    * las filas; la lista clásica las dibuja de a tandas mientras se baja (carga progresiva). El orden es el de `rows`.
    */
   continuous?: boolean;
+  /** Hoja continua: eliminar filas completas desde la planilla (sin motivo ni confirmación, con Deshacer). */
+  rowDelete?: GenusGridRowDelete;
 }
 
 /**
@@ -344,8 +349,10 @@ function ExcelView<T>({
   reasonRequired,
   reasonInline,
   rowClassName,
+  rowDelete,
   maxHeight,
-}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName"> & { maxHeight?: number }) {
+  sheet,
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName" | "rowDelete"> & { maxHeight?: number; sheet?: boolean }) {
   const dataColumns = useMemo(() => columns.filter((c) => !isActionColumn(c)), [columns]);
   const actionColumns = useMemo(() => columns.filter((c) => isActionColumn(c)), [columns]);
   const textOf = (c: OperationalTableColumn<T>, row: T) => (c.text ? c.text(row) : nodeToText(c.render(row)));
@@ -371,6 +378,7 @@ function ExcelView<T>({
         kind: c.edit?.kind ?? "text",
         basis: widths.get(c.key) ?? 150,
         sensitive: c.edit?.sensitive,
+        noFill: c.edit ? c.edit.noFill : c.readOnlyReason ?? "Columna de solo lectura.",
         getValue: (row: T) => textOf(c, row),
         protection: (row: T) => (c.edit ? (c.edit.protection?.(row) ?? null) : (c.readOnlyReason ?? "Columna de solo lectura.")),
         validate: c.edit?.validate,
@@ -405,6 +413,8 @@ function ExcelView<T>({
       maxHeight={maxHeight ?? 560}
       testId={tableId ? `${tableId}-grid` : "os-table-grid"}
       rowClassName={rowClassName}
+      sheet={sheet}
+      rowDelete={rowDelete}
     />
   );
 }
@@ -425,6 +435,7 @@ export function OperationalTable<T>({
   reasonInline,
   rowClassName,
   continuous = false,
+  rowDelete,
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [shown, setShown] = useState(LIST_CHUNK);
@@ -433,7 +444,7 @@ export function OperationalTable<T>({
   const editableTable = Boolean(canEditCells && onCellsCommit && allColumns.some((c) => c.edit));
   const { mode, toggle: toggleMode } = useTableMode(tableId, editableTable);
   // Hoja continua: alto = lo que queda de la ventana (la planilla agrega ~100 px de barra de estado y avisos sobre la grilla).
-  const { height: sheetHeight, ref: sheetRef } = useViewportSheetHeight(continuous, mode === "excel" && !selection?.active ? 100 : 24, [rows.length]);
+  const { height: sheetHeight, ref: sheetRef } = useViewportSheetHeight(continuous, mode === "excel" && !selection?.active ? 132 : 24, [rows.length]);
   // Las columnas `excelOnly` existen solo en la planilla; la lista clásica queda exactamente como antes.
   const columns = useMemo(() => allColumns.filter((c) => !c.excelOnly), [allColumns]);
   const secondaryMeta = columns
@@ -485,6 +496,8 @@ export function OperationalTable<T>({
       reasonInline={reasonInline}
           rowClassName={rowClassName}
           maxHeight={continuous ? sheetHeight : undefined}
+          sheet={continuous}
+          rowDelete={rowDelete}
         />
       </div>
     );

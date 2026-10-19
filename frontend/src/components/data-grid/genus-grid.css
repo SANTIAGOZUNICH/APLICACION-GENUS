@@ -92,3 +92,164 @@
 .genus-grid .dsg-row:not(.dsg-row-header):hover .genus-cell-protected {
   background-color: color-mix(in srgb, var(--os-teal, #0f766e) 7%, var(--os-bg, #f4f6f8));
 }
+
+/* ===================== MODO PLANILLA (Materias Primas) ===================== */
+.genus-sheet {
+  --genus-sheet-accent: var(--os-teal, #12bfb7);
+  background: var(--os-surface, #0f2634);
+}
+.genus-sheet-body {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+.genus-sheet-frame {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* El motor oculta sus barras nativas: las barras propias (siempre visibles) son las únicas, sin desincronizarse. */
+.genus-sheet .dsg-container {
+  background: var(--dsg-cell-background-color, var(--os-surface, #0f2634));
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior: contain;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.genus-sheet .dsg-container::-webkit-scrollbar {
+  display: none;
+}
+/* Celdas compactas y bordes legibles en el tema oscuro. */
+.genus-sheet .dsg-cell {
+  font-size: 0.8125rem;
+}
+.genus-sheet .dsg-selection-rect {
+  background: color-mix(in srgb, var(--genus-sheet-accent) 12%, transparent);
+}
+
+/* Barras de desplazamiento: gruesas, siempre visibles, con pulgar táctil. */
+.genus-sheet-bar {
+  position: relative;
+  flex: none;
+  background: color-mix(in srgb, var(--os-text, #eaf3f6) 7%, var(--os-surface, #0f2634));
+  touch-action: none;
+  user-select: none;
+}
+.genus-sheet-bar-x {
+  width: 100%;
+  border-top: 1px solid var(--os-border, rgb(255 255 255 / 0.1));
+}
+.genus-sheet-bar-y {
+  border-left: 1px solid var(--os-border, rgb(255 255 255 / 0.1));
+}
+.genus-sheet-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--genus-sheet-accent) 72%, #0a1d29);
+  cursor: grab;
+  touch-action: none;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.25);
+}
+.genus-sheet-bar-x .genus-sheet-thumb {
+  height: calc(100% - 6px);
+}
+.genus-sheet-bar-y .genus-sheet-thumb {
+  width: calc(100% - 6px);
+}
+.genus-sheet-thumb:hover,
+.genus-sheet-thumb:active {
+  background: var(--genus-sheet-accent);
+  cursor: grabbing;
+}
+.genus-sheet-foot {
+  border-top: 1px solid var(--os-border, rgb(255 255 255 / 0.1));
+}
+
+/* Controlador de relleno + vista previa del rango (por encima de las celdas, sin capturar clics). */
+.genus-sheet-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  overflow: hidden;
+}
+.genus-sheet-handle {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  cursor: crosshair;
+  touch-action: none;
+}
+.genus-sheet-handle-dot {
+  width: 11px;
+  height: 11px;
+  background: var(--genus-sheet-accent);
+  border: 2px solid var(--os-surface, #0f2634);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px var(--genus-sheet-accent);
+}
+.genus-sheet-fill-preview {
+  position: absolute;
+  border: 2px dashed var(--genus-sheet-accent);
+  background: color-mix(in srgb, var(--genus-sheet-accent) 14%, transparent);
+  box-sizing: border-box;
+}
+.genus-sheet-fill-label {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  padding: 0 6px;
+  font-size: 11px;
+  border-radius: 4px;
+  background: var(--genus-sheet-accent);
+  color: #06232a;
+  font-weight: 600;
+}
+
+/* Primera columna fija al desplazar a los costados. */
+.genus-frozen-col {
+  position: absolute;
+  top: 0;
+  z-index: 35;
+  overflow: hidden;
+  background: var(--dsg-cell-background-color, var(--os-surface, #0f2634));
+  border-right: 2px solid var(--genus-sheet-accent);
+  box-shadow: 6px 0 10px -6px rgb(0 0 0 / 0.5);
+}
+.genus-frozen-head,
+.genus-frozen-cell {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  box-sizing: border-box;
+  background: var(--dsg-cell-background-color, var(--os-surface, #0f2634));
+  border-bottom: 1px solid var(--dsg-border-color, var(--os-border));
+}
+.genus-frozen-head {
+  top: 0;
+  z-index: 2;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--dsg-header-text-color, var(--os-text-muted));
+}
+.genus-frozen-cell {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--os-text, #eaf3f6);
+}
+.genus-frozen-cell:hover {
+  background: color-mix(in srgb, var(--genus-sheet-accent) 10%, var(--dsg-cell-background-color, #0f2634));
+}

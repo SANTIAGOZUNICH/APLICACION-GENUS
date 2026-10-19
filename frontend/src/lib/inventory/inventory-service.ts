@@ -1589,6 +1589,36 @@ export class InventoryService {
     return row;
   }
 
+  /** Deshace «Eliminar fila» de Stock MP: vuelve a mostrar el lote archivado (nunca toca kg ni el libro mayor). */
+  restoreMpStock(actor: InventoryActor, id: string) {
+    this.guard(actor, "mp_stock", true);
+    const existing = this.repo.getMpStock(id);
+    if (!existing) throw new InventoryNotFoundError("Stock MP no encontrado.");
+    if (!existing.archived) return this.enrichMpStock(existing);
+    const now = nowIso();
+    const restored: MpStockRow = {
+      ...existing,
+      archived: false,
+      archivedAt: null,
+      archivedBy: null,
+      archivedReason: null,
+      updatedBy: actor.email,
+      updatedAt: now,
+    };
+    const row = this.enrichMpStock(restored);
+    this.repo.upsertMpStock(row);
+    this.audit(
+      actor,
+      "mp_stock",
+      row.id,
+      "restore",
+      existing as unknown as Record<string, unknown>,
+      row as unknown as Record<string, unknown>,
+      "Eliminación deshecha"
+    );
+    return row;
+  }
+
   adjustMpStock(actor: InventoryActor, id: string, cantidadNueva: number, motivo: string) {
     this.guard(actor, "mp_stock", true);
     if (!motivo.trim()) throw new InventoryValidationError("Motivo obligatorio para ajuste.");

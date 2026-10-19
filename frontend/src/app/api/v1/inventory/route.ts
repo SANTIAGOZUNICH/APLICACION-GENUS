@@ -197,6 +197,8 @@ async function mutateResource(
       return service.upsertMpStock(actor, payload as never);
     case "mp_stock:delete":
       return service.deleteMpStock(actor, id!, reason ?? "");
+    case "mp_stock:restore":
+      return service.restoreMpStock(actor, id!);
     case "mp_stock:adjust":
       return service.adjustMpStock(
         actor,

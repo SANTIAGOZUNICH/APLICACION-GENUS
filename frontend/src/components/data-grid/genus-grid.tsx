@@ -39,7 +39,7 @@ import {
   type ComponentType,
   type ReactNode,
 } from "react";
-import { Lock, Undo2 } from "lucide-react";
+import { Lock, Redo2, Trash2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -50,7 +50,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { friendlySaveError } from "@/lib/ui/friendly-error";
-import { diffGridRows, previewValue, type GenusGridRow } from "./grid-changes";
+import { diffGridRows, previewValue, type CellDiff, type GenusGridRow } from "./grid-changes";
+import { defaultFillMode, fillValues, type FillMode } from "./fill-series";
+import { SheetHScrollbar, SheetVScrollbar, SHEET_BAR_SIZE } from "./sheet-scrollbars";
+import { useSheetGestures, type FillPlan, type SheetRange } from "./sheet-gestures";
 
 export interface GenusGridColumn<T> {
   key: string;
@@ -71,6 +74,8 @@ export interface GenusGridColumn<T> {
   cellClassName?: (row: T) => string | undefined;
   /** Nota de trazabilidad de la celda (null = sin nota): marca visible y texto al pasar el mouse. No bloquea. */
   cellNote?: (row: T) => string | null;
+  /** Modo planilla: motivo por el que el relleno arrastrando NO escribe en esta columna (calculada, mueve stock…). */
+  noFill?: string;
 }
 
 export interface GenusGridCellChange {
@@ -129,6 +134,21 @@ export interface GenusGridProps<T> {
   rowClassName?: (row: T) => string | undefined;
   /** Texto de ayuda en el pie. */
   hint?: ReactNode;
+  /**
+   * MODO PLANILLA (Materias Primas): se comporta como Excel — sin vistas previas ni confirmaciones para ediciones
+   * normales (pegar rangos, borrar varias celdas, rellenar); el motivo se pide SOLO para lo que mueve stock; barras de
+   * desplazamiento fijas y gruesas; controlador de relleno (mouse y táctil); Deshacer/Rehacer.
+   */
+  sheet?: boolean;
+  /** Modo planilla: eliminación de filas completas sin motivo ni confirmación (con Deshacer). */
+  rowDelete?: GenusGridRowDelete;
+}
+
+export interface GenusGridRowDelete {
+  /** Motivo por el que NO se puede eliminar esa fila (null = se puede). */
+  check: (rowId: string) => string | null;
+  /** Elimina las filas (ya filtradas por `check`). Resuelve con el resumen y, si se puede, cómo deshacerlo. */
+  onDelete: (rowIds: string[]) => Promise<{ ok: boolean; message: string; undo?: () => Promise<void> }>;
 }
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -153,6 +173,8 @@ interface CellCtx {
 }
 
 const cellKey = (rowId: string, columnKey: string) => `${rowId}\u0000${columnKey}`;
+/** Celdas por solicitud al guardar (el servidor acepta hasta 1000). */
+const COMMIT_CHUNK = 400;
 
 /** Celda: texto del motor + bloqueo visual/funcional si el registro/columna está protegido. */
 function GenusCell({
@@ -206,6 +228,73 @@ function GenusCell({
   );
 }
 
+/**
+ * Primera columna fija al desplazar a los costados (como «inmovilizar paneles» de Excel). El motor virtualiza las
+ * columnas (la primera se desmonta al salir de la vista), así que la columna identificadora se refleja en un panel
+ * fijo, de solo lectura; tocarla selecciona la fila completa.
+ */
+function FrozenFirstColumn({
+  scroller,
+  rows,
+  columnKey,
+  title,
+  rowHeight,
+  onSelectRow,
+  testId,
+}: {
+  scroller: HTMLElement | null;
+  rows: GenusGridRow[];
+  columnKey: string | undefined;
+  title: string;
+  rowHeight: number;
+  onSelectRow: (row: number) => void;
+  testId: string;
+}) {
+  const [view, setView] = useState({ left: 0, top: 0, height: 0, width: 140 });
+  useEffect(() => {
+    if (!scroller) return;
+    const read = () => {
+      const h = scroller.querySelector(".dsg-row-header .genus-col-0");
+      setView((p) => {
+        const width = h ? Math.round(h.getBoundingClientRect().width) : p.width;
+        return p.left === scroller.scrollLeft && p.top === scroller.scrollTop && p.height === scroller.clientHeight && p.width === width
+          ? p
+          : { left: scroller.scrollLeft, top: scroller.scrollTop, height: scroller.clientHeight, width };
+      });
+    };
+    read();
+    scroller.addEventListener("scroll", read, { passive: true });
+    const ro = new ResizeObserver(read);
+    ro.observe(scroller);
+    return () => {
+      scroller.removeEventListener("scroll", read);
+      ro.disconnect();
+    };
+  }, [scroller]);
+  if (!scroller || !columnKey || view.left < 8) return null;
+  const first = Math.max(0, Math.floor(view.top / rowHeight) - 1);
+  const last = Math.min(rows.length - 1, Math.ceil((view.top + view.height) / rowHeight));
+  const items = Array.from({ length: Math.max(0, last - first + 1) }, (_, i) => first + i).map((r) => (
+    <div
+      key={rows[r]!.__id}
+      className="genus-frozen-cell"
+      style={{ top: rowHeight * (r + 1) - view.top, height: rowHeight }}
+      onClick={() => onSelectRow(r)}
+      title={String(rows[r]![columnKey] ?? "")}
+    >
+      <span className="truncate">{String(rows[r]![columnKey] ?? "")}</span>
+    </div>
+  ));
+  return (
+    <div className="genus-frozen-col" style={{ left: 44, width: view.width, height: view.height }} data-testid={`${testId}-frozen-col`}>
+      <div className="genus-frozen-head" style={{ height: rowHeight }}>
+        <span className="truncate">{title}</span>
+      </div>
+      {items}
+    </div>
+  );
+}
+
 export function GenusGrid<T>({
   rows,
   rowId,
@@ -228,6 +317,8 @@ export function GenusGrid<T>({
   testId = "genus-grid",
   hint,
   rowClassName,
+  sheet = false,
+  rowDelete,
 }: GenusGridProps<T>) {
   const [reasonText, setReasonText] = useState("");
   const gridRef = useRef<DataSheetGridRef>(null);
@@ -241,6 +332,15 @@ export function GenusGrid<T>({
   const [inlineReason, setInlineReason] = useState<{ changes: GenusGridCellChange[]; prompt: string } | null>(null);
   const [inlineText, setInlineText] = useState("");
   const [undoDepth, setUndoDepth] = useState(0);
+  const [redoDepth, setRedoDepth] = useState(0);
+  const redoStack = useRef<GenusGridCellChange[][]>([]);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const selectionRef = useRef<SheetRange | null>(null);
+  const activeRef = useRef<{ col: number; row: number } | null>(null);
+  const [scroller, setScroller] = useState<HTMLElement | null>(null);
+  const [fillChip, setFillChip] = useState<{ plan: FillPlan; mode: FillMode; sourceIds: string[]; note: string } | null>(null);
+  const [rowDeleteResult, setRowDeleteResult] = useState<{ message: string; undo?: () => Promise<void> } | null>(null);
+  const [selectedRowCount, setSelectedRowCount] = useState(0);
   const [selectionLabel, setSelectionLabel] = useState("");
 
   const undoStack = useRef<GenusGridCellChange[][]>([]);
@@ -309,7 +409,7 @@ export function GenusGrid<T>({
 
   // ---- columnas del motor (estáticas: dependen solo de las definiciones) ----
   const gridColumns = useMemo<Partial<Column<GenusGridRow, unknown, string>>[]>(() => {
-    return columns.map((col) => {
+    return columns.map((col, colIndex) => {
       const kind = col.kind ?? "text";
       const base = createTextColumn({
         continuousUpdates: false,
@@ -328,6 +428,7 @@ export function GenusGrid<T>({
       return {
         id: col.key,
         title: col.title,
+        headerClassName: `genus-col-${colIndex}`,
         basis: col.basis ?? 140,
         minWidth: col.minWidth ?? 80,
         grow: 1,
@@ -360,7 +461,7 @@ export function GenusGrid<T>({
         isCellEmpty: ({ rowData }) => !String(rowData[col.key] ?? ""),
         cellClassName: ({ rowData, columnId }) => {
           const key = columnId ?? col.key;
-          const classes: string[] = [];
+          const classes: string[] = [`genus-col-${colIndex}`];
           if (rowData.__prot[key]) classes.push("genus-cell-protected");
           if (rowData.__st[key] === "saving") classes.push("genus-cell-saving");
           if (rowData.__st[key] === "error") classes.push("genus-cell-error");
@@ -411,34 +512,65 @@ export function GenusGrid<T>({
   );
 
   const runCommit = useCallback(
-    (changes: GenusGridCellChange[], opts: { useLatestVersion: boolean; recordUndo: boolean; retryOf?: number }) => {
+    (
+      changes: GenusGridCellChange[],
+      opts: { useLatestVersion: boolean; recordUndo: boolean; retryOf?: number; recordRedo?: boolean; keepRedo?: boolean }
+    ) => {
       setNotice(null);
       setSaveState("saving");
+      if (!opts.keepRedo) {
+        redoStack.current = [];
+        setRedoDepth(0);
+      }
       setOverlay((prev) => {
         const next = { ...prev };
         for (const c of changes) next[cellKey(c.rowId, c.columnKey)] = { value: c.newValue, status: "saving" };
         return next;
       });
       const job = queue.current.then(async () => {
+        // Deja que el re-render del guardado anterior termine: así las versiones leídas son las confirmadas por la base.
+        if (opts.useLatestVersion) await new Promise((resolve) => window.setTimeout(resolve, 80));
         const toSend = changes.map((c) => {
           const latest = opts.useLatestVersion ? rowByIdRef.current.get(c.rowId) : undefined;
           return latest ? { ...c, rowVersion: rowVersion(latest) } : c;
         });
-        let result: GenusGridCommitResult;
-        try {
-          result = await onCommit(toSend);
-        } catch (err) {
-          // Sin conexión / error técnico: mensaje simple. El valor escrito queda en la barra roja con «Reintentar».
-          result = { ok: false, message: friendlySaveError(err) };
+        // Guardado por LOTES: todas las celdas de una fila viajan juntas (comparten versión); un lote no supera CHUNK celdas.
+        const chunks: GenusGridCellChange[][] = [];
+        {
+          const byRow = new Map<string, GenusGridCellChange[]>();
+          for (const c of toSend) byRow.set(c.rowId, [...(byRow.get(c.rowId) ?? []), c]);
+          let cur: GenusGridCellChange[] = [];
+          for (const group of byRow.values()) {
+            if (cur.length > 0 && cur.length + group.length > COMMIT_CHUNK) {
+              chunks.push(cur);
+              cur = [];
+            }
+            cur.push(...group);
+          }
+          if (cur.length) chunks.push(cur);
         }
-        // Fallo PARCIAL (filas de Google): solo las celdas rechazadas quedan en error; las confirmadas se limpian.
+        let result: GenusGridCommitResult = { ok: true };
+        const failures: NonNullable<GenusGridCommitResult["failures"]> = [];
+        const okChunks = new Set<GenusGridCellChange[]>();
+        for (const chunk of chunks) {
+          let r: GenusGridCommitResult;
+          try {
+            r = await onCommit(chunk);
+          } catch (err) {
+            // Sin conexión / error técnico: mensaje simple. El valor escrito queda en la barra roja con «Reintentar».
+            r = { ok: false, message: friendlySaveError(err) };
+          }
+          if (r.ok) okChunks.add(chunk);
+          else {
+            if (result.ok) result = { ok: false, message: r.message };
+            if (r.failures?.length) failures.push(...r.failures);
+            else failures.push(...chunk.map((c) => ({ rowId: c.rowId, columnKey: c.columnKey, message: r.message ?? "" })));
+          }
+        }
+        if (!result.ok) result = { ...result, failures };
+        // Fallo PARCIAL (filas de Google / lotes): solo las celdas rechazadas quedan en error; las confirmadas se limpian.
         const failedKeys = new Set((result.failures ?? []).map((f) => cellKey(f.rowId, f.columnKey)));
-        const partial = !result.ok && failedKeys.size > 0 && failedKeys.size < changes.length;
-        const failedChanges = result.ok
-          ? []
-          : partial
-            ? changes.filter((c) => failedKeys.has(cellKey(c.rowId, c.columnKey)))
-            : changes;
+        const failedChanges = result.ok ? [] : changes.filter((c) => failedKeys.has(cellKey(c.rowId, c.columnKey)));
         const failedSet = new Set(failedChanges.map((c) => cellKey(c.rowId, c.columnKey)));
         setOverlay((prev) => {
           const next = { ...prev };
@@ -451,17 +583,22 @@ export function GenusGrid<T>({
           }
           return next;
         });
-        if (result.ok) {
-          if (opts.retryOf != null) setFailed((prev) => prev.filter((b) => b.id !== opts.retryOf));
+        const savedChanges = result.ok ? toSend : toSend.filter((c) => !failedSet.has(cellKey(c.rowId, c.columnKey)));
+        if (savedChanges.length > 0) {
+          if (opts.retryOf != null && result.ok) setFailed((prev) => prev.filter((b) => b.id !== opts.retryOf));
+          const reversed = savedChanges.map((c) => ({ ...c, oldValue: c.newValue, newValue: c.oldValue }));
           if (opts.recordUndo) {
-            undoStack.current.push(
-              toSend.map((c) => ({ ...c, oldValue: c.newValue, newValue: c.oldValue }))
-            );
+            undoStack.current.push(reversed);
             undoStack.current = undoStack.current.slice(-50);
             setUndoDepth(undoStack.current.length);
           }
-          markSaved(changes.length);
-        } else {
+          if (opts.recordRedo) {
+            redoStack.current.push(reversed);
+            setRedoDepth(redoStack.current.length);
+          }
+          markSaved(savedChanges.length);
+        }
+        if (!result.ok) {
           const message = friendlySaveError({ message: result.failures?.[0]?.message ?? result.message ?? "" }, "No se pudo guardar.");
           setSaveState("error");
           setFailed((prev) => {
@@ -498,22 +635,32 @@ export function GenusGrid<T>({
   const undoLast = useCallback(() => {
     const batch = undoStack.current.pop();
     setUndoDepth(undoStack.current.length);
-    if (batch) void runCommit(batch, { useLatestVersion: true, recordUndo: false });
+    if (batch) void runCommit(batch, { useLatestVersion: true, recordUndo: false, recordRedo: true, keepRedo: true });
   }, [runCommit]);
 
-  // ---- cambios que vienen del motor (edición, pegado, suprimir) ----
-  const handleChange = useCallback(
-    (next: GenusGridRow[]) => {
-      const diffs = diffGridRows(gridRowsRef.current, next, columnKeys);
-      const skipped = flushSkips();
-      if (diffs.length === 0 && skipped.length === 0) return;
+  const redoLast = useCallback(() => {
+    const batch = redoStack.current.pop();
+    setRedoDepth(redoStack.current.length);
+    if (batch) void runCommit(batch, { useLatestVersion: true, recordUndo: true, keepRedo: true });
+  }, [runCommit]);
+
+  // ---- cambios (edición, pegado, suprimir, relleno): validación + decisión de cómo guardarlos ----
+  const processDiffs = useCallback(
+    (diffs: CellDiff[], skipped: PreviewState["skipped"], extraNotes: string[] = []) => {
+      if (diffs.length === 0 && skipped.length === 0 && extraNotes.length === 0) return;
 
       const changes: GenusGridCellChange[] = [];
       const invalid: PreviewState["invalid"] = [];
+      let notCleared = 0;
       for (const d of diffs) {
         const source = rowByIdRef.current.get(d.rowId);
         const col = columnByKey.get(d.columnKey);
         if (!source || !col) continue;
+        // Modo planilla: «vaciar» (Delete sobre un rango) no toca columnas calculadas ni que mueven stock.
+        if (sheet && d.newValue === "" && col.noFill) {
+          notCleared += 1;
+          continue;
+        }
         const change: GenusGridCellChange = {
           rowId: d.rowId,
           columnKey: d.columnKey,
@@ -529,7 +676,38 @@ export function GenusGrid<T>({
       }
 
       const total = changes.length + invalid.length;
-      if (total === 0 && skipped.length === 0) return;
+      if (total === 0 && skipped.length === 0 && extraNotes.length === 0 && notCleared === 0) return;
+
+      // ---- MODO PLANILLA: como Excel — se guarda directo; solo lo que mueve stock pide motivo ----
+      if (sheet) {
+        const moving = changes.filter((c) => Boolean(reasonRequired?.([c])));
+        const plain = changes.filter((c) => !reasonRequired?.([c]));
+        if (plain.length > 0) void runCommit(plain, { useLatestVersion: true, recordUndo: true });
+        const notes = [...extraNotes];
+        if (notCleared > 0) notes.push(`${notCleared} celda${notCleared === 1 ? "" : "s"} no se vacía${notCleared === 1 ? "" : "n"} (columna calculada o que mueve stock)`);
+        if (invalid.length > 0) {
+          const first = invalid
+            .slice(0, 2)
+            .map(({ change, message }) => `${change.columnTitle} “${change.newValue}”: ${message}`)
+            .join(" · ");
+          notes.push(`No se guardó${invalid.length > 1 ? ` ${invalid.length} valores` : ""} — ${first}${invalid.length > 2 ? ` · y ${invalid.length - 2} más` : ""}`);
+        }
+        if (skipped.length > 0) {
+          notes.push(`${skipped.length} celda${skipped.length === 1 ? "" : "s"} protegida${skipped.length === 1 ? "" : "s"} sin modificar (${skipped[0]!.reason})`);
+        }
+        if (moving.length > 0) {
+          const prompt = reasonRequired?.(moving) ?? null;
+          if (reasonInline && moving.length === 1 && prompt) {
+            setInlineText("");
+            setInlineReason({ changes: moving, prompt });
+          } else {
+            setReasonText("");
+            setPreview({ changes: moving, invalid: [], skipped: [], reasonPrompt: prompt });
+          }
+        }
+        if (notes.length > 0) setNotice(notes.join(" · "));
+        return;
+      }
 
       const touchesSensitive = changes.some((c) => columnByKey.get(c.columnKey)?.sensitive);
       const bulkDelete = changes.filter((c) => c.newValue === "" && c.oldValue !== "").length > 1;
@@ -556,8 +734,130 @@ export function GenusGrid<T>({
       setReasonText("");
       setPreview({ changes, invalid, skipped, reasonPrompt });
     },
-    [columnKeys, columnByKey, flushSkips, previewThreshold, rowLabel, rowVersion, runCommit, reasonRequired, reasonInline]
+    [columnByKey, rowLabel, rowVersion, runCommit, reasonRequired, reasonInline, previewThreshold, sheet]
   );
+
+  const handleChange = useCallback(
+    (next: GenusGridRow[]) => {
+      const diffs = diffGridRows(gridRowsRef.current, next, columnKeys);
+      const skipped = flushSkips();
+      setFillChip(null);
+      processDiffs(diffs, skipped);
+    },
+    [columnKeys, flushSkips, processDiffs]
+  );
+
+  // ---- relleno arrastrando (controlador de la esquina de la selección) ----
+  const applyFill = useCallback(
+    (plan: FillPlan, forceMode?: FillMode) => {
+      const rowsNow = gridRowsRef.current;
+      const { source } = plan;
+      const srcColKeys = columnKeys.slice(source.min.col, source.max.col + 1);
+      const rowsSrc = rowsNow.slice(source.min.row, source.max.row + 1);
+      if (rowsSrc.length === 0 || srcColKeys.length === 0) return;
+      const sourceIds = rowsSrc.map((r) => r.__id);
+      const candidates: Array<{ row: number; key: string; value: string }> = [];
+      let usedMode: FillMode = "copy";
+      const kindOf = (key: string) => columnByKey.get(key)?.kind ?? "text";
+      if (plan.axis === "v") {
+        const count = plan.target.max.row - plan.target.min.row + 1;
+        for (const key of srcColKeys) {
+          const srcVals = rowsSrc.map((r) => String(r[key] ?? ""));
+          const base = defaultFillMode(srcVals, kindOf(key));
+          const mode: FillMode = forceMode ?? (plan.invert ? (base === "series" ? "copy" : "series") : base);
+          if (mode === "series") usedMode = "series";
+          const vals = fillValues(srcVals, count, plan.direction, mode, kindOf(key));
+          vals.forEach((value, k) => {
+            const row = plan.direction === 1 ? source.max.row + 1 + k : source.min.row - 1 - k;
+            candidates.push({ row, key, value });
+          });
+        }
+      } else {
+        const count = plan.target.max.col - plan.target.min.col + 1;
+        const kinds = new Set(srcColKeys.map(kindOf));
+        const kind = kinds.size === 1 ? [...kinds][0]! : "text";
+        rowsSrc.forEach((r, i) => {
+          const srcVals = srcColKeys.map((key) => String(r[key] ?? ""));
+          const base = defaultFillMode(srcVals, kind);
+          const mode: FillMode = forceMode ?? (plan.invert ? (base === "series" ? "copy" : "series") : base);
+          if (mode === "series") usedMode = "series";
+          const vals = fillValues(srcVals, count, plan.direction, mode, kind);
+          vals.forEach((value, k) => {
+            const colIdx = plan.direction === 1 ? source.max.col + 1 + k : source.min.col - 1 - k;
+            const key = columnKeys[colIdx];
+            if (key) candidates.push({ row: source.min.row + i, key, value });
+          });
+        });
+      }
+      const diffs: CellDiff[] = [];
+      const skipped: PreviewState["skipped"] = [];
+      let omitted = 0;
+      for (const cand of candidates) {
+        const row = rowsNow[cand.row];
+        const col = columnByKey.get(cand.key);
+        if (!row || !col) continue;
+        const current = String(row[cand.key] ?? "");
+        if (current.trim() === cand.value.trim()) continue;
+        const prot = row.__prot[cand.key];
+        if (prot) {
+          skipped.push({ rowLabel: row.__id, columnTitle: col.title, reason: prot });
+          continue;
+        }
+        if (col.noFill) {
+          omitted += 1;
+          continue;
+        }
+        const probe: GenusGridCellChange = { rowId: row.__id, columnKey: cand.key, columnTitle: col.title, rowLabel: row.__id, oldValue: current, newValue: cand.value, rowVersion: row.__version };
+        if (reasonRequired?.([probe])) {
+          omitted += 1; // mueve stock: no se rellena arrastrando (se edita la celda con su motivo)
+          continue;
+        }
+        diffs.push({ rowId: row.__id, columnKey: cand.key, oldValue: current, newValue: cand.value });
+      }
+      const rowsTouched = new Set(candidates.map((c) => c.row)).size;
+      const notes: string[] = [];
+      if (omitted > 0) notes.push(`${omitted} celda${omitted === 1 ? "" : "s"} omitida${omitted === 1 ? "" : "s"}: columna calculada o que mueve stock (se edita con su motivo)`);
+      processDiffs(diffs, skipped, notes);
+      setFillChip({
+        plan,
+        mode: usedMode,
+        sourceIds,
+        note: `${diffs.length} celda${diffs.length === 1 ? "" : "s"} en ${rowsTouched} fila${rowsTouched === 1 ? "" : "s"} visible${rowsTouched === 1 ? "" : "s"}`,
+      });
+    },
+    [columnKeys, columnByKey, processDiffs, reasonRequired]
+  );
+
+  // ---- eliminar filas (modo planilla): sin motivo ni confirmación, con Deshacer ----
+  const deleteSelectedRows = useCallback(async () => {
+    if (!rowDelete) return;
+    const sel = selectionRef.current;
+    if (!sel) return;
+    const rowsNow = gridRowsRef.current;
+    const ids = rowsNow.slice(sel.min.row, sel.max.row + 1).map((r) => r.__id);
+    const ok: string[] = [];
+    const blocked: string[] = [];
+    for (const id of ids) {
+      const why = rowDelete.check(id);
+      if (why) blocked.push(`${rowLabel(rowByIdRef.current.get(id)!)}: ${why}`);
+      else ok.push(id);
+    }
+    if (ok.length === 0) {
+      setNotice(`No se eliminó nada — ${blocked.slice(0, 2).join(" · ")}`);
+      return;
+    }
+    setNotice(null);
+    setSaveState("saving");
+    try {
+      const res = await rowDelete.onDelete(ok);
+      setSaveState(res.ok ? "saved" : "error");
+      if (res.ok) markSaved(ok.length);
+      setRowDeleteResult({ message: res.message + (blocked.length ? ` · ${blocked.length} no se pudieron eliminar (${blocked[0]})` : ""), undo: res.undo });
+    } catch (err) {
+      setSaveState("error");
+      setNotice(friendlySaveError(err, "No se pudo eliminar."));
+    }
+  }, [rowDelete, rowLabel, markSaved]);
 
   const MIN_INLINE_REASON = 8;
   const applyInlineReason = (text: string) => {
@@ -619,10 +919,32 @@ export function GenusGrid<T>({
     [columnKeys]
   );
 
+  // ---- Modo planilla: Ctrl+Z / Ctrl+Y valen con una celda activa aunque el foco esté en la página (el motor no enfoca nada) ----
+  useEffect(() => {
+    if (!sheet) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (!activeRef.current || !(event.ctrlKey || event.metaKey)) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+      const key = event.key.toLowerCase();
+      if (key === "z" && !event.shiftKey) {
+        event.preventDefault();
+        undoLast();
+      } else if (key === "y" || (key === "z" && event.shiftKey)) {
+        event.preventDefault();
+        redoLast();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [sheet, undoLast, redoLast]);
+
   // ---- Ctrl+Z (fuera de un input) ----
   const onKeyDownCapture = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Tab") tabDir.current = event.shiftKey ? -1 : 1;
-    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "z") {
+    if (sheet) return; // en modo planilla lo maneja el listener global (ver arriba)
+    const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && key === "z") {
       if ((event.target as HTMLElement).tagName === "INPUT") return;
       event.preventDefault();
       event.stopPropagation();
@@ -632,12 +954,81 @@ export function GenusGrid<T>({
 
   const computedHeight = height ?? Math.min(maxHeight, (rows.length + 1) * rowHeight + 24);
 
+  const syncSelection = (selection: SheetRange | null) => {
+    const a = activeRef.current;
+    selectionRef.current = selection ? { min: selection.min, max: selection.max } : a ? { min: a, max: a } : null;
+    const cur = selectionRef.current;
+    setSelectedRowCount(cur ? cur.max.row - cur.min.row + 1 : 0);
+  };
   const describeSelection = (selection: { min: { col: number; row: number }; max: { col: number; row: number } } | null) => {
+    syncSelection(selection);
     if (!selection) return setSelectionLabel("");
     const r = selection.max.row - selection.min.row + 1;
     const c = selection.max.col - selection.min.col + 1;
     setSelectionLabel(r * c > 1 ? `${r} fila${r === 1 ? "" : "s"} × ${c} columna${c === 1 ? "" : "s"} seleccionadas` : "");
   };
+
+  // El marco de scroll del motor (para las barras propias y los gestos): se relee si el motor se remonta.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useLayoutEffect(() => {
+    if (!sheet) return;
+    const el = wrapRef.current?.querySelector<HTMLElement>(".dsg-container") ?? null;
+    setScroller((prev) => (prev === el ? prev : el));
+  });
+  const { overlay: sheetOverlay } = useSheetGestures({
+    wrapRef,
+    gridRef,
+    rowHeight,
+    rowCount: gridRows.length,
+    colCount: columns.length,
+    selectionRef,
+    canFill: sheet && canEdit,
+    onFill: (plan) => applyFill(plan),
+    testId,
+  });
+  // Limpia el aviso «Eliminadas N filas — Deshacer» al rato.
+  useEffect(() => {
+    if (!rowDeleteResult) return;
+    const t = window.setTimeout(() => setRowDeleteResult(null), 15_000);
+    return () => window.clearTimeout(t);
+  }, [rowDeleteResult]);
+  const fillChipValid = fillChip && fillChip.sourceIds.every((id, i) => gridRows[fillChip.plan.source.min.row + i]?.__id === id);
+
+  const dsg = (
+    <DataSheetGrid<GenusGridRow>
+      // Si cambian las columnas (otra pestaña/semana) el motor se remonta: sus encabezados no se actualizan en caliente.
+      key={columns.map((c) => `${c.key}:${c.title}`).join("|")}
+      ref={gridRef}
+      value={gridRows}
+      onChange={(next) => handleChange(next)}
+      columns={gridColumns}
+      rowKey="__id"
+      lockRows
+      addRowsComponent={false}
+      disableContextMenu
+      disableExpandSelection
+      height={computedHeight}
+      rowHeight={rowHeight}
+      headerRowHeight={rowHeight}
+      stickyRightColumn={stickyRight}
+      gutterColumn={{ basis: 44, minWidth: 44, title: "#" } as never}
+      rowClassName={
+        rowClassName
+          ? ({ rowData }) => {
+              const source = rowByIdRef.current.get(rowData.__id);
+              return source ? rowClassName(source) : undefined;
+            }
+          : undefined
+      }
+      onSelectionChange={({ selection }) => describeSelection(selection)}
+      onActiveCellChange={(arg) => {
+        activeRef.current = arg.cell ? { col: arg.cell.col, row: arg.cell.row } : null;
+        if (!arg.cell) syncSelection(null);
+        else if (!selectionRef.current || (selectionRef.current.min.row === selectionRef.current.max.row && selectionRef.current.min.col === selectionRef.current.max.col)) syncSelection(null);
+        onActiveCellChange(arg);
+      }}
+    />
+  );
 
   return (
     <div
@@ -659,19 +1050,91 @@ export function GenusGrid<T>({
           </span>
         )}
         <span className="text-[var(--os-text-muted)]">{selectionLabel}</span>
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="ml-auto h-7 px-2 text-xs"
-          onClick={undoLast}
-          disabled={undoDepth === 0}
-          data-testid={`${testId}-undo`}
-        >
-          <Undo2 className="size-3.5" aria-hidden="true" />
-          Deshacer
-        </Button>
+        <div className="ml-auto flex flex-wrap items-center gap-1">
+          {sheet && rowDelete && canEdit ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => void deleteSelectedRows()}
+              disabled={selectedRowCount === 0}
+              data-testid={`${testId}-delete-rows`}
+              title="Elimina las filas de la selección (sin motivo; se puede deshacer)"
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+              Eliminar {selectedRowCount > 1 ? `${selectedRowCount} filas` : "fila"}
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={undoLast}
+            disabled={undoDepth === 0}
+            data-testid={`${testId}-undo`}
+          >
+            <Undo2 className="size-3.5" aria-hidden="true" />
+            Deshacer
+          </Button>
+          {sheet ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={redoLast}
+              disabled={redoDepth === 0}
+              data-testid={`${testId}-redo`}
+            >
+              <Redo2 className="size-3.5" aria-hidden="true" />
+              Rehacer
+            </Button>
+          ) : null}
+        </div>
       </div>
+
+      {sheet && fillChipValid && fillChip ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs" data-testid={`${testId}-fill-chip`} role="group" aria-label="Opciones de relleno">
+          <span className="text-[var(--os-text-muted)]">Relleno: {fillChip.note}</span>
+          {(["series", "copy"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => (fillChip.mode === m ? undefined : applyFill(fillChip.plan, m))}
+              data-testid={`${testId}-fill-${m}`}
+              aria-pressed={fillChip.mode === m}
+              className={`rounded border px-2 py-0.5 ${
+                fillChip.mode === m
+                  ? "border-[var(--os-teal)] bg-[var(--os-teal-soft)] font-semibold text-[var(--os-text)]"
+                  : "border-[var(--os-border)] text-[var(--os-text-muted)] hover:bg-[var(--os-teal-soft)]/50"
+              }`}
+            >
+              {m === "series" ? "Rellenar serie" : "Copiar celdas"}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {sheet && rowDeleteResult ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs" data-testid={`${testId}-delete-result`} role="status">
+          <span className="text-[var(--os-text)]">{rowDeleteResult.message}</span>
+          {rowDeleteResult.undo ? (
+            <button
+              type="button"
+              className="rounded border border-[var(--os-teal)] px-2 py-0.5 font-semibold text-[var(--os-teal)] hover:bg-[var(--os-teal-soft)]/50"
+              onClick={() => {
+                const undo = rowDeleteResult.undo;
+                setRowDeleteResult(null);
+                void undo?.();
+              }}
+              data-testid={`${testId}-delete-undo`}
+            >
+              Deshacer eliminación
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {failed.length > 0 && (
         <div
@@ -705,16 +1168,16 @@ export function GenusGrid<T>({
 
       {inlineReason && (
         <div
-          className="flex flex-wrap items-center gap-2 rounded-[var(--os-radius-sm)] border border-amber-400 bg-amber-50 px-2 py-1.5 text-xs"
+          className={`flex flex-wrap items-center gap-2 rounded-[var(--os-radius-sm)] border px-2 py-1.5 text-xs ${sheet ? "border-amber-400/50 bg-amber-400/10 text-[var(--os-text)]" : "border-amber-400 bg-amber-50"}`}
           data-testid={`${testId}-inline-reason`}
           role="group"
           aria-label="Motivo del cambio"
         >
-          <span className="font-medium text-amber-950">
+          <span className={`font-medium ${sheet ? "" : "text-amber-950"}`}>
             {inlineReason.changes[0]!.rowLabel} · {inlineReason.changes[0]!.columnTitle}: {previewValue(inlineReason.changes[0]!.oldValue)} →{" "}
             <strong>{previewValue(inlineReason.changes[0]!.newValue)}</strong>
           </span>
-          <span className="text-amber-900">{inlineReason.prompt}</span>
+          <span className={sheet ? "text-amber-200" : "text-amber-900"}>{inlineReason.prompt}</span>
           <input
             autoFocus
             value={inlineText}
@@ -729,7 +1192,7 @@ export function GenusGrid<T>({
               }
             }}
             placeholder="Motivo + Enter"
-            className="h-7 min-w-[14rem] flex-1 rounded border border-amber-400 bg-white px-2 text-xs text-slate-900 placeholder:text-slate-500"
+            className={`h-7 min-w-[14rem] flex-1 rounded border px-2 text-xs ${sheet ? "border-amber-400/50 bg-[var(--os-surface)] text-[var(--os-text)] placeholder:text-[var(--os-text-muted)]" : "border-amber-400 bg-white text-slate-900 placeholder:text-slate-500"}`}
             data-testid={`${testId}-inline-reason-input`}
           />
           {["Conteo físico", "Corrección de carga", "Merma o rotura", "Devolución a proveedor"].map((m) => (
@@ -743,35 +1206,32 @@ export function GenusGrid<T>({
         </div>
       )}
 
-      <div className="genus-grid overflow-hidden rounded-[var(--os-radius-sm)] border border-[var(--os-border)]">
-        <DataSheetGrid<GenusGridRow>
-          // Si cambian las columnas (otra pestaña/semana) el motor se remonta: sus encabezados no se actualizan en caliente.
-          key={columns.map((c) => `${c.key}:${c.title}`).join("|")}
-          ref={gridRef}
-          value={gridRows}
-          onChange={(next) => handleChange(next)}
-          columns={gridColumns}
-          rowKey="__id"
-          lockRows
-          addRowsComponent={false}
-          disableContextMenu
-          disableExpandSelection
-          height={computedHeight}
-          rowHeight={rowHeight}
-          headerRowHeight={rowHeight}
-          stickyRightColumn={stickyRight}
-          gutterColumn={{ basis: 44, minWidth: 44, title: "#" } as never}
-          rowClassName={
-            rowClassName
-              ? ({ rowData }) => {
-                  const source = rowByIdRef.current.get(rowData.__id);
-                  return source ? rowClassName(source) : undefined;
-                }
-              : undefined
-          }
-          onSelectionChange={({ selection }) => describeSelection(selection)}
-          onActiveCellChange={onActiveCellChange}
-        />
+      <div className={`genus-grid overflow-hidden rounded-[var(--os-radius-sm)] border border-[var(--os-border)] ${sheet ? "genus-sheet" : ""}`}>
+        {sheet ? (
+          <>
+            <div className="genus-sheet-body">
+              <div className="genus-sheet-frame" ref={wrapRef} data-testid={`${testId}-frame`}>
+                {dsg}
+                <FrozenFirstColumn
+                  scroller={scroller}
+                  rows={gridRows}
+                  columnKey={columnKeys[0]}
+                  title={columns[0]?.title ?? ""}
+                  rowHeight={rowHeight}
+                  onSelectRow={(row) => gridRef.current?.setSelection({ min: { col: 0, row }, max: { col: columns.length - 1, row } })}
+                  testId={testId}
+                />
+                {sheetOverlay}
+              </div>
+              <SheetVScrollbar scroller={scroller} testId={testId} />
+            </div>
+            <div className="genus-sheet-foot" style={{ paddingRight: SHEET_BAR_SIZE }}>
+              <SheetHScrollbar scroller={scroller} testId={testId} />
+            </div>
+          </>
+        ) : (
+          dsg
+        )}
       </div>
 
       {hint && <p className="text-[11px] text-[var(--os-text-muted)]">{hint}</p>}
