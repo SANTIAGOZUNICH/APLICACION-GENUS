@@ -52,9 +52,11 @@ export async function POST(request: Request) {
       priority: (body.priority as AvisoPriority) ?? "NORMAL",
       toSectors: (body.toSectors as SectorId[]) ?? [],
       toAll: Boolean(body.toAll),
+      toUsers: Array.isArray(body.toUsers) ? body.toUsers.map(String) : [],
+      onlyResponsables: Boolean(body.onlyResponsables),
     };
     const message = await getAvisosService().create(
-      { email: actor.email, sector: actor.sector },
+      { email: actor.email, sector: actor.sector, displayName: actor.displayName },
       input
     );
     return NextResponse.json({ message }, { status: 201 });

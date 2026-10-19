@@ -582,6 +582,29 @@ export const orderNumberSequences = pgTable(
   ]
 );
 
+/** 0060 — destinatarios individuales de un aviso (estado leído/archivado propio de cada persona). */
+export const osInternalMessageUsers = pgTable(
+  "os_internal_message_users",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => osInternalMessages.id, { onDelete: "cascade" }),
+    userEmail: text("user_email").notNull(),
+    userName: text("user_name").notNull().default(""),
+    sector: text("sector").notNull(),
+    /** USUARIO = elegido por nombre; RESPONSABLE = resuelto como responsable de un sector. */
+    via: text("via").notNull().default("USUARIO"),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("os_internal_message_users_msg_email_uq").on(table.messageId, table.userEmail),
+    index("os_internal_message_users_email_idx").on(table.userEmail),
+  ]
+);
+
 export const osNotifications = pgTable("os_notifications", {
   id: uuid("id").defaultRandom().primaryKey(),
   kind: text("kind").notNull(),
@@ -596,6 +619,8 @@ export const osNotifications = pgTable("os_notifications", {
   dismissedBy: jsonb("dismissed_by").notNull().default([]),
   /** Emails que eliminaron el aviso de forma definitiva (no restaurable). */
   deletedBy: jsonb("deleted_by").notNull().default([]),
+  /** 0060 — destinatarios individuales (emails). null = todo el sector, como siempre. */
+  targetEmails: jsonb("target_emails"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

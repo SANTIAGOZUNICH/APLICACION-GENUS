@@ -464,6 +464,8 @@ export type OsNotificationRecord = {
   dismissedBy: string[];
   /** Emails con eliminación definitiva (no restaurable). */
   deletedBy: string[];
+  /** Destinatarios individuales (emails). null/ausente = todo el sector. */
+  targetEmails?: string[] | null;
   createdAt: string;
 };
 

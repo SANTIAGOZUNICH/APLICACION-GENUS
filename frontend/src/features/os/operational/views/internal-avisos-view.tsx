@@ -8,6 +8,8 @@ import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
   createAvisoApi,
+  fetchAvisoDirectoryApi,
+  type AvisoDirectoryEntry,
   fetchAvisosApi,
   patchAvisoApi,
 } from "@/lib/avisos/avisos-client";
@@ -44,6 +46,15 @@ export function InternalAvisosView() {
   const [priority, setPriority] = useState<AvisoPriority>("NORMAL");
   const [toAll, setToAll] = useState(false);
   const [toSectors, setToSectors] = useState<SectorId[]>([]);
+  const [toUsers, setToUsers] = useState<string[]>([]);
+  const [onlyResponsables, setOnlyResponsables] = useState(false);
+  const [directory, setDirectory] = useState<AvisoDirectoryEntry[]>([]);
+  const [userSearch, setUserSearch] = useState("");
+
+  useEffect(() => {
+    if (!composeOpen || directory.length > 0) return;
+    void fetchAvisoDirectoryApi(session).then(setDirectory).catch(() => setDirectory([]));
+  }, [composeOpen, directory.length, session]);
 
   const reload = useCallback(async () => {
     try {
@@ -96,6 +107,8 @@ export function InternalAvisosView() {
         priority,
         toAll,
         toSectors,
+        toUsers,
+        onlyResponsables,
       });
       setComposeOpen(false);
       setConfirmSend(false);
@@ -103,6 +116,9 @@ export function InternalAvisosView() {
       setBody("");
       setToAll(false);
       setToSectors([]);
+      setToUsers([]);
+      setOnlyResponsables(false);
+      setUserSearch("");
       setTab("enviados");
       void reload();
     } catch (e) {
@@ -166,7 +182,7 @@ export function InternalAvisosView() {
               <li className="px-3 py-6 text-sm text-[var(--os-text-muted)]">Sin avisos.</li>
             ) : (
               items.map((m) => {
-                const mine = m.recipients.find((r) => r.sector === sectorId);
+                const mine = m.mine ?? m.recipients.find((r) => r.sector === sectorId);
                 const unread = tab === "recibidos" && mine && !mine.readAt;
                 return (
                   <li key={m.id}>
@@ -204,8 +220,18 @@ export function InternalAvisosView() {
                   {new Date(selected.createdAt).toLocaleString("es-AR")}
                 </p>
                 <p className="text-xs text-[var(--os-text-muted)]">
-                  Para: {selected.toSectors.map((s) => SECTOR_LABELS[s]).join(", ")}
+                  Para:{" "}
+                  {[
+                    ...selected.toSectors.map((s) => SECTOR_LABELS[s]),
+                    ...(selected.userRecipients ?? []).map((u) => `${u.name || u.email}${u.via === "RESPONSABLE" ? " (responsable)" : ""}`),
+                  ].join(", ")}
                 </p>
+                {tab === "enviados" && (selected.userRecipients ?? []).length > 0 ? (
+                  <p className="text-xs text-[var(--os-text-muted)]" data-testid="aviso-read-status">
+                    Lectura:{" "}
+                    {selected.userRecipients.map((u) => `${u.name || u.email}: ${u.readAt ? "leído" : "sin leer"}`).join(" · ")}
+                  </p>
+                ) : null}
                 <pre className="whitespace-pre-wrap rounded bg-[var(--os-bg-muted)] p-3 text-sm font-sans">
                   {selected.body}
                 </pre>
@@ -293,6 +319,40 @@ export function InternalAvisosView() {
                 ))}
               </div>
             ) : null}
+            <label className="mb-2 flex items-center gap-2 text-sm" title="Los sectores marcados arriba se interpretan como «solo sus responsables» y no como todo el sector.">
+              <input type="checkbox" checked={onlyResponsables} onChange={(e) => setOnlyResponsables(e.target.checked)} data-testid="aviso-only-responsables" />
+              Solo los responsables de los sectores elegidos
+            </label>
+            <div className="mb-3" data-testid="aviso-users">
+              <p className="mb-1 text-xs font-medium">Personas concretas {toUsers.length ? `(${toUsers.length})` : ""}</p>
+              <input
+                className="mb-1 w-full rounded border px-2 py-1.5 text-sm"
+                placeholder="Buscar persona…"
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                data-testid="aviso-user-search"
+              />
+              <ul className="max-h-40 space-y-0.5 overflow-y-auto rounded border border-[var(--os-border)] p-1">
+                {directory.length === 0 ? <li className="px-1 py-1 text-xs text-[var(--os-text-muted)]">Sin lista de personas disponible.</li> : null}
+                {directory
+                  .filter((u) => !userSearch.trim() || `${u.name} ${u.email} ${u.sector}`.toLowerCase().includes(userSearch.trim().toLowerCase()))
+                  .map((u) => (
+                    <li key={u.email}>
+                      <label className="flex min-h-9 items-center gap-2 px-1 text-xs">
+                        <input
+                          type="checkbox"
+                          className="size-4"
+                          checked={toUsers.includes(u.email)}
+                          onChange={() => setToUsers((prev) => (prev.includes(u.email) ? prev.filter((x) => x !== u.email) : [...prev, u.email]))}
+                          data-testid="aviso-user-check"
+                        />
+                        <span className="font-medium">{u.name}</span>
+                        <span className="text-[var(--os-text-muted)]">{SECTOR_LABELS[u.sector as SectorId] ?? u.sector}{u.responsable ? " · responsable" : ""}</span>
+                      </label>
+                    </li>
+                  ))}
+              </ul>
+            </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="secondary" onClick={() => setComposeOpen(false)}>
                 Cancelar
@@ -305,7 +365,7 @@ export function InternalAvisosView() {
                   schemaPending ||
                   !title.trim() ||
                   !body.trim() ||
-                  (!toAll && toSectors.length === 0)
+                  (!toAll && toSectors.length === 0 && toUsers.length === 0)
                 }
               >
                 Enviar
