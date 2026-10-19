@@ -196,3 +196,23 @@ export async function fetchPendingDefinition(session: Session): Promise<{
   );
   return { items: json.items ?? [], legacyQualityPending: json.legacyQualityPending ?? 0 };
 }
+
+/** Eliminación masiva de trabajos (Producción). `dryRun` = solo veredictos, no escribe. */
+export async function postBulkDeleteWorks(
+  session: Session,
+  payload: {
+    ids: string[];
+    reason: string;
+    dryRun?: boolean;
+    batchKey?: string;
+    expectedVersions?: Record<string, number>;
+  }
+): Promise<import("../lib/bulk-delete-verdicts").BulkDeleteResult> {
+  const res = await fetch("/api/v1/work-items/bulk-delete", {
+    method: "POST",
+    credentials: "include",
+    headers: { ...headers(session), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parse<import("../lib/bulk-delete-verdicts").BulkDeleteResult>(res, "No se pudo eliminar la selección");
+}

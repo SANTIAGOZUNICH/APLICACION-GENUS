@@ -35,6 +35,15 @@ import { MarkReadyPanel } from "../components/mark-ready-panel";
 import { SendToCodificadoDialog } from "../components/send-to-codificado-dialog";
 import { SendToEnvasadoDialog, type SendToEnvasadoPayload } from "../components/send-to-envasado-dialog";
 import { StatusChip } from "../components/operational-ui";
+import {
+  BulkDeleteDialog,
+  BulkSelectCheckbox,
+  BulkSelectionBar,
+  bulkRowClassName,
+  useBulkSelection,
+} from "../components/bulk-select";
+import { useBulkDeleteWorks } from "../components/bulk-select/use-bulk-delete-works";
+import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
 
 type ActiveAction = { kind: PendingDefinitionAction; row: PendingDefinitionItem } | null;
 
@@ -202,6 +211,32 @@ export function PendientesDefinirView() {
 
   const activeItem = active?.row.workItem ?? null;
 
+  // Selección múltiple + eliminación masiva (solo Producción; el servidor lo valida de nuevo).
+  const visibleIds = useMemo(() => rows.map((r) => r.workItem.id), [rows]);
+  const selection = useBulkSelection(visibleIds);
+  const canBulkDelete = canMutateAssignedWork(sectorId as SectorId);
+  const bulk = useBulkDeleteWorks({
+    session,
+    selectedIds: selection.selected,
+    showToast,
+    onDone: async () => {
+      selection.clear();
+      await load();
+    },
+  });
+  const bulkItems = useMemo(
+    () =>
+      rows
+        .filter((r) => selection.isSelected(r.workItem.id))
+        .map((r) => ({
+          id: r.workItem.id,
+          label: displayField(r.workItem.product),
+          detail: displayField(r.workItem.client),
+        })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, selection.selected]
+  );
+
   return (
     <TwinShell title="Pendientes de definir">
       <header className="mb-4 space-y-1">
@@ -235,9 +270,28 @@ export function PendientesDefinirView() {
         </p>
       ) : (
         <div className="overflow-x-auto">
+          {canBulkDelete ? (
+            <BulkSelectionBar
+              selection={selection}
+              scopeLabel={`de ${selection.visibleCount} pendientes visibles en esta vista`}
+              onDelete={bulk.start}
+              busy={bulk.busy}
+            />
+          ) : null}
           <table className="os-table w-full text-sm" data-testid="pendientes-table">
             <thead>
               <tr className="text-left text-xs uppercase text-[var(--os-text-muted)]">
+                {canBulkDelete ? (
+                  <th className="w-10 py-2">
+                    <BulkSelectCheckbox
+                      checked={selection.allVisibleSelected}
+                      indeterminate={selection.someSelected}
+                      onChange={selection.toggleAllVisible}
+                      label="Seleccionar todos los pendientes visibles"
+                      testId="bulk-select-all"
+                    />
+                  </th>
+                ) : null}
                 <th className="py-2">Producto</th>
                 <th className="hidden py-2 md:table-cell">Cliente</th>
                 <th className="py-2">Cant.</th>
@@ -252,7 +306,22 @@ export function PendientesDefinirView() {
                 const item = row.workItem;
                 const total = totalUnits(item);
                 return (
-                  <tr key={item.id} className="border-t border-[var(--os-border)] align-top" data-testid="pendiente-row">
+                  <tr
+                    key={item.id}
+                    className={`border-t border-[var(--os-border)] align-top ${bulkRowClassName(selection.isSelected(item.id))}`}
+                    data-testid="pendiente-row"
+                    data-selected={selection.isSelected(item.id) ? "true" : "false"}
+                  >
+                    {canBulkDelete ? (
+                      <td className="w-10 py-2">
+                        <BulkSelectCheckbox
+                          checked={selection.isSelected(item.id)}
+                          onChange={() => selection.toggle(item.id)}
+                          label={`Seleccionar ${displayField(item.product)}`}
+                          testId="bulk-select-row"
+                        />
+                      </td>
+                    ) : null}
                     <td className="py-2 pr-2">
                       <span className="font-medium">{displayField(item.product)}</span>
                       <span className="mt-0.5 block text-xs text-[var(--os-text-muted)] md:hidden">
@@ -307,6 +376,17 @@ export function PendientesDefinirView() {
           </table>
         </div>
       )}
+
+      <BulkDeleteDialog
+        open={bulk.open}
+        onOpenChange={bulk.close}
+        items={bulkItems}
+        verdicts={bulk.verdicts}
+        previewError={bulk.previewError}
+        busy={bulk.busy}
+        entityPlural="trabajos"
+        onConfirm={(reason) => void bulk.confirm(reason)}
+      />
 
       {active?.kind === "REGISTRAR_ENTREGA" && activeItem ? (
         <DeliverWorkDialog
