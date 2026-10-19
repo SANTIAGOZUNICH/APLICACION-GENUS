@@ -45,6 +45,7 @@ export const INSTALLED_LABEL = "Genus OS ya está instalada";
 
 export type InstallUiStatus =
   | "preparing"
+  | "manual"
   | "install"
   | "prompting"
   | "started"
@@ -56,6 +57,8 @@ export function statusMessageForInstall(status: InstallUiStatus): string | null 
   switch (status) {
     case "preparing":
       return "Preparando instalador…";
+    case "manual":
+      return "El navegador no ofreció la instalación automática. Tocá el botón para ver cómo agregarla a mano.";
     case "prompting":
       return "Instalación iniciada — confirmá en el diálogo del navegador.";
     case "started":

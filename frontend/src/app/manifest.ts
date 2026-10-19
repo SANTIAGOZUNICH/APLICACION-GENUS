@@ -6,6 +6,8 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "Genus OS",
     short_name: "Genus OS",
     description: "Manufacturing Operating System de Laboratorio Genus",
+    // Mismo valor que Chrome ya deriva de start_url: fija la identidad sin duplicar apps ya instaladas.
+    id: "/login",
     start_url: "/login",
     scope: "/",
     display: "standalone",

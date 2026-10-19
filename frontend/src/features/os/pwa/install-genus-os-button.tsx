@@ -71,6 +71,14 @@ export function InstallGenusOsButton({
     };
   }, []);
 
+  // Chrome a veces nunca dispara beforeinstallprompt (app ya instalada, instalación descartada hace poco, navegador
+  // sin soporte). Sin esto el botón quedaba eternamente en «Preparando instalador…».
+  useEffect(() => {
+    if (status !== "preparing") return;
+    const timer = window.setTimeout(() => setStatus((s) => (s === "preparing" && !hasDeferredInstallPrompt() ? "manual" : s)), 3500);
+    return () => window.clearTimeout(timer);
+  }, [status]);
+
   const isInstalled = platform === "standalone" || installedEvent;
   const label = isInstalled ? INSTALLED_LABEL : INSTALL_LABEL;
   const statusText = isInstalled ? null : statusMessageForInstall(status);
@@ -132,8 +140,13 @@ export function InstallGenusOsButton({
       return;
     }
 
-    // BIP still missing — keep button visible; show clear status (no "Instalar ahora" modal).
-    setStatus(currentPlatform === "chromium" ? "preparing" : "unsupported");
+    // Sin prompt nativo: guía manual (menú de Chrome) en vez de esperar indefinidamente.
+    if (currentPlatform === "chromium" || currentPlatform === "other") {
+      setStatus("manual");
+      setGuideOpen(true);
+      return;
+    }
+    setStatus("unsupported");
   }, [isInstalled, runNativePromptOnce]);
 
   const buttonClass = useMemo(() => {
@@ -261,6 +274,33 @@ function InstallGuideSheet({
                 <li>Abrí Safari.</li>
                 <li>Compartir → Agregar a inicio → Agregar.</li>
               </ol>
+              <button
+                type="button"
+                onClick={onCopyLink}
+                className="min-h-11 w-full rounded-[var(--os-radius-sm)] bg-[var(--os-teal)] text-sm font-medium text-[var(--os-navy)]"
+              >
+                {copied ? "Enlace copiado" : "Copiar enlace"}
+              </button>
+            </>
+          )}
+
+          {(platform === "chromium" || platform === "other") && (
+            <>
+              <p className="text-[var(--os-text-muted)]">
+                Chrome no ofreció la instalación automática en este dispositivo. Podés agregarla a mano:
+              </p>
+              <ol className="list-decimal space-y-2 pl-4">
+                <li>Tocá el menú ⋮ de Chrome (arriba a la derecha).</li>
+                <li>
+                  Elegí «Instalar app» si aparece. Si no aparece, elegí «Agregar a la pantalla principal» (crea un
+                  acceso directo que abre Genus OS en Chrome).
+                </li>
+                <li>Confirmá. Si pide «Agregar automáticamente», tocá Agregar.</li>
+              </ol>
+              <p className="text-xs text-[var(--os-text-muted)]">
+                Mientras tanto Genus OS funciona igual desde Chrome en {typeof window !== "undefined" ? window.location.origin : ""}/login.
+                Si la app ya estaba instalada, buscala en el cajón de aplicaciones.
+              </p>
               <button
                 type="button"
                 onClick={onCopyLink}
