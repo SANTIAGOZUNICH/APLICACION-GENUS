@@ -13,7 +13,7 @@ import "server-only";
 
 import { and, eq, inArray, isNull, lte, gte, or, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { invMpStock, mpMasterLinks, mpStockMovements, operationalOrders, workItems } from "@/lib/db/schema";
+import { invMpStock, mpMasterLinks, mpStockMovements, mpWeeklyProductionExclusions, mpWeeklyRowState, operationalOrders, workItems } from "@/lib/db/schema";
 import { normalizeMpStockPayload } from "@/lib/inventory/neon-persist";
 import { parseArDecimal } from "@/lib/utils/ar-number-parsing";
 import {
@@ -30,7 +30,32 @@ import {
 } from "./availability";
 import { isMissingSchemaError } from "@/lib/db/missing-schema";
 
-export type WeeklyAvailability = AvailabilityResult & {
+/** Decisiones administrativas por MP (no modifican fórmula, cantidades, stock, disponibilidad ni consumos). */
+export const GESTION_OPTIONS = ["", "pendiente", "comprar", "compra_solicitada", "no_comprar", "sustituir", "aporta_cliente", "resuelto"] as const;
+export type Gestion = (typeof GESTION_OPTIONS)[number];
+
+export type RowState = {
+  observacion: string;
+  observacionBy: string | null;
+  observacionAt: string | null;
+  gestion: Gestion;
+  gestionBy: string | null;
+  gestionAt: string | null;
+  excluded: boolean;
+  excludedBy: string | null;
+  excludedAt: string | null;
+  excludedRequerido: number | null;
+  /** Aparecieron necesidades (producciones) nuevas desde que se excluyó: la fila vuelve a mostrarse, marcada. */
+  exclusionToReview: boolean;
+};
+export type WeeklyRow = AvailabilityResult["rows"][number] & { state: RowState };
+
+export type WeeklyAvailability = Omit<AvailabilityResult, "rows"> & {
+  rows: WeeklyRow[];
+  /** MP quitadas del control de esta semana por una persona (siguen guardadas: se pueden restaurar). */
+  excludedRows: WeeklyRow[];
+  /** Producciones quitadas del cálculo de esta semana (se pueden restaurar). */
+  excludedProductions: Array<{ workItemId: string; label: string; by: string; at: string; reason: string }>;
   weekStart: string;
   weekEnd: string;
   generatedAt: string;
@@ -251,11 +276,256 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
   return { inputs, meta };
 }
 
+type StateMem = { rows: Map<string, RowState & { label: string; productionIds: string[] }>; prods: Map<string, { workItemId: string; label: string; by: string; at: string; reason: string }> };
+const gs = globalThis as unknown as { __genusMpWeekState?: StateMem };
+const stateMem = (): StateMem => (gs.__genusMpWeekState ??= { rows: new Map(), prods: new Map() });
+const emptyState = (): RowState => ({ observacion: "", observacionBy: null, observacionAt: null, gestion: "", gestionBy: null, gestionAt: null, excluded: false, excludedBy: null, excludedAt: null, excludedRequerido: null, exclusionToReview: false });
+const memKey = (week: string, key: string) => `${week}|${key}`;
+
+type StoredState = RowState & { productionIds: string[]; label: string };
+async function loadRowStates(week: string): Promise<Map<string, StoredState>> {
+  const out = new Map<string, StoredState>();
+  if (!isDatabaseConfigured()) {
+    for (const [k, v] of stateMem().rows) if (k.startsWith(`${week}|`)) out.set(k.slice(week.length + 1), v);
+    return out;
+  }
+  try {
+    const rows = await getDb().select().from(mpWeeklyRowState).where(eq(mpWeeklyRowState.weekStart, week));
+    for (const r of rows) {
+      out.set(r.rowKey, {
+        label: r.materialLabel,
+        observacion: r.observacion,
+        observacionBy: r.observacionBy,
+        observacionAt: r.observacionAt?.toISOString() ?? null,
+        gestion: (GESTION_OPTIONS as readonly string[]).includes(r.gestion) ? (r.gestion as Gestion) : "",
+        gestionBy: r.gestionBy,
+        gestionAt: r.gestionAt?.toISOString() ?? null,
+        excluded: r.excluded,
+        excludedBy: r.excludedBy,
+        excludedAt: r.excludedAt?.toISOString() ?? null,
+        excludedRequerido: r.excludedRequerido,
+        exclusionToReview: false,
+        productionIds: Array.isArray(r.excludedProductionIds) ? (r.excludedProductionIds as string[]) : [],
+      });
+    }
+  } catch (err) {
+    if (!isMissingSchemaError(err)) throw err; // sin migración 0058: el control funciona igual, sin estado administrativo
+  }
+  return out;
+}
+
+async function loadProductionExclusions(week: string): Promise<StateMem["prods"]> {
+  if (!isDatabaseConfigured()) return new Map([...stateMem().prods].filter(([k]) => k.startsWith(`${week}|`)).map(([k, v]) => [k.slice(week.length + 1), v]));
+  const out: StateMem["prods"] = new Map();
+  try {
+    const rows = await getDb().select().from(mpWeeklyProductionExclusions).where(eq(mpWeeklyProductionExclusions.weekStart, week));
+    for (const r of rows) out.set(r.workItemId, { workItemId: r.workItemId, label: r.label, by: r.excludedBy, at: r.excludedAt.toISOString(), reason: r.reason });
+  } catch (err) {
+    if (!isMissingSchemaError(err)) throw err;
+  }
+  return out;
+}
+
+export class MpStateSchemaPendingError extends Error {
+  constructor() {
+    super("Falta aplicar la migración 0058 en la base: todavía no se pueden guardar observaciones, gestiones ni exclusiones.");
+  }
+}
+async function guardSchema<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (isMissingSchemaError(err)) throw new MpStateSchemaPendingError();
+    throw err;
+  }
+}
+
+/** Observación general por MP y semana (no por producción). Vacía = se borra el texto. */
+export async function saveRowNote(input: { week: string; rowKey: string; label: string; observacion?: string; gestion?: string; by: string }): Promise<void> {
+  const { start } = weekBounds(input.week);
+  const now = new Date();
+  const patchObs = input.observacion !== undefined;
+  const patchGes = input.gestion !== undefined;
+  const observacion = (input.observacion ?? "").slice(0, 2000);
+  if (patchGes && !(GESTION_OPTIONS as readonly string[]).includes(input.gestion!)) throw new Error("Decisión de gestión inválida.");
+  if (!isDatabaseConfigured()) {
+    const m = stateMem();
+    const k = memKey(start, input.rowKey);
+    const cur = m.rows.get(k) ?? { ...emptyState(), label: input.label, productionIds: [] };
+    if (patchObs) Object.assign(cur, { observacion, observacionBy: input.by, observacionAt: now.toISOString() });
+    if (patchGes) Object.assign(cur, { gestion: input.gestion as Gestion, gestionBy: input.by, gestionAt: now.toISOString() });
+    m.rows.set(k, cur);
+    return;
+  }
+  await guardSchema(async () => {
+    const set: Partial<typeof mpWeeklyRowState.$inferInsert> = {};
+    if (patchObs) Object.assign(set, { observacion, observacionBy: input.by, observacionAt: now });
+    if (patchGes) Object.assign(set, { gestion: input.gestion!, gestionBy: input.by, gestionAt: now });
+    await getDb()
+      .insert(mpWeeklyRowState)
+      .values({ weekStart: start, rowKey: input.rowKey, materialLabel: input.label, ...set })
+      .onConflictDoUpdate({ target: [mpWeeklyRowState.weekStart, mpWeeklyRowState.rowKey], set });
+  });
+}
+
+/** Quita MP del control de la semana (persistente; no toca inventario, fórmulas, OE ni consumos). */
+export async function excludeRows(input: { week: string; rows: Array<{ rowKey: string; label: string; productionIds: string[]; requerido: number }>; by: string }): Promise<number> {
+  const { start } = weekBounds(input.week);
+  const now = new Date();
+  if (!isDatabaseConfigured()) {
+    const m = stateMem();
+    for (const r of input.rows) {
+      const k = memKey(start, r.rowKey);
+      const cur = m.rows.get(k) ?? { ...emptyState(), label: r.label, productionIds: [] };
+      Object.assign(cur, { excluded: true, excludedBy: input.by, excludedAt: now.toISOString(), excludedRequerido: r.requerido, productionIds: r.productionIds, label: r.label });
+      m.rows.set(k, cur);
+    }
+    return input.rows.length;
+  }
+  await guardSchema(async () => {
+    for (const r of input.rows) {
+      const set = { excluded: true, excludedBy: input.by, excludedAt: now, excludedProductionIds: r.productionIds, excludedRequerido: r.requerido, materialLabel: r.label };
+      await getDb().insert(mpWeeklyRowState).values({ weekStart: start, rowKey: r.rowKey, ...set }).onConflictDoUpdate({ target: [mpWeeklyRowState.weekStart, mpWeeklyRowState.rowKey], set });
+    }
+  });
+  return input.rows.length;
+}
+
+export async function restoreRows(input: { week: string; rowKeys: string[] }): Promise<void> {
+  const { start } = weekBounds(input.week);
+  if (!isDatabaseConfigured()) {
+    for (const k of input.rowKeys) {
+      const cur = stateMem().rows.get(memKey(start, k));
+      if (cur) Object.assign(cur, { excluded: false, excludedBy: null, excludedAt: null, excludedRequerido: null, productionIds: [] });
+    }
+    return;
+  }
+  await guardSchema(async () => {
+    if (input.rowKeys.length === 0) return;
+    await getDb()
+      .update(mpWeeklyRowState)
+      .set({ excluded: false, excludedBy: null, excludedAt: null, excludedRequerido: null, excludedProductionIds: [] })
+      .where(and(eq(mpWeeklyRowState.weekStart, start), inArray(mpWeeklyRowState.rowKey, input.rowKeys)));
+  });
+}
+
+/** Quita producciones del cálculo de la semana (sus necesidades de MP dejan de sumarse). No borra trabajos ni OE. */
+export async function excludeProductions(input: { week: string; items: Array<{ workItemId: string; label: string }>; by: string; reason?: string }): Promise<number> {
+  const { start } = weekBounds(input.week);
+  if (!isDatabaseConfigured()) {
+    for (const i of input.items) stateMem().prods.set(memKey(start, i.workItemId), { workItemId: i.workItemId, label: i.label, by: input.by, at: new Date().toISOString(), reason: input.reason ?? "" });
+    return input.items.length;
+  }
+  await guardSchema(async () => {
+    for (const i of input.items) {
+      await getDb()
+        .insert(mpWeeklyProductionExclusions)
+        .values({ weekStart: start, workItemId: i.workItemId, label: i.label, excludedBy: input.by, reason: input.reason ?? "" })
+        .onConflictDoNothing();
+    }
+  });
+  return input.items.length;
+}
+
+export async function restoreProductions(input: { week: string; workItemIds: string[] }): Promise<void> {
+  const { start } = weekBounds(input.week);
+  if (!isDatabaseConfigured()) {
+    for (const id of input.workItemIds) stateMem().prods.delete(memKey(start, id));
+    return;
+  }
+  await guardSchema(async () => {
+    if (input.workItemIds.length === 0) return;
+    await getDb().delete(mpWeeklyProductionExclusions).where(and(eq(mpWeeklyProductionExclusions.weekStart, start), inArray(mpWeeklyProductionExclusions.workItemId, input.workItemIds)));
+  });
+}
+
+/**
+ * Al eliminar/anular/archivar un control individual: sus necesidades de MP dejan de sumarse en la semana del control.
+ * Se excluyen SOLO las producciones que corresponden a ese control (misma OE, o mismo cliente + producto); las
+ * necesidades de las demás producciones no se tocan. No borra nada del inventario, fórmulas, OE ni trabajos.
+ */
+export async function excludeProductionsForControl(control: { id: string; client: string; product: string; linkedOeId: string | null; createdAt: string; quantityKg?: number | null }, by: string): Promise<string[]> {
+  if (!isDatabaseConfigured()) return [];
+  const { start, end } = weekBounds(control.createdAt.slice(0, 10));
+  let works;
+  try {
+    works = await getDb()
+      .select()
+      .from(workItems)
+      .where(and(eq(workItems.sector, "ELABORACION"), isNull(workItems.deletedAt), lte(workItems.plannedDate, end), gte(sql`coalesce(${workItems.plannedDateTo}, ${workItems.plannedDate})`, start)));
+  } catch {
+    return [];
+  }
+  const nc = normText(control.client);
+  const np = normText(control.product);
+  // Con OE vinculada se identifica SOLO por la OE. Sin OE: mismo cliente + producto, y si hay varias producciones
+  // iguales se toma la de la misma cantidad; si sigue ambiguo no se quita nada (no se borran necesidades ajenas).
+  let matched = control.linkedOeId ? works.filter((w) => w.orderId === control.linkedOeId) : [];
+  if (!control.linkedOeId) {
+    const same = works.filter((w) => normText(w.client) === nc && normText(w.product) === np);
+    const qty = control.quantityKg;
+    const byQty = qty ? same.filter((w) => Number(String(w.plannedQuantity ?? "").replace(",", ".")) === qty) : [];
+    matched = byQty.length > 0 ? byQty.slice(0, 1) : same.length === 1 ? same : [];
+  }
+  if (matched.length === 0) return [];
+  await excludeProductions({ week: start, items: matched.map((w) => ({ workItemId: w.id, label: `${w.client} — ${w.product}` })), by, reason: `Control eliminado (${control.id.slice(0, 8)})` });
+  return matched.map((w) => w.id);
+}
+
+export async function restoreProductionsForControl(controlId: string): Promise<void> {
+  const tag = `Control eliminado (${controlId.slice(0, 8)})`;
+  if (!isDatabaseConfigured()) {
+    for (const [k, v] of stateMem().prods) if (v.reason === tag) stateMem().prods.delete(k);
+    return;
+  }
+  await guardSchema(async () => {
+    await getDb().delete(mpWeeklyProductionExclusions).where(eq(mpWeeklyProductionExclusions.reason, tag));
+  });
+}
+
+/** Quita del control de la semana las MP indicadas (la persona ve las filas; el servidor toma de ellas las producciones y cantidades). */
+export async function excludeRowsByKeys(week: string, rowKeys: string[], by: string): Promise<number> {
+  const current = await getWeeklyAvailability(week);
+  const pick = current.rows.filter((r) => rowKeys.includes(r.key));
+  if (pick.length === 0) return 0;
+  return excludeRows({ week, by, rows: pick.map((r) => ({ rowKey: r.key, label: r.materiaPrima, productionIds: [...new Set(r.needs.map((n) => n.productionId))], requerido: r.requerido })) });
+}
+
 export async function getWeeklyAvailability(anyDay: string, now = new Date()): Promise<WeeklyAvailability> {
   const { start, end } = weekBounds(anyDay);
-  const [{ lots, source }, aliases, prods] = await Promise.all([loadStockLots(), loadNameAliases(), loadProductions(start, end)]);
-  const result = computeAvailability({ lots, aliases, productions: prods.inputs, todayIso: iso(now) });
-  return { ...result, weekStart: start, weekEnd: end, generatedAt: now.toISOString(), productions: prods.meta, stockSource: source };
+  const [{ lots, source }, aliases, prods, states, prodEx] = await Promise.all([loadStockLots(), loadNameAliases(), loadProductions(start, end), loadRowStates(start), loadProductionExclusions(start)]);
+  // Producciones quitadas del cálculo de la semana: sus necesidades no se suman.
+  const inputs = prods.inputs.filter((p) => !prodEx.has(p.id));
+  const result = computeAvailability({ lots, aliases, productions: inputs, todayIso: iso(now) });
+  const rows: WeeklyRow[] = [];
+  const excludedRows: WeeklyRow[] = [];
+  for (const r of result.rows) {
+    const st = states.get(r.key);
+    const state: RowState = { ...emptyState(), ...(st ?? {}) };
+    if (st?.excluded) {
+      const known = new Set(st.productionIds);
+      state.exclusionToReview = r.needs.some((n) => !known.has(n.productionId));
+      if (!state.exclusionToReview) {
+        excludedRows.push({ ...r, state });
+        continue;
+      }
+    }
+    rows.push({ ...r, state });
+  }
+  const summary = { ...result.summary, total: rows.length };
+  for (const k of Object.keys(summary) as Array<keyof typeof summary>) if (k !== "total") summary[k] = rows.filter((r) => r.estado === k).length;
+  return {
+    ...result,
+    rows,
+    summary,
+    excludedRows,
+    excludedProductions: [...prodEx.values()],
+    weekStart: start,
+    weekEnd: end,
+    generatedAt: now.toISOString(),
+    productions: prods.meta.filter((p) => !prodEx.has(p.id)),
+    stockSource: source,
+  };
 }
 
 /** Stock utilizable consolidado (todas las filas del Stock MP con ese nombre) para líneas de una planilla de control. */

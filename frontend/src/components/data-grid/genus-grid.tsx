@@ -167,6 +167,8 @@ interface PreviewState {
   changes: GenusGridCellChange[];
   invalid: { change: GenusGridCellChange; message: string }[];
   skipped: { rowLabel: string; columnTitle: string; reason: string }[];
+  /** Aviso (existencias reales) que se muestra en la confirmación conjunta. */
+  stockNote?: string;
 }
 
 interface FailedBatch {
@@ -688,12 +690,23 @@ export function GenusGrid<T>({
 
       // ---- MODO PLANILLA: como Excel — se guarda directo; solo lo que mueve stock pide motivo ----
       if (sheet) {
-        // Autocompletar arrastrando: no pide motivo; deja uno automático en la auditoría del ajuste.
-        const moving = autoReason ? [] : changes.filter((c) => Boolean(reasonRequired?.([c])));
-        const plain = autoReason
-          ? changes.map((c) => (reasonRequired?.([c]) ? { ...c, reason: autoReason } : c))
-          : changes.filter((c) => !reasonRequired?.([c]));
+        // Autocompletar arrastrando: lo que mueve existencias reales (Kg lote) se confirma TODO JUNTO, sin pedir un motivo
+        // por celda: el motivo queda automático en la auditoría del ajuste (usuario, fecha, valor anterior y nuevo).
+        const fillStock = autoReason ? changes.filter((c) => columnByKey.get(c.columnKey)?.fillWithReason) : [];
+        const rest = autoReason ? changes.filter((c) => !columnByKey.get(c.columnKey)?.fillWithReason) : changes;
+        const moving = rest.filter((c) => Boolean(reasonRequired?.([c])));
+        const plain = rest.filter((c) => !reasonRequired?.([c]));
         if (plain.length > 0) void runCommit(plain, { useLatestVersion: true, recordUndo: true });
+        if (fillStock.length > 0 && autoReason) {
+          setReasonText("");
+          setPreview({
+            changes: fillStock.map((c) => ({ ...c, reason: autoReason })),
+            invalid: [],
+            skipped: [],
+            reasonPrompt: null,
+            stockNote: `Este autocompletado modifica EXISTENCIAS REALES de ${fillStock.length} lote${fillStock.length === 1 ? "" : "s"}. Queda registrado en el libro mayor y en la auditoría (usuario, fecha, valor anterior y nuevo). Se puede deshacer con Ctrl+Z / Deshacer.`,
+          });
+        }
         const notes = [...extraNotes];
         if (notCleared > 0) notes.push(`${notCleared} celda${notCleared === 1 ? "" : "s"} no se vacía${notCleared === 1 ? "" : "n"} (columna calculada o que mueve stock)`);
         if (invalid.length > 0) {
@@ -1263,6 +1276,11 @@ export function GenusGrid<T>({
           </DialogHeader>
           {preview && (
             <div className="space-y-3 text-sm">
+              {preview.stockNote && (
+                <p className="rounded border border-amber-400/60 bg-amber-400/10 px-3 py-2 text-xs" data-testid={`${testId}-stock-note`}>
+                  {preview.stockNote}
+                </p>
+              )}
               {preview.skipped.length > 0 && (
                 <section>
                   <h4 className="font-semibold text-[var(--genus-error)]">

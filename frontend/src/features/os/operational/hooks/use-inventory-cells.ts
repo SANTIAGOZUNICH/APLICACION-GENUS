@@ -3,6 +3,8 @@
 import { useCallback } from "react";
 import type { GenusGridCellChange, GenusGridCommitResult } from "@/components/data-grid/genus-grid";
 import {
+  INVENTORY_AUTO_REASON,
+  INVENTORY_AUTO_REASON_FIELDS,
   INVENTORY_FILL_WITH_REASON,
   INVENTORY_NO_FILL,
   INVENTORY_REASON_FIELDS,
@@ -30,7 +32,7 @@ export function useInventoryCellEditing<R extends { id?: string; updatedAt: stri
     async (changes: GenusGridCellChange[]): Promise<GenusGridCommitResult> => {
       const payload = changes.flatMap((c) => {
         const field = fieldOf[c.columnKey];
-        return field ? [{ id: c.rowId, field, value: c.newValue, expectedVersion: c.rowVersion ?? "", reason: c.reason, expectedValue: c.oldValue }] : [];
+        return field ? [{ id: c.rowId, field, value: c.newValue, expectedVersion: c.rowVersion ?? "", reason: c.reason || (INVENTORY_AUTO_REASON_FIELDS.has(field) ? INVENTORY_AUTO_REASON : undefined), expectedValue: c.oldValue }] : [];
       });
       const res = await patchInventoryCells(resource, payload);
       await reload(); // lo mostrado es lo que la base confirmó
@@ -47,8 +49,8 @@ export function useInventoryCellEditing<R extends { id?: string; updatedAt: stri
     (changes: GenusGridCellChange[]) => {
       const fields = new Set(changes.map((c) => fieldOf[c.columnKey] ?? ""));
       if (fields.has("codigo")) return "Cambiar el código traspasa su saldo en el libro mayor: ¿por qué se corrige?";
-      if (fields.has("stockLibroMayor")) return "Fijar el saldo del código registra un ajuste en el libro mayor: ¿por qué?";
-      if ([...fields].some((f) => INVENTORY_REASON_FIELDS.has(f))) return "Corregir kilos registra un ajuste en el libro mayor: ¿por qué?";
+      // Kg lote y Stock código se guardan directo (motivo automático en el libro mayor y la auditoría).
+      if ([...fields].some((f) => INVENTORY_REASON_FIELDS.has(f) && !INVENTORY_AUTO_REASON_FIELDS.has(f))) return "Cambiar el código traspasa su saldo en el libro mayor: ¿por qué se corrige?";
       return null;
     },
     [fieldOf]

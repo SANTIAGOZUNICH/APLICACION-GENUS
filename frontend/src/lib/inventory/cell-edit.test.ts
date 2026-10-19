@@ -69,8 +69,11 @@ describe("inventario — edición por celda", () => {
 
   it("MP: en Stock MP no hay candados permanentes: todas las columnas se editan (solo permiso y archivado)", () => {
     for (const field of ["codigo", "producto", "proveedor", "cliente", "descripcion", "ubicacion", "lote", "vencimiento", "cantidadKg", "stockLibroMayor", "estadoStock", "diasAlVence", "estadoVencimiento", "origen"]) {
-      expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, field, true)).toBeNull();
+      expect(inventoryCellProtection("mp_stock", { origen: "ingreso", codigo: "MP-1" }, field, true)).toBeNull();
     }
+    // Fila SIN código: el saldo del código no se puede fijar (antes daba «Error al guardar»); el resto sí se edita.
+    expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "stockLibroMayor", true)).toMatch(/no tiene código/);
+    expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "descripcion", true)).toBeNull();
     expect(inventoryCellProtection("mp_stock", { origen: "ingreso" }, "ubicacion", false)).toMatch(/sector/);
     expect(inventoryCellProtection("mp_stock", { origen: "manual", archived: true }, "ubicacion", true)).toMatch(/archivado/);
     expect(validateInventoryValue("vencimiento", "31/12/2026")).toEqual({ ok: true, value: "2026-12-31" });

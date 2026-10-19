@@ -118,6 +118,28 @@ function recalcLines(
   });
 }
 
+
+/**
+ * Al anular/archivar un control, sus necesidades de MP dejan de sumarse en el Control semanal (solo las de ese control;
+ * las de otras producciones se mantienen). Al restaurarlo vuelven. Mejor esfuerzo: nunca impide la operación del control.
+ */
+async function dropControlNeeds(control: MpWeeklyControl, by: string) {
+  try {
+    const { excludeProductionsForControl } = await import("./weekly-availability-service");
+    await excludeProductionsForControl({ id: control.id, client: control.client, product: control.product, linkedOeId: control.linkedOeId, createdAt: control.createdAt, quantityKg: control.quantityKg }, by);
+  } catch (err) {
+    console.warn("[mp-control] no se pudieron quitar las necesidades del control", err);
+  }
+}
+async function returnControlNeeds(controlId: string) {
+  try {
+    const { restoreProductionsForControl } = await import("./weekly-availability-service");
+    await restoreProductionsForControl(controlId);
+  } catch (err) {
+    console.warn("[mp-control] no se pudieron restaurar las necesidades del control", err);
+  }
+}
+
 function parseLifecycleMeta(audit: unknown): MpWeeklyControlLifecycleMeta {
   if (!audit || typeof audit !== "object") return {};
   const lifecycle = (audit as { lifecycle?: MpWeeklyControlLifecycleMeta }).lifecycle;
@@ -391,6 +413,7 @@ export class MpControlService {
       );
     }
     void reason;
+    await dropControlNeeds(existing, actor.email);
     if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
       try {
         const db = getDb();
@@ -432,6 +455,7 @@ export class MpControlService {
       },
     };
     await this.persist(next, { action: "annul", reason: trimmed }, existing.updatedAt);
+    await dropControlNeeds(existing, actor.email);
     return next;
   }
 
@@ -458,6 +482,7 @@ export class MpControlService {
       },
     };
     await this.persist(next, { action: "archive" }, existing.updatedAt);
+    await dropControlNeeds(existing, actor.email);
     return next;
   }
 
@@ -490,6 +515,7 @@ export class MpControlService {
       },
     };
     await this.persist(next, { action: "restore" }, existing.updatedAt);
+    await returnControlNeeds(existing.id);
     return next;
   }
 

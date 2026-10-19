@@ -83,6 +83,8 @@ async function cleanup() {
   await q("delete from operational_orders where product like '% SEM E2E'");
   await q("delete from work_items where product like '% SEM E2E'");
   await q("delete from inv_mp_stock where payload->>'createdBy' = $1", [TAG]);
+  await q("delete from mp_weekly_row_state where week_start = $1", [monday]).catch(() => undefined);
+  await q("delete from mp_weekly_production_exclusions where week_start = $1", [monday]).catch(() => undefined);
 }
 
 try {
@@ -136,6 +138,57 @@ try {
     check(`[${kind}] se ve la fecha y hora de la última actualización`, /Última actualización/.test(await p.locator("[data-testid=mpw-updated]").innerText()));
     // sin desbordes horizontales de la página
     check(`[${kind}] la página no tiene desplazamiento horizontal propio`, await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2));
+
+    // ── Observaciones y gestión (persisten, por MP y semana) ─────────────────────────────────────────────────────────
+    {
+      const pf = rowOf(p, "Perfume SEMX").first();
+      const input = pf.locator("[data-testid=mpw-note-input]");
+      await input.fill(`Pedir a proveedor (${kind})`);
+      await input.evaluate((el) => el.blur());
+      check(`[${kind}] la observación se guarda en la base con usuario y fecha`, await waitDb(async () => (await q("select observacion, observacion_by, observacion_at from mp_weekly_row_state where week_start = $1 and observacion like $2", [monday, `Pedir a proveedor (${kind})`])).some((r) => r.observacion_by && r.observacion_at)));
+      await pf.locator("[data-testid=mpw-gestion]").selectOption("comprar");
+      check(`[${kind}] la gestión «Comprar» se guarda y no cambia necesidad/estado`, await waitDb(async () => (await q("select 1 from mp_weekly_row_state where week_start = $1 and gestion = 'comprar'", [monday])).length > 0) && (await cells(rowOf(p, "Perfume SEMX").first()))[4] === "10");
+      await openPanel(p); // recarga completa
+      const again = rowOf(p, "Perfume SEMX").first();
+      check(`[${kind}] observación y gestión siguen tras recargar (y se ve quién la escribió)`, (await again.locator("[data-testid=mpw-note-input]").inputValue()) === `Pedir a proveedor (${kind})` && (await again.locator("[data-testid=mpw-gestion]").inputValue()) === "comprar" && /@/.test(await again.locator("[data-testid=mpw-note-meta]").innerText()));
+    }
+    // ── Selección múltiple y exclusión persistente ────────────────────────────────────────────────────────────────────
+    {
+      const [lotsBefore] = await q("select count(*)::int n, coalesce(sum((payload->>'cantidadKg')::numeric),0)::float kg from inv_mp_stock where payload->>'createdBy' = $1", [TAG]);
+      const total = await p.locator("[data-testid=mpw-row]").count();
+      await p.locator("[data-testid=mpw-select-toggle]").click();
+      await p.locator("[data-testid=mpw-select-all]").click();
+      check(`[${kind}] «Seleccionar todos» marca todas las filas y el contador coincide`, (await p.locator("[data-testid=mpw-selected-count]").innerText()).startsWith(`${total} `) && (await p.locator("[data-testid=mpw-check]:checked").count()) === total);
+      await p.locator("[data-testid=mpw-select-none]").click();
+      check(`[${kind}] «Deseleccionar todos» deja 0`, (await p.locator("[data-testid=mpw-selected-count]").innerText()).startsWith("0 ") && (await p.locator("[data-testid=mpw-delete-selected]").isDisabled()));
+      // dedo/click en la fila y en el checkbox
+      const gchk = rowOf(p, "Glicerina").first().locator("[data-testid=mpw-check]");
+      if (kind === "tablet") await gchk.tap(); else await gchk.check();
+      await rowOf(p, "Perfume SEMX").first().click();
+      check(`[${kind}] se pueden marcar varias MP (2 seleccionadas)`, (await p.locator("[data-testid=mpw-selected-count]").innerText()).startsWith("2 "));
+      await p.locator("[data-testid=mpw-delete-selected]").click();
+      check(`[${kind}] la confirmación muestra la cantidad y aclara que el inventario no se toca`, /2/.test(await p.locator("[data-testid=mpw-confirm-delete]").innerText()) && /No se elimina nada del inventario/.test(await p.locator("[data-testid=mpw-confirm-delete]").innerText()));
+      await p.screenshot({ path: `${OUT}/${kind}-confirmar-quitar.png` });
+      await p.locator("[data-testid=mpw-confirm-delete-yes]").click();
+      check(`[${kind}] las 2 MP desaparecen del control`, await waitDb(async () => (await rowOf(p, "Glicerina").count()) === 0 && (await rowOf(p, "Perfume SEMX").count()) === 0));
+      check(`[${kind}] la exclusión queda en la base con usuario y fecha`, (await q("select 1 from mp_weekly_row_state where week_start = $1 and excluded and excluded_by is not null and excluded_at is not null", [monday])).length === 2);
+      await openPanel(p);
+      check(`[${kind}] tras recargar NO reaparecen`, (await rowOf(p, "Glicerina").count()) === 0 && (await rowOf(p, "Perfume SEMX").count()) === 0 && (await rowOf(p, "Agua SEMX").count()) === 1);
+      check(`[${kind}] el inventario (lotes y kg) quedó idéntico`, JSON.stringify((await q("select count(*)::int n, coalesce(sum((payload->>'cantidadKg')::numeric),0)::float kg from inv_mp_stock where payload->>'createdBy' = $1", [TAG]))[0]) === JSON.stringify(lotsBefore));
+      await p.locator("[data-testid=mpw-excluded] summary").click();
+      check(`[${kind}] las quitadas se listan con quién y cuándo`, /la quitó/.test(await p.locator("[data-testid=mpw-excluded]").innerText()));
+      await p.screenshot({ path: `${OUT}/${kind}-quitadas.png` });
+      const restores = p.locator("[data-testid=mpw-restore]");
+      while ((await restores.count()) > 0) { const n = await restores.count(); if (!(await restores.first().isVisible())) await p.locator("[data-testid=mpw-excluded] summary").click(); await restores.first().click(); await waitDb(async () => (await restores.count()) < n); }
+      check(`[${kind}] «Restaurar» devuelve las MP`, (await rowOf(p, "Glicerina").count()) === 1 && (await rowOf(p, "Perfume SEMX").count()) === 1);
+      // quitar UNA con el botón de la fila
+      await rowOf(p, "Perfume SEMX").first().locator("[data-testid=mpw-row-remove]").click();
+      await p.locator("[data-testid=mpw-confirm-delete-yes]").click();
+      check(`[${kind}] quitar una sola MP desde su fila`, await waitDb(async () => (await rowOf(p, "Perfume SEMX").count()) === 0));
+      if (!(await p.locator("[data-testid=mpw-restore]").first().isVisible())) await p.locator("[data-testid=mpw-excluded] summary").click();
+      await p.locator("[data-testid=mpw-restore]").first().click();
+      await waitDb(async () => (await rowOf(p, "Perfume SEMX").count()) === 1);
+    }
     if (kind === "desktop") {
       // cambio de stock → «Actualizar stock» lo refleja sin recargar la página
       await lot("SEM-GLI-B", `${GLI} — Proveedor B`, "Proveedor B", "B2", 20);
@@ -153,6 +206,17 @@ try {
   const movs1 = (await q("select count(*)::int n from mp_stock_movements"))[0].n;
   const bal1 = (await q("select md5(coalesce(string_agg(codigo||stock_actual::text, ';' order by codigo),'')) h from mp_stock_balances"))[0].h;
   check("el control semanal es de solo lectura: no creó movimientos ni cambió saldos del libro mayor", movs1 === movs0 && bal1 === bal0);
+  {
+    const pg = await pr.page.request.patch("/api/v1/mp-control/weekly/state", { data: { week: monday, rowKey: "x", label: "x", observacion: "no" } });
+    check("Producción NO puede escribir observaciones (403)", pg.status() === 403, String(pg.status()));
+    const ex = await pr.page.request.post("/api/v1/mp-control/weekly/exclude", { data: { week: monday, rowKeys: ["x"] } });
+    check("Producción NO puede quitar MP del control (403)", ex.status() === 403, String(ex.status()));
+    const next = new Date(`${monday}T12:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 7);
+    const w2 = await (await pr.page.request.get(`/api/v1/mp-control/weekly?week=${next.toISOString().slice(0, 10)}`)).json();
+    const rowsW2 = w2.data?.rows ?? w2.rows ?? [];
+    check("otra semana no hereda observaciones ni gestión", rowsW2.every((r) => !r.state?.observacion && !r.state?.gestion));
+  }
   await pr.ctx.close();
 } catch (err) {
   console.error(err);

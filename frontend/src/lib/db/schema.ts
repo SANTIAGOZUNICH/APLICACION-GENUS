@@ -1022,6 +1022,44 @@ export const mpMasterLinks = pgTable(
   (t) => [uniqueIndex("mp_master_links_kind_key_uq").on(t.kind, t.key)]
 );
 
+/** Estado administrativo del Control semanal de MP por semana y MP (migración 0058): exclusión, observación y gestión. */
+export const mpWeeklyRowState = pgTable(
+  "mp_weekly_row_state",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    weekStart: date("week_start").notNull(),
+    rowKey: text("row_key").notNull(),
+    materialLabel: text("material_label").notNull().default(""),
+    excluded: boolean("excluded").notNull().default(false),
+    excludedBy: text("excluded_by"),
+    excludedAt: timestamp("excluded_at", { withTimezone: true }),
+    excludedProductionIds: jsonb("excluded_production_ids").notNull().default([]),
+    excludedRequerido: doublePrecision("excluded_requerido"),
+    observacion: text("observacion").notNull().default(""),
+    observacionBy: text("observacion_by"),
+    observacionAt: timestamp("observacion_at", { withTimezone: true }),
+    gestion: text("gestion").notNull().default(""),
+    gestionBy: text("gestion_by"),
+    gestionAt: timestamp("gestion_at", { withTimezone: true }),
+  },
+  (t) => [uniqueIndex("mp_weekly_row_state_week_key_uq").on(t.weekStart, t.rowKey)]
+);
+
+/** Producciones excluidas del cálculo de una semana del Control semanal (migración 0058). */
+export const mpWeeklyProductionExclusions = pgTable(
+  "mp_weekly_production_exclusions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    weekStart: date("week_start").notNull(),
+    workItemId: text("work_item_id").notNull(),
+    label: text("label").notNull().default(""),
+    excludedBy: text("excluded_by").notNull(),
+    excludedAt: timestamp("excluded_at", { withTimezone: true }).notNull().defaultNow(),
+    reason: text("reason").notNull().default(""),
+  },
+  (t) => [uniqueIndex("mp_weekly_production_exclusions_uq").on(t.weekStart, t.workItemId)]
+);
+
 /** Ledger stock MP — migración 0005. */
 export const mpStockBalances = pgTable("mp_stock_balances", {
   codigo: text("codigo").primaryKey(),
