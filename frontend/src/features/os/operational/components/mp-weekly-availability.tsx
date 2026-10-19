@@ -99,7 +99,7 @@ export function MpWeeklyAvailability({ email, sector }: { email: string; sector:
       <p className="mt-1 text-xs text-[var(--os-text-muted)]" data-testid="mpw-updated">
         {data ? (
           <>
-            Semana {data.weekStart} al {data.weekEnd} · Última actualización: <b>{updated}</b> · Fuente: {data.stockSource === "inv_mp_stock" ? "Stock MP (inventario)" : "inventario en memoria"} · Filas de stock leídas: <b data-testid="mpw-rows-read">{data.stockRowsRead}</b> ({data.stockRowsActive} activas)
+            Semana {data.weekStart} al {data.weekEnd} · Última actualización: <b>{updated}</b> · Fuente: {data.stockSource === "inv_mp_stock" ? "Stock MP (inventario)" : "inventario en memoria"} · Filas de stock leídas: <b data-testid="mpw-rows-read">{data.stockRowsRead}</b> ({data.stockRowsActive} activas) · Versión {(process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || "dev").slice(0, 7)}
           </>
         ) : (
           "Consultando el inventario…"

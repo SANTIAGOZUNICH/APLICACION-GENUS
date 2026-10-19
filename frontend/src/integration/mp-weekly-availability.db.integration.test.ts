@@ -127,11 +127,11 @@ describe.skipIf(Boolean(PROBLEM))(`Control semanal de MP en Postgres real${PROBL
     expect(g.requerido).toBe(42);
   });
 
-  it("la MP se busca por nombre en la Descripción del stock: «Perfume suave» encuentra solo el perfume que corresponde y no suma el «floral»", async () => {
+  it("un nombre solo parecido («Perfume suave» vs «Perfume») NO se suma solo: MP NO IDENTIFICADA con la sugerencia, sin asumir cero ni sumar el «floral»", async () => {
     const res = await avail();
     const p = rowOf(res, "Perfume suave")!;
-    expect([p.stockUtilizable, p.requerido, p.estado, p.faltante]).toEqual([3, 10, "FALTANTE", 7]);
-    expect(p.stockNames).toEqual([PERF]);
+    expect([p.stockUtilizable, p.requerido, p.estado]).toEqual([0, 10, "MP NO IDENTIFICADA"]);
+    expect(p.related.map((r) => r.descripcion)).toEqual([PERF]);
     expect(res.rows.some((r) => r.materiaPrima === PERFUME_PARECIDO)).toBe(false);
   });
 
