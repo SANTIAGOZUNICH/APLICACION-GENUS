@@ -332,14 +332,10 @@ try {
   await (await cellLoc(mp, GS, 14, "Kg lote")).click();
   await (await cellLoc(mp, GS, 15, "Kg lote")).click({ modifiers: ["Shift"] });
   await dragFill(mp, GS, 18, "Kg lote");
-  const prevDlg = mp.locator(`[data-testid=${GS}-preview]`);
-  await prevDlg.waitFor({ timeout: 8000 });
-  check("rellenar kg arrastrando NO guarda en silencio: abre la confirmación con motivo y no toca la base antes", (await kgOf(16)) === kgBefore[0] && (await kgOf(18)) === kgBefore[2]);
-  await mp.screenshot({ path: `${OUT}/07-relleno-kg-motivo.png` });
-  await mp.locator(`[data-testid=${GS}-reason]`).fill("Conteo físico de prueba E2E");
-  await mp.locator(`[data-testid=${GS}-preview-apply]`).click();
+  check("rellenar kg arrastrando NO pide motivo ni abre ventanas", (await mp.locator(`[data-testid=${GS}-inline-reason]`).count()) === 0 && (await noDialog(mp)));
+  await mp.screenshot({ path: `${OUT}/07-relleno-kg-sin-motivo.png` });
   const seriesKg = await waitDb(async () => (await kgOf(16)) === 120 && (await kgOf(17)) === 130 && (await kgOf(18)) === 140);
-  check("con el motivo, la serie 100, 110 → 120, 130, 140 se guarda en kg y queda en el libro mayor", seriesKg && (await q("select count(*)::int n from mp_stock_movements"))[0].n > movs0, JSON.stringify([await kgOf(16), await kgOf(17), await kgOf(18)]));
+  check("la serie 100, 110 → 120, 130, 140 se guarda en kg directamente y queda el ajuste en el libro mayor", seriesKg && (await q("select count(*)::int n from mp_stock_movements"))[0].n > movs0, JSON.stringify([await kgOf(16), await kgOf(17), await kgOf(18)]));
   // texto: una celda con texto se copia hacia abajo
   await (await cellLoc(mp, GS, 10, "Proveedor")).click();
   await dragFill(mp, GS, 13, "Proveedor");

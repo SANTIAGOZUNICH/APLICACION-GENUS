@@ -51,8 +51,8 @@ function assertWrite(actor: MpControlActor) {
 
 
 /**
- * Stock CONSOLIDADO de cada línea (todas las existencias utilizables de esa MP, de todos los proveedores y lotes del
- * inventario) o null si la línea no se puede asociar con una MP del inventario (no se asume 0).
+ * Stock CONSOLIDADO de cada línea: suma de los kg utilizables de TODAS las filas del Stock MP cuya Descripción coincide
+ * con el nombre de la MP (cualquier proveedor, lote o código). Sin filas con ese nombre → 0 (Sin stock).
  */
 async function consolidatedStocks(
   lines: Array<{ materiaPrima: string; codigo: string }>,
@@ -62,7 +62,7 @@ async function consolidatedStocks(
   if (lines.length === 0) return [];
   const { stockForControlLines } = await import("./weekly-availability-service");
   const found = await stockForControlLines(lines);
-  return found.map((r, i) => (r.linked ? r.stockUtilizable : (fallback[(lines[i]!.codigo ?? "").trim().replace(/\s+/g, " ").toUpperCase()] ?? fallback[(lines[i]!.codigo ?? "").trim()] ?? null)));
+  return found.map((r, i) => (r.linked ? r.stockUtilizable : (fallback[(lines[i]!.codigo ?? "").trim().replace(/\s+/g, " ").toUpperCase()] ?? fallback[(lines[i]!.codigo ?? "").trim()] ?? 0)));
 }
 
 /** Borradores: el stock de cada línea se muestra en vivo (inventario). Completados conservan el valor histórico. */

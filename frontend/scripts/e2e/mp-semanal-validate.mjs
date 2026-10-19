@@ -83,12 +83,11 @@ async function cleanup() {
   await q("delete from operational_orders where product like '% SEM E2E'");
   await q("delete from work_items where product like '% SEM E2E'");
   await q("delete from inv_mp_stock where payload->>'createdBy' = $1", [TAG]);
-  await q("delete from mp_master_links where key like '%semx%' or master_code like 'SEM-%'");
 }
 
 try {
   await cleanup();
-  await seedFormula("CREMA A SEM E2E", "PT-SEM-A", [[AGUA, "F-AGUA-SEMX", "78"], [GLI, "F-GLI-SEMX", "12"], ["Perfume suave SEMX", "F-PERF-SEMX", "10"]]);
+  await seedFormula("CREMA A SEM E2E", "PT-SEM-A", [[AGUA, "F-AGUA-SEMX", "78"], [GLI, "F-GLI-SEMX", "12"], ["Perfume SEMX", "F-PERF-SEMX", "10"]]);
   await seedFormula("CREMA B SEM E2E", "PT-SEM-B", [[AGUA, "F-AGUA-SEMX", "88"], [GLI, "F-GLI-SEMX", "12"]]);
   await lot("SEM-GLI-A", `${GLI} — Proveedor A`, "Proveedor A", "A1", 10);
   await lot("SEM-GLI-A", `${GLI} — Proveedor A`, "Proveedor A", "A2", 5);
@@ -97,7 +96,7 @@ try {
   await lot("SEM-GLI-C", `${GLI} — Proveedor C`, "Proveedor C", "C-BLOQ", 9, { estadoStockManual: "Bloqueado" });
   await lot("SEM-AGUA", AGUA, "Aguas SA", "AG1", 1000);
   await lot("SEM-PERF-1", PERF, "Esencias SA", "P1", 3);
-  await lot("SEM-PERF-2", "Perfume floral SEMX", "Esencias SA", "P2", 40);
+  await lot("SEM-PERF-2", "Esencia floral SEMX", "Esencias SA", "P2", 40);
 
   const pr = await openAs(E2E_USERS.produccion);
   for (const [product, qty] of [["CREMA A SEM E2E", "100"], ["CREMA B SEM E2E", "100"], ["CREMA B SEM E2E", "150"]]) {
@@ -127,8 +126,8 @@ try {
     check(`[${kind}] saldo proyectado -7 y estado FALTANTE con el faltante real`, /-7/.test(g[6]) && /FALTANTE/.test(g[7]) && /falta 7 kg/.test(g[7]), JSON.stringify(g));
     const agua = await cells(rowOf(p, "Agua SEMX"));
     check(`[${kind}] agua: stock 1000, necesidad 78+88+132 = 298, SUFICIENTE`, agua[3] === "1000" && agua[4] === "298" && /SUFICIENTE/.test(agua[7]), JSON.stringify(agua));
-    const pend = p.locator("[data-testid=mpw-row][data-estado='PENDIENTE DE VINCULAR']");
-    check(`[${kind}] el perfume de nombre parecido queda PENDIENTE DE VINCULAR (no se asume stock cero ni se suma el parecido)`, (await pend.count()) === 1 && /Perfume/.test(await pend.innerText()));
+    const perf = await cells(rowOf(p, "Perfume SEMX"));
+    check(`[${kind}] perfume: se busca por nombre en la Descripción del stock → 3 kg, necesita 10, FALTANTE (falta 7)`, perf[3] === "3" && perf[4] === "10" && /FALTANTE/.test(perf[7]) && /falta 7 kg/.test(perf[7]), JSON.stringify(perf));
     await rowOf(p, "Glicerina").click();
     const lots = await p.locator("[data-testid=mpw-lots]").innerText();
     check(`[${kind}] el detalle muestra proveedores y lotes, y marca el bloqueado como no utilizable`, /Proveedor A/.test(lots) && /Proveedor B/.test(lots) && /Proveedor C/.test(lots) && /C-BLOQ/.test(lots) && /No — Bloqueado/.test(lots));
@@ -143,22 +142,7 @@ try {
       await p.waitForTimeout(1100);
       await p.locator("[data-testid=mpw-refresh]").click();
       check("«Actualizar stock» refleja el ingreso nuevo (utilizable 35 → 55; SUFICIENTE) y cambia la hora", await waitDb(async () => { const c = await cells(rowOf(p, "Glicerina").first()); return c[3] === "55" && /SUFICIENTE/.test(c[7]); }) && (await p.locator("[data-testid=mpw-updated]").innerText()) !== t0);
-      // vincular el perfume (confirmación de una persona autorizada)
-      await pend.click();
-      const opts = await p.locator("[data-testid=mpw-link-select] option").allInnerTexts();
-      const i = opts.findIndex((o) => /SEM-PERF-1/.test(o));
-      await p.locator("[data-testid=mpw-link-select]").selectOption({ index: i });
-      await p.locator("[data-testid=mpw-link-confirm]").click();
-      check("al confirmar la equivalencia, el perfume queda asociado: stock 3, necesita 10, FALTANTE (falta 7)", await waitDb(async () => { const c = await cells(rowOf(p, "Perfume SEMX").first()).catch(() => []); return c[3] === "3" && c[4] === "10" && /FALTANTE/.test(c[7] ?? ""); }));
-      check("la equivalencia se guardó en la base", (await q("select count(*)::int n from mp_master_links where master_code = 'SEM-PERF-1'"))[0].n === 1);
-      await p.reload();
-      await p.locator("[data-testid=mp-weekly-availability]").waitFor({ timeout: 120_000 }).catch(async () => { await nav(p, "Control semanal"); });
-      await openPanel(p);
-      const again = await cells(rowOf(p, "Perfume SEMX").first());
-      check("tras recargar, la equivalencia se recuerda (no vuelve a pedir vincular)", again[3] === "3" && !/PENDIENTE/.test(again[7]), JSON.stringify(again));
       // otros sectores: ven pero no pueden confirmar equivalencias
-      const prx = await pr.page.request.post("/api/v1/mp-control/links", { data: { kind: "formula_name", key: "x", masterCode: "SEM-AGUA" } });
-      check("Producción no puede confirmar equivalencias (403)", prx.status() === 403, String(prx.status()));
       const prg = await pr.page.request.get(`/api/v1/mp-control/weekly?week=${monday}`);
       check("Producción puede leer el control semanal", prg.ok());
     }
