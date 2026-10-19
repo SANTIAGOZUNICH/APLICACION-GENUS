@@ -386,7 +386,7 @@ export async function fetchFormulaProductOptionsApi(
 /** Invalida y reconstruye el índice Drive de fórmulas (no reimporta binarios). */
 export async function syncFormulaDriveIndexApi(
   session: OrdersClientSession
-): Promise<{ ok: boolean; entryCount?: number; clientCount?: number }> {
+): Promise<{ ok: boolean; entryCount?: number; clientCount?: number; scanned?: boolean; added?: number; removed?: number; fileCount?: number; newFiles?: Array<{ client: string; fileName: string }> }> {
   const res = await fetch("/api/v1/formulas/options", {
     method: "POST",
     credentials: "include",
@@ -400,7 +400,7 @@ export async function syncFormulaDriveIndexApi(
     clientCount?: number;
   };
   if (!res.ok) throw new Error(friendlyServerMessage(res.status, body.error));
-  return body as { ok: boolean; entryCount?: number; clientCount?: number };
+  return body as { ok: boolean; entryCount?: number; clientCount?: number; scanned?: boolean; added?: number; removed?: number; fileCount?: number; newFiles?: Array<{ client: string; fileName: string }> };
 }
 
 export async function resolveFormulaMasterApi(

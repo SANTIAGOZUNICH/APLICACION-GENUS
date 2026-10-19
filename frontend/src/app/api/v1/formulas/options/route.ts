@@ -12,6 +12,7 @@ import {
   searchDriveProducts,
   syncDriveFormulasIndex,
 } from "@/lib/formulas/drive-formulas-index";
+import { syncFormulaIndex } from "@/lib/formulas/drive-formula-source";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -174,7 +175,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Sector no autorizado" }, { status: 403 });
     }
     const body = (await request.json().catch(() => ({}))) as { force?: boolean };
+    // «Actualizar desde Drive»: ANTES solo reconstruía la memoria desde la base (sin leer Drive), así que un archivo
+    // recién subido no aparecía hasta el cron horario. Ahora vuelve a recorrer Drive de verdad (solo lectura) y recién
+    // después reconstruye la memoria.
+    let scan: Awaited<ReturnType<typeof syncFormulaIndex>> | null = null;
+    if (body.force) {
+      scan = await syncFormulaIndex({ trigger: "manual", actorEmail: actor.email });
+      if (!scan.ok && !scan.running) {
+        return NextResponse.json({ ok: false, error: scan.error, scanned: false }, { status: 502 });
+      }
+    }
     const result = await syncDriveFormulasIndex(Boolean(body.force));
+    if (result.ok && scan?.ok) {
+      return NextResponse.json({ ...result, scanned: true, added: scan.added, removed: scan.removed, fileCount: scan.fileCount, newFiles: scan.newFiles });
+    }
     if (!result.ok) {
       return NextResponse.json(
         {

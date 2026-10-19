@@ -137,6 +137,7 @@ export function FormulaClientProductPickers({
     getCachedDataSource()
   );
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshNote, setRefreshNote] = useState<string | null>(null);
 
   const clientAbort = useRef<AbortController | null>(null);
   const productAbort = useRef<AbortController | null>(null);
@@ -305,10 +306,16 @@ export function FormulaClientProductPickers({
 
   async function refreshFromDrive() {
     setRefreshing(true);
+    setRefreshNote(null);
     setClientError(null);
     setProductError(null);
     try {
-      await syncFormulaDriveIndexApi(session);
+      const r = await syncFormulaDriveIndexApi(session);
+      setRefreshNote(
+        r.scanned
+          ? `Drive consultado: ${r.fileCount ?? 0} archivos · ${r.added ?? 0} nuevo${r.added === 1 ? "" : "s"}${r.newFiles?.length ? ` (${r.newFiles.slice(0, 5).map((f) => `${f.client} / ${f.fileName}`).join("; ")}${r.newFiles.length > 5 ? "…" : ""})` : ""} · ${r.removed ?? 0} quitado${r.removed === 1 ? "" : "s"}.`
+          : "Lista actualizada."
+      );
       invalidateFormulaCatalogCache();
       setClientsCache([]);
       await preloadClients(true);
@@ -374,8 +381,13 @@ export function FormulaClientProductPickers({
             data-testid="formula-refresh-drive"
             onClick={() => void refreshFromDrive()}
           >
-            {refreshing ? "Actualizando…" : "Actualizar desde Drive"}
+            {refreshing ? "Consultando Drive…" : "Actualizar fórmulas desde Drive"}
           </Button>
+        ) : null}
+        {refreshNote ? (
+          <span className="text-[11px] text-[var(--os-text-muted)]" role="status" data-testid="formula-refresh-note">
+            {refreshNote}
+          </span>
         ) : null}
       </div>
       <div onFocusCapture={handleClientFocus}>

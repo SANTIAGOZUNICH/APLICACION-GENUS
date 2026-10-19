@@ -68,7 +68,7 @@ export function WorkFormulaPanel({ workItemId }: { workItemId: string }) {
     setNotice(null);
     try {
       const r = await driveFormulasApi.sync();
-      setNotice(r.result.ok ? `Índice actualizado: ${r.result.fileCount} archivos de ${r.result.clientCount} clientes (${r.result.added ?? 0} nuevos, ${r.result.removed ?? 0} quitados).` : r.result.error ?? "No se pudo actualizar el índice.");
+      setNotice(r.result.ok ? `Drive consultado: ${r.result.fileCount} archivos de ${r.result.clientCount} clientes (${r.result.added ?? 0} nuevos, ${r.result.removed ?? 0} quitados).` : r.result.error ?? "No se pudo actualizar el índice.");
       await load();
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "No se pudo actualizar el índice.");
@@ -201,7 +201,7 @@ export function WorkFormulaPanel({ workItemId }: { workItemId: string }) {
                   Índice de Drive: {info.index.validated ? `${info.index.files} archivos · ${info.index.clients} clientes · ${fmtDate(info.index.lastSyncAt)}` : "sin indexar"}
                 </span>
                 <button type="button" onClick={() => void sync()} disabled={busy !== null} className="inline-flex items-center gap-1 text-[var(--os-teal)] hover:underline disabled:opacity-50" data-testid="work-formula-sync">
-                  <RefreshCw className={`size-3 ${busy === "sync" ? "animate-spin" : ""}`} aria-hidden="true" /> Actualizar índice
+                  <RefreshCw className={`size-3 ${busy === "sync" ? "animate-spin" : ""}`} aria-hidden="true" /> Actualizar fórmulas desde Drive
                 </button>
                 {info.link && (
                   <button type="button" onClick={() => void unlink()} disabled={busy !== null} className="text-[var(--os-text-muted)] hover:underline" data-testid="work-formula-unlink">
