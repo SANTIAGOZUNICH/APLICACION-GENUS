@@ -358,6 +358,30 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
     homeViewKey: "direccion-home",
     dataMode: "mock",
   }),
+  defineSector({
+    id: "ADMINISTRACION",
+    title: "Administración / Facturación",
+    description: "Consulta de entregas y remitos para facturar; recibe avisos de mercadería lista y entregas registradas.",
+    homeLayout: "executive_signals",
+    visiblePanels: ["header_greeting", "context_panel"],
+    quickActions: ["consult_entity"],
+    visibleEntities: ["pedido", "oa", "oe"],
+    workItemSources: ["pedidos_2026"],
+    allowedActions: ["Consultar entregas", "Consultar remitos", "Consultar cantidades entregadas"],
+    sidebarItems: ["entregados", "entregas", "avisos", "dashboard", "configuracion"],
+    creamyContext: {
+      role: "Copiloto administrativo",
+      topics: ["entregas", "remitos", "facturación"],
+      defaultHint: "Entregas y remitos para facturación.",
+      baseSuggestions: ["Ver entregas", "Ver remitos"],
+    },
+    emptyState: {
+      title: "Sin novedades",
+      message: "Acá vas a ver las entregas registradas listas para facturar.",
+    },
+    homeViewKey: "direccion-home",
+    dataMode: "placeholder",
+  }),
 ];
 
 export const SECTOR_REGISTRY: ReadonlyMap<SectorId, SectorDefinition> = new Map(

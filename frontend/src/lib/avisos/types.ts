@@ -13,6 +13,7 @@ export const AVISO_PARTICIPANT_SECTORS = [
   "MATERIA_PRIMA",
   "CODIFICADO",
   "DEPOSITO",
+  "ADMINISTRACION",
 ] as const satisfies readonly SectorId[];
 
 export type AvisoParticipantSector = (typeof AVISO_PARTICIPANT_SECTORS)[number];

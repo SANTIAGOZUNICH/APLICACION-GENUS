@@ -34,6 +34,8 @@ export function OperationalWorkspaceHome() {
       return <HistorialView sectors={historialSectorsForActor("PRODUCCION")} title="Historial" />;
     case "MATERIA_PRIMA":
       return <MpHubView initialTab="Stock" />;
+    case "ADMINISTRACION":
+      return <RedirectToFirstSection />;
     case "PRODUCCION":
       // «Panel general» se retiró: Mi trabajo de Producción (enlaces viejos, inicio de sesión) abre su primera sección.
       return <RedirectToFirstSection />;

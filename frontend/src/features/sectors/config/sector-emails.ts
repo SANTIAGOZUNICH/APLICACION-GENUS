@@ -12,6 +12,7 @@ export const SECTOR_EMAILS: Record<SectorId, string> = {
   DEPOSITO: "deposito@laboratoriogenus.com.ar",
   PRODUCCION: "produccion@laboratoriogenus.com.ar",
   DIRECCION: "direccion@laboratoriogenus.com.ar",
+  ADMINISTRACION: "administracion@laboratoriogenus.com.ar",
 };
 
 /** Sectores disponibles en login simulado (orden de planta). */

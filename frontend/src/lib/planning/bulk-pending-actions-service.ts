@@ -4,7 +4,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { featureAuditEvents, workItems } from "@/lib/db/schema";
 import { classifyPendingDefinition, type PendingDefinitionAction } from "@/lib/planning/circuit/pending-definition";
-import { recordDeliveryInTx } from "@/lib/planning/circuit/delivery-core";
+import { recordDeliveryInTx, type RecordDeliveryResult } from "@/lib/planning/circuit/delivery-core";
+import { emitBillingForDelivery } from "@/lib/notifications/billing-notifications";
 import { resolveDeliveryTarget } from "@/lib/planning/circuit/delivery-math";
 import { emitCircuitNotification } from "@/lib/planning/circuit/circuit-notifications";
 import type { CircuitMovement } from "@/lib/planning/circuit/movements";
@@ -96,6 +97,7 @@ export async function runBulkPendingAction(input: BulkPendingActionInput): Promi
   }
   const auditAction = input.action === "DELIVER" ? "BULK_DELIVER" : "BULK_SEND_CODIFICADO";
   const movements: CircuitMovement[] = [];
+  const deliveryResults: RecordDeliveryResult[] = [];
   const db = getDb();
 
   let result: BulkActionResult;
@@ -164,6 +166,7 @@ export async function runBulkPendingAction(input: BulkPendingActionInput): Promi
                 observations: input.delivery?.observations ?? null,
               });
               if (r.movement) movements.push(r.movement);
+              deliveryResults.push(r);
               return {
                 code: "ELIGIBLE" as const,
                 reason: "",
@@ -269,6 +272,13 @@ export async function runBulkPendingAction(input: BulkPendingActionInput): Promi
 
   // Avisos FUERA de la transacción: un fallo de la notificación nunca bloquea la operación (ids determinísticos).
   if (!result.replayed) {
+    for (const r of deliveryResults) {
+      try {
+        await emitBillingForDelivery(r, input.actor.displayName || input.actor.email);
+      } catch (e) {
+        console.error("[bulk] aviso de facturación falló", e);
+      }
+    }
     for (const m of movements) {
       try {
         await emitCircuitNotification(m);

@@ -7,6 +7,8 @@
  * (dos confirmaciones simultáneas se serializan), idempotencia por clave (doble clic = una sola marca), cantidades acotadas
  * a lo terminado y no cubierto, y auditoría append-only con valores anteriores y nuevos.
  */
+import { emitBillingNotification } from "@/lib/notifications/billing-notifications";
+import type { BillingEvent } from "@/lib/notifications/billing-notification-builder";
 import "server-only";
 
 import { randomUUID } from "node:crypto";
@@ -197,7 +199,8 @@ export async function markReadyForDelivery(
   if (!key) throw new AvailabilityError("Falta la clave de la operación (protección contra doble clic).", 400, "NO_KEY");
   if (!/^[0-9a-f-]{36}$/i.test(input.workItemId)) throw new AvailabilityError("Trabajo inválido.", 400, "BAD_WORK");
 
-  return (getDb() as unknown as { transaction: <T>(fn: (tx: Exec) => Promise<T>) => Promise<T> }).transaction(async (tx) => {
+  let notice: BillingEvent | null = null;
+  const marked = await (getDb() as unknown as { transaction: <T>(fn: (tx: Exec) => Promise<T>) => Promise<T> }).transaction(async (tx) => {
     // Bloquea la fila del trabajo: dos confirmaciones simultáneas del mismo trabajo se serializan.
     const work = await loadWork(tx, input.workItemId, true);
     if (!work) throw new AvailabilityError("Trabajo no encontrado.", 404, "NOT_FOUND");
@@ -235,8 +238,24 @@ export async function markReadyForDelivery(
               ${q.quantity}, ${unit},
               ${JSON.stringify({ marked, delivered, available: ev.available })}::jsonb,
               ${JSON.stringify({ marked: marked + q.quantity, delivered, available: ev.available + q.quantity })}::jsonb)`);
+    notice = {
+      type: "LISTO_PARA_ENTREGAR",
+      eventKey: markId,
+      workItemId: String(work.id),
+      client: work.client == null ? null : String(work.client),
+      product: work.product == null ? null : String(work.product),
+      pedido: orderRef,
+      orderRef: work.order_number == null ? null : String(work.order_number),
+      quantity: q.quantity,
+      unit,
+      at: new Date(),
+      actorName: actor.displayName || actor.email,
+    };
     return { replayed: false, markId, quantity: q.quantity, state: await buildState(tx, work, actor) };
   });
+  // Aviso a Administración FUERA de la transacción (best-effort, idempotente por marca): «listo» NO es «entregado».
+  if (notice) await emitBillingNotification(notice);
+  return marked;
 }
 
 export type RetractResult = { markId: string; clientNotified: boolean; state: AvailabilityState };
