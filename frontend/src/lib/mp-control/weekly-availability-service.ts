@@ -13,7 +13,7 @@ import "server-only";
 
 import { and, eq, inArray, isNull, lte, gte, or, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { invMpStock, mpStockMovements, operationalOrders, workItems } from "@/lib/db/schema";
+import { invMpStock, mpMasterLinks, mpStockMovements, operationalOrders, workItems } from "@/lib/db/schema";
 import { normalizeMpStockPayload } from "@/lib/inventory/neon-persist";
 import { parseArDecimal } from "@/lib/utils/ar-number-parsing";
 import {
@@ -22,10 +22,13 @@ import {
   normText,
   round3,
   toKg,
+  toNumber,
   type AvailabilityResult,
+  type NameAlias,
   type ProductionInput,
   type StockLot,
 } from "./availability";
+import { isMissingSchemaError } from "@/lib/db/missing-schema";
 
 export type WeeklyAvailability = AvailabilityResult & {
   weekStart: string;
@@ -44,6 +47,11 @@ export function weekBounds(anyDay: string): { start: string; end: string } {
   return { start: iso(start), end: iso(new Date(start.getTime() + 6 * DAY)) };
 }
 
+/**
+ * Stock MP actual: TODAS las filas de `inv_mp_stock` (la misma tabla que lista Materias Primas → Stock). No se descarta
+ * ninguna por no tener código: hay filas de stock sin código y siguen siendo stock. Un error de lectura NO se
+ * interpreta como «sin stock»: se propaga y la pantalla lo muestra.
+ */
 export async function loadStockLots(): Promise<{ lots: StockLot[]; source: WeeklyAvailability["stockSource"] }> {
   let rows;
   let source: WeeklyAvailability["stockSource"] = "inv_mp_stock";
@@ -56,23 +64,66 @@ export async function loadStockLots(): Promise<{ lots: StockLot[]; source: Weekl
   }
   return {
     source,
-    lots: rows
-      .filter((r) => r.codigo.trim())
-      .map((r) => ({
-        id: r.id,
-        codigo: r.codigo,
-        codigosAnteriores: r.codigosAnteriores,
-        descripcion: r.descripcion,
-        proveedor: r.proveedor,
-        lote: r.lote,
-        ubicacion: r.ubicacion,
-        cantidadKg: r.cantidadKg,
-        vencimiento: r.vencimiento,
-        estadoStock: r.estadoStock,
-        estadoStockManual: r.estadoStockManual,
-        archived: r.archived,
-      })),
+    lots: rows.map((r) => ({
+      id: r.id,
+      codigo: r.codigo ?? "",
+      codigosAnteriores: r.codigosAnteriores,
+      descripcion: r.descripcion ?? "",
+      proveedor: r.proveedor ?? "",
+      cliente: r.cliente ?? "",
+      lote: r.lote ?? "",
+      ubicacion: r.ubicacion ?? "",
+      cantidadKg: toNumber(r.cantidadKg),
+      vencimiento: r.vencimiento ?? "",
+      estadoStock: r.estadoStock ?? "",
+      estadoStockManual: r.estadoStockManual ?? "",
+      archived: Boolean(r.archived),
+    })),
   };
+}
+
+type Mem = { aliases: NameAlias[] };
+const g = globalThis as unknown as { __genusMpAliasMem?: Mem };
+const mem = (): Mem => (g.__genusMpAliasMem ??= { aliases: [] });
+
+/** Equivalencias aprobadas a nivel de MATERIA PRIMA (no por lote): «GLICERINA» ⇒ «GLICERINA VEGETAL». */
+export async function loadNameAliases(): Promise<NameAlias[]> {
+  if (!isDatabaseConfigured()) return mem().aliases;
+  try {
+    const rows = await getDb().select().from(mpMasterLinks).where(eq(mpMasterLinks.kind, "name_alias"));
+    return rows.map((r) => ({ formulaName: r.key.split("||")[0]!, stockName: r.masterCode }));
+  } catch (err) {
+    if (isMissingSchemaError(err)) return [];
+    throw err;
+  }
+}
+
+export async function approveNameAlias(input: { formulaName: string; stockName: string; by: string }): Promise<void> {
+  const formulaName = normText(input.formulaName);
+  const stockName = normText(input.stockName);
+  if (!formulaName || !stockName) throw new Error("Falta la materia prima.");
+  const { lots } = await loadStockLots();
+  const { baseName } = await import("./availability");
+  if (!lots.some((l) => baseName(l.descripcion, l.proveedor) === stockName)) throw new Error("Esa descripción no existe en el Stock MP.");
+  if (!isDatabaseConfigured()) {
+    const m = mem();
+    if (!m.aliases.some((a) => a.formulaName === formulaName && a.stockName === stockName)) m.aliases.push({ formulaName, stockName });
+    return;
+  }
+  await getDb()
+    .insert(mpMasterLinks)
+    .values({ kind: "name_alias", key: `${formulaName}||${stockName}`, masterCode: stockName, approvedBy: input.by, note: "Equivalencia por nombre (Control semanal)" })
+    .onConflictDoNothing();
+}
+
+export async function removeNameAlias(input: { formulaName: string; stockName: string }): Promise<void> {
+  const formulaName = normText(input.formulaName);
+  const stockName = normText(input.stockName);
+  if (!isDatabaseConfigured()) {
+    mem().aliases = mem().aliases.filter((a) => !(a.formulaName === formulaName && a.stockName === stockName));
+    return;
+  }
+  await getDb().delete(mpMasterLinks).where(and(eq(mpMasterLinks.kind, "name_alias"), eq(mpMasterLinks.key, `${formulaName}||${stockName}`)));
 }
 
 type OeMat = { materiaPrima?: string; codigo?: string; codigoMp?: string; formulaPct?: number | null; parentRowId?: string | null };
@@ -165,6 +216,7 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
       const reliable = qty != null && qty > 0 && mats.length > 0 && mats.every((m) => m.formulaPct != null);
       inputs.push({
         id: w.id,
+        client: w.client,
         label: `${label} (OE ${oe.orderNumber})`,
         reliable,
         unreliableReason: !reliable ? (qty == null || qty <= 0 ? `Cantidad no válida (${w.plannedQuantity} ${w.unit})` : "La OE no tiene fórmula completa (faltan %)") : undefined,
@@ -181,13 +233,14 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
     const qty = toKg(qtyRaw, w.unit);
     const res = await resolveFormulaForWork({ client: w.client, product: w.product });
     if (!res.ok) {
-      inputs.push({ id: w.id, label, reliable: false, unreliableReason: `Sin fórmula vinculada: ${res.message}`, lines: [] });
+      inputs.push({ id: w.id, client: w.client, label, reliable: false, unreliableReason: `Sin fórmula encontrada: ${res.message}`, lines: [] });
       meta.push({ id: w.id, label, kg: qty ?? null, days, source: "SIN_FORMULA", note: res.message });
       continue;
     }
     const reliable = qty != null && qty > 0;
     inputs.push({
       id: w.id,
+      client: w.client,
       label,
       reliable,
       unreliableReason: reliable ? undefined : `Cantidad/unidad no convertible a kg (${w.plannedQuantity} ${w.unit})`,
@@ -200,14 +253,14 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
 
 export async function getWeeklyAvailability(anyDay: string, now = new Date()): Promise<WeeklyAvailability> {
   const { start, end } = weekBounds(anyDay);
-  const [{ lots, source }, prods] = await Promise.all([loadStockLots(), loadProductions(start, end)]);
-  const result = computeAvailability({ lots, productions: prods.inputs, todayIso: iso(now) });
+  const [{ lots, source }, aliases, prods] = await Promise.all([loadStockLots(), loadNameAliases(), loadProductions(start, end)]);
+  const result = computeAvailability({ lots, aliases, productions: prods.inputs, todayIso: iso(now) });
   return { ...result, weekStart: start, weekEnd: end, generatedAt: now.toISOString(), productions: prods.meta, stockSource: source };
 }
 
 /** Stock utilizable consolidado (todas las filas del Stock MP con ese nombre) para líneas de una planilla de control. */
 export async function stockForControlLines(lines: Array<{ materiaPrima: string; codigo?: string }>, now = new Date()) {
-  const { lots } = await loadStockLots();
+  const [{ lots }, aliases] = await Promise.all([loadStockLots(), loadNameAliases()]);
   const { stockForLine } = await import("./availability");
-  return lines.map((l) => stockForLine(lots, l, iso(now)));
+  return lines.map((l) => stockForLine(lots, l, iso(now), aliases));
 }

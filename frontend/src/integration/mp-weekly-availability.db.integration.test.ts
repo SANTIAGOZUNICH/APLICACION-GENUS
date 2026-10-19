@@ -78,6 +78,12 @@ describe.skipIf(Boolean(PROBLEM))(`Control semanal de MP en Postgres real${PROBL
     // Dos perfumes de nombre parecido que NO son equivalentes.
     await seedLot(`WK-PERF-1${RUN}`, PERF, "Esencias SA", "P1", 3);
     await seedLot(`WK-PERF-2${RUN}`, PERFUME_PARECIDO, "Esencias SA", "P2", 40);
+    // Caso real de producción: filas de Stock MP SIN CÓDIGO (antes el Control semanal las descartaba y mostraba 0).
+    const HUM = `HUMECTANTE RW${RUN}`;
+    for (const [d, kg] of [[HUM, 1.6], [`Humectante RW${RUN}`, 5], [HUM, 1], [`${HUM} VEGETAL`, 8.8], [`Humectante RW${RUN} vegetal`, 4], [`${HUM} VEGETAL`, 0.5], [`EXTRACTO HIDRO${HUM}`, 50]] as Array<[string, number]>) {
+      await seedLot("", d, "Proveedor X", `RW-${kg}`, kg);
+    }
+    await seedFormula(`CREMA C WK ${RUN}`, [[HUM, `F-HUM${RUN}`, "10"], [AGUA, `F-AGUA${RUN}`, "90"]]);
     await seedFormula(`CREMA A WK ${RUN}`, [[AGUA, `F-AGUA${RUN}`, "78"], [GLI, `F-GLI${RUN}`, "12"], [`Perfume suave WK${RUN}`, `F-PERF${RUN}`, "10"]]);
     await seedFormula(`CREMA B WK ${RUN}`, [[AGUA, `F-AGUA${RUN}`, "88"], [GLI, `F-GLI${RUN}`, "12"]]);
     const [m] = await q("select count(*)::int n from mp_stock_movements");
@@ -127,6 +133,27 @@ describe.skipIf(Boolean(PROBLEM))(`Control semanal de MP en Postgres real${PROBL
     expect([p.stockUtilizable, p.requerido, p.estado, p.faltante]).toEqual([3, 10, "FALTANTE", 7]);
     expect(p.stockNames).toEqual([PERF]);
     expect(res.rows.some((r) => r.materiaPrima === PERFUME_PARECIDO)).toBe(false);
+  });
+
+  it("CASO REAL: filas de Stock sin código se leen igual (7,6 kg exactos) y las descripciones parecidas se ofrecen sin sumarlas", async () => {
+    const { lots } = await (await import("@/lib/mp-control/weekly-availability-service")).loadStockLots();
+    expect(lots.filter((l) => l.codigo === "" && /humectante/i.test(l.descripcion))).toHaveLength(7);
+    works.c = await assign(`CREMA C WK ${RUN}`, "100"); // humectante 10 kg
+    const h = rowOf(await avail(), "HUMECTANTE")!;
+    expect([h.stockFisico, h.stockUtilizable, h.requerido, h.estado, h.faltante]).toEqual([7.6, 7.6, 10, "FALTANTE", 2.4]);
+    expect(h.related.map((r) => r.kg)).toEqual([13.3]); // «… VEGETAL» (8,8 + 4 + 0,5); el EXTRACTO HIDRO… nunca se ofrece
+    const res = await avail();
+    expect(res.stockRowsRead).toBeGreaterThanOrEqual(13);
+  });
+
+  it("al sumar la descripción «… VEGETAL» (una vez, por materia prima) quedan 20,9 kg y se recuerda", async () => {
+    const svc = await import("@/lib/mp-control/weekly-availability-service");
+    await svc.approveNameAlias({ formulaName: `HUMECTANTE RW${RUN}`, stockName: `HUMECTANTE RW${RUN} VEGETAL`, by: prod.email });
+    const h = rowOf(await avail(), "HUMECTANTE")!;
+    expect([h.stockUtilizable, h.estado, h.saldoProyectado, h.related.length]).toEqual([20.9, "SUFICIENTE", 10.9, 0]);
+    expect(await sumLots([`HUMECTANTE RW${RUN}`])).toBe(20.9); // el inventario no se tocó (la prueba no modifica stock)
+    await svc.removeNameAlias({ formulaName: `HUMECTANTE RW${RUN}`, stockName: `HUMECTANTE RW${RUN} VEGETAL` });
+    expect(rowOf(await avail(), "HUMECTANTE")!.stockUtilizable).toBe(7.6);
   });
 
   it("hojas por tambor no duplican la necesidad (la OE se cuenta una vez)", async () => {
