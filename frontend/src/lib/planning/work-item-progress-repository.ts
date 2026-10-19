@@ -1461,6 +1461,8 @@ export async function cancelWorkDurable(
 
 export interface DeliverWorkInput {
   id?: string;
+  /** Cajas de esta entrega ([{cajas, unidadesPorCaja}]); deben sumar lo entregado. */
+  deliveryPackingGroups?: unknown;
   workItemId: string;
   qualityItemId?: string | null;
   /**
@@ -1545,6 +1547,7 @@ export async function deliverWorkDurable(
       receivedBy: input.receivedBy,
       observations: input.observations,
       completion: input.completion ?? null,
+      deliveryPackingGroups: input.deliveryPackingGroups ?? null,
     })
   );
   // Aviso a Producción FUERA de la transacción: un fallo de la notificación nunca bloquea la entrega.
@@ -1700,6 +1703,7 @@ export async function listDeliveryLinesDurable(workItemId: string) {
     observations: l.observations,
     cumulativeAfter: l.cumulativeAfter,
     pendingAfter: l.pendingAfter,
+    packingGroups: (l.packingGroups as Array<{ cajas: number; unidadesPorCaja: number }> | null) ?? null,
   }));
 }
 

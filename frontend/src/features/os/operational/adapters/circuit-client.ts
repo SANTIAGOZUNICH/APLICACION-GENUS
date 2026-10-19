@@ -92,6 +92,8 @@ export interface CircuitDeliveryPayload {
   remito?: string | null;
   receivedBy?: string | null;
   observations?: string | null;
+  /** Cajas de esta entrega: [{cajas, unidadesPorCaja}] (deben sumar lo entregado). */
+  deliveryPackingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
   plannedDeliveryDate?: string | null;
   codigo?: string | null;
   sourceSector: SectorId | string;

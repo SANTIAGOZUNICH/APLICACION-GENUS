@@ -291,6 +291,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
         remito: payload.remito,
         receivedBy: payload.receivedBy,
         observations: payload.observations,
+        deliveryPackingGroups: payload.deliveryPackingGroups ?? null,
         plannedDeliveryDate: item.deliveryDate ?? null,
         sourceSector: sectorId,
         completion: {

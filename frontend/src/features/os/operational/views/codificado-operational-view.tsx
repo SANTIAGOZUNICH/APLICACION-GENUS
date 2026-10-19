@@ -270,6 +270,7 @@ export function CodificadoOperationalView() {
         expectedVersion: null,
         idempotencyKey: payload.idempotencyKey,
         deliverQuantity: payload.deliverQuantity,
+        deliveryPackingGroups: payload.deliveryPackingGroups ?? null,
         remito: payload.remito || null,
         receivedBy: payload.receivedBy || null,
         actualDeliveredAt: payload.actualDeliveredAt,
