@@ -15,9 +15,12 @@ import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names
 import { emptyLine, type CatalogItem, type DuplicateWarning, type MaterialSuggestion, type ReceiptDraftPayload, type ReceiptIssue, type ReceiptLineDraft, type ReceiptModule } from "@/lib/inventory/receipt-rules";
 import type { Analysis, Receipt, ReceiptSummary } from "@/lib/inventory/receipt-service";
 
+import { prepareReceiptImage, withRetry } from "@/lib/inventory/prepare-receipt-image";
+
 const API = "/api/v1/inventory/receipts";
 const FILE_API = "/api/v1/inventory/ingreso-adjuntos";
 const MAX_BYTES = 4 * 1024 * 1024;
+const prepareFile = prepareReceiptImage;
 
 function authHeaders(): Record<string, string> {
   const s = getCurrentAuthSession();
@@ -41,27 +44,6 @@ const MODULE_TEXT: Record<ReceiptModule, { sector: string; material: string; sto
   MP: { sector: "Materia Prima", material: "materia prima", stockWord: "Stock MP" },
   ME: { sector: "Depósito", material: "material de envase", stockWord: "Stock de Depósito" },
 };
-
-/** Achica fotos grandes antes de subir (los PDF van tal cual). */
-async function prepareFile(file: File): Promise<File> {
-  if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) return file;
-  const small = file.size <= 1.5 * 1024 * 1024 && (file.type === "image/jpeg" || file.type === "image/png");
-  if (small || typeof createImageBitmap !== "function") return file;
-  try {
-    const bmp = await createImageBitmap(file);
-    const scale = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bmp.width * scale);
-    canvas.height = Math.round(bmp.height * scale);
-    canvas.getContext("2d")?.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-    bmp.close?.();
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
-    if (!blob || blob.size >= file.size) return file;
-    return new File([blob], `${file.name.replace(/\.[^.]+$/, "") || "remito"}.jpg`, { type: "image/jpeg" });
-  } catch {
-    return file;
-  }
-}
 
 const uid = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
 const field = "w-full rounded-lg border border-[var(--os-border)] bg-[var(--os-surface,transparent)] px-2.5 py-2 text-sm";
@@ -215,7 +197,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
         fd.append("receiptId", r.id);
         fd.append("file", file, file.name);
         try {
-          const res = await call<{ item: { id: string; fileName: string; contentType: string } }>(`${API}/files`, { method: "POST", body: fd });
+          const res = await withRetry(() => call<{ item: { id: string; fileName: string; contentType: string } }>(`${API}/files`, { method: "POST", body: fd }), { retryable: (e) => !(e instanceof ApiError) || e.status >= 500 });
           setThumbs((prev) => (prev.some((x) => x.id === res.item.id) ? prev : [...prev, { id: res.item.id, name: res.item.fileName, type: res.item.contentType, url: trackUrl(URL.createObjectURL(file)) }]));
         } catch (e) {
           setError(e instanceof Error ? e.message : `No se pudo subir «${raw.name}».`);

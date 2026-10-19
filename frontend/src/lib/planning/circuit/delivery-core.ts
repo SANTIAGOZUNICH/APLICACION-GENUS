@@ -1,3 +1,4 @@
+import { validateDeliveryPacking } from "@/lib/remitos/delivery-packing";
 import "server-only";
 
 import { and, eq, sql } from "drizzle-orm";
@@ -72,6 +73,8 @@ export interface RecordDeliveryParams {
   movementType?: CircuitMovementType;
   /** Saltea la exigencia de cajas (Codificado: recibe solo la cantidad total). Por defecto se deduce. */
   skipBoxValidation?: boolean;
+  /** Cajas de ESTA entrega ([{cajas, unidadesPorCaja}], cantidades distintas por caja). Debe sumar la cantidad entregada. */
+  deliveryPackingGroups?: unknown;
 }
 
 export interface RecordDeliveryResult {
@@ -345,6 +348,10 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
     pending = 0;
   }
 
+  // Cajas de ESTA entrega: si vienen, deben sumar exactamente lo entregado ahora.
+  const deliveryPacking = validateDeliveryPacking(params.deliveryPackingGroups ?? null, stepQuantity);
+  if (!deliveryPacking.ok) throw new PlanningValidationError(deliveryPacking.error);
+
   // ── Snapshot canónico (relee la fila ya con el patch de cierre aplicado) ─────────────────────────
   if (Object.keys(patch).length > 0 || filledLote || filledVto) {
     await tx.update(workItems).set({ ...patch, updatedAt: now }).where(eq(workItems.id, params.workItemId));
@@ -439,6 +446,7 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
         observations: aggregateValues.observations,
         cumulativeAfter: cumulative,
         pendingAfter: complete ? 0 : pending,
+        packingGroups: deliveryPacking.groups.length > 0 ? deliveryPacking.groups : null,
       })
       .returning();
     line = insertedLine;

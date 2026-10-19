@@ -124,6 +124,7 @@ export async function POST(
             body.deliverQuantity != null && String(body.deliverQuantity).trim() !== ""
               ? Number(String(body.deliverQuantity).replace(",", "."))
               : null,
+          deliveryPackingGroups: Array.isArray(body.deliveryPackingGroups) ? body.deliveryPackingGroups : null,
           remito: body.remito != null ? String(body.remito) : null,
           receivedBy: body.receivedBy != null ? String(body.receivedBy) : null,
           plannedDeliveryDate:

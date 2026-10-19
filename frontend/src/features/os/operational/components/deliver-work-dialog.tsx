@@ -16,6 +16,9 @@ import { formatQty, parseQuantity, planDeliveryStep } from "@/lib/planning/circu
 import { parseBulkRemainderKg } from "../lib/bulk-remainder";
 import { newIdempotencyKey, type DeliveryProgress } from "../adapters/circuit-client";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
+import { PackingGroupsEditor } from "./packing-groups-editor";
+import type { PackingGroup } from "@/lib/remitos/packing-math";
+import { validateDeliveryPacking } from "@/lib/remitos/delivery-packing";
 
 export interface DeliverWorkPayload {
   /** Unidades entregadas ahora (null = todo el saldo). */
@@ -26,6 +29,8 @@ export interface DeliverWorkPayload {
   observations: string;
   bulkRemainderKg?: number | null;
   bulkRemainderObservation?: string | null;
+  /** Cajas de ESTA entrega (distintas cantidades por caja). null = sin detalle. */
+  deliveryPackingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
   /** Misma clave en cada reintento/doble clic de ESTA apertura del diálogo. */
   idempotencyKey: string;
 }
@@ -92,6 +97,8 @@ export function DeliverWorkDialog({
   const [observations, setObservations] = useState("");
   const [bulkKg, setBulkKg] = useState("");
   const [bulkObs, setBulkObs] = useState("");
+  const [boxes, setBoxes] = useState<PackingGroup[]>([]);
+  const [showBoxes, setShowBoxes] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const keyRef = useRef<string>(newIdempotencyKey("deliver"));
@@ -106,6 +113,8 @@ export function DeliverWorkDialog({
     setObservations("");
     setBulkKg("");
     setBulkObs("");
+    setBoxes([]);
+    setShowBoxes(false);
     setError(null);
     setBusy(false);
     // Solo al abrir: el saldo cambia recién cuando se cierra/confirma.
@@ -136,6 +145,16 @@ export function DeliverWorkDialog({
         return;
       }
     }
+    let deliveryPackingGroups: Array<{ cajas: number; unidadesPorCaja: number }> | null = null;
+    if (showBoxes) {
+      const stepUnits = requested ?? balance;
+      const packing = validateDeliveryPacking(boxes, stepUnits);
+      if (!packing.ok) {
+        setError(packing.error);
+        return;
+      }
+      deliveryPackingGroups = packing.groups.length > 0 ? packing.groups : null;
+    }
     let bulk: ReturnType<typeof parseBulkRemainderKg> | null = null;
     if (showBulkRemainder) {
       bulk = parseBulkRemainderKg(bulkKg);
@@ -154,6 +173,7 @@ export function DeliverWorkDialog({
         observations: observations.trim(),
         bulkRemainderKg: bulk && bulk.ok ? bulk.kg : null,
         bulkRemainderObservation: bulkObs.trim() || null,
+        deliveryPackingGroups,
         idempotencyKey: keyRef.current,
       });
       onOpenChange(false);
@@ -259,6 +279,33 @@ export function DeliverWorkDialog({
               data-testid="deliver-observations"
             />
           </label>
+          <div className="rounded border border-[var(--os-border)] p-2" data-testid="deliver-boxes-section">
+            <button
+              type="button"
+              className="min-h-10 text-xs font-medium text-[var(--os-teal)]"
+              onClick={() => setShowBoxes((v) => !v)}
+              data-testid="deliver-boxes-toggle"
+            >
+              {showBoxes ? "▾ Cajas de esta entrega" : "▸ Cargar cajas de esta entrega (opcional)"}
+            </button>
+            {showBoxes ? (
+              <div className="mt-2 space-y-2">
+                <PackingGroupsEditor groups={boxes} onChange={setBoxes} testIdPrefix="deliver-box" />
+                {(() => {
+                  const live = validateDeliveryPacking(boxes, null);
+                  const total = live.ok ? live.unidades : 0;
+                  const cajas = live.ok ? live.cajas : 0;
+                  const expected = requested ?? balance;
+                  return (
+                    <p className={`text-xs ${expected != null && total > 0 && total !== expected ? "text-[var(--genus-warning)]" : "text-[var(--os-text-muted)]"}`} data-testid="deliver-boxes-total">
+                      Total: {cajas} {cajas === 1 ? "caja" : "cajas"} · {total} u.
+                      {expected != null ? ` (la entrega es de ${formatQty(expected)} u.)` : ""}
+                    </p>
+                  );
+                })()}
+              </div>
+            ) : null}
+          </div>
           {showBulkRemainder ? (
             <>
               <label className="block">

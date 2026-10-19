@@ -133,6 +133,7 @@ export function PendientesDefinirView() {
         remito: payload.remito,
         receivedBy: payload.receivedBy,
         observations: payload.observations,
+        deliveryPackingGroups: payload.deliveryPackingGroups ?? null,
         plannedDeliveryDate: item.deliveryDate ?? null,
         sourceSector: item.sector,
       });

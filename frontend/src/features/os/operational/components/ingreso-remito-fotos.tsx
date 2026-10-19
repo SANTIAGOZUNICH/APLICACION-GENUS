@@ -4,6 +4,7 @@
  * Fotos del remito de un ingreso (MP o ME): sacar foto con la cámara del celular/tablet o subir imágenes,
  * varias por ingreso, con progreso y errores; miniaturas y visor ampliable. No toca cantidades ni stock.
  */
+import { prepareReceiptImage, withRetry } from "@/lib/inventory/prepare-receipt-image";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Camera, ChevronLeft, ChevronRight, ExternalLink, ImagePlus, Images, Trash2, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -74,29 +75,7 @@ export function useIngresoAdjuntoCounts(module: IngresoAdjuntoModule, enabled = 
   return { reload };
 }
 
-/**
- * Achica fotos grandes antes de subir (lado mayor 2400 px, JPG 85 %): una foto de celular de 5-10 MB queda en
- * ~1 MB y entra en el límite del servidor. Si el navegador no puede leerla (HEIC fuera de Safari), va tal cual.
- */
-async function prepareForUpload(file: File): Promise<File> {
-  const small = file.size <= 1.5 * 1024 * 1024 && (file.type === "image/jpeg" || file.type === "image/png");
-  if (small || typeof createImageBitmap !== "function") return file;
-  try {
-    const bmp = await createImageBitmap(file);
-    const scale = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bmp.width * scale);
-    canvas.height = Math.round(bmp.height * scale);
-    canvas.getContext("2d")?.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-    bmp.close?.();
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
-    if (!blob || blob.size >= file.size) return file;
-    const base = file.name.replace(/\.[^.]+$/, "") || "remito";
-    return new File([blob], `${base}.jpg`, { type: "image/jpeg" });
-  } catch {
-    return file;
-  }
-}
+const prepareForUpload = prepareReceiptImage;
 
 function uploadWithProgress(module: IngresoAdjuntoModule, ingresoId: string, file: File, onProgress: (pct: number) => void) {
   return new Promise<IngresoAdjunto>((resolve, reject) => {
@@ -249,7 +228,7 @@ function IngresoRemitoFotosDialog({
         const file = await prepareForUpload(raw);
         const v = validateAdjuntoFile({ name: file.name, type: file.type, size: file.size });
         if (!v.ok) throw new Error(v.message);
-        const item = await uploadWithProgress(module, ingresoId, file, (pct) => setP({ pct }));
+        const item = await withRetry(() => uploadWithProgress(module, ingresoId, file, (pct) => setP({ pct })), { retryable: (e) => /conexi[óo]n/i.test(e instanceof Error ? e.message : "") });
         setItems((prev) => [...prev, item]);
         setPending((p) => p.filter((x) => x.key !== key));
       } catch (e) {

@@ -371,6 +371,8 @@ export const workItemDeliveryLines = pgTable(
     observations: text("observations"),
     cumulativeAfter: doublePrecision("cumulative_after"),
     pendingAfter: doublePrecision("pending_after"),
+    /** 0059 — cajas de ESTA entrega: [{cajas, unidadesPorCaja}] (distintas cantidades por caja). null = sin detalle. */
+    packingGroups: jsonb("packing_groups"),
     annulledAt: timestamp("annulled_at", { withTimezone: true }),
     annulledBy: text("annulled_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

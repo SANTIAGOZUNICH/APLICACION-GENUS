@@ -27,7 +27,8 @@ export async function emitBillingNotification(event: BillingEvent): Promise<{ id
 /** Aviso «ENTREGA REGISTRADA — YA SE PUEDE FACTURAR» para una entrega real recién registrada (un replay no avisa de nuevo). */
 export async function emitBillingForDelivery(result: RecordDeliveryResult, actorName: string): Promise<void> {
   if (result.replayed || !result.line) return;
-  const groups = Array.isArray(result.delivery.packingGroups) ? (result.delivery.packingGroups as Array<{ cajas?: unknown; unidadesPorCaja?: unknown }>) : [];
+  const lineGroups = Array.isArray(result.line.packingGroups) ? result.line.packingGroups : null;
+  const groups = lineGroups ? (lineGroups as Array<{ cajas?: unknown; unidadesPorCaja?: unknown }>) : Array.isArray(result.delivery.packingGroups) ? (result.delivery.packingGroups as Array<{ cajas?: unknown; unidadesPorCaja?: unknown }>) : [];
   const packingGroups: PackingGroupLite[] = groups.map((g) => ({ cajas: Number(g.cajas) || 0, unidadesPorCaja: Number(g.unidadesPorCaja) || 0 }));
   await emitBillingNotification({
     type: "ENTREGA_REGISTRADA",

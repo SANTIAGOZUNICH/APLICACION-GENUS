@@ -1,5 +1,6 @@
 "use client";
 
+import { describeDeliveryPacking } from "@/lib/remitos/delivery-packing";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -209,7 +210,7 @@ export function EntregadosView() {
   const [deliveryProgress, setDeliveryProgress] = useState<DeliveryProgress | null>(null);
   const [detail, setDetail] = useState<DeliveryRecord | null>(null);
   const [detailLines, setDetailLines] = useState<
-    Array<{ id: string; sequence: number; quantity: number; unit: string | null; kind: string; status: string; actualDeliveredAt: string; remito: string | null }>
+    Array<{ id: string; sequence: number; quantity: number; unit: string | null; kind: string; status: string; actualDeliveredAt: string; remito: string | null; packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null }>
   >([]);
   const [filesRef, setFilesRef] = useState<string | null>(null);
   const [deleteGuideTarget, setDeleteGuideTarget] = useState<DeliveryRecord | null>(null);
@@ -454,6 +455,7 @@ export function EntregadosView() {
           remito: payload.remito,
           receivedBy: payload.receivedBy,
           observations: payload.observations,
+        deliveryPackingGroups: payload.deliveryPackingGroups ?? null,
           plannedDeliveryDate: selectedPendingMeta.plannedDeliveryDate,
           codigo: selectedPendingMeta.codigo,
           sourceSector: selectedPendingMeta.sourceSector,
@@ -951,6 +953,7 @@ export function EntregadosView() {
                         #{l.sequence} · {formatDateTime(l.actualDeliveredAt)} · {l.quantity} {l.unit ?? ""}
                         {l.status === "ANULADA" ? " (anulada)" : l.kind === "FINAL" ? " (final)" : " (parcial)"}
                         {l.remito ? ` · remito ${l.remito}` : ""}
+                        {l.packingGroups && l.packingGroups.length > 0 ? <span className="block text-[11px] text-[var(--os-text-muted)]" data-testid="detail-line-boxes">{describeDeliveryPacking(l.packingGroups)}</span> : null}
                       </li>
                     ))}
                   </ul>

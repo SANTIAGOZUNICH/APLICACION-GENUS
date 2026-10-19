@@ -6,6 +6,7 @@ import { getReceiptService, ReceiptError } from "@/lib/inventory/receipt-service
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 /** Adjunta UN archivo (foto o PDF) al borrador de una recepción: multipart `module`, `receiptId`, `file`. No toca stock. */
 export async function POST(request: Request) {

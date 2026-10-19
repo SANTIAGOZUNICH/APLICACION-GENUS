@@ -45,6 +45,7 @@ export async function postCodificadoHandoff(
     reason?: string | null;
     /** deliver — entrega parcial: unidades entregadas ahora (omitido = todo el saldo). */
     deliverQuantity?: number | null;
+    deliveryPackingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null;
     remito?: string | null;
     receivedBy?: string | null;
     plannedDeliveryDate?: string | null;

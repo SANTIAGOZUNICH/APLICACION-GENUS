@@ -692,6 +692,7 @@ export async function deliverFromCodificadoDurable(
     idempotencyKey: string;
     /** Entrega parcial: unidades entregadas ahora. null = todo el saldo. */
     deliverQuantity?: number | null;
+    deliveryPackingGroups?: unknown;
     remito?: string | null;
     receivedBy?: string | null;
     plannedDeliveryDate?: string | null;
@@ -737,6 +738,7 @@ export async function deliverFromCodificadoDurable(
       actor: { email: actor.email, sector: actor.sector, displayName: actor.displayName },
       idempotencyKey: `codificado:${key}`,
       quantity: input.deliverQuantity ?? null,
+      deliveryPackingGroups: input.deliveryPackingGroups ?? null,
       codigo: null,
       plannedDeliveryDate: input.plannedDeliveryDate ?? null,
       actualDeliveredAt: input.actualDeliveredAt ?? null,
