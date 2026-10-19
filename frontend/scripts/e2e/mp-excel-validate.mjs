@@ -109,6 +109,7 @@ const savedStatus = (page, gid) => waitDb(async () => (await status(page, gid)) 
 async function dragFill(page, gid, toRow, toTitle, { hold = 0 } = {}) {
   const h = page.locator(`[data-testid=${gid}-fill-handle]`);
   await h.waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(300); // el controlador se reposiciona tras cambiar la selección
   const hb = await h.boundingBox();
   const target = await centerOf(await cellLoc(page, gid, toRow, toTitle));
   await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
@@ -232,7 +233,7 @@ try {
   await mp.screenshot({ path: `${OUT}/03-motivo-en-linea.png` });
   await mp.getByRole("button", { name: "Conteo físico" }).click();
   const kgOk = await waitDb(async () => Number((await stockBy("XL-007")).cantidadKg) === 500 && (await q("select count(*)::int n from mp_stock_movements"))[0].n > snap0.mov);
-  check("con el motivo, los kg se corrigen y queda el ajuste en el libro mayor", kgOk, kgOk ? "" : JSON.stringify({ kg: (await stockBy("XL-007")).cantidadKg, mov: (await q("select count(*)::int n from mp_stock_movements"))[0].n, mov0: snap0.mov, notice: await mp.locator(`[data-testid=${GS}-notice]`).innerText().catch(() => ""), st: await status(mp, GS) }));
+  check("con el motivo, los kg se corrigen y queda el ajuste en el libro mayor", kgOk, kgOk ? "" : JSON.stringify({ kg: (await stockBy("XL-007")).cantidadKg, filas500: (await q("select payload->>'codigo' c from inv_mp_stock where (payload->>'cantidadKg')::numeric = 500")).map((r) => r.c), mov: (await q("select count(*)::int n from mp_stock_movements"))[0].n, mov0: snap0.mov, notice: await mp.locator(`[data-testid=${GS}-notice]`).innerText().catch(() => ""), st: await status(mp, GS) }));
 
   // ================= 3) RELLENO ARRASTRANDO =================
   const GC = "mp-compras-grid";
