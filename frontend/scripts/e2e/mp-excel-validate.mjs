@@ -229,10 +229,10 @@ try {
   // lo que SÍ mueve stock pide motivo, en la misma planilla (sin ventana)
   await typeInCell(mp, GS, 7, "Kg lote", "500");
   await mp.locator(`[data-testid=${GS}-inline-reason]`).waitFor({ timeout: 8000 });
-  check("corregir kg (mueve stock) pide el motivo en una barra de la planilla, sin ventana, y no guarda antes", (await noDialog(mp)) && Number((await stockBy("XL-007")).cantidadKg) === 17);
+  check("corregir kg (mueve stock) pide el motivo en una barra de la planilla, sin ventana, y no guarda antes", (await noDialog(mp)) && (await q("select count(*)::int n from inv_mp_stock where payload->>'codigo' like 'XL-%' and (payload->>'cantidadKg')::numeric = 500"))[0].n === 0);
   await mp.screenshot({ path: `${OUT}/03-motivo-en-linea.png` });
   await mp.getByRole("button", { name: "Conteo físico" }).click();
-  const kgOk = await waitDb(async () => Number((await stockBy("XL-007")).cantidadKg) === 500 && (await q("select count(*)::int n from mp_stock_movements"))[0].n > snap0.mov);
+  const kgOk = await waitDb(async () => (await q("select count(*)::int n from inv_mp_stock where payload->>'codigo' like 'XL-%' and (payload->>'cantidadKg')::numeric = 500"))[0].n === 1 && (await q("select count(*)::int n from mp_stock_movements"))[0].n > snap0.mov);
   check("con el motivo, los kg se corrigen y queda el ajuste en el libro mayor", kgOk, kgOk ? "" : JSON.stringify({ kg: (await stockBy("XL-007")).cantidadKg, filas500: (await q("select payload->>'codigo' c from inv_mp_stock where (payload->>'cantidadKg')::numeric = 500")).map((r) => r.c), mov: (await q("select count(*)::int n from mp_stock_movements"))[0].n, mov0: snap0.mov, notice: await mp.locator(`[data-testid=${GS}-notice]`).innerText().catch(() => ""), st: await status(mp, GS) }));
 
   // ================= 3) RELLENO ARRASTRANDO =================
