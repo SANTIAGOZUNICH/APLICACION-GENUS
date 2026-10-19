@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { ArrowLeft, ChevronDown, LogOut, Menu } from "lucide-react";
 import { formatTime } from "@/features/work/lib/calendar";
 import { NotificationBell } from "@/features/os/feedback/notification-bell";
+import { NotificationToaster } from "@/features/os/feedback/notification-toaster";
 import { InstallGenusOsButton, StandaloneBuildBadge } from "@/features/os/pwa/install-genus-os-button";
 
 interface OsHeaderProps {
@@ -99,6 +100,7 @@ export function OsHeader({
 
       <div className="flex items-center gap-2 sm:gap-3">
         <NotificationBell />
+        <NotificationToaster />
 
         {onLogout ? (
           <div className="relative" ref={menuRef}>

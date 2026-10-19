@@ -32,6 +32,7 @@ function isSectorId(value: string): value is SectorId {
     "DEPOSITO",
     "PRODUCCION",
     "DIRECCION",
+    "ADMINISTRACION",
   ].includes(value);
 }
 

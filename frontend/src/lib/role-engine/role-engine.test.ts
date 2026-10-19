@@ -10,9 +10,9 @@ import {
 import { OPERATIONAL_SECTOR_IDS } from "@/types/operational/sector";
 
 describe("Role Engine — F9.3", () => {
-  it("registra los 10 sectores operativos", () => {
+  it("registra los 11 sectores operativos", () => {
     const definitions = getAllSectorDefinitions();
-    expect(definitions).toHaveLength(10);
+    expect(definitions).toHaveLength(11);
     for (const sectorId of OPERATIONAL_SECTOR_IDS) {
       expect(assertSectorDefinition(sectorId).id).toBe(sectorId);
     }
@@ -63,7 +63,7 @@ describe("Role Engine — F9.3", () => {
 
   it("resuelve todas las Homes sin errores", () => {
     const homes = resolveAllSectorHomes();
-    expect(homes).toHaveLength(10);
+    expect(homes).toHaveLength(11);
     for (const home of homes) {
       expect(home.emptyState.title).toBeTruthy();
       expect(home.allowedActions.length).toBeGreaterThan(0);

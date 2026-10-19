@@ -14,6 +14,7 @@ import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 import { canReopenCodificadoDelivery } from "@/features/os/operational/lib/codificado-flow";
 import { parseQuantity } from "@/lib/planning/circuit/delivery-math";
 import { closeForCodificadoTransfer } from "@/lib/planning/circuit/packaging-close";
+import { emitBillingForDelivery } from "@/lib/notifications/billing-notifications";
 import { recordDeliveryInTx, sumActiveDeliveredUnits } from "@/lib/planning/circuit/delivery-core";
 import { emitCircuitNotification } from "@/lib/planning/circuit/circuit-notifications";
 import type { CircuitMovement } from "@/lib/planning/circuit/movements";
@@ -791,6 +792,7 @@ export async function deliverFromCodificadoDurable(
 
   // Aviso a Producción fuera de la transacción: un fallo del aviso nunca bloquea la entrega.
   if (outcome.movement) await emitCircuitNotification(outcome.movement);
+  await emitBillingForDelivery(outcome, actor.displayName || actor.email);
 
   return {
     item: mapItem(outcome.item),

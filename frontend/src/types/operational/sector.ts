@@ -10,6 +10,7 @@ export const OPERATIONAL_SECTOR_IDS = [
   "DEPOSITO",
   "PRODUCCION",
   "DIRECCION",
+  "ADMINISTRACION",
 ] as const;
 
 export type SectorId = (typeof OPERATIONAL_SECTOR_IDS)[number];
@@ -39,6 +40,7 @@ export const SECTOR_LABELS: Record<SectorId, string> = {
   DEPOSITO: "Depósito",
   PRODUCCION: "Producción",
   DIRECCION: "Dirección",
+  ADMINISTRACION: "Administración / Facturación",
 };
 
 export const SECTOR_GREETING: Record<CurrentSectorId, string> = {
