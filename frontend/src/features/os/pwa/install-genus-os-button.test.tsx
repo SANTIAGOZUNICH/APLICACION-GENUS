@@ -91,4 +91,17 @@ describe("InstallGenusOsButton one-click native install", () => {
     expect(screen.getByText(/Agregar a inicio/i)).toBeTruthy();
     expect(screen.queryByText("Instalar ahora")).toBeNull();
   });
+
+  it("Chrome sin beforeinstallprompt: pasa a manual y abre guía en vez de quedar en «Preparando»", async () => {
+    stubMatchMedia(false);
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (Linux; Android 13; SM-X200) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    });
+    render(<InstallGenusOsButton variant="login" />);
+    const button = screen.getByRole("button", { name: "Instalar Genus OS" });
+    await waitFor(() => expect(button.getAttribute("data-genus-install-status")).toBe("manual"), { timeout: 5000 });
+    fireEvent.click(button);
+    expect(screen.getByRole("dialog").textContent).toContain("Agregar a la pantalla principal");
+  });
 });
