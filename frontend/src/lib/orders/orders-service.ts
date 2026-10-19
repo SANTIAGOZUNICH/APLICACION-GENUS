@@ -21,6 +21,7 @@ import {
 } from "@/lib/orders/rbac";
 import { applyElaboracionMaterialPatch, assertAjusteValid, didFormulaChange } from "@/lib/orders/oe-ajuste";
 import { consumptionMaterials, mergeSheets } from "@/lib/orders/oe-sheets";
+import type { OeContent } from "@/lib/orders/types";
 import { seedTemplateRecords } from "@/lib/orders/seed-templates";
 import {
   canDeleteEmptyDraft,
