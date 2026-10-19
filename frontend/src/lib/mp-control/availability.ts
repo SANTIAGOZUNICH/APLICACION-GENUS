@@ -1,17 +1,18 @@
 /**
  * Disponibilidad de materias primas contra las necesidades de producción — reglas PURAS (sin I/O).
  *
- * Regla única y simple: la materia prima de la fórmula se busca por su NOMBRE en la columna DESCRIPCIÓN del Stock MP,
- * y se suman los KG de TODAS las filas de stock que coinciden (cualquier proveedor, lote, código o ingreso).
- * No hay vinculaciones ni equivalencias que mantener.
+ * Fuente: filas del Stock MP (columna DESCRIPCIÓN y KG LOTE = kg ACTUALES del lote; el consumo de las OE descuenta del
+ * mismo lote). No exige código: hay filas de stock sin código y siguen siendo stock.
  *
- * Coincidencia de nombres (sin mayúsculas, tildes ni signos; sin el sufijo « — Proveedor»):
- *   1. igual:        «GLICERINA» = «Glicerina»
- *   2. contenido:    todas las palabras del nombre más corto están en el más largo («GLICERINA» ⊂ «Glicerina vegetal USP»)
- * Si dos nombres de la fórmula comparten filas de stock, se calculan JUNTOS contra ese stock (nunca se cuenta dos veces).
+ * Identificación de la MP (segura):
+ *   1. Nombre IGUAL normalizado (sin mayúsculas/tildes/signos ni el sufijo « — Proveedor»): «GLICERINA» = «Glicerina».
+ *   2. Equivalencia APROBADA a nivel de materia prima (no por lote): «GLICERINA» ⇒ «GLICERINA VEGETAL». Se recuerda.
+ *   Nombres que solo comparten palabras («GLICERINA VEGETAL», «EXTRACTO HIDROGLICERINADO») NO se suman solos: se ofrecen
+ *   como «posibles equivalentes» para que alguien autorizado los incluya (una sola vez por materia prima).
  *
- * Stock utilizable = kg > 0, no archivado, no bloqueado/rechazado/en cuarentena y no vencido. El físico se informa aparte.
- * Las necesidades de toda la semana se suman ANTES de compararlas con el stock.
+ * Stock utilizable = kg > 0, no archivado, no bloqueado/rechazado/en cuarentena, no vencido y, si el lote es de un
+ * cliente, solo para las producciones de ese cliente. El físico se informa aparte.
+ * Las necesidades de TODA la semana se suman ANTES de compararlas con el stock.
  */
 
 export type StockLot = {
@@ -20,6 +21,7 @@ export type StockLot = {
   codigosAnteriores?: string[];
   descripcion: string;
   proveedor: string;
+  cliente?: string;
   lote: string;
   ubicacion?: string;
   cantidadKg: number | null;
@@ -30,6 +32,8 @@ export type StockLot = {
 };
 
 export type FormulaLine = { materiaPrima: string; codigo?: string; codigoMp?: string };
+/** Equivalencia aprobada: la MP `formulaName` (normalizada) también usa el stock de `stockName` (normalizado). */
+export type NameAlias = { formulaName: string; stockName: string };
 
 export const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
@@ -42,6 +46,15 @@ export function normText(s: string | null | undefined): string {
     .trim();
 }
 export const normCode = (s: string | null | undefined): string => String(s ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+
+/** Número tal como lo guarda/muestra la planilla («8,8», 8.8, «1.234,5») → número; null si no es un número. */
+export function toNumber(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  const t = String(v ?? "").trim().replace(/\s/g, "");
+  if (!t) return null;
+  const n = /^[-+]?\d{1,3}(\.\d{3})+(,\d+)?$/.test(t) ? Number(t.replace(/\./g, "").replace(",", ".")) : Number(t.replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
 
 /** Nombre de la MP sin el sufijo « — Proveedor» (solo separadores largos o el proveedor exacto del lote). */
 export function baseName(descripcion: string, proveedor = ""): string {
@@ -59,14 +72,12 @@ export function baseName(descripcion: string, proveedor = ""): string {
 const STOP = new Set(["de", "del", "la", "el", "y", "en", "para", "con", "a", "al", "usp", "grado", "tipo"]);
 const tokens = (s: string) => s.split(" ").filter((t) => t.length > 1 && !STOP.has(t));
 
-/** ¿El nombre de la fórmula corresponde a la descripción del stock? */
-export function namesMatch(formulaName: string, stockName: string): boolean {
+/** Nombres que comparten palabras pero NO son iguales: solo se SUGIEREN, nunca se suman solos. */
+export function namesRelated(formulaName: string, stockName: string): boolean {
   const a = normText(formulaName);
-  const b = stockName;
-  if (!a || !b) return false;
-  if (a === b) return true;
+  if (!a || !stockName || a === stockName) return false;
   const ta = tokens(a);
-  const tb = tokens(b);
+  const tb = tokens(stockName);
   if (ta.length === 0 || tb.length === 0) return false;
   const inB = new Set(tb);
   const inA = new Set(ta);
@@ -76,9 +87,9 @@ export function namesMatch(formulaName: string, stockName: string): boolean {
 const BLOCKED = /bloquead|rechazad|cuarentena|retenid|no liberad|observad/i;
 export type LotUse = { usable: boolean; reason: string };
 export function lotUsability(lot: StockLot, todayIso: string): LotUse {
-  const kg = lot.cantidadKg;
+  const kg = toNumber(lot.cantidadKg);
   if (lot.archived) return { usable: false, reason: "Archivado" };
-  if (kg == null || !Number.isFinite(kg) || kg <= 0) return { usable: false, reason: "Sin kg" };
+  if (kg == null || kg <= 0) return { usable: false, reason: "Sin kg" };
   const estado = `${lot.estadoStockManual ?? ""} ${lot.estadoStock ?? ""}`;
   if (BLOCKED.test(estado)) return { usable: false, reason: "Bloqueado / no liberado" };
   const v = (lot.vencimiento ?? "").slice(0, 10);
@@ -86,10 +97,11 @@ export function lotUsability(lot: StockLot, todayIso: string): LotUse {
   return { usable: true, reason: "" };
 }
 
-export type Need = { productionId: string; label: string; kg: number };
+export type Need = { productionId: string; label: string; kg: number; client?: string };
 export type ProductionInput = {
   id: string;
   label: string;
+  client?: string;
   /** false = falta dato confiable (cantidad, unidad no convertible, fórmula no encontrada…). */
   reliable: boolean;
   unreliableReason?: string;
@@ -98,16 +110,20 @@ export type ProductionInput = {
   consumedByCode?: Record<string, number>;
 };
 
-export type AvailabilityStatus = "SUFICIENTE" | "FALTANTE" | "SIN STOCK" | "SIN DATOS CONFIABLES";
+export type AvailabilityStatus = "SUFICIENTE" | "FALTANTE" | "SIN STOCK" | "SIN STOCK UTILIZABLE" | "MP NO IDENTIFICADA" | "DATOS INCOMPLETOS";
 
-export type LotDetail = { descripcion: string; codigo: string; proveedor: string; lote: string; ubicacion: string; kg: number; usable: boolean; motivo: string; vencimiento: string };
+export type LotDetail = { descripcion: string; codigo: string; proveedor: string; cliente: string; lote: string; ubicacion: string; kgRegistrados: number; usable: boolean; motivo: string; vencimiento: string; fuente: "nombre" | "equivalencia aprobada" };
+export type RelatedName = { stockName: string; descripcion: string; kg: number; filas: number };
 export type AvailabilityRow = {
   key: string;
   materiaPrima: string;
-  /** Código(s) de inventario de las filas de stock sumadas. */
+  /** Código(s) de inventario de las filas de stock sumadas (puede estar vacío si las filas no tienen código). */
   codigoMaestro: string;
+  /** Stock físico actual: kg de todas las filas que coinciden (sin archivadas ni en cero). */
   stockFisico: number;
+  /** Kg que pueden usarse para las producciones de esta semana. */
   stockUtilizable: number;
+  /** Kg físicos que existen pero no se pueden usar acá: reservados para un cliente que no los necesita esta semana. */
   reservado: number;
   requerido: number;
   saldoProyectado: number;
@@ -120,6 +136,8 @@ export type AvailabilityRow = {
   formulaNames: string[];
   /** Descripciones distintas del Stock MP que se sumaron. */
   stockNames: string[];
+  /** Nombres del Stock MP que comparten palabras pero NO se sumaron (ofrecer «incluir»). */
+  related: RelatedName[];
   notas: string[];
 };
 
@@ -127,17 +145,29 @@ export type AvailabilityResult = {
   rows: AvailabilityRow[];
   excluded: Array<{ id: string; label: string; reason: string }>;
   summary: Record<AvailabilityStatus, number> & { total: number };
+  stockRowsRead: number;
+  stockRowsActive: number;
 };
 
-type Prepared = { lot: StockLot; name: string };
+type Prepared = { lot: StockLot; name: string; kg: number };
 const prepare = (lots: StockLot[]): Prepared[] =>
-  lots.filter((l) => !l.archived && String(l.descripcion ?? "").trim()).map((lot) => ({ lot, name: baseName(lot.descripcion, lot.proveedor) }));
+  lots
+    .filter((l) => !l.archived && String(l.descripcion ?? "").trim())
+    .map((lot) => ({ lot, name: baseName(lot.descripcion, lot.proveedor), kg: toNumber(lot.cantidadKg) ?? 0 }));
 
-function matchedLots(prepared: Prepared[], formulaName: string): Prepared[] {
-  return prepared.filter((p) => namesMatch(formulaName, p.name));
+function matchedLots(prepared: Prepared[], formulaName: string, aliases: NameAlias[]): Array<Prepared & { fuente: LotDetail["fuente"] }> {
+  const f = normText(formulaName);
+  const aliasNames = new Set(aliases.filter((a) => a.formulaName === f).map((a) => a.stockName));
+  const out: Array<Prepared & { fuente: LotDetail["fuente"] }> = [];
+  for (const p of prepared) {
+    if (p.name === f) out.push({ ...p, fuente: "nombre" });
+    else if (aliasNames.has(p.name)) out.push({ ...p, fuente: "equivalencia aprobada" });
+  }
+  return out;
 }
 
-export function computeAvailability(params: { lots: StockLot[]; productions: ProductionInput[]; todayIso: string }): AvailabilityResult {
+export function computeAvailability(params: { lots: StockLot[]; productions: ProductionInput[]; todayIso: string; aliases?: NameAlias[] }): AvailabilityResult {
+  const aliases = params.aliases ?? [];
   const prepared = prepare(params.lots);
   const excluded: AvailabilityResult["excluded"] = [];
 
@@ -159,7 +189,7 @@ export function computeAvailability(params: { lots: StockLot[]; productions: Pro
       if (!name) continue;
       let kg = rawLine.kg;
       if (kg != null) {
-        const hit = matchedLots(prepared, rawLine.materiaPrima)[0];
+        const hit = matchedLots(prepared, rawLine.materiaPrima, aliases)[0];
         const left = hit ? (consumedLeft.get(hit.name) ?? 0) : 0;
         if (hit && left > 0) {
           const used = Math.min(left, kg);
@@ -170,10 +200,10 @@ export function computeAvailability(params: { lots: StockLot[]; productions: Pro
       const acc = byName.get(name) ?? { name: rawLine.materiaPrima.trim(), requerido: 0, needs: [], unreliable: 0 };
       if (!prod.reliable || kg == null || !Number.isFinite(kg)) {
         acc.unreliable += 1;
-        acc.needs.push({ productionId: prod.id, label: prod.label, kg: 0 });
+        acc.needs.push({ productionId: prod.id, label: prod.label, kg: 0, client: prod.client });
       } else {
         acc.requerido = round3(acc.requerido + kg);
-        acc.needs.push({ productionId: prod.id, label: prod.label, kg: round3(kg) });
+        acc.needs.push({ productionId: prod.id, label: prod.label, kg: round3(kg), client: prod.client });
       }
       byName.set(name, acc);
     }
@@ -190,9 +220,9 @@ export function computeAvailability(params: { lots: StockLot[]; productions: Pro
     return r;
   };
   const lotOwner = new Map<string, string>();
-  const lotsOfName = new Map<string, Prepared[]>();
+  const lotsOfName = new Map<string, ReturnType<typeof matchedLots>>();
   for (const n of names) {
-    const ms = matchedLots(prepared, byName.get(n)!.name);
+    const ms = matchedLots(prepared, byName.get(n)!.name, aliases);
     lotsOfName.set(n, ms);
     for (const m of ms) {
       const other = lotOwner.get(m.lot.id);
@@ -205,49 +235,91 @@ export function computeAvailability(params: { lots: StockLot[]; productions: Pro
 
   const rows: AvailabilityRow[] = [];
   for (const [root, members] of clusters) {
-    const lotsById = new Map<string, Prepared>();
+    const lotsById = new Map<string, ReturnType<typeof matchedLots>[number]>();
     for (const n of members) for (const m of lotsOfName.get(n) ?? []) lotsById.set(m.lot.id, m);
     const matched = [...lotsById.values()];
     const accs = members.map((n) => byName.get(n)!);
     const requerido = round3(accs.reduce((s, a) => s + a.requerido, 0));
     const needs = accs.flatMap((a) => a.needs);
     const unreliable = accs.reduce((s, a) => s + a.unreliable, 0);
+
     const details: LotDetail[] = matched
-      .filter((p) => (p.lot.cantidadKg ?? 0) !== 0)
+      .filter((p) => p.kg !== 0)
       .map((p) => {
         const u = lotUsability(p.lot, params.todayIso);
-        return { descripcion: p.lot.descripcion, codigo: p.lot.codigo, proveedor: p.lot.proveedor || "(sin proveedor)", lote: p.lot.lote || "(sin lote)", ubicacion: p.lot.ubicacion ?? "", kg: round3(p.lot.cantidadKg ?? 0), usable: u.usable, motivo: u.reason, vencimiento: p.lot.vencimiento ?? "" };
+        return {
+          descripcion: p.lot.descripcion, codigo: p.lot.codigo, proveedor: p.lot.proveedor || "(sin proveedor)", cliente: p.lot.cliente ?? "", lote: p.lot.lote || "(sin lote)",
+          ubicacion: p.lot.ubicacion ?? "", kgRegistrados: round3(p.kg), usable: u.usable, motivo: u.reason, vencimiento: p.lot.vencimiento ?? "", fuente: p.fuente,
+        };
       });
-    const fisico = round3(details.reduce((s, d) => s + (d.kg > 0 ? d.kg : 0), 0));
-    const util = round3(details.reduce((s, d) => s + (d.usable ? d.kg : 0), 0));
+    const fisico = round3(details.reduce((s, d) => s + (d.kgRegistrados > 0 ? d.kgRegistrados : 0), 0));
+
+    // Stock utilizable con la regla de clientes: lo libre sirve a todos; lo de un cliente solo a sus producciones.
+    const free = details.filter((d) => d.usable && !normText(d.cliente));
+    const freeKg = round3(free.reduce((s, d) => s + d.kgRegistrados, 0));
+    const clientKg = new Map<string, number>();
+    for (const d of details) if (d.usable && normText(d.cliente)) clientKg.set(normText(d.cliente), round3((clientKg.get(normText(d.cliente)) ?? 0) + d.kgRegistrados));
+    const needByClient = new Map<string, number>();
+    for (const n of needs) {
+      const c = [...clientKg.keys()].find((k) => n.client && k === normText(n.client)) ?? "";
+      needByClient.set(c, round3((needByClient.get(c) ?? 0) + n.kg));
+    }
+    let usedFromClients = 0;
+    let reservado = 0;
+    for (const [c, kg] of clientKg) {
+      const used = Math.min(kg, needByClient.get(c) ?? 0);
+      usedFromClients = round3(usedFromClients + used);
+      reservado = round3(reservado + (kg - used));
+    }
+    const util = round3(freeKg + usedFromClients);
+
     const prov = new Map<string, { proveedor: string; kgUtilizable: number; kgTotal: number }>();
     for (const d of details) {
       const p = prov.get(d.proveedor) ?? { proveedor: d.proveedor, kgUtilizable: 0, kgTotal: 0 };
-      if (d.kg > 0) p.kgTotal = round3(p.kgTotal + d.kg);
-      if (d.usable) p.kgUtilizable = round3(p.kgUtilizable + d.kg);
+      if (d.kgRegistrados > 0) p.kgTotal = round3(p.kgTotal + d.kgRegistrados);
+      if (d.usable) p.kgUtilizable = round3(p.kgUtilizable + d.kgRegistrados);
       prov.set(d.proveedor, p);
     }
     const stockNames = [...new Set(matched.map((p) => String(p.lot.descripcion).trim()))];
     const codes = [...new Set(matched.map((p) => normCode(p.lot.codigo)).filter(Boolean))];
     const saldo = round3(util - requerido);
+
+    // Posibles equivalentes (comparten palabras pero NO son el mismo nombre): se muestran, no se suman.
+    const includedNames = new Set(matched.map((p) => p.name));
+    const relMap = new Map<string, RelatedName>();
+    for (const n of members) {
+      for (const p of prepared) {
+        if (includedNames.has(p.name) || !namesRelated(byName.get(n)!.name, p.name) || p.kg <= 0) continue;
+        const cur = relMap.get(p.name) ?? { stockName: p.name, descripcion: String(p.lot.descripcion).trim(), kg: 0, filas: 0 };
+        cur.kg = round3(cur.kg + p.kg);
+        cur.filas += 1;
+        relMap.set(p.name, cur);
+      }
+    }
+
     const notas: string[] = [];
-    const noUsable = round3(fisico - util);
+    const noUsable = round3(fisico - util - reservado);
     if (noUsable > 0) notas.push(`${noUsable} kg físicos NO utilizables (bloqueados, vencidos o no liberados).`);
+    if (reservado > 0) notas.push(`${reservado} kg están reservados para un cliente que no los necesita esta semana.`);
     if (unreliable > 0) notas.push("Hay producciones sin cantidad confiable que no se sumaron.");
     if (members.length > 1) notas.push(`Este stock también cubre: ${members.map((m) => byName.get(m)!.name).join(", ")}.`);
+
     const allUnreliable = needs.length > 0 && unreliable === needs.length;
     let estado: AvailabilityStatus;
-    if (allUnreliable) estado = "SIN DATOS CONFIABLES";
-    else if (fisico <= 0) estado = requerido > 0 ? "SIN STOCK" : "SUFICIENTE";
+    if (allUnreliable) estado = "DATOS INCOMPLETOS";
+    else if (matched.length === 0) estado = "MP NO IDENTIFICADA";
+    else if (fisico <= 0) estado = "SIN STOCK";
+    else if (util <= 0 && requerido > 0) estado = "SIN STOCK UTILIZABLE";
     else if (saldo < 0) estado = "FALTANTE";
     else estado = "SUFICIENTE";
+
     rows.push({
       key: root,
       materiaPrima: accs.map((a) => a.name).join(" / "),
       codigoMaestro: codes.join(", "),
       stockFisico: fisico,
       stockUtilizable: util,
-      reservado: 0,
+      reservado,
       requerido,
       saldoProyectado: saldo,
       faltante: saldo < 0 ? round3(-saldo) : 0,
@@ -257,30 +329,30 @@ export function computeAvailability(params: { lots: StockLot[]; productions: Pro
       needs,
       formulaNames: accs.map((a) => a.name),
       stockNames,
+      related: [...relMap.values()].sort((a, b) => b.kg - a.kg),
       notas,
     });
   }
   rows.sort(order);
-  const summary = { total: rows.length, SUFICIENTE: 0, FALTANTE: 0, "SIN STOCK": 0, "SIN DATOS CONFIABLES": 0 } as AvailabilityResult["summary"];
+  const summary = { total: rows.length, SUFICIENTE: 0, FALTANTE: 0, "SIN STOCK": 0, "SIN STOCK UTILIZABLE": 0, "MP NO IDENTIFICADA": 0, "DATOS INCOMPLETOS": 0 } as AvailabilityResult["summary"];
   for (const r of rows) summary[r.estado] += 1;
-  return { rows, excluded, summary };
+  return { rows, excluded, summary, stockRowsRead: params.lots.length, stockRowsActive: prepared.length };
 }
 
-const ORDER: Record<AvailabilityStatus, number> = { "SIN STOCK": 0, FALTANTE: 1, "SIN DATOS CONFIABLES": 2, SUFICIENTE: 3 };
+const ORDER: Record<AvailabilityStatus, number> = { "MP NO IDENTIFICADA": 0, "SIN STOCK": 1, "SIN STOCK UTILIZABLE": 2, FALTANTE: 3, "DATOS INCOMPLETOS": 4, SUFICIENTE: 5 };
 function order(a: AvailabilityRow, b: AvailabilityRow) {
   return ORDER[a.estado] - ORDER[b.estado] || a.materiaPrima.localeCompare(b.materiaPrima, "es");
 }
 
-/** Stock utilizable (suma de todas las filas del Stock MP con ese nombre) para UNA línea de control. */
-export function stockForLine(lots: StockLot[], line: FormulaLine, todayIso: string): { linked: boolean; stockUtilizable: number; stockFisico: number } {
-  const ms = matchedLots(prepare(lots), line.materiaPrima);
+/** Stock utilizable (suma de las filas del Stock MP con ese nombre o equivalencia aprobada) para UNA línea de control. */
+export function stockForLine(lots: StockLot[], line: FormulaLine, todayIso: string, aliases: NameAlias[] = []): { linked: boolean; stockUtilizable: number; stockFisico: number } {
+  const ms = matchedLots(prepare(lots), line.materiaPrima, aliases);
   if (ms.length === 0) return { linked: false, stockUtilizable: 0, stockFisico: 0 };
   let util = 0;
   let fis = 0;
   for (const m of ms) {
-    const kg = m.lot.cantidadKg ?? 0;
-    if (kg > 0) fis += kg;
-    if (lotUsability(m.lot, todayIso).usable) util += kg;
+    if (m.kg > 0) fis += m.kg;
+    if (lotUsability(m.lot, todayIso).usable) util += m.kg;
   }
   return { linked: true, stockUtilizable: round3(util), stockFisico: round3(fis) };
 }

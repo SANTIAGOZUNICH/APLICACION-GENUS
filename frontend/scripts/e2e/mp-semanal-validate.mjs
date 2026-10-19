@@ -94,6 +94,7 @@ try {
   await lot("SEM-GLI-B", `${GLI} — Proveedor B`, "Proveedor B", "B1", 8);
   await lot("SEM-GLI-C", `${GLI} — Proveedor C`, "Proveedor C", "C1", 12);
   await lot("SEM-GLI-C", `${GLI} — Proveedor C`, "Proveedor C", "C-BLOQ", 9, { estadoStockManual: "Bloqueado" });
+  await lot("", GLI, "Proveedor D", "D1", 0.5); // fila de Stock SIN código (antes se descartaba)
   await lot("SEM-AGUA", AGUA, "Aguas SA", "AG1", 1000);
   await lot("SEM-PERF-1", PERF, "Esencias SA", "P1", 3);
   await lot("SEM-PERF-2", "Esencia floral SEMX", "Esencias SA", "P2", 40);
@@ -121,16 +122,16 @@ try {
     await openPanel(p);
     const g = await cells(rowOf(p, "Glicerina"));
     // 3 proveedores: 10+5 (A) + 8 (B) + 12 (C) = 35 utilizables, 44 físicos (9 bloqueados); necesidad = 12+12+18 = 42... (100·12% + 100·12% + 150·12%)
-    check(`[${kind}] glicerina suma los 3 proveedores: físico 44, utilizable 35`, g[2] === "44" && g[3] === "35", JSON.stringify(g));
+    check(`[${kind}] glicerina suma los 3 proveedores: físico 44,5, utilizable 35,5`, g[2] === "44,5" && g[3] === "35,5", JSON.stringify(g));
     check(`[${kind}] necesidad semanal consolidada de las 3 producciones: 42 kg`, g[4] === "42", JSON.stringify(g));
-    check(`[${kind}] saldo proyectado -7 y estado FALTANTE con el faltante real`, /-7/.test(g[6]) && /FALTANTE/.test(g[7]) && /falta 7 kg/.test(g[7]), JSON.stringify(g));
+    check(`[${kind}] saldo proyectado -6,5 y estado FALTANTE con el faltante real`, /-6,5/.test(g[6]) && /FALTANTE/.test(g[7]) && /falta 6,5 kg/.test(g[7]), JSON.stringify(g));
     const agua = await cells(rowOf(p, "Agua SEMX"));
     check(`[${kind}] agua: stock 1000, necesidad 78+88+132 = 298, SUFICIENTE`, agua[3] === "1000" && agua[4] === "298" && /SUFICIENTE/.test(agua[7]), JSON.stringify(agua));
     const perf = await cells(rowOf(p, "Perfume SEMX"));
     check(`[${kind}] perfume: se busca por nombre en la Descripción del stock → 3 kg, necesita 10, FALTANTE (falta 7)`, perf[3] === "3" && perf[4] === "10" && /FALTANTE/.test(perf[7]) && /falta 7 kg/.test(perf[7]), JSON.stringify(perf));
     await rowOf(p, "Glicerina").click();
     const lots = await p.locator("[data-testid=mpw-lots]").innerText();
-    check(`[${kind}] el detalle muestra proveedores y lotes, y marca el bloqueado como no utilizable`, /Proveedor A/.test(lots) && /Proveedor B/.test(lots) && /Proveedor C/.test(lots) && /C-BLOQ/.test(lots) && /No — Bloqueado/.test(lots));
+    check(`[${kind}] el detalle muestra proveedores y lotes (incluida la fila sin código), y marca el bloqueado como no utilizable`, /Proveedor A/.test(lots) && /Proveedor B/.test(lots) && /Proveedor C/.test(lots) && /Proveedor D/.test(lots) && /C-BLOQ/.test(lots) && /No — Bloqueado/.test(lots));
     await p.screenshot({ path: `${OUT}/${kind}-detalle-glicerina.png` });
     check(`[${kind}] se ve la fecha y hora de la última actualización`, /Última actualización/.test(await p.locator("[data-testid=mpw-updated]").innerText()));
     // sin desbordes horizontales de la página
@@ -141,7 +142,7 @@ try {
       const t0 = await p.locator("[data-testid=mpw-updated]").innerText();
       await p.waitForTimeout(1100);
       await p.locator("[data-testid=mpw-refresh]").click();
-      check("«Actualizar stock» refleja el ingreso nuevo (utilizable 35 → 55; SUFICIENTE) y cambia la hora", await waitDb(async () => { const c = await cells(rowOf(p, "Glicerina").first()); return c[3] === "55" && /SUFICIENTE/.test(c[7]); }) && (await p.locator("[data-testid=mpw-updated]").innerText()) !== t0);
+      check("«Actualizar stock» refleja el ingreso nuevo (utilizable 35,5 → 55,5; SUFICIENTE) y cambia la hora", await waitDb(async () => { const c = await cells(rowOf(p, "Glicerina").first()); return c[3] === "55,5" && /SUFICIENTE/.test(c[7]); }) && (await p.locator("[data-testid=mpw-updated]").innerText()) !== t0);
       // otros sectores: ven pero no pueden confirmar equivalencias
       const prg = await pr.page.request.get(`/api/v1/mp-control/weekly?week=${monday}`);
       check("Producción puede leer el control semanal", prg.ok());
