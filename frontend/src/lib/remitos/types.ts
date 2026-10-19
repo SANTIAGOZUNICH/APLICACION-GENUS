@@ -15,6 +15,22 @@ export function canAccessRemitos(sector: SectorId | string | null | undefined): 
   return String(sector ?? "").toUpperCase() === "PRODUCCION";
 }
 
+/** Producción gestiona remitos; Administración / Facturación solo los consulta (nunca crea, edita ni anula). */
+export function canReadRemitos(sector: SectorId | string | null | undefined): boolean {
+  const s = String(sector ?? "").toUpperCase();
+  return s === "PRODUCCION" || s === "ADMINISTRACION";
+}
+
+/** Trazabilidad Cliente → Pedido → Producto → Entrega → Remito de una línea creada desde una entrega real. */
+export type RemitoLineTrace = {
+  deliveryLineId: string;
+  workItemId: string;
+  pedido: string | null;
+  orderRef: string | null;
+  /** Texto de remito que se cargó al registrar la entrega (si había). */
+  deliveryRemito?: string | null;
+};
+
 export type RemitoCajaCombo = {
   cajas: number;
   unidades: number;
@@ -41,6 +57,8 @@ export type RemitoLine = {
    */
   extraCajas: RemitoCajaCombo[];
   sortOrder: number;
+  /** Solo líneas creadas desde una entrega real (Generar remitos). */
+  trace?: RemitoLineTrace;
 };
 
 export type RemitoVersionInfo = {
@@ -111,6 +129,7 @@ export type RemitoApprovalInput = {
   extraCajas?: RemitoCajaCombo[] | null;
   /** Unidades por caja para bloque 3 (opcional). */
   unitsPerCaja3?: number | null;
+  trace?: RemitoLineTrace;
 };
 
 export type RemitoDraftPatch = {

@@ -35,7 +35,7 @@ import type {
   RemitoVersionInfo,
   RemitoWorkItemStatus,
 } from "./types";
-import { canAccessRemitos } from "./types";
+import { canAccessRemitos, canReadRemitos } from "./types";
 import {
   assertPrivateFileStorageConfigured,
   FILE_STORAGE_NOT_CONFIGURED,
@@ -91,6 +91,12 @@ function mem(): Mem {
     };
   }
   return g.__genusRemitosMem;
+}
+
+function assertRead(actor: RemitoActor) {
+  if (!canReadRemitos(actor.sector)) {
+    throw new OrdersForbiddenError("Solo PRODUCCIÓN o ADMINISTRACIÓN pueden consultar Remitos.");
+  }
 }
 
 function assertAccess(actor: RemitoActor) {
@@ -212,6 +218,7 @@ function linePayload(line: RemitoLine): Record<string, unknown> {
     cajas3: line.cajas3 ?? 0,
     unidades3: line.unidades3 ?? 0,
     extraCajas: line.extraCajas ?? [],
+    ...(line.trace ? { trace: line.trace } : {}),
   };
 }
 
@@ -234,6 +241,7 @@ function hydrateLineFromDb(l: {
     cajas3?: number;
     unidades3?: number;
     extraCajas?: RemitoCajaCombo[];
+    trace?: RemitoLine["trace"];
   };
   return {
     id: l.id,
@@ -251,6 +259,7 @@ function hydrateLineFromDb(l: {
     unidades3: p.unidades3 ?? 0,
     extraCajas: Array.isArray(p.extraCajas) ? p.extraCajas : [],
     sortOrder: l.sortOrder,
+    ...(p.trace ? { trace: p.trace } : {}),
   };
 }
 
@@ -291,13 +300,13 @@ function withVersions(remito: RemitoRecord, versions: RemitoVersionInfo[]): Remi
 
 export class RemitoService {
   async list(actor: RemitoActor, filters: RemitoListFilters = {}): Promise<RemitoRecord[]> {
-    assertAccess(actor);
+    assertRead(actor);
     const all = await this.loadAll();
     return all.filter((r) => this.matchesFilters(r, filters));
   }
 
   async get(actor: RemitoActor, id: string): Promise<RemitoRecord | null> {
-    assertAccess(actor);
+    assertRead(actor);
     return this.findById(id);
   }
 
@@ -391,6 +400,7 @@ export class RemitoService {
         vto,
         ...qtyToLineFields(qty),
         sortOrder: draft.lines.length,
+        ...(input.trace ? { trace: input.trace } : {}),
       };
       draft.lines.push(line);
       const totals = recomputeTotals(draft.lines);
@@ -415,6 +425,7 @@ export class RemitoService {
       vto,
       ...qtyToLineFields(qty),
       sortOrder: 0,
+      ...(input.trace ? { trace: input.trace } : {}),
     };
     const totals = recomputeTotals([line]);
     const remito: RemitoRecord = {
@@ -807,7 +818,7 @@ export class RemitoService {
   }
 
   async listVersions(actor: RemitoActor, remitoId: string): Promise<RemitoVersionInfo[]> {
-    assertAccess(actor);
+    assertRead(actor);
     const remito = await this.findById(remitoId);
     if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
     return remito.versions;
@@ -1013,7 +1024,7 @@ export class RemitoService {
     format: "pdf" | "xlsx",
     version?: number
   ): Promise<{ bytes: Buffer; fileName: string; mimeType: string }> {
-    assertAccess(actor);
+    assertRead(actor);
     const remito = await this.findById(remitoId);
     if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
 
@@ -1087,7 +1098,7 @@ export class RemitoService {
 
   /** Vista previa HTML estilo Excel a partir del XLSX (plantilla real). */
   async previewHtml(actor: RemitoActor, remitoId: string): Promise<string> {
-    assertAccess(actor);
+    assertRead(actor);
     const remito = await this.findById(remitoId);
     if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
     let bytes: Buffer;

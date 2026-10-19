@@ -19,6 +19,7 @@ import {
   updateRemitoDraftApi,
 } from "@/lib/remitos/remitos-client";
 import { RemitoLifecycleRowActions } from "../components/remito-lifecycle-row-actions";
+import { RemitosGenerarPanel } from "../components/remitos-generar-panel";
 import { formatLoteVtoCell, lineTotalCajas, lineTotalUnitsFromCajas } from "@/lib/remitos/line-qty";
 import {
   groupRemitosByClient,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/remitos/client-folders";
 import {
   canAccessRemitos,
+  canReadRemitos,
   type RemitoCajaCombo,
   type RemitoLine,
   type RemitoRecord,
@@ -139,8 +141,11 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
     () => ({ email: email ?? "", sector: sectorId }),
     [email, sectorId]
   );
-  const allowed = canAccessRemitos(sectorId);
+  const allowed = canReadRemitos(sectorId);
+  /** Producción gestiona; Administración / Facturación solo consulta, descarga e imprime. */
+  const canManage = canAccessRemitos(sectorId);
   const [tab, setTab] = useState<RemitoTab>("borradores");
+  const [generar, setGenerar] = useState(false);
   const [q, setQ] = useState("");
   const [items, setItems] = useState<RemitoRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -452,11 +457,25 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                   ? "border-[var(--os-teal,#0d9488)] bg-[var(--os-bg-muted)] font-medium"
                   : "border-[var(--os-border)]"
               }`}
-              onClick={() => setTab(t.id)}
+              onClick={() => {
+                setTab(t.id);
+                setGenerar(false);
+              }}
             >
               {t.label}
             </button>
           ))}
+          <button
+            type="button"
+            data-testid="remitos-tab-generar"
+            className={`rounded border px-3 py-1.5 text-sm ${generar ? "border-[var(--os-teal,#0d9488)] bg-[var(--os-bg-muted)] font-medium" : "border-[var(--os-border)]"}`}
+            onClick={() => {
+              setGenerar(true);
+              setSelected(null);
+            }}
+          >
+            Generar remitos
+          </button>
           {!clientFolderKey ? (
             <input
               value={clientSearch}
@@ -491,7 +510,17 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
           </p>
         ) : null}
 
-        <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+        {generar ? (
+          <RemitosGenerarPanel
+            session={session}
+            canManage={canManage}
+            onCreated={() => {
+              void reload();
+            }}
+          />
+        ) : null}
+
+        <div className={`grid min-w-0 gap-3 lg:grid-cols-2 ${generar ? "hidden" : ""}`}>
           <div className="os-table-wrap min-w-0 overflow-x-clip rounded border border-[var(--os-border)] bg-[var(--os-surface)]">
             {!clientFolderKey ? (
               <table className="os-table w-full max-w-full table-fixed text-left text-[length:var(--os-table-font,13px)]" data-testid="remitos-client-folders">
@@ -553,7 +582,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                   header: "Acciones",
                   action: true,
                   text: () => "",
-                  render: (r: (typeof folderRemitos)[number]) => (
+                  render: (r: (typeof folderRemitos)[number]) => !canManage ? null : (
                     <RemitoLifecycleRowActions
                       remito={r}
                       session={session}
@@ -707,7 +736,8 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                   </Button>
                   {selected.status === "BORRADOR" ? (
                     <>
-                      <Button
+                      {canManage ? (
+<Button
                         type="button"
                         variant="secondary"
                         disabled={busy || schemaPending}
@@ -716,7 +746,9 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       >
                         Editar
                       </Button>
-                      <Button
+) : null}
+                      {canManage ? (
+<Button
                         type="button"
                         disabled={busy || schemaPending}
                         onClick={() => openGenerate(selected)}
@@ -724,7 +756,8 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       >
                         Generar
                       </Button>
-                      {canDeleteDraft ? (
+) : null}
+                      {canManage && canDeleteDraft ? (
                         <Button
                           type="button"
                           variant="destructive"
@@ -739,7 +772,8 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                   ) : null}
                   {selected.status === "GENERADO" ? (
                     <>
-                      <Button
+                      {canManage ? (
+<Button
                         type="button"
                         variant="secondary"
                         disabled={busy || schemaPending}
@@ -748,6 +782,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       >
                         Editar
                       </Button>
+) : null}
                       <Button
                         type="button"
                         variant="secondary"
@@ -776,7 +811,8 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       >
                         Ver versiones
                       </Button>
-                      <Button
+                      {canManage ? (
+<Button
                         type="button"
                         variant="secondary"
                         disabled={busy}
@@ -788,7 +824,9 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       >
                         Renombrar
                       </Button>
-                      <Button
+) : null}
+                      {canManage ? (
+<Button
                         type="button"
                         variant="secondary"
                         disabled={busy}
@@ -796,7 +834,9 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       >
                         Anular
                       </Button>
-                      <Button
+) : null}
+                      {canManage ? (
+<Button
                         type="button"
                         variant="secondary"
                         disabled={busy}
@@ -804,10 +844,11 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       >
                         Archivar
                       </Button>
+) : null}
                     </>
                   ) : null}
-                  {selected.status === "ARCHIVADO" ? (
-                    <Button
+                  {canManage && selected.status === "ARCHIVADO" ? (
+<Button
                       type="button"
                       variant="secondary"
                       disabled={busy}

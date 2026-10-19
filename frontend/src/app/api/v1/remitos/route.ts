@@ -8,7 +8,7 @@ import type {
   RemitoStatus,
   RemitoTab,
 } from "@/lib/remitos/types";
-import { canAccessRemitos } from "@/lib/remitos/types";
+import { canAccessRemitos, canReadRemitos } from "@/lib/remitos/types";
 import { isRemitoSchemaReady, remitoSchemaPendingResponse } from "@/lib/db/remito-schema";
 import { RemitoSchemaPendingError } from "@/lib/db/remito-schema";
 import { resolveOrdersActor } from "@/lib/orders/actor";
@@ -28,7 +28,7 @@ function remitosError(err: unknown) {
 export async function GET(request: Request) {
   try {
     const actor = await resolveOrdersActor(request);
-    if (!canAccessRemitos(actor.sector)) {
+    if (!canReadRemitos(actor.sector)) {
       throw new OrdersForbiddenError("Solo PRODUCCIÓN puede acceder a Remitos.");
     }
     const url = new URL(request.url);

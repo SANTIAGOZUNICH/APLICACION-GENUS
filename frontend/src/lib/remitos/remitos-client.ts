@@ -250,3 +250,28 @@ export async function triggerRemitoDownload(
     URL.revokeObjectURL(objectUrl);
   }
 }
+
+import type { EligibleDelivery, RemitoPreviewGroup } from "./delivery-grouping";
+
+/** Entregas reales pendientes de remito (agrupadas por cliente + fecha). */
+export async function fetchEligibleDeliveriesApi(session: OrdersClientSession): Promise<{ deliveries: EligibleDelivery[]; groups: RemitoPreviewGroup[]; schemaPending: boolean }> {
+  const res = await fetch("/api/v1/remitos/deliveries", { credentials: "include", headers: headers(session), cache: "no-store" });
+  const body = (await res.json().catch(() => ({}))) as { deliveries?: EligibleDelivery[]; groups?: RemitoPreviewGroup[]; error?: string; schemaPending?: boolean };
+  if (res.status === 503 && body.schemaPending) return { deliveries: [], groups: [], schemaPending: true };
+  if (!res.ok) throw new Error(body.error ?? "No se pudieron cargar las entregas pendientes de remito");
+  return { deliveries: body.deliveries ?? [], groups: body.groups ?? [], schemaPending: false };
+}
+
+export async function previewRemitosFromDeliveriesApi(session: OrdersClientSession, lineIds: string[]): Promise<{ groups: RemitoPreviewGroup[]; missing: string[] }> {
+  const res = await fetch("/api/v1/remitos/deliveries", { method: "POST", credentials: "include", headers: { ...headers(session), "content-type": "application/json" }, body: JSON.stringify({ action: "preview", lineIds }) });
+  const body = (await res.json().catch(() => ({}))) as { groups?: RemitoPreviewGroup[]; missing?: string[]; error?: string };
+  if (!res.ok) throw new Error(body.error ?? "No se pudo armar la vista previa del remito");
+  return { groups: body.groups ?? [], missing: body.missing ?? [] };
+}
+
+export async function createRemitosFromDeliveriesApi(session: OrdersClientSession, lineIds: string[]): Promise<{ remitos: RemitoRecord[]; skipped: string[] }> {
+  const res = await fetch("/api/v1/remitos/deliveries", { method: "POST", credentials: "include", headers: { ...headers(session), "content-type": "application/json" }, body: JSON.stringify({ action: "create", lineIds }) });
+  const body = (await res.json().catch(() => ({}))) as { remitos?: RemitoRecord[]; skipped?: string[]; error?: string };
+  if (!res.ok) throw new Error(body.error ?? "No se pudo crear el remito");
+  return { remitos: body.remitos ?? [], skipped: body.skipped ?? [] };
+}
