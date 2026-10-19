@@ -11,6 +11,7 @@ export const E2E_USERS = {
   calidad: { email: "e2e-calidad@genus.test", sector: "CALIDAD", displayName: "E2E Calidad", role: "ROL-CA", roleLabel: "Calidad", sectorLabel: "Calidad" },
   codificado: { email: "e2e-codificado@genus.test", sector: "CODIFICADO", displayName: "E2E Codificado", role: "ROL-OP", roleLabel: "Operario", sectorLabel: "Codificado" },
   envasadoPremium: { email: "e2e-envasado-premium@genus.test", sector: "ENVASADO_PREMIUM", displayName: "E2E Envasado Premium", role: "ROL-OP", roleLabel: "Operario", sectorLabel: "Envasado Premium" },
+  envasadoResp: { email: "e2e-envasado-resp@genus.test", sector: "ENVASADO_MASIVO", displayName: "E2E Responsable Envasado", role: "ROL-SU", roleLabel: "Supervisora", sectorLabel: "Envasado Masivo" },
   administracion: { email: "e2e-administracion@genus.test", sector: "ADMINISTRACION", displayName: "E2E Administración", role: "ROL-SU", roleLabel: "Administración", sectorLabel: "Administración / Facturación" },
   direccion: { email: "e2e-direccion@genus.test", sector: "DIRECCION", displayName: "E2E Dirección", role: "ROL-SU", roleLabel: "Dirección", sectorLabel: "Dirección" },
 };

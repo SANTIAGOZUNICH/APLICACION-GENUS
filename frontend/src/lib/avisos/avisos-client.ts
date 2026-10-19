@@ -62,3 +62,13 @@ export async function patchAvisoApi(
   if (!res.ok) throw new Error(body.error ?? "No se pudo actualizar el aviso");
   return body.message!;
 }
+
+export type AvisoDirectoryEntry = { email: string; name: string; sector: string; roleLabel: string; responsable: boolean };
+
+/** Personas a las que se puede dirigir un aviso. */
+export async function fetchAvisoDirectoryApi(session: OrdersClientSession): Promise<AvisoDirectoryEntry[]> {
+  const res = await fetch("/api/v1/avisos/directory", { credentials: "include", headers: headers(session), cache: "no-store" });
+  const body = (await res.json().catch(() => ({}))) as { users?: AvisoDirectoryEntry[]; error?: string };
+  if (!res.ok) throw new Error(body.error ?? "No se pudo cargar la lista de personas");
+  return body.users ?? [];
+}

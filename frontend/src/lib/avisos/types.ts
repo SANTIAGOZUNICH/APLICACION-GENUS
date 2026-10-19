@@ -26,6 +26,17 @@ export type AvisoRecipientState = {
   archivedAt: string | null;
 };
 
+/** Destinatario individual de un aviso, con su propio estado leído/archivado. */
+export type AvisoUserRecipient = {
+  email: string;
+  name: string;
+  sector: SectorId;
+  /** USUARIO = elegido por nombre; RESPONSABLE = resuelto como responsable de un sector. */
+  via: "USUARIO" | "RESPONSABLE";
+  readAt: string | null;
+  archivedAt: string | null;
+};
+
 export type AvisoRecord = {
   id: string;
   title: string;
@@ -35,6 +46,12 @@ export type AvisoRecord = {
   fromEmail: string;
   toSectors: SectorId[];
   recipients: AvisoRecipientState[];
+  /** Destinatarios individuales (vacío si el aviso es solo por sector). */
+  userRecipients: AvisoUserRecipient[];
+  /** Nombre de quien lo envió. */
+  fromName?: string;
+  /** Estado del aviso para QUIEN LO CONSULTA (su fila individual o, si no la tiene, la de su sector). */
+  mine?: { readAt: string | null; archivedAt: string | null } | null;
   createdAt: string;
 };
 
@@ -45,4 +62,8 @@ export type CreateAvisoInput = {
   toSectors: SectorId[];
   /** Si true, equivale a todos los participantes. */
   toAll?: boolean;
+  /** Emails de personas concretas. */
+  toUsers?: string[];
+  /** true = los sectores elegidos (o todos) se interpretan como «solo sus responsables», no todo el sector. */
+  onlyResponsables?: boolean;
 };

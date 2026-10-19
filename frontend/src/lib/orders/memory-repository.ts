@@ -372,6 +372,7 @@ export class MemoryOrdersRepository implements OrdersRepository {
     return this.notifications
       .filter((n) => {
         if (!n.sectors.includes(sector as never)) return false;
+        if (n.targetEmails && !n.targetEmails.includes(actorEmail)) return false;
         const deleted = (n.deletedBy ?? []).includes(actorEmail);
         if (deleted) return false;
         if (this.tombstones.has(`${actorEmail}::id:${n.id}`)) return false;

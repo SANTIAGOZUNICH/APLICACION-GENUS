@@ -759,6 +759,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
       readBy: notification.readBy,
       dismissedBy: notification.dismissedBy,
       deletedBy: notification.deletedBy ?? [],
+      targetEmails: notification.targetEmails ?? null,
       createdAt: new Date(notification.createdAt),
     });
     return { ...notification, deletedBy: notification.deletedBy ?? [] };
@@ -774,7 +775,9 @@ export class DrizzleOrdersRepository implements OrdersRepository {
     const rows = await db
       .select()
       .from(osNotifications)
-      .where(sql`${osNotifications.sectors} @> ${JSON.stringify([sector])}::jsonb`)
+      .where(
+        sql`${osNotifications.sectors} @> ${JSON.stringify([sector])}::jsonb and (${osNotifications.targetEmails} is null or ${osNotifications.targetEmails} @> ${JSON.stringify([actorEmail])}::jsonb)`
+      )
       .orderBy(desc(osNotifications.createdAt))
       .limit(200);
     const tombstones = await db
@@ -796,6 +799,7 @@ export class DrizzleOrdersRepository implements OrdersRepository {
         readBy: (r.readBy as string[]) ?? [],
         dismissedBy: (r.dismissedBy as string[]) ?? [],
         deletedBy: (r.deletedBy as string[]) ?? [],
+        targetEmails: (r.targetEmails as string[] | null) ?? null,
         createdAt: toIso(r.createdAt)!,
       }))
       .filter((n) => {
