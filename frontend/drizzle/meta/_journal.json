@@ -379,6 +379,13 @@
       "when": 1792700000000,
       "tag": "0056_ingreso_con_remito",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "0057_mp_master_links",
+      "breakpoints": true
     }
   ]
 }

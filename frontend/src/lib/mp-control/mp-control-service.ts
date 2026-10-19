@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import {
   assertFeatureWritesEnabled,
@@ -7,7 +7,7 @@ import {
   isFeatureSchemaReady,
   SchemaPendingError,
 } from "@/lib/db/feature-schema";
-import { mpStockBalances, mpWeeklyControlLines, mpWeeklyControls } from "@/lib/db/schema";
+import { mpWeeklyControlLines, mpWeeklyControls } from "@/lib/db/schema";
 import { isMissingSchemaError } from "@/lib/db/missing-schema";
 import { enrichControlLine } from "./calcs";
 import {
@@ -49,58 +49,40 @@ function assertWrite(actor: MpControlActor) {
   if (!canWriteMpControl(actor.sector)) throw new Error("Solo MP puede editar el Control semanal.");
 }
 
-const normCodigo = (c: string | null | undefined) => (c ?? "").trim().replace(/\s+/g, " ").toUpperCase();
 
 /**
- * Stock REAL por código desde el libro mayor de MP. Antes el cliente nunca mandaba `stockByCodigo` y todas las líneas
- * quedaban con stock 0 (y por lo tanto «falta» todo).
+ * Stock CONSOLIDADO de cada línea (todas las existencias utilizables de esa MP, de todos los proveedores y lotes del
+ * inventario) o null si la línea no se puede asociar con una MP del inventario (no se asume 0).
  */
-async function ledgerStockByCodigo(codes: Iterable<string>): Promise<Record<string, number>> {
-  const uniq = [...new Set([...codes].map(normCodigo).filter(Boolean))];
-  if (uniq.length === 0) return {};
-  const out: Record<string, number> = {};
-  if (isDatabaseConfigured() && (await isFeatureSchemaReady())) {
-    try {
-      const rows = await getDb()
-        .select({ codigo: mpStockBalances.codigo, stockActual: mpStockBalances.stockActual })
-        .from(mpStockBalances)
-        .where(inArray(mpStockBalances.codigo, uniq));
-      for (const r of rows) out[normCodigo(r.codigo)] = r.stockActual;
-      return out;
-    } catch {
-      if (!isFeatureMemoryAllowed()) return out;
-    }
-  }
-  const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
-  for (const c of uniq) {
-    const b = await getMpStockLedger().getBalance(c);
-    if (b) out[c] = b.stockActual;
-  }
-  return out;
+async function consolidatedStocks(
+  lines: Array<{ materiaPrima: string; codigo: string }>,
+  /** Valores informados por quien llama (solo se usan si la MP no se puede asociar con el inventario). */
+  fallback: Record<string, number> = {}
+): Promise<Array<number | null>> {
+  if (lines.length === 0) return [];
+  const { stockForControlLines } = await import("./weekly-availability-service");
+  const found = await stockForControlLines(lines);
+  return found.map((r, i) => (r.linked ? r.stockUtilizable : (fallback[(lines[i]!.codigo ?? "").trim().replace(/\s+/g, " ").toUpperCase()] ?? fallback[(lines[i]!.codigo ?? "").trim()] ?? null)));
 }
 
-/** Borradores: el stock de cada línea se muestra en vivo (libro mayor). Completados conservan el valor histórico. */
+/** Borradores: el stock de cada línea se muestra en vivo (inventario). Completados conservan el valor histórico. */
 async function withLiveStock(controls: MpWeeklyControl[]): Promise<MpWeeklyControl[]> {
   const drafts = controls.filter((c) => c.status === "BORRADOR");
   if (drafts.length === 0) return controls;
-  const stock = await ledgerStockByCodigo(drafts.flatMap((c) => c.lines.map((l) => l.codigo)));
+  const flat = drafts.flatMap((c) => c.lines);
+  const stocks = await consolidatedStocks(flat);
+  const byLine = new Map(flat.map((l, i) => [l.id, stocks[i] ?? null]));
   return controls.map((c) =>
     c.status !== "BORRADOR"
       ? c
-      : {
-          ...c,
-          lines: recalcLines(
-            c.lines.map((l) => ({ ...l, stockActual: stock[normCodigo(l.codigo)] ?? 0 })),
-            c.quantityKg
-          ),
-        }
+      : { ...c, lines: recalcLines(c.lines.map((l) => ({ ...l, stockActual: byLine.get(l.id) ?? null })), c.quantityKg) }
   );
 }
 
 function buildLinesFromSnapshot(
   snapshot: MpFormulaSnapshot,
   quantityKg: number | null,
-  stockByCodigo: Record<string, number> = {}
+  stocks: Array<number | null> = []
 ): MpWeeklyControlLine[] {
   return snapshot.materials.map((m, i) => {
     const enriched = enrichControlLine({
@@ -108,7 +90,7 @@ function buildLinesFromSnapshot(
       materiaPrima: m.materiaPrima ?? "",
       formulaPct: m.formulaPct,
       quantityKg,
-      stockActual: stockByCodigo[normCodigo(m.codigo)] ?? stockByCodigo[(m.codigo ?? "").trim()] ?? 0,
+      stockActual: stocks[i] ?? null,
       sortOrder: i,
     });
     return { id: randomUUID(), ...enriched };
@@ -233,10 +215,11 @@ export class MpControlService {
     assertWrite(actor);
     await assertFeatureWritesEnabled();
     const now = new Date().toISOString();
-    const lines = buildLinesFromSnapshot(input.snapshot, input.quantityKg, {
-      ...(input.stockByCodigo ?? {}),
-      ...(await ledgerStockByCodigo(input.snapshot.materials.map((m) => m.codigo ?? ""))),
-    });
+    const lines = buildLinesFromSnapshot(
+      input.snapshot,
+      input.quantityKg,
+      await consolidatedStocks(input.snapshot.materials.map((m) => ({ materiaPrima: m.materiaPrima ?? "", codigo: m.codigo ?? "" })), input.stockByCodigo)
+    );
     const control: MpWeeklyControl = {
       id: randomUUID(),
       status: "BORRADOR",
@@ -299,7 +282,7 @@ export class MpControlService {
 
     if (patch.recalcFromSnapshot && existing.formulaSnapshot) {
       const snap = existing.formulaSnapshot;
-      const stock = { ...(patch.stockByCodigo ?? {}), ...(await ledgerStockByCodigo(snap.materials.map((m) => m.codigo ?? ""))) };
+      const stock = await consolidatedStocks(snap.materials.map((m) => ({ materiaPrima: m.materiaPrima ?? "", codigo: m.codigo ?? "" })), patch.stockByCodigo);
       lines = buildLinesFromSnapshot(snap, quantityKg, stock).map(
         (nl, i) => {
           const prev = existing.lines[i];

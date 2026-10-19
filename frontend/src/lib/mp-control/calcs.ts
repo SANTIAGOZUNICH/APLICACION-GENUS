@@ -4,7 +4,9 @@ export type MpControlLineEstado =
   | "Disponible"
   | "Parcial"
   | "Sin stock"
-  | "Sin código";
+  | "Sin código"
+  /** Hay código/nombre en la fórmula pero no se pudo asociar con una MP del inventario: NO se asume stock cero. */
+  | "Sin vincular";
 
 export function kgNecesariosFromPct(
   formulaPct: number | null | undefined,
@@ -21,8 +23,9 @@ export function calcLineEstado(params: {
   stockActual: number | null;
 }): MpControlLineEstado {
   if (!params.codigo.trim()) return "Sin código";
+  if (params.stockActual == null) return "Sin vincular";
   const need = params.kgNecesarios ?? 0;
-  const stock = params.stockActual ?? 0;
+  const stock = params.stockActual;
   if (stock <= 0 && need > 0) return "Sin stock";
   if (stock < need) return "Parcial";
   return "Disponible";

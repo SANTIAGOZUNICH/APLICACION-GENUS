@@ -22,6 +22,7 @@ import type { MpWeeklyControl, MpWeeklyControlLine } from "@/lib/mp-control/type
 import { canWriteMpControl } from "@/lib/mp-control/types";
 import { MP_LINE_CELL_KIND, isMpLineCellField, mpLineProtection, validateMpLineValue } from "@/lib/mp-control/cell-edit";
 import { ExcelOrList, excelCol } from "./operational-ui";
+import { MpWeeklyAvailability } from "./mp-weekly-availability";
 import type { GenusGridCellChange, GenusGridCommitResult } from "@/components/data-grid/genus-grid";
 
 function actorHeaders(email: string, sector: string): HeadersInit {
@@ -313,6 +314,7 @@ export function MpWeeklyControlPanel() {
   return (
     <div className="space-y-4" data-testid="mp-weekly-control-panel">
       <SchemaPendingBanner show={schemaPending} />
+      <MpWeeklyAvailability email={session.email} sector={session.sector} canLink={canWrite} />
       {error ? (
         <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm" role="alert">
           {error}
