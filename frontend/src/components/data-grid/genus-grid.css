@@ -187,6 +187,19 @@
   pointer-events: auto;
   cursor: crosshair;
   touch-action: none;
+  transform: translate(-50%, -50%);
+}
+/* Tablet / pantalla táctil: área de toque de 48 px y punto más grande (se agarra con el dedo). */
+@media (pointer: coarse) {
+  .genus-sheet-handle {
+    width: 48px;
+    height: 48px;
+  }
+  .genus-sheet-overlay .genus-sheet-handle-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+  }
 }
 .genus-sheet-handle-dot {
   width: 11px;

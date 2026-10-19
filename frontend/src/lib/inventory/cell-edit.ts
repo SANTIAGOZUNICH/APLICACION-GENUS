@@ -67,6 +67,8 @@ export const INVENTORY_NO_FILL: Readonly<Record<string, string>> = {
   estadoStock: "Columna calculada a partir de los kg.",
   estadoVencimiento: "Columna calculada a partir del vencimiento.",
 };
+/** De las anteriores, las que el relleno arrastrando SÍ escribe, siempre con confirmación y motivo (corrige kg). */
+export const INVENTORY_FILL_WITH_REASON: ReadonlySet<string> = new Set(["cantidadKg"]);
 /** Hasta 1000 celdas por solicitud: pegar o rellenar rangos grandes en una sola operación atómica. */
 export const MAX_INVENTORY_CELL_CHANGES = 1000;
 

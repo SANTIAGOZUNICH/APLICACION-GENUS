@@ -265,6 +265,43 @@ try {
   const del = await el.page.request.post(`/api/v1/orders/${idA}/deliver`, { data: {} });
   const delBody = await del.text();
   check("entregar con datos incompletos en hojas elaboradas informa la fila y NO descuenta", !del.ok() && (await allMovs()).length === before, `${del.status()} ${delBody.slice(0, 160)}`);
+
+  // ===== ENTREGA COMPLETA con 3 tambores: se descuenta UNA vez, por lote, solo los kg reales de las hojas =====
+  const idB = await createOe(pr.page, "L-HJ-B", 250, [{ materiaPrima: "AGUA E2E HJ", codigo: AGUA, formulaPct: 100, codigoMp: AGUA }]);
+  const numB = (await oe(idB)).order_number;
+  const mkSheet = (i, kg, rows) => ({
+    id: `sh_e2eB${i}`, kind: "tambor", number: String(i + 1), name: "", kgPlanificados: kg, kgElaborados: kg, status: "elaborado", operario: "Operario", inicioAt: "", finAt: "", incidencias: "", observaciones: "",
+    materials: rows.map(([kgReal, lote, child], k) => ({ id: child ? `sh_e2eB${i}:m1:x${k}` : `sh_e2eB${i}:m1`, parentRowId: child ? `sh_e2eB${i}:m1` : null, materiaPrima: "AGUA E2E HJ", codigo: AGUA, codigoMp: AGUA, kgReal, lote, formulaPct: null, kgAPesar: null, ajuste: null, ajusteMotivo: "", ajusteAt: null, ajusteBy: null })),
+  });
+  {
+    const cur = await oe(idB);
+    const fd = cur.form_data;
+    fd.sheets = [mkSheet(0, 100, [[98, "A1"], [2, "A1", true]]), mkSheet(1, 100, [[101, "A2"]]), mkSheet(2, 50, [[50, "A2"]])];
+    const sv = await el.page.request.patch(`/api/v1/orders/${idB}`, { data: { expectedVersion: cur.version, formData: fd } });
+    check("OE de 3 tambores con kg reales y lotes se guarda por el backend", sv.ok(), String(sv.status()));
+  }
+  const stockBefore = { a1: Number(await lotKg(AGUA, "A1")), a2: Number(await lotKg(AGUA, "A2")), ledger: await ledgerKg(AGUA) };
+  const sheetsB = await sheetsOf(idB);
+  check("cada tambor es una preparación independiente con sus kg teóricos (100/100/50 kg al 100 %)", sheetsB.length === 3 && sheetsB.map((x) => x.materials[0].kgAPesar).join() === "100,100,50", JSON.stringify(sheetsB.map((x) => x.materials[0].kgAPesar)));
+  const del1 = await el.page.request.post(`/api/v1/orders/${idB}/deliver`, { data: {} });
+  check("entregar la OE con tambores completos funciona", del1.ok(), `${del1.status()} ${(await del1.text()).slice(0, 200)}`);
+  const movsB = await oeMovs(idB);
+  const outB = movsB.filter((x) => x.kind !== "ingreso");
+  const byLote = {};
+  for (const x of outB) byLote[x.lote] = (byLote[x.lote] ?? 0) + Number(x.quantity);
+  check("el descuento es exactamente la suma de los kg reales de los tambores, por lote (A1: 100, A2: 151)", Math.abs((byLote.A1 ?? 0) - 100) < 1e-6 && Math.abs((byLote.A2 ?? 0) - 151) < 1e-6, JSON.stringify(byLote));
+  check("el stock de cada lote bajó lo mismo y el libro mayor coincide (sin duplicar consumos)", Math.abs(stockBefore.a1 - Number(await lotKg(AGUA, "A1")) - 100) < 1e-6 && Math.abs(stockBefore.a2 - Number(await lotKg(AGUA, "A2")) - 151) < 1e-6 && Math.abs(stockBefore.ledger - (await ledgerKg(AGUA)) - 251) < 1e-6 && (await integrity()).ok, JSON.stringify(await integrity()));
+  const del2 = await el.page.request.post(`/api/v1/orders/${idB}/deliver`, { data: {} });
+  check("entregar de nuevo no vuelve a descontar nada (idempotente)", (await oeMovs(idB)).length === movsB.length && Math.abs(stockBefore.ledger - (await ledgerKg(AGUA)) - 251) < 1e-6, String(del2.status()));
+  check("cada movimiento de stock queda con usuario y clave de idempotencia (trazabilidad)", outB.length > 0 && outB.every((x) => x.actor_email && x.idempotency_key));
+  // impresión: el resumen y las hojas salen con los textos completos
+  await openOe(p, numB);
+  await p.locator("[data-testid=oe-sheet-tab-resumen]").click();
+  const [pop] = await Promise.all([p.waitForEvent("popup"), p.locator("[data-testid=oe-print-all]").click()]);
+  await pop.waitForLoadState();
+  const html = await pop.content();
+  check("imprimir todas las hojas incluye las 3 hojas, sus kg y lotes", (html.match(/Tambor \d/g) ?? []).length >= 3 && /A2/.test(html) && /AGUA E2E HJ/.test(html) && /@media print|page-break|break-inside/.test(html));
+  await pop.close();
 } catch (err) {
   console.error(err);
   results.push({ name: "excepción", ok: false });

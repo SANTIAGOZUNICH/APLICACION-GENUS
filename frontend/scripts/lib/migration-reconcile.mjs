@@ -43,6 +43,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0054_portal_disponibilidad": "4804620344578a89c7d0bb6bb91d2d648734cde3084020c6bc609b660786364d",
   "0055_portal_codigos_automaticos": "cf5d091671a794dc1a2d1fdb5140c37a5d60e94e9a682b8ef7d8a478fb47b206",
   "0056_ingreso_con_remito": "c40657cdbe9c1e19491674e8cba1d1ea8b3c4cb34857677a4e40f2d5e70182f1",
+  "0057_mp_master_links": "cfc8e0bab7aa96e9fd2c7109285117899f9e69388831e9ce406b874c37c18f35",
 });
 
 export const RECONCILE_LOG_TABLE = "genus_migration_reconcile_log";

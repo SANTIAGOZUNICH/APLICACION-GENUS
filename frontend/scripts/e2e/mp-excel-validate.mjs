@@ -109,6 +109,7 @@ const savedStatus = (page, gid) => waitDb(async () => (await status(page, gid)) 
 async function dragFill(page, gid, toRow, toTitle, { hold = 0 } = {}) {
   const h = page.locator(`[data-testid=${gid}-fill-handle]`);
   await h.waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(300); // el controlador se reposiciona tras cambiar la selección
   const hb = await h.boundingBox();
   const target = await centerOf(await cellLoc(page, gid, toRow, toTitle));
   await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
@@ -231,7 +232,8 @@ try {
   check("corregir kg (mueve stock) pide el motivo en una barra de la planilla, sin ventana, y no guarda antes", (await noDialog(mp)) && Number((await stockBy("XL-007")).cantidadKg) === 17);
   await mp.screenshot({ path: `${OUT}/03-motivo-en-linea.png` });
   await mp.getByRole("button", { name: "Conteo físico" }).click();
-  check("con el motivo, los kg se corrigen y queda el ajuste en el libro mayor", await waitDb(async () => Number((await stockBy("XL-007")).cantidadKg) === 500 && (await q("select count(*)::int n from mp_stock_movements"))[0].n > snap0.mov));
+  const kgOk = await waitDb(async () => Number((await stockBy("XL-007")).cantidadKg) === 500 && (await q("select count(*)::int n from mp_stock_movements"))[0].n > snap0.mov);
+  check("con el motivo, los kg se corrigen y queda el ajuste en el libro mayor", kgOk, kgOk ? "" : JSON.stringify({ kg: (await stockBy("XL-007")).cantidadKg, filas500: (await q("select payload->>'codigo' c from inv_mp_stock where (payload->>'cantidadKg')::numeric = 500")).map((r) => r.c), mov: (await q("select count(*)::int n from mp_stock_movements"))[0].n, mov0: snap0.mov, notice: await mp.locator(`[data-testid=${GS}-notice]`).innerText().catch(() => ""), st: await status(mp, GS) }));
 
   // ================= 3) RELLENO ARRASTRANDO =================
   const GC = "mp-compras-grid";
@@ -314,6 +316,72 @@ try {
     return Number(last?.cantidad) > 100;
   }));
   await mp.screenshot({ path: `${OUT}/06-autoscroll.png` });
+
+  // ================= 4) STOCK MP: serie en kg (con motivo), copia de texto y códigos intactos =================
+  await openTab(mp, "Stock", GS);
+  await mp.waitForTimeout(1200);
+  const movs0 = (await q("select count(*)::int n from mp_stock_movements"))[0].n;
+  const kgOf = async (i) => Number((await stockBy(`XL-${String(i).padStart(3, "0")}`)).cantidadKg);
+  // datos descartables: filas 14 y 15 con 100 y 110 kg (el resto sube de a 1 kg)
+  await q("update inv_mp_stock set payload = jsonb_set(payload, '{cantidadKg}', '100') where payload->>'codigo' = 'XL-014'");
+  await q("update inv_mp_stock set payload = jsonb_set(payload, '{cantidadKg}', '110') where payload->>'codigo' = 'XL-015'");
+  await openTab(mp, "Stock", GS);
+  await mp.waitForTimeout(1200);
+  const kgBefore = [await kgOf(16), await kgOf(17), await kgOf(18)];
+  // dos celdas con 100 y 110 kg (filas 14 y 15) → 120, 130, 140 (serie) pero SIEMPRE con motivo, nunca en silencio
+  await (await cellLoc(mp, GS, 14, "Kg lote")).click();
+  await (await cellLoc(mp, GS, 15, "Kg lote")).click({ modifiers: ["Shift"] });
+  await dragFill(mp, GS, 18, "Kg lote");
+  const prevDlg = mp.locator(`[data-testid=${GS}-preview]`);
+  await prevDlg.waitFor({ timeout: 8000 });
+  check("rellenar kg arrastrando NO guarda en silencio: abre la confirmación con motivo y no toca la base antes", (await kgOf(16)) === kgBefore[0] && (await kgOf(18)) === kgBefore[2]);
+  await mp.screenshot({ path: `${OUT}/07-relleno-kg-motivo.png` });
+  await mp.locator(`[data-testid=${GS}-reason]`).fill("Conteo físico de prueba E2E");
+  await mp.locator(`[data-testid=${GS}-preview-apply]`).click();
+  const seriesKg = await waitDb(async () => (await kgOf(16)) === 120 && (await kgOf(17)) === 130 && (await kgOf(18)) === 140);
+  check("con el motivo, la serie 100, 110 → 120, 130, 140 se guarda en kg y queda en el libro mayor", seriesKg && (await q("select count(*)::int n from mp_stock_movements"))[0].n > movs0, JSON.stringify([await kgOf(16), await kgOf(17), await kgOf(18)]));
+  // texto: una celda con texto se copia hacia abajo
+  await (await cellLoc(mp, GS, 10, "Proveedor")).click();
+  await dragFill(mp, GS, 13, "Proveedor");
+  check("una celda de texto se copia hacia abajo (sin generar progresión)", await waitDb(async () => (await stockBy("XL-011")).proveedor === "Proveedor 10" && (await stockBy("XL-013")).proveedor === "Proveedor 10"));
+  // lote: texto con número final → el lote NO se numera sola si es una sola celda con «L10»: se copia el valor literal
+  await (await cellLoc(mp, GS, 10, "Lote")).click();
+  await dragFill(mp, GS, 12, "Lote");
+  check("un lote de una sola celda se copia literal (no se inventan lotes)", await waitDb(async () => (await stockBy("XL-011")).lote === "L10" && (await stockBy("XL-012")).lote === "L10"));
+  // código: no se rellena (identifica el saldo)
+  const codesBefore = [(await stockBy("XL-014")).codigo, (await stockBy("XL-015")).codigo];
+  await (await cellLoc(mp, GS, 13, "Código")).click();
+  await dragFill(mp, GS, 15, "Código");
+  await mp.waitForTimeout(1200);
+  check("los códigos de MP no se rellenan arrastrando", (await stockBy("XL-014")).codigo === codesBefore[0] && (await stockBy("XL-015")).codigo === codesBefore[1] && (await noDialog(mp)));
+
+  // ================= 5) TABLET: relleno con el dedo =================
+  const tab = await openAs(E2E_USERS.materiaPrima, "tablet");
+  const tp = tab.page;
+  await openTab(tp, "Compras MP", GC);
+  await tp.waitForTimeout(1200);
+  const cdp = await tab.ctx.newCDPSession(tp);
+  const touch = async (type, x, y) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x, y, id: 1 }] });
+  await (await cellLoc(tp, GC, 0, "Cantidad")).tap();
+  await tp.keyboard.type("7");
+  await tp.keyboard.press("Enter");
+  await waitDb(async () => Number((await compraBy(`${TAG} Compra 00`))?.cantidad) === 7);
+  await (await cellLoc(tp, GC, 0, "Cantidad")).tap();
+  const th = await tp.locator(`[data-testid=${GC}-fill-handle]`).boundingBox();
+  check("tablet: el controlador de relleno es lo bastante grande para tocarlo con el dedo (≥ 44 px)", th.width >= 44 && th.height >= 44, JSON.stringify(th));
+  await tp.screenshot({ path: `${OUT}/08-tablet-controlador.png` });
+  const t3 = await centerOf(await cellLoc(tp, GC, 4, "Cantidad"));
+  await touch("touchStart", th.x + th.width / 2, th.y + th.height / 2);
+  for (let k = 1; k <= 12; k++) await touch("touchMove", th.x + th.width / 2, th.y + th.height / 2 + ((t3.y - (th.y + th.height / 2)) * k) / 12);
+  await tp.waitForTimeout(250);
+  check("tablet: durante el arrastre con el dedo se ve la vista previa del rango", await tp.locator(`[data-testid=${GC}-fill-preview]`).isVisible());
+  await tp.screenshot({ path: `${OUT}/09-tablet-arrastre.png` });
+  await touch("touchEnd", 0, 0);
+  check("tablet: arrastrar con el dedo completa y guarda la serie (7 → 8, 9, 10, 11) en las filas siguientes", await waitDb(async () => {
+    for (let i = 1; i <= 4; i++) if (Number((await compraBy(`${TAG} Compra ${String(i).padStart(2, "0")}`))?.cantidad) !== 7 + i) return false;
+    return true;
+  }));
+  await tab.ctx.close();
 } catch (err) {
   console.error(err);
   results.push({ name: "excepción", ok: false });

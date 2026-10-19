@@ -1007,6 +1007,21 @@ export const mpWeeklyControlLines = pgTable("mp_weekly_control_lines", {
   payload: jsonb("payload").notNull().default({}),
 });
 
+/** Equivalencias aprobadas de MP (migración 0057): fórmula/código de otro proveedor → código maestro de inventario. */
+export const mpMasterLinks = pgTable(
+  "mp_master_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    kind: text("kind").notNull(),
+    key: text("key").notNull(),
+    masterCode: text("master_code").notNull(),
+    approvedBy: text("approved_by").notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true }).notNull().defaultNow(),
+    note: text("note").notNull().default(""),
+  },
+  (t) => [uniqueIndex("mp_master_links_kind_key_uq").on(t.kind, t.key)]
+);
+
 /** Ledger stock MP — migración 0005. */
 export const mpStockBalances = pgTable("mp_stock_balances", {
   codigo: text("codigo").primaryKey(),

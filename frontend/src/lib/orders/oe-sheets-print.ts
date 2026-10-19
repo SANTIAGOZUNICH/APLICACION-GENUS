@@ -14,7 +14,7 @@ h1{font-size:15px;margin:0 0 4px} h2{font-size:13px;margin:14px 0 4px;background
 table{width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:8px}
 th,td{border:1px solid #555;padding:3px 4px;text-align:left;vertical-align:top;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
 th{background:#f0f0f0} td.num{text-align:right;font-variant-numeric:tabular-nums}
-.sheet{page-break-after:always} .sheet:last-child{page-break-after:auto}
+tr{page-break-inside:avoid} .sheet{page-break-after:always} .sheet:last-child{page-break-after:auto}
 .meta span{margin-right:14px}`;
 
 function header(c: OeContent) {
