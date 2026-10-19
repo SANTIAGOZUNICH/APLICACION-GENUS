@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRemitoService } from "@/lib/remitos/remito-service";
-import { canAccessRemitos } from "@/lib/remitos/types";
+import { canReadRemitos } from "@/lib/remitos/types";
 import { RemitoSchemaPendingError, remitoSchemaPendingResponse } from "@/lib/db/remito-schema";
 import { resolveOrdersActor } from "@/lib/orders/actor";
 import { ordersErrorResponse } from "@/lib/orders/http";
@@ -28,7 +28,7 @@ function remitosError(err: unknown) {
 export async function GET(request: Request, ctx: Ctx) {
   try {
     const actor = await resolveOrdersActor(request);
-    if (!canAccessRemitos(actor.sector)) {
+    if (!canReadRemitos(actor.sector)) {
       throw new OrdersForbiddenError("Solo PRODUCCIÓN puede acceder a Remitos.");
     }
     const { id, version: versionRaw } = await ctx.params;

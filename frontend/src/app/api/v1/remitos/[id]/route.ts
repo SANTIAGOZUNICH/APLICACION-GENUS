@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRemitoService } from "@/lib/remitos/remito-service";
-import { canAccessRemitos } from "@/lib/remitos/types";
+import { canAccessRemitos, canReadRemitos } from "@/lib/remitos/types";
 import type {
   RemitoApprovalInput,
   RemitoDraftPatch,
@@ -30,7 +30,7 @@ type Ctx = { params: Promise<{ id: string }> };
 export async function GET(request: Request, ctx: Ctx) {
   try {
     const actor = await resolveOrdersActor(request);
-    if (!canAccessRemitos(actor.sector)) {
+    if (!canReadRemitos(actor.sector)) {
       throw new OrdersForbiddenError("Solo PRODUCCIÓN puede acceder a Remitos.");
     }
     const { id } = await ctx.params;
