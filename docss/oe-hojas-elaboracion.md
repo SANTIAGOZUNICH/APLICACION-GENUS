@@ -1,0 +1,5 @@
+# Hojas de elaboración (tambores/ollas) dentro de una OE
+- Modelo: `form_data.sheets[]` (sin migración). Cada hoja: id permanente `sh_…`, tipo, número, nombre, kg planificados/elaborados, estado, responsable, inicio/fin, incidencias, historial y filas de MP propias (ids `<hoja>:<fila de fórmula>`).
+- Fórmula: se copia de la OE principal (MP, códigos, %). Lotes, kg reales, firmas, fechas y estados NO se copian. Kg teóricos = kg de la hoja × % (4 decimales, igual que la OE). El servidor reconstruye la estructura desde la fórmula: solo se aceptan datos operativos.
+- Consumo: una sola fuente de verdad (`consumptionMaterials`): con hojas se descuentan los kg reales de las hojas al entregar la OE (hojas pendientes sin datos no cuentan; la hoja principal solo si ya traía datos reales). Crear hojas / calcular teóricos no mueve stock. Idempotencia y auditoría: las del flujo existente.
+- Texto largo de MP: textarea autoajustable (la fila crece), también en la vista legal y en la impresión de hojas (`oe-sheets-print.ts`).

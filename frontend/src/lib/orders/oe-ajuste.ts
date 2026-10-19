@@ -20,7 +20,7 @@ export function validateAjusteRows(materials: OeMaterialRow[]): string[] {
 }
 
 export function assertAjusteValid(content: OeContent): void {
-  const errors = validateAjusteRows(content.materials);
+  const errors = [...validateAjusteRows(content.materials), ...(content.sheets ?? []).flatMap((s) => validateAjusteRows(s.materials))];
   if (errors.length) {
     throw new OrdersValidationError(errors.join(" "));
   }
