@@ -91,7 +91,7 @@ function BulkDeleteDialogBody({
       </DialogHeader>
 
       <p
-        className="rounded bg-[var(--genus-warning-soft)] px-3 py-2 text-xs text-[var(--genus-warning)]"
+        className="rounded border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200"
         data-testid="bulk-delete-warning"
       >
         Atención: esta acción puede afectar información operativa (planificación
@@ -100,7 +100,7 @@ function BulkDeleteDialogBody({
 
       {previewError ? (
         <p
-          className="rounded bg-[var(--genus-error-soft)] px-3 py-2 text-sm text-[var(--genus-error)]"
+          className="rounded border border-red-400/30 bg-red-400/10 px-3 py-2 text-sm text-red-200"
           role="alert"
         >
           {previewError}
@@ -135,7 +135,7 @@ function BulkDeleteDialogBody({
           </section>
           {excluded.length > 0 ? (
             <section data-testid="bulk-delete-excluded">
-              <h3 className="font-medium text-[var(--genus-warning)]">
+              <h3 className="font-medium text-amber-300">
                 No se pueden eliminar ({excluded.length}) — quedan sin cambios
               </h3>
               <ul className="mt-1 list-disc pl-5 text-xs">

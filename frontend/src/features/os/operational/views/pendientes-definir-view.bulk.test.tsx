@@ -8,12 +8,14 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 
 const fetchPendingDefinition = vi.fn();
 const postBulkDeleteWorks = vi.fn();
+const postBulkPendingAction = vi.fn();
 const showToast = vi.fn();
 let sector = "PRODUCCION";
 
 vi.mock("../adapters/circuit-client", () => ({
   fetchPendingDefinition: (...a: unknown[]) => fetchPendingDefinition(...a),
   postBulkDeleteWorks: (...a: unknown[]) => postBulkDeleteWorks(...a),
+  postBulkPendingAction: (...a: unknown[]) => postBulkPendingAction(...a),
   fetchDeliveryProgress: vi.fn(),
   postCircuitDelivery: vi.fn(),
   postSendToEnvasado: vi.fn(),
@@ -59,6 +61,18 @@ describe("Pendientes de definir — selección múltiple y eliminación masiva",
       ),
     }));
     showToast.mockReset();
+    postBulkPendingAction.mockReset().mockImplementation(async (_s: unknown, p: { action: string; items: Array<{ id: string }>; dryRun?: boolean }) => ({
+      action: p.action,
+      dryRun: !!p.dryRun,
+      batchKey: null,
+      requested: p.items.length,
+      succeeded: p.dryRun ? [] : p.items.filter((i) => i.id !== "native:3").map((i) => i.id),
+      verdicts: p.items.map((i) =>
+        i.id === "native:3"
+          ? { id: i.id, code: "REJECTED", reason: "Este trabajo ya tiene su entrega completa." }
+          : { id: i.id, code: "ELIGIBLE", reason: "", outcome: "Entrega completa: 10 un" }
+      ),
+    }));
   });
   afterEach(cleanup);
 
@@ -104,6 +118,60 @@ describe("Pendientes de definir — selección múltiple y eliminación masiva",
     // la tabla se recarga y queda solo el protegido; la selección se limpió
     await waitFor(() => expect(screen.getAllByTestId("pendiente-row")).toHaveLength(1));
     expect(screen.queryByTestId("bulk-bar")).toBeNull();
+  });
+
+  it("Producción ve las tres acciones; Dirección ve entregar/Codificado pero no eliminar", async () => {
+    render(<PendientesDefinirView />);
+    await screen.findAllByTestId("pendiente-row");
+    fireEvent.click(screen.getAllByTestId("bulk-select-row")[0]!);
+    expect(screen.getByTestId("bulk-deliver").textContent).toBe("Marcar como entregados (1)");
+    expect(screen.getByTestId("bulk-codificado").textContent).toBe("Enviar a Codificado (1)");
+    expect(screen.getByTestId("bulk-delete").textContent).toBe("Eliminar seleccionados (1)");
+    cleanup();
+    sector = "DIRECCION";
+    render(<PendientesDefinirView />);
+    await screen.findAllByTestId("pendiente-row");
+    fireEvent.click(screen.getAllByTestId("bulk-select-row")[0]!);
+    expect(screen.getByTestId("bulk-deliver")).toBeTruthy();
+    expect(screen.queryByTestId("bulk-delete")).toBeNull();
+  });
+
+  it("Marcar como entregados: previa sin escribir, confirma con batchKey y refresca; bloquea doble confirmación", async () => {
+    render(<PendientesDefinirView />);
+    await screen.findAllByTestId("pendiente-row");
+    fireEvent.click(screen.getByTestId("bulk-select-all"));
+    fireEvent.click(screen.getByTestId("bulk-deliver"));
+    await screen.findByTestId("bulk-action-included");
+    expect(postBulkPendingAction).toHaveBeenCalledTimes(1);
+    expect(postBulkPendingAction.mock.calls[0]![1]).toMatchObject({ action: "DELIVER", dryRun: true });
+    expect(screen.getByTestId("bulk-action-excluded").textContent).toMatch(/Gel.*entrega completa/);
+    fireEvent.click(screen.getByTestId("bulk-action-cancel"));
+    expect(postBulkPendingAction).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByTestId("bulk-deliver"));
+    await screen.findByTestId("bulk-action-included");
+    fetchPendingDefinition.mockResolvedValueOnce({ items: [row("native:3", "Gel")], legacyQualityPending: 0 });
+    const confirm = screen.getByTestId("bulk-action-confirm");
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(showToast).toHaveBeenCalled());
+    const confirms = postBulkPendingAction.mock.calls.filter((c) => !(c[1] as { dryRun?: boolean }).dryRun);
+    expect(confirms).toHaveLength(1);
+    expect(confirms[0]![1]).toMatchObject({ action: "DELIVER", batchKey: expect.any(String), delivery: expect.objectContaining({ actualDeliveredAt: expect.any(String) }) });
+    await waitFor(() => expect(screen.getAllByTestId("pendiente-row")).toHaveLength(1));
+    expect(screen.queryByTestId("bulk-bar")).toBeNull();
+  });
+
+  it("Enviar a Codificado: envía las cantidades totales propuestas", async () => {
+    render(<PendientesDefinirView />);
+    await screen.findAllByTestId("pendiente-row");
+    fireEvent.click(screen.getAllByTestId("bulk-select-row")[0]!);
+    fireEvent.click(screen.getByTestId("bulk-codificado"));
+    await screen.findByTestId("bulk-action-included");
+    fireEvent.click(screen.getByTestId("bulk-action-confirm"));
+    await waitFor(() => expect(postBulkPendingAction.mock.calls.some((c) => !(c[1] as { dryRun?: boolean }).dryRun)).toBe(true));
+    const call = postBulkPendingAction.mock.calls.find((c) => !(c[1] as { dryRun?: boolean }).dryRun)!;
+    expect(call[1]).toMatchObject({ action: "SEND_CODIFICADO", items: [{ id: "native:1", totalUnits: 10 }] });
   });
 
   it("otros sectores no ven checkboxes ni la acción masiva", async () => {

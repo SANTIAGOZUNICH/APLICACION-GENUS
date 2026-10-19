@@ -37,6 +37,8 @@ import { SendToEnvasadoDialog, type SendToEnvasadoPayload } from "../components/
 import { StatusChip } from "../components/operational-ui";
 import {
   BulkDeleteDialog,
+  BulkPendingActionDialog,
+  useBulkPendingAction,
   BulkSelectCheckbox,
   BulkSelectionBar,
   bulkRowClassName,
@@ -215,9 +217,25 @@ export function PendientesDefinirView() {
   const visibleIds = useMemo(() => rows.map((r) => r.workItem.id), [rows]);
   const selection = useBulkSelection(visibleIds);
   const canBulkDelete = canMutateAssignedWork(sectorId as SectorId);
+  // Entregar / enviar a Codificado: los mismos que operan los pendientes (Producción y Dirección); el servidor lo revalida.
+  const canBulkOperate = sectorId === "PRODUCCION" || sectorId === "DIRECCION";
   const bulk = useBulkDeleteWorks({
     session,
     selectedIds: selection.selected,
+    showToast,
+    onDone: async () => {
+      selection.clear();
+      await load();
+    },
+  });
+  const defaultTotals = useMemo(
+    () => Object.fromEntries(rows.map((r) => [r.workItem.id, totalUnits(r.workItem)])),
+    [rows]
+  );
+  const bulkAction = useBulkPendingAction({
+    session,
+    selectedIds: selection.selected,
+    defaultTotals,
     showToast,
     onDone: async () => {
       selection.clear();
@@ -232,6 +250,8 @@ export function PendientesDefinirView() {
           id: r.workItem.id,
           label: displayField(r.workItem.product),
           detail: displayField(r.workItem.client),
+          defaultTotal: totalUnits(r.workItem),
+          unit: r.workItem.unit ?? null,
         })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [rows, selection.selected]
@@ -269,19 +289,22 @@ export function PendientesDefinirView() {
           No hay trabajos pendientes de definir.
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          {canBulkDelete ? (
+        <div>
+          {canBulkOperate ? (
             <BulkSelectionBar
               selection={selection}
               scopeLabel={`de ${selection.visibleCount} pendientes visibles en esta vista`}
-              onDelete={bulk.start}
-              busy={bulk.busy}
+              onDeliver={() => bulkAction.start("DELIVER")}
+              onSendCodificado={() => bulkAction.start("SEND_CODIFICADO")}
+              onDelete={canBulkDelete ? bulk.start : undefined}
+              busy={bulk.busy || bulkAction.busy}
             />
           ) : null}
+          <div className="overflow-x-auto">
           <table className="os-table w-full text-sm" data-testid="pendientes-table">
             <thead>
               <tr className="text-left text-xs uppercase text-[var(--os-text-muted)]">
-                {canBulkDelete ? (
+                {canBulkOperate ? (
                   <th className="w-10 py-2">
                     <BulkSelectCheckbox
                       checked={selection.allVisibleSelected}
@@ -312,7 +335,7 @@ export function PendientesDefinirView() {
                     data-testid="pendiente-row"
                     data-selected={selection.isSelected(item.id) ? "true" : "false"}
                   >
-                    {canBulkDelete ? (
+                    {canBulkOperate ? (
                       <td className="w-10 py-2">
                         <BulkSelectCheckbox
                           checked={selection.isSelected(item.id)}
@@ -374,8 +397,20 @@ export function PendientesDefinirView() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
+
+      <BulkPendingActionDialog
+        open={bulkAction.action !== null}
+        onOpenChange={bulkAction.close}
+        action={bulkAction.action ?? "DELIVER"}
+        items={bulkItems}
+        verdicts={bulkAction.verdicts}
+        previewError={bulkAction.previewError}
+        busy={bulkAction.busy}
+        onConfirm={(payload) => void bulkAction.confirm(payload)}
+      />
 
       <BulkDeleteDialog
         open={bulk.open}

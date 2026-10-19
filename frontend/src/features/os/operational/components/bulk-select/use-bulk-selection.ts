@@ -11,7 +11,10 @@ import { useCallback, useMemo, useState } from "react";
 export function useBulkSelection(visibleIds: readonly string[]) {
   const [raw, setRaw] = useState<ReadonlySet<string>>(() => new Set());
 
-  const selected = useMemo(() => visibleIds.filter((id) => raw.has(id)), [visibleIds, raw]);
+  const selected = useMemo(
+    () => visibleIds.filter((id) => raw.has(id)),
+    [visibleIds, raw],
+  );
   const selectedSet = useMemo(() => new Set(selected), [selected]);
 
   const toggle = useCallback((id: string) => {
@@ -25,7 +28,8 @@ export function useBulkSelection(visibleIds: readonly string[]) {
 
   const clear = useCallback(() => setRaw(new Set()), []);
 
-  const allVisibleSelected = visibleIds.length > 0 && selected.length === visibleIds.length;
+  const allVisibleSelected =
+    visibleIds.length > 0 && selected.length === visibleIds.length;
   const someSelected = selected.length > 0 && !allVisibleSelected;
 
   /** Header: si ya están todos los visibles → deselecciona; si no → selecciona SOLO los visibles. */
