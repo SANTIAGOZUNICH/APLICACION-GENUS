@@ -87,6 +87,7 @@ describe.skipIf(Boolean(PROBLEM))(`Control semanal de MP en Postgres real${PROBL
   afterAll(async () => {
     await q("update work_items set deleted_at = now() where notes = $1", [NOTE]).catch(() => undefined);
     await q("delete from inv_mp_stock where payload->>'createdBy' = $1", [NOTE]).catch(() => undefined);
+    await q("delete from mp_stock_movements where idempotency_key like $1", [`it-wk-${RUN}-%`]).catch(() => undefined);
     await q("delete from mp_master_links where approved_by = $1", [prod.email]).catch(() => undefined);
     await pool?.end();
   });

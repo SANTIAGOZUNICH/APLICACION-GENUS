@@ -119,3 +119,16 @@ describe("disponibilidad de MP", () => {
     expect(toKg(null, "kg")).toBeNull();
   });
 });
+
+describe("consumos ya ejecutados", () => {
+  it("lo consumido (por código de inventario) se resta de la necesidad aunque la fórmula use otro código", () => {
+    const lots = [lot({ codigo: "GLI-A", descripcion: "Glicerina", cantidadKg: 20 })];
+    const r = computeAvailability({
+      lots, links: [], todayIso: TODAY,
+      productions: [{ ...prod("P", [["Glicerina", "F-GLI", 12]]), consumedByCode: { "GLI-A": 12 } }, prod("Q", [["Glicerina", "F-GLI", 30]])],
+    });
+    expect(r.rows[0]!.requerido).toBe(30);
+    const parcial = computeAvailability({ lots, links: [], todayIso: TODAY, productions: [{ ...prod("P", [["Glicerina", "F-GLI", 12]]), consumedByCode: { "GLI-A": 5 } }] });
+    expect(parcial.rows[0]!.requerido).toBe(7);
+  });
+});

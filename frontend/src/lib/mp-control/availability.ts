@@ -202,6 +202,8 @@ export type ProductionInput = {
   reliable: boolean;
   unreliableReason?: string;
   lines: Array<FormulaLine & { kg: number | null }>;
+  /** Kg ya consumidos y descontados del inventario para esta producción (libro mayor), por CÓDIGO DE INVENTARIO. */
+  consumedByCode?: Record<string, number>;
 };
 
 export type AvailabilityStatus = "SUFICIENTE" | "FALTANTE" | "SIN STOCK" | "PENDIENTE DE VINCULAR" | "SIN DATOS CONFIABLES";
@@ -260,8 +262,24 @@ export function computeAvailability(params: {
       excluded.push({ id: prod.id, label: prod.label, reason: prod.unreliableReason ?? "Sin datos confiables" });
       unreliableProductions.add(prod.id);
     }
-    for (const line of prod.lines) {
-      const m = matchFormulaLine(idx, line);
+    // Lo ya consumido (y descontado del stock) no se vuelve a necesitar: se resta por materia prima maestra.
+    const consumedLeft = new Map<string, number>();
+    for (const [code, kg] of Object.entries(prod.consumedByCode ?? {})) {
+      const cur = idx.currentCodeOf.get(normCode(code)) ?? normCode(code);
+      const master = idx.masterOfInventoryCode.get(cur) ?? cur;
+      consumedLeft.set(master, round3((consumedLeft.get(master) ?? 0) + kg));
+    }
+    for (const rawLine of prod.lines) {
+      const m = matchFormulaLine(idx, rawLine);
+      let line = rawLine;
+      if (m.status === "vinculada" && rawLine.kg != null) {
+        const left = consumedLeft.get(m.masterCode) ?? 0;
+        if (left > 0) {
+          const used = Math.min(left, rawLine.kg);
+          consumedLeft.set(m.masterCode, round3(left - used));
+          line = { ...rawLine, kg: round3(rawLine.kg - used) };
+        }
+      }
       if (m.status === "vinculada") {
         const key = `M:${m.masterCode}`;
         const row = rowFor(key, () => baseRow(idx, key, m.masterCode, m.source, params.todayIso));

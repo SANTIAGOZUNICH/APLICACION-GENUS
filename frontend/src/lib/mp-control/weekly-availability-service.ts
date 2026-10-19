@@ -221,9 +221,9 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
         unreliableReason: !reliable ? (qty == null || qty <= 0 ? `Cantidad no válida (${w.plannedQuantity} ${w.unit})` : "La OE no tiene fórmula completa (faltan %)") : undefined,
         lines: mats.map((m) => {
           const need = reliable ? round3(((m.formulaPct ?? 0) * qty!) / 100) : null;
-          const done = per ? (per.get(normCode(m.codigoMp)) ?? per.get(normCode(m.codigo)) ?? 0) : 0;
-          return { materiaPrima: m.materiaPrima ?? "", codigo: m.codigo ?? "", codigoMp: m.codigoMp ?? "", kg: need == null ? null : Math.max(0, round3(need - done)) };
+          return { materiaPrima: m.materiaPrima ?? "", codigo: m.codigo ?? "", codigoMp: m.codigoMp ?? "", kg: need };
         }),
+        consumedByCode: per ? Object.fromEntries([...per].filter(([, kg]) => kg > 0)) : undefined,
       });
       meta.push({ id: w.id, label, kg: qty ?? null, days, source: "OE", oeNumber: oe.orderNumber });
       continue;
