@@ -60,7 +60,7 @@ export function NotificationToaster() {
   const { email, sectorId } = usePreviewSession();
   const { openWorkItem, navigateTo } = usePreviewContext();
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [soundOn, setSoundOn] = useState(true);
+  const [soundOn, setSoundOn] = useState(() => typeof window === "undefined" || store.get(`genus_notif_sound:${email}`) !== "off");
   const [needsGesture, setNeedsGesture] = useState(false);
   const ctxRef = useRef<AudioContext | null>(null);
   const shownRef = useRef<Set<string>>(new Set());
@@ -69,9 +69,8 @@ export function NotificationToaster() {
 
   useEffect(() => {
     if (!email) return;
-    setSoundOn(store.get(soundKey) !== "off");
     shownRef.current = parseShownIds(store.get(shownKey));
-  }, [email, soundKey, shownKey]);
+  }, [email, shownKey]);
 
   const getCtx = useCallback(() => {
     if (!ctxRef.current && typeof window !== "undefined") {
