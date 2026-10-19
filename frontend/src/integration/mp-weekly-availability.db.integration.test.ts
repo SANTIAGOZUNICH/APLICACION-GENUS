@@ -88,7 +88,6 @@ describe.skipIf(Boolean(PROBLEM))(`Control semanal de MP en Postgres real${PROBL
     await q("update work_items set deleted_at = now() where notes = $1", [NOTE]).catch(() => undefined);
     await q("delete from inv_mp_stock where payload->>'createdBy' = $1", [NOTE]).catch(() => undefined);
     await q("delete from mp_stock_movements where idempotency_key like $1", [`it-wk-${RUN}-%`]).catch(() => undefined);
-    await q("delete from mp_master_links where approved_by = $1", [prod.email]).catch(() => undefined);
     await pool?.end();
   });
 
@@ -122,19 +121,11 @@ describe.skipIf(Boolean(PROBLEM))(`Control semanal de MP en Postgres real${PROBL
     expect(g.requerido).toBe(42);
   });
 
-  it("un perfume de nombre parecido NO se une solo: queda pendiente de vincular, sin asumir stock cero, y se recuerda al confirmar", async () => {
-    let res = await avail();
-    const p = res.rows.find((r) => r.estado === "PENDIENTE DE VINCULAR" && r.materiaPrima.toLowerCase().startsWith("perfume"))!;
-    expect(p).toBeTruthy();
-    expect(p.requerido).toBe(10);
-    expect(p.candidates.map((c) => c.descripcion)).toEqual(expect.arrayContaining([PERF, PERFUME_PARECIDO]));
-    const svc = await import("@/lib/mp-control/weekly-availability-service");
-    await svc.approveMpLink({ kind: "formula_name", key: p.formulaNames[0]!, masterCode: `WK-PERF-1${RUN}`, by: prod.email });
-    res = await avail();
-    const linked = rowOf(res, "Perfume WK")!;
-    expect(linked.match).toBe("aprobada");
-    expect([linked.stockUtilizable, linked.requerido, linked.estado, linked.faltante]).toEqual([3, 10, "FALTANTE", 7]);
-    // el perfume parecido (40 kg) NO se sumó
+  it("la MP se busca por nombre en la Descripción del stock: «Perfume suave» encuentra solo el perfume que corresponde y no suma el «floral»", async () => {
+    const res = await avail();
+    const p = rowOf(res, "Perfume suave")!;
+    expect([p.stockUtilizable, p.requerido, p.estado, p.faltante]).toEqual([3, 10, "FALTANTE", 7]);
+    expect(p.stockNames).toEqual([PERF]);
     expect(res.rows.some((r) => r.materiaPrima === PERFUME_PARECIDO)).toBe(false);
   });
 
@@ -182,8 +173,8 @@ describe.skipIf(Boolean(PROBLEM))(`Control semanal de MP en Postgres real${PROBL
     });
     expect(c.lines[0]!.stockActual).toBe(50);
     expect(c.lines[0]!.estado).toBe("Disponible");
-    expect(c.lines[1]!.stockActual).toBeNull();
-    expect(c.lines[1]!.estado).toBe("Sin vincular");
+    expect(c.lines[1]!.stockActual).toBe(0);
+    expect(c.lines[1]!.estado).toBe("Sin stock");
     await q("delete from mp_weekly_controls where id = $1", [c.id]);
   });
 });

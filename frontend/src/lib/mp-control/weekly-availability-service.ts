@@ -13,8 +13,7 @@ import "server-only";
 
 import { and, eq, inArray, isNull, lte, gte, or, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { mpMasterLinks, invMpStock, mpStockMovements, operationalOrders, workItems } from "@/lib/db/schema";
-import { isMissingSchemaError } from "@/lib/db/missing-schema";
+import { invMpStock, mpStockMovements, operationalOrders, workItems } from "@/lib/db/schema";
 import { normalizeMpStockPayload } from "@/lib/inventory/neon-persist";
 import { parseArDecimal } from "@/lib/utils/ar-number-parsing";
 import {
@@ -24,8 +23,6 @@ import {
   round3,
   toKg,
   type AvailabilityResult,
-  type MpLink,
-  type MpLinkKind,
   type ProductionInput,
   type StockLot,
 } from "./availability";
@@ -36,7 +33,6 @@ export type WeeklyAvailability = AvailabilityResult & {
   generatedAt: string;
   productions: Array<{ id: string; label: string; kg: number | null; days: string; source: "OE" | "FORMULA" | "SIN_FORMULA"; oeNumber?: string; note?: string }>;
   stockSource: "inv_mp_stock" | "memoria";
-  schemaPending: boolean;
 };
 
 const DAY = 86_400_000;
@@ -77,53 +73,6 @@ export async function loadStockLots(): Promise<{ lots: StockLot[]; source: Weekl
         archived: r.archived,
       })),
   };
-}
-
-type Mem = { links: Array<MpLink & { id: string }> };
-const g = globalThis as unknown as { __genusMpLinksMem?: Mem };
-const mem = (): Mem => (g.__genusMpLinksMem ??= { links: [] });
-
-export async function loadMpLinks(): Promise<{ links: MpLink[]; schemaPending: boolean }> {
-  if (!isDatabaseConfigured()) return { links: mem().links, schemaPending: false };
-  try {
-    const rows = await getDb().select().from(mpMasterLinks);
-    return {
-      links: rows.map((r) => ({ kind: r.kind as MpLinkKind, key: r.key, masterCode: r.masterCode, approvedBy: r.approvedBy, approvedAt: r.approvedAt.toISOString() })),
-      schemaPending: false,
-    };
-  } catch (err) {
-    if (isMissingSchemaError(err)) return { links: [], schemaPending: true };
-    throw err;
-  }
-}
-
-/** Confirma una equivalencia (la recuerda). Una clave solo puede apuntar a un maestro: confirmar de nuevo la corrige. */
-export async function approveMpLink(input: { kind: MpLinkKind; key: string; masterCode: string; by: string; note?: string }): Promise<void> {
-  const key = input.kind === "formula_name" ? normText(input.key) : normCode(input.key);
-  const masterCode = normCode(input.masterCode);
-  if (!key || !masterCode) throw new Error("Falta la materia prima o el código maestro.");
-  if (input.kind === "inventory_code" && key === masterCode) throw new Error("Un código no se vincula consigo mismo.");
-  const { lots } = await loadStockLots();
-  if (!lots.some((l) => normCode(l.codigo) === masterCode)) throw new Error(`El código maestro ${masterCode} no existe en el inventario de Materias Primas.`);
-  if (!isDatabaseConfigured()) {
-    const m = mem();
-    m.links = m.links.filter((l) => !(l.kind === input.kind && l.key === key));
-    m.links.push({ id: `${Date.now()}`, kind: input.kind, key, masterCode, approvedBy: input.by, approvedAt: new Date().toISOString() });
-    return;
-  }
-  await getDb()
-    .insert(mpMasterLinks)
-    .values({ kind: input.kind, key, masterCode, approvedBy: input.by, note: input.note ?? "" })
-    .onConflictDoUpdate({ target: [mpMasterLinks.kind, mpMasterLinks.key], set: { masterCode, approvedBy: input.by, approvedAt: new Date(), note: input.note ?? "" } });
-}
-
-export async function removeMpLink(input: { kind: MpLinkKind; key: string }): Promise<void> {
-  const key = input.kind === "formula_name" ? normText(input.key) : normCode(input.key);
-  if (!isDatabaseConfigured()) {
-    mem().links = mem().links.filter((l) => !(l.kind === input.kind && l.key === key));
-    return;
-  }
-  await getDb().delete(mpMasterLinks).where(and(eq(mpMasterLinks.kind, input.kind), eq(mpMasterLinks.key, key)));
 }
 
 type OeMat = { materiaPrima?: string; codigo?: string; codigoMp?: string; formulaPct?: number | null; parentRowId?: string | null };
@@ -251,15 +200,14 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
 
 export async function getWeeklyAvailability(anyDay: string, now = new Date()): Promise<WeeklyAvailability> {
   const { start, end } = weekBounds(anyDay);
-  const [{ lots, source }, { links, schemaPending }, prods] = await Promise.all([loadStockLots(), loadMpLinks(), loadProductions(start, end)]);
-  const result = computeAvailability({ lots, links, productions: prods.inputs, todayIso: iso(now) });
-  return { ...result, weekStart: start, weekEnd: end, generatedAt: now.toISOString(), productions: prods.meta, stockSource: source, schemaPending };
+  const [{ lots, source }, prods] = await Promise.all([loadStockLots(), loadProductions(start, end)]);
+  const result = computeAvailability({ lots, productions: prods.inputs, todayIso: iso(now) });
+  return { ...result, weekStart: start, weekEnd: end, generatedAt: now.toISOString(), productions: prods.meta, stockSource: source };
 }
 
-/** Stock utilizable consolidado (todos los proveedores/lotes) para líneas de una planilla de control individual. */
-export async function stockForControlLines(lines: Array<{ materiaPrima: string; codigo: string }>, now = new Date()) {
+/** Stock utilizable consolidado (todas las filas del Stock MP con ese nombre) para líneas de una planilla de control. */
+export async function stockForControlLines(lines: Array<{ materiaPrima: string; codigo?: string }>, now = new Date()) {
   const { lots } = await loadStockLots();
-  const { links } = await loadMpLinks();
   const { stockForLine } = await import("./availability");
-  return lines.map((l) => stockForLine(lots, links, l, iso(now)));
+  return lines.map((l) => stockForLine(lots, l, iso(now)));
 }

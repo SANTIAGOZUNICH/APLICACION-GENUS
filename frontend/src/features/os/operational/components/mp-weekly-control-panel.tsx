@@ -314,7 +314,7 @@ export function MpWeeklyControlPanel() {
   return (
     <div className="space-y-4" data-testid="mp-weekly-control-panel">
       <SchemaPendingBanner show={schemaPending} />
-      <MpWeeklyAvailability email={session.email} sector={session.sector} canLink={canWrite} />
+      <MpWeeklyAvailability email={session.email} sector={session.sector} />
       {error ? (
         <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm" role="alert">
           {error}

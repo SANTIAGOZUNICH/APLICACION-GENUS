@@ -83,6 +83,9 @@ export interface GenusGridColumn<T> {
   fillWithReason?: boolean;
 }
 
+/** Motivo que queda registrado cuando el relleno arrastrando corrige kg (no se le pide al usuario). */
+const FILL_AUTO_REASON = "Autocompletar arrastrando en la planilla";
+
 export interface GenusGridCellChange {
   rowId: string;
   columnKey: string;
@@ -651,7 +654,7 @@ export function GenusGrid<T>({
 
   // ---- cambios (edición, pegado, suprimir, relleno): validación + decisión de cómo guardarlos ----
   const processDiffs = useCallback(
-    (diffs: CellDiff[], skipped: PreviewState["skipped"], extraNotes: string[] = []) => {
+    (diffs: CellDiff[], skipped: PreviewState["skipped"], extraNotes: string[] = [], autoReason?: string) => {
       if (diffs.length === 0 && skipped.length === 0 && extraNotes.length === 0) return;
 
       const changes: GenusGridCellChange[] = [];
@@ -685,8 +688,11 @@ export function GenusGrid<T>({
 
       // ---- MODO PLANILLA: como Excel — se guarda directo; solo lo que mueve stock pide motivo ----
       if (sheet) {
-        const moving = changes.filter((c) => Boolean(reasonRequired?.([c])));
-        const plain = changes.filter((c) => !reasonRequired?.([c]));
+        // Autocompletar arrastrando: no pide motivo; deja uno automático en la auditoría del ajuste.
+        const moving = autoReason ? [] : changes.filter((c) => Boolean(reasonRequired?.([c])));
+        const plain = autoReason
+          ? changes.map((c) => (reasonRequired?.([c]) ? { ...c, reason: autoReason } : c))
+          : changes.filter((c) => !reasonRequired?.([c]));
         if (plain.length > 0) void runCommit(plain, { useLatestVersion: true, recordUndo: true });
         const notes = [...extraNotes];
         if (notCleared > 0) notes.push(`${notCleared} celda${notCleared === 1 ? "" : "s"} no se vacía${notCleared === 1 ? "" : "n"} (columna calculada o que mueve stock)`);
@@ -822,7 +828,7 @@ export function GenusGrid<T>({
       const rowsTouched = new Set(candidates.map((c) => c.row)).size;
       const notes: string[] = [];
       if (omitted > 0) notes.push(`${omitted} celda${omitted === 1 ? "" : "s"} omitida${omitted === 1 ? "" : "s"}: columna calculada o que mueve stock (se edita con su motivo)`);
-      processDiffs(diffs, skipped, notes);
+      processDiffs(diffs, skipped, notes, FILL_AUTO_REASON);
       setFillChip({
         plan,
         mode: usedMode,
