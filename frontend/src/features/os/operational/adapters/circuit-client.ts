@@ -216,3 +216,24 @@ export async function postBulkDeleteWorks(
   });
   return parse<import("../lib/bulk-delete-verdicts").BulkDeleteResult>(res, "No se pudo eliminar la selección");
 }
+
+/** Acciones masivas de Pendientes de definir (entregar / enviar a Codificado). `dryRun` = previa sin escribir. */
+export async function postBulkPendingAction(
+  session: Session,
+  payload: {
+    action: import("../lib/bulk-action-verdicts").BulkPendingAction;
+    items: Array<{ id: string; totalUnits?: number | null }>;
+    dryRun?: boolean;
+    batchKey?: string;
+    delivery?: { actualDeliveredAt?: string | null; remito?: string | null; receivedBy?: string | null; observations?: string | null };
+    observation?: string | null;
+  }
+): Promise<import("../lib/bulk-action-verdicts").BulkActionResult> {
+  const res = await fetch("/api/v1/work-items/bulk-action", {
+    method: "POST",
+    credentials: "include",
+    headers: headers(session),
+    body: JSON.stringify(payload),
+  });
+  return parse(res, "No se pudo procesar la selección");
+}
