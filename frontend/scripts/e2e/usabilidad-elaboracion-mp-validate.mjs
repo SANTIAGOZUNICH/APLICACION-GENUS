@@ -208,6 +208,7 @@ try {
     });
     const lote = el.locator("[data-testid=oe-cell-lote]").first();
     const codigo = el.locator("[data-testid=oe-cell-codigo-mp]").first();
+    const codigo0 = await codigo.inputValue();
     await lote.click();
     await lote.fill("");
     await lote.pressSequentially("LOTE-LARGO-DE-PRUEBA-123456789", { delay: 120 }); // más lento que el autoguardado (900 ms) + respuesta tardía
@@ -233,7 +234,8 @@ try {
     await codigo.press("Tab");
     await el.waitForTimeout(2500);
     check("Código MP: al salir del campo se normaliza a mayúsculas", (await codigo.inputValue()) === "UX-OE-A", await codigo.inputValue());
-    await codigo.fill("");
+    await codigo.fill(codigo0);
+    await codigo.press("Tab");
     await lote.fill("");
     await el.unroute(new RegExp(`/api/v1/orders/${oeId}$`));
     await el.waitForTimeout(2500);
