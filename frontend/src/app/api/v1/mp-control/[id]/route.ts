@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { trySaveWeeklyControl } from "@/lib/mp-control/saved-weekly-control";
 import { MpControlCellError, getMpControlService } from "@/lib/mp-control/mp-control-service";
 import type { MpWeeklyControlLine, MpWeeklyControlStatus } from "@/lib/mp-control/types";
 import { resolveOrdersActor } from "@/lib/orders/actor";
@@ -40,6 +41,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
       lifecycleAction?: "annul" | "archive" | "restore";
       reason?: string;
       expectedVersion?: string;
+      week?: string;
     };
     const svc = getMpControlService();
     const mpActor = { email: actor.email, sector: actor.sector };
@@ -56,7 +58,8 @@ export async function PATCH(request: Request, ctx: Ctx) {
       return NextResponse.json({ control });
     }
     const control = await svc.update(mpActor, id, body);
-    return NextResponse.json({ control });
+    const weekly = await trySaveWeeklyControl({ email: actor.email }, body.week);
+    return NextResponse.json({ control, ...weekly });
   } catch (err) {
     if (err instanceof MpControlCellError) {
       const status = err.code === "CONFLICT" ? 409 : err.code === "PROTECTED" ? 403 : err.code === "NOT_FOUND" ? 404 : 400;

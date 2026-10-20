@@ -23,7 +23,7 @@ import type { MpWeeklyControl, MpWeeklyControlLine } from "@/lib/mp-control/type
 import { canWriteMpControl } from "@/lib/mp-control/types";
 import { MP_LINE_CELL_KIND, isMpLineCellField, mpLineProtection, validateMpLineValue } from "@/lib/mp-control/cell-edit";
 import { ExcelOrList, excelCol } from "./operational-ui";
-import { MpWeeklyAvailability } from "./mp-weekly-availability";
+import { MpWeeklyAttention, mondayOf } from "./mp-weekly-attention";
 import type { GenusGridCellChange, GenusGridCommitResult } from "@/components/data-grid/genus-grid";
 
 function actorHeaders(email: string, sector: string): HeadersInit {
@@ -53,6 +53,8 @@ export function MpWeeklyControlPanel() {
   const [error, setError] = useState<string | null>(null);
   const [schemaPending, setSchemaPending] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [week, setWeek] = useState(() => mondayOf());
+  const [savedTick, setSavedTick] = useState(0);
   const [visibility, setVisibility] = useState<"activos" | "archivados" | "anulados">("activos");
 
   const reload = useCallback(async () => {
@@ -115,11 +117,14 @@ export function MpWeeklyControlPanel() {
           product: snapshot.product,
           quantityKg,
           snapshot,
+          week,
         }),
       });
-      const body = (await res.json()) as { control?: MpWeeklyControl; error?: string };
+      const body = (await res.json()) as { control?: MpWeeklyControl; error?: string; weeklySaved?: boolean };
       if (!res.ok) throw new Error(body.error ?? "No se pudo crear control");
       setActive(body.control!);
+      if (body.weeklySaved === false) setError("El control se guardó, pero no se pudo actualizar el panel de materias primas a resolver. Reintentá con «Actualizar resultados».");
+      setSavedTick((n) => n + 1);
       await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -135,12 +140,13 @@ export function MpWeeklyControlPanel() {
       credentials: "include",
       headers: actorHeaders(session.email, session.sector),
       // La versión que se ve: si otro usuario guardó antes, el servidor responde conflicto y no se pisa nada.
-      body: JSON.stringify({ ...patch, expectedVersion: active.updatedAt }),
+      body: JSON.stringify({ ...patch, expectedVersion: active.updatedAt, week }),
     });
-    const body = (await res.json()) as { control?: MpWeeklyControl; error?: string };
+    const body = (await res.json()) as { control?: MpWeeklyControl; error?: string; weeklySaved?: boolean };
     if (res.status === 409) await reload();
     if (!res.ok) throw new Error(body.error ?? "No se pudo guardar");
     setActive(body.control!);
+    if (body.weeklySaved) setSavedTick((n) => n + 1);
     await reload();
   }
 
@@ -320,7 +326,7 @@ export function MpWeeklyControlPanel() {
   return (
     <div className="space-y-4" data-testid="mp-weekly-control-panel">
       <SchemaPendingBanner show={schemaPending} />
-      <MpWeeklyAvailability email={session.email} sector={session.sector} />
+      <MpWeeklyAttention email={session.email} sector={session.sector} week={week} onWeekChange={setWeek} savedTick={savedTick} />
       {error ? (
         <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm" role="alert">
           {error}

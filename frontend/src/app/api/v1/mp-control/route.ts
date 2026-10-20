@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isFeatureSchemaReady } from "@/lib/db/feature-schema";
+import { trySaveWeeklyControl } from "@/lib/mp-control/saved-weekly-control";
 import { getMpControlService } from "@/lib/mp-control/mp-control-service";
 import type { MpFormulaSnapshot } from "@/lib/mp-control/types";
 import { resolveOrdersActor } from "@/lib/orders/actor";
@@ -36,6 +37,7 @@ export async function POST(request: Request) {
       linkedOeId?: string | null;
       snapshot?: MpFormulaSnapshot;
       stockByCodigo?: Record<string, number>;
+      week?: string;
     };
     if (!body.snapshot) {
       return NextResponse.json({ error: "snapshot obligatorio" }, { status: 400 });
@@ -51,7 +53,8 @@ export async function POST(request: Request) {
         stockByCodigo: body.stockByCodigo,
       }
     );
-    return NextResponse.json({ control }, { status: 201 });
+    const weekly = await trySaveWeeklyControl({ email: actor.email }, body.week);
+    return NextResponse.json({ control, ...weekly }, { status: 201 });
   } catch (err) {
     return ordersErrorResponse(err);
   }
