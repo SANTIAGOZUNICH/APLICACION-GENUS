@@ -57,16 +57,36 @@ async function colMap(page, gid) {
     return out;
   }, gid);
 }
+/** Lleva la hoja al final (filas en blanco) y centra la columna, como haría el usuario al desplazarse. */
+async function scrollToDraftCol(page, gid, colIdx) {
+  await page.evaluate(([gid, c]) => {
+    const grid = document.querySelector(`[data-testid=${gid}]`);
+    const sc = grid.querySelector(".dsg-container");
+    sc.scrollTop = sc.scrollHeight;
+    const h = grid.querySelector(`.dsg-row-header .genus-col-${c}`);
+    if (h) {
+      const cr = sc.getBoundingClientRect();
+      const er = h.getBoundingClientRect();
+      sc.scrollLeft += er.left - cr.left - cr.width / 3;
+    }
+  }, [gid, colIdx]);
+  await page.waitForTimeout(250);
+}
 /** Celda de la fila en blanco número `k` (0 = la primera libre) en la columna con ese título. */
 async function draftCell(page, gid, k, title) {
   const map = await colMap(page, gid);
   const c = map[title.toLowerCase()];
   if (c === undefined) throw new Error(`columna no encontrada: ${title} (${Object.keys(map)})`);
+  await scrollToDraftCol(page, gid, c);
   return page.locator(`[data-testid=${gid}] .genus-draft-row`).nth(k).locator(`.genus-col-${c}`).first();
 }
 async function typeDraft(page, gid, k, title, value, kind) {
   const c = await draftCell(page, gid, k, title);
-  if (kind === "tablet") await c.tap(); else await c.click();
+  const b = await c.boundingBox();
+  if (!b) throw new Error(`celda sin caja: ${title}`);
+  const x = b.x + b.width / 2;
+  const y = b.y + b.height / 2;
+  if (kind === "tablet") await page.touchscreen.tap(x, y); else await page.mouse.click(x, y);
   await page.keyboard.type(value);
   await page.keyboard.press("Enter");
 }
@@ -145,7 +165,8 @@ try {
   check("movimiento de stock registrado una sola vez", (await q("select count(*)::int n from mp_stock_movements"))[0].n === mov0 + 1, String((await q("select count(*)::int n from mp_stock_movements"))[0].n - mov0));
   // Pegar varias filas desde Excel/Sheets en las filas en blanco.
   const c0 = await draftCell(ip, GI, 0, "Fecha");
-  await c0.click();
+  const b0 = await c0.boundingBox();
+  await ip.mouse.click(b0.x + b0.width / 2, b0.y + b0.height / 2);
   const rowsTsv = [1, 2, 3].map((n) => ["21/10/2026", `${TAG} Pegado ${n}`, `Prov ${n}`].join("\t")).join("\n");
   // columnas contiguas en el orden de la planilla: Fecha, (Ingreso Nº bloqueado)… → se pega por celda con el portapapeles
   await ip.evaluate((t) => {
