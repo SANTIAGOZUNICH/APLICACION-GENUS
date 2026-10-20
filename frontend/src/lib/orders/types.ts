@@ -99,6 +99,17 @@ export type OeProcedureStep = {
   text: string;
 };
 
+/**
+ * Registro de una OE completada con datos secundarios pendientes (confirmación excepcional). El estado principal sigue
+ * siendo COMPLETA; esto solo documenta qué faltaba, quién lo confirmó y qué se completó después.
+ */
+export type OeCompletionRecord = {
+  pendingAtCompletion: string[];
+  confirmedBy: string;
+  confirmedAt: string;
+  resolved: Array<{ field: string; by: string; at: string }>;
+};
+
 export type OeContent = {
   kind: "OE";
   title: "OE";
@@ -117,6 +128,8 @@ export type OeContent = {
   materials: OeMaterialRow[];
   /** Hojas de elaboración (tambores/ollas) de esta OE. Opcional: OE viejas no la tienen. */
   sheets?: OeSheet[];
+  /** Solo si se completó con datos secundarios pendientes. */
+  completion?: OeCompletionRecord;
   totals: {
     formulaPctSum: number | null;
     kgSum: number | null;

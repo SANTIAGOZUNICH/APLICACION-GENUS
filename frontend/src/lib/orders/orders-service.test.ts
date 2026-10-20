@@ -5,7 +5,7 @@ import { canDeleteOa, canOrderAction } from "@/lib/orders/rbac";
 import { assertBlankSignatures } from "@/lib/orders/pdf-document";
 import { buildSerumAntiageOeTemplateContent } from "@/lib/orders/seed-templates";
 import { normalizeOrderContent } from "@/lib/orders/content";
-import { validateDeliver } from "@/lib/orders/validators";
+import { classifyDeliverMissing, validateDeliver } from "@/lib/orders/validators";
 import type { OrdersActor, OeContent, OrderContent } from "@/lib/orders/types";
 import { ampleTestLots, fillMaterialsForConsumption, seedMpStockForTests } from "@/lib/orders/oe-mp-test-fixture";
 import {
@@ -712,5 +712,57 @@ describe("notificaciones dismiss por usuario", () => {
 
     await service.restoreNotification("ntf-shared", calidad);
     expect(await service.listNotifications(calidad)).toHaveLength(1);
+  });
+});
+
+describe("OE: completar con datos secundarios pendientes", () => {
+  let service: OrdersService;
+
+  beforeEach(async () => {
+    await seedMpStockForTests(ampleTestLots());
+    service = new OrdersService(new MemoryOrdersRepository());
+  });
+
+  async function oeWith(mutate: (f: OeContent) => OeContent) {
+    const t = (await service.listTemplates("OE"))[0]!;
+    const order = await service.createOrder({ type: "OE", templateId: t.id, assignedSector: "ELABORACION" }, calidad);
+    const filled = mutate(fillOeForDeliver(order.formData));
+    return service.saveProgress(order.id, { expectedVersion: order.version, formData: filled }, elaboracion);
+  }
+
+  it("classifyDeliverMissing separa dispensables de críticos", () => {
+    const base = fillOeForDeliver(buildSerumAntiageOeTemplateContent());
+    expect(classifyDeliverMissing(base)).toEqual({ critical: [], secondary: [] });
+    const sinFin = { ...base, processControl: { ...base.processControl, fechaFin: "" } } as OeContent;
+    const c = classifyDeliverMissing(sinFin);
+    expect(c.critical).toEqual([]);
+    expect(c.secondary).toContain("Fecha de finalización");
+    const sinLote = { ...base, header: { ...base.header, lot: "" } } as OeContent;
+    expect(classifyDeliverMissing(sinLote).critical.length).toBeGreaterThan(0);
+  });
+
+  it("completa con COMPLETA + registro de pendientes, y no permite omitir datos críticos", async () => {
+    const crit = await oeWith((f) => ({ ...f, header: { ...f.header, lot: "" } }) as OeContent);
+    await expect(service.deliver(crit.id, elaboracion, true, { allowIncomplete: true })).rejects.toBeInstanceOf(OrdersValidationError);
+
+    const sec = await oeWith((f) => ({ ...f, processControl: { ...f.processControl, fechaFin: "" } }) as OeContent);
+    const done = await service.deliver(sec.id, elaboracion, true, { allowIncomplete: true });
+    expect(done.status).toBe("COMPLETA");
+    const fd = done.formData as OeContent;
+    expect(fd.completion?.confirmedBy).toBe(elaboracion.email);
+    expect(fd.completion?.pendingAtCompletion).toContain("Fecha de finalización");
+  });
+
+  it("completePendingFields completa después sin reabrir ni duplicar y deja registro", async () => {
+    const sec = await oeWith((f) => ({ ...f, processControl: { ...f.processControl, fechaFin: "" } }) as OeContent);
+    const done = await service.deliver(sec.id, elaboracion, true, { allowIncomplete: true });
+    const late = await service.completePendingFields(done.id, elaboracion, { fechaFin: "2026-07-21" });
+    expect(late.status).toBe("COMPLETA");
+    const fd = late.formData as OeContent;
+    expect(fd.processControl.fechaFin).toBe("2026-07-21");
+    expect(fd.completion?.resolved.map((r) => r.field)).toContain("Fecha de finalización");
+    // No pisa lo ya cargado.
+    await expect(service.completePendingFields(done.id, elaboracion, { fechaFin: "2026-08-01" })).rejects.toBeInstanceOf(OrdersValidationError);
+    expect(((await service.getOrder(done.id, calidad))?.formData as OeContent).processControl.fechaFin).toBe("2026-07-21");
   });
 });

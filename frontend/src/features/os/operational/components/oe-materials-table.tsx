@@ -38,6 +38,9 @@ function AutoTextarea({ value, onChange, disabled, className, testId }: { value:
       disabled={disabled}
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      autoComplete="off"
+      autoCorrect="off"
+      spellCheck={false}
       className={`${className ?? ""} resize-none overflow-hidden whitespace-pre-wrap break-words leading-snug`}
       data-testid={testId}
     />
@@ -233,6 +236,9 @@ export function OeMaterialsTable({
                       <input
                         disabled={formulaLocked}
                         value={m.codigo}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        spellCheck={false}
                         onChange={(e) => patch(m.id, { codigo: e.target.value })}
                         className={`w-full rounded border px-2 py-1.5 text-sm ${formulaLocked ? "bg-[var(--os-bg-muted,#eef1f4)]" : ""}`}
                         data-testid="oe-cell-codigo"
@@ -248,7 +254,17 @@ export function OeMaterialsTable({
                           disabled={!canEditCodigoMp}
                           value={m.codigoMp}
                           list="oe-mp-codes"
-                          onChange={(e) => patch(m.id, { codigoMp: e.target.value.toUpperCase() })}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="characters"
+                          spellCheck={false}
+                          // Se guarda EXACTAMENTE lo escrito (transformar el valor en cada tecla desincroniza el teclado
+                          // virtual de Android y agrega letras); las mayúsculas se aplican al salir del campo.
+                          onChange={(e) => patch(m.id, { codigoMp: e.target.value })}
+                          onBlur={(e) => {
+                            const up = e.target.value.toUpperCase();
+                            if (up !== m.codigoMp) patch(m.id, { codigoMp: up });
+                          }}
                           onKeyDown={(e) => onKeyNav(e, "codigoMp", rowIndex)}
                           onPaste={(e) => onPasteCol(e, "codigoMp", rowIndex)}
                           data-col="codigoMp"
@@ -301,6 +317,9 @@ export function OeMaterialsTable({
                       disabled={opsLocked}
                       value={m.lote}
                       list={`oe-mp-lots-${m.id}`}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      spellCheck={false}
                       onChange={(e) => patch(m.id, { lote: e.target.value })}
                       onKeyDown={(e) => onKeyNav(e, "lote", rowIndex)}
                       onPaste={(e) => onPasteCol(e, "lote", rowIndex)}
@@ -329,6 +348,8 @@ export function OeMaterialsTable({
                     <input
                       disabled={opsLocked}
                       value={m.ajusteMotivo}
+                      autoComplete="off"
+                      autoCorrect="off"
                       onChange={(e) => patch(m.id, { ajusteMotivo: e.target.value })}
                       className="w-full rounded border px-2 py-1.5 text-sm"
                       placeholder="opcional"

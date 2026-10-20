@@ -536,6 +536,21 @@ export async function deliverOrderApi(
   return data.order;
 }
 
+export async function completePendingFieldsApi(
+  session: OrdersClientSession,
+  id: string,
+  patch: { date?: string; fechaFin?: string; cantidadObtenida?: number | null }
+): Promise<OperationalOrderRecord> {
+  const res = await fetch(`/api/v1/orders/${id}/pending-fields`, {
+    method: "POST",
+    credentials: "include",
+    headers: actorHeaders(session),
+    body: JSON.stringify(patch),
+  });
+  const data = await parseJson<{ order: OperationalOrderRecord }>(res);
+  return data.order;
+}
+
 export async function deleteEmptyDraftApi(
   session: OrdersClientSession,
   id: string

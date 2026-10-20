@@ -200,6 +200,47 @@ try {
   const sub = await el.locator("h3 + p").first().innerText();
   check("OE abierta: subtítulo legible (sin «sector ELABORACION»)", !/ELABORACION/.test(sub) && /Elaboración/.test(sub), sub);
 
+  // Escritura: ninguna sugerencia/autoguardado puede agregar, cambiar ni perder caracteres (guardados lentos en vuelo).
+  {
+    await el.route(new RegExp(`/api/v1/orders/${oeId}$`), async (route) => {
+      if (route.request().method() === "PATCH" || route.request().method() === "PUT" || route.request().method() === "POST") await new Promise((r) => setTimeout(r, 1500));
+      await route.continue();
+    });
+    const lote = el.locator("[data-testid=oe-cell-lote]").first();
+    const codigo = el.locator("[data-testid=oe-cell-codigo-mp]").first();
+    const codigo0 = await codigo.inputValue();
+    await lote.click();
+    await lote.fill("");
+    await lote.pressSequentially("LOTE-LARGO-DE-PRUEBA-123456789", { delay: 120 }); // más lento que el autoguardado (900 ms) + respuesta tardía
+    await el.waitForTimeout(3500);
+    check("Escritura letra por letra con guardados lentos: sin caracteres extra ni perdidos", (await lote.inputValue()) === "LOTE-LARGO-DE-PRUEBA-123456789", await lote.inputValue());
+    await lote.fill("");
+    await lote.pressSequentially("ab", { delay: 5 });
+    await lote.pressSequentially("cdef", { delay: 5 });
+    await lote.press("Backspace");
+    await el.waitForTimeout(2500);
+    check("Escritura rápida + borrar: valor exacto", (await lote.inputValue()) === "abcde", await lote.inputValue());
+    await lote.fill("");
+    await el.evaluate(() => navigator.clipboard?.writeText?.("PEGADO-9").catch(() => {})).catch(() => {});
+    await lote.fill("PEGADO-9"); // pegado
+    await el.waitForTimeout(2500);
+    check("Pegado de texto: valor exacto", (await lote.inputValue()) === "PEGADO-9", await lote.inputValue());
+    await codigo.click();
+    await codigo.fill("");
+    await codigo.pressSequentially("ux-oe-a", { delay: 100 }); // minúsculas: no se transforman mientras se escribe
+    check("Código MP: no cambia lo escrito mientras se tipea", (await codigo.inputValue()) === "ux-oe-a", await codigo.inputValue());
+    await el.waitForTimeout(1500);
+    check("Código MP: sigue igual con el autoguardado en vuelo", (await codigo.inputValue()) === "ux-oe-a", await codigo.inputValue());
+    await codigo.press("Tab");
+    await el.waitForTimeout(2500);
+    check("Código MP: al salir del campo se normaliza a mayúsculas", (await codigo.inputValue()) === "UX-OE-A", await codigo.inputValue());
+    await codigo.fill(codigo0);
+    await codigo.press("Tab");
+    await lote.fill("");
+    await el.unroute(new RegExp(`/api/v1/orders/${oeId}$`));
+    await el.waitForTimeout(2500);
+  }
+
   // KG REAL UTILIZADO con coma decimal, sin motivo obligatorio: se guarda solo (autoguardado), sin «Error al guardar».
   const kgReal = el.locator("[data-testid=oe-cell-kg-real]");
   check("KG REAL vacío al abrir (no se copia el teórico)", (await kgReal.first().inputValue()) === "" && (await kgReal.nth(1).inputValue()) === "");
@@ -222,13 +263,13 @@ try {
   await dlg.waitFor();
   const back = dlg.locator("[data-testid=deliver-back]");
   const incomplete = dlg.locator("[data-testid=deliver-incomplete]");
-  check("Entregar con faltantes: «Volver a completar» es la acción principal", (await back.innerText()) === "Volver a completar");
-  check("Entregar con faltantes: «Entregar igual» deshabilitado hasta confirmar", await incomplete.isDisabled());
+  check("Entregar con faltantes secundarios: aviso «HAY DATOS PENDIENTES» y botón CANCELAR", /HAY DATOS PENDIENTES/.test(await dlg.innerText()) && (await back.innerText()).trim() === "CANCELAR");
+  check("Entregar con faltantes secundarios: «COMPLETAR DE TODAS MANERAS» disponible sin casilla previa", !(await incomplete.isDisabled()) && /COMPLETAR DE TODAS MANERAS/.test(await incomplete.innerText()));
   await el.waitForTimeout(800); // que termine la animación antes de la captura
   await el.screenshot({ path: `${OUT}/despues-el-3-entregar-incompleta.png` });
   await back.click();
   const controlOpen = await el.locator("#oe-sec-control").evaluate((d) => d.open);
-  check("«Volver a completar» abre «Control de proceso» (donde están los datos que faltan)", controlOpen);
+  check("CANCELAR vuelve a la OE y abre «Control de proceso» (donde están los datos que faltan)", controlOpen);
   const sec = el.locator("#oe-sec-control");
   await sec.getByLabel("Cantidad obtenida").fill("98,5");
   await sec.getByLabel("Fecha finalización").fill(today);

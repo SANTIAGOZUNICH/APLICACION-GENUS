@@ -67,6 +67,23 @@ export function validateDeliverOa(content: OaContent): string[] {
   return missing;
 }
 
+/**
+ * Campos que SÍ se pueden dejar pendientes al completar una OE (datos administrativos secundarios). Todo lo demás
+ * (producto, cliente, cantidad, lote, materias primas, % y kg, datos de consumo de MP y lote) es de trazabilidad/stock y
+ * no se puede omitir: completar no equivale a liberar el lote ni habilita un cierre que comprometa la calidad.
+ */
+export const OE_DISPENSABLE_FIELDS = ["Fecha", "Procedimiento", "Cantidad obtenida", "Fecha de finalización"] as const;
+
+export type DeliverMissing = { critical: string[]; secondary: string[] };
+
+/** Separa lo que falta en obligatorio (bloquea) y secundario (se puede completar con confirmación excepcional). */
+export function classifyDeliverMissing(content: OrderContent): DeliverMissing {
+  const missing = validateDeliver(content);
+  if (content.kind !== "OE") return { critical: [], secondary: missing };
+  const dispensable = new Set<string>(OE_DISPENSABLE_FIELDS);
+  return { critical: missing.filter((m) => !dispensable.has(m)), secondary: missing.filter((m) => dispensable.has(m)) };
+}
+
 export function validateDeliver(content: OrderContent): string[] {
   if (content.kind === "OE") return validateDeliverOe(content);
   return validateDeliverOa(content);

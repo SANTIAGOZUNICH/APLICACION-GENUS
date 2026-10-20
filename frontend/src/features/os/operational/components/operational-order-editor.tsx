@@ -27,6 +27,7 @@ import {
   annulOrderApi,
   deleteEmptyDraftApi,
   deliverOrderApi,
+  completePendingFieldsApi,
   fetchOrder,
   orderPdfUrl,
   resolveFormulaMasterApi,
@@ -45,7 +46,7 @@ import {
   formatOperationalIdFull,
 } from "@/lib/orders/format-operational-id";
 import type { OaContent, OeContent, OperationalOrderRecord, OrderContent } from "@/lib/orders/types";
-import { validateDeliver } from "@/lib/orders/validators";
+import { classifyDeliverMissing, validateDeliver } from "@/lib/orders/validators";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
 import {
   applyFormulaResolveToOe,
@@ -97,7 +98,6 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   /** Guardia sincrónica: un doble clic llega antes de que el botón se deshabilite en pantalla. */
   const deliveringRef = useRef(false);
   /** Confirmación explícita para entregar una orden con datos pendientes (evita hacerlo por accidente). */
-  const [ackPendientes, setAckPendientes] = useState(false);
   const [forceOpen, setForceOpen] = useState<{ procedimiento?: boolean; control?: boolean }>({});
   /** «Volver a completar»: abre las secciones con datos faltantes y lleva la vista a la primera. */
   const setOpenSectionsFor = useCallback((missing: string[]) => {
@@ -118,6 +118,10 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const [returnOpen, setReturnOpen] = useState(false);
   const [returnReason, setReturnReason] = useState("");
   const [missingFields, setMissingFields] = useState<string[]>([]);
+  const deliverCriticalMissing = useMemo(
+    () => (form && order?.type === "OE" ? classifyDeliverMissing(form).critical : []),
+    [form, order?.type]
+  );
   const [meShortages, setMeShortages] = useState<
     Array<{
       codigo: string;
@@ -139,6 +143,12 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const [mpShortageReason, setMpShortageReason] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const versionRef = useRef(1);
+  /**
+   * Contador de ediciones locales. Un guardado en vuelo NO puede pisar lo que la persona siguió escribiendo mientras tanto
+   * (antes la respuesta del servidor reemplazaba el formulario y «comía» o duplicaba letras, sobre todo con el teclado
+   * virtual de Android).
+   */
+  const editSeqRef = useRef(0);
   const [formulaStatus, setFormulaStatus] = useState<FormulaAutoloadStatus>("idle");
   const [formulaStatusDetail, setFormulaStatusDetail] = useState<string | undefined>();
   const [formulaReplaceOpen, setFormulaReplaceOpen] = useState(false);
@@ -286,6 +296,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const persist = useCallback(
     async (nextForm: OrderContent, expectedVersion: number) => {
       setSaveState("saving");
+      const seqAtStart = editSeqRef.current;
       try {
         const updated = await saveOrderProgressApi(session, orderId, {
           expectedVersion,
@@ -295,7 +306,10 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           formulaVersionHash: formulaSnapshotRef.current.formulaVersionHash,
         });
         setOrder(updated);
-        setForm(hydrateOrderContent(updated.formData));
+        // Solo se refleja lo del servidor si no hubo ediciones nuevas durante el guardado: si las hubo, se conserva
+        // lo escrito (ya hay otro guardado programado) y el cursor/foco no se tocan.
+        const typedMeanwhile = editSeqRef.current !== seqAtStart;
+        if (!typedMeanwhile) setForm(hydrateOrderContent(updated.formData));
         formulaSnapshotRef.current = {
           formulaProductId: updated.formulaProductId,
           formulaVersionId: updated.formulaVersionId,
@@ -317,7 +331,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           );
         }
         versionRef.current = updated.version;
-        setSaveState("saved");
+        setSaveState(typedMeanwhile ? "dirty" : "saved");
         setConflict(null);
         setError(null);
         return true;
@@ -339,36 +353,32 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
 
   const applyResolvedFormula = useCallback(
     (payload: Awaited<ReturnType<typeof resolveFormulaMasterApi>>, identity: string) => {
-      setForm((prev) => {
-        if (!prev || prev.kind !== "OE") return prev;
+      const prev = formRef.current;
+      if (prev && prev.kind === "OE") {
         const applied = applyFormulaResolveToOe(prev, payload);
-        if (!applied) return prev;
-        formulaIdentityRef.current = identity;
-        formulaSnapshotRef.current = {
-          formulaProductId: applied.formulaProductId,
-          formulaVersionId: applied.formulaVersionId,
-          formulaVersionHash: applied.formulaVersionHash,
-        };
-        setBoundProductId(applied.formulaProductId);
-        setDidYouMean(null);
-        const withCode =
-          payload.snapshot?.productCode
-            ? {
-                ...applied.content,
-                header: {
-                  ...applied.content.header,
-                  code: payload.snapshot.productCode || applied.content.header.code,
-                },
-              }
+        if (applied) {
+          formulaIdentityRef.current = identity;
+          formulaSnapshotRef.current = {
+            formulaProductId: applied.formulaProductId,
+            formulaVersionId: applied.formulaVersionId,
+            formulaVersionHash: applied.formulaVersionHash,
+          };
+          setBoundProductId(applied.formulaProductId);
+          setDidYouMean(null);
+          const withCode = payload.snapshot?.productCode
+            ? { ...applied.content, header: { ...applied.content.header, code: payload.snapshot.productCode || applied.content.header.code } }
             : applied.content;
-        const next = normalizeOrderContent(withCode);
-        setSaveState("dirty");
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-        debounceRef.current = setTimeout(() => {
-          void persist(next, versionRef.current);
-        }, 400);
-        return next;
-      });
+          const next = normalizeOrderContent(withCode);
+          formRef.current = next;
+          editSeqRef.current += 1;
+          setForm(next);
+          setSaveState("dirty");
+          if (debounceRef.current) clearTimeout(debounceRef.current);
+          debounceRef.current = setTimeout(() => {
+            void persist(next, versionRef.current);
+          }, 400);
+        }
+      }
       setFormulaStatus("found");
       setFormulaStatusDetail(undefined);
     },
@@ -510,16 +520,18 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   // cuando onClientTextChange se memoiza con form===null del primer render).
   const updateForm = useCallback(
     (updater: (prev: OrderContent) => OrderContent) => {
-      setForm((prev) => {
-        if (!prev || !canEditRef.current) return prev;
-        const next = normalizeOrderContent(updater(prev));
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-        setSaveState("dirty");
-        debounceRef.current = setTimeout(() => {
-          void persist(next, versionRef.current);
-        }, 900);
-        return next;
-      });
+      // Sin efectos dentro del updater de setState (React puede ejecutarlo dos veces): se calcula acá, una sola vez.
+      const prev = formRef.current;
+      if (!prev || !canEditRef.current) return;
+      const next = normalizeOrderContent(updater(prev));
+      formRef.current = next; // varias llamadas seguidas parten siempre de lo último escrito
+      editSeqRef.current += 1;
+      setForm(next);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      setSaveState("dirty");
+      debounceRef.current = setTimeout(() => {
+        void persist(next, versionRef.current);
+      }, 900);
     },
     [persist]
   );
@@ -678,6 +690,29 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const applyFormulaAndProposeMaster = async () => {
     await applyFormulaOrderOnly();
     setMasterOpen(true);
+  };
+
+  const [latePending, setLatePending] = useState({ date: "", fechaFin: "", cantidad: "" });
+  const [lateSaving, setLateSaving] = useState(false);
+  const saveLatePending = async () => {
+    if (lateSaving) return;
+    const qty = latePending.cantidad.trim() ? Number(latePending.cantidad.replace(",", ".")) : undefined;
+    setLateSaving(true);
+    try {
+      const updated = await completePendingFieldsApi(session, orderId, {
+        date: latePending.date || undefined,
+        fechaFin: latePending.fechaFin || undefined,
+        cantidadObtenida: qty !== undefined && Number.isFinite(qty) ? qty : undefined,
+      });
+      setOrder(updated);
+      setForm(hydrateOrderContent(updated.formData));
+      versionRef.current = updated.version;
+      setLatePending({ date: "", fechaFin: "", cantidad: "" });
+    } catch (err) {
+      setError(friendlySaveError(err, "No se pudieron completar los datos pendientes."));
+    } finally {
+      setLateSaving(false);
+    }
   };
 
   const onDeliver = async (
@@ -920,7 +955,6 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               disabled={delivering}
               onClick={() => {
                 if (form) setMissingFields(validateDeliver(form));
-                setAckPendientes(false);
                 setDeliverOpen(true);
               }}
             >
@@ -1096,6 +1130,62 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           Orden «{statusLabel(order.status)}»: no se edita directamente. Usá devolución para corrección si
           corresponde.
         </p>
+      ) : null}
+
+      {order.type === "OE" && form && "completion" in form && form.completion ? (
+        <section
+          className="space-y-2 rounded border border-amber-400 bg-amber-500/10 px-3 py-2 text-sm"
+          data-testid="oe-pending-panel"
+        >
+          <p className="font-semibold">Datos pendientes</p>
+          <p>
+            Completada con datos pendientes, confirmado por {form.completion.confirmedBy} el{" "}
+            {new Date(form.completion.confirmedAt).toLocaleString("es-AR")}.
+          </p>
+          <p data-testid="oe-pending-at-completion">
+            Faltaban al completar: {form.completion.pendingAtCompletion.join(", ") || "—"}
+          </p>
+          {(() => {
+            const resolvedNames = new Set(form.completion.resolved.map((r) => r.field));
+            const still = form.completion.pendingAtCompletion.filter((f) => !resolvedNames.has(f));
+            return (
+              <>
+                <p data-testid="oe-pending-still">Siguen pendientes: {still.length ? still.join(", ") : "ninguno"}</p>
+                {form.completion.resolved.length > 0 ? (
+                  <ul className="list-disc pl-5" data-testid="oe-pending-resolved">
+                    {form.completion.resolved.map((r) => (
+                      <li key={`${r.field}-${r.at}`}>
+                        {r.field}: completado por {r.by} el {new Date(r.at).toLocaleString("es-AR")}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {still.length > 0 && !deletedOe ? (
+                  <div className="flex flex-wrap items-end gap-2">
+                    {still.includes("Fecha") && (
+                      <label className="text-xs">Fecha
+                        <input type="date" className="block rounded border px-2 py-1" value={latePending.date} onChange={(e) => setLatePending((p) => ({ ...p, date: e.target.value }))} data-testid="oe-late-date" />
+                      </label>
+                    )}
+                    {still.includes("Fecha de finalización") && (
+                      <label className="text-xs">Fecha de finalización
+                        <input type="date" className="block rounded border px-2 py-1" value={latePending.fechaFin} onChange={(e) => setLatePending((p) => ({ ...p, fechaFin: e.target.value }))} data-testid="oe-late-fechafin" />
+                      </label>
+                    )}
+                    {still.includes("Cantidad obtenida") && (
+                      <label className="text-xs">Cantidad obtenida
+                        <input inputMode="decimal" className="block w-28 rounded border px-2 py-1" value={latePending.cantidad} onChange={(e) => setLatePending((p) => ({ ...p, cantidad: e.target.value }))} data-testid="oe-late-cantidad" />
+                      </label>
+                    )}
+                    <Button type="button" variant="secondary" disabled={lateSaving} data-testid="oe-late-save" onClick={() => void saveLatePending()}>
+                      {lateSaving ? "Guardando…" : "Completar datos pendientes"}
+                    </Button>
+                  </div>
+                ) : null}
+              </>
+            );
+          })()}
+        </section>
       ) : null}
 
       {showPreview ? (
@@ -1305,11 +1395,19 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       >
         <DialogContent className="w-[min(28rem,calc(100vw-24px))] max-w-none">
           <DialogHeader>
-            <DialogTitle>Entregar orden</DialogTitle>
+            <DialogTitle>
+              {missingFields.length === 0
+                ? "Entregar orden"
+                : deliverCriticalMissing.length > 0
+                  ? "No se puede completar todavía"
+                  : "HAY DATOS PENDIENTES"}
+            </DialogTitle>
             <DialogDescription>
-              {missingFields.length > 0
-                ? "Esta orden tiene información sin completar. Podés guardarla como borrador o entregarla con campos pendientes."
-                : "¿Confirmás que la orden está completa? Se notificará a Calidad y Producción. No modifica la plantilla maestra."}
+              {missingFields.length === 0
+                ? "¿Confirmás que la orden está completa? Se notificará a Calidad y Producción. No modifica la plantilla maestra."
+                : deliverCriticalMissing.length > 0
+                  ? "Faltan datos obligatorios de trazabilidad o control. Completalos para poder cerrar la orden."
+                  : "Faltan los siguientes datos:"}
             </DialogDescription>
           </DialogHeader>
           {missingFields.length > 0 && (
@@ -1319,6 +1417,11 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               ))}
             </ul>
           )}
+          {missingFields.length > 0 && deliverCriticalMissing.length === 0 ? (
+            <p className="text-sm font-medium" data-testid="deliver-pending-question">
+              ¿Querés completar la {order.type} de todas maneras? Quedará COMPLETADA con la marca “Datos pendientes” y podrás cargarlos después.
+            </p>
+          ) : null}
           {order.type === "OE" ? (
             <label className="block min-w-0 space-y-1 text-sm">
               <span>Observaciones (opcional)</span>
@@ -1332,18 +1435,6 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               />
             </label>
           ) : null}
-          {missingFields.length > 0 ? (
-            <label className="flex items-start gap-2 text-sm" data-testid="deliver-ack-label">
-              <input
-                type="checkbox"
-                className="mt-1 size-4"
-                checked={ackPendientes}
-                onChange={(e) => setAckPendientes(e.target.checked)}
-                data-testid="deliver-ack-pendientes"
-              />
-              <span>Entiendo que la orden queda entregada con estos datos sin completar.</span>
-            </label>
-          ) : null}
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:flex-wrap">
             <Button
               type="button"
@@ -1354,7 +1445,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
                 if (missingFields.length > 0) setOpenSectionsFor(missingFields);
               }}
             >
-              {missingFields.length > 0 ? "Volver a completar" : "Cancelar"}
+              {missingFields.length > 0 && deliverCriticalMissing.length > 0 ? "Volver a completar" : "CANCELAR"}
             </Button>
             {missingFields.length > 0 && (
               <Button
@@ -1370,15 +1461,16 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               </Button>
             )}
             {missingFields.length > 0 ? (
-              <Button
-                type="button"
-                variant="secondary"
-                data-testid="deliver-incomplete"
-                disabled={!ackPendientes || delivering}
-                onClick={() => void onDeliver(true)}
-              >
-                {delivering ? "Entregando…" : "Entregar igual, con pendientes"}
-              </Button>
+              deliverCriticalMissing.length === 0 ? (
+                <Button
+                  type="button"
+                  data-testid="deliver-incomplete"
+                  disabled={delivering}
+                  onClick={() => void onDeliver(true)}
+                >
+                  {delivering ? "Completando…" : "COMPLETAR DE TODAS MANERAS"}
+                </Button>
+              ) : null
             ) : (
               <Button type="button" data-testid="deliver-confirm" disabled={delivering} onClick={() => void onDeliver(false)}>
                 {delivering ? "Entregando…" : "Entregar"}
