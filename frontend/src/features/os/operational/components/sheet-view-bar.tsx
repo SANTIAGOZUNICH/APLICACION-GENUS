@@ -65,7 +65,7 @@ export function SheetViewBar({
                 <button type="button" className="inline-flex size-11 items-center justify-center rounded border border-[var(--os-border)]" aria-label={`Achicar ${c.title}`} onClick={() => setPrefs(withWidth(prefs, c.key, c.width - 30))} data-testid={`${testId}-col-narrow`} data-col={c.key}>
                   <Minus className="size-4" aria-hidden="true" />
                 </button>
-                <span className="w-10 text-center text-xs tabular-nums">{c.width}</span>
+                <span className="w-10 text-center text-xs tabular-nums" data-testid={`${testId}-col-width`} data-col={c.key}>{c.width}</span>
                 <button type="button" className="inline-flex size-11 items-center justify-center rounded border border-[var(--os-border)]" aria-label={`Ensanchar ${c.title}`} onClick={() => setPrefs(withWidth(prefs, c.key, c.width + 30))} data-testid={`${testId}-col-wide`} data-col={c.key}>
                   <Plus className="size-4" aria-hidden="true" />
                 </button>
@@ -75,7 +75,7 @@ export function SheetViewBar({
         </div>
       ) : null}
       {panel === "filters" ? (
-        <div className="space-y-2 rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-2" data-testid={`${testId}-filters-panel`}>
+        <div className="max-h-56 space-y-2 overflow-y-auto rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-2" data-testid={`${testId}-filters-panel`}>
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <label className="flex items-center gap-2">
               Ordenar por

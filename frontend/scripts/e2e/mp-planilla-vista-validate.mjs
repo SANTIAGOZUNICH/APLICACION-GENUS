@@ -20,6 +20,8 @@ const pool = new Pool({ connectionString: process.env.GENUS_E2E_DATABASE_URL });
 const q = async (t, p = []) => (await pool.query(t, p)).rows;
 await assertMarkedDatabase(q);
 const TAG = "CV";
+const SECTIONS = (process.env.SECTIONS ?? "all").split(",");
+const run = (n) => SECTIONS.includes("all") || SECTIONS.includes(n);
 const TIPS = {
   desktop: { viewport: { width: 1280, height: 900 } },
   tablet: { viewport: { width: 1180, height: 820 }, hasTouch: true, isMobile: false, deviceScaleFactor: 1.5 },
@@ -96,6 +98,7 @@ try {
   const GS = "mp-stock-grid";
   await openTab(mp, "Stock", GS);
 
+  if (run("columnas")) {
   // ===== COLUMNAS =====
   check("la barra de la planilla ofrece «Columnas» y «Filtros y orden»", (await mp.locator(`[data-testid=${GS}-cols-btn]`).count()) === 1 && (await mp.locator(`[data-testid=${GS}-filters-btn]`).count()) === 1);
   check("antes de ocultar: existe la columna Cliente", (await headers(mp, GS)).includes("cliente"));
@@ -109,6 +112,7 @@ try {
   await mp.locator(`[data-testid=${GS}-col-wide][data-col="DESCRIPCIÓN MATERIA PRIMA"]`).click();
   await mp.waitForTimeout(500);
   const w1 = await headerWidth(mp, GS, "Descripción");
+  console.log("  [diag] ancho en el panel:", await mp.locator(`[data-testid=${GS}-col-width][data-col="DESCRIPCIÓN MATERIA PRIMA"]`).innerText(), "| header:", w0, "→", w1);
   check("«Ensanchar» agranda la columna", w1 > w0 + 30, `${w0} → ${w1}`);
   await mp.reload();
   await mp.locator(`[data-testid=${GS}]`).waitFor({ timeout: 120_000 });
@@ -120,6 +124,8 @@ try {
   await mp.waitForTimeout(500);
   check("«Restablecer vista» devuelve las columnas", (await headers(mp, GS)).includes("cliente"));
 
+  }
+  if (run("filtros")) {
   // ===== FILTROS Y ORDEN =====
   await mp.locator(`[data-testid=${GS}-filters-btn]`).click();
   await mp.locator(`[data-testid=${GS}-filter][data-col="DESCRIPCIÓN MATERIA PRIMA"]`).fill("materia 03");
@@ -139,6 +145,8 @@ try {
   check("filtrar y ordenar no modifican datos", (await allStock()).length === 12);
   await mp.locator(`[data-testid=${GS}-view-reset]`).click();
 
+  }
+  if (run("reemplazo")) {
   // ===== BUSCAR Y REEMPLAZAR =====
   await mp.locator(`[data-testid=${GS}-find-btn]`).click();
   await mp.locator(`[data-testid=${GS}-find-text]`).fill(`${TAG} Materia`);
@@ -156,8 +164,15 @@ try {
   await mp.locator(`[data-testid=${GS}-undo]`).click();
   check("Deshacer revierte el reemplazo", await waitDb(async () => (await q("select count(*)::int n from inv_mp_stock where payload->>'descripcion' like $1", [`${TAG} Materia %`]))[0].n === 12, 25_000));
 
+  }
+  if (run("cola")) {
   // ===== COLA PERSISTENTE (sin conexión + recarga) =====
   await mp.waitForTimeout(1500);
+  // El panel de filtros/columnas ocupa lugar sobre la hoja: se cierra antes de editar.
+  for (const id of ["filters-btn", "cols-btn"]) {
+    if ((await mp.locator(`[data-testid=${GS}-${id}]`).getAttribute("aria-expanded")) === "true") await mp.locator(`[data-testid=${GS}-${id}]`).click();
+  }
+  await mp.waitForTimeout(300);
   const cell = await rowCell(mp, GS, `${TAG} Materia 05`, "Ubicación");
   await mpu.ctx.setOffline(true);
   await clickCell(mp, cell, "desktop");
@@ -176,8 +191,10 @@ try {
   check("al volver la conexión se guarda solo", await waitDb(async () => (await stockBy(`${TAG} Materia 05`)).ubicacion === "COLA-1", 25_000));
   await mp.waitForTimeout(2000);
   check("se guardó una sola vez y la cola quedó vacía", (await q("select count(*)::int n from inv_mp_stock where payload->>'ubicacion' = 'COLA-1'"))[0].n === 1 && !(await mp.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith("genus-queue:") && localStorage.getItem(k) && localStorage.getItem(k) !== "[]"))));
+  }
   await mpu.ctx.close();
 
+  if (run("ingresos")) {
   // ===== INGRESOS: TIPO DE MOVIMIENTO =====
   const iu = await openAs(E2E_USERS.materiaPrima, "desktop");
   const ip = iu.page;
@@ -188,8 +205,10 @@ try {
   const hdr = await headers(ip, "mp-ingresos-grid");
   const colsTxt = await ip.locator("[data-testid=mp-ingresos-grid]").innerText();
   check("Ingresos muestra la columna «Tipo» (nuevo lote / adicional / borrador)", hdr.includes("tipo") || /Ingreso · nuevo lote|Borrador \(no mueve stock\)/.test(colsTxt), hdr.join(","));
+  }
   await iu.ctx.close();
 
+  if (run("tablet")) {
   // ===== TABLET =====
   const tb = await openAs(E2E_USERS.materiaPrima, "tablet");
   await openTab(tb.page, "Stock", GS);
@@ -202,6 +221,7 @@ try {
   await tb.page.locator(`[data-testid=${GS}-find-text]`).fill("zzzz-no-existe");
   check("tablet táctil: buscar y reemplazar abre y cuenta (0 coincidencias)", /0 celdas/.test(await tb.page.locator(`[data-testid=${GS}-find-count]`).innerText()));
   await tb.page.screenshot({ path: `${OUT}/02-tablet.png` });
+  }
   await tb.ctx.close();
 } catch (e) {
   console.error(e);
