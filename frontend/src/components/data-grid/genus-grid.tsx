@@ -39,7 +39,7 @@ import {
   type ComponentType,
   type ReactNode,
 } from "react";
-import { Lock, Redo2, Trash2, Undo2 } from "lucide-react";
+import { Lock, Redo2, Replace, Trash2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -153,6 +153,11 @@ export interface GenusGridProps<T> {
   rowDelete?: GenusGridRowDelete;
   /** Modo planilla: filas en blanco al final para crear registros escribiendo directamente. */
   draftRows?: GenusGridDraftRows;
+  /**
+   * Clave de almacenamiento local de los cambios que NO se pudieron guardar (sin conexión, error): se conservan al
+   * recargar, se reintentan solos al volver la conexión y se avisa antes de cerrar la pestaña con cambios sin guardar.
+   */
+  queueKey?: string;
 }
 
 /**
@@ -404,14 +409,31 @@ export function GenusGrid<T>({
   sheet = false,
   rowDelete,
   draftRows,
+  queueKey,
 }: GenusGridProps<T>) {
   const [reasonText, setReasonText] = useState("");
   const gridRef = useRef<DataSheetGridRef>(null);
-  const [overlay, setOverlay] = useState<Record<string, { value: string; status: "saving" | "error" }>>({});
+  // Cambios pendientes de una sesión anterior (se cortó la conexión o se recargó): vuelven a la barra roja para reintentar.
+  const restored = useMemo<FailedBatch[]>(() => {
+    if (!queueKey || typeof window === "undefined") return [];
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(queueKey) ?? "[]") as FailedBatch[];
+      return Array.isArray(parsed) ? parsed.filter((b) => b && Array.isArray(b.changes) && b.changes.length > 0) : [];
+    } catch {
+      return [];
+    }
+    // solo al montar
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [overlay, setOverlay] = useState<Record<string, { value: string; status: "saving" | "error" }>>(() => {
+    const init: Record<string, { value: string; status: "saving" | "error" }> = {};
+    for (const b of restored) for (const c of b.changes) init[cellKey(c.rowId, c.columnKey)] = { value: c.oldValue, status: "error" };
+    return init;
+  });
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [savedCount, setSavedCount] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
-  const [failed, setFailed] = useState<FailedBatch[]>([]);
+  const [failed, setFailed] = useState<FailedBatch[]>(restored);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   /** Motivo pedido EN LA PLANILLA (una celda que mueve saldo): barra en línea, sin ventana modal. */
   const [inlineReason, setInlineReason] = useState<{ changes: GenusGridCellChange[]; prompt: string } | null>(null);
@@ -438,13 +460,19 @@ export function GenusGrid<T>({
     }
     return topUpDrafts(stored, minBlank, makeDraftId);
   });
+  const [findOpen, setFindOpen] = useState(false);
+  const [findText, setFindText] = useState("");
+  const [replaceText, setReplaceText] = useState("");
+  const [findCol, setFindCol] = useState("");
+  const [findCase, setFindCase] = useState(false);
+  const [replaceConfirm, setReplaceConfirm] = useState(false);
   const draftsRef = useRef(drafts);
   const draftTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const applyDraftDiffsRef = useRef<(diffs: CellDiff[]) => void>(() => {});
 
   const undoStack = useRef<GenusGridCellChange[][]>([]);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
-  const batchSeq = useRef(0);
+  const batchSeq = useRef(restored.reduce((m, b) => Math.max(m, b.id), 0));
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skips = useRef<{ rowLabel: string; columnTitle: string; reason: string }[]>([]);
   const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -747,6 +775,37 @@ export function GenusGrid<T>({
     (batch: FailedBatch) => void runCommit(batch.changes, { useLatestVersion: false, recordUndo: true, retryOf: batch.id }),
     [runCommit]
   );
+
+  // Cola persistente: los cambios fallidos sobreviven a una recarga y se reintentan solos al volver la conexión.
+  const failedRef = useRef(failed);
+  useLayoutEffect(() => {
+    failedRef.current = failed;
+  });
+  useEffect(() => {
+    if (!queueKey) return;
+    try {
+      if (failed.length === 0) window.localStorage.removeItem(queueKey);
+      else window.localStorage.setItem(queueKey, JSON.stringify(failed));
+    } catch {
+      /* sin almacenamiento local */
+    }
+  }, [failed, queueKey]);
+  useEffect(() => {
+    if (!queueKey) return;
+    const onOnline = () => failedRef.current.forEach((b) => void runCommit(b.changes, { useLatestVersion: false, recordUndo: true, retryOf: b.id }));
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (failedRef.current.length > 0) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("online", onOnline);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [queueKey, runCommit]);
 
   const undoLast = useCallback(() => {
     const batch = undoStack.current.pop();
@@ -1176,6 +1235,40 @@ export function GenusGrid<T>({
     }
   };
 
+  // ---- buscar y reemplazar (solo celdas editables de registros reales; las calculadas/protegidas no se tocan) ----
+  const findMatches = useMemo(() => {
+    const needle = findText;
+    if (!findOpen || !needle) return { diffs: [] as CellDiff[], rows: 0, first: null as { row: number; col: number } | null };
+    const flags = findCase ? "g" : "gi";
+    const re = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags);
+    const diffs: CellDiff[] = [];
+    const rowSet = new Set<string>();
+    let first: { row: number; col: number } | null = null;
+    gridRows.forEach((row, rowIdx) => {
+      if (isDraftRowId(row.__id)) return;
+      columns.forEach((col, colIdx) => {
+        if (findCol && col.key !== findCol) return;
+        if (col.noFill || row.__prot[col.key]) return;
+        const current = String(row[col.key] ?? "");
+        re.lastIndex = 0;
+        if (!re.test(current)) return;
+        re.lastIndex = 0;
+        const next = current.replace(re, () => replaceText);
+        if (next.trim() === current.trim()) return;
+        diffs.push({ rowId: row.__id, columnKey: col.key, oldValue: current, newValue: next.trim() });
+        rowSet.add(row.__id);
+        if (!first) first = { row: rowIdx, col: colIdx };
+      });
+    });
+    return { diffs, rows: rowSet.size, first };
+  }, [findOpen, findText, replaceText, findCol, findCase, gridRows, columns]);
+  const doReplaceAll = () => {
+    if (findMatches.diffs.length === 0) return;
+    processDiffs(findMatches.diffs, [], [`Reemplazo: ${findMatches.diffs.length} celda${findMatches.diffs.length === 1 ? "" : "s"} en ${findMatches.rows} fila${findMatches.rows === 1 ? "" : "s"} (se puede deshacer)`]);
+    setReplaceConfirm(false);
+    setFindOpen(false);
+  };
+
   const computedHeight = height ?? Math.min(maxHeight, (gridRows.length + 1) * rowHeight + 24);
 
   const syncSelection = (selection: SheetRange | null) => {
@@ -1303,6 +1396,19 @@ export function GenusGrid<T>({
             <Undo2 className="size-3.5" aria-hidden="true" />
             Deshacer
           </Button>
+          {sheet && canEdit ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => { setReplaceConfirm(false); setFindOpen(true); }}
+              data-testid={`${testId}-find-btn`}
+            >
+              <Replace className="size-3.5" aria-hidden="true" />
+              Buscar y reemplazar
+            </Button>
+          ) : null}
           {sheet ? (
             <Button
               type="button"
@@ -1470,6 +1576,49 @@ export function GenusGrid<T>({
         />
       ) : null}
       {hint && <p className="text-[11px] text-[var(--os-text-muted)]">{hint}</p>}
+
+      <Dialog open={findOpen} onOpenChange={(o) => { setFindOpen(o); if (!o) setReplaceConfirm(false); }}>
+        <DialogContent className="max-w-md" data-testid={`${testId}-find-dialog`}>
+          <DialogHeader>
+            <DialogTitle>Buscar y reemplazar</DialogTitle>
+            <DialogDescription>Solo cambia celdas editables. Las columnas calculadas o protegidas no se tocan. Se puede deshacer.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <label className="block">Buscar<input value={findText} onChange={(e) => { setFindText(e.target.value); setReplaceConfirm(false); }} className="mt-1 min-h-11 w-full rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3" data-testid={`${testId}-find-text`} autoComplete="off" /></label>
+            <label className="block">Reemplazar por<input value={replaceText} onChange={(e) => { setReplaceText(e.target.value); setReplaceConfirm(false); }} className="mt-1 min-h-11 w-full rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3" data-testid={`${testId}-replace-text`} autoComplete="off" /></label>
+            <label className="block">En la columna
+              <select value={findCol} onChange={(e) => { setFindCol(e.target.value); setReplaceConfirm(false); }} className="mt-1 min-h-11 w-full rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2" data-testid={`${testId}-find-col`}>
+                <option value="">Todas las editables</option>
+                {columns.filter((c) => !c.noFill).map((c) => (<option key={c.key} value={c.key}>{c.title}</option>))}
+              </select>
+            </label>
+            <label className="flex min-h-11 items-center gap-2"><input type="checkbox" className="size-5" checked={findCase} onChange={(e) => setFindCase(e.target.checked)} /> Distinguir mayúsculas</label>
+            <p className="text-xs text-[var(--os-text-muted)]" data-testid={`${testId}-find-count`}>
+              {findText ? `${findMatches.diffs.length} celda${findMatches.diffs.length === 1 ? "" : "s"} en ${findMatches.rows} fila${findMatches.rows === 1 ? "" : "s"}` : "Escribí qué buscar."}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setFindOpen(false)}>Cerrar</Button>
+            <Button
+              variant="secondary"
+              disabled={!findMatches.first}
+              onClick={() => { if (findMatches.first) { setFindOpen(false); gridRef.current?.setActiveCell({ col: findMatches.first.col, row: findMatches.first.row }); } }}
+              data-testid={`${testId}-find-go`}
+            >
+              Ir a la primera
+            </Button>
+            {replaceConfirm ? (
+              <Button disabled={findMatches.diffs.length === 0} onClick={doReplaceAll} data-testid={`${testId}-replace-confirm`}>
+                Confirmar: reemplazar {findMatches.diffs.length} celda{findMatches.diffs.length === 1 ? "" : "s"}
+              </Button>
+            ) : (
+              <Button disabled={findMatches.diffs.length === 0} onClick={() => (findMatches.diffs.length > 1 ? setReplaceConfirm(true) : doReplaceAll())} data-testid={`${testId}-replace-all`}>
+                Reemplazar todo
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={preview !== null} onOpenChange={(open) => !open && setPreview(null)}>
         <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto" data-testid={`${testId}-preview`}>

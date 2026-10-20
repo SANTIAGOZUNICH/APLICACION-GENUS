@@ -884,6 +884,16 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     }
   }
 
+  const ingresoTipo = (r: MpIngresoRow, isOriginal: boolean) =>
+    r.status === "ANULADO"
+      ? "Anulado"
+      : r.status !== "CONFIRMADO"
+        ? "Borrador (no mueve stock)"
+        : isOriginal
+          ? "Ingreso · nuevo lote"
+          : r.stockLotId
+            ? "Ingreso adicional a lote"
+            : "Ingreso";
   const ingresoColumns: OperationalTableColumn<MpIngresoRow>[] = [
     ...MP_INGRESO_COLUMNS.map((label) => {
       const map: Record<string, keyof MpIngresoRow> = {
@@ -939,6 +949,15 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
       header: "Estado",
       render: (r) => statusChip(r.status),
     },
+    {
+      // Tipo de movimiento (solo lectura, deducido): un ingreso NO es un ajuste de saldo.
+      key: "tipoMovimiento",
+      header: "Tipo",
+      headerTitle: "Qué hace este renglón: nuevo lote, ingreso adicional a un lote existente, borrador (no mueve stock) o anulado. Los ajustes de saldo se hacen en Stock.",
+      excelOnly: true,
+      text: (r: MpIngresoRow) => ingresoTipo(r, originalByLot.get(r.stockLotId ?? "")?.id === r.id),
+      render: (r: MpIngresoRow) => ingresoTipo(r, originalByLot.get(r.stockLotId ?? "")?.id === r.id),
+    } as OperationalTableColumn<MpIngresoRow>,
     {
       key: "acciones",
       header: "Acciones",
