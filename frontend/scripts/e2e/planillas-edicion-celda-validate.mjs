@@ -289,7 +289,7 @@ try {
 
   await nav(mp, "Stock");
   await inCellRoundTrip(mp, { label: "Stock MP", navLabel: "Stock", gridId: "mp-stock-grid", rowValue: "PLAN-MP-LOT", column: "Ubicación", value: "E7", read: async () => (await q("select payload from inv_mp_stock where payload->>'codigo' = 'PLAN-MP-LOT'"))[0]?.payload.ubicacion });
-  check("Stock MP: «Stock código» sin candado (se edita con motivo: ajuste del libro mayor)", (await lockReason(mp, "mp-stock-grid", "PLAN-MP-LOT", "Stock código")) === "");
+  check("Stock MP: sin columna «Stock código»", !(await mp.locator('[data-testid=mp-stock-grid]').innerText().catch(() => "")).match(/stock c[óo]digo/i));
   await mp.screenshot({ path: `${OUT}/5-stock-mp.png` });
 
   // --- Stock MP con una fila igual a las de Production (lote creado por un ingreso confirmado), usuario Materia Prima.

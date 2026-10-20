@@ -1,7 +1,7 @@
 import { NO_PACKING_TEXT, itemText, packingBreakdown, unitsAndCajasText, type PackingBreakdown, type PackingGroupLike } from "@/lib/remitos/packing-breakdown";
 
 /**
- * Cajas y unidades por caja, siempre igual: «53 unidades · 11 cajas» y debajo «10 × 5 + 1 × 3».
+ * Cajas y unidades por caja, siempre igual: «53 unidades — 11 cajas» y debajo «10 × 5 + 1 × 3».
  * `detail` agrega el desglose completo («10 cajas × 5 unidades = 50 unidades»). Sin datos: «Sin detalle de cajas registrado».
  */
 export function PackingSummary({

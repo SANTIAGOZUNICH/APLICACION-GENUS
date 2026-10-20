@@ -112,7 +112,7 @@ try {
   await nav(pp, "Ingresos MP");
   await waitRow(pp, "E2E-R-2");
   check("planilla de Ingresos editable: proveedor, cantidad y lote sin candado", !(await cellLocked(pp, "E2E-R-2", "Proveedor")) && !(await cellLocked(pp, "E2E-R-2", "Cantidad")) && !(await cellLocked(pp, "E2E-R-2", "Lote")));
-  check("INGRESO Nº y TOTAL no se editan (calculados)", (await cellLocked(pp, "E2E-R-2", "Ingreso")) && (await cellLocked(pp, "E2E-R-2", "Total")));
+  check("INGRESO Nº y TOTAL se editan (sin candado)", !(await cellLocked(pp, "E2E-R-2", "Ingreso")) && !(await cellLocked(pp, "E2E-R-2", "Total")));
   await typeInto(pp, "E2E-R-2", "Cantidad", "45", "mp-ingresos-grid");
   check("editar el borrador en la grilla: guarda 45 y sigue en BORRADOR (no mueve stock)", await waitDb(async () => (await ingreso("E2E-R-2"))?.cantidad === 45 && (await ingreso("E2E-R-2"))?.status === "BORRADOR" && (await balance("E2E-MP-COCO")) === 0));
   await pp.locator("[data-testid=mp-ingresos-borradores]").waitFor({ timeout: 30_000 });
@@ -138,8 +138,8 @@ try {
   // ===== Stock MP: stock del código según el libro mayor =====
   await nav(pp, "Stock");
   await waitRow(pp, "E2E-MP-GLI");
-  const libro = await (await cell(pp, "E2E-MP-GLI", "Stock código")).locator("input").inputValue();
-  check("Stock: columna «Stock código» con el saldo del libro mayor (96)", /96/.test(libro), libro);
+  check("Stock: el libro mayor sigue calculando el saldo del código (96) aunque ya no sea columna", (await balance("E2E-MP-GLI")) === 96);
+  check("Stock: sin columna «Stock código»", !(await pp.locator("body").innerText()).match(/stock c[óo]digo/i));
   // Desde la edición completa de Stock MP los kg de un lote ingresado también se editan en la celda, siempre como
   // AJUSTE con motivo (pedido en la planilla) que mueve lote y libro mayor juntos; ya no hay candado.
   check("Stock: los kg de un lote ingresado se editan en la celda (sin candado; ajuste con motivo)", !(await cellLocked(pp, "E2E-MP-GLI", "Kg lote")));

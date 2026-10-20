@@ -77,4 +77,36 @@ describe.skipIf(Boolean(PROBLEM))(`Cajas por entrega en Postgres real${PROBLEM ?
     const ok = await deliver(id, { deliverQuantity: 500, idempotencyKey: `dp-${RUN}-3` }); // sin detalle de cajas sigue siendo válido
     expect(ok.complete).toBe(true);
   });
+
+  it("cajas mixtas 53 u. = 10×5 + 1×3: desglose por entrega, remito con su propio desglose, sin inventar cajas y unidades = lo entregado", async () => {
+    const id = await newWork("83");
+    const mixed = [{ cajas: 10, unidadesPorCaja: 5 }, { cajas: 1, unidadesPorCaja: 3 }];
+    const a = await deliver(id, { deliverQuantity: 53, idempotencyKey: `dp-${RUN}-m1`, deliveryPackingGroups: mixed });
+    expect(a.complete).toBe(false);
+    expect(a.line?.packingGroups).toEqual(mixed);
+    // Segunda entrega: solo se conoce el total de unidades → sin cajas inventadas.
+    const b = await deliver(id, { deliverQuantity: 30, idempotencyKey: `dp-${RUN}-m2` });
+    expect(b.complete).toBe(true);
+    expect(b.delivered).toBe(83);
+    const lines = await q("select id, quantity, packing_groups from work_item_delivery_lines where work_item_id = $1 and status = 'ACTIVA' order by sequence", [id]);
+    expect(lines.map((l) => Number(l.quantity))).toEqual([53, 30]);
+    expect(lines[0]!.packing_groups).toEqual(mixed);
+    expect(lines[1]!.packing_groups ?? []).toEqual([]);
+    // Unidades facturables = suma real de las entregas (las cajas son información logística).
+    expect(lines.reduce((t, l) => t + Number(l.quantity), 0)).toBe(83);
+    // Remito por entrega: cada renglón conserva SU desglose (no se mezcla con la otra entrega).
+    const { previewRemitosFromDeliveries } = await import("@/lib/remitos/from-deliveries");
+    const { groups } = await previewRemitosFromDeliveries(lines.map((l) => String(l.id)));
+    const rem = groups.flatMap((g) => g.lines).sort((x, y) => x.quantity - y.quantity);
+    expect(rem.map((l) => l.quantity)).toEqual([30, 53]);
+    expect(rem[0]!.packingGroups ?? []).toEqual([]);
+    expect(rem[1]!.packingGroups).toEqual(mixed);
+    const { packingGroupsToRemitoSlots } = await import("@/lib/remitos/packing-math");
+    const slots = packingGroupsToRemitoSlots(rem[1]!.packingGroups);
+    expect(slots.cajas1 * slots.unidades1 + slots.cajas2 * slots.unidades2).toBe(53);
+    expect(slots.cajas1 + slots.cajas2).toBe(11);
+    // Recarga: el desglose se relee de la base tal cual.
+    const again = await q("select packing_groups from work_item_delivery_lines where id = $1", [lines[0]!.id]);
+    expect(again[0]!.packing_groups).toEqual(mixed);
+  });
 });

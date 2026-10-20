@@ -2,17 +2,17 @@ import { describe, expect, it } from "vitest";
 import { itemText, packingBreakdown, unitsAndCajasText } from "./packing-breakdown";
 
 describe("desglose de cajas", () => {
-  it("cajas mixtas: 10 × 5 + 1 × 3 = 53 unidades · 11 cajas", () => {
+  it("cajas mixtas: 10 × 5 + 1 × 3 = 53 unidades — 11 cajas", () => {
     const b = packingBreakdown([{ cajas: 10, unidadesPorCaja: 5 }, { cajas: 1, unidadesPorCaja: 3 }])!;
     expect(b.totalUnits).toBe(53);
     expect(b.totalCajas).toBe(11);
     expect(b.short).toBe("10 × 5 + 1 × 3");
-    expect(unitsAndCajasText(b)).toBe("53 unidades · 11 cajas");
+    expect(unitsAndCajasText(b)).toBe("53 unidades — 11 cajas");
     expect(b.items.map(itemText)).toEqual(["10 cajas × 5 unidades = 50 unidades", "1 caja × 3 unidades = 3 unidades"]);
   });
   it("una sola configuración: 45 × 10 = 450", () => {
     const b = packingBreakdown([{ cajas: 45, unidadesPorCaja: 10 }])!;
-    expect(unitsAndCajasText(b)).toBe("450 unidades · 45 cajas");
+    expect(unitsAndCajasText(b)).toBe("450 unidades — 45 cajas");
     expect(b.short).toBe("45 × 10");
   });
   it("junta solo configuraciones idénticas dentro de la misma entrega (no suma otras)", () => {
@@ -25,8 +25,8 @@ describe("desglose de cajas", () => {
     expect(packingBreakdown([])).toBeNull();
     expect(packingBreakdown([{ cajas: 0, unidadesPorCaja: 5 }, { cajas: 2, unidadesPorCaja: 0 }])).toBeNull();
   });
-  it("singular: 1 unidad · 1 caja", () => {
-    expect(unitsAndCajasText(packingBreakdown([{ cajas: 1, unidadesPorCaja: 1 }])!)).toBe("1 unidad · 1 caja");
+  it("singular: 1 unidad — 1 caja", () => {
+    expect(unitsAndCajasText(packingBreakdown([{ cajas: 1, unidadesPorCaja: 1 }])!)).toBe("1 unidad — 1 caja");
   });
 });
 

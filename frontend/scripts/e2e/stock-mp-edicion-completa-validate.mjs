@@ -203,7 +203,7 @@ try {
   check("Stock MP abre como planilla (con la preferencia vieja «lista» guardada)", await mp.locator(`[data-testid=${G}]`).waitFor({ timeout: 60_000 }).then(() => true).catch(() => false));
 
   // 1) Sin candados: TODAS las columnas visibles, en una fila existente de un ingreso confirmado.
-  const cols = ["Código", "Producto", "Proveedor", "Cliente", "Descripción", "Kg lote", "Stock código", "Ubicación", "Lote", "Vencimiento", "Estado stock", "Días VTO", "Estado VTO", "Origen"];
+  const cols = ["Código", "Producto", "Proveedor", "Cliente", "Descripción", "Kg lote", "Ubicación", "Lote", "Vencimiento", "Estado stock", "Días VTO", "Estado VTO", "Origen"];
   const locked = [];
   for (const col of cols) if ((await lockReason(mp, G, ROW, col)) !== "") locked.push(col);
   check(`ninguna de las ${cols.length} columnas tiene candado (usuario Materia Prima, fila de ingreso confirmado)`, locked.length === 0, locked.join(", "));
@@ -240,32 +240,24 @@ try {
     check("Escape cancela la edición (no se guarda)", (await lot())?.ubicacion === "B7");
   }
 
-  // 4) Kg lote: Enter → motivo DENTRO de la planilla (sin ventana) → ajuste del lote + libro mayor.
+  // 4) Kg lote: Enter guarda directo (motivo automático «Edición directa…») → ajuste del lote + libro mayor.
   {
     const shown = await typeCell(mp, "Kg lote", "30");
-    check("Kg lote: Enter pide el motivo en la misma planilla (sin ventana modal)", shown === "inline", shown);
-    await mp.screenshot({ path: `${OUT}/1-kg-motivo-en-la-planilla.png` });
-    await mp.locator(`[data-testid=${G}-inline-reason-input]`).fill("Conteo físico de depósito");
-    await mp.keyboard.press("Enter");
+    check("Kg lote: Enter guarda directo, sin ventana ni pedido de motivo", shown === "none", shown);
+    await mp.screenshot({ path: `${OUT}/1-kg-guardado-directo.png` });
     check("Kg lote: el lote queda en 30", await waitDb(async () => (await lot())?.cantidadKg === 30), String((await lot())?.cantidadKg));
     const aj = (await movs(OLD)).filter((m) => m.kind === "AJUSTE");
-    check("Kg lote: el libro mayor registra el AJUSTE +5 con el motivo", aj.length === 1 && aj[0].quantity === 5 && /Conteo físico/.test(aj[0].reason) && (await bal(OLD)) === 30, JSON.stringify(aj));
-    // Escape en la barra de motivo: no se guarda nada.
-    const shown2 = await typeCell(mp, "Kg lote", "99");
-    await mp.locator(`[data-testid=${G}-inline-reason-input]`).press("Escape");
-    await mp.waitForTimeout(800);
-    check("Kg lote: Escape en el motivo cancela (no cambia el lote ni el libro mayor)", shown2 === "inline" && (await lot())?.cantidadKg === 30 && (await bal(OLD)) === 30);
+    check("Kg lote: el libro mayor registra el AJUSTE +5 con motivo automático", aj.length === 1 && aj[0].quantity === 5 && /Edición directa/.test(aj[0].reason) && (await bal(OLD)) === 30, JSON.stringify(aj));
   }
 
-  // 5) Stock código: Enter → motivo en la planilla (chip) → ajuste del saldo del código por la diferencia.
+  // 5) «Stock código» ya NO es una columna de la planilla: el libro mayor se conserva y el ajuste del saldo
+  // sigue disponible por API (misma operación segura, con motivo). La planilla no la muestra ni la ofrece.
   {
-    const shown = await typeCell(mp, "Stock código", "40");
-    check("Stock código: pide el motivo en la planilla", shown === "inline", shown);
-    await mp.getByRole("button", { name: "Conteo físico" }).click();
-    check("Stock código: el saldo del código queda en 40 (AJUSTE +10, ref. saldo del código)", await waitDb(async () => (await bal(OLD)) === 40) && (await movs(OLD)).some((m) => m.ref_type === "mp_saldo_codigo" && m.quantity === 10));
-    check("Stock código: el lote no cambia (30 kg)", (await lot())?.cantidadKg === 30);
-    await reloadStock(mp);
-    check("Stock código: tras recargar muestra 40", (await cellValue(mp, G, ROW, "Stock código")) === "40", await cellValue(mp, G, ROW, "Stock código"));
+    const headers = await mp.locator(`[data-testid=${G}] [role=columnheader], [data-testid=${G}] th`).allInnerTexts();
+    check("«Stock código» no aparece como columna de la planilla", !headers.some((h) => /stock c[óo]digo/i.test(h)), headers.join("|"));
+    const adj = await mp.request.patch("/api/v1/inventory/cells", { data: { resource: "mp_stock", changes: [{ id: ids.lot, field: "stockLibroMayor", value: "40", expectedVersion: (await lot()).updatedAt, reason: "Conteo físico", expectedValue: "30" }] } });
+    check("el libro mayor sigue calculándose: ajuste del saldo del código por API (AJUSTE +10)", adj.ok() && (await waitDb(async () => (await bal(OLD)) === 40)) && (await movs(OLD)).some((m) => m.ref_type === "mp_saldo_codigo" && m.quantity === 10), String(adj.status()));
+    check("el lote no cambia (30 kg)", (await lot())?.cantidadKg === 30);
   }
 
   // 6) Código: reclasificación transaccional (lote + ingreso + libro mayor), historia intacta.
@@ -284,7 +276,7 @@ try {
     check("Código: alias viejo → nuevo para OE y control semanal", (await q("select payload->>'reclasificadoA' a from mp_stock_balances where codigo = $1", [OLD]))[0]?.a === NEW);
     await reloadStock(mp);
     check("Código: tras recargar la celda muestra el código nuevo y su nota cita el anterior", (await cellValue(mp, G, ROW, "Código")) === NEW && /antes: FULL-MP-OLD/.test(await noteOf(mp, G, ROW, "Código")));
-    check("Código: «Stock código» muestra el saldo del código nuevo (40)", (await cellValue(mp, G, ROW, "Stock código")) === "40");
+    check("Código: el libro mayor del código nuevo tiene el saldo (40)", (await bal(NEW)) === 40);
     await mp.screenshot({ path: `${OUT}/2-codigo-corregido.png` });
   }
 
@@ -300,9 +292,9 @@ try {
     shown = await typeCell(mp, "Estado VTO", "Re-análisis aprobado");
     check("Estado VTO: se fija a mano", shown === "none" && (await waitDb(async () => (await lot())?.estadoVencimientoManual === "Re-análisis aprobado")));
     // Vaciar la celda: vuelve al cálculo.
-    const c = await cell(mp, G, ROW, "Estado stock");
-    await c.click();
-    await mp.keyboard.press("Delete");
+    // (En la planilla, vaciar una columna calculada está bloqueado a propósito; la operación segura por API sigue vigente.)
+    await mp.request.patch("/api/v1/inventory/cells", { data: { resource: "mp_stock", changes: [{ id: ids.lot, field: "estadoStock", value: "", expectedVersion: (await lot()).updatedAt }] } });
+    await reloadStock(mp); // la fila cambió por API: la planilla relee la versión nueva
     check("Estado stock: vaciar la celda vuelve al cálculo", await waitDb(async () => (await lot())?.estadoStockManual === ""));
     await mp.screenshot({ path: `${OUT}/3-stock-mp-todas-editables.png` });
   }

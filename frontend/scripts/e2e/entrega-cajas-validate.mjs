@@ -78,14 +78,14 @@ try {
   const lines = await q("select quantity, packing_groups, kind from work_item_delivery_lines where work_item_id = $1 and status = 'ACTIVA'", [wid]);
   check("la entrega parcial queda con sus cajas (8×100 + 1×50) en la base", lines.length === 1 && lines[0].quantity === 850 && lines[0].kind === "PARCIAL" && JSON.stringify(lines[0].packing_groups) === JSON.stringify([{ cajas: 8, unidadesPorCaja: 100 }, { cajas: 1, unidadesPorCaja: 50 }]));
   check("se creó UN aviso de facturación con las cajas", (await q("select message from os_notifications where kind = 'entrega_registrada' and message like '%CLIENTE CAJAS SA%'")).filter((r) => /8 cajas de 100 u\. \+ 1 caja de 50 u\./.test(r.message)).length === 1);
-  // ── Pendientes a definir: con cajas registradas en el trabajo se ve «53 unidades · 11 cajas» y «10 × 5 + 1 × 3».
+  // ── Pendientes a definir: con cajas registradas en el trabajo se ve «53 unidades — 11 cajas» y «10 × 5 + 1 × 3».
   await q("update work_items set packing_groups = $2::jsonb where id = $1", [wid, JSON.stringify([{ cajas: 10, unidadesPorCaja: 5 }, { cajas: 1, unidadesPorCaja: 3 }])]);
   await page.reload();
   await page.getByRole("button", { name: /^Pendientes de definir$/ }).or(page.getByRole("link", { name: /^Pendientes de definir$/ })).first().click({ timeout: 120_000 });
   const row2 = page.locator("[data-testid=pendiente-row]", { hasText: "CREMA FACIAL CAJAS E2E" }).first();
   await row2.waitFor({ timeout: 120_000 });
   const cajasTxt = await row2.locator("[data-testid=pendiente-cajas]").innerText();
-  check("Pendientes a definir muestra «53 unidades · 11 cajas» y «10 × 5 + 1 × 3» (cajas mixtas) y el detalle completo", /53 unidades · 11 cajas/.test(cajasTxt) && /10 × 5 \+ 1 × 3/.test(cajasTxt) && /10 cajas × 5 unidades = 50 unidades/.test(cajasTxt) && /1 caja × 3 unidades = 3 unidades/.test(cajasTxt), cajasTxt.replace(/\n/g, " | "));
+  check("Pendientes a definir muestra «53 unidades — 11 cajas» y «10 × 5 + 1 × 3» (cajas mixtas) y el detalle completo", /53 unidades — 11 cajas/.test(cajasTxt) && /10 × 5 \+ 1 × 3/.test(cajasTxt) && /10 cajas × 5 unidades = 50 unidades/.test(cajasTxt) && /1 caja × 3 unidades = 3 unidades/.test(cajasTxt), cajasTxt.replace(/\n/g, " | "));
   await page.screenshot({ path: `${OUT}/tablet-pendientes-cajas.png` });
   await q("update work_items set packing_groups = null where id = $1", [wid]);
   // ── Segunda entrega (saldo 400): otras cajas (40 × 10). Cada entrega conserva SUS cajas.
@@ -118,14 +118,14 @@ try {
   await openEntregados();
   await toListMode();
   const entTxt = await page.locator("[data-testid=entregado-cajas]").evaluateAll((els) => els.map((e) => e.innerText.replace(/\n/g, " | ")).join(" || "));
-  check("Entregados muestra las cajas de cada entrega por separado (850 u. · 9 cajas y 400 u. · 40 cajas)", /850 unidades · 9 cajas/.test(entTxt) && /8 × 100 \+ 1 × 50/.test(entTxt) && /400 unidades · 40 cajas/.test(entTxt) && /40 × 10/.test(entTxt), entTxt);
+  check("Entregados muestra las cajas de cada entrega por separado (850 u. — 9 cajas y 400 u. — 40 cajas)", /850 unidades — 9 cajas/.test(entTxt) && /8 × 100 \+ 1 × 50/.test(entTxt) && /400 unidades — 40 cajas/.test(entTxt) && /40 × 10/.test(entTxt), entTxt);
   check("no se mezclan: ninguna entrega muestra 1.250 unidades ni 49 cajas juntas", !/1\.250 unidades/.test(entTxt) && !/49 cajas/.test(entTxt));
   await page.screenshot({ path: `${OUT}/tablet-entregados-cajas.png` });
   await page.reload();
   await openEntregados();
   await toListMode();
   const entTxt2 = await page.locator("[data-testid=entregado-cajas]").evaluateAll((els) => els.map((e) => e.innerText.replace(/\n/g, " | ")).join(" || "));
-  check("tras recargar, Entregados conserva el mismo desglose", /850 unidades · 9 cajas/.test(entTxt2) && /400 unidades · 40 cajas/.test(entTxt2));
+  check("tras recargar, Entregados conserva el mismo desglose", /850 unidades — 9 cajas/.test(entTxt2) && /400 unidades — 40 cajas/.test(entTxt2));
   await page.getByRole("button", { name: /^Ver detalle$/ }).first().click();
   check("el detalle de la entrega muestra el desglose completo («8 cajas × 100 unidades = 800 unidades»)", await page.getByText(/8 cajas × 100 unidades = 800 unidades/).first().waitFor({ timeout: 15_000 }).then(() => true).catch(() => false));
   await ctx.close();
