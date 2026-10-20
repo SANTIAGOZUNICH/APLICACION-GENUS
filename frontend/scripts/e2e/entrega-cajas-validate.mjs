@@ -107,15 +107,25 @@ try {
   // ── Entregados: el desglose real de cada entrega, sin mezclar, y persiste al recargar.
   const openEntregados = async () => {
     await page.getByRole("button", { name: /^Entregados$/ }).or(page.getByRole("link", { name: /^Entregados$/ })).first().click({ timeout: 120_000 });
-    await page.locator("[data-testid=entregado-cajas]").first().waitFor({ timeout: 120_000 });
+    await page.getByText(/Historial de entregas|Entregados/).first().waitFor({ timeout: 120_000 });
+    await page.locator("[data-testid=os-table-mode-toggle], [data-testid=entregado-cajas]").first().waitFor({ timeout: 120_000 });
+  };
+  // La planilla (modo por defecto) muestra el resumen como texto; la lista, el componente completo.
+  const toListMode = async () => {
+    if ((await page.locator("[data-testid=entregado-cajas]").count()) === 0) await page.locator("[data-testid=os-table-mode-toggle]").first().click();
+    await page.locator("[data-testid=entregado-cajas]").first().waitFor({ timeout: 60_000 });
   };
   await openEntregados();
+  const gridTxt = await page.locator("main").innerText();
+  check("Entregados (planilla) muestra «850 unidades · 9 cajas (8 × 100 + 1 × 50)» y «400 unidades · 40 cajas (40 × 10)»", /850 unidades · 9 cajas \(8 × 100 \+ 1 × 50\)/.test(gridTxt) && /400 unidades · 40 cajas \(40 × 10\)/.test(gridTxt), gridTxt.slice(0, 200));
+  await toListMode();
   const entTxt = await page.locator("[data-testid=entregado-cajas]").evaluateAll((els) => els.map((e) => e.innerText.replace(/\n/g, " | ")).join(" || "));
   check("Entregados muestra las cajas de cada entrega por separado (850 u. · 9 cajas y 400 u. · 40 cajas)", /850 unidades · 9 cajas/.test(entTxt) && /8 × 100 \+ 1 × 50/.test(entTxt) && /400 unidades · 40 cajas/.test(entTxt) && /40 × 10/.test(entTxt), entTxt);
   check("no se mezclan: ninguna entrega muestra 1.250 unidades ni 49 cajas juntas", !/1\.250 unidades/.test(entTxt) && !/49 cajas/.test(entTxt));
   await page.screenshot({ path: `${OUT}/tablet-entregados-cajas.png` });
   await page.reload();
   await openEntregados();
+  await toListMode();
   const entTxt2 = await page.locator("[data-testid=entregado-cajas]").evaluateAll((els) => els.map((e) => e.innerText.replace(/\n/g, " | ")).join(" || "));
   check("tras recargar, Entregados conserva el mismo desglose", /850 unidades · 9 cajas/.test(entTxt2) && /400 unidades · 40 cajas/.test(entTxt2));
   await page.getByRole("button", { name: /^Ver detalle$/ }).first().click();

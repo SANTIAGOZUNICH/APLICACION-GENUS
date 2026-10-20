@@ -1,7 +1,7 @@
 "use client";
 
 import { describeDeliveryPacking } from "@/lib/remitos/delivery-packing";
-import { deliveryPackingEntries, type DeliveryLineLike } from "@/lib/remitos/packing-breakdown";
+import { deliveryPackingEntries, unitsAndCajasText, type DeliveryLineLike } from "@/lib/remitos/packing-breakdown";
 import { PackingSummary } from "../components/packing-summary";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -595,6 +595,11 @@ export function EntregadosView() {
       key: "cajas",
       header: "Cajas",
       headerTitle: "Cajas y unidades por caja registradas en ESTA entrega",
+      // Texto para la planilla (la vista de lista usa el componente de abajo).
+      text: (record) =>
+        deliveryPackingEntries(record, deliveryLines)
+          .map((e) => `${e.label ? `${e.label}: ` : ""}${e.breakdown ? `${unitsAndCajasText(e.breakdown)} (${e.breakdown.short})` : "Sin detalle de cajas registrado"}`)
+          .join(" | "),
       render: (record) => (
         <div className="space-y-1" data-testid="entregado-cajas">
           {deliveryPackingEntries(record, deliveryLines).map((e) => (
