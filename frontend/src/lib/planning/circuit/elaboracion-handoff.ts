@@ -318,6 +318,8 @@ export async function sendElaboracionToEnvasadoDurable(
         notes: input.observation?.trim() || null,
         packagingLote: row.packagingLote ?? null,
         packagingVto: row.packagingVto ?? null,
+        // Mismo lote de producto terminado que la OE: el vínculo con Asignación de Lotes viaja a Envasado/OA.
+        asignacionLoteId: row.asignacionLoteId ?? null,
         productionPedidoId: row.productionPedidoId ?? null,
         // Clave por trabajo de Elaboración: un mismo trabajo nunca genera dos de Envasado, aunque cambie la request.
         idempotencyKey: `elab2env:${id}`,

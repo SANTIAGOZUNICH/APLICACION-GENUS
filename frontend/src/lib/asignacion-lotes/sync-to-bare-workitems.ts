@@ -14,7 +14,7 @@
  */
 import "server-only";
 
-import { and, eq, isNotNull, isNull, ne, or } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, or } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { operationalEvents, workItems } from "@/lib/db/schema";
 import { clienteRelation, productoRelation } from "./resolve-for-work-item";
@@ -66,7 +66,6 @@ export async function fillBareWorkItemsFromAsignacionLote(
     .from(workItems)
     .where(
       and(
-        ne(workItems.sector, "ELABORACION"),
         isNull(workItems.deletedAt),
         isNull(workItems.packagingLote),
         isNull(workItems.packagingVto)
@@ -80,7 +79,15 @@ export async function fillBareWorkItemsFromAsignacionLote(
     const now = new Date();
     const [row] = await db
       .update(workItems)
-      .set({ packagingLote: lote, packagingVto: vto, updatedAt: now })
+      .set({
+        packagingLote: lote,
+        packagingVto: vto,
+        asignacionLoteId: record.id,
+        loteLinkMethod: "AUTO",
+        loteLinkedAt: now,
+        loteLinkedBy: record.updatedBy?.trim() || "asignacion-lotes-sync",
+        updatedAt: now,
+      })
       .where(
         and(
           eq(workItems.id, target.id),
@@ -122,8 +129,7 @@ export async function fillBareWorkItemsFromAsignacionLote(
       .from(workItems)
       .where(
         and(
-          ne(workItems.sector, "ELABORACION"),
-          isNull(workItems.deletedAt),
+            isNull(workItems.deletedAt),
           or(isNotNull(workItems.packagingLote), isNotNull(workItems.packagingVto))
         )
       );

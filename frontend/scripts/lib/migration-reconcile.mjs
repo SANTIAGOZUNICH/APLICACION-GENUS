@@ -49,6 +49,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0064_delivery_remito_marks": "e476630b11436863697d83eb538ea136b7b6f496ef181c6e0382ebde96adc4de",
   "0065_mp_weekly_saved_controls": "7047eb2e043f69e620a5aa14dee380b00262e20046d81acf57fd80fd6f3a207f",
   "0066_mp_weekly_saved_product_controls": "7873b1aa830bd86315d148775b7640c558302f87110984aa9f6ff7af6b185b7d",
+  "0067_work_item_lote_link": "9d6f05486e88ef73d219d7e1d0b7c02b06cb5c5fc49eae935f880e97dd29c223",
   "0062_billing_control": "0d0d6a356759bb57b0f8dd2d9663d74a1f7b6841d493196e9059be0eb586c68f",
   "0060_aviso_user_recipients": "164ac0c7a37f5deeb64c52b08ceb40314451505d4863376a1664ee6f1404c270",
   "0059_delivery_line_packing": "b041d7bd272e73038789695982af2eead8642b1b387c1967ff38c2684eba58f5",
@@ -228,6 +229,7 @@ export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
   { migration: "0064_delivery_remito_marks", object: "delivery_remito_mark_events" },
   { migration: "0065_mp_weekly_saved_controls", object: "mp_weekly_saved_controls" },
   { migration: "0066_mp_weekly_saved_product_controls", object: "mp_weekly_saved_product_controls" },
+  { migration: "0067_work_item_lote_link", object: "work_items.asignacion_lote_id" },
 ]);
 
 /** @param {{ query: (text: string, params?: unknown[]) => Promise<any[]>, required?: ReadonlyArray<{migration: string, object: string}> }} opts */

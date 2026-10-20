@@ -83,6 +83,9 @@ function createFakeDb() {
           cond = c;
           return api;
         },
+        then(resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) {
+          return Promise.resolve(target.filter((r) => matchCond(r, cond)).map((r) => ({ ...r }))).then(resolve, reject);
+        },
         limit(n: number) {
           return Promise.resolve(
             target
@@ -284,6 +287,7 @@ vi.mock("@/lib/db/schema", () => {
     planningWeeks: table("planningWeeks", ["id", "weekStart", "status"]),
     productionPedidos: table("productionPedidos", ["id", "estado", "deletedAt"]),
     productionPedidoStatusEvents: table("productionPedidoStatusEvents", []),
+    asignacionLotes: table("asignacionLotes", ["id", "archived"]),
     operationalEvents: table("operationalEvents", []),
     operationalOrders: table("operationalOrders", [
       "id",

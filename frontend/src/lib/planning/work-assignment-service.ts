@@ -13,7 +13,10 @@ import {
   productionPedidoStatusEvents,
   workItems,
 } from "@/lib/db/schema";
-import { findAsignacionLoteByIdForWorkItem } from "@/lib/asignacion-lotes/resolve-for-work-item";
+import {
+  findAsignacionLoteByIdForWorkItem,
+  resolveAsignacionLoteForWorkItem,
+} from "@/lib/asignacion-lotes/resolve-for-work-item";
 import { computeLoteIdentityKey, computeProductIdentityKey } from "@/lib/planning/order-identity";
 import { weekStartMonday } from "@/lib/operational/operational-calendar";
 import { isIntegerUnit, parseArDecimal, parseArInteger } from "@/lib/utils/ar-number-parsing";
@@ -436,12 +439,9 @@ export async function assignWorkItemDurable(
       let resolvedPackagingLote = input.packagingLote?.trim() || null;
       let resolvedPackagingVto = input.packagingVto?.trim() || null;
       const asignacionLoteId = input.asignacionLoteId?.trim() || null;
-      if (asignacionLoteId && input.sector !== "ELABORACION") {
-        const rows = await tx
-          .select()
-          .from(asignacionLotes)
-          .where(eq(asignacionLotes.id, asignacionLoteId))
-          .limit(1);
+      let loteLinkMethod: "MANUAL" | "AUTO" | null = null;
+      if (asignacionLoteId || (!resolvedPackagingLote && !resolvedPackagingVto)) {
+        const rows = await tx.select().from(asignacionLotes).where(eq(asignacionLotes.archived, false));
         const candidates = rows.map((row: typeof asignacionLotes.$inferSelect) => ({
           id: row.id,
           lote: row.lote,
@@ -453,18 +453,29 @@ export async function assignWorkItemDurable(
           fecha: row.fecha,
           archived: row.archived,
         }));
-        const fresh = findAsignacionLoteByIdForWorkItem(candidates, asignacionLoteId, {
-          cliente: input.client,
-          producto: input.product,
-        });
-        if (fresh) {
-          matchedAsignacionLoteId = fresh.id;
-          resolvedPackagingLote = fresh.lote?.trim() || null;
-          resolvedPackagingVto = fresh.vto?.trim() || null;
+        const criteria = { cliente: input.client, producto: input.product };
+        if (asignacionLoteId) {
+          const fresh = findAsignacionLoteByIdForWorkItem(candidates, asignacionLoteId, criteria);
+          if (fresh) {
+            matchedAsignacionLoteId = fresh.id;
+            loteLinkMethod = "MANUAL";
+            resolvedPackagingLote = fresh.lote?.trim() || null;
+            resolvedPackagingVto = fresh.vto?.trim() || null;
+          }
+          // Si ya no existe/no coincide se ignora en silencio: nunca bloquea.
+        } else {
+          // Sin elección ni lote tipeado: el SERVER resuelve solo si hay UNA
+          // coincidencia inequívoca (misma regla que el diálogo). Ambigua o
+          // sin coincidencia => queda «LOTE PENDIENTE DE ASIGNACIÓN», sin
+          // adivinar.
+          const resolution = resolveAsignacionLoteForWorkItem(candidates, criteria);
+          if (resolution.status === "found") {
+            matchedAsignacionLoteId = resolution.candidate.id;
+            loteLinkMethod = "AUTO";
+            resolvedPackagingLote = resolution.candidate.lote?.trim() || null;
+            resolvedPackagingVto = resolution.candidate.vto?.trim() || null;
+          }
         }
-        // Si ya no existe/no coincide (se editó/archivó mientras el
-        // diálogo estaba abierto), se ignora en silencio y se cae al
-        // packagingLote/packagingVto recibidos tal cual — nunca bloquea.
       }
 
       // Entrega programada confirmada por Producción: completa SOLO lo que quedó vacío (nunca pisa lo que el usuario
@@ -688,6 +699,10 @@ export async function assignWorkItemDurable(
           notes,
           packagingLote: resolvedPackagingLote,
           packagingVto: resolvedPackagingVto,
+          asignacionLoteId: matchedAsignacionLoteId,
+          loteLinkMethod,
+          loteLinkedAt: matchedAsignacionLoteId ? now : null,
+          loteLinkedBy: matchedAsignacionLoteId ? actor.email : null,
           packagingTotalUnits: (() => {
             const unit = unitEff ?? (input.sector === "ELABORACION" ? "kg" : "un.");
             const parsed = isIntegerUnit(unit)
@@ -793,7 +808,7 @@ export async function assignWorkItemDurable(
         note:
           `operationId=${operationId};oa=${orderMeta?.orderNumber ?? "none"};oaCreated=${orderMeta?.created ?? false}` +
           (matchedAsignacionLoteId
-            ? `;loteSource=ASIGNACION_LOTES;asignacionLoteId=${matchedAsignacionLoteId}`
+            ? `;loteSource=ASIGNACION_LOTES;asignacionLoteId=${matchedAsignacionLoteId};loteLinkMethod=${loteLinkMethod}`
             : ""),
       });
 
