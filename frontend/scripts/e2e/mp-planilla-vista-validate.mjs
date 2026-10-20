@@ -1,7 +1,7 @@
 // E2E (Chromium real, build de producción, base DESCARTABLE): Materias Primas como Excel (2/n) — columnas (ocultar /
 // ancho / recordar), filtros por columna y orden, buscar y reemplazar (con confirmación y deshacer), cola persistente de
 // cambios sin conexión (sobrevive a la recarga y se reintenta sin duplicar), tipo de movimiento en Ingresos. Escritorio + tablet.
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { chromium } from "playwright";
 import { assertE2eEnvironment, assertMarkedDatabase } from "./e2e-safety.mjs";
@@ -9,6 +9,7 @@ import { E2E_PASSWORD, E2E_USERS } from "./e2e-fixtures.mjs";
 
 const require = createRequire(import.meta.url);
 const { Pool, neonConfig } = require("@neondatabase/serverless");
+const XLSX = require("xlsx");
 neonConfig.webSocketConstructor = require("ws");
 assertE2eEnvironment();
 const BASE = process.env.GENUS_E2E_BASE_URL ?? "http://localhost:3280";
@@ -207,6 +208,73 @@ try {
   const colsTxt = await ip.locator("[data-testid=mp-ingresos-grid]").innerText();
   check("Ingresos muestra la columna «Tipo» (nuevo lote / adicional / borrador)", hdr.includes("tipo") || /Ingreso · nuevo lote|Borrador \(no mueve stock\)/.test(colsTxt), hdr.join(","));
   await iu.ctx.close();
+  }
+
+  // ===== EXPORTAR / IMPORTAR (escritorio) =====
+  if (run("io")) {
+    const xu = await openAs(E2E_USERS.materiaPrima, "desktop");
+    const xp = xu.page;
+    await openTab(xp, "Stock", GS);
+    // Filtro activo → se exporta lo que se ve.
+    await xp.locator(`[data-testid=${GS}-filters-btn]`).click();
+    await xp.locator(`[data-testid=${GS}-filter][data-col="PROVEEDOR"]`).fill("prov 1");
+    await xp.waitForTimeout(500);
+    await xp.locator(`[data-testid=${GS}-filters-btn]`).click();
+    const [dl] = await Promise.all([xp.waitForEvent("download"), xp.locator(`[data-testid=${GS}-export-csv]`).click()]);
+    const csvPath = await dl.path();
+    const csv = readFileSync(csvPath, "utf8");
+    const csvLines = csv.replace(/^\uFEFF/, "").trim().split(/\r?\n/);
+    check("Exportar CSV: respeta el filtro (4 filas + encabezado) y las tildes", csvLines.length === 5 && /Descripción/.test(csvLines[0]) && /^[^\n]*CV Materia/.test(csvLines[1]) && dl.suggestedFilename().endsWith(".csv"), `${csvLines.length} líneas · ${dl.suggestedFilename()}`);
+    const [dlx] = await Promise.all([xp.waitForEvent("download"), xp.locator(`[data-testid=${GS}-export-xlsx]`).click()]);
+    const wb = XLSX.readFile(await dlx.path());
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
+    check("Exportar Excel (.xlsx): hoja con encabezados y las 4 filas filtradas", aoa.length === 5 && dlx.suggestedFilename().endsWith(".xlsx"), `${aoa.length} filas`);
+    check("exportar no modifica datos", (await allStock()).length === 12);
+    await xp.locator(`[data-testid=${GS}-view-reset]`).click();
+    // Importar un .xlsx: vista previa → confirmar. Solo AGREGA filas; no toca las existentes.
+    const before = await q("select md5(string_agg(payload::text, '|' order by id::text)) m, count(*)::int n from inv_mp_stock");
+    const ws = XLSX.utils.aoa_to_sheet([["DESCRIPCIÓN MATERIA PRIMA", "LOTE", "CANTIDAD (KG)", "UBICACIÓN"], [`${TAG} Import 1`, "IMP1", 7, "Z1"], [`${TAG} Import 2`, "IMP2", 9, "Z2"]]);
+    const wbk = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbk, ws, "Hoja1");
+    const xlsxBuf = XLSX.write(wbk, { type: "buffer", bookType: "xlsx" });
+    await xp.getByRole("button", { name: /Pegar desde Excel/ }).click();
+    await xp.locator('input[type="file"]').setInputFiles({ name: "stock.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: xlsxBuf });
+    const importBtn = xp.getByRole("button", { name: /^Importar 2 seleccionados$/ });
+    await importBtn.waitFor({ timeout: 20_000 });
+    check("importar .xlsx: muestra vista previa de las 2 filas antes de guardar", (await stockBy(`${TAG} Import 1`)) === undefined && /CV Import 1/.test(await xp.locator("[role=dialog]").innerText()));
+    await importBtn.click();
+    check("al confirmar, se agregan las 2 filas nuevas (una vez cada una)", await waitDb(async () => (await q("select count(*)::int n from inv_mp_stock where payload->>'descripcion' like $1", [`${TAG} Import %`]))[0].n === 2, 25_000));
+    const after = await q("select count(*)::int n from inv_mp_stock where payload->>'descripcion' not like $1", [`${TAG} Import %`]);
+    check("las filas existentes quedan exactamente iguales (no se sobrescribe el inventario)", after[0].n === before[0].n);
+    await xp.screenshot({ path: `${OUT}/04-importado.png` });
+    await xu.ctx.close();
+  }
+
+  // ===== BARRA TÁCTIL (copiar / pegar / borrar / rellenar) =====
+  if (run("touch")) {
+    const tu = await browser.newContext({ baseURL: BASE, ...TIPS.tablet });
+    await tu.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(BASE).origin }).catch(() => undefined);
+    const tp = await tu.newPage();
+    await tp.goto("/login");
+    await tp.locator('input[type="email"]').fill(E2E_USERS.materiaPrima.email);
+    await tp.locator('input[type="password"]').fill(E2E_PASSWORD);
+    await tp.locator('button[type="submit"]').click();
+    await tp.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 60_000 });
+    await openTab(tp, "Stock", GS);
+    const src = await rowCell(tp, GS, `${TAG} Materia 01`, "Ubicación");
+    await clickCell(tp, src, "tablet");
+    await tp.locator(`[data-testid=${GS}-touch-copy]`).tap();
+    await tp.waitForTimeout(400);
+    const dst = await rowCell(tp, GS, `${TAG} Materia 02`, "Ubicación");
+    await clickCell(tp, dst, "tablet");
+    await tp.locator(`[data-testid=${GS}-touch-paste]`).tap();
+    check("táctil: Copiar + Pegar copia el valor de una celda a otra (se guarda en la base)", await waitDb(async () => (await stockBy(`${TAG} Materia 02`)).ubicacion === "U1", 20_000));
+    const dst2 = await rowCell(tp, GS, `${TAG} Materia 03`, "Ubicación");
+    await clickCell(tp, dst2, "tablet");
+    await tp.locator(`[data-testid=${GS}-touch-clear]`).tap();
+    check("táctil: Borrar vacía la celda elegida", await waitDb(async () => ((await stockBy(`${TAG} Materia 03`)).ubicacion ?? "") === "", 20_000));
+    await tp.screenshot({ path: `${OUT}/05-touchbar.png` });
+    await tu.close();
   }
 
   if (run("tablet")) {

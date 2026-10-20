@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowDownAZ, ArrowUpAZ, Columns3, Filter, Minus, Plus, RotateCcw } from "lucide-react";
+import { ArrowDownAZ, ArrowUpAZ, Columns3, Download, Filter, Minus, Plus, RotateCcw } from "lucide-react";
 import { EMPTY_PREFS, hasActiveFilters, toggleHidden, withWidth, type SheetViewPrefs } from "./sheet-view-prefs";
 
 type Col = { key: string; title: string; width: number };
@@ -15,6 +15,7 @@ export function SheetViewBar({
   locked,
   total,
   shown,
+  onExport,
 }: {
   testId: string;
   columns: Col[];
@@ -24,6 +25,8 @@ export function SheetViewBar({
   locked: readonly string[];
   total: number;
   shown: number;
+  /** Exporta lo que se ve (columnas visibles, filtros y orden aplicados). */
+  onExport?: (kind: "csv" | "xlsx") => void | Promise<void>;
 }) {
   const [panel, setPanel] = useState<null | "cols" | "filters">(null);
   const filtering = hasActiveFilters(prefs);
@@ -42,6 +45,16 @@ export function SheetViewBar({
           <span className="text-xs text-[var(--os-text-muted)]" data-testid={`${testId}-filter-count`}>
             Mostrando {shown} de {total}
           </span>
+        ) : null}
+        {onExport ? (
+          <>
+            <button type="button" className={btn} onClick={() => void onExport("csv")} data-testid={`${testId}-export-csv`}>
+              <Download className="size-4" aria-hidden="true" /> Exportar CSV
+            </button>
+            <button type="button" className={btn} onClick={() => void onExport("xlsx")} data-testid={`${testId}-export-xlsx`}>
+              <Download className="size-4" aria-hidden="true" /> Exportar Excel
+            </button>
+          </>
         ) : null}
         {customized ? (
           <button type="button" className={btn} onClick={() => setPrefs(EMPTY_PREFS)} data-testid={`${testId}-view-reset`}>

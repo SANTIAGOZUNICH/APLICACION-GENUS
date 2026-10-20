@@ -39,7 +39,7 @@ import {
   type ComponentType,
   type ReactNode,
 } from "react";
-import { Lock, Redo2, Replace, Trash2, Undo2 } from "lucide-react";
+import { ClipboardPaste, Copy, Eraser, Lock, Redo2, Replace, Rows3, Trash2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -1271,6 +1271,104 @@ export function GenusGrid<T>({
     setFindOpen(false);
   };
 
+  // ---- barra táctil: copiar / pegar / borrar / rellenar hacia abajo sin teclado físico ----
+  const currentRange = useCallback((): SheetRange | null => {
+    const sel = selectionRef.current;
+    if (sel) return sel;
+    const a = activeRef.current;
+    return a ? { min: a, max: a } : null;
+  }, []);
+  const touchCopy = useCallback(async () => {
+    const r = currentRange();
+    if (!r) return setNotice("Tocá una celda (o mantené y arrastrá para elegir un rango) y después «Copiar».");
+    const lines = gridRowsRef.current.slice(r.min.row, r.max.row + 1).map((row) => columnKeys.slice(r.min.col, r.max.col + 1).map((k) => String(row[k] ?? "").replace(/[\t\r\n]+/g, " ")).join("\t"));
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setNotice(`Copiado: ${lines.length} fila${lines.length === 1 ? "" : "s"} × ${r.max.col - r.min.col + 1} columna${r.max.col === r.min.col ? "" : "s"}.`);
+    } catch {
+      setNotice("El navegador no permitió copiar. Probá con el teclado (Ctrl+C) o permití el portapapeles.");
+    }
+  }, [columnKeys, currentRange]);
+  const touchPaste = useCallback(async () => {
+    const r = currentRange();
+    if (!r) return setNotice("Tocá la celda donde empieza el pegado y después «Pegar».");
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      return setNotice("El navegador no permitió leer el portapapeles. Permitilo o pegá con el teclado (Ctrl+V).");
+    }
+    const matrix = text.replace(/\r\n?/g, "\n").replace(/\n$/, "").split("\n").map((l) => l.split("\t"));
+    if (matrix.length === 0 || (matrix.length === 1 && matrix[0]!.length === 1 && matrix[0]![0] === "")) return setNotice("El portapapeles está vacío.");
+    const rowsNow = gridRowsRef.current;
+    const diffs: CellDiff[] = [];
+    const skipped: PreviewState["skipped"] = [];
+    const put = (ri: number, ci: number, raw: string) => {
+      const row = rowsNow[ri];
+      const key = columnKeys[ci];
+      const col = key ? columnByKey.get(key) : undefined;
+      if (!row || !key || !col) return;
+      const value = raw.replace(/[\r\n]+/g, " ").trim();
+      const current = String(row[key] ?? "");
+      if (current.trim() === value) return;
+      const prot = row.__prot[key];
+      if (prot) return void skipped.push({ rowLabel: row.__id, columnTitle: col.title, reason: prot });
+      if (col.noFill && !col.fillWithReason) return;
+      diffs.push({ rowId: row.__id, columnKey: key, oldValue: current, newValue: value });
+    };
+    if (matrix.length === 1 && matrix[0]!.length === 1 && (r.max.row > r.min.row || r.max.col > r.min.col)) {
+      // Un solo valor sobre un rango: llena todo el rango (como Excel).
+      for (let ri = r.min.row; ri <= r.max.row; ri += 1) for (let ci = r.min.col; ci <= r.max.col; ci += 1) put(ri, ci, matrix[0]![0]!);
+    } else {
+      matrix.forEach((cells, i) => cells.forEach((v, j) => put(r.min.row + i, r.min.col + j, v)));
+    }
+    processDiffs(diffs, skipped, [`Pegado: ${diffs.length} celda${diffs.length === 1 ? "" : "s"}`]);
+  }, [columnKeys, columnByKey, currentRange, processDiffs]);
+  const touchClear = useCallback(() => {
+    const r = currentRange();
+    if (!r) return setNotice("Tocá una celda o un rango y después «Borrar».");
+    const rowsNow = gridRowsRef.current;
+    const diffs: CellDiff[] = [];
+    const skipped: PreviewState["skipped"] = [];
+    for (let ri = r.min.row; ri <= r.max.row; ri += 1) {
+      const row = rowsNow[ri];
+      if (!row) continue;
+      for (let ci = r.min.col; ci <= r.max.col; ci += 1) {
+        const key = columnKeys[ci];
+        const col = key ? columnByKey.get(key) : undefined;
+        if (!key || !col || String(row[key] ?? "").trim() === "") continue;
+        const prot = row.__prot[key];
+        if (prot) skipped.push({ rowLabel: row.__id, columnTitle: col.title, reason: prot });
+        else if (!col.noFill) diffs.push({ rowId: row.__id, columnKey: key, oldValue: String(row[key] ?? ""), newValue: "" });
+      }
+    }
+    processDiffs(diffs, skipped);
+  }, [columnKeys, columnByKey, currentRange, processDiffs]);
+  const touchFillDown = useCallback(() => {
+    const r = currentRange();
+    if (!r || r.max.row === r.min.row) return setNotice("Elegí un rango de 2 o más filas: la primera fila se copia hacia abajo.");
+    const rowsNow = gridRowsRef.current;
+    const first = rowsNow[r.min.row];
+    if (!first) return;
+    const diffs: CellDiff[] = [];
+    const skipped: PreviewState["skipped"] = [];
+    for (let ri = r.min.row + 1; ri <= r.max.row; ri += 1) {
+      const row = rowsNow[ri];
+      if (!row) continue;
+      for (let ci = r.min.col; ci <= r.max.col; ci += 1) {
+        const key = columnKeys[ci];
+        const col = key ? columnByKey.get(key) : undefined;
+        if (!key || !col) continue;
+        const value = String(first[key] ?? "");
+        if (String(row[key] ?? "").trim() === value.trim()) continue;
+        const prot = row.__prot[key];
+        if (prot) skipped.push({ rowLabel: row.__id, columnTitle: col.title, reason: prot });
+        else if (!col.noFill) diffs.push({ rowId: row.__id, columnKey: key, oldValue: String(row[key] ?? ""), newValue: value });
+      }
+    }
+    processDiffs(diffs, skipped, [`Relleno hacia abajo: ${diffs.length} celda${diffs.length === 1 ? "" : "s"}`]);
+  }, [columnKeys, columnByKey, currentRange, processDiffs]);
+
   const computedHeight = height ?? Math.min(maxHeight, (gridRows.length + 1) * rowHeight + 24);
 
   const syncSelection = (selection: SheetRange | null) => {
@@ -1427,6 +1525,28 @@ export function GenusGrid<T>({
           ) : null}
         </div>
       </div>
+
+      {sheet && canEdit ? (
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Acciones de celdas (táctil)" data-testid={`${testId}-touchbar`}>
+          {([
+            ["copy", "Copiar", Copy, touchCopy],
+            ["paste", "Pegar", ClipboardPaste, touchPaste],
+            ["clear", "Borrar", Eraser, touchClear],
+            ["filldown", "Rellenar ↓", Rows3, touchFillDown],
+          ] as const).map(([id, label, Icon, fn]) => (
+            <button
+              key={id}
+              type="button"
+              className="inline-flex min-h-11 items-center gap-1 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3 text-xs font-medium"
+              onClick={() => void fn()}
+              data-testid={`${testId}-touch-${id}`}
+            >
+              <Icon className="size-4" aria-hidden="true" /> {label}
+            </button>
+          ))}
+          <span className="text-[11px] text-[var(--os-text-muted)]">Con el dedo: tocá una celda; mantené y arrastrá para elegir un rango.</span>
+        </div>
+      ) : null}
 
       {sheet && fillChipValid && fillChip ? (
         <div className="flex flex-wrap items-center gap-2 text-xs" data-testid={`${testId}-fill-chip`} role="group" aria-label="Opciones de relleno">

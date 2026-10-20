@@ -1,6 +1,7 @@
 "use client";
 
 import { SheetViewBar } from "./sheet-view-bar";
+import { downloadCsv, downloadXlsx, exportFileName } from "@/lib/sheet-io";
 import { EMPTY_PREFS, applySheetView, parsePrefs, prefsKey, type SheetViewPrefs } from "./sheet-view-prefs";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Rows3, Table2 } from "lucide-react";
@@ -442,6 +443,13 @@ function ExcelView<T>({
         locked={lockedKeys}
         total={rows.length}
         shown={viewRows.length}
+        onExport={async (kind) => {
+          const headers = dataColumns.map((c) => c.header);
+          const body = viewRows.map((r) => dataColumns.map((c) => textOf(c, r)));
+          const base = tableId ?? "planilla";
+          if (kind === "csv") downloadCsv(exportFileName(base, "csv"), headers, body);
+          else await downloadXlsx(exportFileName(base, "xlsx"), base, headers, body);
+        }}
       />
     ) : null}
     <GenusGrid<T>
