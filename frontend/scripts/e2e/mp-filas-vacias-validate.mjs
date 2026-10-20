@@ -120,7 +120,7 @@ try {
   await mp.waitForTimeout(1200);
   const keptVal = await (await draftCell(mp, GS, 0, "Descripción")).locator("input").first().inputValue().catch(async () => (await (await draftCell(mp, GS, 0, "Descripción")).innerText()));
   check("al recargar, la fila incompleta conserva lo escrito (almacenamiento local)", /FV Glicerina fila/.test(keptVal), keptVal);
-  await typeDraft(mp, GS, 0, "Cantidad (kg)", "25,5", "desktop");
+  await typeDraft(mp, GS, 0, "Kg lote", "25,5", "desktop");
   const created = await waitDb(async () => (await stockRows(`${TAG} Glicerina fila`)).length === 1, 15_000);
   check("al completar la fila se CREA el registro en Stock (una sola vez)", created);
   await mp.waitForTimeout(2500);
@@ -130,7 +130,7 @@ try {
   // Fecha inválida: no crea nada y avisa.
   await typeDraft(mp, GS, 0, "Descripción", `${TAG} Mala fecha`, "desktop");
   await typeDraft(mp, GS, 0, "Lote", "FV-L2", "desktop");
-  await typeDraft(mp, GS, 0, "Cantidad (kg)", "5", "desktop");
+  await typeDraft(mp, GS, 0, "Kg lote", "5", "desktop");
   await typeDraft(mp, GS, 0, "Vencimiento", "31/02/2027", "desktop");
   await mp.waitForTimeout(3000);
   check("vencimiento inválido: no se crea y se explica el error", (await stockRows(`${TAG} Mala fecha`)).length === 0 && /Vencimiento/.test(await mp.locator(`[data-testid=${GS}-drafts-error]`).first().innerText().catch(() => "")));
@@ -141,7 +141,7 @@ try {
   await openTab(tb.page, "Stock", GS);
   await typeDraft(tb.page, GS, 0, "Descripción", `${TAG} Tablet gel`, "tablet");
   await typeDraft(tb.page, GS, 0, "Lote", "FV-T1", "tablet");
-  await typeDraft(tb.page, GS, 0, "Cantidad (kg)", "12", "tablet");
+  await typeDraft(tb.page, GS, 0, "Kg lote", "12", "tablet");
   check("tablet táctil: escribir con el dedo en la fila en blanco crea el lote", await waitDb(async () => (await stockRows(`${TAG} Tablet gel`)).length === 1, 15_000));
   await tb.page.screenshot({ path: `${OUT}/02-tablet-stock.png` });
   await tb.ctx.close();

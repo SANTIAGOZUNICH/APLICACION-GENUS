@@ -1176,7 +1176,7 @@ export function GenusGrid<T>({
     }
   };
 
-  const computedHeight = height ?? Math.min(maxHeight, (rows.length + 1) * rowHeight + 24);
+  const computedHeight = height ?? Math.min(maxHeight, (gridRows.length + 1) * rowHeight + 24);
 
   const syncSelection = (selection: SheetRange | null) => {
     const a = activeRef.current;
