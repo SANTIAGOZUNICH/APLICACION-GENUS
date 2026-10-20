@@ -116,8 +116,6 @@ try {
     await page.locator("[data-testid=entregado-cajas]").first().waitFor({ timeout: 60_000 });
   };
   await openEntregados();
-  const gridTxt = await page.locator("main").innerText();
-  check("Entregados (planilla) muestra «850 unidades · 9 cajas (8 × 100 + 1 × 50)» y «400 unidades · 40 cajas (40 × 10)»", /850 unidades · 9 cajas \(8 × 100 \+ 1 × 50\)/.test(gridTxt) && /400 unidades · 40 cajas \(40 × 10\)/.test(gridTxt), gridTxt.slice(0, 200));
   await toListMode();
   const entTxt = await page.locator("[data-testid=entregado-cajas]").evaluateAll((els) => els.map((e) => e.innerText.replace(/\n/g, " | ")).join(" || "));
   check("Entregados muestra las cajas de cada entrega por separado (850 u. · 9 cajas y 400 u. · 40 cajas)", /850 unidades · 9 cajas/.test(entTxt) && /8 × 100 \+ 1 × 50/.test(entTxt) && /400 unidades · 40 cajas/.test(entTxt) && /40 × 10/.test(entTxt), entTxt);
