@@ -196,7 +196,7 @@ const PORTAL_COLUMNS = ["portal_clients.access_enabled", "portal_clients.origin"
 const PORTAL_TABLES = ["portal_clients", "portal_client_aliases", "portal_authorized_emails", "portal_login_challenges", "portal_sessions", "portal_rate_limits", "portal_email_outbox", "portal_notifications", "portal_receipt_confirmations", "portal_audit_events", "portal_holiday_overrides"];
 
 /** Objetos de 0057–0061 (Control semanal, cajas por entrega, avisos por usuario, programaciones). */
-const NEW_TABLES = ["mp_master_links", "mp_weekly_row_state", "mp_weekly_production_exclusions", "os_internal_message_users", "billing_invoices", "billing_invoice_lines", "billing_invoice_events", "billing_work_notes"];
+const NEW_TABLES = ["mp_master_links", "mp_weekly_row_state", "mp_weekly_production_exclusions", "os_internal_message_users", "billing_invoices", "billing_invoice_lines", "billing_invoice_events", "billing_work_notes", "genus_auth_activations"];
 const NEW_COLUMNS = ["work_item_delivery_lines.packing_groups", "os_notifications.target_emails", "work_items.schedule_root_id", "work_items.schedule_total"];
 
 describe("verificación de esquema después del migrate (build)", () => {
@@ -226,7 +226,7 @@ describe("verificación de esquema después del migrate (build)", () => {
     expect(res.ok).toBe(false);
     expect(res.missing.map((m) => m.object)).toEqual(REQUIRED_SCHEMA_OBJECTS.map((r) => r.object));
     expect(new Set(res.missing.map((m) => m.migration))).toEqual(
-      new Set(["0043_asignacion_lotes_local_edits", "0044_inventory_ingreso_adjuntos", "0045_scheduled_deliveries", "0046_dashboard_kpi_targets", "0047_work_item_delivery_lines", "0049_mp_load_order", "0050_entregas_correcciones", "0051_formula_drive_index", "0052_portal_clientes", "0053_portal_demo", "0054_portal_disponibilidad", "0055_portal_codigos_automaticos", "0056_ingreso_con_remito", "0057_mp_master_links", "0058_mp_weekly_row_state", "0059_delivery_line_packing", "0060_aviso_user_recipients", "0061_work_item_schedules", "0062_billing_control"])
+      new Set(["0043_asignacion_lotes_local_edits", "0044_inventory_ingreso_adjuntos", "0045_scheduled_deliveries", "0046_dashboard_kpi_targets", "0047_work_item_delivery_lines", "0049_mp_load_order", "0050_entregas_correcciones", "0051_formula_drive_index", "0052_portal_clientes", "0053_portal_demo", "0054_portal_disponibilidad", "0055_portal_codigos_automaticos", "0056_ingreso_con_remito", "0057_mp_master_links", "0058_mp_weekly_row_state", "0059_delivery_line_packing", "0060_aviso_user_recipients", "0061_work_item_schedules", "0062_billing_control", "0063_admin_account_activation"])
     );
   });
 
