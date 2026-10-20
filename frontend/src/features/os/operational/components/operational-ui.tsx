@@ -411,6 +411,7 @@ function ExcelView<T>({
         title: c.header,
         kind: c.edit?.kind ?? "text",
         basis: (sheet ? prefs.widths[c.key] : undefined) ?? widths.get(c.key) ?? 150,
+        fixedWidth: sheet && prefs.widths[c.key] != null,
         sensitive: c.edit?.sensitive,
         noFill: c.edit ? c.edit.noFill : c.readOnlyReason ?? "Columna de solo lectura.",
         fillWithReason: c.edit?.fillWithReason,

@@ -164,6 +164,8 @@ try {
   await mp.keyboard.type("COLA-1");
   await mp.keyboard.press("Enter");
   await mp.waitForTimeout(2500);
+  console.log("  [diag] failed bar:", await mp.locator(`[data-testid=${GS}-failed]`).count(), "| ubicacion db:", (await stockBy(`${TAG} Materia 05`)).ubicacion, "| estado:", await mp.locator(`[data-testid=${GS}-status]`).getAttribute("data-state").catch(() => "?"));
+  await mp.screenshot({ path: `${OUT}/03-offline.png` });
   check("sin conexión: el cambio no se guarda y queda en la barra roja con reintento", (await stockBy(`${TAG} Materia 05`)).ubicacion === "U5" && (await mp.locator(`[data-testid=${GS}-failed]`).count()) >= 1);
   await mpu.ctx.setOffline(false);
   await mp.reload();
@@ -181,6 +183,8 @@ try {
   const ip = iu.page;
   await post(ip, { action: "upsert", resource: "mp_ingresos", payload: { fecha: "2026-10-01", proveedor: "Prov CV", descripcion: `${TAG} Ingreso tipo`, codigo: `${TAG}-IT1`, lote: "CVT1", cantidad: 50 } });
   await openTab(ip, "Ingresos MP", "mp-ingresos-grid");
+  await ip.evaluate(() => { const sc = document.querySelector("[data-testid=mp-ingresos-grid] .dsg-container"); sc.scrollLeft = sc.scrollWidth; });
+  await ip.waitForTimeout(500);
   const hdr = await headers(ip, "mp-ingresos-grid");
   const colsTxt = await ip.locator("[data-testid=mp-ingresos-grid]").innerText();
   check("Ingresos muestra la columna «Tipo» (nuevo lote / adicional / borrador)", hdr.includes("tipo") || /Ingreso · nuevo lote|Borrador \(no mueve stock\)/.test(colsTxt), hdr.join(","));

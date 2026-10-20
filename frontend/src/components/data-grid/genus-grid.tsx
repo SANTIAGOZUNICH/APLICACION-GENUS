@@ -71,6 +71,8 @@ export interface GenusGridColumn<T> {
   validate?: (raw: string, row: T) => string | null;
   /** Columna sensible (identidad/trazabilidad): su edición siempre pide confirmación. */
   sensitive?: boolean;
+  /** Ancho elegido por el usuario: la columna mide exactamente `basis` (no se estira para llenar la hoja). */
+  fixedWidth?: boolean;
   /** Clase extra por celda (p. ej. «editado en GENUS» / conflicto). Opcional y aditivo. */
   cellClassName?: (row: T) => string | undefined;
   /** Nota de trazabilidad de la celda (null = sin nota): marca visible y texto al pasar el mouse. No bloquea. */
@@ -574,8 +576,8 @@ export function GenusGrid<T>({
         title: col.title,
         headerClassName: `genus-col-${colIndex}`,
         basis: col.basis ?? 140,
-        minWidth: col.minWidth ?? 80,
-        grow: 1,
+        minWidth: col.fixedWidth ? (col.basis ?? 140) : (col.minWidth ?? 80),
+        grow: col.fixedWidth ? 0 : 1,
         // shrink 0: en pantallas angostas la grilla hace scroll horizontal interno (no rompe el layout).
         shrink: 0,
         keepFocus: false,
