@@ -74,9 +74,17 @@ async function scrollToDraftCol(page, gid, colIdx) {
 }
 /** Celda de la fila en blanco número `k` (0 = la primera libre) en la columna con ese título. */
 async function draftCell(page, gid, k, title) {
-  const map = await colMap(page, gid);
-  const c = map[title.toLowerCase()];
-  if (c === undefined) throw new Error(`columna no encontrada: ${title} (${Object.keys(map)})`);
+  // La planilla virtualiza columnas: se desplaza a la derecha hasta que aparezca el encabezado buscado.
+  await page.evaluate((gid) => { document.querySelector(`[data-testid=${gid}] .dsg-container`).scrollLeft = 0; }, gid);
+  let c;
+  for (let i = 0; i < 25 && c === undefined; i++) {
+    c = (await colMap(page, gid))[title.toLowerCase()];
+    if (c === undefined) {
+      await page.evaluate((gid) => { document.querySelector(`[data-testid=${gid}] .dsg-container`).scrollLeft += 260; }, gid);
+      await page.waitForTimeout(150);
+    }
+  }
+  if (c === undefined) throw new Error(`columna no encontrada: ${title} (${Object.keys(await colMap(page, gid))})`);
   await scrollToDraftCol(page, gid, c);
   return page.locator(`[data-testid=${gid}] .genus-draft-row`).nth(k).locator(`.genus-col-${c}`).first();
 }
