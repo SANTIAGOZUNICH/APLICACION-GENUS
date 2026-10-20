@@ -39,3 +39,42 @@ describe("filas en blanco de la planilla", () => {
     expect(isDraftRowId("0b7e")).toBe(false);
   });
 });
+
+import { applyPastedToDrafts, mapPastedToDrafts, parseClipboardMatrix, type PasteCol } from "./draft-rows";
+
+const cols: PasteCol[] = [
+  { key: "FECHA", title: "Fecha", editable: true },
+  { key: "ING", title: "Ingreso", editable: false },
+  { key: "DESC", title: "Descripción", editable: true },
+  { key: "PROV", title: "Proveedor", editable: true },
+  { key: "TOTAL", title: "Total", editable: false },
+  { key: "LOTE", title: "Lote", editable: true },
+];
+
+describe("pegar varias filas en las filas en blanco", () => {
+  it("parsea el portapapeles de Excel (tabs, saltos, comillas)", () => {
+    expect(parseClipboardMatrix('a\t"b c"\r\nx\ty\r\n')).toEqual([["a", "b c"], ["x", "y"]]);
+  });
+  it("sin encabezados: reparte en columnas EDITABLES consecutivas (saltea las calculadas)", () => {
+    const m = [["21/10/2026", "Agua", "ACME", "L1"], ["22/10/2026", "Gel", "ACME", "L2"]];
+    expect(mapPastedToDrafts(m, cols, 0)).toEqual([
+      { FECHA: "21/10/2026", DESC: "Agua", PROV: "ACME", LOTE: "L1" },
+      { FECHA: "22/10/2026", DESC: "Gel", PROV: "ACME", LOTE: "L2" },
+    ]);
+  });
+  it("con encabezados que coinciden: mapea por nombre y no carga la fila de títulos", () => {
+    const m = [["Lote", "Descripción", "columna rara"], ["L9", "Glicerina", "x"]];
+    expect(mapPastedToDrafts(m, cols, 0)).toEqual([{ LOTE: "L9", DESC: "Glicerina" }]);
+  });
+  it("arranca desde la columna activa", () => {
+    expect(mapPastedToDrafts([["Gel", "ACME"]], cols, 2)).toEqual([{ DESC: "Gel", PROV: "ACME" }]);
+  });
+  it("aplica sobre las filas en blanco y agrega filas libres si el pegado es más largo", () => {
+    const base = [newDraft(() => "a"), newDraft(() => "b")];
+    const r = applyPastedToDrafts(base, 1, [{ LOTE: "1" }, { LOTE: "2" }, {}], () => `n${Math.random()}`);
+    expect(r.drafts.length).toBe(4);
+    expect(r.drafts[1]!.values.LOTE).toBe("1");
+    expect(r.drafts[2]!.values.LOTE).toBe("2");
+    expect(r.touchedIds).toEqual([base[1]!.id, r.drafts[2]!.id]);
+  });
+});
