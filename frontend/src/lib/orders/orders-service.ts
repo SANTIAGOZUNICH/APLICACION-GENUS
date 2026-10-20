@@ -51,7 +51,7 @@ import {
   OrdersNotFoundError,
   OrdersValidationError,
 } from "@/lib/orders/types";
-import { assertOrderTypeMatch, validateDeliver } from "@/lib/orders/validators";
+import { assertOrderTypeMatch, classifyDeliverMissing, validateDeliver } from "@/lib/orders/validators";
 import { normalizeOptionalReason, sanitizeOptionalReason } from "@/lib/lifecycle";
 
 function nowIso(): string {
@@ -1002,8 +1002,16 @@ export class OrdersService {
       throw new OrdersValidationError("La orden ya está completa.");
     }
 
-    const missing = validateDeliver(current.formData);
+    const classified = classifyDeliverMissing(current.formData);
+    const missing = [...classified.critical, ...classified.secondary];
     const allowIncomplete = Boolean(opts?.allowIncomplete);
+    // OE: lo de trazabilidad / stock / lote NO se puede omitir ni con confirmación excepcional. Completar no libera el lote.
+    if (current.type === "OE" && classified.critical.length > 0) {
+      throw new OrdersValidationError(
+        `No se puede completar la OE todavía: faltan datos obligatorios (${classified.critical.join(", ")}). ` +
+          "Son de trazabilidad, lote o consumo de materias primas: completalos y volvé a intentar."
+      );
+    }
     if (missing.length > 0 && !allowIncomplete) {
       throw new OrdersValidationError(
         `Esta orden tiene información sin completar: ${missing.join(", ")}. ` +
@@ -1040,8 +1048,13 @@ export class OrdersService {
     }
 
     const ts = nowIso();
-    const status = missing.length > 0 ? "COMPLETA_CON_PENDIENTES" : "COMPLETA";
+    // OE: el estado principal es COMPLETA aunque queden datos secundarios pendientes (se muestra un indicador aparte).
+    // OA conserva su estado histórico COMPLETA_CON_PENDIENTES.
+    const status = current.type === "OE" ? "COMPLETA" : missing.length > 0 ? "COMPLETA_CON_PENDIENTES" : "COMPLETA";
     let normalized = normalizeOrderContent(current.formData);
+    if (normalized.kind === "OE" && classified.secondary.length > 0) {
+      normalized = { ...normalized, completion: { pendingAtCompletion: classified.secondary, confirmedBy: actor.email, confirmedAt: ts, resolved: [] } };
+    }
     if (normalized.kind === "OE") {
       normalized = normalizeOrderContent(
         mergeOeDeliveryObservation(
@@ -1145,6 +1158,8 @@ export class OrdersService {
         templateId: updated.templateId,
         templateUnchanged: true,
         pendingFields: missing,
+        exceptionalConfirmation: missing.length > 0,
+        confirmedAt: ts,
         status,
         meStockNegativeAllowed: Boolean(opts?.allowNegativeMeStock),
         mpStockNegativeAuthorized: mpConsumption?.negativeAuthorized ?? false,
@@ -1176,6 +1191,56 @@ export class OrdersService {
       sectors: ["PRODUCCION"],
       href: `/os?view=${current.type === "OE" ? "ordenes-elaboracion" : "ordenes-acondicionamiento"}&orderId=${id}`,
       orderId: id,
+    });
+    return updated;
+  }
+
+  /**
+   * Completa DESPUÉS los datos secundarios que quedaron pendientes al completar una OE (fecha, procedimiento, cantidad
+   * obtenida, fecha de finalización). Solo llena campos que siguen vacíos; no reabre la elaboración, no toca materias
+   * primas, lotes ni kg reales y no genera movimientos de stock. Queda auditado.
+   */
+  async completePendingFields(
+    id: string,
+    actor: OrdersActor,
+    patch: { date?: string; fechaFin?: string; cantidadObtenida?: number | null }
+  ) {
+    const current = await this.requireOrder(id);
+    assertOeNotDeleted(current);
+    if (current.type !== "OE" || current.formData.kind !== "OE") throw new OrdersValidationError("Solo las OE tienen datos pendientes por completar.");
+    if (current.status !== "COMPLETA" && current.status !== "COMPLETA_CON_PENDIENTES") throw new OrdersValidationError("La OE todavía no está completada: editala normalmente.");
+    const sectorOk = canOrderAction("OE", "edit", actor.sector) || actor.sector === "PRODUCCION" || actor.sector === "DIRECCION";
+    if (!sectorOk) throw new OrdersForbiddenError("Tu sector no puede completar datos pendientes de la OE.");
+    const fd = current.formData;
+    const filled: string[] = [];
+    const next: OeContent = { ...fd, header: { ...fd.header }, processControl: { ...fd.processControl } };
+    if (patch.date !== undefined && patch.date.trim() && !fd.header.date.trim()) {
+      next.header.date = patch.date.trim();
+      filled.push("Fecha");
+    }
+    if (patch.fechaFin !== undefined && patch.fechaFin.trim() && !fd.processControl.fechaFin.trim()) {
+      next.processControl.fechaFin = patch.fechaFin.trim();
+      filled.push("Fecha de finalización");
+    }
+    if (patch.cantidadObtenida != null && Number.isFinite(patch.cantidadObtenida) && patch.cantidadObtenida >= 0 && fd.processControl.cantidadObtenida == null) {
+      next.processControl.cantidadObtenida = patch.cantidadObtenida;
+      filled.push("Cantidad obtenida");
+    }
+    if (filled.length === 0) throw new OrdersValidationError("No hay datos nuevos para guardar: solo se completan campos pendientes que sigan vacíos.");
+    const ts = nowIso();
+    const record = fd.completion ?? { pendingAtCompletion: [], confirmedBy: actor.email, confirmedAt: ts, resolved: [] };
+    const finalContent = normalizeOrderContent({ ...next, completion: { ...record, resolved: [...record.resolved, ...filled.map((field) => ({ field, by: actor.email, at: ts }))] } });
+    const updated = await this.repo.updateOrderOptimistic(id, current.version, { updatedBy: actor.email, formData: finalContent });
+    if (!updated) {
+      const fresh = await this.repo.getOrder(id);
+      throw new OrdersConflictError("Conflicto al completar los datos pendientes.", fresh!);
+    }
+    await this.repo.appendAudit({
+      orderId: id,
+      eventType: "OE_DATOS_PENDIENTES_COMPLETADOS",
+      actor: actor.email,
+      actorSector: actor.sector,
+      metadata: { orderNumber: current.orderNumber, fields: filled, stockMovements: 0 },
     });
     return updated;
   }

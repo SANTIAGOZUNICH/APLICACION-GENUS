@@ -65,6 +65,13 @@ interface NativeOrdersListProps {
   title?: string;
 }
 
+function hasOpenPendingData(formData: unknown): boolean {
+  const c = (formData as { completion?: { pendingAtCompletion?: string[]; resolved?: Array<{ field: string }> } } | null)?.completion;
+  if (!c?.pendingAtCompletion?.length) return false;
+  const done = new Set((c.resolved ?? []).map((x) => x.field));
+  return c.pendingAtCompletion.some((f) => !done.has(f));
+}
+
 export function NativeOrdersListView({
   type,
   oaSector,
@@ -296,7 +303,17 @@ export function NativeOrdersListView({
             ) : null}
           </span>
         ) : (
-          <StatusChip status={statusLabel(r.status)} />
+          <span className="flex flex-col gap-0.5">
+            <StatusChip status={statusLabel(r.status)} />
+            {r.type === "OE" && hasOpenPendingData(r.formData) ? (
+              <span
+                className="w-fit rounded bg-amber-500/20 px-1.5 text-[length:var(--os-density-font-caption)] font-medium text-amber-800"
+                data-testid="order-pending-chip"
+              >
+                Datos pendientes
+              </span>
+            ) : null}
+          </span>
         ),
     },
     {
