@@ -54,6 +54,7 @@ import { diffGridRows, previewValue, type CellDiff, type GenusGridRow } from "./
 import { defaultFillMode, fillValues, type FillMode } from "./fill-series";
 import { SheetHScrollbar, SheetVScrollbar, SHEET_BAR_SIZE } from "./sheet-scrollbars";
 import { useSheetGestures, type FillPlan, type SheetRange } from "./sheet-gestures";
+import { DRAFT_PREFIX, isDraftRowId, missingRequired, newDraft, parseDrafts, serializeDrafts, topUpDrafts, type DraftRow } from "./draft-rows";
 
 export interface GenusGridColumn<T> {
   key: string;
@@ -150,6 +151,27 @@ export interface GenusGridProps<T> {
   sheet?: boolean;
   /** Modo planilla: eliminación de filas completas sin motivo ni confirmación (con Deshacer). */
   rowDelete?: GenusGridRowDelete;
+  /** Modo planilla: filas en blanco al final para crear registros escribiendo directamente. */
+  draftRows?: GenusGridDraftRows;
+}
+
+/**
+ * Filas en blanco al final (como Excel): se escribe directo en ellas y el registro se CREA recién cuando la fila tiene
+ * todos los datos obligatorios (nunca se guarda una fila incompleta). Mientras tanto vive en el navegador.
+ */
+export interface GenusGridDraftRows {
+  /** Columnas que se pueden escribir en una fila nueva (el resto se calcula al crear y queda bloqueado). */
+  createKeys: string[];
+  /** Columnas obligatorias para crear el registro. */
+  requiredKeys: string[];
+  /** Clave de almacenamiento local (incluir el usuario y la planilla) para no perder lo escrito si se corta la conexión. */
+  storageKey: string;
+  /** Cantidad de filas vacías que se mantienen siempre al final (por defecto 8). */
+  minBlank?: number;
+  /** Validación de la fila completa antes de crear (null = válida). */
+  validate?: (values: Record<string, string>) => string | null;
+  /** Crea el registro. `draftId` es el id definitivo: reintentar con el mismo id NUNCA duplica. */
+  onCreate: (draftId: string, values: Record<string, string>) => Promise<{ ok: boolean; message?: string }>;
 }
 
 export interface GenusGridRowDelete {
@@ -180,6 +202,15 @@ interface FailedBatch {
 interface CellCtx {
   noteSkip: (rowLabel: string, columnTitle: string, reason: string) => void;
   noteTouch: (reason: string) => void;
+}
+
+/** UUID v4: también es el id definitivo del registro que se crea desde una fila en blanco. */
+function makeDraftId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
 }
 
 const cellKey = (rowId: string, columnKey: string) => `${rowId}\u0000${columnKey}`;
@@ -234,6 +265,49 @@ function GenusCell({
         </span>
       ) : null}
       {note ? <span className="genus-cell-note" aria-label={note} data-genus-note="1" /> : null}
+    </div>
+  );
+}
+
+/** Resumen de las filas nuevas en preparación: qué falta, errores con reintento y «agregar filas». */
+function DraftInfo({
+  drafts,
+  requiredKeys,
+  titleOf,
+  testId,
+  onAddRows,
+  onRetry,
+}: {
+  drafts: DraftRow[];
+  requiredKeys: string[];
+  titleOf: (key: string) => string;
+  testId: string;
+  onAddRows: () => void;
+  onRetry: (id: string) => void;
+}) {
+  const used = drafts.filter((d) => Object.values(d.values).some((v) => v.trim() !== ""));
+  const incomplete = used.filter((d) => d.status === "editing" && missingRequired(d, requiredKeys).length > 0);
+  const failed = used.filter((d) => d.status === "error");
+  const missingTitles = [...new Set(incomplete.flatMap((d) => missingRequired(d, requiredKeys)))].map(titleOf);
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--os-text-muted)]" data-testid={`${testId}-drafts-info`}>
+      <span>Filas en blanco al final: escribí directo y la fila se crea sola cuando tiene {requiredKeys.map(titleOf).join(", ")}.</span>
+      {incomplete.length > 0 ? (
+        <span className="rounded bg-amber-500/15 px-2 py-0.5 text-amber-800 dark:text-amber-300" data-testid={`${testId}-drafts-incomplete`}>
+          {incomplete.length} fila{incomplete.length === 1 ? "" : "s"} nueva{incomplete.length === 1 ? "" : "s"} sin completar (falta {missingTitles.join(", ")}): no se guarda{incomplete.length === 1 ? "" : "n"} hasta completar{incomplete.length === 1 ? "la" : "las"}.
+        </span>
+      ) : null}
+      {failed.map((d) => (
+        <span key={d.id} className="inline-flex items-center gap-1 rounded bg-red-500/15 px-2 py-0.5 text-red-800 dark:text-red-300" data-testid={`${testId}-drafts-error`}>
+          No se creó: {d.error ?? "error"}
+          <button type="button" className="min-h-8 rounded border border-current px-2 font-medium" onClick={() => onRetry(d.id)}>
+            Reintentar
+          </button>
+        </span>
+      ))}
+      <button type="button" className="min-h-11 rounded border border-[var(--os-border)] px-3 font-medium text-[var(--os-text)]" onClick={onAddRows} data-testid={`${testId}-drafts-add`}>
+        + 10 filas
+      </button>
     </div>
   );
 }
@@ -329,6 +403,7 @@ export function GenusGrid<T>({
   rowClassName,
   sheet = false,
   rowDelete,
+  draftRows,
 }: GenusGridProps<T>) {
   const [reasonText, setReasonText] = useState("");
   const gridRef = useRef<DataSheetGridRef>(null);
@@ -352,6 +427,20 @@ export function GenusGrid<T>({
   const [rowDeleteResult, setRowDeleteResult] = useState<{ message: string; undo?: () => Promise<void> } | null>(null);
   const [selectedRowCount, setSelectedRowCount] = useState(0);
   const [selectionLabel, setSelectionLabel] = useState("");
+  const minBlank = draftRows?.minBlank ?? 8;
+  const [drafts, setDrafts] = useState<DraftRow[]>(() => {
+    if (!draftRows) return [];
+    let stored: DraftRow[] = [];
+    try {
+      if (typeof window !== "undefined") stored = parseDrafts(window.localStorage.getItem(draftRows.storageKey));
+    } catch {
+      /* sin almacenamiento local: arranca vacío */
+    }
+    return topUpDrafts(stored, minBlank, makeDraftId);
+  });
+  const draftsRef = useRef(drafts);
+  const draftTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const applyDraftDiffsRef = useRef<(diffs: CellDiff[]) => void>(() => {});
 
   const undoStack = useRef<GenusGridCellChange[][]>([]);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
@@ -380,8 +469,24 @@ export function GenusGrid<T>({
           if (ov) out.__st[col.key] = ov.status;
         }
         return out;
-      }),
-    [rows, columns, overlay, rowId, rowVersion, canEdit, readOnlyReason]
+      }).concat(
+        draftRows
+          ? drafts.map((d) => {
+              const out: GenusGridRow = { __id: `${DRAFT_PREFIX}${d.id}`, __version: "", __prot: {}, __st: {}, __note: {} };
+              for (const col of columns) {
+                out[col.key] = d.values[col.key] ?? "";
+                out.__prot[col.key] = !canEdit
+                  ? (readOnlyReason ?? "Tu sector no puede editar esta tabla.")
+                  : draftRows.createKeys.includes(col.key)
+                    ? null
+                    : "Se completa solo al crear el registro.";
+                if (d.status !== "editing") out.__st[col.key] = d.status === "saving" ? "saving" : "error";
+              }
+              return out;
+            })
+          : []
+      ),
+    [rows, columns, overlay, rowId, rowVersion, canEdit, readOnlyReason, draftRows, drafts]
   );
   const gridRowsRef = useRef(gridRows);
 
@@ -398,6 +503,7 @@ export function GenusGrid<T>({
   useLayoutEffect(() => {
     rowByIdRef.current = rowById;
     gridRowsRef.current = gridRows;
+    draftsRef.current = drafts;
   });
   useLayoutEffect(() => {
   ctx.current = {
@@ -654,9 +760,103 @@ export function GenusGrid<T>({
     if (batch) void runCommit(batch, { useLatestVersion: true, recordUndo: true, keepRedo: true });
   }, [runCommit]);
 
+  // ---- filas en blanco: se crean recién cuando están completas; mientras tanto viven en el navegador ----
+  const submitDraft = useCallback(
+    async (id: string) => {
+      if (!draftRows) return;
+      const d = draftsRef.current.find((x) => x.id === id);
+      if (!d || d.status === "saving") return;
+      if (missingRequired(d, draftRows.requiredKeys).length > 0) return;
+      const invalid = draftRows.validate?.(d.values) ?? null;
+      const patch = (p: Partial<DraftRow>) => setDrafts((prev) => prev.map((x) => (x.id === id ? { ...x, ...p } : x)));
+      if (invalid) {
+        patch({ status: "error", error: invalid });
+        setNotice(`Fila nueva no creada — ${invalid}`);
+        return;
+      }
+      patch({ status: "saving", error: undefined });
+      setSaveState("saving");
+      let res: { ok: boolean; message?: string };
+      try {
+        res = await draftRows.onCreate(d.id, d.values);
+      } catch (e) {
+        res = { ok: false, message: friendlySaveError(e, "No se pudo crear la fila.") };
+      }
+      if (res.ok) {
+        setDrafts((prev) => topUpDrafts(prev.filter((x) => x.id !== id), minBlank, makeDraftId));
+        setSaveState("saved");
+        setSavedCount((n) => n + 1);
+        setNotice(res.message ?? null);
+        onReload?.();
+      } else {
+        patch({ status: "error", error: res.message ?? "No se pudo crear la fila." });
+        setSaveState("error");
+        setNotice(`Fila nueva no creada — ${res.message ?? "error"}. Lo escrito se conserva: corregí la fila o tocá una celda para reintentar.`);
+      }
+    },
+    [draftRows, minBlank, onReload]
+  );
+  const scheduleDraftSubmit = useCallback(
+    (id: string) => {
+      const old = draftTimers.current.get(id);
+      if (old) clearTimeout(old);
+      // Pequeña espera: el usuario suele seguir escribiendo las celdas de la misma fila (ubicación, observaciones…).
+      draftTimers.current.set(id, setTimeout(() => void submitDraft(id), 1200));
+    },
+    [submitDraft]
+  );
+  useLayoutEffect(() => {
+    applyDraftDiffsRef.current = (diffs) => {
+      const touched = new Set<string>();
+      setDrafts((prev) =>
+        topUpDrafts(
+          prev.map((d) => {
+            const mine = diffs.filter((x) => x.rowId === `${DRAFT_PREFIX}${d.id}`);
+            if (mine.length === 0) return d;
+            touched.add(d.id);
+            const values = { ...d.values };
+            for (const x of mine) values[x.columnKey] = x.newValue;
+            return { ...d, values, status: d.status === "saving" ? d.status : "editing", error: undefined };
+          }),
+          minBlank,
+          makeDraftId
+        )
+      );
+      // setDrafts es asíncrono: los ids tocados se calculan a partir de los diffs.
+      for (const x of diffs) touched.add(x.rowId.slice(DRAFT_PREFIX.length));
+      touched.forEach((id) => scheduleDraftSubmit(id));
+    };
+  }, [minBlank, scheduleDraftSubmit]);
+  // Conserva en el navegador lo escrito en filas todavía no creadas (corte de conexión, recarga).
+  useEffect(() => {
+    if (!draftRows) return;
+    try {
+      const raw = serializeDrafts(drafts);
+      if (raw === "[]") window.localStorage.removeItem(draftRows.storageKey);
+      else window.localStorage.setItem(draftRows.storageKey, raw);
+    } catch {
+      /* sin almacenamiento local */
+    }
+  }, [drafts, draftRows]);
+  // Al volver la conexión se reintentan las filas completas que habían fallado.
+  useEffect(() => {
+    if (!draftRows) return;
+    const onOnline = () => draftsRef.current.filter((d) => d.status === "error").forEach((d) => void submitDraft(d.id));
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, [draftRows, submitDraft]);
+  useEffect(() => {
+    const timers = draftTimers.current;
+    return () => timers.forEach((t) => clearTimeout(t));
+  }, []);
+
   // ---- cambios (edición, pegado, suprimir, relleno): validación + decisión de cómo guardarlos ----
   const processDiffs = useCallback(
-    (diffs: CellDiff[], skipped: PreviewState["skipped"], extraNotes: string[] = [], autoReason?: string) => {
+    (allDiffs: CellDiff[], skipped: PreviewState["skipped"], extraNotes: string[] = [], autoReason?: string) => {
+      // Las filas en blanco del final son locales: se actualizan aparte y se crean recién al estar completas.
+      const draftDiffs = allDiffs.filter((d) => isDraftRowId(d.rowId));
+      const diffs = draftDiffs.length ? allDiffs.filter((d) => !isDraftRowId(d.rowId)) : allDiffs;
+      if (draftDiffs.length) applyDraftDiffsRef.current(draftDiffs);
       if (diffs.length === 0 && skipped.length === 0 && extraNotes.length === 0) return;
 
       const changes: GenusGridCellChange[] = [];
@@ -858,7 +1058,7 @@ export function GenusGrid<T>({
     const sel = selectionRef.current;
     if (!sel) return;
     const rowsNow = gridRowsRef.current;
-    const ids = rowsNow.slice(sel.min.row, sel.max.row + 1).map((r) => r.__id);
+    const ids = rowsNow.slice(sel.min.row, sel.max.row + 1).map((r) => r.__id).filter((id) => !isDraftRowId(id));
     const ok: string[] = [];
     const blocked: string[] = [];
     for (const id of ids) {
@@ -976,7 +1176,7 @@ export function GenusGrid<T>({
     }
   };
 
-  const computedHeight = height ?? Math.min(maxHeight, (rows.length + 1) * rowHeight + 24);
+  const computedHeight = height ?? Math.min(maxHeight, (gridRows.length + 1) * rowHeight + 24);
 
   const syncSelection = (selection: SheetRange | null) => {
     const a = activeRef.current;
@@ -1037,10 +1237,11 @@ export function GenusGrid<T>({
       stickyRightColumn={stickyRight}
       gutterColumn={{ basis: 44, minWidth: 44, title: "#" } as never}
       rowClassName={
-        rowClassName
+        rowClassName || draftRows
           ? ({ rowData }) => {
+              if (isDraftRowId(rowData.__id)) return "genus-draft-row";
               const source = rowByIdRef.current.get(rowData.__id);
-              return source ? rowClassName(source) : undefined;
+              return source && rowClassName ? rowClassName(source) : undefined;
             }
           : undefined
       }
@@ -1258,6 +1459,16 @@ export function GenusGrid<T>({
         )}
       </div>
 
+      {draftRows && canEdit ? (
+        <DraftInfo
+          drafts={drafts}
+          requiredKeys={draftRows.requiredKeys}
+          titleOf={(k) => columnByKey.get(k)?.title ?? k}
+          testId={testId}
+          onAddRows={() => setDrafts((prev) => [...prev, ...Array.from({ length: 10 }, () => newDraft(makeDraftId))])}
+          onRetry={(id) => void submitDraft(id)}
+        />
+      ) : null}
       {hint && <p className="text-[11px] text-[var(--os-text-muted)]">{hint}</p>}
 
       <Dialog open={preview !== null} onOpenChange={(open) => !open && setPreview(null)}>
