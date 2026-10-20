@@ -509,14 +509,13 @@ describe("deleteOa — eliminación manual de OA (soft-delete/tombstone)", () =>
     expect(stillThere?.deletedAt).toBeNull();
   });
 
-  it("motivo vacío se rechaza — es obligatorio para eliminar OA", async () => {
+  it("el motivo es opcional: eliminar sin motivo funciona y registra usuario/fecha", async () => {
     const oa = await makeOa();
-    await expect(service.deleteOa(oa.id, calidad, "")).rejects.toBeInstanceOf(
-      OrdersValidationError
-    );
-    await expect(service.deleteOa(oa.id, calidad, "   ")).rejects.toBeInstanceOf(
-      OrdersValidationError
-    );
+    const deleted = await service.deleteOa(oa.id, produccion, "");
+    expect(deleted.deletedAt).not.toBeNull();
+    expect(deleted.deletedBy).toBe(produccion.email);
+    const event = repo.audits.find((a) => a.orderId === oa.id && a.eventType === "ORDER_OA_DELETED");
+    expect(event?.actor).toBe(produccion.email);
   });
 
   it("duplicado sin relaciones: elimina la OA candidata y conserva la OA correcta (test obligatorio #1, #11)", async () => {
@@ -567,7 +566,7 @@ describe("deleteOa — eliminación manual de OA (soft-delete/tombstone)", () =>
     expect(deleted.deletedAt).not.toBeNull();
   });
 
-  it("Calidad elimina una OA COMPLETA, con lote/VTO/cantidad/operarios cargados (test obligatorio #2, #4, #5)", async () => {
+  it("una OA COMPLETA con producción cargada se conserva: no se elimina (nada pendiente para cancelar)", async () => {
     const oa = await makeOa();
     const withData = {
       ...(await repo.getOrder(oa.id))!,
@@ -584,35 +583,28 @@ describe("deleteOa — eliminación manual de OA (soft-delete/tombstone)", () =>
     };
     repo.orders.set(oa.id, withData);
 
-    const deleted = await service.deleteOa(oa.id, calidad, "Duplicada de otra OA completa");
-    expect(deleted.deletedAt).not.toBeNull();
-    expect(deleted.status).toBe("COMPLETA"); // el status original no cambia, solo se marca eliminada
-    expect(deleted.lot).toBe("G26080");
+    await expect(service.deleteOa(oa.id, calidad, "")).rejects.toBeInstanceOf(OrdersValidationError);
+    const after = await repo.getOrder(oa.id);
+    expect(after?.deletedAt).toBeNull();
+    expect(after?.status).toBe("COMPLETA");
+    expect(after?.lot).toBe("G26080");
   });
 
-  it("Calidad elimina una OA vinculada a un trabajo activo, con entregas y decisión de Calidad, sin bloquear — no rompe la integridad de esas relaciones (test obligatorio #3, #10)", async () => {
+  it("OA con decisión de Calidad se conserva; OA en curso con entregas se cancela solo lo pendiente (ANULADA) sin borrarla", async () => {
+    const q = await makeOa();
+    repo.oaReferences.set(q.id, { activeWorkItemCount: 1, activeDeliveryCount: 2, hasQualityDecision: true });
+    await expect(service.deleteOa(q.id, produccion, "")).rejects.toBeInstanceOf(OrdersValidationError);
+
     const oa = await makeOa();
-    repo.oaReferences.set(oa.id, {
-      activeWorkItemCount: 1,
-      activeDeliveryCount: 2,
-      hasQualityDecision: true,
-    });
-
-    const deleted = await service.deleteOa(oa.id, calidad, "Duplicada — se conserva la otra OA del mismo lote");
-    expect(deleted.deletedAt).not.toBeNull();
-
-    // La referencia (work_item/entrega/decisión) queda documentada en el
-    // audit trail, no bloqueada ni alterada — deleteOa() nunca escribe en
-    // esas tablas, solo marca deletedAt en la propia OA.
-    const event = repo.audits.find((a) => a.orderId === oa.id && a.eventType === "ORDER_OA_DELETED");
-    const metadata = event?.metadata as {
-      hadActiveWorkItems?: number;
-      hadActiveDeliveries?: number;
-      hadQualityDecision?: boolean;
-    };
-    expect(metadata?.hadActiveWorkItems).toBe(1);
-    expect(metadata?.hadActiveDeliveries).toBe(2);
-    expect(metadata?.hadQualityDecision).toBe(true);
+    repo.oaReferences.set(oa.id, { activeWorkItemCount: 1, activeDeliveryCount: 2, hasQualityDecision: false });
+    const res = await service.deleteOa(oa.id, produccion, "");
+    expect(res.deletedAt).toBeNull();
+    expect(res.status).toBe("ANULADA");
+    const event = repo.audits.find((a) => a.orderId === oa.id && a.eventType === "ORDER_OA_CANCELLED_SAFE");
+    expect(event).toBeTruthy();
+    expect((event?.metadata as { hadActiveDeliveries?: number }).hadActiveDeliveries).toBe(2);
+    // idempotente
+    await expect(service.deleteOa(oa.id, produccion, "")).resolves.toMatchObject({ status: "ANULADA" });
   });
 
   it("Calidad elimina una OA ANULADA — el soft-delete no destruye nada, solo la retira del listado activo", async () => {

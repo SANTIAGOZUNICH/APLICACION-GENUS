@@ -50,9 +50,7 @@ import {
   ListSelectionToolbar,
   useListSelectionMode,
 } from "../components/list-selection-mode";
-import {
-  deleteEmptyDraftApi,
-} from "@/lib/orders/orders-client";
+import { deleteEmptyDraftApi, deleteOaApi } from "@/lib/orders/orders-client";
 
 type TabKey = "pendientes" | "completas";
 
@@ -213,7 +211,9 @@ export function NativeOrdersListView({
     return new Set(
       items
         .filter((order) =>
-          buildOrderLifecycleMenuItems(order, sectorId).some((item) => item.action === "eliminar")
+          buildOrderLifecycleMenuItems(order, sectorId).some(
+            (item) => item.action === "eliminar" || (order.type === "OA" && item.action === "eliminar_definitivo")
+          )
         )
         .map((order) => order.id)
     );
@@ -763,8 +763,10 @@ export function NativeOrdersListView({
           bulkPending
             ? syntheticLifecycleItem(
                 "eliminar",
-                "Eliminar borradores",
-                bulkDeleteConfirmMessage(sel.selectedCount)
+                type === "OA" ? "Eliminar órdenes" : "Eliminar borradores",
+                type === "OA"
+                  ? `Se eliminarán ${sel.selectedCount} OA seleccionada(s). Si alguna tiene entregas, solo se cancela lo pendiente; las que tienen producción completa o decisión de Calidad se omiten. Queda registrado quién y cuándo.`
+                  : bulkDeleteConfirmMessage(sel.selectedCount)
               )
             : null
         }
@@ -782,7 +784,9 @@ export function NativeOrdersListView({
               continue;
             }
             try {
-              await deleteEmptyDraftApi(session, id);
+              const rec = items.find((o) => o.id === id);
+              if (rec?.type === "OA" && rec.status !== "BORRADOR") await deleteOaApi(session, id, "");
+              else await deleteEmptyDraftApi(session, id);
               ok += 1;
             } catch {
               failed += 1;
@@ -793,7 +797,7 @@ export function NativeOrdersListView({
           setBulkBusy(false);
           setRefreshTick((v) => v + 1);
           const parts = [`${ok} eliminada(s)`];
-          if (skipped) parts.push(`${skipped} omitida(s) (no borrador eliminable)`);
+          if (skipped) parts.push(`${skipped} omitida(s) (no eliminable)`);
           if (failed) parts.push(`${failed} error(es)`);
           setError(parts.join(" · "));
         }}

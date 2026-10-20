@@ -47,10 +47,10 @@ describe("Role Engine — F9.3", () => {
     expect(calidad.sidebarItems).toContain("ordenes_acondicionamiento");
   });
 
-  it("Producción expone OE pero NO la pestaña independiente de OA — la infraestructura de OA sigue activa vía asignación de trabajos", () => {
+  it("Producción expone OE y la pestaña de OA (consulta y eliminación segura)", () => {
     const produccion = resolveSectorHome("PRODUCCION");
     expect(produccion.sidebarItems).toContain("ordenes_elaboracion");
-    expect(produccion.sidebarItems).not.toContain("ordenes_acondicionamiento");
+    expect(produccion.sidebarItems).toContain("ordenes_acondicionamiento");
     expect(produccion.sidebarItems).toContain("pedidos");
     expect(produccion.sidebarItems).not.toContain("ordenes");
   });
