@@ -54,7 +54,7 @@ import { diffGridRows, previewValue, type CellDiff, type GenusGridRow } from "./
 import { defaultFillMode, fillValues, type FillMode } from "./fill-series";
 import { SheetHScrollbar, SheetVScrollbar, SHEET_BAR_SIZE } from "./sheet-scrollbars";
 import { useSheetGestures, type FillPlan, type SheetRange } from "./sheet-gestures";
-import { DRAFT_PREFIX, isDraftRowId, missingRequired, newDraft, parseDrafts, serializeDrafts, topUpDrafts, type DraftRow } from "./draft-rows";
+import { DRAFT_PREFIX, applyPastedToDrafts, isDraftRowId, mapPastedToDrafts, missingRequired, newDraft, parseClipboardMatrix, parseDrafts, serializeDrafts, topUpDrafts, type DraftRow } from "./draft-rows";
 
 export interface GenusGridColumn<T> {
   key: string;
@@ -1273,6 +1273,49 @@ export function GenusGrid<T>({
     setFindOpen(false);
   };
 
+  // ---- pegar varias filas (Excel/Sheets) sobre las filas en blanco: se mapea a las columnas editables y se crean al completarse ----
+  const pasteTextIntoDrafts = useCallback(
+    (text: string): boolean => {
+      if (!draftRows || !canEdit) return false;
+      const active = activeRef.current ?? selectionRef.current?.min ?? null;
+      if (!active) return false;
+      const rowsNow = gridRowsRef.current;
+      if (!isDraftRowId(rowsNow[active.row]?.__id ?? "")) return false;
+      const matrix = parseClipboardMatrix(text);
+      if (matrix.length === 0 || (matrix.length === 1 && matrix[0]!.length === 1 && matrix[0]![0] === "")) return false;
+      const realCount = rowsNow.length - draftsRef.current.length;
+      const startIndex = active.row - realCount;
+      const records = mapPastedToDrafts(
+        matrix,
+        columns.map((c) => ({ key: c.key, title: c.title, editable: draftRows.createKeys.includes(c.key) })),
+        active.col
+      );
+      if (records.every((r) => Object.keys(r).length === 0)) return false;
+      const { drafts: next, touchedIds } = applyPastedToDrafts(draftsRef.current, startIndex, records, makeDraftId);
+      setDrafts(topUpDrafts(next, minBlank, makeDraftId));
+      touchedIds.forEach((id) => scheduleDraftSubmit(id));
+      setNotice(`Pegado en filas nuevas: ${touchedIds.length} fila${touchedIds.length === 1 ? "" : "s"}. Se crean solas cuando tienen todos los datos obligatorios.`);
+      return true;
+    },
+    [draftRows, canEdit, columns, minBlank, scheduleDraftSubmit]
+  );
+  useEffect(() => {
+    if (!draftRows || !canEdit) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      // Si se está escribiendo en un campo de texto fuera de la planilla (buscador, diálogos), no se interviene.
+      if (target && target !== document.body && (target as Node) !== (document as unknown as Node) && !wrapRef.current?.contains(target) && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      if (pasteTextIntoDrafts(text)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    };
+    document.addEventListener("paste", onPaste, true);
+    return () => document.removeEventListener("paste", onPaste, true);
+  }, [draftRows, canEdit, pasteTextIntoDrafts]);
+
+
   // ---- barra táctil: copiar / pegar / borrar / rellenar hacia abajo sin teclado físico ----
   const currentRange = useCallback((): SheetRange | null => {
     const sel = selectionRef.current;
@@ -1300,6 +1343,7 @@ export function GenusGrid<T>({
     } catch {
       return setNotice("El navegador no permitió leer el portapapeles. Permitilo o pegá con el teclado (Ctrl+V).");
     }
+    if (pasteTextIntoDrafts(text)) return;
     const matrix = text.replace(/\r\n?/g, "\n").replace(/\n$/, "").split("\n").map((l) => l.split("\t"));
     if (matrix.length === 0 || (matrix.length === 1 && matrix[0]!.length === 1 && matrix[0]![0] === "")) return setNotice("El portapapeles está vacío.");
     const rowsNow = gridRowsRef.current;
@@ -1325,7 +1369,7 @@ export function GenusGrid<T>({
       matrix.forEach((cells, i) => cells.forEach((v, j) => put(r.min.row + i, r.min.col + j, v)));
     }
     processDiffs(diffs, skipped, [`Pegado: ${diffs.length} celda${diffs.length === 1 ? "" : "s"}`]);
-  }, [columnKeys, columnByKey, currentRange, processDiffs]);
+  }, [columnKeys, columnByKey, currentRange, processDiffs, pasteTextIntoDrafts]);
   const touchClear = useCallback(() => {
     const r = currentRange();
     if (!r) return setNotice("Tocá una celda o un rango y después «Borrar».");
