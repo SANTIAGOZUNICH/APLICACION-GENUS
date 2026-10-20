@@ -20,10 +20,10 @@ export function ActivarAdministracionForm() {
     const t = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("t") ?? "";
     window.history.replaceState(null, "", window.location.pathname);
     if (!t) {
-      setPhase("invalid");
+      queueMicrotask(() => setPhase("invalid"));
       return;
     }
-    setToken(t);
+    queueMicrotask(() => setToken(t));
     void fetch("/api/v1/auth/activar-administracion", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "inspect", token: t }), cache: "no-store" })
       .then((r) => r.json())
       .then((d: { valid?: boolean; email?: string }) => {
