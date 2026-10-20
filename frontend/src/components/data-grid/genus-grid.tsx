@@ -446,6 +446,8 @@ export function GenusGrid<T>({
   const wrapRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef<SheetRange | null>(null);
   const activeRef = useRef<{ col: number; row: number } | null>(null);
+  /** Última selección/celda no vacía: la barra táctil actúa sobre ella aunque tocar un botón desactive la celda. */
+  const lastRangeRef = useRef<SheetRange | null>(null);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
   const [fillChip, setFillChip] = useState<{ plan: FillPlan; mode: FillMode; sourceIds: string[]; note: string } | null>(null);
   const [rowDeleteResult, setRowDeleteResult] = useState<{ message: string; undo?: () => Promise<void> } | null>(null);
@@ -1276,7 +1278,7 @@ export function GenusGrid<T>({
     const sel = selectionRef.current;
     if (sel) return sel;
     const a = activeRef.current;
-    return a ? { min: a, max: a } : null;
+    return a ? { min: a, max: a } : lastRangeRef.current;
   }, []);
   const touchCopy = useCallback(async () => {
     const r = currentRange();
@@ -1375,6 +1377,7 @@ export function GenusGrid<T>({
     const a = activeRef.current;
     selectionRef.current = selection ? { min: selection.min, max: selection.max } : a ? { min: a, max: a } : null;
     const cur = selectionRef.current;
+    if (cur) lastRangeRef.current = { min: { ...cur.min }, max: { ...cur.max } };
     setSelectedRowCount(cur ? cur.max.row - cur.min.row + 1 : 0);
   };
   const describeSelection = (selection: { min: { col: number; row: number }; max: { col: number; row: number } } | null) => {
@@ -1441,6 +1444,7 @@ export function GenusGrid<T>({
       onSelectionChange={({ selection }) => describeSelection(selection)}
       onActiveCellChange={(arg) => {
         activeRef.current = arg.cell ? { col: arg.cell.col, row: arg.cell.row } : null;
+        if (arg.cell) lastRangeRef.current = { min: { col: arg.cell.col, row: arg.cell.row }, max: { col: arg.cell.col, row: arg.cell.row } };
         if (!arg.cell) syncSelection(null);
         else if (!selectionRef.current || (selectionRef.current.min.row === selectionRef.current.max.row && selectionRef.current.min.col === selectionRef.current.max.col)) syncSelection(null);
         onActiveCellChange(arg);
@@ -1538,6 +1542,7 @@ export function GenusGrid<T>({
               key={id}
               type="button"
               className="inline-flex min-h-11 items-center gap-1 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3 text-xs font-medium"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => void fn()}
               data-testid={`${testId}-touch-${id}`}
             >
