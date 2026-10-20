@@ -1,7 +1,8 @@
 /**
  * Planillas editables de Materias Primas (Etapa 3) — política PURA compartida cliente/servidor.
  *
- *  - Ingresos MP: se editan los datos del documento. TOTAL = bultos × cantidad (calculado). Anulados: solo lectura.
+ *  - Ingresos MP: se editan TODAS las columnas. TOTAL = bultos × cantidad: editar el total es corregir la cantidad por
+ *    bulto (total ÷ bultos); INGRESO Nº se puede cambiar pero no repetirse. Anulados: solo lectura.
  *    En un ingreso CONFIRMADO, cambiar código, bultos, cantidad o lote mueve el stock: es una CORRECCIÓN y pide
  *    motivo; se aplica como delta (lote de Stock MP y libro mayor en la misma transacción).
  *  - Compras MP: se editan todas las columnas con control de versión. Una compra cancelada solo cambia estado y nota.
@@ -15,6 +16,7 @@ import { canWriteInventory } from "./rbac";
 export type MpSheetResource = "mp_ingresos" | "mp_compras";
 
 export const MP_INGRESO_SHEET_FIELDS = [
+  "ingresoNro",
   "fecha",
   "proveedor",
   "cliente",
@@ -25,6 +27,7 @@ export const MP_INGRESO_SHEET_FIELDS = [
   "descripcion",
   "bultos",
   "cantidad",
+  "total",
   "ubicacion",
   "lote",
   "vencimiento",
@@ -58,10 +61,10 @@ const FIELDS: Record<MpSheetResource, readonly string[]> = {
   mp_ingresos: MP_INGRESO_SHEET_FIELDS,
   mp_compras: MP_COMPRA_SHEET_FIELDS,
 };
-const NUMBER_FIELDS = new Set(["bultos", "cantidad"]);
+const NUMBER_FIELDS = new Set(["bultos", "cantidad", "total"]);
 const DATE_FIELDS = new Set(["fecha", "vencimiento", "fechaEntrega"]);
 /** En un ingreso confirmado, estos campos mueven el stock: corrección con motivo. */
-export const MP_INGRESO_STOCK_FIELDS: ReadonlySet<string> = new Set(["codigo", "bultos", "cantidad", "lote"]);
+export const MP_INGRESO_STOCK_FIELDS: ReadonlySet<string> = new Set(["codigo", "bultos", "cantidad", "total", "lote"]);
 export const MIN_MP_CORRECCION_MOTIVO = 8;
 export const MAX_MP_SHEET_CHANGES = 1000;
 
@@ -121,6 +124,7 @@ export function validateMpSheetValue(resource: MpSheetResource, field: string, r
   }
   const max = field === "nota" || field === "produccionesAfecta" ? 1000 : 200;
   if (text.length > max) return { ok: false, message: `Máximo ${max} caracteres.` };
+  if (resource === "mp_ingresos" && field === "ingresoNro" && !text) return { ok: false, message: "El número de ingreso no puede quedar vacío." };
   if (resource === "mp_compras" && field === "materiaPrima" && !text) return { ok: false, message: "La materia prima no puede quedar vacía." };
   return { ok: true, value: text };
 }

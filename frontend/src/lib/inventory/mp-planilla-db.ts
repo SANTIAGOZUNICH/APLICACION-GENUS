@@ -252,6 +252,32 @@ export async function patchMpSheetCells(
       if (reason) entry.reason = reason;
       patches.set(row.id, entry);
     });
+    if (resource === "mp_ingresos") {
+      // TOTAL es derivado (bultos × cantidad): editarlo corrige el dato de origen — la cantidad por bulto — y el total se
+      // recalcula; el stock se mueve por la misma diferencia que una corrección de cantidad (con motivo, auditada).
+      // INGRESO Nº se puede cambiar, pero no repetirse.
+      const used = new Map<string, string>();
+      for (const r of repo.listMpIngresos()) if (r.ingresoNro?.trim()) used.set(r.ingresoNro.trim().toUpperCase(), r.id);
+      changes.forEach((c, i) => {
+        if (!results[i]!.ok) return;
+        const entry = patches.get(String(c.id));
+        if (!entry) return;
+        if (c.field === "total") {
+          const current = repo.getMpIngreso(c.id)!;
+          const total = entry.patch.total as number | null;
+          delete entry.patch.total;
+          const bultosNow = (entry.patch.bultos as number | null | undefined) !== undefined ? (entry.patch.bultos as number | null) : (current.bultos ?? null);
+          entry.patch.cantidad = total == null ? null : bultosNow && bultosNow > 0 ? Math.round((total / bultosNow) * 1e6) / 1e6 : total;
+        }
+        if (c.field === "ingresoNro") {
+          const nro = String(entry.patch.ingresoNro ?? "").trim();
+          const owner = used.get(nro.toUpperCase());
+          if (owner && owner !== c.id) return void (results[i] = { ok: false, code: "DUPLICATE", message: `El número de ingreso ${nro} ya existe: no se repite.` });
+          used.set(nro.toUpperCase(), c.id);
+          entry.patch.ingresoNro = nro;
+        }
+      });
+    }
     const reject = () => {
       changes.forEach((_, i) => {
         if (results[i]!.ok) results[i] = { ok: false, code: "INVALID", message: "No se guardó: otra celda del mismo cambio fue rechazada." };

@@ -12,10 +12,7 @@ const REASONS: Record<string, Record<string, string>> = {
     BULTOS: "Stock calculado (ingresos − salidas ± ajustes): se corrige con «Ajustar stock» (motivo, auditado).",
     "CANTIDAD TOTAL": "Stock calculado (ingresos − salidas ± ajustes): se corrige con «Ajustar stock» (motivo, auditado).",
   },
-  mp_ingresos: {
-    "INGRESO Nº": "Número asignado por el sistema (único): no se edita.",
-    TOTAL,
-  },
+  mp_ingresos: {},
   mp_control: {
     codigo: "Viene de la fórmula (snapshot del control): no se edita.",
     materiaPrima: "Viene de la fórmula (snapshot del control): no se edita.",

@@ -118,6 +118,50 @@ describe.skipIf(Boolean(PROBLEM))(`Materias Primas: planillas transaccionales en
     expect(audit).toHaveLength(1);
   });
 
+  it("ingreso confirmado suma al lote existente (10 + 25 = 35), lote nuevo crea registro y reintentar no duplica", async () => {
+    const { runMpInventoryOp } = await db();
+    const first = { fecha: "2026-10-05", remitoNro: "IT-R-10", codigo: "IT-MP-AZ1", descripcion: "Azucar IT", lote: "G1", cantidad: 10 };
+    await runMpInventoryOp(mp, ({ service }) => service.upsertMpIngreso(mp, first));
+    expect(await balance("IT-MP-AZ1")).toBe(10);
+    const second = { fecha: "2026-10-06", remitoNro: "IT-R-11", codigo: "IT-MP-AZ1", descripcion: "Azucar IT", lote: "G1", cantidad: 25 };
+    await runMpInventoryOp(mp, ({ service }) => service.upsertMpIngreso(mp, second));
+    const lots = await lotsOf("IT-MP-AZ1");
+    expect(lots).toHaveLength(1);
+    expect(lots[0]?.cantidadKg).toBe(35);
+    expect(await balance("IT-MP-AZ1")).toBe(35);
+    // Mismo ingreso reintentado (doble clic / reintento de red): rechazado, no suma de nuevo.
+    await expect(runMpInventoryOp(mp, ({ service }) => service.upsertMpIngreso(mp, second))).rejects.toThrow(/Duplicado del ingreso/);
+    expect(await balance("IT-MP-AZ1")).toBe(35);
+    // Lote nuevo del mismo código: crea otro registro en Stock y el saldo del código suma ambos.
+    await runMpInventoryOp(mp, ({ service }) => service.upsertMpIngreso(mp, { ...second, remitoNro: "IT-R-12", lote: "G2", cantidad: 5 }));
+    expect((await lotsOf("IT-MP-AZ1")).map((l) => l.cantidadKg).sort()).toEqual([35, 5]);
+    expect(await balance("IT-MP-AZ1")).toBe(40);
+  });
+
+  it("Ingresos: editar TOTAL corrige la cantidad por bulto y mueve stock por la diferencia; INGRESO Nº no se repite", async () => {
+    const { patchMpSheetCells, runMpInventoryOp, MpSheetPatchError } = await db();
+    const a = await runMpInventoryOp(mp, ({ service }) =>
+      service.upsertMpIngreso(mp, { fecha: "2026-10-07", remitoNro: "IT-R-20", codigo: "IT-MP-TOT", descripcion: "Total tot IT", lote: "T1", bultos: 4, cantidad: 5 })
+    );
+    expect(await balance("IT-MP-TOT")).toBe(20);
+    // Sin motivo: el total confirmado mueve stock y lo exige.
+    await expect(patchMpSheetCells(mp, "mp_ingresos", [{ id: a.id, field: "total", value: "40", expectedVersion: a.updatedAt }])).rejects.toBeInstanceOf(MpSheetPatchError);
+    expect(await balance("IT-MP-TOT")).toBe(20);
+    const [edited] = (await patchMpSheetCells(mp, "mp_ingresos", [{ id: a.id, field: "total", value: "40", expectedVersion: a.updatedAt, reason: "Total corregido IT" }])).items as Array<{ cantidad: number; total: number; bultos: number }>;
+    expect([edited!.bultos, edited!.cantidad, edited!.total]).toEqual([4, 10, 40]);
+    expect(await balance("IT-MP-TOT")).toBe(40);
+    expect((await lotsOf("IT-MP-TOT"))[0]?.cantidadKg).toBe(40);
+    // INGRESO Nº: se puede cambiar a un número libre; repetir el de otro ingreso se rechaza.
+    const b = await runMpInventoryOp(mp, ({ service }) =>
+      service.upsertMpIngreso(mp, { fecha: "2026-10-07", remitoNro: "IT-R-21", codigo: "IT-MP-TOT", descripcion: "Total tot IT", lote: "T2", cantidad: 1 })
+    );
+    const cur = await ingresoRow(a.id);
+    await expect(patchMpSheetCells(mp, "mp_ingresos", [{ id: b.id, field: "ingresoNro", value: String(cur.ingresoNro), expectedVersion: b.updatedAt }])).rejects.toThrow(/ya existe/);
+    const ok = await patchMpSheetCells(mp, "mp_ingresos", [{ id: b.id, field: "ingresoNro", value: "IT-MANUAL-1", expectedVersion: b.updatedAt }]);
+    expect((ok.items[0] as { ingresoNro: string }).ingresoNro).toBe("IT-MANUAL-1");
+    expect(await balance("IT-MP-TOT")).toBe(41);
+  });
+
   it("dos usuarios editan la misma celda: uno guarda, el otro recibe conflicto y nada se pisa", async () => {
     const { patchMpSheetCells, runMpInventoryOp } = await db();
     const row = await runMpInventoryOp(mp, ({ service }) =>

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { trySaveControlNeeds } from "@/lib/mp-control/saved-weekly-control";
 import { MAX_MP_LINE_CELL_CHANGES, type MpLineCellChange } from "@/lib/mp-control/cell-edit";
 import { MpControlCellError, getMpControlService } from "@/lib/mp-control/mp-control-service";
 import { resolveOrdersActor } from "@/lib/orders/actor";
@@ -24,7 +25,8 @@ export async function PATCH(request: Request, ctx: Ctx) {
       body.changes,
       body.expectedVersion
     );
-    return NextResponse.json({ control });
+    const weekly = await trySaveControlNeeds({ email: actor.email, sector: actor.sector }, id, new URL(request.url).searchParams.get("week"));
+    return NextResponse.json({ control, ...weekly });
   } catch (err) {
     if (err instanceof MpControlCellError) {
       const status = err.code === "CONFLICT" ? 409 : err.code === "PROTECTED" ? 403 : err.code === "NOT_FOUND" ? 404 : 400;

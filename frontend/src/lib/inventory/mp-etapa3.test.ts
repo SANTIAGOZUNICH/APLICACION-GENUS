@@ -18,10 +18,10 @@ import type { SectorId } from "@/types/operational/sector";
 const mp = { email: "mp@laboratoriogenus.com.ar", sector: "MATERIA_PRIMA" as SectorId };
 
 describe("política de planillas MP (cliente y servidor)", () => {
-  it("Ingresos: INGRESO Nº y TOTAL no se editan; los datos del documento sí", () => {
-    expect(isMpSheetField("mp_ingresos", "ingresoNro")).toBe(false);
-    expect(isMpSheetField("mp_ingresos", "total")).toBe(false);
-    for (const f of ["fecha", "remitoNro", "codigo", "bultos", "cantidad", "lote", "vencimiento"]) {
+  it("Ingresos: TODAS las columnas se editan (incluidos INGRESO Nº y TOTAL); el total confirmado pide motivo", () => {
+    expect(mpSheetNeedsReason("mp_ingresos", { status: "CONFIRMADO" }, "total")).toBe(true);
+    expect(mpSheetNeedsReason("mp_ingresos", { status: "BORRADOR" }, "total")).toBe(false);
+    for (const f of ["ingresoNro", "total", "fecha", "remitoNro", "codigo", "bultos", "cantidad", "lote", "vencimiento"]) {
       expect(isMpSheetField("mp_ingresos", f)).toBe(true);
     }
   });

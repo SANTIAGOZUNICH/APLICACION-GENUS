@@ -1790,6 +1790,12 @@ export class InventoryService {
     const total = multiplyTotal(bultos, cantidad);
     const now = nowIso();
     const ingresoId = existing?.id ?? input.id ?? randomUUID();
+    // INGRESO Nº se puede cargar o cambiar a mano, pero no repetirse.
+    const wantedNro = String(input.ingresoNro ?? "").trim();
+    if (wantedNro && wantedNro.toUpperCase() !== String(existing?.ingresoNro ?? "").trim().toUpperCase()) {
+      const clash = this.repo.listMpIngresos().find((r) => r.id !== ingresoId && String(r.ingresoNro ?? "").trim().toUpperCase() === wantedNro.toUpperCase());
+      if (clash) throw new InventoryValidationError(`El número de ingreso ${wantedNro} ya existe: no se repite.`);
+    }
     const codigoRaw = input.codigo ?? existing?.codigo ?? "";
     let codigo =
       normalizeMpCodigoLocal(codigoRaw) || (codigoRaw.trim() ? codigoRaw.trim() : "");
@@ -2123,13 +2129,31 @@ export class InventoryService {
         }
       }
     }
+    // Mismo código con LOTE distinto = otro lote de Stock MP (no se mezclan en una sola fila): si el ingreso trae un lote
+    // que no existe todavía para ese código se crea un registro nuevo; si trae el mismo lote, suma a ese; sin lote, al primero.
+    let newLoteForKnownCode = false;
     if (code) {
+      const loteKey = (v: string | undefined) => String(v ?? "").trim().toUpperCase();
+      const sameCode = this.repo.listMpStock().filter((l) => !l.archived && normalizeMpCodigoLocal(l.codigo) === code);
+      const want = loteKey(ingreso.lote);
+      if (sameCode.length > 0 && want) {
+        const exact = sameCode.find((l) => loteKey(l.lote) === want);
+        if (exact) return exact;
+        const blank = sameCode.find((l) => !loteKey(l.lote));
+        if (blank) {
+          this.repo.upsertMpStock(this.enrichMpStock({ ...blank, lote: ingreso.lote.trim(), updatedAt: nowIso() }));
+          return this.repo.getMpStock(blank.id)!;
+        }
+        newLoteForKnownCode = true;
+      }
+    }
+    if (code && !newLoteForKnownCode) {
       const byCode = this.repo.findMpStockByCodigo(code);
       if (byCode) return byCode;
       const renamed = this.repo.listMpStock().find((l) => !l.archived && (l.codigosAnteriores ?? []).includes(code));
       if (renamed) return renamed;
     }
-    if (ingreso.lote.trim()) {
+    if (ingreso.lote.trim() && !newLoteForKnownCode) {
       const byLot = this.repo.findMpStockByDescLote(ingreso.descripcion, ingreso.lote);
       if (byLot) {
         const lotCode = normalizeMpCodigoLocal(byLot.codigo);
