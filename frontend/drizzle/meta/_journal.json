@@ -449,6 +449,13 @@
       "when": 1793600000000,
       "tag": "0066_mp_weekly_saved_product_controls",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1793700000000,
+      "tag": "0067_work_item_lote_link",
+      "breakpoints": true
     }
   ]
 }

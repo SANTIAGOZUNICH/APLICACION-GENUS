@@ -131,6 +131,11 @@ export const workItems = pgTable(
     /** Embalaje asignado (columnas aditivas 0014) — no viven en notes. */
     packagingLote: text("packaging_lote"),
     packagingVto: text("packaging_vto"),
+    /** Vínculo persistente con el registro de Asignación de Lotes (0067). AUTO = coincidencia única; MANUAL = elegido; CONCILIACION = históricos. */
+    asignacionLoteId: text("asignacion_lote_id"),
+    loteLinkMethod: text("lote_link_method"),
+    loteLinkedAt: timestamp("lote_linked_at", { withTimezone: true }),
+    loteLinkedBy: text("lote_linked_by"),
     packagingTotalUnits: doublePrecision("packaging_total_units"),
     packingGroups: jsonb("packing_groups"),
     /**

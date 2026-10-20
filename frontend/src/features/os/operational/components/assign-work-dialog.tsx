@@ -178,7 +178,7 @@ export function AssignWorkDialog({
   const [entregaPick, setEntregaPick] = useState<DeliverySuggestion | null>(null);
   const entrega = entregaPick && client === entregaPick.client && product === entregaPick.product ? entregaPick : null;
   const [loteResolutionLoading, setLoteResolutionLoading] = useState(false);
-  const showsPackagingFields = sector !== "ELABORACION";
+  const showsPackagingFields = true; // Elaboración también resuelve el lote de producto terminado (PR lotes)
 
   useEffect(() => {
     if (!native || !showsPackagingFields) {
@@ -399,7 +399,7 @@ export function AssignWorkDialog({
       // Elaboración: lote de fabricación escrito por Producción (se copia exacto a la OE).
       packagingLote: packagingLote.trim() || null,
       packagingVto: sector === "ELABORACION" ? null : packagingVto.trim() || null,
-      asignacionLoteId: sector === "ELABORACION" ? null : selectedAsignacionLoteId,
+      asignacionLoteId: selectedAsignacionLoteId,
       scheduledDeliveryItemId: entrega?.itemId ?? null,
       productionPedidoId: selectedPedido?.id ?? null,
       idempotencyKey: idempotencyRef.current,
@@ -824,19 +824,19 @@ export function AssignWorkDialog({
           {sector === "ELABORACION" ? (
             <div className="space-y-1.5">
               <label htmlFor="af-lote-fab" className="text-sm font-medium">
-                Lote de fabricación (opcional)
+                Lote (desde Asignación de Lotes)
               </label>
               <input
                 id="af-lote-fab"
                 value={packagingLote}
                 disabled={submitting}
-                onChange={(e) => setPackagingLote(e.target.value)}
-                placeholder="Se copia tal cual a la OE"
+                onChange={(e) => editPackagingManually("lote", e.target.value)}
+                placeholder="Se completa desde Asignación de Lotes"
                 className={CONTROL_CLASS}
                 data-testid="assign-lote-fabricacion"
               />
               <p className="text-xs text-[var(--os-text-muted)]">
-                Si lo dejás vacío, la OE queda con el lote pendiente.
+                Se toma de Asignación de Lotes y se copia a la OE y a la OA. Si no hay, queda «LOTE PENDIENTE DE ASIGNACIÓN».
               </p>
             </div>
           ) : null}
@@ -871,6 +871,9 @@ export function AssignWorkDialog({
                   data-testid="assign-packaging-vto"
                 />
               </div>
+
+            </>
+          ) : null}
 
               <div className="space-y-1.5 sm:col-span-2" data-testid="assign-lote-resolution">
                 {loteResolutionLoading ? (
@@ -943,12 +946,13 @@ export function AssignWorkDialog({
                   >
                     🔴 {LOTE_VTO_WARNING_LABEL.MISSING_LOTE_AND_VTO}
                     <br />
+                    <br />
+                    <strong data-testid="assign-lote-pending">LOTE PENDIENTE DE ASIGNACIÓN</strong>
+                    <br />
                     <span className="text-xs opacity-80">No bloquea — podés asignar el trabajo igual.</span>
                   </p>
                 ) : null}
               </div>
-            </>
-          ) : null}
 
           <div className="space-y-1.5 sm:col-span-2">
             <label htmlFor="af-notes" className="text-sm font-medium">

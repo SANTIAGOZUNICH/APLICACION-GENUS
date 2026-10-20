@@ -12,6 +12,7 @@ import {
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { asignacionLotes, asignacionLotesCellAudit, asignacionLotesLocalEdits, workItems } from "@/lib/db/schema";
 import { fillBareWorkItemsFromAsignacionLote } from "./sync-to-bare-workitems";
+import { syncLinkedWorkItemsForLote } from "./lote-link";
 import { hasWritebackSince } from "./writeback-ops";
 import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from "@/lib/orders/types";
@@ -802,6 +803,7 @@ export class AsignacionLotesService {
       // se carga en Asignación de Lotes") — best-effort, nunca puede tirar
       // abajo el alta/edición de la asignación en sí.
       try {
+        await syncLinkedWorkItemsForLote(record, actor.sector);
         await fillBareWorkItemsFromAsignacionLote(record, actor.sector);
       } catch {
         // No-op: el guardado de la asignación ya se confirmó arriba.
@@ -1312,7 +1314,8 @@ export class AsignacionLotesService {
       // Sincronización retroactiva a WorkItems "pelados" — best-effort, igual que writeRecord().
       for (const record of updated) {
         try {
-          await fillBareWorkItemsFromAsignacionLote(record, actor.sector);
+          await syncLinkedWorkItemsForLote(record, actor.sector);
+        await fillBareWorkItemsFromAsignacionLote(record, actor.sector);
         } catch {
           // No-op: el guardado de la celda ya se confirmó.
         }

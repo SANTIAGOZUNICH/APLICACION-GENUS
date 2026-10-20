@@ -61,6 +61,10 @@ function createFakeDb() {
         cond = c;
         return api;
       },
+      // Como drizzle real: `await select().from().where()` (sin limit) también resuelve las filas.
+      then(resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) {
+        return Promise.resolve(all().filter((r) => matchCond(r, cond)).map((r) => ({ ...r }))).then(resolve, reject);
+      },
       limit(n: number) {
         // Postgres devuelve filas independientes — clonar para que una
         // mutación posterior vía UPDATE no reescriba silenciosamente un
@@ -703,7 +707,7 @@ describe("assignWorkItemDurable — vínculo Asignación de Lotes → WorkItem (
     expect(result.item.packagingVto).toBeNull();
   });
 
-  it("Elaboración nunca intenta resolver Asignación de Lotes (no tiene packaging)", async () => {
+  it("Elaboración también toma el lote de Asignación de Lotes y lo vincula por id (el OE lo hereda)", async () => {
     const result = await assignWorkItemDurable(
       {
         sector: "ELABORACION",
@@ -718,8 +722,11 @@ describe("assignWorkItemDurable — vínculo Asignación de Lotes → WorkItem (
       },
       actor
     );
-    expect(result.item.packagingLote).toBeNull();
-    expect(result.item.packagingVto).toBeNull();
+    expect(result.item.packagingLote).toBe("G26043");
+    expect(result.item.packagingVto).toBe("2028-10-31");
+    const stored = [...fakeDbHandle.workItems.values()].find((w) => w.id === result.item.id)!;
+    expect(stored.asignacionLoteId).toBe("al-1");
+    expect(stored.loteLinkMethod).toBe("MANUAL");
   });
 
   it("Test 10: se asigna sin lote/VTO (ninguna asignación coincide) -> el WorkItem se crea igual, sin bloquear", async () => {
