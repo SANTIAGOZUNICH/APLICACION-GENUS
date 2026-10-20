@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { operationalEvents, operationalOrders, workItemDeliveries, workItemDeliveryLines, workItems } from "@/lib/db/schema";
 import type { SectorId } from "@/types/operational/sector";
@@ -1687,7 +1687,22 @@ export async function listDeliveryLinesDurable(workItemId: string) {
     .from(workItemDeliveryLines)
     .where(eq(workItemDeliveryLines.workItemId, workItemId))
     .orderBy(workItemDeliveryLines.createdAt);
-  return rows.map((l) => ({
+  return rows.map(mapDeliveryLine);
+}
+
+/** Renglones de entrega (con sus cajas) de varias entregas a la vez: lectura para Entregados. */
+export async function listDeliveryLinesForDeliveriesDurable(deliveryIds: string[]) {
+  if (deliveryIds.length === 0) return [];
+  const rows = await getDb()
+    .select()
+    .from(workItemDeliveryLines)
+    .where(inArray(workItemDeliveryLines.deliveryId, deliveryIds))
+    .orderBy(workItemDeliveryLines.createdAt);
+  return rows.map(mapDeliveryLine);
+}
+
+function mapDeliveryLine(l: typeof workItemDeliveryLines.$inferSelect) {
+  return {
     id: l.id,
     deliveryId: l.deliveryId,
     sequence: l.sequence,
@@ -1704,7 +1719,7 @@ export async function listDeliveryLinesDurable(workItemId: string) {
     cumulativeAfter: l.cumulativeAfter,
     pendingAfter: l.pendingAfter,
     packingGroups: (l.packingGroups as Array<{ cajas: number; unidadesPorCaja: number }> | null) ?? null,
-  }));
+  };
 }
 
 /**

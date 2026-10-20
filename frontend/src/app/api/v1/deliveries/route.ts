@@ -6,6 +6,7 @@ import { AuthUnauthorizedError } from "@/lib/auth/types";
 import {
   listDeliveriesDurable,
   listDeliveryLinesDurable,
+  listDeliveryLinesForDeliveriesDurable,
   nativeIdFromItemId,
   toClientDeliveryRecord,
 } from "@/lib/planning/work-item-progress-repository";
@@ -47,7 +48,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ lines: await listDeliveryLinesDurable(nativeId) });
     }
     const rows = await listDeliveriesDurable({ includeDeleted: false });
-    return NextResponse.json({ deliveries: rows.map(toClientDeliveryRecord) });
+    // Cajas REALES de cada entrega (renglones de entrega): permanentes, no dependen de la pantalla de remitos.
+    const deliveryLines = await listDeliveryLinesForDeliveriesDurable(rows.map((r) => r.id)).catch(() => []);
+    return NextResponse.json({ deliveries: rows.map(toClientDeliveryRecord), deliveryLines });
   } catch (error) {
     return NextResponse.json(
       {
