@@ -44,8 +44,10 @@ export function extractionConfig(env: Partial<NodeJS.ProcessEnv> = process.env):
   const mode = (env.INGRESO_REMITO_EXTRACTION ?? "").trim().toLowerCase();
   const model = cleanModel(env.INGRESO_REMITO_GEMINI_MODEL);
   const modelSource = model ? "INGRESO_REMITO_GEMINI_MODEL" : "automático";
-  if (mode !== "gemini") {
-    return { available: false, provider: null, model, modelSource, code: "disabled", reason: "La lectura automática de remitos todavía no está activada en GENUS OS. Cargá los datos a mano: la foto queda adjunta igual." };
+  // Se activa sola cuando existe GEMINI_API_KEY (antes exigía además INGRESO_REMITO_EXTRACTION=gemini y, sin esa variable,
+  // la lectura quedaba «apagada» aunque la clave estuviera cargada). Solo se apaga con una orden explícita.
+  if (["off", "false", "0", "no", "disabled", "desactivada"].includes(mode)) {
+    return { available: false, provider: null, model, modelSource, code: "disabled", reason: "La lectura automática de fotos está desactivada por Sistemas. Cargá los datos a mano: la foto queda adjunta igual." };
   }
   if (!env.GEMINI_API_KEY?.trim()) {
     return { available: false, provider: null, model, modelSource, code: "missing_key", reason: "La lectura automática está habilitada pero falta la clave del servicio (GEMINI_API_KEY). Cargá los datos a mano y avisá a Sistemas." };
@@ -116,7 +118,7 @@ async function listModels(env: Partial<NodeJS.ProcessEnv>, doFetch: typeof fetch
 
 // ───────────────────────── Clasificación de errores ─────────────────────────
 
-export type FailureKind = "model" | "key" | "permission" | "region" | "limit" | "unavailable" | "bad_request";
+export type FailureKind = "model" | "key" | "permission" | "region" | "limit" | "overloaded" | "unavailable" | "bad_request";
 type GeminiError = { code?: number; status?: string; message?: string };
 
 /** Distingue modelo inexistente / clave inválida / permisos / región / límite de uso a partir del estado HTTP y del cuerpo del error. */
@@ -129,6 +131,7 @@ export function classifyHttp(status: number, err: GeminiError | null | undefined
   if (status === 404 || st === "NOT_FOUND" || /models\/[\w.-]+ is not found|no longer available|is not supported for generatecontent/i.test(msg)) return { kind: "model", detail };
   if (status === 403 || st === "PERMISSION_DENIED" || /has not been used in project|service_disabled|billing|permission/i.test(msg)) return { kind: "permission", detail };
   if (status === 429 || st === "RESOURCE_EXHAUSTED" || /quota|rate limit/i.test(msg)) return { kind: "limit", detail };
+  if (status === 503 || st === "UNAVAILABLE" || /overloaded|high demand|try again later/i.test(msg)) return { kind: "overloaded", detail };
   if (status === 400) return { kind: "bad_request", detail };
   return { kind: "unavailable", detail };
 }
@@ -149,8 +152,10 @@ function messageFor(kind: FailureKind, model: string | null, tried: string[]): s
       return "Se alcanzó el límite de uso de Gemini (cuota). Reintentá en unos minutos o cargá los datos a mano.";
     case "bad_request":
       return "Gemini rechazó el pedido. Podés reintentar o completar los datos manualmente; si se repite, avisá a Sistemas.";
+    case "overloaded":
+      return "El servicio de lectura está saturado en este momento (se reintentó automáticamente). Probá de nuevo en un minuto o completá los datos manualmente: la foto no se pierde.";
     default:
-      return "El servicio de lectura no está disponible ahora. Podés reintentar o completar los datos manualmente.";
+      return "El servicio de lectura no está disponible ahora (no respondió tras varios intentos). Podés reintentar o completar los datos manualmente.";
   }
 }
 
@@ -168,10 +173,13 @@ type GeminiBody = {
 };
 export type Attempt = { model: string; status: number | null; kind: "ok" | FailureKind };
 
-function generationConfig(model: string, withThinking = true, maxOutputTokens = 8192) {
+function generationConfig(model: string, withThinking = true, maxOutputTokens = 12288) {
   const cfg: Record<string, unknown> = { temperature: 0, responseMimeType: "application/json", maxOutputTokens };
-  // Gemini 2.5 Flash «piensa» por defecto (lento y con costo): para leer un remito no hace falta. Otros modelos pueden no aceptarlo.
+  // Los modelos «que piensan» gastan tokens de salida razonando y pueden devolver una respuesta VACÍA (finishReason MAX_TOKENS):
+  // para leer una foto no hace falta. 2.5 Flash: sin presupuesto de razonamiento; 3.x: nivel mínimo. Si el modelo no lo acepta
+  // (400 «thinking») se reintenta igual sin esa opción.
   if (withThinking && /gemini-2\.5-flash/.test(model) && !/lite/.test(model)) cfg.thinkingConfig = { thinkingBudget: 0 };
+  else if (withThinking && /gemini-(3|[4-9])/.test(model)) cfg.thinkingConfig = { thinkingLevel: "low" };
   return cfg;
 }
 
@@ -215,20 +223,43 @@ async function runGenerate(
 
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  // Reintentos CONTROLADOS: solo para fallos transitorios (red, 5xx, «saturado», límite por minuto), con espera creciente y un tope
+  // fijo; si un modelo no se recupera se prueba otro candidato. Nunca hay reintentos infinitos (y todo cabe en TIMEOUT_MS).
+  const base = Math.max(0, Number(env.INGRESO_REMITO_RETRY_BASE_MS ?? 700) || 0);
+  const BACKOFF_MS = [base, Math.round(base * 2.6)];
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+  let lastTransient: { kind: FailureKind; model: string } | null = null;
+  let transientModels = 0; // tope: con dos modelos saturados se informa, no se sigue probando
   try {
     while (queue.length) {
       const model = queue.shift()!;
       tried.add(model);
       let withThinking = true;
-      for (let retry = 0; retry < 2; retry++) {
+      let transientTries = 0;
+      let moveOn = false;
+      for (let n = 0; n < 6 && !moveOn; n++) {
         const gc = generationConfig(model, withThinking, opts.maxOutputTokens);
         if (opts.json === false) delete gc.responseMimeType;
-        const res = await doFetch(`${baseUrl(env)}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY!.trim() },
-          body: JSON.stringify({ contents: [{ role: "user", parts }], generationConfig: gc }),
-          signal: ctl.signal,
-        });
+        let res: Response;
+        try {
+          res = await doFetch(`${baseUrl(env)}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY!.trim() },
+            body: JSON.stringify({ contents: [{ role: "user", parts }], generationConfig: gc }),
+            signal: ctl.signal,
+          });
+        } catch (err) {
+          if (err instanceof Error && err.name === "AbortError") throw err;
+          attempts.push({ model, status: null, kind: "unavailable" });
+          logFailure("red", null, model, err instanceof Error ? err.message : "");
+          if (transientTries < BACKOFF_MS.length) {
+            await sleep(BACKOFF_MS[transientTries++]!);
+            continue;
+          }
+          lastTransient = { kind: "unavailable", model };
+          moveOn = true;
+          continue;
+        }
         const body = (await res.json().catch(() => null)) as GeminiBody | null;
         if (res.ok) {
           attempts.push({ model, status: res.status, kind: "ok" });
@@ -236,7 +267,7 @@ async function runGenerate(
           return { ok: true, body: body ?? {}, model, attempts };
         }
         const cls = classifyHttp(res.status, body?.error);
-        if (cls.kind === "bad_request" && withThinking && /thinking/i.test(cls.detail) && retry === 0) {
+        if (cls.kind === "bad_request" && withThinking && /thinking/i.test(cls.detail)) {
           withThinking = false; // este modelo no acepta «thinkingConfig»: se reintenta igual sin él
           continue;
         }
@@ -245,11 +276,27 @@ async function runGenerate(
         if (cls.kind === "model") {
           if (modelCache?.working === model) modelCache = { ...modelCache, working: null };
           if (!queue.length && !discovered) await discover();
-          break; // siguiente candidato
+          moveOn = true;
+          continue;
+        }
+        if (cls.kind === "overloaded" || cls.kind === "unavailable" || cls.kind === "limit") {
+          const maxTries = cls.kind === "limit" ? 1 : BACKOFF_MS.length;
+          if (transientTries < maxTries) {
+            await sleep(BACKOFF_MS[transientTries++]!);
+            continue;
+          }
+          lastTransient = { kind: cls.kind, model };
+          transientModels += 1;
+          if (transientModels >= 2) return { ok: false, kind: cls.kind, message: messageFor(cls.kind, model, [...tried]), attempts, model };
+          if (cls.kind === "limit") return { ok: false, kind: cls.kind, message: messageFor(cls.kind, model, [...tried]), attempts, model };
+          if (!queue.length && !discovered) await discover();
+          moveOn = true; // otro modelo puede estar menos saturado
+          continue;
         }
         return { ok: false, kind: cls.kind, message: messageFor(cls.kind, model, [...tried]), attempts, model };
       }
     }
+    if (lastTransient) return { ok: false, kind: lastTransient.kind, message: messageFor(lastTransient.kind, lastTransient.model, [...tried]), attempts, model: lastTransient.model };
     return { ok: false, kind: "model", message: messageFor("model", null, [...tried]), attempts, model: null };
   } catch (err) {
     const aborted = err instanceof Error && err.name === "AbortError";
@@ -262,18 +309,35 @@ async function runGenerate(
   }
 }
 
-const PROMPT = `Sos un asistente de lectura de remitos de proveedores argentinos (materias primas y materiales de envase de un laboratorio). Las imágenes/páginas adjuntas son del MISMO remito. Devolvé SOLO un JSON con esta forma:
+const PROMPT_BASE = `Sos un asistente de lectura de documentos de ingreso de un laboratorio argentino. La foto puede ser un REMITO o factura de proveedor (varios renglones) o la ETIQUETA / rótulo de UN envase o bolsa (un solo producto: en ese caso devolvé una única línea). Las imágenes/páginas adjuntas son del MISMO documento. Devolvé SOLO un JSON con esta forma:
 {"supplier": string, "remitoNumber": string, "remitoDate": "YYYY-MM-DD" | "", "notes": string,
  "unclearFields": string[],
- "lines": [{"supplierCode": string, "description": string, "quantity": number|null, "unit": string, "packages": number|null, "lot": string, "expiryDate": "YYYY-MM-DD"|"", "notes": string, "confidence": number, "unclearFields": string[]}]}
+ "lines": [{"supplierCode": string, "description": string, "quantity": number|null, "unit": string, "packages": number|null, "lot": string, "expiryDate": "YYYY-MM-DD"|"", "notes": string, "confidence": number, "unclearFields": string[], "inferredFields": string[]}]}
 Reglas estrictas:
-- "supplier" es quien EMITE el remito (el proveedor), no el destinatario (Laboratorio Genus).
-- UNA línea por producto o renglón de la tabla. No omitas renglones. No inventes ni completes datos que no se lean con claridad: dejá "" o null y agregá el nombre del campo en "unclearFields".
-- "supplierCode" es el código que imprime el PROVEEDOR para ese renglón; no lo conviertas en otro código.
-- "quantity" es la cantidad de ese renglón como número (sin unidades); "unit" la unidad escrita (kg, g, un, l, cajas...). "packages" son los bultos/cajas/tambores si figuran.
-- "lot" (lote) y "expiryDate" (vencimiento, formato ISO) solo si están impresos o escritos.
-- "notes": observaciones relevantes del remito (condiciones, faltantes, daños, referencias de orden de compra). "confidence" entre 0 y 1.
-- Si la imagen no es un remito legible, devolvé {"supplier":"","remitoNumber":"","remitoDate":"","notes":"","unclearFields":[],"lines":[]}.`;
+- "supplier" es quien EMITE el documento o fabrica el producto (el proveedor), no el destinatario (Laboratorio Genus).
+- UNA línea por producto o renglón de la tabla. No omitas renglones. NUNCA inventes ni completes datos que no se lean con claridad: dejá "" o null y agregá el nombre del campo en "unclearFields". Una foto borrosa o cortada es mejor devolverla con campos vacíos que adivinada.
+- "supplierCode" es el código que imprime el PROVEEDOR / la etiqueta; no lo conviertas en otro código.
+- "quantity" es la cantidad como número (sin unidades; usá punto decimal); "unit" la unidad escrita (kg, g, un, l, cajas...). "packages" son los bultos/cajas/tambores si figuran.
+- "lot" (lote) y "expiryDate" (vencimiento, formato ISO) solo si están impresos o escritos. Una fecha «MM/AAAA» o «AAAA-MM» sin día: dejala en "expiryDate" como último día de ese mes SOLO si se lee con claridad y agregá "expiryDate" a "inferredFields".
+- "inferredFields": campos que NO están escritos literalmente y que normalizaste o dedujiste (p. ej. unidad deducida, fecha completada, descripción ordenada). Lo copiado tal cual de la imagen NO va ahí.
+- "notes": observaciones relevantes (condiciones, faltantes, daños, referencias de orden de compra{EXTRA_NOTES}). "confidence" entre 0 y 1.
+- Si la imagen no contiene un documento o etiqueta legible, devolvé {"supplier":"","remitoNumber":"","remitoDate":"","notes":"","unclearFields":[],"lines":[]}.`;
+
+const MODULE_HINT: Record<"MP" | "ME", { intro: string; extraNotes: string }> = {
+  MP: {
+    intro: "Contexto: MATERIAS PRIMAS (químicos, aceites, activos, colorantes, fragancias). Prestá especial atención a código, nombre del producto, proveedor, lote, cantidad (kg/g/l) y fecha de vencimiento / re-análisis.",
+    extraNotes: "",
+  },
+  ME: {
+    intro: "Contexto: DEPÓSITO — MATERIALES DE ENVASE (frascos, tapas, cajas, etiquetas, bolsas). Prestá especial atención a código, descripción, proveedor, cliente para el que se fabrica (si figura), lote (solo si corresponde), cantidad (unidades o cajas) y ubicación.",
+    extraNotes: "; si figuran el CLIENTE o la UBICACIÓN, copialos en notes con el formato «Cliente: …» / «Ubicación: …»",
+  },
+};
+
+function promptFor(module: "MP" | "ME" | undefined): string {
+  const h = MODULE_HINT[module ?? "MP"];
+  return `${h.intro}\n${PROMPT_BASE.replace("{EXTRA_NOTES}", h.extraNotes)}`;
+}
 
 export type ExtractionFile = { bytes: Uint8Array; contentType: string };
 export type ExtractionOutcome =
@@ -281,7 +345,7 @@ export type ExtractionOutcome =
   | { ok: false; message: string; kind: "disabled" | "config" | FailureKind | "unreadable" | "timeout" };
 
 /** Llama al servicio y devuelve la sugerencia saneada. Nunca lanza: ante cualquier falla devuelve ok:false con un mensaje claro. */
-export async function extractRemito(files: ExtractionFile[], deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv> } = {}): Promise<ExtractionOutcome> {
+export async function extractRemito(files: ExtractionFile[], deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv>; module?: "MP" | "ME" } = {}): Promise<ExtractionOutcome> {
   const env = deps.env ?? process.env;
   const cfg = extractionConfig(env);
   if (!cfg.available) return { ok: false, kind: cfg.code === "missing_key" ? "config" : "disabled", message: cfg.reason };
@@ -293,9 +357,14 @@ export async function extractRemito(files: ExtractionFile[], deps: { fetchImpl?:
     used.push(f);
     total += f.bytes.length;
   }
-  const parts: Array<Record<string, unknown>> = [{ text: PROMPT }];
+  const parts: Array<Record<string, unknown>> = [{ text: promptFor(deps.module) }];
   for (const f of used) parts.push({ inline_data: { mime_type: f.contentType, data: Buffer.from(f.bytes).toString("base64") } });
-  const run = await runGenerate(parts, env, deps.fetchImpl ?? fetch);
+  let run = await runGenerate(parts, env, deps.fetchImpl ?? fetch);
+  // Respuesta cortada por tokens (modelo que «piensa» de más): un único reintento con más margen.
+  if (run.ok && !run.body.candidates?.[0]?.content?.parts?.some((p) => (p.text ?? "").trim()) && run.body.candidates?.[0]?.finishReason === "MAX_TOKENS") {
+    logFailure("respuesta cortada (MAX_TOKENS)", null, run.model, "reintento con más margen");
+    run = await runGenerate(parts, env, deps.fetchImpl ?? fetch, { maxOutputTokens: 24576 });
+  }
   if (!run.ok) return { ok: false, kind: run.kind, message: run.message };
   const body = run.body;
   if (body.promptFeedback?.blockReason) {

@@ -62,7 +62,7 @@ import {
   type ReceiptStatus,
   type ValidationResult,
 } from "@/lib/inventory/receipt-rules";
-import { getFileStorage, safeFileName, STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE } from "@/lib/storage/file-storage";
+import { FILE_STORAGE_NOT_CONFIGURED, getFileStorage, safeFileName, STORAGE_PROVIDER_VERCEL_BLOB_PRIVATE } from "@/lib/storage/file-storage";
 import { isMpInternalCodigo } from "@/lib/inventory/types";
 import type { MeIngresoRow, MeMaterial, MpIngresoRow, MpStockRow } from "@/lib/inventory/types";
 
@@ -78,6 +78,18 @@ export class ReceiptError extends Error {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const todayIso = () => new Date().toISOString().slice(0, 10);
+
+/** Almacenamiento de fotos: si no está configurado en el servidor se dice claramente (no es un «error genérico»). */
+function storageOrThrow() {
+  try {
+    return getFileStorage();
+  } catch (err) {
+    if (err instanceof Error && err.message === FILE_STORAGE_NOT_CONFIGURED) {
+      throw new ReceiptError("El almacenamiento de fotos no está configurado en el servidor (Vercel Blob). Avisá a Sistemas; mientras tanto cargá los datos a mano.", 503, "STORAGE_NOT_CONFIGURED");
+    }
+    throw err;
+  }
+}
 
 export const RECEIPT_FILE_MAX_BYTES = 4 * 1024 * 1024;
 const FILE_TYPES: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", heic: "image/heic", heif: "image/heif", pdf: "application/pdf" };
@@ -453,7 +465,7 @@ export class ReceiptService {
     if (!type) throw new InventoryValidationError(`«${file.fileName}» no es una imagen JPG, PNG, HEIC ni un PDF válido.`);
     const current = await loadFiles(db, id);
     if (current.length >= RECEIPT_MAX_FILES) throw new InventoryValidationError(`Máximo ${RECEIPT_MAX_FILES} archivos por remito.`);
-    const storage = getFileStorage();
+    const storage = storageOrThrow();
     const sha = storage.sha256(file.bytes);
     // El mismo archivo dos veces en el mismo remito: no se guarda de nuevo.
     const [dup] = await db.select().from(inventoryIngresoAdjuntos).where(and(eq(inventoryIngresoAdjuntos.receiptId, id), eq(inventoryIngresoAdjuntos.sha256, sha), isNull(inventoryIngresoAdjuntos.deletedAt))).limit(1);
@@ -511,7 +523,7 @@ export class ReceiptService {
     if (!cfg.available) return fail(cfg.reason, cfg.code, false);
     const files = await db.select().from(inventoryIngresoAdjuntos).where(and(eq(inventoryIngresoAdjuntos.receiptId, id), isNull(inventoryIngresoAdjuntos.deletedAt))).orderBy(asc(inventoryIngresoAdjuntos.uploadedAt));
     if (!files.length) return fail("Primero sacá o subí la foto del remito.", "no_files", false);
-    const storage = getFileStorage();
+    const storage = storageOrThrow();
     let loaded: Array<{ bytes: Uint8Array; contentType: string }>;
     try {
       loaded = await Promise.all(files.map(async (f) => ({ bytes: (await storage.get(f.storageKey)).bytes, contentType: f.contentType })));
@@ -519,7 +531,7 @@ export class ReceiptService {
       console.warn("[ingreso-remito] no se pudo leer el archivo guardado para la lectura automática", err instanceof Error ? err.message : err);
       return fail("No se pudo abrir la foto guardada para leerla. Reintentá o completá los datos manualmente.", "storage", true);
     }
-    const out = await (this.deps.extract ?? extractRemito)(loaded);
+    const out = await (this.deps.extract ?? extractRemito)(loaded, { module });
     if (!out.ok) return fail(out.message, "kind" in out ? out.kind : "unavailable", true);
 
     const draft = readDraft(row);

@@ -320,14 +320,14 @@ describe.skipIf(Boolean(PROBLEM))(`Ingreso con remito en Postgres real${PROBLEM 
     expect(f2.id).toBe(f1.id); // mismo archivo en el mismo remito: no se duplica
   });
 
-  it("lectura automática: desactivada por defecto (carga manual igual); error del servicio no rompe; la sugerencia no se confirma sola", async () => {
+  it("lectura automática: sin clave o desactivada (carga manual igual); error del servicio no rompe; la sugerencia no se confirma sola", async () => {
     const { ReceiptService } = await lib();
     const off = new ReceiptService();
     expect(off.config().available).toBe(false);
     const r0 = await draft("MP", mp, `R-${RUN}-16`, [], { files: 1 });
     const res0 = await off.extract(mp as never, r0.id, "MP");
     expect(res0).toMatchObject({ applied: false });
-    expect(res0.message).toMatch(/no está activada/);
+    expect(res0.message).toMatch(/falta la clave|desactivada/);
 
     const failing = new ReceiptService({ extractionConfig: () => ({ available: true, provider: "gemini", model: "m", modelSource: "INGRESO_REMITO_GEMINI_MODEL" as const, code: "ok", reason: "" }), extract: async () => ({ ok: false, kind: "unavailable", message: "Servicio caído" }) });
     const res1 = await failing.extract(mp as never, r0.id, "MP");

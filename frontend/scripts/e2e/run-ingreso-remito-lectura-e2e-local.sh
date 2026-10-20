@@ -8,6 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 export INGRESO_REMITO_EXTRACTION=gemini
 export GEMINI_API_KEY=e2e-clave-falsa-no-es-real
+export INGRESO_REMITO_RETRY_BASE_MS=150
 export INGRESO_REMITO_GEMINI_BASE_URL=http://127.0.0.1:4599
 # Modelo configurado que YA NO EXISTE en el Gemini simulado: la lectura debe descubrir otro sola.
 export INGRESO_REMITO_GEMINI_MODEL=gemini-2.0-flash-retirado
