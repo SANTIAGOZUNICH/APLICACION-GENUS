@@ -46,6 +46,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0058_mp_weekly_row_state": "ff82c5bf6f9c312aa3192aee72f8634490279a049b7b3adfc27eda2b7bb5319d",
   "0061_work_item_schedules": "7e31268a5fd1c1082f7a8724145483b3aeb4fbeb50947b901d79837feaa06482",
   "0063_admin_account_activation": "4b3dca40deb514c5c58438f9f3cfa02a6579038afc17602a14252d3380cc5f70",
+  "0064_delivery_remito_marks": "e476630b11436863697d83eb538ea136b7b6f496ef181c6e0382ebde96adc4de",
   "0062_billing_control": "0d0d6a356759bb57b0f8dd2d9663d74a1f7b6841d493196e9059be0eb586c68f",
   "0060_aviso_user_recipients": "164ac0c7a37f5deeb64c52b08ceb40314451505d4863376a1664ee6f1404c270",
   "0059_delivery_line_packing": "b041d7bd272e73038789695982af2eead8642b1b387c1967ff38c2684eba58f5",
@@ -221,6 +222,8 @@ export const REQUIRED_SCHEMA_OBJECTS = Object.freeze([
   { migration: "0062_billing_control", object: "billing_invoice_events" },
   { migration: "0062_billing_control", object: "billing_work_notes" },
   { migration: "0063_admin_account_activation", object: "genus_auth_activations" },
+  { migration: "0064_delivery_remito_marks", object: "delivery_remito_marks" },
+  { migration: "0064_delivery_remito_marks", object: "delivery_remito_mark_events" },
 ]);
 
 /** @param {{ query: (text: string, params?: unknown[]) => Promise<any[]>, required?: ReadonlyArray<{migration: string, object: string}> }} opts */

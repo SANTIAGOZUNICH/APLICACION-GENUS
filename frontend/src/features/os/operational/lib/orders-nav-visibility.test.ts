@@ -10,11 +10,9 @@ function expectSidebarHas(sectorId: SectorId, item: keyof typeof SIDEBAR_LABELS)
 }
 
 describe("OE/OA navegación y CTA por sector", () => {
-  it("PRODUCCION ve OE pero NO la pestaña independiente de OA — igual puede crear/vincular OA vía asignación de trabajos", () => {
+  it("PRODUCCION ve OE y la pestaña de OA (consulta y eliminación segura) — también crea/vincula OA vía asignación de trabajos", () => {
     expectSidebarHas("PRODUCCION", "ordenes_elaboracion");
-    expect(resolveSectorHome("PRODUCCION").sidebarItems).not.toContain(
-      "ordenes_acondicionamiento"
-    );
+    expectSidebarHas("PRODUCCION", "ordenes_acondicionamiento");
     expect(resolveSectorHome("PRODUCCION").sidebarItems).not.toContain("ordenes");
     expect(canOrderAction("OE", "create", "PRODUCCION")).toBe(true);
     // La acción OA sigue habilitada a nivel RBAC — solo se retiró el listado

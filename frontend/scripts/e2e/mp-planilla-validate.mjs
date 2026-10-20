@@ -68,7 +68,16 @@ async function typeInto(page, rowValue, title, value, gridTestId, reason) {
   await page.keyboard.type(value);
   await page.keyboard.press("Enter");
   const apply = page.locator(`[data-testid=${gridTestId}-preview-apply]`);
-  if (await apply.waitFor({ timeout: 4000 }).then(() => true).catch(() => false)) {
+  const inline = page.locator(`[data-testid=${gridTestId}-inline-reason-input]`);
+  // Un solo cambio que pide motivo: la barra en línea («Motivo + Enter»); varios: el diálogo con vista previa.
+  const which = await Promise.race([
+    apply.waitFor({ timeout: 4000 }).then(() => "dialog").catch(() => null),
+    inline.waitFor({ timeout: 4000 }).then(() => "inline").catch(() => null),
+  ]);
+  if (which === "inline") {
+    if (reason) await inline.fill(reason);
+    await inline.press("Enter");
+  } else if (which === "dialog") {
     if (reason) await page.locator(`[data-testid=${gridTestId}-reason]`).fill(reason);
     await apply.click();
   }

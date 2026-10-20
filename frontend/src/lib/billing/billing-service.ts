@@ -190,11 +190,35 @@ async function loadNotes(db: Tx): Promise<Map<string, string>> {
   return new Map((res.rows as Row[]).map((r) => [String(r.id), String(r.observations)]));
 }
 
+/** Números de remito creados por fuera de GENUS OS («Marcar como remito ya creado»). Tolera que la migración 0064 no esté aplicada. */
+async function loadExternalRemitos(db: Tx): Promise<{ byLine: Map<string, string>; byWorkItem: Map<string, string[]> }> {
+  const byLine = new Map<string, string>();
+  const byWorkItem = new Map<string, string[]>();
+  try {
+    const res = await db.execute(sql`
+      select m.delivery_line_id::text as line_id, l.work_item_id::text as work_item_id, m.external_remito_number as num
+        from delivery_remito_marks m join work_item_delivery_lines l on l.id = m.delivery_line_id
+       where m.active = true and m.mark = 'REMITO_EXTERNO' and m.external_remito_number is not null and m.external_remito_number <> ''`);
+    for (const r of res.rows as Row[]) {
+      byLine.set(String(r.line_id), String(r.num));
+      const w = String(r.work_item_id);
+      byWorkItem.set(w, [...(byWorkItem.get(w) ?? []), String(r.num)]);
+    }
+  } catch {
+    /* tabla ausente: sin remitos externos */
+  }
+  return { byLine, byWorkItem };
+}
+
 export async function listBillingRows(actor: BillingActor, filters: BillingFilters = {}): Promise<BillingRowView[]> {
   assertBillingRead(actor);
   const db = getDb() as unknown as Tx;
-  const [res, notes] = await Promise.all([db.execute(BASE_ROWS), loadNotes(db)]);
-  const rows = buildBillingRows(res.rows as Row[], notes);
+  const [res, notes, ext] = await Promise.all([db.execute(BASE_ROWS), loadNotes(db), loadExternalRemitos(db)]);
+  const raw = (res.rows as Row[]).map((r) => {
+    const extra = ext.byWorkItem.get(String(r.id));
+    return extra ? { ...r, remitos: [...strArr(r.remitos), ...extra] } : r;
+  });
+  const rows = buildBillingRows(raw, notes);
   const sorted = rows.sort((a, b) => (b.lastDeliveryAt ?? "").localeCompare(a.lastDeliveryAt ?? "") || a.client.localeCompare(b.client));
   return filterBillingRows(sorted, filters);
 }
@@ -234,6 +258,7 @@ export async function listBillableDeliveries(actor: BillingActor, opts: { rootKe
                   where il.status = 'ACTIVA' and inv.status = 'ACTIVA' group by il.delivery_line_id) i on i.delivery_line_id = l.id
      where ${sql.join(conds, sql` and `)}
      order by l.actual_delivered_at desc limit 500`);
+  const ext = await loadExternalRemitos(getDb() as unknown as Tx);
   const out = (res.rows as Row[]).map((r) => {
     const quantity = num(r.quantity);
     const invoiced = num(r.invoiced);
@@ -249,7 +274,7 @@ export async function listBillableDeliveries(actor: BillingActor, opts: { rootKe
       invoiced,
       available: Math.max(0, round6(quantity - invoiced)),
       deliveredAt: new Date(String(r.actual_delivered_at)).toISOString(),
-      remito: r.remito == null || r.remito === "" ? null : String(r.remito),
+      remito: r.remito == null || r.remito === "" ? (ext.byLine.get(String(r.id)) ?? null) : String(r.remito),
       kind: String(r.kind ?? "PARCIAL"),
     };
   });

@@ -78,13 +78,13 @@ function buildOrderLifecycleMenuItems(
     items.push({
       action: "eliminar_definitivo",
       label: "Eliminar OA",
-      requireReasonMandatory: true,
       decision: {
         action: "eliminar_definitivo",
         allowed: true,
-        requireReason: true,
-        requireDoubleConfirm: true,
-        reason: "Esta acción quitará la OA de las vistas operativas, pero conservará su historial para auditoría.",
+        requireReason: false,
+        requireDoubleConfirm: false,
+        reason:
+          "La OA se quita de las vistas operativas y queda registrado quién y cuándo. Si ya tiene entregas, solo se cancela lo pendiente y todo lo registrado se conserva. Si ya tiene producción completa o decisión de Calidad, no se elimina.",
       },
       impact: {
         summary: `Lote: ${order.lot || "—"} · Producto: ${order.product || "—"} · Cliente: ${order.client || "—"}`,

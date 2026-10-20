@@ -1739,25 +1739,51 @@ export class OrdersService {
     if (!canDeleteOa(actor.sector)) {
       throw new OrdersForbiddenError(ORDERS_DENIED_MESSAGE);
     }
-    // A diferencia del resto de lifecycle (motivo siempre opcional, ver
-    // normalizeOptionalReason), acá el motivo es realmente obligatorio —
-    // hay que validar el crudo ANTES de normalizar, porque
-    // normalizeOptionalReason() rellena con "Sin motivo informado" cuando
-    // viene vacío y eso enmascararía la falta de motivo real.
-    if (!sanitizeOptionalReason(reason)) {
-      throw new OrdersValidationError("El motivo es obligatorio para eliminar una OA.");
-    }
+    // El motivo es opcional (se registra usuario, fecha y operación automáticamente).
     const trimmed = normalizeOptionalReason(reason);
     if (current.deletedAt) {
       return current; // idempotente
     }
-
-    // Solo informativo para el audit trail — nunca bloquea. Deja constancia
-    // de qué relaciones tenía la OA al momento de eliminarla, sin tocarlas.
+    // Relaciones al momento de eliminar (constancia en la auditoría; nunca se tocan).
     const refs = await this.repo.findOaReferences({
       id: current.id,
       orderNumber: current.orderNumber,
     });
+    const finished =
+      current.status === "COMPLETA" || current.status === "COMPLETA_CON_PENDIENTES" || current.status === "ARCHIVADA";
+    const hasHistory = finished || refs.hasQualityDecision || refs.activeDeliveryCount > 0;
+    if (finished || refs.hasQualityDecision) {
+      throw new OrdersValidationError(
+        "Esta OA ya tiene producción, entregas o decisión de Calidad registradas: se conserva completa. No hay una parte pendiente para cancelar."
+      );
+    }
+    if (hasHistory) {
+      if (current.status === "ANULADA") return current; // ya cancelada: idempotente
+      // Tiene entregas registradas pero sigue en curso: se cancela SOLO lo pendiente (estado ANULADA). Las entregas,
+      // remitos, facturas y movimientos quedan exactamente como están.
+      const cancelled = await this.repo.updateOrderOptimistic(id, current.version, {
+        status: "ANULADA",
+        updatedBy: actor.email,
+      });
+      if (!cancelled) {
+        const fresh = await this.repo.getOrder(id);
+        throw new OrdersConflictError("Conflicto al cancelar.", fresh!);
+      }
+      await this.repo.appendAudit({
+        orderId: id,
+        eventType: "ORDER_OA_CANCELLED_SAFE",
+        actor: actor.email,
+        actorSector: actor.sector,
+        metadata: {
+          reason: trimmed,
+          orderNumber: current.orderNumber,
+          previousStatus: current.status,
+          hadActiveDeliveries: refs.activeDeliveryCount,
+          at: nowIso(),
+        },
+      });
+      return cancelled;
+    }
 
     const updated = await this.repo.updateOrderOptimistic(id, current.version, {
       deletedAt: nowIso(),

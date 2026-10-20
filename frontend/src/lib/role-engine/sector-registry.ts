@@ -284,15 +284,13 @@ export const SECTOR_DEFINITIONS: SectorDefinition[] = [
       "Asignar trabajo",
       "Reasignar trabajo",
     ],
-    // "ordenes_acondicionamiento" (pestaña independiente de OA) queda fuera
-    // a propósito para Producción — la infraestructura de OA (auto-creación
-    // 1 trabajo = 1 OA, /oa/[id], uso desde Envasado/Codificado/remitos)
-    // sigue intacta; solo se retira el listado independiente de este menú.
+    // Producción consulta todas las OA en su propia pestaña «Órdenes de Acondicionamiento» (buscar, filtrar, eliminar de forma segura).
     // Sin «Panel general» ni la pestaña general «Semanas» (retiradas): Producción aterriza en Pedidos. Las vistas
     // semanales de cada sector (Envasado, Elaboración, Codificado…) siguen dentro de su «Mi trabajo» / «Ver …».
     sidebarItems: [
       "pedidos",
       "ordenes_elaboracion",
+      "ordenes_acondicionamiento",
       "pendientes",
       "entregados",
       "entregas",

@@ -8,6 +8,7 @@ import { describeDeliveryPacking } from "./delivery-packing";
 import { groupDeliveries, type EligibleDelivery, type RemitoPreviewGroup } from "./delivery-grouping";
 export { groupDeliveries };
 export type { EligibleDelivery, RemitoPreviewGroup };
+import { marksTableReady } from "./delivery-marks";
 import { getRemitoService } from "./remito-service";
 import type { RemitoActor } from "./remito-service";
 import type { RemitoApprovalInput, RemitoRecord } from "./types";
@@ -23,6 +24,9 @@ type Row = Record<string, unknown>;
  */
 export async function listEligibleDeliveries(opts: { lineIds?: string[] } = {}): Promise<EligibleDelivery[]> {
   const only = opts.lineIds?.length ? sql`and l.id in (${sql.join(opts.lineIds.map((i) => sql`${i}::uuid`), sql`, `)})` : sql``;
+  const marks = (await marksTableReady())
+    ? sql`and not exists (select 1 from delivery_remito_marks m where m.delivery_line_id = l.id and m.active = true)`
+    : sql``;
   const res = await getDb().execute(sql`
     select l.id::text as id, l.work_item_id::text as work_item_id, l.quantity, l.unit, l.kind, l.actual_delivered_at, l.remito, l.delivered_by,
            l.packing_groups, w.client, w.product, w.packaging_lote, w.packaging_vto, w.order_number, d.pedido_op,
@@ -30,7 +34,7 @@ export async function listEligibleDeliveries(opts: { lineIds?: string[] } = {}):
       from work_item_delivery_lines l
       join work_items w on w.id = l.work_item_id
       left join work_item_deliveries d on d.id = l.delivery_id
-     where l.status = 'ACTIVA' and w.deleted_at is null ${only}
+     where l.status = 'ACTIVA' and w.deleted_at is null ${only} ${marks}
        and not exists (
          select 1 from remito_work_links k join remitos r on r.id = k.remito_id
           where k.work_item_id = 'dl:' || l.id::text and r.status <> 'ANULADO')

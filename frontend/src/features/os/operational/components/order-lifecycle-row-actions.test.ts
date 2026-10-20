@@ -16,7 +16,7 @@ describe("buildOrderLifecycleMenuItems — botón Eliminar OA", () => {
     const del = items.find((i) => i.action === "eliminar_definitivo");
     expect(del).toBeTruthy();
     expect(del?.label).toBe("Eliminar OA");
-    expect(del?.requireReasonMandatory).toBe(true);
+    expect(del?.requireReasonMandatory).toBeFalsy();
   });
 
   it("Producción y Dirección también la ven (mismo conjunto que administra OA hoy)", () => {
