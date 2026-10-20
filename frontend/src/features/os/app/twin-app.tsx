@@ -37,6 +37,7 @@ import { MpHubView } from "@/features/os/operational/views/mp-hub-view";
 import { SemanasSectorView } from "@/features/os/operational/views/semanas-sector-view";
 import { AsignacionLotesView } from "@/features/os/operational/views/asignacion-lotes-view";
 import { PortalClientesView } from "@/features/os/operational/views/portal-clientes-view";
+import { ControlFacturacionView } from "@/features/os/operational/views/control-facturacion-view";
 import { EntregadosView } from "@/features/os/operational/views/entregados-view";
 import { EntregasView } from "@/features/os/operational/views/entregas-view";
 import { RemitosView } from "@/features/os/operational/views/remitos-view";
@@ -61,6 +62,8 @@ export function TwinRouter() {
     case "mi-trabajo":
       return renderSectorHome(sectorId, SECTOR_VIEW_REGISTRY);
     case "plan-semanal":
+      // Administración no tiene plan semanal: cualquier enlace/redirect viejo aterriza en su Control de facturación.
+      if (sectorId === "ADMINISTRACION") return <ControlFacturacionView key="control" initialTab="control" />;
       if (sectorId === "CODIFICADO") return <SharedWeeklyPlanViewForCodificado />;
       if (sectorId === "MATERIA_PRIMA") return <SharedWeeklyPlanViewForMateriaPrima />;
       return <WireframePlanSemanal />;
@@ -133,6 +136,8 @@ export function TwinRouter() {
       return <EntregadosView />;
     case "asignacion-lotes":
       return <AsignacionLotesView />;
+    case "control-facturacion":
+      return <ControlFacturacionView key="control" initialTab="control" />;
     case "portal-clientes":
       return <PortalClientesView />;
     case "remitos":
@@ -146,7 +151,8 @@ export function TwinRouter() {
     case "expedicion":
       return <ExpedicionView />;
     case "dashboard":
-      return <DashboardView />;
+      // Administración: su tablero es el de facturación (sin importes), no el de producción.
+      return sectorId === "ADMINISTRACION" ? <ControlFacturacionView key="resumen" initialTab="resumen" /> : <DashboardView />;
     case "ver-elaboracion":
       return <ElaboracionOperationalView />;
     case "ver-envasado-masivo":

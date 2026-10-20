@@ -29,6 +29,7 @@ import {
   Truck,
   Gauge,
   Globe,
+  Receipt,
 } from "lucide-react";
 import type { SidebarItemId } from "@/lib/role-engine/types";
 
@@ -62,6 +63,7 @@ const ICONS = {
   entregas: Truck,
   asignacion_lotes: Tags,
   portal_clientes: Globe,
+  control_facturacion: Receipt,
   ver_elaboracion: Beaker,
   ver_envasado_masivo: Package,
   ver_envasado_premium: Package,
@@ -105,6 +107,7 @@ export const SIDEBAR_LABELS: Record<SidebarItemId, string> = {
   entregas: "Entregas",
   asignacion_lotes: "Asignación de lotes",
   portal_clientes: "Portal de Clientes",
+  control_facturacion: "Control de facturación",
   ver_elaboracion: "Elaboración",
   ver_envasado_masivo: "Envasado Masivo",
   ver_envasado_premium: "Envasado Premium",

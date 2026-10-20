@@ -27,3 +27,31 @@ describe("avisos a Administración", () => {
     for (const t of ["Cliente: Pilar", "Pedido: 1520", "Producto: Crema Facial", "OE/OA: OA-1520", "parcial", "5 cajas de 250 u.", "Registró: Producción", "Remito: R-1"]) expect(ent.message).toContain(t);
   });
 });
+
+describe("avisos de facturación: parcial, completa y remitos", () => {
+  const delivery = { ...base, remito: "R-1", packingGroups: [{ cajas: 3, unidadesPorCaja: 100 }], deliveredAt: new Date("2026-10-19T14:00:00Z"), totals: { requested: 500, delivered: 300, pending: 200 } };
+  it("entrega parcial: título propio y cantidades pedido / acumulado / pendiente", () => {
+    const n = buildBillingNotification({ type: "ENTREGA_REGISTRADA", ...delivery, complete: false });
+    expect(n.title).toMatch(/ENTREGA PARCIAL REGISTRADA/);
+    for (const t of ["Total pedido: 500 u", "Entregado acumulado: 300 u", "Pendiente de entregar: 200 u", "entregar no es facturar"]) expect(n.message).toContain(t);
+    expect(n.href).toContain("/facturacion");
+  });
+  it("entrega completa: aviso aparte con id distinto al de la entrega", () => {
+    const a = buildBillingNotification({ type: "ENTREGA_REGISTRADA", ...delivery, complete: true });
+    const c = buildBillingNotification({ type: "ENTREGA_COMPLETA", ...delivery });
+    expect(c.title).toMatch(/PEDIDO ENTREGADO COMPLETO/);
+    expect(c.id).not.toBe(a.id);
+    expect(c.kind).toBe("entrega_completa");
+  });
+  it("remito generado / anulado: contenido, motivo y unidades pendientes; ids estables y distintos", () => {
+    const common = { remitoId: "r1", remitoNumber: "R-20261019-ABC-1", client: "Pilar", lines: [{ product: "Crema", quantity: 100, unit: "u", orderRef: "OA-1" }, { product: "Serum", quantity: 50, unit: "u" }], totalUnits: 150, totalCajas: 3, at: new Date("2026-10-19T15:00:00Z"), actorName: "Producción" };
+    const g = buildBillingNotification({ type: "REMITO_GENERADO", ...common });
+    const x = buildBillingNotification({ type: "REMITO_ANULADO", ...common, reason: "error de carga", pendingInvoiceUnits: 150 });
+    expect(g.message).toContain("Remito: R-20261019-ABC-1");
+    expect(g.message).toContain("Crema (100 u · OA-1); Serum (50 u)");
+    expect(x.message).toContain("Motivo de anulación: error de carga");
+    expect(x.message).toContain("pendientes de facturar afectadas: 150 u.");
+    expect(g.id).not.toBe(x.id);
+    expect(buildBillingNotification({ type: "REMITO_GENERADO", ...common }).id).toBe(g.id);
+  });
+});

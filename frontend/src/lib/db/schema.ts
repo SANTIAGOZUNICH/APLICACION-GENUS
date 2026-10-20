@@ -1798,3 +1798,73 @@ export const depositoGranelesAudit = pgTable(
   (table) => [index("deposito_graneles_audit_granel_idx").on(table.granelId)]
 );
 
+
+/** Control de facturación (0062): facturas emitidas FUERA del sistema, registradas por Administración. Sin importes. */
+export const billingInvoices = pgTable(
+  "billing_invoices",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    client: text("client").notNull(),
+    clientNorm: text("client_norm").notNull(),
+    invoiceNumber: text("invoice_number").notNull(),
+    invoiceNumberNorm: text("invoice_number_norm").notNull(),
+    invoiceDate: date("invoice_date").notNull(),
+    observations: text("observations"),
+    status: text("status").notNull().default("ACTIVA"),
+    idempotencyKey: text("idempotency_key"),
+    createdBy: text("created_by").notNull(),
+    createdBySector: text("created_by_sector").notNull(),
+    annulledAt: timestamp("annulled_at", { withTimezone: true }),
+    annulledBy: text("annulled_by"),
+    annulReason: text("annul_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("billing_invoices_client_number_uidx").on(table.clientNorm, table.invoiceNumberNorm),
+    uniqueIndex("billing_invoices_idem_uidx").on(table.idempotencyKey),
+    index("billing_invoices_date_idx").on(table.invoiceDate),
+  ]
+);
+
+/** Unidades de UNA entrega real (work_item_delivery_lines) cubiertas por una factura. Sin FKs (trazabilidad por id). */
+export const billingInvoiceLines = pgTable(
+  "billing_invoice_lines",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    invoiceId: uuid("invoice_id").notNull(),
+    deliveryLineId: uuid("delivery_line_id").notNull(),
+    workItemId: uuid("work_item_id").notNull(),
+    quantity: doublePrecision("quantity").notNull(),
+    status: text("status").notNull().default("ACTIVA"),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("billing_invoice_lines_invoice_idx").on(table.invoiceId),
+    index("billing_invoice_lines_delivery_idx").on(table.deliveryLineId),
+    index("billing_invoice_lines_work_item_idx").on(table.workItemId),
+  ]
+);
+
+export const billingInvoiceEvents = pgTable(
+  "billing_invoice_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    invoiceId: uuid("invoice_id").notNull(),
+    eventType: text("event_type").notNull(),
+    actorEmail: text("actor_email").notNull(),
+    actorSector: text("actor_sector").notNull(),
+    detail: jsonb("detail").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("billing_invoice_events_invoice_idx").on(table.invoiceId)]
+);
+
+/** Observaciones de Administración por trabajo (editable; no toca el trabajo ni la entrega). */
+export const billingWorkNotes = pgTable("billing_work_notes", {
+  workItemId: uuid("work_item_id").primaryKey(),
+  observations: text("observations"),
+  updatedBy: text("updated_by").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
