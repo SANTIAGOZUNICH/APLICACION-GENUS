@@ -202,7 +202,7 @@ try {
 
   await nav(dp, "Ingresos ME");
   await inCellRoundTrip(dp, { label: "Ingresos ME", navLabel: "Ingresos ME", gridId: "me-ingresos-grid", rowValue: "PL-R-1", column: "PROVEEDOR", value: "PROV EDITADO", read: async () => (await pl("inv_me_ingresos", id.ing))?.proveedor });
-  check("Ingresos ME: TOTAL protegido, con el motivo", /bultos × cantidad/.test(await lockReason(dp, "me-ingresos-grid", "PL-R-1", "TOTAL")));
+  check("Ingresos ME: TOTAL sin candado (editarlo corrige la cantidad por bulto)", (await lockReason(dp, "me-ingresos-grid", "PL-R-1", "TOTAL")) === "");
   check("Ingresos ME: la edición queda auditada", (await auditCount(id.ing)) >= 1);
   await dp.screenshot({ path: `${OUT}/1-ingresos-me.png` });
 
@@ -212,7 +212,7 @@ try {
 
   await nav(dp, "Inventario ME");
   await inCellRoundTrip(dp, { label: "Inventario ME", navLabel: "Inventario ME", gridId: "me-inventario-grid", rowValue: "PLAN-ME-01", column: "UBICACIÓN", value: "RACK-9", read: async () => (await pl("inv_me_materials", id.mat))?.ubicacion });
-  check("Inventario ME: CANTIDAD TOTAL protegida (se ajusta con motivo)", /Ajustar stock/.test(await lockReason(dp, "me-inventario-grid", "PLAN-ME-01", "CANTIDAD TOTAL")));
+  check("Inventario ME: CANTIDAD TOTAL sin candado (escribirla genera un ajuste auditado)", (await lockReason(dp, "me-inventario-grid", "PLAN-ME-01", "CANTIDAD TOTAL")) === "");
   await dp.screenshot({ path: `${OUT}/3-inventario-me.png` });
   await dep.ctx.close();
 
@@ -235,7 +235,7 @@ try {
   // y sin mover stock.
   await inCellRoundTrip(mp, { label: "Ingresos MP (confirmado existente)", navLabel: "Ingresos MP", gridId: "mp-ingresos-grid", rowValue: "PL-MP-PROD", column: "Ubicación", value: "B9", read: async () => (await ingreso("PL-MP-PROD"))?.ubicacion });
   check("Ingresos MP (confirmado existente): sigue CONFIRMADO y sin movimientos nuevos", (await ingreso("PL-MP-PROD"))?.status === "CONFIRMADO" && (await q("select 1 from mp_stock_movements where codigo = 'PLAN-MP-PROD'")).length === 0);
-  check("Ingresos MP: INGRESO Nº protegido, con el motivo", /asignado por el sistema/.test(await lockReason(mp, "mp-ingresos-grid", "PL-MP-R1", "Ingreso")));
+  check("Ingresos MP: INGRESO Nº sin candado (se puede cambiar a mano)", (await lockReason(mp, "mp-ingresos-grid", "PL-MP-R1", "Ingreso")) === "");
 
   // Escape cancela
   {
@@ -246,17 +246,18 @@ try {
     await mp.waitForTimeout(1200);
     check("teclado: Escape cancela la edición (no se guarda nada)", ((await ingreso("PL-MP-R2"))?.cliente ?? "") === "" && (await cellValue(mp, "mp-ingresos-grid", "PL-MP-R2", "Cliente")) === "");
   }
-  // Tab: guarda y pasa a la siguiente celda EDITABLE (saltea INGRESO Nº)
+  // Tab: guarda y pasa a la siguiente celda (INGRESO Nº ya es editable: se pasa con otro Tab)
   {
     const c = await cell(mp, "mp-ingresos-grid", "PL-MP-R2", "Fecha");
     await c.dblclick();
     await mp.keyboard.press("ControlOrMeta+A");
     await mp.keyboard.type("08/10/2026");
     await mp.keyboard.press("Tab");
+    await mp.keyboard.press("Tab");
     await mp.keyboard.type("PROV TAB");
     await mp.keyboard.press("Enter");
     const ok = await waitDb(async () => (await ingreso("PL-MP-R2"))?.fecha === "2026-10-08" && (await ingreso("PL-MP-R2"))?.proveedor === "PROV TAB");
-    check("teclado: Tab guarda la celda y salta la columna protegida (Ingreso Nº) a la siguiente editable (Proveedor)", ok, JSON.stringify({ fecha: (await ingreso("PL-MP-R2"))?.fecha, prov: (await ingreso("PL-MP-R2"))?.proveedor }));
+    check("teclado: Tab guarda la celda y avanza de a una columna (Fecha → Ingreso Nº → Proveedor)", ok, JSON.stringify({ fecha: (await ingreso("PL-MP-R2"))?.fecha, prov: (await ingreso("PL-MP-R2"))?.proveedor }));
   }
   // Pegado de un rango desde Excel (2 filas × 1 columna) en «Ubicación», empezando en la fila de arriba.
   {

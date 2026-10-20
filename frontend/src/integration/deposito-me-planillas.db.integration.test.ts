@@ -169,4 +169,68 @@ describe.skipIf(Boolean(PROBLEM))(`Depósito ME: planillas editables en Postgres
     expect(await meStockByCodigoDb("IT-ME-TAPA-B")).toBe(moved);
     expect((await q("select count(*)::int n from inv_me_materials where payload->>'codigo' = 'IT-ME-TAPA-B'"))[0]!.n).toBe(1);
   });
+
+  it("Ingresos: editar TOTAL corrige la cantidad por bulto (total ÷ bultos) y el stock sigue siendo calculado", async () => {
+    const { patchMeSheetCells, meStockByCodigoDb } = await mod();
+    const id = randomUUID();
+    const mid = randomUUID();
+    await q("insert into inv_me_materials (id, payload) values ($1,$2)", [mid, { id: mid, codigo: "IT-ME-TOT", descripcion: "Total IT", cliente: "CLIENTE IT", ubicacion: "", unidad: "u", cantidadPorBulto: null, stockActual: 0, stockMinimo: null, puntoReposicion: null, responsable: "", observacion: "", updatedAt: T, archived: false }]);
+    await q("insert into inv_me_ingresos (id, payload) values ($1,$2)", [id, { id, fecha: "2026-10-03", ingresoNro: "IT-TOT-1", proveedor: "PROV IT", cliente: "CLIENTE IT", remitoNro: "R-TOT", codigo: "IT-ME-TOT", descripcionInsumo: "Total IT", bultos: 4, cantidad: 25, total: 100, ubicacion: "", materialId: mid, anulado: false, createdBy: "x", updatedBy: "x", createdAt: T, updatedAt: T }]);
+    expect(await meStockByCodigoDb("IT-ME-TOT")).toBe(100);
+    await patchMeSheetCells(deposito, "me_ingresos", [{ id, field: "total", value: "120", expectedVersion: T }]);
+    expect(await payload("inv_me_ingresos", id)).toMatchObject({ bultos: 4, cantidad: 30, total: 120 });
+    expect(await meStockByCodigoDb("IT-ME-TOT")).toBe(120);
+    // INGRESO Nº se edita a mano (varias líneas pueden compartirlo)
+    const v = String((await payload("inv_me_ingresos", id)).updatedAt);
+    await patchMeSheetCells(deposito, "me_ingresos", [{ id, field: "ingresoNro", value: "IT-1", expectedVersion: v }]);
+    expect(await payload("inv_me_ingresos", id)).toMatchObject({ ingresoNro: "IT-1" });
+  });
+
+  it("Inventario: escribir CANTIDAD TOTAL genera un AJUSTE auditado por la diferencia (idempotente; conflicto si cambió el stock)", async () => {
+    const { patchMeSheetCells, meStockByCodigoDb, MeSheetPatchError } = await mod();
+    const mid = (await q("select id from inv_me_materials where payload->>'codigo' = 'IT-ME-TOT'"))[0]!.id as string;
+    const mat = await payload("inv_me_materials", mid);
+    await patchMeSheetCells(deposito, "me_inventario", [{ id: mid, field: "stockTotal", value: "110", expectedVersion: String(mat.updatedAt), expectedValue: "120" }]);
+    expect(await meStockByCodigoDb("IT-ME-TOT")).toBe(110);
+    const aj = await q("select payload from inv_ajustes where payload->>'entityId' = $1", [mid]);
+    expect(aj).toHaveLength(1);
+    expect(aj[0]!.payload).toMatchObject({ module: "ME", cantidadAnterior: 120, cantidadNueva: 110, diferencia: -10, actorSector: "DEPOSITO" });
+    // Mismo valor otra vez: no crea otro ajuste
+    const mat2 = await payload("inv_me_materials", mid);
+    await patchMeSheetCells(deposito, "me_inventario", [{ id: mid, field: "stockTotal", value: "110", expectedVersion: String(mat2.updatedAt), expectedValue: "110" }]);
+    expect(await q("select 1 from inv_ajustes where payload->>'entityId' = $1", [mid])).toHaveLength(1);
+    // El usuario veía 120 pero el stock ya es 110 → conflicto, no se ajusta sobre otro número
+    const err = await patchMeSheetCells(deposito, "me_inventario", [{ id: mid, field: "stockTotal", value: "90", expectedVersion: String((await payload("inv_me_materials", mid)).updatedAt), expectedValue: "120" }]).catch((e) => e);
+    expect(err).toBeInstanceOf(MeSheetPatchError);
+    expect(err.status).toBe(409);
+    expect(await meStockByCodigoDb("IT-ME-TOT")).toBe(110);
+    // BULTOS: pide «cant. por bulto» y luego ajusta por bultos × cantidad por bulto
+    const e2 = await patchMeSheetCells(deposito, "me_inventario", [{ id: mid, field: "bultosStock", value: "3", expectedVersion: String((await payload("inv_me_materials", mid)).updatedAt) }]).catch((e) => e);
+    expect(e2.message).toMatch(/Cant\. por bulto/);
+    await patchMeSheetCells(deposito, "me_inventario", [{ id: mid, field: "cantidadPorBulto", value: "10", expectedVersion: String((await payload("inv_me_materials", mid)).updatedAt) }]);
+    await patchMeSheetCells(deposito, "me_inventario", [{ id: mid, field: "bultosStock", value: "3", expectedVersion: String((await payload("inv_me_materials", mid)).updatedAt) }]);
+    expect(await meStockByCodigoDb("IT-ME-TOT")).toBe(30);
+  });
+
+  it("Inventario: editar el CÓDIGO renombra el material y sus movimientos (stock intacto); no se puede usar el de otro material", async () => {
+    const { patchMeSheetCells, meStockByCodigoDb, MeSheetPatchError } = await mod();
+    const mid = (await q("select id from inv_me_materials where payload->>'codigo' = 'IT-ME-TOT'"))[0]!.id as string;
+    const clash = await patchMeSheetCells(deposito, "me_inventario", [{ id: mid, field: "codigo", value: COD, expectedVersion: String((await payload("inv_me_materials", mid)).updatedAt) }]).catch((e) => e);
+    expect(clash).toBeInstanceOf(MeSheetPatchError);
+    expect(clash.message).toMatch(/otro material/);
+    await patchMeSheetCells(deposito, "me_inventario", [{ id: mid, field: "codigo", value: "it-me-ren", expectedVersion: String((await payload("inv_me_materials", mid)).updatedAt) }]);
+    expect((await payload("inv_me_materials", mid)).codigo).toBe("IT-ME-REN");
+    expect((await q("select payload->>'codigo' c from inv_me_ingresos where payload->>'remitoNro' = 'R-TOT'"))[0]!.c).toBe("IT-ME-REN");
+    expect(await meStockByCodigoDb("IT-ME-REN")).toBe(30);
+    expect(await meStockByCodigoDb("IT-ME-TOT")).toBe(0);
+    const audit = await q("select payload from inv_audit where payload->>'entityId' = $1 and payload->>'action' = 'cell_edit' order by created_at desc limit 1", [mid]);
+    expect(audit[0]!.payload).toMatchObject({ before: { codigo: "IT-ME-TOT" }, after: { codigo: "IT-ME-REN" } });
+  });
+
+  it("permisos: Producción no edita TOTAL ni ajusta stock desde la planilla (403)", async () => {
+    const { patchMeSheetCells } = await mod();
+    const mid = (await q("select id from inv_me_materials where payload->>'codigo' = 'IT-ME-REN'"))[0]!.id as string;
+    const err = await patchMeSheetCells(produccion as never, "me_inventario", [{ id: mid, field: "stockTotal", value: "5", expectedVersion: String((await payload("inv_me_materials", mid)).updatedAt) }]).catch((e) => e);
+    expect(err.status ?? 403).toBe(403);
+  });
 });

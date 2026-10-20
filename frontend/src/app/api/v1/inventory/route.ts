@@ -180,6 +180,8 @@ async function mutateResource(
         Number(payload.cantidadNueva),
         String(payload.motivo ?? reason ?? "")
       );
+    case "me_stock:create":
+      return service.createMeMaterial(actor, payload as never);
     case "me_stock:thresholds":
       return service.updateMeThresholds(actor, id!, payload as never);
     case "me_stock:delete":
