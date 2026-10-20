@@ -130,6 +130,7 @@ try {
   check("«Quitar de pendientes» pide confirmación pero NO pide motivo", (await page.locator("[data-testid=remitos-mark-dialog] textarea, [data-testid=remitos-mark-dialog] input").count()) === 0);
   await page.locator("[data-testid=remitos-mark-confirmar]").dblclick();
   await page.locator("[data-testid=remitos-generar-notice]").filter({ hasText: /quitada/ }).waitFor({ timeout: 30_000 });
+  await page.locator("[data-testid=remitos-generar-row]").filter({ hasText: "TONICO REM" }).waitFor({ state: "detached", timeout: 15_000 }).catch(() => undefined);
   check("la entrega quitada deja de ofrecerse para remito", (await page.locator("[data-testid=remitos-generar-row]").filter({ hasText: "TONICO REM" }).count()) === 0);
   const tonicoLine = (await q("select l.id from work_item_delivery_lines l where l.work_item_id = $1", [ids.otro]))[0].id;
   const m1 = await q("select mark, active, created_by from delivery_remito_marks where delivery_line_id = $1", [tonicoLine]);
