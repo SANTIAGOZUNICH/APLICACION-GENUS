@@ -81,9 +81,10 @@ export function middleware(request: NextRequest) {
   }
 
   const hasSessionCookie = Boolean(request.cookies.get("genus_session")?.value);
-  const isAuthLogin = pathname === "/api/v1/auth/login";
+  const isAuthLogin = pathname === "/api/v1/auth/login" || pathname === "/api/v1/auth/activar-administracion";
   const isPublicPage =
     pathname === "/login" ||
+    pathname === "/activar-administracion" ||
     pathname === "/offline" ||
     pathname === "/manifest.webmanifest" ||
     pathname === "/manifest.webmanifest/";

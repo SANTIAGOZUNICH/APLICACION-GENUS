@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
+import { AdminAccountActivationCard } from "@/features/os/admin/admin-account-activation-card";
 import { AdminUsersPanel } from "@/features/os/admin/admin-users-panel";
 import { getAuthService } from "@/lib/auth/get-auth-service";
 import { isSuperadminEmail, isSuperadminEmailConfigured } from "@/lib/auth/superadmin";
@@ -36,6 +37,7 @@ export default async function AdministracionUsuariosPage() {
 
   return (
     <main className="design-preview-root min-h-screen px-4 py-6 md:px-8">
+      <AdminAccountActivationCard />
       <AdminUsersPanel sectors={sectors} />
     </main>
   );
