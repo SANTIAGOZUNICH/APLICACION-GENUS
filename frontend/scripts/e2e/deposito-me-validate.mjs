@@ -126,8 +126,8 @@ try {
   await waitRow(dp, "E2E-I-1");
   check("tras recargar, la celda muestra exactamente 120", (await (await cell(dp, "E2E-I-1", "CANTIDAD")).locator("input").inputValue()) === "120");
   const totalLocked = await (await cell(dp, "E2E-I-1", "TOTAL")).evaluate((el) => el.classList.contains("genus-cell-protected"));
-  const totalApi = await api.patch("/api/v1/inventory/cells", { data: { resource: "me_ingresos", changes: [{ id: id.i1, field: "total", value: "999", expectedVersion: (await pl("inv_me_ingresos", id.i1)).updatedAt }] } });
-  check("TOTAL es calculado (no se escribe a mano: celda protegida y el servidor lo rechaza)", totalLocked && totalApi.status() === 403 && (await pl("inv_me_ingresos", id.i1)).total === 120, String(totalApi.status()));
+  const totalApi = await api.patch("/api/v1/inventory/cells", { data: { resource: "me_ingresos", changes: [{ id: id.i1, field: "total", value: "120", expectedVersion: (await pl("inv_me_ingresos", id.i1)).updatedAt }] } });
+  check("TOTAL se puede editar (corrige la cantidad por bulto): celda sin candado y el servidor lo acepta; el mismo valor no cambia nada", !totalLocked && totalApi.status() === 200 && (await pl("inv_me_ingresos", id.i1)).total === 120, String(totalApi.status()));
   await clickInRow(dp, "E2E-I-1", "[data-testid=me-history-open]");
   await dp.locator("[data-testid=me-history-entry]").first().waitFor({ timeout: 30_000 });
   const hist = await dp.locator("[data-testid=me-history-dialog]").innerText();
@@ -156,7 +156,7 @@ try {
   await waitRow(dp, "E2E-ME-CAJA");
   const cajaStock = await (await cell(dp, "E2E-ME-CAJA", "CANTIDAD TOTAL")).locator("input").inputValue();
   check("Inventario muestra el stock recalculado (125)", /125/.test(cajaStock), cajaStock);
-  check("CANTIDAD TOTAL no se edita a mano", await (await cell(dp, "E2E-ME-CAJA", "CANTIDAD TOTAL")).evaluate((el) => el.classList.contains("genus-cell-protected")));
+  check("CANTIDAD TOTAL se puede escribir en la celda (genera un ajuste auditado; no queda protegida)", !(await (await cell(dp, "E2E-ME-CAJA", "CANTIDAD TOTAL")).evaluate((el) => el.classList.contains("genus-cell-protected"))));
   const etiText = await (await cell(dp, "E2E-ME-ETI", "CANTIDAD TOTAL")).locator("input").inputValue();
   check("stock negativo visible (−20), no oculto ni llevado a 0", /-20|−20|NEGATIVO/.test(etiText), etiText);
   await typeInto(dp, "E2E-ME-CAJA", "STOCK MÍNIMO", "30", "me-inventario-grid");

@@ -255,9 +255,7 @@ export async function patchMpSheetCells(
     if (resource === "mp_ingresos") {
       // TOTAL es derivado (bultos × cantidad): editarlo corrige el dato de origen — la cantidad por bulto — y el total se
       // recalcula; el stock se mueve por la misma diferencia que una corrección de cantidad (con motivo, auditada).
-      // INGRESO Nº se puede cambiar, pero no repetirse.
-      const used = new Map<string, string>();
-      for (const r of repo.listMpIngresos()) if (r.ingresoNro?.trim()) used.set(r.ingresoNro.trim().toUpperCase(), r.id);
+      // INGRESO Nº se puede cambiar a mano: varias líneas de un mismo ingreso pueden compartirlo (no es la clave del registro).
       changes.forEach((c, i) => {
         if (!results[i]!.ok) return;
         const entry = patches.get(String(c.id));
@@ -269,13 +267,7 @@ export async function patchMpSheetCells(
           const bultosNow = (entry.patch.bultos as number | null | undefined) !== undefined ? (entry.patch.bultos as number | null) : (current.bultos ?? null);
           entry.patch.cantidad = total == null ? null : bultosNow && bultosNow > 0 ? Math.round((total / bultosNow) * 1e6) / 1e6 : total;
         }
-        if (c.field === "ingresoNro") {
-          const nro = String(entry.patch.ingresoNro ?? "").trim();
-          const owner = used.get(nro.toUpperCase());
-          if (owner && owner !== c.id) return void (results[i] = { ok: false, code: "DUPLICATE", message: `El número de ingreso ${nro} ya existe: no se repite.` });
-          used.set(nro.toUpperCase(), c.id);
-          entry.patch.ingresoNro = nro;
-        }
+        if (c.field === "ingresoNro") entry.patch.ingresoNro = String(entry.patch.ingresoNro ?? "").trim();
       });
     }
     const reject = () => {

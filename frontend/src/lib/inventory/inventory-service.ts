@@ -759,6 +759,48 @@ export class InventoryService {
     return out;
   }
 
+  /**
+   * Alta de un material de Depósito desde una fila nueva de la planilla (el stock arranca en 0: se carga con ingresos o con
+   * un ajuste). El código identifica el inventario, así que no puede repetirse. Idempotente por `id` (reintento = mismo material).
+   */
+  createMeMaterial(
+    actor: InventoryActor,
+    input: { id?: string; codigo: string; descripcion?: string; cliente?: string; ubicacion?: string; unidad?: string; cantidadPorBulto?: number | null; stockMinimo?: number | null; puntoReposicion?: number | null }
+  ): MeMaterial {
+    this.guard(actor, "me_stock", true);
+    const codigo = normalizeMeCodigo(input.codigo);
+    if (!codigo) throw new InventoryValidationError(ME_CODIGO_REQUIRED_MSG);
+    if (input.id) {
+      const again = this.repo.getMeMaterial(input.id);
+      if (again) return again;
+    }
+    const dup = this.repo.listMeMaterials().find((m) => !m.archived && normalizeMeCodigo(m.codigo) === codigo);
+    if (dup) throw new InventoryValidationError(`Ya existe un material con el código ${codigo}: no se duplica.`);
+    const now = nowIso();
+    const mat: MeMaterial = {
+      id: input.id ?? randomUUID(),
+      codigo,
+      descripcion: (input.descripcion ?? "").trim() || codigo,
+      cliente: input.cliente ?? "",
+      ubicacion: input.ubicacion ?? "",
+      unidad: input.unidad?.trim() || "u",
+      cantidadPorBulto: input.cantidadPorBulto ?? null,
+      stockActual: 0,
+      stockMinimo: input.stockMinimo ?? null,
+      puntoReposicion: input.puntoReposicion ?? null,
+      responsable: "",
+      observacion: "",
+      updatedAt: now,
+      archived: false,
+      archivedAt: null,
+      archivedBy: null,
+      archivedReason: null,
+    };
+    this.repo.upsertMeMaterial(mat);
+    this.audit(actor, "me_stock", mat.id, "create", null, { codigo, descripcion: mat.descripcion });
+    return mat;
+  }
+
   updateMeThresholds(
     actor: InventoryActor,
     materialId: string,
@@ -1790,12 +1832,6 @@ export class InventoryService {
     const total = multiplyTotal(bultos, cantidad);
     const now = nowIso();
     const ingresoId = existing?.id ?? input.id ?? randomUUID();
-    // INGRESO Nº se puede cargar o cambiar a mano, pero no repetirse.
-    const wantedNro = String(input.ingresoNro ?? "").trim();
-    if (wantedNro && wantedNro.toUpperCase() !== String(existing?.ingresoNro ?? "").trim().toUpperCase()) {
-      const clash = this.repo.listMpIngresos().find((r) => r.id !== ingresoId && String(r.ingresoNro ?? "").trim().toUpperCase() === wantedNro.toUpperCase());
-      if (clash) throw new InventoryValidationError(`El número de ingreso ${wantedNro} ya existe: no se repite.`);
-    }
     const codigoRaw = input.codigo ?? existing?.codigo ?? "";
     let codigo =
       normalizeMpCodigoLocal(codigoRaw) || (codigoRaw.trim() ? codigoRaw.trim() : "");

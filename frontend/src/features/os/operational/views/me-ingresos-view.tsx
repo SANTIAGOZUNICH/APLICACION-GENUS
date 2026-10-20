@@ -24,6 +24,8 @@ import {
 } from "../components/list-selection-mode";
 import { displayCell, multiplyTotal, parseOptionalNumber } from "@/lib/inventory/calcs";
 import { ME_INGRESO_COLUMNS, type MeIngresoRow } from "@/lib/inventory/types";
+import { ME_INGRESO_DRAFT_CREATE_KEYS, ME_INGRESO_DRAFT_REQUIRED_KEYS, meIngresoPayloadFromDraft } from "@/lib/inventory/me-draft-rows";
+import type { GenusGridDraftRows } from "@/components/data-grid/genus-grid";
 import { canWriteInventory } from "@/lib/inventory/rbac";
 import { IngresoRemitoFotosButton, useIngresoAdjuntoCounts } from "@/features/os/operational/components/ingreso-remito-fotos";
 import { canManageAdjuntos, canViewAdjuntos } from "@/lib/inventory/ingreso-adjuntos-rules";
@@ -86,14 +88,14 @@ function emptyForm(): FormState {
   };
 }
 
-/** Columna de la planilla → campo del ingreso (TOTAL no: es calculado). */
+/** Columna de la planilla → campo del ingreso (TOTAL corrige la cantidad por bulto: total ÷ bultos). */
 const ME_INGRESO_SHEET_FIELD_OF: Record<string, string> = {
   FECHA: "fecha", "INGRESO Nº": "ingresoNro", PROVEEDOR: "proveedor", CLIENTE: "cliente", "REMITO Nº": "remitoNro", CÓDIGO: "codigo",
-  "DESCRIPCIÓN INSUMO": "descripcionInsumo", BULTOS: "bultos", CANTIDAD: "cantidad", UBICACIÓN: "ubicacion",
+  "DESCRIPCIÓN INSUMO": "descripcionInsumo", BULTOS: "bultos", CANTIDAD: "cantidad", TOTAL: "total", UBICACIÓN: "ubicacion",
 };
 
 export function MeIngresosView() {
-  const { sectorId } = usePreviewSession();
+  const { sectorId, email } = usePreviewSession();
   const { showToast } = usePreviewContext();
   const canWrite = canWriteInventory(sectorId, "me_ingresos");
   // Fotos del remito por ingreso (tabla aparte: editar el ingreso no las pierde).
@@ -108,8 +110,6 @@ export function MeIngresosView() {
   const [bulkPending, setBulkPending] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
-  const [page, setPage] = useState(0);
-  const pageSize = 20;
 
   const reload = useCallback(async () => {
     const res = await fetchInventory<MeIngresoRow>("me_ingresos");
@@ -119,6 +119,34 @@ export function MeIngresosView() {
   }, []);
   const [historyFor, setHistoryFor] = useState<{ id: string; label: string } | null>(null);
   const sheet = useMeSheetEditing<MeIngresoRow>("me_ingresos", sectorId, canWrite, ME_INGRESO_SHEET_FIELD_OF, reload);
+  // Filas en blanco al final de la planilla: se escribe directo y el ingreso se registra al completarse (suma al stock del código).
+  const draftRows = useMemo<GenusGridDraftRows | undefined>(
+    () =>
+      canWrite
+        ? {
+            createKeys: ME_INGRESO_DRAFT_CREATE_KEYS,
+            requiredKeys: ME_INGRESO_DRAFT_REQUIRED_KEYS,
+            storageKey: `genus-draft:${email ?? "anon"}:me-ingresos`,
+            validate: (v) => {
+              const r = meIngresoPayloadFromDraft("validate", v);
+              return r.ok ? null : r.message;
+            },
+            onCreate: async (id, v) => {
+              const r = meIngresoPayloadFromDraft(id, v);
+              if (!r.ok) return { ok: false, message: r.message };
+              try {
+                await mutateInventory({ action: "upsert", resource: "me_ingresos", payload: r.payload });
+                await reload();
+                return { ok: true, message: "Ingreso registrado: ya suma al stock del material." };
+              } catch (e) {
+                return { ok: false, message: e instanceof InventoryClientError ? e.message : "No se pudo registrar el ingreso." };
+              }
+            },
+          }
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canWrite, email]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -154,7 +182,6 @@ export function MeIngresosView() {
     return applySort(base, ME_INGRESO_SORT_OPTIONS, sort);
   }, [rows, search, sort]);
 
-  const pageRows = filtered.slice(page * pageSize, page * pageSize + pageSize);
   const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
   const sel = useListSelectionMode(visibleIds);
 
@@ -180,7 +207,7 @@ export function MeIngresosView() {
       hideOnMobile: ME_INGRESO_PRIMARY.has(label) ? false : ("xl" as const),
       render: (row) => displayCell(row[key]),
       text: (row) => (row[key] == null ? "" : String(row[key])),
-      // Planilla editable (Depósito): TOTAL se calcula (bultos × cantidad), el resto se corrige en la celda.
+      // Planilla editable (Depósito): todas las columnas se corrigen en la celda (TOTAL corrige la cantidad por bulto).
       edit: sheet.edit(label),
       readOnlyReason: readOnlyReason("me_ingresos", label),
     };
@@ -285,14 +312,12 @@ export function MeIngresosView() {
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
-            setPage(0);
           }}
         />
         <SortSelect
           value={sort}
           onChange={(key) => {
             setSort(key);
-            setPage(0);
           }}
           options={ME_INGRESO_SORT_OPTIONS}
           testId="me-ingresos-sort"
@@ -393,7 +418,9 @@ export function MeIngresosView() {
               ]
             : []),
         ]}
-        rows={pageRows}
+        rows={filtered}
+        continuous
+        draftRows={draftRows}
         rowKey={(r) => r.id}
         tableId="me-ingresos"
         canEditCells={sheet.canEditCells}
@@ -406,23 +433,6 @@ export function MeIngresosView() {
             : undefined
         }
       />
-
-      <div className="mt-3 flex items-center gap-2 text-sm">
-        <Button type="button" variant="secondary" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
-          Anterior
-        </Button>
-        <span>
-          Página {page + 1} / {Math.max(1, Math.ceil(filtered.length / pageSize))}
-        </span>
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={(page + 1) * pageSize >= filtered.length}
-          onClick={() => setPage((p) => p + 1)}
-        >
-          Siguiente
-        </Button>
-      </div>
 
       {form && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

@@ -6,6 +6,8 @@ import { ClipboardPaste, History, Pencil, Plus, Trash2 } from "lucide-react";
 import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
 import { useMeSheetEditing } from "@/features/os/operational/hooks/use-me-sheet-cells";
 import { ME_SALIDA_MOTIVOS, meSalidaMotivo } from "@/lib/inventory/me-sheet-edit";
+import { ME_SALIDA_DRAFT_CREATE_KEYS, ME_SALIDA_DRAFT_REQUIRED_KEYS, meSalidaPayloadFromDraft } from "@/lib/inventory/me-draft-rows";
+import type { GenusGridDraftRows } from "@/components/data-grid/genus-grid";
 import { Button } from "@/components/ui/button";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { LifecycleConfirmDialog } from "@/features/os/operational/components/lifecycle-confirm-dialog";
@@ -98,14 +100,14 @@ function emptyForm(): FormState {
   };
 }
 
-/** Columna de la planilla → campo de la salida (TOTAL no: es calculado). */
+/** Columna de la planilla → campo de la salida (TOTAL corrige la cantidad por bulto: total ÷ bultos). */
 const ME_SALIDA_SHEET_FIELD_OF: Record<string, string> = {
   FECHA: "fecha", "EGRESO N.º": "egresoNro", CLIENTE: "cliente", "REMITO N.º": "remitoNro", DESCRIPCIÓN: "descripcion", BULTOS: "bultos",
-  CANTIDAD: "cantidad", CONTROL: "control", ENTREGADO: "entregado", COMENTARIOS: "comentarios", CÓDIGO: "codigo", MOTIVO: "motivoSalida", "DESCUENTA STOCK": "descuentaStock",
+  CANTIDAD: "cantidad", TOTAL: "total", CONTROL: "control", ENTREGADO: "entregado", COMENTARIOS: "comentarios", CÓDIGO: "codigo", MOTIVO: "motivoSalida", "DESCUENTA STOCK": "descuentaStock",
 };
 
 export function MeSalidasView() {
-  const { sectorId } = usePreviewSession();
+  const { sectorId, email } = usePreviewSession();
   const { showToast } = usePreviewContext();
   const canWrite = canWriteInventory(sectorId, "me_salidas");
   const [rows, setRows] = useState<MeSalidaRow[]>([]);
@@ -120,8 +122,6 @@ export function MeSalidasView() {
   const [bulkPending, setBulkPending] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
-  const [page, setPage] = useState(0);
-  const pageSize = 20;
 
   const reload = useCallback(async () => {
     const [salidas, stock] = await Promise.all([
@@ -135,6 +135,34 @@ export function MeSalidasView() {
   }, []);
   const [historyFor, setHistoryFor] = useState<{ id: string; label: string } | null>(null);
   const sheet = useMeSheetEditing<MeSalidaRow>("me_salidas", sectorId, canWrite, ME_SALIDA_SHEET_FIELD_OF, reload);
+  // Filas en blanco al final: salida MANUAL (no mueve stock salvo que se elija un motivo que descuenta; las reglas anti doble descuento son las del servidor).
+  const draftRows = useMemo<GenusGridDraftRows | undefined>(
+    () =>
+      canWrite
+        ? {
+            createKeys: ME_SALIDA_DRAFT_CREATE_KEYS,
+            requiredKeys: ME_SALIDA_DRAFT_REQUIRED_KEYS,
+            storageKey: `genus-draft:${email ?? "anon"}:me-salidas`,
+            validate: (v) => {
+              const r = meSalidaPayloadFromDraft("validate", v);
+              return r.ok ? null : r.message;
+            },
+            onCreate: async (id, v) => {
+              const r = meSalidaPayloadFromDraft(id, v);
+              if (!r.ok) return { ok: false, message: r.message };
+              try {
+                await mutateInventory({ action: "upsert", resource: "me_salidas", payload: r.payload });
+                await reload();
+                return { ok: true, message: "Salida registrada." };
+              } catch (e) {
+                return { ok: false, message: e instanceof InventoryClientError ? e.message : "No se pudo registrar la salida." };
+              }
+            },
+          }
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canWrite, email]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -170,7 +198,6 @@ export function MeSalidasView() {
     return applySort(base, ME_SALIDA_SORT_OPTIONS, sort);
   }, [rows, search, filterControl, filterEntregado, sort]);
 
-  const pageRows = filtered.slice(page * pageSize, page * pageSize + pageSize);
   const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
   const sel = useListSelectionMode(visibleIds);
 
@@ -339,14 +366,12 @@ export function MeSalidasView() {
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
-            setPage(0);
           }}
         />
         <SortSelect
           value={sort}
           onChange={(key) => {
             setSort(key);
-            setPage(0);
           }}
           options={ME_SALIDA_SORT_OPTIONS}
           testId="me-salidas-sort"
@@ -453,7 +478,9 @@ export function MeSalidasView() {
               ]
             : []),
         ]}
-        rows={pageRows}
+        rows={filtered}
+        continuous
+        draftRows={draftRows}
         rowKey={(r) => r.id}
         tableId="me-salidas"
         canEditCells={sheet.canEditCells}
@@ -467,22 +494,6 @@ export function MeSalidasView() {
         }
       />
 
-      <div className="mt-3 flex gap-2 text-sm">
-        <Button type="button" variant="secondary" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
-          Anterior
-        </Button>
-        <span>
-          Página {page + 1} / {Math.max(1, Math.ceil(filtered.length / pageSize))}
-        </span>
-        <Button
-          type="button"
-          variant="secondary"
-          disabled={(page + 1) * pageSize >= filtered.length}
-          onClick={() => setPage((p) => p + 1)}
-        >
-          Siguiente
-        </Button>
-      </div>
 
       {form && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

@@ -21,7 +21,10 @@ import { invAjustes, invAudit, invMeIngresos, invMeMaterials, invMeSalidas } fro
 import { multiplyTotal } from "./calcs";
 import { InventoryForbiddenError, InventoryNotFoundError, InventoryValidationError, type InventoryActor } from "./inventory-service";
 import { normalizeMeCodigo } from "./me-codigo";
+import { parseDisplayedNumber } from "./cell-edit";
 import {
+  ME_INVENTARIO_OPERATION_FIELDS,
+  ME_SHEET_AUTO_ADJUST_REASON,
   MAX_ME_SHEET_CHANGES,
   MIN_AJUSTE_MOTIVO,
   ME_AJUSTE_TIPOS,
@@ -139,6 +142,7 @@ export async function patchMeSheetCells(actor: InventoryActor, resource: MeSheet
     const results: MeSheetResult[] = changes.map(() => ({ ok: true }));
     const patches = new Map<string, Record<string, unknown>>();
     const reasons = new Map<string, string>();
+    const ops: Array<{ i: number; c: MeSheetChange; row: AnyRow; value: string | number | boolean | null }> = [];
     changes.forEach((c, i) => {
       const row = rows.get(String(c?.id));
       if (!row) return void (results[i] = { ok: false, code: "NOT_FOUND", message: "El registro ya no existe." });
@@ -148,12 +152,18 @@ export async function patchMeSheetCells(actor: InventoryActor, resource: MeSheet
       if (row.updatedAt !== c.expectedVersion) return void (results[i] = { ok: false, code: "CONFLICT", message: "Otro usuario modificó este registro mientras editabas. Recargá y revisá antes de guardar." });
       const v = validateMeSheetValue(resource, c.field, c.value);
       if (!v.ok) return void (results[i] = { ok: false, code: "INVALID", message: v.message });
+      if (resource === "me_inventario" && ME_INVENTARIO_OPERATION_FIELDS.has(c.field)) {
+        // CÓDIGO / CANTIDAD TOTAL / BULTOS no son datos del material: son operaciones (renombrar, ajustar) que se aplican abajo.
+        ops.push({ i, c, row, value: v.value });
+        if (c.reason?.trim()) reasons.set(row.id, c.reason.trim());
+        return;
+      }
       const patch = patches.get(row.id) ?? {};
       patch[c.field] = c.field === "codigo" ? normalizeMeCodigo(String(v.value)) : v.value;
       patches.set(row.id, patch);
       if (c.reason?.trim()) reasons.set(row.id, c.reason.trim());
     });
-    const reject = () => {
+    const reject = (): never => {
       changes.forEach((_, i) => {
         if (results[i]!.ok) results[i] = { ok: false, code: "INVALID", message: "No se guardó: otra celda del mismo cambio fue rechazada." };
       });
@@ -161,6 +171,16 @@ export async function patchMeSheetCells(actor: InventoryActor, resource: MeSheet
     };
     if (results.some((r) => !r.ok)) reject();
 
+    // TOTAL (= bultos × cantidad) es derivado: escribirlo corrige la cantidad por bulto (total ÷ bultos); el total se recalcula.
+    for (const [id, patch] of patches) {
+      if (!("total" in patch)) continue;
+      const total = patch.total as number | null;
+      delete patch.total;
+      const bultos = "bultos" in patch ? (patch.bultos as number | null) : ((rows.get(id)!.bultos as number | null | undefined) ?? null);
+      patch.cantidad = total == null ? null : bultos && bultos > 0 ? Math.round((total / bultos) * 1e6) / 1e6 : total;
+      // Un ingreso sin bultos no suma (TOTAL = bultos × cantidad): al escribir el total se toma como 1 bulto.
+      if (resource === "me_ingresos" && !(bultos && bultos > 0)) patch.bultos = 1;
+    }
     // Armar cada fila nueva y validar reglas de negocio (anti doble descuento, duplicados).
     const prepared: Array<{ id: string; before: AnyRow; next: AnyRow; changed: string[] }> = [];
     const all = resource === "me_ingresos" ? ((await tx.select({ payload: invMeIngresos.payload }).from(invMeIngresos)).map((r) => r.payload as MeIngresoRow)) : [];
@@ -211,7 +231,65 @@ export async function patchMeSheetCells(actor: InventoryActor, resource: MeSheet
       const a = auditRow(actor, meSheetModule(resource), p.id, "cell_edit", Object.fromEntries(fields.map((f) => [f, p.before[f] ?? null])), Object.fromEntries(fields.map((f) => [f, p.next[f] ?? null])), reasons.get(p.id) ?? null);
       await tx.insert(invAudit).values({ id: a.id, payload: a, createdAt: new Date(a.createdAt) });
     }
-    return { items: prepared.map((p) => p.next) };
+    const items: AnyRow[] = prepared.map((p) => p.next);
+    for (const op of ops) {
+      const [fresh] = await tx.select({ payload: invMeMaterials.payload }).from(invMeMaterials).where(eq(invMeMaterials.id, op.row.id)).for("update");
+      const mat = (fresh?.payload ?? op.row) as unknown as MeMaterial;
+      const fail = (code: "INVALID" | "CONFLICT", message: string): never => {
+        results[op.i] = { ok: false, code, message };
+        return reject();
+      };
+      const oldCodigo = normalizeMeCodigo(mat.codigo);
+      if (op.c.field === "codigo") {
+        const nu = normalizeMeCodigo(String(op.value));
+        if (!nu || nu === oldCodigo) continue;
+        await lockCodigos(tx, [oldCodigo, nu]);
+        const mats = (await tx.select({ payload: invMeMaterials.payload }).from(invMeMaterials)).map((r) => r.payload as MeMaterial);
+        if (mats.some((m) => m.id !== mat.id && !m.archived && normalizeMeCodigo(m.codigo) === nu)) return fail("INVALID", `El código ${nu} ya pertenece a otro material: no se pueden mezclar dos materiales.`);
+        if (mats.some((m) => m.id !== mat.id && !m.archived && normalizeMeCodigo(m.codigo) === oldCodigo)) return fail("INVALID", `Hay otro material con el mismo código ${oldCodigo}: unificalos antes de cambiar el código.`);
+        const now = new Date();
+        const next = { ...mat, codigo: nu, updatedAt: nextVersion(mat.updatedAt) };
+        await tx.update(invMeMaterials).set({ payload: next, updatedAt: now }).where(eq(invMeMaterials.id, mat.id));
+        // Los movimientos se identifican por código: se renombran con el material (el stock del código viejo pasa completo al nuevo).
+        let moved = 0;
+        for (const [tbl, label] of [[invMeIngresos, "ingresos"], [invMeSalidas, "salidas"]] as const) {
+          const rowsT = await tx.select({ id: tbl.id, payload: tbl.payload }).from(tbl);
+          for (const r of rowsT) {
+            const pl = r.payload as AnyRow;
+            if (normalizeMeCodigo(String(pl.codigo ?? "")) !== oldCodigo) continue;
+            await tx.update(tbl).set({ payload: { ...pl, codigo: nu, updatedAt: nextVersion(pl.updatedAt) }, updatedAt: now }).where(eq(tbl.id, r.id));
+            moved += 1;
+            void label;
+          }
+        }
+        const a = auditRow(actor, "me_stock", mat.id, "cell_edit", { codigo: oldCodigo }, { codigo: nu, movimientosRenombrados: moved }, reasons.get(mat.id) ?? "Cambio de código desde la planilla de Inventario ME");
+        await tx.insert(invAudit).values({ id: a.id, payload: a, createdAt: new Date(a.createdAt) });
+        const at = items.findIndex((x) => x.id === mat.id);
+        if (at >= 0) items[at] = { ...items[at]!, codigo: nu, updatedAt: next.updatedAt };
+        else items.push(next as unknown as AnyRow);
+        continue;
+      }
+      // CANTIDAD TOTAL / BULTOS: el stock es calculado → se corrige con un AJUSTE auditado por la diferencia.
+      if (!oldCodigo) return fail("INVALID", "El material no tiene código: asignale un código antes de ajustar su stock.");
+      await lockCodigos(tx, [oldCodigo]);
+      const data = await loadLedgerInputs(tx);
+      const { stock } = stockOf(oldCodigo, data);
+      let target = Number(op.value);
+      if (op.c.field === "bultosStock") {
+        const per = Number(mat.cantidadPorBulto ?? 0);
+        if (!(per > 0)) return fail("INVALID", "Para escribir bultos completá antes «Cant. por bulto» del material (o escribí la CANTIDAD TOTAL).");
+        target = Math.round(target * per * 1e6) / 1e6;
+      }
+      const seen = parseDisplayedNumber(op.c.expectedValue);
+      if (op.c.field === "stockTotal" && seen != null && Math.abs(seen - stock) > 1e-9) return fail("CONFLICT", `El stock de ${oldCodigo} cambió mientras editabas (ahora ${stock.toLocaleString("es-AR")}). Revisá antes de ajustar.`);
+      if (Math.abs(target - stock) < 1e-9) continue; // ya es ese valor: nada que ajustar
+      await adjustInTx(tx, actor, { materialId: mat.id, newStock: target, motivo: reasons.get(mat.id) ?? ME_SHEET_AUTO_ADJUST_REASON, tipo: "CORRECCION_ERROR_REGISTRO", stockNow: stock, material: mat });
+      const at = items.findIndex((x) => x.id === mat.id);
+      const upd = { ...mat, stockActual: target } as unknown as AnyRow;
+      if (at >= 0) items[at] = { ...items[at]!, stockActual: target };
+      else items.push(upd);
+    }
+    return { items };
   });
 }
 
@@ -225,12 +303,33 @@ export interface MeAjusteInput {
   tipo: string;
 }
 
+/** Ajuste dentro de una transacción ya abierta (la planilla lo usa junto con las demás celdas; todo-o-nada). */
+async function adjustInTx(
+  tx: Tx,
+  actor: InventoryActor,
+  input: { materialId: string; newStock: number; motivo: string; tipo: string; stockNow: number; material: MeMaterial }
+): Promise<{ stockAnterior: number; stockActual: number; ajuste: StockAjuste }> {
+  const { material: mat, stockNow: stock, newStock, motivo } = input;
+  const tipo = ME_AJUSTE_TIPOS.some((t) => t.id === input.tipo) ? input.tipo : "OTRO";
+  const diferencia = Number((newStock - stock).toFixed(6));
+  const now = new Date();
+  const ajuste: StockAjuste & { tipo: string; actorName?: string } = {
+    id: randomUUID(), module: "ME", entityId: mat.id, cantidadAnterior: stock, cantidadNueva: newStock, diferencia,
+    motivo, tipo, actor: actor.email, actorName: actor.displayName, actorSector: actor.sector, createdAt: now.toISOString(),
+  };
+  await tx.insert(invAjustes).values({ id: ajuste.id, payload: ajuste, createdAt: now });
+  const a = auditRow(actor, "me_ajustes", mat.id, "adjust", { stockActual: stock }, { stockActual: newStock, tipo }, motivo);
+  await tx.insert(invAudit).values({ id: a.id, payload: a, createdAt: now });
+  // Cache del saldo en el material (el valor de verdad es el cálculo). No cambia su versión de datos.
+  await tx.update(invMeMaterials).set({ payload: { ...mat, codigo: normalizeMeCodigo(mat.codigo), stockActual: newStock }, updatedAt: now }).where(eq(invMeMaterials.id, mat.id));
+  return { stockAnterior: stock, stockActual: newStock, ajuste };
+}
+
 /** Ajuste de inventario ME auditado: crea un movimiento AJUSTE (diferencia) — el stock sigue siendo calculado. */
 export async function adjustMeStockDb(actor: InventoryActor, input: MeAjusteInput): Promise<{ stockAnterior: number; stockActual: number; ajuste: StockAjuste }> {
   assertWrite(actor, "me_ajustes");
   const motivo = String(input.motivo ?? "").trim();
   if (motivo.length < MIN_AJUSTE_MOTIVO) throw new InventoryValidationError(`El ajuste requiere un motivo (mín. ${MIN_AJUSTE_MOTIVO} caracteres).`);
-  const tipo = ME_AJUSTE_TIPOS.some((t) => t.id === input.tipo) ? input.tipo : "OTRO";
   const newStock = Number(input.newStock);
   if (!Number.isFinite(newStock) || newStock < 0 || newStock > 1_000_000_000) throw new InventoryValidationError("El stock corregido debe ser un número ≥ 0.");
   const db = getDb();
@@ -247,19 +346,8 @@ export async function adjustMeStockDb(actor: InventoryActor, input: MeAjusteInpu
     if (Math.abs(stock - Number(input.expectedStock)) > 1e-9) {
       throw new MeSheetConflictError(`El stock de ${codigo} cambió mientras ajustabas (ahora ${stock}). Revisá antes de ajustar.`, { stockActual: stock });
     }
-    const diferencia = Number((newStock - stock).toFixed(6));
-    if (diferencia === 0) throw new InventoryValidationError("El stock ya es ese valor: no hay nada que ajustar.");
-    const now = new Date();
-    const ajuste: StockAjuste & { tipo: string; actorName?: string } = {
-      id: randomUUID(), module: "ME", entityId: mat.id, cantidadAnterior: stock, cantidadNueva: newStock, diferencia,
-      motivo, tipo, actor: actor.email, actorName: actor.displayName, actorSector: actor.sector, createdAt: now.toISOString(),
-    };
-    await tx.insert(invAjustes).values({ id: ajuste.id, payload: ajuste, createdAt: now });
-    const a = auditRow(actor, "me_ajustes", mat.id, "adjust", { stockActual: stock }, { stockActual: newStock, tipo }, motivo);
-    await tx.insert(invAudit).values({ id: a.id, payload: a, createdAt: now });
-    // Cache del saldo en el material (el valor de verdad es el cálculo). No cambia su versión de datos.
-    await tx.update(invMeMaterials).set({ payload: { ...mat, codigo, stockActual: newStock }, updatedAt: now }).where(eq(invMeMaterials.id, mat.id));
-    return { stockAnterior: stock, stockActual: newStock, ajuste };
+    if (Number((newStock - stock).toFixed(6)) === 0) throw new InventoryValidationError("El stock ya es ese valor: no hay nada que ajustar.");
+    return adjustInTx(tx, actor, { materialId: mat.id, newStock, motivo, tipo: input.tipo, stockNow: stock, material: mat });
   });
 }
 

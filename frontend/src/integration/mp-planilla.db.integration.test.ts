@@ -138,7 +138,7 @@ describe.skipIf(Boolean(PROBLEM))(`Materias Primas: planillas transaccionales en
     expect(await balance("IT-MP-AZ1")).toBe(40);
   });
 
-  it("Ingresos: editar TOTAL corrige la cantidad por bulto y mueve stock por la diferencia; INGRESO Nº no se repite", async () => {
+  it("Ingresos: editar TOTAL corrige la cantidad por bulto y mueve stock por la diferencia; INGRESO Nº se edita a mano", async () => {
     const { patchMpSheetCells, runMpInventoryOp, MpSheetPatchError } = await db();
     const a = await runMpInventoryOp(mp, ({ service }) =>
       service.upsertMpIngreso(mp, { fecha: "2026-10-07", remitoNro: "IT-R-20", codigo: "IT-MP-TOT", descripcion: "Total tot IT", lote: "T1", bultos: 4, cantidad: 5 })
@@ -156,8 +156,10 @@ describe.skipIf(Boolean(PROBLEM))(`Materias Primas: planillas transaccionales en
       service.upsertMpIngreso(mp, { fecha: "2026-10-07", remitoNro: "IT-R-21", codigo: "IT-MP-TOT", descripcion: "Total tot IT", lote: "T2", cantidad: 1 })
     );
     const cur = await ingresoRow(a.id);
-    await expect(patchMpSheetCells(mp, "mp_ingresos", [{ id: b.id, field: "ingresoNro", value: String(cur.ingresoNro), expectedVersion: b.updatedAt }])).rejects.toThrow(/ya existe/);
-    const ok = await patchMpSheetCells(mp, "mp_ingresos", [{ id: b.id, field: "ingresoNro", value: "IT-MANUAL-1", expectedVersion: b.updatedAt }]);
+    // Varias líneas de un mismo ingreso pueden compartir el Nº (no es la clave del registro): se permite repetirlo.
+    const shared = await patchMpSheetCells(mp, "mp_ingresos", [{ id: b.id, field: "ingresoNro", value: String(cur.ingresoNro), expectedVersion: b.updatedAt }]);
+    expect((shared.items[0] as { ingresoNro: string }).ingresoNro).toBe(String(cur.ingresoNro));
+    const ok = await patchMpSheetCells(mp, "mp_ingresos", [{ id: b.id, field: "ingresoNro", value: "IT-MANUAL-1", expectedVersion: (shared.items[0] as { updatedAt: string }).updatedAt }]);
     expect((ok.items[0] as { ingresoNro: string }).ingresoNro).toBe("IT-MANUAL-1");
     expect(await balance("IT-MP-TOT")).toBe(41);
   });

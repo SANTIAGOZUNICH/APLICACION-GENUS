@@ -80,7 +80,9 @@ describe("protección y validación de celdas", () => {
     expect(meSheetProtection("me_salidas", { origen: "MANUAL" }, "cantidad", "DEPOSITO")).toBeNull();
     expect(meSheetProtection("me_ingresos", { anulado: true }, "cantidad", "DEPOSITO")).toMatch(/anulado/);
     expect(meSheetProtection("me_ingresos", {}, "cantidad", "PRODUCCION")).toMatch(/Depósito/);
-    expect(meSheetProtection("me_ingresos", {}, "total", "DEPOSITO")).toMatch(/calculada/);
+    // Todas las columnas de datos se editan: TOTAL corrige la cantidad por bulto; CANTIDAD TOTAL / BULTOS / CÓDIGO son operaciones seguras.
+    expect(meSheetProtection("me_ingresos", {}, "total", "DEPOSITO")).toBeNull();
+    for (const f of ["codigo", "stockTotal", "bultosStock"]) expect(meSheetProtection("me_inventario", {}, f, "DEPOSITO")).toBeNull();
     expect(meSheetProtection("me_inventario", {}, "stockActual", "DEPOSITO")).toMatch(/calculada/);
     expect(meSheetProtection("me_inventario", {}, "stockMinimo", "PRODUCCION")).toBeNull();
   });

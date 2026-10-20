@@ -30,7 +30,7 @@ export function useMeSheetEditing<R extends { id?: string; updatedAt: string }>(
     async (changes: GenusGridCellChange[]): Promise<GenusGridCommitResult> => {
       const payload = changes.flatMap((c) => {
         const field = fieldOf[c.columnKey];
-        return field ? [{ id: c.rowId, field, value: c.newValue, expectedVersion: c.rowVersion ?? "", reason: c.reason }] : [];
+        return field ? [{ id: c.rowId, field, value: c.newValue, expectedVersion: c.rowVersion ?? "", reason: c.reason, expectedValue: c.oldValue }] : [];
       });
       const res = await patchInventoryCells(resource, payload);
       await reload();

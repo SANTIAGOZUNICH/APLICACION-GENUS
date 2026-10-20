@@ -2,16 +2,11 @@
  * Por qué una columna NO se edita en la planilla (se muestra en la celda con candado y al intentar editarla).
  * Clave: encabezado de la columna (label) tal como lo arma cada vista.
  */
-const TOTAL = "TOTAL = bultos × cantidad: se calcula solo.";
 
 const REASONS: Record<string, Record<string, string>> = {
-  me_ingresos: { TOTAL },
-  me_salidas: { TOTAL },
-  me_inventario: {
-    CÓDIGO: "Código del material: identifica el inventario (se corrige en el ingreso).",
-    BULTOS: "Stock calculado (ingresos − salidas ± ajustes): se corrige con «Ajustar stock» (motivo, auditado).",
-    "CANTIDAD TOTAL": "Stock calculado (ingresos − salidas ± ajustes): se corrige con «Ajustar stock» (motivo, auditado).",
-  },
+  me_ingresos: {},
+  me_salidas: {},
+  me_inventario: {},
   mp_ingresos: {},
   mp_control: {
     codigo: "Viene de la fórmula (snapshot del control): no se edita.",

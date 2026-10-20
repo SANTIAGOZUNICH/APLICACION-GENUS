@@ -1,11 +1,13 @@
 /**
  * Planillas editables de Depósito ME (Ingresos, Salidas, Inventario) — política PURA compartida cliente/servidor.
  *
- *  - Ingresos: se editan todos los datos de origen. TOTAL se calcula (bultos × cantidad). Anulados: solo lectura.
+ *  - Ingresos: se editan TODAS las columnas. TOTAL (= bultos × cantidad) se puede escribir: es corregir la cantidad por
+ *    bulto (total ÷ bultos) y el total se recalcula. Anulados: solo lectura.
  *  - Salidas MANUALES: se editan; «Descuenta stock» es una elección explícita y NUNCA para el consumo de una OA
  *    (la OA descuenta sola al entregarla). Salidas de OA: solo lectura (se corrigen desde la OA).
- *  - Inventario: el STOCK no se edita (se calcula). Se corrigen datos del material y umbrales; el saldo se corrige
- *    con un AJUSTE (motivo + historial) o corrigiendo el movimiento de origen.
+ *  - Inventario: TODAS las columnas se editan. El stock sigue siendo calculado, así que escribir CANTIDAD TOTAL (o
+ *    BULTOS) genera un AJUSTE auditado por la diferencia (nunca se pisa el saldo sin movimiento); CÓDIGO renombra el
+ *    material y todos sus movimientos (no puede coincidir con otro material).
  */
 import { parseFlexibleDate } from "@/features/os/operational/lib/delivery-date";
 import type { SectorId } from "@/types/operational/sector";
@@ -13,20 +15,24 @@ import { canWriteInventory } from "./rbac";
 
 export type MeSheetResource = "me_ingresos" | "me_salidas" | "me_inventario";
 
-export const ME_INGRESO_SHEET_FIELDS = ["fecha", "ingresoNro", "proveedor", "cliente", "remitoNro", "codigo", "descripcionInsumo", "bultos", "cantidad", "ubicacion"] as const;
-export const ME_SALIDA_SHEET_FIELDS = ["fecha", "egresoNro", "cliente", "remitoNro", "codigo", "descripcion", "bultos", "cantidad", "unidad", "control", "entregado", "comentarios", "motivoSalida", "descuentaStock"] as const;
-export const ME_MATERIAL_SHEET_FIELDS = ["descripcion", "cliente", "ubicacion", "unidad", "cantidadPorBulto", "stockMinimo", "puntoReposicion", "responsable", "observacion"] as const;
+export const ME_INGRESO_SHEET_FIELDS = ["fecha", "ingresoNro", "proveedor", "cliente", "remitoNro", "codigo", "descripcionInsumo", "bultos", "cantidad", "total", "ubicacion"] as const;
+export const ME_SALIDA_SHEET_FIELDS = ["fecha", "egresoNro", "cliente", "remitoNro", "codigo", "descripcion", "bultos", "cantidad", "total", "unidad", "control", "entregado", "comentarios", "motivoSalida", "descuentaStock"] as const;
+export const ME_MATERIAL_SHEET_FIELDS = ["codigo", "descripcion", "cliente", "ubicacion", "unidad", "cantidadPorBulto", "stockMinimo", "puntoReposicion", "responsable", "observacion", "stockTotal", "bultosStock"] as const;
 
 const FIELDS: Record<MeSheetResource, readonly string[]> = {
   me_ingresos: ME_INGRESO_SHEET_FIELDS,
   me_salidas: ME_SALIDA_SHEET_FIELDS,
   me_inventario: ME_MATERIAL_SHEET_FIELDS,
 };
-const NUMBER_FIELDS = new Set(["bultos", "cantidad", "cantidadPorBulto", "stockMinimo", "puntoReposicion"]);
+const NUMBER_FIELDS = new Set(["bultos", "cantidad", "total", "cantidadPorBulto", "stockMinimo", "puntoReposicion", "stockTotal", "bultosStock"]);
 const DATE_FIELDS = new Set(["fecha"]);
 const BOOL_FIELDS = new Set(["control", "entregado", "descuentaStock"]);
 /** Cambian el stock calculado (o a qué código cuenta): piden confirmación en la grilla. */
-export const ME_STOCK_FIELDS: ReadonlySet<string> = new Set(["codigo", "bultos", "cantidad", "descuentaStock", "motivoSalida"]);
+export const ME_STOCK_FIELDS: ReadonlySet<string> = new Set(["codigo", "bultos", "cantidad", "total", "descuentaStock", "motivoSalida", "stockTotal", "bultosStock"]);
+/** Campos de Inventario que no se guardan en el material: generan un ajuste de stock (stockTotal, bultosStock) o un renombre (codigo). */
+export const ME_INVENTARIO_OPERATION_FIELDS: ReadonlySet<string> = new Set(["codigo", "stockTotal", "bultosStock"]);
+/** Motivo automático del ajuste generado al escribir el stock en la planilla (queda en el libro y la auditoría). */
+export const ME_SHEET_AUTO_ADJUST_REASON = "Edición directa en la planilla de Inventario ME";
 export const MAX_ME_SHEET_CHANGES = 200;
 export const MIN_AJUSTE_MOTIVO = 8;
 
@@ -97,7 +103,10 @@ export function validateMeSheetValue(resource: MeSheetResource, field: string, r
     return { ok: false, message: "Escribí Sí o No." };
   }
   if (NUMBER_FIELDS.has(field)) {
-    if (!text) return field === "cantidad" && resource !== "me_inventario" ? { ok: false, message: "La cantidad es obligatoria." } : { ok: true, value: null };
+    if (!text) {
+      if (field === "stockTotal" || field === "bultosStock") return { ok: false, message: "Escribí el stock corregido (≥ 0)." };
+      return (field === "cantidad" || field === "total") && resource !== "me_inventario" ? { ok: false, message: field === "total" ? "El total es obligatorio." : "La cantidad es obligatoria." } : { ok: true, value: null };
+    }
     const n = parseNumber(text);
     if (n === null || n < 0 || n > 1_000_000_000) return { ok: false, message: "Número inválido (≥ 0)." };
     return { ok: true, value: n };
@@ -141,6 +150,8 @@ export interface MeSheetChange {
   id: string;
   field: string;
   value: string;
+  /** Valor que el usuario veía en la celda (stock): si cambió desde entonces, conflicto. */
+  expectedValue?: string;
   /** `updatedAt` del registro que el usuario tenía a la vista. */
   expectedVersion: string;
   reason?: string;

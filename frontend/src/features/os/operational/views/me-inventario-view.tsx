@@ -27,6 +27,8 @@ import {
   type MeInventarioViewRow,
 } from "@/lib/inventory/types";
 import { canWriteInventory } from "@/lib/inventory/rbac";
+import { ME_INVENTARIO_DRAFT_CREATE_KEYS, ME_INVENTARIO_DRAFT_REQUIRED_KEYS, meInventarioPayloadFromDraft } from "@/lib/inventory/me-draft-rows";
+import type { GenusGridDraftRows } from "@/components/data-grid/genus-grid";
 import { useMeSheetEditing } from "@/features/os/operational/hooks/use-me-sheet-cells";
 import { MeStockDialog } from "@/features/os/operational/components/me-stock-dialog";
 import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
@@ -35,10 +37,10 @@ import { SortSelect } from "@/features/os/operational/components/sort-select";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import { applySort, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
 
-// Se editan los datos del material. CÓDIGO (clave) y CANTIDAD TOTAL (se calcula) NO: el stock se corrige con un
-// ajuste (motivo + historial) o corrigiendo el ingreso / la salida de origen.
+// TODAS las columnas se editan. CÓDIGO renombra el material y sus movimientos; CANTIDAD TOTAL y BULTOS generan un AJUSTE
+// auditado por la diferencia (el stock sigue siendo ingresos − salidas ± ajustes: nunca se pisa sin movimiento).
 const ME_CELL_FIELDS: Record<string, string> = {
-  CLIENTE: "cliente", INSUMO: "descripcion", UBICACIÓN: "ubicacion", UNIDAD: "unidad", "CANT. POR BULTO": "cantidadPorBulto", "STOCK MÍNIMO": "stockMinimo", "PUNTO DE REPOSICIÓN": "puntoReposicion",
+  CÓDIGO: "codigo", BULTOS: "bultosStock", "CANTIDAD TOTAL": "stockTotal", CLIENTE: "cliente", INSUMO: "descripcion", UBICACIÓN: "ubicacion", UNIDAD: "unidad", "CANT. POR BULTO": "cantidadPorBulto", "STOCK MÍNIMO": "stockMinimo", "PUNTO DE REPOSICIÓN": "puntoReposicion",
 };
 
 export const ME_INVENTARIO_SORT_OPTIONS: SortOption<MeInventarioViewRow>[] = [
@@ -59,7 +61,7 @@ const DELETE_DESCRIPTION =
  * Columnas visibles exactas: CLIENTE, INSUMO, BULTOS, CANTIDAD TOTAL, UBICACIÓN.
  */
 export function MeInventarioView() {
-  const { sectorId } = usePreviewSession();
+  const { sectorId, email } = usePreviewSession();
   const { showToast } = usePreviewContext();
   const canWrite = canWriteInventory(sectorId, "me_stock");
   const [rows, setRows] = useState<MeInventarioViewRow[]>([]);
@@ -115,6 +117,34 @@ export function MeInventarioView() {
   );
 
   const cells = useMeSheetEditing<MeInventarioViewRow>("me_inventario", sectorId, canWrite, ME_CELL_FIELDS, reload);
+  // Filas en blanco al final: alta de un material nuevo (el stock arranca en 0; se carga con ingresos o escribiendo CANTIDAD TOTAL).
+  const draftRows = useMemo<GenusGridDraftRows | undefined>(
+    () =>
+      canWrite
+        ? {
+            createKeys: ME_INVENTARIO_DRAFT_CREATE_KEYS,
+            requiredKeys: ME_INVENTARIO_DRAFT_REQUIRED_KEYS,
+            storageKey: `genus-draft:${email ?? "anon"}:me-inventario`,
+            validate: (v) => {
+              const r = meInventarioPayloadFromDraft("validate", v);
+              return r.ok ? null : r.message;
+            },
+            onCreate: async (id, v) => {
+              const r = meInventarioPayloadFromDraft(id, v);
+              if (!r.ok) return { ok: false, message: r.message };
+              try {
+                await mutateInventory({ action: "create", resource: "me_stock", payload: r.payload });
+                await reload();
+                return { ok: true, message: "Material creado en el inventario (stock 0)." };
+              } catch (e) {
+                return { ok: false, message: e instanceof InventoryClientError ? e.message : "No se pudo crear el material." };
+              }
+            },
+          }
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canWrite, email]
+  );
   const canAdjust = canWriteInventory(sectorId, "me_ajustes");
   const [stockFor, setStockFor] = useState<{ materialId: string; codigo: string; insumo: string; stock: number } | null>(null);
   const [historyFor, setHistoryFor] = useState<{ id: string; label: string } | null>(null);
@@ -276,6 +306,8 @@ export function MeInventarioView() {
             : []),
         ]}
         rows={filtered}
+        continuous
+        draftRows={draftRows}
         rowKey={(r) => r.materialId}
         rowClassName={(r) => (r.cantidadTotal < 0 ? "genus-row-stock-negativo" : undefined)}
         emptyMessage="Inventario ME vacío. Cargá ingresos y entregá OA para ver movimientos."
