@@ -156,7 +156,7 @@ try {
   const aMark = await admB.page.request.post("/api/v1/remitos/deliveries/marks", { data: { action: "exclude", lineIds: [tonicoLine] } });
   check("Administración no puede marcar ni quitar entregas (403)", aMark.status() === 403, String(aMark.status()));
   await admB.ctx.close();
-  await page.locator("[data-testid=remitos-marcadas-toggle]").tap();
+  if (!(await page.locator("[data-testid=remitos-restaurar]").first().isVisible().catch(() => false))) await page.locator("[data-testid=remitos-marcadas-toggle]").tap();
   await page.locator("[data-testid=remitos-restaurar]").first().tap();
   await page.locator("[data-testid=remitos-generar-row]").filter({ hasText: "TONICO REM" }).waitFor({ timeout: 30_000 });
   check("el remito externo también se revierte con confirmación y vuelve a pendientes", (await q("select active from delivery_remito_marks where delivery_line_id = $1", [tonicoLine]))[0].active === false);
