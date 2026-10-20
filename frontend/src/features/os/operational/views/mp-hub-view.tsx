@@ -19,7 +19,15 @@ import {
   patchInventoryCells,
   InventoryClientError,
 } from "@/features/os/operational/adapters/inventory-client";
-import type { GenusGridRowDelete } from "@/components/data-grid/genus-grid";
+import type { GenusGridDraftRows, GenusGridRowDelete } from "@/components/data-grid/genus-grid";
+import {
+  MP_INGRESO_DRAFT_CREATE_KEYS,
+  MP_INGRESO_DRAFT_REQUIRED_KEYS,
+  MP_STOCK_DRAFT_CREATE_KEYS,
+  MP_STOCK_DRAFT_REQUIRED_KEYS,
+  ingresoPayloadFromDraft,
+  stockPayloadFromDraft,
+} from "@/lib/inventory/mp-draft-rows";
 import { ExcelPasteDialog } from "@/features/os/operational/components/excel-paste-dialog";
 import { MpWeeklyControlPanel } from "@/features/os/operational/components/mp-weekly-control-panel";
 import { MpCoasPanel } from "@/features/os/operational/components/mp-coas-panel";
@@ -527,6 +535,62 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
   );
   // ---- Eliminar filas desde la planilla (sin motivo ni confirmación; con Deshacer donde se puede) ----
   const errText = (e: unknown) => (e instanceof Error ? e.message : "Error");
+  // Filas en blanco al final de la planilla: se escribe directo y el registro se crea cuando la fila está completa.
+  const stockDraftRows = useMemo<GenusGridDraftRows | undefined>(
+    () =>
+      canWrite && tab === "Stock"
+        ? {
+            createKeys: MP_STOCK_DRAFT_CREATE_KEYS,
+            requiredKeys: MP_STOCK_DRAFT_REQUIRED_KEYS,
+            storageKey: `genus-draft:${email ?? "anon"}:mp-stock`,
+            validate: (v) => {
+              const r = stockPayloadFromDraft("validate", v);
+              return r.ok ? null : r.message;
+            },
+            onCreate: async (id, v) => {
+              const r = stockPayloadFromDraft(id, v);
+              if (!r.ok) return { ok: false, message: r.message };
+              try {
+                await mutateInventory({ action: "upsert", resource: "mp_stock", payload: r.payload });
+                await reload();
+                return { ok: true, message: "Lote creado en Stock." };
+              } catch (e) {
+                return { ok: false, message: errText(e) };
+              }
+            },
+          }
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canWrite, tab, email]
+  );
+  const ingresoDraftRows = useMemo<GenusGridDraftRows | undefined>(
+    () =>
+      canWrite && tab === "Ingresos MP"
+        ? {
+            createKeys: MP_INGRESO_DRAFT_CREATE_KEYS,
+            requiredKeys: MP_INGRESO_DRAFT_REQUIRED_KEYS,
+            storageKey: `genus-draft:${email ?? "anon"}:mp-ingresos`,
+            validate: (v) => {
+              const r = ingresoPayloadFromDraft("validate", v);
+              return r.ok ? null : r.message;
+            },
+            onCreate: async (id, v) => {
+              const r = ingresoPayloadFromDraft(id, v);
+              if (!r.ok) return { ok: false, message: r.message };
+              try {
+                const result = await mutateInventory({ action: "upsert", resource: "mp_ingresos", payload: r.payload });
+                const saved = result.data as MpIngresoRow;
+                await reload();
+                return { ok: true, message: saved.stockImpacted ? "Ingreso registrado y sumado al stock." : (saved.stockMessage ?? "Ingreso registrado (borrador).") };
+              } catch (e) {
+                return { ok: false, message: errText(e) };
+              }
+            },
+          }
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [canWrite, tab, email]
+  );
   const stockRowDelete = useMemo<GenusGridRowDelete | undefined>(
     () =>
       canWrite && tab === "Stock"
@@ -1250,6 +1314,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           tableId="mp-stock"
           continuous
           rowDelete={stockRowDelete}
+          draftRows={stockDraftRows}
           canEditCells={stockCells.canEditCells}
           onCellsCommit={stockCells.onCellsCommit}
           reasonRequired={stockCells.reasonRequired}
@@ -1355,6 +1420,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             tableId="mp-ingresos"
             continuous
             rowDelete={ingresoRowDelete}
+            draftRows={ingresoDraftRows}
             canEditCells={ingresoCells.canEditCells}
             onCellsCommit={ingresoCells.onCellsCommit}
             reasonRequired={ingresoCells.reasonRequired}

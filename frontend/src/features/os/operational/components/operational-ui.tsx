@@ -8,6 +8,7 @@ import {
   type GenusGridColumn,
   type GenusGridCommitResult,
   type GenusGridRowDelete,
+  type GenusGridDraftRows,
 } from "@/components/data-grid/genus-grid";
 import { nodeToText } from "@/lib/utils/node-text";
 import {
@@ -173,6 +174,8 @@ interface OperationalTableProps<T> {
   continuous?: boolean;
   /** Hoja continua: eliminar filas completas desde la planilla (sin motivo ni confirmación, con Deshacer). */
   rowDelete?: GenusGridRowDelete;
+  /** Hoja continua: filas en blanco al final para crear registros escribiendo directamente (se crean al completarse). */
+  draftRows?: GenusGridDraftRows;
 }
 
 /**
@@ -354,9 +357,10 @@ function ExcelView<T>({
   reasonInline,
   rowClassName,
   rowDelete,
+  draftRows,
   maxHeight,
   sheet,
-}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName" | "rowDelete"> & { maxHeight?: number; sheet?: boolean }) {
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName" | "rowDelete" | "draftRows"> & { maxHeight?: number; sheet?: boolean }) {
   const dataColumns = useMemo(() => columns.filter((c) => !isActionColumn(c)), [columns]);
   const actionColumns = useMemo(() => columns.filter((c) => isActionColumn(c)), [columns]);
   const textOf = (c: OperationalTableColumn<T>, row: T) => (c.text ? c.text(row) : nodeToText(c.render(row)));
@@ -421,6 +425,7 @@ function ExcelView<T>({
       rowClassName={rowClassName}
       sheet={sheet}
       rowDelete={rowDelete}
+      draftRows={draftRows}
     />
   );
 }
@@ -442,6 +447,7 @@ export function OperationalTable<T>({
   rowClassName,
   continuous = false,
   rowDelete,
+  draftRows,
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [shown, setShown] = useState(LIST_CHUNK);
@@ -467,7 +473,7 @@ export function OperationalTable<T>({
   const visibleColCount =
     primaryCount + (hasSecondary ? 1 : 0) + (selectionActive ? 1 : 0);
 
-  if (rows.length === 0) {
+  if (rows.length === 0 && !(draftRows && editableTable)) {
     return (
       <p className="rounded-[var(--os-radius-sm)] border border-dashed border-[var(--os-border)] px-4 py-8 text-center text-sm text-[var(--os-text-muted)]">
         {emptyMessage}
@@ -504,6 +510,7 @@ export function OperationalTable<T>({
           maxHeight={continuous ? sheetHeight : undefined}
           sheet={continuous}
           rowDelete={rowDelete}
+          draftRows={draftRows}
         />
       </div>
     );

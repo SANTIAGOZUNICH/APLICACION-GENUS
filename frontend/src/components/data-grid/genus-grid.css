@@ -277,3 +277,7 @@
 .genus-grid .genus-tone-unknown { background: color-mix(in srgb, #94a3b8 16%, transparent); }
 .genus-grid .genus-tone-unknown .dsg-input { color: #cbd5e1; font-weight: 600; }
 .genus-grid .genus-tone-neg .dsg-input { color: #fda4af; font-weight: 800; }
+
+/* Filas en blanco al final (se crean al completarse). */
+.genus-sheet .genus-draft-row .dsg-cell { background: color-mix(in srgb, var(--os-teal, #0d9488) 5%, transparent); }
+.genus-sheet .genus-draft-row .dsg-cell.genus-cell-protected { background: color-mix(in srgb, var(--os-text-muted, #64748b) 10%, transparent); }
