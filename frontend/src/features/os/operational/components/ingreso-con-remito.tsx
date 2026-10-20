@@ -103,6 +103,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
   const [ack, setAck] = useState(false);
   const [parentId, setParentId] = useState<string>("");
   const [extraction, setExtraction] = useState<{ available: boolean; reason: string; code?: string } | null>(null);
+  const [storageIssue, setStorageIssue] = useState<string | null>(null);
   /** La última lectura automática falló: se muestra el motivo con «Reintentar lectura». */
   const [readFailed, setReadFailed] = useState<string | null>(null);
   const [showPhoto, setShowPhoto] = useState(false);
@@ -143,8 +144,11 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
       extractionRef.current = c;
       if (alive) setExtraction(c);
     };
-    configLoad.current = call<{ extraction: { available: boolean; reason: string; code?: string } }>(`${API}?module=${module}&view=config`)
-      .then((c) => setCfg(c.extraction))
+    configLoad.current = call<{ extraction: { available: boolean; reason: string; code?: string }; storage?: { configured: boolean; reason: string } }>(`${API}?module=${module}&view=config`)
+      .then((c) => {
+        setCfg(c.extraction);
+        if (alive && c.storage && !c.storage.configured) setStorageIssue(c.storage.reason);
+      })
       .catch(() => setCfg({ available: false, reason: "No se pudo comprobar si la lectura automática está disponible. Cargá los datos a mano." }));
     const resume = resumeRef.id;
     resumeRef.id = null;
@@ -214,7 +218,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     if (uploaded && extractionRef.current?.available) {
       const hasManual = draftRef.current.lines.some((l) => l.description || l.quantity || l.materialCode);
       if (!hasManual) await runExtract(false);
-      else setNotice("Subido. Como ya cargaste datos, la lectura no se hizo sola: usá «Leer remito automáticamente» si querés completar lo que falta.");
+      else setNotice("Subido. Como ya cargaste datos, la lectura no se hizo sola: usá «Leer la foto automáticamente» si querés completar lo que falta.");
     }
   }
 
@@ -262,7 +266,12 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
         setReadFailed(res.message);
       }
     } catch (e) {
-      setReadFailed(e instanceof Error ? e.message : "No pudimos interpretar automáticamente este remito. Podés reintentar o completar los datos manualmente.");
+      // Sin respuesta del servidor (corte de conexión) ≠ el servicio de lectura falló: la foto y lo cargado siguen guardados.
+      setReadFailed(
+        e instanceof ApiError
+          ? e.message
+          : "Error de conexión: no pudimos comunicarnos con GENUS OS. La foto y lo que cargaste siguen guardados; reintentá cuando vuelva la conexión o completá los datos a mano."
+      );
     } finally {
       setBusy(null);
     }
@@ -397,12 +406,13 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
             <div className="flex flex-wrap items-center gap-2 border-t border-[var(--os-border)] pt-3">
               {extraction?.available ? (
                 <Button type="button" variant="secondary" disabled={!thumbs.length || Boolean(busy)} onClick={() => void runExtract(false)} data-testid="remito-leer">
-                  <ScanLine className="mr-1 size-4" /> {readFailed ? "Reintentar lectura" : "Leer remito automáticamente"}
+                  <ScanLine className="mr-1 size-4" /> {readFailed ? "Reintentar lectura" : "Leer la foto automáticamente"}
                 </Button>
               ) : null}
               <Button type="button" disabled={Boolean(busy)} onClick={() => void goReview()} data-testid="remito-cargar-manual">
                 {thumbs.length ? "Cargar los datos a mano" : "Cargar manualmente (sin foto por ahora)"}
               </Button>
+              {storageIssue ? <p className="w-full rounded-lg bg-amber-500/10 px-3 py-2 text-xs" role="alert" data-testid="remito-storage-issue">{storageIssue}</p> : null}
               {extraction?.available ? (
                 <p className="w-full text-xs text-[var(--os-text-muted)]">Al subir la foto, GENUS OS analiza el remito solo y completa el formulario. La imagen se envía al servicio de lectura configurado por Sistemas. Es una sugerencia: siempre la revisás vos antes de confirmar.</p>
               ) : extraction && extraction.reason ? (

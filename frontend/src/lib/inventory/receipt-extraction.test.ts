@@ -41,8 +41,10 @@ beforeEach(() => resetModelCacheForTests());
 afterEach(() => vi.restoreAllMocks());
 
 describe("configuración de la lectura automática", () => {
-  it("apagada por defecto, aunque exista la clave de Gemini (no se envían remitos sin autorización)", () => {
-    expect(extractionConfig({ GEMINI_API_KEY: KEY } as never)).toMatchObject({ available: false, code: "disabled" });
+  it("se activa sola cuando existe la clave de Gemini y solo se apaga con una orden explícita", () => {
+    expect(extractionConfig({ GEMINI_API_KEY: KEY } as never)).toMatchObject({ available: true, code: "ok" });
+    expect(extractionConfig({ GEMINI_API_KEY: KEY, INGRESO_REMITO_EXTRACTION: "off" } as never)).toMatchObject({ available: false, code: "disabled" });
+    expect(extractionConfig({} as never)).toMatchObject({ available: false, code: "missing_key" });
   });
   it("habilitada pero sin clave → missing_key; con clave → ok", () => {
     expect(extractionConfig({ INGRESO_REMITO_EXTRACTION: "gemini" } as never)).toMatchObject({ available: false, code: "missing_key" });
@@ -51,6 +53,95 @@ describe("configuración de la lectura automática", () => {
   it("el modelo solo sale de INGRESO_REMITO_GEMINI_MODEL: NO hereda el de Creamy a ciegas", () => {
     expect(extractionConfig(env({ CREAMY_GEMINI_MODEL: "gemini-2.0-flash" })).model).toBe("");
     expect(extractionConfig(env({ INGRESO_REMITO_GEMINI_MODEL: "models/gemini-3.5-flash" }))).toMatchObject({ model: "gemini-3.5-flash", modelSource: "INGRESO_REMITO_GEMINI_MODEL" });
+  });
+});
+
+describe("fallos transitorios: reintentos controlados, sin bucles infinitos", () => {
+  const fast = (over: Record<string, string> = {}) => env({ INGRESO_REMITO_RETRY_BASE_MS: "1", INGRESO_REMITO_GEMINI_MODEL: "gemini-3.5-flash", ...over });
+  it("503 «saturado» una vez: reintenta el mismo modelo y lee bien", async () => {
+    let n = 0;
+    const f = gemini({ onModel: () => (++n === 1 ? err(503, "UNAVAILABLE", "The model is overloaded. Please try again later.") : ok(remito)) });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const out = await extractRemito([jpg], { fetchImpl: f as never, env: fast() });
+    expect(out).toMatchObject({ ok: true, model: "gemini-3.5-flash" });
+    expect(f.generate()).toHaveLength(2);
+  });
+  it("503 permanente: reintenta con tope (3 intentos por modelo), prueba otro modelo y recién entonces informa «saturado» (no «no disponible»)", async () => {
+    const f = gemini({ models: ["gemini-3.5-flash", "gemini-2.5-flash"], onModel: () => err(503, "UNAVAILABLE", "overloaded") });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const out = await extractRemito([jpg], { fetchImpl: f as never, env: fast() });
+    expect(out).toMatchObject({ ok: false, kind: "overloaded" });
+    expect((out as { message: string }).message).toMatch(/saturado/);
+    expect(f.generate().length).toBe(6);
+    expect(new Set(f.generate().map((c) => c.model))).toEqual(new Set(["gemini-3.5-flash", "gemini-2.5-flash"]));
+  });
+  it("el otro modelo responde cuando el primero sigue saturado", async () => {
+    const f = gemini({ models: ["gemini-3.5-flash", "gemini-2.5-flash"], onModel: (m) => (m === "gemini-3.5-flash" ? err(503, "UNAVAILABLE", "overloaded") : ok(remito)) });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(await extractRemito([jpg], { fetchImpl: f as never, env: fast() })).toMatchObject({ ok: true, model: "gemini-2.5-flash" });
+  });
+  it("corte de red: reintenta y, si no se recupera, informa servicio no disponible con tope", async () => {
+    let n = 0;
+    const down = vi.fn(async () => {
+      n++;
+      throw new TypeError("fetch failed");
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const out = await extractRemito([jpg], { fetchImpl: down as never, env: fast() });
+    expect(out).toMatchObject({ ok: false, kind: "unavailable" });
+    expect(n).toBe(3);
+  });
+  it("la clave inválida NO se reintenta ni se disfraza de «no disponible»", async () => {
+    const f = gemini({ onModel: () => err(400, "INVALID_ARGUMENT", "API key not valid. Please pass a valid API key.") });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const out = await extractRemito([jpg], { fetchImpl: f as never, env: fast() });
+    expect(out).toMatchObject({ ok: false, kind: "key" });
+    expect(f.generate()).toHaveLength(1);
+  });
+  it("respuesta vacía cortada por tokens (modelo que piensa de más): un reintento con más margen y lee", async () => {
+    let n = 0;
+    const f = gemini({ onModel: () => (++n === 1 ? json(200, { candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [] } }] }) : ok(remito)) });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const out = await extractRemito([jpg], { fetchImpl: f as never, env: fast() });
+    expect(out).toMatchObject({ ok: true });
+    expect(f.generate()).toHaveLength(2);
+    expect((f.generate()[1]!.body!.generationConfig as { maxOutputTokens: number }).maxOutputTokens).toBeGreaterThan((f.generate()[0]!.body!.generationConfig as { maxOutputTokens: number }).maxOutputTokens);
+  });
+  it("modelos 3.x: se pide razonamiento mínimo (si el modelo lo rechaza, se reintenta sin esa opción)", async () => {
+    let n = 0;
+    const f = gemini({ onModel: (_m, body) => (++n === 1 ? (JSON.stringify(body).includes("thinkingLevel") ? err(400, "INVALID_ARGUMENT", "thinking level is not supported") : ok(remito)) : ok(remito)) });
+    const out = await extractRemito([jpg], { fetchImpl: f as never, env: fast() });
+    expect(out).toMatchObject({ ok: true });
+    expect(JSON.stringify(f.generate()[0]!.body)).toContain("thinkingLevel");
+    expect(JSON.stringify(f.generate()[1]!.body)).not.toContain("thinkingLevel");
+  });
+});
+
+describe("lectura de etiquetas y adaptación por sector", () => {
+  const fast = env({ INGRESO_REMITO_RETRY_BASE_MS: "1", INGRESO_REMITO_GEMINI_MODEL: "gemini-3.5-flash" });
+  const promptOf = (f: ReturnType<typeof gemini>) => String(((f.generate()[0]!.body as { contents: Array<{ parts: Array<{ text?: string }> }> }).contents[0]!.parts[0] as { text: string }).text);
+  it("Materias Primas: el pedido describe etiquetas de MP (lote, vencimiento) y admite UNA línea", async () => {
+    const f = gemini({ onModel: () => ok(remito) });
+    await extractRemito([jpg], { fetchImpl: f as never, env: fast, module: "MP" });
+    expect(promptOf(f)).toMatch(/MATERIAS PRIMAS/);
+    expect(promptOf(f)).toMatch(/ETIQUETA/);
+    expect(promptOf(f)).toMatch(/NUNCA inventes/);
+  });
+  it("Depósito: el pedido describe materiales de envase y pide cliente/ubicación en notas", async () => {
+    const f = gemini({ onModel: () => ok(remito) });
+    await extractRemito([jpg], { fetchImpl: f as never, env: fast, module: "ME" });
+    expect(promptOf(f)).toMatch(/MATERIALES DE ENVASE/);
+    expect(promptOf(f)).toMatch(/Cliente: …/);
+  });
+  it("lo deducido o normalizado (inferredFields) y lo ilegible quedan marcados para confirmar; nada se inventa", async () => {
+    const f = gemini({ onModel: () => ok({ supplier: "ACME", remitoNumber: "", remitoDate: "", notes: "", unclearFields: [], lines: [{ supplierCode: "E-1", description: "Etiqueta frasco 30 ml", quantity: 500, unit: "un", packages: null, lot: "", expiryDate: "2028-06-30", notes: "", confidence: 0.9, unclearFields: ["lot"], inferredFields: ["expiryDate"] }] }) });
+    const out = await extractRemito([jpg], { fetchImpl: f as never, env: fast, module: "ME" });
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      const l = out.data.lines[0]!;
+      expect(l.lote).toBe("");
+      expect(l.review).toEqual(expect.arrayContaining(["lote", "vencimiento"]));
+    }
   });
 });
 
@@ -116,7 +207,8 @@ describe("clasificación de errores (cada causa, un mensaje distinto)", () => {
     [403, "PERMISSION_DENIED", "The caller does not have permission", "permission"],
     [400, "FAILED_PRECONDITION", "User location is not supported for the API use.", "region"],
     [429, "RESOURCE_EXHAUSTED", "You exceeded your current quota", "limit"],
-    [503, "UNAVAILABLE", "The model is overloaded", "unavailable"],
+    [503, "UNAVAILABLE", "The model is overloaded", "overloaded"],
+    [500, "INTERNAL", "Internal error", "unavailable"],
   ];
   it("classifyHttp", () => {
     for (const [status, st, message, kind] of cases) expect(classifyHttp(status, { code: status, status: st, message }).kind, message).toBe(kind);
@@ -127,14 +219,14 @@ describe("clasificación de errores (cada causa, un mensaje distinto)", () => {
     const msgs = new Set<string>();
     for (const [status, st, message, kind] of cases.filter((c) => c[3] !== "model")) {
       resetModelCacheForTests();
-      const out = await extractRemito([jpg], { fetchImpl: gemini({ models: ["gemini-2.5-flash"], onModel: () => err(status, st, message) }) as never, env: env() });
+      const out = await extractRemito([jpg], { fetchImpl: gemini({ models: ["gemini-2.5-flash"], onModel: () => err(status, st, message) }) as never, env: env({ INGRESO_REMITO_RETRY_BASE_MS: "1" }) });
       expect(out).toMatchObject({ ok: false, kind });
       if (!out.ok) {
         expect(out.message).not.toContain(KEY);
         msgs.add(`${kind}:${out.message}`);
       }
     }
-    expect(new Set([...msgs].map((m) => m.split(":")[0])).size).toBe(5); // key, permission, region, limit, unavailable
+    expect(new Set([...msgs].map((m) => m.split(":")[0])).size).toBe(6); // key, permission, region, limit, overloaded, unavailable
     const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
     expect(logged).toMatch(/lectura automática falló/);
     expect(logged).not.toContain(KEY);
@@ -168,7 +260,7 @@ describe("extractRemito", () => {
   });
   it("apagada o sin clave: no llama a nadie y explica el motivo", async () => {
     const f = vi.fn();
-    expect(await extractRemito([jpg], { fetchImpl: f as never, env: { GEMINI_API_KEY: KEY } as never })).toMatchObject({ ok: false, kind: "disabled" });
+    expect(await extractRemito([jpg], { fetchImpl: f as never, env: { GEMINI_API_KEY: KEY, INGRESO_REMITO_EXTRACTION: "off" } as never })).toMatchObject({ ok: false, kind: "disabled" });
     expect(await extractRemito([jpg], { fetchImpl: f as never, env: { INGRESO_REMITO_EXTRACTION: "gemini" } as never })).toMatchObject({ ok: false, kind: "config" });
     expect(f).not.toHaveBeenCalled();
   });
@@ -243,7 +335,7 @@ describe("prueba de configuración (view=extraction_health)", () => {
     resetModelCacheForTests();
     const gone = await probeExtraction({ fetchImpl: gemini({ models: ["gemini-3.5-flash"], onModel: () => err(404, "NOT_FOUND", "x") }) as never, env: env() });
     expect(gone).toMatchObject({ ok: false, text: { ok: false, kind: "model" } });
-    expect(await probeExtraction({ env: { GEMINI_API_KEY: KEY } as never })).toMatchObject({ ok: false, code: "disabled" });
+    expect(await probeExtraction({ env: { GEMINI_API_KEY: KEY, INGRESO_REMITO_EXTRACTION: "off" } as never })).toMatchObject({ ok: false, code: "disabled" });
   });
   it("redactSecrets", () => {
     expect(redactSecrets(`falló con ${KEY} y api_key=abcdef123456`)).not.toMatch(/AIza|abcdef123456/);

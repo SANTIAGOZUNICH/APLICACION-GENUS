@@ -68,9 +68,14 @@ const gem = http.createServer((req, res) => {
     if (state.mode === "quota") return send(429, { error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "You exceeded your current quota" } });
     if (parts.every((p) => p.text) && req.method === "POST" && state.mode !== "textfail") return send(200, { candidates: [{ content: { parts: [{ text: "OK" }] } }] }); // prueba de configuración
     await new Promise((r) => setTimeout(r, state.delayMs));
+    if (state.mode === "overloaded") return send(503, { error: { code: 503, status: "UNAVAILABLE", message: "The model is overloaded. Please try again later." } });
+    if (state.mode === "flaky") {
+      state.flakyHits = (state.flakyHits ?? 0) + 1;
+      if (state.flakyHits === 1) return send(503, { error: { code: 503, status: "UNAVAILABLE", message: "The model is overloaded. Please try again later." } });
+    }
     if (state.mode === "garbage") return send(200, { candidates: [{ finishReason: "STOP", content: { parts: [{ text: "Lo siento, no puedo ayudar con eso" }] } }] });
     if (state.mode === "403") return send(403, { error: { code: 403, message: "PERMISSION_DENIED" } });
-    const payload = state.mode === "me" ? remitoME : remitoMP;
+    const payload = state.mode === "me" ? remitoME : remitoMP; // «flaky» responde como «ok» tras el primer 503
     send(200, { candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(payload) }] } }] });
   });
 });
@@ -139,7 +144,7 @@ try {
   check("Una sola llamada a Gemini con las 2 hojas (JPG + PDF), clave en cabecera y sin salir de la URL local", reqs.length === 1 && reqs[0].mimes.join() === "image/jpeg,application/pdf" && reqs[0].key === FAKE_KEY && !reqs[0].url.includes(FAKE_KEY), JSON.stringify(reqs[0]?.mimes));
   const genReqs = state.requests.filter((r) => r.model);
   check("El modelo configurado NO EXISTE (404): GENUS OS consultó qué modelos tiene la clave y siguió con el mejor (gemini-3.5-flash), sin error para el operario", genReqs[0]?.model === "gemini-2.0-flash-retirado" && genReqs[1]?.model === "gemini-3.5-flash" && state.lists === 1, JSON.stringify(genReqs.map((r) => r.model)));
-  check("Pidió respuesta JSON y temperatura 0, sin opciones propias de otros modelos (thinking solo en 2.5-flash)", reqs[0]?.gen?.responseMimeType === "application/json" && reqs[0]?.gen?.temperature === 0 && reqs[0]?.gen?.thinkingConfig === undefined);
+  check("Pidió respuesta JSON y temperatura 0, sin opciones propias de otros modelos (razonamiento mínimo en modelos 3.x)", reqs[0]?.gen?.responseMimeType === "application/json" && reqs[0]?.gen?.temperature === 0 && (reqs[0]?.gen?.thinkingConfig === undefined || reqs[0]?.gen?.thinkingConfig?.thinkingLevel === "low"));
   check("El formulario se completó SOLO (sin recargar): proveedor, n.º y fecha del remito", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-numero]").inputValue()) === REM && (await mp.locator("[data-testid=remito-fecha]").inputValue()) === "2026-10-14");
   check("La fecha de recepción sigue siendo la de hoy (distinta de la del remito)", (await mp.locator("[data-testid=remito-recepcion]").inputValue()) === new Date().toISOString().slice(0, 10));
   const lines = mp.locator("[data-testid=remito-linea]");
@@ -201,6 +206,36 @@ try {
   check("Permisos insuficientes: el mensaje lo dice y pide avisar a Sistemas (no confunde con modelo ni clave)", /no tiene permiso/.test(await mp.locator("[data-testid=remito-lectura-fallo]").innerText()) && !/modelo/.test(await mp.locator("[data-testid=remito-lectura-fallo]").innerText()));
   await mp.keyboard.press("Escape");
   state.mode = "ok";
+
+  // ===== Fallo TRANSITORIO del proveedor: GENUS OS reintenta solo (el operario no ve ningún error) =====
+  state.mode = "flaky";
+  state.flakyHits = 0;
+  await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
+  await dlg(mp).waitFor();
+  const stockAntesFlaky = await balance(MP_CODE);
+  await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+  await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
+  check("503 transitorio del proveedor: reintento automático y la lectura se completa sin error visible", state.flakyHits >= 2 && (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-lectura-fallo]").count()) === 0, `hits=${state.flakyHits}`);
+  check("el reintento no duplicó nada: sigue siendo un borrador sin stock", (await balance(MP_CODE)) === stockAntesFlaky);
+  await mp.keyboard.press("Escape");
+
+  // ===== Proveedor saturado de forma sostenida: mensaje propio, tope de reintentos, foto y carga manual intactas =====
+  state.mode = "overloaded";
+  state.requests.length = 0;
+  await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
+  await dlg(mp).waitFor();
+  await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+  await mp.locator("[data-testid=remito-lectura-fallo]").waitFor({ timeout: 90_000 });
+  const sat = await mp.locator("[data-testid=remito-lectura-fallo]").innerText();
+  const generate = state.requests.filter((r) => r.model && !r.textOnly).length;
+  check("Saturación sostenida: mensaje «saturado» (no el genérico «no disponible») y la foto sigue adjunta", /saturado/.test(sat) && !/no está disponible ahora/.test(sat) && (await mp.locator("[data-testid=remito-miniaturas] li").count()) === 1, sat.slice(0, 100));
+  check("Reintentos con tope (no infinitos)", generate >= 3 && generate <= 8, String(generate));
+  check("Se puede completar a mano sin perder la foto", await mp.locator("[data-testid=remito-cargar-manual]").isEnabled());
+  state.mode = "ok";
+  await mp.locator("[data-testid=remito-reintentar]").first().click();
+  await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
+  check("Cuando el proveedor se recupera, «Reintentar lectura» funciona", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER);
+  await mp.keyboard.press("Escape");
 
   // ===== Depósito (PC) =====
   state.mode = "me";

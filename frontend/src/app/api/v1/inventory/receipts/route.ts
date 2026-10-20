@@ -4,6 +4,7 @@ import { InventoryForbiddenError, InventoryValidationError } from "@/lib/invento
 import { probeExtraction } from "@/lib/inventory/receipt-extraction";
 import { parseReceiptModule } from "@/lib/inventory/receipt-rules";
 import { getReceiptService, ReceiptError } from "@/lib/inventory/receipt-service";
+import { getStorageHealth } from "@/lib/storage/file-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,7 +35,11 @@ export async function GET(request: Request) {
     const id = url.searchParams.get("id") ?? "";
     if (view === "config") {
       const cfg = svc.config();
-      return NextResponse.json({ extraction: { available: cfg.available, reason: cfg.reason, code: cfg.code } });
+      const storage = getStorageHealth();
+      return NextResponse.json({
+        extraction: { available: cfg.available, reason: cfg.reason, code: cfg.code },
+        storage: { configured: storage.configured, reason: storage.configured ? "" : "El almacenamiento de fotos no está configurado en el servidor: no se pueden adjuntar fotos hasta que Sistemas lo habilite. Podés cargar los datos a mano." },
+      });
     }
     if (view === "extraction_health") {
       // Solo supervisión (Dirección / Producción / superadmin): prueba clave y modelo SIN enviar ningún remito real (con &image=1 lee un remito ficticio incorporado).

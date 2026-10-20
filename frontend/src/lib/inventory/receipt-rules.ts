@@ -462,6 +462,13 @@ export function sanitizeExtraction(raw: unknown): ExtractedRemito | null {
     if (!venc) review.push("vencimiento");
     const lineUnclear = Array.isArray(o.unclearFields) ? o.unclearFields.map(String) : [];
     for (const f of lineUnclear) if (!review.includes(f)) review.push(f);
+    // Lo que el modelo normalizó o dedujo (no leído literalmente) también se marca para que la persona lo confirme.
+    const inferred = Array.isArray(o.inferredFields) ? o.inferredFields.map(String) : [];
+    const INFERRED_MAP: Record<string, string> = { expiryDate: "vencimiento", lot: "lote" };
+    for (const f of inferred) {
+      const k = INFERRED_MAP[f] ?? f;
+      if (!review.includes(k)) review.push(k);
+    }
     if (lowConf(o.confidence) && !review.includes("quantity")) review.push("quantity");
     if (!description && !supplierCode && qtyNum == null) return [];
     const pk = parseNumber(o.packages);
