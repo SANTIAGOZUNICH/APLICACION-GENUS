@@ -1316,7 +1316,7 @@ export function GenusGrid<T>({
   const dsg = (
     <DataSheetGrid<GenusGridRow>
       // Si cambian las columnas (otra pestaña/semana) el motor se remonta: sus encabezados no se actualizan en caliente.
-      key={columns.map((c) => `${c.key}:${c.title}`).join("|")}
+      key={columns.map((c) => `${c.key}:${c.title}:${c.fixedWidth ? c.basis : ""}`).join("|")}
       ref={gridRef}
       value={gridRows}
       onChange={(next) => handleChange(next)}

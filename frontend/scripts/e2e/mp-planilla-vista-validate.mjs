@@ -174,22 +174,23 @@ try {
   }
   await mp.waitForTimeout(300);
   const cell = await rowCell(mp, GS, `${TAG} Materia 05`, "Ubicación");
-  await mpu.ctx.setOffline(true);
+  // Corte de red SOLO para los guardados de celdas (así se puede recargar la página con el corte activo).
+  await mp.route("**/api/v1/inventory/cells", (route) => route.abort("internetdisconnected"));
   await clickCell(mp, cell, "desktop");
   await mp.keyboard.type("COLA-1");
   await mp.keyboard.press("Enter");
   await mp.waitForTimeout(2500);
-  console.log("  [diag] failed bar:", await mp.locator(`[data-testid=${GS}-failed]`).count(), "| ubicacion db:", (await stockBy(`${TAG} Materia 05`)).ubicacion, "| estado:", await mp.locator(`[data-testid=${GS}-status]`).getAttribute("data-state").catch(() => "?"));
-  await mp.screenshot({ path: `${OUT}/03-offline.png` });
+  console.log("  [diag] failed bar:", await mp.locator(`[data-testid=${GS}-failed]`).count(), "| ubicacion db:", (await stockBy(`${TAG} Materia 05`)).ubicacion);
   check("sin conexión: el cambio no se guarda y queda en la barra roja con reintento", (await stockBy(`${TAG} Materia 05`)).ubicacion === "U5" && (await mp.locator(`[data-testid=${GS}-failed]`).count()) >= 1);
-  await mpu.ctx.setOffline(false);
   await mp.reload();
   await mp.locator(`[data-testid=${GS}]`).waitFor({ timeout: 120_000 });
   await mp.waitForTimeout(1500);
-  check("tras recargar, el cambio pendiente sigue ahí (no se perdió)", /sin guardar|Reintentar/i.test(await mp.locator(`[data-testid=${GS}]`).innerText()));
+  check("tras recargar (con el corte activo) el cambio pendiente sigue en la barra roja", (await mp.locator(`[data-testid=${GS}-failed]`).count()) >= 1 && (await stockBy(`${TAG} Materia 05`)).ubicacion === "U5");
+  await mp.unroute("**/api/v1/inventory/cells");
   await mp.evaluate(() => window.dispatchEvent(new Event("online")));
   check("al volver la conexión se guarda solo", await waitDb(async () => (await stockBy(`${TAG} Materia 05`)).ubicacion === "COLA-1", 25_000));
   await mp.waitForTimeout(2000);
+  console.log("  [diag] colas en localStorage:", JSON.stringify(await mp.evaluate(() => Object.fromEntries(Object.keys(localStorage).filter((k) => k.startsWith("genus-queue:")).map((k) => [k, localStorage.getItem(k)])))));
   check("se guardó una sola vez y la cola quedó vacía", (await q("select count(*)::int n from inv_mp_stock where payload->>'ubicacion' = 'COLA-1'"))[0].n === 1 && !(await mp.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith("genus-queue:") && localStorage.getItem(k) && localStorage.getItem(k) !== "[]"))));
   }
   await mpu.ctx.close();
@@ -205,8 +206,8 @@ try {
   const hdr = await headers(ip, "mp-ingresos-grid");
   const colsTxt = await ip.locator("[data-testid=mp-ingresos-grid]").innerText();
   check("Ingresos muestra la columna «Tipo» (nuevo lote / adicional / borrador)", hdr.includes("tipo") || /Ingreso · nuevo lote|Borrador \(no mueve stock\)/.test(colsTxt), hdr.join(","));
-  }
   await iu.ctx.close();
+  }
 
   if (run("tablet")) {
   // ===== TABLET =====
@@ -221,8 +222,8 @@ try {
   await tb.page.locator(`[data-testid=${GS}-find-text]`).fill("zzzz-no-existe");
   check("tablet táctil: buscar y reemplazar abre y cuenta (0 coincidencias)", /0 celdas/.test(await tb.page.locator(`[data-testid=${GS}-find-count]`).innerText()));
   await tb.page.screenshot({ path: `${OUT}/02-tablet.png` });
-  }
   await tb.ctx.close();
+  }
 } catch (e) {
   console.error(e);
   results.push({ name: "excepción", ok: false });
