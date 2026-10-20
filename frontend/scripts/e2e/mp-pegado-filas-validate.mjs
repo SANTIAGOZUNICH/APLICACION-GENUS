@@ -118,11 +118,12 @@ try {
   const GI = "mp-ingresos-grid";
   await openTab(p, "Ingresos MP", GI);
   const mov0 = (await q("select count(*)::int n from mp_stock_movements"))[0].n;
-  // Se pega «como sale de Excel»: Fecha, Descripción, Proveedor, Lote, Cantidad (sin tocar las columnas calculadas).
+  // Se pega «como sale de Excel», en el ORDEN de la planilla (se saltean las columnas calculadas):
+  // Fecha, Proveedor, Cliente, Remito, Código, Producto, Descripción, Bultos, Cantidad, Ubicación, Lote.
   const c0 = await draftCell(p, GI, 0, "Fecha");
   const b = await c0.boundingBox();
   await p.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
-  const tsv = [1, 2, 3].map((n) => ["21/10/2026", `${TAG} Pegado ${n}`, "Prov PG", `PG-L${n}`, String(10 * n)].join("\t")).join("\n");
+  const tsv = [1, 2, 3].map((n) => ["21/10/2026", "Prov PG", "", "", "", "", `${TAG} Pegado ${n}`, "", String(10 * n), "U1", `PG-L${n}`].join("\t")).join("\n");
   await pasteDoc(p, tsv);
   check("pegar 3 filas: las 3 se crean como ingresos completos (una vez cada una)", await waitDb(async () => (await q("select count(*)::int n from inv_mp_ingresos where payload->>'descripcion' like $1", [`${TAG} Pegado %`]))[0].n === 3, 25_000));
   await p.waitForTimeout(2500);
@@ -136,7 +137,7 @@ try {
   await pasteDoc(p, ["Lote\tDescripción\tCantidad\tProveedor\tFecha", `PG-L9\t${TAG} Con titulos\t5\tProv PG\t22/10/2026`, `PG-L10\t${TAG} Incompleta\t7\t\t22/10/2026`].join("\n"));
   check("pegado con encabezados: mapea por nombre y crea la fila completa", await waitDb(async () => (await q("select count(*)::int n from inv_mp_ingresos where payload->>'descripcion' = $1", [`${TAG} Con titulos`]))[0].n === 1, 25_000));
   await p.waitForTimeout(2500);
-  check("la fila pegada sin proveedor NO se crea (queda en preparación, avisando)", (await q("select count(*)::int n from inv_mp_ingresos where payload->>'descripcion' = $1", [`${TAG} Incompleta`]))[0].n === 0 && /sin completar/.test(await p.locator(`[data-testid=${GI}-drafts-info]`).innerText()));
+  check("la fila pegada sin proveedor NO se crea (queda en preparación, avisando)", (await q("select count(*)::int n from inv_mp_ingresos where payload->>'descripcion' = $1", [`${TAG} Incompleta`]))[0].n === 0 && (await p.locator(`[data-testid=${GI}-drafts-incomplete]`).count()) >= 1);
   await p.screenshot({ path: `${OUT}/01-pegado.png` });
   await u.ctx.close();
 } catch (e) {
