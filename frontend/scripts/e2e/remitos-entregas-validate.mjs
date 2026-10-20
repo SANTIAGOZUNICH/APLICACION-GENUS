@@ -40,6 +40,8 @@ const tablet = { viewport: { width: 1180, height: 820 }, hasTouch: true, deviceS
 
 async function cleanup() {
   await q("delete from remitos where client_display in ($1,$2)", [A, B]).catch(() => undefined);
+  await q("delete from delivery_remito_mark_events where delivery_line_id in (select l.id from work_item_delivery_lines l join work_items w on w.id = l.work_item_id where w.notes like $1)", [`${TAG}%`]).catch(() => undefined);
+  await q("delete from delivery_remito_marks where delivery_line_id in (select l.id from work_item_delivery_lines l join work_items w on w.id = l.work_item_id where w.notes like $1)", [`${TAG}%`]).catch(() => undefined);
   await q("delete from os_notifications where message like '%CLIENTE REM%'").catch(() => undefined);
   await q("update work_items set deleted_at = now() where notes like $1 and deleted_at is null", [`${TAG}%`]);
 }
@@ -113,6 +115,53 @@ try {
   const serumLine = (await q("select l.id from work_item_delivery_lines l where l.work_item_id = $1", [ids.serum]))[0].id;
   const dup = await api.post("/api/v1/remitos/deliveries", { data: { action: "create", lineIds: [serumLine] } });
   check("reintento sobre una entrega ya remitida: rechazado, sin duplicar", dup.status() >= 400 && (await q("select count(*)::int n from remito_work_links where work_item_id = $1", [`dl:${serumLine}`]))[0].n === 1);
+  // ── Selección múltiple, «Quitar de pendientes» y «Marcar como remito ya creado» (tablet, con el dedo) ──────────────────
+  await page.locator("[data-testid=remitos-select-all]").tap();
+  check("«Seleccionar todo lo visible» marca todas las entregas visibles", (await page.locator("[data-testid=remitos-generar-check]:checked").count()) === (await page.locator("[data-testid=remitos-generar-row]").count()) && (await page.locator("[data-testid=remitos-generar-row]").count()) >= 2);
+  await page.locator("[data-testid=remitos-deselect]").tap();
+  check("«Deseleccionar» limpia la selección", (await page.locator("[data-testid=remitos-generar-check]:checked").count()) === 0 && (await page.locator("[data-testid=remitos-hacer]").isDisabled()));
+  const stock0 = (await q("select count(*)::int n from mp_stock_movements"))[0].n;
+  const remitos0 = (await q("select count(*)::int n from remitos"))[0].n;
+  const lines0 = JSON.stringify(await q("select id, quantity, status, remito from work_item_delivery_lines where work_item_id = any($1::uuid[]) order by id", [Object.values(ids)]));
+  const tonico = page.locator("[data-testid=remitos-generar-row]").filter({ hasText: "TONICO REM" });
+  await tonico.locator("[data-testid=remitos-generar-check]").tap();
+  await page.locator("[data-testid=remitos-quitar]").tap();
+  await page.locator("[data-testid=remitos-mark-dialog]").waitFor();
+  check("«Quitar de pendientes» pide confirmación pero NO pide motivo", (await page.locator("[data-testid=remitos-mark-dialog] textarea, [data-testid=remitos-mark-dialog] input").count()) === 0);
+  await page.locator("[data-testid=remitos-mark-confirmar]").dblclick();
+  await page.locator("[data-testid=remitos-generar-notice]").filter({ hasText: /quitada/ }).waitFor({ timeout: 30_000 });
+  check("la entrega quitada deja de ofrecerse para remito", (await page.locator("[data-testid=remitos-generar-row]").filter({ hasText: "TONICO REM" }).count()) === 0);
+  const tonicoLine = (await q("select l.id from work_item_delivery_lines l where l.work_item_id = $1", [ids.otro]))[0].id;
+  const m1 = await q("select mark, active, created_by from delivery_remito_marks where delivery_line_id = $1", [tonicoLine]);
+  check("queda auditada la exclusión (usuario, un solo registro aun con doble toque)", m1.length === 1 && m1[0].mark === "EXCLUIDA" && m1[0].active === true && m1[0].created_by === E2E_USERS.produccion.email && (await q("select count(*)::int n from delivery_remito_mark_events where delivery_line_id = $1", [tonicoLine]))[0].n === 1);
+  await page.locator("[data-testid=remitos-marcadas-toggle]").tap();
+  check("la vista de quitadas muestra la entrega con su detalle de cajas", /TONICO REM/.test(await page.locator("[data-testid=remitos-marcadas]").innerText()) && /2 cajas de 100 u\./.test(await page.locator("[data-testid=remitos-marcadas]").innerText()));
+  await page.locator("[data-testid=remitos-restaurar]").first().tap();
+  await page.locator("[data-testid=remitos-generar-row]").filter({ hasText: "TONICO REM" }).waitFor({ timeout: 30_000 });
+  check("«Restaurar» devuelve la entrega a pendientes (reversible)", (await q("select active from delivery_remito_marks where delivery_line_id = $1", [tonicoLine]))[0].active === false);
+  await page.locator("[data-testid=remitos-generar-row]").filter({ hasText: "TONICO REM" }).locator("[data-testid=remitos-generar-check]").tap();
+  await page.locator("[data-testid=remitos-ya-creado]").tap();
+  await page.locator("[data-testid=remitos-ext-numero]").fill("0003-00001234");
+  await page.locator("[data-testid=remitos-ext-obs]").fill("Hecho a mano");
+  await page.locator("[data-testid=remitos-mark-confirmar]").tap();
+  await page.locator("[data-testid=remitos-generar-notice]").filter({ hasText: /remito ya creado/ }).waitFor({ timeout: 30_000 });
+  const m2 = await q("select mark, external_remito_number, notes from delivery_remito_marks where delivery_line_id = $1 and active", [tonicoLine]);
+  check("«Marcar como remito ya creado» guarda número y observaciones, sin crear remito ni numeración interna", m2.length === 1 && m2[0].mark === "REMITO_EXTERNO" && m2[0].external_remito_number === "0003-00001234" && (await q("select count(*)::int n from remitos"))[0].n === remitos0 && (await q("select count(*)::int n from remito_work_links where work_item_id = $1", [`dl:${tonicoLine}`]))[0].n === 0);
+  check("no cambia entregas, no mueve stock", JSON.stringify(await q("select id, quantity, status, remito from work_item_delivery_lines where work_item_id = any($1::uuid[]) order by id", [Object.values(ids)])) === lines0 && (await q("select count(*)::int n from mp_stock_movements"))[0].n === stock0);
+  const admB = await login(tablet, E2E_USERS.administracion);
+  const ctl = await (await admB.page.request.get(`/api/v1/billing/control?q=${encodeURIComponent(B)}`)).json();
+  check("Control de facturación sigue mostrando la entrega y muestra el remito externo", JSON.stringify(ctl).includes("0003-00001234") && JSON.stringify(ctl).includes("TONICO REM"));
+  const bd = await (await admB.page.request.get(`/api/v1/billing/deliveries?client=${encodeURIComponent(B)}`)).json();
+  check("la entrega externa-remitada sigue facturable (cantidades sin cambios)", JSON.stringify(bd).includes("0003-00001234") && JSON.stringify(bd).includes('"quantity":200'));
+  const aMark = await admB.page.request.post("/api/v1/remitos/deliveries/marks", { data: { action: "exclude", lineIds: [tonicoLine] } });
+  check("Administración no puede marcar ni quitar entregas (403)", aMark.status() === 403, String(aMark.status()));
+  await admB.ctx.close();
+  await page.locator("[data-testid=remitos-marcadas-toggle]").tap();
+  await page.locator("[data-testid=remitos-restaurar]").first().tap();
+  await page.locator("[data-testid=remitos-generar-row]").filter({ hasText: "TONICO REM" }).waitFor({ timeout: 30_000 });
+  check("el remito externo también se revierte con confirmación y vuelve a pendientes", (await q("select active from delivery_remito_marks where delivery_line_id = $1", [tonicoLine]))[0].active === false);
+  await page.screenshot({ path: `${OUT}/tablet-marcas.png` });
+
   // ── Ciclo de vida del remito (datos descartables) ───────────────────────────────────────────────────────────────────
   const mov0 = (await q("select count(*)::int n from mp_stock_movements"))[0].n;
   const deliv0 = (await q("select coalesce(sum(quantity),0)::float8 n from work_item_delivery_lines where status = 'ACTIVA' and work_item_id = any($1::uuid[])", [Object.values(ids)]))[0].n;
@@ -136,6 +185,13 @@ try {
   check("un BORRADOR sí se elimina y libera sus entregas", delDraft.ok() && (await q("select 1 from remitos where id = $1", [draft2])).length === 0 && (await (await api.get("/api/v1/remitos/deliveries")).json()).deliveries.filter((d) => d.client === A).length >= 3);
   check("el remito anulado se conserva para auditoría", (await q("select status from remitos where id = $1", [rem[0].id]))[0].status === "ANULADO");
   await ctx.close();
+
+  // Producción ve la pestaña «Órdenes de Acondicionamiento».
+  const oaUser = await login({ viewport: { width: 1440, height: 900 } }, E2E_USERS.produccion);
+  await oaUser.page.getByRole("button", { name: /^Órdenes de Acondicionamiento$/ }).or(oaUser.page.getByRole("link", { name: /^Órdenes de Acondicionamiento$/ })).first().click({ timeout: 60_000 });
+  await oaUser.page.getByText(/Órdenes de Acondicionamiento/).first().waitFor({ timeout: 60_000 });
+  check("Producción tiene la pestaña «Órdenes de Acondicionamiento» con su buscador", (await oaUser.page.getByPlaceholder(/Número, producto, código, cliente, lote/).count()) >= 1);
+  await oaUser.ctx.close();
 
   // Permisos: solo Producción crea; Administración consulta pero no escribe; el resto no accede.
   const adm = await login(tablet, E2E_USERS.administracion);

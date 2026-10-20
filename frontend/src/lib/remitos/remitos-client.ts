@@ -275,3 +275,38 @@ export async function createRemitosFromDeliveriesApi(session: OrdersClientSessio
   if (!res.ok) throw new Error(body.error ?? "No se pudo crear el remito");
   return { remitos: body.remitos ?? [], skipped: body.skipped ?? [] };
 }
+
+export type MarkedDeliveryView = {
+  deliveryLineId: string;
+  mark: "EXCLUIDA" | "REMITO_EXTERNO";
+  externalRemitoNumber: string | null;
+  externalRemitoDate: string | null;
+  notes: string | null;
+  markedBy: string;
+  markedAt: string;
+  client: string;
+  pedido: string | null;
+  product: string;
+  lote: string;
+  quantity: number;
+  unit: string | null;
+  deliveryDate: string;
+  boxesText: string | null;
+};
+
+export async function fetchMarkedDeliveriesApi(session: OrdersClientSession): Promise<MarkedDeliveryView[]> {
+  const res = await fetch("/api/v1/remitos/deliveries/marks", { credentials: "include", headers: headers(session), cache: "no-store" });
+  const body = (await res.json().catch(() => ({}))) as { marked?: MarkedDeliveryView[]; error?: string };
+  if (!res.ok) throw new Error(body.error ?? "No se pudieron cargar las entregas marcadas");
+  return body.marked ?? [];
+}
+
+export async function markDeliveriesApi(
+  session: OrdersClientSession,
+  input: { action: "exclude" | "mark_created" | "restore"; lineIds: string[]; externalRemitoNumber?: string; externalRemitoDate?: string; notes?: string }
+): Promise<{ marked?: string[]; skipped?: string[]; restored?: string[] }> {
+  const res = await fetch("/api/v1/remitos/deliveries/marks", { method: "POST", credentials: "include", headers: { ...headers(session), "content-type": "application/json" }, body: JSON.stringify(input) });
+  const body = (await res.json().catch(() => ({}))) as { marked?: string[]; skipped?: string[]; restored?: string[]; error?: string };
+  if (!res.ok) throw new Error(body.error ?? "No se pudo completar la acción");
+  return body;
+}
