@@ -46,6 +46,7 @@ import {
 } from "../components/bulk-select";
 import { useBulkDeleteWorks } from "../components/bulk-select/use-bulk-delete-works";
 import { canMutateAssignedWork } from "../lib/work-mutation-rbac";
+import { PackingSummary } from "../components/packing-summary";
 
 type ActiveAction = { kind: PendingDefinitionAction; row: PendingDefinitionItem } | null;
 
@@ -319,6 +320,7 @@ export function PendientesDefinirView() {
                 <th className="py-2">Producto</th>
                 <th className="hidden py-2 md:table-cell">Cliente</th>
                 <th className="py-2">Cant.</th>
+                <th className="py-2">Cajas</th>
                 <th className="hidden py-2 lg:table-cell">Sector</th>
                 <th className="hidden py-2 lg:table-cell">Terminado</th>
                 <th className="py-2">Situación</th>
@@ -355,6 +357,9 @@ export function PendientesDefinirView() {
                     <td className="hidden py-2 pr-2 md:table-cell">{displayField(item.client)}</td>
                     <td className="py-2 tabular-nums">
                       {total != null ? total : "—"} {item.unit ?? ""}
+                    </td>
+                    <td className="py-2 pr-2" data-testid="pendiente-cajas">
+                      <PackingSummary groups={item.packingGroups} detail testId="pendiente-packing" />
                     </td>
                     <td className="hidden py-2 text-xs lg:table-cell">{SECTOR_LABELS[item.sector]}</td>
                     <td className="hidden py-2 text-xs lg:table-cell">

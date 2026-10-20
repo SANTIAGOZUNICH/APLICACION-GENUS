@@ -1,6 +1,8 @@
 "use client";
 
 import { describeDeliveryPacking } from "@/lib/remitos/delivery-packing";
+import { deliveryPackingEntries, unitsAndCajasText, type DeliveryLineLike } from "@/lib/remitos/packing-breakdown";
+import { PackingSummary } from "../components/packing-summary";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -209,6 +211,8 @@ export function EntregadosView() {
   const [deliveryTarget, setDeliveryTarget] = useState<QualityItem | null>(null);
   const [deliveryProgress, setDeliveryProgress] = useState<DeliveryProgress | null>(null);
   const [detail, setDetail] = useState<DeliveryRecord | null>(null);
+  // Cajas REALES de cada entrega (renglones de entrega): se cargan junto con el listado y no dependen de Remitos.
+  const [deliveryLines, setDeliveryLines] = useState<DeliveryLineLike[]>([]);
   const [detailLines, setDetailLines] = useState<
     Array<{ id: string; sequence: number; quantity: number; unit: string | null; kind: string; status: string; actualDeliveredAt: string; remito: string | null; packingGroups?: Array<{ cajas: number; unidadesPorCaja: number }> | null }>
   >([]);
@@ -279,10 +283,11 @@ export function EntregadosView() {
     if (!res.ok) {
       throw new Error(`No se pudieron cargar las entregas (HTTP ${res.status}).`);
     }
-    const data = (await res.json().catch(() => null)) as { deliveries?: DeliveryRecord[] } | null;
+    const data = (await res.json().catch(() => null)) as { deliveries?: DeliveryRecord[]; deliveryLines?: DeliveryLineLike[] } | null;
     if (!data) {
       throw new Error("Respuesta inválida del servidor al cargar entregas.");
     }
+    setDeliveryLines(data.deliveryLines ?? []);
     return data.deliveries ?? [];
   }, []);
 
@@ -586,6 +591,23 @@ export function EntregadosView() {
       render: (record) => formatDate(record.plannedDeliveryDate),
     },
     { key: "product", header: "Producto", render: (record) => record.product },
+    {
+      key: "cajas",
+      header: "Cajas",
+      headerTitle: "Cajas y unidades por caja registradas en ESTA entrega",
+      // Texto para la planilla (la vista de lista usa el componente de abajo).
+      text: (record) =>
+        deliveryPackingEntries(record, deliveryLines)
+          .map((e) => `${e.label ? `${e.label}: ` : ""}${e.breakdown ? `${unitsAndCajasText(e.breakdown)} (${e.breakdown.short})` : "Sin detalle de cajas registrado"}`)
+          .join(" | "),
+      render: (record) => (
+        <div className="space-y-1" data-testid="entregado-cajas">
+          {deliveryPackingEntries(record, deliveryLines).map((e) => (
+            <PackingSummary key={e.key} breakdown={e.breakdown} label={e.label} testId="entregado-packing" />
+          ))}
+        </div>
+      ),
+    },
     {
       key: "client",
       header: "Cliente",
@@ -953,7 +975,8 @@ export function EntregadosView() {
                         #{l.sequence} · {formatDateTime(l.actualDeliveredAt)} · {l.quantity} {l.unit ?? ""}
                         {l.status === "ANULADA" ? " (anulada)" : l.kind === "FINAL" ? " (final)" : " (parcial)"}
                         {l.remito ? ` · remito ${l.remito}` : ""}
-                        {l.packingGroups && l.packingGroups.length > 0 ? <span className="block text-[11px] text-[var(--os-text-muted)]" data-testid="detail-line-boxes">{describeDeliveryPacking(l.packingGroups)}</span> : null}
+                        <PackingSummary groups={l.packingGroups} detail testId="detail-line-packing" />
+                        {l.packingGroups && l.packingGroups.length > 0 ? <span className="sr-only" data-testid="detail-line-boxes">{describeDeliveryPacking(l.packingGroups)}</span> : null}
                       </li>
                     ))}
                   </ul>
