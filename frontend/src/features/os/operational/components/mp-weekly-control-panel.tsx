@@ -1,5 +1,6 @@
 "use client";
 
+import { TONE_BADGE, TONE_CELL, TONE_LABEL, fmtKg, fmtSigned, toneOfNumbers, valueClass, type Tone } from "@/lib/mp-control/availability-tone";
 import { readOnlyReason } from "@/features/os/operational/lib/readonly-reasons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -203,15 +204,20 @@ export function MpWeeklyControlPanel() {
       return v.ok ? null : v.message;
     },
   });
+  /** Semáforo de cada línea del control (mismos colores que el Control semanal): verde, amarillo, rojo, gris. */
+  const toneOfLine = (l: MpWeeklyControlLine): Tone =>
+    l.estado === "Sin vincular" || l.estado === "Sin código" ? "unknown" : toneOfNumbers({ need: l.kgEditados ?? l.kgNecesarios, usable: l.stockActual });
+  const stateLabel = (l: MpWeeklyControlLine) => (l.estado === "Sin vincular" ? "NO IDENTIFICADA" : l.estado === "Sin código" ? "SIN DATOS" : TONE_LABEL[toneOfLine(l)]);
+  const toneClass = (l: MpWeeklyControlLine, value?: number | null) => `genus-tone-${toneOfLine(l)}${value != null && value < 0 ? " genus-tone-neg" : ""}`;
   const lineColumns = [
     excelCol<MpWeeklyControlLine>("codigo", "Código", (l) => l.codigo, { readOnlyReason: readOnlyReason("mp_control", "codigo") }),
     excelCol<MpWeeklyControlLine>("materiaPrima", "Materia prima", (l) => l.materiaPrima, { readOnlyReason: readOnlyReason("mp_control", "materiaPrima") }),
     excelCol<MpWeeklyControlLine>("formulaPct", "%", (l) => String(l.formulaPct ?? ""), { readOnlyReason: readOnlyReason("mp_control", "formulaPct") }),
     excelCol<MpWeeklyControlLine>("kgEditados", "Kg nec.", (l) => String(l.kgEditados ?? l.kgNecesarios ?? ""), { edit: lineEdit("kgEditados") }),
-    excelCol<MpWeeklyControlLine>("stockActual", "Stock", (l) => String(l.stockActual ?? ""), { readOnlyReason: readOnlyReason("mp_control", "stockActual") }),
-    excelCol<MpWeeklyControlLine>("stockProyectado", "Proyectado", (l) => String(l.stockProyectado ?? ""), { readOnlyReason: readOnlyReason("mp_control", "stockProyectado") }),
-    excelCol<MpWeeklyControlLine>("diferencia", "Dif.", (l) => String(l.diferencia ?? ""), { readOnlyReason: readOnlyReason("mp_control", "diferencia") }),
-    excelCol<MpWeeklyControlLine>("estado", "Estado", (l) => l.estado, { readOnlyReason: readOnlyReason("mp_control", "estado") }),
+    excelCol<MpWeeklyControlLine>("stockActual", "Stock", (l) => String(l.stockActual ?? ""), { readOnlyReason: readOnlyReason("mp_control", "stockActual"), cellClassName: (l) => toneClass(l) }),
+    excelCol<MpWeeklyControlLine>("stockProyectado", "Proyectado", (l) => String(l.stockProyectado ?? ""), { readOnlyReason: readOnlyReason("mp_control", "stockProyectado"), cellClassName: (l) => toneClass(l, l.stockProyectado) }),
+    excelCol<MpWeeklyControlLine>("diferencia", "Dif.", (l) => String(l.diferencia ?? ""), { readOnlyReason: readOnlyReason("mp_control", "diferencia"), cellClassName: (l) => toneClass(l, l.diferencia) }),
+    excelCol<MpWeeklyControlLine>("estado", "Estado", (l) => stateLabel(l), { readOnlyReason: readOnlyReason("mp_control", "estado"), cellClassName: (l) => toneClass(l) }),
     excelCol<MpWeeklyControlLine>("lote", "Lote", (l) => l.lote, { edit: lineEdit("lote") }),
     excelCol<MpWeeklyControlLine>("preparado", "Prep.", (l) => (l.preparado ? "Sí" : "No"), { edit: lineEdit("preparado") }),
     excelCol<MpWeeklyControlLine>("observacion", "Observación", (l) => l.observacion, { edit: lineEdit("observacion") }),
@@ -470,25 +476,32 @@ export function MpWeeklyControlPanel() {
                 onCellsCommit={commitCells}
                 rowVersion={() => active.updatedAt}
               >
-              <table className="os-table w-full max-w-full table-fixed text-xs" data-testid="mp-control-lines">
+              <p className="text-[11px] text-[var(--os-text-muted)]" data-testid="mp-control-legend">
+                Color y texto según el stock utilizable: <span className={`rounded border px-1.5 ${TONE_BADGE.ok}`}>SUFICIENTE</span> <span className={`rounded border px-1.5 ${TONE_BADGE.partial}`}>FALTANTE PARCIAL</span> <span className={`rounded border px-1.5 ${TONE_BADGE.none}`}>SIN STOCK</span> <span className={`rounded border px-1.5 ${TONE_BADGE.unknown}`}>SIN DATOS</span> · el stock es el de toda la planta (compartido con las demás producciones).
+              </p>
+              <div className="overflow-x-auto">
+              <table className="os-table w-full min-w-[46rem] table-fixed text-xs" data-testid="mp-control-lines">
                 <thead>
                   <tr className="border-b text-left">
-                    <th className="p-1">Código</th>
-                    <th className="p-1">Materia prima</th>
-                    <th className="hidden p-1 md:table-cell">% </th>
-                    <th className="p-1">Kg nec.</th>
-                    <th className="hidden p-1 sm:table-cell">Stock</th>
-                    <th className="hidden p-1 md:table-cell">Proyect.</th>
-                    <th className="hidden p-1 md:table-cell">Dif.</th>
-                    <th className="p-1">Estado</th>
-                    <th className="hidden p-1 lg:table-cell">Lote</th>
-                    <th className="hidden p-1 lg:table-cell">Prep.</th>
-                    <th className="hidden p-1 xl:table-cell">Obs.</th>
+                    <th className="w-[9%] p-1">Código</th>
+                    <th className="w-[20%] p-1">Materia prima</th>
+                    <th className="w-[6%] p-1 text-right">%</th>
+                    <th className="w-[10%] p-1 text-right">Kg nec.</th>
+                    <th className="w-[10%] p-1 text-right">Stock disp.</th>
+                    <th className="w-[10%] p-1 text-right">Proyect.</th>
+                    <th className="w-[10%] p-1 text-right">Dif.</th>
+                    <th className="w-[12%] p-1">Estado</th>
+                    <th className="p-1">Lote</th>
+                    <th className="p-1">Prep.</th>
+                    <th className="p-1">Obs.</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {active.lines.map((l) => (
-                    <tr key={l.id} className="border-b">
+                  {active.lines.map((l) => {
+                    const need = l.kgEditados ?? l.kgNecesarios;
+                    const tone: Tone = l.estado === "Sin vincular" || l.estado === "Sin código" ? "unknown" : toneOfNumbers({ need, usable: l.stockActual });
+                    return (
+                    <tr key={l.id} className={`border-b ${TONE_CELL[tone]}`} data-testid="mp-control-line" data-tone={tone}>
                       <td className="p-1">
                         <input
                           className="w-full min-w-0 max-w-[5rem] rounded border px-1"
@@ -500,11 +513,11 @@ export function MpWeeklyControlPanel() {
                       <td className="min-w-0 p-1">
                         <span className="os-break">{l.materiaPrima}</span>
                       </td>
-                      <td className="hidden p-1 md:table-cell">{l.formulaPct ?? "—"}</td>
+                      <td className="p-1 text-right font-mono" data-testid="mp-control-pct">{l.formulaPct ?? "—"}</td>
                       <td className="p-1">
                         <input
                           type="number"
-                          className="w-full min-w-0 max-w-[4rem] rounded border px-1"
+                          className="w-full min-w-0 max-w-[5rem] rounded border px-1 text-right font-mono"
                           value={l.kgEditados ?? l.kgNecesarios ?? ""}
                           disabled={!writesEnabled}
                           onChange={(e) =>
@@ -515,11 +528,11 @@ export function MpWeeklyControlPanel() {
                           }
                         />
                       </td>
-                      <td className="hidden p-1 sm:table-cell">{l.stockActual ?? "—"}</td>
-                      <td className="hidden p-1 md:table-cell">{l.stockProyectado ?? "—"}</td>
-                      <td className="hidden p-1 md:table-cell">{l.diferencia ?? "—"}</td>
-                      <td className="p-1">{l.estado}</td>
-                      <td className="hidden p-1 lg:table-cell">
+                      <td className={`p-1 text-right font-mono ${valueClass(tone)}`} data-testid="mp-control-stock">{tone === "unknown" && l.stockActual == null ? "—" : fmtKg(l.stockActual)}</td>
+                      <td className={`p-1 text-right font-mono ${valueClass(tone, l.stockProyectado)}`} data-testid="mp-control-proyectado">{tone === "unknown" && l.stockActual == null ? "—" : fmtSigned(l.stockProyectado)}</td>
+                      <td className={`p-1 text-right font-mono ${valueClass(tone, l.diferencia)}`} data-testid="mp-control-dif">{tone === "unknown" && l.stockActual == null ? "—" : fmtSigned(l.diferencia)}</td>
+                      <td className="p-1"><span className={`inline-block rounded border px-2 py-1 font-bold ${TONE_BADGE[tone]}`} data-testid="mp-control-estado">{l.estado === "Sin vincular" ? "NO IDENTIFICADA" : l.estado === "Sin código" ? "SIN DATOS" : TONE_LABEL[tone]}</span></td>
+                      <td className="p-1">
                         <input
                           className="w-full min-w-0 max-w-[4rem] rounded border px-1"
                           value={l.lote}
@@ -527,7 +540,7 @@ export function MpWeeklyControlPanel() {
                           onChange={(e) => updateLine(l.id, { lote: e.target.value })}
                         />
                       </td>
-                      <td className="hidden p-1 lg:table-cell">
+                      <td className="p-1">
                         <input
                           type="checkbox"
                           checked={l.preparado}
@@ -537,7 +550,7 @@ export function MpWeeklyControlPanel() {
                           }
                         />
                       </td>
-                      <td className="hidden p-1 xl:table-cell">
+                      <td className="p-1">
                         <input
                           className="w-full min-w-0 rounded border px-1"
                           value={l.observacion}
@@ -548,9 +561,11 @@ export function MpWeeklyControlPanel() {
                         />
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
+              </div>
               </ExcelOrList>
             </div>
           ) : (

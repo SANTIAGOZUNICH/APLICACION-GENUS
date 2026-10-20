@@ -200,8 +200,9 @@ describe.skipIf(Boolean(PROBLEM))(`Control semanal de MP en Postgres real${PROBL
     });
     expect(c.lines[0]!.stockActual).toBe(50);
     expect(c.lines[0]!.estado).toBe("Disponible");
-    expect(c.lines[1]!.stockActual).toBe(0);
-    expect(c.lines[1]!.estado).toBe("Sin stock");
+    // Una MP que no se puede asociar al inventario NO es «stock cero»: queda sin vincular (gris).
+    expect(c.lines[1]!.stockActual).toBeNull();
+    expect(c.lines[1]!.estado).toBe("Sin vincular");
     await q("delete from mp_weekly_controls where id = $1", [c.id]);
   });
   it("observaciones y gestión se guardan por MP y semana, sin mezclar semanas ni tocar stock/fórmula/necesidad", async () => {
@@ -287,6 +288,121 @@ describe.skipIf(Boolean(PROBLEM))(`Control semanal de MP en Postgres real${PROBL
     const left = await q("select id from mp_weekly_controls where id = $1", [c.id]);
     expect(left).toHaveLength(0);
     await q("delete from mp_weekly_production_exclusions where work_item_id = $1", [a.workId]);
+    await q("update work_items set deleted_at = now() where id = $1", [a.workId]);
+  });
+
+  /** Cada prueba de la vista por producto parte de una semana limpia (los trabajos de las pruebas anteriores se dan de baja). */
+  const clearWeek = async () => {
+    await q("update work_items set deleted_at = now() where notes = $1 and deleted_at is null", [NOTE]);
+    await q("delete from mp_weekly_production_exclusions where week_start = any($1::date[])", [[WEEK, "2031-03-10"]]);
+    await q("delete from mp_weekly_row_state where week_start = any($1::date[])", [[WEEK, "2031-03-10"]]);
+  };
+
+  // ── Vista por producto (rediseño del Control semanal) ──────────────────────────────────────────────────────────────────
+  it("por producto: una sección por producto con su fórmula completa, OE, kg, fechas y conteos; el stock compartido se asigna por orden", async () => {
+    await clearWeek();
+    const a = await assign(`CREMA A WK ${RUN}`, "100"); // glicerina 12
+    const b = await assign(`CREMA B WK ${RUN}`, "250"); // glicerina 30
+    const res = await avail();
+    const secA = res.products.find((p) => p.product === `CREMA A WK ${RUN}`)!;
+    const secB = res.products.find((p) => p.product === `CREMA B WK ${RUN}`)!;
+    expect(secA.client).toBe(CLIENT);
+    expect(secA.totalKg).toBe(100);
+    expect(secA.oes).toHaveLength(1);
+    expect(secA.oes[0]!.oeNumber).toMatch(/^OE-2026-/);
+    expect(secA.days).toContain(WEEK);
+    expect(secA.lines.map((l) => l.materiaPrima.toLowerCase().split(" ")[0]).sort()).toEqual(["agua", "glicerina", "perfume"]); // fórmula COMPLETA
+    // La glicerina (50 kg utilizables tras los ingresos previos o 30 según el orden de la corrida) es compartida entre A y B.
+    const gA = secA.lines.find((l) => /glicerina/i.test(l.materiaPrima))!;
+    const gB = secB.lines.find((l) => /glicerina/i.test(l.materiaPrima))!;
+    expect(gA.shared && gB.shared).toBe(true);
+    const total = gA.needKg! + gB.needKg!;
+    const util = gA.stockUtilizable;
+    expect(gA.allocatedKg + gB.allocatedKg).toBeLessThanOrEqual(util + 1e-6); // nunca se asignan más kilos que los que existen
+    if (total > util) expect([gA.tone, gB.tone].includes("partial") || [gA.tone, gB.tone].includes("none")).toBe(true);
+    // Perfume no identificado (gris) en A; nunca stock cero.
+    const pA = secA.lines.find((l) => /perfume/i.test(l.materiaPrima))!;
+    expect([pA.tone, pA.rowEstado]).toEqual(["unknown", "MP NO IDENTIFICADA"]);
+    expect(secA.overall).toBe("DATOS_INCOMPLETOS");
+    expect(res.productSummary.mpUnidentified).toBeGreaterThanOrEqual(1);
+    await q("update work_items set deleted_at = now() where id = any($1)", [[a.workId, b.workId]]);
+  });
+
+  it("por producto: varias OE del mismo producto con igual fórmula se agrupan con sus órdenes y el total", async () => {
+    await clearWeek();
+    const a1 = await assign(`CREMA B WK ${RUN}`, "100");
+    const a2 = await assign(`CREMA B WK ${RUN}`, "50");
+    const sec = (await avail()).products.filter((p) => p.product === `CREMA B WK ${RUN}`);
+    expect(sec).toHaveLength(1);
+    expect(sec[0]!.oes).toHaveLength(2);
+    expect(sec[0]!.totalKg).toBe(150);
+    expect(sec[0]!.oes.map((o) => o.oeNumber).every(Boolean)).toBe(true);
+    await q("update work_items set deleted_at = now() where id = any($1)", [[a1.workId, a2.workId]]);
+  });
+
+  it("por producto: una OE repartida en dos semanas respeta la cantidad de cada semana y no duplica la necesidad", async () => {
+    await clearWeek();
+    const { addSchedulesDurable } = await import("@/lib/planning/work-schedules-service");
+    const a = await assign(`CREMA B WK ${RUN}`, "100"); // glicerina 12 kg en total
+    const W2 = "2031-03-10";
+    await addSchedulesDurable({ sourceId: a.workId, items: [{ plannedDate: W2, quantity: "40" }], rebalanceSource: true, idempotencyKey: `it-wk-${RUN}-sched` } as never, prod as never);
+    const { getWeeklyAvailability } = await import("@/lib/mp-control/weekly-availability-service");
+    const w1 = (await getWeeklyAvailability(WEEK)).products.find((p) => p.product === `CREMA B WK ${RUN}`)!;
+    const w2 = (await getWeeklyAvailability(W2)).products.find((p) => p.product === `CREMA B WK ${RUN}`)!;
+    expect(w1.totalKg).toBe(60);
+    expect(w2.totalKg).toBe(40);
+    const gli = (s: typeof w1) => s.lines.find((l) => /glicerina/i.test(l.materiaPrima))!.needKg!;
+    expect(gli(w1) + gli(w2)).toBeCloseTo(12, 3); // 7,2 + 4,8: sin duplicar
+    await q("update work_items set deleted_at = now() where notes = $1 and product = $2", [NOTE, `CREMA B WK ${RUN}`]);
+  });
+
+  it("control eliminado/anulado: su producción sale del cálculo, se informa como «control» y se restaura; una quitada a mano se distingue", async () => {
+    await clearWeek();
+    const { excludeProductionsForControl, restoreProductionsForControl, excludeProductions, restoreProductions } = await import("@/lib/mp-control/weekly-availability-service");
+    const a = await assign(`CREMA A WK ${RUN}`, "100");
+    const b = await assign(`CREMA B WK ${RUN}`, "100");
+    const ctlId = randomUUID();
+    await excludeProductionsForControl({ id: ctlId, client: CLIENT, product: `CREMA A WK ${RUN}`, linkedOeId: a.orderId, quantityKg: 100, createdAt: `${WEEK}T10:00:00.000Z` }, prod.email);
+    await excludeProductions({ week: WEEK, items: [{ workItemId: b.workId, label: `${CLIENT} — CREMA B` }], by: prod.email, reason: "A mano" });
+    const res = await avail();
+    expect(res.products.some((p) => p.product === `CREMA A WK ${RUN}`)).toBe(false);
+    expect(res.excludedProductions.find((p) => p.workItemId === a.workId)?.kind).toBe("control");
+    expect(res.excludedProductions.find((p) => p.workItemId === b.workId)?.kind).toBe("manual");
+    await restoreProductionsForControl(ctlId);
+    await restoreProductions({ week: WEEK, workItemIds: [b.workId] });
+    const back = await avail();
+    expect(back.products.some((p) => p.product === `CREMA A WK ${RUN}`)).toBe(true);
+    expect(back.excludedProductions.filter((p) => [a.workId, b.workId].includes(p.workItemId))).toHaveLength(0);
+    await q("update work_items set deleted_at = now() where id = any($1)", [[a.workId, b.workId]]);
+  });
+
+  it("exclusión de MP con alcance: una producción nueva la vuelve a mostrar con el motivo; restaurar varias a la vez; nada toca el inventario", async () => {
+    await clearWeek();
+    const { excludeRowsByKeys, restoreRows } = await import("@/lib/mp-control/weekly-availability-service");
+    const a = await assign(`CREMA A WK ${RUN}`, "100");
+    const first = await avail();
+    const keys = first.rows.slice(0, 2).map((r) => r.key);
+    const [lotsBefore] = await q("select count(*)::int n, coalesce(sum((payload->>'cantidadKg')::numeric),0)::float kg from inv_mp_stock where payload->>'createdBy' = $1", [NOTE]);
+    expect(await excludeRowsByKeys(WEEK, keys, prod.email)).toBe(2);
+    const hidden = await avail();
+    expect(hidden.excludedRows.map((r) => r.key).sort()).toEqual([...keys].sort());
+    expect(hidden.excludedRows.every((r) => r.scope && r.scope.productionLabels.length > 0 && r.scope.requeridoAtExclusion != null)).toBe(true);
+    // Los productos siguen mostrando la fórmula completa (la MP quitada figura marcada, sin contarse).
+    const sec = hidden.products.find((p) => p.product === `CREMA A WK ${RUN}`)!;
+    expect(sec.lines).toHaveLength(3);
+    expect(sec.lines.filter((l) => l.excluded)).toHaveLength(2);
+    // Producción nueva → vuelve a mostrarse con motivo.
+    const nueva = await assign(`CREMA B WK ${RUN}`, "50");
+    const again = await avail();
+    const revisar = again.rows.filter((r) => keys.includes(r.key) && r.state.exclusionToReview);
+    expect(revisar.length).toBeGreaterThan(0);
+    expect(revisar.every((r) => /nueva/.test(r.state.exclusionReviewReason ?? ""))).toBe(true);
+    await q("update work_items set deleted_at = now() where id = $1", [nueva.workId]);
+    await restoreRows({ week: WEEK, rowKeys: keys });
+    const done = await avail();
+    expect(done.excludedRows).toHaveLength(0);
+    const [lotsAfter] = await q("select count(*)::int n, coalesce(sum((payload->>'cantidadKg')::numeric),0)::float kg from inv_mp_stock where payload->>'createdBy' = $1", [NOTE]);
+    expect(lotsAfter).toEqual(lotsBefore);
     await q("update work_items set deleted_at = now() where id = $1", [a.workId]);
   });
 });
