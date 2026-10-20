@@ -322,11 +322,18 @@ export function ExcelImportPreviewDialog({
 
   async function onCsvFile(file: File | null) {
     if (!file) return;
+    let text: string;
     if (file.name.toLowerCase().endsWith(".xlsx")) {
-      onToast?.("Para .xlsx preferimos CSV o pegar desde Excel.", "info");
-      return;
+      // Excel: se lee la primera hoja y pasa por la misma vista previa (nunca reemplaza el inventario).
+      try {
+        text = await (await import("@/lib/sheet-io")).xlsxToTsv(await file.arrayBuffer());
+      } catch {
+        onToast?.("No se pudo leer el archivo de Excel. Probá guardarlo como CSV.", "info");
+        return;
+      }
+    } else {
+      text = await file.text();
     }
-    const text = await file.text();
     setRaw(text);
     setCustomMapping({});
     setExcluded([]);
@@ -387,10 +394,10 @@ export function ExcelImportPreviewDialog({
             )}
             {acceptCsvFile && (
               <label className="inline-flex min-h-9 cursor-pointer items-center rounded border border-[var(--os-border)] px-3 text-xs font-medium">
-                Cargar CSV
+                Cargar CSV / Excel
                 <input
                   type="file"
-                  accept=".csv,text/csv,text/plain"
+                  accept=".csv,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                   className="sr-only"
                   disabled={busy}
                   onChange={(e) => void onCsvFile(e.target.files?.[0] ?? null)}

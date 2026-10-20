@@ -1,5 +1,8 @@
 "use client";
 
+import { SheetViewBar } from "./sheet-view-bar";
+import { downloadCsv, downloadXlsx, exportFileName } from "@/lib/sheet-io";
+import { EMPTY_PREFS, applySheetView, parsePrefs, prefsKey, type SheetViewPrefs } from "./sheet-view-prefs";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Rows3, Table2 } from "lucide-react";
 import {
@@ -15,6 +18,7 @@ import {
   SelectionCheckbox,
   selectedRowClassName,
 } from "@/features/os/operational/components/list-selection-mode";
+import { usePreviewSession } from "@/features/os/session/preview-context";
 import { isWorkTransferredStatus, WORK_TRANSFER } from "../lib/work-transfer-labels";
 
 export interface OperationalTab {
@@ -361,7 +365,30 @@ function ExcelView<T>({
   maxHeight,
   sheet,
 }: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName" | "rowDelete" | "draftRows"> & { maxHeight?: number; sheet?: boolean }) {
-  const dataColumns = useMemo(() => columns.filter((c) => !isActionColumn(c)), [columns]);
+  const { email } = usePreviewSession();
+  const storageKey = prefsKey(email, tableId ?? "tabla");
+  const [prefs, setPrefsState] = useState<SheetViewPrefs>(() => {
+    try {
+      return typeof window === "undefined" || !sheet ? EMPTY_PREFS : parsePrefs(window.localStorage.getItem(storageKey));
+    } catch {
+      return EMPTY_PREFS;
+    }
+  });
+  const setPrefs = (next: SheetViewPrefs) => {
+    setPrefsState(next);
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {
+      /* solo esta sesión */
+    }
+  };
+  const allDataColumns = useMemo(() => columns.filter((c) => !isActionColumn(c)), [columns]);
+  // Columnas ocultas por el usuario (solo planillas continuas); las obligatorias para crear filas nunca se ocultan.
+  const lockedKeys = useMemo(() => draftRows?.requiredKeys ?? [], [draftRows]);
+  const dataColumns = useMemo(
+    () => (sheet ? allDataColumns.filter((c) => !prefs.hidden.includes(c.key) || lockedKeys.includes(c.key)) : allDataColumns),
+    [allDataColumns, prefs.hidden, sheet, lockedKeys]
+  );
   const actionColumns = useMemo(() => columns.filter((c) => isActionColumn(c)), [columns]);
   const textOf = (c: OperationalTableColumn<T>, row: T) => (c.text ? c.text(row) : nodeToText(c.render(row)));
   // Ancho según el contenido (como «autoajustar» en Excel): encabezado y textos de las primeras filas, entre 96 y
@@ -384,7 +411,8 @@ function ExcelView<T>({
         key: c.key,
         title: c.header,
         kind: c.edit?.kind ?? "text",
-        basis: widths.get(c.key) ?? 150,
+        basis: (sheet ? prefs.widths[c.key] : undefined) ?? widths.get(c.key) ?? 150,
+        fixedWidth: sheet && prefs.widths[c.key] != null,
         sensitive: c.edit?.sensitive,
         noFill: c.edit ? c.edit.noFill : c.readOnlyReason ?? "Columna de solo lectura.",
         fillWithReason: c.edit?.fillWithReason,
@@ -395,14 +423,40 @@ function ExcelView<T>({
         cellClassName: c.cellClassName,
       })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [dataColumns, widths]
+    [dataColumns, widths, prefs.widths]
   );
+  const viewRows = useMemo(() => {
+    if (!sheet) return rows;
+    const byKey = new Map(allDataColumns.map((c) => [c.key, c] as const));
+    return applySheetView(rows, (key, row) => (byKey.has(key) ? textOf(byKey.get(key)!, row) : ""), prefs);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, prefs, sheet, allDataColumns]);
+  const gridTestId = tableId ? `${tableId}-grid` : "os-table-grid";
   return (
+    <>
+    {sheet ? (
+      <SheetViewBar
+        testId={gridTestId}
+        columns={allDataColumns.map((c) => ({ key: c.key, title: c.header, width: prefs.widths[c.key] ?? widths.get(c.key) ?? 150 }))}
+        prefs={prefs}
+        setPrefs={setPrefs}
+        locked={lockedKeys}
+        total={rows.length}
+        shown={viewRows.length}
+        onExport={async (kind) => {
+          const headers = dataColumns.map((c) => c.header);
+          const body = viewRows.map((r) => dataColumns.map((c) => textOf(c, r)));
+          const base = tableId ?? "planilla";
+          if (kind === "csv") downloadCsv(exportFileName(base, "csv"), headers, body);
+          else await downloadXlsx(exportFileName(base, "xlsx"), base, headers, body);
+        }}
+      />
+    ) : null}
     <GenusGrid<T>
-      rows={rows}
+      rows={viewRows}
       rowId={rowKey}
       rowVersion={rowVersion ?? (() => "")}
-      rowLabel={(row) => textOf(dataColumns[0]!, row) || rowKey(row)}
+      rowLabel={(row) => textOf(allDataColumns[0]!, row) || rowKey(row)}
       columns={gridColumns}
       canEdit={Boolean(canEditCells && onCellsCommit)}
       onCommit={onCellsCommit ?? (async () => ({ ok: false, message: "Esta tabla es de solo lectura." }))}
@@ -426,7 +480,9 @@ function ExcelView<T>({
       sheet={sheet}
       rowDelete={rowDelete}
       draftRows={draftRows}
+      queueKey={sheet ? `genus-queue:${email ?? "anon"}:${tableId ?? "tabla"}` : undefined}
     />
+    </>
   );
 }
 

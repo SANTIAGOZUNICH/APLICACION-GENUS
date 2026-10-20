@@ -39,7 +39,7 @@ import {
   type ComponentType,
   type ReactNode,
 } from "react";
-import { Lock, Redo2, Trash2, Undo2 } from "lucide-react";
+import { ClipboardPaste, Copy, Eraser, Lock, Redo2, Replace, Rows3, Trash2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -71,6 +71,8 @@ export interface GenusGridColumn<T> {
   validate?: (raw: string, row: T) => string | null;
   /** Columna sensible (identidad/trazabilidad): su edición siempre pide confirmación. */
   sensitive?: boolean;
+  /** Ancho elegido por el usuario: la columna mide exactamente `basis` (no se estira para llenar la hoja). */
+  fixedWidth?: boolean;
   /** Clase extra por celda (p. ej. «editado en GENUS» / conflicto). Opcional y aditivo. */
   cellClassName?: (row: T) => string | undefined;
   /** Nota de trazabilidad de la celda (null = sin nota): marca visible y texto al pasar el mouse. No bloquea. */
@@ -153,6 +155,11 @@ export interface GenusGridProps<T> {
   rowDelete?: GenusGridRowDelete;
   /** Modo planilla: filas en blanco al final para crear registros escribiendo directamente. */
   draftRows?: GenusGridDraftRows;
+  /**
+   * Clave de almacenamiento local de los cambios que NO se pudieron guardar (sin conexión, error): se conservan al
+   * recargar, se reintentan solos al volver la conexión y se avisa antes de cerrar la pestaña con cambios sin guardar.
+   */
+  queueKey?: string;
 }
 
 /**
@@ -404,14 +411,31 @@ export function GenusGrid<T>({
   sheet = false,
   rowDelete,
   draftRows,
+  queueKey,
 }: GenusGridProps<T>) {
   const [reasonText, setReasonText] = useState("");
   const gridRef = useRef<DataSheetGridRef>(null);
-  const [overlay, setOverlay] = useState<Record<string, { value: string; status: "saving" | "error" }>>({});
+  // Cambios pendientes de una sesión anterior (se cortó la conexión o se recargó): vuelven a la barra roja para reintentar.
+  const restored = useMemo<FailedBatch[]>(() => {
+    if (!queueKey || typeof window === "undefined") return [];
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(queueKey) ?? "[]") as FailedBatch[];
+      return Array.isArray(parsed) ? parsed.filter((b) => b && Array.isArray(b.changes) && b.changes.length > 0) : [];
+    } catch {
+      return [];
+    }
+    // solo al montar
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [overlay, setOverlay] = useState<Record<string, { value: string; status: "saving" | "error" }>>(() => {
+    const init: Record<string, { value: string; status: "saving" | "error" }> = {};
+    for (const b of restored) for (const c of b.changes) init[cellKey(c.rowId, c.columnKey)] = { value: c.oldValue, status: "error" };
+    return init;
+  });
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [savedCount, setSavedCount] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
-  const [failed, setFailed] = useState<FailedBatch[]>([]);
+  const [failed, setFailed] = useState<FailedBatch[]>(restored);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   /** Motivo pedido EN LA PLANILLA (una celda que mueve saldo): barra en línea, sin ventana modal. */
   const [inlineReason, setInlineReason] = useState<{ changes: GenusGridCellChange[]; prompt: string } | null>(null);
@@ -422,6 +446,8 @@ export function GenusGrid<T>({
   const wrapRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef<SheetRange | null>(null);
   const activeRef = useRef<{ col: number; row: number } | null>(null);
+  /** Última selección/celda no vacía: la barra táctil actúa sobre ella aunque tocar un botón desactive la celda. */
+  const lastRangeRef = useRef<SheetRange | null>(null);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
   const [fillChip, setFillChip] = useState<{ plan: FillPlan; mode: FillMode; sourceIds: string[]; note: string } | null>(null);
   const [rowDeleteResult, setRowDeleteResult] = useState<{ message: string; undo?: () => Promise<void> } | null>(null);
@@ -438,13 +464,19 @@ export function GenusGrid<T>({
     }
     return topUpDrafts(stored, minBlank, makeDraftId);
   });
+  const [findOpen, setFindOpen] = useState(false);
+  const [findText, setFindText] = useState("");
+  const [replaceText, setReplaceText] = useState("");
+  const [findCol, setFindCol] = useState("");
+  const [findCase, setFindCase] = useState(false);
+  const [replaceConfirm, setReplaceConfirm] = useState(false);
   const draftsRef = useRef(drafts);
   const draftTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const applyDraftDiffsRef = useRef<(diffs: CellDiff[]) => void>(() => {});
 
   const undoStack = useRef<GenusGridCellChange[][]>([]);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
-  const batchSeq = useRef(0);
+  const batchSeq = useRef(restored.reduce((m, b) => Math.max(m, b.id), 0));
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skips = useRef<{ rowLabel: string; columnTitle: string; reason: string }[]>([]);
   const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -546,8 +578,8 @@ export function GenusGrid<T>({
         title: col.title,
         headerClassName: `genus-col-${colIndex}`,
         basis: col.basis ?? 140,
-        minWidth: col.minWidth ?? 80,
-        grow: 1,
+        minWidth: col.fixedWidth ? (col.basis ?? 140) : (col.minWidth ?? 80),
+        grow: col.fixedWidth ? 0 : 1,
         // shrink 0: en pantallas angostas la grilla hace scroll horizontal interno (no rompe el layout).
         shrink: 0,
         keepFocus: false,
@@ -747,6 +779,37 @@ export function GenusGrid<T>({
     (batch: FailedBatch) => void runCommit(batch.changes, { useLatestVersion: false, recordUndo: true, retryOf: batch.id }),
     [runCommit]
   );
+
+  // Cola persistente: los cambios fallidos sobreviven a una recarga y se reintentan solos al volver la conexión.
+  const failedRef = useRef(failed);
+  useLayoutEffect(() => {
+    failedRef.current = failed;
+  });
+  useEffect(() => {
+    if (!queueKey) return;
+    try {
+      if (failed.length === 0) window.localStorage.removeItem(queueKey);
+      else window.localStorage.setItem(queueKey, JSON.stringify(failed));
+    } catch {
+      /* sin almacenamiento local */
+    }
+  }, [failed, queueKey]);
+  useEffect(() => {
+    if (!queueKey) return;
+    const onOnline = () => failedRef.current.forEach((b) => void runCommit(b.changes, { useLatestVersion: false, recordUndo: true, retryOf: b.id }));
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (failedRef.current.length > 0) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("online", onOnline);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [queueKey, runCommit]);
 
   const undoLast = useCallback(() => {
     const batch = undoStack.current.pop();
@@ -1176,12 +1239,145 @@ export function GenusGrid<T>({
     }
   };
 
+  // ---- buscar y reemplazar (solo celdas editables de registros reales; las calculadas/protegidas no se tocan) ----
+  const findMatches = useMemo(() => {
+    const needle = findText;
+    if (!findOpen || !needle) return { diffs: [] as CellDiff[], rows: 0, first: null as { row: number; col: number } | null };
+    const flags = findCase ? "g" : "gi";
+    const re = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), flags);
+    const diffs: CellDiff[] = [];
+    const rowSet = new Set<string>();
+    let first: { row: number; col: number } | null = null;
+    gridRows.forEach((row, rowIdx) => {
+      if (isDraftRowId(row.__id)) return;
+      columns.forEach((col, colIdx) => {
+        if (findCol && col.key !== findCol) return;
+        if (col.noFill || row.__prot[col.key]) return;
+        const current = String(row[col.key] ?? "");
+        re.lastIndex = 0;
+        if (!re.test(current)) return;
+        re.lastIndex = 0;
+        const next = current.replace(re, () => replaceText);
+        if (next.trim() === current.trim()) return;
+        diffs.push({ rowId: row.__id, columnKey: col.key, oldValue: current, newValue: next.trim() });
+        rowSet.add(row.__id);
+        if (!first) first = { row: rowIdx, col: colIdx };
+      });
+    });
+    return { diffs, rows: rowSet.size, first };
+  }, [findOpen, findText, replaceText, findCol, findCase, gridRows, columns]);
+  const doReplaceAll = () => {
+    if (findMatches.diffs.length === 0) return;
+    processDiffs(findMatches.diffs, [], [`Reemplazo: ${findMatches.diffs.length} celda${findMatches.diffs.length === 1 ? "" : "s"} en ${findMatches.rows} fila${findMatches.rows === 1 ? "" : "s"} (se puede deshacer)`]);
+    setReplaceConfirm(false);
+    setFindOpen(false);
+  };
+
+  // ---- barra táctil: copiar / pegar / borrar / rellenar hacia abajo sin teclado físico ----
+  const currentRange = useCallback((): SheetRange | null => {
+    const sel = selectionRef.current;
+    if (sel) return sel;
+    const a = activeRef.current;
+    return a ? { min: a, max: a } : lastRangeRef.current;
+  }, []);
+  const touchCopy = useCallback(async () => {
+    const r = currentRange();
+    if (!r) return setNotice("Tocá una celda (o mantené y arrastrá para elegir un rango) y después «Copiar».");
+    const lines = gridRowsRef.current.slice(r.min.row, r.max.row + 1).map((row) => columnKeys.slice(r.min.col, r.max.col + 1).map((k) => String(row[k] ?? "").replace(/[\t\r\n]+/g, " ")).join("\t"));
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setNotice(`Copiado: ${lines.length} fila${lines.length === 1 ? "" : "s"} × ${r.max.col - r.min.col + 1} columna${r.max.col === r.min.col ? "" : "s"}.`);
+    } catch {
+      setNotice("El navegador no permitió copiar. Probá con el teclado (Ctrl+C) o permití el portapapeles.");
+    }
+  }, [columnKeys, currentRange]);
+  const touchPaste = useCallback(async () => {
+    const r = currentRange();
+    if (!r) return setNotice("Tocá la celda donde empieza el pegado y después «Pegar».");
+    let text = "";
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      return setNotice("El navegador no permitió leer el portapapeles. Permitilo o pegá con el teclado (Ctrl+V).");
+    }
+    const matrix = text.replace(/\r\n?/g, "\n").replace(/\n$/, "").split("\n").map((l) => l.split("\t"));
+    if (matrix.length === 0 || (matrix.length === 1 && matrix[0]!.length === 1 && matrix[0]![0] === "")) return setNotice("El portapapeles está vacío.");
+    const rowsNow = gridRowsRef.current;
+    const diffs: CellDiff[] = [];
+    const skipped: PreviewState["skipped"] = [];
+    const put = (ri: number, ci: number, raw: string) => {
+      const row = rowsNow[ri];
+      const key = columnKeys[ci];
+      const col = key ? columnByKey.get(key) : undefined;
+      if (!row || !key || !col) return;
+      const value = raw.replace(/[\r\n]+/g, " ").trim();
+      const current = String(row[key] ?? "");
+      if (current.trim() === value) return;
+      const prot = row.__prot[key];
+      if (prot) return void skipped.push({ rowLabel: row.__id, columnTitle: col.title, reason: prot });
+      if (col.noFill && !col.fillWithReason) return;
+      diffs.push({ rowId: row.__id, columnKey: key, oldValue: current, newValue: value });
+    };
+    if (matrix.length === 1 && matrix[0]!.length === 1 && (r.max.row > r.min.row || r.max.col > r.min.col)) {
+      // Un solo valor sobre un rango: llena todo el rango (como Excel).
+      for (let ri = r.min.row; ri <= r.max.row; ri += 1) for (let ci = r.min.col; ci <= r.max.col; ci += 1) put(ri, ci, matrix[0]![0]!);
+    } else {
+      matrix.forEach((cells, i) => cells.forEach((v, j) => put(r.min.row + i, r.min.col + j, v)));
+    }
+    processDiffs(diffs, skipped, [`Pegado: ${diffs.length} celda${diffs.length === 1 ? "" : "s"}`]);
+  }, [columnKeys, columnByKey, currentRange, processDiffs]);
+  const touchClear = useCallback(() => {
+    const r = currentRange();
+    if (!r) return setNotice("Tocá una celda o un rango y después «Borrar».");
+    const rowsNow = gridRowsRef.current;
+    const diffs: CellDiff[] = [];
+    const skipped: PreviewState["skipped"] = [];
+    for (let ri = r.min.row; ri <= r.max.row; ri += 1) {
+      const row = rowsNow[ri];
+      if (!row) continue;
+      for (let ci = r.min.col; ci <= r.max.col; ci += 1) {
+        const key = columnKeys[ci];
+        const col = key ? columnByKey.get(key) : undefined;
+        if (!key || !col || String(row[key] ?? "").trim() === "") continue;
+        const prot = row.__prot[key];
+        if (prot) skipped.push({ rowLabel: row.__id, columnTitle: col.title, reason: prot });
+        else if (!col.noFill) diffs.push({ rowId: row.__id, columnKey: key, oldValue: String(row[key] ?? ""), newValue: "" });
+      }
+    }
+    processDiffs(diffs, skipped);
+  }, [columnKeys, columnByKey, currentRange, processDiffs]);
+  const touchFillDown = useCallback(() => {
+    const r = currentRange();
+    if (!r || r.max.row === r.min.row) return setNotice("Elegí un rango de 2 o más filas: la primera fila se copia hacia abajo.");
+    const rowsNow = gridRowsRef.current;
+    const first = rowsNow[r.min.row];
+    if (!first) return;
+    const diffs: CellDiff[] = [];
+    const skipped: PreviewState["skipped"] = [];
+    for (let ri = r.min.row + 1; ri <= r.max.row; ri += 1) {
+      const row = rowsNow[ri];
+      if (!row) continue;
+      for (let ci = r.min.col; ci <= r.max.col; ci += 1) {
+        const key = columnKeys[ci];
+        const col = key ? columnByKey.get(key) : undefined;
+        if (!key || !col) continue;
+        const value = String(first[key] ?? "");
+        if (String(row[key] ?? "").trim() === value.trim()) continue;
+        const prot = row.__prot[key];
+        if (prot) skipped.push({ rowLabel: row.__id, columnTitle: col.title, reason: prot });
+        else if (!col.noFill) diffs.push({ rowId: row.__id, columnKey: key, oldValue: String(row[key] ?? ""), newValue: value });
+      }
+    }
+    processDiffs(diffs, skipped, [`Relleno hacia abajo: ${diffs.length} celda${diffs.length === 1 ? "" : "s"}`]);
+  }, [columnKeys, columnByKey, currentRange, processDiffs]);
+
   const computedHeight = height ?? Math.min(maxHeight, (gridRows.length + 1) * rowHeight + 24);
 
   const syncSelection = (selection: SheetRange | null) => {
     const a = activeRef.current;
     selectionRef.current = selection ? { min: selection.min, max: selection.max } : a ? { min: a, max: a } : null;
     const cur = selectionRef.current;
+    if (cur) lastRangeRef.current = { min: { ...cur.min }, max: { ...cur.max } };
     setSelectedRowCount(cur ? cur.max.row - cur.min.row + 1 : 0);
   };
   const describeSelection = (selection: { min: { col: number; row: number }; max: { col: number; row: number } } | null) => {
@@ -1221,7 +1417,7 @@ export function GenusGrid<T>({
   const dsg = (
     <DataSheetGrid<GenusGridRow>
       // Si cambian las columnas (otra pestaña/semana) el motor se remonta: sus encabezados no se actualizan en caliente.
-      key={columns.map((c) => `${c.key}:${c.title}`).join("|")}
+      key={columns.map((c) => `${c.key}:${c.title}:${c.fixedWidth ? c.basis : ""}`).join("|")}
       ref={gridRef}
       value={gridRows}
       onChange={(next) => handleChange(next)}
@@ -1248,6 +1444,7 @@ export function GenusGrid<T>({
       onSelectionChange={({ selection }) => describeSelection(selection)}
       onActiveCellChange={(arg) => {
         activeRef.current = arg.cell ? { col: arg.cell.col, row: arg.cell.row } : null;
+        if (arg.cell) lastRangeRef.current = { min: { col: arg.cell.col, row: arg.cell.row }, max: { col: arg.cell.col, row: arg.cell.row } };
         if (!arg.cell) syncSelection(null);
         else if (!selectionRef.current || (selectionRef.current.min.row === selectionRef.current.max.row && selectionRef.current.min.col === selectionRef.current.max.col)) syncSelection(null);
         onActiveCellChange(arg);
@@ -1303,6 +1500,19 @@ export function GenusGrid<T>({
             <Undo2 className="size-3.5" aria-hidden="true" />
             Deshacer
           </Button>
+          {sheet && canEdit ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => { setReplaceConfirm(false); setFindOpen(true); }}
+              data-testid={`${testId}-find-btn`}
+            >
+              <Replace className="size-3.5" aria-hidden="true" />
+              Buscar y reemplazar
+            </Button>
+          ) : null}
           {sheet ? (
             <Button
               type="button"
@@ -1319,6 +1529,29 @@ export function GenusGrid<T>({
           ) : null}
         </div>
       </div>
+
+      {sheet && canEdit ? (
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Acciones de celdas (táctil)" data-testid={`${testId}-touchbar`}>
+          {([
+            ["copy", "Copiar", Copy, touchCopy],
+            ["paste", "Pegar", ClipboardPaste, touchPaste],
+            ["clear", "Borrar", Eraser, touchClear],
+            ["filldown", "Rellenar ↓", Rows3, touchFillDown],
+          ] as const).map(([id, label, Icon, fn]) => (
+            <button
+              key={id}
+              type="button"
+              className="inline-flex min-h-11 items-center gap-1 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3 text-xs font-medium"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => void fn()}
+              data-testid={`${testId}-touch-${id}`}
+            >
+              <Icon className="size-4" aria-hidden="true" /> {label}
+            </button>
+          ))}
+          <span className="text-[11px] text-[var(--os-text-muted)]">Con el dedo: tocá una celda; mantené y arrastrá para elegir un rango.</span>
+        </div>
+      ) : null}
 
       {sheet && fillChipValid && fillChip ? (
         <div className="flex flex-wrap items-center gap-2 text-xs" data-testid={`${testId}-fill-chip`} role="group" aria-label="Opciones de relleno">
@@ -1470,6 +1703,49 @@ export function GenusGrid<T>({
         />
       ) : null}
       {hint && <p className="text-[11px] text-[var(--os-text-muted)]">{hint}</p>}
+
+      <Dialog open={findOpen} onOpenChange={(o) => { setFindOpen(o); if (!o) setReplaceConfirm(false); }}>
+        <DialogContent className="max-w-md" data-testid={`${testId}-find-dialog`}>
+          <DialogHeader>
+            <DialogTitle>Buscar y reemplazar</DialogTitle>
+            <DialogDescription>Solo cambia celdas editables. Las columnas calculadas o protegidas no se tocan. Se puede deshacer.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <label className="block">Buscar<input value={findText} onChange={(e) => { setFindText(e.target.value); setReplaceConfirm(false); }} className="mt-1 min-h-11 w-full rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3" data-testid={`${testId}-find-text`} autoComplete="off" /></label>
+            <label className="block">Reemplazar por<input value={replaceText} onChange={(e) => { setReplaceText(e.target.value); setReplaceConfirm(false); }} className="mt-1 min-h-11 w-full rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-3" data-testid={`${testId}-replace-text`} autoComplete="off" /></label>
+            <label className="block">En la columna
+              <select value={findCol} onChange={(e) => { setFindCol(e.target.value); setReplaceConfirm(false); }} className="mt-1 min-h-11 w-full rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-2" data-testid={`${testId}-find-col`}>
+                <option value="">Todas las editables</option>
+                {columns.filter((c) => !c.noFill).map((c) => (<option key={c.key} value={c.key}>{c.title}</option>))}
+              </select>
+            </label>
+            <label className="flex min-h-11 items-center gap-2"><input type="checkbox" className="size-5" checked={findCase} onChange={(e) => setFindCase(e.target.checked)} /> Distinguir mayúsculas</label>
+            <p className="text-xs text-[var(--os-text-muted)]" data-testid={`${testId}-find-count`}>
+              {findText ? `${findMatches.diffs.length} celda${findMatches.diffs.length === 1 ? "" : "s"} en ${findMatches.rows} fila${findMatches.rows === 1 ? "" : "s"}` : "Escribí qué buscar."}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setFindOpen(false)}>Cerrar</Button>
+            <Button
+              variant="secondary"
+              disabled={!findMatches.first}
+              onClick={() => { if (findMatches.first) { setFindOpen(false); gridRef.current?.setActiveCell({ col: findMatches.first.col, row: findMatches.first.row }); } }}
+              data-testid={`${testId}-find-go`}
+            >
+              Ir a la primera
+            </Button>
+            {replaceConfirm ? (
+              <Button disabled={findMatches.diffs.length === 0} onClick={doReplaceAll} data-testid={`${testId}-replace-confirm`}>
+                Confirmar: reemplazar {findMatches.diffs.length} celda{findMatches.diffs.length === 1 ? "" : "s"}
+              </Button>
+            ) : (
+              <Button disabled={findMatches.diffs.length === 0} onClick={() => (findMatches.diffs.length > 1 ? setReplaceConfirm(true) : doReplaceAll())} data-testid={`${testId}-replace-all`}>
+                Reemplazar todo
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={preview !== null} onOpenChange={(open) => !open && setPreview(null)}>
         <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto" data-testid={`${testId}-preview`}>
