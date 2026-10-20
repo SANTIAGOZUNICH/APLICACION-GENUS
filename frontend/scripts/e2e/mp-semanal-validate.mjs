@@ -113,6 +113,7 @@ try {
     await page.goto("/mi-trabajo");
     await nav(page, "Control semanal");
     await page.locator("[data-testid=mp-weekly-availability]").waitFor({ timeout: 120_000 });
+    await page.locator("[data-testid=mpw-view-consolidado]").click({ timeout: 60_000 });
     await page.locator("[data-testid=mpw-table] [data-testid=mpw-row]").first().waitFor({ timeout: 60_000 });
   };
   const rowOf = (page, name) => page.locator("[data-testid=mpw-row]").filter({ hasText: name });
@@ -179,7 +180,7 @@ try {
       check(`[${kind}] las quitadas se listan con quién y cuándo`, /la quitó/.test(await p.locator("[data-testid=mpw-excluded]").innerText()));
       await p.screenshot({ path: `${OUT}/${kind}-quitadas.png` });
       const restores = p.locator("[data-testid=mpw-restore]");
-      while ((await restores.count()) > 0) { const n = await restores.count(); if (!(await restores.first().isVisible())) await p.locator("[data-testid=mpw-excluded] summary").click(); await restores.first().click(); await waitDb(async () => (await restores.count()) < n); }
+      while ((await restores.count()) > 0) { const n = await restores.count(); if (!(await restores.first().isVisible())) await p.locator("[data-testid=mpw-excluded] summary").click(); await restores.first().click(); await p.locator("[data-testid=mpw-restore-yes]").click(); await waitDb(async () => (await restores.count()) < n); }
       check(`[${kind}] «Restaurar» devuelve las MP`, (await rowOf(p, "Glicerina").count()) === 1 && (await rowOf(p, "Perfume SEMX").count()) === 1);
       // quitar UNA con el botón de la fila
       await rowOf(p, "Perfume SEMX").first().locator("[data-testid=mpw-row-remove]").click();
@@ -187,6 +188,7 @@ try {
       check(`[${kind}] quitar una sola MP desde su fila`, await waitDb(async () => (await rowOf(p, "Perfume SEMX").count()) === 0));
       if (!(await p.locator("[data-testid=mpw-restore]").first().isVisible())) await p.locator("[data-testid=mpw-excluded] summary").click();
       await p.locator("[data-testid=mpw-restore]").first().click();
+      await p.locator("[data-testid=mpw-restore-yes]").click();
       await waitDb(async () => (await rowOf(p, "Perfume SEMX").count()) === 1);
     }
     if (kind === "desktop") {

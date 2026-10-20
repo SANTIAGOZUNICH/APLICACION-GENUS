@@ -31,7 +31,7 @@ export type StockLot = {
   archived?: boolean;
 };
 
-export type FormulaLine = { materiaPrima: string; codigo?: string; codigoMp?: string };
+export type FormulaLine = { materiaPrima: string; codigo?: string; codigoMp?: string; /** % de la fórmula (solo informativo para la vista por producto). */ pct?: number | null };
 /** Equivalencia aprobada: la MP `formulaName` (normalizada) también usa el stock de `stockName` (normalizado). */
 export type NameAlias = { formulaName: string; stockName: string };
 
@@ -97,7 +97,18 @@ export function lotUsability(lot: StockLot, todayIso: string): LotUse {
   return { usable: true, reason: "" };
 }
 
-export type Need = { productionId: string; label: string; kg: number; client?: string };
+export type Need = {
+  productionId: string;
+  label: string;
+  kg: number;
+  client?: string;
+  /** Línea de la fórmula que originó la necesidad (para la vista por producto). */
+  line?: string;
+  codigo?: string;
+  pct?: number | null;
+  /** La línea no tiene cantidad confiable (fórmula incompleta, cantidad no convertible…): no se sumó. */
+  unreliable?: boolean;
+};
 export type ProductionInput = {
   id: string;
   label: string;
@@ -106,6 +117,14 @@ export type ProductionInput = {
   reliable: boolean;
   unreliableReason?: string;
   lines: Array<FormulaLine & { kg: number | null }>;
+  /** Datos de presentación para la vista por producto (no intervienen en el cálculo). */
+  product?: string;
+  oeNumber?: string;
+  days?: string;
+  /** Cantidad a elaborar en la semana (kg) — ya repartida si la OE tiene varias programaciones. */
+  weekKg?: number | null;
+  source?: "OE" | "FORMULA" | "SIN_FORMULA";
+  note?: string;
   /** Kg ya consumidos y descontados del inventario para esta producción (libro mayor), por CÓDIGO DE INVENTARIO. */
   consumedByCode?: Record<string, number>;
 };
@@ -200,10 +219,10 @@ export function computeAvailability(params: { lots: StockLot[]; productions: Pro
       const acc = byName.get(name) ?? { name: rawLine.materiaPrima.trim(), requerido: 0, needs: [], unreliable: 0 };
       if (!prod.reliable || kg == null || !Number.isFinite(kg)) {
         acc.unreliable += 1;
-        acc.needs.push({ productionId: prod.id, label: prod.label, kg: 0, client: prod.client });
+        acc.needs.push({ productionId: prod.id, label: prod.label, kg: 0, client: prod.client, line: name, codigo: rawLine.codigo, pct: rawLine.pct ?? null, unreliable: true });
       } else {
         acc.requerido = round3(acc.requerido + kg);
-        acc.needs.push({ productionId: prod.id, label: prod.label, kg: round3(kg), client: prod.client });
+        acc.needs.push({ productionId: prod.id, label: prod.label, kg: round3(kg), client: prod.client, line: name, codigo: rawLine.codigo, pct: rawLine.pct ?? null });
       }
       byName.set(name, acc);
     }

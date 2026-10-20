@@ -9,72 +9,41 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ACTOR_EMAIL_HEADER, ACTOR_SECTOR_HEADER } from "@/lib/auth/header-names";
 import type { AvailabilityStatus } from "@/lib/mp-control/availability";
+import { TONE_BADGE, TONE_CELL, fmtKg, fmtSigned, statusLabel, toneOfStatus, valueClass } from "@/lib/mp-control/availability-tone";
+import { matchesProductFilter, type ProductFilter } from "@/lib/mp-control/product-breakdown";
 import type { WeeklyAvailability, WeeklyRow } from "@/lib/mp-control/weekly-availability-service";
+import { ProductSections } from "./mp-weekly-products";
+import { GESTION_LABEL, NoteCell, fmtWhen } from "./mp-weekly-shared";
 
-const fmt = (n: number) => String(Number(n.toFixed(3))).replace(".", ",");
-const TONE: Record<AvailabilityStatus, string> = {
-  SUFICIENTE: "border-emerald-400/60 bg-emerald-400/10 text-emerald-300",
-  FALTANTE: "border-amber-400/70 bg-amber-400/10 text-amber-300",
-  "SIN STOCK": "border-rose-500/70 bg-rose-500/10 text-rose-300",
-  "SIN STOCK UTILIZABLE": "border-rose-500/70 bg-rose-500/10 text-rose-300",
-  "MP NO IDENTIFICADA": "border-sky-400/60 bg-sky-400/10 text-sky-300",
-  "DATOS INCOMPLETOS": "border-slate-400/60 bg-slate-400/10 text-slate-300",
-};
-
-const GESTION_LABEL: Record<string, string> = {
-  "": "— Sin decisión —",
-  pendiente: "Pendiente",
-  comprar: "Comprar",
-  compra_solicitada: "Compra solicitada",
-  no_comprar: "No comprar",
-  sustituir: "Sustituir",
-  aporta_cliente: "Aporta el cliente",
-  resuelto: "Resuelto",
-};
-const fmtWhen = (iso: string | null) => (iso ? new Date(iso).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }) : "");
-
-/** Observación general por MP y semana: se guarda al salir del campo o con «Guardar»; crece según el texto. */
-function NoteCell({ row, canEdit, onSave }: { row: WeeklyRow; canEdit: boolean; onSave: (row: WeeklyRow, text: string) => Promise<void> }) {
-  const saved = row.state.observacion;
-  const [draft, setDraft] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const value = draft ?? saved;
-  const dirty = draft !== null && draft !== saved;
-  async function commit() {
-    if (!dirty || saving) return;
-    setSaving(true);
-    try {
-      await onSave(row, draft!);
-      setDraft(null);
-    } finally {
-      setSaving(false);
-    }
+const fmt = fmtKg;
+type View = "productos" | "consolidado";
+/** Filtros del resumen: los cinco generales y tres de materias primas (consolidado). */
+type ViewFilter = ProductFilter | "MP_PARCIAL" | "MP_SIN_STOCK" | "MP_NO_ID";
+const FILTER_CHIPS: Array<{ id: ProductFilter; label: string }> = [
+  { id: "TODOS", label: "TODOS" },
+  { id: "SUFICIENTES", label: "SUFICIENTES" },
+  { id: "CON_FALTANTES", label: "CON FALTANTES" },
+  { id: "SIN_STOCK", label: "SIN STOCK" },
+  { id: "DATOS_INCOMPLETOS", label: "DATOS INCOMPLETOS" },
+];
+function rowMatches(estado: AvailabilityStatus, f: ViewFilter): boolean {
+  switch (f) {
+    case "SUFICIENTES":
+      return estado === "SUFICIENTE";
+    case "CON_FALTANTES":
+      return estado === "FALTANTE" || estado === "SIN STOCK" || estado === "SIN STOCK UTILIZABLE";
+    case "SIN_STOCK":
+    case "MP_SIN_STOCK":
+      return estado === "SIN STOCK" || estado === "SIN STOCK UTILIZABLE";
+    case "DATOS_INCOMPLETOS":
+      return estado === "MP NO IDENTIFICADA" || estado === "DATOS INCOMPLETOS";
+    case "MP_PARCIAL":
+      return estado === "FALTANTE";
+    case "MP_NO_ID":
+      return estado === "MP NO IDENTIFICADA";
+    default:
+      return true;
   }
-  return (
-    <div onClick={(e) => e.stopPropagation()} data-testid="mpw-note">
-      {canEdit ? (
-        <>
-          <textarea
-            value={value}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => void commit()}
-            rows={Math.min(8, Math.max(2, Math.ceil(value.length / 28) + (value.match(/\n/g)?.length ?? 0)))}
-            placeholder="Observación (compras, sustitución…)"
-            className="w-full resize-y rounded border border-[var(--os-border)] bg-transparent px-1.5 py-1 text-xs leading-snug"
-            data-testid="mpw-note-input"
-          />
-          {dirty ? (
-            <button type="button" className="mt-1 rounded border border-[var(--os-teal)] px-2 py-1 text-[11px] text-[var(--os-teal)]" onMouseDown={(e) => e.preventDefault()} onClick={() => void commit()} data-testid="mpw-note-save">
-              {saving ? "Guardando…" : "Guardar"}
-            </button>
-          ) : null}
-        </>
-      ) : (
-        <p className="whitespace-pre-wrap break-words text-xs">{saved || "—"}</p>
-      )}
-      {saved && row.state.observacionBy ? <p className="mt-0.5 text-[10px] text-[var(--os-text-muted)]" data-testid="mpw-note-meta">{row.state.observacionBy} · {fmtWhen(row.state.observacionAt)}</p> : null}
-    </div>
-  );
 }
 
 function mondayOf(d = new Date()): string {
@@ -102,6 +71,11 @@ export function MpWeeklyAvailability({ email, sector }: { email: string; sector:
   const [confirmDelete, setConfirmDelete] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [view, setView] = useState<View>("productos");
+  const [filter, setFilter] = useState<ViewFilter>("TODOS");
+  const [openSec, setOpenSec] = useState<Record<string, boolean>>({});
+  const [restoreSel, setRestoreSel] = useState<Set<string>>(new Set());
+  const [confirmRestore, setConfirmRestore] = useState<string[] | null>(null);
 
   const headers = useMemo(() => ({ "Content-Type": "application/json", [ACTOR_EMAIL_HEADER]: email, [ACTOR_SECTOR_HEADER]: sector }), [email, sector]);
 
@@ -186,6 +160,12 @@ export function MpWeeklyAvailability({ email, sector }: { email: string; sector:
       setError(e instanceof Error ? e.message : "No se pudo restaurar");
     }
   }
+  async function doRestore(keys: string[]) {
+    await restoreRowsClick(keys);
+    setNotice(`Se restauraron ${keys.length} materia${keys.length === 1 ? "" : "s"} prima${keys.length === 1 ? "" : "s"} en el control de esta semana.`);
+    setConfirmRestore(null);
+    setRestoreSel(new Set());
+  }
   async function productionAction(id: string, label: string, restore: boolean) {
     try {
       await post("/api/v1/mp-control/weekly/exclude-production", { week: data!.weekStart, items: [{ workItemId: id, label }], restore, reason: "Quitada manualmente del Control semanal" });
@@ -195,7 +175,11 @@ export function MpWeeklyAvailability({ email, sector }: { email: string; sector:
     }
   }
 
-  const rows = (data?.rows ?? []).filter((r) => !onlyProblems || r.estado !== "SUFICIENTE");
+  const rows = (data?.rows ?? []).filter((r) => (!onlyProblems || r.estado !== "SUFICIENTE") && rowMatches(r.estado, filter));
+  const rowsByKey = useMemo(() => new Map([...(data?.rows ?? []), ...(data?.excludedRows ?? [])].map((r) => [r.key, r])), [data]);
+  const sections = (data?.products ?? []).filter((p) => matchesProductFilter(p, filter === "MP_PARCIAL" ? "CON_FALTANTES" : filter === "MP_SIN_STOCK" ? "SIN_STOCK" : filter === "MP_NO_ID" ? "DATOS_INCOMPLETOS" : filter));
+  const pickFilter = (f: ViewFilter, v?: View) => { setFilter(f); if (v) setView(v); };
+  const toReview = (data?.rows ?? []).filter((r) => r.state.exclusionToReview);
   const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.key));
   const toggle = (key: string) => setSelected((cur) => { const n = new Set(cur); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const updated = data ? new Date(data.generatedAt).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "medium" }) : null;
@@ -228,12 +212,59 @@ export function MpWeeklyAvailability({ email, sector }: { email: string; sector:
 
       {data ? (
         <>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="mpw-summary">
-            {(Object.keys(TONE) as AvailabilityStatus[]).map((s) => (data.summary[s] > 0 || s === "SUFICIENTE" || s === "FALTANTE") ? (
-              <span key={s} className={`rounded border px-2 py-0.5 ${TONE[s]}`}>{s}: <b>{data.summary[s]}</b></span>
-            ) : null)}
-            <label className="ml-auto flex items-center gap-1"><input type="checkbox" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} /> Solo lo que requiere atención</label>
+          <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7" data-testid="mpw-tiles">
+            {([
+              { id: "prod", label: "Productos programados", value: data.productSummary.products, tone: "unknown" as const, f: "TODOS" as ViewFilter, v: "productos" as View },
+              { id: "cubiertos", label: "Fórmula completamente cubierta", value: data.productSummary.covered, tone: "ok" as const, f: "SUFICIENTES" as ViewFilter, v: "productos" as View },
+              { id: "faltantes", label: "Productos con faltantes", value: data.productSummary.withShortage, tone: "partial" as const, f: "CON_FALTANTES" as ViewFilter, v: "productos" as View },
+              { id: "mp-parcial", label: "MP con faltante parcial", value: data.productSummary.mpPartial, tone: "partial" as const, f: "MP_PARCIAL" as ViewFilter, v: "consolidado" as View },
+              { id: "mp-sin-stock", label: "MP sin stock", value: data.productSummary.mpNone, tone: "none" as const, f: "MP_SIN_STOCK" as ViewFilter, v: "consolidado" as View },
+              { id: "mp-no-id", label: "MP no identificadas", value: data.productSummary.mpUnidentified, tone: "unknown" as const, f: "MP_NO_ID" as ViewFilter, v: "consolidado" as View },
+              { id: "incompletos", label: "Necesidades con datos incompletos", value: data.productSummary.incompleteNeeds, tone: "unknown" as const, f: "DATOS_INCOMPLETOS" as ViewFilter, v: "productos" as View },
+            ]).map((t) => (
+              <button key={t.id} type="button" onClick={() => pickFilter(t.f, t.v)} className={`min-h-16 rounded-lg border px-3 py-2 text-left ${TONE_BADGE[t.tone]} ${filter === t.f ? "ring-2 ring-[var(--os-teal)]" : ""}`} data-testid={`mpw-tile-${t.id}`}>
+                <span className="block text-2xl font-bold leading-none" data-testid={`mpw-tile-value-${t.id}`}>{t.value}</span>
+                <span className="mt-1 block text-[11px] leading-tight">{t.label}</span>
+              </button>
+            ))}
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2" data-testid="mpw-filters">
+            {FILTER_CHIPS.map((c) => (
+              <button key={c.id} type="button" onClick={() => setFilter(c.id)} aria-pressed={filter === c.id} className={`min-h-11 rounded-full border px-4 text-xs font-semibold ${filter === c.id ? "border-[var(--os-teal)] bg-[var(--os-teal)]/20" : "border-[var(--os-border)]"}`} data-testid={`mpw-filter-${c.id}`}>{c.label}</button>
+            ))}
+            {filter === "MP_PARCIAL" || filter === "MP_SIN_STOCK" || filter === "MP_NO_ID" ? <button type="button" className="min-h-11 rounded-full border border-[var(--os-border)] px-4 text-xs" onClick={() => setFilter("TODOS")}>Quitar filtro de MP ✕</button> : null}
+          </div>
+          <div role="tablist" aria-label="Vista del control semanal" className="mt-3 flex flex-wrap items-center gap-2">
+            {([["productos", "Por producto y fórmula"], ["consolidado", "Consolidado para compras"]] as const).map(([id, label]) => (
+              <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)} className={`min-h-11 rounded-lg border px-4 text-sm font-semibold ${view === id ? "border-[var(--os-teal)] bg-[var(--os-teal)]/15" : "border-[var(--os-border)]"}`} data-testid={`mpw-view-${id}`}>{label}</button>
+            ))}
+            {view === "productos" ? (
+              <>
+                <Button type="button" size="sm" variant="secondary" className="min-h-11" onClick={() => setOpenSec(Object.fromEntries(data.products.map((p) => [p.id, true])))} data-testid="mpw-expand-all">Expandir todo</Button>
+                <Button type="button" size="sm" variant="secondary" className="min-h-11" onClick={() => setOpenSec(Object.fromEntries(data.products.map((p) => [p.id, false])))} data-testid="mpw-collapse-all">Contraer todo</Button>
+              </>
+            ) : null}
+            <label className="ml-auto flex min-h-11 items-center gap-2 text-xs"><input type="checkbox" className="size-5" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} /> Solo lo que requiere atención</label>
+          </div>
+          {view === "consolidado" ? (
+            <p className="mt-2 text-xs text-[var(--os-text-muted)]" data-testid="mpw-consolidated-note">
+              Consolidado para compras: una fila por materia prima con la necesidad de TODOS los productos de la semana contra el stock real. El stock se cuenta una sola vez (es compartido), no una vez por producto.
+            </p>
+          ) : null}
+          {confirmRestore ? (
+            <div className="mt-2 rounded border border-emerald-400/60 bg-emerald-400/10 p-3" role="alertdialog" data-testid="mpw-restore-confirm">
+              <p>Vas a restaurar <b>{confirmRestore.length}</b> materia{confirmRestore.length === 1 ? "" : "s"} prima{confirmRestore.length === 1 ? "" : "s"} en el control de esta semana. No se modifica stock, fórmulas ni OE.</p>
+              <div className="mt-2 flex gap-2">
+                <Button type="button" size="sm" className="min-h-11" onClick={() => void doRestore(confirmRestore)} data-testid="mpw-restore-yes">Restaurar</Button>
+                <Button type="button" size="sm" variant="secondary" className="min-h-11" onClick={() => setConfirmRestore(null)} data-testid="mpw-restore-no">Cancelar</Button>
+              </div>
+            </div>
+          ) : null}
+          {toReview.length > 0 ? (
+            <p className="mt-2 rounded border border-amber-400/60 bg-amber-400/10 px-3 py-2 text-xs text-amber-100" role="status" data-testid="mpw-review-banner">
+              {toReview.length} materia{toReview.length === 1 ? "" : "s"} prima{toReview.length === 1 ? "" : "s"} que se había{toReview.length === 1 ? "" : "n"} quitado vuelve{toReview.length === 1 ? "" : "n"} a mostrarse porque hay necesidades nuevas o mayores: revisalas.
+            </p>
+          ) : null}
 
           {canEdit ? (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid="mpw-select-bar">
@@ -284,7 +315,26 @@ export function MpWeeklyAvailability({ email, sector }: { email: string; sector:
             ) : null}
           </details>
 
-          <div className="mt-2 overflow-x-auto">
+          {view === "productos" ? (
+            <div className="mt-3">
+              <ProductSections
+                sections={sections}
+                rowsByKey={rowsByKey}
+                open={openSec}
+                setOpen={(id, v) => setOpenSec((o) => ({ ...o, [id]: v }))}
+                canEdit={canEdit}
+                selectMode={selectMode}
+                selected={selected}
+                onToggleSelect={toggle}
+                onRemove={(key) => setConfirmDelete([key])}
+                onSaveNote={saveNote}
+                onSaveGestion={saveGestion}
+              />
+              {data.products.length === 0 ? <p className="mt-2 text-center text-sm text-[var(--os-text-muted)]">{data.excludedRows.length > 0 ? `No hay productos con necesidades visibles: hay ${data.excludedRows.length} materias primas quitadas de la semana (revisalas más abajo).` : "No hay elaboraciones programadas en esta semana."}</p> : null}
+            </div>
+          ) : null}
+          {view === "consolidado" ? (
+          <div className="mt-2 overflow-x-auto" data-testid="mpw-consolidado">
             <table className="w-full min-w-[78rem] table-fixed text-xs" data-testid="mpw-table">
               <thead>
                 <tr className="text-left">
@@ -314,11 +364,11 @@ export function MpWeeklyAvailability({ email, sector }: { email: string; sector:
                       <td className="whitespace-normal break-words p-1 font-medium">{open[r.key] ? "▾" : "▸"} {r.materiaPrima}</td>
                       <td className="whitespace-normal break-words p-1 font-mono">{r.codigoMaestro || "—"}</td>
                       <td className="p-1 text-right font-mono">{fmt(r.stockFisico)}</td>
-                      <td className="p-1 text-right font-mono">{fmt(r.stockUtilizable)}</td>
+                      <td className={`p-1 text-right font-mono ${TONE_CELL[toneOfStatus(r.estado)]} ${valueClass(toneOfStatus(r.estado))}`} data-testid="mpw-util">{r.estado === "MP NO IDENTIFICADA" ? "—" : fmt(r.stockUtilizable)}</td>
                       <td className="p-1 text-right font-mono">{fmt(r.requerido)}</td>
                       <td className="p-1 text-right font-mono">{fmt(r.reservado)}</td>
-                      <td className={`p-1 text-right font-mono ${r.saldoProyectado < 0 ? "text-rose-300" : ""}`}>{`${r.saldoProyectado > 0 ? "+" : ""}${fmt(r.saldoProyectado)}`}</td>
-                      <td className="p-1"><span className={`inline-block rounded border px-2 py-0.5 ${TONE[r.estado]}`} data-testid="mpw-estado">{r.estado}</span>{r.faltante > 0 ? <span className="ml-1 text-rose-300">falta {fmt(r.faltante)} kg</span> : null}{r.related.length > 0 ? <span className="ml-1 text-sky-300" title="Hay descripciones parecidas en el Stock sin sumar">· {r.related.length} parecida{r.related.length > 1 ? "s" : ""}</span> : null}{r.state.exclusionToReview ? <span className="mt-1 block text-amber-300" data-testid="mpw-review">Se había quitado, pero aparecieron necesidades nuevas: revisar.</span> : null}</td>
+                      <td className={`p-1 text-right font-mono ${TONE_CELL[toneOfStatus(r.estado)]} ${valueClass(toneOfStatus(r.estado), r.saldoProyectado)}`} data-testid="mpw-saldo">{r.estado === "MP NO IDENTIFICADA" ? "—" : fmtSigned(r.saldoProyectado)}</td>
+                      <td className="p-1"><span className={`inline-block rounded border px-2 py-0.5 font-bold ${TONE_BADGE[toneOfStatus(r.estado)]}`} data-testid="mpw-estado">{statusLabel(r.estado)}</span>{r.faltante > 0 ? <span className="ml-1 font-bold text-rose-300" data-testid="mpw-faltante">falta {fmt(r.faltante)} kg</span> : null}{r.related.length > 0 ? <span className="ml-1 text-sky-300" title="Hay descripciones parecidas en el Stock sin sumar">· {r.related.length} parecida{r.related.length > 1 ? "s" : ""}</span> : null}{r.state.exclusionToReview ? <span className="mt-1 block text-amber-300" data-testid="mpw-review">Se había quitado: {r.state.exclusionReviewReason ?? "hay necesidades nuevas"} Revisar.{canEdit ? <button type="button" className="ml-2 min-h-9 rounded border border-amber-400/60 px-2 text-[11px]" onClick={(e) => { e.stopPropagation(); setConfirmDelete([r.key]); }} data-testid="mpw-review-keep">Mantener quitada</button> : null}{canEdit ? <button type="button" className="ml-1 min-h-9 rounded border border-[var(--os-border)] px-2 text-[11px]" onClick={(e) => { e.stopPropagation(); setConfirmRestore([r.key]); }} data-testid="mpw-review-restore">Restaurar</button> : null}</span> : null}</td>
                       <td className="p-1" onClick={(e) => e.stopPropagation()}>
                         {canEdit ? (
                           <select value={r.state.gestion} onChange={(e) => void saveGestion(r, e.target.value)} className="w-full min-h-9 rounded border border-[var(--os-border)] bg-[var(--os-surface)] px-1 text-xs" data-testid="mpw-gestion">
@@ -388,21 +438,60 @@ export function MpWeeklyAvailability({ email, sector }: { email: string; sector:
                     ) : null}
                   </Fragment>
                 ))}
-                {rows.length === 0 ? <tr><td colSpan={12} className="p-3 text-center text-[var(--os-text-muted)]">{data.rows.length === 0 ? "No hay necesidades de MP para esta semana." : "Todo está cubierto."}</td></tr> : null}
+                {rows.length === 0 ? <tr><td colSpan={12} className="p-3 text-center text-[var(--os-text-muted)]">{data.rows.length === 0 ? (data.excludedRows.length > 0 ? `Todas las necesidades de esta semana están quitadas del control (${data.excludedRows.length}). Revisalas y restauralas abajo.` : "No hay necesidades de MP para esta semana.") : "Ninguna materia prima con ese filtro."}</td></tr> : null}
               </tbody>
             </table>
           </div>
-          {data.excludedRows.length > 0 ? (
-            <details className="mt-2 text-xs" data-testid="mpw-excluded">
-              <summary className="cursor-pointer text-[var(--os-text-muted)]">Materias primas quitadas de esta semana ({data.excludedRows.length})</summary>
-              <ul className="mt-1 space-y-1">
-                {data.excludedRows.map((r) => (
-                  <li key={r.key} className="flex flex-wrap items-center gap-2">
-                    <span>{r.materiaPrima} — la quitó {r.state.excludedBy} el {fmtWhen(r.state.excludedAt)}</span>
-                    {canEdit ? <button type="button" className="rounded border border-[var(--os-border)] px-2 py-1" onClick={() => void restoreRowsClick([r.key])} data-testid="mpw-restore">Restaurar</button> : null}
-                  </li>
-                ))}
-              </ul>
+          ) : null}
+          {data.excludedRows.length > 0 || data.excludedProductions.length > 0 ? (
+            <details className="mt-3 rounded border border-[var(--os-border)] p-2 text-xs" data-testid="mpw-excluded" open={data.excludedRows.length > 0 && data.rows.length === 0}>
+              <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">Quitadas de esta semana: {data.excludedRows.length} materia{data.excludedRows.length === 1 ? "" : "s"} prima{data.excludedRows.length === 1 ? "" : "s"}{data.excludedProductions.length ? ` · ${data.excludedProductions.length} producción${data.excludedProductions.length === 1 ? "" : "es"}` : ""}</summary>
+              <p className="mb-2 text-[var(--os-text-muted)]">Quitar nunca borra stock, fórmulas, OE ni movimientos: solo oculta la necesidad de esta semana. Se vuelve a mostrar sola si aparecen necesidades nuevas o mayores. Podés restaurar una por una o varias a la vez.</p>
+              {data.excludedRows.length > 0 ? (
+                <div data-testid="mpw-excluded-rows">
+                  <h4 className="mb-1 font-semibold">Materias primas quitadas por una persona</h4>
+                  {canEdit ? (
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <Button type="button" size="sm" variant="secondary" className="min-h-11" onClick={() => setRestoreSel(new Set(data.excludedRows.map((r) => r.key)))} data-testid="mpw-restore-all">Seleccionar todas</Button>
+                      <Button type="button" size="sm" variant="secondary" className="min-h-11" onClick={() => setRestoreSel(new Set())}>Ninguna</Button>
+                      <Button type="button" size="sm" className="min-h-11" disabled={restoreSel.size === 0} onClick={() => setConfirmRestore([...restoreSel])} data-testid="mpw-restore-selected">Restaurar seleccionadas ({restoreSel.size})</Button>
+                    </div>
+                  ) : null}
+                  <ul className="space-y-2">
+                    {data.excludedRows.map((r) => (
+                      <li key={r.key} className="flex flex-wrap items-start gap-2 rounded border border-[var(--os-border)] p-2" data-testid="mpw-excluded-item">
+                        {canEdit ? <input type="checkbox" className="mt-1 size-6" aria-label={`Elegir ${r.materiaPrima}`} checked={restoreSel.has(r.key)} onChange={() => setRestoreSel((cur) => { const n = new Set(cur); if (n.has(r.key)) n.delete(r.key); else n.add(r.key); return n; })} data-testid="mpw-restore-check" /> : null}
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium">{r.materiaPrima} — la quitó {r.state.excludedBy} el {fmtWhen(r.state.excludedAt)}</p>
+                          <p className="text-[var(--os-text-muted)]" data-testid="mpw-excluded-scope">Alcance: toda la MP de esta semana · producciones que la necesitaban: {r.scope?.productionLabels.join(" · ") || "sin detalle guardado"} · necesidad al quitarla: {r.scope?.requeridoAtExclusion != null ? `${fmt(r.scope.requeridoAtExclusion)} kg` : "—"} · hoy: {fmt(r.requerido)} kg</p>
+                        </div>
+                        {canEdit ? <button type="button" className="min-h-11 rounded border border-[var(--os-border)] px-3" onClick={() => setConfirmRestore([r.key])} data-testid="mpw-restore">Restaurar</button> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {data.excludedProductions.length > 0 ? (
+                <div className="mt-3" data-testid="mpw-prod-excluded-panel">
+                  {(["control", "manual"] as const).map((kind) => {
+                    const list = data.excludedProductions.filter((p) => p.kind === kind);
+                    if (list.length === 0) return null;
+                    return (
+                      <div key={kind} className="mb-2">
+                        <h4 className="mb-1 font-semibold">{kind === "control" ? "Producciones quitadas junto con un control eliminado, anulado o archivado" : "Producciones quitadas del cálculo por una persona (solo de esta producción)"}</h4>
+                        <ul className="space-y-1">
+                          {list.map((p) => (
+                            <li key={p.workItemId} className="flex flex-wrap items-center gap-2">
+                              <span>{p.label} · {p.by} · {fmtWhen(p.at)}{p.reason ? ` — ${p.reason}` : ""}</span>
+                              {canEdit ? <button type="button" className="min-h-11 rounded border border-[var(--os-border)] px-3" onClick={() => void productionAction(p.workItemId, p.label, true)} data-testid="mpw-prod-restore-panel">Volver a sumar</button> : null}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
             </details>
           ) : null}
         </>

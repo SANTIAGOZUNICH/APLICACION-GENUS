@@ -30,6 +30,7 @@ import {
   type StockLot,
 } from "./availability";
 import { isMissingSchemaError } from "@/lib/db/missing-schema";
+import { buildProductBreakdown, type ProductSection, type ProductSummary } from "./product-breakdown";
 
 /** Decisiones administrativas por MP (no modifican fórmula, cantidades, stock, disponibilidad ni consumos). */
 export const GESTION_OPTIONS = ["", "pendiente", "comprar", "compra_solicitada", "no_comprar", "sustituir", "aporta_cliente", "resuelto"] as const;
@@ -46,21 +47,28 @@ export type RowState = {
   excludedBy: string | null;
   excludedAt: string | null;
   excludedRequerido: number | null;
-  /** Aparecieron necesidades (producciones) nuevas desde que se excluyó: la fila vuelve a mostrarse, marcada. */
+  /** Aparecieron necesidades (producciones) nuevas, o la necesidad creció, desde que se excluyó: la fila vuelve a mostrarse, marcada. */
   exclusionToReview: boolean;
+  /** Por qué hay que revisar la exclusión (texto para la persona). */
+  exclusionReviewReason: string | null;
 };
-export type WeeklyRow = AvailabilityResult["rows"][number] & { state: RowState };
+/** Alcance de una exclusión de MP: qué producciones cubría y cuánto se necesitaba cuando se quitó. */
+export type ExcludedScope = { productionLabels: string[]; requeridoAtExclusion: number | null; requeridoNow: number };
+export type WeeklyRow = AvailabilityResult["rows"][number] & { state: RowState; scope?: ExcludedScope };
 
 export type WeeklyAvailability = Omit<AvailabilityResult, "rows"> & {
   rows: WeeklyRow[];
   /** MP quitadas del control de esta semana por una persona (siguen guardadas: se pueden restaurar). */
   excludedRows: WeeklyRow[];
   /** Producciones quitadas del cálculo de esta semana (se pueden restaurar). */
-  excludedProductions: Array<{ workItemId: string; label: string; by: string; at: string; reason: string }>;
+  excludedProductions: Array<{ workItemId: string; label: string; by: string; at: string; reason: string; /** control = quitada junto con un control eliminado/anulado/archivado; manual = la quitó una persona. */ kind: "control" | "manual" }>;
+  /** Vista principal: una sección por producto con su fórmula completa. */
+  products: ProductSection[];
+  productSummary: ProductSummary;
   weekStart: string;
   weekEnd: string;
   generatedAt: string;
-  productions: Array<{ id: string; label: string; kg: number | null; days: string; source: "OE" | "FORMULA" | "SIN_FORMULA"; oeNumber?: string; note?: string }>;
+  productions: Array<{ id: string; label: string; kg: number | null; days: string; source: "OE" | "FORMULA" | "SIN_FORMULA"; oeNumber?: string; note?: string; client?: string; product?: string }>;
   stockSource: "inv_mp_stock" | "memoria";
 };
 
@@ -243,7 +251,7 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
     const oe = oeByWork.get(w.id);
     // Duplicados: varios trabajos (p. ej. días) de la misma OE cuentan UNA vez.
     if (oe && seenOe.has(oe.id)) {
-      meta.push({ id: w.id, label, kg: null, days, source: "OE", oeNumber: oe.orderNumber, note: "Misma OE que otro trabajo de la semana: no se suma de nuevo." });
+      meta.push({ id: w.id, label, kg: null, days, source: "OE", oeNumber: oe.orderNumber, client: w.client, product: w.product, note: "Misma OE que otro trabajo de la semana: no se suma de nuevo." });
       continue;
     }
     if (oe) seenOe.add(oe.id);
@@ -269,23 +277,29 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
         id: w.id,
         client: w.client,
         label: `${label} (OE ${oe.orderNumber})`,
+        product: w.product,
+        oeNumber: oe.orderNumber,
+        days,
+        weekKg: qty ?? null,
+        source: "OE",
+        note: share != null ? `Orden repartida en varias programaciones: esta semana corresponde el ${Math.round(share * 100)} % de la necesidad.` : undefined,
         reliable,
         unreliableReason: !reliable ? (qty == null || qty <= 0 ? `Cantidad no válida (${w.plannedQuantity} ${w.unit})` : "La OE no tiene fórmula completa (faltan %)") : undefined,
         lines: mats.map((m) => {
           const need = reliable ? round3(((m.formulaPct ?? 0) * qty!) / 100) : null;
-          return { materiaPrima: m.materiaPrima ?? "", codigo: m.codigo ?? "", codigoMp: m.codigoMp ?? "", kg: need };
+          return { materiaPrima: m.materiaPrima ?? "", codigo: m.codigo ?? "", codigoMp: m.codigoMp ?? "", kg: need, pct: m.formulaPct ?? null };
         }),
         consumedByCode: per ? Object.fromEntries([...per].filter(([, kg]) => kg > 0).map(([code, kg]) => [code, share != null ? round3(kg * share) : kg])) : undefined,
       });
-      meta.push({ id: w.id, label, kg: qty ?? null, days, source: "OE", oeNumber: oe.orderNumber, note: share != null ? `Orden repartida en varias programaciones: esta semana corresponde el ${Math.round(share * 100)} % de la necesidad.` : undefined });
+      meta.push({ id: w.id, label, kg: qty ?? null, days, source: "OE", oeNumber: oe.orderNumber, client: w.client, product: w.product, note: share != null ? `Orden repartida en varias programaciones: esta semana corresponde el ${Math.round(share * 100)} % de la necesidad.` : undefined });
       continue;
     }
 
     const qty = toKg(qtyRaw, w.unit);
     const res = await resolveFormulaForWork({ client: w.client, product: w.product });
     if (!res.ok) {
-      inputs.push({ id: w.id, client: w.client, label, reliable: false, unreliableReason: `Sin fórmula encontrada: ${res.message}`, lines: [] });
-      meta.push({ id: w.id, label, kg: qty ?? null, days, source: "SIN_FORMULA", note: res.message });
+      inputs.push({ id: w.id, client: w.client, label, product: w.product, days, weekKg: qty ?? null, source: "SIN_FORMULA", reliable: false, unreliableReason: `Sin fórmula encontrada: ${res.message}`, lines: [] });
+      meta.push({ id: w.id, label, kg: qty ?? null, days, source: "SIN_FORMULA", client: w.client, product: w.product, note: res.message });
       continue;
     }
     const reliable = qty != null && qty > 0;
@@ -293,11 +307,15 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
       id: w.id,
       client: w.client,
       label,
+      product: w.product,
+      days,
+      weekKg: qty ?? null,
+      source: "FORMULA",
       reliable,
       unreliableReason: reliable ? undefined : `Cantidad/unidad no convertible a kg (${w.plannedQuantity} ${w.unit})`,
-      lines: res.materials.map((m) => ({ materiaPrima: m.materiaPrima, codigo: m.codigo, kg: reliable && m.formulaPct != null ? round3((m.formulaPct * qty!) / 100) : null })),
+      lines: res.materials.map((m) => ({ materiaPrima: m.materiaPrima, codigo: m.codigo, pct: m.formulaPct ?? null, kg: reliable && m.formulaPct != null ? round3((m.formulaPct * qty!) / 100) : null })),
     });
-    meta.push({ id: w.id, label, kg: qty ?? null, days, source: "FORMULA" });
+    meta.push({ id: w.id, label, kg: qty ?? null, days, source: "FORMULA", client: w.client, product: w.product });
   }
   return { inputs, meta };
 }
@@ -305,7 +323,7 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
 type StateMem = { rows: Map<string, RowState & { label: string; productionIds: string[] }>; prods: Map<string, { workItemId: string; label: string; by: string; at: string; reason: string }> };
 const gs = globalThis as unknown as { __genusMpWeekState?: StateMem };
 const stateMem = (): StateMem => (gs.__genusMpWeekState ??= { rows: new Map(), prods: new Map() });
-const emptyState = (): RowState => ({ observacion: "", observacionBy: null, observacionAt: null, gestion: "", gestionBy: null, gestionAt: null, excluded: false, excludedBy: null, excludedAt: null, excludedRequerido: null, exclusionToReview: false });
+const emptyState = (): RowState => ({ observacion: "", observacionBy: null, observacionAt: null, gestion: "", gestionBy: null, gestionAt: null, excluded: false, excludedBy: null, excludedAt: null, excludedRequerido: null, exclusionToReview: false, exclusionReviewReason: null });
 const memKey = (week: string, key: string) => `${week}|${key}`;
 
 type StoredState = RowState & { productionIds: string[]; label: string };
@@ -331,6 +349,7 @@ async function loadRowStates(week: string): Promise<Map<string, StoredState>> {
         excludedAt: r.excludedAt?.toISOString() ?? null,
         excludedRequerido: r.excludedRequerido,
         exclusionToReview: false,
+        exclusionReviewReason: null,
         productionIds: Array.isArray(r.excludedProductionIds) ? (r.excludedProductionIds as string[]) : [],
       });
     }
@@ -350,6 +369,20 @@ async function loadProductionExclusions(week: string): Promise<StateMem["prods"]
     if (!isMissingSchemaError(err)) throw err;
   }
   return out;
+}
+
+/**
+ * ¿Una MP quitada del control sigue oculta? Solo si TODAS las producciones que la necesitan hoy ya existían al quitarla y la
+ * necesidad no creció. Exclusiones sin alcance guardado (viejas) nunca ocultan nada.
+ */
+export function exclusionVerdict(p: { knownProductionIds: string[]; requeridoAtExclusion: number | null; currentProductionIds: string[]; requeridoNow: number }): { toReview: boolean; reason: string | null } {
+  const known = new Set(p.knownProductionIds);
+  const fresh = p.currentProductionIds.filter((id) => !known.has(id));
+  if (fresh.length > 0) return { toReview: true, reason: `Aparecieron ${fresh.length} producción${fresh.length === 1 ? "" : "es"} nueva${fresh.length === 1 ? "" : "s"} que necesita${fresh.length === 1 ? "" : "n"} esta MP desde que se quitó.` };
+  if (p.requeridoAtExclusion != null && p.requeridoNow > p.requeridoAtExclusion + 0.0005) {
+    return { toReview: true, reason: `La necesidad creció desde que se quitó (de ${p.requeridoAtExclusion} a ${p.requeridoNow} kg).` };
+  }
+  return { toReview: false, reason: null };
 }
 
 export class MpStateSchemaPendingError extends Error {
@@ -525,27 +558,39 @@ export async function getWeeklyAvailability(anyDay: string, now = new Date()): P
   const result = computeAvailability({ lots, aliases, productions: inputs, todayIso: iso(now) });
   const rows: WeeklyRow[] = [];
   const excludedRows: WeeklyRow[] = [];
+  const labelOf = new Map(prods.meta.map((m) => [m.id, m.label]));
   for (const r of result.rows) {
     const st = states.get(r.key);
     const state: RowState = { ...emptyState(), ...(st ?? {}) };
     if (st?.excluded) {
-      const known = new Set(st.productionIds);
-      state.exclusionToReview = r.needs.some((n) => !known.has(n.productionId));
-      if (!state.exclusionToReview) {
-        excludedRows.push({ ...r, state });
+      // Una exclusión solo oculta lo que ya existía cuando se quitó. Si aparecen producciones nuevas, o la necesidad
+      // creció, la MP vuelve a verse marcada «revisar»: una exclusión vieja o muy amplia no puede esconder necesidades nuevas.
+      const verdict = exclusionVerdict({ knownProductionIds: st.productionIds, requeridoAtExclusion: st.excludedRequerido, currentProductionIds: [...new Set(r.needs.map((n) => n.productionId))], requeridoNow: r.requerido });
+      state.exclusionToReview = verdict.toReview;
+      state.exclusionReviewReason = verdict.reason;
+      const scope: ExcludedScope = { productionLabels: st.productionIds.map((id) => labelOf.get(id) ?? "Producción ya no programada en la semana"), requeridoAtExclusion: st.excludedRequerido, requeridoNow: r.requerido };
+      if (!verdict.toReview) {
+        excludedRows.push({ ...r, state, scope });
         continue;
       }
+      rows.push({ ...r, state, scope });
+      continue;
     }
     rows.push({ ...r, state });
   }
   const summary = { ...result.summary, total: rows.length };
   for (const k of Object.keys(summary) as Array<keyof typeof summary>) if (k !== "total") summary[k] = rows.filter((r) => r.estado === k).length;
+  const excludedKeys = new Set(excludedRows.map((r) => r.key));
+  const duplicates = prods.meta.filter((m) => m.note?.startsWith("Misma OE")).map((m) => ({ id: m.id, oeNumber: m.oeNumber, days: m.days, note: m.note }));
+  const breakdown = buildProductBreakdown({ rows: [...rows, ...excludedRows], productions: inputs, excludedKeys, duplicates });
   return {
     ...result,
     rows,
     summary,
     excludedRows,
-    excludedProductions: [...prodEx.values()],
+    excludedProductions: [...prodEx.values()].map((p) => ({ ...p, kind: p.reason.startsWith("Control eliminado") ? ("control" as const) : ("manual" as const) })),
+    products: breakdown.sections,
+    productSummary: breakdown.summary,
     weekStart: start,
     weekEnd: end,
     generatedAt: now.toISOString(),
