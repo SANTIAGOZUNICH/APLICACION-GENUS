@@ -1,6 +1,8 @@
 import "server-only";
 
-import { getDb } from "@/lib/db/client";
+import { sql } from "drizzle-orm";
+import { getDb, isDatabaseConfigured } from "@/lib/db/client";
+import type { RemitoRecord } from "@/lib/remitos/types";
 import { osNotifications } from "@/lib/db/schema";
 import type { RecordDeliveryResult } from "@/lib/planning/circuit/delivery-core";
 import { buildBillingNotification, type BillingEvent, type PackingGroupLite } from "./billing-notification-builder";
@@ -46,5 +48,68 @@ export async function emitBillingForDelivery(result: RecordDeliveryResult, actor
     packingGroups,
     complete: result.complete,
     deliveredAt: result.line.actualDeliveredAt,
+    totals: { requested: result.target, delivered: result.delivered, pending: result.pending },
   });
+  // Pedido entregado completo: aviso aparte (la entrega que lo completa ya avisó su propio movimiento).
+  if (result.complete) {
+    await emitBillingNotification({
+      type: "ENTREGA_COMPLETA",
+      eventKey: result.line.id,
+      workItemId: result.item.id,
+      client: result.item.client ?? null,
+      product: result.item.product ?? null,
+      pedido: result.delivery.pedidoOp ?? result.item.orderNumber ?? null,
+      orderRef: result.item.orderNumber ?? null,
+      quantity: result.line.quantity,
+      unit: result.line.unit ?? null,
+      at: new Date(),
+      actorName,
+      remito: result.line.remito ?? result.delivery.remito ?? null,
+      packingGroups,
+      deliveredAt: result.line.actualDeliveredAt,
+      totals: { requested: result.target, delivered: result.delivered, pending: result.pending },
+    });
+  }
+}
+
+/**
+ * Aviso «REMITO GENERADO» / «REMITO ANULADO». En la anulación informa cuántas unidades de esas entregas seguían
+ * pendientes de facturar. Best-effort e idempotente (id por remito + número): nunca bloquea ni revierte el remito.
+ */
+export async function emitBillingForRemito(kind: "GENERADO" | "ANULADO", remito: RemitoRecord, actorName: string, reason?: string | null): Promise<void> {
+  if (!remito.remitoNumber || !isDatabaseConfigured()) return;
+  try {
+    let pendingInvoiceUnits: number | null = null;
+    if (kind === "ANULADO") {
+      const ids = remito.lines.map((l) => l.trace?.deliveryLineId).filter((x): x is string => Boolean(x));
+      if (ids.length > 0) {
+        const list = sql.join(ids.map((i) => sql`${i}::uuid`), sql`, `);
+        const res = await getDb().execute(sql`
+          select coalesce(sum(greatest(0, l.quantity - coalesce(i.invoiced, 0))), 0)::float8 as pending
+            from work_item_delivery_lines l
+            left join (select il.delivery_line_id, sum(il.quantity) as invoiced
+                         from billing_invoice_lines il join billing_invoices inv on inv.id = il.invoice_id
+                        where il.status = 'ACTIVA' and inv.status = 'ACTIVA' group by il.delivery_line_id) i on i.delivery_line_id = l.id
+           where l.id in (${list}) and l.status = 'ACTIVA'`);
+        pendingInvoiceUnits = Number((res.rows[0] as { pending?: unknown } | undefined)?.pending ?? 0);
+      }
+      // Solo avisa si afecta entregas pendientes de facturar (o si no se pudo medir).
+      if (pendingInvoiceUnits != null && pendingInvoiceUnits <= 0) return;
+    }
+    await emitBillingNotification({
+      type: kind === "GENERADO" ? "REMITO_GENERADO" : "REMITO_ANULADO",
+      remitoId: remito.id,
+      remitoNumber: remito.remitoNumber,
+      client: remito.clientDisplay ?? null,
+      lines: remito.lines.map((l) => ({ product: l.product, quantity: l.totalUnits, unit: "u", orderRef: l.trace?.orderRef ?? null })),
+      totalUnits: remito.totalUnits,
+      totalCajas: remito.totalCajas ?? null,
+      at: new Date(),
+      actorName,
+      reason: reason ?? null,
+      pendingInvoiceUnits,
+    });
+  } catch (error) {
+    console.error("[facturación] no se pudo avisar el remito (el remito ya quedó confirmado)", error);
+  }
 }

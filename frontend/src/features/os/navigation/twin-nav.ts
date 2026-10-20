@@ -33,6 +33,7 @@ export type TwinView =
   | "entregas"
   | "asignacion-lotes"
   | "portal-clientes"
+  | "control-facturacion"
   | "ver-elaboracion"
   | "ver-envasado-masivo"
   | "ver-envasado-premium"
@@ -88,6 +89,7 @@ export const SIDEBAR_TO_TWIN_VIEW: Record<SidebarItemId, TwinView> = {
   entregas: "entregas",
   asignacion_lotes: "asignacion-lotes",
   portal_clientes: "portal-clientes",
+  control_facturacion: "control-facturacion",
   ver_elaboracion: "ver-elaboracion",
   ver_envasado_masivo: "ver-envasado-masivo",
   ver_envasado_premium: "ver-envasado-premium",
@@ -132,6 +134,7 @@ export function twinViewToSidebarId(view: TwinView): SidebarItemId | undefined {
     entregas: "entregas",
     "asignacion-lotes": "asignacion_lotes",
     "portal-clientes": "portal_clientes",
+    "control-facturacion": "control_facturacion",
     "ver-elaboracion": "ver_elaboracion",
     "ver-envasado-masivo": "ver_envasado_masivo",
     "ver-envasado-premium": "ver_envasado_premium",
@@ -187,6 +190,7 @@ export function viewTitle(view: TwinView): string {
     entregas: "Entregas",
     "asignacion-lotes": "Asignación de lotes",
     "portal-clientes": "Portal de Clientes",
+    "control-facturacion": "Control de facturación",
     "ver-elaboracion": "Elaboración",
     "ver-envasado-masivo": "Envasado Masivo",
     "ver-envasado-premium": "Envasado Premium",

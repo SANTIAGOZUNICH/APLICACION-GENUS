@@ -138,7 +138,8 @@ export function NotificationToaster() {
     close(t.id);
     if (email) void patchOsNotificationApi({ email, sector: sectorId }, t.id, "read").catch(() => undefined);
     const workItemId = workItemIdFromNotificationHref(t.href);
-    if (workItemId) openWorkItem(workItemId);
+    if (t.href?.startsWith("/facturacion")) navigateTo({ view: "control-facturacion", workItemId: workItemId ?? undefined });
+    else if (workItemId) openWorkItem(workItemId);
     else if (t.href?.startsWith("/avisos")) navigateTo({ view: "avisos" });
   }
   function toggleSound() {

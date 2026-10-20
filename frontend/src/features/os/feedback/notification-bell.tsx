@@ -50,7 +50,7 @@ type TabId = "activas" | "archivadas";
 /** Campana: une notificaciones demo locales + notificaciones Neon de órdenes OE/OA. */
 export function NotificationBell() {
   const { sectorId, email } = usePreviewSession();
-  const { openWorkItem } = usePreviewContext();
+  const { openWorkItem, navigateTo } = usePreviewContext();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<TabId>("activas");
   const [activeItems, setActiveItems] = useState<BellItem[]>([]);
@@ -182,7 +182,10 @@ export function NotificationBell() {
   async function handleOpenWork(n: BellItem) {
     const workItemId = workItemIdFromNotificationHref(n.href);
     await handleMarkRead(n);
-    if (workItemId) {
+    if (n.href?.startsWith("/facturacion")) {
+      setOpen(false);
+      navigateTo({ view: "control-facturacion", workItemId: workItemId ?? undefined });
+    } else if (workItemId) {
       setOpen(false);
       openWorkItem(workItemId);
     }
@@ -348,14 +351,14 @@ export function NotificationBell() {
                           {n.source === "server" ? " · servidor" : " · demo"}
                         </p>
                       </button>
-                      {workItemIdFromNotificationHref(n.href) ? (
+                      {workItemIdFromNotificationHref(n.href) || n.href?.startsWith("/facturacion") ? (
                         <button
                           type="button"
                           className="mt-1 mr-3 text-[11px] font-medium text-[var(--os-teal)] hover:underline"
                           onClick={() => void handleOpenWork(n)}
                           data-testid="bell-open-work"
                         >
-                          Abrir trabajo
+                          {n.href?.startsWith("/facturacion") ? "Abrir en facturación" : "Abrir trabajo"}
                         </button>
                       ) : null}
                       {tab === "activas" ? (

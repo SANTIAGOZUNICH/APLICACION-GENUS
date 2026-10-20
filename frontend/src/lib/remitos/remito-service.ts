@@ -651,6 +651,8 @@ export class RemitoService {
 
     const { linkRemitoNumberToDeliveries } = await import("./delivery-remito-sync");
     await linkRemitoNumberToDeliveries(withMeta);
+    const { emitBillingForRemito } = await import("@/lib/notifications/billing-notifications");
+    await emitBillingForRemito("GENERADO", withMeta, actor.email);
     return this.attachVersions(withMeta);
   }
 
@@ -966,6 +968,8 @@ export class RemitoService {
     await this.persistRemito(remito);
     const { unlinkRemitoNumberFromDeliveries } = await import("./delivery-remito-sync");
     await unlinkRemitoNumberFromDeliveries(remito);
+    const { emitBillingForRemito } = await import("@/lib/notifications/billing-notifications");
+    await emitBillingForRemito("ANULADO", remito, actor.email, reason);
     const { recordLifecycleEvent, normalizeOptionalReason } = await import("@/lib/lifecycle");
     recordLifecycleEvent({
       entityKind: "remito",
