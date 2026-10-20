@@ -33,7 +33,7 @@ export function packingBreakdown(groups: PackingGroupLike[] | null | undefined):
 }
 
 const fmt = (n: number) => new Intl.NumberFormat("es-AR").format(n);
-export const unitsAndCajasText = (b: PackingBreakdown) => `${fmt(b.totalUnits)} unidad${b.totalUnits === 1 ? "" : "es"} · ${fmt(b.totalCajas)} caja${b.totalCajas === 1 ? "" : "s"}`;
+export const unitsAndCajasText = (b: PackingBreakdown) => `${fmt(b.totalUnits)} unidad${b.totalUnits === 1 ? "" : "es"} — ${fmt(b.totalCajas)} caja${b.totalCajas === 1 ? "" : "s"}`;
 export const itemText = (i: PackingBreakdown["items"][number]) => `${fmt(i.cajas)} caja${i.cajas === 1 ? "" : "s"} × ${fmt(i.unidadesPorCaja)} unidad${i.unidadesPorCaja === 1 ? "" : "es"} = ${fmt(i.units)} unidades`;
 
 export type DeliveryLineLike = { id: string; deliveryId: string; sequence: number; status: string; quantity: number; packingGroups?: PackingGroupLike[] | null };

@@ -322,17 +322,8 @@ try {
   await mp.waitForTimeout(1200);
   // El relleno numérico de «Kg lote» (confirmación conjunta, mouse y dedo) se prueba en mp-stock-fill-validate.mjs.
   // Copia de texto y protección del código al rellenar: se prueban con datos controlados en mp-stock-fill-validate.mjs.
-  // «Stock código» (saldo del código): antes daba «Error al guardar»; ahora guarda y audita.
-  await savedStatus(mp, GS);
-  await mp.waitForTimeout(800);
-  const nSc = (await q("select count(*)::int n from mp_stock_movements where reason like '%Edición directa%'"))[0].n;
-  await typeInCell(mp, GS, 13, "Stock código", "77");
-  const scOk = await waitDb(async () => (await q("select codigo from mp_stock_balances where codigo like 'XL-%' and stock_actual = 77")).length === 1);
-  await savedStatus(mp, GS);
-  check("editar «Stock código» de 0/vacío a un valor guarda sin «Error al guardar» ni ventanas", scOk && (await noDialog(mp)) && (await status(mp, GS)) !== "error", JSON.stringify({ st: await status(mp, GS), notice: await mp.locator(`[data-testid=${GS}-notice]`).innerText().catch(() => "") }));
-  await savedStatus(mp, GS);
-  check("y registra el movimiento en el libro mayor con motivo automático y usuario", await waitDb(async () => (await q("select count(*)::int n from mp_stock_movements where reason like '%Edición directa%' and kind = 'AJUSTE' and actor_email is not null"))[0].n > nSc));
-
+  // «Stock código» ya no es una columna de la planilla (el libro mayor se conserva internamente).
+  check("«Stock código» no aparece como columna del Stock MP", !(await mp.locator(`[data-testid=${GS}]`).innerText().catch(() => "")).match(/stock c[óo]digo/i));
 
   // ================= 5) TABLET: relleno con el dedo =================
   const tab = await openAs(E2E_USERS.materiaPrima, "tablet");

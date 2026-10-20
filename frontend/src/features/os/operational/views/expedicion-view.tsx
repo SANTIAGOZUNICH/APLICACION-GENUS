@@ -12,6 +12,7 @@ import { useOperationalStore } from "../store/operational-store-context";
 import type { WorkProgressRecord } from "../store/operational-store";
 import type { QualityItem } from "../types";
 import type { WorkItem } from "@/types/operational/work-item";
+import { PackingSummary } from "@/features/os/operational/components/packing-summary";
 import { packingGroupsFromLegacy, summarizePackingGroups } from "@/lib/remitos/packing-math";
 import { qualityItemProgressKey, resolveWorkItemForQualityItem } from "../lib/resolve-quality-work-item";
 import { WorkItemWarningBadge } from "../components/work-item-warning-badge";
@@ -262,17 +263,7 @@ export function ExpedicionCard({
 
       <div>
         <p className="mb-1 text-xs uppercase text-[var(--os-text-muted)]">Detalle de cajas</p>
-        {summary.groups.length === 0 ? (
-          <p className="text-xs text-[var(--os-text-muted)]">Sin cajas informadas.</p>
-        ) : (
-          <ul className="space-y-0.5 text-sm" data-testid="expedicion-cajas">
-            {summary.groups.map((g, i) => (
-              <li key={`${g.cajas}-${g.unidadesPorCaja}-${i}`}>
-                {g.cajas} cajas × {g.unidadesPorCaja} un.
-              </li>
-            ))}
-          </ul>
-        )}
+        <PackingSummary groups={summary.groups} detail testId="expedicion-cajas" />
       </div>
 
       <div className="flex items-center justify-between gap-2 border-t border-[var(--os-border)] pt-2">

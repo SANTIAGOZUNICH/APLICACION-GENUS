@@ -136,7 +136,6 @@ const STOCK_HEADER_SHORT: Record<string, string> = {
   CLIENTE: "Cliente",
   "DESCRIPCIÓN MATERIA PRIMA": "Descripción",
   "CANTIDAD (KG)": "Kg lote",
-  "STOCK CÓDIGO (LIBRO MAYOR)": "Stock código",
   UBICACIÓN: "Ubicación",
   LOTE: "Lote",
   VENCIMIENTO: "Vencimiento",
@@ -153,7 +152,7 @@ const STOCK_ALWAYS = new Set([
   "ESTADO STOCK",
 ]);
 /** Esenciales desde ~1024px (1366/1440). */
-const STOCK_FROM_LG = new Set(["PRODUCTO", "CANTIDAD (KG)", "STOCK CÓDIGO (LIBRO MAYOR)", "LOTE", "VENCIMIENTO"]);
+const STOCK_FROM_LG = new Set(["PRODUCTO", "CANTIDAD (KG)", "LOTE", "VENCIMIENTO"]);
 /** Secundarias solo desde 2xl (~1536+ / 1920). */
 const STOCK_FROM_2XL = new Set([
   "PROVEEDOR",
@@ -227,7 +226,6 @@ const MP_STOCK_CELL_FIELDS: Record<string, string> = {
   UBICACIÓN: "ubicacion",
   LOTE: "lote",
   VENCIMIENTO: "vencimiento",
-  "STOCK CÓDIGO (LIBRO MAYOR)": "stockLibroMayor",
   "ESTADO STOCK": "estadoStock",
   "DÍAS AL VENCE": "diasAlVence",
   "ESTADO VENCIMIENTO": "estadoVencimiento",
@@ -733,8 +731,9 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     await reload();
   }
 
-  // Columnas de la planilla original + «Stock código» (libro mayor, calculada) a la derecha de los kg del lote.
-  const stockColumnLabels: string[] = MP_STOCK_COLUMNS.flatMap((l) => (l === "CANTIDAD (KG)" ? [l, "STOCK CÓDIGO (LIBRO MAYOR)"] : [l]));
+  // Columnas de la planilla original. «Stock código» (libro mayor) ya no se muestra: el libro mayor se sigue
+  // calculando internamente (Control semanal, relaciones por lote, stock físico) pero no es una columna de la planilla.
+  const stockColumnLabels: string[] = [...MP_STOCK_COLUMNS];
   const stockColumns: OperationalTableColumn<MpStockRow>[] = stockColumnLabels.map((label) => {
     const map: Record<string, keyof MpStockRow> = {
       CÓDIGO: "codigo",
@@ -755,27 +754,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     const short = STOCK_HEADER_SHORT[label] ?? label;
     const collapse = stockCollapse(label);
     const mono = label === "CÓDIGO" || label === "LOTE";
-
-    if (label === "STOCK CÓDIGO (LIBRO MAYOR)") {
-      // Stock real del código (ingresos − consumos de OE ± ajustes). Negativo: visible en rojo, nunca se oculta.
-      return {
-        key: label,
-        header: short,
-        headerTitle: "Stock real del código según el libro mayor (descuenta los consumos de las OE). Se edita en la celda: registra un ajuste por la diferencia, con motivo.",
-        hideOnMobile: collapse === false ? false : collapse,
-        className: "w-[7rem]",
-        text: (r: MpStockRow) => (r.stockLibroMayor == null ? "" : r.stockLibroMayor.toLocaleString("es-AR")),
-        render: (r: MpStockRow) => {
-          const v = r.stockLibroMayor;
-          if (v == null) return <span className="text-[var(--os-text-muted)]">—</span>;
-          return (
-            <span data-testid={`mp-stock-libro-${r.id}`} className={v < 0 ? "font-semibold text-red-700" : undefined}>
-              {v.toLocaleString("es-AR")}
-            </span>
-          );
-        },
-      } as OperationalTableColumn<MpStockRow>;
-    }
 
     if (label === "CÓDIGO") {
       return {
