@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { trySaveWeeklyControl } from "@/lib/mp-control/saved-weekly-control";
+import { trySaveControlNeeds } from "@/lib/mp-control/saved-weekly-control";
 import { MpControlCellError, getMpControlService } from "@/lib/mp-control/mp-control-service";
 import type { MpWeeklyControlLine, MpWeeklyControlStatus } from "@/lib/mp-control/types";
 import { resolveOrdersActor } from "@/lib/orders/actor";
@@ -47,18 +47,21 @@ export async function PATCH(request: Request, ctx: Ctx) {
     const mpActor = { email: actor.email, sector: actor.sector };
     if (body.lifecycleAction === "annul") {
       const control = await svc.annul(mpActor, id, body.reason ?? "");
-      return NextResponse.json({ control });
+      const weekly = await trySaveControlNeeds({ email: actor.email, sector: actor.sector }, id, body.week);
+      return NextResponse.json({ control, ...weekly });
     }
     if (body.lifecycleAction === "archive") {
       const control = await svc.archive(mpActor, id);
-      return NextResponse.json({ control });
+      const weekly = await trySaveControlNeeds({ email: actor.email, sector: actor.sector }, id, body.week);
+      return NextResponse.json({ control, ...weekly });
     }
     if (body.lifecycleAction === "restore") {
       const control = await svc.restore(mpActor, id);
-      return NextResponse.json({ control });
+      const weekly = await trySaveControlNeeds({ email: actor.email, sector: actor.sector }, id, body.week);
+      return NextResponse.json({ control, ...weekly });
     }
     const control = await svc.update(mpActor, id, body);
-    const weekly = await trySaveWeeklyControl({ email: actor.email }, body.week);
+    const weekly = await trySaveControlNeeds({ email: actor.email, sector: actor.sector }, id, body.week);
     return NextResponse.json({ control, ...weekly });
   } catch (err) {
     if (err instanceof MpControlCellError) {

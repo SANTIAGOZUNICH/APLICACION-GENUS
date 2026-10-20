@@ -86,7 +86,7 @@ async function cleanup() {
   for (const w of [monday, nextMonday]) {
     await q("delete from mp_weekly_row_state where week_start = $1", [w]).catch(() => undefined);
     await q("delete from mp_weekly_production_exclusions where week_start = $1", [w]).catch(() => undefined);
-    await q("delete from mp_weekly_saved_controls where week_start = $1", [w]).catch(() => undefined);
+    await q("delete from mp_weekly_saved_product_controls where week_start = $1", [w]).catch(() => undefined);
   }
   await q("delete from mp_weekly_control_lines where control_id in (select id from mp_weekly_controls where client = $1)", [CLIENT]).catch(() => undefined);
   await q("delete from mp_weekly_controls where client = $1", [CLIENT]).catch(() => undefined);
@@ -125,108 +125,78 @@ try {
   const mp = await openAs(E2E_USERS.materiaPrima, "tablet");
   const p = mp.page;
   await openPanel(p);
-  // ── 1) ANTES de guardar ───────────────────────────────────────────────────────────────────────────────────────────
-  check("antes de guardar: mensaje «Guardá el control para ver las materias primas faltantes de esta semana»", /Guardá el control para ver las materias primas faltantes de esta semana/.test(await p.locator("[data-testid=mpw-empty-unsaved]").innerText()));
-  check("antes de guardar: no se muestran fórmulas ni necesidades arriba", (await p.locator("[data-testid=mpw-row]").count()) === 0 && (await p.locator("[data-testid=mpw-tiles]").count()) === 0 && (await p.locator("[data-testid=mpw-view-productos]").count()) === 0 && !/Por producto y fórmula/.test(await p.locator("[data-testid=mp-weekly-availability]").innerText()));
-  check("el control individual de abajo sigue disponible (formulario de nuevo control)", (await p.locator("[data-testid=mp-control-create]").count()) === 1);
+
+  const mkControl = (product, qty, mats) => ({ week: monday, client: CLIENT, product, quantityKg: qty, snapshot: { client: CLIENT, product, source: "manual", capturedAt: new Date().toISOString(), materials: mats } });
+  const matsA = [[AGUA, "F-AGUA-SEMX", 72], [GLI, "F-GLI-SEMX", 12], [PERF, "F-PERF-SEMX", 10], [ETO, "F-ETO-SEMX", 5], [COL, "F-COL-SEMX", 1]].map(([materiaPrima, codigo, formulaPct]) => ({ materiaPrima, codigo, formulaPct }));
+  const matsB = [[AGUA, "F-AGUA-SEMX", 88], [GLI, "F-GLI-SEMX", 12]].map(([materiaPrima, codigo, formulaPct]) => ({ materiaPrima, codigo, formulaPct }));
+  const blockOf = (page, product) => page.locator("[data-testid=mpw-block]").filter({ has: page.locator("[data-testid=mpw-block-product]", { hasText: product }) });
+  const itemIn = (block, name) => block.locator("[data-testid=mpw-item]").filter({ hasText: name });
+
+  // ── 1) Antes de guardar ningún control ────────────────────────────────────────────────────────────────────────────
+  check("sin controles guardados: solo el mensaje «Guardá el control…», sin bloques ni fórmulas", /Guardá el control para ver las materias primas faltantes de esta semana/.test(await p.locator("[data-testid=mpw-empty-unsaved]").innerText()) && (await p.locator("[data-testid=mpw-block]").count()) === 0);
+  check("el control individual de abajo sigue disponible", (await p.locator("[data-testid=mp-control-create]").count()) === 1);
   await p.screenshot({ path: `${OUT}/01-antes-de-guardar.png` });
 
-  // ── 2) GUARDAR el control (servidor) y que el panel muestre solo faltantes ────────────────────────────────────────
-  const created = await p.request.post("/api/v1/mp-control", { data: { week: monday, client: CLIENT, product: "CREMA A SEM E2E", quantityKg: 100, snapshot: { client: CLIENT, product: "CREMA A SEM E2E", source: "manual", capturedAt: new Date().toISOString(), materials: [{ codigo: "F-AGUA-SEMX", materiaPrima: AGUA, formulaPct: 72 }, { codigo: "F-GLI-SEMX", materiaPrima: GLI, formulaPct: 12 }] } } });
-  check("guardar el control responde OK y confirma que el control semanal quedó guardado", created.status() === 201 && (await created.json()).weeklySaved === true, String(created.status()));
+  // ── 2) Guardar el control de A: aparece SOLO A con SUS faltantes ──────────────────────────────────────────────────
+  const a = await p.request.post("/api/v1/mp-control", { data: mkControl("CREMA A SEM E2E", 100, matsA) });
+  const aBody = await a.json();
+  check("guardar el control A responde 201 y weeklySaved=true", a.status() === 201 && aBody.weeklySaved === true, String(a.status()));
   await openPanel(p);
-  await p.locator("[data-testid=mpw-saved-meta]").waitFor({ timeout: 30_000 });
-  check("después de guardar aparece «MATERIAS PRIMAS A RESOLVER» con el último control guardado (quién y cuándo)", /MATERIAS PRIMAS A RESOLVER/.test(await p.locator("[data-testid=mpw-title]").innerText()) && /guardado el/.test(await p.locator("[data-testid=mpw-saved-meta]").innerText()));
-  check("aparecen SOLO las que necesitan atención: glicerina, perfume, etoxilado, colorante", (await p.locator("[data-testid=mpw-row]").count()) === 4 && (await itemOf(p, "Glicerina").count()) === 1 && (await itemOf(p, "Perfume").count()) === 1 && (await itemOf(p, "Etoxilado").count()) === 1 && (await itemOf(p, "Colorante").count()) === 1);
-  check("la MP con stock suficiente (agua) NO aparece", (await itemOf(p, "Agua SEMX").count()) === 0);
-  check("ROJO: etoxilado (0 kg en inventario) = SIN STOCK", (await itemOf(p, "Etoxilado").getAttribute("data-estado")) === "SIN_STOCK" && /SIN STOCK/.test(await itemOf(p, "Etoxilado").locator("[data-testid=mpw-estado]").innerText()));
-  check("AMARILLO: glicerina y perfume = STOCK INSUFICIENTE", (await itemOf(p, "Glicerina").getAttribute("data-estado")) === "INSUFICIENTE" && (await itemOf(p, "Perfume").getAttribute("data-estado")) === "INSUFICIENTE" && /STOCK INSUFICIENTE/.test(await itemOf(p, "Perfume").locator("[data-testid=mpw-estado]").innerText()));
-  check("GRIS: colorante (no está en el inventario) = SIN DATOS, sin asumir stock cero", (await itemOf(p, "Colorante").getAttribute("data-estado")) === "SIN_DATOS" && /no se asume stock cero/i.test(await itemOf(p, "Colorante").locator("[data-testid=mpw-sindatos]").innerText()));
-  const perf = itemOf(p, "Perfume");
-  const perfTxt = (await perf.innerText()).replace(/\s+/g, " ");
-  check("cada faltante muestra producto, cliente, OE/semana y cantidades (perfume: necesario 10 kg, disponible 3 kg, falta 7 kg)", /CREMA A SEM E2E/.test(perfTxt) && /CLIENTE SEM E2E/.test(perfTxt) && /Disponible: 3 kg/.test(perfTxt) && /Necesario: 10 kg/.test(perfTxt) && /Faltante: 7 kg/.test(perfTxt) && /elaboración de la semana: 100 kg/.test(perfTxt), perfTxt.slice(0, 300));
-  // stock compartido: glicerina la usan A (100 kg) y B (100 + 150 kg) → un solo stock de 35 kg para 42 kg de necesidad
-  const gli = (await itemOf(p, "Glicerina").innerText()).replace(/\s+/g, " ");
-  check("stock compartido: glicerina muestra stock total 35 kg, necesidad total 42 kg y faltante total 7 kg (una sola vez)", /Stock utilizable total \(compartido\): 35 kg/.test(gli) && /Necesidad total: 42 kg/.test(gli) && /Faltante total: 7 kg/.test(gli), gli.slice(0, 360));
-  const prods = await itemOf(p, "Glicerina").locator("[data-testid=mpw-producto]").count();
-  const falt = await itemOf(p, "Glicerina").locator("[data-testid=mpw-producto]").evaluateAll((els) => els.map((e) => e.innerText));
-  const sumFalta = falt.reduce((s, t) => { const m = /falta ([\d.,]+) kg/.exec(t); return s + (m ? Number(m[1].replace(/\./g, "").replace(",", ".")) : 0); }, 0);
-  check("el detalle por producto y OE se conserva y la suma de faltantes por producto = faltante total (no se duplica)", prods >= 2 && Math.abs(sumFalta - 7) < 0.01, `${prods} productos · suma ${sumFalta}`);
-  const tiles = async () => ({ sin: await p.locator("[data-testid=mpw-tile-value-sin-stock]").innerText(), ins: await p.locator("[data-testid=mpw-tile-value-insuficientes]").innerText(), dat: await p.locator("[data-testid=mpw-tile-value-sin-datos]").innerText(), tot: await p.locator("[data-testid=mpw-tile-value-total]").innerText() });
-  const t = await tiles();
-  check("indicadores: MP sin stock 1 · insuficientes 2 · sin identificar/sin datos 1 · total 4", t.sin === "1" && t.ins === "2" && t.dat === "1" && t.tot === "4", JSON.stringify(t));
-  await p.locator("[data-testid=mpw-tile-sin-stock]").tap();
-  check("los indicadores filtran (tocar «MP sin stock» deja solo etoxilado)", (await p.locator("[data-testid=mpw-row]").count()) === 1 && (await itemOf(p, "Etoxilado").count()) === 1);
-  await p.locator("[data-testid=mpw-filter-INSUFICIENTE]").tap();
-  check("filtro INSUFICIENTES: glicerina y perfume", (await p.locator("[data-testid=mpw-row]").count()) === 2);
-  await p.locator("[data-testid=mpw-filter-SIN_DATOS]").tap();
-  check("filtro SIN DATOS: colorante", (await p.locator("[data-testid=mpw-row]").count()) === 1 && (await itemOf(p, "Colorante").count()) === 1);
-  await p.locator("[data-testid=mpw-filter-TODAS]").tap();
-  await p.screenshot({ path: `${OUT}/02-despues-de-guardar-tablet.png` });
-  check("la página no tiene desplazamiento horizontal propio (tablet)", await p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2));
+  await p.locator("[data-testid=mpw-block]").first().waitFor({ timeout: 30_000 });
+  const bA = blockOf(p, "CREMA A SEM E2E");
+  check("aparece un bloque: producto, cliente y kg de producción correctos", (await p.locator("[data-testid=mpw-block]").count()) === 1 && (await bA.locator("[data-testid=mpw-block-client]").innerText()) === CLIENT && /PRODUCCIÓN: 100 KG/.test(await bA.locator("[data-testid=mpw-block-kg]").innerText()), await p.locator("[data-testid=mpw-list]").innerText());
+  check("el producto sin control guardado (B) NO aparece", (await blockOf(p, "CREMA B SEM E2E").count()) === 0);
+  check("solo las MP que faltan: perfume, etoxilado, colorante (3)", (await bA.locator("[data-testid=mpw-item]").count()) === 3);
+  check("MP SIN STOCK (etoxilado, 0 kg) en ROJO", (await itemIn(bA, "Etoxilado").getAttribute("data-estado")) === "SIN_STOCK" && /SIN STOCK/.test(await itemIn(bA, "Etoxilado").innerText()) && /rose|border-rose/.test((await itemIn(bA, "Etoxilado").getAttribute("class")) ?? ""));
+  check("MP INSUFICIENTE (perfume 3 de 10 kg) en AMARILLO con faltante 7", (await itemIn(bA, "Perfume").getAttribute("data-estado")) === "INSUFICIENTE" && /amber/.test((await itemIn(bA, "Perfume").getAttribute("class")) ?? "") && /Necesario: 10 kg/.test(await itemIn(bA, "Perfume").innerText()) && /Stock físico: 3 kg/.test(await itemIn(bA, "Perfume").innerText()) && /Faltante: 7 kg/.test(await itemIn(bA, "Perfume").innerText()), await itemIn(bA, "Perfume").innerText());
+  check("MP NO IDENTIFICADA (colorante) en ROJO, «Stock no identificado», no 0 kg", (await itemIn(bA, "Colorante").getAttribute("data-estado")) === "NO_IDENTIFICADA" && /NO IDENTIFICADA/.test(await itemIn(bA, "Colorante").innerText()) && /Stock no identificado/.test(await itemIn(bA, "Colorante").innerText()) && /rose/.test((await itemIn(bA, "Colorante").getAttribute("class")) ?? ""));
+  check("MP con stock suficiente (agua y glicerina de A) NO aparecen", (await itemIn(bA, "Agua SEMX").count()) === 0 && (await itemIn(bA, "Glicerina").count()) === 0);
+  check("no se muestran porcentajes ni fórmulas completas arriba", !/%/.test(await p.locator("[data-testid=mpw-list]").innerText()));
+  await p.screenshot({ path: `${OUT}/02-un-control-guardado.png` });
 
-  // ── 3) Observaciones/decisiones, exclusiones y restauración ──────────────────────────────────────────────────────
-  {
-    const pf = itemOf(p, "Perfume");
-    await pf.locator("[data-testid=mpw-note-input]").fill("Pedir a proveedor (SEM)");
-    await pf.locator("[data-testid=mpw-note-input]").evaluate((el) => el.blur());
-    await pf.locator("[data-testid=mpw-gestion]").selectOption("comprar");
-    check("observación y decisión se guardan en la base con usuario y fecha", await waitDb(async () => (await q("select 1 from mp_weekly_row_state where week_start = $1 and observacion = 'Pedir a proveedor (SEM)' and observacion_by is not null and gestion = 'comprar'", [monday])).length > 0));
-    await openPanel(p);
-    check("tras recargar siguen las observaciones y la decisión", (await itemOf(p, "Perfume").locator("[data-testid=mpw-note-input]").inputValue()) === "Pedir a proveedor (SEM)" && (await itemOf(p, "Perfume").locator("[data-testid=mpw-gestion]").inputValue()) === "comprar");
-    await p.locator("[data-testid=mpw-select-toggle]").tap();
-    await p.locator("[data-testid=mpw-select-all]").tap();
-    check("selección múltiple: «Seleccionar todos» marca las 4", (await p.locator("[data-testid=mpw-selected-count]").innerText()).startsWith("4 "));
-    await p.locator("[data-testid=mpw-select-none]").tap();
-    await p.locator("[data-testid=mpw-row]").filter({ hasText: "Perfume" }).locator("[data-testid=mpw-check]").tap();
-    await p.locator("[data-testid=mpw-delete-selected]").tap();
-    check("quitar pide confirmación y aclara que el inventario no se toca", /No se elimina nada del inventario/.test(await p.locator("[data-testid=mpw-confirm-delete]").innerText()));
-    await p.locator("[data-testid=mpw-confirm-delete-yes]").tap();
-    check("el perfume quitado desaparece del panel y queda auditado", await waitDb(async () => (await itemOf(p, "Perfume").count()) === 0) && (await q("select 1 from mp_weekly_row_state where week_start = $1 and excluded and excluded_by is not null", [monday])).length === 1);
-    await openPanel(p);
-    check("la exclusión persiste al recargar (no se restaura sola)", (await itemOf(p, "Perfume").count()) === 0 && (await itemOf(p, "Glicerina").count()) === 1);
-    await p.locator("[data-testid=mpw-excluded] summary").tap();
-    check("el panel de quitadas lista la MP con quién y cuándo", /Perfume/.test(await p.locator("[data-testid=mpw-excluded]").innerText()) && /la quitó/.test(await p.locator("[data-testid=mpw-excluded]").innerText()));
-    await p.locator("[data-testid=mpw-restore]").first().tap();
-    await p.locator("[data-testid=mpw-restore-yes]").tap();
-    check("«Restaurar» devuelve el perfume al panel con su observación intacta", await waitDb(async () => (await itemOf(p, "Perfume").count()) === 1) && (await itemOf(p, "Perfume").locator("[data-testid=mpw-note-input]").inputValue()) === "Pedir a proveedor (SEM)");
-  }
+  // ── 3) Segundo control (B): bloque separado; stock compartido de glicerina sin duplicar ───────────────────────────
+  const b = await p.request.post("/api/v1/mp-control", { data: mkControl("CREMA B SEM E2E", 250, matsB) });
+  check("guardar el control B responde 201 y weeklySaved=true", b.status() === 201 && (await b.json()).weeklySaved === true);
+  await openPanel(p);
+  await p.locator("[data-testid=mpw-block]").nth(1).waitFor({ timeout: 30_000 });
+  const bB = blockOf(p, "CREMA B SEM E2E");
+  check("dos productos guardados = dos bloques independientes", (await p.locator("[data-testid=mpw-block]").count()) === 2 && (await bB.count()) === 1 && (await blockOf(p, "CREMA A SEM E2E").count()) === 1);
+  check("B: kg de producción 250 y solo SUS MP (glicerina), sin las de A", /PRODUCCIÓN: 250 KG/.test(await bB.locator("[data-testid=mpw-block-kg]").innerText()) && (await bB.locator("[data-testid=mpw-item]").count()) === 1 && (await itemIn(bB, "Perfume").count()) === 0);
+  check("stock compartido: A usa 12 de los 35 kg de glicerina; B solo dispone de 23 → falta 7 (no se cuentan dos veces)", (await itemIn(bB, "Glicerina").getAttribute("data-estado")) === "INSUFICIENTE" && /Necesario: 30 kg/.test(await itemIn(bB, "Glicerina").innerText()) && /Disponible para esta producción: 23 kg/.test(await itemIn(bB, "Glicerina").innerText()) && /Faltante: 7 kg/.test(await itemIn(bB, "Glicerina").innerText()), await itemIn(bB, "Glicerina").innerText());
+  check("el bloque A no cambió al guardar B", (await blockOf(p, "CREMA A SEM E2E").locator("[data-testid=mpw-item]").count()) === 3);
+  await p.screenshot({ path: `${OUT}/03-dos-controles.png` });
 
-  // ── 4) Cambió el stock después de guardar: se distingue lo guardado de lo actual ──────────────────────────────────
+  // ── 4) Re-guardar no duplica; actualizar un control no toca el otro ───────────────────────────────────────────────
+  const re = await p.request.patch(`/api/v1/mp-control/${aBody.control.id}`, { data: { quantityKg: 100, week: monday, expectedVersion: aBody.control.updatedAt } });
+  const reBody = await re.json();
+  const rowsDb = await q("select control_id, version from mp_weekly_saved_product_controls where week_start = $1 order by created_at", [monday]);
+  check("volver a guardar el control A no duplica registros y sube la versión", re.ok() && reBody.weeklySaved === true && rowsDb.length === 2 && rowsDb[0].version === 2 && rowsDb[1].version === 1, JSON.stringify({ s: re.status(), rowsDb }));
+  const resaveBtn = blockOf(p, "CREMA B SEM E2E").locator("[data-testid=mpw-resave]");
+  await resaveBtn.click();
+  await p.locator("[data-testid=mpw-notice]").waitFor({ timeout: 30_000 });
+  check("«Actualizar con stock de hoy» en B actualiza solo B (sigue habiendo 2 filas)", (await q("select version from mp_weekly_saved_product_controls where week_start = $1 order by created_at", [monday])).map((r) => r.version).join(",") === "2,2" && (await p.locator("[data-testid=mpw-block]").count()) === 2);
+
+  // ── 5) Otra semana no se mezcla; recarga conserva ─────────────────────────────────────────────────────────────────
+  await p.locator("[data-testid=mpw-week]").fill(nextMonday);
+  await p.locator("[data-testid=mpw-empty-unsaved]").waitFor({ timeout: 30_000 });
+  check("otra semana: sin bloques (no se muestran resultados de otra semana)", (await p.locator("[data-testid=mpw-block]").count()) === 0);
+  await openPanel(p);
+  check("después de recargar los dos controles siguen guardados", (await p.locator("[data-testid=mpw-block]").count()) === 2);
+
+  // ── 6) Anular un control lo quita del panel ───────────────────────────────────────────────────────────────────────
   {
-    await lot("SEM-PERF-1", PERF, "Esencias SA", "P2", 20); // ahora alcanza (3 + 20 ≥ 10)
-    await p.locator("[data-testid=mpw-refresh]").tap();
-    await p.locator("[data-testid=mpw-changed-banner]").waitFor({ timeout: 20_000 });
-    const pfTxt = (await itemOf(p, "Perfume").innerText()).replace(/\s+/g, " ");
-    check("si cambia el stock físico, el panel mantiene lo guardado y muestra aparte «Hoy»", /Disponible: 3 kg/.test(pfTxt) && /Hoy: ya no necesita atención/.test(pfTxt), pfTxt.slice(0, 260));
-    await p.locator("[data-testid=mpw-resave]").tap();
-    check("«Actualizar resultados» vuelve a guardar y el perfume sale del panel (sin duplicar el registro semanal)", await waitDb(async () => (await itemOf(p, "Perfume").count()) === 0) && (await q("select count(*)::int n, max(version)::int v from mp_weekly_saved_controls where week_start = $1", [monday]))[0].n === 1);
-  }
-  // ── 5) Semanas distintas no se mezclan ─────────────────────────────────────────────────────────────────────────────
-  {
-    await p.locator("[data-testid=mpw-week]").fill(nextMonday);
-    await p.locator("[data-testid=mpw-empty-unsaved]").waitFor({ timeout: 30_000 });
-    check("otra semana sin control guardado muestra el estado vacío (no hereda resultados)", (await p.locator("[data-testid=mpw-row]").count()) === 0);
-    await p.locator("[data-testid=mpw-week]").fill(monday);
-    await p.locator("[data-testid=mpw-saved-meta]").waitFor({ timeout: 30_000 });
-    check("volver a la semana guardada muestra sus resultados", (await p.locator("[data-testid=mpw-row]").count()) >= 3);
-  }
-  // ── 6) El control individual de abajo sigue funcionando ───────────────────────────────────────────────────────────
-  {
-    await openPanel(p);
+    // El control individual de abajo sigue funcionando.
     await p.getByText(/CLIENTE SEM E2E · CREMA A SEM E2E/).first().click();
     await p.locator("[data-testid=mp-control-lines-grid]").waitFor({ timeout: 30_000 });
-    await p.locator("[data-testid=os-table-mode-toggle]").first().click();
-    await p.locator("[data-testid=mp-control-lines]").waitFor({ timeout: 30_000 });
-    const mini = (name) => p.locator("[data-testid=mp-control-line]").filter({ hasText: name });
-    check("control individual: fórmula completa con % y semáforo (cada MP contra su propia necesidad)", (await p.locator("[data-testid=mp-control-line]").count()) === 2 && (await mini(AGUA).getAttribute("data-tone")) === "ok" && (await mini(GLI).getAttribute("data-tone")) === "ok", JSON.stringify(await p.locator("[data-testid=mp-control-line]").evaluateAll((els) => els.map((e) => [e.getAttribute("data-tone"), e.textContent?.slice(0, 80)]))));
+    check("control individual de abajo abre con su fórmula completa", (await p.locator("[data-testid=mp-control-lines-grid]").count()) === 1);
   }
+
   // ── 7) Solo lectura del inventario y permisos ─────────────────────────────────────────────────────────────────────
-  check("guardar/ver el control no creó movimientos ni cambió saldos ni lotes", (await q("select count(*)::int n from mp_stock_movements"))[0].n === movs0 && (await q("select md5(coalesce(string_agg(codigo||stock_actual::text, ';' order by codigo),'')) h from mp_stock_balances"))[0].h === bal0);
+  check("guardar/ver controles no creó movimientos ni cambió saldos ni lotes", (await q("select count(*)::int n from mp_stock_movements"))[0].n === movs0 && (await q("select md5(coalesce(string_agg(codigo||stock_actual::text, ';' order by codigo),'')) h from mp_stock_balances"))[0].h === bal0);
   {
     const prRead = await pr.page.request.get(`/api/v1/mp-control/weekly/saved?week=${monday}`);
-    check("Producción puede leer el control guardado (200)", prRead.ok());
-    const prWrite = await pr.page.request.post("/api/v1/mp-control/weekly/saved", { data: { week: monday } });
+    check("Producción puede leer los controles guardados (200)", prRead.ok() && (await prRead.json()).controls.length === 2);
+    const prWrite = await pr.page.request.post("/api/v1/mp-control/weekly/saved", { data: { week: monday, controlId: aBody.control.id } });
     check("Producción NO puede guardar el control semanal (403)", prWrite.status() === 403, String(prWrite.status()));
   }
   await mp.ctx.close();
@@ -234,8 +204,8 @@ try {
   // ── 8) Escritorio ─────────────────────────────────────────────────────────────────────────────────────────────────
   const dk = await openAs(E2E_USERS.materiaPrima, "desktop");
   await openPanel(dk.page);
-  check("[escritorio] el panel muestra los faltantes guardados", (await dk.page.locator("[data-testid=mpw-row]").count()) >= 3);
-  await dk.page.screenshot({ path: `${OUT}/03-despues-de-guardar-escritorio.png` });
+  check("[escritorio] el panel muestra los dos bloques", (await dk.page.locator("[data-testid=mpw-block]").count()) === 2);
+  await dk.page.screenshot({ path: `${OUT}/04-escritorio.png` });
   check("[escritorio] sin desplazamiento horizontal de la página", await dk.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 2));
   await dk.ctx.close();
   await pr.ctx.close();

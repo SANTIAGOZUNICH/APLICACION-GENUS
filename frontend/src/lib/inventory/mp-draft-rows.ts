@@ -7,7 +7,7 @@ import { validateMpSheetValue } from "./mp-sheet-edit";
 
 export const MP_STOCK_DRAFT_CREATE_KEYS = ["CÓDIGO", "PROVEEDOR", "CLIENTE", "DESCRIPCIÓN MATERIA PRIMA", "CANTIDAD (KG)", "UBICACIÓN", "LOTE", "VENCIMIENTO"];
 export const MP_STOCK_DRAFT_REQUIRED_KEYS = ["DESCRIPCIÓN MATERIA PRIMA", "LOTE", "CANTIDAD (KG)"];
-export const MP_INGRESO_DRAFT_CREATE_KEYS = ["FECHA", "PROVEEDOR", "CLIENTE", "REMITO Nº", "CÓDIGO", "PRODUCTO", "DESCRIPCIÓN MATERIA PRIMA", "BULTOS", "CANTIDAD (kg/u)", "UBICACIÓN", "LOTE", "VENCIMIENTO"];
+export const MP_INGRESO_DRAFT_CREATE_KEYS = ["INGRESO Nº", "FECHA", "PROVEEDOR", "CLIENTE", "REMITO Nº", "CÓDIGO", "PRODUCTO", "DESCRIPCIÓN MATERIA PRIMA", "BULTOS", "CANTIDAD (kg/u)", "TOTAL", "UBICACIÓN", "LOTE", "VENCIMIENTO"];
 export const MP_INGRESO_DRAFT_REQUIRED_KEYS = ["FECHA", "DESCRIPCIÓN MATERIA PRIMA", "PROVEEDOR", "LOTE", "CANTIDAD (kg/u)"];
 
 export type DraftPayload = { ok: true; payload: Record<string, unknown> } | { ok: false; message: string };
@@ -64,10 +64,21 @@ export function ingresoPayloadFromDraft(id: string, v: Record<string, string>): 
   if (!bultos.ok) return bultos;
   const venc = check("Vencimiento", validateMpSheetValue("mp_ingresos", "vencimiento", text(v, "VENCIMIENTO")));
   if (!venc.ok) return venc;
+  // TOTAL escrito a mano en una fila nueva: es el dato de origen que manda → cantidad por bulto = total ÷ bultos.
+  const total = check("Total", validateMpSheetValue("mp_ingresos", "total", text(v, "TOTAL")));
+  if (!total.ok) return total;
+  let cantidadFinal = cantidad.value;
+  if (total.value != null) {
+    if (!(Number(total.value) > 0)) return { ok: false, message: "Total: tiene que ser mayor a 0." };
+    const b = Number(bultos.value);
+    cantidadFinal = b > 0 ? Math.round((Number(total.value) / b) * 1e6) / 1e6 : total.value;
+  }
+  const nro = text(v, "INGRESO Nº");
   return {
     ok: true,
     payload: {
       id,
+      ...(nro ? { ingresoNro: nro } : {}),
       fecha: fecha.value,
       proveedor: text(v, "PROVEEDOR"),
       cliente: text(v, "CLIENTE"),
@@ -76,7 +87,7 @@ export function ingresoPayloadFromDraft(id: string, v: Record<string, string>): 
       producto: text(v, "PRODUCTO"),
       descripcion: text(v, "DESCRIPCIÓN MATERIA PRIMA"),
       bultos: bultos.value,
-      cantidad: cantidad.value,
+      cantidad: cantidadFinal,
       ubicacion: text(v, "UBICACIÓN"),
       lote: text(v, "LOTE"),
       vencimiento: venc.value,

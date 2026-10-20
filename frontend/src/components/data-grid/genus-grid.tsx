@@ -51,7 +51,7 @@ import {
 } from "@/components/ui/dialog";
 import { friendlySaveError } from "@/lib/ui/friendly-error";
 import { diffGridRows, previewValue, type CellDiff, type GenusGridRow } from "./grid-changes";
-import { defaultFillMode, fillValues, type FillMode } from "./fill-series";
+import { defaultFillMode, fillValues, formatSheetNumber, parseSheetNumber, type FillMode } from "./fill-series";
 import { SheetHScrollbar, SheetVScrollbar, SHEET_BAR_SIZE } from "./sheet-scrollbars";
 import { useSheetGestures, type FillPlan, type SheetRange } from "./sheet-gestures";
 import { DRAFT_PREFIX, applyPastedToDrafts, isDraftRowId, mapPastedToDrafts, missingRequired, newDraft, parseClipboardMatrix, parseDrafts, serializeDrafts, topUpDrafts, type DraftRow } from "./draft-rows";
@@ -449,6 +449,8 @@ export function GenusGrid<T>({
   /** Última selección/celda no vacía: la barra táctil actúa sobre ella aunque tocar un botón desactive la celda. */
   const lastRangeRef = useRef<SheetRange | null>(null);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
+  // Menú «Rellenar» (barra de celdas): orden numérico o igual, con vista previa si pisa datos existentes.
+  const [fillMenu, setFillMenu] = useState<{ seriesReason: string | null; rangeReason: string | null; preview: { mode: "series" | "copy"; diffs: CellDiff[]; skipped: PreviewState["skipped"]; notes: string[]; overwrites: number; samples: string[] } | null } | null>(null);
   const [fillChip, setFillChip] = useState<{ plan: FillPlan; mode: FillMode; sourceIds: string[]; note: string } | null>(null);
   const [rowDeleteResult, setRowDeleteResult] = useState<{ message: string; undo?: () => Promise<void> } | null>(null);
   const [selectedRowCount, setSelectedRowCount] = useState(0);
@@ -1390,30 +1392,93 @@ export function GenusGrid<T>({
     }
     processDiffs(diffs, skipped);
   }, [columnKeys, columnByKey, currentRange, processDiffs]);
-  const touchFillDown = useCallback(() => {
-    const r = currentRange();
-    if (!r || r.max.row === r.min.row) return setNotice("Elegí un rango de 2 o más filas: la primera fila se copia hacia abajo.");
-    const rowsNow = gridRowsRef.current;
-    const first = rowsNow[r.min.row];
-    if (!first) return;
-    const diffs: CellDiff[] = [];
-    const skipped: PreviewState["skipped"] = [];
-    for (let ri = r.min.row + 1; ri <= r.max.row; ri += 1) {
-      const row = rowsNow[ri];
-      if (!row) continue;
-      for (let ci = r.min.col; ci <= r.max.col; ci += 1) {
-        const key = columnKeys[ci];
+  /** Celdas que escribiría «Rellenar»: la primera celda de cada columna (o fila, si el rango es de una fila) hacia las siguientes del rango. */
+  const planTouchFill = useCallback(
+    (mode: "series" | "copy") => {
+      const r = currentRange();
+      const rowsNow = gridRowsRef.current;
+      const vertical = !!r && r.max.row > r.min.row;
+      const horizontal = !!r && !vertical && r.max.col > r.min.col;
+      if (!r || (!vertical && !horizontal)) return null;
+      const diffs: CellDiff[] = [];
+      const skipped: PreviewState["skipped"] = [];
+      const samples: string[] = [];
+      let omitted = 0;
+      let overwrites = 0;
+      const put = (row: GenusGridRow | undefined, key: string | undefined, value: string) => {
         const col = key ? columnByKey.get(key) : undefined;
-        if (!key || !col) continue;
-        const value = String(first[key] ?? "");
-        if (String(row[key] ?? "").trim() === value.trim()) continue;
+        if (!row || !key || !col) return;
+        const current = String(row[key] ?? "");
+        if (current.trim() === value.trim()) return;
         const prot = row.__prot[key];
-        if (prot) skipped.push({ rowLabel: row.__id, columnTitle: col.title, reason: prot });
-        else if (!col.noFill) diffs.push({ rowId: row.__id, columnKey: key, oldValue: String(row[key] ?? ""), newValue: value });
+        if (prot) return void skipped.push({ rowLabel: row.__id, columnTitle: col.title, reason: prot });
+        if (col.noFill && !col.fillWithReason) return void (omitted += 1);
+        if (current.trim() !== "") overwrites += 1;
+        if (samples.length < 4) samples.push(`${col.title}: ${current.trim() || "(vacío)"} → ${value}`);
+        diffs.push({ rowId: row.__id, columnKey: key, oldValue: current, newValue: value });
+      };
+      const valueAt = (v0: string, i: number) => (mode === "series" ? formatSheetNumber((parseSheetNumber(v0) ?? 0) + i) : v0);
+      if (vertical) {
+        const first = rowsNow[r.min.row];
+        for (let ci = r.min.col; ci <= r.max.col; ci += 1) {
+          const key = columnKeys[ci];
+          if (!first || !key) continue;
+          const v0 = String(first[key] ?? "");
+          for (let ri = r.min.row + 1; ri <= r.max.row; ri += 1) put(rowsNow[ri], key, valueAt(v0, ri - r.min.row));
+        }
+      } else {
+        for (let ri = r.min.row; ri <= r.max.row; ri += 1) {
+          const row = rowsNow[ri];
+          const k0 = columnKeys[r.min.col];
+          if (!row || !k0) continue;
+          const v0 = String(row[k0] ?? "");
+          for (let ci = r.min.col + 1; ci <= r.max.col; ci += 1) put(row, columnKeys[ci], valueAt(v0, ci - r.min.col));
+        }
       }
+      const notes = [`Relleno ${mode === "series" ? "en orden numérico" : "igual"}: ${diffs.length} celda${diffs.length === 1 ? "" : "s"}`];
+      if (omitted > 0) notes.push(`${omitted} celda${omitted === 1 ? "" : "s"} omitida${omitted === 1 ? "" : "s"}: columna calculada o que mueve stock (se edita con su motivo)`);
+      return { mode, diffs, skipped, notes, overwrites, samples };
+    },
+    [columnKeys, columnByKey, currentRange]
+  );
+  const openFillMenu = useCallback(() => {
+    if (fillMenu) return setFillMenu(null);
+    const r = currentRange();
+    if (!r || (r.max.row === r.min.row && r.max.col === r.min.col)) {
+      return setNotice("Elegí la celda inicial y las celdas que querés completar (mantené y arrastrá, o Shift + flechas) y después «Rellenar».");
     }
-    processDiffs(diffs, skipped, [`Relleno hacia abajo: ${diffs.length} celda${diffs.length === 1 ? "" : "s"}`]);
-  }, [columnKeys, columnByKey, currentRange, processDiffs]);
+    // La serie numérica solo se ofrece si TODAS las celdas iniciales son números.
+    const vertical = r.max.row > r.min.row;
+    const rowsNow = gridRowsRef.current;
+    const starts: Array<{ title: string; value: string }> = [];
+    if (vertical) {
+      const first = rowsNow[r.min.row];
+      for (let ci = r.min.col; ci <= r.max.col; ci += 1) starts.push({ title: columnByKey.get(columnKeys[ci] ?? "")?.title ?? "", value: String(first?.[columnKeys[ci] ?? ""] ?? "") });
+    } else {
+      for (let ri = r.min.row; ri <= r.max.row; ri += 1) starts.push({ title: columnByKey.get(columnKeys[r.min.col] ?? "")?.title ?? "", value: String(rowsNow[ri]?.[columnKeys[r.min.col] ?? ""] ?? "") });
+    }
+    const bad = starts.find((x) => parseSheetNumber(x.value) === null);
+    setFillMenu({
+      seriesReason: bad ? (bad.value.trim() === "" ? `La celda inicial de «${bad.title}» está vacía: la secuencia numérica necesita un número inicial.` : `El valor inicial «${bad.value}» (${bad.title}) no es numérico: la secuencia numérica solo funciona con números.`) : null,
+      rangeReason: null,
+      preview: null,
+    });
+  }, [fillMenu, currentRange, columnByKey, columnKeys]);
+  const chooseFill = useCallback(
+    (mode: "series" | "copy") => {
+      const plan = planTouchFill(mode);
+      if (!plan) return setFillMenu(null);
+      if (plan.diffs.length === 0 && plan.skipped.length === 0) {
+        setFillMenu(null);
+        return setNotice("No hay nada para rellenar: las celdas ya tienen esos valores.");
+      }
+      // Si pisa datos existentes se muestra una vista previa antes de guardar; si solo completa celdas vacías, se guarda directo.
+      if (plan.overwrites > 0) return setFillMenu((m) => (m ? { ...m, preview: plan } : m));
+      setFillMenu(null);
+      processDiffs(plan.diffs, plan.skipped, plan.notes);
+    },
+    [planTouchFill, processDiffs]
+  );
 
   const computedHeight = height ?? Math.min(maxHeight, (gridRows.length + 1) * rowHeight + 24);
 
@@ -1580,7 +1645,7 @@ export function GenusGrid<T>({
             ["copy", "Copiar", Copy, touchCopy],
             ["paste", "Pegar", ClipboardPaste, touchPaste],
             ["clear", "Borrar", Eraser, touchClear],
-            ["filldown", "Rellenar ↓", Rows3, touchFillDown],
+            ["filldown", "Rellenar", Rows3, openFillMenu],
           ] as const).map(([id, label, Icon, fn]) => (
             <button
               key={id}
@@ -1594,6 +1659,36 @@ export function GenusGrid<T>({
             </button>
           ))}
           <span className="text-[11px] text-[var(--os-text-muted)]">Con el dedo: tocá una celda; mantené y arrastrá para elegir un rango.</span>
+        </div>
+      ) : null}
+
+      {sheet && canEdit && fillMenu ? (
+        <div className="space-y-2 rounded border border-[var(--os-border)] bg-[var(--os-surface)] p-3 text-xs" role="dialog" aria-label="Rellenar" data-testid={`${testId}-fill-menu`} onKeyDown={(e) => e.key === "Escape" && setFillMenu(null)}>
+          {fillMenu.preview ? (
+            <div data-testid={`${testId}-fill-menu-preview`}>
+              <p className="font-semibold">Vista previa — {fillMenu.preview.mode === "series" ? "Rellenar en orden numérico" : "Rellenar igual"}</p>
+              <p>Se van a modificar {fillMenu.preview.diffs.length} celda{fillMenu.preview.diffs.length === 1 ? "" : "s"} ({fillMenu.preview.overwrites} con datos existentes).</p>
+              <ul className="list-disc pl-5 text-[var(--os-text-muted)]">{fillMenu.preview.samples.map((x) => <li key={x}>{x}</li>)}</ul>
+              <div className="mt-2 flex gap-2">
+                <button type="button" className="min-h-11 rounded border border-[var(--os-teal)] bg-[var(--os-teal-soft)] px-3 font-semibold" onClick={() => { const pv = fillMenu.preview!; setFillMenu(null); processDiffs(pv.diffs, pv.skipped, pv.notes); }} data-testid={`${testId}-fill-menu-apply`}>Aplicar (se puede deshacer)</button>
+                <button type="button" className="min-h-11 rounded border border-[var(--os-border)] px-3" onClick={() => setFillMenu(null)} data-testid={`${testId}-fill-menu-cancel`}>Cancelar</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <p className="font-semibold">Rellenar las celdas seleccionadas a partir de la primera</p>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" disabled={fillMenu.seriesReason !== null} className="min-h-11 rounded border border-[var(--os-border)] px-3 font-medium disabled:cursor-not-allowed disabled:opacity-50" onClick={() => chooseFill("series")} data-testid={`${testId}-fill-menu-series`} title={fillMenu.seriesReason ?? undefined}>
+                  RELLENAR EN ORDEN NUMÉRICO <span className="block font-normal text-[var(--os-text-muted)]">1, 2, 3, 4…</span>
+                </button>
+                <button type="button" className="min-h-11 rounded border border-[var(--os-border)] px-3 font-medium" onClick={() => chooseFill("copy")} data-testid={`${testId}-fill-menu-copy`}>
+                  RELLENAR IGUAL <span className="block font-normal text-[var(--os-text-muted)]">1, 1, 1, 1…</span>
+                </button>
+                <button type="button" className="min-h-11 rounded border border-[var(--os-border)] px-3 text-[var(--os-text-muted)]" onClick={() => setFillMenu(null)} data-testid={`${testId}-fill-menu-close`}>Cerrar</button>
+              </div>
+              {fillMenu.seriesReason ? <p className="text-amber-300" data-testid={`${testId}-fill-menu-series-reason`}>Orden numérico no disponible: {fillMenu.seriesReason}</p> : null}
+            </>
+          )}
         </div>
       ) : null}
 
@@ -1613,7 +1708,7 @@ export function GenusGrid<T>({
                   : "border-[var(--os-border)] text-[var(--os-text-muted)] hover:bg-[var(--os-teal-soft)]/50"
               }`}
             >
-              {m === "series" ? "Rellenar serie" : "Copiar celdas"}
+              {m === "series" ? "Rellenar en orden numérico" : "Rellenar igual"}
             </button>
           ))}
         </div>

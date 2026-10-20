@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isFeatureSchemaReady } from "@/lib/db/feature-schema";
-import { trySaveWeeklyControl } from "@/lib/mp-control/saved-weekly-control";
+import { trySaveControlNeeds } from "@/lib/mp-control/saved-weekly-control";
 import { getMpControlService } from "@/lib/mp-control/mp-control-service";
 import type { MpFormulaSnapshot } from "@/lib/mp-control/types";
 import { resolveOrdersActor } from "@/lib/orders/actor";
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
         stockByCodigo: body.stockByCodigo,
       }
     );
-    const weekly = await trySaveWeeklyControl({ email: actor.email }, body.week);
+    const weekly = await trySaveControlNeeds({ email: actor.email, sector: actor.sector }, control.id, body.week);
     return NextResponse.json({ control, ...weekly }, { status: 201 });
   } catch (err) {
     return ordersErrorResponse(err);

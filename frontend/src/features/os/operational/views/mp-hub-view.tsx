@@ -186,8 +186,9 @@ const TAB_TO_RESOURCE = {
   "COA'S": "mp_stock",
 } as const;
 
-/** Planilla de Ingresos MP: columna → campo (INGRESO Nº y TOTAL no se editan). */
+/** Planilla de Ingresos MP: TODAS las columnas se editan (TOTAL corrige la cantidad por bulto; INGRESO Nº no se repite). */
 const MP_INGRESO_CELL_FIELDS: Record<string, string> = {
+  "INGRESO Nº": "ingresoNro",
   FECHA: "fecha",
   PROVEEDOR: "proveedor",
   CLIENTE: "cliente",
@@ -197,6 +198,7 @@ const MP_INGRESO_CELL_FIELDS: Record<string, string> = {
   "DESCRIPCIÓN MATERIA PRIMA": "descripcion",
   BULTOS: "bultos",
   "CANTIDAD (kg/u)": "cantidad",
+  TOTAL: "total",
   UBICACIÓN: "ubicacion",
   LOTE: "lote",
   VENCIMIENTO: "vencimiento",

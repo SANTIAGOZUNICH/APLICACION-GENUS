@@ -442,6 +442,13 @@
       "when": 1793500000000,
       "tag": "0065_mp_weekly_saved_controls",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1793600000000,
+      "tag": "0066_mp_weekly_saved_product_controls",
+      "breakpoints": true
     }
   ]
 }
