@@ -192,11 +192,7 @@ async function runSheet(key, kind) {
     const [title, field] = sh.text[i % sh.text.length];
     const row = rowLoc(page, sh, map, code);
     await row.waitFor({ timeout: 20_000 });
-    if (i === 0) await cellOf(row, map, title).click();
-    else {
-      const cur = await snap(page, sh, map);
-      if (cur.activeId !== code) await cellOf(row, map, title).click(); // Enter pasó de columna: se vuelve a la columna de trabajo
-    }
+    await cellOf(row, map, title).click(); // la columna de trabajo cambia en cada edición
     const before = await snap(page, sh, map);
     const yBefore = await rowY(page, sh, map, code);
     const typed = `Ed${i}-${START + i}`;
