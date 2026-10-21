@@ -288,13 +288,17 @@ try {
     return true;
   }));
   // lateral (copia horizontal): UNIDAD → PROVEEDOR
+  await (await cellLoc(mp, GC, 0, "Fecha")).click(); // colapsa la selección del relleno anterior (que incluía esta fila)
   await (await cellLoc(mp, GC, 8, "Unidad")).click();
   await dragFill(mp, GC, 8, "Proveedor");
-  check("relleno lateral: copia «kg» hacia la derecha", await waitDb(async () => (await compraBy(`${TAG} Compra 08`))?.proveedor === "kg"));
+  const latOk = await waitDb(async () => (await compraBy(`${TAG} Compra 08`))?.proveedor === "kg");
+  check("relleno lateral: copia «kg» hacia la derecha", latOk, latOk ? "" : JSON.stringify({ prov: (await compraBy(`${TAG} Compra 08`))?.proveedor, unidad: (await compraBy(`${TAG} Compra 08`))?.unidad, notice: await mp.locator(`[data-testid=${GC}-notice]`).innerText().catch(() => ""), chip: await mp.locator(`[data-testid=${GC}-fill-chip]`).innerText().catch(() => "") }));
+  if (!latOk) await mp.screenshot({ path: `${OUT}/debug-lateral.png` });
   // autoscroll: arrastrar hasta el borde inferior y esperar
   await typeInCell(mp, GC, 0, "Cantidad", "100");
   await waitDb(async () => Number((await compraBy(`${TAG} Compra 00`))?.cantidad) === 100);
   await (await cellLoc(mp, GC, 0, "Cantidad")).click();
+  await mp.waitForTimeout(400); // el controlador se reposiciona tras cambiar la selección (igual que en dragFill)
   {
     const h = await mp.locator(`[data-testid=${GC}-fill-handle]`).boundingBox();
     const sc = await mp.locator(`[data-testid=${GC}-frame] .dsg-container`).boundingBox();
@@ -338,6 +342,7 @@ try {
   await tp.keyboard.press("Enter");
   await waitDb(async () => Number((await compraBy(`${TAG} Compra 00`))?.cantidad) === 7);
   await (await cellLoc(tp, GC, 0, "Cantidad")).tap();
+  await tp.waitForTimeout(500); // la hoja se reajusta al alto de la ventana al cambiar los avisos de arriba
   const th = await tp.locator(`[data-testid=${GC}-fill-handle]`).boundingBox();
   check("tablet: el controlador de relleno es lo bastante grande para tocarlo con el dedo (≥ 44 px)", th.width >= 44 && th.height >= 44, JSON.stringify(th));
   await tp.screenshot({ path: `${OUT}/08-tablet-controlador.png` });

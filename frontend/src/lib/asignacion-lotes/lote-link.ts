@@ -15,7 +15,7 @@
  */
 import "server-only";
 
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { asignacionLotes, operationalEvents, operationalOrders, orderAuditEvents, workItems } from "@/lib/db/schema";
 import { resolveAsignacionLoteForWorkItem } from "./resolve-for-work-item";
@@ -149,6 +149,14 @@ export interface ReconcileLoteLinksResult {
   ambiguous: string[];
   pending: string[];
   skippedClosed: string[];
+  /** Informe para revisión humana: nada de esto se modifica automáticamente. */
+  report: {
+    examined: number;
+    alreadyLinked: number;
+    /** Vinculados cuyo lote del trabajo/OE-OA difiere del de Asignación (requieren sync o corrección auditada). */
+    linkedMismatch: Array<{ workItemId: string; asignacionLoteId: string; workLote: string | null; asignacionLote: string | null; blockedByClosed: boolean }>;
+    ambiguousDetail: Array<{ workItemId: string; client: string; product: string; reason: "VARIOS_LOTES" | "LOTE_PROPIO_DISTINTO"; candidates: Array<{ id: string; lote: string }> }>;
+  };
 }
 
 /**
@@ -161,7 +169,13 @@ export async function reconcileLoteLinks(opts: {
   actorSector?: string;
   dryRun?: boolean;
 }): Promise<ReconcileLoteLinksResult> {
-  const out: ReconcileLoteLinksResult = { linked: [], ambiguous: [], pending: [], skippedClosed: [] };
+  const out: ReconcileLoteLinksResult = {
+    linked: [],
+    ambiguous: [],
+    pending: [],
+    skippedClosed: [],
+    report: { examined: 0, alreadyLinked: 0, linkedMismatch: [], ambiguousDetail: [] },
+  };
   const db = getDb();
   const rows = await db.select().from(asignacionLotes).where(eq(asignacionLotes.archived, false));
   const candidates = rows.map((row: typeof asignacionLotes.$inferSelect) => ({
@@ -175,6 +189,35 @@ export async function reconcileLoteLinks(opts: {
     fecha: row.fecha,
     archived: row.archived,
   }));
+  const linkedRows = await db
+    .select({
+      id: workItems.id,
+      status: workItems.status,
+      asignacionLoteId: workItems.asignacionLoteId,
+      packagingLote: workItems.packagingLote,
+      orderId: workItems.orderId,
+    })
+    .from(workItems)
+    .where(and(isNotNull(workItems.asignacionLoteId), isNull(workItems.deletedAt)));
+  out.report.alreadyLinked = linkedRows.length;
+  const loteById = new Map(candidates.map((c) => [c.id, c.lote]));
+  for (const lw of linkedRows) {
+    const al = loteById.get(lw.asignacionLoteId as string) ?? null;
+    if (al == null || (lw.packagingLote ?? null) === al) continue;
+    let orderClosed = false;
+    if (lw.orderId) {
+      const [o] = await db.select({ status: operationalOrders.status }).from(operationalOrders).where(eq(operationalOrders.id, lw.orderId)).limit(1);
+      orderClosed = o ? !OPEN_ORDER_STATUSES.has(String(o.status)) : false;
+    }
+    out.report.linkedMismatch.push({
+      workItemId: lw.id,
+      asignacionLoteId: lw.asignacionLoteId as string,
+      workLote: lw.packagingLote ?? null,
+      asignacionLote: al,
+      blockedByClosed: CLOSED_WORK_STATUSES.has(String(lw.status)) || orderClosed,
+    });
+  }
+
   const unlinked = await db
     .select({
       id: workItems.id,
@@ -188,6 +231,7 @@ export async function reconcileLoteLinks(opts: {
     .from(workItems)
     .where(and(isNull(workItems.asignacionLoteId), isNull(workItems.deletedAt)));
 
+  out.report.examined = unlinked.length + linkedRows.length;
   for (const wi of unlinked) {
     if (CLOSED_WORK_STATUSES.has(String(wi.status))) {
       out.skippedClosed.push(wi.id);
@@ -196,6 +240,13 @@ export async function reconcileLoteLinks(opts: {
     const resolution = resolveAsignacionLoteForWorkItem(candidates, { cliente: wi.client, producto: wi.product });
     if (resolution.status === "ambiguous") {
       out.ambiguous.push(wi.id);
+      out.report.ambiguousDetail.push({
+        workItemId: wi.id,
+        client: wi.client,
+        product: wi.product,
+        reason: "VARIOS_LOTES",
+        candidates: resolution.candidates.map((c) => ({ id: c.id, lote: c.lote })),
+      });
       continue;
     }
     if (resolution.status === "none") {
@@ -206,6 +257,13 @@ export async function reconcileLoteLinks(opts: {
     // Si el trabajo ya tiene un lote propio distinto, no se vincula (no se adivina cuál manda).
     if (wi.packagingLote && wi.packagingLote.trim() !== c.lote.trim()) {
       out.ambiguous.push(wi.id);
+      out.report.ambiguousDetail.push({
+        workItemId: wi.id,
+        client: wi.client,
+        product: wi.product,
+        reason: "LOTE_PROPIO_DISTINTO",
+        candidates: [{ id: c.id, lote: c.lote }],
+      });
       continue;
     }
     out.linked.push({ workItemId: wi.id, asignacionLoteId: c.id });

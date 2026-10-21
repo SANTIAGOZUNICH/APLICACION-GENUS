@@ -208,6 +208,8 @@ describe.skipIf(Boolean(PROBLEM))(`Lotes: vínculo persistente en Postgres real$
     const { reconcileLoteLinks } = await import("@/lib/asignacion-lotes/lote-link");
     const dry = await reconcileLoteLinks({ actorEmail: prod.email, dryRun: true });
     expect(dry.linked.map((l) => l.workItemId)).toContain(unique);
+    expect(dry.report.examined).toBeGreaterThanOrEqual(4);
+    expect(dry.report.ambiguousDetail.find((a) => a.workItemId === amb)?.candidates).toHaveLength(2);
     expect((await wi(unique)).asignacion_lote_id).toBeNull(); // dry run no escribe
     const res = await reconcileLoteLinks({ actorEmail: prod.email, dryRun: false });
     expect(res.linked.map((l) => l.workItemId)).toContain(unique);

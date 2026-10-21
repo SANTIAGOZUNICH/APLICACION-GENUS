@@ -181,6 +181,9 @@ export interface GenusGridDraftRows {
   onCreate: (draftId: string, values: Record<string, string>) => Promise<{ ok: boolean; message?: string }>;
 }
 
+const MIN_SHEET_HEIGHT = 240;
+const SHEET_BOTTOM_RESERVE = 48;
+
 export interface GenusGridRowDelete {
   /** Motivo por el que NO se puede eliminar esa fila (null = se puede). */
   check: (rowId: string) => string | null;
@@ -1480,7 +1483,55 @@ export function GenusGrid<T>({
     [planTouchFill, processDiffs]
   );
 
-  const computedHeight = height ?? Math.min(maxHeight, (gridRows.length + 1) * rowHeight + 24);
+  const baseHeight = height ?? Math.min(maxHeight, (gridRows.length + 1) * rowHeight + 24);
+  // Hoja continua: la barra horizontal fija tiene que verse SIN bajar la página (escritorio y tablet). Lo que hay
+  // arriba de la grilla (barra de vista, avisos, filas en blanco) cambia, así que se mide el pie real y se achica el
+  // alto de la hoja lo que sobre; nunca por debajo de MIN_SHEET_HEIGHT ni por encima del alto calculado.
+  const footRef = useRef<HTMLDivElement>(null);
+  const [fitDelta, setFitDelta] = useState(0);
+  const pointerDownRef = useRef(false);
+  useEffect(() => {
+    const down = () => { pointerDownRef.current = true; };
+    const up = () => { pointerDownRef.current = false; };
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    return () => {
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+    };
+  }, []);
+  const fitSheet = useCallback(() => {
+    const foot = footRef.current;
+    // Nunca se mueve la hoja en medio de un gesto (arrastre de relleno, selección con el dedo).
+    if (!foot || pointerDownRef.current) return;
+    const bottomAtTop = foot.getBoundingClientRect().bottom + window.scrollY;
+    // Reserva: pie fijo de la aplicación (~34 px) + margen, para que la barra no quede tapada.
+    const overflow = bottomAtTop - window.innerHeight + SHEET_BOTTOM_RESERVE;
+    // Histéresis: solo se achica si la barra queda tapada (> 6 px) y solo se agranda si sobra mucho espacio (> 60 px).
+    if (overflow <= 6 && overflow >= -60) return;
+    setFitDelta((d) => Math.min(0, Math.max(MIN_SHEET_HEIGHT - baseHeight, d - Math.round(overflow))));
+  }, [baseHeight]);
+  // Al montar y al cambiar la ventana (con un segundo pase cuando termina de cargar el contenido de arriba).
+  useEffect(() => {
+    if (!sheet || height !== undefined) return;
+    const raf = window.requestAnimationFrame(fitSheet);
+    const t = window.setTimeout(fitSheet, 450);
+    window.addEventListener("resize", fitSheet);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.clearTimeout(t);
+      window.removeEventListener("resize", fitSheet);
+    };
+  }, [sheet, height, fitSheet]);
+  // Cuando aparece o desaparece una línea sobre la hoja (aviso, chip de relleno, selección), se reajusta en el acto.
+  useEffect(() => {
+    if (!sheet || height !== undefined) return;
+    const raf = window.requestAnimationFrame(fitSheet);
+    return () => window.cancelAnimationFrame(raf);
+  }, [sheet, height, fitSheet, notice, fillChip, selectedRowCount, rowDeleteResult]);
+  const computedHeight = sheet && height === undefined ? Math.max(MIN_SHEET_HEIGHT, baseHeight + fitDelta) : baseHeight;
 
   const syncSelection = (selection: SheetRange | null) => {
     const a = activeRef.current;
@@ -1822,7 +1873,7 @@ export function GenusGrid<T>({
               </div>
               <SheetVScrollbar scroller={scroller} testId={testId} />
             </div>
-            <div className="genus-sheet-foot" style={{ paddingRight: SHEET_BAR_SIZE }}>
+            <div className="genus-sheet-foot" ref={footRef} style={{ paddingRight: SHEET_BAR_SIZE }}>
               <SheetHScrollbar scroller={scroller} testId={testId} />
             </div>
           </>
