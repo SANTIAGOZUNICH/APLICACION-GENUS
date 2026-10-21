@@ -274,6 +274,11 @@ async function runSheet(key, kind) {
     const reasonBar = await page.locator(`[data-testid=${sh.gid}-reason-bar], [data-testid=${sh.gid}-inline-reason]`).count();
     const stored = (await dbRow(sh, code))?.[sh.qty.field];
     const y1 = await rowY(page, sh, map, code);
+    if (y1 !== y0) {
+      const now = await snap(page, sh, map);
+      console.log(`  ${tag} DIAGNÓSTICO cantidad: scroll ahora ${JSON.stringify(now)} (antes de editar la fila estaba en Y=${y0})`);
+      await page.screenshot({ path: `${OUT}/${key}-${kind}-cantidad-salto.png` });
+    }
     check(`${tag}: editar una cantidad se guarda directo (sin motivo, sin confirmación) y la fila no se mueve`, Number(stored) === sh.qty.expect && dialog === 0 && reasonBar === 0 && y1 === y0, `guardado=${JSON.stringify(stored)} diálogos=${dialog} barraMotivo=${reasonBar} Y ${y0}→${y1} estado=${await status(page, sh.gid)} aviso=${await page.locator(`[data-testid=${sh.gid}-notice]`).innerText().catch(() => "-")}`);
   }
   // ---- editar un lote ----
