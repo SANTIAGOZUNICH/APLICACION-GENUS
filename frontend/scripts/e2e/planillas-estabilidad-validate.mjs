@@ -272,7 +272,9 @@ async function runSheet(key, kind) {
     await page.waitForTimeout(900);
     const dialog = await page.locator("[role=dialog]").count();
     const reasonBar = await page.locator(`[data-testid=${sh.gid}-reason-bar], [data-testid=${sh.gid}-inline-reason]`).count();
-    check(`${tag}: editar una cantidad se guarda directo (sin motivo, sin confirmación) y la fila no se mueve`, Number((await dbRow(sh, code))?.[sh.qty.field]) === sh.qty.expect && dialog === 0 && reasonBar === 0 && (await rowY(page, sh, map, code)) === y0);
+    const stored = (await dbRow(sh, code))?.[sh.qty.field];
+    const y1 = await rowY(page, sh, map, code);
+    check(`${tag}: editar una cantidad se guarda directo (sin motivo, sin confirmación) y la fila no se mueve`, Number(stored) === sh.qty.expect && dialog === 0 && reasonBar === 0 && y1 === y0, `guardado=${JSON.stringify(stored)} diálogos=${dialog} barraMotivo=${reasonBar} Y ${y0}→${y1} estado=${await status(page, sh.gid)} aviso=${await page.locator(`[data-testid=${sh.gid}-notice]`).innerText().catch(() => "-")}`);
   }
   // ---- editar un lote ----
   if (sh.lot) {
@@ -290,6 +292,7 @@ async function runSheet(key, kind) {
   const orderAfter = await apiOrder(page, RESOURCE[key]);
   check(`${tag}: tras tantas ediciones el orden de la hoja (servidor) es EXACTAMENTE el mismo`, JSON.stringify(orderBefore) === JSON.stringify(orderAfter), `${orderBefore.length} filas antes, ${orderAfter.length} después`);
   await page.reload();
+  await nav(page, sh.nav).catch(() => undefined); // la recarga vuelve a la pestaña inicial: se vuelve a la planilla
   await page.locator(`[data-testid=${sh.gid}]`).waitFor({ timeout: 120_000 });
   await page.waitForFunction((gid) => (document.querySelector(`[data-testid=${gid}] .dsg-container`)?.scrollHeight ?? 0) > 5000, sh.gid, { timeout: 180_000 });
   await page.waitForTimeout(1200);
