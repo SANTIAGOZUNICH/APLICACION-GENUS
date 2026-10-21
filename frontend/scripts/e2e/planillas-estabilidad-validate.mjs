@@ -122,36 +122,43 @@ const headerMap = (page, gid) => page.evaluate((gid) => {
   return out;
 }, gid);
 
-/** Estado observable: scroll X/Y, y para la celda activa la identidad de su fila (valor de la columna identidad). */
-async function snap(page, sh, map) {
-  return page.evaluate(({ gid, idc }) => {
+/**
+ * La identidad de una fila se lee de su NÚMERO de fila (gutter «#»), que siempre está renderizado: la columna
+ * identidad puede quedar fuera de pantalla (virtualización horizontal) cuando se trabaja en columnas de la derecha.
+ * En las hojas sembradas, la fila n es la n-ésima: el orden es estable mientras el número coincide con el código.
+ */
+const numOf = (code) => Number(String(code).slice(-5));
+/** Estado observable: scroll X/Y y la fila de la celda activa (por su número de fila). */
+async function snap(page, sh) {
+  return page.evaluate(({ gid }) => {
     const root = document.querySelector(`[data-testid=${gid}]`);
     const sc = root.querySelector(".dsg-container");
     const rows = [...root.querySelectorAll(".dsg-row")].slice(1);
-    const idOf = (row) => (row?.querySelector(`.genus-col-${idc} input`)?.value ?? "").trim();
+    const numberOf = (row) => Number((row?.querySelector(".dsg-cell-gutter")?.textContent ?? "").trim());
     const act = root.querySelector(".dsg-active-cell");
-    let activeId = null;
+    let activeNum = null;
     if (act) {
       const r = act.getBoundingClientRect();
       const y = r.top + r.height / 2;
       const hit = rows.find((row) => { const b = row.getBoundingClientRect(); return y >= b.top && y <= b.bottom; });
-      activeId = hit ? idOf(hit) : null;
+      activeNum = hit ? numberOf(hit) : null;
     }
-    return { top: Math.round(sc.scrollTop), left: Math.round(sc.scrollLeft), hasActive: Boolean(act), activeId };
-  }, { gid: sh.gid, idc: map[sh.idCol] });
+    return { top: Math.round(sc.scrollTop), left: Math.round(sc.scrollLeft), hasActive: Boolean(act), activeNum };
+  }, { gid: sh.gid });
 }
-/** Posición absoluta (px desde el inicio de la hoja) de la fila con ese identificador: cambia solo si la fila se movió. */
-async function rowY(page, sh, map, code) {
-  return page.evaluate(({ gid, idc, code }) => {
+/** Posición absoluta (px desde el inicio de la hoja) de la fila n: cambia solo si la fila se movió. */
+async function rowY(page, sh, _map, code) {
+  const n = numOf(code);
+  return page.evaluate(({ gid, n }) => {
     const root = document.querySelector(`[data-testid=${gid}]`);
     const sc = root.querySelector(".dsg-container");
     for (const row of [...root.querySelectorAll(".dsg-row")].slice(1)) {
-      if ((row.querySelector(`.genus-col-${idc} input`)?.value ?? "").trim() === code) return Math.round(row.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop);
+      if (Number((row.querySelector(".dsg-cell-gutter")?.textContent ?? "").trim()) === n) return Math.round(row.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop);
     }
     return null;
-  }, { gid: sh.gid, idc: map[sh.idCol], code });
+  }, { gid: sh.gid, n });
 }
-const rowLoc = (page, sh, map, code) => page.locator(`[data-testid=${sh.gid}] .dsg-row`).filter({ has: page.locator(`.genus-col-${map[sh.idCol]} input[value="${code}"]`) }).first();
+const rowLoc = (page, sh, _map, code) => page.locator(`[data-testid=${sh.gid}] .dsg-row`).filter({ has: page.locator(".dsg-cell-gutter", { hasText: new RegExp(`^${numOf(code)}$`) }) }).first();
 const cellOf = (row, map, title) => row.locator(`.genus-col-${map[title]}`).first();
 async function wheelTo(page, sh, y) {
   const b = await page.locator(`[data-testid=${sh.gid}] .dsg-container`).boundingBox();
@@ -193,23 +200,23 @@ async function runSheet(key, kind) {
     const row = rowLoc(page, sh, map, code);
     await row.waitFor({ timeout: 20_000 });
     await cellOf(row, map, title).click(); // la columna de trabajo cambia en cada edición
-    const before = await snap(page, sh, map);
+    const before = await snap(page, sh);
     const yBefore = await rowY(page, sh, map, code);
     const typed = `Ed${i}-${START + i}`;
     await page.keyboard.type(typed);
     await page.keyboard.press("Enter");
     await settled(page, sh.gid);
     await page.waitForTimeout(900);
-    const after = await snap(page, sh, map);
+    const after = await snap(page, sh);
     const yAfter = await rowY(page, sh, map, code);
     const drift = Math.abs(after.top - before.top);
     maxDrift = Math.max(maxDrift, drift);
     if (!after.hasActive) lost++;
-    if (after.activeId !== sh.code(START + i + 1)) wrongNext++;
+    if (after.activeNum !== START + i + 1) wrongNext++;
     if (yBefore !== yAfter) movedRows++;
     const saved = await dbRow(sh, code);
     if (String(saved?.[field] ?? "") !== typed) notSaved++;
-    console.log(`  ${tag} #${i + 1} ${code}: scrollTop ${before.top}→${after.top}, left ${before.left}→${after.left}, fila Y ${yBefore}→${yAfter}, activa=${after.activeId}`);
+    console.log(`  ${tag} #${i + 1} ${code}: scrollTop ${before.top}→${after.top}, left ${before.left}→${after.left}, fila Y ${yBefore}→${yAfter}, activa=#${after.activeNum}`);
   }
   check(`${tag}: 10 ediciones en la fila ${START}: el scroll nunca salta (desvío máx. ${maxDrift}px, fila = ${Math.round(rowH)}px)`, maxDrift <= rowH * 2.5);
   check(`${tag}: la celda activa se conserva tras cada guardado (y sigue en la fila siguiente, como Excel)`, lost === 0 && wrongNext === 0, `sin celda activa ${lost}, fila activa distinta de la esperada ${wrongNext}`);
@@ -275,7 +282,7 @@ async function runSheet(key, kind) {
     const stored = (await dbRow(sh, code))?.[sh.qty.field];
     const y1 = await rowY(page, sh, map, code);
     if (y1 !== y0) {
-      const now = await snap(page, sh, map);
+      const now = await snap(page, sh);
       console.log(`  ${tag} DIAGNÓSTICO cantidad: scroll ahora ${JSON.stringify(now)} (antes de editar la fila estaba en Y=${y0})`);
       await page.screenshot({ path: `${OUT}/${key}-${kind}-cantidad-salto.png` });
     }
