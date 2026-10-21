@@ -318,6 +318,8 @@ export async function syncFormulaIndex(opts: { trigger: "manual" | "cron" | "aut
 
   // El mismo archivo visible por dos accesos directos se indexa una vez (el primero).
   const seen = new Set<string>();
+  // Una lectura que no trae NINGÚN archivo es un error de Drive, no «se borró todo»: no se marca nada como quitado.
+  if (collected.length === 0) return fail("Drive no devolvió ningún archivo de fórmulas. No se modificó el índice; reintentá en unos minutos.");
   const unique = collected.filter((f) => (seen.has(f.fileId) ? false : (seen.add(f.fileId), true)));
   const clientNames = clientFolders.map((c) => c.name);
   const files = markDuplicates(
