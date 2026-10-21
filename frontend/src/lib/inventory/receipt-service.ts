@@ -44,6 +44,7 @@ import {
   mappingKey,
   autoMatchMaterial,
   normalizeMaterialCode,
+  parseNumber,
   preselectFromHistory,
   remitoKey,
   splitPackages,
@@ -577,6 +578,111 @@ export class ReceiptService {
         ? "Remito analizado. Revisá los datos antes de confirmar."
         : "Se leyó el encabezado pero no se detectaron materiales. Agregalos a mano.";
     return { receipt: await toReceipt(db, finalRow), applied: true, message, kind: "ok", analysis: await this.analyzeRow(db, finalRow, module) };
+  }
+
+  /**
+   * «Pasar al Excel»: sube lo leído de la foto a la tabla TAL CUAL, sin validar nada (campos vacíos, dudosos o mal leídos
+   * incluidos). Las filas quedan persistentes y editables. MP: cada fila entra como BORRADOR (no mueve stock ni libro
+   * mayor; se confirma en la tabla cuando esté completa). ME: el stock se calcula por código y cantidad, así que una fila
+   * sin código o sin cantidad no suma nada. Idempotente por `confirmKey`. Nunca se inventan códigos ni valores.
+   */
+  async toSheet(actor: InventoryActor, id: string, module: ReceiptModule, input: { confirmKey: string; header?: unknown; lines?: unknown }): Promise<{ receipt: Receipt; sheet: { count: number; module: ReceiptModule; stockMoved: false; ingresoIds: string[] } }> {
+    assertWrite(actor, module);
+    const key = String(input.confirmKey ?? "").trim();
+    if (key.length < 8 || key.length > 80) throw new InventoryValidationError("Falta la clave del envío a la planilla.");
+    const db = getDb();
+    const first = await requireRow(db, id, module);
+    if (first.status === "EN_PLANILLA" || first.status === "CONFIRMADO") {
+      if (first.status === "EN_PLANILLA" && first.confirmKey === key) {
+        return { receipt: await toReceipt(db, first), sheet: { count: (first.ingresoIds as string[]).length, module, stockMoved: false, ingresoIds: first.ingresoIds as string[] } };
+      }
+      throw new ReceiptError("Este remito ya fue pasado a la planilla. No se cargó de nuevo.", 409, "ALREADY_CONFIRMED");
+    }
+    if (first.status === "DESCARTADO") throw new ReceiptError("Este borrador fue descartado.", 409, "DISCARDED");
+    const draft = input.header !== undefined || input.lines !== undefined ? sanitizeDraft(input.header, input.lines, readDraft(first).extraction ?? null) : readDraft(first);
+    const h = draft.header;
+    const date = h.receivedDate || h.remitoDate || todayIso();
+    const catalog = await loadCatalog(db, module);
+    const used = draft.lines.filter((l) => [l.supplierCode, l.description, l.materialCode, l.quantity, l.lote, l.vencimiento, l.packages, l.notes].some((v) => String(v ?? "").trim() !== ""));
+    // Sin ninguna línea con datos: igual sube UNA fila con lo que haya del encabezado (proveedor, remito, fecha).
+    const lines = used.length ? used : [emptyLine("l0")];
+    const rows = lines.map((l) => {
+      const code = l.materialCode && catalog.has(normalizeMaterialCode(l.materialCode)) ? normalizeMaterialCode(l.materialCode) : "";
+      const qty = parseNumber(l.quantity);
+      const quantity = qty !== null && qty >= 0 ? qty : null;
+      const pk = parseNumber(l.packages);
+      const parts = quantity !== null ? splitPackages(quantity, pk && pk > 0 ? pk : null) : { bultos: null as number | null, cantidad: null as number | null };
+      return { line: l, code, label: code ? catalog.get(code)!.description : "", quantity, parts };
+    });
+    const finish = async (tx: Db, created: Array<{ ingresoId: string; r: (typeof rows)[number]; i: number }>) => {
+      const updated = await tx
+        .update(inventoryReceipts)
+        .set({
+          status: "EN_PLANILLA", confirmKey: key, ingresoIds: created.map((c) => c.ingresoId), confirmedBy: actor.email, confirmedAt: new Date(), updatedAt: new Date(),
+          version: sql`${inventoryReceipts.version} + 1`, payload: draft, supplier: h.supplier, supplierKey: supplierKey(h.supplier), remitoNumber: h.remitoNumber, remitoKey: remitoKey(h.remitoNumber),
+          remitoDate: h.remitoDate, receivedDate: h.receivedDate, notes: h.notes,
+        })
+        .where(and(eq(inventoryReceipts.id, id), eq(inventoryReceipts.status, "BORRADOR")))
+        .returning({ id: inventoryReceipts.id });
+      if (!updated[0]) throw new ReceiptError("Este remito ya fue pasado a la planilla. No se cargó de nuevo.", 409, "ALREADY_CONFIRMED");
+      await tx.insert(inventoryReceiptLines).values(
+        created.map((c) => ({
+          receiptId: id, module, lineNo: c.i + 1, supplierCode: c.r.line.supplierCode, supplierCodeKey: codeKey(c.r.line.supplierCode), description: c.r.line.description,
+          materialCode: c.r.code, materialLabel: c.r.label, remitoQuantity: parseNumber(c.r.line.remitoQuantity), quantity: c.r.quantity ?? 0, unit: c.r.line.unit,
+          packages: parseNumber(c.r.line.packages), lote: c.r.line.lote, vencimiento: c.r.line.vencimiento, notes: c.r.line.notes, ingresoId: c.ingresoId,
+        }))
+      );
+      const a = auditRow(actor, module === "MP" ? "mp_ingresos" : "me_ingresos", id, "receipt_to_sheet", null, { receiptId: id, ingresos: created.map((c) => c.ingresoId), lines: created.length }, `Foto pasada al Excel sin validaciones (remito ${h.remitoNumber || "s/n"})`);
+      await tx.insert(invAudit).values({ id: a.id, payload: a, createdAt: new Date(a.createdAt) });
+    };
+    if (module === "MP") {
+      await runMpInventoryOp(actor, async ({ service, tx }) => {
+        const row = await requireRow(tx, id, module, true);
+        if (row.status !== "BORRADOR") throw new ReceiptError("Este remito ya fue pasado a la planilla. No se cargó de nuevo.", 409, "ALREADY_CONFIRMED");
+        const created: Array<{ ingresoId: string; r: (typeof rows)[number]; i: number }> = [];
+        for (const [i, r] of rows.entries()) {
+          const ingreso = await service.upsertMpIngreso(actor, {
+            id: randomUUID(), fecha: date, proveedor: h.supplier, remitoNro: h.remitoNumber, codigo: r.code, descripcion: r.line.description || r.label,
+            bultos: r.parts.bultos, cantidad: r.parts.cantidad, lote: r.line.lote, vencimiento: r.line.vencimiento, status: "BORRADOR", skipDuplicateCheck: true, keepBlankCodigo: true,
+            auditReason: `Foto pasada al Excel (recepción ${id})`,
+          });
+          created.push({ ingresoId: ingreso.id, r, i });
+        }
+        await finish(tx, created);
+        return id;
+      });
+    } else {
+      await getDb().transaction(async (tx) => {
+        const row = await requireRow(tx, id, module, true);
+        if (row.status !== "BORRADOR") throw new ReceiptError("Este remito ya fue pasado a la planilla. No se cargó de nuevo.", 409, "ALREADY_CONFIRMED");
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext('genus-me-ingreso-nro'))`);
+        const all = await tx.select({ payload: invMeIngresos.payload }).from(invMeIngresos);
+        let next = all.reduce((m, r) => Math.max(m, Number(/^ME-I-(\d+)$/.exec(String((r.payload as MeIngresoRow).ingresoNro ?? ""))?.[1] ?? 0)), 0);
+        const mats = await loadMeMaterialIds(tx);
+        const created: Array<{ ingresoId: string; r: (typeof rows)[number]; i: number }> = [];
+        const now = new Date().toISOString();
+        for (const [i, r] of rows.entries()) {
+          const ingresoId = randomUUID();
+          next += 1;
+          const mat = r.code ? mats.get(r.code) : undefined;
+          const bultos = r.quantity !== null ? (r.parts.bultos ?? 1) : null;
+          const ingreso: MeIngresoRow = {
+            id: ingresoId, fecha: date, ingresoNro: `ME-I-${String(next).padStart(5, "0")}`, proveedor: h.supplier, cliente: mat?.cliente ?? "", remitoNro: h.remitoNumber,
+            codigo: r.code, descripcionInsumo: r.line.description || r.label, bultos, cantidad: r.parts.cantidad, total: r.quantity, ubicacion: mat?.ubicacion ?? "",
+            materialId: mat?.id ?? null, anulado: false, anuladoAt: null, anuladoReason: null, createdBy: actor.email, updatedBy: actor.email, createdAt: now, updatedAt: now,
+          };
+          await tx.insert(invMeIngresos).values({ id: ingresoId, payload: ingreso, updatedAt: new Date(now) });
+          const a = auditRow(actor, "me_ingresos", ingresoId, "create", null, ingreso as unknown as Record<string, unknown>, `Foto pasada al Excel (recepción ${id})`);
+          await tx.insert(invAudit).values({ id: a.id, payload: a, createdAt: new Date(a.createdAt) });
+          created.push({ ingresoId, r, i });
+        }
+        await finish(tx, created);
+      });
+    }
+    const done = await requireRow(getDb(), id, module);
+    const receipt = await toReceipt(getDb(), done);
+    if (module === "ME") await refreshMeAlertsBestEffort(actor, receipt);
+    return { receipt, sheet: { count: (done.ingresoIds as string[]).length, module, stockMoved: false, ingresoIds: done.ingresoIds as string[] } };
   }
 
   // ── Revisión (sin escribir) ──

@@ -6,7 +6,8 @@ import type { SectorId } from "@/types/operational/sector";
 import { canReadInventory, canWriteInventory } from "@/lib/inventory/rbac";
 
 export type ReceiptModule = "MP" | "ME";
-export type ReceiptStatus = "BORRADOR" | "CONFIRMADO" | "DESCARTADO";
+/** EN_PLANILLA = pasado al Excel sin validaciones (filas editables; el stock físico se registra aparte). */
+export type ReceiptStatus = "BORRADOR" | "CONFIRMADO" | "DESCARTADO" | "EN_PLANILLA";
 
 export const RECEIPT_MAX_LINES = 60;
 export const RECEIPT_MAX_FILES = 20;

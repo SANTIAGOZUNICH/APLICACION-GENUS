@@ -7,7 +7,7 @@
  * La lectura automática (si está activada) solo COMPLETA el formulario como sugerencia.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Camera, CheckCircle2, FileText, ImagePlus, Loader2, ScanLine, Trash2, X } from "lucide-react";
+import { AlertTriangle, Camera, CheckCircle2, FileText, ImagePlus, Loader2, ScanLine, Table2, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { getCurrentAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
@@ -86,7 +86,7 @@ const resumeRef: { id: string | null } = { id: null };
 
 // ───────────────────────── Asistente ─────────────────────────
 
-type Step = "foto" | "revision" | "resumen" | "listo";
+type Step = "foto" | "revision" | "resumen" | "listo" | "planilla";
 type Thumb = { id: string; name: string; type: string; url: string | null };
 
 function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule; onClose: () => void; onConfirmed: () => void }) {
@@ -107,6 +107,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
   /** La última lectura automática falló: se muestra el motivo con «Reintentar lectura». */
   const [readFailed, setReadFailed] = useState<string | null>(null);
   const [showPhoto, setShowPhoto] = useState(false);
+  const [sheetResult, setSheetResult] = useState<{ count: number } | null>(null);
   const confirmKey = useRef(uid());
   const cameraRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
@@ -318,6 +319,25 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     }
   }
 
+  /** «Pasar al Excel»: sube lo leído tal cual (aunque falte casi todo o esté mal leído) a la tabla; se edita ahí. No mueve stock. */
+  async function toSheet() {
+    setBusy("Pasando al Excel…");
+    setError(null);
+    try {
+      const r = receiptRef.current ?? (await ensureDraft());
+      const cur = draftRef.current;
+      const res = await post<{ receipt: Receipt; sheet: { count: number } }>({ action: "to_sheet", module, id: r.id, confirmKey: confirmKey.current, header: cur.header, lines: cur.lines });
+      applyReceipt(res.receipt);
+      setSheetResult({ count: res.sheet.count });
+      setStep("planilla");
+      onConfirmed();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo pasar al Excel. Tu conexión pudo fallar: volvé a tocar «Pasar al Excel»; no se carga dos veces.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function confirm() {
     if (!receipt) return;
     setBusy("Confirmando ingreso…");
@@ -351,7 +371,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     return m;
   }, [analysis]);
 
-  const stepIdx = { foto: 0, revision: 1, resumen: 2, listo: 3 }[step];
+  const stepIdx = { foto: 0, revision: 1, resumen: 2, listo: 3, planilla: 3 }[step];
   const current = thumbs[viewIdx] ?? null;
 
   return (
@@ -359,7 +379,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
       <DialogContent className="max-h-[94dvh] w-[min(72rem,calc(100vw-16px))] max-w-none overflow-y-auto p-4 sm:p-6" data-testid="ingreso-remito-dialog">
         <DialogTitle>Nuevo ingreso con remito — {t.sector}</DialogTitle>
         <DialogDescription>
-          {step === "listo" ? "Ingreso registrado." : `Registrá ${module === "MP" ? "materias primas" : "materiales de envase"} a partir de la foto del remito. No se suma stock hasta que confirmes.`}
+          {step === "listo" ? "Ingreso registrado." : step === "planilla" ? "Pasado al Excel." : `Registrá ${module === "MP" ? "materias primas" : "materiales de envase"} a partir de la foto del remito. No se suma stock hasta que confirmes.`}
         </DialogDescription>
         <ol className="flex gap-2 text-xs" aria-label="Pasos">
           {["1 · Foto", "2 · Revisión", "3 · Confirmar"].map((s, i) => (
@@ -409,7 +429,12 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
                   <ScanLine className="mr-1 size-4" /> {readFailed ? "Reintentar lectura" : "Leer la foto automáticamente"}
                 </Button>
               ) : null}
-              <Button type="button" disabled={Boolean(busy)} onClick={() => void goReview()} data-testid="remito-cargar-manual">
+              {thumbs.length ? (
+                <Button type="button" disabled={Boolean(busy)} onClick={() => void toSheet()} data-testid="remito-pasar-excel-foto">
+                  <Table2 className="mr-1 size-4" /> Pasar al Excel
+                </Button>
+              ) : null}
+              <Button type="button" variant="secondary" disabled={Boolean(busy)} onClick={() => void goReview()} data-testid="remito-cargar-manual">
                 {thumbs.length ? "Cargar los datos a mano" : "Cargar manualmente (sin foto por ahora)"}
               </Button>
               {storageIssue ? <p className="w-full rounded-lg bg-amber-500/10 px-3 py-2 text-xs" role="alert" data-testid="remito-storage-issue">{storageIssue}</p> : null}
@@ -430,7 +455,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
             <div className="space-y-4">
               {draft.extraction?.ok ? (
                 <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm" data-testid="remito-lectura-ok">
-                  Datos leídos automáticamente del remito. Revisá todo, en especial lo marcado «Revisar», antes de confirmar.
+                  Datos leídos automáticamente del remito. Lo que no se pudo leer queda vacío. No hace falta corregir nada ahora: podés pasarlo al Excel y editarlo ahí.
                 </p>
               ) : null}
               {(readFailed || (draft.extraction && !draft.extraction.ok)) && thumbs.length ? (
@@ -465,7 +490,8 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
                 <Button type="button" variant="secondary" onClick={() => setStep("foto")}>Volver a la foto</Button>
                 <div className="flex gap-2">
                   {extraction?.available && thumbs.length ? <Button type="button" variant="secondary" onClick={retryRead} disabled={Boolean(busy)} data-testid="remito-releer">Reintentar lectura</Button> : null}
-                  <Button type="button" onClick={() => void goSummary()} disabled={Boolean(busy)} data-testid="remito-revisar">Revisar y confirmar</Button>
+                  <Button type="button" variant="secondary" onClick={() => void goSummary()} disabled={Boolean(busy)} data-testid="remito-revisar">Revisar y confirmar ingreso de stock</Button>
+                  <Button type="button" onClick={() => void toSheet()} disabled={Boolean(busy)} data-testid="remito-pasar-excel"><Table2 className="mr-1 size-4" /> Pasar al Excel</Button>
                 </div>
               </div>
             </div>
@@ -486,6 +512,23 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
             onBack={() => setStep("revision")}
             onConfirm={() => void confirm()}
           />
+        ) : null}
+
+        {step === "planilla" && receipt ? (
+          <section className="space-y-3" data-testid="paso-planilla">
+            <p className="flex items-center gap-2 text-base font-medium text-emerald-700 dark:text-emerald-300">
+              <CheckCircle2 className="size-5" /> Pasado al Excel: {sheetResult?.count ?? 1} fila{(sheetResult?.count ?? 1) === 1 ? "" : "s"} en {module === "MP" ? "Ingresos MP" : "Ingresos de Depósito"}.
+            </p>
+            <p className="text-sm">Lo que no se pudo leer quedó vacío. Editá, corregí y completá lo que necesites directamente en la tabla; se guarda solo.</p>
+            <p className="text-xs text-[var(--os-text-muted)]">
+              {module === "MP"
+                ? "Las filas entran como borrador: todavía no mueven stock ni el libro mayor. Cuando estén completas las confirmás en la tabla («Confirmar borradores»)."
+                : "El stock se calcula por código y cantidad: una fila sin código o sin cantidad no suma nada hasta que la completes."}
+            </p>
+            <div className="flex gap-2">
+              <Button type="button" onClick={onClose} data-testid="remito-ir-tabla">Ir a la tabla</Button>
+            </div>
+          </section>
         ) : null}
 
         {step === "listo" && receipt ? (
@@ -814,11 +857,11 @@ function RemitosHistorial({ module, canWrite, onClose, onResume }: { module: Rec
           <ul className="divide-y divide-[var(--os-border)]" data-testid="remitos-lista">
             {items.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                <button type="button" className="text-left" onClick={() => void (r.status === "CONFIRMADO" ? open(r.id) : canWrite ? onResume(r.id) : undefined)}>
+                <button type="button" className="text-left" onClick={() => void (r.status === "CONFIRMADO" ? open(r.id) : r.status === "EN_PLANILLA" ? undefined : canWrite ? onResume(r.id) : undefined)}>
                   <strong>{r.supplier || "(sin proveedor)"}</strong> · remito {r.remitoNumber || "—"} · {r.receivedDate || "—"}
                   <span className="block text-xs text-[var(--os-text-muted)]">{r.lineCount} material{r.lineCount === 1 ? "" : "es"} · {r.fileCount} archivo{r.fileCount === 1 ? "" : "s"} · {r.confirmedBy ?? r.createdBy}</span>
                 </button>
-                <span className={`rounded-full px-2 py-0.5 text-xs ${r.status === "CONFIRMADO" ? "bg-emerald-500/15 text-emerald-700" : "bg-amber-500/15 text-amber-700"}`}>{r.status === "CONFIRMADO" ? "Confirmado" : "Borrador"}</span>
+                <span className={`rounded-full px-2 py-0.5 text-xs ${r.status === "CONFIRMADO" ? "bg-emerald-500/15 text-emerald-700" : r.status === "EN_PLANILLA" ? "bg-sky-500/15 text-sky-700" : "bg-amber-500/15 text-amber-700"}`}>{r.status === "CONFIRMADO" ? "Confirmado" : r.status === "EN_PLANILLA" ? "En la planilla" : "Borrador"}</span>
               </li>
             ))}
           </ul>
