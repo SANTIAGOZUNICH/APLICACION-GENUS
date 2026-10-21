@@ -219,17 +219,8 @@ try {
     await waitDb(async () => /el lote «G9» no está en Stock MP para el código E2E-CR-GLI \(lotes: G[12], G[12]\)/.test(await p.locator("[data-testid=oe-consumo-pendientes]").innerText()), 10_000),
     await p.locator("[data-testid=oe-consumo-pendientes]").innerText().catch(() => "(sin panel)")
   );
-  // Entregar con un lote faltante: se informa la fila, no se descuenta nada.
   await lotes.nth(1).fill("A2");
   await lotes.nth(2).fill("G1");
-  await p.waitForTimeout(2500);
-  await p.getByRole("button", { name: /^ENTREGAR OE$/ }).first().click();
-  await p.locator("[data-testid=mp-consumo-issues]").waitFor({ timeout: 30_000 });
-  const issuesTxt = await p.locator("[data-testid=mp-consumo-issues]").innerText();
-  check("Entregar con un dato faltante: informa la fila (4, falta LOTE MP) y no entrega", /Fila 4 — AGUA E2E CR: falta LOTE MP/.test(issuesTxt) && !/COMPLETA/.test((await oe(idA)).status), issuesTxt);
-  check("…y no se descontó nada", (await allMovs()).length === movs0 && (await lotKg(AGUA, "A1")) === 150);
-  await p.screenshot({ path: `${OUT}/03-celular-falta-lote.png`, fullPage: true });
-  await p.keyboard.press("Escape");
   await lotes.nth(3).fill("A1");
   await p.waitForTimeout(2500);
 
@@ -293,11 +284,11 @@ try {
   const elC = await openAs(E2E_USERS.elaboracion);
   await openOe(elC.page, numC);
   await elC.page.getByRole("button", { name: /^ENTREGAR OE$/ }).first().click();
-  await elC.page.locator("[data-testid=mp-stock-shortages]").waitFor({ timeout: 30_000 });
-  const shortTxt = await elC.page.locator("[data-testid=mp-stock-shortages]").innerText();
-  check("Stock insuficiente: muestra el faltante (ESENCIA lote P1: hay 3, faltan 2)", /E2E-CR-POCO · lote P1 — hay 3 kg, se necesitan 5 kg \(faltan 2 kg\)/.test(shortTxt), shortTxt);
-  check("Elaboración no puede autorizar (sin botón)", (await elC.page.locator("[data-testid=mp-shortage-authorize]").count()) === 0);
-  check("Nada parcial: ni la MP con stock se descontó, la OE sigue sin entregar", (await lotKg(AGUA, "A1")) === 110.2 && (await lotKg(POCO, "P1")) === 3 && !/COMPLETA/.test((await oe(idC)).status));
+  await elC.page.locator("[data-testid=oe-mp-pendiente]").waitFor({ timeout: 30_000 });
+  check("Stock insuficiente: la OE se ENTREGA igual (COMPLETA) y el descuento queda pendiente", await waitDb(async () => (await oe(idC)).status === "COMPLETA"), (await oe(idC)).status);
+  check("Aviso informativo posterior (no «No se entregó»)", /OE entregada\. El descuento de materias primas quedó pendiente por datos incompletos/.test(await elC.page.locator("[data-testid=oe-deliver-notice]").innerText()) && !/No se entregó/.test(await elC.page.locator("body").innerText()));
+  check("Nada parcial: ni la MP con stock se descontó", (await lotKg(AGUA, "A1")) === 110.2 && (await lotKg(POCO, "P1")) === 3 && (await oeMovs(idC)).length === 0);
+  check("Auditoría: consumo pendiente registrado (sin movimientos)", (await q("select 1 from order_audit_events where order_id = $1 and event_type = 'OE_MP_CONSUMO_PENDIENTE'", [idC])).length === 1);
   await elC.page.screenshot({ path: `${OUT}/05-faltante-elaboracion.png` });
   await elC.ctx.close();
 
@@ -315,6 +306,29 @@ try {
   check("Autorizado: OE entregada y stock de ESENCIA en negativo (−2), AGUA descontada", await waitDb(async () => (await oe(idC)).status === "COMPLETA" && (await lotKg(POCO, "P1")) === -2 && (await ledgerKg(POCO)) === -2 && (await lotKg(AGUA, "A1")) === 105.2));
   const auditC = await q("select metadata, actor from order_audit_events where order_id = $1 and event_type = 'OE_MP_CONSUMO'", [idC]);
   check("Autorización auditada: quién y motivo", auditC.length === 1 && auditC[0].actor === E2E_USERS.produccion.email && auditC[0].metadata.stockNegativoAutorizado?.motivo === "Ingreso de esencia en camino (remito 123)");
+
+  // ===== Caso real: 14 MP sin código / código inexistente / sin KG REAL / sin fórmula =====
+  const rows14 = Array.from({ length: 14 }, (_, i) => ({ materiaPrima: `MP E2E ${i}`, codigo: "", codigoMp: i < 8 ? "" : i === 8 ? "NO-EXISTE-E2E" : AGUA, formulaPct: i < 12 ? 5 : null }));
+  const idE = await createOe(pr.page, "L-CR-E", 100, rows14);
+  const numE = (await oe(idE)).order_number;
+  const movsE0 = (await allMovs()).length;
+  const elE = await openAs(E2E_USERS.elaboracion);
+  await openOe(elE.page, numE);
+  let deliversE = 0;
+  elE.page.on("request", (r) => { if (r.url().includes(`/orders/${idE}/deliver`)) deliversE += 1; });
+  await elE.page.getByRole("button", { name: /^ENTREGAR OE$/ }).first().dblclick();
+  check("14 MP incompletas: la OE se ENTREGA (COMPLETA) con un clic", await waitDb(async () => (await oe(idE)).status === "COMPLETA"), (await oe(idE)).status);
+  check("…una sola solicitud aunque se pulse dos veces", deliversE === 1, String(deliversE));
+  await elE.page.locator("[data-testid=oe-mp-pendiente]").waitFor({ timeout: 30_000 });
+  check("…sin el mensaje «No se entregó» ni listado de 14 filas obligatorio", !/No se entregó/.test(await elE.page.locator("body").innerText()) && (await elE.page.locator("[data-testid=mp-consumo-issues]").count()) === 0);
+  check("…no se descontó stock ni se inventaron movimientos; consumo pendiente auditado", (await allMovs()).length === movsE0 && (await lotKg(AGUA, "A1")) === 110.2 && (await q("select 1 from order_audit_events where order_id = $1 and event_type = 'OE_MP_CONSUMO_PENDIENTE'", [idE])).length === 1);
+  await elE.page.screenshot({ path: `${OUT}/07-entrega-14-mp-incompletas.png`, fullPage: true });
+  await elE.page.reload();
+  await openOe(elE.page, numE);
+  check("Tras recargar, la entrega sigue registrada y el descuento pendiente visible", (await oe(idE)).status === "COMPLETA" && (await elE.page.locator("[data-testid=oe-mp-pendiente]").count()) === 1);
+  const againE = await elE.page.request.post(`/api/v1/orders/${idE}/deliver`, { data: { confirm: true } });
+  check("Nueva entrega: rechazada (400), sin duplicar", againE.status() === 400 && (await allMovs()).length === movsE0, String(againE.status()));
+  await elE.ctx.close();
 
   // ===== Anular devuelve lo descontado (una sola vez) =====
   const an = await pr.page.request.post(`/api/v1/orders/${idC}/annul`, { data: { reason: "Producción suspendida" } });

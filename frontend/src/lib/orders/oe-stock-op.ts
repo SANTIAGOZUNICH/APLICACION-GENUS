@@ -16,6 +16,7 @@ import { getMpStockLedger } from "@/lib/mp-stock/mp-stock-ledger";
 import {
   buildOeConsumptionPlan,
   lotShortages,
+  type ConsumptionIssue,
   normMpCode,
   normMpLote,
   type ConsumptionLine,
@@ -74,6 +75,12 @@ function legacyLotFor(catalog: MpCatalogLot[], codigo: string, lote: string): st
   return null;
 }
 
+/** Consumo que NO se pudo descontar al entregar (datos incompletos o stock insuficiente): la entrega igual se registra. */
+export type OeConsumptionPending = {
+  issues: ConsumptionIssue[];
+  shortages: LotShortage[];
+};
+
 export type OeConsumptionResult = {
   lines: ConsumptionLine[];
   applied: Array<{ codigo: string; lote: string; delta: number; lotId: string | null }>;
@@ -96,12 +103,23 @@ export async function consumeOeStock<O extends { version: number; status: string
     authorizeNegative?: { reason: string } | null;
     /** Producción/Dirección confirmando la entrega: solo vale si hay faltante de MP que autorizar. */
     onlyToAuthorizeShortage?: boolean;
-    commitOrder: () => Promise<O>;
+    /**
+     * Entrega de Elaboración: la falta de datos o de stock NUNCA bloquea. Se registra la entrega (`commitOrder`) y el
+     * descuento queda pendiente (sin movimientos parciales ni cantidades inventadas); se regulariza después, una sola vez.
+     */
+    soft?: boolean;
+    commitOrder: (pending?: OeConsumptionPending) => Promise<O>;
   }
-): Promise<{ order: O; result: OeConsumptionResult }> {
+): Promise<{ order: O; result: OeConsumptionResult | null; pending: OeConsumptionPending | null }> {
   const ledger = getMpStockLedger();
   const plan = buildOeConsumptionPlan(params.materials, ctx.catalog);
-  if (plan.issues.length) throw new MpConsumptionIncompleteError(plan.issues);
+  if (plan.issues.length) {
+    if (params.soft) {
+      const pending = { issues: plan.issues, shortages: [] };
+      return { order: await params.commitOrder(pending), result: null, pending };
+    }
+    throw new MpConsumptionIncompleteError(plan.issues);
+  }
 
   const lotIdOf = (d: { codigo: string; lote: string; lotId: string | null }) => d.lotId ?? legacyLotFor(ctx.catalog, d.codigo, d.lote);
 
@@ -127,6 +145,10 @@ export async function consumeOeStock<O extends { version: number; status: string
   }
   const canAuthorize = canAuthorizeNegativeMp(actor.sector);
   const negativeAuthorized = shortages.length > 0 && canAuthorize && Boolean(params.authorizeNegative?.reason?.trim());
+  if (shortages.length > 0 && !negativeAuthorized && params.soft) {
+    const pending = { issues: [], shortages };
+    return { order: await params.commitOrder(pending), result: null, pending };
+  }
   if (shortages.length > 0 && !negativeAuthorized) {
     const detail = shortages
       .map((s) =>
@@ -167,7 +189,7 @@ export async function consumeOeStock<O extends { version: number; status: string
       : `Consumo ${params.orderNumber} (kg reales)`,
     deltas: lotDeltas,
   });
-  return { order, result: { lines: plan.lines, applied, lots, shortages, negativeAuthorized } };
+  return { order, result: { lines: plan.lines, applied, lots, shortages, negativeAuthorized }, pending: null };
 }
 
 /** Devuelve TODO lo descontado por la OE (libro mayor + lotes). `commitOrder` cambia el estado en la misma transacción. */

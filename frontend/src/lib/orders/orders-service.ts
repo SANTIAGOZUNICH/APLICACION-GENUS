@@ -21,6 +21,7 @@ import {
 } from "@/lib/orders/rbac";
 import { applyElaboracionMaterialPatch, assertAjusteValid, didFormulaChange } from "@/lib/orders/oe-ajuste";
 import { consumptionMaterials, mergeSheets } from "@/lib/orders/oe-sheets";
+import { MP_CONSUMO_PENDIENTE } from "@/lib/orders/oe-mp-consumption";
 import type { OeContent } from "@/lib/orders/types";
 import { seedTemplateRecords } from "@/lib/orders/seed-templates";
 import {
@@ -1069,13 +1070,26 @@ export class OrdersService {
         )
       );
     }
-    const commitDelivery = async () => {
+    // Una entrega nueva (p. ej. tras «devolver para corrección») parte sin la marca de descuento pendiente de la anterior.
+    if (normalized.kind === "OE" && normalized.completion) {
+      const c = normalized.completion;
+      normalized = {
+        ...normalized,
+        completion: { ...c, pendingAtCompletion: c.pendingAtCompletion.filter((f) => f !== MP_CONSUMO_PENDIENTE), resolved: c.resolved.filter((r) => r.field !== MP_CONSUMO_PENDIENTE) },
+      };
+    }
+    const commitDelivery = async (mpPending?: unknown) => {
+      let formData = normalized;
+      if (mpPending && formData.kind === "OE") {
+        const rec = formData.completion ?? { pendingAtCompletion: [], confirmedBy: actor.email, confirmedAt: ts, resolved: [] };
+        formData = { ...formData, completion: { ...rec, pendingAtCompletion: [...rec.pendingAtCompletion, MP_CONSUMO_PENDIENTE] } };
+      }
       const u = await this.repo.updateOrderOptimistic(id, current.version, {
         status,
         completedAt: ts,
         completedBy: actor.email,
         updatedBy: actor.email,
-        formData: normalized,
+        formData,
         completionPercentage:
           missing.length > 0 ? computeCompletionPercentage(normalized) : 100,
       });
@@ -1099,8 +1113,27 @@ export class OrdersService {
           materials: consumptionMaterials(oeContent),
           authorizeNegative: opts?.allowNegativeMpStock ? { reason: opts.negativeMpStockReason ?? "" } : null,
           onlyToAuthorizeShortage: mpShortageAuthorizer,
+          // Elaboración entrega SIEMPRE: si faltan códigos/kg reales/stock, el descuento queda pendiente (no bloquea).
+          soft: !mpShortageAuthorizer,
           commitOrder: commitDelivery,
         });
+        if (!r.result) {
+          await this.repo.appendAudit({
+            orderId: id,
+            eventType: "OE_MP_CONSUMO_PENDIENTE",
+            actor: actor.email,
+            actorSector: actor.sector,
+            metadata: {
+              orderNumber: current.orderNumber,
+              oeVersion: r.order.version,
+              motivo: r.pending?.issues.length ? "datos incompletos" : "stock insuficiente",
+              issues: r.pending?.issues ?? [],
+              faltantes: r.pending?.shortages ?? [],
+              movimientos: 0,
+            },
+          });
+          return r;
+        }
         await this.repo.appendAudit({
           orderId: id,
           eventType: "OE_MP_CONSUMO",
@@ -1197,6 +1230,102 @@ export class OrdersService {
       orderId: id,
     });
     return updated;
+  }
+
+  /**
+   * Regulariza el descuento de MP de una OE YA ENTREGADA cuyo consumo quedó pendiente (faltaban códigos/kg/lote o
+   * alcanzaba el stock). Opcionalmente completa/corrige filas (CÓDIGO MP, LOTE, KG REAL) — solo mientras no se haya
+   * descontado nada — y procesa el descuento UNA sola vez (idempotente), con auditoría. No toca la entrega original.
+   * Si siguen faltando datos o stock, no cambia nada y devuelve lo que falta (`MpConsumptionIncompleteError` / `MpStockShortageError`).
+   */
+  async settleMpConsumption(
+    id: string,
+    actor: OrdersActor,
+    opts?: {
+      rows?: Array<{ rowId: string; codigoMp?: string; lote?: string; kgReal?: number | null }>;
+      allowNegativeMpStock?: boolean;
+      negativeMpStockReason?: string;
+    }
+  ) {
+    const current = await this.requireOrder(id);
+    assertOeNotDeleted(current);
+    if (current.type !== "OE" || current.formData.kind !== "OE") throw new OrdersValidationError("Solo las OE descuentan materias primas.");
+    const sectorOk = canOrderAction("OE", "edit", actor.sector) || canAuthorizeOeMpShortage(actor.sector);
+    if (!sectorOk) throw new OrdersForbiddenError("Tu sector no puede regularizar el descuento de materias primas.");
+    if (current.status !== "COMPLETA" && current.status !== "COMPLETA_CON_PENDIENTES") {
+      throw new OrdersValidationError("La OE todavía no fue entregada: el descuento se procesa al entregarla.");
+    }
+    const fd = current.formData;
+    const record = fd.completion;
+    const isPending = Boolean(record?.pendingAtCompletion.includes(MP_CONSUMO_PENDIENTE) && !record.resolved.some((r) => r.field === MP_CONSUMO_PENDIENTE));
+    if (!isPending) throw new OrdersValidationError("El descuento de materias primas de esta OE ya fue procesado.");
+
+    const ts = nowIso();
+    const patches = new Map((opts?.rows ?? []).map((r) => [r.rowId, r]));
+    const changes: Array<{ rowId: string; campo: string; antes: unknown; despues: unknown }> = [];
+    const patchRow = <T extends { id: string; codigoMp: string; lote: string; kgReal: number | null }>(m: T): T => {
+      const pr = patches.get(m.id);
+      if (!pr) return m;
+      const next = { ...m };
+      if (pr.codigoMp !== undefined && pr.codigoMp.trim() !== m.codigoMp) {
+        changes.push({ rowId: m.id, campo: "codigoMp", antes: m.codigoMp, despues: pr.codigoMp.trim() });
+        next.codigoMp = pr.codigoMp.trim();
+      }
+      if (pr.lote !== undefined && pr.lote.trim() !== m.lote) {
+        changes.push({ rowId: m.id, campo: "lote", antes: m.lote, despues: pr.lote.trim() });
+        next.lote = pr.lote.trim();
+      }
+      if (pr.kgReal !== undefined && pr.kgReal !== m.kgReal) {
+        if (pr.kgReal != null && !(Number.isFinite(pr.kgReal) && pr.kgReal >= 0)) throw new OrdersValidationError("KG REAL UTILIZADO no puede ser negativo.");
+        changes.push({ rowId: m.id, campo: "kgReal", antes: m.kgReal, despues: pr.kgReal });
+        next.kgReal = pr.kgReal;
+      }
+      return next;
+    };
+    let content: OeContent = fd;
+    if (patches.size > 0) {
+      content = { ...fd, materials: fd.materials.map(patchRow), sheets: fd.sheets?.map((sh) => ({ ...sh, materials: sh.materials.map(patchRow) })) };
+    }
+    const resolveMarker = (c: OeContent): OeContent => {
+      const rec = c.completion ?? { pendingAtCompletion: [], confirmedBy: actor.email, confirmedAt: ts, resolved: [] };
+      return normalizeOrderContent({ ...c, completion: { ...rec, resolved: [...rec.resolved, { field: MP_CONSUMO_PENDIENTE, by: actor.email, at: ts }] } }) as OeContent;
+    };
+    const { runOeStockOp, consumeOeStock } = await import("@/lib/orders/oe-stock-op");
+    const out = await runOeStockOp(actor, async (ctx) => {
+      const r = await consumeOeStock(ctx, actor, {
+        oeId: id,
+        orderNumber: current.orderNumber,
+        materials: consumptionMaterials(content),
+        authorizeNegative: opts?.allowNegativeMpStock ? { reason: opts.negativeMpStockReason ?? "" } : null,
+        // Los datos corregidos se guardan solo si el descuento se puede procesar (todo o nada).
+        commitOrder: async () => {
+          const u = await this.repo.updateOrderOptimistic(id, current.version, { updatedBy: actor.email, formData: resolveMarker(content) });
+          if (!u) {
+            const fresh = await this.repo.getOrder(id);
+            throw new OrdersConflictError("Conflicto al regularizar el descuento de MP.", fresh!);
+          }
+          return u;
+        },
+      });
+      await this.repo.appendAudit({
+        orderId: id,
+        eventType: "OE_MP_CONSUMO",
+        actor: actor.email,
+        actorSector: actor.sector,
+        metadata: {
+          orderNumber: current.orderNumber,
+          oeVersion: r.order.version,
+          regularizacion: true,
+          cambiosDeFilas: changes,
+          consumos: r.result!.lines.map((l) => ({ codigo: l.codigo, lote: l.lote, kgReal: l.kg, materiaPrima: l.materiaPrima })),
+          movimientos: r.result!.applied,
+          lotes: r.result!.lots,
+          stockNegativoAutorizado: r.result!.negativeAuthorized ? { motivo: opts?.negativeMpStockReason?.trim() ?? "", faltantes: r.result!.shortages } : null,
+        },
+      });
+      return r;
+    });
+    return out.order;
   }
 
   /**

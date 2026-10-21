@@ -536,6 +536,26 @@ export async function deliverOrderApi(
   return data.order;
 }
 
+/** Regulariza el descuento de MP pendiente de una OE ya entregada (opcionalmente completando filas). */
+export async function settleMpConsumptionApi(
+  session: OrdersClientSession,
+  id: string,
+  body?: {
+    rows?: Array<{ rowId: string; codigoMp?: string; lote?: string; kgReal?: number | null }>;
+    allowNegativeMpStock?: boolean;
+    negativeMpStockReason?: string;
+  }
+): Promise<OperationalOrderRecord> {
+  const res = await fetch(`/api/v1/orders/${id}/mp-consumption`, {
+    method: "POST",
+    credentials: "include",
+    headers: actorHeaders(session),
+    body: JSON.stringify(body ?? {}),
+  });
+  const data = await parseJson<{ order: OperationalOrderRecord }>(res);
+  return data.order;
+}
+
 export async function completePendingFieldsApi(
   session: OrdersClientSession,
   id: string,
