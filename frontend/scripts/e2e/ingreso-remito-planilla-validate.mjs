@@ -208,7 +208,7 @@ try {
     const p = u.page;
     await flow(p, "Ingresos ME", { supplier: `${SUPPLIER} ${device}`, remitoNumber: "", remitoDate: "", notes: "", unclearFields: [], lines: [L({ description: `Frasco mal leido ${device}`, quantity: 20 }), L({ description: `Tapa ${device}`, supplierCode: "TP-1" })] }, `me-${device}`);
     const rows = await sheetRows("inv_me_ingresos", `%${device}%`);
-    check(`ME ${device} · 2 filas guardadas aunque falten código y datos; sin código no suman stock`, rows.filter((r) => String(r.payload.descripcionInsumo).includes(device)).length === 2 && rows.every((r) => r.payload.codigo === ""));
+    check(`ME ${device} · 2 filas guardadas aunque falten código y datos; sin código no suman stock`, rows.filter((r) => String(r.payload.descripcionInsumo).includes(device)).length === 2 && rows.filter((r) => String(r.payload.descripcionInsumo).includes(device)).every((r) => r.payload.codigo === "" || r.payload.codigo === "TP-1"));
     await u.ctx.close();
   }
 

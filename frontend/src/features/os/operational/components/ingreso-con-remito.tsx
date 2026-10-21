@@ -500,17 +500,20 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
                   + Agregar material
                 </Button>
               </div>
-              {/* Barra fija abajo: PASAR A EXCEL siempre visible aunque se desplace el contenido; respeta el área segura de Android. */}
-              <div className="sticky bottom-0 z-10 -mx-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--os-border)] bg-[var(--os-surface)] px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:-mx-6 sm:px-6" data-testid="remito-barra-accion">
-                <div className="flex items-center gap-2">
-                  <Button type="button" variant="secondary" size="sm" onClick={() => setStep("foto")}>Volver</Button>
-                  {extraction?.available && thumbs.length ? <Button type="button" variant="secondary" size="sm" onClick={retryRead} disabled={Boolean(busy)} data-testid="remito-releer">Releer</Button> : null}
-                  <button type="button" className="text-xs underline disabled:opacity-50" onClick={() => void goSummary()} disabled={Boolean(busy)} data-testid="remito-revisar">Confirmar ingreso de stock (opcional)</button>
-                </div>
-                <Button type="button" className="min-h-12 min-w-44 flex-1 font-bold uppercase tracking-wide sm:flex-none" onClick={() => void toSheet()} disabled={Boolean(busy)} data-testid="remito-pasar-excel"><Table2 className="mr-1 size-4" /> PASAR A EXCEL</Button>
-              </div>
             </div>
           </section>
+        ) : null}
+
+        {/* Barra fija abajo (hija directa del diálogo que scrollea): PASAR A EXCEL siempre visible; respeta el área segura de Android. */}
+        {step === "revision" ? (
+          <div className="sticky bottom-0 z-10 -mx-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--os-border)] bg-[var(--os-surface)] px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:-mx-6 sm:px-6" data-testid="remito-barra-accion">
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="secondary" size="sm" onClick={() => setStep("foto")}>Volver</Button>
+              {extraction?.available && thumbs.length ? <Button type="button" variant="secondary" size="sm" onClick={retryRead} disabled={Boolean(busy)} data-testid="remito-releer">Releer</Button> : null}
+              <button type="button" className="text-xs underline disabled:opacity-50" onClick={() => void goSummary()} disabled={Boolean(busy)} data-testid="remito-revisar">Confirmar ingreso de stock (opcional)</button>
+            </div>
+            <Button type="button" className="min-h-12 min-w-44 flex-1 font-bold uppercase tracking-wide sm:flex-none" onClick={() => void toSheet()} disabled={Boolean(busy)} data-testid="remito-pasar-excel"><Table2 className="mr-1 size-4" /> PASAR A EXCEL</Button>
+          </div>
         ) : null}
 
         {step === "resumen" && analysis && receipt ? (
