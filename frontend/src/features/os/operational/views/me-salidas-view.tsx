@@ -43,6 +43,7 @@ import { useSortPreference } from "@/features/os/operational/lib/use-sort-prefer
 import { applySort, compareDates, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
 
 export const ME_SALIDA_SORT_OPTIONS: SortOption<MeSalidaRow>[] = [
+  { key: "orden_hoja", label: "Orden de la hoja (manual)", compare: () => 0 },
   { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.fecha, b.fecha, "desc") },
   { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.fecha, b.fecha, "asc") },
   { key: "codigo_asc", label: "Código A-Z", compare: (a, b) => compareStrings(a.codigo, b.codigo, "asc") },
@@ -180,7 +181,7 @@ export function MeSalidasView() {
     };
   }, [reload]);
 
-  const [sort, setSort] = useSortPreference("me-salidas", "fecha_desc", ME_SALIDA_SORT_KEYS);
+  const [sort, setSort] = useSortPreference("me-salidas-v2", "orden_hoja", ME_SALIDA_SORT_KEYS);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const base = rows.filter((r) => {

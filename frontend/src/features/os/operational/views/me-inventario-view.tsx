@@ -44,6 +44,7 @@ const ME_CELL_FIELDS: Record<string, string> = {
 };
 
 export const ME_INVENTARIO_SORT_OPTIONS: SortOption<MeInventarioViewRow>[] = [
+  { key: "orden_hoja", label: "Orden de la hoja (manual)", compare: () => 0 },
   { key: "codigo_asc", label: "Código A-Z", compare: (a, b) => compareStrings(a.codigo, b.codigo, "asc") },
   { key: "cliente_asc", label: "Cliente A-Z", compare: (a, b) => compareStrings(a.cliente, b.cliente, "asc") },
   { key: "insumo_asc", label: "Insumo A-Z", compare: (a, b) => compareStrings(a.insumo, b.insumo, "asc") },
@@ -90,7 +91,7 @@ export function MeInventarioView() {
     };
   }, [reload]);
 
-  const [sort, setSort] = useSortPreference("me-inventario", "codigo_asc", ME_INVENTARIO_SORT_KEYS);
+  const [sort, setSort] = useSortPreference("me-inventario-v2", "orden_hoja", ME_INVENTARIO_SORT_KEYS);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const base = !q

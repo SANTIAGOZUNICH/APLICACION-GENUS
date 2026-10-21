@@ -35,7 +35,10 @@ import { SortSelect } from "@/features/os/operational/components/sort-select";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import { applySort, compareDates, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
 
+/** Orden de la hoja (carga): la API trae las filas por `load_seq`; este comparador no reordena nada. Ordenar por una columna es voluntario. */
+export const ME_ORDEN_HOJA_KEY = "orden_hoja";
 export const ME_INGRESO_SORT_OPTIONS: SortOption<MeIngresoRow>[] = [
+  { key: ME_ORDEN_HOJA_KEY, label: "Orden de la hoja (manual)", compare: () => 0 },
   { key: "fecha_desc", label: "Más recientes", compare: (a, b) => compareDates(a.fecha, b.fecha, "desc") },
   { key: "fecha_asc", label: "Más antiguos", compare: (a, b) => compareDates(a.fecha, b.fecha, "asc") },
   { key: "codigo_asc", label: "Código A-Z", compare: (a, b) => compareStrings(a.codigo, b.codigo, "asc") },
@@ -168,7 +171,7 @@ export function MeIngresosView() {
     };
   }, []);
 
-  const [sort, setSort] = useSortPreference("me-ingresos", "fecha_desc", ME_INGRESO_SORT_KEYS);
+  const [sort, setSort] = useSortPreference("me-ingresos-v2", "orden_hoja", ME_INGRESO_SORT_KEYS);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const base = rows.filter((r) => {

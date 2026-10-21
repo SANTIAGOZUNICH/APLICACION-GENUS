@@ -650,7 +650,9 @@ export const osNotificationUserTombstones = pgTable(
 export const invMeIngresos = pgTable("inv_me_ingresos", {
   id: uuid("id").primaryKey(),
   payload: jsonb("payload").notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),  /** Orden manual de la hoja (0068): IDENTITY asignado al insertar; editar NO lo toca. */
+  loadSeq: bigint("load_seq", { mode: "number" }).generatedByDefaultAsIdentity(),
+  seqCriterio: text("seq_criterio").default("alta"),
 });
 
 /**
@@ -770,13 +772,17 @@ export const dashboardKpiTargets = pgTable("dashboard_kpi_targets", {
 export const invMeSalidas = pgTable("inv_me_salidas", {
   id: uuid("id").primaryKey(),
   payload: jsonb("payload").notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),  /** Orden manual de la hoja (0068): IDENTITY asignado al insertar; editar NO lo toca. */
+  loadSeq: bigint("load_seq", { mode: "number" }).generatedByDefaultAsIdentity(),
+  seqCriterio: text("seq_criterio").default("alta"),
 });
 
 export const invMeMaterials = pgTable("inv_me_materials", {
   id: uuid("id").primaryKey(),
   payload: jsonb("payload").notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),  /** Orden manual de la hoja (0068): IDENTITY asignado al insertar; editar NO lo toca. */
+  loadSeq: bigint("load_seq", { mode: "number" }).generatedByDefaultAsIdentity(),
+  seqCriterio: text("seq_criterio").default("alta"),
 });
 
 export const invMeAlerts = pgTable("inv_me_alerts", {
