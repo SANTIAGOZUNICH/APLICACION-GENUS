@@ -316,7 +316,9 @@ const PROMPT_BASE = `Sos un asistente de lectura de documentos de ingreso de un 
 Reglas estrictas:
 - "supplier" es quien EMITE el documento o fabrica el producto (el proveedor), no el destinatario (Laboratorio Genus).
 - UNA línea por producto o renglón de la tabla. No omitas renglones. NUNCA inventes ni completes datos que no se lean con claridad: dejá "" o null y agregá el nombre del campo en "unclearFields". Una foto borrosa o cortada es mejor devolverla con campos vacíos que adivinada.
-- "supplierCode" es el código que imprime el PROVEEDOR / la etiqueta; no lo conviertas en otro código.
+- "supplierCode" es el código del producto que imprime el PROVEEDOR / la etiqueta. Buscalo con atención: puede estar en una columna «Código», «Cód.», «Artículo», «Art.», «Referencia», «Ref.», «SKU» o «Item», o escrito junto a la descripción (p. ej. «FR-4521 Fragancia rosa»: código «FR-4521», descripción «Fragancia rosa»). Los códigos de fragancias suelen mezclar letras, números y guiones. NO lo confundas con el número de remito, el número de pedido/orden, el lote, una fecha, un precio ni una cantidad. Si no hay código legible, dejalo "" y agregá "supplierCode" a "unclearFields". Copialo tal cual, sin inventar ni «arreglar» caracteres.
+- Extraé TODO lo visible que corresponda a una columna de la tabla: proveedor, cliente (si figura), n.º de remito, fecha, código, nombre y descripción, lote, vencimiento, cantidad, bultos y cantidad por bulto, ubicación y observaciones. Lo que no figure, vacío.
+- Si el documento indica «N bultos de X» (o X por bulto) y NO imprime un total, "quantity" = N × X, "packages" = N y agregá "quantity" a "inferredFields"; si imprime el total, usá ese total. No uses otra cuenta.
 - "quantity" es la cantidad como número (sin unidades; usá punto decimal); "unit" la unidad escrita (kg, g, un, l, cajas...). "packages" son los bultos/cajas/tambores si figuran.
 - "lot" (lote) y "expiryDate" (vencimiento, formato ISO) solo si están impresos o escritos. Una fecha «MM/AAAA» o «AAAA-MM» sin día: dejala en "expiryDate" como último día de ese mes SOLO si se lee con claridad y agregá "expiryDate" a "inferredFields".
 - "inferredFields": campos que NO están escritos literalmente y que normalizaste o dedujiste (p. ej. unidad deducida, fecha completada, descripción ordenada). Lo copiado tal cual de la imagen NO va ahí.
@@ -326,7 +328,7 @@ Reglas estrictas:
 const MODULE_HINT: Record<"MP" | "ME", { intro: string; extraNotes: string }> = {
   MP: {
     intro: "Contexto: MATERIAS PRIMAS (químicos, aceites, activos, colorantes, fragancias). Prestá especial atención a código, nombre del producto, proveedor, lote, cantidad (kg/g/l) y fecha de vencimiento / re-análisis.",
-    extraNotes: "",
+    extraNotes: "; si figuran el CLIENTE o la UBICACIÓN, copialos en notes con el formato «Cliente: …» / «Ubicación: …»",
   },
   ME: {
     intro: "Contexto: DEPÓSITO — MATERIALES DE ENVASE (frascos, tapas, cajas, etiquetas, bolsas). Prestá especial atención a código, descripción, proveedor, cliente para el que se fabrica (si figura), lote (solo si corresponde), cantidad (unidades o cajas) y ubicación.",

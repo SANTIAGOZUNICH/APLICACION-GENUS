@@ -998,18 +998,22 @@ export class OrdersService {
         { createdBy: current.createdBy }
       );
     }
-    if (current.status === "COMPLETA" || current.status === "COMPLETA_CON_PENDIENTES") {
+    // Una OE marcada «COMPLETA CON DATOS PENDIENTES» (estado histórico) se puede entregar/cerrar: pasa a COMPLETA y el descuento
+    // de MP es idempotente (no se descuenta dos veces). Solo una OE ya COMPLETA, o una OA completa, rechaza una nueva entrega.
+    const alreadyDone = current.type === "OE" ? current.status === "COMPLETA" : current.status === "COMPLETA" || current.status === "COMPLETA_CON_PENDIENTES";
+    if (alreadyDone) {
       throw new OrdersValidationError("La orden ya está completa.");
     }
 
     const classified = classifyDeliverMissing(current.formData);
     const missing = [...classified.critical, ...classified.secondary];
-    const allowIncomplete = Boolean(opts?.allowIncomplete);
+    // OE: los datos pendientes nunca frenan la entrega (sin confirmación excepcional); OA conserva su confirmación.
+    const allowIncomplete = current.type === "OE" ? true : Boolean(opts?.allowIncomplete);
     // OE: lo de trazabilidad / stock / lote NO se puede omitir ni con confirmación excepcional. Completar no libera el lote.
     if (current.type === "OE" && classified.critical.length > 0) {
       throw new OrdersValidationError(
-        `No se puede completar la OE todavía: faltan datos obligatorios (${classified.critical.join(", ")}). ` +
-          "Son de trazabilidad, lote o consumo de materias primas: completalos y volvé a intentar."
+        `No se puede entregar la OE todavía: ${classified.critical.join(", ")}. ` +
+          "Es necesario para identificar la orden y no comprometer el stock; el resto de los datos pueden quedar pendientes."
       );
     }
     if (missing.length > 0 && !allowIncomplete) {
@@ -1203,7 +1207,7 @@ export class OrdersService {
   async completePendingFields(
     id: string,
     actor: OrdersActor,
-    patch: { date?: string; fechaFin?: string; cantidadObtenida?: number | null }
+    patch: { date?: string; fechaFin?: string; cantidadObtenida?: number | null; client?: string; quantityKg?: number | null; lot?: string }
   ) {
     const current = await this.requireOrder(id);
     assertOeNotDeleted(current);
@@ -1225,6 +1229,18 @@ export class OrdersService {
     if (patch.cantidadObtenida != null && Number.isFinite(patch.cantidadObtenida) && patch.cantidadObtenida >= 0 && fd.processControl.cantidadObtenida == null) {
       next.processControl.cantidadObtenida = patch.cantidadObtenida;
       filled.push("Cantidad obtenida");
+    }
+    if (patch.client !== undefined && patch.client.trim() && !fd.header.client.trim()) {
+      next.header.client = patch.client.trim();
+      filled.push("Cliente");
+    }
+    if (patch.quantityKg != null && Number.isFinite(patch.quantityKg) && patch.quantityKg > 0 && fd.header.quantityKg == null) {
+      next.header.quantityKg = patch.quantityKg;
+      filled.push("Cantidad");
+    }
+    if (patch.lot !== undefined && patch.lot.trim() && !fd.header.lot.trim()) {
+      next.header.lot = patch.lot.trim();
+      filled.push("Lote");
     }
     if (filled.length === 0) throw new OrdersValidationError("No hay datos nuevos para guardar: solo se completan campos pendientes que sigan vacíos.");
     const ts = nowIso();

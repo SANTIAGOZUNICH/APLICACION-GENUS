@@ -102,6 +102,11 @@ const nav = async (page, label) => {
   }
   await direct.click({ timeout: 120_000 });
 };
+async function cdpShrink(page, vp) {
+  // Simula el teclado en pantalla: reduce la ventana ~40 %.
+  await page.setViewportSize({ width: vp.width, height: Math.round(vp.height * 0.6) });
+  await page.waitForTimeout(250);
+}
 const dlg = (page) => page.locator("[data-testid=ingreso-remito-dialog]");
 const balance = async (code) => Number((await q("select stock_actual from mp_stock_balances where codigo = $1", [code]))[0]?.stock_actual ?? 0);
 const count = async (table) => Number((await q(`select count(*)::int n from ${table}`))[0].n);
@@ -171,7 +176,7 @@ try {
     // 2) VARIOS PRODUCTOS, sin lote / sin proveedor / sin código / sin cantidad / datos mal leídos
     await flow(p, "Ingresos MP", { supplier: "", remitoNumber: "", remitoDate: "", notes: "", unclearFields: [], lines: [L({ description: `Prod A ${device}`, quantity: 10 }), L({ description: `Prod B ${device}`, supplierCode: "ZZ-1", lot: "LX-1" }), L({ description: `Prod C ${device}`, quantity: "4,5", unit: "KG" })] }, `mp-${device}-varios`);
     rows = await sheetRows("inv_mp_ingresos", `%Prod _ ${device}%`);
-    check(`MP ${device} · varios productos incompletos: 3 filas guardadas, ninguna con código inventado`, rows.length === 3 && rows.every((r) => r.payload.status === "BORRADOR" && r.payload.codigo === ""));
+    check(`MP ${device} · varios productos incompletos: 3 filas guardadas; solo lleva código el que figuraba en el documento (ZZ-1)`, rows.length === 3 && rows.every((r) => r.payload.status === "BORRADOR") && rows.find((r) => r.payload.descripcion === `Prod B ${device}`)?.payload.codigo === "ZZ-1" && rows.filter((r) => r.payload.codigo === "").length === 2);
     check(`MP ${device} · el stock y el libro mayor NO se movieron (borradores)`, (await q("select stock_actual from mp_stock_balances where codigo = $1", [MP_CODE]))[0].stock_actual === mpStock0 && (await mpMovs()) === 0);
     // 3) SIN NADA RECONOCIDO: solo la foto
     await flow(p, "Ingresos MP", { supplier: "", remitoNumber: "", remitoDate: "", notes: "", unclearFields: [], lines: [] }, `mp-${device}-vacio`);
@@ -205,6 +210,41 @@ try {
     const rows = await sheetRows("inv_me_ingresos", `%${device}%`);
     check(`ME ${device} · 2 filas guardadas aunque falten código y datos; sin código no suman stock`, rows.filter((r) => String(r.payload.descripcionInsumo).includes(device)).length === 2 && rows.every((r) => r.payload.codigo === ""));
     await u.ctx.close();
+  }
+
+  // ===== Celular: «PASAR A EXCEL» siempre visible (vertical y horizontal) =====
+  for (const [label, vp] of [["celular vertical", { width: 393, height: 740 }], ["celular horizontal", { width: 740, height: 360 }]]) {
+    const ctx = await browser.newContext({ baseURL: BASE, ...PHONE, viewport: vp });
+    const page = await ctx.newPage();
+    await page.goto("/login");
+    await page.locator('input[type="email"]').fill(E2E_USERS.materiaPrima.email);
+    await page.locator('input[type="password"]').fill(E2E_PASSWORD);
+    await page.locator('button[type="submit"]').click();
+    await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 60_000 });
+    state.custom = { supplier: "", remitoNumber: "", remitoDate: "", notes: "", unclearFields: [], lines: [1, 2, 3, 4].map((n) => L({ description: `Producto ${n} ${label}`, quantity: n, supplierCode: `PH-${n}` })) };
+    state.mode = "ok";
+    state.delayMs = 100;
+    await page.goto("/mi-trabajo");
+    await nav(page, "Ingresos MP");
+    await page.locator("[data-testid=nuevo-ingreso-remito]").waitFor({ timeout: 120_000 });
+    await page.locator("[data-testid=nuevo-ingreso-remito]").click();
+    await dlg(page).waitFor();
+    await page.locator("[data-testid=remito-input-archivos]").setInputFiles([path.join(FIX, "hoja-1.jpg")]);
+    await page.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
+    const btn = page.locator("[data-testid=remito-pasar-excel]");
+    const inView = async () => btn.evaluate((el) => { const r = el.getBoundingClientRect(); const v = window.visualViewport; const h = v ? v.height : window.innerHeight; const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { ok: r.top >= 0 && r.bottom <= h + 1 && r.width > 40 && (top === el || el.contains(top)), top: r.top, bottom: r.bottom, h }; });
+    let v = await inView();
+    check(`${label}: PASAR A EXCEL visible sin scrollear (${JSON.stringify(v)})`, v.ok);
+    check(`${label}: el botón dice PASAR A EXCEL`, /pasar a excel/i.test(await btn.innerText()));
+    // Con el teclado abierto el visualViewport se achica: el botón debe seguir dentro.
+    await cdpShrink(page, vp);
+    v = await inView();
+    check(`${label}: con teclado (viewport reducido) sigue visible (${JSON.stringify(v)})`, v.ok);
+    await page.screenshot({ path: `${OUT}/${label.replace(/ /g, "-")}.png` });
+    await btn.click();
+    await page.locator("[data-testid=paso-planilla]").waitFor({ timeout: 60_000 });
+    check(`${label}: un toque en PASAR A EXCEL pasa las filas sin pantallas intermedias`, /Pasado al Excel/.test(await page.locator("[data-testid=paso-planilla]").innerText()));
+    await ctx.close();
   }
 } catch (e) {
   console.error(e);

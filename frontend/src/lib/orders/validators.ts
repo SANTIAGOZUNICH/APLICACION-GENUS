@@ -68,15 +68,27 @@ export function validateDeliverOa(content: OaContent): string[] {
 }
 
 /**
- * Campos que SÍ se pueden dejar pendientes al completar una OE (datos administrativos secundarios). Todo lo demás
- * (producto, cliente, cantidad, lote, materias primas, % y kg, datos de consumo de MP y lote) es de trazabilidad/stock y
- * no se puede omitir: completar no equivale a liberar el lote ni habilita un cierre que comprometa la calidad.
+ * Datos de una OE que se pueden dejar PENDIENTES al entregarla: todo lo administrativo (fecha, cliente, cantidad, lote de
+ * producto terminado, procedimiento, cantidad obtenida, fecha de finalización, kg/% teóricos, materias primas). Se conservan como
+ * «Datos pendientes» para completarlos después; nunca se inventan.
+ * Lo ÚNICO que bloquea es lo crítico para la trazabilidad y el stock: que la orden tenga producto y que los KG REALES cargados
+ * sean válidos (no negativos). El descuento de MP sigue exigiendo código y lote en las filas que informan kg reales.
  */
-export const OE_DISPENSABLE_FIELDS = ["Fecha", "Procedimiento", "Cantidad obtenida", "Fecha de finalización"] as const;
+export const OE_DISPENSABLE_FIELDS = [
+  "Fecha",
+  "Cliente",
+  "Cantidad",
+  "Lote",
+  "Materias primas",
+  "Kg y/o porcentajes válidos",
+  "Procedimiento",
+  "Cantidad obtenida",
+  "Fecha de finalización",
+] as const;
 
 export type DeliverMissing = { critical: string[]; secondary: string[] };
 
-/** Separa lo que falta en obligatorio (bloquea) y secundario (se puede completar con confirmación excepcional). */
+/** Separa lo que falta en crítico (bloquea) y pendiente (se entrega igual, queda marcado). */
 export function classifyDeliverMissing(content: OrderContent): DeliverMissing {
   const missing = validateDeliver(content);
   if (content.kind !== "OE") return { critical: [], secondary: missing };

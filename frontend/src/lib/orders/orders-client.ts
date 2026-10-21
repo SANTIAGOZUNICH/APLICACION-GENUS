@@ -539,7 +539,7 @@ export async function deliverOrderApi(
 export async function completePendingFieldsApi(
   session: OrdersClientSession,
   id: string,
-  patch: { date?: string; fechaFin?: string; cantidadObtenida?: number | null }
+  patch: { date?: string; fechaFin?: string; cantidadObtenida?: number | null; client?: string; quantityKg?: number | null; lot?: string }
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}/pending-fields`, {
     method: "POST",

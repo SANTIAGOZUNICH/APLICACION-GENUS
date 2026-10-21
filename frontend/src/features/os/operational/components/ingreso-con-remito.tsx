@@ -108,6 +108,16 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
   const [readFailed, setReadFailed] = useState<string | null>(null);
   const [showPhoto, setShowPhoto] = useState(false);
   const [sheetResult, setSheetResult] = useState<{ count: number } | null>(null);
+  /** Alto visible real (con el teclado abierto en Android el área útil se achica): el diálogo nunca la supera, así el botón principal no queda tapado. */
+  const [vvh, setVvh] = useState<number | null>(null);
+  useEffect(() => {
+    const vv = typeof window !== "undefined" ? window.visualViewport : null;
+    if (!vv) return;
+    const read = () => setVvh(Math.round(vv.height));
+    read();
+    vv.addEventListener("resize", read);
+    return () => vv.removeEventListener("resize", read);
+  }, []);
   const confirmKey = useRef(uid());
   const cameraRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
@@ -376,12 +386,16 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
 
   return (
     <Dialog open onOpenChange={(o) => !o && void discardAndClose()}>
-      <DialogContent className="max-h-[94dvh] w-[min(72rem,calc(100vw-16px))] max-w-none overflow-y-auto p-4 sm:p-6" data-testid="ingreso-remito-dialog">
-        <DialogTitle>Nuevo ingreso con remito — {t.sector}</DialogTitle>
-        <DialogDescription>
+      <DialogContent
+        className="max-h-[100dvh] w-[min(72rem,100vw)] max-w-none overflow-y-auto p-3 pb-0 sm:max-h-[94dvh] sm:w-[min(72rem,calc(100vw-16px))] sm:p-6 sm:pb-0"
+        style={{ maxHeight: vvh ? `${vvh}px` : undefined }}
+        data-testid="ingreso-remito-dialog"
+      >
+        <DialogTitle className="text-base sm:text-lg">Nuevo ingreso con remito — {t.sector}</DialogTitle>
+        <DialogDescription className="hidden sm:block">
           {step === "listo" ? "Ingreso registrado." : step === "planilla" ? "Pasado al Excel." : `Registrá ${module === "MP" ? "materias primas" : "materiales de envase"} a partir de la foto del remito. No se suma stock hasta que confirmes.`}
         </DialogDescription>
-        <ol className="flex gap-2 text-xs" aria-label="Pasos">
+        <ol className="hidden gap-2 text-xs sm:flex" aria-label="Pasos">
           {["1 · Foto", "2 · Revisión", "3 · Confirmar"].map((s, i) => (
             <li key={s} className={`rounded-full px-3 py-1 ${i === Math.min(stepIdx, 2) ? "bg-[var(--os-teal,#0d9488)] text-white" : "border border-[var(--os-border)] text-[var(--os-text-muted)]"}`}>
               {s}
@@ -431,7 +445,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
               ) : null}
               {thumbs.length ? (
                 <Button type="button" disabled={Boolean(busy)} onClick={() => void toSheet()} data-testid="remito-pasar-excel-foto">
-                  <Table2 className="mr-1 size-4" /> Pasar al Excel
+                  <Table2 className="mr-1 size-4" /> PASAR A EXCEL
                 </Button>
               ) : null}
               <Button type="button" variant="secondary" disabled={Boolean(busy)} onClick={() => void goReview()} data-testid="remito-cargar-manual">
@@ -486,13 +500,14 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
                   + Agregar material
                 </Button>
               </div>
-              <div className="flex flex-wrap justify-between gap-2 border-t border-[var(--os-border)] pt-3">
-                <Button type="button" variant="secondary" onClick={() => setStep("foto")}>Volver a la foto</Button>
-                <div className="flex gap-2">
-                  {extraction?.available && thumbs.length ? <Button type="button" variant="secondary" onClick={retryRead} disabled={Boolean(busy)} data-testid="remito-releer">Reintentar lectura</Button> : null}
-                  <Button type="button" variant="secondary" onClick={() => void goSummary()} disabled={Boolean(busy)} data-testid="remito-revisar">Revisar y confirmar ingreso de stock</Button>
-                  <Button type="button" onClick={() => void toSheet()} disabled={Boolean(busy)} data-testid="remito-pasar-excel"><Table2 className="mr-1 size-4" /> Pasar al Excel</Button>
+              {/* Barra fija abajo: PASAR A EXCEL siempre visible aunque se desplace el contenido; respeta el área segura de Android. */}
+              <div className="sticky bottom-0 z-10 -mx-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--os-border)] bg-[var(--os-surface)] px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:-mx-6 sm:px-6" data-testid="remito-barra-accion">
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="secondary" size="sm" onClick={() => setStep("foto")}>Volver</Button>
+                  {extraction?.available && thumbs.length ? <Button type="button" variant="secondary" size="sm" onClick={retryRead} disabled={Boolean(busy)} data-testid="remito-releer">Releer</Button> : null}
+                  <button type="button" className="text-xs underline disabled:opacity-50" onClick={() => void goSummary()} disabled={Boolean(busy)} data-testid="remito-revisar">Confirmar ingreso de stock (opcional)</button>
                 </div>
+                <Button type="button" className="min-h-12 min-w-44 flex-1 font-bold uppercase tracking-wide sm:flex-none" onClick={() => void toSheet()} disabled={Boolean(busy)} data-testid="remito-pasar-excel"><Table2 className="mr-1 size-4" /> PASAR A EXCEL</Button>
               </div>
             </div>
           </section>

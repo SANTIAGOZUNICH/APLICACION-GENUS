@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canonicalUnit, classifyDuplicates, convertQuantity, parseNumber, preselectFromHistory, remitoKey, sanitizeExtraction, splitPackages, suggestMaterials, supplierKey,
-  validateReceipt, autoMatchMaterial, emptyHeader, emptyLine, canWriteReceipts, type CatalogItem, type MappingHistory, type ReceiptDraftPayload, mappingKey,
+  validateReceipt, autoMatchMaterial, recoverSupplierCode, emptyHeader, emptyLine, canWriteReceipts, type CatalogItem, type MappingHistory, type ReceiptDraftPayload, mappingKey,
 } from "./receipt-rules";
 
 const catalogMP = new Map<string, CatalogItem>([
@@ -181,5 +181,33 @@ describe("preselección automática (solo si es inequívoca)", () => {
   it("sin datos suficientes: no elige nada y nunca crea", () => {
     expect(autoMatchMaterial({ ...base, description: "" }, cat, none, "MP")).toBeNull();
     expect(autoMatchMaterial({ ...base, supplierCode: "XX-1", description: "Cosa rara" }, cat, none, "MP")).toBeNull();
+  });
+});
+
+describe("código de producto en la lectura (fragancias)", () => {
+  const ctx = { remitoNumber: "0003-00012345" };
+  it("separa el código pegado a la descripción", () => {
+    expect(recoverSupplierCode({ supplierCode: "", description: "FR-4521 Fragancia rosa silvestre", lote: "" }, ctx)).toMatchObject({ supplierCode: "FR-4521", description: "Fragancia rosa silvestre", recovered: true });
+    expect(recoverSupplierCode({ supplierCode: "", description: "Fragancia vainilla Cód: VN2209", lote: "" }, ctx)).toMatchObject({ supplierCode: "VN2209", description: "Fragancia vainilla", recovered: true });
+    expect(recoverSupplierCode({ supplierCode: "", description: "Fragancia coco - Ref. 88-COCO-1", lote: "" }, ctx).supplierCode).toBe("88-COCO-1");
+    expect(recoverSupplierCode({ supplierCode: "", description: "SKU: AB123 Esencia lavanda", lote: "" }, ctx).supplierCode).toBe("AB123");
+  });
+  it("no confunde con remito, lote, fecha ni cantidad; no inventa", () => {
+    expect(recoverSupplierCode({ supplierCode: "", description: "0003-00012345 Fragancia", lote: "" }, ctx).recovered).toBe(false);
+    expect(recoverSupplierCode({ supplierCode: "", description: "L2210A Fragancia", lote: "L2210A" }, ctx).recovered).toBe(false);
+    expect(recoverSupplierCode({ supplierCode: "", description: "12/10/2026 Fragancia", lote: "" }, ctx).recovered).toBe(false);
+    expect(recoverSupplierCode({ supplierCode: "", description: "25kg Fragancia", lote: "" }, ctx).recovered).toBe(false);
+    expect(recoverSupplierCode({ supplierCode: "", description: "Fragancia rosa sin código", lote: "" }, ctx)).toMatchObject({ supplierCode: "", recovered: false });
+  });
+  it("descarta como código el n.º de remito o el lote y lo deja para revisar", () => {
+    expect(recoverSupplierCode({ supplierCode: "0003-00012345", description: "Fragancia", lote: "" }, ctx)).toMatchObject({ supplierCode: "", discarded: true });
+    expect(recoverSupplierCode({ supplierCode: "LOTE77", description: "Fragancia", lote: "LOTE77" }, ctx).discarded).toBe(true);
+    expect(recoverSupplierCode({ supplierCode: "FR-4521", description: "Fragancia", lote: "L1" }, ctx)).toMatchObject({ supplierCode: "FR-4521", discarded: false });
+  });
+  it("sanitizeExtraction aplica la recuperación y marca «Revisar» el código", () => {
+    const out = sanitizeExtraction({ supplier: "Esencias SA", remitoNumber: "0003-00012345", lines: [{ supplierCode: "", description: "FR-4521 Fragancia rosa", quantity: 5, unit: "kg" }, { supplierCode: "0003-00012345", description: "Otra", quantity: 1, unit: "kg" }] });
+    expect(out!.lines[0]).toMatchObject({ supplierCode: "FR-4521", description: "Fragancia rosa" });
+    expect(out!.lines[0]!.review).toContain("supplierCode");
+    expect(out!.lines[1]!.supplierCode).toBe("");
   });
 });

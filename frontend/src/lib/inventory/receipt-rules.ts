@@ -428,6 +428,54 @@ const isoOrEmpty = (v: unknown) => {
   return "";
 };
 
+// ── Códigos de producto en la lectura ──
+// Gemini a veces deja el código pegado a la descripción («FR-4521 Fragancia rosa») o bajo encabezados como Artículo / Referencia /
+// Cód. / SKU. Este paso es determinístico y conservador: solo extrae lo que está escrito literalmente, nunca lo inventa, y no
+// toma como código un número de remito, un lote, una fecha ni una cantidad con unidad.
+const CODE_LABEL_RE = /(?:^|[\s(\[])(?:c[oó]d(?:igo|\.)?|art(?:[ií]culo|\.)?|ref(?:erencia|\.)?|sku|item|[ií]tem)\s*[:.#Nº°-]*\s*([A-Z0-9][A-Z0-9._/-]{1,24})(?=$|[\s,;)\]])/i;
+const LEADING_CODE_RE = /^([A-Z]{1,6}[-. /]?\d{2,}[A-Z0-9._/-]*|\d{3,}[A-Z]{0,3}[-./]?[A-Z0-9]*)\s*(?:[-–—:|]\s*|\s+)(?=\S)/i;
+const looksLikeDate = (v: string) => /^\d{1,4}[/.-]\d{1,2}([/.-]\d{1,4})?$/.test(v);
+const looksLikeQuantity = (v: string) => /^\d+([.,]\d+)?(kg|kgs|g|gr|grs|l|lt|lts|ml|cc|un|u|unid|unidades)$/i.test(v);
+
+export function isPlausibleProductCode(code: string, ctx: { remitoNumber?: string; lote?: string }): boolean {
+  const c = code.trim();
+  if (c.length < 2 || c.length > 30 || !/\d/.test(c)) return false;
+  if (looksLikeDate(c) || looksLikeQuantity(c)) return false;
+  const norm = (v: string) => v.toUpperCase().replace(/[^A-Z0-9]+/g, "");
+  if (ctx.remitoNumber && norm(c) === norm(ctx.remitoNumber)) return false;
+  if (ctx.lote && norm(c) === norm(ctx.lote)) return false;
+  return true;
+}
+
+/** Si la línea no trae código pero está escrito en la descripción, lo separa. Si el «código» es en realidad el N.º de remito, el lote o una fecha, lo descarta. */
+export function recoverSupplierCode(line: { supplierCode: string; description: string; lote: string }, ctx: { remitoNumber: string }): { supplierCode: string; description: string; recovered: boolean; discarded: boolean } {
+  let code = line.supplierCode.trim();
+  let description = line.description;
+  let discarded = false;
+  if (code && !isPlausibleProductCode(code, { remitoNumber: ctx.remitoNumber, lote: line.lote })) {
+    // Un código sin dígitos puede ser legítimo (p. ej. «ALC-CET»): solo se descarta si choca con remito/lote/fecha/cantidad.
+    const hasDigit = /\d/.test(code);
+    const norm = (v: string) => v.toUpperCase().replace(/[^A-Z0-9]+/g, "");
+    const clash = norm(code) === norm(ctx.remitoNumber) || norm(code) === norm(line.lote) || looksLikeDate(code) || looksLikeQuantity(code);
+    if (clash || (hasDigit && code.length > 30)) {
+      code = "";
+      discarded = true;
+    }
+  }
+  if (code || !description) return { supplierCode: code, description, recovered: false, discarded };
+  const labelled = CODE_LABEL_RE.exec(description);
+  if (labelled && isPlausibleProductCode(labelled[1]!, { remitoNumber: ctx.remitoNumber, lote: line.lote })) {
+    const rest = description.replace(labelled[0], " ").replace(/\s+/g, " ").replace(/^[\s,;:–—-]+|[\s,;:–—-]+$/g, "");
+    return { supplierCode: labelled[1]!.toUpperCase(), description: rest || description, recovered: true, discarded };
+  }
+  const lead = LEADING_CODE_RE.exec(description);
+  if (lead && isPlausibleProductCode(lead[1]!, { remitoNumber: ctx.remitoNumber, lote: line.lote })) {
+    const rest = description.slice(lead[0].length).trim();
+    if (rest) return { supplierCode: lead[1]!.toUpperCase().replace(/\s+/g, " "), description: rest, recovered: true, discarded };
+  }
+  return { supplierCode: "", description, recovered: false, discarded };
+}
+
 /**
  * Valida y sanea la respuesta del servicio de lectura: nunca se confía en ella. Todo dato ausente queda vacío y marcado
  * «Revisar»; las fechas/cantidades inválidas se descartan (no se inventan). Devuelve null si no es un remito legible.
@@ -452,9 +500,11 @@ export function sanitizeExtraction(raw: unknown): ExtractedRemito | null {
     const qtyNum = parseNumber(o.quantity);
     const venc = isoOrEmpty(o.expiryDate ?? o.vencimiento);
     const review: string[] = [];
-    const supplierCode = str(o.supplierCode, 60);
-    const description = str(o.description, 200);
     const lote = str(o.lot ?? o.lote, 60);
+    const recovered = recoverSupplierCode({ supplierCode: str(o.supplierCode, 60), description: str(o.description, 200), lote }, { remitoNumber });
+    const supplierCode = recovered.supplierCode;
+    const description = recovered.description;
+    if (recovered.recovered || recovered.discarded) review.push("supplierCode");
     const unit = str(o.unit, 20);
     if (!description) review.push("description");
     if (qtyNum == null || !(qtyNum > 0)) review.push("quantity");

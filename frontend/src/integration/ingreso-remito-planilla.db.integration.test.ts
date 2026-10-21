@@ -89,17 +89,19 @@ describe.skipIf(Boolean(PROBLEM))(`Pasar al Excel sin validaciones en Postgres r
       mp,
       [
         line({ description: "Producto A", quantity: "10", lote: "L1" }), // sin código ni proveedor
+        line({ description: "Fragancia rosa", supplierCode: "FR-4521", quantity: "2" }), // el código leído del documento va a la columna Código
         line({ description: "Producto B", materialCode: MP_CODE, quantity: "5" }), // sin lote, con código válido: sigue siendo borrador
         line({ description: "Producto C", materialCode: "CODIGO-INEXISTENTE", lote: "LX" }), // código incorrecto → queda vacío, nunca inventado
         line({ lote: "SOLO-LOTE" }),
       ],
       head({ supplier: "" }),
     );
-    expect(out.sheet.count).toBe(4);
+    expect(out.sheet.count).toBe(5);
     const rows = await mpRows(out.sheet.ingresoIds);
+    expect(rows.find((r) => r.descripcion === "Fragancia rosa")!.codigo).toBe("FR-4521");
     expect(rows.every((r) => r.status === "BORRADOR" && r.stockImpacted === false)).toBe(true);
     expect(rows.find((r) => r.descripcion === "Producto B")!.codigo).toBe(MP_CODE);
-    expect(rows.find((r) => r.descripcion === "Producto C")!.codigo).toBe("");
+    expect(rows.find((r) => r.descripcion === "Producto C")!.codigo).toBe(""); // código del catálogo inexistente y sin código del documento: vacío
     expect(rows.find((r) => r.lote === "SOLO-LOTE")).toBeTruthy();
     expect(await mpBalanceMoves()).toEqual({ bal: 0, movs: 0 }); // ningún movimiento físico
   });
@@ -127,15 +129,17 @@ describe.skipIf(Boolean(PROBLEM))(`Pasar al Excel sin validaciones en Postgres r
       dep,
       [
         line({ description: "Frasco sin código", quantity: "50" }),
+        line({ description: "Con código del proveedor", supplierCode: "ZZ-77", quantity: "3" }),
         line({ description: "Sin cantidad", materialCode: ME_CODE }),
         line({ description: "Código raro", materialCode: "NO-EXISTE", quantity: "9" }),
         line({ description: "Completo", materialCode: ME_CODE, quantity: "100" }),
       ],
       head({ supplier: SUP }),
     );
-    expect(out.sheet.count).toBe(4);
+    expect(out.sheet.count).toBe(5);
     const rows = await meRows(out.sheet.ingresoIds);
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(5);
+    expect(rows.find((r) => r.descripcionInsumo === "Con código del proveedor")).toMatchObject({ codigo: "ZZ-77", cantidad: 3 }); // no es un material de Depósito: no suma stock a ninguno
     expect(rows.find((r) => r.descripcionInsumo === "Frasco sin código")).toMatchObject({ codigo: "", cantidad: 50 });
     expect(rows.find((r) => r.descripcionInsumo === "Código raro")!.codigo).toBe("");
     expect(rows.find((r) => r.descripcionInsumo === "Sin cantidad")).toMatchObject({ codigo: ME_CODE, cantidad: null, total: null });

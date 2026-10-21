@@ -612,7 +612,10 @@ export class ReceiptService {
       const quantity = qty !== null && qty >= 0 ? qty : null;
       const pk = parseNumber(l.packages);
       const parts = quantity !== null ? splitPackages(quantity, pk && pk > 0 ? pk : null) : { bultos: null as number | null, cantidad: null as number | null };
-      return { line: l, code, label: code ? catalog.get(code)!.description : "", quantity, parts };
+      // Columna Código de la tabla: el material del catálogo si está elegido; si no, el código que se leyó del documento
+      // (código del proveedor, p. ej. de una fragancia), tal cual. Sin ninguno queda vacío: nunca se inventa.
+      const sheetCode = code || normalizeMaterialCode(l.supplierCode);
+      return { line: l, code, sheetCode, label: code ? catalog.get(code)!.description : "", quantity, parts };
     });
     const finish = async (tx: Db, created: Array<{ ingresoId: string; r: (typeof rows)[number]; i: number }>) => {
       const updated = await tx
@@ -642,7 +645,7 @@ export class ReceiptService {
         const created: Array<{ ingresoId: string; r: (typeof rows)[number]; i: number }> = [];
         for (const [i, r] of rows.entries()) {
           const ingreso = await service.upsertMpIngreso(actor, {
-            id: randomUUID(), fecha: date, proveedor: h.supplier, remitoNro: h.remitoNumber, codigo: r.code, descripcion: r.line.description || r.label,
+            id: randomUUID(), fecha: date, proveedor: h.supplier, remitoNro: h.remitoNumber, codigo: r.sheetCode, descripcion: r.line.description || r.label,
             bultos: r.parts.bultos, cantidad: r.parts.cantidad, lote: r.line.lote, vencimiento: r.line.vencimiento, status: "BORRADOR", skipDuplicateCheck: true, keepBlankCodigo: true,
             auditReason: `Foto pasada al Excel (recepción ${id})`,
           });
@@ -668,7 +671,7 @@ export class ReceiptService {
           const bultos = r.quantity !== null ? (r.parts.bultos ?? 1) : null;
           const ingreso: MeIngresoRow = {
             id: ingresoId, fecha: date, ingresoNro: `ME-I-${String(next).padStart(5, "0")}`, proveedor: h.supplier, cliente: mat?.cliente ?? "", remitoNro: h.remitoNumber,
-            codigo: r.code, descripcionInsumo: r.line.description || r.label, bultos, cantidad: r.parts.cantidad, total: r.quantity, ubicacion: mat?.ubicacion ?? "",
+            codigo: r.sheetCode, descripcionInsumo: r.line.description || r.label, bultos, cantidad: r.parts.cantidad, total: r.quantity, ubicacion: mat?.ubicacion ?? "",
             materialId: mat?.id ?? null, anulado: false, anuladoAt: null, anuladoReason: null, createdBy: actor.email, updatedBy: actor.email, createdAt: now, updatedAt: now,
           };
           await tx.insert(invMeIngresos).values({ id: ingresoId, payload: ingreso, updatedAt: new Date(now) });

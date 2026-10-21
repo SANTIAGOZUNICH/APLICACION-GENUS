@@ -257,41 +257,27 @@ try {
   await el.locator("[data-testid=oe-cell-lote]").nth(1).fill("GL-UX-1");
   check("Lotes y kg reales guardados", await waitDb(async () => JSON.stringify((await oeRow(oeId))?.form_data?.materials?.map((m) => [m.kgReal, m.lote])) === JSON.stringify([[80.5, "AG-UX-1"], [19.8, "GL-UX-1"]])));
 
-  // Entregar incompleta: la acción principal es volver a completar; entregar igual exige confirmación explícita.
-  await el.getByRole("button", { name: /^Entregar$/ }).first().click();
-  const dlg = el.locator("[role=dialog]");
-  await dlg.waitFor();
-  const back = dlg.locator("[data-testid=deliver-back]");
-  const incomplete = dlg.locator("[data-testid=deliver-incomplete]");
-  check("Entregar con faltantes secundarios: aviso «HAY DATOS PENDIENTES» y botón CANCELAR", /HAY DATOS PENDIENTES/.test(await dlg.innerText()) && (await back.innerText()).trim() === "CANCELAR");
-  check("Entregar con faltantes secundarios: «COMPLETAR DE TODAS MANERAS» disponible sin casilla previa", !(await incomplete.isDisabled()) && /COMPLETAR DE TODAS MANERAS/.test(await incomplete.innerText()));
-  await el.waitForTimeout(800); // que termine la animación antes de la captura
-  await el.screenshot({ path: `${OUT}/despues-el-3-entregar-incompleta.png` });
-  await back.click();
-  const controlOpen = await el.locator("#oe-sec-control").evaluate((d) => d.open);
-  check("CANCELAR vuelve a la OE y abre «Control de proceso» (donde están los datos que faltan)", controlOpen);
-  const sec = el.locator("#oe-sec-control");
-  await sec.getByLabel("Cantidad obtenida").fill("98,5");
-  await sec.getByLabel("Fecha finalización").fill(today);
-  check("Cantidad obtenida con coma decimal se guarda (98.5)", await waitDb(async () => (await oeRow(oeId))?.form_data?.processControl?.cantidadObtenida === 98.5 && (await oeRow(oeId))?.form_data?.processControl?.fechaFin === today));
-  await el.waitForTimeout(1200);
-
-  // Entregar completa: un clic en «Entregar» del diálogo; doble clic no entrega dos veces.
-  await el.getByRole("button", { name: /^Entregar$/ }).first().click();
-  await dlg.waitFor();
-  const confirm = dlg.locator("[data-testid=deliver-confirm]");
-  check("OE completa: el diálogo ofrece «Entregar» directamente", await confirm.isVisible());
+  // ENTREGAR OE con datos pendientes: UN clic, sin ventanas ni confirmaciones; solo un aviso breve y no bloqueante.
   let delivers = 0;
   el.on("request", (r) => { if (r.url().includes(`/orders/${oeId}/deliver`)) delivers += 1; });
-  await confirm.dblclick();
-  check("OE entregada: estado COMPLETA en PostgreSQL", await waitDb(async () => (await oeRow(oeId))?.status === "COMPLETA"), (await oeRow(oeId))?.status);
+  const entregar = el.getByRole("button", { name: /^ENTREGAR OE$/ }).first();
+  check("El botón se llama ENTREGAR OE y está habilitado aunque falten datos", (await entregar.isVisible()) && !(await entregar.isDisabled()));
+  await entregar.dblclick(); // doble clic: no entrega dos veces
+  check("Sin ventanas de confirmación ni formularios al entregar", (await el.locator("[role=dialog]").count()) === 0);
+  check("OE entregada con datos pendientes: estado COMPLETA en PostgreSQL", await waitDb(async () => (await oeRow(oeId))?.status === "COMPLETA"), (await oeRow(oeId))?.status);
+  check("Los pendientes (fecha de finalización) quedan registrados para completarlos después", await waitDb(async () => ((await oeRow(oeId))?.form_data?.completion?.pendingAtCompletion ?? []).includes("Fecha de finalización")));
   check(
     "Al entregar se descontaron los kg REALES (80,5 y 19,8) del lote y del código",
     (await lotKg("UX-OE-AGUA", "AG-UX-1")) === 419.5 && (await lotKg("UX-OE-GLI", "GL-UX-1")) === 80.2 && (await ledgerKg("UX-OE-AGUA")) === 419.5 && (await ledgerKg("UX-OE-GLI")) === 80.2,
     JSON.stringify([await lotKg("UX-OE-AGUA", "AG-UX-1"), await lotKg("UX-OE-GLI", "GL-UX-1"), await ledgerKg("UX-OE-AGUA"), await ledgerKg("UX-OE-GLI")])
   );
   await el.waitForTimeout(1000);
-  check("Doble clic en «Entregar»: un solo envío", delivers === 1, String(delivers));
+  check("Doble clic en «ENTREGAR OE»: un solo envío", delivers === 1, String(delivers));
+  check("Panel «Datos pendientes» visible para completar después", await el.locator("[data-testid=oe-pending-panel]").isVisible());
+  await el.locator("[data-testid=oe-late-fechafin]").fill(today);
+  await el.locator("[data-testid=oe-late-cantidad]").fill("98,5");
+  await el.locator("[data-testid=oe-late-save]").click();
+  check("Los pendientes se completan después (fecha y cantidad obtenida) sin mover stock", await waitDb(async () => (await oeRow(oeId))?.form_data?.processControl?.cantidadObtenida === 98.5 && (await oeRow(oeId))?.form_data?.processControl?.fechaFin === today) && (await lotKg("UX-OE-AGUA", "AG-UX-1")) === 419.5);
   const after = await el.locator("main").innerText();
   check("Tras entregar: sin errores técnicos en pantalla", !/HTTP \d{3}|Error \d{3}|Cannot read|undefined/.test(after));
   await el.screenshot({ path: `${OUT}/despues-el-4-entregada.png` });
