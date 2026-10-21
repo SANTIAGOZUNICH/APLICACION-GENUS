@@ -51,7 +51,7 @@ describe("política de planillas MP (cliente y servidor)", () => {
     expect(validateMpSheetValue("mp_ingresos", "cantidad", "12,5")).toEqual({ ok: true, value: 12.5 });
     expect(validateMpSheetValue("mp_ingresos", "cantidad", "-3").ok).toBe(false);
     expect(validateMpSheetValue("mp_ingresos", "vencimiento", "31/12/2027")).toEqual({ ok: true, value: "2027-12-31" });
-    expect(validateMpSheetValue("mp_ingresos", "fecha", "").ok).toBe(false);
+    expect(validateMpSheetValue("mp_ingresos", "fecha", "")).toEqual({ ok: true, value: "" }); // fecha vacía: se guarda
     expect(validateMpSheetValue("mp_compras", "estado", "en camino")).toEqual({ ok: true, value: "En camino" });
     expect(validateMpSheetValue("mp_compras", "estado", "Inventado").ok).toBe(false);
     expect(MP_COMPRA_ESTADOS).toContain("En planta");

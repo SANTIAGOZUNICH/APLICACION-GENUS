@@ -35,7 +35,9 @@ export type StockAjuste = {
 
 export type MpLedgerOp =
   | { kind: "reclasificacion"; refId: string; lotId: string; from: string; to: string; mode: "all" | "quantity"; quantity: number; reason: string; lote: string; descripcion: string }
-  | { kind: "saldo_codigo"; refId: string; lotId: string; codigo: string; target: number; expected: number | null; reason: string };
+  | { kind: "saldo_codigo"; refId: string; lotId: string; codigo: string; target: number; expected: number | null; reason: string }
+  /** Una fila pierde o gana código: el saldo de ESE código sube/baja por los kg de la fila (el libro mayor sigue = suma de lotes). */
+  | { kind: "codigo_delta"; refId: string; lotId: string; codigo: string; quantity: number; reason: string; lote: string; descripcion: string };
 
 export class MemoryInventoryRepo {
   meIngresos: MeIngresoRow[] = [];

@@ -53,6 +53,7 @@ import { friendlySaveError } from "@/lib/ui/friendly-error";
 import { diffGridRows, previewValue, type CellDiff, type GenusGridRow } from "./grid-changes";
 import { defaultFillMode, fillValues, formatSheetNumber, parseSheetNumber, type FillMode } from "./fill-series";
 import { SheetHScrollbar, SheetVScrollbar, SHEET_BAR_SIZE } from "./sheet-scrollbars";
+import { ScrollGuard } from "./scroll-guard";
 import { useSheetGestures, type FillPlan, type SheetRange } from "./sheet-gestures";
 import { DRAFT_PREFIX, applyPastedToDrafts, isDraftRowId, mapPastedToDrafts, missingRequired, newDraft, parseClipboardMatrix, parseDrafts, serializeDrafts, topUpDrafts, type DraftRow } from "./draft-rows";
 
@@ -418,6 +419,8 @@ export function GenusGrid<T>({
 }: GenusGridProps<T>) {
   const [reasonText, setReasonText] = useState("");
   const gridRef = useRef<DataSheetGridRef>(null);
+  /** La hoja solo se mueve cuando la mueve el usuario: durante guardados/recargas se revierte cualquier salto ajeno. */
+  const guardRef = useRef<ScrollGuard | null>(null);
   // Cambios pendientes de una sesión anterior (se cortó la conexión o se recargó): vuelven a la barra roja para reintentar.
   const restored = useMemo<FailedBatch[]>(() => {
     if (!queueKey || typeof window === "undefined") return [];
@@ -671,6 +674,7 @@ export function GenusGrid<T>({
     ) => {
       setNotice(null);
       setSaveState("saving");
+      guardRef.current?.lock(3000);
       if (!opts.keepRedo) {
         redoStack.current = [];
         setRedoDepth(0);
@@ -762,6 +766,7 @@ export function GenusGrid<T>({
         }
       });
       queue.current = job.catch(() => undefined);
+      void job.finally(() => guardRef.current?.lock(3000));
       return job;
     },
     [onCommit, rowVersion, markSaved]
@@ -1573,6 +1578,20 @@ export function GenusGrid<T>({
     return () => window.clearTimeout(t);
   }, [rowDeleteResult]);
   const fillChipValid = fillChip && fillChip.sourceIds.every((id, i) => gridRows[fillChip.plan.source.min.row + i]?.__id === id);
+
+  useEffect(() => {
+    if (!scroller) return;
+    const g = new ScrollGuard(scroller, window);
+    guardRef.current = g;
+    return () => {
+      g.destroy();
+      if (guardRef.current === g) guardRef.current = null;
+    };
+  }, [scroller]);
+  // Llegaron datos nuevos (recarga tras guardar, filas nuevas, borradores): ventana de protección del scroll.
+  useEffect(() => {
+    guardRef.current?.lock(2500);
+  }, [rows, drafts, columns]);
 
   const dsg = (
     <DataSheetGrid<GenusGridRow>

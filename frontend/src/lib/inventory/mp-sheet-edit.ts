@@ -66,6 +66,8 @@ const DATE_FIELDS = new Set(["fecha", "vencimiento", "fechaEntrega"]);
 /** En un ingreso confirmado, estos campos mueven el stock: corrección con motivo. */
 export const MP_INGRESO_STOCK_FIELDS: ReadonlySet<string> = new Set(["codigo", "bultos", "cantidad", "total", "lote"]);
 export const MIN_MP_CORRECCION_MOTIVO = 8;
+/** Motivo que queda registrado cuando la planilla corrige un dato que mueve stock (no se le pide al usuario). */
+export const MP_SHEET_AUTO_REASON = "Corrección directa en la planilla de Ingresos MP";
 export const MAX_MP_SHEET_CHANGES = 1000;
 
 export function mpSheetFieldKind(field: string): "text" | "number" | "date" {
@@ -112,7 +114,7 @@ export function validateMpSheetValue(resource: MpSheetResource, field: string, r
     return { ok: true, value: n };
   }
   if (DATE_FIELDS.has(field)) {
-    if (!text) return field === "fecha" ? { ok: false, message: "La fecha es obligatoria." } : { ok: true, value: "" };
+    if (!text) return { ok: true, value: "" }; // fecha vacía: se guarda (pendiente de completar)
     const iso = parseFlexibleDate(text);
     if (!iso) return { ok: false, message: "Fecha inválida. Usá dd/mm/aaaa." };
     return { ok: true, value: iso };
@@ -124,8 +126,6 @@ export function validateMpSheetValue(resource: MpSheetResource, field: string, r
   }
   const max = field === "nota" || field === "produccionesAfecta" ? 1000 : 200;
   if (text.length > max) return { ok: false, message: `Máximo ${max} caracteres.` };
-  if (resource === "mp_ingresos" && field === "ingresoNro" && !text) return { ok: false, message: "El número de ingreso no puede quedar vacío." };
-  if (resource === "mp_compras" && field === "materiaPrima" && !text) return { ok: false, message: "La materia prima no puede quedar vacía." };
   return { ok: true, value: text };
 }
 

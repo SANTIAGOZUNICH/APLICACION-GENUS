@@ -46,9 +46,6 @@ describe("inventario — edición por celda", () => {
 
   it("MP: ubicación manual se edita; kg exige motivo y queda en ajustes; todo-o-nada", () => {
     const lot = svc.upsertMpStock(mp, { descripcion: "Agua", cantidadKg: 40, lote: "A", ubicacion: "R1" });
-    const [bad] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "cantidadKg", value: "30", expectedVersion: lot.updatedAt }]);
-    expect(bad).toMatchObject({ ok: false, code: "INVALID" });
-    expect(repo.getMpStock(lot.id)!.cantidadKg).toBe(40);
     const mixed = svc.patchInventoryCells(mp, "mp_stock", [
       { id: lot.id, field: "ubicacion", value: "R7", expectedVersion: lot.updatedAt },
       { id: lot.id, field: "vencimiento", value: "no-fecha", expectedVersion: lot.updatedAt },
@@ -65,6 +62,11 @@ describe("inventario — edición por celda", () => {
     expect(after.cantidadKg).toBe(30.5);
     expect(after.lote).toBe("A");
     expect(repo.ajustes.some((a) => a.entityId === lot.id && a.cantidadAnterior === 40 && a.cantidadNueva === 30.5)).toBe(true);
+    // Sin pedir motivo: el ajuste queda con el motivo automático (usuario, fecha, valor anterior y nuevo en la auditoría).
+    const [direct] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "cantidadKg", value: "20", expectedVersion: after.updatedAt }]);
+    expect(direct).toMatchObject({ ok: true });
+    expect(repo.getMpStock(lot.id)!.cantidadKg).toBe(20);
+    expect(repo.ajustes.some((a) => a.entityId === lot.id && a.cantidadNueva === 20 && /planilla/i.test(a.motivo))).toBe(true);
   });
 
   it("MP: en Stock MP no hay candados permanentes: todas las columnas se editan (solo permiso y archivado)", () => {
@@ -94,8 +96,6 @@ describe("inventario — edición por celda", () => {
     expect(after).toMatchObject({ producto: "CREMA X · GEL Y", proveedor: "P2", descripcion: "Mentol cristal", cantidadKg: lot.cantidadKg, codigo: "MP-77" });
     expect(repo.audit.filter((a) => a.action === "cell_edit" && a.entityId === lot.id)).toHaveLength(3);
     // Kg de un lote de ingreso: también en la celda, con motivo → ajuste (queda en ajustes y va al libro mayor).
-    const [sinMotivo] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "cantidadKg", value: "1", expectedVersion: after.updatedAt }]);
-    expect(sinMotivo).toMatchObject({ ok: false, code: "INVALID" });
     const [kg] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "cantidadKg", value: "1", expectedVersion: after.updatedAt, reason: "Conteo físico de prueba" }]);
     expect(kg).toMatchObject({ ok: true });
     expect(repo.ajustes.some((a) => a.entityId === lot.id && a.cantidadNueva === 1 && a.diferencia === 1 - (lot.cantidadKg ?? 0))).toBe(true);
@@ -128,8 +128,6 @@ describe("inventario — edición por celda", () => {
   it("Código: corrige lote + ingresos vinculados (conservan el recibido) y deja la reclasificación para el libro mayor", async () => {
     await svc.upsertMpIngreso(mp, { codigo: "MP-OLD", producto: "CREMA", descripcion: "Urea", lote: "L1", bultos: 1, cantidad: 9, confirm: true } as never);
     const lot = svc.listMpStock(mp).find((r) => r.codigo === "MP-OLD")!;
-    const [sinMotivo] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "codigo", value: "mp-new", expectedVersion: lot.updatedAt }]);
-    expect(sinMotivo).toMatchObject({ ok: false, code: "INVALID" });
     const [bad] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "codigo", value: "..", expectedVersion: lot.updatedAt, reason: "Código mal cargado" }]);
     expect(bad).toMatchObject({ ok: false, code: "INVALID" });
     const [ok] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "codigo", value: "mp-new", expectedVersion: lot.updatedAt, reason: "Código mal cargado" }]);
@@ -173,8 +171,32 @@ describe("inventario — edición por celda", () => {
     // Vaciar el estado vuelve al cálculo.
     svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "estadoStock", value: "", expectedVersion: after.updatedAt }]);
     expect(svc.listMpStock(mp).find((r) => r.id === lot.id)!.estadoStock).toBe("Sin stock");
+    // Sin pedir motivo: se guarda con el automático.
     const [sinMotivo] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "stockLibroMayor", value: "1", expectedVersion: repo.getMpStock(lot.id)!.updatedAt }]);
-    expect(sinMotivo).toMatchObject({ ok: false, code: "INVALID" });
+    expect(sinMotivo).toMatchObject({ ok: true });
+  });
+
+  it("Borrar celdas: kg vacíos = 0, descripción vacía y código borrado se guardan; el libro mayor sigue = suma de lotes", async () => {
+    await svc.upsertMpIngreso(mp, { codigo: "MP-DEL", producto: "X", descripcion: "Urea", lote: "L1", bultos: 1, cantidad: 9, confirm: true } as never);
+    const lot = svc.listMpStock(mp).find((r) => r.codigo === "MP-DEL")!;
+    repo.mpLedgerOps.length = 0;
+    const [desc] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "descripcion", value: "", expectedVersion: lot.updatedAt }]);
+    expect(desc).toMatchObject({ ok: true });
+    expect(repo.getMpStock(lot.id)!.descripcion).toBe("");
+    const [cleared] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "codigo", value: "", expectedVersion: repo.getMpStock(lot.id)!.updatedAt }]);
+    expect(cleared).toMatchObject({ ok: true });
+    const after = repo.getMpStock(lot.id)!;
+    expect(after.codigo).toBe("");
+    expect(after.cantidadKg).toBe(9); // los kg de la fila se conservan (pendiente de código)
+    expect(repo.mpLedgerOps).toEqual([expect.objectContaining({ kind: "codigo_delta", codigo: "MP-DEL", quantity: -9 })]);
+    // Asignarle un código después: sus kg entran al código nuevo (ledger = suma de lotes).
+    repo.mpLedgerOps.length = 0;
+    const [again] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "codigo", value: "mp-nuevo", expectedVersion: after.updatedAt }]);
+    expect(again).toMatchObject({ ok: true });
+    expect(repo.mpLedgerOps).toEqual([expect.objectContaining({ kind: "codigo_delta", codigo: "MP-NUEVO", quantity: 9 })]);
+    const [kg0] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "cantidadKg", value: "", expectedVersion: repo.getMpStock(lot.id)!.updatedAt }]);
+    expect(kg0).toMatchObject({ ok: true });
+    expect(repo.getMpStock(lot.id)!.cantidadKg).toBe(0);
   });
 });
 

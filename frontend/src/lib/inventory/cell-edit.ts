@@ -60,22 +60,19 @@ export const INVENTORY_REASON_FIELDS: ReadonlySet<string> = new Set(["cantidadKg
  * en el libro mayor y en la auditoría (usuario, fecha, valor anterior y nuevo) y se pueden deshacer. El código
  * (identificador) sigue pidiendo motivo.
  */
-export const INVENTORY_AUTO_REASON_FIELDS: ReadonlySet<string> = new Set(["cantidadKg", "stockLibroMayor"]);
+export const INVENTORY_AUTO_REASON_FIELDS: ReadonlySet<string> = new Set(["cantidadKg", "stockLibroMayor", "codigo"]);
 export const INVENTORY_AUTO_REASON = "Edición directa en la planilla de Stock";
 /**
  * Columnas de Stock MP donde el RELLENO arrastrando no escribe (sí la edición directa de la celda, con su motivo
  * cuando mueve saldo): mueven stock o son calculadas.
  */
 export const INVENTORY_NO_FILL: Readonly<Record<string, string>> = {
-  codigo: "Identifica el saldo en el libro mayor: se corrige celda por celda, con motivo.",
-  cantidadKg: "Mueve el stock: se corrige celda por celda, con motivo.",
-  stockLibroMayor: "Lo lleva el libro mayor: se fija celda por celda, con motivo.",
   diasAlVence: "Columna calculada a partir del vencimiento.",
   estadoStock: "Columna calculada a partir de los kg.",
   estadoVencimiento: "Columna calculada a partir del vencimiento.",
 };
-/** De las anteriores, las que el relleno arrastrando SÍ escribe, siempre con confirmación y motivo (corrige kg). */
-export const INVENTORY_FILL_WITH_REASON: ReadonlySet<string> = new Set(["cantidadKg"]);
+/** Ya no hay columnas de relleno «con confirmación»: todo lo editable se rellena y se borra directo (Deshacer disponible). */
+export const INVENTORY_FILL_WITH_REASON: ReadonlySet<string> = new Set();
 /** Hasta 1000 celdas por solicitud: pegar o rellenar rangos grandes en una sola operación atómica. */
 export const MAX_INVENTORY_CELL_CHANGES = 1000;
 
@@ -124,6 +121,7 @@ export function parseDisplayedNumber(text: unknown): number | null {
 export function validateInventoryValue(field: string, raw: unknown): InventoryValidation {
   const text = typeof raw === "number" ? String(raw) : typeof raw === "string" ? raw.trim() : "";
   if (field === "codigo") {
+    if (!text) return { ok: true, value: "" }; // borrar el código es válido: la fila queda sin código (pendiente)
     if (!/[\p{L}\p{N}]/u.test(text)) return { ok: false, message: "El código necesita letras o números." };
     if (text.length > 60) return { ok: false, message: "Máximo 60 caracteres." };
     return { ok: true, value: text.replace(/\s+/g, " ").toUpperCase() };
@@ -138,7 +136,7 @@ export function validateInventoryValue(field: string, raw: unknown): InventoryVa
     return { ok: true, value: text };
   }
   if (NUMERIC.has(field)) {
-    if (!text) return field === "cantidadKg" ? { ok: false, message: "Ingresá una cantidad (≥ 0)." } : { ok: true, value: null };
+    if (!text) return field === "cantidadKg" ? { ok: true, value: 0 } : { ok: true, value: null }; // kg vacíos = 0 (el stock de la fila queda en cero)
     const n = parseNonNegativeNumber(text);
     if (n === null || n > 1_000_000_000) return { ok: false, message: "Número inválido (≥ 0)." };
     return { ok: true, value: n };
@@ -151,7 +149,6 @@ export function validateInventoryValue(field: string, raw: unknown): InventoryVa
   }
   const max = field === "observacion" ? 1000 : 200;
   if (text.length > max) return { ok: false, message: `Máximo ${max} caracteres.` };
-  if (field === "descripcion" && !text) return { ok: false, message: "La descripción no puede quedar vacía." };
   return { ok: true, value: text };
 }
 

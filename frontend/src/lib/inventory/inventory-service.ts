@@ -52,6 +52,7 @@ import {
   mpInternalCodigoForIngreso,
 } from "./types";
 import {
+  INVENTORY_AUTO_REASON,
   INVENTORY_REASON_FIELDS,
   MAX_INVENTORY_CELL_CHANGES,
   inventoryCellProtection,
@@ -681,12 +682,10 @@ export class InventoryService {
       if (prot) { results.push({ ok: false, code: "PROTECTED", message: prot }); continue; }
       const v = validateInventoryValue(c.field, c.value);
       if (!v.ok) { results.push({ ok: false, code: "INVALID", message: v.message }); continue; }
-      if (INVENTORY_REASON_FIELDS.has(c.field) && sanitizeOptionalReason(c.reason).length < 8) {
-        results.push({ ok: false, code: "INVALID", message: "Corregir cantidades requiere un motivo (mín. 8 caracteres)." });
-        continue;
-      }
+      // Sin pedir motivo: si no viene uno, queda el automático (la auditoría guarda usuario, fecha, valor anterior y nuevo).
+      const cc = INVENTORY_REASON_FIELDS.has(c.field) && sanitizeOptionalReason(c.reason).length < 8 ? { ...c, reason: INVENTORY_AUTO_REASON } : c;
       results.push({ ok: true });
-      parsed.push({ c, value: v.value });
+      parsed.push({ c: cc, value: v.value });
     }
     if (results.some((r) => !r.ok)) return results;
 
@@ -1710,7 +1709,19 @@ export class InventoryService {
   reclassifyMpLotCodigo(actor: InventoryActor, lot: MpStockRow, nuevo: string, reason: string) {
     const from = normalizeMpCodigoLocal(lot.codigo);
     const to = normalizeMpCodigoLocal(nuevo);
-    if (!to || from === to) return lot;
+    if (from === to) return lot;
+    if (!to) {
+      // Borrar el código de la fila: queda SIN código (pendiente) y su saldo sale del código anterior para que el libro
+      // mayor siga siendo la suma de sus lotes. Al asignarle un código después, el saldo entra al nuevo.
+      const cleared = this.enrichMpStock({ ...lot, codigo: "", codigoPendiente: true, updatedBy: actor.email, updatedAt: bumpIso(lot.updatedAt) });
+      this.repo.upsertMpStock(cleared);
+      if (from && (lot.cantidadKg ?? 0) !== 0) {
+        this.repo.mpLedgerOps.push({ kind: "codigo_delta", refId: randomUUID(), lotId: lot.id, codigo: from, quantity: -(lot.cantidadKg ?? 0), reason: reason || INVENTORY_AUTO_REASON, lote: lot.lote, descripcion: lot.descripcion });
+      }
+      if (from) this.refreshProductosAsociadosForCodigo(from);
+      this.audit(actor, "mp_stock", lot.id, "codigo_borrado", { codigo: lot.codigo }, { codigo: "", saldoRetirado: lot.cantidadKg ?? 0 }, reason || INVENTORY_AUTO_REASON);
+      return this.repo.getMpStock(lot.id) ?? cleared;
+    }
     const others = this.repo
       .listMpStock()
       .filter((l) => l.id !== lot.id && !l.archived && normalizeMpCodigoLocal(l.codigo) === from);
@@ -1751,6 +1762,10 @@ export class InventoryService {
         lote: lot.lote,
         descripcion: lot.descripcion,
       });
+    }
+    if (!from && (lot.cantidadKg ?? 0) !== 0) {
+      // La fila no tenía código (su saldo no estaba en ningún código): al asignarlo, sus kg entran al código nuevo.
+      this.repo.mpLedgerOps.push({ kind: "codigo_delta", refId, lotId: lot.id, codigo: to, quantity: lot.cantidadKg ?? 0, reason: reason || INVENTORY_AUTO_REASON, lote: lot.lote, descripcion: lot.descripcion });
     }
     // PRODUCTO (de los ingresos confirmados del código) se recalcula con los ingresos ya en el código nuevo.
     this.refreshProductosAsociadosForCodigo(to);

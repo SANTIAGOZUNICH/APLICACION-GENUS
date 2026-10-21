@@ -36,6 +36,7 @@ import { ensureMpLoadOrderBackfill, MP_SEQ_ALTA } from "./mp-load-order";
 import {
   MAX_MP_SHEET_CHANGES,
   MIN_MP_CORRECCION_MOTIVO,
+  MP_SHEET_AUTO_REASON,
   mpSheetNeedsReason,
   mpSheetProtection,
   validateMpSheetValue,
@@ -138,6 +139,11 @@ export async function runMpInventoryOp<T>(
             { email: actor.email, sector: actor.sector },
             { from: op.from, to: op.to, mode: op.mode, quantity: op.quantity, reason: op.reason, refId: op.refId, lote: op.lote, descripcion: op.descripcion }
           );
+        } else if (op.kind === "codigo_delta") {
+          await getMpStockLedger().applyLotAdjustment(
+            { email: actor.email, sector: actor.sector },
+            { codigo: op.codigo, quantity: op.quantity, reason: op.reason, ajusteId: op.refId, lote: op.lote, descripcion: op.descripcion }
+          );
         } else {
           await getMpStockLedger().adjustCodigoBalance(
             { email: actor.email, sector: actor.sector },
@@ -239,14 +245,9 @@ export async function patchMpSheetCells(
       }
       const v = validateMpSheetValue(resource, c.field, c.value);
       if (!v.ok) return void (results[i] = { ok: false, code: "INVALID", message: v.message });
-      const reason = String(c.reason ?? "").trim();
-      if (mpSheetNeedsReason(resource, row as never, c.field) && reason.length < MIN_MP_CORRECCION_MOTIVO) {
-        return void (results[i] = {
-          ok: false,
-          code: "INVALID",
-          message: `Corregir un ingreso confirmado mueve el stock: indicá el motivo (mín. ${MIN_MP_CORRECCION_MOTIVO} caracteres).`,
-        });
-      }
+      // Sin pedir motivo: si no viene uno, queda el automático (usuario, fecha, valor anterior y nuevo en la auditoría).
+      let reason = String(c.reason ?? "").trim();
+      if (mpSheetNeedsReason(resource, row as never, c.field) && reason.length < MIN_MP_CORRECCION_MOTIVO) reason = MP_SHEET_AUTO_REASON;
       const entry = patches.get(row.id) ?? { patch: {}, reason: "" };
       entry.patch[c.field] = v.value;
       if (reason) entry.reason = reason;

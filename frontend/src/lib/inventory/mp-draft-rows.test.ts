@@ -14,6 +14,6 @@ describe("filas en blanco → pedido de alta", () => {
     const ok = ingresoPayloadFromDraft("id-2", { FECHA: "20/10/2026", PROVEEDOR: "ACME", "DESCRIPCIÓN MATERIA PRIMA": "Agua", LOTE: "A1", "CANTIDAD (kg/u)": "100", BULTOS: "4" });
     expect(ok).toMatchObject({ ok: true, payload: { id: "id-2", fecha: "2026-10-20", cantidad: 100, bultos: 4, proveedor: "ACME" } });
     expect(ingresoPayloadFromDraft("id-2", { FECHA: "20/10/2026", "CANTIDAD (kg/u)": "0" })).toMatchObject({ ok: false });
-    expect(ingresoPayloadFromDraft("id-2", { FECHA: "", "CANTIDAD (kg/u)": "5" })).toMatchObject({ ok: false, message: expect.stringContaining("Fecha") });
+    expect(ingresoPayloadFromDraft("id-2", { FECHA: "", "CANTIDAD (kg/u)": "5" })).toMatchObject({ ok: true, payload: { fecha: "" } }); // sin fecha: igual se guarda
   });
 });
