@@ -132,7 +132,7 @@ async function openOe(page, number, ready = "[data-testid=oe-materials-table]") 
   if ((page.viewportSize()?.width ?? 1440) < 768) await page.getByRole("button", { name: "Abrir menú" }).click({ timeout: 60_000 }); // celular: menú colapsado
   await nav(page, "Órdenes de Elaboración");
   await page.getByPlaceholder("Número, producto, código, cliente, lote…").fill(number);
-  await page.getByText(/^1 resultado$/).waitFor({ timeout: 60_000 });
+  await page.getByText(/^1 resultado$/).waitFor({ timeout: 60_000 }).catch(async (e) => { await page.screenshot({ path: `${OUT}/debug-lista.png`, fullPage: true }); console.log("LISTA:", (await page.locator("body").innerText()).slice(0, 1500)); throw e; });
   await page.waitForTimeout(800);
   // En la grilla de escritorio el encabezado fijo puede tapar el botón: se dispara el clic directamente.
   await page.getByRole("button", { name: /^Abrir$/ }).first().dispatchEvent("click");
