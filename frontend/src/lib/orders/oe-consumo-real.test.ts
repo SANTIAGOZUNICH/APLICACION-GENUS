@@ -3,6 +3,7 @@ import { memoryInventoryRepo } from "@/lib/inventory/get-inventory-service";
 import { getMpStockLedger } from "@/lib/mp-stock/mp-stock-ledger";
 import { emptyOeMaterial } from "@/lib/orders/content";
 import { MemoryOrdersRepository } from "@/lib/orders/memory-repository";
+import { hasMpConsumoPendiente } from "@/lib/orders/oe-mp-consumption";
 import { seedMpStockForTests } from "@/lib/orders/oe-mp-test-fixture";
 import { OrdersService } from "@/lib/orders/orders-service";
 import type { OeContent, OeMaterialRow, OrdersActor } from "@/lib/orders/types";
@@ -93,48 +94,87 @@ describe("entrega de OE: descuento por KG REAL UTILIZADO (código MP + lote)", (
     expect(consumos[0]!.quantity).toBe(-20);
   });
 
-  it("faltan datos: informa la fila y no entrega ni descuenta nada", async () => {
+  it("faltan datos: la OE se ENTREGA igual, no se descuenta nada y el consumo queda pendiente; se regulariza una sola vez", async () => {
     const oe = await makeOe([
-      { materiaPrima: "AGUA", formulaPct: 50, codigoMp: "MP-AGUA" },
-      { materiaPrima: "GLICERINA", formulaPct: 50, codigoMp: "" },
+      { id: "r1", materiaPrima: "AGUA", formulaPct: 50, codigoMp: "MP-AGUA" },
+      { id: "r2", materiaPrima: "GLICERINA", formulaPct: 50, codigoMp: "" },
     ]);
     await elaboracionCarga(oe.id, (ms) => [{ ...ms[0]!, kgReal: 10, lote: "A1" }, { ...ms[1]!, kgReal: 5, lote: "G1" }]);
-    const err = await service.deliver(oe.id, elaboracion, true).catch((e) => e);
-    expect(err).toBeInstanceOf(MpConsumptionIncompleteError);
-    expect((err as MpConsumptionIncompleteError).issues.map((i) => [i.rowNumber, i.field])).toEqual([[2, "codigoMp"]]);
-    expect((await service.getOrder(oe.id, produccion)).status).not.toMatch(/COMPLETA/);
+    const done = await service.deliver(oe.id, elaboracion, true);
+    expect(done.status).toBe("COMPLETA");
+    expect(hasMpConsumoPendiente(done.formData)).toBe(true);
+    // Sin descuentos parciales ni inventados.
     expect(lotKg("MP-AGUA", "A1")).toBe(100);
     expect(await codeKg("MP-AGUA")).toBe(150);
+    expect(lotKg("MP-GLI", "G1")).toBe(200);
+    expect((await service.getOrder(oe.id, produccion)).status).toBe("COMPLETA");
+    // Segunda pulsación: no duplica la entrega.
+    await expect(service.deliver(oe.id, elaboracion, true)).rejects.toThrow(/ya está completa/);
+
+    // Regularizar sin completar: informa qué falta, no cambia nada.
+    const err = await service.settleMpConsumption(oe.id, elaboracion).catch((e) => e);
+    expect(err).toBeInstanceOf(MpConsumptionIncompleteError);
+    expect((err as MpConsumptionIncompleteError).issues.map((i) => [i.rowNumber, i.field])).toEqual([[2, "codigoMp"]]);
+    expect(lotKg("MP-AGUA", "A1")).toBe(100);
+    expect(hasMpConsumoPendiente((await service.getOrder(oe.id, produccion)).formData)).toBe(true);
+
+    // Completando el dato: se descuenta UNA vez y queda auditado; reintentar no duplica.
+    const settled = await service.settleMpConsumption(oe.id, elaboracion, { rows: [{ rowId: "r2", codigoMp: "MP-GLI" }] });
+    expect(hasMpConsumoPendiente(settled.formData)).toBe(false);
+    expect(lotKg("MP-AGUA", "A1")).toBe(90);
+    expect(lotKg("MP-GLI", "G1")).toBe(195);
+    await expect(service.settleMpConsumption(oe.id, elaboracion)).rejects.toThrow(/ya fue procesado/);
+    expect(lotKg("MP-GLI", "G1")).toBe(195);
+    expect(await codeKg("MP-GLI")).toBe(195);
   });
 
-  it("stock insuficiente: Elaboración no puede entregar (nada parcial); Producción autoriza con motivo y queda auditado", async () => {
+  it("caso real: 14 MP (sin código, código inexistente, sin KG REAL, sin fórmula) se ENTREGA sin descontar ni bloquear", async () => {
+    const rows: Array<Partial<OeMaterialRow>> = Array.from({ length: 14 }, (_, i) => ({
+      id: `m${i}`,
+      materiaPrima: `MP ${i}`,
+      formulaPct: i < 12 ? 5 : null,
+      codigoMp: i < 8 ? "" : i === 8 ? "NO-EXISTE" : "MP-AGUA",
+      kgReal: null,
+    }));
+    const oe = await makeOe(rows);
+    const done = await service.deliver(oe.id, elaboracion, true);
+    expect(done.status).toBe("COMPLETA");
+    expect(hasMpConsumoPendiente(done.formData)).toBe(true);
+    expect(await codeKg("MP-AGUA")).toBe(150);
+    expect(await getMpStockLedger().history("MP-AGUA").then((h) => h.filter((m) => m.kind === "CONSUMO_OE"))).toHaveLength(0);
+    // Persistencia: al recargar la entrega sigue registrada y no se puede repetir.
+    expect((await service.getOrder(oe.id, produccion)).status).toBe("COMPLETA");
+    await expect(service.deliver(oe.id, elaboracion, true)).rejects.toThrow(/ya está completa/);
+  });
+
+  it("stock insuficiente: Elaboración entrega igual (consumo pendiente); Producción autoriza con motivo y queda auditado", async () => {
     const oe = await makeOe([
-      { materiaPrima: "AGUA", formulaPct: 50, codigoMp: "MP-AGUA" },
-      { materiaPrima: "POCO", formulaPct: 50, codigoMp: "MP-POCO" },
+      { id: "a", materiaPrima: "AGUA", formulaPct: 50, codigoMp: "MP-AGUA" },
+      { id: "p", materiaPrima: "POCO", formulaPct: 50, codigoMp: "MP-POCO" },
     ]);
     await elaboracionCarga(oe.id, (ms) => [{ ...ms[0]!, kgReal: 10, lote: "A1" }, { ...ms[1]!, kgReal: 5, lote: "P1" }]);
-    const err = await service.deliver(oe.id, elaboracion, true).catch((e) => e);
-    expect(err).toBeInstanceOf(MpStockShortageError);
-    expect((err as MpStockShortageError).canAuthorize).toBe(false);
-    expect((err as MpStockShortageError).shortages.map((s) => [s.codigo, s.tipo, s.faltante])).toEqual([
+    const done = await service.deliver(oe.id, elaboracion, true);
+    expect(done.status).toBe("COMPLETA");
+    expect(hasMpConsumoPendiente(done.formData)).toBe(true);
+    // Ni la MP con stock se descontó (nada parcial).
+    expect(lotKg("MP-AGUA", "A1")).toBe(100);
+    expect(await codeKg("MP-AGUA")).toBe(150);
+
+    // Elaboración no puede forzar stock negativo: la regularización informa el faltante y no cambia nada.
+    const shortErr = await service.settleMpConsumption(oe.id, elaboracion, { allowNegativeMpStock: true, negativeMpStockReason: "x" }).catch((e) => e);
+    expect(shortErr).toBeInstanceOf(MpStockShortageError);
+    expect((shortErr as MpStockShortageError).canAuthorize).toBe(false);
+    expect((shortErr as MpStockShortageError).shortages.map((s) => [s.codigo, s.tipo, s.faltante])).toEqual([
       ["MP-POCO", "lote", 2],
       ["MP-POCO", "codigo", 2],
     ]);
-    // Ni la MP con stock se descontó.
     expect(lotKg("MP-AGUA", "A1")).toBe(100);
-    expect(await codeKg("MP-AGUA")).toBe(150);
+    // Producción sin motivo: tampoco. Calidad no puede autorizar stock negativo.
+    await expect(service.settleMpConsumption(oe.id, produccion, { allowNegativeMpStock: true, negativeMpStockReason: " " })).rejects.toBeInstanceOf(MpStockShortageError);
+    await expect(service.settleMpConsumption(oe.id, calidad, { allowNegativeMpStock: true, negativeMpStockReason: "x" })).rejects.toBeInstanceOf(MpStockShortageError);
 
-    // Elaboración no puede autorizar; Producción sin motivo, tampoco (pero se le ofrece autorizar).
-    await expect(service.deliver(oe.id, elaboracion, true, { allowNegativeMpStock: true, negativeMpStockReason: "x" })).rejects.toBeInstanceOf(MpStockShortageError);
-    const prodErr = await service.deliver(oe.id, produccion, true).catch((e) => e);
-    expect(prodErr).toBeInstanceOf(MpStockShortageError);
-    expect((prodErr as MpStockShortageError).canAuthorize).toBe(true);
-    await expect(service.deliver(oe.id, produccion, true, { allowNegativeMpStock: true, negativeMpStockReason: " " })).rejects.toBeInstanceOf(MpStockShortageError);
-    // Calidad no autoriza.
-    await expect(service.deliver(oe.id, calidad, true, { allowNegativeMpStock: true, negativeMpStockReason: "x" })).rejects.toBeInstanceOf(OrdersForbiddenError);
-
-    const done = await service.deliver(oe.id, produccion, true, { allowNegativeMpStock: true, negativeMpStockReason: "Ingreso pendiente de cargar" });
-    expect(done.status).toBe("COMPLETA");
+    const settled = await service.settleMpConsumption(oe.id, produccion, { allowNegativeMpStock: true, negativeMpStockReason: "Ingreso pendiente de cargar" });
+    expect(hasMpConsumoPendiente(settled.formData)).toBe(false);
     expect(lotKg("MP-POCO", "P1")).toBe(-2);
     expect(await codeKg("MP-POCO")).toBe(-2);
     expect(lotKg("MP-AGUA", "A1")).toBe(90);

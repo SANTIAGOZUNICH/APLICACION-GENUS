@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import { Button } from "@/components/ui/button";
+import { hasMpConsumoPendiente } from "@/lib/orders/oe-mp-consumption";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,7 @@ import {
   deleteEmptyDraftApi,
   deliverOrderApi,
   completePendingFieldsApi,
+  settleMpConsumptionApi,
   fetchOrder,
   orderPdfUrl,
   resolveFormulaMasterApi,
@@ -719,6 +721,47 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     }
   };
 
+  /** Regularización del descuento de MP de una OE ya entregada: filas a completar y reintento (se descuenta una sola vez). */
+  const [mpFix, setMpFix] = useState<Record<string, { codigoMp?: string; lote?: string; kgReal?: string }>>({});
+  const [mpSettling, setMpSettling] = useState(false);
+  const [mpSettleIssues, setMpSettleIssues] = useState<Array<{ rowId: string; message: string }>>([]);
+  const [mpSettleMsg, setMpSettleMsg] = useState<string | null>(null);
+  const settleMp = async (authorize?: { reason: string }) => {
+    if (mpSettling) return;
+    setMpSettling(true);
+    setMpSettleMsg(null);
+    try {
+      const rows = Object.entries(mpFix)
+        .map(([rowId, v]) => ({
+          rowId,
+          codigoMp: v.codigoMp,
+          lote: v.lote,
+          kgReal: v.kgReal === undefined ? undefined : v.kgReal.trim() === "" ? null : Number(v.kgReal.replace(",", ".")),
+        }))
+        .filter((r) => r.codigoMp !== undefined || r.lote !== undefined || r.kgReal !== undefined);
+      const updated = await settleMpConsumptionApi(session, orderId, { rows, allowNegativeMpStock: Boolean(authorize), negativeMpStockReason: authorize?.reason });
+      setMpShortage(null);
+      setMpShortageReason("");
+      setOrder(updated);
+      setForm(hydrateOrderContent(updated.formData));
+      versionRef.current = updated.version;
+      setMpFix({});
+      setMpSettleIssues([]);
+      setDeliverNotice(null);
+      setMpSettleMsg("Descuento de materias primas procesado.");
+    } catch (err) {
+      const e = err as Error & { code?: string; issues?: Array<{ rowId: string; message: string }>; shortages?: Array<{ codigo: string; lote: string; disponible: number; requerido: number; faltante: number; tipo: string }> };
+      if (e.code === "MP_CONSUMO_INCOMPLETO" && e.issues?.length) setMpSettleIssues(e.issues);
+      else if (e.code === "MP_STOCK_SHORTAGE") {
+        setMpShortage({ shortages: (e.shortages ?? []) as unknown as NonNullable<typeof mpShortage>["shortages"], canAuthorize: Boolean((e as { canAuthorize?: boolean }).canAuthorize) });
+        setMpSettleMsg("El stock no alcanza para descontar: la OE sigue entregada y el descuento queda pendiente.");
+      }
+      else setMpSettleMsg(friendlySaveError(err, "No se pudo procesar el descuento."));
+    } finally {
+      setMpSettling(false);
+    }
+  };
+
   const onDeliver = async (
     allowIncomplete = false,
     meOpts?: { allowNegativeMeStock?: boolean; negativeMeStockReason?: string; allowNegativeMpStock?: boolean; negativeMpStockReason?: string }
@@ -973,13 +1016,13 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               {order.type === "OE" ? "ENTREGAR OE" : "Entregar"}
             </Button>
           )}
-          {canAuthorizeMpShortage && (
+          {(canAuthorizeMpShortage || (order.type === "OE" && form && hasMpConsumoPendiente(form) && !deletedOe && canAuthorizeOeMpShortage(sectorId))) && (
             <Button
               type="button"
               variant="secondary"
               data-testid="mp-authorize-open"
-              disabled={delivering}
-              onClick={() => void onDeliver(false)}
+              disabled={delivering || mpSettling}
+              onClick={() => (form && hasMpConsumoPendiente(form) ? void settleMp() : void onDeliver(false))}
               title="Revisa el stock de MP de esta OE: si falta, podés autorizar la entrega con motivo."
             >
               Autorizar faltante de MP
@@ -1106,6 +1149,28 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         <p className="rounded border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-900" role="status" data-testid="oe-deliver-notice">
           {deliverNotice}
         </p>
+      ) : null}
+      {order.type === "OE" && hasMpConsumoPendiente(form) && !deletedOe ? (
+        <section className="space-y-2 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950" data-testid="oe-mp-pendiente">
+          <p className="font-medium">El descuento de materias primas está pendiente (la OE ya está entregada y no se vuelve a entregar).</p>
+          <p className="text-xs">No se descontó nada ni se inventaron cantidades. Completá lo que falte cuando puedas y tocá «Descontar MP»; se descuenta una sola vez y queda auditado.</p>
+          {mpSettleIssues.length > 0 ? (
+            <ul className="space-y-1" data-testid="oe-mp-pendiente-issues">
+              {mpSettleIssues.map((i) => (
+                <li key={`${i.rowId}-${i.message}`} className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs">{i.message}</span>
+                  <input className="w-28 rounded border px-1 py-0.5 text-xs" placeholder="CÓDIGO MP" aria-label="CÓDIGO MP" onChange={(e) => setMpFix((p) => ({ ...p, [i.rowId]: { ...p[i.rowId], codigoMp: e.target.value } }))} />
+                  <input className="w-24 rounded border px-1 py-0.5 text-xs" placeholder="LOTE" aria-label="LOTE MP" onChange={(e) => setMpFix((p) => ({ ...p, [i.rowId]: { ...p[i.rowId], lote: e.target.value } }))} />
+                  <input inputMode="decimal" className="w-24 rounded border px-1 py-0.5 text-xs" placeholder="KG REAL" aria-label="KG REAL UTILIZADO" onChange={(e) => setMpFix((p) => ({ ...p, [i.rowId]: { ...p[i.rowId], kgReal: e.target.value } }))} />
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {mpSettleMsg ? <p className="text-xs" role="status" data-testid="oe-mp-pendiente-msg">{mpSettleMsg}</p> : null}
+          <Button type="button" variant="secondary" size="sm" disabled={mpSettling} onClick={() => void settleMp()} data-testid="oe-mp-descontar">
+            {mpSettling ? "Procesando…" : "Descontar MP"}
+          </Button>
+        </section>
       ) : null}
       {conflict && (
         <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
@@ -1517,7 +1582,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           <DialogHeader>
             <DialogTitle>Faltan datos para descontar las materias primas</DialogTitle>
             <DialogDescription>
-              No se entregó ni se descontó nada. Completá estas filas de la tabla y volvé a entregar:
+              Todavía no se descontó nada. Completá estas filas de la tabla y volvé a intentar:
             </DialogDescription>
           </DialogHeader>
           <ul className="ml-4 list-disc space-y-1 text-sm" data-testid="mp-consumo-issues">
@@ -1538,9 +1603,9 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           <DialogHeader>
             <DialogTitle>Stock de MP insuficiente</DialogTitle>
             <DialogDescription>
-              No se entregó ni se descontó nada.{" "}
+              Todavía no se descontó nada.{" "}
               {mpShortage?.canAuthorize
-                ? "Podés autorizar la entrega: el stock quedará en negativo y queda registrado con tu motivo."
+                ? "Podés autorizar el descuento: el stock quedará en negativo y queda registrado con tu motivo."
                 : "Avisá a Producción (puede autorizar la entrega) o a Materia Prima (para registrar el ingreso o corregir el lote)."}
             </DialogDescription>
           </DialogHeader>
@@ -1574,13 +1639,15 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
                 data-testid="mp-shortage-authorize"
                 disabled={!mpShortageReason.trim() || delivering}
                 onClick={() =>
-                  void onDeliver(pendingAllowIncomplete, {
-                    allowNegativeMpStock: true,
-                    negativeMpStockReason: mpShortageReason.trim(),
-                  })
+                  form && hasMpConsumoPendiente(form)
+                    ? void settleMp({ reason: mpShortageReason.trim() })
+                    : void onDeliver(pendingAllowIncomplete, {
+                        allowNegativeMpStock: true,
+                        negativeMpStockReason: mpShortageReason.trim(),
+                      })
                 }
               >
-                Autorizar y entregar
+                Autorizar y descontar
               </Button>
             ) : null}
           </DialogFooter>

@@ -214,3 +214,12 @@ export function fillCodigoMpSuggestions(materials: OeMaterialRow[], catalog: MpC
     return s.kind === "one" ? { ...m, codigoMp: s.codigo } : m;
   });
 }
+
+/** Marca en `completion.pendingAtCompletion`: la OE se entregó pero su descuento de MP quedó pendiente. */
+export const MP_CONSUMO_PENDIENTE = "Descuento de materias primas";
+
+/** ¿La OE entregada tiene el descuento de MP todavía pendiente? (marca puesta y sin resolver) */
+export function hasMpConsumoPendiente(content: { kind?: string; completion?: { pendingAtCompletion: string[]; resolved: Array<{ field: string }> } | null } | null | undefined): boolean {
+  const c = content?.completion;
+  return Boolean(content?.kind === "OE" && c?.pendingAtCompletion.includes(MP_CONSUMO_PENDIENTE) && !c.resolved.some((r) => r.field === MP_CONSUMO_PENDIENTE));
+}
