@@ -812,6 +812,10 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       setMpIssues([]);
       setMpShortage(null);
       setMpShortageReason("");
+      if (updated.type === "OE" && hasMpConsumoPendiente(updated.formData)) {
+        // La entrega ya está registrada; el descuento de MP queda pendiente y se regulariza después (no bloquea).
+        setDeliverNotice("OE entregada. El descuento de materias primas quedó pendiente por datos incompletos.");
+      }
       setOrder(updated);
       setForm(hydrateOrderContent(updated.formData));
       versionRef.current = updated.version;
