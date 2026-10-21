@@ -149,7 +149,7 @@ describe.skipIf(Boolean(PROBLEM))(`Pasar al Excel sin validaciones en Postgres r
   it("ME · una sola columna reconocida y sin foto adjunta: sube igual", async () => {
     const { out } = await pass("ME", dep, [line({ supplierCode: "FR-9" })], head({ supplier: SUP, remitoNumber: "" }), `k-${randomUUID()}`, false);
     expect(out.sheet.count).toBe(1);
-    expect((await meRows(out.sheet.ingresoIds))[0]).toMatchObject({ codigo: "", cantidad: null, total: null });
+    expect((await meRows(out.sheet.ingresoIds))[0]).toMatchObject({ codigo: "FR-9", cantidad: null, total: null });
     expect(await meStock(ME_CODE)).toBe(100);
   });
 
