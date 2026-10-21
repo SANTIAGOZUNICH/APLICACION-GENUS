@@ -1815,6 +1815,10 @@ export class InventoryService {
       confirmDemote?: boolean;
       /** Motivo de la corrección (queda en la auditoría). Obligatorio en la planilla para ingresos confirmados. */
       auditReason?: string;
+      /** Pasar a la planilla desde una foto: no se rechaza por «duplicado» (se avisa y se corrige en la tabla). */
+      skipDuplicateCheck?: boolean;
+      /** Borrador desde foto: sin código de negocio NO se inventa la identidad interna INT-MP-…: el código queda vacío. */
+      keepBlankCodigo?: boolean;
     }
   ) {
     this.guard(actor, "mp_ingresos", true);
@@ -1840,7 +1844,7 @@ export class InventoryService {
     const qty = mpIngresoImpactQty({ total, cantidad });
     let codigoPendiente =
       Boolean(existing?.codigoPendiente) || isMpInternalCodigo(codigo);
-    if (!isBusinessMpCodigo(codigo) && qty > 0) {
+    if (!isBusinessMpCodigo(codigo) && qty > 0 && !(input.keepBlankCodigo && input.status === "BORRADOR")) {
       if (!codigo || isMpInternalCodigo(codigo)) {
         codigo = mpInternalCodigoForIngreso(ingresoId);
         codigoPendiente = true;
@@ -1884,7 +1888,7 @@ export class InventoryService {
     // Duplicado: mismo remito, código, lote, cantidad total y fecha que otro ingreso vigente (pegar dos veces el
     // mismo remito duplicaba el stock). Varias líneas de un remito con distinto código/lote/cantidad siguen permitidas.
     const dupRemito = (input.remitoNro ?? existing?.remitoNro ?? "").trim().toUpperCase();
-    if (dupRemito) {
+    if (dupRemito && !input.skipDuplicateCheck) {
       const dupFecha = input.fecha ?? existing?.fecha ?? todayIso();
       const dupLote = (input.lote ?? existing?.lote ?? "").trim().toUpperCase();
       const dup = this.repo.listMpIngresos().find(

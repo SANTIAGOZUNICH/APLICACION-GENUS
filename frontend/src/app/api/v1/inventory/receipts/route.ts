@@ -77,6 +77,9 @@ export async function POST(request: Request) {
           { receipt: await svc.confirm(actor, id, mod, { expectedVersion: Number(body.expectedVersion), confirmKey: String(body.confirmKey ?? ""), acknowledgeDuplicates: body.acknowledgeDuplicates === true, parentReceiptId: typeof body.parentReceiptId === "string" ? body.parentReceiptId : null }) },
           { status: 200 }
         );
+      case "to_sheet":
+        // «Pasar al Excel»: sin validaciones; el encabezado y las líneas viajan tal como están en pantalla.
+        return NextResponse.json(await svc.toSheet(actor, id, mod, { confirmKey: String(body.confirmKey ?? ""), header: body.header, lines: body.lines }));
       case "discard":
         await svc.discard(actor, id, mod);
         return NextResponse.json({ ok: true });
