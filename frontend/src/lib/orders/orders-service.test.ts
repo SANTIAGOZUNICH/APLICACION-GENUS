@@ -729,13 +729,24 @@ describe("OE: completar con datos secundarios pendientes", () => {
     const c = classifyDeliverMissing(sinFin);
     expect(c.critical).toEqual([]);
     expect(c.secondary).toContain("Fecha de finalización");
-    const sinLote = { ...base, header: { ...base.header, lot: "" } } as OeContent;
-    expect(classifyDeliverMissing(sinLote).critical.length).toBeGreaterThan(0);
+    // Lote, cliente y cantidad ya NO frenan: quedan pendientes. Solo bloquea el producto (identificación) o un KG REAL negativo.
+    const sinLote = { ...base, header: { ...base.header, lot: "", client: "" } } as OeContent;
+    const cl = classifyDeliverMissing(sinLote);
+    expect(cl.critical).toEqual([]);
+    expect(cl.secondary).toEqual(expect.arrayContaining(["Lote", "Cliente"]));
+    const sinProducto = { ...base, header: { ...base.header, productName: "" } } as OeContent;
+    expect(classifyDeliverMissing(sinProducto).critical).toContain("Producto");
   });
 
   it("completa con COMPLETA + registro de pendientes, y no permite omitir datos críticos", async () => {
-    const crit = await oeWith((f) => ({ ...f, header: { ...f.header, lot: "" } }) as OeContent);
-    await expect(service.deliver(crit.id, elaboracion, true, { allowIncomplete: true })).rejects.toBeInstanceOf(OrdersValidationError);
+    // Un KG REAL negativo es crítico para el stock: ni se guarda ni se entrega.
+    await expect(oeWith((f) => ({ ...f, materials: f.materials.map((m, i) => (i === 0 ? { ...m, kgReal: -1 } : m)) }) as OeContent)).rejects.toBeInstanceOf(OrdersValidationError);
+
+    // Aun sin pedir «allowIncomplete» (un clic), una OE con pendientes se entrega: queda COMPLETA con los pendientes marcados.
+    const sinLote = await oeWith((f) => ({ ...f, header: { ...f.header, lot: "" }, processControl: { ...f.processControl, cantidadObtenida: null, fechaFin: "" } }) as OeContent);
+    const one = await service.deliver(sinLote.id, elaboracion, true);
+    expect(one.status).toBe("COMPLETA");
+    expect((one.formData as OeContent).completion?.pendingAtCompletion).toEqual(expect.arrayContaining(["Lote", "Fecha de finalización"]));
 
     const sec = await oeWith((f) => ({ ...f, processControl: { ...f.processControl, fechaFin: "" } }) as OeContent);
     const done = await service.deliver(sec.id, elaboracion, true, { allowIncomplete: true });
@@ -743,6 +754,22 @@ describe("OE: completar con datos secundarios pendientes", () => {
     const fd = done.formData as OeContent;
     expect(fd.completion?.confirmedBy).toBe(elaboracion.email);
     expect(fd.completion?.pendingAtCompletion).toContain("Fecha de finalización");
+  });
+
+  it("una OE en estado histórico COMPLETA_CON_PENDIENTES se puede entregar (pasa a COMPLETA); una COMPLETA rechaza repetir", async () => {
+    const o = await oeWith((f) => f);
+    const done = await service.deliver(o.id, elaboracion, true);
+    await expect(service.deliver(done.id, elaboracion, true)).rejects.toBeInstanceOf(OrdersValidationError);
+  });
+
+  it("completePendingFields también completa Lote, Cliente y Cantidad pendientes, sin pisar lo cargado", async () => {
+    const sec = await oeWith((f) => ({ ...f, header: { ...f.header, lot: "", client: "" } }) as OeContent);
+    const done = await service.deliver(sec.id, elaboracion, true);
+    const late = await service.completePendingFields(done.id, elaboracion, { lot: "L-77", client: "CLIENTE X" });
+    const h = (late.formData as OeContent).header;
+    expect(h.lot).toBe("L-77");
+    expect(h.client).toBe("CLIENTE X");
+    await expect(service.completePendingFields(done.id, elaboracion, { lot: "OTRO" })).rejects.toBeInstanceOf(OrdersValidationError);
   });
 
   it("completePendingFields completa después sin reabrir ni duplicar y deja registro", async () => {

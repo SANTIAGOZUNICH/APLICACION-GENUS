@@ -112,6 +112,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   const [conflict, setConflict] = useState<OperationalOrderRecord | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [deliverOpen, setDeliverOpen] = useState(false);
+  const [deliverNotice, setDeliverNotice] = useState<string | null>(null);
   const [deliverObservation, setDeliverObservation] = useState("");
   const [masterOpen, setMasterOpen] = useState(false);
   const [masterReason, setMasterReason] = useState("");
@@ -692,7 +693,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
     setMasterOpen(true);
   };
 
-  const [latePending, setLatePending] = useState({ date: "", fechaFin: "", cantidad: "" });
+  const [latePending, setLatePending] = useState({ date: "", fechaFin: "", cantidad: "", client: "", quantityKg: "", lot: "" });
   const [lateSaving, setLateSaving] = useState(false);
   const saveLatePending = async () => {
     if (lateSaving) return;
@@ -703,11 +704,14 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
         date: latePending.date || undefined,
         fechaFin: latePending.fechaFin || undefined,
         cantidadObtenida: qty !== undefined && Number.isFinite(qty) ? qty : undefined,
+        client: latePending.client.trim() || undefined,
+        quantityKg: latePending.quantityKg.trim() && Number.isFinite(Number(latePending.quantityKg.replace(",", "."))) ? Number(latePending.quantityKg.replace(",", ".")) : undefined,
+        lot: latePending.lot.trim() || undefined,
       });
       setOrder(updated);
       setForm(hydrateOrderContent(updated.formData));
       versionRef.current = updated.version;
-      setLatePending({ date: "", fechaFin: "", cantidad: "" });
+      setLatePending({ date: "", fechaFin: "", cantidad: "", client: "", quantityKg: "", lot: "" });
     } catch (err) {
       setError(friendlySaveError(err, "No se pudieron completar los datos pendientes."));
     } finally {
@@ -953,12 +957,20 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
             <Button
               type="button"
               disabled={delivering}
+              data-testid={order.type === "OE" ? "oe-entregar" : "oa-entregar"}
               onClick={() => {
+                if (order.type === "OE") {
+                  // OE: un clic. Los datos pendientes no frenan ni piden confirmaciones: avisa breve y entrega.
+                  const pending = form ? classifyDeliverMissing(form) : { critical: [], secondary: [] };
+                  setDeliverNotice(pending.critical.length === 0 && pending.secondary.length > 0 ? "La OE tiene datos pendientes. Podés completarlos más adelante" : null);
+                  void onDeliver(true);
+                  return;
+                }
                 if (form) setMissingFields(validateDeliver(form));
                 setDeliverOpen(true);
               }}
             >
-              Entregar
+              {order.type === "OE" ? "ENTREGAR OE" : "Entregar"}
             </Button>
           )}
           {canAuthorizeMpShortage && (
@@ -1090,6 +1102,11 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           {error}
         </div>
       )}
+      {deliverNotice && !error ? (
+        <p className="rounded border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-900" role="status" data-testid="oe-deliver-notice">
+          {deliverNotice}
+        </p>
+      ) : null}
       {conflict && (
         <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
           Conflicto detectado (versión {conflict.version}).{" "}
@@ -1170,6 +1187,21 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
                     {still.includes("Fecha de finalización") && (
                       <label className="text-xs">Fecha de finalización
                         <input type="date" className="block rounded border px-2 py-1" value={latePending.fechaFin} onChange={(e) => setLatePending((p) => ({ ...p, fechaFin: e.target.value }))} data-testid="oe-late-fechafin" />
+                      </label>
+                    )}
+                    {still.includes("Cliente") && (
+                      <label className="text-xs">Cliente
+                        <input className="block rounded border px-2 py-1" value={latePending.client} onChange={(e) => setLatePending((p) => ({ ...p, client: e.target.value }))} data-testid="oe-late-client" />
+                      </label>
+                    )}
+                    {still.includes("Cantidad") && (
+                      <label className="text-xs">Cantidad (kg)
+                        <input inputMode="decimal" className="block w-28 rounded border px-2 py-1" value={latePending.quantityKg} onChange={(e) => setLatePending((p) => ({ ...p, quantityKg: e.target.value }))} data-testid="oe-late-quantity" />
+                      </label>
+                    )}
+                    {still.includes("Lote") && (
+                      <label className="text-xs">Lote
+                        <input className="block rounded border px-2 py-1" value={latePending.lot} onChange={(e) => setLatePending((p) => ({ ...p, lot: e.target.value }))} data-testid="oe-late-lot" />
                       </label>
                     )}
                     {still.includes("Cantidad obtenida") && (

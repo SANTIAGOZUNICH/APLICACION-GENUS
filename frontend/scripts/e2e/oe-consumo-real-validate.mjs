@@ -223,8 +223,7 @@ try {
   await lotes.nth(1).fill("A2");
   await lotes.nth(2).fill("G1");
   await p.waitForTimeout(2500);
-  await p.getByRole("button", { name: /^Entregar$/ }).first().click();
-  await p.locator("[data-testid=deliver-confirm]").click();
+  await p.getByRole("button", { name: /^ENTREGAR OE$/ }).first().click();
   await p.locator("[data-testid=mp-consumo-issues]").waitFor({ timeout: 30_000 });
   const issuesTxt = await p.locator("[data-testid=mp-consumo-issues]").innerText();
   check("Entregar con un dato faltante: informa la fila (4, falta LOTE MP) y no entrega", /Fila 4 — AGUA E2E CR: falta LOTE MP/.test(issuesTxt) && !/COMPLETA/.test((await oe(idA)).status), issuesTxt);
@@ -237,8 +236,7 @@ try {
   // Entregar: doble clic no entrega dos veces.
   let delivers = 0;
   p.on("request", (r) => { if (r.url().includes(`/orders/${idA}/deliver`)) delivers += 1; });
-  await p.getByRole("button", { name: /^Entregar$/ }).first().click();
-  await p.locator("[data-testid=deliver-confirm]").dblclick();
+  await p.getByRole("button", { name: /^ENTREGAR OE$/ }).first().dblclick(); // un clic entrega; el doble clic no duplica
   check("OE entregada (COMPLETA)", await waitDb(async () => (await oe(idA)).status === "COMPLETA"), (await oe(idA)).status);
   check("Doble clic en «Entregar»: un solo envío", delivers === 1, String(delivers));
   check(
@@ -294,8 +292,7 @@ try {
   await elabSave(elApi.page, idC, (ms) => [{ ...ms[0], kgReal: 5, lote: "A1" }, { ...ms[1], kgReal: 5, lote: "P1" }]);
   const elC = await openAs(E2E_USERS.elaboracion);
   await openOe(elC.page, numC);
-  await elC.page.getByRole("button", { name: /^Entregar$/ }).first().click();
-  await elC.page.locator("[data-testid=deliver-confirm]").click();
+  await elC.page.getByRole("button", { name: /^ENTREGAR OE$/ }).first().click();
   await elC.page.locator("[data-testid=mp-stock-shortages]").waitFor({ timeout: 30_000 });
   const shortTxt = await elC.page.locator("[data-testid=mp-stock-shortages]").innerText();
   check("Stock insuficiente: muestra el faltante (ESENCIA lote P1: hay 3, faltan 2)", /E2E-CR-POCO · lote P1 — hay 3 kg, se necesitan 5 kg \(faltan 2 kg\)/.test(shortTxt), shortTxt);
