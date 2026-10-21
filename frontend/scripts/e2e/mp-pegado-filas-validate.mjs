@@ -76,9 +76,10 @@ async function scrollToDraftCol(page, gid, colIdx) {
 async function draftCell(page, gid, k, title) {
   // La planilla virtualiza columnas: se desplaza a la derecha hasta que aparezca el encabezado buscado.
   await page.evaluate((gid) => { document.querySelector(`[data-testid=${gid}] .dsg-container`).scrollLeft = 0; }, gid);
+  await page.waitForTimeout(350); // la planilla vuelve a dibujar las primeras columnas
   let c;
   for (let i = 0; i < 25 && c === undefined; i++) {
-    c = (await colMap(page, gid))[title.toLowerCase()];
+    { const m = await colMap(page, gid); const t = title.toLowerCase(); c = m[t] ?? Object.entries(m).find(([k]) => k.startsWith(`${t} `))?.[1]; } // «Fecha / Ingreso» = Fecha
     if (c === undefined) {
       await page.evaluate((gid) => { document.querySelector(`[data-testid=${gid}] .dsg-container`).scrollLeft += 260; }, gid);
       await page.waitForTimeout(150);
@@ -119,11 +120,11 @@ try {
   await openTab(p, "Ingresos MP", GI);
   const mov0 = (await q("select count(*)::int n from mp_stock_movements"))[0].n;
   // Se pega «como sale de Excel», en el ORDEN de la planilla (se saltean las columnas calculadas):
-  // Fecha, Proveedor, Cliente, Remito, Código, Producto, Descripción, Bultos, Cantidad, Ubicación, Lote.
+  // Fecha, Ingreso Nº (editable), Proveedor, Cliente, Remito, Código, Producto, Descripción, Bultos, Cantidad, Total (editable), Ubicación, Lote.
   const c0 = await draftCell(p, GI, 0, "Fecha");
   const b = await c0.boundingBox();
   await p.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
-  const tsv = [1, 2, 3].map((n) => ["21/10/2026", "Prov PG", "", "", "", "", `${TAG} Pegado ${n}`, "", String(10 * n), "U1", `PG-L${n}`].join("\t")).join("\n");
+  const tsv = [1, 2, 3].map((n) => ["21/10/2026", "", "Prov PG", "", "", "", "", `${TAG} Pegado ${n}`, "", String(10 * n), "", "U1", `PG-L${n}`].join("\t")).join("\n");
   await pasteDoc(p, tsv);
   check("pegar 3 filas: las 3 se crean como ingresos completos (una vez cada una)", await waitDb(async () => (await q("select count(*)::int n from inv_mp_ingresos where payload->>'descripcion' like $1", [`${TAG} Pegado %`]))[0].n === 3, 25_000));
   await p.waitForTimeout(2500);

@@ -215,6 +215,7 @@ try {
     const xu = await openAs(E2E_USERS.materiaPrima, "desktop");
     const xp = xu.page;
     await openTab(xp, "Stock", GS);
+    const nBeforeExport = (await allStock()).length; // un ingreso con lote nuevo (paso anterior) ya sumó su fila a Stock
     // Filtro activo → se exporta lo que se ve.
     await xp.locator(`[data-testid=${GS}-filters-btn]`).click();
     await xp.locator(`[data-testid=${GS}-filter][data-col="PROVEEDOR"]`).fill("prov 1");
@@ -229,7 +230,7 @@ try {
     const wb = XLSX.readFile(await dlx.path());
     const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 });
     check("Exportar Excel (.xlsx): hoja con encabezados y las 4 filas filtradas", aoa.length === 5 && dlx.suggestedFilename().endsWith(".xlsx"), `${aoa.length} filas`);
-    check("exportar no modifica datos", (await allStock()).length === 12);
+    check("exportar no modifica datos (misma cantidad de filas antes y después)", (await allStock()).length === nBeforeExport, String((await allStock()).length));
     await xp.locator(`[data-testid=${GS}-view-reset]`).click();
     // Importar un .xlsx: vista previa → confirmar. Solo AGREGA filas; no toca las existentes.
     const before = await q("select md5(string_agg(payload::text, '|' order by id::text)) m, count(*)::int n from inv_mp_stock");

@@ -76,9 +76,10 @@ async function scrollToDraftCol(page, gid, colIdx) {
 async function draftCell(page, gid, k, title) {
   // La planilla virtualiza columnas: se desplaza a la derecha hasta que aparezca el encabezado buscado.
   await page.evaluate((gid) => { document.querySelector(`[data-testid=${gid}] .dsg-container`).scrollLeft = 0; }, gid);
+  await page.waitForTimeout(350); // la planilla vuelve a dibujar las primeras columnas
   let c;
   for (let i = 0; i < 25 && c === undefined; i++) {
-    c = (await colMap(page, gid))[title.toLowerCase()];
+    { const m = await colMap(page, gid); const t = title.toLowerCase(); c = m[t] ?? Object.entries(m).find(([k]) => k.startsWith(`${t} `))?.[1]; } // «Fecha / Ingreso» = Fecha
     if (c === undefined) {
       await page.evaluate((gid) => { document.querySelector(`[data-testid=${gid}] .dsg-container`).scrollLeft += 260; }, gid);
       await page.waitForTimeout(150);
@@ -90,6 +91,15 @@ async function draftCell(page, gid, k, title) {
 }
 async function typeDraft(page, gid, k, title, value, kind) {
   const c = await draftCell(page, gid, k, title);
+  // La hoja se ajusta al alto de la ventana: la fila en blanco puede quedar bajo el encabezado fijo o fuera de la vista.
+  await c.evaluate((el) => {
+    const sc = el.closest(".dsg-container");
+    if (!sc) return;
+    const r = el.getBoundingClientRect();
+    const s = sc.getBoundingClientRect();
+    if (r.top < s.top + 44 || r.bottom > s.bottom - 8) sc.scrollTop += r.top - s.top - 60;
+  });
+  await page.waitForTimeout(250);
   const b = await c.boundingBox();
   if (!b) throw new Error(`celda sin caja: ${title}`);
   const x = b.x + b.width / 2;
@@ -192,7 +202,9 @@ try {
   await iu.ctx.setOffline(true);
   await typeDraft(ip, GI, 1, "Cantidad", "40", "desktop");
   await ip.waitForTimeout(3000);
-  check("sin conexión: no se crea y la fila queda visible con aviso de reintento", (await ingRows(`${TAG} Offline mp`)).length === 0 && (await ip.locator(`[data-testid=${GI}-drafts-error]`).count()) >= 1);
+  const offN = (await ingRows(`${TAG} Offline mp`)).length;
+  const offErr = (await ip.locator(`[data-testid=${GI}-drafts-error]`).count()) + (await ip.locator(`[data-testid=${GI}-failed]`).count()); // aviso de reintento: de la fila o de la cola sin conexión
+  check("sin conexión: no se crea y la fila queda visible con aviso de reintento", offN === 0 && offErr >= 1, JSON.stringify({ offN, offErr, info: await ip.locator(`[data-testid=${GI}-drafts-info]`).innerText().catch(() => "") }));
   await iu.ctx.setOffline(false);
   await ip.evaluate(() => window.dispatchEvent(new Event("online")));
   check("al volver la conexión se crea automáticamente, sin duplicar", await waitDb(async () => (await ingRows(`${TAG} Offline mp`)).length === 1, 20_000));
