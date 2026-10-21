@@ -139,6 +139,8 @@ async function buildIndexFromNewSource(): Promise<IndexState | null> {
   const src = await import("@/lib/formulas/drive-formula-source");
   if (!(await src.isNewFormulaSourceValidated())) return null;
   const files = await src.loadIndexFiles();
+  // Índice persistente vacío (p. ej. una actualización que no vio archivos): no se usa; se recorre Drive como antes.
+  if (files.length === 0) return null;
   const root = src.formulasRootId();
   const entries: DriveFormulaIndexEntry[] = files.map((f) => ({
     fileId: f.fileId,

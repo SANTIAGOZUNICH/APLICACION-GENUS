@@ -90,7 +90,7 @@ describe("options Drive-first", () => {
     expect(body.clients[0]?.client).toBe("UNICA");
   });
 
-  it("ELABORACION no puede buscar en Drive options", async () => {
+  it("ELABORACION puede CONSULTAR clientes (solo lectura): el selector de fórmula no queda vacío", async () => {
     const { GET } = await import("@/app/api/v1/formulas/options/route");
     const res = await GET(
       new Request("http://localhost/api/v1/formulas/options?scope=clients&q=uni", {
@@ -100,6 +100,6 @@ describe("options Drive-first", () => {
         },
       })
     );
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 });

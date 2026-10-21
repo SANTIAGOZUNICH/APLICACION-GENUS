@@ -17,7 +17,8 @@ import { syncFormulaIndex } from "@/lib/formulas/drive-formula-source";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SEARCH_ALLOWED = ["CALIDAD", "PRODUCCION", "MATERIA_PRIMA", "DIRECCION"];
+// Elaboración solo CONSULTA (lista/busca clientes y productos); actualizar el índice sigue restringido (SYNC_ALLOWED).
+const SEARCH_ALLOWED = ["CALIDAD", "PRODUCCION", "MATERIA_PRIMA", "ELABORACION", "DIRECCION"];
 const SYNC_ALLOWED = ["CALIDAD", "PRODUCCION", "MATERIA_PRIMA", "DIRECCION"];
 
 /**
@@ -61,6 +62,10 @@ export async function GET(request: Request) {
     try {
       if (scope === "clients") {
         const hits = await searchDriveClients(q, limit);
+        // Índice de Drive sin ningún cliente (vacío/dañado): NO devolver lista vacía; se usa el respaldo de la base.
+        if (hits.length === 0 && (await searchDriveClients("", 1)).length === 0) {
+          throw new Error("El índice de Drive no tiene clientes.");
+        }
         return NextResponse.json({
           scope: "clients",
           query: q,
@@ -81,6 +86,9 @@ export async function GET(request: Request) {
           );
         }
         const hits = await searchDriveProducts(client, q, limit);
+        if (hits.length === 0 && (await searchDriveClients("", 1)).length === 0) {
+          throw new Error("El índice de Drive no tiene clientes.");
+        }
         return NextResponse.json({
           scope: "products",
           query: q,
