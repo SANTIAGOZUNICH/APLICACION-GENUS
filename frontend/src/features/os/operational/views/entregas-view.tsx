@@ -18,6 +18,7 @@ import { EntregaDetailDialog } from "../components/entrega-detail-dialog";
 import { DraggableChip, DropDay, DropMonthNav, EntregaMoveDialog, dragChipId, moveOptions, parseDragChipId, type PendingDrop } from "../components/entrega-drag";
 import { gridRange, longDateLabel, monthGrid, monthLabel, shiftMonth, WEEKDAYS_ES } from "@/lib/entregas/calendar";
 import { entregasApi } from "@/lib/entregas/entregas-client";
+import { DELIVERY_SECTOR_FILTERS, filterDeliveriesBySector, type DeliverySectorFilter } from "@/lib/entregas/sector-filter";
 import { clientKey, groupDeliveriesByClient } from "@/lib/entregas/rules";
 import { canManageEntregas, canViewEntregas, type EntregasDateAudit, type EntregasRecoveryStats, type ScheduledDelivery } from "@/lib/entregas/types";
 import { friendlySaveError } from "@/lib/ui/friendly-error";
@@ -36,7 +37,8 @@ export function EntregasView() {
   const allowed = canViewEntregas(sectorId);
   const today = todayIso();
   const [{ year, month }, setYm] = useState(() => ({ year: Number(today.slice(0, 4)), month: Number(today.slice(5, 7)) }));
-  const [deliveries, setDeliveries] = useState<ScheduledDelivery[]>([]);
+  const [allDeliveries, setDeliveries] = useState<ScheduledDelivery[]>([]);
+  const [sectorFilter, setSectorFilter] = useState<DeliverySectorFilter>("TODAS");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState<string>(today);
@@ -94,6 +96,9 @@ export function EntregasView() {
   const reloadAll = useCallback(async () => {
     await Promise.all([reload(), reloadStats()]);
   }, [reload, reloadStats]);
+
+  // Filtro TODAS | ENVASADO (Masivo + Premium) | ELABORACIÓN: en el cliente, por el sector persistente de cada producto.
+  const deliveries = useMemo(() => filterDeliveriesBySector(allDeliveries, sectorFilter), [allDeliveries, sectorFilter]);
 
   const byDate = useMemo(() => {
     const map = new Map<string, ScheduledDelivery[]>();
@@ -215,6 +220,21 @@ export function EntregasView() {
             </Button>
           )}
         </header>
+
+        <div role="group" aria-label="Filtrar por sector" className="flex w-full max-w-md gap-1 rounded-[var(--os-radius)] border border-[var(--os-border)] bg-[var(--os-surface)] p-1" data-testid="entregas-sector-filter">
+          {DELIVERY_SECTOR_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              aria-pressed={sectorFilter === f.id}
+              onClick={() => setSectorFilter(f.id)}
+              data-testid={`entregas-sector-${f.id.toLowerCase()}`}
+              className={`min-h-11 flex-1 rounded-[calc(var(--os-radius)-2px)] px-3 text-sm font-semibold uppercase tracking-wide transition-colors ${sectorFilter === f.id ? "bg-[var(--os-teal)] text-[#04201e] shadow" : "text-[var(--os-text-muted)] hover:bg-[var(--os-bg)]"}`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
 
         {error && (
           <p role="alert" className="rounded border border-[var(--genus-error)]/30 bg-[var(--genus-error-soft)] px-3 py-2 text-sm text-[var(--genus-error)]" data-testid="entregas-error">
