@@ -31,7 +31,7 @@ const today = new Date().toISOString().slice(0, 10);
 const AGUA = "E2E-SB-AGUA";
 const GLI = "E2E-SB-GLI";
 const POCO = "E2E-SB-POCO";
-const CODES = [AGUA, GLI, POCO];
+const CODES = [AGUA, POCO];
 const PRODUCT = "CREMA SIN BLOQUEO E2E";
 
 async function openAs(user, viewport = { width: 1440, height: 900 }) {
@@ -127,7 +127,7 @@ async function elabSave(page, id, edit) {
   if (!r.ok()) throw new Error(`guardar OE: ${r.status()} ${await r.text()}`);
 }
 
-async function openOe(page, number) {
+async function openOe(page, number, ready = "[data-testid=oe-materials-table]") {
   await page.goto("/");
   if ((page.viewportSize()?.width ?? 1440) < 768) await page.getByRole("button", { name: "Abrir menú" }).click({ timeout: 60_000 }); // celular: menú colapsado
   await nav(page, "Órdenes de Elaboración");
@@ -136,7 +136,7 @@ async function openOe(page, number) {
   await page.waitForTimeout(800);
   // En la grilla de escritorio el encabezado fijo puede tapar el botón: se dispara el clic directamente.
   await page.getByRole("button", { name: /^Abrir$/ }).first().dispatchEvent("click");
-  await page.locator("[data-testid=oe-materials-table]").waitFor({ timeout: 60_000 });
+  await page.locator(ready).waitFor({ timeout: 60_000 });
 }
 const AG = AGUA;
 async function seed(page) {
@@ -173,8 +173,7 @@ try {
   check("…sin movimientos ni stock inventado (AGUA sigue 100)", (await allMovs()).length === movs0 && (await lotKg(AG, "A1")) === 100 && (await integrity()).ok);
   check("…consumo pendiente auditado y entrega auditada", (await auditCount(idE, "OE_MP_CONSUMO_PENDIENTE")) === 1 && (await auditCount(idE, "ORDER_DELIVERED_INCOMPLETE")) + (await auditCount(idE, "ORDER_DELIVERED")) === 1);
   await elE.page.screenshot({ path: `${OUT}/01-entrega-14-mp.png`, fullPage: true });
-  await elE.page.reload();
-  await openOe(elE.page, numE);
+  await openOe(elE.page, numE, "[data-testid=oe-mp-pendiente]");
   check("Tras recargar: entrega registrada y descuento pendiente visible", (await oe(idE)).status === "COMPLETA" && (await elE.page.locator("[data-testid=oe-mp-pendiente]").count()) === 1);
   const again = await elE.page.request.post(`/api/v1/orders/${idE}/deliver`, { data: { confirm: true } });
   check("Nueva entrega: rechazada (400) y sin duplicar", again.status() === 400 && (await allMovs()).length === movs0, String(again.status()));
@@ -191,7 +190,7 @@ try {
   await el.page.locator("[data-testid=oe-mp-pendiente]").waitFor({ timeout: 30_000 });
   check("Stock insuficiente: la OE se entrega (COMPLETA) y nada parcial se descuenta", await waitDb(async () => (await oe(idC)).status === "COMPLETA") && (await lotKg(AG, "A1")) === 100 && (await lotKg(POCO, "P1")) === 3 && (await oeMovs(idC)).length === 0);
   await el.ctx.close();
-  await openOe(pr.page, numC);
+  await openOe(pr.page, numC, "[data-testid=oe-mp-pendiente]");
   await pr.page.locator("[data-testid=mp-authorize-open]").click();
   await pr.page.locator("[data-testid=mp-shortage-reason]").waitFor({ timeout: 30_000 });
   check("Producción: «Autorizar y descontar» deshabilitado sin motivo", await pr.page.locator("[data-testid=mp-shortage-authorize]").isDisabled());
