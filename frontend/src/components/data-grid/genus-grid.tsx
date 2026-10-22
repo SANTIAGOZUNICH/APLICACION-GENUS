@@ -1144,7 +1144,7 @@ export function GenusGrid<T>({
   // ---- eliminar filas (modo planilla): sin motivo ni confirmación, con Deshacer ----
   const deleteSelectedRows = useCallback(async () => {
     if (!rowDelete) return;
-    const sel = selectionRef.current;
+    const sel = selectionRef.current ?? lastRangeRef.current;
     if (!sel) return;
     const rowsNow = gridRowsRef.current;
     const ids = rowsNow.slice(sel.min.row, sel.max.row + 1).map((r) => r.__id).filter((id) => !isDraftRowId(id));
@@ -1257,7 +1257,8 @@ export function GenusGrid<T>({
   const runRowOp = useCallback(
     async (kind: "above" | "below" | "up" | "down") => {
       if (!rowOps || rowOpBusy.current) return;
-      const sel = selectionRef.current;
+      // Al tocar un botón de la barra el motor suelta la selección: se usa la última (como hace el resto de la barra).
+      const sel = selectionRef.current ?? lastRangeRef.current;
       if (!sel) return;
       const list = gridRowsRef.current;
       const real = (i: number) => (i >= 0 && i < list.length && !isDraftRowId(list[i].__id) ? list[i].__id : null);
@@ -1763,7 +1764,7 @@ export function GenusGrid<T>({
                   size="sm"
                   className="h-7 px-2 text-xs"
                   onClick={() => void runRowOp(kind)}
-                  disabled={selectedRowCount === 0 || (rowOps.enabled === false && kind !== "above" && kind !== "below" ? true : false)}
+                  disabled={rowOps.enabled === false && (kind === "up" || kind === "down")}
                   data-testid={`${testId}-row-${kind}`}
                   title={rowOps.enabled === false && (kind === "up" || kind === "down") ? "Elegí «Orden de la hoja» para mover filas" : title}
                 >
@@ -1780,7 +1781,6 @@ export function GenusGrid<T>({
               size="sm"
               className="h-7 px-2 text-xs"
               onClick={() => void deleteSelectedRows()}
-              disabled={selectedRowCount === 0}
               data-testid={`${testId}-delete-rows`}
               title="Elimina las filas de la selección (sin motivo; se puede deshacer)"
             >
