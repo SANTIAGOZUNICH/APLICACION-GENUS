@@ -104,16 +104,18 @@ export function validateMeSheetValue(resource: MeSheetResource, field: string, r
   }
   if (NUMBER_FIELDS.has(field)) {
     if (!text) {
-      if (field === "stockTotal" || field === "bultosStock") return { ok: false, message: "Escribí el stock corregido (≥ 0)." };
-      return (field === "cantidad" || field === "total") && resource !== "me_inventario" ? { ok: false, message: field === "total" ? "El total es obligatorio." : "La cantidad es obligatoria." } : { ok: true, value: null };
+      // Vaciar una celda es válido: el stock físico lo calcula el sistema con lo que haya (sin cantidad no suma ni resta).
+      if (field === "stockTotal" || field === "bultosStock") return { ok: true, value: 0 };
+      return { ok: true, value: null };
     }
     const n = parseNumber(text);
     if (n === null || n < 0 || n > 1_000_000_000) return { ok: false, message: "Número inválido (≥ 0)." };
     return { ok: true, value: n };
   }
   if (DATE_FIELDS.has(field)) {
+    if (!text) return { ok: true, value: "" }; // fecha vacía: se guarda (pendiente de completar)
     const iso = parseFlexibleDate(text);
-    if (!text || !iso) return { ok: false, message: "Fecha inválida. Usá dd/mm/aaaa." };
+    if (!iso) return { ok: false, message: "Fecha inválida. Usá dd/mm/aaaa." };
     return { ok: true, value: iso };
   }
   if (field === "motivoSalida") {
@@ -122,10 +124,10 @@ export function validateMeSheetValue(resource: MeSheetResource, field: string, r
     return m ? { ok: true, value: m.id } : { ok: false, message: "Motivo inválido. Elegí uno de la lista." };
   }
   if (field === "codigo") {
-    if (!text) return { ok: false, message: "El código es obligatorio (es la clave del inventario)." };
+    // En Inventario ME el código es la clave del material; en Ingresos/Salidas una fila puede quedar sin código (pendiente).
+    if (!text && resource === "me_inventario") return { ok: false, message: "El código es obligatorio (es la clave del inventario)." };
     return text.length > 60 ? { ok: false, message: "Máximo 60 caracteres." } : { ok: true, value: text };
   }
-  if (field === "descripcion" && resource === "me_inventario" && !text) return { ok: false, message: "La descripción no puede quedar vacía." };
   const max = field === "comentarios" || field === "observacion" ? 1000 : 200;
   return text.length > max ? { ok: false, message: `Máximo ${max} caracteres.` } : { ok: true, value: text };
 }

@@ -92,6 +92,7 @@ describe("protección y validación de celdas", () => {
     expect(validateMeSheetValue("me_ingresos", "fecha", "31/12/2026")).toEqual({ ok: true, value: "2026-12-31" });
     expect(validateMeSheetValue("me_salidas", "descuentaStock", "Sí")).toEqual({ ok: true, value: true });
     expect(validateMeSheetValue("me_salidas", "motivoSalida", "devolución")).toEqual({ ok: true, value: "DEVOLUCION_CLIENTE" });
-    expect(validateMeSheetValue("me_ingresos", "codigo", "").ok).toBe(false);
+    expect(validateMeSheetValue("me_ingresos", "codigo", "").ok).toBe(true); // una fila de movimiento puede quedar sin código (pendiente)
+    expect(validateMeSheetValue("me_inventario", "codigo", "").ok).toBe(false); // en Inventario es la clave del material
   });
 });

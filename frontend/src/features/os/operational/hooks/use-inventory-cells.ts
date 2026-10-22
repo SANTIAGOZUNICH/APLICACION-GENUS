@@ -7,7 +7,6 @@ import {
   INVENTORY_AUTO_REASON_FIELDS,
   INVENTORY_FILL_WITH_REASON,
   INVENTORY_NO_FILL,
-  INVENTORY_REASON_FIELDS,
   INVENTORY_SENSITIVE_FIELDS,
   inventoryCellProtection,
   inventoryFieldKind,
@@ -45,16 +44,8 @@ export function useInventoryCellEditing<R extends { id?: string; updatedAt: stri
     [resource, fieldOf, reload]
   );
 
-  const reasonRequired = useCallback(
-    (changes: GenusGridCellChange[]) => {
-      const fields = new Set(changes.map((c) => fieldOf[c.columnKey] ?? ""));
-      if (fields.has("codigo")) return "Cambiar el código traspasa su saldo en el libro mayor: ¿por qué se corrige?";
-      // Kg lote y Stock código se guardan directo (motivo automático en el libro mayor y la auditoría).
-      if ([...fields].some((f) => INVENTORY_REASON_FIELDS.has(f) && !INVENTORY_AUTO_REASON_FIELDS.has(f))) return "Cambiar el código traspasa su saldo en el libro mayor: ¿por qué se corrige?";
-      return null;
-    },
-    [fieldOf]
-  );
+  /** Sin motivos: kg, código y stock se guardan directo con un motivo automático (auditoría: usuario, fecha, antes y después). */
+  const reasonRequired = useCallback((): string | null => null, []);
 
   /** Especificación `edit` de una columna (por su clave de tabla), o undefined si no es editable. */
   const edit = useCallback(

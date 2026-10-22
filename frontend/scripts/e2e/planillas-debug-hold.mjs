@@ -1,0 +1,24 @@
+// Solo para investigación local: siembra 1.400 filas de Stock MP y mantiene el servidor vivo hasta que exista /tmp/planillas-debug-stop.
+import { createRequire } from "node:module";
+import { existsSync, rmSync } from "node:fs";
+import { assertE2eEnvironment, assertMarkedDatabase } from "./e2e-safety.mjs";
+const require = createRequire(import.meta.url);
+const { Pool, neonConfig } = require("@neondatabase/serverless");
+neonConfig.webSocketConstructor = require("ws");
+assertE2eEnvironment();
+const pool = new Pool({ connectionString: process.env.GENUS_E2E_DATABASE_URL });
+const q = async (t, p = []) => (await pool.query(t, p)).rows;
+await assertMarkedDatabase(q);
+rmSync("/tmp/planillas-debug-stop", { force: true });
+const N = 1400;
+const base = `'createdBy','zze','updatedBy','zze','createdAt','2026-10-01T00:00:00.000Z','updatedAt','2026-10-01T00:00:00.000Z'`;
+const id = (k) => `md5('zze-${k}-' || g.n)::uuid`;
+const gen = `(select n from generate_series(1, ${N}) n) g`;
+await q(`insert into inv_mp_stock (id, payload, updated_at) select ${id("stock")}, jsonb_build_object('id', ${id("stock")}::text, 'codigo','ZZE-' || lpad(g.n::text,5,'0'), 'descripcion','Materia ZZE ' || g.n, 'proveedor','Prov ' || g.n, 'lote','L' || g.n, 'cantidadKg',10, 'ubicacion','U' || (g.n % 40), 'vencimiento','2028-01-31','estadoStock','Stock OK','origen','manual','archived',false,${base}), now() from ${gen}`);
+await q(`insert into inv_mp_ingresos (id, payload, updated_at) select ${id("ingmp")}, jsonb_build_object('id', ${id("ingmp")}::text, 'fecha','2026-10-01','ingresoNro','ZZE-I-' || lpad(g.n::text,5,'0'),'proveedor','Prov ' || g.n,'cliente','','remitoNro','R' || g.n,'codigo','ZZE-I' || g.n,'producto','','descripcion','Ingreso ZZE ' || g.n,'bultos',1,'cantidad',5,'total',5,'ubicacion','U1','lote','LI' || g.n,'vencimiento','2028-01-31','stockLotId',null,'status','BORRADOR','stockImpacted',false,${base}), now() from ${gen}`);
+await q(`insert into inv_me_materials (id, payload, updated_at) select ${id("mat")}, jsonb_build_object('id', ${id("mat")}::text, 'codigo','ZZE-M-' || lpad(g.n::text,5,'0'),'descripcion','Material ZZE ' || g.n,'cliente','','ubicacion','A' || (g.n % 30),'unidad','u','cantidadPorBulto',null,'stockActual',10,'stockMinimo',null,'puntoReposicion',null,'responsable','','observacion','','archived',false,${base}), now() from ${gen}`);
+await q(`insert into inv_me_ingresos (id, payload, updated_at) select ${id("ing")}, jsonb_build_object('id', ${id("ing")}::text, 'fecha','2026-10-01','ingresoNro','ZZE-EI-' || lpad(g.n::text,5,'0'),'proveedor','Prov ' || g.n,'cliente','','remitoNro','R' || g.n,'codigo','ZZE-M-' || lpad(g.n::text,5,'0'),'descripcionInsumo','Ingreso ME ZZE ' || g.n,'bultos',1,'cantidad',10,'total',10,'ubicacion','A1','materialId',${id("mat")}::text,${base}), now() from ${gen}`);
+await q(`insert into inv_me_salidas (id, payload, updated_at) select ${id("sal")}, jsonb_build_object('id', ${id("sal")}::text, 'fecha','2026-10-02','egresoNro','ZZE-S-' || lpad(g.n::text,5,'0'),'cliente','Cli ' || g.n,'remitoNro','','descripcion','Salida ME ZZE ' || g.n,'bultos',null,'cantidad',null,'total',null,'control',false,'entregado',false,'comentarios','','materialId',${id("mat")}::text,'codigo','ZZE-M-' || lpad(g.n::text,5,'0'),'unidad','u','origen','MANUAL','descuentaStock',false,'motivoSalida',null,'oaId',null,'oaNumber',null,'oaVersion',null,'materialLineId',null,'idempotencyKey',null,'reverted',false,'revertedAt',null,'revertReason',null,${base}), now() from ${gen}`);
+console.log("HOLD: listo", process.env.GENUS_E2E_BASE_URL ?? "http://localhost:3280");
+while (!existsSync("/tmp/planillas-debug-stop")) await new Promise((r) => setTimeout(r, 1000));
+await pool.end();

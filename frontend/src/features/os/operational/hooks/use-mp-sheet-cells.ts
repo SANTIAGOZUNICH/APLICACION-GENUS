@@ -8,10 +8,8 @@
 import { useCallback } from "react";
 import type { GenusGridCellChange, GenusGridCommitResult } from "@/components/data-grid/genus-grid";
 import {
-  MP_INGRESO_STOCK_FIELDS,
   isMpSheetField,
   mpSheetFieldKind,
-  mpSheetNeedsReason,
   mpSheetProtection,
   validateMpSheetValue,
   type MpSheetResource,
@@ -53,20 +51,11 @@ export function useMpSheetEditing<R extends { id?: string; updatedAt: string; st
     [resource, fieldOf, reload]
   );
 
-  /** Corregir código/bultos/cantidad/lote de un ingreso CONFIRMADO mueve el stock: pide motivo (queda auditado). */
-  const reasonRequired = useCallback(
-    (changes: GenusGridCellChange[]) => {
-      const byId = new Map(rows.map((r) => [String(r.id), r] as const));
-      return changes.some((c) => {
-        const row = byId.get(c.rowId);
-        const field = fieldOf[c.columnKey];
-        return Boolean(row && field && mpSheetNeedsReason(resource, row, field));
-      })
-        ? "Estás corrigiendo un ingreso CONFIRMADO: el stock del lote y del libro mayor se ajusta por la diferencia. Indicá el motivo."
-        : null;
-    },
-    [resource, rows, fieldOf]
-  );
+  /**
+   * Sin motivos ni confirmaciones: corregir un ingreso confirmado se guarda directo; el servidor ajusta el stock por la
+   * diferencia y registra usuario, fecha, valor anterior y nuevo (se deshace con Ctrl+Z).
+   */
+  const reasonRequired = useCallback((): string | null => null, []);
 
   const edit = useCallback(
     (columnKey: string) => {
@@ -74,7 +63,7 @@ export function useMpSheetEditing<R extends { id?: string; updatedAt: string; st
       if (!field || !isMpSheetField(resource, field)) return undefined;
       return {
         kind: mpSheetFieldKind(field),
-        sensitive: resource === "mp_ingresos" && MP_INGRESO_STOCK_FIELDS.has(field),
+        sensitive: false,
         protection: (r: R) => (canWrite ? mpSheetProtection(resource, r, field, sector) : "Tu sector no puede editar esta planilla."),
         validate: (raw: string) => {
           const v = validateMpSheetValue(resource, field, raw);

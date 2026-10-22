@@ -77,9 +77,10 @@ export async function hydrateInventoryFromNeon(
       ajustes,
       audit,
     ] = await Promise.all([
-      db.select().from(invMeIngresos),
-      db.select().from(invMeSalidas),
-      db.select().from(invMeMaterials),
+      // Orden manual de la hoja (0068): editar una fila NO la mueve (antes la base devolvía el orden físico).
+      db.select().from(invMeIngresos).orderBy(asc(invMeIngresos.loadSeq)),
+      db.select().from(invMeSalidas).orderBy(asc(invMeSalidas.loadSeq)),
+      db.select().from(invMeMaterials).orderBy(asc(invMeMaterials.loadSeq)),
       db.select().from(invMeAlerts),
       db.select().from(invMeAlertReads),
       db.select().from(invMpStock).orderBy(asc(invMpStock.loadSeq)),
