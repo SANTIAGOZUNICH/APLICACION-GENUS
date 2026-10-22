@@ -324,7 +324,7 @@ async function runSheet(key, kind) {
     const hide = { stock: "archived", ingmp: "status", ingme: "anulado", salme: "reverted", invme: "archived" }[key];
     const textTitle = sh.text[0][0];
     const others = async (exceptIds) => (await q(`select md5(coalesce(string_agg(payload::text, '' order by id), '')) h from ${sh.table} where payload->>'createdBy' = 'zze' and id::text <> all($1::text[])`, [exceptIds]))[0].h;
-    const clickRowN = async (n) => { const r = rowLocN(page, sh, n); await r.waitFor({ timeout: 20_000 }); await cellOf(r, map2, textTitle).click(); };
+    const clickRowN = async (n) => { const top = (await snap(page, sh)).top; const want = (n - 4) * rowH; if (Math.abs(want - top) > rowH * 8) await wheelTo(page, sh, want - top); const r = rowLocN(page, sh, n); await r.waitFor({ timeout: 20_000 }); await cellOf(r, map2, textTitle).click(); };
     const scrollNow = async () => (await snap(page, sh)).top;
     const idA = await idOf(sh.code(START + 30)), idB = await idOf(sh.code(START + 40)), idC = await idOf(sh.code(START + 50));
     const pre = await apiOrder(page, resource);
