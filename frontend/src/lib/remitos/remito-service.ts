@@ -514,6 +514,41 @@ export class RemitoService {
     return this.attachVersions(remito);
   }
 
+  /**
+   * Completa las cajas de renglones de un BORRADOR que quedaron en 0 (el borrador se armó antes de que las cajas
+   * estuvieran cargadas). Solo renglones SIN ninguna caja y una única vez por renglón (`snapshot.boxesAutofilled`):
+   * nunca pisa una cantidad cargada ni una corrección manual (incluido un 0 puesto a propósito después).
+   */
+  async autofillDraftBoxes(
+    actor: RemitoActor,
+    remitoId: string,
+    fills: Array<{ lineId: string; slots: Pick<RemitoLine, "cajas1" | "unidades1" | "cajas2" | "unidades2" | "cajas3" | "unidades3" | "extraCajas"> }>
+  ): Promise<RemitoRecord | null> {
+    assertAccess(actor);
+    const remito = await this.findById(remitoId);
+    if (!remito || remito.status !== "BORRADOR") return null;
+    const done = new Set<string>(Array.isArray(remito.snapshot?.boxesAutofilled) ? (remito.snapshot.boxesAutofilled as string[]) : []);
+    const touched: RemitoLine[] = [];
+    for (const f of fills) {
+      const line = remito.lines.find((l) => l.id === f.lineId);
+      if (!line || done.has(line.id) || lineTotalCajas(line) > 0) continue;
+      applyLinePatch(line, { id: line.id, ...f.slots });
+      done.add(line.id);
+      touched.push(line);
+    }
+    if (touched.length === 0) return null;
+    const totals = recomputeTotals(remito.lines);
+    remito.totalUnits = totals.totalUnits;
+    remito.totalCajas = totals.totalCajas;
+    remito.totalBultos = totals.totalBultos;
+    remito.snapshot = { ...remito.snapshot, boxesAutofilled: [...done] };
+    remito.updatedBy = actor.email;
+    remito.updatedAt = new Date().toISOString();
+    await this.persistRemito(remito);
+    for (const line of touched) await this.upsertLine(line);
+    return this.attachVersions(remito);
+  }
+
   async generate(
     actor: RemitoActor,
     remitoId: string,

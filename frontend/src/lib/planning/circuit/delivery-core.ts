@@ -1,4 +1,4 @@
-import { validateDeliveryPacking } from "@/lib/remitos/delivery-packing";
+import { resolveWorkItemDeliveryPacking, validateDeliveryPacking } from "@/lib/remitos/delivery-packing";
 import "server-only";
 
 import { and, eq, sql } from "drizzle-orm";
@@ -425,6 +425,23 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
   }
 
   let line: typeof workItemDeliveryLines.$inferSelect | null = null;
+  // Cajas de esta entrega: las que se cargaron en el diálogo o, si no se cargaron, las ya registradas en el trabajo
+  // (Envasado/Codificado) cuando son inequívocas (ver resolveWorkItemDeliveryPacking). Nunca se inventan ni se dividen.
+  let linePacking: Array<{ cajas: number; unidadesPorCaja: number }> = deliveryPacking.groups;
+  if (stepQuantity != null && linePacking.length === 0) {
+    const prior = await tx
+      .select({ id: workItemDeliveryLines.id, quantity: workItemDeliveryLines.quantity, packingGroups: workItemDeliveryLines.packingGroups })
+      .from(workItemDeliveryLines)
+      .where(and(eq(workItemDeliveryLines.workItemId, params.workItemId), eq(workItemDeliveryLines.status, "ACTIVA")));
+    const resolved = resolveWorkItemDeliveryPacking({
+      workItemGroups: canonical.packingGroups,
+      lines: [
+        ...prior.map((l: { id: string; quantity: number; packingGroups: unknown }) => ({ id: l.id, quantity: Number(l.quantity), groups: Array.isArray(l.packingGroups) ? (l.packingGroups as never) : null })),
+        { id: "__new__", quantity: stepQuantity, groups: null },
+      ],
+    }).get("__new__");
+    if (resolved && resolved.source === "TRABAJO") linePacking = resolved.groups;
+  }
   if (stepQuantity != null) {
     const [insertedLine] = await tx
       .insert(workItemDeliveryLines)
@@ -446,7 +463,7 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
         observations: aggregateValues.observations,
         cumulativeAfter: cumulative,
         pendingAfter: complete ? 0 : pending,
-        packingGroups: deliveryPacking.groups.length > 0 ? deliveryPacking.groups : null,
+        packingGroups: linePacking.length > 0 ? linePacking : null,
       })
       .returning();
     line = insertedLine;

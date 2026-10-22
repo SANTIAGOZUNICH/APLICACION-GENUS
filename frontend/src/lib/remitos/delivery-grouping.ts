@@ -18,6 +18,10 @@ export type EligibleDelivery = {
   deliveryDate: string;
   packingGroups: PackingGroup[];
   boxesText: string | null;
+  /** De dónde salen las cajas: la propia entrega, el trabajo (Envasado/Codificado), el snapshot o ninguna. */
+  packingSource?: "ENTREGA" | "TRABAJO" | "SNAPSHOT" | "NINGUNA";
+  packingWarning?: string | null;
+  packingSuggested?: PackingGroup[];
   deliveredBy: string;
   deliveryRemito: string | null;
 };

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { autofillDraftBoxesFromDeliveries } from "@/lib/remitos/from-deliveries";
 import { getRemitoService } from "@/lib/remitos/remito-service";
 import { canAccessRemitos, canReadRemitos } from "@/lib/remitos/types";
 import type {
@@ -35,11 +36,15 @@ export async function GET(request: Request, ctx: Ctx) {
     }
     const { id } = await ctx.params;
     const persistenceReady = await isRemitoSchemaReady();
-    const remito = await getRemitoService().get(
+    const found = await getRemitoService().get(
       { email: actor.email, sector: actor.sector },
       id
     );
-    if (!remito) throw new OrdersNotFoundError("Remito no encontrado.");
+    if (!found) throw new OrdersNotFoundError("Remito no encontrado.");
+    // Cajas vacías de un borrador → se completan con las de la entrega/trabajo (sin pisar cantidades ni correcciones).
+    const remito = canAccessRemitos(actor.sector)
+      ? await autofillDraftBoxesFromDeliveries({ email: actor.email, sector: actor.sector }, found)
+      : found;
     return NextResponse.json({
       remito,
       persistenceReady,
