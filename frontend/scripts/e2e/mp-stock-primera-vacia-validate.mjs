@@ -202,7 +202,7 @@ try {
     if (!(await page.locator("[data-testid=mp-stock-grid] .dsg-active-cell").count())) lost++;
   }
   check(`editar la fila 350 mientras llegan ingresos: sin saltos (desvío máx. ${maxDrift}px) ni pérdida de celda activa`, maxDrift <= 36 * 2.5 && lost === 0);
-  check(`la planilla sigue con ${T} posiciones y los ingresos ZZW ocuparon las primeras vacías`, (await visibleTotal()) === T);
+  check(`la planilla sigue con ${T + 1} posiciones (${T} + la única fila vacía que la prueba insertó a propósito) y los ZZW ocuparon vacías existentes`, (await visibleTotal()) === T + 1, `${await visibleTotal()}`);
 
   // movimientos: exactamente 1 alta por ingreso nuevo
   const dup = await q(`select codigo, count(*)::int n from mp_stock_movements where codigo like 'ZZN-%' or codigo like 'ZZW-%' group by 1 having count(*) > 1`);
