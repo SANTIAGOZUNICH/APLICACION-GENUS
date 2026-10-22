@@ -48,7 +48,7 @@ async function cleanup() {
   await q(`delete from mp_stock_balances where codigo like 'ZZ%'`).catch(() => undefined);
 }
 async function seedStock(n) {
-  await q(`insert into inv_mp_stock (id, payload, updated_at) select md5('zze-stock-' || g.n)::uuid, jsonb_build_object('id', md5('zze-stock-' || g.n), 'codigo','ZZE-' || lpad(g.n::text,5,'0'),'descripcion','Materia ZZE ' || g.n,'proveedor','Prov','cliente','','producto','','lote','L' || g.n,'cantidadKg',10,'ubicacion','U1','vencimiento','2028-01-31','estadoStock','Stock OK','origen','manual','archived',false,'createdBy','zze','updatedBy','zze','createdAt','${NOWISO}','updatedAt','${NOWISO}'), now() from (select n from generate_series(1, ${n}) n) g`);
+  await q(`insert into inv_mp_stock (id, payload, updated_at) select md5('zze-stock-' || g.n)::uuid, jsonb_build_object('id', md5('zze-stock-' || g.n)::uuid::text, 'codigo','ZZE-' || lpad(g.n::text,5,'0'),'descripcion','Materia ZZE ' || g.n,'proveedor','Prov','cliente','','producto','','lote','L' || g.n,'cantidadKg',10,'ubicacion','U1','vencimiento','2028-01-31','estadoStock','Stock OK','origen','manual','archived',false,'createdBy','zze','updatedBy','zze','createdAt','${NOWISO}','updatedAt','${NOWISO}'), now() from (select n from generate_series(1, ${n}) n) g`);
 }
 const apiList = async (resource) => (await (await page.request.get(`/api/v1/inventory?resource=${resource}`, { timeout: 180_000 })).json()).data ?? [];
 const stockOrder = async () => (await apiList("mp_stock")).filter((r) => !r.archived).map((r) => r.id);
