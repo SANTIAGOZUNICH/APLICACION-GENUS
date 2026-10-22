@@ -37,6 +37,8 @@ export interface DeliveryInput {
   deliveryDate: string;
   responsible?: string | null;
   notes?: string | null;
+  /** INAMOVIBLE: prioridad visual y de planificación (se ve en rojo en el calendario). No bloquea ediciones ni reprogramaciones. */
+  isImmovable?: boolean;
   items: DeliveryItemInput[];
 }
 
@@ -56,6 +58,7 @@ export interface CleanDelivery {
   deliveryDate: string;
   responsible: string | null;
   notes: string | null;
+  isImmovable: boolean;
   items: CleanDeliveryItem[];
 }
 
@@ -127,7 +130,7 @@ export function validateDeliveryInput(input: DeliveryInput): { ok: true; value: 
       notes: clean(it.notes),
     });
   }
-  return { ok: true, value: { client, deliveryDate, responsible: clean(input.responsible), notes: clean(input.notes), items } };
+  return { ok: true, value: { client, deliveryDate, responsible: clean(input.responsible), notes: clean(input.notes), isImmovable: input.isImmovable === true, items } };
 }
 
 // ───────────────────────── Estados ─────────────────────────

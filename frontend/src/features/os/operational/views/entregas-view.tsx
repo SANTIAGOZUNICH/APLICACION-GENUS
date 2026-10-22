@@ -289,7 +289,7 @@ export function EntregasView() {
                     <div className="hidden flex-col gap-1 sm:flex">
                       {groups.slice(0, CELL_VISIBLE).map((g) => (
                         <DraggableChip key={g.client} id={dragChipId(day.iso, g.client)} disabled={!canManage || moveOptions(g.deliveries).length === 0}>
-                          <ClientChip name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} hidden={isAllHidden(g.deliveries)} review={needsReview(g.deliveries)} onOpen={() => openClient(g.client, day.iso)} />
+                          <ClientChip name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} hidden={isAllHidden(g.deliveries)} review={needsReview(g.deliveries)} immovable={isImmovableGroup(g.deliveries)} onOpen={() => openClient(g.client, day.iso)} />
                         </DraggableChip>
                       ))}
                       {groups.length > CELL_VISIBLE && (
@@ -304,6 +304,8 @@ export function EntregasView() {
             </div>
           ))}
         </div>
+
+        <p className="text-[11px] text-[var(--os-text-muted)]" data-testid="entregas-legend-inamovible">🔴 Inamovible</p>
 
         {/* Día seleccionado: lista completa (en celular es la forma de ver y tocar los clientes). */}
         <section className="space-y-2 rounded-[var(--os-radius)] border border-[var(--os-border)] p-3" aria-live="polite" data-testid="entregas-agenda">
@@ -321,7 +323,7 @@ export function EntregasView() {
             <div className="flex flex-wrap gap-2">
               {selectedClients.map((g) => (
                 <DraggableChip key={g.client} id={dragChipId(selectedDay, g.client)} disabled={!canManage || moveOptions(g.deliveries).length === 0}>
-                  <ClientChip name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} hidden={isAllHidden(g.deliveries)} review={needsReview(g.deliveries)} onOpen={() => openClient(g.client, selectedDay)} large />
+                  <ClientChip name={g.client} cancelled={g.deliveries.every((d) => d.state === "cancelada")} delivered={g.deliveries.every((d) => d.status === "entregada")} hidden={isAllHidden(g.deliveries)} review={needsReview(g.deliveries)} immovable={isImmovableGroup(g.deliveries)} onOpen={() => openClient(g.client, selectedDay)} large />
                 </DraggableChip>
               ))}
             </div>
@@ -383,8 +385,10 @@ export function EntregasView() {
 const isAllHidden = (ds: ScheduledDelivery[]) => ds.length > 0 && ds.every((d) => d.items.length > 0 && d.items.every((i) => i.hidden));
 /** Alguna fecha contradictoria marcada para revisión. */
 const needsReview = (ds: ScheduledDelivery[]) => ds.some((d) => d.items.some((i) => i.reviewFlags?.length));
+/** Alguna entrega vigente del cliente ese día está marcada INAMOVIBLE: solo esa tarjeta se ve en rojo. */
+const isImmovableGroup = (ds: ScheduledDelivery[]) => ds.some((d) => d.isImmovable === true && d.state !== "cancelada");
 
-function ClientChip({ name, cancelled, delivered, hidden, review, onOpen, large }: { name: string; cancelled: boolean; delivered?: boolean; hidden?: boolean; review?: boolean; onOpen: () => void; large?: boolean }) {
+function ClientChip({ name, cancelled, delivered, hidden, review, immovable, onOpen, large }: { name: string; cancelled: boolean; delivered?: boolean; hidden?: boolean; review?: boolean; immovable?: boolean; onOpen: () => void; large?: boolean }) {
   return (
     <button
       type="button"
@@ -392,13 +396,14 @@ function ClientChip({ name, cancelled, delivered, hidden, review, onOpen, large 
         e.stopPropagation();
         onOpen();
       }}
-      title={cancelled ? `${name} (cancelada)` : hidden ? `${name} (quitada del calendario)` : review ? `${name} — revisar fecha` : name}
-      className={`max-w-full truncate rounded-md border px-1.5 py-0.5 text-left font-semibold transition hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--os-teal)] ${large ? "px-3 py-1.5 text-sm" : "text-[11px]"} ${hidden ? "border-dashed border-white/30 bg-transparent text-[var(--os-text-muted)] line-through" : cancelled ? "border-rose-400/40 bg-rose-400/10 text-rose-200 line-through" : delivered ? "border-emerald-400/40 bg-emerald-400/10 text-[var(--os-text)]" : "border-[var(--os-teal)]/50 bg-[var(--os-teal)]/15 text-[var(--os-text)]"}`}
+      title={immovable ? `${name} — INAMOVIBLE` : cancelled ? `${name} (cancelada)` : hidden ? `${name} (quitada del calendario)` : review ? `${name} — revisar fecha` : name}
+      className={`max-w-full truncate rounded-md border px-1.5 py-0.5 text-left font-semibold transition hover:brightness-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--os-teal)] ${large ? "px-3 py-1.5 text-sm" : "text-[11px]"} ${hidden ? "border-dashed border-white/30 bg-transparent text-[var(--os-text-muted)] line-through" : immovable ? "border-red-500 bg-red-600/30 text-red-50 ring-1 ring-red-500/60" : cancelled ? "border-slate-400/40 bg-slate-400/10 text-slate-300 line-through" : delivered ? "border-emerald-400/40 bg-emerald-400/10 text-[var(--os-text)]" : "border-[var(--os-teal)]/50 bg-[var(--os-teal)]/15 text-[var(--os-text)]"}`}
       data-testid="entregas-client"
       data-client={name}
       data-delivered={delivered ? "1" : undefined}
       data-hidden={hidden ? "1" : undefined}
       data-review={review ? "1" : undefined}
+      data-immovable={immovable ? "1" : undefined}
     >
       {review && <AlertTriangle className="mr-1 inline size-3 text-amber-300" aria-label="Revisar fecha" />}
       {name}

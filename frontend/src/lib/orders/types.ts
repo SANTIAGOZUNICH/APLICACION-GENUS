@@ -539,6 +539,8 @@ export type PatchOrderInput = {
   formulaProductId?: string | null;
   formulaVersionId?: string | null;
   formulaVersionHash?: string | null;
+  /** Botón «Guardar avance» (no el autoguardado): además contabiliza en Stock MP el consumo real ya informado, por diferencia. */
+  registerMpConsumption?: boolean;
 };
 
 export class OrdersValidationError extends Error {

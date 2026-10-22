@@ -43,6 +43,7 @@ export function EntregaFormDialog({ open, onOpenChange, initial, defaultDate, cl
   const [deliveryDate, setDeliveryDate] = useState(initial?.deliveryDate ?? defaultDate ?? "");
   const [responsible, setResponsible] = useState(initial?.responsible ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [isImmovable, setIsImmovable] = useState(initial?.isImmovable === true);
   const [items, setItems] = useState<ItemDraft[]>(
     initial?.items.length
       ? initial.items.map((i) => ({
@@ -69,7 +70,7 @@ export function EntregaFormDialog({ open, onOpenChange, initial, defaultDate, cl
   async function save() {
     if (busy) return;
     setError(null);
-    const input = { client, deliveryDate, responsible, notes, items: items.map((i) => ({ id: i.id, product: i.product, quantity: i.quantity, unit: i.unit, sector: i.sector, plannedProductionDate: i.plannedProductionDate, lot: i.lot, vto: i.vto, notes: i.notes })) };
+    const input = { client, deliveryDate, responsible, notes, isImmovable, items: items.map((i) => ({ id: i.id, product: i.product, quantity: i.quantity, unit: i.unit, sector: i.sector, plannedProductionDate: i.plannedProductionDate, lot: i.lot, vto: i.vto, notes: i.notes })) };
     const v = validateDeliveryInput(input);
     if (!v.ok) {
       setError(v.message);
@@ -125,6 +126,12 @@ export function EntregaFormDialog({ open, onOpenChange, initial, defaultDate, cl
               <input value={notes} onChange={(e) => setNotes(e.target.value)} className={CONTROL} data-testid="entrega-notes" />
             </label>
           </div>
+
+          <label className="flex items-center gap-2 text-sm font-semibold" data-testid="entrega-inamovible-label">
+            <input type="checkbox" checked={isImmovable} onChange={(e) => setIsImmovable(e.target.checked)} className="size-4 accent-red-600" data-testid="entrega-inamovible" />
+            INAMOVIBLE
+            <span className="text-xs font-normal text-[var(--os-text-muted)]">(se ve en rojo en el calendario; no bloquea cambios ni reprogramaciones)</span>
+          </label>
 
           <div className="space-y-3">
             <h4 className="text-sm font-semibold">Productos</h4>

@@ -463,6 +463,13 @@
       "when": 1793800000000,
       "tag": "0068_me_load_order",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1793800001000,
+      "tag": "0069_scheduled_delivery_immovable",
+      "breakpoints": true
     }
   ]
 }

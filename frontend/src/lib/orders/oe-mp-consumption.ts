@@ -81,7 +81,9 @@ function isBlankRow(m: OeMaterialRow): boolean {
 
 export function buildOeConsumptionPlan(
   materials: OeMaterialRow[],
-  catalog: MpCatalogLot[]
+  catalog: MpCatalogLot[],
+  /** `progress`: «Guardar avance». Una fila sin KG REAL UTILIZADO todavía NO se consumió: se ignora (no es un faltante). */
+  opts: { progress?: boolean } = {}
 ): { lines: ConsumptionLine[]; issues: ConsumptionIssue[] } {
   const issues: ConsumptionIssue[] = [];
   const grouped = new Map<string, ConsumptionLine>();
@@ -96,7 +98,7 @@ export function buildOeConsumptionPlan(
       issues.push({ rowId: m.id, rowNumber: i + 1, materiaPrima, field, message: `${where}: ${message}` });
 
     if (m.kgReal == null) {
-      issue("kgReal", "falta KG REAL UTILIZADO.");
+      if (!opts.progress) issue("kgReal", "falta KG REAL UTILIZADO.");
       return;
     }
     if (!(m.kgReal >= 0)) {

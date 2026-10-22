@@ -768,6 +768,15 @@ export class OrdersService {
   }
 
   async saveProgress(id: string, input: PatchOrderInput, actor: OrdersActor) {
+    return (await this.saveProgressWithConsumption(id, input, actor)).order;
+  }
+
+  /**
+   * Guardar avance. Con `registerMpConsumption` (botón «Guardar avance» de Elaboración) además contabiliza en Stock MP el consumo
+   * REAL ya informado (KG REAL UTILIZADO + código MP + lote) por diferencia contra lo ya registrado de esta OE. No entrega ni
+   * aprueba nada, y nunca bloquea el guardado: lo incompleto o sin stock queda pendiente de regularización.
+   */
+  async saveProgressWithConsumption(id: string, input: PatchOrderInput, actor: OrdersActor) {
     const current = await this.repo.getOrder(id);
     if (!current) throw new OrdersNotFoundError("Orden no encontrada.");
     assertOeNotDeleted(current);
@@ -916,6 +925,41 @@ export class OrdersService {
         fresh
       );
     }
+    let mpConsumption: import("@/lib/orders/oe-stock-op").OeProgressConsumption | null = null;
+    if (input.registerMpConsumption === true && current.type === "OE" && updated.formData.kind === "OE" && !isMpFormulaOnly) {
+      try {
+        const { runOeStockOp, registerOeProgressConsumption } = await import("@/lib/orders/oe-stock-op");
+        const oeContent = updated.formData;
+        mpConsumption = await runOeStockOp(actor, (ctx) =>
+          registerOeProgressConsumption(ctx, actor, {
+            oeId: id,
+            orderNumber: updated.orderNumber,
+            orderVersion: updated.version,
+            orderStatus: updated.status,
+            materials: consumptionMaterials(oeContent),
+          })
+        );
+        if (mpConsumption.applied.length > 0 || mpConsumption.pendingIssues.length > 0 || mpConsumption.shortages.length > 0) {
+          await this.repo.appendAudit({
+            orderId: id,
+            eventType: mpConsumption.applied.length > 0 ? "OE_MP_CONSUMO_AVANCE" : "OE_MP_CONSUMO_PENDIENTE",
+            actor: actor.email,
+            actorSector: actor.sector,
+            metadata: {
+              orderNumber: updated.orderNumber,
+              oeVersion: updated.version,
+              movimientos: mpConsumption.applied,
+              pendientes: mpConsumption.pendingIssues,
+              faltantes: mpConsumption.shortages,
+            },
+          });
+        }
+      } catch (err) {
+        // El avance ya está guardado: el consumo queda pendiente y se reintenta (por diferencia) en el próximo guardado o al entregar.
+        console.error("[orders] consumo de MP al guardar avance", err);
+        mpConsumption = { applied: [], pendingIssues: ["No se pudo contabilizar el consumo de materias primas ahora. Queda pendiente y se reintenta al volver a guardar."], shortages: [] };
+      }
+    }
     const formulaChanged =
       current.formData.kind === "OE" &&
       updated.formData.kind === "OE" &&
@@ -932,7 +976,7 @@ export class OrdersService {
       },
     });
     // Sin notificación en autoguardado.
-    return updated;
+    return { order: updated, mpConsumption };
   }
 
   async deleteEmptyDraft(id: string, actor: OrdersActor) {

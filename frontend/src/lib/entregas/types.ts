@@ -169,6 +169,8 @@ export interface ScheduledDelivery {
   responsible: string | null;
   notes: string | null;
   state: ScheduledDeliveryState;
+  /** INAMOVIBLE (solo entregas programadas a mano). Ausente = false. Solo cambia el color en el calendario. */
+  isImmovable?: boolean;
   rescheduleCount: number;
   version: number;
   cancelledAt: string | null;
