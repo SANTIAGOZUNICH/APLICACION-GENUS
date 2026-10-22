@@ -330,12 +330,14 @@ async function runSheet(key, kind) {
     const pre = await apiOrder(page, resource);
     const frozen = await others([idA, idB, idC]);
 
+    page.on("response", async (r) => { if (r.url().includes("/inventory/rows")) console.log(`  [rows] ${r.request().method()} ${r.status()} ${(await r.text().catch(() => "")).slice(0, 300)}`); });
     // insertar una fila en blanco DEBAJO de la fila START+30
     await clickRowN(pre.indexOf(idA) + 1);
     const t0 = await scrollNow();
     await page.locator(`[data-testid=${sh.gid}-row-below]`).click();
     await settled(page, sh.gid);
     await page.waitForTimeout(1200);
+    console.log(`  [aviso] ${await page.locator(`[data-testid=${sh.gid}-notice]`).innerText().catch(() => "-")}`);
     const afterIns = await apiOrder(page, resource);
     const newId = afterIns.find((id) => !pre.includes(id));
     const insOk = afterIns.length === pre.length + 1 && newId && afterIns.indexOf(newId) === afterIns.indexOf(idA) + 1;
