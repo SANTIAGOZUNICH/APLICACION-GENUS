@@ -220,7 +220,7 @@ try {
     bal: (await q("select md5(coalesce(string_agg(codigo||stock_actual::text, ';' order by codigo),'')) h from mp_stock_balances"))[0].h,
     ajustes: (await q("select count(*)::int n from inv_ajustes"))[0].n,
   };
-  check("integridad: editar/borrar/pegar datos administrativos (descriptivos) no movió stock (movimientos, saldos, ajustes)", snap1.mov === snap0.mov && snap1.bal === snap0.bal && snap1.ajustes === snap0.ajustes);
+  check("integridad: editar/borrar/pegar datos administrativos (descriptivos) no movió stock (movimientos, saldos, ajustes)", snap1.mov === snap0.mov && snap1.bal === snap0.bal && snap1.ajustes === snap0.ajustes, JSON.stringify({ snap0, snap1 }));
 
   // Lo que SÍ mueve stock se guarda directo (sin ventana ni motivo manual) y queda auditado con motivo automático.
   await typeInCell(mp, GS, 7, "Kg lote", "500");

@@ -11,6 +11,7 @@ import {
   type GenusGridColumn,
   type GenusGridCommitResult,
   type GenusGridRowDelete,
+  type GenusGridRowOps,
   type GenusGridDraftRows,
 } from "@/components/data-grid/genus-grid";
 import { nodeToText } from "@/lib/utils/node-text";
@@ -178,6 +179,7 @@ interface OperationalTableProps<T> {
   continuous?: boolean;
   /** Hoja continua: eliminar filas completas desde la planilla (sin motivo ni confirmación, con Deshacer). */
   rowDelete?: GenusGridRowDelete;
+  rowOps?: GenusGridRowOps;
   /** Hoja continua: filas en blanco al final para crear registros escribiendo directamente (se crean al completarse). */
   draftRows?: GenusGridDraftRows;
 }
@@ -361,10 +363,11 @@ function ExcelView<T>({
   reasonInline,
   rowClassName,
   rowDelete,
+  rowOps,
   draftRows,
   maxHeight,
   sheet,
-}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName" | "rowDelete" | "draftRows"> & { maxHeight?: number; sheet?: boolean }) {
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName" | "rowDelete" | "rowOps" | "draftRows"> & { maxHeight?: number; sheet?: boolean }) {
   const { email } = usePreviewSession();
   const storageKey = prefsKey(email, tableId ?? "tabla");
   const [prefs, setPrefsState] = useState<SheetViewPrefs>(() => {
@@ -479,6 +482,7 @@ function ExcelView<T>({
       rowClassName={rowClassName}
       sheet={sheet}
       rowDelete={rowDelete}
+      rowOps={rowOps}
       draftRows={draftRows}
       queueKey={sheet ? `genus-queue:${email ?? "anon"}:${tableId ?? "tabla"}` : undefined}
     />
@@ -503,6 +507,7 @@ export function OperationalTable<T>({
   rowClassName,
   continuous = false,
   rowDelete,
+  rowOps,
   draftRows,
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -566,6 +571,7 @@ export function OperationalTable<T>({
           maxHeight={continuous ? sheetHeight : undefined}
           sheet={continuous}
           rowDelete={rowDelete}
+          rowOps={rowOps}
           draftRows={draftRows}
         />
       </div>

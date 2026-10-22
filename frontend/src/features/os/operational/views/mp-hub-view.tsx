@@ -72,6 +72,7 @@ import {
   ACTOR_EMAIL_HEADER,
   ACTOR_SECTOR_HEADER,
 } from "@/lib/auth/header-names";
+import { useSheetRowOps } from "@/features/os/operational/lib/use-sheet-row-ops";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
 import { useInventoryCellEditing } from "@/features/os/operational/hooks/use-inventory-cells";
 import { useMpSheetEditing } from "@/features/os/operational/hooks/use-mp-sheet-cells";
@@ -93,7 +94,7 @@ import {
  * opción es una decisión explícita del usuario y volver acá recupera exactamente el orden de carga.
  */
 export const MP_ORDEN_CARGA_KEY = "carga";
-export const MP_ORDEN_CARGA_LABEL = "Orden de carga (original)";
+export const MP_ORDEN_CARGA_LABEL = "Orden de la hoja (manual)";
 const ordenCarga = <T,>(): SortOption<T> => ({ key: MP_ORDEN_CARGA_KEY, label: MP_ORDEN_CARGA_LABEL, compare: () => 0 });
 
 export const MP_STOCK_SORT_OPTIONS: SortOption<MpStockRow>[] = [
@@ -591,14 +592,13 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [canWrite, tab, email]
   );
+  const stockRowOps = useSheetRowOps("mp_stock", reload, stockSort === MP_ORDEN_CARGA_KEY, canWrite && tab === "Stock");
+  const ingresoRowOps = useSheetRowOps("mp_ingresos", reload, ingresoSort === MP_ORDEN_CARGA_KEY, canWrite && tab === "Ingresos MP");
   const stockRowDelete = useMemo<GenusGridRowDelete | undefined>(
     () =>
       canWrite && tab === "Stock"
         ? {
-            check: (id) =>
-              ingresos.some((i) => i.stockLotId === id && i.status !== "ANULADO")
-                ? "Vinculado a un ingreso activo: anulá el ingreso o usá Ajuste (el historial no se borra)."
-                : null,
+            check: () => null,
             onDelete: async (ids) => {
               const done: string[] = [];
               let failed = 0;
@@ -638,7 +638,6 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
               const r = ingresos.find((x) => x.id === id);
               if (!r) return "El ingreso ya no existe.";
               if (r.status === "ANULADO") return "Ya está anulado.";
-              if (r.status === "CONFIRMADO") return "Está confirmado y mueve el stock: se anula con «Anular» y motivo (revierte el stock con auditoría).";
               return null;
             },
             onDelete: async (ids) => {
@@ -657,7 +656,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
               await reload();
               return {
                 ok: done > 0,
-                message: `${done} borrador${done === 1 ? "" : "es"} descartado${done === 1 ? "" : "s"} (quedan anulados en el historial; no afectaron stock)${failed ? ` · ${failed} con error: ${firstError}` : ""}.`,
+                message: `${done} ingreso${done === 1 ? "" : "s"} eliminado${done === 1 ? "" : "s"} de la vista (quedan anulados en el historial; el stock que habían sumado se revierte con auditoría)${failed ? ` · ${failed} con error: ${firstError}` : ""}.`,
               };
             },
           }
@@ -1313,6 +1312,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
           tableId="mp-stock"
           continuous
           rowDelete={stockRowDelete}
+          rowOps={stockRowOps}
           draftRows={stockDraftRows}
           canEditCells={stockCells.canEditCells}
           onCellsCommit={stockCells.onCellsCommit}
@@ -1419,6 +1419,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
             tableId="mp-ingresos"
             continuous
             rowDelete={ingresoRowDelete}
+            rowOps={ingresoRowOps}
             draftRows={ingresoDraftRows}
             canEditCells={ingresoCells.canEditCells}
             onCellsCommit={ingresoCells.onCellsCommit}

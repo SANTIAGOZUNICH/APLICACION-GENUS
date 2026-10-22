@@ -34,6 +34,7 @@ import { MeStockDialog } from "@/features/os/operational/components/me-stock-dia
 import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
 import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useMeRowDelete, useSheetRowOps } from "@/features/os/operational/lib/use-sheet-row-ops";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import { applySort, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
 
@@ -92,6 +93,8 @@ export function MeInventarioView() {
   }, [reload]);
 
   const [sort, setSort] = useSortPreference("me-inventario-v2", "orden_hoja", ME_INVENTARIO_SORT_KEYS);
+  const rowOps = useSheetRowOps("me_inventario", reload, sort === "orden_hoja", canWrite);
+  const rowDelete = useMeRowDelete("me_inventario", reload, canWrite);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const base = !q
@@ -309,6 +312,8 @@ export function MeInventarioView() {
         rows={filtered}
         continuous
         draftRows={draftRows}
+        rowOps={rowOps}
+        rowDelete={rowDelete}
         rowKey={(r) => r.materialId}
         rowClassName={(r) => (r.cantidadTotal < 0 ? "genus-row-stock-negativo" : undefined)}
         emptyMessage="Inventario ME vacío. Cargá ingresos y entregá OA para ver movimientos."

@@ -143,3 +143,22 @@ export async function fetchMeHistorial(id: string): Promise<import("@/lib/invent
   if (!res.ok) throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status);
   return json.entries ?? [];
 }
+
+// ─── Filas como en Excel: insertar en blanco y mover (orden manual persistente) ───────────────────────────────────
+export type SheetRowResource = "mp_stock" | "mp_ingresos" | "me_ingresos" | "me_salidas" | "me_inventario";
+
+/** Inserta una fila en blanco antes de `beforeId` (null = al final). */
+export async function insertSheetRow(resource: SheetRowResource, beforeId: string | null): Promise<{ id: string; position: number }> {
+  const res = await fetch("/api/v1/inventory/rows", { method: "POST", headers: actorHeaders(), body: JSON.stringify({ action: "insert", resource, beforeId }) });
+  const json = (await res.json().catch(() => ({}))) as { id?: string; position?: number; error?: string; code?: string };
+  if (!res.ok || !json.id) throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status, json.code);
+  return { id: json.id, position: json.position ?? 0 };
+}
+
+/** Mueve la fila `id` para que quede antes de `beforeId` (null = al final). */
+export async function moveSheetRowApi(resource: SheetRowResource, id: string, beforeId: string | null): Promise<{ position: number }> {
+  const res = await fetch("/api/v1/inventory/rows", { method: "POST", headers: actorHeaders(), body: JSON.stringify({ action: "move", resource, id, beforeId }) });
+  const json = (await res.json().catch(() => ({}))) as { position?: number; error?: string; code?: string };
+  if (!res.ok) throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status, json.code);
+  return { position: json.position ?? 0 };
+}

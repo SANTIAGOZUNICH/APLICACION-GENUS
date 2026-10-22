@@ -39,6 +39,7 @@ import {
   formatOperationalIdFull,
 } from "@/lib/orders/format-operational-id";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useMeRowDelete, useSheetRowOps } from "@/features/os/operational/lib/use-sheet-row-ops";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import { applySort, compareDates, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
 
@@ -182,6 +183,8 @@ export function MeSalidasView() {
   }, [reload]);
 
   const [sort, setSort] = useSortPreference("me-salidas-v2", "orden_hoja", ME_SALIDA_SORT_KEYS);
+  const rowOps = useSheetRowOps("me_salidas", reload, sort === "orden_hoja", canWrite);
+  const rowDelete = useMeRowDelete("me_salidas", reload, canWrite);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const base = rows.filter((r) => {
@@ -482,6 +485,8 @@ export function MeSalidasView() {
         rows={filtered}
         continuous
         draftRows={draftRows}
+        rowOps={rowOps}
+        rowDelete={rowDelete}
         rowKey={(r) => r.id}
         tableId="me-salidas"
         canEditCells={sheet.canEditCells}
