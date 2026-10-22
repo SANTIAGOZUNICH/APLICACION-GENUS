@@ -26,10 +26,10 @@ describe("política de planillas MP (cliente y servidor)", () => {
     }
   });
 
-  it("solo Materia Prima (y Dirección) editan; Producción y Depósito no", () => {
+  it("Materia Prima, Producción y Dirección editan; Depósito no", () => {
     expect(mpSheetProtection("mp_ingresos", { status: "BORRADOR" }, "cantidad", "MATERIA_PRIMA")).toBeNull();
     expect(mpSheetProtection("mp_ingresos", { status: "BORRADOR" }, "cantidad", "DIRECCION")).toBeNull();
-    expect(mpSheetProtection("mp_ingresos", { status: "BORRADOR" }, "cantidad", "PRODUCCION")).toMatch(/Solo Materia Prima/);
+    expect(mpSheetProtection("mp_ingresos", { status: "BORRADOR" }, "cantidad", "PRODUCCION")).toBeNull();
     expect(mpSheetProtection("mp_compras", { estado: "" }, "nota", "DEPOSITO")).toMatch(/Solo Materia Prima/);
   });
 

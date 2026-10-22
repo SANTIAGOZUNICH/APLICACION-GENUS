@@ -54,7 +54,7 @@ describe("Fotos de remito en ingresos MP/ME", () => {
     expect(canManageAdjuntos("DIRECCION", "ME")).toBe(true);
     expect(canManageAdjuntos("DEPOSITO", "MP")).toBe(false);
     expect(canManageAdjuntos("MATERIA_PRIMA", "ME")).toBe(false);
-    expect(canManageAdjuntos("PRODUCCION", "MP")).toBe(false);
+    expect(canManageAdjuntos("PRODUCCION", "MP")).toBe(true);
     expect(canViewAdjuntos("PRODUCCION", "MP")).toBe(true);
     expect(canViewAdjuntos("ELABORACION", "MP")).toBe(false);
   });
@@ -95,7 +95,7 @@ describe("Fotos de remito en ingresos MP/ME", () => {
 
   it("quitar una foto: deja de listarse pero el archivo y el registro se conservan (auditable); idempotente", async () => {
     const a = await service.upload(actor("MATERIA_PRIMA"), { module: "MP", ingresoId: ING_MP, fileName: "a.jpg", contentType: "image/jpeg", bytes: JPG });
-    await expect(service.remove(actor("PRODUCCION"), a.id)).rejects.toThrow(/permiso/);
+    await expect(service.remove(actor("DEPOSITO"), a.id)).rejects.toThrow(/permiso/);
     await service.remove(actor("MATERIA_PRIMA"), a.id);
     await service.remove(actor("MATERIA_PRIMA"), a.id);
     expect(await service.list(actor("MATERIA_PRIMA"), "MP", ING_MP)).toEqual([]);

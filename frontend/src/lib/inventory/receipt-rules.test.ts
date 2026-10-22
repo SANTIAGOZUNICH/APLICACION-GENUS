@@ -140,12 +140,12 @@ describe("lectura automática = sugerencia saneada", () => {
 });
 
 describe("permisos por sector", () => {
-  it("MP: Materia Prima y Dirección; ME: Depósito y Dirección; Producción solo supervisa", () => {
+  it("MP: Materia Prima, Producción y Dirección; ME: Depósito y Dirección; Producción no escribe ME", () => {
     expect(canWriteReceipts("MATERIA_PRIMA", "MP")).toBe(true);
     expect(canWriteReceipts("DEPOSITO", "MP")).toBe(false);
     expect(canWriteReceipts("DEPOSITO", "ME")).toBe(true);
     expect(canWriteReceipts("MATERIA_PRIMA", "ME")).toBe(false);
-    expect(canWriteReceipts("PRODUCCION", "MP")).toBe(false);
+    expect(canWriteReceipts("PRODUCCION", "MP")).toBe(true);
     expect(canWriteReceipts("PRODUCCION", "ME")).toBe(false);
     expect(canWriteReceipts("DIRECCION", "MP")).toBe(true);
     expect(canWriteReceipts("DIRECCION", "ME")).toBe(true);
