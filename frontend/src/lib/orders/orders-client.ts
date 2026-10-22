@@ -287,7 +287,8 @@ export async function fetchOrder(
 export async function saveOrderProgressApi(
   session: OrdersClientSession,
   id: string,
-  input: PatchOrderInput
+  input: PatchOrderInput,
+  opts?: { onMpConsumption?: (r: { applied: Array<{ codigo: string; lote: string; delta: number }>; pendingIssues: string[]; shortages: unknown[] }) => void }
 ): Promise<OperationalOrderRecord> {
   const res = await fetch(`/api/v1/orders/${id}`, {
     method: "PATCH",
@@ -295,7 +296,8 @@ export async function saveOrderProgressApi(
     headers: actorHeaders(session),
     body: JSON.stringify(input),
   });
-  const data = await parseJson<{ order: OperationalOrderRecord }>(res);
+  const data = await parseJson<{ order: OperationalOrderRecord; mpConsumption?: { applied: Array<{ codigo: string; lote: string; delta: number }>; pendingIssues: string[]; shortages: unknown[] } | null }>(res);
+  if (data.mpConsumption) opts?.onMpConsumption?.(data.mpConsumption);
   return data.order;
 }
 

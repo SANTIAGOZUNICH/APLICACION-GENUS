@@ -220,3 +220,16 @@ describe("itemQuantities", () => {
     expect(itemQuantities(item({ quantity: null, works: [work({ plannedQuantity: "300" }), work({ linkId: "b", plannedQuantity: "200" })] })).planned).toBe(500);
   });
 });
+
+describe("entrega INAMOVIBLE", () => {
+  const base = { client: "Cliente SA", deliveryDate: "2026-11-05", items: [{ product: "Shampoo", quantity: "10" }] } as never;
+  it("por defecto NO es inamovible y se conserva el valor marcado", () => {
+    const a = validateDeliveryInput(base);
+    expect(a.ok && a.value.isImmovable).toBe(false);
+    const b = validateDeliveryInput({ ...(base as object), isImmovable: true } as never);
+    expect(b.ok && b.value.isImmovable).toBe(true);
+    const c = validateDeliveryInput({ ...(base as object), isImmovable: "si" } as never);
+    expect(c.ok && c.value.isImmovable).toBe(false); // solo `true` marca; no cambia fechas ni cantidades
+    expect(b.ok && b.value.deliveryDate).toBe("2026-11-05");
+  });
+});

@@ -297,17 +297,32 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
   void formulaFingerprint;
 
   const persist = useCallback(
-    async (nextForm: OrderContent, expectedVersion: number) => {
+    async (nextForm: OrderContent, expectedVersion: number, opts?: { registerMpConsumption?: boolean }) => {
       setSaveState("saving");
       const seqAtStart = editSeqRef.current;
       try {
-        const updated = await saveOrderProgressApi(session, orderId, {
-          expectedVersion,
-          formData: nextForm,
-          formulaProductId: formulaSnapshotRef.current.formulaProductId,
-          formulaVersionId: formulaSnapshotRef.current.formulaVersionId,
-          formulaVersionHash: formulaSnapshotRef.current.formulaVersionHash,
-        });
+        const updated = await saveOrderProgressApi(
+          session,
+          orderId,
+          {
+            expectedVersion,
+            formData: nextForm,
+            formulaProductId: formulaSnapshotRef.current.formulaProductId,
+            formulaVersionId: formulaSnapshotRef.current.formulaVersionId,
+            formulaVersionHash: formulaSnapshotRef.current.formulaVersionHash,
+            // Solo el botón «Guardar avance» contabiliza el consumo real en Stock MP; el autoguardado no.
+            ...(opts?.registerMpConsumption ? { registerMpConsumption: true } : {}),
+          },
+          {
+            onMpConsumption: (r) => {
+              const parts: string[] = [];
+              if (r.applied.length > 0) parts.push(`Stock MP actualizado: ${r.applied.map((a) => `${a.codigo}${a.lote ? ` (lote ${a.lote})` : ""} ${a.delta > 0 ? "+" : ""}${a.delta} kg`).join(" · ")}.`);
+              if (r.pendingIssues.length > 0) parts.push(`Quedó pendiente de descontar (no bloquea): ${r.pendingIssues.slice(0, 2).join(" · ")}${r.pendingIssues.length > 2 ? ` · +${r.pendingIssues.length - 2} más` : ""}.`);
+              if (r.shortages.length > 0) parts.push("Hay materias primas sin stock suficiente: el descuento queda pendiente de regularizar.");
+              setDeliverNotice(parts.length ? parts.join(" ") : null);
+            },
+          }
+        );
         setOrder(updated);
         // Solo se refleja lo del servidor si no hubo ediciones nuevas durante el guardado: si las hubo, se conserva
         // lo escrito (ya hay otro guardado programado) y el cursor/foco no se tocan.
@@ -675,7 +690,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       return;
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    await persist(form, versionRef.current);
+    await persist(form, versionRef.current, { registerMpConsumption: form.kind === "OE" });
   };
 
   const applyFormulaOrderOnly = async () => {
@@ -687,7 +702,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       formulaBaselineRef.current = pending;
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    await persist(pending, versionRef.current);
+    await persist(pending, versionRef.current, { registerMpConsumption: pending.kind === "OE" });
   };
 
   const applyFormulaAndProposeMaster = async () => {

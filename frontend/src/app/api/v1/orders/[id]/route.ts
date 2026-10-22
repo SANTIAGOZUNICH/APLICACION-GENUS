@@ -29,8 +29,8 @@ export async function PATCH(request: Request, ctx: Ctx) {
     const { id } = await ctx.params;
     const actor = await resolveOrdersActor(request);
     const body = (await request.json()) as PatchOrderInput;
-    const order = await getOrdersService().saveProgress(id, body, actor);
-    return NextResponse.json({ order, legallyOperational: true });
+    const { order, mpConsumption } = await getOrdersService().saveProgressWithConsumption(id, body, actor);
+    return NextResponse.json({ order, mpConsumption, legallyOperational: true });
   } catch (err) {
     return ordersErrorResponse(err);
   }

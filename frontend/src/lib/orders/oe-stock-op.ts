@@ -216,3 +216,72 @@ export async function reverseOeStock<O extends { version: number }>(
   });
   return { order, applied, lots };
 }
+
+/** Resultado de registrar el consumo real al «Guardar avance» (informativo; nunca bloquea el guardado). */
+export type OeProgressConsumption = {
+  /** Movimientos registrados ahora (solo diferencias contra lo ya contabilizado de esta OE). */
+  applied: Array<{ codigo: string; lote: string; delta: number }>;
+  /** Filas con kg reales que no se pudieron contabilizar (falta código/lote o no existe en Stock MP): quedan pendientes. */
+  pendingIssues: string[];
+  /** Stock insuficiente: no se inventa ni se deja en negativo, queda pendiente. */
+  shortages: LotShortage[];
+};
+
+/**
+ * «Guardar avance» de una OE EN CURSO: contabiliza en Stock MP el consumo REAL ya informado (KG REAL UTILIZADO, código MP y
+ * lote). No es la entrega: la OE sigue en su estado. Es un descuento por DIFERENCIA contra lo ya registrado de esta OE
+ * (mismo libro mayor que usa la entrega): guardar de nuevo sin cambios no descuenta nada, aumentar descuenta solo la
+ * diferencia y reducir registra una compensación auditada. ENTREGAR después reconoce lo ya descontado (misma regla).
+ * Nunca lanza por datos incompletos o stock insuficiente: queda pendiente de regularización sin movimientos inventados.
+ * `orderVersion` = versión de la OE ya guardada (clave idempotente por versión + código + lote).
+ */
+export async function registerOeProgressConsumption(
+  ctx: OeStockCtx,
+  actor: OrdersActor,
+  params: { oeId: string; orderNumber: string; orderVersion: number; orderStatus: string; materials: OeMaterialRow[] }
+): Promise<OeProgressConsumption> {
+  const ledger = getMpStockLedger();
+  const plan = buildOeConsumptionPlan(params.materials, ctx.catalog, { progress: true });
+  const pendingIssues = plan.issues.map((i) => i.message);
+  const lotIdOf = (d: { codigo: string; lote: string; lotId: string | null }) => d.lotId ?? legacyLotFor(ctx.catalog, d.codigo, d.lote);
+
+  let deltas = await ledger.planOeConsumptionDeltas(params.oeId, plan.lines);
+  // Con filas incompletas no se compensa (devolver stock) lo de filas que dejaron de ser identificables: solo se suma consumo.
+  if (plan.issues.length > 0) deltas = deltas.filter((d) => d.delta < 0);
+  if (deltas.length === 0) return { applied: [], pendingIssues, shortages: [] };
+
+  const withLots = deltas.map((d) => ({ ...d, lotId: lotIdOf(d) })).filter((d): d is typeof d & { lotId: string } => Boolean(d.lotId));
+  const shortages: LotShortage[] = lotShortages(withLots, ctx.catalog);
+  const byCode = new Map<string, number>();
+  for (const d of deltas) byCode.set(d.codigo, Math.round(((byCode.get(d.codigo) ?? 0) + d.delta) * 1000) / 1000);
+  for (const [codigo, delta] of byCode) {
+    if (delta >= 0) continue;
+    const disponible = Number(((await ledger.getBalance(codigo))?.stockActual ?? 0).toFixed(4));
+    if (disponible + delta < 0) shortages.push({ codigo, lote: "", disponible, requerido: -delta, faltante: Number((-delta - disponible).toFixed(4)), tipo: "codigo" });
+  }
+  if (shortages.length > 0) return { applied: [], pendingIssues, shortages };
+
+  const wanted = new Set(deltas.map((d) => `${d.codigo}|${d.lote}`));
+  const applied = await ledger.applyOeConsumption(
+    { email: actor.email, sector: actor.sector },
+    {
+      oeId: params.oeId,
+      oeVersion: params.orderVersion,
+      oeStatus: params.orderStatus,
+      lines: plan.lines,
+      orderNumber: params.orderNumber,
+      progress: true,
+      onlyDeltaKeys: plan.issues.length > 0 ? wanted : undefined,
+    }
+  );
+  const lotDeltas = applied
+    .map((a) => ({ lotId: lotIdOf(a), delta: a.delta }))
+    .filter((d): d is { lotId: string; delta: number } => Boolean(d.lotId));
+  ctx.inventory.applyOeLotDeltas(ctx.inventoryActor, {
+    oeId: params.oeId,
+    orderNumber: params.orderNumber,
+    reason: `Consumo ${params.orderNumber} al guardar avance (kg reales)`,
+    deltas: lotDeltas,
+  });
+  return { applied: applied.map((a) => ({ codigo: a.codigo, lote: a.lote, delta: a.delta })), pendingIssues, shortages: [] };
+}

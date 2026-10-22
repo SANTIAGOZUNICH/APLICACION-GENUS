@@ -511,11 +511,15 @@ export class MpStockLedgerService {
       lines: Array<{ codigo: string; lote: string; kg: number; lotId?: string | null }>;
       allowNegative?: boolean;
       orderNumber?: string;
+      /** «Guardar avance» de una OE en curso: registra el consumo real aunque la OE todavía no esté entregada. */
+      progress?: boolean;
+      /** Solo aplica estas posiciones `código|lote` (cuando hay filas incompletas no se compensan las demás). */
+      onlyDeltaKeys?: Set<string>;
     }
   ): Promise<Array<{ codigo: string; lote: string; delta: number; lotId: string | null }>> {
-    if (params.oeStatus !== "COMPLETA" && params.oeStatus !== "COMPLETA_CON_PENDIENTES") return [];
+    if (!params.progress && params.oeStatus !== "COMPLETA" && params.oeStatus !== "COMPLETA_CON_PENDIENTES") return [];
     await assertFeatureWritesEnabled();
-    const deltas = await this.planOeConsumptionDeltas(params.oeId, params.lines);
+    const deltas = (await this.planOeConsumptionDeltas(params.oeId, params.lines)).filter((d) => !params.onlyDeltaKeys || params.onlyDeltaKeys.has(`${d.codigo}|${d.lote}`));
     const applied: Array<{ codigo: string; lote: string; delta: number; lotId: string | null }> = [];
     for (const d of deltas) {
       const key = buildOeConsumptionKey(params.oeId, params.oeVersion, d.codigo, d.lote);

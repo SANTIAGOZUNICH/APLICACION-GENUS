@@ -183,7 +183,7 @@ function factsFromRow(r: Row): WorkFacts {
 
 const DELIVERY_COLS = sql`
   d.id, d.client, to_char(d.delivery_date, 'YYYY-MM-DD') as delivery_date, d.responsible, d.notes, d.status, d.reschedule_count,
-  d.version, d.cancelled_at, d.cancelled_by, d.cancel_reason, d.created_by, d.created_at, d.updated_at
+  d.version, d.cancelled_at, d.cancelled_by, d.cancel_reason, d.created_by, d.created_at, d.updated_at, d.is_immovable
 `;
 
 /** Carga entregas (con productos y trabajos vinculados frescos) y deriva los estados. Sin recorte por sector. */
@@ -265,6 +265,7 @@ async function loadDeliveries(db: { execute: SqlTx["execute"] }, where: ReturnTy
       responsible: str(r.responsible),
       notes: str(r.notes),
       state: r.status === "cancelada" ? "cancelada" : "programada",
+      isImmovable: Boolean(r.is_immovable),
       rescheduleCount: Number(r.reschedule_count ?? 0),
       version: Number(r.version ?? 1),
       cancelledAt: r.cancelled_at ? iso(r.cancelled_at) : null,
@@ -516,8 +517,8 @@ export const entregasService = {
     const id = randomUUID();
     await db.transaction(async (tx) => {
       await tx.execute(sql`
-        insert into scheduled_deliveries (id, client, client_key, delivery_date, responsible, notes, created_by, created_by_sector)
-        values (${id}::uuid, ${c.client}, ${clientKey(c.client)}, ${c.deliveryDate}::date, ${c.responsible}, ${c.notes}, ${actor.email}, ${actor.sector})
+        insert into scheduled_deliveries (id, client, client_key, delivery_date, responsible, notes, is_immovable, created_by, created_by_sector)
+        values (${id}::uuid, ${c.client}, ${clientKey(c.client)}, ${c.deliveryDate}::date, ${c.responsible}, ${c.notes}, ${c.isImmovable}, ${actor.email}, ${actor.sector})
       `);
       await insertItems(tx, id, c.items, 0);
       await audit(tx, actor, { action: "create", deliveryId: id, payload: { after: snapshot(c) } });
@@ -556,7 +557,7 @@ export const entregasService = {
         }
       }
       await tx.execute(sql`
-        update scheduled_deliveries set client = ${c.client}, client_key = ${clientKey(c.client)}, responsible = ${c.responsible}, notes = ${c.notes},
+        update scheduled_deliveries set client = ${c.client}, client_key = ${clientKey(c.client)}, responsible = ${c.responsible}, notes = ${c.notes}, is_immovable = ${c.isImmovable},
           version = version + 1, updated_at = now() where id = ${id}::uuid
       `);
       // Productos: se quitan (baja lógica), se actualizan y se agregan.
@@ -1149,6 +1150,7 @@ const snapshot = (c: CleanDelivery) => ({
   deliveryDate: c.deliveryDate,
   responsible: c.responsible,
   notes: c.notes,
+  isImmovable: c.isImmovable,
   items: c.items.map((i) => ({ product: i.product, quantity: i.quantity, unit: i.unit, sector: i.sector, plannedProductionDate: i.plannedProductionDate, lot: i.lot, vto: i.vto, notes: i.notes })),
 });
 const snapshotFromDelivery = (d: ScheduledDelivery) => ({
@@ -1156,6 +1158,7 @@ const snapshotFromDelivery = (d: ScheduledDelivery) => ({
   deliveryDate: d.deliveryDate,
   responsible: d.responsible,
   notes: d.notes,
+  isImmovable: Boolean(d.isImmovable),
   items: d.items.map((i) => ({ product: i.product, quantity: i.quantity, unit: i.unit, sector: i.sector, plannedProductionDate: i.plannedProductionDate, lot: i.lot, vto: i.vto, notes: i.notes })),
 });
 
