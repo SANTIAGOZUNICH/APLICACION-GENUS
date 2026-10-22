@@ -32,6 +32,7 @@ import { canManageAdjuntos, canViewAdjuntos } from "@/lib/inventory/ingreso-adju
 import { IngresoConRemitoButtons } from "@/features/os/operational/components/ingreso-con-remito";
 import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useMeRowDelete, useSheetRowOps } from "@/features/os/operational/lib/use-sheet-row-ops";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import { applySort, compareDates, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
 
@@ -172,6 +173,8 @@ export function MeIngresosView() {
   }, []);
 
   const [sort, setSort] = useSortPreference("me-ingresos-v2", "orden_hoja", ME_INGRESO_SORT_KEYS);
+  const rowOps = useSheetRowOps("me_ingresos", reload, sort === ME_ORDEN_HOJA_KEY, canWrite);
+  const rowDelete = useMeRowDelete("me_ingresos", reload, canWrite);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const base = rows.filter((r) => {
@@ -424,6 +427,8 @@ export function MeIngresosView() {
         rows={filtered}
         continuous
         draftRows={draftRows}
+        rowOps={rowOps}
+        rowDelete={rowDelete}
         rowKey={(r) => r.id}
         tableId="me-ingresos"
         canEditCells={sheet.canEditCells}

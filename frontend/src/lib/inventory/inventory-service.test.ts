@@ -575,7 +575,7 @@ describe("MP Stock — archivo lógico seguro", () => {
     svc = new InventoryService(new MemoryInventoryRepo());
   });
 
-  it("bloquea deleteMpStock si hay ingreso activo ligado", async () => {
+  it("deleteMpStock con ingreso activo ligado archiva el lote sin tocar el ingreso ni los kg (sin bloqueo)", async () => {
     const row = await svc.upsertMpIngreso(mp, {
       codigo: "ARC-01",
       descripcion: "A",
@@ -585,10 +585,11 @@ describe("MP Stock — archivo lógico seguro", () => {
       confirm: true,
     });
     expect(row.stockLotId).toBeTruthy();
-    expect(() => svc.deleteMpStock(mp, row.stockLotId!, "cleanup")).toThrow(
-      /vinculado al ingreso/i
-    );
-    expect(svc.listMpStock(mp)).toHaveLength(1);
+    const archived = svc.deleteMpStock(mp, row.stockLotId!, "");
+    expect(archived.archived).toBe(true);
+    expect(archived.cantidadKg).toBe(10);
+    expect(svc.listMpStock(mp)).toHaveLength(0);
+    expect(svc.listMpIngresos(mp).find((i) => i.id === row.id)?.status).toBe("CONFIRMADO");
   });
 
   it("archiva saldo manual sin ingresos y lo oculta del listado", () => {

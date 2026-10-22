@@ -158,7 +158,7 @@ describe("hoja única de Materias Primas: orden de carga por defecto", () => {
   it("la primera opción de cada hoja es el orden de carga y NO reordena (ni por nombre, código, cantidad ni fecha)", () => {
     for (const options of [MP_STOCK_SORT_OPTIONS, MP_INGRESO_SORT_OPTIONS, MP_COMPRA_SORT_OPTIONS] as Array<readonly { key: string; label: string }[]>) {
       expect(options[0]!.key).toBe(MP_ORDEN_CARGA_KEY);
-      expect(options[0]!.label).toMatch(/Orden de carga/);
+      expect(options[0]!.label).toMatch(/Orden de la hoja/);
     }
     expect(applySort(stock, MP_STOCK_SORT_OPTIONS, MP_ORDEN_CARGA_KEY).map((r) => r.descripcion)).toEqual([
       "Glicerina",

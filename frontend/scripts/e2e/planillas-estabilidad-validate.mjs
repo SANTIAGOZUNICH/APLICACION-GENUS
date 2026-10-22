@@ -159,6 +159,7 @@ async function rowY(page, sh, _map, code) {
   }, { gid: sh.gid, n });
 }
 const rowLoc = (page, sh, _map, code) => page.locator(`[data-testid=${sh.gid}] .dsg-row`).filter({ has: page.locator(".dsg-cell-gutter", { hasText: new RegExp(`^${numOf(code)}$`) }) }).first();
+const rowLocN = (page, sh, n) => page.locator(`[data-testid=${sh.gid}] .dsg-row`).filter({ has: page.locator(".dsg-cell-gutter", { hasText: new RegExp(`^${n}$`) }) }).first();
 const cellOf = (row, map, title) => row.locator(`.genus-col-${map[title]}`).first();
 async function wheelTo(page, sh, y) {
   const b = await page.locator(`[data-testid=${sh.gid}] .dsg-container`).boundingBox();
@@ -315,6 +316,85 @@ async function runSheet(key, kind) {
   const shown = await cellOf(r0, map2, sh.text[0][0]).locator("input").first().inputValue().catch(() => null);
   check(`${tag}: tras recargar la edición sigue ahí y la fila está en el mismo lugar`, shown === `Ed0-${START}` || (await dbRow(sh, sh.code(START)))?.[sh.text[0][1]] === `Ed0-${START}`, String(shown));
   await page.screenshot({ path: `${OUT}/${key}-${kind}-02-recargado.png` });
+
+  // ---- FILAS COMO EN EXCEL: insertar, mover, eliminar; el orden manual queda guardado ----
+  {
+    const resource = RESOURCE[key];
+    const idOf = async (code) => (await q(`select id::text id from ${sh.table} where payload->>'${sh.idField}' = $1`, [code]))[0]?.id;
+    const hide = { stock: "archived", ingmp: "status", ingme: "anulado", salme: "reverted", invme: "archived" }[key];
+    const textTitle = sh.text[0][0];
+    const others = async (exceptIds) => (await q(`select md5(coalesce(string_agg(payload::text, '' order by id), '')) h from ${sh.table} where payload->>'createdBy' = 'zze' and id::text <> all($1::text[])`, [exceptIds]))[0].h;
+    const clickRowN = async (n) => { const r = rowLocN(page, sh, n); await r.waitFor({ timeout: 20_000 }); await cellOf(r, map2, textTitle).click(); };
+    const scrollNow = async () => (await snap(page, sh)).top;
+    const idA = await idOf(sh.code(START + 30)), idB = await idOf(sh.code(START + 40)), idC = await idOf(sh.code(START + 50));
+    const pre = await apiOrder(page, resource);
+    const frozen = await others([idA, idB, idC]);
+
+    // insertar una fila en blanco DEBAJO de la fila START+30
+    await clickRowN(pre.indexOf(idA) + 1);
+    const t0 = await scrollNow();
+    await page.locator(`[data-testid=${sh.gid}-row-below]`).click();
+    await settled(page, sh.gid);
+    await page.waitForTimeout(1200);
+    const afterIns = await apiOrder(page, resource);
+    const newId = afterIns.find((id) => !pre.includes(id));
+    const insOk = afterIns.length === pre.length + 1 && newId && afterIns.indexOf(newId) === afterIns.indexOf(idA) + 1;
+    const blank = newId ? (await q(`select payload from ${sh.table} where id = $1::uuid`, [newId]))[0]?.payload : null;
+    check(`${tag}: «Insertar abajo» crea una fila en blanco justo debajo, en la posición exacta (${insOk ? "ok" : afterIns.indexOf(newId) + " vs " + (afterIns.indexOf(idA) + 1)})`, Boolean(insOk));
+    check(`${tag}: la fila insertada es un registro vacío guardado (sin stock ni datos inventados)`, !!blank && !String(blank[sh.idField] ?? "").length, JSON.stringify(blank?.[sh.idField]));
+    check(`${tag}: insertar no mueve el scroll (${t0}→${await scrollNow()})`, Math.abs((await scrollNow()) - t0) <= rowH * 2.5);
+
+    // escribir en la fila nueva y que quede guardado
+    await clickRowN(afterIns.indexOf(newId) + 1);
+    await page.keyboard.type("NUEVA");
+    await page.keyboard.press("Enter");
+    await settled(page, sh.gid);
+    await page.waitForTimeout(900);
+    const typedNew = (await q(`select payload from ${sh.table} where id = $1::uuid`, [newId]))[0]?.payload;
+    check(`${tag}: se puede escribir en la fila insertada y se guarda`, String(typedNew?.[sh.text[0][1]] ?? "") === "NUEVA", JSON.stringify(typedNew?.[sh.text[0][1]]));
+
+    // mover una fila hacia arriba con el botón y hacia abajo con Alt+↓
+    const order1 = await apiOrder(page, resource);
+    await clickRowN(order1.indexOf(idB) + 1);
+    const t1 = await scrollNow();
+    await page.locator(`[data-testid=${sh.gid}-row-up]`).click();
+    await settled(page, sh.gid);
+    await page.waitForTimeout(1200);
+    const order2 = await apiOrder(page, resource);
+    check(`${tag}: «Subir» sube la fila una posición y el orden queda guardado`, order2.indexOf(idB) === order1.indexOf(idB) - 1, `${order1.indexOf(idB)}→${order2.indexOf(idB)}`);
+    const act = await snap(page, sh);
+    check(`${tag}: tras subir, la selección sigue a la fila movida (#${act.activeNum}) y el scroll no salta (${t1}→${act.top})`, act.activeNum === order2.indexOf(idB) + 1 && Math.abs(act.top - t1) <= rowH * 2.5);
+    await page.keyboard.press("Alt+ArrowDown");
+    await page.keyboard.press("Alt+ArrowDown");
+    await settled(page, sh.gid);
+    await page.waitForTimeout(1500);
+    const order3 = await apiOrder(page, resource);
+    check(`${tag}: Alt+↓ dos veces baja la fila dos posiciones`, order3.indexOf(idB) === order2.indexOf(idB) + 2, `${order2.indexOf(idB)}→${order3.indexOf(idB)}`);
+    const movedSame = JSON.stringify(order3.filter((id) => id !== idB)) === JSON.stringify(order2.filter((id) => id !== idB));
+    check(`${tag}: mover una fila no cambia el orden relativo de las demás`, movedSame);
+
+    // eliminar una fila de la vista (archivo lógico; el historial queda)
+    await clickRowN(order3.indexOf(idC) + 1);
+    await page.locator(`[data-testid=${sh.gid}-delete-rows]`).click();
+    await settled(page, sh.gid);
+    await page.waitForTimeout(1500);
+    const order4 = await apiOrder(page, resource);
+    const kept = (await q(`select payload from ${sh.table} where id = $1::uuid`, [idC]))[0]?.payload;
+    check(`${tag}: eliminar la fila la saca de la vista sin pedir motivo ni confirmación`, !order4.includes(idC) && (await page.locator("[role=dialog]").count()) === 0);
+    check(`${tag}: la fila eliminada sigue en la base (borrado lógico, historial conservado)`, !!kept && Boolean(hide === "status" ? kept.status === "ANULADO" : kept[hide]));
+    check(`${tag}: insertar, mover y eliminar no tocan los datos de las demás filas (huella idéntica)`, (await others([idA, idB, idC, newId])) === frozen);
+    const aud = await q(`select payload->>'action' a from inv_audit where payload->>'actor' is not null and payload->>'action' in ('insert_row','move_row') and payload->>'entityId' = any($1::text[])`, [[newId, idB]]);
+    check(`${tag}: insertar y mover quedan auditados (usuario, fecha, antes/después)`, aud.some((r) => r.a === "insert_row") && aud.some((r) => r.a === "move_row"), JSON.stringify(aud));
+
+    // recargar: el orden manual persiste
+    await page.reload();
+    await nav(page, sh.nav).catch(() => undefined);
+    await page.locator(`[data-testid=${sh.gid}]`).waitFor({ timeout: 120_000 });
+    await page.waitForFunction((gid) => (document.querySelector(`[data-testid=${gid}] .dsg-container`)?.scrollHeight ?? 0) > 5000, sh.gid, { timeout: 180_000 });
+    const orderReload = await apiOrder(page, resource);
+    check(`${tag}: tras recargar el orden manual es el mismo (insertada, movida y eliminada)`, JSON.stringify(orderReload) === JSON.stringify(order4));
+    await page.screenshot({ path: `${OUT}/${key}-${kind}-03-filas.png` });
+  }
   await u.ctx.close();
 }
 

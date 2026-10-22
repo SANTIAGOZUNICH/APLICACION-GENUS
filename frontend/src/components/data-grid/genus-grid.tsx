@@ -39,7 +39,7 @@ import {
   type ComponentType,
   type ReactNode,
 } from "react";
-import { ClipboardPaste, Copy, Eraser, Lock, Redo2, Replace, Rows3, Trash2, Undo2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ClipboardPaste, Copy, Eraser, Lock, Redo2, Replace, Rows3, Trash2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -154,6 +154,8 @@ export interface GenusGridProps<T> {
   sheet?: boolean;
   /** Modo planilla: eliminación de filas completas sin motivo ni confirmación (con Deshacer). */
   rowDelete?: GenusGridRowDelete;
+  /** Modo planilla: insertar filas en blanco en cualquier lugar y mover filas (orden manual persistente). */
+  rowOps?: GenusGridRowOps;
   /** Modo planilla: filas en blanco al final para crear registros escribiendo directamente. */
   draftRows?: GenusGridDraftRows;
   /**
@@ -190,6 +192,19 @@ export interface GenusGridRowDelete {
   check: (rowId: string) => string | null;
   /** Elimina las filas (ya filtradas por `check`). Resuelve con el resumen y, si se puede, cómo deshacerlo. */
   onDelete: (rowIds: string[]) => Promise<{ ok: boolean; message: string; undo?: () => Promise<void> }>;
+}
+
+/**
+ * Filas como en Excel (modo planilla): insertar una fila en blanco en cualquier lugar y mover filas, con orden manual
+ * persistente en el servidor. Los handlers deben resolver recién cuando la lista ya se recargó.
+ */
+export interface GenusGridRowOps {
+  /** false = el orden visible no es el de la hoja (hay otro orden elegido): las acciones de orden se desactivan. */
+  enabled?: boolean;
+  /** Inserta una fila en blanco antes de `beforeId` (null = al final). */
+  onInsert: (beforeId: string | null) => Promise<{ ok: boolean; message?: string }>;
+  /** Mueve la fila `id` para que quede antes de `beforeId` (null = al final). */
+  onMove: (id: string, beforeId: string | null) => Promise<{ ok: boolean; message?: string }>;
 }
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -414,6 +429,7 @@ export function GenusGrid<T>({
   rowClassName,
   sheet = false,
   rowDelete,
+  rowOps,
   draftRows,
   queueKey,
 }: GenusGridProps<T>) {
@@ -1236,6 +1252,86 @@ export function GenusGrid<T>({
     return () => document.removeEventListener("keydown", onKey);
   }, [sheet, undoLast, redoLast]);
 
+  // ---- filas como en Excel: insertar en blanco y mover (el orden queda guardado en el servidor) ----
+  const rowOpBusy = useRef(false);
+  const runRowOp = useCallback(
+    async (kind: "above" | "below" | "up" | "down") => {
+      if (!rowOps || rowOpBusy.current) return;
+      const sel = selectionRef.current;
+      if (!sel) return;
+      const list = gridRowsRef.current;
+      const real = (i: number) => (i >= 0 && i < list.length && !isDraftRowId(list[i].__id) ? list[i].__id : null);
+      let first = sel.min.row;
+      let last = sel.max.row;
+      while (first <= last && !real(first)) first += 1;
+      while (last >= first && !real(last)) last -= 1;
+      if (first > last) {
+        setNotice("Elegí una fila ya cargada.");
+        return;
+      }
+      rowOpBusy.current = true;
+      setNotice(null);
+      setSaveState("saving");
+      guardRef.current?.lock(3000);
+      const col = activeRef.current?.col ?? sel.min.col;
+      try {
+        let res: { ok: boolean; message?: string };
+        let target = first;
+        let targetEnd = last;
+        if (kind === "above" || kind === "below") {
+          const beforeIdx = kind === "above" ? first : last + 1;
+          res = await rowOps.onInsert(real(beforeIdx));
+          target = beforeIdx;
+          targetEnd = beforeIdx;
+        } else if (kind === "up") {
+          const neighbor = real(first - 1);
+          if (!neighbor) { setSaveState("idle"); return; }
+          res = await rowOps.onMove(neighbor, real(last + 1));
+          target = first - 1;
+          targetEnd = last - 1;
+        } else {
+          const neighbor = real(last + 1);
+          if (!neighbor) { setSaveState("idle"); return; }
+          res = await rowOps.onMove(neighbor, real(first));
+          target = first + 1;
+          targetEnd = last + 1;
+        }
+        setSaveState(res.ok ? "saved" : "error");
+        if (!res.ok) setNotice(res.message ?? "No se pudo mover la fila.");
+        else {
+          markSaved(1);
+          guardRef.current?.lock(3000);
+          // La selección sigue a las filas movidas / a la fila nueva (la lista ya se recargó).
+          window.requestAnimationFrame(() => gridRef.current?.setSelection({ min: { col, row: target }, max: { col, row: targetEnd } }));
+        }
+      } catch (err) {
+        setSaveState("error");
+        setNotice(friendlySaveError(err, "No se pudo completar la operación de filas."));
+      } finally {
+        rowOpBusy.current = false;
+      }
+    },
+    [rowOps, markSaved]
+  );
+  const runRowOpRef = useRef(runRowOp);
+  useEffect(() => {
+    runRowOpRef.current = runRowOp;
+  }, [runRowOp]);
+  useEffect(() => {
+    if (!sheet || !rowOps) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+      const root = wrapRef.current;
+      if (!root || !root.contains(document.activeElement)) return;
+      if (rowOps.enabled === false) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void runRowOpRef.current(e.key === "ArrowUp" ? "up" : "down");
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [sheet, rowOps]);
+
   // ---- Ctrl+Z (fuera de un input) ----
   const onKeyDownCapture = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Tab") tabDir.current = event.shiftKey ? -1 : 1;
@@ -1652,6 +1748,31 @@ export function GenusGrid<T>({
         )}
         <span className="text-[var(--os-text-muted)]">{selectionLabel}</span>
         <div className="ml-auto flex flex-wrap items-center gap-1">
+          {sheet && rowOps && canEdit ? (
+            <>
+              {([
+                ["above", "Insertar arriba", "Inserta una fila en blanco arriba de la selección", null],
+                ["below", "Insertar abajo", "Inserta una fila en blanco debajo de la selección", null],
+                ["up", "Subir", "Sube la selección una fila (Alt+↑). El orden queda guardado", ArrowUp],
+                ["down", "Bajar", "Baja la selección una fila (Alt+↓). El orden queda guardado", ArrowDown],
+              ] as const).map(([kind, label, title, Icon]) => (
+                <Button
+                  key={kind}
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => void runRowOp(kind)}
+                  disabled={selectedRowCount === 0 || (rowOps.enabled === false && kind !== "above" && kind !== "below" ? true : false)}
+                  data-testid={`${testId}-row-${kind}`}
+                  title={rowOps.enabled === false && (kind === "up" || kind === "down") ? "Elegí «Orden de la hoja» para mover filas" : title}
+                >
+                  {Icon ? <Icon className="size-3.5" aria-hidden="true" /> : null}
+                  {label}
+                </Button>
+              ))}
+            </>
+          ) : null}
           {sheet && rowDelete && canEdit ? (
             <Button
               type="button"
