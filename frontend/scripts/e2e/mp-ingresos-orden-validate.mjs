@@ -231,8 +231,9 @@ try {
   check(`eliminar varias filas seleccionadas a la vez (${n2}–${n3})`, (await rowOf(D[1].id)) === 0 && (await rowOf(D[2].id)) === 0 && (await lotKg("ZZD-2")) === 0 && (await lotKg("ZZD-3")) === 0 && n3 === n2 + 1);
   // 3) con consumo posterior: se baja el lote a mano (consumo) y se elimina el ingreso
   const lot4 = (await q(`select id::text id from inv_mp_stock where payload->>'codigo' = 'ZZD-4'`))[0].id;
-  const ver = (await q(`select updated_at from inv_mp_stock where id = $1::uuid`, [lot4]))[0].updated_at;
-  await page.request.patch("/api/v1/inventory/cells", { data: { resource: "mp_stock", changes: [{ id: lot4, field: "cantidadKg", value: "15", expectedVersion: new Date(ver).toISOString() }] } });
+  const lotRow = (await apiList("mp_stock")).find((r) => r.id === lot4);
+  const patchRes = await page.request.patch("/api/v1/inventory/cells", { data: { resource: "mp_stock", changes: [{ id: lot4, field: "cantidadKg", value: "15", expectedVersion: lotRow.updatedAt }] } });
+  console.log(`  [consumo] PATCH ${patchRes.status()} ${(await patchRes.text()).slice(0, 200)}`);
   const consumed = await lotKg("ZZD-4");
   await clickIngresoRow(D[3].id);
   await page.locator("[data-testid=mp-ingresos-grid-delete-rows]").click();
