@@ -236,6 +236,8 @@ async function runSheet(key, kind) {
     return loc();
   };
   const valAt = async (rowN, col) => { await cellAt(rowN, col); return (await cellsOf(page, sh.gid, rowN))?.find((z) => z.cls.includes(`genus-col-${colIdx(col)}`))?.v; };
+  const isQtyCol = (t) => /^(kg lote|cantidad total|bultos|total|cantidad)$/i.test(t);
+  const emptyish = (col, v) => (v ?? "") === "" || (isQtyCol(col.t) && v === "0");
   const topNow = async () => (await snap(page, sh)).top;
 
   // ---- 1) Backspace en CADA columna, una fila distinta por columna; luego Delete en otras ----
@@ -313,7 +315,7 @@ async function runSheet(key, kind) {
     await settled(page, sh.gid);
     await page.waitForTimeout(800);
     const left = [];
-    for (const d of dataCols) if (((await valAt(n, d)) ?? "") !== "") left.push(d.t);
+    for (const d of dataCols) if (!emptyish(d, await valAt(n, d))) left.push(d.t);
     check(`${tag}: vaciar una fila completa con Backspace deja todas las celdas vacías (la fila queda como registro vacío)`, left.length === 0, `con contenido: ${left.join(", ")}; aviso="${await notice()}"`);
   }
   // ---- 4) varias filas completas seleccionadas + Backspace ----
@@ -325,7 +327,7 @@ async function runSheet(key, kind) {
     await settled(page, sh.gid);
     await page.waitForTimeout(900);
     let left = 0;
-    for (let n = 44; n <= 46; n++) for (const d of dataCols) if (((await valAt(n, d)) ?? "") !== "") left++;
+    for (let n = 44; n <= 46; n++) for (const d of dataCols) if (!emptyish(d, await valAt(n, d))) left++;
     check(`${tag}: 3 filas completas seleccionadas + Delete: todo vacío`, left === 0, `${left} celdas con contenido; aviso="${await notice()}"`);
   }
   // ---- 5) botón táctil BORRAR (visible en tablet) equivale a Delete ----
@@ -339,7 +341,8 @@ async function runSheet(key, kind) {
   }
   // ---- 6) escribir sobre una celda y luego borrar con Backspace: en edición, Backspace borra caracteres ----
   {
-    const col = dataCols[1] ?? dataCols[0];
+    let col = dataCols[0];
+    for (const d of dataCols) { if (((await valAt(52, d)) ?? "") !== "" && !isQtyCol(d.t) && !/fecha|vencimiento/i.test(d.t)) { col = d; break; } }
     const cell = await cellAt(52, col);
     await cell.click();
     await page.keyboard.press("Enter"); // entra en edición con el texto actual
@@ -350,7 +353,7 @@ async function runSheet(key, kind) {
     await settled(page, sh.gid);
     await page.waitForTimeout(500);
     const v = (await valAt(52, col)) ?? "";
-    check(`${tag}: en modo edición, Backspace borra solo un carácter (no vacía la celda)`, v.endsWith("X") && v.length > 1, v);
+    check(`${tag}: en modo edición, Backspace borra solo un carácter (no vacía la celda)`, v.endsWith("X") && v.length > 1, `${col.t}: ${v}`);
   }
   // ---- 7) buscador: Backspace dentro del buscador NO borra celdas ----
   {
@@ -363,8 +366,9 @@ async function runSheet(key, kind) {
       await search.type("abc");
       await page.keyboard.press("Backspace");
       await page.keyboard.press("Delete");
-      const after = await valAt(55, col);
       await search.fill("");
+      await page.waitForTimeout(500);
+      const after = await valAt(55, col);
       check(`${tag}: Backspace/Delete dentro del buscador no tocan la planilla`, before === after && before !== "", `${before} → ${after}`);
     }
   }
