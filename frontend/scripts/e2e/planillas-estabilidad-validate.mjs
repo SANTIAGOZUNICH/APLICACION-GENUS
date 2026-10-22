@@ -169,7 +169,7 @@ async function wheelTo(page, sh, y) {
 }
 async function apiOrder(page, resource) {
   const res = await page.request.get(`/api/v1/inventory?resource=${resource}`, { timeout: 120_000 });
-  return ((await res.json()).data ?? []).map((r) => r.id);
+  return ((await res.json()).data ?? []).filter((r) => r.status !== "ANULADO").map((r) => r.id ?? r.materialId);
 }
 const RESOURCE = { stock: "mp_stock", ingmp: "mp_ingresos", ingme: "me_ingresos", salme: "me_salidas", invme: "me_inventario" };
 
@@ -366,10 +366,12 @@ async function runSheet(key, kind) {
     check(`${tag}: «Subir» sube la fila una posición y el orden queda guardado`, order2.indexOf(idB) === order1.indexOf(idB) - 1, `${order1.indexOf(idB)}→${order2.indexOf(idB)}`);
     const act = await snap(page, sh);
     check(`${tag}: tras subir, la selección sigue a la fila movida (#${act.activeNum}) y el scroll no salta (${t1}→${act.top})`, act.activeNum === order2.indexOf(idB) + 1 && Math.abs(act.top - t1) <= rowH * 2.5);
-    await page.keyboard.press("Alt+ArrowDown");
-    await page.keyboard.press("Alt+ArrowDown");
-    await settled(page, sh.gid);
-    await page.waitForTimeout(1500);
+    for (let k = 0; k < 2; k++) {
+      await page.keyboard.press("Alt+ArrowDown");
+      await page.waitForTimeout(400);
+      await settled(page, sh.gid);
+      await page.waitForTimeout(1500);
+    }
     const order3 = await apiOrder(page, resource);
     check(`${tag}: Alt+↓ dos veces baja la fila dos posiciones`, order3.indexOf(idB) === order2.indexOf(idB) + 2, `${order2.indexOf(idB)}→${order3.indexOf(idB)}`);
     const movedSame = JSON.stringify(order3.filter((id) => id !== idB)) === JSON.stringify(order2.filter((id) => id !== idB));
