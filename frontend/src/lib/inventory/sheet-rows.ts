@@ -166,48 +166,63 @@ export async function insertBlankSheetRow(actor: InventoryActor, resource: Sheet
   });
 }
 
-const BLANK_KEYS: Record<"inv_mp_stock" | "inv_mp_ingresos", string[]> = {
-  inv_mp_stock: ["proveedor", "cliente", "descripcion", "cantidadKg", "ubicacion", "lote", "vencimiento", "codigo", "producto"],
-  inv_mp_ingresos: ["fecha", "ingresoNro", "proveedor", "cliente", "remitoNro", "codigo", "producto", "descripcion", "bultos", "cantidad", "total", "ubicacion", "lote", "vencimiento"],
-};
-const emptyValue = (v: unknown) => v == null || v === "" || v === 0;
+type NewRowTable = "inv_mp_stock" | "inv_mp_ingresos";
 
-/** Fila de trabajo vacía (insertada en blanco y todavía sin datos). Las archivadas/anuladas NO cuentan como vacías. */
-export function isBlankSheetPayload(table: "inv_mp_stock" | "inv_mp_ingresos", p: Record<string, unknown>): boolean {
-  if (p.archived === true || p.status === "ANULADO" || p.status === "CONFIRMADO") return false;
-  return BLANK_KEYS[table].every((k) => emptyValue(p[k]));
+const TEXT_FIELDS: Record<NewRowTable, string[]> = {
+  inv_mp_stock: ["proveedor", "cliente", "descripcion", "ubicacion", "lote", "vencimiento", "codigo", "producto"],
+  inv_mp_ingresos: ["fecha", "ingresoNro", "proveedor", "cliente", "remitoNro", "codigo", "producto", "descripcion", "ubicacion", "lote", "vencimiento"],
+};
+const NUMBER_FIELDS: Record<NewRowTable, string[]> = {
+  inv_mp_stock: ["cantidadKg"],
+  inv_mp_ingresos: ["bultos", "cantidad", "total"],
+};
+
+/**
+ * Clasificación SQL de una fila de la planilla según lo que el usuario VE escrito:
+ *  - 'hidden': archivada / anulada (no se ve, no cuenta ni como escrita ni como vacía);
+ *  - 'blank': ninguna columna cargada a mano tiene datos (las columnas calculadas — estado, días, productos asociados — NO cuentan);
+ *  - 'data': cualquier dato escrito.
+ */
+export function sheetRowKindSql(table: NewRowTable): string {
+  const text = TEXT_FIELDS[table].map((f) => `coalesce(nullif(btrim(payload->>'${f}'), ''), '') = ''`);
+  const nums = NUMBER_FIELDS[table].map((f) => `coalesce(nullif(btrim(payload->>'${f}'), ''), '0') ~ '^-?0*[.,]?0*$'`);
+  const hidden = table === "inv_mp_stock" ? `coalesce(payload->>'archived', 'false') = 'true'` : `payload->>'status' = 'ANULADO'`;
+  const draftOnly = table === "inv_mp_ingresos" ? ` and coalesce(payload->>'status', 'BORRADOR') = 'BORRADOR'` : "";
+  return `case when ${hidden} then 'hidden' when ${[...text, ...nums].join(" and ")}${draftOnly} then 'blank' else 'data' end`;
 }
 
 /**
- * Las filas NUEVAS de Stock MP / Ingresos MP van siempre al final del orden manual (la base les da el load_seq más alto;
- * nunca reutiliza huecos) y, si debajo de la última fila con datos quedaron filas de trabajo vacías, el registro nuevo se
- * ubica justo ANTES de ellas (después de la última fila escrita) y las vacías siguen disponibles debajo.
- * No mueve ninguna otra fila: solo reparte las posiciones que ya ocupaban las vacías de cola y la fila nueva.
+ * Como en una hoja Excel: un registro NUEVO de Stock MP / Ingresos MP ocupa la PRIMERA fila vacía que hay inmediatamente
+ * debajo de la última fila con datos (según el orden manual de la planilla), no el final de todos los registros guardados.
+ *  - Se identifica la última fila con datos y las filas vacías persistidas que le siguen (las ocultas se saltean).
+ *  - El registro nuevo toma la posición de la primera vacía y esa fila vacía (sin datos) se retira: ni se duplica ni crece la
+ *    planilla, y las demás vacías siguen debajo. Si no hay vacías, el registro queda a continuación de la última escrita.
+ *  - Nunca toca filas con datos ni cambia el orden relativo de las ya escritas.
  * Debe correr dentro de la transacción de la operación (con el candado de MP tomado).
  */
-export async function placeNewRowsAfterLastWritten(tx: Tx, table: "inv_mp_stock" | "inv_mp_ingresos", newIds: string[]): Promise<void> {
+export async function placeNewRowsAfterLastWritten(tx: Tx, table: NewRowTable, newIds: string[]): Promise<void> {
   if (newIds.length === 0) return;
   const res = (await tx.execute(
-    sql.raw(`select id::text as id, load_seq::float8 as seq, payload from "${table}" order by load_seq desc limit 400`)
-  )) as unknown as { rows: Array<{ id: string; seq: number; payload: Record<string, unknown> }> };
+    sql.raw(`select id::text as id, load_seq::float8 as seq, (${sheetRowKindSql(table)}) as kind from "${table}" order by load_seq desc`)
+  )) as unknown as { rows: Array<{ id: string; seq: number; kind: "hidden" | "blank" | "data" }> };
   const fresh = new Set(newIds);
-  const tail = res.rows.filter((r) => !fresh.has(r.id)); // de abajo hacia arriba, sin las nuevas
-  let anchor: string | null = null;
-  for (const r of tail) {
-    if (!isBlankSheetPayload(table, r.payload)) break;
-    anchor = r.id;
+  const blanks: string[] = []; // de arriba hacia abajo
+  for (const r of res.rows) {
+    if (fresh.has(r.id) || r.kind === "hidden") continue;
+    if (r.kind === "data") break;
+    blanks.unshift(r.id);
   }
-  if (!anchor) return;
-  // Se mantienen las nuevas en el orden en que se crearon, todas antes de la primera vacía de cola.
-  const ordered = (await orderedRows(tx, table)).slice();
+  if (blanks.length === 0) return;
+  let current = await orderedRows(tx, table);
   const sortedNew = newIds
-    .map((id) => ordered.find((r) => r.id === id))
+    .map((id) => current.find((r) => r.id === id))
     .filter((r): r is SeqRow => Boolean(r))
     .sort((a, b) => a.seq - b.seq);
-  let current = ordered;
   for (const n of sortedNew) {
-    const changes = planMove(current, n.id, anchor);
-    await applySeq(tx, table, changes);
+    const target = blanks.shift();
+    if (!target) break; // sin más vacías: el resto queda a continuación de la última escrita (final)
+    await applySeq(tx, table, planMove(current, n.id, target));
+    await tx.execute(sql.raw(`delete from "${table}" where id = '${target}'::uuid and (${sheetRowKindSql(table)}) = 'blank'`));
     current = await orderedRows(tx, table);
   }
 }
