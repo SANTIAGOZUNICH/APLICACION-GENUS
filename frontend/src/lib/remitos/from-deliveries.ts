@@ -9,8 +9,10 @@ import { groupDeliveries, type EligibleDelivery, type RemitoPreviewGroup } from 
 export { groupDeliveries };
 export type { EligibleDelivery, RemitoPreviewGroup };
 import { marksTableReady } from "./delivery-marks";
+import { loadResolvedPackingByLine } from "./delivery-packing-resolve";
 import { getRemitoService } from "./remito-service";
 import type { RemitoActor } from "./remito-service";
+import { lineTotalCajas } from "./line-qty";
 import type { RemitoApprovalInput, RemitoRecord } from "./types";
 
 /** Clave con la que una entrega real queda vinculada a un remito (impide incluirla dos veces). */
@@ -39,8 +41,14 @@ export async function listEligibleDeliveries(opts: { lineIds?: string[] } = {}):
          select 1 from remito_work_links k join remitos r on r.id = k.remito_id
           where k.work_item_id = 'dl:' || l.id::text and r.status <> 'ANULADO')
      order by l.actual_delivered_at desc`);
-  return (res.rows as Row[]).map((r) => {
-    const groups = Array.isArray(r.packing_groups) ? (r.packing_groups as Array<{ cajas?: number; unidadesPorCaja?: number }>).map((g) => ({ cajas: Number(g.cajas) || 0, unidadesPorCaja: Number(g.unidadesPorCaja) || 0 })) : [];
+  const rows = res.rows as Row[];
+  // Cajas efectivas: las de la entrega o, si falta, las registradas en el trabajo (Envasado/Codificado). Ver delivery-packing-resolve.
+  const resolved = await loadResolvedPackingByLine(rows.map((r) => String(r.work_item_id)));
+  return rows.map((r) => {
+    const rp = resolved.get(String(r.id));
+    const groups = rp
+      ? rp.groups
+      : Array.isArray(r.packing_groups) ? (r.packing_groups as Array<{ cajas?: number; unidadesPorCaja?: number }>).map((g) => ({ cajas: Number(g.cajas) || 0, unidadesPorCaja: Number(g.unidadesPorCaja) || 0 })) : [];
     return {
       deliveryLineId: String(r.id),
       workItemId: String(r.work_item_id),
@@ -57,6 +65,9 @@ export async function listEligibleDeliveries(opts: { lineIds?: string[] } = {}):
       deliveryDate: String(r.delivery_date),
       packingGroups: groups,
       boxesText: describeDeliveryPacking(groups),
+      packingSource: rp?.source ?? (groups.length > 0 ? "ENTREGA" : "NINGUNA"),
+      packingWarning: rp?.warning ?? null,
+      packingSuggested: rp?.suggested ?? [],
       deliveredBy: String(r.delivered_by ?? ""),
       deliveryRemito: r.remito == null ? null : String(r.remito),
     };
@@ -111,4 +122,28 @@ export async function createRemitoDraftsFromDeliveries(actor: RemitoActor, lineI
     }
   }
   return { remitos: [...out.values()], skipped };
+}
+
+/**
+ * Al abrir un BORRADOR: completa las cajas de los renglones que quedaron vacías con las cajas efectivas de su entrega
+ * (entrega o trabajo). No toca renglones con cajas ni correcciones manuales (ver autofillDraftBoxes). Best-effort.
+ */
+export async function autofillDraftBoxesFromDeliveries(actor: RemitoActor, remito: RemitoRecord): Promise<RemitoRecord> {
+  if (remito.status !== "BORRADOR") return remito;
+  const targets = remito.lines.filter((l) => l.trace?.deliveryLineId && l.trace.workItemId && lineTotalCajas(l) === 0);
+  if (targets.length === 0) return remito;
+  try {
+    const resolved = await loadResolvedPackingByLine(targets.map((l) => String(l.trace?.workItemId)));
+    const fills = targets.flatMap((l) => {
+      const r = resolved.get(String(l.trace?.deliveryLineId));
+      if (!r || r.groups.length === 0) return [];
+      const slots = packingGroupsToRemitoSlots(r.groups);
+      return [{ lineId: l.id, slots }];
+    });
+    if (fills.length === 0) return remito;
+    return (await getRemitoService().autofillDraftBoxes(actor, remito.id, fills)) ?? remito;
+  } catch (error) {
+    console.error("[remitos] no se pudieron completar las cajas del borrador", error);
+    return remito;
+  }
 }

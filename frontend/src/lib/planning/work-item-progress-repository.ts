@@ -1,5 +1,6 @@
 import "server-only";
 
+import { loadResolvedPackingByLine } from "@/lib/remitos/delivery-packing-resolve";
 import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { operationalEvents, operationalOrders, workItemDeliveries, workItemDeliveryLines, workItems } from "@/lib/db/schema";
@@ -1687,7 +1688,7 @@ export async function listDeliveryLinesDurable(workItemId: string) {
     .from(workItemDeliveryLines)
     .where(eq(workItemDeliveryLines.workItemId, workItemId))
     .orderBy(workItemDeliveryLines.createdAt);
-  return rows.map(mapDeliveryLine);
+  return withResolvedPacking(rows);
 }
 
 /** Renglones de entrega (con sus cajas) de varias entregas a la vez: lectura para Entregados. */
@@ -1698,7 +1699,25 @@ export async function listDeliveryLinesForDeliveriesDurable(deliveryIds: string[
     .from(workItemDeliveryLines)
     .where(inArray(workItemDeliveryLines.deliveryId, deliveryIds))
     .orderBy(workItemDeliveryLines.createdAt);
-  return rows.map(mapDeliveryLine);
+  return withResolvedPacking(rows);
+}
+
+/**
+ * Cajas efectivas por renglón: si la entrega no las guardó pero el trabajo (Envasado/Codificado) las tiene y alcanzan
+ * sin ambigüedad, se muestran esas (solo lectura; no se modifica nada). Ver delivery-packing-resolve.
+ */
+async function withResolvedPacking(rows: Array<typeof workItemDeliveryLines.$inferSelect>) {
+  const mapped = rows.map(mapDeliveryLine);
+  try {
+    const resolved = await loadResolvedPackingByLine(rows.map((r) => r.workItemId));
+    return mapped.map((l) => {
+      const r = resolved.get(l.id);
+      return r && r.source !== "ENTREGA" && r.groups.length > 0 ? { ...l, packingGroups: r.groups, packingSource: r.source } : l;
+    });
+  } catch (error) {
+    console.error("[entregas] no se pudieron recuperar las cajas del trabajo", error);
+    return mapped;
+  }
 }
 
 function mapDeliveryLine(l: typeof workItemDeliveryLines.$inferSelect) {

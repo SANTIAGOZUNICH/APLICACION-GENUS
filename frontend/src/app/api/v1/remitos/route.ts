@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { autofillDraftBoxesFromDeliveries } from "@/lib/remitos/from-deliveries";
 import { getRemitoService } from "@/lib/remitos/remito-service";
 import type {
   RemitoApprovalInput,
@@ -40,10 +41,14 @@ export async function GET(request: Request) {
       status: (url.searchParams.get("status") as RemitoStatus) || undefined,
     };
     const persistenceReady = await isRemitoSchemaReady();
-    const remitos = await getRemitoService().list(
+    const listed = await getRemitoService().list(
       { email: actor.email, sector: actor.sector },
       filters
     );
+    // Borradores con cajas vacías → se completan con las cajas efectivas de su entrega/trabajo (sin pisar nada cargado).
+    const remitos = canAccessRemitos(actor.sector)
+      ? await Promise.all(listed.map((r) => autofillDraftBoxesFromDeliveries({ email: actor.email, sector: actor.sector }, r)))
+      : listed;
     return NextResponse.json({
       remitos,
       persistenceReady,

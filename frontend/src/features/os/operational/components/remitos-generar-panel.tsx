@@ -281,7 +281,8 @@ export function RemitosGenerarPanel({ session, canManage, onCreated }: { session
                   {g.lines.map((l) => (
                     <li key={l.deliveryLineId} className="text-xs">
                       <span className="font-medium">{l.product}</span> — {fmt(l.quantity)} {l.unit ?? "u."} · pedido {l.pedido ?? "—"}{l.lote ? ` · lote ${l.lote}` : ""}
-                      <span className="block text-[var(--os-text-muted)]">{describeDeliveryPacking(l.packingGroups) ?? "Sin detalle de cajas registrado (se puede completar editando el borrador)"}</span>
+                      <span className="block text-[var(--os-text-muted)]">{describeDeliveryPacking(l.packingGroups) ?? "Sin detalle de cajas registrado (se puede completar editando el borrador)"}{l.packingSource === "TRABAJO" || l.packingSource === "SNAPSHOT" ? " · tomadas del trabajo" : ""}</span>
+                      {l.packingWarning ? <span className="block text-amber-400" data-testid="remito-cajas-aviso">⚠ {l.packingWarning}{l.packingSuggested && l.packingSuggested.length > 0 ? ` Registrado en el trabajo: ${describeDeliveryPacking(l.packingSuggested)}.` : ""}</span> : null}
                     </li>
                   ))}
                 </ul>
