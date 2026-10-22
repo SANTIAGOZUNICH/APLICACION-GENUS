@@ -189,6 +189,8 @@ export type MpStockRow = {
   /** Códigos que tuvo el lote antes de una corrección de código (un ingreso nuevo con el código viejo cae acá). */
   codigosAnteriores?: string[];
   estadoVencimientoManual?: string;
+  /** Columnas calculadas que el usuario vació a propósito (estadoStock / diasAlVence / estadoVencimiento): quedan en blanco y NO se recalculan. */
+  columnasVaciadas?: string[];
   /** Stock real del CÓDIGO según el libro mayor (solo lectura; lo agrega la API al listar). */
   stockLibroMayor?: number | null;
   /** Archivo lógico: oculto del listado activo; no hard-delete del historial. */
@@ -229,6 +231,8 @@ export type MpIngresoRow = {
   status: MpIngresoStatus;
   stockImpacted: boolean;
   stockMessage?: string;
+  /** Pasó a borrador porque la planilla le vació la cantidad (stock revertido): al volver a cargar la cantidad se reconfirma solo. */
+  confirmadoPrevio?: boolean;
   createdBy: string;
   updatedBy: string;
   createdAt: string;

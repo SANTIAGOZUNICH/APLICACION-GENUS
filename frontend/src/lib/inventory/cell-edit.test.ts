@@ -168,9 +168,13 @@ describe("inventario — edición por celda", () => {
     expect(after.estadoStock).toBe("En cuarentena"); // fijado a mano, kg intactos
     expect(after.cantidadKg).toBe(0);
     expect(repo.mpLedgerOps).toEqual([expect.objectContaining({ kind: "saldo_codigo", codigo: "DER", target: 15, expected: 12.5 })]);
-    // Vaciar el estado vuelve al cálculo.
+    // Vaciar una columna calculada la deja EN BLANCO (corrección persistente: no se recalcula); escribir un valor la reactiva.
     svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "estadoStock", value: "", expectedVersion: after.updatedAt }]);
-    expect(svc.listMpStock(mp).find((r) => r.id === lot.id)!.estadoStock).toBe("Sin stock");
+    expect(svc.listMpStock(mp).find((r) => r.id === lot.id)!.estadoStock).toBe("");
+    svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "estadoStock", value: "Revisar", expectedVersion: repo.getMpStock(lot.id)!.updatedAt }]);
+    expect(svc.listMpStock(mp).find((r) => r.id === lot.id)!.estadoStock).toBe("Revisar");
+    svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "diasAlVence", value: "", expectedVersion: repo.getMpStock(lot.id)!.updatedAt }]);
+    expect(svc.listMpStock(mp).find((r) => r.id === lot.id)!.diasAlVence).toBeNull();
     // Sin pedir motivo: se guarda con el automático.
     const [sinMotivo] = svc.patchInventoryCells(mp, "mp_stock", [{ id: lot.id, field: "stockLibroMayor", value: "1", expectedVersion: repo.getMpStock(lot.id)!.updatedAt }]);
     expect(sinMotivo).toMatchObject({ ok: true });

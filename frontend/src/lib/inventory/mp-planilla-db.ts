@@ -32,6 +32,8 @@ import {
   type InventoryService,
 } from "./inventory-service";
 import { MemoryInventoryRepo } from "./memory-repo";
+import { canConfirmMpIngreso, mpIngresoImpactQty } from "./inventory-service";
+import { multiplyTotal } from "./calcs";
 import { placeNewRowsAfterLastWritten } from "./sheet-rows";
 import { ensureMpLoadOrderBackfill, MP_SEQ_ALTA } from "./mp-load-order";
 import {
@@ -292,11 +294,18 @@ export async function patchMpSheetCells(
           const current = repo.getMpIngreso(id)!;
           // El estado se conserva explícitamente: editar un borrador NO lo confirma (antes, cualquier guardado con
           // cantidad lo confirmaba y movía stock). Confirmar es una acción aparte.
+          // Vaciar la cantidad de un ingreso CONFIRMADO es una corrección más: pasa a borrador y su stock se revierte UNA vez
+          // (auditado, sin motivo ni bloqueo). Si después se vuelve a cargar la cantidad, se reconfirma solo (Deshacer = vuelve igual).
+          const merged = { ...current, ...(patch as Partial<MpIngresoRow>) };
+          const readyAfter = canConfirmMpIngreso(mpIngresoImpactQty({ total: multiplyTotal(merged.bultos ?? null, merged.cantidad ?? null), cantidad: merged.cantidad ?? null }));
+          const demote = current.status === "CONFIRMADO" && !readyAfter;
+          const reconfirm = current.status === "BORRADOR" && Boolean(current.confirmadoPrevio) && readyAfter;
           items.push(
             await service.upsertMpIngreso(actor, {
               id,
               ...(patch as Partial<MpIngresoRow>),
-              status: current.status === "CONFIRMADO" ? "CONFIRMADO" : "BORRADOR",
+              status: demote ? "BORRADOR" : reconfirm ? "CONFIRMADO" : current.status === "CONFIRMADO" ? "CONFIRMADO" : "BORRADOR",
+              ...(demote ? { confirmDemote: true, confirmadoPrevio: true } : {}),
               auditReason: reason || undefined,
             })
           );

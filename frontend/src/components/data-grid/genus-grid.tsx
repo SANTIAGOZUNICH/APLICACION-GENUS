@@ -955,11 +955,8 @@ export function GenusGrid<T>({
         const source = rowByIdRef.current.get(d.rowId);
         const col = columnByKey.get(d.columnKey);
         if (!source || !col) continue;
-        // Modo planilla: «vaciar» (Delete sobre un rango) no toca columnas calculadas ni que mueven stock.
-        if (sheet && d.newValue === "" && col.noFill) {
-          notCleared += 1;
-          continue;
-        }
+        // Vaciar (Backspace/Delete) funciona en TODAS las columnas: las calculadas quedan en blanco como corrección persistente
+        // y las que mueven stock se corrigen con ajuste automático auditado. Solo el RELLENO arrastrando omite esas columnas.
         const change: GenusGridCellChange = {
           rowId: d.rowId,
           columnKey: d.columnKey,
@@ -1493,7 +1490,7 @@ export function GenusGrid<T>({
         if (!key || !col || String(row[key] ?? "").trim() === "") continue;
         const prot = row.__prot[key];
         if (prot) skipped.push({ rowLabel: row.__id, columnTitle: col.title, reason: prot });
-        else if (!col.noFill) diffs.push({ rowId: row.__id, columnKey: key, oldValue: String(row[key] ?? ""), newValue: "" });
+        else diffs.push({ rowId: row.__id, columnKey: key, oldValue: String(row[key] ?? ""), newValue: "" });
       }
     }
     processDiffs(diffs, skipped);

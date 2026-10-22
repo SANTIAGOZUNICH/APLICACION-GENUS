@@ -79,7 +79,7 @@ function isBusinessMpCodigo(codigo: string): boolean {
 }
 
 /** Cantidad efectiva para stock: TOTAL si > 0, si no CANTIDAD. */
-function mpIngresoImpactQty(row: {
+export function mpIngresoImpactQty(row: {
   total: number | null;
   cantidad: number | null;
 }): number {
@@ -93,7 +93,7 @@ function mpIngresoImpactQty(row: {
 }
 
 /** Confirmable con qty>0; el código de negocio es opcional (se asigna identidad interna). */
-function canConfirmMpIngreso(qty: number): boolean {
+export function canConfirmMpIngreso(qty: number): boolean {
   return qty > 0;
 }
 
@@ -727,13 +727,20 @@ export class InventoryService {
         } else {
           // Columnas que dependen de otros datos: se guarda el dato del que dependen (días → vencimiento) o un
           // estado fijado a mano (vacío = vuelve al cálculo). Nunca cambian kg ni libro mayor.
+          // Vaciar una columna calculada es una corrección persistente: queda en blanco (`columnasVaciadas`) y no se recalcula;
+          // escribir un valor la saca de esa lista. Nunca toca kg ni libro mayor.
+          const clearing = value === null || value === "";
+          const vaciadas = new Set(current.columnasVaciadas ?? []);
+          if (clearing) vaciadas.add(c.field);
+          else vaciadas.delete(c.field);
+          const vaciadasPatch: Partial<MpStockRow> = { columnasVaciadas: [...vaciadas] };
           const patch: Partial<MpStockRow> =
             c.field === "diasAlVence"
-              ? { vencimiento: addDaysIso(Number(value)) }
+              ? clearing ? { ...vaciadasPatch } : { vencimiento: addDaysIso(Number(value)), ...vaciadasPatch }
               : c.field === "estadoStock"
-                ? { estadoStockManual: String(value) }
+                ? { estadoStockManual: clearing ? "" : String(value), ...vaciadasPatch }
                 : c.field === "estadoVencimiento"
-                  ? { estadoVencimientoManual: String(value) }
+                  ? { estadoVencimientoManual: clearing ? "" : String(value), ...vaciadasPatch }
                   : { [c.field]: value };
           const before = Object.fromEntries(
             Object.keys(patch).map((k) => [k, (current as Record<string, unknown>)[k] ?? ""])
@@ -1756,13 +1763,14 @@ export class InventoryService {
 
   private enrichMpStock(row: MpStockRow): MpStockRow {
     const dias = calcDiasAlVence(row.vencimiento || null);
+    const vaciadas = new Set(row.columnasVaciadas ?? []);
     const productosAsociados = this.aggregateProductosAsociados(row.codigo);
     return {
       ...row,
       // Estado fijado a mano en la planilla (si hay); si no, el calculado.
-      estadoStock: row.estadoStockManual?.trim() || calcMpEstadoStock(row.cantidadKg),
-      diasAlVence: dias,
-      estadoVencimiento: row.estadoVencimientoManual?.trim() || calcMpEstadoVencimiento(dias),
+      estadoStock: vaciadas.has("estadoStock") ? "" : row.estadoStockManual?.trim() || calcMpEstadoStock(row.cantidadKg),
+      diasAlVence: vaciadas.has("diasAlVence") ? null : dias,
+      estadoVencimiento: vaciadas.has("estadoVencimiento") ? "" : row.estadoVencimientoManual?.trim() || calcMpEstadoVencimiento(dias),
       productosAsociados,
     };
   }
@@ -1808,6 +1816,7 @@ export class InventoryService {
       id?: string;
       confirm?: boolean;
       confirmDemote?: boolean;
+      confirmadoPrevio?: boolean;
       /** Motivo de la corrección (queda en la auditoría). Obligatorio en la planilla para ingresos confirmados. */
       auditReason?: string;
       /** Pasar a la planilla desde una foto: no se rechaza por «duplicado» (se avisa y se corrige en la tabla). */
@@ -1944,6 +1953,7 @@ export class InventoryService {
       status,
       stockImpacted: false,
       stockMessage,
+      ...(status === "BORRADOR" && (input.confirmadoPrevio ?? existing?.confirmadoPrevio) ? { confirmadoPrevio: true } : {}),
       createdBy: existing?.createdBy ?? actor.email,
       updatedBy: actor.email,
       createdAt: existing?.createdAt ?? now,
