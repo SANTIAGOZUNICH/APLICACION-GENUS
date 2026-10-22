@@ -79,7 +79,7 @@ function isBusinessMpCodigo(codigo: string): boolean {
 }
 
 /** Cantidad efectiva para stock: TOTAL si > 0, si no CANTIDAD. */
-function mpIngresoImpactQty(row: {
+export function mpIngresoImpactQty(row: {
   total: number | null;
   cantidad: number | null;
 }): number {
@@ -93,7 +93,7 @@ function mpIngresoImpactQty(row: {
 }
 
 /** Confirmable con qty>0; el código de negocio es opcional (se asigna identidad interna). */
-function canConfirmMpIngreso(qty: number): boolean {
+export function canConfirmMpIngreso(qty: number): boolean {
   return qty > 0;
 }
 
@@ -1816,6 +1816,7 @@ export class InventoryService {
       id?: string;
       confirm?: boolean;
       confirmDemote?: boolean;
+      confirmadoPrevio?: boolean;
       /** Motivo de la corrección (queda en la auditoría). Obligatorio en la planilla para ingresos confirmados. */
       auditReason?: string;
       /** Pasar a la planilla desde una foto: no se rechaza por «duplicado» (se avisa y se corrige en la tabla). */
@@ -1952,6 +1953,7 @@ export class InventoryService {
       status,
       stockImpacted: false,
       stockMessage,
+      ...(status === "BORRADOR" && (input.confirmadoPrevio ?? existing?.confirmadoPrevio) ? { confirmadoPrevio: true } : {}),
       createdBy: existing?.createdBy ?? actor.email,
       updatedBy: actor.email,
       createdAt: existing?.createdAt ?? now,

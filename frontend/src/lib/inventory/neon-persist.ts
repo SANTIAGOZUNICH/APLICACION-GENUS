@@ -157,6 +157,7 @@ export function normalizeMpIngresoPayload(raw: unknown): MpIngresoRow {
     status,
     stockImpacted: Boolean(r.stockImpacted),
     stockMessage: r.stockMessage,
+    ...(r.confirmadoPrevio ? { confirmadoPrevio: true } : {}),
     createdBy: r.createdBy ?? "",
     updatedBy: r.updatedBy ?? "",
     createdAt: r.createdAt ?? "",

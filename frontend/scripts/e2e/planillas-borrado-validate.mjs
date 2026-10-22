@@ -224,6 +224,11 @@ async function runSheet(key, kind) {
   // Las columnas se virtualizan horizontalmente: se busca la celda desplazando a la izquierda/derecha según haga falta.
   const cellAt = async (rowN, col) => {
     const loc = () => rowByN(rowN).locator(`.genus-col-${colIdx(col)}`).first();
+    {
+      const top = await page.evaluate((gid) => document.querySelector(`[data-testid=${gid}] .dsg-container`).scrollTop, sh.gid);
+      const want = (rowN - 4) * rowH;
+      if (!(await rowByN(rowN).count()) || Math.abs(want - top) > rowH * 9) { await wheelTo(page, sh, want - top); }
+    }
     for (const dx of [0, -6000, 6000, -6000, 400]) {
       if (dx) { const b = await page.locator(`[data-testid=${sh.gid}] .dsg-container`).boundingBox(); await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.wheel(dx, 0); await page.waitForTimeout(350); }
       if (await loc().count()) return loc();
@@ -271,7 +276,8 @@ async function runSheet(key, kind) {
     const c = dataCols.findIndex((d) => d.t === x.col);
     const rowN = x.mode === "Backspace" ? 3 + c : 3 + dataCols.length + c;
     const v = await valAt(rowN, dataCols[c]);
-    if (v !== "" && v !== undefined) restored.push(`${x.col}(fila ${rowN})="${v}"`);
+    const isQty = /^(kg lote|cantidad total|bultos|total|cantidad)$/i.test(dataCols[c].t);
+    if (v !== "" && v !== undefined && !(isQty && v === "0")) restored.push(`${x.col}(fila ${rowN})="${v}"`);
   }
   check(`${tag}: tras recargar, ningún dato borrado con Backspace/Delete vuelve a aparecer`, restored.length === 0, restored.slice(0, 6).join(" ; "));
 

@@ -231,6 +231,8 @@ export type MpIngresoRow = {
   status: MpIngresoStatus;
   stockImpacted: boolean;
   stockMessage?: string;
+  /** Pasó a borrador porque la planilla le vació la cantidad (stock revertido): al volver a cargar la cantidad se reconfirma solo. */
+  confirmadoPrevio?: boolean;
   createdBy: string;
   updatedBy: string;
   createdAt: string;

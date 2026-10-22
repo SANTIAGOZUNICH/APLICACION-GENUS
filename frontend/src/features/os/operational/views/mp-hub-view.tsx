@@ -913,8 +913,10 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         header: short,
         headerTitle: label,
         hideOnMobile: collapse === false ? false : collapse,
+        // El código vaciado en un ingreso se muestra VACÍO: la identidad interna INT-MP-… es solo la clave del libro mayor.
+        ...(label === "CÓDIGO" ? { text: (r: MpIngresoRow) => (r.codigoPendiente || isMpInternalCodigo(r.codigo) ? "" : displayCell(r.codigo)) } : {}),
         render: (r: MpIngresoRow) => {
-          const value = displayCell(r[k]);
+          const value = label === "CÓDIGO" && (r.codigoPendiente || isMpInternalCodigo(r.codigo)) ? "" : displayCell(r[k]);
           return (
             <OsClampedText fullText={value} mono={mono}>
               {value}
