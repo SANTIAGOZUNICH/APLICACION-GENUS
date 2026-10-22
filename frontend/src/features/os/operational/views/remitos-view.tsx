@@ -792,17 +792,15 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                       >
                         {downloadBusy === "xlsx" ? "Descargando…" : "Descargar XLSX"}
                       </Button>
-                      {(selected.versions ?? []).some((v) => v.driveFileIdPdf) ? (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={busy || downloadBusy !== null}
-                          onClick={() => void downloadSelected("pdf")}
-                          data-testid="remito-dl-pdf"
-                        >
-                          {downloadBusy === "pdf" ? "Descargando…" : "Descargar PDF (legacy)"}
-                        </Button>
-                      ) : null}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={busy || downloadBusy !== null}
+                        onClick={() => void downloadSelected("pdf")}
+                        data-testid="remito-dl-pdf"
+                      >
+                        {downloadBusy === "pdf" ? "Descargando…" : "DESCARGAR PDF"}
+                      </Button>
                       <Button
                         type="button"
                         variant="secondary"
@@ -1233,7 +1231,7 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                     <p className="text-sm text-[var(--os-text-muted)]">Cargando vista previa…</p>
                   ) : previewHtml ? (
                     <div
-                      className="rounded border border-[var(--os-border)]"
+                      className="rounded border border-neutral-400 bg-white text-neutral-900 [color-scheme:light]"
                       dangerouslySetInnerHTML={{ __html: previewHtml }}
                       data-testid="remito-preview-xlsx"
                     />
@@ -1254,6 +1252,15 @@ export function RemitosView({ initialRemitoId }: { initialRemitoId?: string } = 
                         Descargar XLSX
                       </Button>
                     ) : null}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={downloadBusy !== null}
+                      onClick={() => void downloadSelected("pdf")}
+                      data-testid="remito-preview-dl-pdf"
+                    >
+                      {downloadBusy === "pdf" ? "Descargando…" : "DESCARGAR PDF"}
+                    </Button>
                     <Button type="button" variant="secondary" onClick={closeModal}>
                       Cerrar
                     </Button>
