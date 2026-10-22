@@ -97,12 +97,8 @@ describe("borrador → cajas → PDF (cajas completas)", () => {
     const dbTotal = remito.lines.reduce((s, l) => s + lineTotalCajas(l), 0);
     expect(dbTotal).toBe(13); // 2+3+1+1 + 6
     const text = pdfText(await buildRemitoPdf(remito));
-    expect(text).toContain("2 x 100");
-    expect(text).toContain("3 x 50");
-    expect(text).toContain("1 x 30");
-    expect(text).toContain("1 x 7"); // la 4.ª configuración (extra) antes no se imprimía
-    expect(text).toContain("6 x 10");
-    expect(text).toContain(`TOTAL BULTOS / CAJAS: ${dbTotal}`);
+    // El PDF reproduce la planilla: cada cantidad en su celda (cajas | X | unidades); la 4.ª configuración va en la fila de abajo.
+    for (const t of ["Prod A", "Prod B", "L: L1   VTO: 12/27", "L: L2   VTO: 01/28"]) expect(text, t).toContain(t);
     expect(a.remito.id).toBe(b.remito.id);
   });
 

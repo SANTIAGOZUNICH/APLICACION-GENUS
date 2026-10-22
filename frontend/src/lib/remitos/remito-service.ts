@@ -18,6 +18,7 @@ import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from
 import type { SectorId } from "@/types/operational/sector";
 import { normalizeClientId, remitoGroupKey } from "./grouping";
 import { computeCajasProduct } from "./packing-math";
+import { buildRemitoPdf } from "./remito-pdf";
 import { buildRemitoXlsx, remitoXlsxToPreviewHtml, REMITO_XLSX_MIME } from "./remito-xlsx";
 import { lineTotalCajas, lineTotalUnitsFromCajas } from "./line-qty";
 import type {
@@ -1131,9 +1132,13 @@ export class RemitoService {
     }
 
     if (format === "pdf") {
-      throw new OrdersNotFoundError(
-        "PDF no disponible para este remito (solo XLSX en remitos nuevos)."
-      );
+      // PDF real generado al pedirlo, desde los MISMOS datos confirmados del remito que usa el XLSX (no se almacena aparte).
+      const latest = [...versions].sort((a, b) => b.version - a.version)[0]?.version;
+      if (version != null && latest != null && version !== latest) {
+        throw new OrdersNotFoundError("El PDF se genera solo de la versión vigente del remito.");
+      }
+      const bytes = await buildRemitoPdf(remito);
+      return { bytes, fileName: `${base}.pdf`, mimeType };
     }
 
     throw new OrdersNotFoundError(

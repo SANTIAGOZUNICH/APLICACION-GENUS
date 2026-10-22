@@ -1,7 +1,7 @@
 import PDFDocument from "pdfkit";
 import type { RemitoRecord } from "./types";
-import { consolidateLinesByProductLoteVto } from "./grouping";
-import { lineCajaCombos, lineTotalCajas } from "./line-qty";
+import { buildRemitoXlsx } from "./remito-xlsx";
+import { layoutRemitoFromXlsx, REMITO_PAGE_H, REMITO_PAGE_W, type RemitoLayout } from "./remito-layout";
 
 function collectPdf(doc: PDFKit.PDFDocument): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -12,57 +12,32 @@ function collectPdf(doc: PDFKit.PDFDocument): Promise<Buffer> {
   });
 }
 
-/**
- * PDF portrait data-accurate (no pixel-perfect vs Excel).
- */
-export async function buildRemitoPdf(remito: RemitoRecord): Promise<Buffer> {
-  const doc = new PDFDocument({ size: "A4", margin: 48, autoFirstPage: true });
+/** Dibuja la maquetación del remito (la misma de la vista previa) como PDF A4 horizontal: texto real, no imagen. */
+export async function renderRemitoLayoutPdf(layout: RemitoLayout, title = "Remito"): Promise<Buffer> {
+  const doc = new PDFDocument({ size: [REMITO_PAGE_W, REMITO_PAGE_H], margin: 0, autoFirstPage: false, info: { Title: title, Author: "Laboratorio Genus" } });
   const done = collectPdf(doc);
-  const lines = consolidateLinesByProductLoteVto(remito.lines);
-
-  doc.fontSize(16).text("REMITO", { align: "center" });
-  doc.moveDown(0.5);
-  doc.fontSize(10);
-  if (remito.remitoNumber) {
-    doc.text(`Nº: ${remito.remitoNumber}`);
+  for (const page of layout.pages) {
+    doc.addPage({ size: [REMITO_PAGE_W, REMITO_PAGE_H], margin: 0 });
+    doc.lineWidth(0.5).strokeColor("#8c8c8c");
+    for (const r of page.rects) doc.rect(r.x, r.y, r.w, r.h).stroke();
+    for (const t of page.texts) {
+      const font = t.bold ? (t.italic ? "Helvetica-BoldOblique" : "Helvetica-Bold") : t.italic ? "Helvetica-Oblique" : "Helvetica";
+      const pad = 3;
+      const maxW = Math.max(1, t.w - 2 * pad);
+      let size = t.size;
+      doc.font(font).fontSize(size);
+      if (!t.wrap) while (size > 6 && doc.widthOfString(t.text) > maxW) doc.fontSize((size -= 0.5));
+      const textH = doc.heightOfString(t.text, { width: maxW, align: t.align });
+      const y = t.valign === "middle" ? t.y + (t.h - textH) / 2 : t.valign === "top" ? t.y + 1 : t.y + t.h - textH - 2;
+      doc.fillColor("#000000").text(t.text, t.x + pad, y, { width: maxW, align: t.align, lineBreak: t.wrap, height: t.wrap ? t.h : undefined });
+    }
   }
-  doc.text(`Versión: ${remito.version}`);
-  doc.text(`Fecha: ${remito.deliveryDate}`);
-  doc.text(`Cliente: ${remito.clientDisplay}`);
-  doc.moveDown();
-
-  doc.fontSize(9).text("TOTAL  |  PRODUCTO / L / VTO  |  CAJAS x UNIDADES POR CAJA");
-  doc.moveDown(0.3);
-  doc
-    .moveTo(doc.page.margins.left, doc.y)
-    .lineTo(doc.page.width - doc.page.margins.right, doc.y)
-    .stroke();
-  doc.moveDown(0.4);
-
-  for (const line of lines) {
-    if (doc.y > doc.page.height - 100) doc.addPage();
-    const label = `${line.product}  L: ${line.lote || "—"}   VTO: ${line.vto || "—"}`;
-    // Todas las configuraciones de caja del renglón (1.ª, 2.ª, 3.ª y adicionales): antes solo se imprimían las dos primeras.
-    const combos = lineCajaCombos(line)
-      .filter((c) => (c.cajas || 0) > 0 || (c.unidades || 0) > 0)
-      .map((c) => `${c.cajas} x ${c.unidades}`)
-      .join("  +  ");
-    doc.fontSize(9).text(
-      `${line.totalUnits}  |  ${label}  |  ${combos || "sin cajas"}`,
-      { width: doc.page.width - doc.page.margins.left - doc.page.margins.right }
-    );
-    doc.moveDown(0.25);
-  }
-
-  const totalUnits = lines.reduce((s, l) => s + l.totalUnits, 0);
-  const totalCajas = lines.reduce((s, l) => s + lineTotalCajas(l), 0);
-  doc.moveDown();
-  doc.fontSize(11).text(`TOTAL DE TODOS LOS PRODUCTOS: ${totalUnits}`);
-  doc.text(`TOTAL BULTOS / CAJAS: ${totalCajas}`);
-  doc.text(`Estado: ${remito.status}`);
-
   doc.end();
   return done;
 }
 
-export const REMITO_PDF_MIME = "application/pdf";
+/** PDF del remito: sale del mismo XLSX (plantilla del laboratorio) que se descarga, con la misma estructura y datos. */
+export async function buildRemitoPdf(remito: RemitoRecord): Promise<Buffer> {
+  const layout = await layoutRemitoFromXlsx(await buildRemitoXlsx(remito));
+  return renderRemitoLayoutPdf(layout, `Remito ${remito.remitoNumber ?? ""} ${remito.clientDisplay}`.trim());
+}

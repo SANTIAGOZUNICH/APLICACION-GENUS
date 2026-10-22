@@ -90,8 +90,10 @@ describe("buildRemitoXlsx — REMITO_MODELO_APP", () => {
     expect(d47.formula).toContain("D23");
     expect(d47.formula).toContain("L23");
     expect(d47.result).toBe(6); // 2+1+3 cajas
-    expect(sheet!.pageSetup.orientation).toBe("portrait");
-    expect(sheet!.pageSetup.scale).toBe(81);
+    expect(sheet!.pageSetup.orientation).toBe("landscape");
+    expect(sheet!.pageSetup.paperSize).toBe(9); // A4
+    expect(sheet!.pageSetup.fitToWidth).toBe(1);
+    expect(sheet!.pageSetup.showGridLines).toBe(true);
   });
 
   it("escribe totales por producto y general para CREMA+SHAMPOO", async () => {
@@ -161,11 +163,13 @@ describe("buildRemitoXlsx — REMITO_MODELO_APP", () => {
     expect(PRODUCT_BLOCK_ROWS).toHaveLength(6);
   });
 
-  it("incluye cajas extra en fórmulas de unidades y TOTAL BULTOS", async () => {
+  it("4.ª configuración de caja: va en las columnas de distribución (fila libre de abajo), sin texto EXTRA, y suma en unidades y TOTAL BULTOS", async () => {
     const bytes = await buildRemitoXlsx(
       remito([
         line({
           product: "EXTRA-P",
+          lote: "L1",
+          vto: "01/28",
           cajas1: 1,
           unidades1: 10,
           cajas2: 1,
@@ -180,15 +184,16 @@ describe("buildRemitoXlsx — REMITO_MODELO_APP", () => {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(bytes);
     const sheet = wb.getWorksheet("THELMA Y LOUISE")!;
-    const a23 = sheet.getCell("A23").value as ExcelJS.CellFormulaValue;
-    expect(a23).toMatchObject({
-      formula: "D23*F23+H23*J23+L23*N23+6",
-      result: 23,
-    });
-    expect(String(sheet.getCell("C24").value)).toContain("EXTRA:");
-    expect(String(sheet.getCell("C24").value)).toContain("2×3");
+    expect(sheet.getCell("A23").value).toMatchObject({ formula: "D23*F23+H23*J23+L23*N23+D25*F25+H25*J25+L25*N25", result: 23 });
+    expect(String(sheet.getCell("C24").value)).toBe("L: L1   VTO: 01/28"); // solo lote y vencimiento
+    expect(sheet.getCell("D25").value).toBe(2);
+    expect(sheet.getCell("E25").value).toBe("X");
+    expect(sheet.getCell("F25").value).toBe(3);
+    // mismo estilo que la 1.ª configuración
+    expect(sheet.getCell("F25").font?.size).toBe(sheet.getCell("F23").font?.size);
+    expect(sheet.getCell("N23").font?.size).toBe(sheet.getCell("F23").font?.size);
     const d47 = sheet.getCell("D47").value as ExcelJS.CellFormulaValue;
-    expect(d47.formula).toContain("+2");
+    expect(d47.formula).toContain("D25");
     expect(d47.result).toBe(5); // 1+1+1+2
   });
 });

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ExcelJS from "exceljs";
+import { layoutRemitoFromXlsx, remitoLayoutToPreviewHtml } from "./remito-layout";
 import type { RemitoCajaCombo, RemitoLine, RemitoRecord } from "./types";
 import { consolidateLinesByProductLoteVto } from "./grouping";
 import {
@@ -61,7 +62,7 @@ function resolveTemplatePath(): string {
   );
 }
 
-function toFillLine(
+export function toFillLine(
   line: Pick<
     RemitoLine,
     | "product"
@@ -104,9 +105,19 @@ function toFillLine(
   };
 }
 
-function productFormula(row: number, extraUnits = 0): string {
-  const base = `D${row}*F${row}+H${row}*J${row}+L${row}*N${row}`;
-  return extraUnits > 0 ? `${base}+${extraUnits}` : base;
+const COMBO_COLS = [
+  ["D", "E", "F"],
+  ["H", "I", "J"],
+  ["L", "M", "N"],
+] as const;
+
+/** Filas del bloque de producto que llevan cajas: la principal y, debajo, las dos filas libres del bloque (3 configuraciones por fila). */
+function comboRowsOf(dataRow: number): number[] {
+  return [dataRow, dataRow + 2, dataRow + 3];
+}
+
+function rowFormula(row: number): string {
+  return `D${row}*F${row}+H${row}*J${row}+L${row}*N${row}`;
 }
 
 function extrasUnits(extras: RemitoCajaCombo[]): number {
@@ -118,53 +129,55 @@ function extrasCajas(extras: RemitoCajaCombo[]): number {
 }
 
 function clearProductBlock(sheet: ExcelJS.Worksheet, dataRow: number) {
-  for (const col of ["A", "C", "D", "E", "F", "H", "I", "J", "L", "M", "N"]) {
-    sheet.getCell(`${col}${dataRow}`).value = null;
+  for (const col of ["A", "C"]) sheet.getCell(`${col}${dataRow}`).value = null;
+  for (const r of comboRowsOf(dataRow)) {
+    for (const cols of COMBO_COLS) for (const col of cols) sheet.getCell(`${col}${r}`).value = null;
   }
   sheet.getCell(`C${dataRow + 1}`).value = null;
+  sheet.getCell(`C${dataRow + 3}`).value = null;
 }
 
 function writeX(sheet: ExcelJS.Worksheet, addr: string, hasPair: boolean) {
   sheet.getCell(addr).value = hasPair ? "X" : null;
 }
 
-function writeProductBlock(sheet: ExcelJS.Worksheet, dataRow: number, line: FillLine) {
-  const combos = lineCajaCombos(line);
-  const c1 = combos[0] ?? { cajas: 0, unidades: 0 };
-  const c2 = combos[1] ?? { cajas: 0, unidades: 0 };
-  const c3 = combos[2] ?? { cajas: 0, unidades: 0 };
-  const extras = combos.slice(3);
-  const extraU = extrasUnits(extras);
+/**
+ * Escribe el producto y TODAS sus configuraciones de caja en las columnas de distribución del modelo: tres por fila
+ * (cajas · X · unidades), la primera en la fila del producto y las siguientes en las filas libres de debajo, con el mismo
+ * estilo. La fila de lote/vencimiento lleva solo esos datos. Devuelve las filas que usan cajas (para fórmulas y totales).
+ */
+function writeProductBlock(sheet: ExcelJS.Worksheet, dataRow: number, line: FillLine): { rows: number[]; overflow: RemitoCajaCombo[] } {
+  const combos = lineCajaCombos(line).filter((c) => (c.cajas || 0) > 0 || (c.unidades || 0) > 0);
+  const slots = comboRowsOf(dataRow).length * 3;
+  const placed = combos.slice(0, slots);
+  // Más de 9 configuraciones (no entran en el bloque): se anotan como texto en la última fila libre, nunca se pierden.
+  const overflow = combos.slice(slots);
+  const rows = comboRowsOf(dataRow).filter((_, i) => i === 0 || placed.length > i * 3);
   const total = line.totalUnits;
 
+  sheet.getCell(`C${dataRow}`).value = line.product;
+  // Mismo estilo (fuente, tamaño, alineación) para TODAS las cantidades de caja: el de la 1.ª configuración (D · E · F).
+  const styleSrc = COMBO_COLS[0].map((col) => sheet.getCell(`${col}${dataRow}`).style);
+  const proto = JSON.parse(JSON.stringify(styleSrc)) as ExcelJS.Style[];
+  rows.forEach((r, i) => {
+    for (const cols of COMBO_COLS) cols.forEach((col, k) => (sheet.getCell(`${col}${r}`).style = JSON.parse(JSON.stringify(proto[k] ?? {}))));
+    COMBO_COLS.forEach((cols, j) => {
+      const c = placed[i * 3 + j] ?? { cajas: 0, unidades: 0 };
+      sheet.getCell(`${cols[0]}${r}`).value = c.cajas || null;
+      writeX(sheet, `${cols[1]}${r}`, Boolean(c.cajas || c.unidades));
+      sheet.getCell(`${cols[2]}${r}`).value = c.unidades || null;
+    });
+  });
+
   // Fórmula auditable + result cacheado (Excel/LibreOffice muestran valor sin recalcular).
+  const extraU = extrasUnits(overflow);
   sheet.getCell(`A${dataRow}`).value = {
-    formula: productFormula(dataRow, extraU),
+    formula: rows.map(rowFormula).join("+") + (extraU > 0 ? `+${extraU}` : ""),
     result: total,
   };
-
-  sheet.getCell(`C${dataRow}`).value = line.product;
-
-  sheet.getCell(`D${dataRow}`).value = c1.cajas || null;
-  writeX(sheet, `E${dataRow}`, Boolean(c1.cajas || c1.unidades));
-  sheet.getCell(`F${dataRow}`).value = c1.unidades || null;
-
-  sheet.getCell(`H${dataRow}`).value = c2.cajas || null;
-  writeX(sheet, `I${dataRow}`, Boolean(c2.cajas || c2.unidades));
-  sheet.getCell(`J${dataRow}`).value = c2.unidades || null;
-
-  sheet.getCell(`L${dataRow}`).value = c3.cajas || null;
-  writeX(sheet, `M${dataRow}`, Boolean(c3.cajas || c3.unidades));
-  sheet.getCell(`N${dataRow}`).value = c3.unidades || null;
-
-  let loteVto = formatLoteVtoCell(line.lote, line.vto);
-  if (extras.length > 0) {
-    const extraTxt = extras
-      .map((e) => `${e.cajas}×${e.unidades}`)
-      .join(" + ");
-    loteVto = `${loteVto}   | EXTRA: ${extraTxt}`;
-  }
-  sheet.getCell(`C${dataRow + 1}`).value = loteVto;
+  sheet.getCell(`C${dataRow + 1}`).value = formatLoteVtoCell(line.lote, line.vto);
+  if (overflow.length > 0) sheet.getCell(`C${dataRow + 3}`).value = `+ ${overflow.map((e) => `${e.cajas}×${e.unidades}`).join(" + ")}`;
+  return { rows, overflow };
 }
 
 /** Copia estilo de celda (fuente/borde/alineación/relleno) sin mutar el origen. */
@@ -219,6 +232,8 @@ function writeHeader(sheet: ExcelJS.Worksheet, remito: RemitoRecord) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
     const [y, m, d] = fecha.split("-").map(Number);
     sheet.getCell("F4").value = new Date(Date.UTC(y!, m! - 1, d!));
+    // Formato explícito: Excel mostraba la fecha según la región del equipo (mm-dd-yy); acá siempre DD/MM/AAAA.
+    sheet.getCell("F4").numFmt = "dd/mm/yyyy";
   } else {
     sheet.getCell("F4").value = fecha;
   }
@@ -228,7 +243,7 @@ function writeHeader(sheet: ExcelJS.Worksheet, remito: RemitoRecord) {
 function writeTotals(
   sheet: ExcelJS.Worksheet,
   dataRows: number[],
-  filledLines: Array<{ row: number; line: FillLine }>,
+  filledLines: Array<{ row: number; line: FillLine; rows: number[]; overflow: RemitoCajaCombo[] }>,
   totalsRow: number
 ) {
   const filledRows = filledLines.map((f) => f.row);
@@ -236,11 +251,11 @@ function writeTotals(
   const totalUnits = filledLines.reduce((s, f) => s + f.line.totalUnits, 0);
   const totalBultos = filledLines.reduce((s, f) => s + lineTotalCajas(f.line), 0);
 
-  // TOTAL BULTOS: D/H/L de cada producto + literales de cajas extra (no hay columnas extra).
+  // TOTAL BULTOS: columnas de cajas (D/H/L) de todas las filas con cajas de cada producto.
   const cajaParts: string[] = [];
-  for (const { row, line } of filledLines) {
-    cajaParts.push(`D${row}`, `H${row}`, `L${row}`);
-    const extra = extrasCajas(line.extraCajas ?? []);
+  for (const { rows, overflow } of filledLines) {
+    for (const r of rows) cajaParts.push(`D${r}`, `H${r}`, `L${r}`);
+    const extra = extrasCajas(overflow);
     if (extra > 0) cajaParts.push(String(extra));
   }
 
@@ -252,7 +267,7 @@ function writeTotals(
   // D47:I47 combinado — escribir fórmula+result en ancla D (única celda visible del merge).
   const dCell = sheet.getCell(`D${totalsRow}`);
   dCell.value = { formula: cajaFormula, result: totalBultos };
-  dCell.alignment = { ...(dCell.alignment ?? {}), horizontal: "left", vertical: "middle" };
+  dCell.alignment = { ...(dCell.alignment ?? {}), horizontal: "center", vertical: "middle" };
 
   // Limpiar bloques de plantilla no usados (muestra THELMA)
   for (const r of dataRows) {
@@ -267,11 +282,11 @@ function fillTemplateSheet(sheet: ExcelJS.Worksheet, remito: RemitoRecord, lines
   for (const r of PRODUCT_BLOCK_ROWS) clearProductBlock(sheet, r);
 
   const { dataRows, totalsRow } = ensureProductBlocks(sheet, Math.max(lines.length, 1));
-  const filled: Array<{ row: number; line: FillLine }> = [];
+  const filled: Array<{ row: number; line: FillLine; rows: number[]; overflow: RemitoCajaCombo[] }> = [];
   lines.forEach((line, i) => {
     const row = dataRows[i]!;
-    writeProductBlock(sheet, row, line);
-    filled.push({ row, line });
+    const w = writeProductBlock(sheet, row, line);
+    filled.push({ row, line, ...w });
   });
   writeTotals(sheet, dataRows, filled, totalsRow);
 }
@@ -293,116 +308,18 @@ export async function buildRemitoXlsx(remito: RemitoRecord): Promise<Buffer> {
     wb.worksheets[0];
   if (!sheet) throw new Error("Plantilla remito sin hojas.");
 
-  // Conservar pageSetup del modelo (A4, portrait, scale 81%, márgenes).
   fillTemplateSheet(sheet, remito, consolidated);
+  // Impresión como la planilla original: A4 horizontal, cuadrícula impresa y ancho ajustado a la hoja (alto libre → 2 páginas
+  // naturales, sin páginas artificiales). Márgenes del modelo.
+  sheet.pageSetup = { ...sheet.pageSetup, paperSize: 9, orientation: "landscape", showGridLines: true, fitToPage: true, fitToWidth: 1, fitToHeight: 0, scale: undefined };
 
   const buffer = await wb.xlsx.writeBuffer();
   return Buffer.from(buffer);
 }
 
-/** HTML de vista previa a partir del XLSX generado (mismas celdas que el archivo). */
+/** HTML de vista previa: las MISMAS páginas que el PDF (ver remito-layout.ts), derivadas de este XLSX. */
 export async function remitoXlsxToPreviewHtml(bytes: Buffer): Promise<string> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(bytes as unknown as ArrayBuffer);
-  const sheet = wb.worksheets[0];
-  if (!sheet) return "<p>Sin hojas</p>";
-
-  const maxRow = Math.max(sheet.rowCount || DEFAULT_TOTALS_ROW, DEFAULT_TOTALS_ROW);
-  const maxCol = 14;
-
-  type MergeBox = { r1: number; c1: number; r2: number; c2: number };
-  const merges: MergeBox[] = [];
-  for (const m of sheet.model.merges ?? []) {
-    const [a, b] = String(m).split(":");
-    if (!a || !b) continue;
-    const tl = sheet.getCell(a);
-    const br = sheet.getCell(b);
-    merges.push({
-      r1: Number(tl.row),
-      c1: Number(tl.col),
-      r2: Number(br.row),
-      c2: Number(br.col),
-    });
-  }
-
-  function mergeAt(r: number, c: number): MergeBox | null {
-    return merges.find((m) => r >= m.r1 && r <= m.r2 && c >= m.c1 && c <= m.c2) ?? null;
-  }
-
-  function cellText(cell: ExcelJS.Cell): string {
-    const v = cell.value;
-    if (v == null) return "";
-    if (typeof v === "object" && "formula" in v) {
-      const f = v as ExcelJS.CellFormulaValue;
-      if (f.result != null) return String(f.result);
-      // Evaluar fórmulas simples de producto/totales para preview
-      return evaluateSimpleFormula(sheet, f.formula) ?? `=${f.formula}`;
-    }
-    if (v instanceof Date) return v.toISOString().slice(0, 10);
-    if (typeof v === "object" && "richText" in v) {
-      return (v as ExcelJS.CellRichTextValue).richText.map((t) => t.text).join("");
-    }
-    return String(v);
-  }
-
-  const rows: string[] = [];
-  for (let r = 1; r <= maxRow; r++) {
-    const cells: string[] = [];
-    for (let c = 1; c <= maxCol; c++) {
-      const box = mergeAt(r, c);
-      if (box && (r !== box.r1 || c !== box.c1)) continue;
-      const cell = sheet.getCell(r, c);
-      const text = cellText(cell);
-      const colspan = box ? box.c2 - box.c1 + 1 : 1;
-      const rowspan = box ? box.r2 - box.r1 + 1 : 1;
-      const span =
-        (colspan > 1 ? ` colspan="${colspan}"` : "") +
-        (rowspan > 1 ? ` rowspan="${rowspan}"` : "");
-      cells.push(
-        `<td${span} style="border:1px solid #cbd5e1;padding:2px 4px;font-size:11px;white-space:pre-wrap;">${escapeHtml(text)}</td>`
-      );
-    }
-    rows.push(`<tr>${cells.join("")}</tr>`);
-  }
-  return `<div data-testid="remito-xlsx-preview" style="overflow:auto;max-height:60vh;background:#fff;">
-<table style="border-collapse:collapse;font-family:Calibri,Arial,sans-serif;min-width:720px;">${rows.join("")}</table>
-</div>`;
-}
-
-/** Evalúa fórmulas aritméticas simples (productos/sumas de celdas) para la preview. */
-function evaluateSimpleFormula(
-  sheet: ExcelJS.Worksheet,
-  formula: string
-): string | null {
-  const expr = formula.replace(/\$/g, "").trim();
-  if (!/^[\dA-Z+*.\s]+$/i.test(expr)) return null;
-  const withValues = expr.replace(/([A-Z]+)(\d+)/gi, (_m, col: string, row: string) => {
-    const v = sheet.getCell(`${col.toUpperCase()}${row}`).value;
-    if (v == null) return "0";
-    if (typeof v === "number") return String(v);
-    if (typeof v === "object" && v && "formula" in v) {
-      const nested = evaluateSimpleFormula(sheet, (v as ExcelJS.CellFormulaValue).formula);
-      return nested ?? "0";
-    }
-    const n = Number(v);
-    return Number.isFinite(n) ? String(n) : "0";
-  });
-  if (!/^[\d+*.\s]+$/.test(withValues)) return null;
-  try {
-    // eslint-disable-next-line no-new-func
-    const n = Function(`"use strict"; return (${withValues});`)() as number;
-    return Number.isFinite(n) ? String(n) : null;
-  } catch {
-    return null;
-  }
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return remitoLayoutToPreviewHtml(await layoutRemitoFromXlsx(bytes));
 }
 
 export function lineTotalCajasForRemito(lines: FillLine[]): number {
