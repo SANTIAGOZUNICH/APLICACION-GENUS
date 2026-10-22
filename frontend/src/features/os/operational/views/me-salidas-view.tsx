@@ -183,7 +183,7 @@ export function MeSalidasView() {
   }, [reload]);
 
   const [sort, setSort] = useSortPreference("me-salidas-v2", "orden_hoja", ME_SALIDA_SORT_KEYS);
-  const rowOps = useSheetRowOps("me_salidas", reload, sort === ME_ORDEN_HOJA_KEY, canWrite);
+  const rowOps = useSheetRowOps("me_salidas", reload, sort === "orden_hoja", canWrite);
   const rowDelete = useMeRowDelete("me_salidas", reload, canWrite);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

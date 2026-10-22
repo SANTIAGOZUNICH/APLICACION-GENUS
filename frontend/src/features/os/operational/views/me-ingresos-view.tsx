@@ -173,7 +173,7 @@ export function MeIngresosView() {
   }, []);
 
   const [sort, setSort] = useSortPreference("me-ingresos-v2", "orden_hoja", ME_INGRESO_SORT_KEYS);
-  const rowOps = useSheetRowOps("me_ingresos", reload, sort === ME_ORDEN_HOJA_KEY, canWrite);
+  const rowOps = useSheetRowOps("me_ingresos", reload, sort === "orden_hoja", canWrite);
   const rowDelete = useMeRowDelete("me_ingresos", reload, canWrite);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

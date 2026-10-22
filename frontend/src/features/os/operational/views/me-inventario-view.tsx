@@ -93,7 +93,7 @@ export function MeInventarioView() {
   }, [reload]);
 
   const [sort, setSort] = useSortPreference("me-inventario-v2", "orden_hoja", ME_INVENTARIO_SORT_KEYS);
-  const rowOps = useSheetRowOps("me_inventario", reload, sort === ME_ORDEN_HOJA_KEY, canWrite);
+  const rowOps = useSheetRowOps("me_inventario", reload, sort === "orden_hoja", canWrite);
   const rowDelete = useMeRowDelete("me_inventario", reload, canWrite);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
