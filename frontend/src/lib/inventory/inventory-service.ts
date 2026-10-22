@@ -707,11 +707,8 @@ export class InventoryService {
         versions.set(c.id, updated.updatedAt);
       } else {
         const current = this.repo.getMpStock(c.id)!;
-        const expected = versions.get(c.id) ?? c.expectedVersion;
-        if (current.updatedAt !== expected) {
-          out.push({ ok: false, code: "CONFLICT", message: "Otro usuario modificó este lote. Recargá y reintentá." });
-          continue;
-        }
+        // Stock MP se edita como una planilla: gana el último guardado (una versión vieja NO bloquea borrar ni corregir una celda;
+        // cada celda toca solo su campo y queda auditada con valor anterior y nuevo).
         if (c.field === "cantidadKg") {
           this.adjustMpStock(actor, c.id, Number(value), sanitizeOptionalReason(c.reason));
         } else if (c.field === "codigo") {

@@ -244,7 +244,8 @@ export async function patchMpSheetCells(
       if (!row) return void (results[i] = { ok: false, code: "NOT_FOUND", message: "El registro ya no existe." });
       const prot = mpSheetProtection(resource, row as never, c.field, actor.sector, actor.isSuperadmin);
       if (prot) return void (results[i] = { ok: false, code: "PROTECTED", message: prot });
-      if (!sameVersion(row.updatedAt, c.expectedVersion)) {
+      // Ingresos MP se edita como una planilla: gana el último guardado (una versión vieja NO bloquea borrar ni corregir una celda).
+      if (resource === "mp_compras" && !sameVersion(row.updatedAt, c.expectedVersion)) {
         return void (results[i] = {
           ok: false,
           code: "CONFLICT",
