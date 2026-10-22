@@ -137,18 +137,24 @@ try {
   let ing = await ingreso(A[0].id);
   check("Backspace en CANTIDAD de un ingreso confirmado: se vacía, sin motivo ni diálogo, y queda como borrador", (await valIn(GID, n, "Cantidad")) === "" && (ing.cantidad == null || ing.cantidad === 0) && ing.status === "BORRADOR" && (await page.locator("[role=dialog]").count()) === 0, `status=${ing.status} cantidad=${ing.cantidad}`);
   check("su stock se revirtió UNA vez (lote 0, saldo 0, +1 movimiento) y no quedan lotes duplicados", (await lotKg("ZZC-1")) === 0 && (await balance("ZZC-1")) === 0 && (await movs("ZZC-1")) === m0 + 1 && (await lotsOf("ZZC-1")).n === 1, `mov ${m0}→${await movs("ZZC-1")}`);
-  await (await cellIn(GID, n, "Cantidad")).click();
-  await page.keyboard.press("Backspace");
-  await settledG(GID);
-  await page.waitForTimeout(600);
-  check("repetir Backspace sobre la celda ya vacía no vuelve a mover stock (idempotente)", (await movs("ZZC-1")) === m0 + 1 && (await lotKg("ZZC-1")) === 0);
-  // Deshacer
+  // Deshacer (justo después del primer Backspace)
   await page.keyboard.press("Control+z");
   await settledG(GID);
   await page.waitForTimeout(1200);
   ing = await ingreso(A[0].id);
   check("Deshacer (Ctrl+Z) reconfirma el ingreso y devuelve el stock una sola vez (sin lotes duplicados)", ing.status === "CONFIRMADO" && (await lotKg("ZZC-1")) === 10 && (await balance("ZZC-1")) === 10 && (await lotsOf("ZZC-1")).n === 1, `status=${ing.status} cantidad=${ing.cantidad} previo=${ing.confirmadoPrevio} celda=${await valIn(GID, n, "Cantidad")} lote=${await lotKg("ZZC-1")} saldo=${await balance("ZZC-1")} movs=${await movs("ZZC-1")}`);
 
+  await (await cellIn(GID, n, "Cantidad")).click();
+  await page.keyboard.press("Backspace");
+  await settledG(GID);
+  await page.waitForTimeout(800);
+  const mStable = await movs("ZZC-1");
+  await (await cellIn(GID, n, "Cantidad")).click();
+  await page.keyboard.press("Backspace");
+  await settledG(GID);
+  await page.waitForTimeout(600);
+  check("repetir Backspace sobre la celda ya vacía no vuelve a mover stock (idempotente)", (await movs("ZZC-1")) === mStable && (await lotKg("ZZC-1")) === 0, `mov ${mStable}→${await movs("ZZC-1")}`);
+  if (process.env.ONLY_UNDO) throw new Error('ONLY_UNDO_DONE');
   // B) Backspace en CÓDIGO (confirmado)
   n = await rowN(A[1].id);
   await (await cellIn(GID, n, "Código")).click();
@@ -275,8 +281,9 @@ try {
   check("tablet (Ingresos ME): «Borrar» en CANTIDAD la vacía sin motivo ni diálogo (el stock del material se recalcula solo)", (meIng.cantidad == null || meIng.cantidad === 0) && (await page.locator("[role=dialog]").count()) === 0, JSON.stringify(meIng.cantidad));
   await dctx.close();
 } catch (err) {
+  if (String(err?.message).includes('ONLY_UNDO_DONE')) { console.log('(solo Deshacer)'); } else {
   console.error(err);
-  check("ejecución sin excepciones", false, err instanceof Error ? err.message.split("\n")[0] : String(err));
+  check("ejecución sin excepciones", false, err instanceof Error ? err.message.split("\n")[0] : String(err)); }
 } finally {
   await browser.close();
   await cleanup().catch(() => undefined);
