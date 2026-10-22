@@ -1097,17 +1097,19 @@ export class InventoryService {
     this.guard(actor, "me_stock", false);
     const rows = this.repo
       .listMeMaterials()
-      .filter((m) => options.includeArchived || !m.archived)
-      .filter((m) => normalizeMeCodigo(m.codigo).length > 0);
-    // Una fila por código normalizado (defensa ante duplicados residuales).
+      .filter((m) => options.includeArchived || !m.archived);
+    // Una fila por código normalizado (defensa ante duplicados residuales). Las filas SIN código (en blanco, insertadas
+    // en la planilla) se conservan todas: son filas de trabajo y no se pueden fusionar.
     const byCodigo = new Map<string, MeMaterial>();
     for (const m of rows) {
       const c = normalizeMeCodigo(m.codigo);
-      const prev = byCodigo.get(c);
+      const key = c || `__blank:${m.id}`;
+      const prev = byCodigo.get(key);
       if (!prev || m.id.localeCompare(prev.id) < 0) {
-        byCodigo.set(c, m);
+        byCodigo.set(key, m);
       }
     }
+    // Se mantiene el ORDEN DE LA HOJA (el del repositorio = load_seq): ya no se reordena por código en el servidor.
     return [...byCodigo.values()]
       .map((m) => {
         const fresh = this.recalculateMeStock(m.id);
@@ -1125,8 +1127,7 @@ export class InventoryService {
           stockMinimo: fresh.stockMinimo,
           puntoReposicion: fresh.puntoReposicion,
         };
-      })
-      .sort((a, b) => a.codigo.localeCompare(b.codigo, "es"));
+      });
   }
 
   getMeMaterialById(actor: InventoryActor, id: string) {

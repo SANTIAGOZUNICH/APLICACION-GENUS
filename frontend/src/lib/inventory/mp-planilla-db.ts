@@ -32,6 +32,7 @@ import {
   type InventoryService,
 } from "./inventory-service";
 import { MemoryInventoryRepo } from "./memory-repo";
+import { placeNewRowsAfterLastWritten } from "./sheet-rows";
 import { ensureMpLoadOrderBackfill, MP_SEQ_ALTA } from "./mp-load-order";
 import {
   MAX_MP_SHEET_CHANGES,
@@ -189,6 +190,11 @@ export async function runMpInventoryOp<T>(
             await tx.insert(table).values({ id: row.id, payload: row as never, updatedAt: now, seqCriterio: MP_SEQ_ALTA });
           }
         }
+      }
+      // Filas nuevas de Stock / Ingresos: siempre después de la última fila escrita del orden manual.
+      for (const [key, table] of [["mpStock", "inv_mp_stock"], ["mpIngresos", "inv_mp_ingresos"]] as const) {
+        const added = (repo[key] as Array<{ id: string }>).filter((r) => !loaded[key].has(r.id)).map((r) => r.id);
+        await placeNewRowsAfterLastWritten(tx, table, added);
       }
       for (const aj of repo.ajustes) {
         await tx.insert(invAjustes).values({ id: aj.id, payload: aj, createdAt: new Date(aj.createdAt) });
