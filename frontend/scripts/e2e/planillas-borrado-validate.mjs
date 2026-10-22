@@ -221,6 +221,16 @@ async function runSheet(key, kind) {
   const dialogs = () => page.locator("[role=dialog]").count();
   const rowByN = (n) => page.locator(`[data-testid=${sh.gid}] .dsg-row`).filter({ has: page.locator(".dsg-cell-gutter", { hasText: new RegExp(`^${n}$`) }) }).first();
   const rowH = await page.evaluate((gid) => document.querySelector(`[data-testid=${gid}] .dsg-row:not(:first-child)`).getBoundingClientRect().height, sh.gid);
+  // Las columnas se virtualizan horizontalmente: se busca la celda desplazando a la izquierda/derecha según haga falta.
+  const cellAt = async (rowN, col) => {
+    const loc = () => rowByN(rowN).locator(`.genus-col-${colIdx(col)}`).first();
+    for (const dx of [0, -6000, 6000, -6000, 400]) {
+      if (dx) { const b = await page.locator(`[data-testid=${sh.gid}] .dsg-container`).boundingBox(); await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.wheel(dx, 0); await page.waitForTimeout(350); }
+      if (await loc().count()) return loc();
+    }
+    return loc();
+  };
+  const valAt = async (rowN, col) => { await cellAt(rowN, col); return (await cellsOf(page, sh.gid, rowN))?.find((z) => z.cls.includes(`genus-col-${colIdx(col)}`))?.v; };
   const topNow = async () => (await snap(page, sh)).top;
 
   // ---- 1) Backspace en CADA columna, una fila distinta por columna; luego Delete en otras ----
@@ -234,14 +244,14 @@ async function runSheet(key, kind) {
       if (rowN > rows) continue;
       const r = rowByN(rowN);
       if (!(await r.count())) { results1.push({ mode, col: col.t, ok: false, why: "fila no visible" }); continue; }
-      const cell = r.locator(`.genus-col-${colIdx(col)}`).first();
-      const before = (await cellsOf(page, sh.gid, rowN))?.find((x) => x.cls.includes(`genus-col-${colIdx(col)}`))?.v ?? "";
+      const cell = await cellAt(rowN, col);
+      const before = (await valAt(rowN, col)) ?? "";
       await cell.click();
       const t0 = await topNow();
       await page.keyboard.press(mode);
       await settled(page, sh.gid);
       await page.waitForTimeout(500);
-      const after = (await cellsOf(page, sh.gid, rowN))?.find((x) => x.cls.includes(`genus-col-${colIdx(col)}`))?.v ?? "?";
+      const after = (await valAt(rowN, col)) ?? "?";
       const nt = await notice(), dl = await dialogs();
       const ok = (before === "" || after === "") && dl === 0 && !/motivo|obligatori|bloquead|no se puede|no editable|calculad/i.test(nt) && Math.abs((await topNow()) - t0) <= rowH * 2.5;
       results1.push({ mode, col: col.t, ok, why: ok ? "" : `antes="${before}" después="${after}" aviso="${nt}" diálogos=${dl}` });
@@ -257,8 +267,7 @@ async function runSheet(key, kind) {
   for (const x of results1.filter((y) => y.ok)) {
     const c = dataCols.findIndex((d) => d.t === x.col);
     const rowN = x.mode === "Backspace" ? 3 + c : 3 + dataCols.length + c;
-    const cells = await cellsOf(page, sh.gid, rowN);
-    const v = cells?.find((z) => z.cls.includes(`genus-col-${colIdx(dataCols[c])}`))?.v;
+    const v = await valAt(rowN, dataCols[c]);
     if (v !== "" && v !== undefined) restored.push(`${x.col}(fila ${rowN})="${v}"`);
   }
   check(`${tag}: tras recargar, ningún dato borrado con Backspace/Delete vuelve a aparecer`, restored.length === 0, restored.slice(0, 6).join(" ; "));
@@ -267,22 +276,20 @@ async function runSheet(key, kind) {
   {
     const c0 = dataCols[0], c1 = dataCols[Math.min(1, dataCols.length - 1)];
     const rA = rowByN(30), rB = rowByN(34);
-    await rA.locator(`.genus-col-${colIdx(c0)}`).first().click();
-    await rB.locator(`.genus-col-${colIdx(c1)}`).first().click({ modifiers: ["Shift"] });
+    await (await cellAt(30, c0)).click();
+    await (await cellAt(34, c1)).click({ modifiers: ["Shift"] });
     await page.keyboard.press("Backspace");
     await settled(page, sh.gid);
     await page.waitForTimeout(700);
     let nonEmpty = 0;
     for (let n = 30; n <= 34; n++) {
-      const cells = await cellsOf(page, sh.gid, n);
-      for (const c of [c0, c1]) if ((cells?.find((z) => z.cls.includes(`genus-col-${colIdx(c)}`))?.v ?? "x") !== "") nonEmpty++;
+      for (const c of [c0, c1]) if (((await valAt(n, c)) ?? "x") !== "") nonEmpty++;
     }
     check(`${tag}: seleccionar 10 celdas y presionar Backspace las vacía todas`, nonEmpty === 0 && (await dialogs()) === 0, `${nonEmpty} con contenido; aviso="${await notice()}"`);
     await page.keyboard.press("Control+z");
     await settled(page, sh.gid);
     await page.waitForTimeout(700);
-    const back = await cellsOf(page, sh.gid, 31);
-    check(`${tag}: Deshacer (Ctrl+Z) recupera el rango borrado`, (back?.find((z) => z.cls.includes(`genus-col-${colIdx(c0)}`))?.v ?? "") !== "");
+    check(`${tag}: Deshacer (Ctrl+Z) recupera el rango borrado`, ((await valAt(31, c0)) ?? "") !== "");
     await page.keyboard.press("Backspace"); // vuelve a borrar el rango (selección conservada)
     await settled(page, sh.gid);
     await page.waitForTimeout(500);
@@ -291,41 +298,40 @@ async function runSheet(key, kind) {
   {
     const n = 40;
     const first = dataCols[0], last = dataCols[dataCols.length - 1];
-    await rowByN(n).locator(`.genus-col-${colIdx(first)}`).first().click();
-    await rowByN(n).locator(`.genus-col-${colIdx(last)}`).first().click({ modifiers: ["Shift"] });
+    await (await cellAt(n, first)).click();
+    await (await cellAt(n, last)).click({ modifiers: ["Shift"] });
     await page.keyboard.press("Backspace");
     await settled(page, sh.gid);
     await page.waitForTimeout(800);
-    const cells = (await cellsOf(page, sh.gid, n)) ?? [];
-    const left = dataCols.filter((d) => (cells.find((z) => z.cls.includes(`genus-col-${colIdx(d)}`))?.v ?? "") !== "").map((d) => d.t);
+    const left = [];
+    for (const d of dataCols) if (((await valAt(n, d)) ?? "") !== "") left.push(d.t);
     check(`${tag}: vaciar una fila completa con Backspace deja todas las celdas vacías (la fila queda como registro vacío)`, left.length === 0, `con contenido: ${left.join(", ")}; aviso="${await notice()}"`);
   }
   // ---- 4) varias filas completas seleccionadas + Backspace ----
   {
     const first = dataCols[0], last = dataCols[dataCols.length - 1];
-    await rowByN(44).locator(`.genus-col-${colIdx(first)}`).first().click();
-    await rowByN(46).locator(`.genus-col-${colIdx(last)}`).first().click({ modifiers: ["Shift"] });
+    await (await cellAt(44, first)).click();
+    await (await cellAt(46, last)).click({ modifiers: ["Shift"] });
     await page.keyboard.press("Delete");
     await settled(page, sh.gid);
     await page.waitForTimeout(900);
     let left = 0;
-    for (let n = 44; n <= 46; n++) { const cells = (await cellsOf(page, sh.gid, n)) ?? []; left += dataCols.filter((d) => (cells.find((z) => z.cls.includes(`genus-col-${colIdx(d)}`))?.v ?? "") !== "").length; }
+    for (let n = 44; n <= 46; n++) for (const d of dataCols) if (((await valAt(n, d)) ?? "") !== "") left++;
     check(`${tag}: 3 filas completas seleccionadas + Delete: todo vacío`, left === 0, `${left} celdas con contenido; aviso="${await notice()}"`);
   }
   // ---- 5) botón táctil BORRAR (visible en tablet) equivale a Delete ----
   if (kind === "tablet") {
     const col = dataCols[1] ?? dataCols[0];
-    await rowByN(50).locator(`.genus-col-${colIdx(col)}`).first().tap().catch(async () => rowByN(50).locator(`.genus-col-${colIdx(col)}`).first().click());
+    { const c50 = await cellAt(50, col); await c50.tap().catch(async () => c50.click()); }
     const btn = page.locator(`[data-testid=${sh.gid}-touchbar] button`, { hasText: /^Borrar$/ }).first();
     const visible = await btn.isVisible().catch(() => false);
     if (visible) { await btn.tap().catch(() => btn.click()); await settled(page, sh.gid); await page.waitForTimeout(600); }
-    const cells = await cellsOf(page, sh.gid, 50);
-    check(`${tag}: el botón táctil «Borrar» vacía la celda seleccionada`, visible && (cells?.find((z) => z.cls.includes(`genus-col-${colIdx(col)}`))?.v ?? "x") === "");
+    check(`${tag}: el botón táctil «Borrar» vacía la celda seleccionada`, visible && ((await valAt(50, col)) ?? "x") === "");
   }
   // ---- 6) escribir sobre una celda y luego borrar con Backspace: en edición, Backspace borra caracteres ----
   {
     const col = dataCols[1] ?? dataCols[0];
-    const cell = rowByN(52).locator(`.genus-col-${colIdx(col)}`).first();
+    const cell = await cellAt(52, col);
     await cell.click();
     await page.keyboard.press("Enter"); // entra en edición con el texto actual
     await page.keyboard.press("End");
@@ -334,7 +340,7 @@ async function runSheet(key, kind) {
     await page.keyboard.press("Enter");
     await settled(page, sh.gid);
     await page.waitForTimeout(500);
-    const v = (await cellsOf(page, sh.gid, 52))?.find((z) => z.cls.includes(`genus-col-${colIdx(col)}`))?.v ?? "";
+    const v = (await valAt(52, col)) ?? "";
     check(`${tag}: en modo edición, Backspace borra solo un carácter (no vacía la celda)`, v.endsWith("X") && v.length > 1, v);
   }
   // ---- 7) buscador: Backspace dentro del buscador NO borra celdas ----
@@ -342,13 +348,13 @@ async function runSheet(key, kind) {
     const search = page.getByPlaceholder(/buscar/i).first();
     if (await search.count()) {
       const col = dataCols[0];
-      const before = (await cellsOf(page, sh.gid, 55))?.find((z) => z.cls.includes(`genus-col-${colIdx(col)}`))?.v;
-      await rowByN(55).locator(`.genus-col-${colIdx(col)}`).first().click();
+      const before = await valAt(55, col);
+      await (await cellAt(55, col)).click();
       await search.click();
       await search.type("abc");
       await page.keyboard.press("Backspace");
       await page.keyboard.press("Delete");
-      const after = (await cellsOf(page, sh.gid, 55))?.find((z) => z.cls.includes(`genus-col-${colIdx(col)}`))?.v;
+      const after = await valAt(55, col);
       await search.fill("");
       check(`${tag}: Backspace/Delete dentro del buscador no tocan la planilla`, before === after && before !== "", `${before} → ${after}`);
     }
