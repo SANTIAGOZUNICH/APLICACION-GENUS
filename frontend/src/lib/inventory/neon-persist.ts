@@ -186,6 +186,7 @@ export function normalizeMpStockPayload(raw: unknown): MpStockRow {
     estadoStockManual: r.estadoStockManual ?? "",
     ...(r.codigosAnteriores?.length ? { codigosAnteriores: r.codigosAnteriores } : {}),
     estadoVencimientoManual: r.estadoVencimientoManual ?? "",
+    ...(r.columnasVaciadas?.length ? { columnasVaciadas: r.columnasVaciadas } : {}),
     archived: Boolean(r.archived),
     archivedAt: r.archivedAt ?? null,
     archivedBy: r.archivedBy ?? null,

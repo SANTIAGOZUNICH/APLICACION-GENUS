@@ -127,6 +127,7 @@ export function validateInventoryValue(field: string, raw: unknown): InventoryVa
     return { ok: true, value: text.replace(/\s+/g, " ").toUpperCase() };
   }
   if (field === "diasAlVence") {
+    if (!text) return { ok: true, value: null }; // vaciar la columna calculada: queda en blanco (corrección persistente)
     const n = parseSignedInteger(text);
     if (n === null || Math.abs(n) > 36500) return { ok: false, message: "Escribí una cantidad de días (puede ser negativa)." };
     return { ok: true, value: n };

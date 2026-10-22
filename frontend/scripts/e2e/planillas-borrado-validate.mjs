@@ -253,8 +253,11 @@ async function runSheet(key, kind) {
       await page.waitForTimeout(500);
       const after = (await valAt(rowN, col)) ?? "?";
       const nt = await notice(), dl = await dialogs();
-      const ok = (before === "" || after === "") && dl === 0 && !/motivo|obligatori|bloquead|no se puede|no editable|calculad/i.test(nt) && Math.abs((await topNow()) - t0) <= rowH * 2.5;
-      results1.push({ mode, col: col.t, ok, why: ok ? "" : `antes="${before}" después="${after}" aviso="${nt}" diálogos=${dl}` });
+      const qtyCol = /^(kg lote|cantidad total|bultos|total|cantidad)$/i.test(col.t); // cantidades del libro: vaciar = 0
+      const emptyOk = after === "" || (qtyCol && after === "0");
+      const ok = (before === "" || emptyOk) && dl === 0 && !/motivo|obligatori|bloquead|no se puede|no editable|calculad/i.test(nt) && Math.abs((await topNow()) - t0) <= rowH * 2.5;
+      const sn = ok ? null : await snap(page, sh);
+      results1.push({ mode, col: col.t, ok, why: ok ? "" : `antes="${before}" después="${after}" aviso="${nt}" diálogos=${dl} activa=#${sn?.activeNum} hasActive=${sn?.hasActive}` });
     }
   }
   for (const mode of ["Backspace", "Delete"]) {
