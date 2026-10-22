@@ -184,7 +184,12 @@ const NUMBER_FIELDS: Record<NewRowTable, string[]> = {
  *  - 'data': cualquier dato escrito.
  */
 export function sheetRowKindSql(table: NewRowTable): string {
-  const text = TEXT_FIELDS[table].map((f) => `coalesce(nullif(btrim(payload->>'${f}'), ''), '') = ''`);
+  // Vacío = sin texto, o la «fecha cero» que dejan las hojas de Excel importadas (1899/1900) en las columnas de fecha.
+  const text = TEXT_FIELDS[table].map((f) =>
+    /^(fecha|vencimiento)$/.test(f)
+      ? `(coalesce(nullif(btrim(payload->>'${f}'), ''), '') = '' or payload->>'${f}' ~ '^(1899|1900)-')`
+      : `coalesce(nullif(btrim(payload->>'${f}'), ''), '') = ''`
+  );
   const nums = NUMBER_FIELDS[table].map((f) => `coalesce(nullif(btrim(payload->>'${f}'), ''), '0') ~ '^-?0*[.,]?0*$'`);
   const hidden = table === "inv_mp_stock" ? `coalesce(payload->>'archived', 'false') = 'true'` : `payload->>'status' = 'ANULADO'`;
   const draftOnly = table === "inv_mp_ingresos" ? ` and coalesce(payload->>'status', 'BORRADOR') = 'BORRADOR'` : "";
@@ -222,7 +227,9 @@ export async function placeNewRowsAfterLastWritten(tx: Tx, table: NewRowTable, n
     const target = blanks.shift();
     if (!target) break; // sin más vacías: el resto queda a continuación de la última escrita (final)
     await applySeq(tx, table, planMove(current, n.id, target));
-    await tx.execute(sql.raw(`delete from "${table}" where id = '${target}'::uuid and (${sheetRowKindSql(table)}) = 'blank'`));
+    // Solo se retira la fila vacía si NADA la referencia (ingresos o controles vinculados a ese lote).
+    const guard = table === "inv_mp_stock" ? ` and not exists (select 1 from inv_mp_ingresos i where i.payload->>'stockLotId' = '${target}') and not exists (select 1 from inv_mp_control c where c.payload->>'stockLotId' = '${target}')` : "";
+    await tx.execute(sql.raw(`delete from "${table}" where id = '${target}'::uuid and (${sheetRowKindSql(table)}) = 'blank'${guard}`));
     current = await orderedRows(tx, table);
   }
 }

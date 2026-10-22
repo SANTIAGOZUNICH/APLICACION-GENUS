@@ -80,7 +80,8 @@ export function canWriteInventory(sector: SectorId | undefined, module: Inventor
     return sector === "DEPOSITO" || sector === "PRODUCCION";
   }
   if (module.startsWith("mp_")) {
-    return sector === "MATERIA_PRIMA";
+    // Producción edita Stock MP e Ingresos MP completo (igual que Materia Prima), sin motivos ni bloqueos administrativos.
+    return sector === "MATERIA_PRIMA" || sector === "PRODUCCION";
   }
   return false;
 }

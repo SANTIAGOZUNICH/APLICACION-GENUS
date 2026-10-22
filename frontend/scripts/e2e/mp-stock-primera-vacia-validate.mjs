@@ -49,7 +49,7 @@ async function cleanup() {
   await q(`delete from mp_stock_balances where codigo like 'ZZ%'`).catch(() => undefined);
 }
 async function seedStock(written, total) {
-  await q(`insert into inv_mp_stock (id, payload, updated_at) select md5('zze-stock-' || g.n)::uuid, case when g.n <= ${written} then jsonb_build_object('id', md5('zze-stock-' || g.n)::uuid::text, 'codigo','ZZE-' || lpad(g.n::text,5,'0'),'descripcion','Materia ZZE ' || g.n,'proveedor','Prov','cliente','','producto','','lote','L' || g.n,'cantidadKg',10,'ubicacion','U1','vencimiento','2028-01-31','estadoStock','Stock OK','origen','manual','archived',false,'createdBy','zze','updatedBy','zze','createdAt','${NOWISO}','updatedAt','${NOWISO}') else jsonb_build_object('id', md5('zze-stock-' || g.n)::uuid::text, 'codigo','','descripcion','','proveedor','','cliente','','producto','','lote','','cantidadKg',null,'ubicacion','','vencimiento','','estadoStock','Sin stock','diasAlVence',null,'estadoVencimiento','','origen','planilla','archived',false,'createdBy','zze','updatedBy','zze','createdAt','${NOWISO}','updatedAt','${NOWISO}') end, now() from (select n from generate_series(1, ${total}) n order by n) g`);
+  await q(`insert into inv_mp_stock (id, payload, updated_at) select md5('zze-stock-' || g.n)::uuid, case when g.n <= ${written} then jsonb_build_object('id', md5('zze-stock-' || g.n)::uuid::text, 'codigo','ZZE-' || lpad(g.n::text,5,'0'),'descripcion','Materia ZZE ' || g.n,'proveedor','Prov','cliente','','producto','','lote','L' || g.n,'cantidadKg',10,'ubicacion','U1','vencimiento','2028-01-31','estadoStock','Stock OK','origen','manual','archived',false,'createdBy','zze','updatedBy','zze','createdAt','${NOWISO}','updatedAt','${NOWISO}') else jsonb_build_object('id', md5('zze-stock-' || g.n)::uuid::text, 'codigo','','descripcion','','proveedor','','cliente','','producto','','lote','','cantidadKg',0,'ubicacion','','vencimiento','1899-12-30','estadoStock','Sin stock','diasAlVence',null,'estadoVencimiento','','origen','planilla','archived',false,'createdBy','zze','updatedBy','zze','createdAt','${NOWISO}','updatedAt','${NOWISO}') end, now() from (select n from generate_series(1, ${total}) n order by n) g`);
 }
 const apiList = async (resource) => (await (await page.request.get(`/api/v1/inventory?resource=${resource}`, { timeout: 180_000 })).json()).data ?? [];
 const stockOrder = async () => (await apiList("mp_stock")).filter((r) => !r.archived).map((r) => r.id);
@@ -146,6 +146,38 @@ try {
   check("reintentos no duplican movimientos, lotes ni kg ni cambian de fila", (await movs("ZZN-1")) === mv0 && (await lotKg("ZZN-1")) === kg0 && (await rowIdx("ZZN-1")) === W + 1 && (await visibleTotal()) === T, `mov ${mv0}→${await movs("ZZN-1")}`);
   check("1 solo lote por cada código nuevo (sin lotes duplicados)", (await q(`select count(*)::int n from inv_mp_stock where payload->>'codigo' = 'ZZN-1'`))[0].n === 1);
   check("saldo del código = suma de lotes", (await balance("ZZN-1")) === (await lotKg("ZZN-1")));
+
+  // ===== BORRADO LIBRE (rutas reales) =====
+  const stale = "1999-01-01T00:00:00.000Z";
+  const stockRow = (await apiList("mp_stock")).find((r) => r.codigo === "ZZN-1");
+  const pStock = await page.request.patch("/api/v1/inventory/cells", { data: { resource: "mp_stock", changes: [{ id: stockRow.id, field: "proveedor", value: "", expectedVersion: stale }, { id: stockRow.id, field: "lote", value: "", expectedVersion: stale }] } });
+  const jStock = await pStock.json().catch(() => ({}));
+  check("Stock MP: borrar celdas con una versión VIEJA no se rechaza (gana el último guardado)", pStock.ok() && jStock.ok === true, `HTTP ${pStock.status()} ${JSON.stringify(jStock).slice(0, 200)}`);
+  const stockAfter = (await q(`select payload from inv_mp_stock where id = $1::uuid`, [stockRow.id]))[0].payload;
+  check("y quedaron vacías en la base (sin restaurar el valor anterior)", (stockAfter.proveedor ?? "") === "" && (stockAfter.lote ?? "") === "");
+  const ingRow = (await apiList("mp_ingresos")).find((r) => r.id === a.id);
+  const pIng = await page.request.patch("/api/v1/inventory/cells", { data: { resource: "mp_ingresos", changes: [{ id: ingRow.id, field: "proveedor", value: "", expectedVersion: stale }, { id: ingRow.id, field: "remitoNro", value: "", expectedVersion: stale }] } });
+  const jIng = await pIng.json().catch(() => ({}));
+  check("Ingresos MP (confirmado): borrar celdas con versión vieja no se rechaza", pIng.ok() && jIng.ok === true, `HTTP ${pIng.status()} ${JSON.stringify(jIng).slice(0, 200)}`);
+  const movBefore = await movs("ZZN-1");
+  const delRes = await page.request.post("/api/v1/inventory", { data: { action: "delete", resource: "mp_ingresos", id: a.id } });
+  const delJson = await delRes.json().catch(() => ({}));
+  check("Ingresos MP: eliminar un ingreso CONFIRMADO (acción de borrado, sin motivo)", delRes.ok(), `HTTP ${delRes.status()} ${JSON.stringify(delJson).slice(0, 200)}`);
+  check("su stock se revirtió una sola vez (+1 movimiento, lote 0) y reintentar no duplica", (await movs("ZZN-1")) === movBefore + 1 && (await lotKg("ZZN-1")) === 0 && (await (async () => { await page.request.post("/api/v1/inventory", { data: { action: "delete", resource: "mp_ingresos", id: a.id } }); return movs("ZZN-1"); })()) === movBefore + 1);
+  // Backspace real sobre una celda de Stock MP en la fila del caso real, y recarga
+  await bottomOfSheet();
+  await gotoRow(W + 2);
+  const rb = page.locator("[data-testid=mp-stock-grid] .dsg-row").filter({ has: page.locator(".dsg-cell-gutter", { hasText: new RegExp(`^${W + 2}$`) }) }).first();
+  await rb.locator(".dsg-cell").nth(3).click();
+  await page.keyboard.press("Backspace");
+  await page.waitForTimeout(2500);
+  const afterBs = (await q(`select payload from inv_mp_stock where payload->>'codigo' = 'ZZN-2'`))[0]?.payload;
+  const rowFields = Object.entries(afterBs ?? {}).filter(([k, v]) => ["proveedor", "cliente", "descripcion"].includes(k) && v === "");
+  check("Backspace sobre una celda de Stock MP (fila del caso real) la vacía en la base", rowFields.length >= 1, JSON.stringify(rowFields));
+  // diagnóstico de solo lectura
+  const dg = await (await page.request.get("/api/v1/inventory/diagnostico")).json();
+  console.log("  [diagnóstico]", JSON.stringify({ version: dg.version, usuario: dg.usuario, stockMp: { ...dg.stockMp, ultimasFilasConDatos: undefined, primerasFilasDespuesDeLaUltima: undefined } }));
+  check("diagnóstico: informa última fila con datos y próximo lugar libre", dg.stockMp && dg.stockMp.ultimaFilaConDatos >= W && dg.stockMp.proximoIngresoOcuparia === dg.stockMp.ultimaFilaConDatos + 1, JSON.stringify(dg.stockMp).slice(0, 200));
 
   // alta manual de un lote (Stock) en la planilla: también usa la primera vacía
   const manual = await page.request.post("/api/v1/inventory", { data: { action: "upsert", resource: "mp_stock", payload: { id: crypto.randomUUID(), codigo: "ZZN-M", descripcion: "Manual", lote: "LM", cantidadKg: 5, origen: "planilla" } } });
