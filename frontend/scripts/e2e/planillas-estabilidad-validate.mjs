@@ -385,7 +385,7 @@ async function runSheet(key, kind) {
     check(`${tag}: eliminar la fila la saca de la vista sin pedir motivo ni confirmación`, !order4.includes(idC) && (await page.locator("[role=dialog]").count()) === 0);
     check(`${tag}: la fila eliminada sigue en la base (borrado lógico, historial conservado)`, !!kept && Boolean(hide === "status" ? kept.status === "ANULADO" : kept[hide]));
     check(`${tag}: insertar, mover y eliminar no tocan los datos de las demás filas (huella idéntica)`, (await others([idA, idB, idC, newId])) === frozen);
-    const aud = await q(`select payload->>'action' a from inv_audit where payload->>'actor' is not null and payload->>'action' in ('insert_row','move_row') and payload->>'entityId' = any($1::text[])`, [[newId, idB]]);
+    const aud = await q(`select payload->>'action' a from inv_audit where payload->>'actor' is not null and payload->>'action' in ('insert_row','move_row') and payload->>'entityId' = any($1::text[])`, [[newId, idB, ...order1.slice(order1.indexOf(idB) - 2, order1.indexOf(idB))]]);
     check(`${tag}: insertar y mover quedan auditados (usuario, fecha, antes/después)`, aud.some((r) => r.a === "insert_row") && aud.some((r) => r.a === "move_row"), JSON.stringify(aud));
 
     // recargar: el orden manual persiste

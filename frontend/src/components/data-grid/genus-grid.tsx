@@ -1322,8 +1322,9 @@ export function GenusGrid<T>({
     if (!sheet || !rowOps) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
-      const root = wrapRef.current;
-      if (!root || !root.contains(document.activeElement)) return;
+      const active = document.activeElement;
+      const root = active?.closest(`[data-testid="${testId}"]`) ?? null;
+      if (!root && active !== document.body) return;
       if (rowOps.enabled === false) return;
       e.preventDefault();
       e.stopPropagation();
@@ -1331,7 +1332,7 @@ export function GenusGrid<T>({
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [sheet, rowOps]);
+  }, [sheet, rowOps, testId]);
 
   // ---- Ctrl+Z (fuera de un input) ----
   const onKeyDownCapture = (event: React.KeyboardEvent<HTMLDivElement>) => {
