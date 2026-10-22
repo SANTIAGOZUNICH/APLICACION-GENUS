@@ -66,7 +66,7 @@ async function newIngreso(code, qty = 25) {
   return { id, ok: res.ok(), json, status: res.status() };
 }
 const movs = async (code) => (await q(`select count(*)::int n from mp_stock_movements where codigo = $1`, [code]))[0].n;
-const balance = async (code) => Number((await q(`select stock_actual from mp_stock_balances where codigo = $1`, [code]))[0]?.stock_actual ?? 0);
+const balance = async (code) => Number((await q(`select stock_actual from mp_stock_balances where codigo = upper($1)`, [code]))[0]?.stock_actual ?? 0);
 const lotKg = async (code) => Number((await q(`select coalesce(sum((payload->>'cantidadKg')::numeric),0) s from inv_mp_stock where payload->>'codigo' = $1 and coalesce((payload->>'archived')::boolean,false) = false`, [code]))[0].s);
 
 /** Texto de la fila n (gutter) de una planilla: celdas + valores de inputs. */
@@ -147,7 +147,7 @@ try {
   await settledG(GID);
   await page.waitForTimeout(1200);
   ing = await ingreso(A[0].id);
-  check("Deshacer (Ctrl+Z) reconfirma el ingreso y devuelve el stock una sola vez (sin lotes duplicados)", ing.status === "CONFIRMADO" && (await lotKg("ZZC-1")) === 10 && (await balance("ZZC-1")) === 10 && (await lotsOf("ZZC-1")).n === 1, `status=${ing.status} lote=${await lotKg("ZZC-1")} saldo=${await balance("ZZC-1")} movs=${await movs("ZZC-1")}`);
+  check("Deshacer (Ctrl+Z) reconfirma el ingreso y devuelve el stock una sola vez (sin lotes duplicados)", ing.status === "CONFIRMADO" && (await lotKg("ZZC-1")) === 10 && (await balance("ZZC-1")) === 10 && (await lotsOf("ZZC-1")).n === 1, `status=${ing.status} cantidad=${ing.cantidad} previo=${ing.confirmadoPrevio} celda=${await valIn(GID, n, "Cantidad")} lote=${await lotKg("ZZC-1")} saldo=${await balance("ZZC-1")} movs=${await movs("ZZC-1")}`);
 
   // B) Backspace en CÓDIGO (confirmado)
   n = await rowN(A[1].id);
@@ -223,7 +223,7 @@ try {
   const sIdx = stockRows.filter((r) => !r.archived).findIndex((r) => r.id === target.id) + 1;
   const sCell = await cellIn("mp-stock-grid", sIdx, "Proveedor");
   await sCell.tap().catch(async () => sCell.click());
-  const bar = page.locator("[data-testid=mp-stock-grid-touchbar] button", { hasText: /^Borrar$/ }).first();
+  const bar = page.locator("[data-testid=mp-stock-grid-touch-clear]");
   check("tablet: la barra táctil muestra el botón «Borrar»", await bar.isVisible().catch(() => false));
   await bar.tap().catch(async () => bar.click());
   await settledG("mp-stock-grid");
@@ -260,7 +260,7 @@ try {
   const meIdx = meRows.filter((r) => !r.anulado).findIndex((r) => r.id === ing1) + 1;
   const meCell = await cellIn("me-ingresos-grid", meIdx, "PROVEEDOR");
   await meCell.tap().catch(async () => meCell.click());
-  const meBar = page.locator("[data-testid=me-ingresos-grid-touchbar] button", { hasText: /^Borrar$/ }).first();
+  const meBar = page.locator("[data-testid=me-ingresos-grid-touch-clear]");
   check("tablet (Depósito · Ingresos ME): la barra táctil muestra «Borrar»", await meBar.isVisible().catch(() => false));
   await meBar.tap().catch(async () => meBar.click());
   await settledG("me-ingresos-grid");
