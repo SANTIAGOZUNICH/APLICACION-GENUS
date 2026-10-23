@@ -1,5 +1,6 @@
 import "server-only";
 
+import { resolveManualLoteLinkPatch } from "@/lib/asignacion-lotes/lote-link";
 import { loadResolvedPackingByLine } from "@/lib/remitos/delivery-packing-resolve";
 import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
@@ -314,6 +315,8 @@ export interface UpdateLoteVtoInput {
   updatedBySector: SectorId | string;
   /** Ver UpdateWorkItemPlanningInput#expectedVersion. */
   expectedVersion?: number;
+  /** Registro de Asignación de Lotes elegido por Producción (debe tener el lote indicado). */
+  asignacionLoteId?: string | null;
 }
 
 /**
@@ -348,6 +351,7 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
         sector: workItems.sector,
         client: workItems.client,
         product: workItems.product,
+        asignacionLoteId: workItems.asignacionLoteId,
       })
       .from(workItems)
       .where(eq(workItems.id, id))
@@ -368,6 +372,20 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
     };
     if (nextLote !== undefined) patch.packagingLote = nextLote;
     if (nextVto !== undefined) patch.packagingVto = nextVto;
+
+    // Vínculo con Asignación de Lotes: una corrección manual del lote lo re-resuelve (vincula / desvincula) en vez de dejar
+    // un vínculo viejo que luego pisaría la decisión manual, o un trabajo sin vincular aunque el lote ya exista.
+    let linkNote: string | null = null;
+    if (nextLote !== undefined && nextLote !== existing.packagingLote) {
+      const link = await resolveManualLoteLinkPatch(tx, existing, nextLote, input.updatedBy, input.asignacionLoteId);
+      if (link.patch) Object.assign(patch, link.patch);
+      linkNote = link.note;
+    }
+    // VTO corregido a mano en un trabajo que sigue vinculado: es una decisión manual; la sincronización posterior desde
+    // Asignación de Lotes no la reemplaza en silencio (queda como conflicto para revisar).
+    if (nextVto !== undefined && nextVto !== existing.packagingVto && (patch.asignacionLoteId ?? existing.asignacionLoteId) && patch.loteLinkMethod === undefined) {
+      patch.loteLinkMethod = "MANUAL_VTO";
+    }
 
     // Identidad OA/OE = PEDIDO+PRODUCTO+LOTE (ver order-identity.ts): si el
     // lote efectivamente cambió y este trabajo viene de un Pedido con OA/OE
@@ -409,7 +427,7 @@ export async function updateWorkItemLoteVtoDurable(id: string, input: UpdateLote
       }),
       actorEmail: input.updatedBy,
       actorSector: String(input.updatedBySector),
-      note: reason,
+      note: linkNote ? `${reason} · ${linkNote}` : reason,
     });
 
     if (reresolvedOrder) {

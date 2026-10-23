@@ -49,6 +49,7 @@ export async function syncLinkedWorkItemsForLote(record: LoteRecord, actorSector
       packagingLote: workItems.packagingLote,
       packagingVto: workItems.packagingVto,
       orderId: workItems.orderId,
+      loteLinkMethod: workItems.loteLinkMethod,
     })
     .from(workItems)
     .where(and(eq(workItems.asignacionLoteId, record.id), isNull(workItems.deletedAt)));
@@ -71,11 +72,12 @@ export async function syncLinkedWorkItemsForLote(record: LoteRecord, actorSector
         .limit(1);
       order = o ?? null;
     }
+    const manualVto = wi.loteLinkMethod === "MANUAL_VTO" && vto != null && (wi.packagingVto ?? null) !== vto;
     const workClosed = CLOSED_WORK_STATUSES.has(String(wi.status));
     const orderClosed = order ? !OPEN_ORDER_STATUSES.has(String(order.status)) : false;
 
-    if (workClosed || orderClosed) {
-      const reason = workClosed ? `el trabajo está ${wi.status}` : `la orden está ${order?.status}`;
+    if (workClosed || orderClosed || manualVto) {
+      const reason = manualVto ? "el VTO del trabajo fue corregido a mano por Producción" : workClosed ? `el trabajo está ${wi.status}` : `la orden está ${order?.status}`;
       result.conflicts.push({ workItemId: wi.id, reason });
       await db.insert(operationalEvents).values({
         workItemId: wi.id,
@@ -295,4 +297,60 @@ export async function reconcileLoteLinks(opts: {
     }
   }
   return out;
+}
+
+type LinkTx = Pick<ReturnType<typeof getDb>, "select">;
+
+export interface ManualLoteLinkPatch {
+  asignacionLoteId: string | null;
+  loteLinkMethod: "MANUAL" | "AUTO" | null;
+  loteLinkedAt: Date | null;
+  loteLinkedBy: string | null;
+}
+
+/**
+ * Qué pasa con el vínculo a Asignación de Lotes cuando Producción corrige el LOTE de un trabajo a mano:
+ *  - eligió un registro (`explicitId`) que tiene ese lote  -> se vincula (MANUAL);
+ *  - el trabajo seguía vinculado a un registro con OTRO lote -> se desvincula (la decisión manual no se pisa después
+ *    por una sincronización) y queda dicho en la nota de auditoría;
+ *  - sin vínculo y existe UN registro inequívoco (mismo cliente y producto, mismo lote) -> se vincula (AUTO);
+ *  - en cualquier otro caso no se toca el vínculo existente.
+ * `null` = no cambiar nada. Nunca modifica Asignación de Lotes.
+ */
+export async function resolveManualLoteLinkPatch(
+  tx: LinkTx,
+  work: { client: string; product: string; asignacionLoteId: string | null },
+  nextLote: string | null,
+  actorEmail: string,
+  explicitId?: string | null
+): Promise<{ patch: ManualLoteLinkPatch | null; note: string | null }> {
+  const norm = (v: string | null | undefined) => (v ?? "").trim().toUpperCase().replace(/\s+/g, "");
+  const rows: Array<typeof asignacionLotes.$inferSelect> = nextLote
+    ? await tx.select().from(asignacionLotes).where(eq(asignacionLotes.archived, false))
+    : [];
+  const sameLote = rows.filter((r) => norm(r.lote) === norm(nextLote));
+  const now = new Date();
+  if (explicitId) {
+    const chosen = sameLote.find((r) => r.id === explicitId);
+    if (chosen) return { patch: { asignacionLoteId: chosen.id, loteLinkMethod: "MANUAL", loteLinkedAt: now, loteLinkedBy: actorEmail }, note: `Vinculado a Asignación de Lotes (id=${chosen.id}).` };
+  }
+  if (nextLote && !explicitId) {
+    const candidates = sameLote.map((r) => ({
+      id: r.id, lote: r.lote, vto: r.vto, producto: r.producto, marca: r.marca, codigo: r.codigo, cantidades: Number(r.cantidades) || 0, fecha: r.fecha, archived: r.archived,
+    }));
+    const resolution = resolveAsignacionLoteForWorkItem(candidates, { cliente: work.client, producto: work.product });
+    if (resolution.status === "found") {
+      return { patch: { asignacionLoteId: resolution.candidate.id, loteLinkMethod: "AUTO", loteLinkedAt: now, loteLinkedBy: actorEmail }, note: `Vinculado automáticamente a Asignación de Lotes (id=${resolution.candidate.id}).` };
+    }
+  }
+  if (work.asignacionLoteId) {
+    const stillLinked = sameLote.some((r) => r.id === work.asignacionLoteId);
+    if (!stillLinked) {
+      return {
+        patch: { asignacionLoteId: null, loteLinkMethod: null, loteLinkedAt: null, loteLinkedBy: null },
+        note: `Se desvinculó de Asignación de Lotes (id=${work.asignacionLoteId}): el lote se corrigió a mano y ya no coincide con ese registro.`,
+      };
+    }
+  }
+  return { patch: null, note: null };
 }

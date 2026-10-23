@@ -203,7 +203,7 @@ export function AssignWorkDialog({
         try {
           const res = await fetch(
             `/api/v1/asignacion-lotes/resolve?cliente=${encodeURIComponent(cliente)}&producto=${encodeURIComponent(producto)}`,
-            { credentials: "include" }
+            { credentials: "include", cache: "no-store" }
           );
           if (!res.ok) {
             setLoteResolution(null);

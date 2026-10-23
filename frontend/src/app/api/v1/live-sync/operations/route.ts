@@ -113,6 +113,7 @@ type OperationAction =
       updatedBy?: string;
       actorSectorId?: SectorId;
       expectedVersion?: number;
+      asignacionLoteId?: string | null;
     }
   | {
       action: "update_order_ref";
@@ -418,6 +419,7 @@ export async function POST(request: Request) {
           updatedBy: body.updatedBy ?? actor.displayName ?? actor.email,
           updatedBySector: actor.sector,
           expectedVersion: body.expectedVersion,
+          asignacionLoteId: typeof body.asignacionLoteId === "string" ? body.asignacionLoteId : null,
         });
         return NextResponse.json({ ok: true, revision: row.version, record: row });
       }

@@ -376,3 +376,46 @@ describe("detectLoteVtoInconsistency — sección 11: nunca sobreescribe, solo s
     expect(detectLoteVtoInconsistency({ packagingLote: "G26050", packagingVto: "2028-11" }, none)).toBeNull();
   });
 });
+
+describe("resolveAsignacionLoteForWorkItem — prioridad por código y coincidencias parciales", () => {
+  it("el código de producto (con el mismo cliente) manda sobre el texto del nombre", () => {
+    const candidates = [
+      lote({ id: "a", producto: "SERUM", codigo: "SK-100", marca: "ECODERM", lote: "L-A" }),
+      lote({ id: "b", producto: "SERUM AHA ROSEHIP", codigo: "SK-200", marca: "ECODERM", lote: "L-B" }),
+    ];
+    const r = resolveAsignacionLoteForWorkItem(candidates, { cliente: "ecoderm", producto: "SERUM AHA ROSEHIP", codigo: "sk 100" });
+    expect(r.status).toBe("found");
+    if (r.status === "found") {
+      expect(r.matchTier).toBe("CODIGO");
+      expect(r.candidate.id).toBe("a");
+    }
+  });
+
+  it("el mismo código de OTRO cliente nunca se usa", () => {
+    const candidates = [lote({ id: "a", producto: "SERUM", codigo: "SK-100", marca: "OTRA MARCA" })];
+    expect(resolveAsignacionLoteForWorkItem(candidates, { cliente: "ECODERM", producto: "SERUM", codigo: "SK-100" }).status).toBe("none");
+  });
+
+  it("coincidencia solo parcial (≥70% de las palabras) nunca se elige sola: pide confirmación aunque sea única", () => {
+    const candidates = [lote({ id: "p", producto: "SERUM VITAMINA C ROSEHIP", marca: "ECODERM", codigo: "" })];
+    const r = resolveAsignacionLoteForWorkItem(candidates, { cliente: "ECODERM", producto: "SERUM VITAMINA C ROSEHIP FORTE PLUS" });
+    expect(r.status === "ambiguous" || r.status === "none").toBe(true);
+    const near = [lote({ id: "q", producto: "AFTER SHAVE VERDE SUAVE", marca: "BLACK" })];
+    const r2 = resolveAsignacionLoteForWorkItem(near, { cliente: "BLACK", producto: "AFTER SHAVE VERDE" });
+    expect(r2.status).toBe("found"); // el pedido queda totalmente explicado por el candidato
+    const partial = [lote({ id: "r", producto: "AFTER SHAVE VERDE SUAVE", marca: "BLACK" })];
+    const r3 = resolveAsignacionLoteForWorkItem(partial, { cliente: "BLACK", producto: "AFTER SHAVE VERDE FUERTE" });
+    expect(r3.status).toBe("ambiguous");
+    if (r3.status === "ambiguous") expect(r3.candidates).toHaveLength(1);
+  });
+
+  it("un nivel superior (exacto) nunca se mezcla con parciales del mismo cliente", () => {
+    const candidates = [
+      lote({ id: "x", producto: "AFTER SHAVE VERDE", marca: "BLACK", lote: "LX" }),
+      lote({ id: "y", producto: "AFTER SHAVE VERDE SUAVE", marca: "BLACK", lote: "LY" }),
+    ];
+    const r = resolveAsignacionLoteForWorkItem(candidates, { cliente: "BLACK", producto: "AFTER SHAVE VERDE" });
+    expect(r.status).toBe("found");
+    if (r.status === "found") expect(r.candidate.id).toBe("x");
+  });
+});

@@ -189,6 +189,65 @@ describe.skipIf(Boolean(PROBLEM))(`Lotes: vínculo persistente en Postgres real$
     expect(again.lote_linked_at).toBeTruthy();
   });
 
+  it("14. Corrección manual del lote a uno que SÍ existe en Asignación (único e inequívoco): se vincula; persiste y llega a la OE", async () => {
+    const cli = `CLI MAN ${RUN}`;
+    // el trabajo se crea sin lote registrado (queda pendiente) y recién después se carga el lote en Asignación
+    const r = await assign({ client: cli, product: "SERUM MANUAL" });
+    expect((await wi(r.item.id)).asignacion_lote_id).toBeNull();
+    await mkLote(`al-14-${RUN}`, { marca: cli, producto: "SERUM MANUAL", lote: `LM14-${RUN}` });
+    const { updateWorkItemLoteVtoDurable } = await import("@/lib/planning/work-item-progress-repository");
+    await updateWorkItemLoteVtoDurable(r.item.id, { packagingLote: `lm14-${RUN}`, packagingVto: "2027-11-30", reason: "carga manual", updatedBy: prod.email, updatedBySector: "PRODUCCION" });
+    const row = await wi(r.item.id);
+    expect(row.asignacion_lote_id).toBe(`al-14-${RUN}`);
+    expect(row.lote_link_method).toBe("AUTO");
+    expect((await events(r.item.id, "LOTE_VTO_CORRECTED"))[0]!.note).toContain("Vinculado automáticamente");
+  });
+
+  it("15. Corrección manual a un lote distinto en un trabajo vinculado: se desvincula y la sincronización posterior NO pisa la decisión manual", async () => {
+    const id = `al-15-${RUN}`;
+    await mkLote(id, { producto: "LOCION MANUAL", lote: `LM15-${RUN}` });
+    const r = await assign({ product: "LOCION MANUAL", sector: "ENVASADO_MASIVO", unit: "un." });
+    expect((await wi(r.item.id)).asignacion_lote_id).toBe(id);
+    const { updateWorkItemLoteVtoDurable } = await import("@/lib/planning/work-item-progress-repository");
+    await updateWorkItemLoteVtoDurable(r.item.id, { packagingLote: `OTRO-${RUN}`, reason: "lote real distinto", updatedBy: prod.email, updatedBySector: "PRODUCCION" });
+    const row = await wi(r.item.id);
+    expect(row.asignacion_lote_id).toBeNull();
+    expect(row.packaging_lote).toBe(`OTRO-${RUN}`);
+    const { syncLinkedWorkItemsForLote } = await import("@/lib/asignacion-lotes/lote-link");
+    const res = await syncLinkedWorkItemsForLote({ id, lote: `LM15B-${RUN}`, vto: "2028-01-31", updatedBy: "it-sync" }, "PRODUCCION");
+    expect(res.synced).not.toContain(r.item.id);
+    expect((await wi(r.item.id)).packaging_lote).toBe(`OTRO-${RUN}`);
+  });
+
+  it("16. Elección explícita desde el diálogo de edición: se vincula por id (MANUAL)", async () => {
+    const cli = `CLI EXP ${RUN}`;
+    await mkLote(`al-16a-${RUN}`, { marca: cli, producto: "GEL EXP", lote: `LE-${RUN}` });
+    await mkLote(`al-16b-${RUN}`, { marca: cli, producto: "GEL EXP", lote: `LE-${RUN}`, codigo: `C-OTRO-${RUN}` });
+    const r = await assign({ client: cli, product: "GEL EXP" });
+    expect((await wi(r.item.id)).asignacion_lote_id).toBeNull(); // ambiguo: no se adivina
+    const { updateWorkItemLoteVtoDurable } = await import("@/lib/planning/work-item-progress-repository");
+    await updateWorkItemLoteVtoDurable(r.item.id, { packagingLote: `LE-${RUN}`, packagingVto: "2027-11-30", reason: "elegido", updatedBy: prod.email, updatedBySector: "PRODUCCION", asignacionLoteId: `al-16b-${RUN}` });
+    const row = await wi(r.item.id);
+    expect(row.asignacion_lote_id).toBe(`al-16b-${RUN}`);
+    expect(row.lote_link_method).toBe("MANUAL");
+  });
+
+  it("17. VTO corregido a mano en un trabajo vinculado: un cambio posterior de VTO en Asignación no lo reemplaza en silencio (conflicto auditado)", async () => {
+    const id = `al-17-${RUN}`;
+    await mkLote(id, { producto: "CREMA VTO", lote: `LV-${RUN}` });
+    const r = await assign({ product: "CREMA VTO", sector: "ENVASADO_MASIVO", unit: "un." });
+    const { updateWorkItemLoteVtoDurable } = await import("@/lib/planning/work-item-progress-repository");
+    await updateWorkItemLoteVtoDurable(r.item.id, { packagingVto: "2029-05-31", reason: "VTO real", updatedBy: prod.email, updatedBySector: "PRODUCCION" });
+    const row = await wi(r.item.id);
+    expect(row.asignacion_lote_id).toBe(id);
+    expect(row.lote_link_method).toBe("MANUAL_VTO");
+    const { syncLinkedWorkItemsForLote } = await import("@/lib/asignacion-lotes/lote-link");
+    const res = await syncLinkedWorkItemsForLote({ id, lote: `LV-${RUN}`, vto: "2030-01-31", updatedBy: "it-sync" }, "PRODUCCION");
+    expect(res.conflicts.map((c) => c.workItemId)).toContain(r.item.id);
+    expect((await wi(r.item.id)).packaging_vto).toBe("2029-05-31");
+    expect(await events(r.item.id, "LOTE_SYNC_CONFLICT")).toHaveLength(1);
+  });
+
   it("13. Reconciliación: vincula solo coincidencias únicas; ambiguos/sin match quedan pendientes; histórico cerrado intacto", async () => {
     const cli = `CLI REC ${RUN}`;
     await mkLote(`al-rec-${RUN}`, { marca: cli, producto: "CREMA REC", lote: `LRC-${RUN}` });
