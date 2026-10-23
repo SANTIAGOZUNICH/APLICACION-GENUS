@@ -1,6 +1,7 @@
 /**
- * DIFERENCIA ME en un Postgres de PRUEBA real, con las MISMAS funciones del servidor (me-diferencia-db). Se SALTA sin
- * base local marcada. Todo el material/pedidos usan un cliente propio de la corrida (no toca datos ajenos).
+ * DIFERENCIA de INGRESOS ME en un Postgres de PRUEBA real, con las MISMAS funciones del servidor. Control de recepción:
+ * acumulado por pedido + material − lo que pide el pedido, con snapshot por ingreso; NUNCA usa el saldo de Stock ME.
+ * Se SALTA sin base local marcada. Cada corrida usa clientes propios (no toca datos ajenos).
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -12,29 +13,32 @@ const CLI = `CLI DIF ${RUN}`;
 const CLI2 = `CLI DIF OTRO ${RUN}`;
 const dep = { email: "it-dif-dep@laboratoriogenus.com.ar", sector: "DEPOSITO" } as never;
 const elab = { email: "it-dif-el@laboratoriogenus.com.ar", sector: "ELABORACION" } as never;
+const calidad = { email: "it-dif-ca@laboratoriogenus.com.ar", sector: "CALIDAD" } as never;
 
-describe.skipIf(Boolean(PROBLEM))(`DIFERENCIA ME en Postgres real${PROBLEM ? ` — saltado: ${PROBLEM}` : ""}`, () => {
+describe.skipIf(Boolean(PROBLEM))(`DIFERENCIA de Ingresos ME en Postgres real${PROBLEM ? ` — saltado: ${PROBLEM}` : ""}`, () => {
   let pool: import("@neondatabase/serverless").Pool;
   let svc: typeof import("@/lib/inventory/me-diferencia-db");
   const q = async (text: string, params: unknown[] = []) => (await pool.query(text, params)).rows as Record<string, unknown>[];
   const mats: string[] = [];
   const peds: string[] = [];
-  const now = new Date().toISOString();
+  let clock = 0;
+  const at = () => new Date(Date.UTC(2026, 9, 1, 10, 0, ++clock)).toISOString();
 
   const mkMat = async (codigo: string, cliente = CLI) => {
     const id = randomUUID();
     mats.push(id);
-    await q("insert into inv_me_materials (id, payload) values ($1,$2)", [id, { id, codigo, descripcion: codigo, cliente, ubicacion: "", unidad: "UN", stockActual: 0, createdAt: now, updatedAt: now }]);
+    await q("insert into inv_me_materials (id, payload) values ($1,$2)", [id, { id, codigo, descripcion: codigo, cliente, ubicacion: "", unidad: "UN", stockActual: 0, createdAt: at(), updatedAt: at() }]);
     return id;
   };
-  const ingreso = async (codigo: string, total: number, extra: Record<string, unknown> = {}) => {
+  /** Ingreso confirmado (ya registrado) de un material, con producto (si se indica). */
+  const ingreso = async (materialId: string, codigo: string, total: number, extra: Record<string, unknown> = {}) => {
     const id = randomUUID();
-    await q("insert into inv_me_ingresos (id, payload) values ($1,$2)", [id, { id, codigo, cliente: CLI, total, cantidad: total, bultos: 1, anulado: false, createdAt: now, updatedAt: now, ...extra }]);
+    const t = at();
+    await q("insert into inv_me_ingresos (id, payload) values ($1,$2)", [id, { id, codigo, materialId, cliente: CLI, total, cantidad: total, bultos: 1, anulado: false, createdAt: t, updatedAt: t, ...extra }]);
     return id;
   };
   const salidaOA = async (codigo: string, total: number) => {
-    const id = randomUUID();
-    await q("insert into inv_me_salidas (id, payload) values ($1,$2)", [id, { id, codigo, cliente: CLI, total, cantidad: total, origen: "OA", reverted: false, createdAt: now, updatedAt: now }]);
+    await q("insert into inv_me_salidas (id, payload) values ($1,$2)", [randomUUID(), { id: randomUUID(), codigo, cliente: CLI, total, cantidad: total, origen: "OA", reverted: false, createdAt: at(), updatedAt: at() }]);
   };
   const mkPed = async (cliente: string, producto: string, qty: number, estado = "INGRESO") => {
     const id = randomUUID();
@@ -42,13 +46,15 @@ describe.skipIf(Boolean(PROBLEM))(`DIFERENCIA ME en Postgres real${PROBLEM ? ` �
     await q("insert into production_pedidos (id, cliente, producto, q, estado) values ($1,$2,$3,$4,$5)", [id, cliente, producto, qty, estado]);
     return id;
   };
-  const link = (materialId: string, pedidoId: string, unidadesPorProducto: number | null = 1) => svc.upsertMePedidoLinkDb(dep, { materialId, pedidoId, unidadesPorProducto });
-  const dif = async (materialId: string) => (await svc.listMeDiferenciasDb(dep))[materialId]!;
+  const sync = (ingresoId: string, resetSnapshot = false) => svc.syncIngresoAfterWrite(dep, ingresoId, { resetSnapshot });
+  const link = (ingresoId: string, pedidoId: string, unidadesPorProducto?: number | null) => svc.linkIngresoPedidoDb(dep, { ingresoId, pedidoId, unidadesPorProducto });
+  const row = async (ingresoId: string) => (await svc.listIngresoDiferenciasDb(dep)).ingresos[ingresoId]!;
+  const payloadOf = async (ingresoId: string) => (await q("select payload from inv_me_ingresos where id = $1", [ingresoId]))[0]!.payload as Record<string, unknown>;
   const snapshot = async () => JSON.stringify([
-    await q("select id, payload from inv_me_ingresos order by id"),
+    // De los ingresos solo pueden cambiar producto/pedidoId/difSnapshot: cantidades, fechas y totales quedan idénticos.
+    (await q("select id, payload from inv_me_ingresos order by id")).map((r) => ({ id: r.id, payload: Object.fromEntries(Object.entries(r.payload as Record<string, unknown>).filter(([k]) => !["producto", "pedidoId", "difSnapshot"].includes(k))) })),
     await q("select id, payload from inv_me_salidas order by id"),
-    // Del material solo cambian los datos de vínculo (producto/pedidoId/versión): el resto — incluido el stock — queda igual.
-    (await q("select id, payload from inv_me_materials order by id")).map((r) => ({ id: r.id, payload: Object.fromEntries(Object.entries(r.payload as Record<string, unknown>).filter(([k]) => !["producto", "pedidoId", "updatedAt", "updatedBy"].includes(k))) })),
+    (await q("select id, payload from inv_me_materials order by id")).map((r) => ({ id: r.id, payload: Object.fromEntries(Object.entries(r.payload as Record<string, unknown>).filter(([k]) => !["producto", "updatedAt"].includes(k))) })),
     await q("select id, payload from inv_ajustes order by id"),
     await q("select id, q, estado, deleted_at from production_pedidos order by id"),
   ]);
@@ -72,160 +78,141 @@ describe.skipIf(Boolean(PROBLEM))(`DIFERENCIA ME en Postgres real${PROBLEM ? ` �
     await pool?.end();
   });
 
-  it("1-3) pedido 3.000: envases 2.800 → −200 FALTAN; tapas 3.200 → +200 SOBRAN; etiquetas 3.000 → JUSTO", async () => {
-    const ped = await mkPed(CLI, "CREMA A", 3000);
-    const [env, tap, eti] = [await mkMat(`ENV-${RUN}`), await mkMat(`TAP-${RUN}`), await mkMat(`ETI-${RUN}`)];
-    await ingreso(`ENV-${RUN}`, 2800); await ingreso(`TAP-${RUN}`, 3200); await ingreso(`ETI-${RUN}`, 3000);
-    for (const m of [env, tap, eti]) await link(m, ped);
-    expect(await dif(env)).toMatchObject({ estado: "FALTAN", diferencia: -200, necesario: 3000, stock: 2800 });
-    expect(await dif(tap)).toMatchObject({ estado: "SOBRAN", diferencia: 200 });
-    expect(await dif(eti)).toMatchObject({ estado: "JUSTO", diferencia: 0 });
-  });
-
-  it("4-5-10) ingresos acumulados (1.000+1.500 → −500; +700 → +200), salida OA que descuenta y ingreso anulado que no cuenta", async () => {
-    const ped = await mkPed(CLI, "CREMA B", 3000);
-    const m = await mkMat(`ACU-${RUN}`);
-    await link(m, ped);
-    await ingreso(`ACU-${RUN}`, 1000); await ingreso(`ACU-${RUN}`, 1500);
-    expect((await dif(m)).diferencia).toBe(-500);
-    await ingreso(`ACU-${RUN}`, 700);
-    expect((await dif(m)).diferencia).toBe(200);
-    await ingreso(`ACU-${RUN}`, 9999, { anulado: true });
-    expect((await dif(m)).diferencia).toBe(200);
-    await salidaOA(`ACU-${RUN}`, 300);
-    expect(await dif(m)).toMatchObject({ estado: "FALTAN", diferencia: -100 });
-  });
-
-  it("6) cambia la cantidad del pedido → se recalcula; 9) consumo no 1:1", async () => {
-    const ped = await mkPed(CLI, "CREMA C", 3000);
-    const m = await mkMat(`RAT-${RUN}`);
-    await ingreso(`RAT-${RUN}`, 250);
-    await link(m, ped, 1 / 12);
-    expect(await dif(m)).toMatchObject({ estado: "JUSTO", necesario: 250 });
-    await q("update production_pedidos set q = 3600 where id = $1", [ped]);
-    expect(await dif(m)).toMatchObject({ estado: "FALTAN", diferencia: -50 });
-    await link(m, ped, 2); // 2 etiquetas por producto
-    expect(await dif(m)).toMatchObject({ estado: "FALTAN", necesario: 7200 });
-  });
-
-  it("7) dos clientes con el mismo producto: no se mezclan (candidatos y vínculo rechazan otro cliente)", async () => {
-    const mio = await mkPed(CLI, "SERUM", 100);
-    const ajeno = await mkPed(CLI2, "SERUM", 999);
-    const m = await mkMat(`CLI-${RUN}`);
-    const cands = await svc.candidatePedidosDb(dep, m);
-    expect(cands.map((c) => c.pedidoId)).toContain(mio);
-    expect(cands.map((c) => c.pedidoId)).not.toContain(ajeno);
-    await expect(link(m, ajeno)).rejects.toThrow(/otro cliente/);
-  });
-
-  it("8) dos pedidos activos del mismo cliente+producto: solo cuenta el elegido (vínculo único); entregados/eliminados se excluyen", async () => {
-    const a = await mkPed(CLI, "GEL", 1000);
-    const b = await mkPed(CLI, "GEL", 400);
-    const entregado = await mkPed(CLI, "GEL", 5000, "ENTREGADO");
-    const m = await mkMat(`DOS-${RUN}`);
-    await ingreso(`DOS-${RUN}`, 1000);
-    expect((await svc.candidatePedidosDb(dep, m)).map((c) => c.pedidoId)).not.toContain(entregado);
-    await link(m, a);
-    expect(await dif(m)).toMatchObject({ estado: "JUSTO", necesario: 1000 });
-    await link(m, b); // elegir otro REEMPLAZA: el mismo stock no cuenta para dos pedidos
-    expect(await dif(m)).toMatchObject({ estado: "SOBRAN", necesario: 400, diferencia: 600 });
-    expect((await dif(m)).pedidos).toHaveLength(1);
-    await q("update production_pedidos set deleted_at = now() where id = $1", [b]);
-    expect((await dif(m)).pedidos).toHaveLength(0);
-    expect((await dif(m)).estado).toBe("SIN_DATOS");
-  });
-
-  it("11) sin pedido → SIN DATOS; sin consumo configurado → SIN CONFIGURAR (no asume 1:1)", async () => {
-    const m = await mkMat(`SIN-${RUN}`);
-    await ingreso(`SIN-${RUN}`, 10);
-    expect((await dif(m)).estado).toBe("SIN_DATOS");
-    const ped = await mkPed(CLI, "X", 3000);
-    await link(m, ped, null);
-    expect(await dif(m)).toMatchObject({ estado: "SIN_CONFIGURAR", diferencia: null });
-  });
-
-  const setProducto = async (materialId: string, producto: string, cliente?: string) => {
-    const { resolveProductoLink } = await import("@/lib/inventory/me-producto-link");
-    const { getDb } = await import("@/lib/db/client");
-    await q("update inv_me_materials set payload = payload || $2::jsonb where id = $1", [materialId, JSON.stringify({ producto, ...(cliente ? { cliente } : {}) })]);
-    await getDb().transaction(async (tx) => { await resolveProductoLink(tx, dep, materialId); });
-  };
-
-  it("PRODUCTO) cliente + producto exacto con UN pedido activo → se vincula solo, conserva consumo, y guarda la referencia estable", async () => {
+  it("1) pedido 3.000: ingresos de 1.000 → −2.000; +1.500 → −500; +700 → +200 SOBRAN (cada fila conserva su resultado)", async () => {
     const ped = await mkPed(CLI, "CREMA FACIAL", 3000);
-    await mkPed(CLI, "SHAMPOO", 999);
-    await mkPed(CLI2, "CREMA FACIAL", 111);
-    const m = await mkMat(`PRO-${RUN}`);
-    await ingreso(`PRO-${RUN}`, 2800);
-    await setProducto(m, "crema  facial"); // igualdad normalizada, no por parecido
-    expect(await dif(m)).toMatchObject({ estado: "SIN_CONFIGURAR", producto: "crema  facial" });
-    const [mat] = await q("select payload from inv_me_materials where id = $1", [m]);
-    expect((mat!.payload as Record<string, unknown>).pedidoId).toBe(ped);
-    await link(m, ped, 1);
-    expect(await dif(m)).toMatchObject({ estado: "FALTAN", diferencia: -200, candidatos: 1 });
-    // cambiar a un producto que no existe: el vínculo viejo se quita y queda SIN DATOS (stock intacto)
-    await setProducto(m, "PRODUCTO INEXISTENTE");
-    expect(await dif(m)).toMatchObject({ estado: "SIN_DATOS", stock: 2800 });
-    await setProducto(m, "CREMA FACIAL"); // vuelve a un único candidato: se re-vincula solo con consumo ya configurado? no (se quitó) → SIN CONFIGURAR
-    expect((await dif(m)).estado).toBe("SIN_CONFIGURAR");
+    const m = await mkMat(`ENV-${RUN}`);
+    const i1 = await ingreso(m, `ENV-${RUN}`, 1000, { producto: "crema facial" });
+    await sync(i1);
+    expect((await row(i1)).estado).toBe("SIN_CONFIGURAR"); // pedido único vinculado solo, pero sin consumo por producto: no se asume 1:1
+    await link(i1, ped, 1);
+    expect(await row(i1)).toMatchObject({ estado: "FALTAN", diferencia: -2000, snapshot: { diferencia: -2000, estado: "FALTAN" } });
+    const i2 = await ingreso(m, `ENV-${RUN}`, 1500, { producto: "CREMA FACIAL" });
+    await sync(i2);
+    expect(await row(i2)).toMatchObject({ estado: "FALTAN", diferencia: -500, acumulado: 2500, snapshot: { diferencia: -500 } });
+    const i3 = await ingreso(m, `ENV-${RUN}`, 700, { producto: "CREMA FACIAL" });
+    await sync(i3);
+    expect(await row(i3)).toMatchObject({ estado: "SOBRAN", diferencia: 200, acumulado: 3200 });
+    // los anteriores no cambiaron
+    expect((await row(i1)).snapshot?.diferencia).toBe(-2000);
+    expect((await row(i2)).snapshot?.diferencia).toBe(-500);
+    expect((await payloadOf(i2)).pedidoId).toBe(ped); // referencia estable
   });
 
-  it("PRODUCTO) mismo producto en varios pedidos activos → ELEGIR PEDIDO hasta que Depósito elija; otro cliente no se mezcla", async () => {
-    const p1 = await mkPed(CLI, "BALSAMO", 1000);
-    await mkPed(CLI, "BALSAMO", 500);
-    await mkPed(CLI2, "BALSAMO", 70);
-    const m = await mkMat(`BAL-${RUN}`);
-    await ingreso(`BAL-${RUN}`, 1000);
-    await setProducto(m, "BALSAMO");
-    expect(await dif(m)).toMatchObject({ estado: "ELEGIR_PEDIDO", candidatos: 2, pedidos: [] });
-    await link(m, p1, 1);
-    expect(await dif(m)).toMatchObject({ estado: "JUSTO", necesario: 1000 });
+  it("2) las SALIDAS/consumos y los ajustes de Stock ME NO cambian la diferencia de los ingresos", async () => {
+    const ped = await mkPed(CLI, "SERUM", 3000);
+    const m = await mkMat(`TAP-${RUN}`);
+    const ids = [] as string[];
+    for (const n of [1000, 1500, 700]) {
+      const id = await ingreso(m, `TAP-${RUN}`, n, { producto: "SERUM" });
+      ids.push(id);
+      if (ids.length === 1) { await sync(id); await link(id, ped, 1); } else await sync(id);
+    }
+    const antes = await Promise.all(ids.map(async (i) => { const r = await row(i); return [r.estado, r.diferencia, r.acumulado]; }));
+    expect(antes.map((a) => a[1])).toEqual([-2000, -500, 200]);
+    await salidaOA(`TAP-${RUN}`, 2000); // Producción consume 2.000: el stock baja
+    await q("insert into inv_ajustes (id, payload) values ($1,$2)", [randomUUID(), { id: randomUUID(), module: "ME", entityId: m, diferencia: -50, motivo: "conteo", createdAt: at() }]);
+    const despues = await Promise.all(ids.map(async (i) => { const r = await row(i); return [r.estado, r.diferencia, r.acumulado]; }));
+    expect(despues).toEqual(antes);
   });
 
-  it("PRODUCTO) sin pedido registrado: el producto queda como texto y DIFERENCIA en SIN DATOS; histórico sin producto sigue funcionando", async () => {
-    const m = await mkMat(`TXT-${RUN}`);
-    await ingreso(`TXT-${RUN}`, 50);
-    await setProducto(m, "PRODUCTO SIN PEDIDO");
-    expect(await dif(m)).toMatchObject({ estado: "SIN_DATOS", producto: "PRODUCTO SIN PEDIDO", stock: 50, candidatos: 0 });
-    const viejo = await mkMat(`OLD-${RUN}`); // sin campo producto (registro anterior)
-    expect(await dif(viejo)).toMatchObject({ estado: "SIN_DATOS", producto: "" });
+  it("3) el pedido cambia de cantidad o de consumo: el resultado histórico NO se reescribe; «hoy» queda aparte", async () => {
+    const ped = await mkPed(CLI, "TONICO", 3000);
+    const m = await mkMat(`ETI-${RUN}`);
+    const i1 = await ingreso(m, `ETI-${RUN}`, 2500, { producto: "TONICO" });
+    await sync(i1);
+    await link(i1, ped, 1);
+    expect(await row(i1)).toMatchObject({ diferencia: -500, snapshot: { diferencia: -500, pedidoUnidades: 3000 } });
+    await q("update production_pedidos set q = 2000 where id = $1", [ped]);
+    expect(await row(i1)).toMatchObject({ snapshot: { diferencia: -500, estado: "FALTAN" }, actual: { estado: "SOBRAN", diferencia: 500 } });
+    const { ingresoDiferenciaView } = await import("@/lib/inventory/me-diferencia");
+    expect(ingresoDiferenciaView(await row(i1)).text).toBe("−500 FALTAN · hoy +500 SOBRAN");
+    await link(i1, ped, 2); // mismo ingreso, otro consumo → se vuelve a vincular a propósito: recalcula y queda auditado
+    expect(await row(i1)).toMatchObject({ snapshot: { diferencia: 2500 - 4000, unidadesPorProducto: 2 } });
   });
 
-  it("PRODUCTO) la planilla guarda producto por celda (patchMeSheetCells), resuelve el pedido y no cambia el stock", async () => {
-    const ped = await mkPed(CLI, "TONICO", 2000);
-    const m = await mkMat(`CEL-${RUN}`);
-    await ingreso(`CEL-${RUN}`, 2000);
+  it("4) editar el ingreso (cantidad) recalcula SU snapshot con auditoría; los posteriores conservan el suyo y muestran «hoy»", async () => {
+    const ped = await mkPed(CLI, "BALSAMO", 3000);
+    const m = await mkMat(`EDI-${RUN}`);
+    const a = await ingreso(m, `EDI-${RUN}`, 1000, { producto: "BALSAMO" });
+    await sync(a); await link(a, ped, 1);
+    const b = await ingreso(m, `EDI-${RUN}`, 1500, { producto: "BALSAMO" });
+    await sync(b);
+    expect((await row(b)).snapshot?.diferencia).toBe(-500);
     const { patchMeSheetCells } = await import("@/lib/inventory/me-planilla-db");
-    const [row] = await q("select payload from inv_me_materials where id = $1", [m]);
-    const before = await snapshot();
-    void before;
-    await patchMeSheetCells(dep, "me_inventario", [{ id: m, field: "producto", value: "TONICO", expectedVersion: (row!.payload as Record<string, string>).updatedAt } as never]);
-    const [after] = await q("select payload from inv_me_materials where id = $1", [m]);
-    expect(after!.payload).toMatchObject({ producto: "TONICO", pedidoId: ped });
-    expect((await dif(m)).stock).toBe(2000);
-    // ingreso con producto: queda guardado en el ingreso y hereda la referencia al pedido
-    const ing = await ingreso(`CEL-${RUN}`, 0, { materialId: m, bultos: 1, cantidad: 0 });
-    const [ir] = await q("select payload from inv_me_ingresos where id = $1", [ing]);
-    await patchMeSheetCells(dep, "me_ingresos", [{ id: ing, field: "producto", value: " tonico ", expectedVersion: (ir!.payload as Record<string, string>).updatedAt } as never]);
-    const [ir2] = await q("select payload from inv_me_ingresos where id = $1", [ing]);
-    expect(ir2!.payload).toMatchObject({ producto: "tonico", pedidoId: ped });
+    await patchMeSheetCells(dep, "me_ingresos", [{ id: a, field: "cantidad", value: "1200", expectedVersion: (await payloadOf(a)).updatedAt } as never]);
+    expect(await row(a)).toMatchObject({ snapshot: { diferencia: -1800, acumulado: 1200 } });
+    expect(await row(b)).toMatchObject({ snapshot: { diferencia: -500 }, actual: { diferencia: -300 } }); // histórico intacto, hoy distinto
+    const audit = await q("select payload->>'action' as a, payload->'before'->'difSnapshot'->>'diferencia' as antes from inv_audit where payload->>'entityId' = $1 and payload->>'action' = 'dif_snapshot_recalculado'", [a]);
+    expect(audit).toHaveLength(1);
+    expect(audit[0]!.antes).toBe("-2000");
   });
 
-  it("12) vincular/quitar/recalcular NO cambia stock, movimientos, ajustes ni pedidos; permisos y auditoría", async () => {
-    const ped = await mkPed(CLI, "Z", 500);
+  it("5) no mezcla clientes ni productos: candidatos solo del cliente del ingreso; dos productos del mismo código acumulan por separado", async () => {
+    const mio = await mkPed(CLI, "CREMA A", 100);
+    const mio2 = await mkPed(CLI, "CREMA B", 100);
+    const ajeno = await mkPed(CLI2, "CREMA A", 999);
+    const m = await mkMat(`MIX-${RUN}`);
+    const i1 = await ingreso(m, `MIX-${RUN}`, 60, { producto: "CREMA A" });
+    const i2 = await ingreso(m, `MIX-${RUN}`, 70, { producto: "CREMA B" });
+    await sync(i1); await sync(i2);
+    await link(i1, mio, 1); await link(i2, mio2, 1);
+    expect(await row(i1)).toMatchObject({ acumulado: 60, diferencia: -40 });
+    expect(await row(i2)).toMatchObject({ acumulado: 70, diferencia: -30 }); // no suma el ingreso del otro producto
+    const cands = (await svc.candidatePedidosDb(dep, i1)).map((c) => c.pedidoId);
+    expect(cands).toEqual(expect.arrayContaining([mio, mio2]));
+    expect(cands).not.toContain(ajeno);
+    await expect(link(i1, ajeno, 1)).rejects.toThrow(/otro cliente/);
+  });
+
+  it("6) mismo cliente + producto en dos pedidos activos → ELEGIR PEDIDO hasta que se elija; entregados/eliminados no cuentan", async () => {
+    const a = await mkPed(CLI, "GEL", 1000);
+    await mkPed(CLI, "GEL", 400);
+    const entregado = await mkPed(CLI, "GEL", 5000, "ENTREGADO");
+    const m = await mkMat(`GEL-${RUN}`);
+    const i1 = await ingreso(m, `GEL-${RUN}`, 1000, { producto: "GEL" });
+    await sync(i1);
+    expect(await row(i1)).toMatchObject({ estado: "ELEGIR_PEDIDO", candidatos: 2, pedidoId: null });
+    expect((await svc.candidatePedidosDb(dep, i1)).map((c) => c.pedidoId)).not.toContain(entregado);
+    await link(i1, a, 1);
+    expect(await row(i1)).toMatchObject({ estado: "JUSTO", pedidoId: a });
+  });
+
+  it("7) sin pedido → SIN DATOS; sin consumo configurado → SIN CONFIGURAR; ingreso sin producto → SIN DATOS (no se mezcla)", async () => {
+    const m = await mkMat(`SIN-${RUN}`);
+    const sinProd = await ingreso(m, `SIN-${RUN}`, 10);
+    await sync(sinProd);
+    expect((await row(sinProd)).estado).toBe("SIN_DATOS");
+    const noPed = await ingreso(m, `SIN-${RUN}`, 10, { producto: "PRODUCTO SIN PEDIDO" });
+    await sync(noPed);
+    expect((await row(noPed)).estado).toBe("SIN_DATOS");
+    await mkPed(CLI, "PRODUCTO CON PEDIDO", 50);
+    const sinCfg = await ingreso(m, `SIN-${RUN}`, 10, { producto: "PRODUCTO CON PEDIDO" });
+    await sync(sinCfg);
+    expect(await row(sinCfg)).toMatchObject({ estado: "SIN_CONFIGURAR", diferencia: null, snapshot: null });
+  });
+
+  it("8) vincular / editar / quitar NO cambia stock, movimientos, ajustes ni cantidades de pedidos; permisos; ingresos anulados fuera", async () => {
+    const ped = await mkPed(CLI, "NOP", 500);
     const m = await mkMat(`NOP-${RUN}`);
-    await ingreso(`NOP-${RUN}`, 400);
+    const i = await ingreso(m, `NOP-${RUN}`, 400, { producto: "NOP" });
+    const anul = await ingreso(m, `NOP-${RUN}`, 9999, { producto: "NOP", anulado: true });
     const before = await snapshot();
-    await link(m, ped);
-    await dif(m);
-    await link(m, ped, 3);
+    await sync(i); await link(i, ped, 1); await link(i, ped, 2); await row(i);
     expect(await snapshot()).toBe(before);
-    await expect(svc.upsertMePedidoLinkDb(elab, { materialId: m, pedidoId: ped, unidadesPorProducto: 1 })).rejects.toThrow(/no puede modificar/);
-    await expect(link(m, ped, 0)).rejects.toThrow(/mayor que 0/);
-    const audit = await q("select payload->>'action' as a from inv_audit where payload->>'entityId' = $1 and payload->>'action' like 'pedido_link_%'", [m]);
-    expect(audit.map((r) => r.a)).toEqual(expect.arrayContaining(["pedido_link_create", "pedido_link_update"]));
-    await svc.removeMePedidoLinkDb(dep, m, ped);
+    await expect(svc.linkIngresoPedidoDb(elab, { ingresoId: i, pedidoId: ped, unidadesPorProducto: 1 })).rejects.toThrow(/no puede modificar/);
+    await expect(link(i, ped, 0)).rejects.toThrow(/mayor que 0/);
+    expect((await svc.listIngresoDiferenciasDb(dep)).ingresos[anul]).toBeUndefined();
+    const acciones = (await q("select payload->>'action' as a from inv_audit where payload->>'entityId' = $1", [i])).map((r) => r.a);
+    expect(acciones).toEqual(expect.arrayContaining(["pedido_link", "dif_snapshot"]));
+    await svc.unlinkIngresoPedidoDb(dep, i);
+    expect((await row(i)).estado).toBe("SIN_DATOS");
     expect(await snapshot()).toBe(before);
-    expect((await dif(m)).estado).toBe("SIN_DATOS");
+  });
+
+  it("9) el contexto de PREVISTA solo lo reciben quienes pueden escribir ingresos; el sector que solo lee ve resultados, no pedidos", async () => {
+    expect((await svc.listIngresoDiferenciasDb(dep)).previsto?.pedidos.length).toBeGreaterThan(0);
+    const lector = await svc.listIngresoDiferenciasDb(calidad);
+    expect(lector.previsto).toBeUndefined();
+    expect(Object.keys(lector.ingresos).length).toBeGreaterThan(0);
   });
 });

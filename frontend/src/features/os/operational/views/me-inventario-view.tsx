@@ -31,7 +31,6 @@ import { ME_INVENTARIO_DRAFT_CREATE_KEYS, ME_INVENTARIO_DRAFT_REQUIRED_KEYS, meI
 import type { GenusGridDraftRows } from "@/components/data-grid/genus-grid";
 import { useMeSheetEditing } from "@/features/os/operational/hooks/use-me-sheet-cells";
 import { MeStockDialog } from "@/features/os/operational/components/me-stock-dialog";
-import { MeDiferenciaCell, MePedidoPicker, diferenciaClass, diferenciaText, useMeDiferencias } from "@/features/os/operational/components/me-diferencia-cell";
 import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
 import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
@@ -69,15 +68,12 @@ export function MeInventarioView() {
   const canWrite = canWriteInventory(sectorId, "me_stock");
   const [rows, setRows] = useState<MeInventarioViewRow[]>([]);
   const [banner, setBanner] = useState<string | null>(null);
-  const dif = useMeDiferencias();
   const [search, setSearch] = useState("");
 
   const reload = useCallback(async () => {
     const res = await fetchInventory<MeInventarioViewRow>("me_inventario" as never);
     setRows(res.data);
     setBanner(res.message ?? null);
-    void dif.reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -193,15 +189,6 @@ export function MeInventarioView() {
     }
   );
 
-  columns.push({
-    key: "DIFERENCIA",
-    header: "DIFERENCIA",
-    minWidth: 168,
-    text: (row) => diferenciaText(dif.map[row.materialId] ?? { estado: "SIN_DATOS", diferencia: null }),
-    cellClassName: (row) => diferenciaClass(dif.map[row.materialId] ?? { estado: "SIN_DATOS" }),
-    render: (row) => <MeDiferenciaCell d={dif.map[row.materialId] ?? { estado: "SIN_DATOS", diferencia: null }} />,
-  } as OperationalTableColumn<MeInventarioViewRow>);
-
   return (
     <TwinShell title="Inventario ME">
       {banner && (
@@ -296,7 +283,6 @@ export function MeInventarioView() {
                   header: "",
                   render: (row: MeInventarioViewRow) => (
                     <span className="inline-flex items-center gap-1">
-                    <MePedidoPicker materialId={row.materialId} row={dif.map[row.materialId]} onChanged={() => void dif.reload()} />
                     <button type="button" onClick={() => openStock(row)} className={`rounded px-1.5 py-0.5 text-xs font-semibold ${row.cantidadTotal < 0 ? "bg-red-500/15 text-red-500" : "text-[var(--os-teal)] hover:underline"}`} data-testid="me-stock-open" title="Movimientos y ajuste de inventario">
                       {row.cantidadTotal < 0 ? "Corregir" : "Stock"}
                     </button>

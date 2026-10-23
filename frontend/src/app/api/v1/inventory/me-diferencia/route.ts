@@ -1,36 +1,38 @@
 import { NextResponse } from "next/server";
 import { ensureInventoryPersistenceReady, inventoryErrorResponse, resolveInventoryActor } from "@/lib/inventory/http";
-import { candidatePedidosDb, listMeDiferenciasDb, removeMePedidoLinkDb, upsertMePedidoLinkDb } from "@/lib/inventory/me-diferencia-db";
+import { candidatePedidosDb, linkIngresoPedidoDb, listIngresoDiferenciasDb, unlinkIngresoPedidoDb } from "@/lib/inventory/me-diferencia-db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** GET → { data: { [materialId]: DIFERENCIA } }; GET ?candidatos=<materialId> → pedidos activos del cliente del material. */
+/** GET → { data: { ingresos, previsto? } }; GET ?candidatos=<ingresoId> → pedidos activos del cliente del ingreso. */
 export async function GET(request: Request) {
   try {
     const blocked = ensureInventoryPersistenceReady();
     if (blocked) return blocked;
     const actor = await resolveInventoryActor(request);
-    const materialId = new URL(request.url).searchParams.get("candidatos");
-    if (materialId) return NextResponse.json({ data: await candidatePedidosDb(actor, materialId) });
-    return NextResponse.json({ data: await listMeDiferenciasDb(actor) });
+    const ingresoId = new URL(request.url).searchParams.get("candidatos");
+    if (ingresoId) return NextResponse.json({ data: await candidatePedidosDb(actor, ingresoId) });
+    return NextResponse.json({ data: await listIngresoDiferenciasDb(actor) });
   } catch (err) {
     return inventoryErrorResponse(err);
   }
 }
 
-/** POST { action: "link"|"unlink", materialId, pedidoId, unidadesPorProducto? }. No toca stock ni pedidos. */
+/** POST { action: "link"|"unlink", ingresoId, pedidoId?, unidadesPorProducto? }. No toca stock ni pedidos. */
 export async function POST(request: Request) {
   try {
     const blocked = ensureInventoryPersistenceReady();
     if (blocked) return blocked;
     const actor = await resolveInventoryActor(request);
-    const b = (await request.json()) as { action?: string; materialId?: string; pedidoId?: string; unidadesPorProducto?: number | null };
-    if (!b.materialId || !b.pedidoId) return NextResponse.json({ error: "Faltan material o pedido." }, { status: 400 });
-    if (b.action === "unlink") await removeMePedidoLinkDb(actor, b.materialId, b.pedidoId);
-    else if (b.action === "link") await upsertMePedidoLinkDb(actor, { materialId: b.materialId, pedidoId: b.pedidoId, unidadesPorProducto: b.unidadesPorProducto == null ? null : Number(b.unidadesPorProducto) });
-    else return NextResponse.json({ error: "Acción inválida." }, { status: 400 });
-    return NextResponse.json({ data: await listMeDiferenciasDb(actor) });
+    const b = (await request.json()) as { action?: string; ingresoId?: string; pedidoId?: string; unidadesPorProducto?: number | null };
+    if (!b.ingresoId) return NextResponse.json({ error: "Falta el ingreso." }, { status: 400 });
+    if (b.action === "unlink") await unlinkIngresoPedidoDb(actor, b.ingresoId);
+    else if (b.action === "link") {
+      if (!b.pedidoId) return NextResponse.json({ error: "Falta el pedido." }, { status: 400 });
+      await linkIngresoPedidoDb(actor, { ingresoId: b.ingresoId, pedidoId: b.pedidoId, unidadesPorProducto: b.unidadesPorProducto === undefined ? undefined : b.unidadesPorProducto == null ? null : Number(b.unidadesPorProducto) });
+    } else return NextResponse.json({ error: "Acción inválida." }, { status: 400 });
+    return NextResponse.json({ data: await listIngresoDiferenciasDb(actor) });
   } catch (err) {
     return inventoryErrorResponse(err);
   }

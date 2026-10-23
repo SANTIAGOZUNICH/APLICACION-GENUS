@@ -41,7 +41,7 @@ import {
 import { buildMeMovements, computeMeStock, type MeMovement } from "./me-stock-calc";
 import type { StockAjuste } from "./memory-repo";
 import { canReadInventory, canWriteInventory } from "./rbac";
-import { resolveProductoLink } from "./me-producto-link";
+import { reprocessIngreso } from "./me-producto-link";
 import type { InventoryAudit, MeIngresoRow, MeMaterial, MeSalidaRow } from "./types";
 
 type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
@@ -232,11 +232,13 @@ export async function patchMeSheetCells(actor: InventoryActor, resource: MeSheet
       const a = auditRow(actor, meSheetModule(resource), p.id, "cell_edit", Object.fromEntries(fields.map((f) => [f, p.before[f] ?? null])), Object.fromEntries(fields.map((f) => [f, p.next[f] ?? null])), reasons.get(p.id) ?? null);
       await tx.insert(invAudit).values({ id: a.id, payload: a, createdAt: new Date(a.createdAt) });
     }
-    // Cliente/producto cambiados: se resuelve el pedido (único → se vincula; varios → hay que elegir; ninguno → SIN DATOS).
-    for (const p of prepared) {
-      if (!p.changed.some((f) => f === "producto" || f === "cliente" || (resource === "me_ingresos" && f === "codigo"))) continue;
-      const matId = resource === "me_inventario" ? p.id : (p.next.materialId as string | null | undefined);
-      if (matId) await resolveProductoLink(tx, actor, matId, resource === "me_ingresos" ? { ingresoProducto: String(p.next.producto ?? "") } : {});
+    // Ingreso editado (producto, cliente, código o cantidades): se resuelve su pedido por cliente + producto y se RECALCULA su
+    // snapshot de DIFERENCIA (el resultado anterior queda en la auditoría). Sin tocar stock.
+    if (resource === "me_ingresos") {
+      for (const p of prepared) {
+        if (!p.changed.some((f) => ["producto", "cliente", "codigo", "bultos", "cantidad", "total"].includes(f))) continue;
+        await reprocessIngreso(tx, actor, p.id, { resetSnapshot: true });
+      }
     }
     const items: AnyRow[] = prepared.map((p) => p.next);
     for (const op of ops) {

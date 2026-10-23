@@ -294,8 +294,9 @@ export class InventoryService {
       proveedor: input.proveedor ?? existing?.proveedor ?? "",
       cliente: input.cliente ?? existing?.cliente ?? "",
       producto: (input.producto ?? existing?.producto ?? "").trim(),
-      // El vínculo con el pedido lo resuelve el servidor por cliente + producto: si cambia el producto no se arrastra el viejo.
-      pedidoId: (input.producto ?? existing?.producto ?? "").trim() === (existing?.producto ?? "").trim() ? (existing?.pedidoId ?? null) : null,
+      // El pedido y el snapshot de DIFERENCIA los resuelve el servidor (cliente + producto); acá solo se conservan si nada relevante cambió.
+      pedidoId: existing && (input.producto ?? existing.producto ?? "").trim() === (existing.producto ?? "").trim() && (input.cliente ?? existing.cliente) === existing.cliente ? (existing.pedidoId ?? null) : null,
+      difSnapshot: existing && total === existing.total && codigo === normalizeMeCodigo(existing.codigo) && (input.producto ?? existing.producto ?? "").trim() === (existing.producto ?? "").trim() && (input.cliente ?? existing.cliente) === existing.cliente ? (existing.difSnapshot ?? null) : null,
       remitoNro: input.remitoNro ?? existing?.remitoNro ?? "",
       codigo,
       descripcionInsumo: input.descripcionInsumo ?? existing?.descripcionInsumo ?? material.descripcion,

@@ -1,4 +1,4 @@
-// E2E en Chromium real (TABLET 1024×768): PRODUCTO en Stock ME e Ingresos ME + DIFERENCIA también en Ingresos ME.
+// E2E en Chromium real (TABLET 1024×768): PRODUCTO en Stock ME e Ingresos ME; DIFERENCIA SOLO en Ingresos ME (acumulado por pedido, sin usar el saldo de Stock).
 // Base DESCARTABLE (marca verificada) y login real. Ver run-deposito-me-producto-local.sh.
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -21,18 +21,16 @@ const q = async (text, params = []) => (await pool.query(text, params)).rows;
 await assertMarkedDatabase(q);
 const T = "2026-10-01T10:00:00.000Z";
 const CLI = "CLIENTE E2E PD";
-const id = { env: randomUUID(), tap: randomUUID(), i1: randomUUID(), i2: randomUUID(), i3: randomUUID(), p1: randomUUID(), p2: randomUUID(), p3: randomUUID(), p4: randomUUID() };
+const id = { env: randomUUID(), tap: randomUUID(), p1: randomUUID(), p2: randomUUID(), p3: randomUUID(), p4: randomUUID() };
 const pl = async (table, rid) => (await q(`select payload from ${table} where id = $1`, [rid]))[0]?.payload;
 const mat = (mid, codigo) => ({ id: mid, codigo, descripcion: codigo, cliente: CLI, ubicacion: "A1", unidad: "u", cantidadPorBulto: null, stockActual: 0, stockMinimo: null, puntoReposicion: null, responsable: "", observacion: "", updatedAt: T, archived: false });
-const ing = (iid, nro, codigo, materialId, total) => ({ id: iid, fecha: "2026-10-01", ingresoNro: nro, proveedor: "PROV", cliente: CLI, remitoNro: `R-${nro}`, codigo, descripcionInsumo: codigo, bultos: 1, cantidad: total, total, ubicacion: "A1", materialId, anulado: false, createdBy: "e2e", updatedBy: "e2e", createdAt: T, updatedAt: T });
 
 async function seed() {
-  for (const t of ["inv_me_ingresos", "inv_me_materials"]) await q(`delete from ${t} where payload->>'codigo' like 'E2E-PD-%'`);
+  for (const t of ["inv_me_ingresos", "inv_me_salidas", "inv_me_materials"]) await q(`delete from ${t} where payload->>'codigo' like 'E2E-PD-%'`);
   await q("delete from me_material_pedido_links where pedido_id = any($1)", [[id.p1, id.p2, id.p3, id.p4]]);
   await q("delete from production_pedidos where cliente = $1", [CLI]);
   await q("insert into production_pedidos (id, cliente, producto, q, estado) values ($1,$2,'CREMA FACIAL',3000,'INGRESO'),($3,$2,'SHAMPOO',500,'INGRESO'),($4,$2,'GEL DOBLE',100,'INGRESO'),($5,$2,'GEL DOBLE',200,'INGRESO')", [id.p1, CLI, id.p2, id.p3, id.p4]);
   await q("insert into inv_me_materials (id, payload) values ($1,$2),($3,$4)", [id.env, mat(id.env, "E2E-PD-ENV"), id.tap, mat(id.tap, "E2E-PD-TAP")]);
-  await q("insert into inv_me_ingresos (id, payload) values ($1,$2),($3,$4),($5,$6)", [id.i1, ing(id.i1, "PD-1", "E2E-PD-ENV", id.env, 1000), id.i2, ing(id.i2, "PD-2", "E2E-PD-ENV", id.env, 1500), id.i3, ing(id.i3, "PD-3", "E2E-PD-TAP", id.tap, 3200)]);
 }
 
 const browser = await chromium.launch({ executablePath: process.env.GENUS_E2E_CHROMIUM_PATH || undefined });
@@ -92,63 +90,71 @@ try {
   await page.locator('button[type="submit"]').click();
   await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 60_000 });
   if (!page.url().includes("/mi-trabajo")) await page.goto("/mi-trabajo");
+  const post = (payload) => page.request.post("/api/v1/inventory", { data: { action: "upsert", resource: "me_ingresos", payload } });
+  const stockOf = async (codigo) => (await (await page.request.get("/api/v1/inventory?resource=me_inventario")).json()).data.find((r) => r.codigo === codigo)?.cantidadTotal;
+  const ingreso = (n, cantidad, extra = {}) => ({ fecha: "2026-10-05", remitoNro: `R-PD-${n}`, codigo: "E2E-PD-ENV", cliente: CLI, producto: "crema facial", descripcionInsumo: "E2E-PD-ENV", bultos: 1, cantidad, ubicacion: "A1", ...extra });
 
-  // ============ STOCK ME (Inventario) ============
-  await nav("Inventario ME");
-  await waitRow("E2E-PD-ENV");
-  const hInv = await headers();
-  check("Stock ME: PRODUCTO va inmediatamente después de CLIENTE y existe DIFERENCIA", hInv.indexOf("PRODUCTO") === hInv.indexOf("CLIENTE") + 1 && hInv.includes("DIFERENCIA"), hInv.join(" | "));
-  check("registro sin producto sigue funcionando: DIFERENCIA «SIN DATOS»", (await cellText("E2E-PD-ENV", "DIFERENCIA")) === "SIN DATOS");
-  await typeInto("E2E-PD-ENV", "PRODUCTO", "crema facial", "me-inventario-grid");
-  check("PRODUCTO escrito en la celda: pedido único del cliente → vinculado solo (referencia estable)", await waitDb(async () => (await pl("inv_me_materials", id.env))?.pedidoId === id.p1));
-  await page.reload();
-  await nav("Inventario ME");
-  await waitRow("E2E-PD-ENV");
-  check("tras recargar conserva el producto y, sin consumo configurado, DIFERENCIA = SIN CONFIGURAR", (await cellText("E2E-PD-ENV", "PRODUCTO")) === "crema facial" && (await cellText("E2E-PD-ENV", "DIFERENCIA")) === "SIN CONFIGURAR");
-  // consumo por producto con el selector (producto/pedido del cliente)
-  await clickInRow("E2E-PD-ENV", "[data-testid=me-diferencia-vincular]");
-  await page.waitForFunction(() => document.querySelectorAll("[data-testid=me-diferencia-pedido] option").length > 1, null, { timeout: 30_000 });
-  const opts = await page.locator("[data-testid=me-diferencia-pedido] option").allInnerTexts();
-  check("el selector lista SOLO pedidos activos del cliente del material", opts.some((o) => /CREMA FACIAL/.test(o)) && opts.some((o) => /SHAMPOO/.test(o)) && opts.length === 5, opts.join(" / "));
-  await page.locator("[data-testid=me-diferencia-pedido]").selectOption(id.p1);
-  await page.locator("[data-testid=me-diferencia-ratio]").fill("1");
-  await page.screenshot({ path: `${OUT}/0-selector-pedido.png` });
-  await page.locator("[data-testid=me-diferencia-guardar]").click({ timeout: 8000 });
-  await waitDb(async () => (await q("select units_per_product u from me_material_pedido_links where material_id = $1", [id.env]))[0]?.u === 1);
-  await page.reload();
-  await nav("Inventario ME");
-  await waitRow("E2E-PD-ENV");
-  check("Stock ME: 1.000 + 1.500 = 2.500 vs pedido 3.000 → −500 FALTAN", (await cellText("E2E-PD-ENV", "DIFERENCIA")) === "−500 FALTAN", await cellText("E2E-PD-ENV", "DIFERENCIA"));
-  const difCell = await cell("E2E-PD-ENV", "DIFERENCIA");
-  await page.screenshot({ path: `${OUT}/1-stock-me-tablet.png` });
-  console.log("DBGC", JSON.stringify(await difCell.evaluate((el) => ({ cls: el.className, html: el.innerHTML.slice(0, 200), colors: [el, ...el.querySelectorAll("*")].map((n) => getComputedStyle(n).color) }))));
-  check("…en ROJO", await difCell.evaluate((el) => [el, ...el.querySelectorAll("*")].some((n) => getComputedStyle(n).color === "rgb(220, 38, 38)")));
-
-  // producto con VARIOS pedidos activos → ELEGIR PEDIDO (no se asume)
-  await typeInto("E2E-PD-TAP", "PRODUCTO", "GEL DOBLE", "me-inventario-grid");
-  await waitDb(async () => (await pl("inv_me_materials", id.tap))?.producto === "GEL DOBLE");
-  await page.reload();
-  await nav("Inventario ME");
-  await waitRow("E2E-PD-TAP");
-  check("mismo producto en dos pedidos activos: pide elegir (ELEGIR PEDIDO), sin vincular", (await cellText("E2E-PD-TAP", "DIFERENCIA")) === "ELEGIR PEDIDO" && !(await pl("inv_me_materials", id.tap)).pedidoId);
+  // 1.º ingreso (por el mismo camino que el alta de la planilla): el pedido único del cliente se vincula solo
+  const r1 = await post(ingreso(1, 1000));
+  check("ingreso de 1.000 registrado", r1.status() === 200);
 
   // ============ INGRESOS ME ============
   await nav("Ingresos ME");
-  await waitRow("PD-1");
+  await waitRow("R-PD-1");
   const hIng = await headers();
-  check("Ingresos ME: PRODUCTO inmediatamente después de CLIENTE y columna DIFERENCIA presente (tablet)", hIng.indexOf("PRODUCTO") === hIng.indexOf("CLIENTE") + 1 && hIng.includes("DIFERENCIA"), hIng.join(" | "));
-  check("Ingresos: DIFERENCIA usa el stock ACUMULADO del material (no solo este ingreso): −500 FALTAN en ambos", (await cellText("PD-1", "DIFERENCIA")) === "−500 FALTAN" && (await cellText("PD-2", "DIFERENCIA")) === "−500 FALTAN", `${await cellText("PD-1", "DIFERENCIA")} / ${await cellText("PD-2", "DIFERENCIA")}`);
-  await typeInto("PD-1", "PRODUCTO", "CREMA FACIAL", "me-ingresos-grid");
-  check("PRODUCTO del ingreso se guarda y guarda la referencia al pedido", await waitDb(async () => { const p = await pl("inv_me_ingresos", id.i1); return p?.producto === "CREMA FACIAL" && p?.pedidoId === id.p1; }));
+  check("Ingresos ME: PRODUCTO inmediatamente después de CLIENTE y DIFERENCIA presente (tablet)", hIng.indexOf("PRODUCTO") === hIng.indexOf("CLIENTE") + 1 && hIng.includes("DIFERENCIA"), hIng.join(" | "));
+  check("sin consumo por producto configurado: SIN CONFIGURAR (no se asume 1:1)", (await cellText("R-PD-1", "DIFERENCIA")) === "SIN CONFIGURAR", await cellText("R-PD-1", "DIFERENCIA"));
+  await clickInRow("R-PD-1", "[data-testid=me-diferencia-vincular]");
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid=me-diferencia-pedido] option").length > 1, null, { timeout: 30_000 });
+  const opts = await page.locator("[data-testid=me-diferencia-pedido] option").allInnerTexts();
+  check("el selector lista SOLO pedidos activos del cliente del ingreso", opts.some((o) => /CREMA FACIAL/.test(o)) && opts.some((o) => /SHAMPOO/.test(o)) && opts.length === 5, opts.join(" / "));
+  await page.locator("[data-testid=me-diferencia-pedido]").selectOption(id.p1);
+  await page.locator("[data-testid=me-diferencia-ratio]").fill("1");
+  await page.locator("[data-testid=me-diferencia-guardar]").click({ timeout: 8000 });
+  await waitDb(async () => ((await q("select units_per_product u from me_material_pedido_links where pedido_id = $1", [id.p1]))[0]?.u) === 1);
+  check("1.er ingreso (1.000 de 3.000): −2.000 FALTAN", await waitDb(async () => ((await pl("inv_me_ingresos", (await q("select id from inv_me_ingresos where payload->>'remitoNro' = 'R-PD-1'"))[0].id))?.difSnapshot?.diferencia) === -2000));
+  await post(ingreso(2, 1500));
+  await post(ingreso(3, 700));
+  await page.reload();
+  await nav("Ingresos ME");
+  await waitRow("R-PD-3");
+  const t = [await cellText("R-PD-1", "DIFERENCIA"), await cellText("R-PD-2", "DIFERENCIA"), await cellText("R-PD-3", "DIFERENCIA")];
+  check("acumulados: −2.000 FALTAN → −500 FALTAN → +200 SOBRAN (cada fila conserva el suyo)", t[0] === "−2.000 FALTAN" && t[1] === "−500 FALTAN" && t[2] === "+200 SOBRAN", t.join(" / "));
+  check("…y recargando persisten, con color rojo / verde", await (await cell("R-PD-1", "DIFERENCIA")).evaluate((el) => [el, ...el.querySelectorAll("*")].some((n) => getComputedStyle(n).color === "rgb(220, 38, 38)")) && await (await cell("R-PD-3", "DIFERENCIA")).evaluate((el) => [el, ...el.querySelectorAll("*")].some((n) => getComputedStyle(n).color === "rgb(5, 150, 105)")));
   await page.screenshot({ path: `${OUT}/2-ingresos-me-tablet.png` });
-  // fila nueva: diferencia PREVISTA sin sumar al stock
-  const stockAntes = (await (await page.request.get("/api/v1/inventory?resource=me_inventario")).json()).data.find((r) => r.codigo === "E2E-PD-ENV").cantidadTotal;
-  const draft = page.locator(".dsg-row.genus-draft-row, .genus-draft-row").first();
-  const dIdx = await page.evaluate(() => { const rows = [...document.querySelectorAll(".dsg-row")]; return rows.findIndex((r) => r.classList.contains("genus-draft-row")); });
-  const colIdx = async (t) => (await renderedHeaders()).indexOf(t);
-  const dcell = async (t) => { await reveal(t); return page.locator(".dsg-row").nth(dIdx).locator(".dsg-cell").nth(await colIdx(t)); };
-  for (const [t, v] of [["CÓDIGO", "E2E-PD-ENV"], ["CLIENTE", CLI], ["CANTIDAD", "700"]]) {
-    const c = await dcell(t);
+
+  // Producción consume 2.000 envases: baja el stock, NO las diferencias de los ingresos
+  const stockAntes = await stockOf("E2E-PD-ENV");
+  await q("insert into inv_me_salidas (id, payload) values ($1,$2)", [randomUUID(), { id: randomUUID(), fecha: "2026-10-06", egresoNro: "E2E-PD-OA", cliente: CLI, remitoNro: "", descripcion: "E2E-PD-ENV", bultos: null, cantidad: 2000, total: 2000, control: false, entregado: false, comentarios: "consumo OA", materialId: id.env, codigo: "E2E-PD-ENV", unidad: "u", origen: "OA", oaId: "oa-e2e-pd", oaNumber: "OA-2026-000999", oaVersion: null, materialLineId: null, idempotencyKey: null, reverted: false, revertedAt: null, revertReason: null, createdBy: "e2e", updatedBy: "e2e", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]);
+  const stockDesp = await stockOf("E2E-PD-ENV");
+  await page.reload();
+  await nav("Ingresos ME");
+  await waitRow("R-PD-3");
+  const t2 = [await cellText("R-PD-1", "DIFERENCIA"), await cellText("R-PD-2", "DIFERENCIA"), await cellText("R-PD-3", "DIFERENCIA")];
+  check("consumo de 2.000: Stock ME baja (3.200 → 1.200) y las diferencias de los ingresos NO cambian", stockAntes === 3200 && stockDesp === 1200 && t2.join("|") === t.join("|"), `${stockAntes}→${stockDesp} ${t2.join(" / ")}`);
+
+  // el pedido cambia de cantidad: el histórico se conserva y «hoy» se muestra aparte
+  await q("update production_pedidos set q = 2000 where id = $1", [id.p1]);
+  await page.reload();
+  await nav("Ingresos ME");
+  await waitRow("R-PD-3");
+  const t3 = await cellText("R-PD-2", "DIFERENCIA");
+  check("pedido 3.000 → 2.000: el ingreso conserva su resultado histórico y muestra «hoy» aparte", /^−500 FALTAN · hoy \+500 SOBRAN$/.test(t3), t3);
+  await q("update production_pedidos set q = 3000 where id = $1", [id.p1]);
+
+  // varios pedidos activos del mismo cliente+producto → elegir
+  await post({ ...ingreso(4, 50, { codigo: "E2E-PD-TAP", descripcionInsumo: "E2E-PD-TAP", producto: "GEL DOBLE" }) });
+  await page.reload();
+  await nav("Ingresos ME");
+  await waitRow("R-PD-4");
+  check("mismo cliente + producto en dos pedidos activos: ELEGIR PEDIDO, sin vincular", (await cellText("R-PD-4", "DIFERENCIA")) === "ELEGIR PEDIDO");
+
+  // fila nueva sin confirmar: diferencia prevista, sin sumar nada
+  const antesPrev = await stockOf("E2E-PD-ENV");
+  const dIdx = await page.evaluate(() => [...document.querySelectorAll(".dsg-row")].findIndex((r) => r.classList.contains("genus-draft-row")));
+  const dcell = async (tt) => { await reveal(tt); return page.locator(".dsg-row").nth(dIdx).locator(".dsg-cell").nth((await renderedHeaders()).indexOf(tt)); };
+  for (const [tt, v] of [["CÓDIGO", "E2E-PD-ENV"], ["CLIENTE", CLI], ["PRODUCTO", "crema facial"], ["CANTIDAD", "100"]]) {
+    const c = await dcell(tt);
     await c.dblclick();
     await page.keyboard.type(v);
     await page.keyboard.press("Enter");
@@ -156,19 +162,22 @@ try {
   await page.waitForTimeout(500);
   const prev = (await (await dcell("DIFERENCIA")).locator("input").inputValue().catch(async () => (await (await dcell("DIFERENCIA")).innerText()))).trim();
   await page.screenshot({ path: `${OUT}/3-fila-nueva-prevista.png` });
-  check("fila nueva sin confirmar: diferencia PREVISTA (+200 SOBRAN con ≈) y el stock NO cambia", /^≈ \+200 SOBRAN$/.test(prev) && (await (await page.request.get("/api/v1/inventory?resource=me_inventario")).json()).data.find((r) => r.codigo === "E2E-PD-ENV").cantidadTotal === stockAntes, prev);
-  void draft;
-  // ingreso confirmado por API (mismo camino que el alta de la planilla): suma una sola vez
-  const r = await page.request.post("/api/v1/inventory", { data: { action: "upsert", resource: "me_ingresos", payload: { fecha: "2026-10-05", remitoNro: "R-PD-4", codigo: "E2E-PD-ENV", cliente: CLI, producto: "CREMA FACIAL", descripcionInsumo: "E2E-PD-ENV", bultos: 1, cantidad: 700, ubicacion: "A1" } } });
-  const stockDesp = (await (await page.request.get("/api/v1/inventory?resource=me_inventario")).json()).data.find((x) => x.codigo === "E2E-PD-ENV").cantidadTotal;
-  check("ingreso confirmado de 700: stock 2.500 → 3.200 (una sola vez)", r.status() === 200 && stockAntes === 2500 && stockDesp === 3200, `${r.status()} ${stockAntes}→${stockDesp}`);
-  await page.reload();
-  await nav("Ingresos ME");
-  await waitRow("PD-1");
-  check("…y DIFERENCIA pasa a +200 SOBRAN en Ingresos", (await cellText("PD-1", "DIFERENCIA")) === "+200 SOBRAN", await cellText("PD-1", "DIFERENCIA"));
+  check("fila nueva sin confirmar: «≈ +300 SOBRAN» (3.200 + 100 − 3.000) y nada se suma al stock", prev === "≈ +300 SOBRAN" && (await stockOf("E2E-PD-ENV")) === antesPrev, prev);
+
+  // ============ STOCK ME ============
   await nav("Inventario ME");
   await waitRow("E2E-PD-ENV");
-  check("…y en Stock ME (mismo cálculo, sin duplicar)", (await cellText("E2E-PD-ENV", "DIFERENCIA")) === "+200 SOBRAN" && (await cellText("E2E-PD-ENV", "PRODUCTO")) === "CREMA FACIAL", `${await cellText("E2E-PD-ENV", "DIFERENCIA")} / ${await cellText("E2E-PD-ENV", "PRODUCTO")}`);
+  const hInv = await headers();
+  check("Stock ME: PRODUCTO inmediatamente después de CLIENTE", hInv.indexOf("PRODUCTO") === hInv.indexOf("CLIENTE") + 1, hInv.join(" | "));
+  check("Stock ME: SIN columna DIFERENCIA", !hInv.includes("DIFERENCIA"));
+  check("Stock ME: muestra el stock real (1.200 tras el consumo) y el producto", /1\.?200/.test(await cellText("E2E-PD-ENV", "CANTIDAD TOTAL")) && (await cellText("E2E-PD-ENV", "PRODUCTO")).toUpperCase() === "CREMA FACIAL", `${await cellText("E2E-PD-ENV", "CANTIDAD TOTAL")} / ${await cellText("E2E-PD-ENV", "PRODUCTO")}`);
+  await page.screenshot({ path: `${OUT}/1-stock-me-tablet.png` });
+  await typeInto("E2E-PD-TAP", "PRODUCTO", "GEL DOBLE", "me-inventario-grid");
+  check("PRODUCTO editable en Stock ME y persiste al recargar", await waitDb(async () => (await pl("inv_me_materials", id.tap))?.producto === "GEL DOBLE"));
+  await page.reload();
+  await nav("Inventario ME");
+  await waitRow("E2E-PD-TAP");
+  check("…recargado sigue GEL DOBLE y el stock no cambió por vincular/editar producto", (await cellText("E2E-PD-TAP", "PRODUCTO")) === "GEL DOBLE" && (await stockOf("E2E-PD-TAP")) === 50 && (await stockOf("E2E-PD-ENV")) === 1200);
 } catch (err) {
   console.error(err);
   results.push({ name: "excepción", ok: false });

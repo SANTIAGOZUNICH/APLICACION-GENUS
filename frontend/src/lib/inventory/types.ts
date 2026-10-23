@@ -10,6 +10,8 @@ export type MeIngresoRow = {
   producto?: string;
   /** Pedido activo vinculado (referencia estable); null/ausente = sin vincular. */
   pedidoId?: string | null;
+  /** Resultado de DIFERENCIA del momento en que se pudo calcular (no se reescribe en silencio; ver me-diferencia.ts). */
+  difSnapshot?: import("./me-diferencia").IngresoDifSnapshot | null;
   remitoNro: string;
   codigo: string;
   descripcionInsumo: string;

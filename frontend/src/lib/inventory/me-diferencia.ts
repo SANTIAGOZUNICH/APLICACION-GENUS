@@ -61,19 +61,105 @@ export function meDiferenciaTone(estado: MeDiferenciaEstado): "red" | "green" | 
   return estado === "FALTAN" ? "red" : estado === "SOBRAN" || estado === "JUSTO" ? "green" : "neutral";
 }
 
-export interface MeDiferenciaPedido {
+/**
+ * DIFERENCIA de INGRESOS ME — control de recepción, NO de stock.
+ *
+ *   acumulado(ingreso) = Σ ingresos confirmados (no anulados) del MISMO código y MISMO pedido, hasta ese ingreso inclusive
+ *                        (orden de registro). Nunca usa el saldo de Stock ME: los consumos posteriores no lo alteran.
+ *   diferencia         = acumulado − (unidades del pedido × consumo por producto)
+ *
+ * Cada ingreso guarda un SNAPSHOT del resultado del momento en que se pudo calcular (pedido + consumo conocidos). Las
+ * correcciones posteriores (pedido que cambia de cantidad, consumo, ingresos anteriores corregidos) no lo reescriben: se
+ * muestra aparte como «hoy». Editar el propio ingreso lo recalcula y deja el cambio en la auditoría.
+ */
+export interface IngresoDifSnapshot {
   pedidoId: string;
-  producto: string;
-  unidades: number | null;
-  unidadesPorProducto: number | null;
+  acumulado: number;
+  necesario: number;
+  diferencia: number;
+  estado: "FALTAN" | "SOBRAN" | "JUSTO";
+  pedidoUnidades: number;
+  unidadesPorProducto: number;
+  calculadoAt: string;
 }
-export interface MeDiferenciaRow extends MeDiferencia {
-  materialId: string;
+
+export interface IngresoDifInput {
+  id: string;
+  /** Código normalizado. */
   codigo: string;
-  cliente: string;
-  /** Producto del material (texto) y cuántos pedidos activos del cliente lo tienen: >1 sin vínculo = ELEGIR PEDIDO. */
-  producto: string;
+  pedidoId: string | null | undefined;
+  total: number | null | undefined;
+  createdAt: string;
+  anulado?: boolean;
+}
+
+/** Acumulado por ingreso (por código + pedido, en orden de registro). Los ingresos sin pedido no acumulan. */
+export function acumuladoPorIngreso(rows: readonly IngresoDifInput[]): Map<string, number> {
+  const groups = new Map<string, IngresoDifInput[]>();
+  for (const r of rows) {
+    if (r.anulado || !r.pedidoId || !r.codigo) continue;
+    const k = `${r.codigo}|${r.pedidoId}`;
+    groups.set(k, [...(groups.get(k) ?? []), r]);
+  }
+  const out = new Map<string, number>();
+  for (const list of groups.values()) {
+    let acc = 0;
+    for (const r of [...list].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))) {
+      acc = round(acc + (r.total ?? 0));
+      out.set(r.id, acc);
+    }
+  }
+  return out;
+}
+
+export interface IngresoDiferenciaRow extends MeDiferencia {
+  /** Lo que se muestra en la fila: el snapshot histórico si existe; si no, el cálculo actual. */
+  acumulado: number | null;
+  pedidoId: string | null;
+  pedidoUnidades: number | null;
+  unidadesPorProducto: number | null;
+  snapshot: IngresoDifSnapshot | null;
+  /** Cálculo de hoy (con el pedido, consumo e ingresos actuales). */
+  actual: Pick<MeDiferencia, "estado" | "diferencia">;
+  /** Pedidos activos del cliente con ese producto (>1 sin elegir = ELEGIR PEDIDO). */
   candidatos: number;
-  pedidos: MeDiferenciaPedido[];
+}
+
+/** Arma lo que se muestra: snapshot si existe (resultado del momento del ingreso) + «hoy» si hoy da distinto. */
+export function ingresoDiferenciaView(row: Pick<IngresoDiferenciaRow, "snapshot" | "actual" | "estado" | "diferencia">): { estado: MeDiferenciaEstado; text: string; diferencia: number | null } {
+  const base = row.snapshot ? { estado: row.snapshot.estado as MeDiferenciaEstado, diferencia: row.snapshot.diferencia } : { estado: row.estado, diferencia: row.diferencia };
+  let text = formatMeDiferencia(base);
+  const hoyDistinto = row.snapshot && ["FALTAN", "SOBRAN", "JUSTO"].includes(row.actual.estado) && (row.actual.estado !== row.snapshot.estado || row.actual.diferencia !== row.snapshot.diferencia);
+  if (hoyDistinto) text += ` · hoy ${formatMeDiferencia(row.actual)}`;
+  return { estado: base.estado, text, diferencia: base.diferencia };
+}
+
+/** Datos para la diferencia PREVISTA de una fila nueva (sin confirmar): pedidos del cliente + acumulados y consumos por código y pedido. */
+export interface IngresoPrevistoContext {
+  pedidos: Array<{ id: string; cliente: string; producto: string; unidades: number | null }>;
+  /** `${codigo}|${pedidoId}` → acumulado ya ingresado. */
+  acumulados: Record<string, number>;
+  /** `${codigo}|${pedidoId}` → consumo por producto (null = sin configurar). */
+  consumos: Record<string, number | null>;
+}
+
+const normT = (s: string | null | undefined) => (s ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+
+/** Previsión para un ingreso todavía sin registrar. No toca nada: solo suma lo escrito al acumulado del grupo. */
+export function ingresoPrevisto(ctx: IngresoPrevistoContext, draft: { codigo: string; cliente: string; producto: string; total: number }): Pick<MeDiferencia, "estado" | "diferencia"> {
+  const sinDatos = { estado: "SIN_DATOS" as const, diferencia: null };
+  const cands = ctx.pedidos.filter((p) => normT(p.cliente) === normT(draft.cliente) && normT(p.producto) === normT(draft.producto) && draft.producto.trim());
+  if (cands.length === 0) return sinDatos;
+  if (cands.length > 1) return { estado: "ELEGIR_PEDIDO", diferencia: null };
+  const p = cands[0]!;
+  const k = `${normT(draft.codigo)}|${p.id}`;
+  const d = computeMeDiferencia((ctx.acumulados[k] ?? 0) + draft.total, [{ pedidoId: p.id, pedidoUnidades: p.unidades, unidadesPorProducto: ctx.consumos[k] ?? null }]);
+  return { estado: d.estado, diferencia: d.diferencia };
+}
+
+export interface IngresoDiferenciasPayload {
+  ingresos: Record<string, IngresoDiferenciaRow>;
+  /** Solo para quien puede escribir ingresos: lo necesario para la diferencia PREVISTA de filas nuevas. */
+  previsto?: IngresoPrevistoContext;
 }
 
