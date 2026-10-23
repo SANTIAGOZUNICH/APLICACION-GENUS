@@ -4,7 +4,7 @@ import { cellDisplayText, escapeHtml } from "./remito-sheet-text";
 /**
  * Maquetación ÚNICA del remito impreso: se calcula desde el XLSX ya completo (la plantilla del laboratorio), de modo que
  * la vista previa, el PDF y el XLSX comparten estructura y datos. Reproduce la planilla impresa en UNA sola hoja A4 vertical,
- * cuadrícula fina gris en todas las celdas y filas con la altura de la plantilla, ajustada a 1 página de ancho por 1 de alto.
+ * sin cuadrícula (solo texto) y filas con la altura de la plantilla, ajustada a 1 página de ancho por 1 de alto.
  */
 export const REMITO_PAGE_W = 595.28; // A4 vertical (210 × 297 mm)
 export const REMITO_PAGE_H = 841.89;
@@ -119,12 +119,10 @@ export async function layoutRemitoFromXlsx(bytes: Buffer): Promise<RemitoLayout>
   return { pages: [page] };
 }
 
-const GRID = "#8c8c8c";
-
 /** Vista previa: una página SVG por hoja impresa, texto negro sobre blanco con colores propios (no depende del tema de la app). */
 export function remitoLayoutToPreviewHtml(layout: RemitoLayout): string {
   const svgs = layout.pages.map((p, i) => {
-    const rects = p.rects.map((r) => `<rect x="${r.x.toFixed(2)}" y="${r.y.toFixed(2)}" width="${r.w.toFixed(2)}" height="${r.h.toFixed(2)}" fill="none" stroke="${GRID}" stroke-width="0.6"/>`).join("");
+    // Sin cuadrícula: solo texto negro sobre blanco en sus posiciones originales.
     const texts = p.texts
       .map((t) => {
         const pad = 3;
@@ -136,7 +134,7 @@ export function remitoLayoutToPreviewHtml(layout: RemitoLayout): string {
         return `<text x="${tx.toFixed(2)}" y="${ty.toFixed(2)}" text-anchor="${anchor}" font-family="Arial, Helvetica, sans-serif" font-size="${t.size.toFixed(2)}" font-weight="${t.bold ? 700 : 400}" font-style="${t.italic ? "italic" : "normal"}" fill="#000000"${fit}>${escapeHtml(t.text)}</text>`;
       })
       .join("");
-    return `<figure style="margin:0 0 12px 0;"><svg viewBox="0 0 ${REMITO_PAGE_W} ${REMITO_PAGE_H}" width="100%" style="display:block;max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #9ca3af;box-shadow:0 1px 3px rgba(0,0,0,.25);" role="img" aria-label="Remito, página ${i + 1} de ${layout.pages.length}"><rect width="100%" height="100%" fill="#ffffff"/>${rects}${texts}</svg><figcaption style="text-align:center;font:12px Arial,sans-serif;color:#111827;background:#ffffff;padding:2px 0;">Hoja A4 vertical · 1 página</figcaption></figure>`;
+    return `<figure style="margin:0 0 12px 0;"><svg viewBox="0 0 ${REMITO_PAGE_W} ${REMITO_PAGE_H}" width="100%" style="display:block;max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #9ca3af;box-shadow:0 1px 3px rgba(0,0,0,.25);" role="img" aria-label="Remito, página ${i + 1} de ${layout.pages.length}"><rect width="100%" height="100%" fill="#ffffff"/>${texts}</svg><figcaption style="text-align:center;font:12px Arial,sans-serif;color:#111827;background:#ffffff;padding:2px 0;">Hoja A4 vertical · 1 página</figcaption></figure>`;
   });
   return `<div data-testid="remito-xlsx-preview" style="background:#ffffff;color:#000000;color-scheme:light;padding:8px;overflow:auto;max-height:75vh;">${svgs.join("")}</div>`;
 }

@@ -309,8 +309,10 @@ export async function buildRemitoXlsx(remito: RemitoRecord): Promise<Buffer> {
   if (!sheet) throw new Error("Plantilla remito sin hojas.");
 
   fillTemplateSheet(sheet, remito, consolidated);
-  // Impresión: UNA sola hoja A4 vertical (ajustada a 1 página de ancho por 1 de alto), cuadrícula impresa, márgenes del modelo.
-  sheet.pageSetup = { ...sheet.pageSetup, paperSize: 9, orientation: "portrait", showGridLines: true, horizontalCentered: true, fitToPage: true, fitToWidth: 1, fitToHeight: 1, scale: undefined };
+  // Impresión: UNA sola hoja A4 vertical (ajustada a 1 página de ancho por 1 de alto), SIN cuadrícula impresa ni en pantalla, márgenes del modelo.
+  sheet.pageSetup = { ...sheet.pageSetup, paperSize: 9, orientation: "portrait", showGridLines: false, horizontalCentered: true, fitToPage: true, fitToWidth: 1, fitToHeight: 1, scale: undefined };
+  sheet.views = sheet.views.map((v) => ({ ...v, showGridLines: false }));
+  // La plantilla no define bordes de celda: sin cuadrícula no queda ninguna línea.
   // Área de impresión: A–I como la planilla original; hasta N solo si hay 2.ª/3.ª configuración de cajas (columnas J–N).
   let lastCol = "I";
   for (let r = 1; r <= sheet.rowCount && lastCol === "I"; r++) for (let c = 10; c <= 14; c++) if (sheet.getCell(r, c).value != null && sheet.getCell(r, c).value !== "") lastCol = "N";
