@@ -102,17 +102,96 @@ describe("OE: GUARDAR AVANCE descuenta el consumo real de MP (sin doble descuent
     expect(await codeKg("MP-AGUA")).toBe(87);
   });
 
-  it("datos incompletos: guarda igual, no inventa movimientos, avisa sin bloquear y se regulariza después", async () => {
+  it("datos incompletos (sin CÓDIGO MP): guarda igual, no inventa movimientos, avisa sin bloquear y se regulariza después", async () => {
     const oe = await makeOe();
-    const a = await avance(oe.id, (m) => [{ ...m[0]!, kgReal: 8, lote: "" }]); // falta el lote
+    const a = await avance(oe.id, (m) => [{ ...m[0]!, kgReal: 8, codigoMp: "", lote: "A1" }]); // falta el código
     expect(a.order.version).toBeGreaterThan(oe.version);
     expect(a.mpConsumption?.applied).toEqual([]);
     expect(a.mpConsumption?.pendingIssues.length).toBeGreaterThan(0);
     expect(lotKg("MP-AGUA", "A1")).toBe(100);
     expect(await movs("MP-AGUA")).toBe(0);
-    const b = await avance(oe.id, (m) => [{ ...m[0]!, kgReal: 8, lote: "A1" }]); // se completa el dato
+    const b = await avance(oe.id, (m) => [{ ...m[0]!, kgReal: 8, codigoMp: "MP-AGUA", lote: "A1" }]); // se completa el dato
     expect(b.mpConsumption?.applied).toEqual([{ codigo: "MP-AGUA", lote: "A1", delta: -8 }]);
     expect(lotKg("MP-AGUA", "A1")).toBe(92);
+  });
+
+  it("LOTE MP vacío: descuenta por CÓDIGO (25 kg − 3 kg = 22 kg), queda auditado con la OE y no se duplica al guardar de nuevo", async () => {
+    await seedMpStockForTests([{ codigo: "MP001", lote: "G-1", kg: 25, descripcion: "Glicerina" }, { codigo: "MP-AGUA", lote: "A1", kg: 100 }]);
+    const oe = await makeOe();
+    const sinLote = (n: number) => (m: OeMaterialRow[]) => [{ ...m[0]!, codigoMp: "MP001", kgReal: n, lote: "" }];
+    const a = await avance(oe.id, sinLote(3));
+    expect(a.mpConsumption?.pendingIssues).toEqual([]);
+    expect(a.mpConsumption?.applied).toEqual([{ codigo: "MP001", lote: "G-1", delta: -3 }]);
+    expect(await codeKg("MP001")).toBe(22);
+    expect(lotKg("MP001", "G-1")).toBe(22);
+    const mov = (await getMpStockLedger().history("MP001")).find((x) => x.kind === "CONSUMO_OE")!;
+    expect(mov).toMatchObject({ refType: "oe", refId: oe.id, quantity: -3 });
+    expect(mov.reason).toContain("kg real");
+    const b = await avance(oe.id, sinLote(3)); // guardar dos veces: no duplica
+    expect(b.mpConsumption?.applied).toEqual([]);
+    expect(await codeKg("MP001")).toBe(22);
+    const c = await avance(oe.id, sinLote(5)); // cambia la cantidad: solo la diferencia
+    expect(c.mpConsumption?.applied).toEqual([{ codigo: "MP001", lote: "G-1", delta: -2 }]);
+    expect(await codeKg("MP001")).toBe(20);
+    const d = await avance(oe.id, sinLote(4)); // baja: compensación de la diferencia
+    expect(d.mpConsumption?.applied).toEqual([{ codigo: "MP001", lote: "G-1", delta: 1 }]);
+    expect(await codeKg("MP001")).toBe(21);
+    await service.deliver(oe.id, elaboracion, true); // entregar reconoce lo ya descontado
+    expect(await codeKg("MP001")).toBe(21);
+  });
+
+  it("dos lotes sin indicar lote: FEFO — 2 kg del lote de vencimiento más próximo y 3 kg del siguiente", async () => {
+    await seedMpStockForTests([
+      { codigo: "MP001", lote: "B", kg: 8, vencimiento: "2027-06-01" },
+      { codigo: "MP001", lote: "A", kg: 2, vencimiento: "2027-01-01" },
+      { codigo: "MP-AGUA", lote: "A1", kg: 100 },
+    ]);
+    const oe = await makeOe();
+    const a = await avance(oe.id, (m) => [{ ...m[0]!, codigoMp: "MP001", kgReal: 5, lote: "" }]);
+    expect(a.mpConsumption?.applied).toEqual([{ codigo: "MP001", lote: "A", delta: -2 }, { codigo: "MP001", lote: "B", delta: -3 }]);
+    expect([lotKg("MP001", "A"), lotKg("MP001", "B"), await codeKg("MP001")]).toEqual([0, 5, 5]);
+    const b = await avance(oe.id, (m) => [{ ...m[0]!, codigoMp: "MP001", kgReal: 5, lote: "" }]); // sin cambios: no mueve kg entre lotes
+    expect(b.mpConsumption?.applied).toEqual([]);
+    const c = await avance(oe.id, (m) => [{ ...m[0]!, codigoMp: "MP001", kgReal: 6, lote: "" }]);
+    expect(c.mpConsumption?.applied).toEqual([{ codigo: "MP001", lote: "B", delta: -1 }]);
+    expect([lotKg("MP001", "A"), lotKg("MP001", "B")]).toEqual([0, 4]);
+  });
+
+  it("lote explícito: se respeta y se valida su disponibilidad (no se reparte a otros lotes)", async () => {
+    await seedMpStockForTests([{ codigo: "MP001", lote: "A", kg: 2 }, { codigo: "MP001", lote: "B", kg: 8 }, { codigo: "MP-AGUA", lote: "A1", kg: 100 }]);
+    const oe = await makeOe();
+    const a = await avance(oe.id, (m) => [{ ...m[0]!, codigoMp: "MP001", kgReal: 5, lote: "A" }]); // A solo tiene 2
+    expect(a.mpConsumption?.applied).toEqual([]);
+    expect(a.mpConsumption?.shortages.map((s) => s.lote)).toEqual(["A"]);
+    expect([lotKg("MP001", "A"), lotKg("MP001", "B")]).toEqual([2, 8]);
+    const b = await avance(oe.id, (m) => [{ ...m[0]!, codigoMp: "MP001", kgReal: 5, lote: "B" }]);
+    expect(b.mpConsumption?.applied).toEqual([{ codigo: "MP001", lote: "B", delta: -5 }]);
+  });
+
+  it("stock insuficiente sin lote: no descuenta parcialmente; MP vencida / en cuarentena: no se consume; código inexistente: error claro", async () => {
+    await seedMpStockForTests([
+      { codigo: "MP001", lote: "A", kg: 2, vencimiento: "2027-01-01" },
+      { codigo: "MP001", lote: "B", kg: 8, vencimiento: "2027-06-01" },
+      { codigo: "MP-CUA", lote: "Q", kg: 50, estadoStockManual: "Cuarentena" },
+      { codigo: "MP-VEN", lote: "V", kg: 50, vencimiento: "2020-01-01" },
+      { codigo: "MP-AGUA", lote: "A1", kg: 100 },
+    ]);
+    const oe = await makeOe();
+    const run = (codigoMp: string, n: number) => avance(oe.id, (m) => [{ ...m[0]!, codigoMp, kgReal: n, lote: "" }]);
+    const corto = await run("MP001", 50);
+    expect(corto.mpConsumption?.applied).toEqual([]);
+    expect(corto.mpConsumption?.shortages.length).toBeGreaterThan(0);
+    expect([lotKg("MP001", "A"), lotKg("MP001", "B"), await codeKg("MP001")]).toEqual([2, 8, 10]);
+    for (const code of ["MP-CUA", "MP-VEN"]) {
+      const r = await run(code, 1);
+      expect(r.mpConsumption?.applied).toEqual([]);
+      expect(r.mpConsumption?.pendingIssues.join(" ")).toMatch(/no se consume/);
+      expect(await codeKg(code)).toBe(50);
+    }
+    const no = await run("NO-EXISTE", 1);
+    expect(no.mpConsumption?.applied).toEqual([]);
+    expect(no.mpConsumption?.pendingIssues.join(" ")).toContain("no existe en Stock MP");
+    expect(await codeKg("MP-AGUA")).toBe(100);
   });
 
   it("sin KG REAL todavía: no es faltante ni descuenta; sin stock suficiente queda pendiente sin negativos", async () => {

@@ -79,17 +79,17 @@ describe("buildOeConsumptionPlan", () => {
       ],
       catalog
     );
-    expect(lines).toEqual([]);
+    // La fila 4 no tiene lote (opcional): se identifica por código y se reparte entre los lotes del código.
+    expect(lines.map((l) => [l.codigo, l.lote, l.kg])).toEqual([["MP-AGUA", "A1", 1]]);
     expect(issues.map((i) => [i.rowNumber, i.field])).toEqual([
       [1, "kgReal"],
       [2, "codigoMp"],
       [3, "codigoMp"],
-      [4, "lote"],
       [5, "lote"],
       [6, "codigoMp"],
     ]);
     expect(issues[0]!.message).toBe("Fila 1 — AGUA: falta KG REAL UTILIZADO.");
-    expect(issues[4]!.message).toContain("«ZZ» no está en Stock MP");
+    expect(issues[3]!.message).toContain("«ZZ» no está en Stock MP");
   });
 
   it("KG REAL 0 = no se usó: no exige código ni lote y no descuenta; filas vacías se ignoran", () => {
@@ -196,5 +196,74 @@ describe("sugerencia de CÓDIGO MP", () => {
       catalog
     );
     expect(out.map((m) => m.codigoMp)).toEqual(["MP-GLI", "MANUAL", "", ""]);
+  });
+});
+
+
+describe("LOTE MP opcional: descuento por CÓDIGO (FEFO / FIFO entre lotes aptos)", () => {
+  const lot = (id: string, lote: string, kg: number, over: Partial<MpCatalogLot> = {}): MpCatalogLot => ({ id, codigo: "MP001", descripcion: "GLICERINA", lote, cantidadKg: kg, ...over });
+  const plan = (rows: Parameters<typeof row>[0][], cat: MpCatalogLot[], opts = {}) => buildOeConsumptionPlan(rows.map((r) => row({ materiaPrima: "GLICERINA", codigoMp: "MP001", ...r })), cat, opts);
+  const out = (p: ReturnType<typeof plan>) => p.lines.map((l) => [l.lote, l.kg]);
+
+  it("un solo registro del código: se descuenta de ese registro aunque el lote esté vacío", () => {
+    const p = plan([{ kgReal: 3, lote: "" }], [lot("a", "L1", 25)]);
+    expect(p.issues).toEqual([]);
+    expect(p.lines).toMatchObject([{ codigo: "MP001", lote: "L1", lotId: "a", kg: 3, viaCodigo: true }]);
+  });
+
+  it("dos lotes: primero el de vencimiento más próximo y el resto del siguiente (2 kg del A + 3 kg del B)", () => {
+    const cat = [lot("b", "B", 8, { vencimiento: "2027-06-01" }), lot("a", "A", 2, { vencimiento: "2027-01-01" })];
+    expect(out(plan([{ kgReal: 5, lote: "" }], cat, { today: new Date("2026-10-23T12:00:00") }))).toEqual([["A", 2], ["B", 3]]);
+  });
+
+  it("sin vencimiento: FIFO por fecha de ingreso; los que tienen vencimiento van antes", () => {
+    const cat = [lot("n2", "N2", 10, { createdAt: "2026-02-01T00:00:00Z" }), lot("n1", "N1", 10, { createdAt: "2026-01-01T00:00:00Z" }), lot("v", "V", 10, { vencimiento: "2030-01-01" })];
+    expect(out(plan([{ kgReal: 25, lote: "" }], cat))).toEqual([["V", 10], ["N1", 10], ["N2", 5]]);
+    expect(out(plan([{ kgReal: 4, lote: "" }], cat))).toEqual([["V", 4]]);
+  });
+
+  it("no consume lotes vencidos, en cuarentena, bloqueados ni rechazados", () => {
+    const cat = [
+      lot("v", "VENC", 50, { vencimiento: "2020-01-01" }),
+      lot("c", "CUAR", 50, { estadoManual: "Cuarentena" }),
+      lot("b", "BLOQ", 50, { estadoManual: "Bloqueado" }),
+      lot("r", "RECH", 50, { vencimientoEstadoManual: "Rechazado" }),
+      lot("ok", "OK", 5, { vencimiento: "2027-01-01" }),
+    ];
+    expect(out(plan([{ kgReal: 4, lote: "" }], cat, { today: new Date("2026-10-23T12:00:00") }))).toEqual([["OK", 4]]);
+    const todos = plan([{ kgReal: 1, lote: "" }], cat.slice(0, 4), { today: new Date("2026-10-23T12:00:00") });
+    expect(todos.lines).toEqual([]);
+    expect(todos.issues[0]!.message).toContain("no hay lotes aptos");
+    const unico = plan([{ kgReal: 1, lote: "" }], [lot("x", "X", 9, { estadoManual: "Cuarentena" })]);
+    expect(unico.lines).toEqual([]);
+    expect(unico.issues[0]!.message).toContain("cuarentena");
+  });
+
+  it("lote explícito: se respeta (no se reparte) y puede convivir con filas sin lote", () => {
+    const cat = [lot("a", "A", 2, { vencimiento: "2027-01-01" }), lot("b", "B", 8, { vencimiento: "2027-06-01" })];
+    expect(out(plan([{ kgReal: 1.5, lote: "b" }], cat))).toEqual([["B", 1.5]]);
+    expect(out(plan([{ kgReal: 1, lote: "B" }, { kgReal: 1, lote: "" }], cat))).toEqual([["B", 1], ["A", 1]]);
+  });
+
+  it("stock insuficiente: el faltante queda en el primer lote apto para que el control de stock lo informe (no se descuenta parcial)", () => {
+    const cat = [lot("a", "A", 2, { vencimiento: "2027-01-01" }), lot("b", "B", 8, { vencimiento: "2027-06-01" })];
+    const p = plan([{ kgReal: 150, lote: "" }], cat);
+    expect(out(p)).toEqual([["A", 142], ["B", 8]]);
+    expect(lotShortages(p.lines.map((l) => ({ codigo: l.codigo, lote: l.lote, lotId: l.lotId, delta: -l.kg })), cat).map((s) => s.lote)).toEqual(["A"]);
+  });
+
+  it("guardar de nuevo con lo ya consumido: se conserva lo tomado de cada lote y solo se suma lo nuevo", () => {
+    const cat = [lot("a", "A", 0, { vencimiento: "2027-01-01" }), lot("b", "B", 5, { vencimiento: "2027-06-01" })]; // A ya se agotó con esta OE
+    const consumed = new Map([["MP001|A", 2], ["MP001|B", 3]]);
+    expect(out(plan([{ kgReal: 5, lote: "" }], cat, { consumedBefore: consumed }))).toEqual([["A", 2], ["B", 3]]); // igual: sin cambios
+    expect(out(plan([{ kgReal: 6, lote: "" }], cat, { consumedBefore: consumed }))).toEqual([["A", 2], ["B", 4]]); // +1 del siguiente apto
+    expect(out(plan([{ kgReal: 4, lote: "" }], cat, { consumedBefore: consumed }))).toEqual([["A", 2], ["B", 2]]); // se reduce del último
+  });
+
+  it("código ambiguo: error claro, sin elegir otra MP", () => {
+    const cat = [lot("a", "A", 5), { id: "z", codigo: "MP002", codigosAnteriores: ["MP001"], descripcion: "OTRA", lote: "Z", cantidadKg: 5 }];
+    const p = plan([{ kgReal: 1, lote: "" }], cat);
+    expect(p.lines).toEqual([]);
+    expect(p.issues[0]!.message).toContain("ambiguo");
   });
 });

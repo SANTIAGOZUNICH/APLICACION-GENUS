@@ -5,17 +5,22 @@
  * (código de Stock MP) y del LOTE MP indicados. Una MP usada desde varios lotes tiene filas de «lote adicional»; una
  * MP repetida en varias fases suma por (código, lote) sin duplicar.
  *
- * Antes de descontar, cada fila con consumo debe tener CÓDIGO MP existente en Stock MP, KG REAL y LOTE MP. Si algo
- * falta se informa la fila exacta y no se descuenta NADA.
+ * Antes de descontar, cada fila con consumo debe tener CÓDIGO MP existente (e inequívoco) en Stock MP y KG REAL. El LOTE MP
+ * es OPCIONAL. Si algo falta se informa la fila exacta y no se descuenta NADA.
  *
  * Fila de Stock MP que se descuenta (nunca se adivina):
- *  - el lote tiene su propia fila en Stock MP para ese código → esa fila;
- *  - el código tiene UNA sola fila en Stock MP (Ingresos MP acumula todos los lotes de un código en esa fila) → esa
- *    fila; el lote real queda registrado igual en el libro mayor y en la auditoría;
- *  - el código tiene varias filas y ninguna es de ese lote → se pide corregir el lote (no se elige una al azar).
+ *  - LOTE indicado: el lote tiene su propia fila en Stock MP para ese código → esa fila; el código tiene UNA sola fila
+ *    (Ingresos MP acumula todos los lotes de un código en esa fila) → esa fila, con el lote real registrado igual; el
+ *    código tiene varias filas y ninguna es de ese lote → se pide corregir el lote (no se elige una al azar).
+ *  - LOTE vacío: se identifica por CÓDIGO. Una sola fila → esa fila (queda su lote como trazabilidad). Varias filas →
+ *    se reparte entre las APTAS (no vencidas, no en cuarentena/bloqueadas/rechazadas, con stock): primero la de
+ *    vencimiento más próximo (FEFO) y, sin vencimiento, la de ingreso más antiguo (FIFO). Lo ya consumido por esta OE
+ *    se conserva (guardar de nuevo no mueve kg entre lotes); si no alcanza, el faltante se informa como stock insuficiente
+ *    y no se descuenta nada.
  */
 import type { OeMaterialRow } from "@/lib/orders/types";
 import { normalizeSearchKey } from "@/lib/formulas/types";
+import { calcDiasAlVence } from "@/lib/inventory/calcs";
 
 /** Lote de la planilla Stock MP (catálogo con lotes y kg). */
 export type MpCatalogLot = {
@@ -26,10 +31,94 @@ export type MpCatalogLot = {
   lote: string;
   cantidadKg: number | null;
   archived?: boolean;
+  /** Vencimiento del lote (ISO) y fecha de ingreso, para FEFO / FIFO. */
+  vencimiento?: string;
+  createdAt?: string;
+  /** Estados fijados a mano en Stock MP (texto libre): «Cuarentena», «Bloqueado», «Rechazado», «Vencido»… */
+  estadoManual?: string;
+  vencimientoEstadoManual?: string;
 };
 
 export const normMpCode = (c: string | null | undefined) => String(c ?? "").trim().replace(/\s+/g, " ").toUpperCase();
 export const normMpLote = (l: string | null | undefined) => String(l ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+
+const BLOCKED_RE = /cuarentena|bloquead|rechazad/i;
+
+/** Motivo por el que un lote NO se consume automáticamente (null = apto). Solo datos reales de Stock MP: nada inventado. */
+export function mpLotBlockReason(l: MpCatalogLot, today = new Date()): string | null {
+  if (BLOCKED_RE.test(`${l.estadoManual ?? ""} ${l.vencimientoEstadoManual ?? ""}`)) return "en cuarentena / bloqueado / rechazado";
+  if (/vencid/i.test(l.vencimientoEstadoManual ?? "")) return "vencido";
+  const dias = calcDiasAlVence(l.vencimiento, today);
+  if (dias != null && dias < 0) return "vencido";
+  return null;
+}
+
+/** Clave de posición consumida por una OE (código normalizado | lote normalizado). */
+export const oePositionKey = (codigo: string, lote: string | null | undefined) => `${normMpCode(codigo)}|${normMpLote(lote)}`;
+
+/** FEFO (vencimiento más próximo) y, sin vencimiento, FIFO por fecha de ingreso; los que no tienen vencimiento van después. */
+function fefoCompare(a: MpCatalogLot, b: MpCatalogLot): number {
+  const va = (a.vencimiento ?? "").slice(0, 10);
+  const vb = (b.vencimiento ?? "").slice(0, 10);
+  if (va && vb) return va.localeCompare(vb) || (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id.localeCompare(b.id);
+  if (va) return -1;
+  if (vb) return 1;
+  return (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.id.localeCompare(b.id);
+}
+
+const r4 = (n: number) => Number(n.toFixed(4));
+
+/**
+ * Reparte `total` kg de una MP SIN lote entre las filas de Stock MP de su código. Devuelve [{lot, kg}] o un motivo de error.
+ * `consumedBefore`: kg que esta OE ya tiene consumidos por (código|lote); `explicitKg`: kg pedidos explícitamente por lote.
+ */
+export function allocateWithoutLote(
+  code: string,
+  total: number,
+  codeLots: MpCatalogLot[],
+  consumedBefore: Map<string, number>,
+  explicitKg: Map<string, number>,
+  today = new Date()
+): { parts: Array<{ lot: MpCatalogLot; kg: number }>; error?: string } {
+  if (codeLots.length === 1) {
+    const only = codeLots[0]!;
+    const why = mpLotBlockReason(only, today);
+    return why ? { parts: [], error: `el stock del código ${code} está ${why}: no se consume.` } : { parts: [{ lot: only, kg: r4(total) }] };
+  }
+  const eligible = codeLots.filter((l) => !mpLotBlockReason(l, today)).sort(fefoCompare);
+  if (eligible.length === 0) return { parts: [], error: `no hay lotes aptos del código ${code} (vencidos, en cuarentena, bloqueados o rechazados): no se consume.` };
+  const sortedAll = [...eligible, ...codeLots.filter((l) => mpLotBlockReason(l, today)).sort(fefoCompare)];
+  const parts = new Map<string, { lot: MpCatalogLot; kg: number }>();
+  const add = (lot: MpCatalogLot, kg: number) => {
+    const p = parts.get(lot.id);
+    if (p) p.kg = r4(p.kg + kg);
+    else parts.set(lot.id, { lot, kg: r4(kg) });
+  };
+  let remaining = r4(total);
+  // 1) Lo que esta OE ya consumió de cada lote sin haberlo pedido explícitamente se conserva (no se mueve entre lotes).
+  for (const lot of sortedAll) {
+    if (remaining <= 0) break;
+    const key = oePositionKey(code, lot.lote);
+    const prev = Math.max(0, r4((consumedBefore.get(key) ?? 0) - (explicitKg.get(key) ?? 0)));
+    const keep = Math.min(remaining, prev);
+    if (keep > 0) {
+      add(lot, keep);
+      remaining = r4(remaining - keep);
+    }
+  }
+  // 2) El resto: FEFO / FIFO entre los lotes aptos con stock.
+  for (const lot of eligible) {
+    if (remaining <= 0) break;
+    const take = Math.min(remaining, Math.max(0, lot.cantidadKg ?? 0));
+    if (take > 0) {
+      add(lot, take);
+      remaining = r4(remaining - take);
+    }
+  }
+  // 3) Si no alcanza, el faltante queda en el primer lote apto: el control de stock lo informa y no se descuenta nada.
+  if (remaining > 0) add(eligible[0]!, remaining);
+  return { parts: [...parts.values()] };
+}
 
 export type ConsumptionIssue = {
   rowId: string;
@@ -82,12 +171,16 @@ function isBlankRow(m: OeMaterialRow): boolean {
 export function buildOeConsumptionPlan(
   materials: OeMaterialRow[],
   catalog: MpCatalogLot[],
-  /** `progress`: «Guardar avance». Una fila sin KG REAL UTILIZADO todavía NO se consumió: se ignora (no es un faltante). */
-  opts: { progress?: boolean } = {}
+  /** `progress`: «Guardar avance». Una fila sin KG REAL UTILIZADO todavía NO se consumió: se ignora (no es un faltante).
+   *  `consumedBefore`: kg que la OE ya tiene consumidos por (código|lote) (para no mover consumos entre lotes al repartir). */
+  opts: { progress?: boolean; consumedBefore?: Map<string, number>; today?: Date } = {}
 ): { lines: ConsumptionLine[]; issues: ConsumptionIssue[] } {
   const issues: ConsumptionIssue[] = [];
   const grouped = new Map<string, ConsumptionLine>();
   const parentOf = new Map(materials.map((m) => [m.id, m]));
+  /** Filas SIN lote: se reparten por código al final (después de conocer lo pedido explícitamente por lote). */
+  const unassigned = new Map<string, { code: string; kg: number; rowIds: string[]; materiaPrima: string; firstRow: { id: string; n: number } }>();
+  const explicitKg = new Map<string, number>();
 
   materials.forEach((m, i) => {
     if (isBlankRow(m)) return;
@@ -116,9 +209,18 @@ export function buildOeConsumptionPlan(
       issue("codigoMp", `el CÓDIGO MP «${code}» no existe en Stock MP.`);
       return;
     }
+    if (new Set(codeLots.map((l) => normMpCode(l.codigo))).size > 1) {
+      issue("codigoMp", `el CÓDIGO MP «${code}» es ambiguo: coincide con varias materias primas de Stock MP (${[...new Set(codeLots.map((l) => normMpCode(l.codigo)))].join(", ")}).`);
+      return;
+    }
     const lote = normMpLote(m.lote);
     if (!lote) {
-      issue("lote", "falta LOTE MP.");
+      // LOTE MP vacío (opcional): se identifica por código y se reparte al final (FEFO / FIFO entre lotes aptos).
+      const prevU = unassigned.get(code);
+      if (prevU) {
+        prevU.kg = Number((prevU.kg + m.kgReal).toFixed(4));
+        prevU.rowIds.push(m.id);
+      } else unassigned.set(code, { code, kg: Number(m.kgReal.toFixed(4)), rowIds: [m.id], materiaPrima, firstRow: { id: m.id, n: i + 1 } });
       return;
     }
     const matches = codeLots.filter((l) => normMpLote(l.lote) === lote);
@@ -136,6 +238,7 @@ export function buildOeConsumptionPlan(
     const lot = matches[0] ?? codeLots[0]!;
     const realLote = m.lote.trim().replace(/\s+/g, " ");
     const key = `${code}|${lote}`;
+    explicitKg.set(key, Number(((explicitKg.get(key) ?? 0) + m.kgReal).toFixed(4)));
     const prev = grouped.get(key);
     if (prev) {
       prev.kg = Number((prev.kg + m.kgReal).toFixed(4));
@@ -152,6 +255,26 @@ export function buildOeConsumptionPlan(
       });
     }
   });
+
+  // Reparto de las filas sin lote (por código).
+  for (const u of unassigned.values()) {
+    const codeLots = lotsForCode(catalog, u.code);
+    const { parts, error } = allocateWithoutLote(u.code, u.kg, codeLots, opts.consumedBefore ?? new Map(), explicitKg, opts.today);
+    if (error) {
+      issues.push({ rowId: u.firstRow.id, rowNumber: u.firstRow.n, materiaPrima: u.materiaPrima, field: "codigoMp", message: `Fila ${u.firstRow.n} — ${u.materiaPrima}: ${error}` });
+      continue;
+    }
+    for (const { lot, kg } of parts) {
+      const key = `${u.code}|${normMpLote(lot.lote)}`;
+      const prev = grouped.get(key);
+      if (prev) {
+        prev.kg = Number((prev.kg + kg).toFixed(4));
+        for (const id of u.rowIds) if (!prev.rowIds.includes(id)) prev.rowIds.push(id);
+      } else {
+        grouped.set(key, { codigo: u.code, lote: lot.lote.trim(), lotId: lot.id, viaCodigo: codeLots.length === 1, kg, materiaPrima: u.materiaPrima, rowIds: [...u.rowIds] });
+      }
+    }
+  }
 
   return { lines: [...grouped.values()], issues };
 }

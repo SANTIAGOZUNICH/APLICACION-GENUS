@@ -252,8 +252,8 @@ export function OeFormSections({
             className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-950"
             data-testid="oe-formula-locked-banner"
           >
-            Fórmula teórica en solo lectura. Elaboración completa CÓDIGO MP (si falta), KG REAL UTILIZADO y LOTE MP; al
-            entregar se descuenta del stock solo lo realmente utilizado.
+            Fórmula teórica en solo lectura. Elaboración completa CÓDIGO MP (si falta) y KG REAL UTILIZADO; LOTE MP es opcional
+            (sin lote se descuenta por código). Se descuenta del stock solo lo realmente utilizado.
           </p>
         )}
         <OeMaterialsTable

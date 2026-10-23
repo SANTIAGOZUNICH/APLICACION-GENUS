@@ -16,6 +16,7 @@ import { getMpStockLedger } from "@/lib/mp-stock/mp-stock-ledger";
 import {
   buildOeConsumptionPlan,
   lotShortages,
+  oePositionKey,
   type ConsumptionIssue,
   normMpCode,
   normMpLote,
@@ -41,6 +42,10 @@ const toCatalog = (rows: MpStockRow[]): MpCatalogLot[] =>
     lote: r.lote,
     cantidadKg: r.cantidadKg,
     archived: r.archived,
+    vencimiento: r.vencimiento,
+    createdAt: r.createdAt,
+    estadoManual: r.estadoStockManual,
+    vencimientoEstadoManual: r.estadoVencimientoManual,
   }));
 
 export async function runOeStockOp<T>(actor: OrdersActor, op: (ctx: OeStockCtx) => Promise<T>): Promise<T> {
@@ -93,6 +98,16 @@ export type OeConsumptionResult = {
  * Valida y descuenta el consumo REAL de la OE. `commitOrder` actualiza la OE (dentro de la misma transacción) y
  * devuelve su nueva versión: solo se llama si todo está en orden.
  */
+/** Kg que la OE ya tiene consumidos por (código|lote) según el libro mayor (para repartir sin mover consumos entre lotes). */
+async function consumedBeforeOf(oeId: string): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (const p of (await getMpStockLedger().oeNetPositions(oeId)).values()) {
+    const kg = Math.round(-p.net * 10000) / 10000;
+    if (kg > 0) out.set(oePositionKey(p.codigo, p.lote), kg);
+  }
+  return out;
+}
+
 export async function consumeOeStock<O extends { version: number; status: string }>(
   ctx: OeStockCtx,
   actor: OrdersActor,
@@ -112,7 +127,7 @@ export async function consumeOeStock<O extends { version: number; status: string
   }
 ): Promise<{ order: O; result: OeConsumptionResult | null; pending: OeConsumptionPending | null }> {
   const ledger = getMpStockLedger();
-  const plan = buildOeConsumptionPlan(params.materials, ctx.catalog);
+  const plan = buildOeConsumptionPlan(params.materials, ctx.catalog, { consumedBefore: await consumedBeforeOf(params.oeId) });
   if (plan.issues.length) {
     if (params.soft) {
       const pending = { issues: plan.issues, shortages: [] };
@@ -241,7 +256,7 @@ export async function registerOeProgressConsumption(
   params: { oeId: string; orderNumber: string; orderVersion: number; orderStatus: string; materials: OeMaterialRow[] }
 ): Promise<OeProgressConsumption> {
   const ledger = getMpStockLedger();
-  const plan = buildOeConsumptionPlan(params.materials, ctx.catalog, { progress: true });
+  const plan = buildOeConsumptionPlan(params.materials, ctx.catalog, { progress: true, consumedBefore: await consumedBeforeOf(params.oeId) });
   const pendingIssues = plan.issues.map((i) => i.message);
   const lotIdOf = (d: { codigo: string; lote: string; lotId: string | null }) => d.lotId ?? legacyLotFor(ctx.catalog, d.codigo, d.lote);
 
