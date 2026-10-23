@@ -30,7 +30,7 @@ export type LayoutText = {
 };
 export type LayoutRect = { x: number; y: number; w: number; h: number };
 export type LayoutPage = { rects: LayoutRect[]; texts: LayoutText[] };
-export type RemitoLayout = { pages: LayoutPage[] };
+export type RemitoLayout = { pages: LayoutPage[]; /** Zoom de impresión efectivamente aplicado (125 % salvo remitos enormes). */ zoom: number };
 
 function alignOf(h: string | undefined, numeric: boolean): "left" | "center" | "right" {
   if (h === "center" || h === "centerContinuous") return "center";
@@ -45,7 +45,7 @@ export async function layoutRemitoFromXlsx(bytes: Buffer): Promise<RemitoLayout>
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(bytes as unknown as ArrayBuffer);
   const sheet = wb.worksheets[0];
-  if (!sheet) return { pages: [{ rects: [], texts: [] }] };
+  if (!sheet) return { pages: [{ rects: [], texts: [] }], zoom: 1 };
 
   const lastRow = Math.max(sheet.rowCount || 0, 47);
   const merges: Box[] = [];
@@ -116,7 +116,53 @@ export async function layoutRemitoFromXlsx(bytes: Buffer): Promise<RemitoLayout>
     }
     y += h;
   }
-  return { pages: [page] };
+  const zoomed = applyPrintZoom(page);
+  return { pages: [zoomed.page], zoom: zoomed.zoom };
+}
+
+/**
+ * Escala de impresión del remito: 125 % (antes se imprimía como un 91 % «ajustado a la hoja»). El zoom se aplica a toda la
+ * maquetación (posiciones, anchos, altos y tamaños de letra por igual) alrededor del centro del BLOQUE DE TEXTO del remito,
+ * que luego queda centrado horizontalmente en la hoja: las proporciones y el diseño no cambian. Para no recortar nada, el zoom
+ * baja solo si el texto no entraría en una hoja A4 vertical con un margen de seguridad (remitos con muchos productos).
+ */
+export const REMITO_PRINT_ZOOM = 1.25;
+const SAFE_MARGIN = 12; // ~4 mm: el borde no imprimible típico
+
+function applyPrintZoom(page: LayoutPage): { page: LayoutPage; zoom: number } {
+  // «|» de la celda A1 es un resto de la plantilla original (no es dato del remito): no condiciona el zoom.
+  const isStray = (t: LayoutText) => t.text === "|";
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const t of page.texts) {
+    if (isStray(t)) continue;
+    const w = Math.min(t.w - 6, t.text.length * t.size * 0.56);
+    const left = t.align === "center" ? t.x + t.w / 2 - w / 2 : t.align === "right" ? t.x + t.w - 3 - w : t.x + 3;
+    const baseline = t.valign === "middle" ? t.y + t.h / 2 + t.size * 0.35 : t.valign === "top" ? t.y + t.size + 1 : t.y + t.h - 3;
+    minX = Math.min(minX, left);
+    maxX = Math.max(maxX, left + w);
+    minY = Math.min(minY, baseline - t.size);
+    maxY = Math.max(maxY, baseline + t.size * 0.25);
+  }
+  if (!Number.isFinite(minX)) return { page, zoom: 1 };
+  const bw = maxX - minX;
+  const bh = maxY - minY;
+  const z = Math.min(REMITO_PRINT_ZOOM, (REMITO_PAGE_W - 2 * SAFE_MARGIN) / bw, (REMITO_PAGE_H - 2 * SAFE_MARGIN) / bh);
+  const bcx = (minX + maxX) / 2;
+  const bcy = (minY + maxY) / 2;
+  const ncx = REMITO_PAGE_W / 2;
+  const ncy = Math.min(Math.max(bcy, SAFE_MARGIN + (bh * z) / 2), REMITO_PAGE_H - SAFE_MARGIN - (bh * z) / 2);
+  const map = (r: LayoutRect): LayoutRect => ({ x: ncx + (r.x - bcx) * z, y: ncy + (r.y - bcy) * z, w: r.w * z, h: r.h * z });
+  const inside = (r: LayoutRect) => r.x + r.w > 0 && r.x < REMITO_PAGE_W && r.y + r.h > 0 && r.y < REMITO_PAGE_H;
+  return {
+    zoom: z,
+    page: {
+      rects: page.rects.map(map),
+      texts: page.texts.map((t) => ({ ...t, ...map(t), size: t.size * z })).filter((t) => inside(t)),
+    },
+  };
 }
 
 /** Vista previa: una página SVG por hoja impresa, texto negro sobre blanco con colores propios (no depende del tema de la app). */
