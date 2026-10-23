@@ -84,7 +84,7 @@ export async function lockCodigos(tx: Tx, codigos: Iterable<string>) {
   }
 }
 
-async function loadLedgerInputs(tx: Tx | ReturnType<typeof getDb>) {
+export async function loadLedgerInputs(tx: Tx | ReturnType<typeof getDb>) {
   const [ingresos, salidas, materials, ajustes] = await Promise.all([
     tx.select({ payload: invMeIngresos.payload }).from(invMeIngresos),
     tx.select({ payload: invMeSalidas.payload }).from(invMeSalidas),
@@ -99,7 +99,7 @@ async function loadLedgerInputs(tx: Tx | ReturnType<typeof getDb>) {
   };
 }
 type LedgerInputs = Awaited<ReturnType<typeof loadLedgerInputs>>;
-function stockOf(codigo: string, data: LedgerInputs) {
+export function stockOf(codigo: string, data: LedgerInputs) {
   const c = normalizeMeCodigo(codigo);
   const materialIds = new Set(data.materials.filter((m) => normalizeMeCodigo(m.codigo) === c).map((m) => m.id));
   return { stock: computeMeStock(c, { ...data, materialIds }), materialIds };

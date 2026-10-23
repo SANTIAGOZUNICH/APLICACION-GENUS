@@ -1879,3 +1879,22 @@ export const billingWorkNotes = pgTable("billing_work_notes", {
   updatedBy: text("updated_by").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Vínculo material ME ↔ pedido de Producción con consumo por producto (0070). Solo cálculo de DIFERENCIA; no mueve stock. */
+export const meMaterialPedidoLinks = pgTable(
+  "me_material_pedido_links",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    materialId: uuid("material_id").notNull(),
+    pedidoId: uuid("pedido_id").notNull(),
+    unitsPerProduct: doublePrecision("units_per_product"),
+    createdBy: text("created_by"),
+    updatedBy: text("updated_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("me_material_pedido_links_uidx").on(table.materialId, table.pedidoId),
+    index("me_material_pedido_links_pedido_idx").on(table.pedidoId),
+  ]
+);

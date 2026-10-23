@@ -27,6 +27,8 @@ import { ME_INGRESO_COLUMNS, type MeIngresoRow } from "@/lib/inventory/types";
 import { ME_INGRESO_DRAFT_CREATE_KEYS, ME_INGRESO_DRAFT_REQUIRED_KEYS, meIngresoPayloadFromDraft } from "@/lib/inventory/me-draft-rows";
 import type { GenusGridDraftRows } from "@/components/data-grid/genus-grid";
 import { canWriteInventory } from "@/lib/inventory/rbac";
+import { MeDiferenciaCell, useMeDiferencias } from "@/features/os/operational/components/me-diferencia-cell";
+import { formatMeDiferencia } from "@/lib/inventory/me-diferencia";
 import { IngresoRemitoFotosButton, useIngresoAdjuntoCounts } from "@/features/os/operational/components/ingreso-remito-fotos";
 import { canManageAdjuntos, canViewAdjuntos } from "@/lib/inventory/ingreso-adjuntos-rules";
 import { IngresoConRemitoButtons } from "@/features/os/operational/components/ingreso-con-remito";
@@ -106,6 +108,7 @@ export function MeIngresosView() {
   const fotos = useIngresoAdjuntoCounts("ME", canViewAdjuntos(sectorId, "ME"));
   const canManageFotos = canManageAdjuntos(sectorId, "ME");
   const [rows, setRows] = useState<MeIngresoRow[]>([]);
+  const dif = useMeDiferencias();
   const [persistence, setPersistence] = useState(true);
   const [banner, setBanner] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -120,6 +123,7 @@ export function MeIngresosView() {
     setRows(res.data);
     setPersistence(res.persistence);
     setBanner(res.message ?? null);
+    void dif.reload();
   }, []);
   const [historyFor, setHistoryFor] = useState<{ id: string; label: string } | null>(null);
   const sheet = useMeSheetEditing<MeIngresoRow>("me_ingresos", sectorId, canWrite, ME_INGRESO_SHEET_FIELD_OF, reload);
@@ -218,6 +222,15 @@ export function MeIngresosView() {
       readOnlyReason: readOnlyReason("me_ingresos", label),
     };
   });
+
+  // DIFERENCIA con el stock ACUMULADO del material (ingresos confirmados − salidas ± ajustes), no solo este ingreso.
+  columns.push({
+    key: "DIFERENCIA",
+    header: "DIFERENCIA",
+    hideOnMobile: false,
+    text: (row) => (row.anulado || !row.materialId || !dif.map[row.materialId] ? "" : formatMeDiferencia(dif.map[row.materialId]!)),
+    render: (row) => (row.anulado ? "—" : <MeDiferenciaCell materialId={row.materialId} row={row.materialId ? dif.map[row.materialId] : undefined} canLink={canWriteInventory(sectorId, "me_stock")} onChanged={() => void dif.reload()} />),
+  } as OperationalTableColumn<MeIngresoRow>);
 
   async function saveForm() {
     if (!form || !canWrite) return;
