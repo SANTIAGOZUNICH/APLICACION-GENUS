@@ -78,11 +78,6 @@ export function canWriteMpControl(sector: SectorId): boolean {
   return sector === "MATERIA_PRIMA";
 }
 
-/** Observaciones del Control semanal: Materia Prima y Producción (no mueven stock ni tocan OE). */
-export function canWriteMpNotes(sector: SectorId): boolean {
-  return sector === "MATERIA_PRIMA" || sector === "PRODUCCION";
-}
-
 export function canReadMpControl(sector: SectorId): boolean {
   return (
     sector === "MATERIA_PRIMA" ||
