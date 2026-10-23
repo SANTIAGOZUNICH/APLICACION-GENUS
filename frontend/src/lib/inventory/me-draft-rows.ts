@@ -6,11 +6,11 @@
 import { validateMeSheetValue, ME_SALIDA_MOTIVOS } from "./me-sheet-edit";
 import type { DraftPayload } from "./mp-draft-rows";
 
-export const ME_INGRESO_DRAFT_CREATE_KEYS = ["FECHA", "INGRESO Nº", "PROVEEDOR", "CLIENTE", "REMITO Nº", "CÓDIGO", "DESCRIPCIÓN INSUMO", "BULTOS", "CANTIDAD", "TOTAL", "UBICACIÓN"];
+export const ME_INGRESO_DRAFT_CREATE_KEYS = ["FECHA", "INGRESO Nº", "PROVEEDOR", "CLIENTE", "PRODUCTO", "REMITO Nº", "CÓDIGO", "DESCRIPCIÓN INSUMO", "BULTOS", "CANTIDAD", "TOTAL", "UBICACIÓN"];
 export const ME_INGRESO_DRAFT_REQUIRED_KEYS = ["FECHA", "CÓDIGO", "CANTIDAD"];
 export const ME_SALIDA_DRAFT_CREATE_KEYS = ["FECHA", "EGRESO N.º", "CLIENTE", "REMITO N.º", "DESCRIPCIÓN", "BULTOS", "CANTIDAD", "TOTAL", "CONTROL", "ENTREGADO", "COMENTARIOS", "CÓDIGO", "MOTIVO", "DESCUENTA STOCK"];
 export const ME_SALIDA_DRAFT_REQUIRED_KEYS = ["FECHA", "CÓDIGO", "CANTIDAD"];
-export const ME_INVENTARIO_DRAFT_CREATE_KEYS = ["CÓDIGO", "CLIENTE", "INSUMO", "UBICACIÓN", "UNIDAD", "CANT. POR BULTO", "STOCK MÍNIMO", "PUNTO DE REPOSICIÓN"];
+export const ME_INVENTARIO_DRAFT_CREATE_KEYS = ["CÓDIGO", "CLIENTE", "PRODUCTO", "INSUMO", "UBICACIÓN", "UNIDAD", "CANT. POR BULTO", "STOCK MÍNIMO", "PUNTO DE REPOSICIÓN"];
 export const ME_INVENTARIO_DRAFT_REQUIRED_KEYS = ["CÓDIGO", "INSUMO"];
 
 const text = (v: Record<string, string>, k: string) => (v[k] ?? "").trim();
@@ -59,6 +59,7 @@ export function meIngresoPayloadFromDraft(id: string, v: Record<string, string>)
       fecha: fecha.value,
       proveedor: text(v, "PROVEEDOR"),
       cliente: text(v, "CLIENTE"),
+      producto: text(v, "PRODUCTO"),
       remitoNro: text(v, "REMITO Nº"),
       codigo,
       descripcionInsumo: text(v, "DESCRIPCIÓN INSUMO"),
@@ -133,6 +134,7 @@ export function meInventarioPayloadFromDraft(id: string, v: Record<string, strin
       codigo,
       descripcion: insumo,
       cliente: text(v, "CLIENTE"),
+      producto: text(v, "PRODUCTO"),
       ubicacion: text(v, "UBICACIÓN"),
       unidad: text(v, "UNIDAD"),
       cantidadPorBulto: porBulto.value,

@@ -97,6 +97,7 @@ describe("Inventario ME automático (OA)", () => {
     expect([...ME_INVENTARIO_COLUMNS]).toEqual([
       "CÓDIGO",
       "CLIENTE",
+      "PRODUCTO",
       "INSUMO",
       "BULTOS",
       "CANTIDAD TOTAL",

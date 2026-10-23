@@ -15,9 +15,9 @@ import { canWriteInventory } from "./rbac";
 
 export type MeSheetResource = "me_ingresos" | "me_salidas" | "me_inventario";
 
-export const ME_INGRESO_SHEET_FIELDS = ["fecha", "ingresoNro", "proveedor", "cliente", "remitoNro", "codigo", "descripcionInsumo", "bultos", "cantidad", "total", "ubicacion"] as const;
+export const ME_INGRESO_SHEET_FIELDS = ["fecha", "ingresoNro", "proveedor", "cliente", "producto", "remitoNro", "codigo", "descripcionInsumo", "bultos", "cantidad", "total", "ubicacion"] as const;
 export const ME_SALIDA_SHEET_FIELDS = ["fecha", "egresoNro", "cliente", "remitoNro", "codigo", "descripcion", "bultos", "cantidad", "total", "unidad", "control", "entregado", "comentarios", "motivoSalida", "descuentaStock"] as const;
-export const ME_MATERIAL_SHEET_FIELDS = ["codigo", "descripcion", "cliente", "ubicacion", "unidad", "cantidadPorBulto", "stockMinimo", "puntoReposicion", "responsable", "observacion", "stockTotal", "bultosStock"] as const;
+export const ME_MATERIAL_SHEET_FIELDS = ["codigo", "descripcion", "cliente", "producto", "ubicacion", "unidad", "cantidadPorBulto", "stockMinimo", "puntoReposicion", "responsable", "observacion", "stockTotal", "bultosStock"] as const;
 
 const FIELDS: Record<MeSheetResource, readonly string[]> = {
   me_ingresos: ME_INGRESO_SHEET_FIELDS,

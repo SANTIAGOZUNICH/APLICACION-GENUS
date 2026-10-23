@@ -87,6 +87,8 @@ export interface OperationalTableColumn<T> {
   hideOnMobile?: boolean | "md" | "lg" | "xl" | "2xl";
   /** Texto plano de la celda para la planilla (selección/copia estilo Excel). Si falta se deriva de `render`. */
   text?: (row: T) => string;
+  /** Ancho mínimo (px) en la planilla, para textos que el muestreo de filas no anticipa (p. ej. «ELEGIR PEDIDO»). */
+  minWidth?: number;
   /** Solo se muestra en la planilla (p. ej. la «Unidad» que en la lista va dentro de la cantidad). */
   excelOnly?: boolean;
   /** Columna de botones/acciones: en la planilla va fija a la derecha con su render real (no se copia). */
@@ -403,7 +405,7 @@ function ExcelView<T>({
         const lens = sample.map((r) => textOf(c, r).length).sort((a, b) => a - b);
         const p90 = lens.length ? lens[Math.min(lens.length - 1, Math.floor(lens.length * 0.9))]! : 0;
         const chars = Math.max(c.header.length + 2, p90);
-        return [c.key, Math.round(Math.min(340, Math.max(96, chars * 7.6 + 30)))] as const;
+        return [c.key, Math.round(Math.min(340, Math.max(c.minWidth ?? 96, chars * 7.6 + 30)))] as const;
       })
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps

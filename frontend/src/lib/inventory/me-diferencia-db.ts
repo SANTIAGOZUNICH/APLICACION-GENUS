@@ -6,17 +6,20 @@
  * Los pedidos solo los lee Producción: acá el servidor devuelve a Depósito únicamente lo calculado y, para vincular,
  * los pedidos ACTIVOS del mismo cliente del material (producto y unidades).
  */
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { invAudit, meMaterialPedidoLinks, productionPedidos } from "@/lib/db/schema";
+import { normalizeMeCodigo } from "./me-codigo";
 import { InventoryForbiddenError, InventoryNotFoundError, InventoryValidationError, type InventoryActor } from "./inventory-service";
 import { computeMeDiferencia, type MeDiferenciaLink, type MeDiferenciaRow } from "./me-diferencia";
 import { auditRow, loadLedgerInputs, lockCodigos, stockOf } from "./me-planilla-db";
 import { canReadInventory, canWriteInventory } from "./rbac";
+import { normText, pedidoActivo, resolveProductoLink, setSingleLink } from "./me-producto-link";
+import { invMeMaterials } from "@/lib/db/schema";
+import type { MeMaterial } from "./types";
 
-const norm = (s: string | null | undefined) => (s ?? "").trim().replace(/\s+/g, " ").toUpperCase();
-/** Pedido activo = no eliminado, no entregado (cancelados se eliminan lógicamente). */
-const activo = and(isNull(productionPedidos.deletedAt), sql`coalesce(${productionPedidos.estado}, '') <> 'ENTREGADO'`);
+const norm = normText;
+const activo = pedidoActivo;
 
 function assertRead(actor: InventoryActor) {
   if (!actor.isSuperadmin && !canReadInventory(actor.sector, "me_stock")) throw new InventoryForbiddenError(`Sector ${actor.sector} no puede ver me_stock.`);
@@ -37,6 +40,8 @@ export async function listMeDiferenciasDb(actor: InventoryActor): Promise<Record
       .innerJoin(productionPedidos, eq(productionPedidos.id, meMaterialPedidoLinks.pedidoId))
       .where(activo),
   ]);
+  const activos = await db.select({ cliente: productionPedidos.cliente, producto: productionPedidos.producto }).from(productionPedidos).where(activo).limit(5000);
+  const candCount = (cli: string, prod: string) => (prod.trim() ? activos.filter((a) => norm(a.cliente) === norm(cli) && norm(a.producto) === norm(prod)).length : 0);
   const byMaterial = new Map<string, typeof links>();
   for (const l of links) byMaterial.set(l.materialId, [...(byMaterial.get(l.materialId) ?? []), l]);
   const out: Record<string, MeDiferenciaRow> = {};
@@ -44,9 +49,16 @@ export async function listMeDiferenciasDb(actor: InventoryActor): Promise<Record
     const ls = byMaterial.get(m.id) ?? [];
     const { stock } = stockOf(m.codigo, data);
     const calc: MeDiferenciaLink[] = ls.map((l) => ({ pedidoId: l.pedidoId, pedidoUnidades: l.q, unidadesPorProducto: l.ratio }));
+    const producto = (m.producto ?? "").trim();
+    const candidatos = candCount(m.cliente, producto);
+    const calculo = computeMeDiferencia(stock, calc);
     out[m.id] = {
-      ...computeMeDiferencia(stock, calc),
+      ...(ls.length === 0 && candidatos > 1 ? { ...calculo, estado: "ELEGIR_PEDIDO" as const } : calculo),
       materialId: m.id,
+      codigo: normalizeMeCodigo(m.codigo),
+      cliente: m.cliente,
+      producto,
+      candidatos,
       pedidos: ls.map((l) => ({ pedidoId: l.pedidoId, producto: l.producto ?? "", unidades: l.q, unidadesPorProducto: l.ratio })),
     };
   }
@@ -85,13 +97,12 @@ export async function upsertMePedidoLinkDb(actor: InventoryActor, input: MeLinkI
     const [ped] = await tx.select({ id: productionPedidos.id, cliente: productionPedidos.cliente, producto: productionPedidos.producto }).from(productionPedidos).where(and(eq(productionPedidos.id, input.pedidoId), activo));
     if (!ped) throw new InventoryNotFoundError("Pedido activo no encontrado.");
     if (norm(ped.cliente) !== norm(mat.cliente)) throw new InventoryValidationError("El pedido es de otro cliente: no se mezclan materiales de clientes distintos.");
-    const [prev] = await tx.select().from(meMaterialPedidoLinks).where(and(eq(meMaterialPedidoLinks.materialId, input.materialId), eq(meMaterialPedidoLinks.pedidoId, input.pedidoId)));
-    await tx
-      .insert(meMaterialPedidoLinks)
-      .values({ materialId: input.materialId, pedidoId: input.pedidoId, unitsPerProduct: ratio, createdBy: actor.email, updatedBy: actor.email })
-      .onConflictDoUpdate({ target: [meMaterialPedidoLinks.materialId, meMaterialPedidoLinks.pedidoId], set: { unitsPerProduct: ratio, updatedBy: actor.email, updatedAt: new Date() } });
-    const a = auditRow(actor, "me_stock", input.materialId, prev ? "pedido_link_update" : "pedido_link_create", prev ? { pedidoId: input.pedidoId, unidadesPorProducto: prev.unitsPerProduct } : null, { pedidoId: input.pedidoId, producto: ped.producto, unidadesPorProducto: ratio }, "Vínculo material ↔ pedido para DIFERENCIA");
-    await tx.insert(invAudit).values({ id: a.id, payload: a, createdAt: new Date(a.createdAt) });
+    // Un solo pedido por material: elegir otro reemplaza el vínculo (el mismo stock no cuenta para dos pedidos).
+    await setSingleLink(tx, actor, input.materialId, input.pedidoId, ratio);
+    const [fresh] = await tx.select({ payload: invMeMaterials.payload }).from(invMeMaterials).where(eq(invMeMaterials.id, input.materialId)).for("update");
+    const cur = fresh!.payload as MeMaterial;
+    await tx.update(invMeMaterials).set({ payload: { ...cur, producto: ped.producto ?? cur.producto ?? "", pedidoId: input.pedidoId, updatedAt: new Date(Math.max(Date.now(), new Date(cur.updatedAt).getTime() + 1)).toISOString() }, updatedAt: new Date() }).where(eq(invMeMaterials.id, input.materialId));
+    await resolveProductoLink(tx, actor, input.materialId);
   });
 }
 
@@ -101,7 +112,25 @@ export async function removeMePedidoLinkDb(actor: InventoryActor, materialId: st
     const [prev] = await tx.select().from(meMaterialPedidoLinks).where(and(eq(meMaterialPedidoLinks.materialId, materialId), eq(meMaterialPedidoLinks.pedidoId, pedidoId)));
     if (!prev) return;
     await tx.delete(meMaterialPedidoLinks).where(and(eq(meMaterialPedidoLinks.materialId, materialId), eq(meMaterialPedidoLinks.pedidoId, pedidoId)));
+    const [row] = await tx.select({ payload: invMeMaterials.payload }).from(invMeMaterials).where(eq(invMeMaterials.id, materialId)).for("update");
+    const cur = row?.payload as MeMaterial | undefined;
+    if (cur?.pedidoId === pedidoId) await tx.update(invMeMaterials).set({ payload: { ...cur, pedidoId: null, updatedAt: new Date(Math.max(Date.now(), new Date(cur.updatedAt).getTime() + 1)).toISOString() }, updatedAt: new Date() }).where(eq(invMeMaterials.id, materialId));
     const a = auditRow(actor, "me_stock", materialId, "pedido_link_remove", { pedidoId, unidadesPorProducto: prev.unitsPerProduct }, null, "Se quitó el vínculo material ↔ pedido");
     await tx.insert(invAudit).values({ id: a.id, payload: a, createdAt: new Date(a.createdAt) });
   });
+}
+
+/**
+ * Tras crear/editar un ingreso o un material por el servicio en memoria (altas desde filas nuevas): resuelve producto → pedido
+ * en la base. Es best-effort: un fallo acá nunca deshace el ingreso ya registrado (la DIFERENCIA queda en SIN DATOS).
+ */
+export async function syncProductoAfterWrite(actor: InventoryActor, materialId: string | null | undefined, ingresoProducto?: string): Promise<void> {
+  if (!materialId) return;
+  try {
+    await getDb().transaction(async (tx) => {
+      await resolveProductoLink(tx, actor, materialId, { ingresoProducto });
+    });
+  } catch (err) {
+    console.error("[inventory] producto→pedido", err);
+  }
 }

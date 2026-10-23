@@ -22,7 +22,6 @@ import {
   useListSelectionMode,
 } from "../components/list-selection-mode";
 import { displayCell } from "@/lib/inventory/calcs";
-import { formatMeDiferencia } from "@/lib/inventory/me-diferencia";
 import {
   ME_INVENTARIO_COLUMNS,
   type MeInventarioViewRow,
@@ -32,7 +31,7 @@ import { ME_INVENTARIO_DRAFT_CREATE_KEYS, ME_INVENTARIO_DRAFT_REQUIRED_KEYS, meI
 import type { GenusGridDraftRows } from "@/components/data-grid/genus-grid";
 import { useMeSheetEditing } from "@/features/os/operational/hooks/use-me-sheet-cells";
 import { MeStockDialog } from "@/features/os/operational/components/me-stock-dialog";
-import { MeDiferenciaCell, useMeDiferencias } from "@/features/os/operational/components/me-diferencia-cell";
+import { MeDiferenciaCell, MePedidoPicker, diferenciaClass, diferenciaText, useMeDiferencias } from "@/features/os/operational/components/me-diferencia-cell";
 import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
 import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
@@ -43,7 +42,7 @@ import { applySort, compareNumbers, compareStrings, type SortOption } from "@/li
 // TODAS las columnas se editan. CÓDIGO renombra el material y sus movimientos; CANTIDAD TOTAL y BULTOS generan un AJUSTE
 // auditado por la diferencia (el stock sigue siendo ingresos − salidas ± ajustes: nunca se pisa sin movimiento).
 const ME_CELL_FIELDS: Record<string, string> = {
-  CÓDIGO: "codigo", BULTOS: "bultosStock", "CANTIDAD TOTAL": "stockTotal", CLIENTE: "cliente", INSUMO: "descripcion", UBICACIÓN: "ubicacion", UNIDAD: "unidad", "CANT. POR BULTO": "cantidadPorBulto", "STOCK MÍNIMO": "stockMinimo", "PUNTO DE REPOSICIÓN": "puntoReposicion",
+  CÓDIGO: "codigo", BULTOS: "bultosStock", "CANTIDAD TOTAL": "stockTotal", CLIENTE: "cliente", PRODUCTO: "producto", INSUMO: "descripcion", UBICACIÓN: "ubicacion", UNIDAD: "unidad", "CANT. POR BULTO": "cantidadPorBulto", "STOCK MÍNIMO": "stockMinimo", "PUNTO DE REPOSICIÓN": "puntoReposicion",
 };
 
 export const ME_INVENTARIO_SORT_OPTIONS: SortOption<MeInventarioViewRow>[] = [
@@ -164,6 +163,7 @@ export function MeInventarioView() {
       const map: Record<string, keyof MeInventarioViewRow> = {
         CÓDIGO: "codigo",
         CLIENTE: "cliente",
+        PRODUCTO: "producto",
         INSUMO: "insumo",
         BULTOS: "bultosDisplay",
         "CANTIDAD TOTAL": "cantidadTotal",
@@ -196,8 +196,10 @@ export function MeInventarioView() {
   columns.push({
     key: "DIFERENCIA",
     header: "DIFERENCIA",
-    text: (row) => { const d = dif.map[row.materialId]; return d ? formatMeDiferencia(d) : formatMeDiferencia({ estado: "SIN_DATOS", diferencia: null }); },
-    render: (row) => <MeDiferenciaCell materialId={row.materialId} row={dif.map[row.materialId]} canLink={canWrite} onChanged={() => void dif.reload()} />,
+    minWidth: 168,
+    text: (row) => diferenciaText(dif.map[row.materialId] ?? { estado: "SIN_DATOS", diferencia: null }),
+    cellClassName: (row) => diferenciaClass(dif.map[row.materialId] ?? { estado: "SIN_DATOS" }),
+    render: (row) => <MeDiferenciaCell d={dif.map[row.materialId] ?? { estado: "SIN_DATOS", diferencia: null }} />,
   } as OperationalTableColumn<MeInventarioViewRow>);
 
   return (
@@ -294,6 +296,7 @@ export function MeInventarioView() {
                   header: "",
                   render: (row: MeInventarioViewRow) => (
                     <span className="inline-flex items-center gap-1">
+                    <MePedidoPicker materialId={row.materialId} row={dif.map[row.materialId]} onChanged={() => void dif.reload()} />
                     <button type="button" onClick={() => openStock(row)} className={`rounded px-1.5 py-0.5 text-xs font-semibold ${row.cantidadTotal < 0 ? "bg-red-500/15 text-red-500" : "text-[var(--os-teal)] hover:underline"}`} data-testid="me-stock-open" title="Movimientos y ajuste de inventario">
                       {row.cantidadTotal < 0 ? "Corregir" : "Stock"}
                     </button>

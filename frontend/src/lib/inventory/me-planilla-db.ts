@@ -41,6 +41,7 @@ import {
 import { buildMeMovements, computeMeStock, type MeMovement } from "./me-stock-calc";
 import type { StockAjuste } from "./memory-repo";
 import { canReadInventory, canWriteInventory } from "./rbac";
+import { resolveProductoLink } from "./me-producto-link";
 import type { InventoryAudit, MeIngresoRow, MeMaterial, MeSalidaRow } from "./types";
 
 type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
@@ -230,6 +231,12 @@ export async function patchMeSheetCells(actor: InventoryActor, resource: MeSheet
       const fields = [...p.changed, ...(p.changed.some((f) => f === "bultos" || f === "cantidad") ? ["total"] : [])];
       const a = auditRow(actor, meSheetModule(resource), p.id, "cell_edit", Object.fromEntries(fields.map((f) => [f, p.before[f] ?? null])), Object.fromEntries(fields.map((f) => [f, p.next[f] ?? null])), reasons.get(p.id) ?? null);
       await tx.insert(invAudit).values({ id: a.id, payload: a, createdAt: new Date(a.createdAt) });
+    }
+    // Cliente/producto cambiados: se resuelve el pedido (único → se vincula; varios → hay que elegir; ninguno → SIN DATOS).
+    for (const p of prepared) {
+      if (!p.changed.some((f) => f === "producto" || f === "cliente" || (resource === "me_ingresos" && f === "codigo"))) continue;
+      const matId = resource === "me_inventario" ? p.id : (p.next.materialId as string | null | undefined);
+      if (matId) await resolveProductoLink(tx, actor, matId, resource === "me_ingresos" ? { ingresoProducto: String(p.next.producto ?? "") } : {});
     }
     const items: AnyRow[] = prepared.map((p) => p.next);
     for (const op of ops) {

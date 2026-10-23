@@ -7,7 +7,7 @@
  *  diferencia < 0 → FALTAN · > 0 → SOBRAN · = 0 → JUSTO.
  *  Sin pedido vinculado → SIN DATOS; con pedido pero sin consumo por producto → SIN CONFIGURAR (nunca se asume 1:1).
  */
-export type MeDiferenciaEstado = "FALTAN" | "SOBRAN" | "JUSTO" | "SIN_CONFIGURAR" | "SIN_DATOS";
+export type MeDiferenciaEstado = "FALTAN" | "SOBRAN" | "JUSTO" | "SIN_CONFIGURAR" | "SIN_DATOS" | "ELEGIR_PEDIDO";
 
 export interface MeDiferenciaLink {
   pedidoId: string;
@@ -51,6 +51,7 @@ export function formatMeDiferencia(d: Pick<MeDiferencia, "estado" | "diferencia"
     case "SOBRAN": return `+${n(d.diferencia ?? 0)} SOBRAN`;
     case "JUSTO": return "0 JUSTO";
     case "SIN_CONFIGURAR": return "SIN CONFIGURAR";
+    case "ELEGIR_PEDIDO": return "ELEGIR PEDIDO";
     default: return "SIN DATOS";
   }
 }
@@ -68,6 +69,11 @@ export interface MeDiferenciaPedido {
 }
 export interface MeDiferenciaRow extends MeDiferencia {
   materialId: string;
+  codigo: string;
+  cliente: string;
+  /** Producto del material (texto) y cuántos pedidos activos del cliente lo tienen: >1 sin vínculo = ELEGIR PEDIDO. */
+  producto: string;
+  candidatos: number;
   pedidos: MeDiferenciaPedido[];
 }
 

@@ -6,6 +6,10 @@ export type MeIngresoRow = {
   ingresoNro: string;
   proveedor: string;
   cliente: string;
+  /** Producto para el que se usa el material (opcional; registros anteriores no lo tienen). */
+  producto?: string;
+  /** Pedido activo vinculado (referencia estable); null/ausente = sin vincular. */
+  pedidoId?: string | null;
   remitoNro: string;
   codigo: string;
   descripcionInsumo: string;
@@ -78,6 +82,9 @@ export type MeMaterial = {
   codigo: string;
   descripcion: string;
   cliente: string;
+  /** Producto para el que se usa el material; el pedido se vincula por cliente + producto (ver me-diferencia-db). */
+  producto?: string;
+  pedidoId?: string | null;
   ubicacion: string;
   unidad: string;
   /** Unidades por bulto cerrado; null = no calcular bultos. */
@@ -101,6 +108,7 @@ export type MeInventarioViewRow = {
   materialId: string;
   codigo: string;
   cliente: string;
+  producto?: string;
   insumo: string;
   bultosDisplay: string;
   cantidadTotal: number;
@@ -116,6 +124,7 @@ export type MeInventarioViewRow = {
 export const ME_INVENTARIO_COLUMNS = [
   "CÓDIGO",
   "CLIENTE",
+  "PRODUCTO",
   "INSUMO",
   "BULTOS",
   "CANTIDAD TOTAL",
@@ -321,6 +330,7 @@ export const ME_INGRESO_COLUMNS = [
   "INGRESO Nº",
   "PROVEEDOR",
   "CLIENTE",
+  "PRODUCTO",
   "REMITO Nº",
   "CÓDIGO",
   "DESCRIPCIÓN INSUMO",
