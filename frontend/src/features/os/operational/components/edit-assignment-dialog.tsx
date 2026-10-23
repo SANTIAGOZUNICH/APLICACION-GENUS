@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { AsignacionLoteMatchCandidate, AsignacionLoteResolution } from "@/lib/asignacion-lotes/resolve-for-work-item";
 import type { SectorId } from "@/types/operational/sector";
 import type { WorkItem } from "@/types/operational/work-item";
 import { editWorkItemAssignment } from "../lib/edit-assignment";
@@ -57,10 +58,40 @@ export function EditAssignmentDialog({
   const [vto, setVto] = useState(() => item?.packagingVto ?? "");
   const [orderRef, setOrderRef] = useState(() => item?.oeRef ?? item?.oaRef ?? "");
   const [reason, setReason] = useState("");
+  const [asignacionLoteId, setAsignacionLoteId] = useState<string | null>(null);
+  const [loteOptions, setLoteOptions] = useState<AsignacionLoteResolution | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Lotes de Asignación de Lotes para este cliente+producto (solo lectura): se ofrecen para elegir; nunca se aplican solos.
+  const lookupCliente = client.trim();
+  const lookupProducto = product.trim();
+  useEffect(() => {
+    if (!lookupCliente || !lookupProducto) {
+      const t = window.setTimeout(() => setLoteOptions(null), 0);
+      return () => window.clearTimeout(t);
+    }
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      void fetch(`/api/v1/asignacion-lotes/resolve?cliente=${encodeURIComponent(lookupCliente)}&producto=${encodeURIComponent(lookupProducto)}`, { credentials: "include", cache: "no-store" })
+        .then((r) => (r.ok ? (r.json() as Promise<AsignacionLoteResolution>) : null))
+        .then((d) => {
+          if (!cancelled) setLoteOptions(d);
+        })
+        .catch(() => {
+          if (!cancelled) setLoteOptions(null);
+        });
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [lookupCliente, lookupProducto]);
+
   if (!item) return null;
+
+  const loteChoices: AsignacionLoteMatchCandidate[] =
+    loteOptions?.status === "found" ? [loteOptions.candidate] : loteOptions?.status === "ambiguous" ? loteOptions.candidates : [];
 
   const showLoteVto = item.sector !== "ELABORACION";
   const orderRefLabel = item.sector === "ELABORACION" ? "OE" : "OA";
@@ -99,6 +130,7 @@ export function EditAssignmentDialog({
         actorSectorId,
         updatedBy: actorName,
         expectedVersion: item.version,
+        asignacionLoteId,
       });
       if (!loteResult.ok) {
         setBusy(false);
@@ -253,7 +285,10 @@ export function EditAssignmentDialog({
                   <input
                     id="edit-lote"
                     value={lote}
-                    onChange={(e) => setLote(e.target.value)}
+                    onChange={(e) => {
+                      setAsignacionLoteId(null);
+                      setLote(e.target.value);
+                    }}
                     className={CONTROL_CLASS}
                     disabled={busy}
                   />
@@ -271,8 +306,37 @@ export function EditAssignmentDialog({
                   />
                 </div>
               </div>
+              {loteChoices.length > 0 ? (
+                <div className="space-y-1" data-testid="edit-lote-options">
+                  <p className="text-xs text-[var(--os-text-muted)]">
+                    {loteOptions?.status === "found" ? "Encontrado en Asignación de Lotes:" : "Hay más de un lote posible — elegí cuál corresponde:"}
+                  </p>
+                  <ul className="space-y-1">
+                    {loteChoices.map((c) => (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          data-testid={`edit-lote-option-${c.id}`}
+                          onClick={() => {
+                            setAsignacionLoteId(c.id);
+                            setLote(c.lote ?? "");
+                            setVto(c.vto ?? "");
+                          }}
+                          className={`w-full rounded-[var(--os-radius-sm)] border px-2 py-1.5 text-left text-xs hover:bg-[var(--os-teal)]/10 ${asignacionLoteId === c.id ? "border-[var(--os-teal)] bg-[var(--os-teal)]/10" : "border-[var(--os-border)]"}`}
+                        >
+                          Lote {c.lote || "—"} · VTO {c.vto || "—"}
+                          {c.codigo ? ` · Código ${c.codigo}` : ""}
+                          {c.cantidades ? ` · Cant. ${c.cantidades}` : ""}
+                          {c.fecha ? ` · ${c.fecha}` : ""}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               <p className="text-xs text-[var(--os-text-muted)]">
-                Envasado/Codificado reciben este valor de solo lectura.
+                Envasado/Codificado reciben este valor de solo lectura. Si el lote no está en Asignación de Lotes, podés escribirlo a mano.
               </p>
             </div>
           ) : null}

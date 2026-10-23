@@ -21,6 +21,7 @@ export async function correctWorkItemLoteVto(input: {
   actorSectorId: SectorId;
   updatedBy?: string;
   expectedVersion?: number;
+  asignacionLoteId?: string | null;
 }): Promise<LoteVtoCorrectionResult> {
   const reason = input.reason.trim();
   if (!reason) {
@@ -43,6 +44,7 @@ export async function correctWorkItemLoteVto(input: {
       updatedBy: input.updatedBy,
       actorSectorId: input.actorSectorId,
       expectedVersion: input.expectedVersion,
+      asignacionLoteId: input.asignacionLoteId ?? null,
     });
   } catch {
     return { ok: false, error: "Sin conexión con el servidor. Reintentá." };

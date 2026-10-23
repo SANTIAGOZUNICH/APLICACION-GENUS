@@ -50,7 +50,7 @@ export async function fillBareWorkItemsFromAsignacionLote(
 
   const qualifies = (client: string, product: string) =>
     clienteRelation(client, record.marca) !== "NONE" &&
-    productoRelation(record, product) !== "NONE";
+    ["EXACT", "CONTAINED"].includes(productoRelation(record, product)); // parcial/parecido nunca se completa solo
 
   const db = getDb();
 

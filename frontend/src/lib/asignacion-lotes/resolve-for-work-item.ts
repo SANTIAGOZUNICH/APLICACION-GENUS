@@ -40,7 +40,14 @@ export interface AsignacionLoteMatchCandidate {
 /** Insumo mínimo del resolver — cualquier fuente (servicio en memoria/Neon, fila Drizzle cruda) alcanza con esto. */
 export type AsignacionLoteResolveInput = AsignacionLoteMatchCandidate & { archived?: boolean };
 
-export type MatchTier = "EXACTO" | "COMPATIBLE";
+/**
+ * Nivel de coincidencia (de más a menos confiable):
+ *  - CODIGO: mismo cliente y mismo código de producto (identificador estable; no depende del texto del nombre).
+ *  - EXACTO: mismo cliente y mismo nombre de producto normalizado.
+ *  - COMPATIBLE: cliente por submarca y TODAS las palabras significativas del pedido explicadas por producto+código+marca.
+ *  - PARCIAL: solo una parte de las palabras coincide. NUNCA se elige solo: siempre pide confirmación de una persona.
+ */
+export type MatchTier = "CODIGO" | "EXACTO" | "COMPATIBLE" | "PARCIAL";
 
 export type AsignacionLoteResolution =
   | { status: "found"; candidate: AsignacionLoteMatchCandidate; matchTier: MatchTier }
@@ -108,7 +115,7 @@ export function clienteRelation(a: string, b: string): ClienteRelation {
   return aSubsetOfB || bSubsetOfA ? "TOKEN_SUBSET" : "NONE";
 }
 
-type ProductoRelation = "EXACT" | "CONTAINED" | "NONE";
+type ProductoRelation = "EXACT" | "CONTAINED" | "PARTIAL" | "NONE";
 const PRODUCT_CONTAINMENT_THRESHOLD = 0.7;
 
 /**
@@ -157,24 +164,34 @@ export function productoRelation(
   const pedidoSet = new Set(pedidoBag);
   const intersection = candidateBag.filter((t) => pedidoSet.has(t)).length;
   const ratio = intersection / pedidoBag.length;
-  return ratio >= PRODUCT_CONTAINMENT_THRESHOLD ? "CONTAINED" : "NONE";
+  // Todas las palabras del pedido explicadas -> equivalente. Cobertura parcial -> solo sugerencia (nunca automática).
+  if (ratio === 1) return "CONTAINED";
+  return ratio >= PRODUCT_CONTAINMENT_THRESHOLD ? "PARTIAL" : "NONE";
 }
 
 function classifyMatch(clienteRel: ClienteRelation, productoRel: ProductoRelation): MatchTier | null {
   if (clienteRel === "NONE" || productoRel === "NONE") return null;
+  if (productoRel === "PARTIAL") return "PARCIAL";
   return clienteRel === "EXACT" && productoRel === "EXACT" ? "EXACTO" : "COMPATIBLE";
 }
 
+const TIER_ORDER: MatchTier[] = ["CODIGO", "EXACTO", "COMPATIBLE", "PARCIAL"];
+
+function sameCode(a: string | null | undefined, b: string | null | undefined): boolean {
+  const na = normalizeSearchKey(a ?? "").replace(/\s+/g, "");
+  const nb = normalizeSearchKey(b ?? "").replace(/\s+/g, "");
+  return na.length > 0 && na === nb;
+}
+
 /**
- * Resuelve qué asignación de lote corresponde a un cliente+producto dado.
- * Nunca elige silenciosamente entre varias: si más de un candidato alcanza
- * el nivel de coincidencia más alto disponible, devuelve "ambiguous" con
- * todos para que Producción decida explícitamente. Un candidato "COMPATIBLE"
- * nunca gana contra un "EXACTO" que exista en simultáneo.
+ * Resuelve qué asignación de lote corresponde a un cliente+producto (y código, si se conoce). Nunca elige
+ * silenciosamente entre varias ni por parecido: si más de un candidato alcanza el nivel más alto disponible, devuelve
+ * "ambiguous" con todos para que Producción decida; una coincidencia PARCIAL (aunque sea única) también pide elección.
+ * Un nivel menor nunca gana contra uno mayor que exista en simultáneo.
  */
 export function resolveAsignacionLoteForWorkItem(
   candidates: readonly AsignacionLoteResolveInput[],
-  criteria: { cliente: string; producto: string }
+  criteria: { cliente: string; producto: string; codigo?: string | null }
 ): AsignacionLoteResolution {
   if (!criteria.cliente?.trim() || !criteria.producto?.trim()) return { status: "none" };
 
@@ -183,6 +200,10 @@ export function resolveAsignacionLoteForWorkItem(
     if (c.archived) continue;
     const clienteRel = clienteRelation(criteria.cliente, c.marca);
     if (clienteRel === "NONE") continue;
+    if (criteria.codigo && sameCode(criteria.codigo, c.codigo)) {
+      qualifying.push({ item: c, tier: "CODIGO" });
+      continue;
+    }
     const productoRel = productoRelation(c, criteria.producto);
     const tier = classifyMatch(clienteRel, productoRel);
     if (!tier) continue;
@@ -191,11 +212,10 @@ export function resolveAsignacionLoteForWorkItem(
 
   if (qualifying.length === 0) return { status: "none" };
 
-  const hasExacto = qualifying.some((q) => q.tier === "EXACTO");
-  const topTier = hasExacto ? "EXACTO" : "COMPATIBLE";
+  const topTier = TIER_ORDER.find((t) => qualifying.some((q) => q.tier === t))!;
   const top = qualifying.filter((q) => q.tier === topTier);
 
-  if (top.length === 1) return { status: "found", candidate: toCandidate(top[0]!.item), matchTier: topTier };
+  if (top.length === 1 && topTier !== "PARCIAL") return { status: "found", candidate: toCandidate(top[0]!.item), matchTier: topTier };
   return { status: "ambiguous", candidates: top.map((q) => toCandidate(q.item)) };
 }
 

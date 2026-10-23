@@ -328,6 +328,7 @@ export async function postUpdateLoteVto(payload: {
   updatedBy?: string;
   actorSectorId: SectorId;
   expectedVersion?: number;
+  asignacionLoteId?: string | null;
 }): Promise<Response> {
   return fetch("/api/v1/live-sync/operations", {
     method: "POST",
