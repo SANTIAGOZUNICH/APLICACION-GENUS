@@ -2,7 +2,7 @@
  * SOLO PRUEBAS: Stock MP en memoria (lotes + libro mayor por código) para entregar OE en tests unitarios.
  * No se importa desde código de la app.
  */
-import { resetInventoryServiceForTests } from "@/lib/inventory/get-inventory-service";
+import { memoryInventoryRepo, resetInventoryServiceForTests } from "@/lib/inventory/get-inventory-service";
 import type { InventoryActor } from "@/lib/inventory/inventory-service";
 import { getMpStockLedger, resetMpStockMemoryForTests } from "@/lib/mp-stock/mp-stock-ledger";
 import type { OeMaterialRow } from "@/lib/orders/types";
@@ -14,7 +14,7 @@ export const MP_TEST_ACTOR: InventoryActor = {
   isSuperadmin: true,
 };
 
-export type MpTestLot = { codigo: string; lote: string; kg: number; descripcion?: string; codigoKg?: number };
+export type MpTestLot = { codigo: string; lote: string; kg: number; descripcion?: string; codigoKg?: number; vencimiento?: string; estadoStockManual?: string };
 
 /** Limpia inventario + libro mayor en memoria y carga los lotes (y el saldo por código = suma de sus lotes). */
 export async function seedMpStockForTests(lots: MpTestLot[]) {
@@ -28,7 +28,10 @@ export async function seedMpStockForTests(lots: MpTestLot[]) {
       lote: l.lote,
       cantidadKg: l.kg,
       descripcion: l.descripcion ?? l.codigo,
+      ...(l.vencimiento ? { vencimiento: l.vencimiento } : {}),
     });
+    // Estado fijado a mano en la planilla de Stock MP (no es parte del alta): se escribe directo en el repositorio.
+    if (l.estadoStockManual) memoryInventoryRepo.upsertMpStock({ ...row, estadoStockManual: l.estadoStockManual });
     ids[`${l.codigo}|${l.lote}`] = row.id;
     const prev = byCode.get(l.codigo) ?? { kg: 0, descripcion: l.descripcion ?? l.codigo };
     prev.kg += l.kg;

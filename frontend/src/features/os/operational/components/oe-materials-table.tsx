@@ -5,7 +5,7 @@
  * columna desde una planilla y autoguardado (lo hace el editor). Columnas:
  *   Materia prima · Código (fórmula) · CÓDIGO MP (Stock MP) · % · KG A PESAR (teórico) · KG REAL UTILIZADO · Dif. ·
  *   LOTE MP · Obs.
- * Lo único que se descuenta del stock al entregar son los KG REAL UTILIZADO, del CÓDIGO MP y LOTE MP de cada fila.
+ * Lo único que se descuenta del stock son los KG REAL UTILIZADO, del CÓDIGO MP de cada fila (LOTE MP es opcional).
  * «+ lote» agrega una fila de lote adicional para la misma MP (cuando se usó de más de un lote).
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";

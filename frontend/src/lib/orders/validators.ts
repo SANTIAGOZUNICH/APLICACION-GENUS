@@ -72,7 +72,7 @@ export function validateDeliverOa(content: OaContent): string[] {
  * producto terminado, procedimiento, cantidad obtenida, fecha de finalización, kg/% teóricos, materias primas). Se conservan como
  * «Datos pendientes» para completarlos después; nunca se inventan.
  * Lo ÚNICO que bloquea es lo crítico para la trazabilidad y el stock: que la orden tenga producto y que los KG REALES cargados
- * sean válidos (no negativos). El descuento de MP sigue exigiendo código y lote en las filas que informan kg reales.
+ * sean válidos (no negativos). El descuento de MP exige código y kg reales en las filas que consumen (el lote es opcional).
  */
 export const OE_DISPENSABLE_FIELDS = [
   "Fecha",

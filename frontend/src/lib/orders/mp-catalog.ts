@@ -15,6 +15,10 @@ const toLot = (r: MpStockRow): MpCatalogLot => ({
   lote: r.lote,
   cantidadKg: r.cantidadKg,
   archived: r.archived,
+  vencimiento: r.vencimiento,
+  createdAt: r.createdAt,
+  estadoManual: r.estadoStockManual,
+  vencimientoEstadoManual: r.estadoVencimientoManual,
 });
 
 export async function listMpCatalogForOe(): Promise<MpCatalogLot[]> {
