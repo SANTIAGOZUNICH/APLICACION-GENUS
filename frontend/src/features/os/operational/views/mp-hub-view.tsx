@@ -29,7 +29,6 @@ import {
   stockPayloadFromDraft,
 } from "@/lib/inventory/mp-draft-rows";
 import { ExcelPasteDialog } from "@/features/os/operational/components/excel-paste-dialog";
-import { MpWeeklyTable } from "@/features/os/operational/components/mp-weekly-table";
 import { MpWeeklyControlPanel } from "@/features/os/operational/components/mp-weekly-control-panel";
 import { MpCoasPanel } from "@/features/os/operational/components/mp-coas-panel";
 import { MpStockAjusteModal } from "@/features/os/operational/components/mp-stock-ajuste-modal";
@@ -1452,15 +1451,7 @@ export function MpHubView({ initialTab = "Stock" as MpHubTab }: { initialTab?: M
         </>
       )}
 
-      {tab === "Control semanal" && (
-        <>
-          <MpWeeklyTable email={email ?? ""} sector={sectorId} />
-          <details className="mt-3 rounded border border-[var(--os-border)] p-2" data-testid="mp-control-manual">
-            <summary className="cursor-pointer text-sm font-medium">Controles manuales anteriores (por producto)</summary>
-            <MpWeeklyControlPanel />
-          </details>
-        </>
-      )}
+      {tab === "Control semanal" && <MpWeeklyControlPanel />}
 
       {tab === "COA'S" && <MpCoasPanel />}
 

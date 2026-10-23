@@ -324,11 +324,11 @@ export function MpWeeklyControlPanel() {
   }, [active]);
 
   return (
-    <div className="space-y-4" data-testid="mp-weekly-control-panel">
+    <div className="space-y-3" data-testid="mp-weekly-control-panel">
       <SchemaPendingBanner show={schemaPending} />
       <MpWeeklyAttention email={session.email} sector={session.sector} week={week} onWeekChange={setWeek} savedTick={savedTick} />
       {error ? (
-        <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm" role="alert">
+        <p className="rounded border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-sm" role="alert">
           {error}
         </p>
       ) : null}
@@ -339,7 +339,7 @@ export function MpWeeklyControlPanel() {
       ) : null}
 
       {canCreate ? (
-        <div className="grid gap-3 rounded border border-[var(--os-border)] p-3 sm:grid-cols-3" data-testid="mp-control-create">
+        <div className="grid gap-2.5 rounded border border-[var(--os-border)] p-2.5 sm:grid-cols-3" data-testid="mp-control-create">
           <div className="sm:col-span-2">
             <FormulaClientProductPickers
               session={session}
@@ -405,7 +405,7 @@ export function MpWeeklyControlPanel() {
         <p className="text-sm text-[var(--os-text-muted)]">Solo lectura (Producción/Calidad).</p>
       )}
 
-      <div className="grid gap-3 lg:grid-cols-3">
+      <div className="grid gap-2.5 lg:grid-cols-3">
         <div className="space-y-2">
           <div className="flex flex-wrap gap-1">
             {(["activos", "archivados", "anulados"] as const).map((f) => (
@@ -428,7 +428,7 @@ export function MpWeeklyControlPanel() {
             <li key={c.id}>
               <button
                 type="button"
-                className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--os-bg-muted)]"
+                className="w-full px-2.5 py-1.5 text-left text-sm hover:bg-[var(--os-bg-muted)]"
                 onClick={() => {
                   setActive(c);
                   setQty(c.quantityKg != null ? String(c.quantityKg) : "");
@@ -445,7 +445,7 @@ export function MpWeeklyControlPanel() {
             </li>
           ))}
           {visibleControls.length === 0 ? (
-            <li className="px-3 py-4 text-sm text-[var(--os-text-muted)]">Sin controles.</li>
+            <li className="px-2.5 py-3 text-sm text-[var(--os-text-muted)]">Sin controles.</li>
           ) : null}
         </ul>
         </div>
@@ -537,7 +537,7 @@ export function MpWeeklyControlPanel() {
                       <td className={`p-1 text-right font-mono ${valueClass(tone)}`} data-testid="mp-control-stock">{tone === "unknown" && l.stockActual == null ? "—" : fmtKg(l.stockActual)}</td>
                       <td className={`p-1 text-right font-mono ${valueClass(tone, l.stockProyectado)}`} data-testid="mp-control-proyectado">{tone === "unknown" && l.stockActual == null ? "—" : fmtSigned(l.stockProyectado)}</td>
                       <td className={`p-1 text-right font-mono ${valueClass(tone, l.diferencia)}`} data-testid="mp-control-dif">{tone === "unknown" && l.stockActual == null ? "—" : fmtSigned(l.diferencia)}</td>
-                      <td className="p-1"><span className={`inline-block rounded border px-2 py-1 font-bold ${TONE_BADGE[tone]}`} data-testid="mp-control-estado">{l.estado === "Sin vincular" ? "NO IDENTIFICADA" : l.estado === "Sin código" ? "SIN DATOS" : TONE_LABEL[tone]}</span></td>
+                      <td className="p-1"><span className={`inline-block rounded border px-1.5 py-0.5 font-bold ${TONE_BADGE[tone]}`} data-testid="mp-control-estado">{l.estado === "Sin vincular" ? "NO IDENTIFICADA" : l.estado === "Sin código" ? "SIN DATOS" : TONE_LABEL[tone]}</span></td>
                       <td className="p-1">
                         <input
                           className="w-full min-w-0 max-w-[4rem] rounded border px-1"
@@ -575,7 +575,7 @@ export function MpWeeklyControlPanel() {
               </ExcelOrList>
             </div>
           ) : (
-            <p className="p-4 text-sm text-[var(--os-text-muted)]">
+            <p className="p-3 text-sm text-[var(--os-text-muted)]">
               {canCreate
                 ? "Elegí un control de la lista, o creá uno nuevo arriba: cliente, producto, kg y «Guardar control»."
                 : "Elegí un control de la lista."}

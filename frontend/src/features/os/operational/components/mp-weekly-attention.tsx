@@ -75,34 +75,34 @@ export function MpWeeklyAttention({ email, sector, week, onWeekChange, savedTick
   }
 
   return (
-    <section className="rounded border border-[var(--os-border)] p-3" data-testid="mp-weekly-availability">
+    <section className="rounded border border-[var(--os-border)] p-2.5" data-testid="mp-weekly-availability">
       <div className="flex flex-wrap items-end gap-2">
         <div>
           <h3 className="text-sm font-semibold" data-testid="mpw-title">MATERIAS PRIMAS A RESOLVER</h3>
           <p className="text-xs text-[var(--os-text-muted)]">Solo lo que falta para cada control guardado. Las fórmulas completas están en el control individual de abajo.</p>
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Button type="button" variant="secondary" size="sm" className="min-h-11" onClick={() => onWeekChange(shift(week, -7))} aria-label="Semana anterior">‹</Button>
-          <input type="date" value={week} onChange={(e) => e.target.value && onWeekChange(e.target.value)} className="min-h-11 rounded border border-[var(--os-border)] bg-transparent px-2 text-sm" data-testid="mpw-week" />
-          <Button type="button" variant="secondary" size="sm" className="min-h-11" onClick={() => onWeekChange(shift(week, 7))} aria-label="Semana siguiente">›</Button>
-          <Button type="button" size="sm" className="min-h-11" onClick={() => void refresh()} disabled={loading} data-testid="mpw-refresh">{loading ? "Consultando…" : "Actualizar"}</Button>
+          <Button type="button" variant="secondary" size="sm" className="min-h-10" onClick={() => onWeekChange(shift(week, -7))} aria-label="Semana anterior">‹</Button>
+          <input type="date" value={week} onChange={(e) => e.target.value && onWeekChange(e.target.value)} className="min-h-10 rounded border border-[var(--os-border)] bg-transparent px-2 text-sm" data-testid="mpw-week" />
+          <Button type="button" variant="secondary" size="sm" className="min-h-10" onClick={() => onWeekChange(shift(week, 7))} aria-label="Semana siguiente">›</Button>
+          <Button type="button" size="sm" className="min-h-10" onClick={() => void refresh()} disabled={loading} data-testid="mpw-refresh">{loading ? "Consultando…" : "Actualizar"}</Button>
         </div>
       </div>
-      {notice ? <p className="mt-2 rounded border border-emerald-400/60 bg-emerald-400/10 px-3 py-2 text-xs" role="status" data-testid="mpw-notice">{notice}</p> : null}
-      {error ? <p className="mt-2 rounded border border-rose-500/60 bg-rose-500/10 px-3 py-2 text-sm" role="alert" data-testid="mpw-error">No se pudo consultar: {error}. Lo que se ve puede estar desactualizado.</p> : null}
+      {notice ? <p className="mt-2 rounded border border-emerald-400/60 bg-emerald-400/10 px-2.5 py-1.5 text-xs" role="status" data-testid="mpw-notice">{notice}</p> : null}
+      {error ? <p className="mt-2 rounded border border-rose-500/60 bg-rose-500/10 px-2.5 py-1.5 text-sm" role="alert" data-testid="mpw-error">No se pudo consultar: {error}. Lo que se ve puede estar desactualizado.</p> : null}
 
       {schemaPending ? (
-        <p className="mt-3 rounded border border-amber-400/60 bg-amber-400/10 px-3 py-3 text-sm" data-testid="mpw-schema-pending">El guardado del Control semanal necesita una actualización de la base de datos (migración 0066) que todavía no se aplicó.</p>
+        <p className="mt-2.5 rounded border border-amber-400/60 bg-amber-400/10 px-2.5 py-2.5 text-sm" data-testid="mpw-schema-pending">El guardado del Control semanal necesita una actualización de la base de datos (migración 0066) que todavía no se aplicó.</p>
       ) : controls === undefined ? (
-        <p className="mt-3 text-sm text-[var(--os-text-muted)]">Consultando los controles guardados…</p>
+        <p className="mt-2.5 text-sm text-[var(--os-text-muted)]">Consultando los controles guardados…</p>
       ) : controls.length === 0 ? (
-        <p className="mt-3 rounded border border-dashed border-[var(--os-border)] px-3 py-6 text-center text-sm" data-testid="mpw-empty-unsaved">
+        <p className="mt-2.5 rounded border border-dashed border-[var(--os-border)] px-2.5 py-5 text-center text-sm" data-testid="mpw-empty-unsaved">
           Guardá el control para ver las materias primas faltantes de esta semana
         </p>
       ) : (
-        <ul className="mt-3 space-y-3" data-testid="mpw-list">
+        <ul className="mt-2.5 space-y-2.5" data-testid="mpw-list">
           {controls.map((c) => (
-            <li key={c.controlId} className="rounded-lg border border-[var(--os-border)] p-3" data-testid="mpw-block" data-control-id={c.controlId}>
+            <li key={c.controlId} className="rounded-lg border border-[var(--os-border)] p-2.5" data-testid="mpw-block" data-control-id={c.controlId}>
               <div className="flex flex-wrap items-start gap-2">
                 <div className="min-w-0">
                   <p className="text-sm font-bold uppercase" data-testid="mpw-block-title">
@@ -115,17 +115,17 @@ export function MpWeeklyAttention({ email, sector, week, onWeekChange, savedTick
                   </p>
                 </div>
                 {canEdit ? (
-                  <Button type="button" variant="secondary" size="sm" className="ml-auto min-h-11" disabled={busyId === c.controlId} onClick={() => void resave(c.controlId)} data-testid="mpw-resave">
+                  <Button type="button" variant="secondary" size="sm" className="ml-auto min-h-10" disabled={busyId === c.controlId} onClick={() => void resave(c.controlId)} data-testid="mpw-resave">
                     {busyId === c.controlId ? "Actualizando…" : "Actualizar con stock de hoy"}
                   </Button>
                 ) : null}
               </div>
               {c.needs.items.length === 0 ? (
-                <p className="mt-2 rounded border border-emerald-400/50 bg-emerald-400/10 px-3 py-2 text-sm" data-testid="mpw-nothing">No faltan materias primas para esta producción.</p>
+                <p className="mt-2 rounded border border-emerald-400/50 bg-emerald-400/10 px-2.5 py-1.5 text-sm" data-testid="mpw-nothing">No faltan materias primas para esta producción.</p>
               ) : (
                 <ul className="mt-2 space-y-2">
                   {c.needs.items.map((it) => (
-                    <li key={`${it.materiaPrima}|${it.codigo}`} className={`rounded border px-3 py-2 ${TONE_BADGE[TONE_OF[it.status]]} ${TONE_CELL[TONE_OF[it.status]]}`} data-testid="mpw-item" data-estado={it.status}>
+                    <li key={`${it.materiaPrima}|${it.codigo}`} className={`rounded border px-2.5 py-1.5 ${TONE_BADGE[TONE_OF[it.status]]} ${TONE_CELL[TONE_OF[it.status]]}`} data-testid="mpw-item" data-estado={it.status}>
                       <p className="text-sm font-semibold">
                         <span data-testid="mpw-item-name">{it.materiaPrima}</span>
                         {it.codigo ? <span className="ml-2 font-mono text-xs opacity-80">{it.codigo}</span> : null}
