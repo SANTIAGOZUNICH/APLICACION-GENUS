@@ -3,6 +3,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import { inflateSync } from "node:zlib";
+import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
 import { getRemitoService, resetRemitoMemoryForTests } from "./remito-service";
 import { buildRemitoPdf } from "./remito-pdf";
@@ -47,6 +48,20 @@ function pdfPages(buf: Buffer): string[] {
   }
   return pages;
 }
+/** Mide el texto REAL (fuentes de PDFKit) y exige que quede entero dentro de la hoja, sin recortes en ningún borde. */
+function expectTextInsidePage(layout: Awaited<ReturnType<typeof layoutRemitoFromXlsx>>) {
+  const doc = new PDFDocument();
+  for (const t of layout.pages[0]!.texts) {
+    doc.font(t.bold ? "Helvetica-Bold" : "Helvetica").fontSize(t.size);
+    const w = doc.widthOfString(t.text);
+    const left = t.align === "center" ? t.x + t.w / 2 - w / 2 : t.align === "right" ? t.x + t.w - 3 - w : t.x + 3;
+    if (t.text === "|") continue; // resto de la plantilla (A1), no es dato
+    expect(left, `${t.text} (izq.)`).toBeGreaterThanOrEqual(8);
+    expect(left + w, `${t.text} (der.)`).toBeLessThanOrEqual(REMITO_PAGE_W - 8);
+    expect(t.y, `${t.text} (arriba)`).toBeGreaterThanOrEqual(0);
+    expect(t.y + t.h, `${t.text} (abajo)`).toBeLessThanOrEqual(REMITO_PAGE_H);
+  }
+}
 const textsOf = (l: Awaited<ReturnType<typeof layoutRemitoFromXlsx>>, page: number) => l.pages[page]!.texts.map((t) => t.text);
 
 describe("remito: réplica de la planilla impresa (PDF, vista previa y XLSX comparten estructura y datos)", () => {
@@ -90,6 +105,7 @@ describe("remito: réplica de la planilla impresa (PDF, vista previa y XLSX comp
     expect(layout.pages).toHaveLength(1);
     const total = layout.pages[0]!.texts;
     expect(total.map((t) => t.text)).toEqual(expect.arrayContaining(["TOTAL BULTOS:", "3"]));
+    expect(layout.zoom).toBeCloseTo(1.25, 5); // escala de impresión 125 %: ECODERM entra completo
     // legible: con columnas J–N (2 configuraciones) la letra más chica sigue siendo ≥ 6 pt
     expect(Math.min(...total.map((t) => t.size))).toBeGreaterThanOrEqual(6);
     const pdf = await buildRemitoPdf(remito);
@@ -126,7 +142,8 @@ describe("remito: réplica de la planilla impresa (PDF, vista previa y XLSX comp
     const cajas = layout.pages.at(-1)!.texts;
     expect(cajas.map((t) => t.text)).toContain("15"); // 2+3+1+1+2 + 6 = 15 bultos
     // todo queda dentro de la hoja
-    for (const p of layout.pages) for (const r of p.rects) { expect(r.x + r.w).toBeLessThanOrEqual(REMITO_PAGE_W - 40); expect(r.x).toBeGreaterThanOrEqual(40); };
+    expectTextInsidePage(layout);
+    expect(layout.zoom).toBeCloseTo(1.25, 5);;
   });
 
   it("remito largo: varias páginas sin filas cortadas ni texto fuera de la hoja", async () => {
@@ -136,7 +153,8 @@ describe("remito: réplica de la planilla impresa (PDF, vista previa y XLSX comp
     expect(layout.pages).toHaveLength(1); // nunca una 2.ª página: se ajusta toda la plantilla a una hoja
     const all = layout.pages.flatMap((_, i) => textsOf(layout, i));
     for (const l of many) expect(all.filter((t) => t === l.product), l.product).toHaveLength(1);
-    for (const p of layout.pages) for (const r of p.rects) expect(r.y + r.h).toBeLessThanOrEqual(REMITO_PAGE_H - 50);
+    expectTextInsidePage(layout);
+    expect(layout.zoom).toBeLessThan(1.25); // remito enorme: el zoom baja para no recortar
     expect(layout.pages[0]!.texts.map((t) => t.text)).toContain("TOTAL BULTOS:");
     expect(layout.pages.at(-1)!.texts.map((t) => t.text)).toContain("TOTAL BULTOS:");
     expect(pdfPages(await buildRemitoPdf(remito))).toHaveLength(layout.pages.length);
