@@ -3,15 +3,15 @@ import { cellDisplayText, escapeHtml } from "./remito-sheet-text";
 
 /**
  * Maquetación ÚNICA del remito impreso: se calcula desde el XLSX ya completo (la plantilla del laboratorio), de modo que
- * la vista previa, el PDF y el XLSX comparten estructura y datos. Reproduce la planilla impresa: A4 horizontal,
- * cuadrícula fina gris en todas las celdas, filas con la altura de la plantilla y salto de página natural.
+ * la vista previa, el PDF y el XLSX comparten estructura y datos. Reproduce la planilla impresa en UNA sola hoja A4 vertical,
+ * cuadrícula fina gris en todas las celdas y filas con la altura de la plantilla, ajustada a 1 página de ancho por 1 de alto.
  */
-export const REMITO_PAGE_W = 841.89;
-export const REMITO_PAGE_H = 595.28;
+export const REMITO_PAGE_W = 595.28; // A4 vertical (210 × 297 mm)
+export const REMITO_PAGE_H = 841.89;
 const MARGIN_Y = 53.9; // 0,748" del modelo
 const MARGIN_X = 51; // 0,7087" del modelo
-/** Ancho de la tabla cuando solo se usan las columnas A–I (como el original impreso). */
-const BASE_TABLE_W = 631;
+/** Relación entre el ancho de columna de la plantilla y los puntos impresos (la planilla original impresa). */
+const COL_PRINT_FACTOR = 0.95;
 const BASE_COLS = 9;
 const ALL_COLS = 14;
 
@@ -74,42 +74,41 @@ export async function layoutRemitoFromXlsx(bytes: Buffer): Promise<RemitoLayout>
     const w = sheet.getColumn(c).width ?? 9.140625;
     rawPts.push(Math.trunc(w * 7 + 5) * 0.75);
   }
-  const rawTotal = rawPts.reduce((s, n) => s + n, 0);
-  const scale = ncols === BASE_COLS ? BASE_TABLE_W / rawTotal : Math.min(BASE_TABLE_W / (rawPts.slice(0, BASE_COLS).reduce((s, n) => s + n, 0)), (REMITO_PAGE_W - 2 * MARGIN_X) / rawTotal);
-  const widths = rawPts.map((n) => n * scale);
-  const tableW = widths.reduce((s, n) => s + n, 0);
-  const x0 = (REMITO_PAGE_W - tableW) / 2;
-  const colX = widths.map((_, i) => x0 + widths.slice(0, i).reduce((s, n) => s + n, 0));
+  // Geometría natural de la plantilla (columnas y alturas de fila tal cual); luego se ajusta TODA a una sola hoja A4 vertical
+  // (equivale a «ajustar a 1 página de ancho por 1 de alto»).
+  const widths = rawPts.map((n) => n * COL_PRINT_FACTOR);
+  const naturalW = widths.reduce((s, n) => s + n, 0);
+  const colX = widths.map((_, i) => widths.slice(0, i).reduce((s, n) => s + n, 0));
+  const heights: number[] = [];
+  for (let r = 1; r <= lastRow; r++) heights.push(sheet.getRow(r).height ?? 15);
+  const naturalH = heights.reduce((s, n) => s + n, 0);
+  const k = Math.min((REMITO_PAGE_W - 2 * MARGIN_X) / naturalW, (REMITO_PAGE_H - 2 * MARGIN_Y) / naturalH);
+  const x0 = (REMITO_PAGE_W - naturalW * k) / 2;
 
-  const pages: LayoutPage[] = [{ rects: [], texts: [] }];
-  const limit = REMITO_PAGE_H - MARGIN_Y;
+  const page: LayoutPage = { rects: [], texts: [] };
   let y = MARGIN_Y;
   for (let r = 1; r <= lastRow; r++) {
-    const h = sheet.getRow(r).height ?? 15;
-    if (y + h > limit && pages[pages.length - 1]!.rects.length > 0) {
-      pages.push({ rects: [], texts: [] });
-      y = MARGIN_Y;
-    }
-    const page = pages[pages.length - 1]!;
+    const h = heights[r - 1]! * k;
     for (let c = 1; c <= ncols; c++) {
       const box = mergeAt(r, c);
       if (box && (r !== box.r1 || c !== box.c1)) continue;
       const c2 = box ? Math.min(box.c2, ncols) : c;
-      const w = colX[c2 - 1]! + widths[c2 - 1]! - colX[c - 1]!;
-      page.rects.push({ x: colX[c - 1]!, y, w, h });
+      const w = (colX[c2 - 1]! + widths[c2 - 1]! - colX[c - 1]!) * k;
+      const x = x0 + colX[c - 1]! * k;
+      page.rects.push({ x, y, w, h });
       const cell = sheet.getCell(r, c);
       const text = cellDisplayText(sheet, cell).trim();
       if (!text) continue;
       const numeric = typeof cell.value === "number" || (typeof cell.value === "object" && cell.value !== null && "result" in cell.value && typeof cell.value.result === "number");
       page.texts.push({
-        x: colX[c - 1]!,
+        x,
         y,
         w,
         h,
         text,
         bold: Boolean(cell.font?.bold),
         italic: Boolean(cell.font?.italic),
-        size: (cell.font?.size ?? 11) * 0.95,
+        size: (cell.font?.size ?? 11) * 0.95 * k,
         align: alignOf(cell.alignment?.horizontal as string | undefined, numeric),
         valign: (cell.alignment?.vertical as "top" | "middle" | "bottom" | undefined) ?? "bottom",
         wrap: Boolean(cell.alignment?.wrapText),
@@ -117,7 +116,7 @@ export async function layoutRemitoFromXlsx(bytes: Buffer): Promise<RemitoLayout>
     }
     y += h;
   }
-  return { pages };
+  return { pages: [page] };
 }
 
 const GRID = "#8c8c8c";
@@ -137,7 +136,7 @@ export function remitoLayoutToPreviewHtml(layout: RemitoLayout): string {
         return `<text x="${tx.toFixed(2)}" y="${ty.toFixed(2)}" text-anchor="${anchor}" font-family="Arial, Helvetica, sans-serif" font-size="${t.size.toFixed(2)}" font-weight="${t.bold ? 700 : 400}" font-style="${t.italic ? "italic" : "normal"}" fill="#000000"${fit}>${escapeHtml(t.text)}</text>`;
       })
       .join("");
-    return `<figure style="margin:0 0 12px 0;"><svg viewBox="0 0 ${REMITO_PAGE_W} ${REMITO_PAGE_H}" width="100%" style="display:block;max-width:1000px;margin:0 auto;background:#ffffff;border:1px solid #9ca3af;box-shadow:0 1px 3px rgba(0,0,0,.25);" role="img" aria-label="Remito, página ${i + 1} de ${layout.pages.length}"><rect width="100%" height="100%" fill="#ffffff"/>${rects}${texts}</svg><figcaption style="text-align:center;font:12px Arial,sans-serif;color:#111827;background:#ffffff;padding:2px 0;">Página ${i + 1} de ${layout.pages.length}</figcaption></figure>`;
+    return `<figure style="margin:0 0 12px 0;"><svg viewBox="0 0 ${REMITO_PAGE_W} ${REMITO_PAGE_H}" width="100%" style="display:block;max-width:620px;margin:0 auto;background:#ffffff;border:1px solid #9ca3af;box-shadow:0 1px 3px rgba(0,0,0,.25);" role="img" aria-label="Remito, página ${i + 1} de ${layout.pages.length}"><rect width="100%" height="100%" fill="#ffffff"/>${rects}${texts}</svg><figcaption style="text-align:center;font:12px Arial,sans-serif;color:#111827;background:#ffffff;padding:2px 0;">Hoja A4 vertical · 1 página</figcaption></figure>`;
   });
   return `<div data-testid="remito-xlsx-preview" style="background:#ffffff;color:#000000;color-scheme:light;padding:8px;overflow:auto;max-height:75vh;">${svgs.join("")}</div>`;
 }

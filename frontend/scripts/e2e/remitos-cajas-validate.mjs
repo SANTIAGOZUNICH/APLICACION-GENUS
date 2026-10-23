@@ -140,7 +140,7 @@ try {
     check("XLSX = base de datos: 10 × 100, 12 × 100 + 1 × 50, 6 × 100 y total 29 cajas", [10, 12, 6, 100, 50, 29].every((n) => nums.includes(n)), JSON.stringify(nums));
     const pdf = await api.get(`/api/v1/remitos/${remId}/download?format=pdf`);
     const pb = Buffer.from(await pdf.body());
-    check("DESCARGAR PDF: PDF real (no vacío), A4 horizontal y 2 páginas como la planilla", pdf.ok() && pb.subarray(0, 5).toString() === "%PDF-" && pb.length > 2000 && (pb.toString("latin1").match(/\/Type \/Page\b/g) ?? []).length === 2, `${pdf.status()} ${pb.length} bytes`);
+    check("DESCARGAR PDF: PDF real (no vacío), UNA sola hoja A4 vertical", pdf.ok() && pb.subarray(0, 5).toString() === "%PDF-" && pb.length > 2000 && (pb.toString("latin1").match(/\/Type \/Page\b/g) ?? []).length === 1 && /\/MediaBox \[0 0 595\.\d+ 841\.\d+\]/.test(pb.toString("latin1")), `${pdf.status()} ${pb.length} bytes`);
   } else check("generar el remito principal", false, (await genM.text()).slice(0, 200));
 
   const diag = await api.get("/api/v1/remitos/diagnostico-cajas");

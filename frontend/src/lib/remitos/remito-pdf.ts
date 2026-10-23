@@ -12,7 +12,7 @@ function collectPdf(doc: PDFKit.PDFDocument): Promise<Buffer> {
   });
 }
 
-/** Dibuja la maquetación del remito (la misma de la vista previa) como PDF A4 horizontal: texto real, no imagen. */
+/** Dibuja la maquetación del remito (la misma de la vista previa) como PDF A4 vertical, una sola hoja: texto real, no imagen. */
 export async function renderRemitoLayoutPdf(layout: RemitoLayout, title = "Remito"): Promise<Buffer> {
   const doc = new PDFDocument({ size: [REMITO_PAGE_W, REMITO_PAGE_H], margin: 0, autoFirstPage: false, info: { Title: title, Author: "Laboratorio Genus" } });
   const done = collectPdf(doc);
