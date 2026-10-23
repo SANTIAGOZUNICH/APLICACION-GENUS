@@ -90,7 +90,8 @@ describe("buildRemitoXlsx — REMITO_MODELO_APP", () => {
     expect(d47.formula).toContain("D23");
     expect(d47.formula).toContain("L23");
     expect(d47.result).toBe(6); // 2+1+3 cajas
-    expect(sheet!.pageSetup.orientation).toBe("landscape");
+    expect(sheet!.pageSetup.orientation).toBe("portrait");
+    expect(sheet!.pageSetup.fitToHeight).toBe(1);
     expect(sheet!.pageSetup.paperSize).toBe(9); // A4
     expect(sheet!.pageSetup.fitToWidth).toBe(1);
     expect(sheet!.pageSetup.showGridLines).toBe(true);

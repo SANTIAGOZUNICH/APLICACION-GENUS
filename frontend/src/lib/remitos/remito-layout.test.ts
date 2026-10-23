@@ -56,26 +56,29 @@ describe("remito: réplica de la planilla impresa (PDF, vista previa y XLSX comp
     const remito = await draft([{ product: "AFTER SHAVE VERDE", lote: "S26001", vto: "09/28", groups: [g(100, 12)] }], "ORIGINAL BLACK", "2026-10-02");
     const xlsx = await buildRemitoXlsx(remito);
     const layout = await layoutRemitoFromXlsx(xlsx);
-    expect(layout.pages).toHaveLength(2);
+    expect(layout.pages).toHaveLength(1); // UNA sola hoja: detalle y total juntos
     const p1 = textsOf(layout, 0);
     for (const t of ["ORIGINAL BLACK", "1200", "AFTER SHAVE VERDE", "100", "X", "12", "L: S26001   VTO: 09/28", "02/10/2026"]) expect(p1, t).toContain(t);
-    const p2 = layout.pages[1]!.texts;
-    expect(p2.map((t) => t.text)).toEqual(expect.arrayContaining(["1200", "TOTAL BULTOS:", "100"]));
-    expect(p2.find((t) => t.text === "100")!.align).toBe("center");
+    const all1 = layout.pages[0]!.texts;
+    expect(all1.map((t) => t.text)).toEqual(expect.arrayContaining(["1200", "TOTAL BULTOS:", "100"]));
+    expect(all1.filter((t) => t.text === "100").some((t) => t.align === "center")).toBe(true);
     // XLSX: misma plantilla, fecha con formato fijo y A4 horizontal con cuadrícula
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(xlsx as never);
     const sh = wb.worksheets[0]!;
     expect(sh.getCell("F4").numFmt).toBe("dd/mm/yyyy");
-    expect(sh.pageSetup.orientation).toBe("landscape");
+    expect(sh.pageSetup.orientation).toBe("portrait");
+    expect(sh.pageSetup.paperSize).toBe(9);
+    expect(sh.pageSetup.fitToWidth).toBe(1);
+    expect(sh.pageSetup.fitToHeight).toBe(1);
     expect(sh.pageSetup.showGridLines).toBe(true);
     // PDF real, mismas páginas y mismo texto
     const pdf = await buildRemitoPdf(remito);
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
     const pages = pdfPages(pdf);
-    expect(pages).toHaveLength(2);
-    for (const t of ["ORIGINAL BLACK", "AFTER SHAVE VERDE", "02/10/2026", "S26001"]) expect(pages[0], t).toContain(t);
-    expect(pages[1]).toContain("TOTAL BULTOS:");
+    expect(pages).toHaveLength(1);
+    expect(pdf.toString("latin1")).toMatch(/\/MediaBox \[0 0 595\.\d+ 841\.\d+\]/); // A4 vertical
+    for (const t of ["ORIGINAL BLACK", "AFTER SHAVE VERDE", "02/10/2026", "S26001", "TOTAL BULTOS:"]) expect(pages[0], t).toContain(t);
   });
 
   it("ECODERM: 2 × 110 + 1 × 46 = 266 u. y 3 bultos, con lote y vencimiento", async () => {
@@ -83,8 +86,14 @@ describe("remito: réplica de la planilla impresa (PDF, vista previa y XLSX comp
     const layout = await layoutRemitoFromXlsx(await buildRemitoXlsx(remito));
     const all = layout.pages.flatMap((_, i) => textsOf(layout, i));
     for (const t of ["ECODERM", "22/10/2026", "SERUM AHA ROSEHIP", "L: 1234   VTO: 08/27", "266", "2", "110", "1", "46"]) expect(all, t).toContain(t);
-    const total = layout.pages.at(-1)!.texts;
+    expect(layout.pages).toHaveLength(1);
+    const total = layout.pages[0]!.texts;
     expect(total.map((t) => t.text)).toEqual(expect.arrayContaining(["TOTAL BULTOS:", "3"]));
+    // legible: con columnas J–N (2 configuraciones) la letra más chica sigue siendo ≥ 6 pt
+    expect(Math.min(...total.map((t) => t.size))).toBeGreaterThanOrEqual(6);
+    const pdf = await buildRemitoPdf(remito);
+    expect(pdfPages(pdf)).toHaveLength(1);
+    expect(pdf.toString("latin1")).toMatch(/\/MediaBox \[0 0 595\.\d+ 841\.\d+\]/);
   });
 
   it("varios productos y más de tres configuraciones de caja: ninguna se pierde (columnas J–N y detalle EXTRA)", async () => {
@@ -113,17 +122,18 @@ describe("remito: réplica de la planilla impresa (PDF, vista previa y XLSX comp
     const cajas = layout.pages.at(-1)!.texts;
     expect(cajas.map((t) => t.text)).toContain("15"); // 2+3+1+1+2 + 6 = 15 bultos
     // todo queda dentro de la hoja
-    for (const p of layout.pages) for (const r of p.rects) expect(r.x + r.w).toBeLessThanOrEqual(REMITO_PAGE_W - 40);
+    for (const p of layout.pages) for (const r of p.rects) { expect(r.x + r.w).toBeLessThanOrEqual(REMITO_PAGE_W - 40); expect(r.x).toBeGreaterThanOrEqual(40); };
   });
 
   it("remito largo: varias páginas sin filas cortadas ni texto fuera de la hoja", async () => {
     const many = Array.from({ length: 14 }, (_, i) => ({ product: `PRODUCTO LARGO ${String(i).padStart(2, "0")}`, lote: `L${i}`, vto: "01/29", groups: [g(2, 10), g(1, 4)] }));
     const remito = await draft(many, "CLIENTE LARGO", "2026-10-22");
     const layout = await layoutRemitoFromXlsx(await buildRemitoXlsx(remito));
-    expect(layout.pages.length).toBeGreaterThan(2);
+    expect(layout.pages).toHaveLength(1); // nunca una 2.ª página: se ajusta toda la plantilla a una hoja
     const all = layout.pages.flatMap((_, i) => textsOf(layout, i));
     for (const l of many) expect(all.filter((t) => t === l.product), l.product).toHaveLength(1);
     for (const p of layout.pages) for (const r of p.rects) expect(r.y + r.h).toBeLessThanOrEqual(REMITO_PAGE_H - 50);
+    expect(layout.pages[0]!.texts.map((t) => t.text)).toContain("TOTAL BULTOS:");
     expect(layout.pages.at(-1)!.texts.map((t) => t.text)).toContain("TOTAL BULTOS:");
     expect(pdfPages(await buildRemitoPdf(remito))).toHaveLength(layout.pages.length);
   });
@@ -136,6 +146,7 @@ describe("remito: réplica de la planilla impresa (PDF, vista previa y XLSX comp
     expect(html).toContain("color-scheme:light");
     expect(html).toContain("AFTER SHAVE VERDE");
     expect(html).toContain("02/10/2026");
-    expect(html).toContain("Página 2 de 2");
+    expect(html).toContain("viewBox=\"0 0 595.28 841.89\"");
+    expect(html).toContain("1 página");
   });
 });
