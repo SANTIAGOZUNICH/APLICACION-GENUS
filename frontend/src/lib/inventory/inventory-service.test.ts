@@ -141,6 +141,7 @@ describe("Columnas exactas ME/MP", () => {
       "INGRESO Nº",
       "PROVEEDOR",
       "CLIENTE",
+      "PRODUCTO",
       "REMITO Nº",
       "CÓDIGO",
       "DESCRIPCIÓN INSUMO",

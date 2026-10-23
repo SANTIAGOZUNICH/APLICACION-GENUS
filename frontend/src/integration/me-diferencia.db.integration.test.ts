@@ -47,7 +47,8 @@ describe.skipIf(Boolean(PROBLEM))(`DIFERENCIA ME en Postgres real${PROBLEM ? ` �
   const snapshot = async () => JSON.stringify([
     await q("select id, payload from inv_me_ingresos order by id"),
     await q("select id, payload from inv_me_salidas order by id"),
-    await q("select id, payload from inv_me_materials order by id"),
+    // Del material solo cambian los datos de vínculo (producto/pedidoId/versión): el resto — incluido el stock — queda igual.
+    (await q("select id, payload from inv_me_materials order by id")).map((r) => ({ id: r.id, payload: Object.fromEntries(Object.entries(r.payload as Record<string, unknown>).filter(([k]) => !["producto", "pedidoId", "updatedAt", "updatedBy"].includes(k))) })),
     await q("select id, payload from inv_ajustes order by id"),
     await q("select id, q, estado, deleted_at from production_pedidos order by id"),
   ]);
@@ -117,7 +118,7 @@ describe.skipIf(Boolean(PROBLEM))(`DIFERENCIA ME en Postgres real${PROBLEM ? ` �
     await expect(link(m, ajeno)).rejects.toThrow(/otro cliente/);
   });
 
-  it("8) dos pedidos activos del mismo cliente+producto: solo cuenta el vinculado; entregados/eliminados se excluyen", async () => {
+  it("8) dos pedidos activos del mismo cliente+producto: solo cuenta el elegido (vínculo único); entregados/eliminados se excluyen", async () => {
     const a = await mkPed(CLI, "GEL", 1000);
     const b = await mkPed(CLI, "GEL", 400);
     const entregado = await mkPed(CLI, "GEL", 5000, "ENTREGADO");
@@ -126,11 +127,10 @@ describe.skipIf(Boolean(PROBLEM))(`DIFERENCIA ME en Postgres real${PROBLEM ? ` �
     expect((await svc.candidatePedidosDb(dep, m)).map((c) => c.pedidoId)).not.toContain(entregado);
     await link(m, a);
     expect(await dif(m)).toMatchObject({ estado: "JUSTO", necesario: 1000 });
-    await link(m, b); // vínculo explícito a ambos → suma
-    expect(await dif(m)).toMatchObject({ estado: "FALTAN", necesario: 1400, diferencia: -400 });
+    await link(m, b); // elegir otro REEMPLAZA: el mismo stock no cuenta para dos pedidos
+    expect(await dif(m)).toMatchObject({ estado: "SOBRAN", necesario: 400, diferencia: 600 });
+    expect((await dif(m)).pedidos).toHaveLength(1);
     await q("update production_pedidos set deleted_at = now() where id = $1", [b]);
-    expect(await dif(m)).toMatchObject({ estado: "JUSTO", necesario: 1000 });
-    await q("update production_pedidos set estado = 'ENTREGADO' where id = $1", [a]);
     expect((await dif(m)).pedidos).toHaveLength(0);
     expect((await dif(m)).estado).toBe("SIN_DATOS");
   });
@@ -142,6 +142,73 @@ describe.skipIf(Boolean(PROBLEM))(`DIFERENCIA ME en Postgres real${PROBLEM ? ` �
     const ped = await mkPed(CLI, "X", 3000);
     await link(m, ped, null);
     expect(await dif(m)).toMatchObject({ estado: "SIN_CONFIGURAR", diferencia: null });
+  });
+
+  const setProducto = async (materialId: string, producto: string, cliente?: string) => {
+    const { resolveProductoLink } = await import("@/lib/inventory/me-producto-link");
+    const { getDb } = await import("@/lib/db/client");
+    await q("update inv_me_materials set payload = payload || $2::jsonb where id = $1", [materialId, JSON.stringify({ producto, ...(cliente ? { cliente } : {}) })]);
+    await getDb().transaction(async (tx) => { await resolveProductoLink(tx, dep, materialId); });
+  };
+
+  it("PRODUCTO) cliente + producto exacto con UN pedido activo → se vincula solo, conserva consumo, y guarda la referencia estable", async () => {
+    const ped = await mkPed(CLI, "CREMA FACIAL", 3000);
+    await mkPed(CLI, "SHAMPOO", 999);
+    await mkPed(CLI2, "CREMA FACIAL", 111);
+    const m = await mkMat(`PRO-${RUN}`);
+    await ingreso(`PRO-${RUN}`, 2800);
+    await setProducto(m, "crema  facial"); // igualdad normalizada, no por parecido
+    expect(await dif(m)).toMatchObject({ estado: "SIN_CONFIGURAR", producto: "crema  facial" });
+    const [mat] = await q("select payload from inv_me_materials where id = $1", [m]);
+    expect((mat!.payload as Record<string, unknown>).pedidoId).toBe(ped);
+    await link(m, ped, 1);
+    expect(await dif(m)).toMatchObject({ estado: "FALTAN", diferencia: -200, candidatos: 1 });
+    // cambiar a un producto que no existe: el vínculo viejo se quita y queda SIN DATOS (stock intacto)
+    await setProducto(m, "PRODUCTO INEXISTENTE");
+    expect(await dif(m)).toMatchObject({ estado: "SIN_DATOS", stock: 2800 });
+    await setProducto(m, "CREMA FACIAL"); // vuelve a un único candidato: se re-vincula solo con consumo ya configurado? no (se quitó) → SIN CONFIGURAR
+    expect((await dif(m)).estado).toBe("SIN_CONFIGURAR");
+  });
+
+  it("PRODUCTO) mismo producto en varios pedidos activos → ELEGIR PEDIDO hasta que Depósito elija; otro cliente no se mezcla", async () => {
+    const p1 = await mkPed(CLI, "BALSAMO", 1000);
+    await mkPed(CLI, "BALSAMO", 500);
+    await mkPed(CLI2, "BALSAMO", 70);
+    const m = await mkMat(`BAL-${RUN}`);
+    await ingreso(`BAL-${RUN}`, 1000);
+    await setProducto(m, "BALSAMO");
+    expect(await dif(m)).toMatchObject({ estado: "ELEGIR_PEDIDO", candidatos: 2, pedidos: [] });
+    await link(m, p1, 1);
+    expect(await dif(m)).toMatchObject({ estado: "JUSTO", necesario: 1000 });
+  });
+
+  it("PRODUCTO) sin pedido registrado: el producto queda como texto y DIFERENCIA en SIN DATOS; histórico sin producto sigue funcionando", async () => {
+    const m = await mkMat(`TXT-${RUN}`);
+    await ingreso(`TXT-${RUN}`, 50);
+    await setProducto(m, "PRODUCTO SIN PEDIDO");
+    expect(await dif(m)).toMatchObject({ estado: "SIN_DATOS", producto: "PRODUCTO SIN PEDIDO", stock: 50, candidatos: 0 });
+    const viejo = await mkMat(`OLD-${RUN}`); // sin campo producto (registro anterior)
+    expect(await dif(viejo)).toMatchObject({ estado: "SIN_DATOS", producto: "" });
+  });
+
+  it("PRODUCTO) la planilla guarda producto por celda (patchMeSheetCells), resuelve el pedido y no cambia el stock", async () => {
+    const ped = await mkPed(CLI, "TONICO", 2000);
+    const m = await mkMat(`CEL-${RUN}`);
+    await ingreso(`CEL-${RUN}`, 2000);
+    const { patchMeSheetCells } = await import("@/lib/inventory/me-planilla-db");
+    const [row] = await q("select payload from inv_me_materials where id = $1", [m]);
+    const before = await snapshot();
+    void before;
+    await patchMeSheetCells(dep, "me_inventario", [{ id: m, field: "producto", value: "TONICO", expectedVersion: (row!.payload as Record<string, string>).updatedAt } as never]);
+    const [after] = await q("select payload from inv_me_materials where id = $1", [m]);
+    expect(after!.payload).toMatchObject({ producto: "TONICO", pedidoId: ped });
+    expect((await dif(m)).stock).toBe(2000);
+    // ingreso con producto: queda guardado en el ingreso y hereda la referencia al pedido
+    const ing = await ingreso(`CEL-${RUN}`, 0, { materialId: m, bultos: 1, cantidad: 0 });
+    const [ir] = await q("select payload from inv_me_ingresos where id = $1", [ing]);
+    await patchMeSheetCells(dep, "me_ingresos", [{ id: ing, field: "producto", value: " tonico ", expectedVersion: (ir!.payload as Record<string, string>).updatedAt } as never]);
+    const [ir2] = await q("select payload from inv_me_ingresos where id = $1", [ing]);
+    expect(ir2!.payload).toMatchObject({ producto: "tonico", pedidoId: ped });
   });
 
   it("12) vincular/quitar/recalcular NO cambia stock, movimientos, ajustes ni pedidos; permisos y auditoría", async () => {

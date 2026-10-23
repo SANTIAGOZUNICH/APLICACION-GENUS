@@ -178,6 +178,8 @@ export interface GenusGridDraftRows {
   storageKey: string;
   /** Cantidad de filas vacías que se mantienen siempre al final (por defecto 8). */
   minBlank?: number;
+  /** Columnas calculadas que se muestran (solo lectura) en la fila nueva a partir de lo escrito, p. ej. una diferencia prevista. */
+  computed?: Record<string, (values: Record<string, string>) => string>;
   /** Validación de la fila completa antes de crear (null = válida). */
   validate?: (values: Record<string, string>) => string | null;
   /** Crea el registro. `draftId` es el id definitivo: reintentar con el mismo id NUNCA duplica. */
@@ -516,9 +518,10 @@ export function GenusGrid<T>({
     () =>
       rows.map((row) => {
         const id = rowId(row);
-        const out: GenusGridRow = { __id: id, __version: rowVersion(row), __prot: {}, __st: {}, __note: {} };
+        const out: GenusGridRow = { __id: id, __version: rowVersion(row), __prot: {}, __st: {}, __note: {}, __cls: {} };
         for (const col of columns) {
           if (col.cellNote) out.__note![col.key] = col.cellNote(row);
+          if (col.cellClassName) out.__cls![col.key] = col.cellClassName(row);
           const ov = overlay[cellKey(id, col.key)];
           out[col.key] = ov ? ov.value : col.getValue(row);
           out.__prot[col.key] = canEdit ? (col.protection?.(row) ?? null) : (readOnlyReason ?? "Tu sector no puede editar esta tabla.");
@@ -530,12 +533,12 @@ export function GenusGrid<T>({
           ? drafts.map((d) => {
               const out: GenusGridRow = { __id: `${DRAFT_PREFIX}${d.id}`, __version: "", __prot: {}, __st: {}, __note: {} };
               for (const col of columns) {
-                out[col.key] = d.values[col.key] ?? "";
+                out[col.key] = draftRows.computed?.[col.key]?.(d.values) ?? d.values[col.key] ?? "";
                 out.__prot[col.key] = !canEdit
                   ? (readOnlyReason ?? "Tu sector no puede editar esta tabla.")
                   : draftRows.createKeys.includes(col.key)
                     ? null
-                    : "Se completa solo al crear el registro.";
+                    : draftRows.computed?.[col.key] ? "Calculada: se actualiza sola." : "Se completa solo al crear el registro.";
                 if (d.status !== "editing") out.__st[col.key] = d.status === "saving" ? "saving" : "error";
               }
               return out;
@@ -638,11 +641,8 @@ export function GenusGrid<T>({
           if (rowData.__st[key] === "saving") classes.push("genus-cell-saving");
           if (rowData.__st[key] === "error") classes.push("genus-cell-error");
           if (kind === "number") classes.push("genus-cell-num");
-          if (col.cellClassName) {
-            const source = rowByIdRef.current.get(rowData.__id);
-            const extra = source ? col.cellClassName(source) : undefined;
-            if (extra) classes.push(extra);
-          }
+          const extra = rowData.__cls?.[key];
+          if (extra) classes.push(extra);
           return classes.join(" ") || undefined;
         },
       };

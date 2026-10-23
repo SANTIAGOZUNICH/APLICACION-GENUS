@@ -281,3 +281,7 @@
 /* Filas en blanco al final (se crean al completarse). */
 .genus-sheet .genus-draft-row .dsg-cell { background: color-mix(in srgb, var(--os-teal, #0d9488) 5%, transparent); }
 .genus-sheet .genus-draft-row .dsg-cell.genus-cell-protected { background: color-mix(in srgb, var(--os-text-muted, #64748b) 10%, transparent); }
+
+/* DIFERENCIA ME (faltan/sobran contra el pedido): el texto de la celda toma el color del estado. */
+.genus-grid .genus-dif-red .dsg-input, .genus-grid .genus-dif-red { color: #dc2626; font-weight: 600; }
+.genus-grid .genus-dif-green .dsg-input, .genus-grid .genus-dif-green { color: #059669; font-weight: 600; }

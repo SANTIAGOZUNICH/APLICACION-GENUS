@@ -1,7 +1,7 @@
 "use client";
 
 import { readOnlyReason } from "@/features/os/operational/lib/readonly-reasons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClipboardPaste, History, Pencil, Plus, Trash2 } from "lucide-react";
 import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
 import { useMeSheetEditing } from "@/features/os/operational/hooks/use-me-sheet-cells";
@@ -27,8 +27,8 @@ import { ME_INGRESO_COLUMNS, type MeIngresoRow } from "@/lib/inventory/types";
 import { ME_INGRESO_DRAFT_CREATE_KEYS, ME_INGRESO_DRAFT_REQUIRED_KEYS, meIngresoPayloadFromDraft } from "@/lib/inventory/me-draft-rows";
 import type { GenusGridDraftRows } from "@/components/data-grid/genus-grid";
 import { canWriteInventory } from "@/lib/inventory/rbac";
-import { MeDiferenciaCell, useMeDiferencias } from "@/features/os/operational/components/me-diferencia-cell";
-import { formatMeDiferencia } from "@/lib/inventory/me-diferencia";
+import { validateMeSheetValue } from "@/lib/inventory/me-sheet-edit";
+import { MeDiferenciaCell, MePedidoPicker, diferenciaClass, diferenciaText, ingresoDiferencia, useMeDiferencias } from "@/features/os/operational/components/me-diferencia-cell";
 import { IngresoRemitoFotosButton, useIngresoAdjuntoCounts } from "@/features/os/operational/components/ingreso-remito-fotos";
 import { canManageAdjuntos, canViewAdjuntos } from "@/lib/inventory/ingreso-adjuntos-rules";
 import { IngresoConRemitoButtons } from "@/features/os/operational/components/ingreso-con-remito";
@@ -96,7 +96,7 @@ function emptyForm(): FormState {
 
 /** Columna de la planilla → campo del ingreso (TOTAL corrige la cantidad por bulto: total ÷ bultos). */
 const ME_INGRESO_SHEET_FIELD_OF: Record<string, string> = {
-  FECHA: "fecha", "INGRESO Nº": "ingresoNro", PROVEEDOR: "proveedor", CLIENTE: "cliente", "REMITO Nº": "remitoNro", CÓDIGO: "codigo",
+  FECHA: "fecha", "INGRESO Nº": "ingresoNro", PROVEEDOR: "proveedor", CLIENTE: "cliente", PRODUCTO: "producto", "REMITO Nº": "remitoNro", CÓDIGO: "codigo",
   "DESCRIPCIÓN INSUMO": "descripcionInsumo", BULTOS: "bultos", CANTIDAD: "cantidad", TOTAL: "total", UBICACIÓN: "ubicacion",
 };
 
@@ -109,6 +109,8 @@ export function MeIngresosView() {
   const canManageFotos = canManageAdjuntos(sectorId, "ME");
   const [rows, setRows] = useState<MeIngresoRow[]>([]);
   const dif = useMeDiferencias();
+  const difRef = useRef(dif);
+  difRef.current = dif;
   const [persistence, setPersistence] = useState(true);
   const [banner, setBanner] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -135,6 +137,23 @@ export function MeIngresosView() {
             createKeys: ME_INGRESO_DRAFT_CREATE_KEYS,
             requiredKeys: ME_INGRESO_DRAFT_REQUIRED_KEYS,
             storageKey: `genus-draft:${email ?? "anon"}:me-ingresos`,
+            // Fila nueva sin confirmar: diferencia PREVISTA = stock acumulado + este ingreso (no se suma al stock hasta registrarse).
+            computed: {
+              DIFERENCIA: (v) => {
+                // Se calcula con lo escrito aunque falten datos del ingreso (p. ej. la fecha): no hace falta que esté completo.
+                const num = (field: "cantidad" | "bultos" | "total", col: string) => {
+                  const r = validateMeSheetValue("me_ingresos", field, v[col] ?? "");
+                  return r.ok && typeof r.value === "number" ? r.value : null;
+                };
+                const cantidad = num("cantidad", "CANTIDAD");
+                const bultos = v.BULTOS?.trim() ? num("bultos", "BULTOS") : 1;
+                const total = v.TOTAL?.trim() ? num("total", "TOTAL") : cantidad != null && bultos != null ? cantidad * bultos : null;
+                const codigo = (v["CÓDIGO"] ?? "").trim();
+                const mat = codigo ? difRef.current.forIngreso({ codigo, cliente: (v.CLIENTE ?? "").trim() }) : undefined;
+                if (!mat || !total || !(total > 0)) return "";
+                return diferenciaText(ingresoDiferencia({ producto: (v.PRODUCTO ?? "").trim() }, mat, total), true);
+              },
+            },
             validate: (v) => {
               const r = meIngresoPayloadFromDraft("validate", v);
               return r.ok ? null : r.message;
@@ -195,13 +214,14 @@ export function MeIngresosView() {
   const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
   const sel = useListSelectionMode(visibleIds);
 
-  const ME_INGRESO_PRIMARY = new Set(["CÓDIGO", "DESCRIPCIÓN INSUMO"]);
+  const ME_INGRESO_PRIMARY = new Set(["CÓDIGO", "DESCRIPCIÓN INSUMO", "PRODUCTO"]);
   const columns: OperationalTableColumn<MeIngresoRow>[] = ME_INGRESO_COLUMNS.map((label) => {
     const keyMap: Record<string, keyof MeIngresoRow> = {
       FECHA: "fecha",
       "INGRESO Nº": "ingresoNro",
       PROVEEDOR: "proveedor",
       CLIENTE: "cliente",
+      PRODUCTO: "producto",
       "REMITO Nº": "remitoNro",
       CÓDIGO: "codigo",
       "DESCRIPCIÓN INSUMO": "descripcionInsumo",
@@ -224,13 +244,18 @@ export function MeIngresosView() {
   });
 
   // DIFERENCIA con el stock ACUMULADO del material (ingresos confirmados − salidas ± ajustes), no solo este ingreso.
+  const difOf = (row: MeIngresoRow) => ingresoDiferencia(row, dif.forIngreso(row));
   columns.push({
     key: "DIFERENCIA",
     header: "DIFERENCIA",
+    minWidth: 168,
     hideOnMobile: false,
-    text: (row) => (row.anulado || !row.materialId || !dif.map[row.materialId] ? "" : formatMeDiferencia(dif.map[row.materialId]!)),
-    render: (row) => (row.anulado ? "—" : <MeDiferenciaCell materialId={row.materialId} row={row.materialId ? dif.map[row.materialId] : undefined} canLink={canWriteInventory(sectorId, "me_stock")} onChanged={() => void dif.reload()} />),
+    text: (row) => (row.anulado ? "" : diferenciaText(difOf(row))),
+    cellClassName: (row) => (row.anulado ? undefined : diferenciaClass(difOf(row))),
+    render: (row) => (row.anulado ? "—" : <MeDiferenciaCell d={difOf(row)} />),
   } as OperationalTableColumn<MeIngresoRow>);
+  // Junto a la cantidad (después de TOTAL): al final de la fila quedaba fuera de pantalla en tablet.
+  columns.splice(columns.findIndex((c) => c.key === "TOTAL") + 1, 0, columns.pop()!);
 
   async function saveForm() {
     if (!form || !canWrite) return;
@@ -370,6 +395,7 @@ export function MeIngresosView() {
                     <div className="flex flex-wrap gap-1">
                       {!row.anulado && (
                         <>
+                      {canWriteInventory(sectorId, "me_stock") ? <MePedidoPicker materialId={dif.forIngreso(row)?.materialId ?? row.materialId} row={dif.forIngreso(row)} onChanged={() => void dif.reload()} /> : null}
                       <button
                         type="button"
                         aria-label="Editar"

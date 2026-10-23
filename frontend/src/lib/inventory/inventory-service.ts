@@ -293,6 +293,9 @@ export class InventoryService {
       ingresoNro: input.ingresoNro ?? existing?.ingresoNro ?? this.nextMeIngresoNro(),
       proveedor: input.proveedor ?? existing?.proveedor ?? "",
       cliente: input.cliente ?? existing?.cliente ?? "",
+      producto: (input.producto ?? existing?.producto ?? "").trim(),
+      // El vínculo con el pedido lo resuelve el servidor por cliente + producto: si cambia el producto no se arrastra el viejo.
+      pedidoId: (input.producto ?? existing?.producto ?? "").trim() === (existing?.producto ?? "").trim() ? (existing?.pedidoId ?? null) : null,
       remitoNro: input.remitoNro ?? existing?.remitoNro ?? "",
       codigo,
       descripcionInsumo: input.descripcionInsumo ?? existing?.descripcionInsumo ?? material.descripcion,
@@ -768,7 +771,7 @@ export class InventoryService {
    */
   createMeMaterial(
     actor: InventoryActor,
-    input: { id?: string; codigo: string; descripcion?: string; cliente?: string; ubicacion?: string; unidad?: string; cantidadPorBulto?: number | null; stockMinimo?: number | null; puntoReposicion?: number | null }
+    input: { id?: string; codigo: string; descripcion?: string; cliente?: string; producto?: string; ubicacion?: string; unidad?: string; cantidadPorBulto?: number | null; stockMinimo?: number | null; puntoReposicion?: number | null }
   ): MeMaterial {
     this.guard(actor, "me_stock", true);
     const codigo = normalizeMeCodigo(input.codigo);
@@ -785,6 +788,8 @@ export class InventoryService {
       codigo,
       descripcion: (input.descripcion ?? "").trim() || codigo,
       cliente: input.cliente ?? "",
+      producto: (input.producto ?? "").trim(),
+      pedidoId: null,
       ubicacion: input.ubicacion ?? "",
       unidad: input.unidad?.trim() || "u",
       cantidadPorBulto: input.cantidadPorBulto ?? null,
@@ -1121,6 +1126,7 @@ export class InventoryService {
           materialId: fresh.id,
           codigo: normalizeMeCodigo(fresh.codigo) || fresh.codigo,
           cliente: fresh.cliente,
+          producto: fresh.producto ?? "",
           insumo: fresh.descripcion,
           bultosDisplay: formatMeBultosDisplay(fresh.stockActual, fresh.cantidadPorBulto),
           cantidadTotal: fresh.stockActual,

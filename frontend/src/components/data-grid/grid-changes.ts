@@ -13,6 +13,8 @@ export interface GenusGridRow {
   __st: Record<string, "saving" | "error" | undefined>;
   /** columna → nota de trazabilidad (p. ej. «el ingreso original dice X»); se ve al pasar el mouse. */
   __note?: Record<string, string | null>;
+  /** Clase extra por celda calculada junto con la fila: así la celda se repinta cuando cambia el dato (p. ej. semáforo). */
+  __cls?: Record<string, string | undefined>;
   [columnKey: string]: unknown;
 }
 

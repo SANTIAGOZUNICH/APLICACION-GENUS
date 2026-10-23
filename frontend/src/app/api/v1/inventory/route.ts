@@ -13,6 +13,7 @@ import {
 import { hydrateInventoryFromNeon, persistInventorySnapshot, refreshMpInventoryFromNeon } from "@/lib/inventory/neon-persist";
 import type { InventoryActor, InventoryNotificationPayload } from "@/lib/inventory/inventory-service";
 import { confirmMpIngresos, runMpInventoryOp } from "@/lib/inventory/mp-planilla-db";
+import { syncProductoAfterWrite } from "@/lib/inventory/me-diferencia-db";
 import { ME_ALERT_NOTIFY_SECTORS } from "@/lib/inventory/rbac";
 
 export const runtime = "nodejs";
@@ -98,6 +99,12 @@ export async function POST(request: Request) {
     }
     const result = await mutateResource(ready.service, actor, body);
     await persistInventorySnapshot(memoryInventoryRepo);
+    if (body.resource === "me_ingresos" && body.action === "upsert") {
+      const row = result as { materialId?: string | null; producto?: string };
+      await syncProductoAfterWrite(actor, row.materialId, row.producto);
+    } else if (body.resource === "me_stock" && body.action === "create") {
+      await syncProductoAfterWrite(actor, (result as { id?: string }).id);
+    }
     return NextResponse.json({ data: result, persistence: true });
   } catch (err) {
     return inventoryErrorResponse(err);
