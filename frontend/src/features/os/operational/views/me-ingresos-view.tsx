@@ -28,7 +28,7 @@ import { ME_INGRESO_DRAFT_CREATE_KEYS, ME_INGRESO_DRAFT_REQUIRED_KEYS, meIngreso
 import type { GenusGridDraftRows } from "@/components/data-grid/genus-grid";
 import { canWriteInventory } from "@/lib/inventory/rbac";
 import { validateMeSheetValue } from "@/lib/inventory/me-sheet-edit";
-import { MeDiferenciaCell, MePedidoPicker, diferenciaClass, diferenciaText, ingresoDiferencia, useMeDiferencias } from "@/features/os/operational/components/me-diferencia-cell";
+import { MeDiferenciaCell, MePedidoPicker, ingresoDifClass, ingresoDifText, ingresoPrevisto, previstoText, useIngresoDiferencias } from "@/features/os/operational/components/me-diferencia-cell";
 import { IngresoRemitoFotosButton, useIngresoAdjuntoCounts } from "@/features/os/operational/components/ingreso-remito-fotos";
 import { canManageAdjuntos, canViewAdjuntos } from "@/lib/inventory/ingreso-adjuntos-rules";
 import { IngresoConRemitoButtons } from "@/features/os/operational/components/ingreso-con-remito";
@@ -108,7 +108,7 @@ export function MeIngresosView() {
   const fotos = useIngresoAdjuntoCounts("ME", canViewAdjuntos(sectorId, "ME"));
   const canManageFotos = canManageAdjuntos(sectorId, "ME");
   const [rows, setRows] = useState<MeIngresoRow[]>([]);
-  const dif = useMeDiferencias();
+  const dif = useIngresoDiferencias();
   const difRef = useRef(dif);
   difRef.current = dif;
   const [persistence, setPersistence] = useState(true);
@@ -137,7 +137,7 @@ export function MeIngresosView() {
             createKeys: ME_INGRESO_DRAFT_CREATE_KEYS,
             requiredKeys: ME_INGRESO_DRAFT_REQUIRED_KEYS,
             storageKey: `genus-draft:${email ?? "anon"}:me-ingresos`,
-            // Fila nueva sin confirmar: diferencia PREVISTA = stock acumulado + este ingreso (no se suma al stock hasta registrarse).
+            // Fila nueva sin confirmar: diferencia PREVISTA = acumulado del pedido + este ingreso (no cuenta hasta registrarse).
             computed: {
               DIFERENCIA: (v) => {
                 // Se calcula con lo escrito aunque falten datos del ingreso (p. ej. la fecha): no hace falta que esté completo.
@@ -149,9 +149,9 @@ export function MeIngresosView() {
                 const bultos = v.BULTOS?.trim() ? num("bultos", "BULTOS") : 1;
                 const total = v.TOTAL?.trim() ? num("total", "TOTAL") : cantidad != null && bultos != null ? cantidad * bultos : null;
                 const codigo = (v["CÓDIGO"] ?? "").trim();
-                const mat = codigo ? difRef.current.forIngreso({ codigo, cliente: (v.CLIENTE ?? "").trim() }) : undefined;
-                if (!mat || !total || !(total > 0)) return "";
-                return diferenciaText(ingresoDiferencia({ producto: (v.PRODUCTO ?? "").trim() }, mat, total), true);
+                const ctx = difRef.current.data.previsto;
+                if (!codigo || !ctx || !total || !(total > 0)) return "";
+                return previstoText(ingresoPrevisto(ctx, { codigo, cliente: (v.CLIENTE ?? "").trim(), producto: (v.PRODUCTO ?? "").trim(), total }));
               },
             },
             validate: (v) => {
@@ -243,16 +243,15 @@ export function MeIngresosView() {
     };
   });
 
-  // DIFERENCIA con el stock ACUMULADO del material (ingresos confirmados − salidas ± ajustes), no solo este ingreso.
-  const difOf = (row: MeIngresoRow) => ingresoDiferencia(row, dif.forIngreso(row));
+  // DIFERENCIA = total acumulado ingresado para ese pedido y material − lo que pide el pedido. NO usa el saldo de Stock ME.
   columns.push({
     key: "DIFERENCIA",
     header: "DIFERENCIA",
     minWidth: 168,
     hideOnMobile: false,
-    text: (row) => (row.anulado ? "" : diferenciaText(difOf(row))),
-    cellClassName: (row) => (row.anulado ? undefined : diferenciaClass(difOf(row))),
-    render: (row) => (row.anulado ? "—" : <MeDiferenciaCell d={difOf(row)} />),
+    text: (row) => (row.anulado ? "" : ingresoDifText(dif.data.ingresos[row.id])),
+    cellClassName: (row) => (row.anulado ? undefined : ingresoDifClass(dif.data.ingresos[row.id])),
+    render: (row) => (row.anulado ? "—" : <MeDiferenciaCell row={dif.data.ingresos[row.id]} />),
   } as OperationalTableColumn<MeIngresoRow>);
   // Junto a la cantidad (después de TOTAL): al final de la fila quedaba fuera de pantalla en tablet.
   columns.splice(columns.findIndex((c) => c.key === "TOTAL") + 1, 0, columns.pop()!);
@@ -395,7 +394,7 @@ export function MeIngresosView() {
                     <div className="flex flex-wrap gap-1">
                       {!row.anulado && (
                         <>
-                      {canWriteInventory(sectorId, "me_stock") ? <MePedidoPicker materialId={dif.forIngreso(row)?.materialId ?? row.materialId} row={dif.forIngreso(row)} onChanged={() => void dif.reload()} /> : null}
+                      <MePedidoPicker ingresoId={row.id} row={dif.data.ingresos[row.id]} onChanged={() => void dif.reload()} />
                       <button
                         type="button"
                         aria-label="Editar"

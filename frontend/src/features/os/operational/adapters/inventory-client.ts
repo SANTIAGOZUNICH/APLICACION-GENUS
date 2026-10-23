@@ -1,6 +1,6 @@
 /** Cliente HTTP inventario ME/MP + estado de persistencia Neon. */
 import { friendlyServerMessage } from "@/lib/ui/friendly-error";
-import type { MeDiferenciaRow } from "@/lib/inventory/me-diferencia";
+import type { IngresoDiferenciasPayload } from "@/lib/inventory/me-diferencia";
 
 import { getCurrentAuthSession } from "@/features/os/auth/lib/auth-session-helpers";
 
@@ -164,22 +164,24 @@ export async function moveSheetRowApi(resource: SheetRowResource, id: string, be
   return { position: json.position ?? 0 };
 }
 
-/** DIFERENCIA ME (faltantes/sobrantes contra el pedido). Solo lectura de stock; el vínculo no mueve inventario. */
-export async function fetchMeDiferencias(): Promise<Record<string, MeDiferenciaRow>> {
+/** DIFERENCIA de Ingresos ME (control de recepción contra el pedido). Solo lectura de stock; el vínculo no mueve inventario. */
+export async function fetchIngresoDiferencias(): Promise<IngresoDiferenciasPayload> {
   const res = await fetch("/api/v1/inventory/me-diferencia", { headers: actorHeaders(), cache: "no-store" });
-  const json = (await res.json().catch(() => ({}))) as { data?: Record<string, MeDiferenciaRow>; error?: string; code?: string };
+  const json = (await res.json().catch(() => ({}))) as { data?: IngresoDiferenciasPayload; error?: string; code?: string };
   if (!res.ok) throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status, json.code);
-  return json.data ?? {};
+  return json.data ?? { ingresos: {} };
 }
 
-export async function fetchMeDiferenciaCandidatos(materialId: string): Promise<Array<{ pedidoId: string; cliente: string; producto: string; unidades: number | null; estado: string }>> {
-  const res = await fetch(`/api/v1/inventory/me-diferencia?candidatos=${encodeURIComponent(materialId)}`, { headers: actorHeaders(), cache: "no-store" });
-  const json = (await res.json().catch(() => ({}))) as { data?: Array<{ pedidoId: string; cliente: string; producto: string; unidades: number | null; estado: string }>; error?: string; code?: string };
+export type IngresoPedidoCandidato = { pedidoId: string; cliente: string; producto: string; unidades: number | null; estado: string };
+
+export async function fetchIngresoPedidoCandidatos(ingresoId: string): Promise<IngresoPedidoCandidato[]> {
+  const res = await fetch(`/api/v1/inventory/me-diferencia?candidatos=${encodeURIComponent(ingresoId)}`, { headers: actorHeaders(), cache: "no-store" });
+  const json = (await res.json().catch(() => ({}))) as { data?: IngresoPedidoCandidato[]; error?: string; code?: string };
   if (!res.ok) throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status, json.code);
   return json.data ?? [];
 }
 
-export async function postMeDiferenciaLink(body: { action: "link" | "unlink"; materialId: string; pedidoId: string; unidadesPorProducto?: number | null }): Promise<void> {
+export async function postIngresoPedidoLink(body: { action: "link" | "unlink"; ingresoId: string; pedidoId?: string; unidadesPorProducto?: number | null }): Promise<void> {
   const res = await fetch("/api/v1/inventory/me-diferencia", { method: "POST", headers: actorHeaders(), body: JSON.stringify(body) });
   const json = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
   if (!res.ok) throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status, json.code);
