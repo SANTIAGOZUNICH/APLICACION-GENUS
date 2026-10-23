@@ -22,6 +22,7 @@ import {
   useListSelectionMode,
 } from "../components/list-selection-mode";
 import { displayCell } from "@/lib/inventory/calcs";
+import { formatMeDiferencia } from "@/lib/inventory/me-diferencia";
 import {
   ME_INVENTARIO_COLUMNS,
   type MeInventarioViewRow,
@@ -31,6 +32,7 @@ import { ME_INVENTARIO_DRAFT_CREATE_KEYS, ME_INVENTARIO_DRAFT_REQUIRED_KEYS, meI
 import type { GenusGridDraftRows } from "@/components/data-grid/genus-grid";
 import { useMeSheetEditing } from "@/features/os/operational/hooks/use-me-sheet-cells";
 import { MeStockDialog } from "@/features/os/operational/components/me-stock-dialog";
+import { MeDiferenciaCell, useMeDiferencias } from "@/features/os/operational/components/me-diferencia-cell";
 import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
 import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
@@ -68,12 +70,15 @@ export function MeInventarioView() {
   const canWrite = canWriteInventory(sectorId, "me_stock");
   const [rows, setRows] = useState<MeInventarioViewRow[]>([]);
   const [banner, setBanner] = useState<string | null>(null);
+  const dif = useMeDiferencias();
   const [search, setSearch] = useState("");
 
   const reload = useCallback(async () => {
     const res = await fetchInventory<MeInventarioViewRow>("me_inventario" as never);
     setRows(res.data);
     setBanner(res.message ?? null);
+    void dif.reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -187,6 +192,13 @@ export function MeInventarioView() {
       };
     }
   );
+
+  columns.push({
+    key: "DIFERENCIA",
+    header: "DIFERENCIA",
+    text: (row) => { const d = dif.map[row.materialId]; return d ? formatMeDiferencia(d) : formatMeDiferencia({ estado: "SIN_DATOS", diferencia: null }); },
+    render: (row) => <MeDiferenciaCell materialId={row.materialId} row={dif.map[row.materialId]} canLink={canWrite} onChanged={() => void dif.reload()} />,
+  } as OperationalTableColumn<MeInventarioViewRow>);
 
   return (
     <TwinShell title="Inventario ME">
