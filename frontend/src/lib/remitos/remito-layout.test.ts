@@ -71,7 +71,8 @@ describe("remito: réplica de la planilla impresa (PDF, vista previa y XLSX comp
     expect(sh.pageSetup.paperSize).toBe(9);
     expect(sh.pageSetup.fitToWidth).toBe(1);
     expect(sh.pageSetup.fitToHeight).toBe(1);
-    expect(sh.pageSetup.showGridLines).toBe(true);
+    expect(sh.pageSetup.showGridLines).toBe(false); // sin cuadrícula impresa
+    expect(sh.views[0]?.showGridLines).toBe(false);
     // PDF real, mismas páginas y mismo texto
     const pdf = await buildRemitoPdf(remito);
     expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
@@ -93,6 +94,9 @@ describe("remito: réplica de la planilla impresa (PDF, vista previa y XLSX comp
     expect(Math.min(...total.map((t) => t.size))).toBeGreaterThanOrEqual(6);
     const pdf = await buildRemitoPdf(remito);
     expect(pdfPages(pdf)).toHaveLength(1);
+    // el contenido del PDF no dibuja ninguna línea ni rectángulo (operadores de trazo/relleno de trazado)
+    const content = [...pdf.toString("latin1").matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)].map((m) => { try { return inflateSync(Buffer.from(m[1]!, "latin1")).toString("latin1"); } catch { return ""; } }).join("\n");
+    expect(content).not.toMatch(/\sre\s|\s[Sf]\s|\sl\s/);
     expect(pdf.toString("latin1")).toMatch(/\/MediaBox \[0 0 595\.\d+ 841\.\d+\]/);
   });
 
@@ -148,5 +152,6 @@ describe("remito: réplica de la planilla impresa (PDF, vista previa y XLSX comp
     expect(html).toContain("02/10/2026");
     expect(html).toContain("viewBox=\"0 0 595.28 841.89\"");
     expect(html).toContain("1 página");
+    expect(html).not.toContain("<rect x="); // sin cuadrícula: solo el fondo blanco y el texto
   });
 });

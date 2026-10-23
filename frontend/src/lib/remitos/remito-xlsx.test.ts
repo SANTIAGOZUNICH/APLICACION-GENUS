@@ -94,7 +94,8 @@ describe("buildRemitoXlsx — REMITO_MODELO_APP", () => {
     expect(sheet!.pageSetup.fitToHeight).toBe(1);
     expect(sheet!.pageSetup.paperSize).toBe(9); // A4
     expect(sheet!.pageSetup.fitToWidth).toBe(1);
-    expect(sheet!.pageSetup.showGridLines).toBe(true);
+    expect(sheet!.pageSetup.showGridLines).toBe(false);
+    for (const a of ["A9", "C23", "D23", "D47", "F4"]) expect(Object.keys(sheet!.getCell(a).border ?? {})).toHaveLength(0); // ni bordes manuales
   });
 
   it("escribe totales por producto y general para CREMA+SHAMPOO", async () => {

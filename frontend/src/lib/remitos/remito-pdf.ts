@@ -18,8 +18,7 @@ export async function renderRemitoLayoutPdf(layout: RemitoLayout, title = "Remit
   const done = collectPdf(doc);
   for (const page of layout.pages) {
     doc.addPage({ size: [REMITO_PAGE_W, REMITO_PAGE_H], margin: 0 });
-    doc.lineWidth(0.5).strokeColor("#8c8c8c");
-    for (const r of page.rects) doc.rect(r.x, r.y, r.w, r.h).stroke();
+    // Sin cuadrícula: la maquetación solo aporta posiciones; no se dibuja ninguna línea de celda.
     for (const t of page.texts) {
       const font = t.bold ? (t.italic ? "Helvetica-BoldOblique" : "Helvetica-Bold") : t.italic ? "Helvetica-Oblique" : "Helvetica";
       const pad = 3;
