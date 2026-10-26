@@ -4,6 +4,7 @@
  */
 import type { SectorId } from "@/types/operational/sector";
 import { canReadInventory, canWriteInventory } from "@/lib/inventory/rbac";
+import { idNorm, identifyMaterial, specConflict } from "@/lib/mp-control/mp-identity";
 
 export type ReceiptModule = "MP" | "ME";
 /** EN_PLANILLA = pasado al Excel sin validaciones (filas editables; el stock físico se registra aparte). */
@@ -242,10 +243,12 @@ export function splitPackages(total: number, packages: number | null): { bultos:
 
 // ───────────────────────── Sugerencia de materiales ─────────────────────────
 
-export type MaterialSuggestion = { code: string; description: string; unit: string; score: number; reason: string };
+export type MaterialSuggestion = { code: string; description: string; unit: string; score: number; reason: string; /** Confianza cualitativa (sin porcentajes inventados). */ confidence?: "ALTA" | "MEDIA" | "BAJA" };
 /** Historial: (proveedor, código del proveedor) → material interno ya usado en un ingreso confirmado. */
 export type MappingHistory = Map<string, { code: string; count: number }>;
 export const mappingKey = (supplier: string, supplierCode: string) => `${supplierKey(supplier)}|${codeKey(supplierCode)}`;
+/** Clave de una denominación ya confirmada (proveedor + descripción normalizada), para remitos sin código. */
+export const descriptionKey = (supplier: string, description: string) => `${supplierKey(supplier)}|DESC:${idNorm(description)}`;
 
 const STOP = new Set(["DE", "DEL", "LA", "EL", "LOS", "LAS", "Y", "EN", "CON", "PARA", "POR", "A", "X", "UN", "UNA"]);
 const tokens = (s: string) => strip(s).toUpperCase().replace(/[^A-Z0-9]+/g, " ").split(" ").filter((t) => t.length > 1 && !STOP.has(t));
@@ -258,7 +261,8 @@ export function suggestMaterials(line: { supplier: string; supplierCode: string;
   const out: MaterialSuggestion[] = [];
   const prev = line.supplierCode.trim() ? history.get(mappingKey(line.supplier, line.supplierCode)) : undefined;
   const want = new Set(tokens(`${line.description} ${line.supplierCode}`));
-  for (const m of catalog) {
+  const items = [...catalog];
+  for (const m of items) {
     let score = 0;
     let reason = "";
     if (prev && prev.code === m.code) {
@@ -279,7 +283,30 @@ export function suggestMaterials(line: { supplier: string; supplierCode: string;
     }
     if (score >= 0.2) out.push({ code: m.code, description: m.description, unit: m.unit, score: Math.round(score * 100) / 100, reason });
   }
-  return out.sort((a, b) => b.score - a.score || a.code.localeCompare(b.code)).slice(0, limit);
+  // Capa de identidad: sinónimos (ES/EN/INCI) como CANDIDATOS y descarte por concentración/grado/presentación contradictorios.
+  const conflicting = new Set<string>();
+  const id = identifyMaterial({ name: line.description, code: line.supplierCode }, items.map((m) => ({ code: m.code, description: m.description })), { limit: limit * 2 });
+  for (const d of id.discarded) conflicting.add(d.code);
+  const byCode = new Map(out.map((o) => [o.code, o]));
+  const unitOf = new Map(items.map((m) => [m.code, m.unit]));
+  for (const c of id.candidates) {
+    const base = c.confidence === "ALTA" ? 0.95 : c.confidence === "MEDIA" ? 0.7 : 0.3;
+    const cur = byCode.get(c.code);
+    if (cur && !(cur.reason.startsWith("Ya se usó"))) {
+      cur.score = Math.max(cur.score, base);
+      cur.reason = c.reason;
+      cur.confidence = c.confidence;
+    } else if (!cur) {
+      const row: MaterialSuggestion = { code: c.code, description: c.description, unit: unitOf.get(c.code) ?? "", score: base, reason: c.reason, confidence: c.confidence };
+      out.push(row);
+      byCode.set(c.code, row);
+    }
+  }
+  for (const o of out) if (!o.confidence) o.confidence = o.score >= 0.9 ? "ALTA" : o.score >= 0.5 ? "MEDIA" : "BAJA";
+  return out
+    .filter((o) => !conflicting.has(o.code) || o.reason.startsWith("Ya se usó"))
+    .sort((a, b) => b.score - a.score || a.code.localeCompare(b.code))
+    .slice(0, limit);
 }
 
 export type AutoMatch = { code: string; source: "previo" | "codigo" | "nombre"; reason: string };
@@ -300,6 +327,13 @@ export function autoMatchMaterial(
   const prevCode = preselectFromHistory(line, history);
   if (prevCode && catalog.has(normalizeMaterialCode(prevCode))) {
     return { code: normalizeMaterialCode(prevCode), source: "previo", reason: "ya se usó con este proveedor y este código" };
+  }
+  if (idNorm(line.description)) {
+    const byDesc = history.get(descriptionKey(line.supplier, line.description));
+    const item = byDesc ? catalog.get(normalizeMaterialCode(byDesc.code)) : undefined;
+    if (item && !specConflict(line.description, item.description)) {
+      return { code: item.code, source: "previo", reason: "esta denominación ya se confirmó antes con este proveedor" };
+    }
   }
   const unitOk = (m: CatalogItem) => !line.unit.trim() || convertQuantity(1, line.unit, module === "MP" ? "kg" : m.unit).ok;
   const want = new Set(tokens(line.description));
@@ -332,7 +366,7 @@ export function autoMatchMaterial(
       .filter((x) => x.ok)
       .sort((a, b) => b.score - a.score || a.m.code.localeCompare(b.m.code));
     const [top, second] = scored;
-    if (top && top.score >= 0.8 && (!second || top.score - second.score >= 0.3)) {
+    if (top && top.score >= 0.8 && (!second || top.score - second.score >= 0.3) && !specConflict(line.description, top.m.description)) {
       return { code: top.m.code, source: "nombre", reason: "la descripción coincide con el nombre del material" };
     }
   }

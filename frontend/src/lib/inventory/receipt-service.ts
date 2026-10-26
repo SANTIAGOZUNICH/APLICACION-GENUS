@@ -31,6 +31,7 @@ import { normalizeMeCodigo } from "@/lib/inventory/me-codigo";
 import { auditRow, lockCodigos } from "@/lib/inventory/me-planilla-db";
 import { runMpInventoryOp } from "@/lib/inventory/mp-planilla-db";
 import { extractRemito, extractionConfig, type ExtractionConfig } from "@/lib/inventory/receipt-extraction";
+import { idNorm } from "@/lib/mp-control/mp-identity";
 import {
   RECEIPT_MAX_FILES,
   RECEIPT_MAX_LINES,
@@ -42,6 +43,7 @@ import {
   emptyLine,
   isIsoDate,
   mappingKey,
+  descriptionKey,
   autoMatchMaterial,
   normalizeMaterialCode,
   parseNumber,
@@ -218,18 +220,22 @@ export function searchCatalog(catalog: Map<string, CatalogItem>, q: string, limi
 /** (proveedor, código del proveedor) → material interno, a partir de recepciones confirmadas. */
 async function loadHistory(db: Db, module: ReceiptModule): Promise<MappingHistory> {
   const rows = await db
-    .select({ supplier: inventoryReceipts.supplier, code: inventoryReceiptLines.supplierCode, material: inventoryReceiptLines.materialCode })
+    .select({ supplier: inventoryReceipts.supplier, code: inventoryReceiptLines.supplierCode, codeKey: inventoryReceiptLines.supplierCodeKey, description: inventoryReceiptLines.description, material: inventoryReceiptLines.materialCode })
     .from(inventoryReceiptLines)
     .innerJoin(inventoryReceipts, eq(inventoryReceipts.id, inventoryReceiptLines.receiptId))
-    .where(and(eq(inventoryReceiptLines.module, module), eq(inventoryReceipts.status, "CONFIRMADO"), sql`${inventoryReceiptLines.supplierCodeKey} <> ''`))
+    .where(and(eq(inventoryReceiptLines.module, module), eq(inventoryReceipts.status, "CONFIRMADO")))
     .orderBy(desc(inventoryReceiptLines.createdAt))
     .limit(5000);
   const tally = new Map<string, Map<string, number>>();
-  for (const r of rows) {
-    const k = mappingKey(r.supplier, r.code);
+  const add = (k: string, material: string) => {
     const byMat = tally.get(k) ?? new Map<string, number>();
-    byMat.set(r.material, (byMat.get(r.material) ?? 0) + 1);
+    byMat.set(material, (byMat.get(material) ?? 0) + 1);
     tally.set(k, byMat);
+  };
+  for (const r of rows) {
+    if (r.codeKey) add(mappingKey(r.supplier, r.code), r.material);
+    // Denominación ya confirmada con este proveedor (aunque el remito no traiga código): equivalencia verificada por una persona.
+    if (idNorm(r.description)) add(descriptionKey(r.supplier, r.description), r.material);
   }
   const history: MappingHistory = new Map();
   for (const [k, byMat] of tally) {
