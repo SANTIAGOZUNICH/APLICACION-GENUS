@@ -12,6 +12,7 @@ import type { DraftItem, DraftPayload } from "@/lib/email-orders/types";
 
 type Status = {
   account: string;
+  ordersAddress?: string;
   oauth: { ready: boolean; missing: string[]; invalid: Array<{ name: string; problem: string }>; keyFormat: string | null };
   aiAvailable: boolean;
   aiReason: string;
@@ -21,7 +22,7 @@ type Status = {
   connectedBy: string | null;
   lastError: string | null;
   lastAnalyzedAt: string | null;
-  metrics: { mensajes: number; sinPedido: number; conError: number; borradores: number; pendientes: number; aprobados: number; aprobadosSinCambios: number; aprobadosCorregidos: number; descartados: number; renglonesCargados: number } | null;
+  metrics: { mensajes: number; sinPedido: number; conError: number; excluidos?: number; borradores: number; pendientes: number; aprobados: number; aprobadosSinCambios: number; aprobadosCorregidos: number; descartados: number; renglonesCargados: number } | null;
 };
 
 const field = "w-full rounded border border-[var(--os-border)] bg-transparent px-2 py-1 text-sm";
@@ -38,6 +39,7 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
   const [after, setAfter] = useState("");
   const [before, setBefore] = useState("");
   const [result, setResult] = useState<AnalyzeResult | null>(null);
+  const [diag, setDiag] = useState<null | { target: string; scanned: number; verified: number; rows: Array<{ date: string | null; senderDomain: string; verified: boolean; strength: string | null; evidence: string[]; reason: string; recipientHeadersPresent: string[] }> }>(null);
 
   const api = useCallback(
     async <T,>(path: string, init?: RequestInit): Promise<T> => {
@@ -82,6 +84,17 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
       setBusy(null);
     }
   }
+  async function runDiagnose() {
+    setBusy("diagnosticando");
+    setError(null);
+    try {
+      setDiag(await api("/api/v1/email-orders/diagnose", { method: "POST", body: JSON.stringify({ scan: 20 }) }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo verificar el filtro");
+    } finally {
+      setBusy(null);
+    }
+  }
   async function disconnect() {
     if (!window.confirm("¿Desconectar la casilla de pedidos? Se borra el acceso guardado y se revoca en Google. Los borradores existentes se conservan.")) return;
     setBusy("desconectando");
@@ -118,7 +131,7 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
           ) : null}
           {status && !status.connected && status.oauth.ready ? (
             <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span>Casilla autorizada: <b>{status.account}</b>. Se pide solo permiso de LECTURA de Gmail.</span>
+              <span>Cuenta a conectar: <b>{status.account}</b> (a donde Webnode reenvía). Solo se analizan los correos que originalmente iban a <b>{status.ordersAddress ?? "pedidos@laboratoriogenus.com.ar"}</b>. Se pide solo permiso de LECTURA de Gmail.</span>
               <a className="inline-flex min-h-10 items-center rounded bg-[var(--os-teal,#0d9488)] px-3 text-sm font-semibold text-white" href="/api/v1/email-orders/oauth/start" data-testid="email-pedidos-conectar">Conectar casilla de pedidos</a>
             </div>
           ) : null}
@@ -134,14 +147,25 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
               <Button type="button" className="min-h-10 font-bold uppercase" onClick={() => void analyze()} disabled={Boolean(busy) || !status.aiAvailable} data-testid="email-pedidos-analizar">
                 {busy === "analizando" ? "Analizando…" : "Analizar correos"}
               </Button>
+              <button type="button" className="min-h-10 text-xs underline" onClick={() => void runDiagnose()} disabled={Boolean(busy)} data-testid="email-pedidos-diagnosticar">{busy === "diagnosticando" ? "Verificando…" : "Verificar filtro (sin analizar)"}</button>
               <button type="button" className="min-h-10 text-xs underline" onClick={() => void disconnect()} disabled={Boolean(busy)} data-testid="email-pedidos-desconectar">Desconectar</button>
               <span className="text-[var(--os-text-muted)]">Conectada por {status.connectedBy}. Solo lectura: no borra, mueve ni responde correos.</span>
             </div>
           ) : null}
           {status && !status.aiAvailable ? <p className="text-xs text-amber-700">La lectura con IA no está disponible: {status.aiReason}</p> : null}
+          {diag ? (
+            <div className="rounded border border-[var(--os-border)] px-2.5 py-1.5 text-xs" data-testid="email-pedidos-diagnostico">
+              <p>Filtro de destinatario original ({diag.target}): de {diag.scanned} correos recientes, <b>{diag.verified}</b> verificados y {diag.scanned - diag.verified} excluidos. Solo se muestran metadatos; nada se descargó ni se envió a la IA.</p>
+              <ul className="mt-1 space-y-0.5">
+                {diag.rows.map((r, i) => (
+                  <li key={i}>{(r.date ?? "").slice(0, 10)} · {r.senderDomain || "?"} · {r.verified ? `✔ verificado (${r.strength}: ${r.evidence.join(", ")})` : `✖ no verificable (${r.reason === "sin_encabezados" ? "sin encabezados" : "sin destinatario original"}; encabezados de destinatario presentes: ${r.recipientHeadersPresent.join(", ") || "ninguno"})`}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {result ? (
             <p className="rounded border border-[var(--os-border)] px-2.5 py-1.5 text-xs" data-testid="email-pedidos-resultado">
-              Revisados {result.requested} correo(s): {result.drafts} borrador(es) nuevo(s), {result.withoutOrder} sin pedido (consultas u otros), {result.alreadyProcessed} ya procesado(s)
+              Revisados {result.scanned} correo(s) (solo encabezados): {result.excluded} excluido(s) por no poder verificar que iban a la casilla de pedidos (no se leyeron ni se enviaron a la IA); de los {result.requested} dirigidos a pedidos: {result.drafts} borrador(es) nuevo(s), {result.withoutOrder} sin pedido (consultas u otros), {result.alreadyProcessed} ya procesado(s)
               {result.errors.length ? `, ${result.errors.length} con error (se reintentan al analizar de nuevo)` : ""}.
               {result.errors.map((er) => <span key={er.messageId} className="block text-rose-700">«{er.subject || er.messageId}»: {er.message}</span>)}
             </p>
