@@ -477,6 +477,13 @@
       "when": 1793800002000,
       "tag": "0070_me_material_pedido_links",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1793900000000,
+      "tag": "0071_email_orders",
+      "breakpoints": true
     }
   ]
 }

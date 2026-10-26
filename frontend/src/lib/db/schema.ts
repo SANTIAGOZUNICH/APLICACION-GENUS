@@ -1898,3 +1898,71 @@ export const meMaterialPedidoLinks = pgTable(
     index("me_material_pedido_links_pedido_idx").on(table.pedidoId),
   ]
 );
+
+// ───────────────────────── Pedidos desde email (piloto Gmail, migración 0071) ─────────────────────────
+
+/** Conexión OAuth a la casilla de pedidos (solo lectura). El refresh token se guarda CIFRADO (AES-256-GCM); jamás llega al navegador. */
+export const emailIntegrations = pgTable("email_integrations", {
+  id: text("id").primaryKey(),
+  provider: text("provider").notNull().default("gmail"),
+  accountEmail: text("account_email").notNull(),
+  refreshTokenEnc: text("refresh_token_enc"),
+  scope: text("scope").notNull().default(""),
+  status: text("status").notNull().default("desconectado"),
+  connectedBy: text("connected_by"),
+  connectedAt: timestamp("connected_at", { withTimezone: true }),
+  disconnectedBy: text("disconnected_by"),
+  disconnectedAt: timestamp("disconnected_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  lastAnalyzedAt: timestamp("last_analyzed_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Un registro por correo de Gmail analizado (ID estable): evita reprocesar y pedidos duplicados. No guarda el cuerpo del correo. */
+export const emailOrderMessages = pgTable(
+  "email_order_messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    gmailMessageId: text("gmail_message_id").notNull(),
+    gmailThreadId: text("gmail_thread_id"),
+    fromAddr: text("from_addr"),
+    subject: text("subject"),
+    receivedAt: timestamp("received_at", { withTimezone: true }),
+    classification: text("classification"),
+    outcome: text("outcome").notNull(),
+    attachments: jsonb("attachments").notNull().default([]),
+    error: text("error"),
+    aiMs: integer("ai_ms"),
+    analyzedBy: text("analyzed_by"),
+    analyzedAt: timestamp("analyzed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("email_order_messages_gmail_uidx").on(t.gmailMessageId), index("email_order_messages_thread_idx").on(t.gmailThreadId)]
+);
+
+/** Borrador de pedido(s) interpretado de un correo. Solo Producción lo aprueba; recién ahí se crean pedidos con el flujo existente. */
+export const emailOrderDrafts = pgTable(
+  "email_order_drafts",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    gmailMessageId: text("gmail_message_id").notNull(),
+    gmailThreadId: text("gmail_thread_id"),
+    kind: text("kind").notNull().default("NUEVO"),
+    status: text("status").notNull().default("PENDIENTE"),
+    payload: jsonb("payload").notNull(),
+    original: jsonb("original").notNull(),
+    source: jsonb("source").notNull().default({}),
+    related: jsonb("related").notNull().default({}),
+    version: integer("version").notNull().default(1),
+    wasEdited: boolean("was_edited").notNull().default(false),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    discardReason: text("discard_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("email_order_drafts_gmail_uidx").on(t.gmailMessageId),
+    index("email_order_drafts_status_idx").on(t.status, t.createdAt),
+    index("email_order_drafts_thread_idx").on(t.gmailThreadId),
+  ]
+);

@@ -531,6 +531,29 @@ export async function askGeminiJson(prompt: string, deps: { fetchImpl?: typeof f
   }
 }
 
+/**
+ * Llamada genérica a Gemini con PARTES arbitrarias (texto + archivos en línea) que devuelve JSON. La usa la importación de pedidos desde
+ * email. Mismo presupuesto, reintentos y clasificación de errores que la lectura de remitos. Nunca lanza.
+ */
+export async function generateJsonFromParts(
+  parts: Array<Record<string, unknown>>,
+  deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv>; budgetMs?: number; maxOutputTokens?: number } = {}
+): Promise<{ ok: true; json: unknown; ms: number; model: string } | { ok: false; message: string; kind: string }> {
+  const baseEnv = deps.env ?? process.env;
+  const cfg = extractionConfig(baseEnv);
+  if (!cfg.available) return { ok: false, message: cfg.reason, kind: cfg.code };
+  const env = deps.budgetMs ? { ...baseEnv, INGRESO_REMITO_BUDGET_MS: String(deps.budgetMs), INGRESO_REMITO_ATTEMPT_MS: String(Math.min(30_000, deps.budgetMs)) } : baseEnv;
+  const t0 = Date.now();
+  const run = await runGenerate(parts, env, deps.fetchImpl ?? fetch, { maxOutputTokens: deps.maxOutputTokens ?? 8192 });
+  if (!run.ok) return { ok: false, message: run.message, kind: run.kind };
+  const text = run.body.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+  try {
+    return { ok: true, json: JSON.parse(text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, "")), ms: Date.now() - t0, model: run.model };
+  } catch {
+    return { ok: false, message: "La IA no devolvió una respuesta interpretable.", kind: "unreadable" };
+  }
+}
+
 // ───────────────────────── Prueba de configuración ─────────────────────────
 
 export type ProbeResult = {
