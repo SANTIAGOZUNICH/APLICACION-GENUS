@@ -28,7 +28,7 @@
    |---|---|
    | `GMAIL_OAUTH_CLIENT_ID` | ID de cliente del paso 4 |
    | `GMAIL_OAUTH_CLIENT_SECRET` | Secreto del paso 4 (marcar *Sensitive*) |
-   | `EMAIL_TOKEN_ENCRYPTION_KEY` | `openssl rand -base64 32` (32 bytes en base64; **guardarla**: si se pierde hay que reconectar) |
+   | `EMAIL_TOKEN_ENCRYPTION_KEY` | `openssl rand -base64 32` recomendado. También se aceptan 32 bytes en hex (64 caracteres) o cualquier secreto de ≥ 32 caracteres; comillas/espacios sobrantes se ignoran. Menos de 32 caracteres se rechaza y el panel lo indica. **Guardarla**: si se pierde o cambia hay que reconectar la casilla |
    | `GMAIL_OAUTH_REDIRECT_URI` | (opcional) la URI exacta del paso 4; si falta se usa el dominio desde el que se conecta |
    | `GMAIL_ORDERS_ACCOUNT` | (opcional) por defecto `pedidos@laboratoriogenus.com.ar` |
    | `GEMINI_API_KEY` | ya configurada (lectura de remitos) |
@@ -47,3 +47,6 @@
 ## Pruebas
 - Unitarias: `src/lib/email-orders/email-orders.test.ts`, `src/features/os/operational/components/email-order-drafts-panel.test.tsx`.
 - Postgres descartable (Gmail e IA simulados): `bash scripts/e2e/run-email-orders-db-local.sh`.
+
+## Diagnóstico si el panel dice que falta configuración
+El panel distingue **"no llegan al servidor"** (variable ausente en el entorno del deploy activo: revisar que esté en *Production* y redeployar después de crearla) de **"mal configuradas"** (presente pero vacía o demasiado corta). Nunca muestra valores. Desde la consola del navegador, ya logueado como Producción: `fetch('/api/v1/email-orders/status').then(r=>r.json()).then(j=>console.log(j.oauth))` devuelve `{ready, missing, invalid, keyFormat}`.

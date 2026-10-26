@@ -2,23 +2,43 @@
  * Cifrado del refresh token de Gmail (AES-256-GCM). La clave vive SOLO en el servidor (`EMAIL_TOKEN_ENCRYPTION_KEY`, 32 bytes en base64).
  * Formato: `v1.<iv>.<tag>.<ciphertext>` (base64url). Sin clave válida NO se guarda ningún token.
  */
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 
 export class TokenCryptoError extends Error {}
 
+/**
+ * Interpreta la clave configurada. Acepta los formatos que se usan en la práctica y NUNCA devuelve ni registra el valor:
+ *  1) 32 bytes en base64 / base64url (`openssl rand -base64 32`, formato documentado);
+ *  2) 32 bytes en hexadecimal (64 caracteres, `openssl rand -hex 32`);
+ *  3) cualquier otro secreto de ≥ 32 caracteres: se deriva una clave de 32 bytes con SHA-256 (determinístico: el mismo texto da la misma clave).
+ * Comillas o espacios/saltos de línea sobrantes (típico al pegar en Vercel) se quitan. Más corto que 32 caracteres → inválida.
+ */
+export type KeyDiagnosis = { ok: true; format: "base64" | "hex" | "derivada"; key: Buffer } | { ok: false; reason: "ausente" | "demasiado_corta"; length: number };
+
+export function diagnoseKey(raw: string | undefined): KeyDiagnosis {
+  const v = (raw ?? "").trim().replace(/^(["'])([\s\S]*)\1$/, "$2").trim();
+  if (!v) return { ok: false, reason: "ausente", length: 0 };
+  if (/^[A-Za-z0-9+/_-]+={0,2}$/.test(v)) {
+    const b = Buffer.from(v.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+    if (b.length === 32) return { ok: true, format: "base64", key: b };
+  }
+  if (/^[0-9a-fA-F]{64}$/.test(v)) return { ok: true, format: "hex", key: Buffer.from(v, "hex") };
+  if (v.length >= 32) return { ok: true, format: "derivada", key: createHash("sha256").update(v, "utf8").digest() };
+  return { ok: false, reason: "demasiado_corta", length: v.length };
+}
+
 function keyFrom(raw: string | undefined): Buffer {
-  const b = Buffer.from((raw ?? "").trim(), "base64");
-  if (b.length !== 32) throw new TokenCryptoError("Falta EMAIL_TOKEN_ENCRYPTION_KEY (32 bytes en base64).");
-  return b;
+  const d = diagnoseKey(raw);
+  if (!d.ok) {
+    throw new TokenCryptoError(
+      d.reason === "ausente" ? "Falta EMAIL_TOKEN_ENCRYPTION_KEY." : `EMAIL_TOKEN_ENCRYPTION_KEY es demasiado corta (${d.length} caracteres; mínimo 32). Generá una con: openssl rand -base64 32`
+    );
+  }
+  return d.key;
 }
 
 export function encryptionKeyConfigured(env: Partial<NodeJS.ProcessEnv> = process.env): boolean {
-  try {
-    keyFrom(env.EMAIL_TOKEN_ENCRYPTION_KEY);
-    return true;
-  } catch {
-    return false;
-  }
+  return diagnoseKey(env.EMAIL_TOKEN_ENCRYPTION_KEY).ok;
 }
 
 export function encryptToken(plain: string, env: Partial<NodeJS.ProcessEnv> = process.env): string {

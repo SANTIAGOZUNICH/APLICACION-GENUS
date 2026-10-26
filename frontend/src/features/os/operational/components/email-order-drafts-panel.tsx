@@ -12,7 +12,7 @@ import type { DraftItem, DraftPayload } from "@/lib/email-orders/types";
 
 type Status = {
   account: string;
-  oauth: { ready: boolean; missing: string[] };
+  oauth: { ready: boolean; missing: string[]; invalid: Array<{ name: string; problem: string }>; keyFormat: string | null };
   aiAvailable: boolean;
   aiReason: string;
   dbReady: boolean;
@@ -111,7 +111,9 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
           {status && !status.dbReady ? <p className="text-xs">Requiere la base de datos configurada.</p> : null}
           {status && !status.oauth.ready ? (
             <p className="rounded border border-amber-400/60 bg-amber-400/10 px-2.5 py-1.5 text-xs" data-testid="email-pedidos-config">
-              Falta configurar en el servidor (lo hace Sistemas): {status.oauth.missing.join(", ")}. Ver docss/PEDIDOS_EMAIL_GMAIL.md.
+              {status.oauth.missing.length ? <>No llegan al servidor (revisá el entorno Production y hacé un redeploy después de crearlas): {status.oauth.missing.join(", ")}. </> : null}
+              {status.oauth.invalid.length ? <>Mal configuradas: {status.oauth.invalid.map((i) => `${i.name} (${i.problem === "demasiado_corta" ? "demasiado corta, mínimo 32 caracteres" : "vacía"})`).join(", ")}. </> : null}
+              Ver docss/PEDIDOS_EMAIL_GMAIL.md.
             </p>
           ) : null}
           {status && !status.connected && status.oauth.ready ? (

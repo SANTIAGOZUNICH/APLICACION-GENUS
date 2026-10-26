@@ -8,20 +8,47 @@ import "server-only";
  * el origen de la petición), GMAIL_ORDERS_ACCOUNT (default pedidos@laboratoriogenus.com.ar), EMAIL_TOKEN_ENCRYPTION_KEY.
  */
 import { google } from "googleapis";
-import { encryptionKeyConfigured } from "./crypto";
+import { diagnoseKey } from "./crypto";
 
 export const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 export const DEFAULT_ORDERS_ACCOUNT = "pedidos@laboratoriogenus.com.ar";
 
 export const ordersAccount = (env: Partial<NodeJS.ProcessEnv> = process.env) => (env.GMAIL_ORDERS_ACCOUNT?.trim() || DEFAULT_ORDERS_ACCOUNT).toLowerCase();
 
-export type OAuthConfigStatus = { ready: boolean; missing: string[] };
+export type ConfigIssue = { name: string; problem: "ausente" | "vacía_o_con_espacios" | "demasiado_corta" };
+export type OAuthConfigStatus = {
+  ready: boolean;
+  /** Variables que NO llegaron al servidor (no definidas, o definidas en otro entorno / sin redeploy posterior). */
+  missing: string[];
+  /** Variables presentes pero inutilizables (formato). Nunca incluye el valor. */
+  invalid: ConfigIssue[];
+  /** Cómo se interpretó la clave de cifrado (sin el valor): null si no se pudo. */
+  keyFormat: "base64" | "hex" | "derivada" | null;
+};
 export function oauthConfigStatus(env: Partial<NodeJS.ProcessEnv> = process.env): OAuthConfigStatus {
   const missing: string[] = [];
-  if (!env.GMAIL_OAUTH_CLIENT_ID?.trim()) missing.push("GMAIL_OAUTH_CLIENT_ID");
-  if (!env.GMAIL_OAUTH_CLIENT_SECRET?.trim()) missing.push("GMAIL_OAUTH_CLIENT_SECRET");
-  if (!encryptionKeyConfigured(env)) missing.push("EMAIL_TOKEN_ENCRYPTION_KEY");
-  return { ready: missing.length === 0, missing };
+  const invalid: ConfigIssue[] = [];
+  for (const name of ["GMAIL_OAUTH_CLIENT_ID", "GMAIL_OAUTH_CLIENT_SECRET"] as const) {
+    const raw = env[name];
+    if (raw === undefined) missing.push(name);
+    else if (!raw.trim()) invalid.push({ name, problem: "vacía_o_con_espacios" });
+  }
+  const k = diagnoseKey(env.EMAIL_TOKEN_ENCRYPTION_KEY);
+  if (!k.ok) {
+    if (env.EMAIL_TOKEN_ENCRYPTION_KEY === undefined) missing.push("EMAIL_TOKEN_ENCRYPTION_KEY");
+    else invalid.push({ name: "EMAIL_TOKEN_ENCRYPTION_KEY", problem: k.reason === "ausente" ? "vacía_o_con_espacios" : "demasiado_corta" });
+  }
+  return { ready: missing.length === 0 && invalid.length === 0, missing, invalid, keyFormat: k.ok ? k.format : null };
+}
+
+/** Texto para la persona (sin valores): qué falta y qué está mal escrito. */
+export function describeConfigProblems(c: OAuthConfigStatus): string {
+  const parts: string[] = [];
+  if (c.missing.length) parts.push(`no llegan al servidor: ${c.missing.join(", ")} (revisá que estén en el entorno Production y hacer un redeploy DESPUÉS de crearlas)`);
+  for (const i of c.invalid) {
+    parts.push(`${i.name} ${i.problem === "demasiado_corta" ? "es demasiado corta (mínimo 32 caracteres; usá `openssl rand -base64 32`)" : "está vacía"}`);
+  }
+  return parts.join("; ");
 }
 
 export function redirectUri(requestUrl: string, env: Partial<NodeJS.ProcessEnv> = process.env): string {
