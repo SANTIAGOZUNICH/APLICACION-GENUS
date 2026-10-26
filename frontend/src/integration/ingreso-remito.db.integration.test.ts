@@ -428,6 +428,87 @@ describe.skipIf(Boolean(PROBLEM))(`Ingreso con remito en Postgres real${PROBLEM 
     expect(retry.receipt.draft.extraction).toMatchObject({ ok: true, note: "Revisar: remitoDate" });
   });
 
+  const readerCfg = () => ({ available: true, provider: "gemini" as const, model: "m", modelSource: "INGRESO_REMITO_GEMINI_MODEL" as const, code: "ok" as const, reason: "" });
+  const readerData = (extra: Record<string, unknown> = {}) => ({
+    ok: true as const, provider: "gemini:test", model: "test", ...extra,
+    data: { supplier: `Proveedor IT ${RUN} SA`, remitoNumber: `R-${RUN}-J1`, remitoDate: "", notes: "", headerReview: [], lines: [
+      { supplierCode: "", description: "Glicerina vegetal", quantity: "10", unit: "kg", packages: "", lote: "", vencimiento: "", notes: "", review: [], confidence: "ALTA" as const },
+      { supplierCode: "", description: "Ilegible ##", quantity: "", unit: "", packages: "", lote: "", vencimiento: "", notes: "", review: ["description", "quantity"], confidence: "BAJA" as const },
+    ] },
+  });
+
+  it("lectura persistente: el trabajo queda guardado (done), la segunda lectura en paralelo no duplica la llamada y el reintento de las mismas fotos usa la caché", async () => {
+    const { ReceiptService } = await lib();
+    let calls = 0;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const slow = new ReceiptService({ extractionConfig: readerCfg, extract: async () => { calls++; await gate; return readerData(); } });
+    const r = await draft("MP", mp, "", [], { files: 1, header: { supplier: "", remitoNumber: "", remitoDate: "" } });
+    const first = slow.extract(mp as never, r.id, "MP");
+    await new Promise((x) => setTimeout(x, 150));
+    // Mientras la primera sigue en curso: la segunda NO llama al servicio y devuelve «en curso» con el trabajo visible.
+    const second = await slow.extract(mp as never, r.id, "MP");
+    expect(second).toMatchObject({ applied: false, kind: "in_progress" });
+    expect(second.receipt.draft.job).toMatchObject({ status: "running" });
+    release();
+    const done = await first;
+    expect(done).toMatchObject({ applied: true, kind: "ok" });
+    expect(calls).toBe(1);
+    expect(done.receipt.draft.job).toMatchObject({ status: "done", fromCache: false });
+    // Se puede recuperar el resultado sin volver a fotografiar: el borrador guardado ya tiene las líneas y el trabajo terminado.
+    const got = await (await svc()).get(mp as never, r.id, "MP");
+    expect(got.draft.job?.status).toBe("done");
+    expect(got.draft.lines).toHaveLength(2);
+    expect(got.draft.readCache).toBeNull(); // la caché no viaja al navegador
+    // Línea ilegible: se conserva con confianza BAJA y sin valores inventados; la clara queda ALTA.
+    expect(got.draft.lines.map((l) => l.confidence)).toEqual(["ALTA", "BAJA"]);
+    expect(got.draft.lines[1]).toMatchObject({ quantity: "", description: "Ilegible ##" });
+    // Reintento con las mismas fotos: sin nueva llamada al servicio.
+    const again = await slow.extract(mp as never, r.id, "MP", { replace: true });
+    expect(again.receipt.draft.job).toMatchObject({ status: "done", fromCache: true });
+    expect(calls).toBe(1);
+    // «Releer» explícito (fresh) sí vuelve a llamar.
+    await slow.extract(mp as never, r.id, "MP", { replace: true, fresh: true });
+    expect(calls).toBe(2);
+    expect(await movements(MP_CODE)).toBe(await movements(MP_CODE)); // la lectura nunca mueve stock
+  });
+
+  it("lectura que falla: el trabajo queda «failed» con el motivo, la foto sigue y un trabajo colgado viejo no bloquea el reintento", async () => {
+    const { ReceiptService } = await lib();
+    const down = new ReceiptService({ extractionConfig: readerCfg, extract: async () => ({ ok: false as const, kind: "timeout" as const, message: "La lectura tardó demasiado." }) });
+    const r = await draft("MP", mp, "", [], { files: 1, header: { supplier: "", remitoNumber: "", remitoDate: "" } });
+    const res = await down.extract(mp as never, r.id, "MP");
+    expect(res).toMatchObject({ applied: false, kind: "timeout" });
+    expect(res.receipt.draft.job).toMatchObject({ status: "failed", message: "La lectura tardó demasiado." });
+    expect(res.receipt.files).toHaveLength(1);
+    // Un «running» viejo (la función ya terminó) se considera interrumpido y se puede reintentar.
+    await q("update inventory_receipts set payload = jsonb_set(payload, '{job}', $2::jsonb) where id = $1", [r.id, JSON.stringify({ id: "old", status: "running", startedAt: new Date(Date.now() - 200_000).toISOString() })]);
+    const ok = new ReceiptService({ extractionConfig: readerCfg, extract: async () => readerData() });
+    expect(await ok.extract(mp as never, r.id, "MP")).toMatchObject({ applied: true });
+  });
+
+  it("IA: las sugerencias se validan contra el catálogo real, se guardan sin elegir el material ni mover stock", async () => {
+    const { ReceiptService } = await lib();
+    const s0 = new ReceiptService({
+      extractionConfig: readerCfg,
+      ask: async () => ({ ok: true as const, ms: 5, json: { results: [] } }),
+    });
+    const r = await draft("MP", mp, `R-${RUN}-AI`, [mpLine({ id: "ai1", materialCode: "", supplierCode: "", description: "Glycerin", matchSource: "" })]);
+    // La IA propone un código real y uno inventado: solo el real sobrevive; el material NO se elige solo.
+    const s1 = new ReceiptService({
+      extractionConfig: readerCfg,
+      ask: async () => ({ ok: true as const, ms: 5, json: { results: [{ lineId: "ai1", options: [{ code: MP_CODE, verdict: "equivalente", reason: "Glycerin es glicerina" }, { code: "NO-EXISTE-999", verdict: "equivalente", reason: "inventado" }] }] } }),
+    });
+    expect(await s0.aiSuggest(mp as never, r.id, "MP")).toMatchObject({ suggestions: {} });
+    const out = await s1.aiSuggest(mp as never, r.id, "MP");
+    expect(out.suggestions.ai1?.map((x) => x.code)).toEqual([MP_CODE]);
+    expect(out.suggestions.ai1?.[0]).toMatchObject({ confidence: "MEDIA" });
+    const got = await (await svc()).get(mp as never, r.id, "MP");
+    expect(got.draft.lines[0]).toMatchObject({ materialCode: "" });
+    expect(got.draft.lines[0]!.aiSuggestions?.[0]?.code).toBe(MP_CODE);
+    await rejects(s1.aiSuggest(dep as never, r.id, "MP"), 403);
+  });
+
   it("consulta posterior: la recepción confirmada se lee con quién, cuándo, líneas, archivos y movimiento; el historial la lista", async () => {
     const s = await svc();
     const list = await s.list(prod as never, "MP");

@@ -28,7 +28,15 @@ export type ExtractionConfig = {
 };
 
 const DEFAULT_BASE = "https://generativelanguage.googleapis.com";
-const TIMEOUT_MS = 50_000;
+/**
+ * Presupuesto TOTAL de una lectura (debe ser menor que `maxDuration` de la ruta, 60 s) y tope por intento. Antes un único cronómetro de
+ * 50 s cubría todo: si el primer intento se colgaba, no quedaba tiempo para reintentar ni probar otro modelo. Ahora cada intento tiene
+ * su propio tope y lo que sobra se aprovecha para un segundo intento / otro modelo.
+ */
+const DEFAULT_BUDGET_MS = 54_000;
+const DEFAULT_ATTEMPT_MS = 30_000;
+/** Con menos que esto no vale la pena empezar otro intento. */
+const MIN_ATTEMPT_MS = 9_000;
 const MODEL_CACHE_MS = 6 * 60 * 60 * 1000;
 /** Gemini acepta hasta ~20 MB de datos en línea por pedido: se envían como máximo estas hojas / bytes. */
 const MAX_FILES = 10;
@@ -178,7 +186,7 @@ function generationConfig(model: string, withThinking = true, maxOutputTokens = 
   // Los modelos «que piensan» gastan tokens de salida razonando y pueden devolver una respuesta VACÍA (finishReason MAX_TOKENS):
   // para leer una foto no hace falta. 2.5 Flash: sin presupuesto de razonamiento; 3.x: nivel mínimo. Si el modelo no lo acepta
   // (400 «thinking») se reintenta igual sin esa opción.
-  if (withThinking && /gemini-2\.5-flash/.test(model) && !/lite/.test(model)) cfg.thinkingConfig = { thinkingBudget: 0 };
+  if (withThinking && (/gemini-2\.5-flash/.test(model) || /flash-latest$/.test(model)) && !/lite/.test(model)) cfg.thinkingConfig = { thinkingBudget: 0 };
   else if (withThinking && /gemini-(3|[4-9])/.test(model)) cfg.thinkingConfig = { thinkingLevel: "low" };
   return cfg;
 }
@@ -210,7 +218,13 @@ async function runGenerate(
   let discovered = false;
   const discover = async () => {
     discovered = true;
-    const listed = await listModels(env, doFetch);
+    // Listar modelos tiene su propio tope corto: un listado colgado no puede comerse la lectura.
+    const quick = ((url: string, init?: RequestInit) => {
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), 8_000);
+      return doFetch(url, { ...init, signal: c.signal }).finally(() => clearTimeout(t));
+    }) as typeof fetch;
+    const listed = await listModels(env, quick);
     if (listed.ok) {
       modelCache = { models: listed.models, working: modelCache?.working ?? null, at: modelCache?.at ?? Date.now() };
       for (const m of listed.models.slice(0, 4)) push(m);
@@ -221,10 +235,27 @@ async function runGenerate(
   };
   if (!queue.length) await discover();
 
-  const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  const budgetMs = Math.max(50, Number(env.INGRESO_REMITO_BUDGET_MS ?? DEFAULT_BUDGET_MS) || DEFAULT_BUDGET_MS);
+  const attemptMs = Math.max(20, Number(env.INGRESO_REMITO_ATTEMPT_MS ?? DEFAULT_ATTEMPT_MS) || DEFAULT_ATTEMPT_MS);
+  const minAttemptMs = Math.min(MIN_ATTEMPT_MS, Math.round(attemptMs / 3));
+  const deadline = Date.now() + budgetMs;
+  const remaining = () => deadline - Date.now();
+  let attemptTimeouts = 0;
+  /** fetch con tope propio por intento (el menor entre el tope y lo que queda del presupuesto). */
+  const timedFetch = async (url: string, init: RequestInit): Promise<Response> => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), Math.max(1, Math.min(attemptMs, remaining())));
+    try {
+      // La respuesta se lee completa DENTRO del tope: devolver solo cabeceras y colgarse leyendo el cuerpo no debe ser posible.
+      const res = await doFetch(url, { ...init, signal: ctl.signal });
+      const text = await res.text();
+      return new Response(text, { status: res.status, headers: res.headers });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   // Reintentos CONTROLADOS: solo para fallos transitorios (red, 5xx, «saturado», límite por minuto), con espera creciente y un tope
-  // fijo; si un modelo no se recupera se prueba otro candidato. Nunca hay reintentos infinitos (y todo cabe en TIMEOUT_MS).
+  // fijo; si un modelo no se recupera se prueba otro candidato. Nunca hay reintentos infinitos (y todo cabe en el presupuesto de la lectura).
   const base = Math.max(0, Number(env.INGRESO_REMITO_RETRY_BASE_MS ?? 700) || 0);
   const BACKOFF_MS = [base, Math.round(base * 2.6)];
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -242,14 +273,25 @@ async function runGenerate(
         if (opts.json === false) delete gc.responseMimeType;
         let res: Response;
         try {
-          res = await doFetch(`${baseUrl(env)}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+          if (remaining() < Math.min(1_500, minAttemptMs)) throw Object.assign(new Error("presupuesto agotado"), { name: "AbortError" });
+          res = await timedFetch(`${baseUrl(env)}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
             method: "POST",
             headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY!.trim() },
             body: JSON.stringify({ contents: [{ role: "user", parts }], generationConfig: gc }),
-            signal: ctl.signal,
           });
         } catch (err) {
-          if (err instanceof Error && err.name === "AbortError") throw err;
+          if (err instanceof Error && err.name === "AbortError") {
+            // Un intento colgado NO consume toda la lectura: si queda tiempo se prueba otro modelo (o se reintenta una vez el mismo).
+            attemptTimeouts += 1;
+            attempts.push({ model, status: null, kind: "unavailable" });
+            logFailure("intento sin respuesta a tiempo", null, model, `quedan ${Math.max(0, Math.round(remaining() / 1000))} s`);
+            if (remaining() < minAttemptMs || attemptTimeouts >= 3) throw err;
+            lastTransient = { kind: "unavailable", model };
+            if (!queue.length && !discovered) await discover();
+            if (queue.length) moveOn = true;
+            else if (attemptTimeouts >= 2) throw err;
+            continue;
+          }
           attempts.push({ model, status: null, kind: "unavailable" });
           logFailure("red", null, model, err instanceof Error ? err.message : "");
           if (transientTries < BACKOFF_MS.length) {
@@ -261,6 +303,17 @@ async function runGenerate(
           continue;
         }
         const body = (await res.json().catch(() => null)) as GeminiBody | null;
+        if (res.ok && body === null) {
+          // 200 con cuerpo ilegible (cortado): se trata como falla transitoria.
+          attempts.push({ model, status: res.status, kind: "unavailable" });
+          if (transientTries < BACKOFF_MS.length && remaining() > minAttemptMs) {
+            await sleep(BACKOFF_MS[transientTries++]!);
+            continue;
+          }
+          lastTransient = { kind: "unavailable", model };
+          moveOn = true;
+          continue;
+        }
         if (res.ok) {
           attempts.push({ model, status: res.status, kind: "ok" });
           modelCache = { models: modelCache?.models ?? [], working: model, at: Date.now() };
@@ -304,8 +357,6 @@ async function runGenerate(
     return aborted
       ? { ok: false, kind: "timeout", message: "La lectura tardó demasiado. Podés reintentar o completar los datos manualmente.", attempts, model: null }
       : { ok: false, kind: "unavailable", message: "No se pudo contactar al servicio de lectura. Podés reintentar o completar los datos manualmente.", attempts, model: null };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -323,6 +374,8 @@ Reglas estrictas:
 - "lot" (lote) y "expiryDate" (vencimiento, formato ISO) solo si están impresos o escritos. Una fecha «MM/AAAA» o «AAAA-MM» sin día: dejala en "expiryDate" como último día de ese mes SOLO si se lee con claridad y agregá "expiryDate" a "inferredFields".
 - "inferredFields": campos que NO están escritos literalmente y que normalizaste o dedujiste (p. ej. unidad deducida, fecha completada, descripción ordenada). Lo copiado tal cual de la imagen NO va ahí.
 - "notes": observaciones relevantes (condiciones, faltantes, daños, referencias de orden de compra{EXTRA_NOTES}). "confidence" entre 0 y 1.
+- La foto puede estar inclinada, con sombras, algo borrosa, con tablas desalineadas, abreviaturas o notas escritas a mano junto al texto impreso: leé todo lo razonablemente reconocible. Si UNA línea no se entiende, devolvé igual el resto y marcá solo los campos dudosos de esa línea en "unclearFields" (dejando vacío lo ilegible). No descartes el documento por una línea difícil.
+- Para ahorrar tiempo, en cada renglón OMITÍ las claves vacías o sin novedad ("notes", "unclearFields", "inferredFields", "packages", "lot", "expiryDate" cuando no hay nada).
 - Si la imagen no contiene un documento o etiqueta legible, devolvé {"supplier":"","remitoNumber":"","remitoDate":"","notes":"","unclearFields":[],"lines":[]}.`;
 
 const MODULE_HINT: Record<"MP" | "ME", { intro: string; extraNotes: string }> = {
@@ -343,8 +396,63 @@ function promptFor(module: "MP" | "ME" | undefined): string {
 
 export type ExtractionFile = { bytes: Uint8Array; contentType: string };
 export type ExtractionOutcome =
-  | { ok: true; data: ExtractedRemito; provider: string; model: string }
+  | { ok: true; data: ExtractedRemito; provider: string; model: string; /** La respuesta venía cortada: se rescataron solo los renglones completos. */ partial?: boolean; elapsedMs?: number }
   | { ok: false; message: string; kind: "disabled" | "config" | FailureKind | "unreadable" | "timeout" };
+
+/**
+ * Rescata lo aprovechable de un JSON cortado (respuesta truncada por tokens o por corte de red): el encabezado y los renglones que
+ * quedaron COMPLETOS. Nunca completa ni adivina lo que falta. Devuelve null si no hay nada aprovechable.
+ */
+export function salvagePartialJson(text: string): Record<string, unknown> | null {
+  const t = text.replace(/^\s*```(?:json)?\s*/i, "");
+  const out: Record<string, unknown> = {};
+  const linesAt = t.search(/"lines"\s*:\s*\[/);
+  const head = linesAt >= 0 ? t.slice(0, linesAt) : t; // el encabezado va antes de los renglones: no confundir con "notes" de un renglón
+  for (const key of ["supplier", "remitoNumber", "remitoDate", "notes"]) {
+    const m = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(head);
+    if (m) {
+      try {
+        out[key] = JSON.parse(`"${m[1]}"`);
+      } catch {
+        /* campo ilegible: queda vacío */
+      }
+    }
+  }
+  const lines: unknown[] = [];
+  const at = t.search(/"lines"\s*:\s*\[/);
+  if (at >= 0) {
+    let i = t.indexOf("[", at) + 1;
+    let depth = 0;
+    let start = -1;
+    let inStr = false;
+    for (; i < t.length; i++) {
+      const ch = t[i]!;
+      if (inStr) {
+        if (ch === "\\") i++;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === "{") {
+        if (depth === 0) start = i;
+        depth++;
+      } else if (ch === "}") {
+        depth--;
+        if (depth === 0 && start >= 0) {
+          try {
+            lines.push(JSON.parse(t.slice(start, i + 1)));
+          } catch {
+            /* renglón dañado: se omite */
+          }
+          start = -1;
+        }
+      } else if (ch === "]" && depth === 0) break;
+    }
+  }
+  if (lines.length === 0 && !out.supplier && !out.remitoNumber) return null;
+  out.lines = lines;
+  return out;
+}
 
 /** Llama al servicio y devuelve la sugerencia saneada. Nunca lanza: ante cualquier falla devuelve ok:false con un mensaje claro. */
 export async function extractRemito(files: ExtractionFile[], deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv>; module?: "MP" | "ME" } = {}): Promise<ExtractionOutcome> {
@@ -359,6 +467,7 @@ export async function extractRemito(files: ExtractionFile[], deps: { fetchImpl?:
     used.push(f);
     total += f.bytes.length;
   }
+  const startedAt = Date.now();
   const parts: Array<Record<string, unknown>> = [{ text: promptFor(deps.module) }];
   for (const f of used) parts.push({ inline_data: { mime_type: f.contentType, data: Buffer.from(f.bytes).toString("base64") } });
   let run = await runGenerate(parts, env, deps.fetchImpl ?? fetch);
@@ -380,18 +489,46 @@ export async function extractRemito(files: ExtractionFile[], deps: { fetchImpl?:
     return { ok: false, kind: "unreadable", message: MSG_UNREADABLE };
   }
   let parsed: unknown;
+  let partial = false;
   try {
     parsed = JSON.parse(text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, ""));
   } catch {
-    logFailure("JSON inválido", null, run.model, cand?.finishReason ?? "");
-    return { ok: false, kind: "unreadable", message: MSG_UNREADABLE };
+    // Respuesta cortada: se aprovecha lo que quedó completo en vez de rechazar todo el remito.
+    parsed = salvagePartialJson(text);
+    partial = parsed != null;
+    if (!partial) {
+      logFailure("JSON inválido", null, run.model, cand?.finishReason ?? "");
+      return { ok: false, kind: "unreadable", message: MSG_UNREADABLE };
+    }
+    logFailure("JSON cortado: lectura parcial", null, run.model, cand?.finishReason ?? "");
   }
   const data = sanitizeExtraction(parsed);
   if (!data) {
     logFailure("sin datos de remito", null, run.model, "");
     return { ok: false, kind: "unreadable", message: MSG_UNREADABLE };
   }
-  return { ok: true, data, provider: `gemini:${run.model}`, model: run.model };
+  return { ok: true, data, provider: `gemini:${run.model}`, model: run.model, elapsedMs: Date.now() - startedAt, ...(partial ? { partial: true } : {}) };
+}
+
+/**
+ * Pregunta de TEXTO (sin imágenes) que devuelve JSON, con presupuesto corto: sirve para evaluar equivalencias de materiales sin demorar la
+ * lectura del remito. Nunca lanza; ante cualquier falla devuelve ok:false y quien llama sigue sin la ayuda de la IA.
+ */
+export async function askGeminiJson(prompt: string, deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv>; budgetMs?: number } = {}): Promise<{ ok: true; json: unknown; ms: number } | { ok: false; message: string }> {
+  const baseEnv = deps.env ?? process.env;
+  const cfg = extractionConfig(baseEnv);
+  if (!cfg.available) return { ok: false, message: cfg.reason };
+  const budget = String(deps.budgetMs ?? 22_000);
+  const env = { ...baseEnv, INGRESO_REMITO_BUDGET_MS: budget, INGRESO_REMITO_ATTEMPT_MS: String(Math.min(16_000, deps.budgetMs ?? 16_000)) };
+  const t0 = Date.now();
+  const run = await runGenerate([{ text: prompt }], env, deps.fetchImpl ?? fetch, { maxOutputTokens: 4096 });
+  if (!run.ok) return { ok: false, message: run.message };
+  const text = run.body.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+  try {
+    return { ok: true, json: JSON.parse(text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, "")), ms: Date.now() - t0 };
+  } catch {
+    return { ok: false, message: "La IA no devolvió una respuesta interpretable." };
+  }
 }
 
 // ───────────────────────── Prueba de configuración ─────────────────────────

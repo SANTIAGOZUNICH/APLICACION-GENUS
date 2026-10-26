@@ -60,11 +60,22 @@ export type ReceiptLineDraft = {
   matchSource?: "previo" | "codigo" | "nombre" | "manual" | "";
   /** Motivo de la preselección automática (se muestra para que la persona la verifique). */
   matchReason?: string;
+  /** Confianza de la lectura de esta línea (solo informa; se edita todo antes de confirmar). */
+  confidence?: LineConfidence;
+  /** Sugerencias de la IA (candidatos reales del catálogo, con motivo). Nunca se aplican solas. */
+  aiSuggestions?: Array<{ code: string; description: string; unit: string; confidence: "ALTA" | "MEDIA" | "BAJA"; reason: string }>;
 };
+
+/** Trabajo de lectura persistente: sobrevive a un corte de conexión o a un timeout HTTP, así que nunca hace falta volver a fotografiar. */
+export type ReadJob = { id: string; status: "running" | "done" | "failed"; startedAt: string; finishedAt?: string; message?: string; partial?: boolean; elapsedMs?: number; fromCache?: boolean };
+/** Resultado de la última lectura, ligado al conjunto de fotos (huella): releer las mismas fotos no vuelve a llamar al servicio. */
+export type ReadCache = { key: string; at: string; provider: string; partial?: boolean; data: ExtractedRemito };
 
 export type ReceiptDraftPayload = {
   header: ReceiptHeaderDraft;
   lines: ReceiptLineDraft[];
+  job?: ReadJob | null;
+  readCache?: ReadCache | null;
   /** Resultado de la lectura automática (solo sugerencia). */
   extraction?: { provider: string; at: string; ok: boolean; note?: string } | null;
 };
@@ -444,9 +455,23 @@ export function classifyDuplicates(input: {
 
 // ───────────────────────── Lectura automática (sugerencia) ─────────────────────────
 
+export type LineConfidence = "ALTA" | "MEDIA" | "BAJA";
 export type ExtractedLine = {
   supplierCode: string; description: string; quantity: string; unit: string; packages: string; lote: string; vencimiento: string; notes: string; review: string[];
+  /** Confianza de la lectura de ESTA línea (reglas determinísticas sobre lo que el servicio marcó como dudoso). */
+  confidence: LineConfidence;
 };
+
+/**
+ * Confianza cualitativa de una línea. BAJA: falta descripción o cantidad, o el servicio las marcó dudosas / su confianza es <0,5.
+ * MEDIA: hay algún campo dudoso o deducido, o confianza <0,8. ALTA: nada dudoso. Que falte lote o vencimiento NO es duda.
+ */
+export function lineConfidence(input: { description: string; quantity: string; doubtful: string[]; modelConfidence?: number | null }): LineConfidence {
+  const c = input.modelConfidence;
+  if (!input.description || !input.quantity || (typeof c === "number" && c < 0.5) || input.doubtful.some((f) => f === "description" || f === "quantity")) return "BAJA";
+  if (input.doubtful.length > 0 || (typeof c === "number" && c < 0.8)) return "MEDIA";
+  return "ALTA";
+}
 export type ExtractedRemito = { supplier: string; remitoNumber: string; remitoDate: string; notes: string; headerReview: string[]; lines: ExtractedLine[] };
 
 const str = (v: unknown, max = 300) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : typeof v === "number" && Number.isFinite(v) ? String(v) : "");
@@ -546,6 +571,8 @@ export function sanitizeExtraction(raw: unknown): ExtractedRemito | null {
     if (!lote) review.push("lote");
     if (!venc) review.push("vencimiento");
     const lineUnclear = Array.isArray(o.unclearFields) ? o.unclearFields.map(String) : [];
+    const doubtful = new Set<string>(lineUnclear);
+    if (recovered.recovered || recovered.discarded) doubtful.add("supplierCode");
     for (const f of lineUnclear) if (!review.includes(f)) review.push(f);
     // Lo que el modelo normalizó o dedujo (no leído literalmente) también se marca para que la persona lo confirme.
     const inferred = Array.isArray(o.inferredFields) ? o.inferredFields.map(String) : [];
@@ -553,6 +580,7 @@ export function sanitizeExtraction(raw: unknown): ExtractedRemito | null {
     for (const f of inferred) {
       const k = INFERRED_MAP[f] ?? f;
       if (!review.includes(k)) review.push(k);
+      doubtful.add(k);
     }
     if (lowConf(o.confidence) && !review.includes("quantity")) review.push("quantity");
     if (!description && !supplierCode && qtyNum == null) return [];
@@ -560,6 +588,7 @@ export function sanitizeExtraction(raw: unknown): ExtractedRemito | null {
     return [{
       supplierCode, description, quantity: qtyNum != null && qtyNum > 0 ? String(qtyNum) : "", unit, packages: pk != null && pk > 0 ? String(pk) : "",
       lote, vencimiento: venc, notes: str(o.notes, 300), review,
+      confidence: lineConfidence({ description, quantity: qtyNum != null && qtyNum > 0 ? String(qtyNum) : "", doubtful: [...doubtful], modelConfidence: typeof o.confidence === "number" ? o.confidence : null }),
     }];
   });
   if (!supplier && !remitoNumber && lines.length === 0) return null;
