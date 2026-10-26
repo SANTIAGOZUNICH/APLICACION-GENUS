@@ -205,6 +205,7 @@ vi.mock("@/lib/db/schema", () => {
     "qualityObservation",
     "qualityChangeReason",
     "productionPedidoId",
+    "scheduleRootId",
     "orderNumber",
     "client",
     "product",

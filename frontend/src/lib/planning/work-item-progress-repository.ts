@@ -2,7 +2,7 @@ import "server-only";
 
 import { resolveManualLoteLinkPatch } from "@/lib/asignacion-lotes/lote-link";
 import { loadResolvedPackingByLine } from "@/lib/remitos/delivery-packing-resolve";
-import { and, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, like, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/lib/db/client";
 import { operationalEvents, operationalOrders, workItemDeliveries, workItemDeliveryLines, workItems } from "@/lib/db/schema";
 import type { SectorId } from "@/types/operational/sector";
@@ -24,6 +24,7 @@ import {
   type DeliveryCompletion,
   type RecordDeliveryResult,
 } from "@/lib/planning/circuit/delivery-core";
+import { primaryOfSyncObs, syncObsMark } from "@/lib/planning/circuit/delivery-group";
 import { emitCircuitNotification } from "@/lib/planning/circuit/circuit-notifications";
 import { emitBillingForDelivery } from "@/lib/notifications/billing-notifications";
 import {
@@ -1613,49 +1614,66 @@ export async function restoreDeliveryDurable(id: string) {
   return row ?? null;
 }
 
+/**
+ * Anula UNA entrega vigente (las líneas quedan como historial y el saldo vuelve a estar pendiente).
+ * Si la entrega fue parte de una entrega SINCRONIZADA (las apariciones del mismo trabajo en otros días, ver
+ * circuit/delivery-group), se anulan también las demás entregas de ESE mismo conjunto, en la misma transacción: no queda
+ * una aparición «entregada» con las otras pendientes. Nunca toca entregas de otros pedidos ni de otras etapas.
+ */
 export async function annulDeliveryDurable(id: string, reason: string, actorName: string) {
   const db = getDb();
-  const [existing] = await db
-    .select()
-    .from(workItemDeliveries)
-    .where(eq(workItemDeliveries.id, id))
-    .limit(1);
-  if (!existing) return null;
-  if (existing.status === "REGISTRO_ELIMINADO") return null;
-  if (existing.archived) return null;
-  if (existing.status === "ANULADO") return existing;
+  return db.transaction(async (tx: Tx) => {
+    const [existing] = await tx.select().from(workItemDeliveries).where(eq(workItemDeliveries.id, id)).limit(1);
+    if (!existing) return null;
+    if (existing.status === "REGISTRO_ELIMINADO") return null;
+    if (existing.archived) return null;
+    if (existing.status === "ANULADO") return existing;
 
-  const now = new Date();
-  const [row] = await db
-    .update(workItemDeliveries)
-    .set({
-      status: "ANULADO",
-      archived: false,
-      annulledAt: now,
-      annulledBy: actorName,
-      annulReason: reason,
-      updatedAt: now,
-    })
-    .where(eq(workItemDeliveries.id, id))
-    .returning();
+    // Conjunto sincronizado: las apariciones entregadas «desde» P (marca [sync-from:P] en su entrega) + la propia P.
+    const primaryId = primaryOfSyncObs(existing.observations) ?? existing.workItemId;
+    const marked: Array<typeof workItemDeliveries.$inferSelect> = await tx
+      .select()
+      .from(workItemDeliveries)
+      .where(and(like(workItemDeliveries.observations, `%${syncObsMark(primaryId)}%`), eq(workItemDeliveries.status, "ENTREGADO"), eq(workItemDeliveries.archived, false)))
+      .orderBy(workItemDeliveries.workItemId)
+      .for("update");
+    const primaryDelivery: Array<typeof workItemDeliveries.$inferSelect> =
+      primaryId === existing.workItemId
+        ? []
+        : await tx
+            .select()
+            .from(workItemDeliveries)
+            .where(and(eq(workItemDeliveries.workItemId, primaryId), eq(workItemDeliveries.status, "ENTREGADO"), eq(workItemDeliveries.archived, false)))
+            .for("update");
+    const relatedDeliveries = [...primaryDelivery, ...marked].filter((d) => d.id !== existing.id);
 
-  if (row) {
-    // Las líneas de la entrega anulada dejan de contar como unidades entregadas (siguen como historial).
-    await db
-      .update(workItemDeliveryLines)
-      .set({ status: "ANULADA", annulledAt: now, annulledBy: actorName })
-      .where(and(eq(workItemDeliveryLines.deliveryId, row.id), eq(workItemDeliveryLines.status, "ACTIVA")));
-    await db
-      .update(workItems)
-      .set({
-        operationalStatus: "revision",
-        progressUpdatedAt: now,
-        progressUpdatedBy: actorName,
-        updatedAt: now,
-      })
-      .where(eq(workItems.id, row.workItemId));
-  }
-  return row ?? null;
+    const annulOne = async (d: typeof workItemDeliveries.$inferSelect, why: string) => {
+      const now = new Date();
+      const [row] = await tx
+        .update(workItemDeliveries)
+        .set({ status: "ANULADO", archived: false, annulledAt: now, annulledBy: actorName, annulReason: why, updatedAt: now })
+        .where(eq(workItemDeliveries.id, d.id))
+        .returning();
+      if (row) {
+        // Las líneas de la entrega anulada dejan de contar como unidades entregadas (siguen como historial).
+        await tx
+          .update(workItemDeliveryLines)
+          .set({ status: "ANULADA", annulledAt: now, annulledBy: actorName })
+          .where(and(eq(workItemDeliveryLines.deliveryId, row.id), eq(workItemDeliveryLines.status, "ACTIVA")));
+        await tx
+          .update(workItems)
+          .set({ operationalStatus: "revision", progressUpdatedAt: now, progressUpdatedBy: actorName, updatedAt: now })
+          .where(eq(workItems.id, row.workItemId));
+      }
+      return row ?? null;
+    };
+
+    const row = await annulOne(existing, reason);
+    for (const d of relatedDeliveries) {
+      await annulOne(d, `${reason ? `${reason} · ` : ""}Entrega sincronizada con la del trabajo ${existing.workItemId}: se anula junto con ella.`.slice(0, 500));
+    }
+    return row;
+  });
 }
 
 export async function deleteDeliveryRecordDurable(

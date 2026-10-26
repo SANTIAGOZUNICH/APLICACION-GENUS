@@ -189,6 +189,8 @@ vi.mock("@/lib/db/schema", () => {
     "completedAt",
     "completedBy",
     "productionPedidoId",
+    "scheduleRootId",
+    "orderId",
     "planningWeekId",
     "version",
     "deletedAt",
