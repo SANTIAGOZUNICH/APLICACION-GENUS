@@ -547,6 +547,9 @@ export async function POST(request: Request) {
             complete: result.complete,
             delivered: result.delivered,
             pending: result.pending,
+            // Otras apariciones del mismo trabajo entregadas junto con esta (el cliente refresca la planificación).
+            synced: result.synced?.map((s) => `native:${s.workItemId}`) ?? [],
+            syncSkipped: result.syncSkipped ?? [],
           });
         }
         const record = serverOperationalState.deliverWork(body as DeliveryRecord);

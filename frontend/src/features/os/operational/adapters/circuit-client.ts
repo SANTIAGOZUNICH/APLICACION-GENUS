@@ -119,6 +119,8 @@ export interface CircuitDeliveryResult {
   complete: boolean;
   delivered: number | null;
   pending: number | null;
+  /** Otras apariciones del mismo trabajo (otros días) que se entregaron junto con esta. */
+  synced?: string[];
 }
 
 /** Registra una entrega final (total o parcial) vía deliver_work. Misma clave = misma entrega. */

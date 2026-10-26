@@ -206,6 +206,7 @@ vi.mock("@/lib/db/schema", () => {
     "bulkRemainderKg",
     "bulkRemainderObservation",
     "productionPedidoId",
+    "scheduleRootId",
     "finishedQty",
     "version",
     "status",

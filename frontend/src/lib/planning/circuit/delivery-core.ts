@@ -1,7 +1,7 @@
 import { resolveWorkItemDeliveryPacking, validateDeliveryPacking } from "@/lib/remitos/delivery-packing";
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import {
   operationalEvents,
   productionPedidos,
@@ -25,6 +25,7 @@ import {
   planDeliveryStep,
   resolveDeliveryTarget,
 } from "./delivery-math";
+import { groupSiblings, syncObsMark, type DeliveryGroupCandidate } from "./delivery-group";
 import type { CircuitMovement, CircuitMovementType } from "./movements";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -75,6 +76,18 @@ export interface RecordDeliveryParams {
   skipBoxValidation?: boolean;
   /** Cajas de ESTA entrega ([{cajas, unidadesPorCaja}], cantidades distintas por caja). Debe sumar la cantidad entregada. */
   deliveryPackingGroups?: unknown;
+  /**
+   * Entregar una aparición del trabajo entrega TAMBIÉN las demás apariciones del MISMO trabajo operativo (programaciones de
+   * la misma OE/OA y pedido, mismo sector; ver delivery-group). false = no sincronizar (lo usa la propia sincronización).
+   */
+  syncGroup?: boolean;
+  /** Trazabilidad que se agrega a la nota del evento (entregas sincronizadas). */
+  syncNote?: string;
+  /**
+   * Entrega SINCRONIZADA: cierra la aparición como entregada SIN cantidad física propia (no se genera una segunda entrega
+   * ni línea de entrega: lo físico lo registró la entrega que se hizo). Solo la usa la sincronización del grupo.
+   */
+  syncOnly?: boolean;
 }
 
 export interface RecordDeliveryResult {
@@ -88,6 +101,10 @@ export interface RecordDeliveryResult {
   pending: number | null;
   target: number | null;
   movement: CircuitMovement | null;
+  /** Otras apariciones del mismo trabajo entregadas junto con esta (misma transacción). */
+  synced?: Array<{ workItemId: string; replayed: boolean }>;
+  /** Apariciones que no se pudieron sincronizar (siguen pendientes y visibles) y por qué. */
+  syncSkipped?: Array<{ workItemId: string; reason: string }>;
 }
 
 const ENVASADO = new Set(["ENVASADO_MASIVO", "ENVASADO_PREMIUM"]);
@@ -134,8 +151,42 @@ function defaultMovementType(actorSector: string): CircuitMovementType {
  *  - una sola fila agregada ENTREGADO por trabajo (índice único existente) + una línea por entrega física;
  *  - NO toca inventario ni el consumo de MP (eso cuelga de la entrega de la OE, no de work_items).
  */
+/**
+ * Bloquea (en orden de id: sin interbloqueos entre dos usuarios que entregan apariciones distintas a la vez) a TODAS las
+ * apariciones vigentes del mismo trabajo operativo y devuelve las otras. Sin referencia estable (orden/programación) no hay grupo.
+ */
+async function lockDeliveryGroup(tx: Tx, workItemId: string): Promise<DeliveryGroupCandidate[]> {
+  const cols = {
+    id: workItems.id,
+    sector: workItems.sector,
+    orderId: workItems.orderId,
+    scheduleRootId: workItems.scheduleRootId,
+    productionPedidoId: workItems.productionPedidoId,
+    operationalStatus: workItems.operationalStatus,
+    status: workItems.status,
+    deletedAt: workItems.deletedAt,
+  };
+  const [self] = await tx.select(cols).from(workItems).where(eq(workItems.id, workItemId)).limit(1);
+  if (!self) return [];
+  const root = self.scheduleRootId ?? self.id;
+  const links = [eq(workItems.scheduleRootId, root), eq(workItems.id, root)];
+  if (self.orderId) links.push(eq(workItems.orderId, self.orderId));
+  const candidates: DeliveryGroupCandidate[] = await tx
+    .select(cols)
+    .from(workItems)
+    .where(and(eq(workItems.sector, self.sector), isNull(workItems.deletedAt), or(...links)));
+  const ids = [self.id, ...groupSiblings(self, candidates).map((c) => c.id)];
+  if (ids.length < 2) return [];
+  await tx.select({ id: workItems.id }).from(workItems).where(inArray(workItems.id, ids)).orderBy(workItems.id).for("update");
+  // Relectura ya con los candados: el estado de cada aparición es el vigente.
+  const fresh: DeliveryGroupCandidate[] = await tx.select(cols).from(workItems).where(inArray(workItems.id, ids));
+  const me = fresh.find((f) => f.id === self.id) ?? self;
+  return groupSiblings(me, fresh);
+}
+
 export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): Promise<RecordDeliveryResult> {
   const { actor } = params;
+  const groupAtStart = params.syncGroup === false ? [] : await lockDeliveryGroup(tx, params.workItemId);
   const [row] = await tx.select().from(workItems).where(eq(workItems.id, params.workItemId)).for("update").limit(1);
   if (!row) throw new PlanningNotFoundError("Trabajo no encontrado.");
   if (!canActorDeliverItem(actor.sector, row.sector)) {
@@ -334,7 +385,10 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
   let cumulative: number | null = null;
   let pending: number | null = null;
   let complete = true;
-  if (target != null) {
+  if (params.syncOnly) {
+    // Sin cantidad física: queda completa, sin línea de entrega y sin saldo.
+    pending = 0;
+  } else if (target != null) {
     const step = planDeliveryStep({ target, alreadyDelivered, requested, unit });
     if (!step.ok) throw new PlanningValidationError(step.error);
     stepQuantity = step.quantity;
@@ -504,11 +558,51 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
     note:
       `delivery:${key} | cantidad=${stepQuantity ?? "s/d"} | acumulado=${cumulative ?? "s/d"} | saldo=${
         complete ? 0 : (pending ?? "s/d")
-      }`.slice(0, 500),
+      }${params.syncNote ? ` | ${params.syncNote}` : ""}`.slice(0, 500),
   });
 
   if (complete) {
     await closePedidoIfAllDelivered(tx, updatedItem, actor);
+  }
+
+  // ── Mismo trabajo en otros días: se entregan las demás apariciones (idempotente, sin duplicar nada) ──────────
+  const synced: Array<{ workItemId: string; replayed: boolean }> = [];
+  const syncSkipped: Array<{ workItemId: string; reason: string }> = [];
+  if (complete) {
+    for (const sib of groupAtStart) {
+      if (sib.operationalStatus === "entregado") continue; // ya entregada: nada que hacer
+      const run = (t: Tx) =>
+        recordDeliveryInTx(t, {
+          workItemId: sib.id,
+          actor,
+          idempotencyKey: null,
+          quantity: null,
+          codigo: params.codigo ?? null,
+          plannedDeliveryDate: params.plannedDeliveryDate ?? null,
+          actualDeliveredAt: params.actualDeliveredAt ?? now,
+          remito: params.remito,
+          receivedBy: params.receivedBy,
+          observations: [nonEmpty(params.observations), `Entrega sincronizada: se entregó otra aparición del mismo trabajo, sin entrega física adicional. ${syncObsMark(params.workItemId)}`].filter(Boolean).join(" · "),
+          syncOnly: true,
+          skipBoxValidation: true,
+          movementType: params.movementType,
+          syncGroup: false,
+          syncNote: `sync-from:${params.workItemId} por ${actorName}`,
+        });
+      try {
+        // Punto de guardado: si una aparición no se puede entregar, no tumba la entrega principal (queda pendiente y visible).
+        const r: RecordDeliveryResult = typeof tx.transaction === "function" ? await tx.transaction((sp: Tx) => run(sp)) : await run(tx);
+        synced.push({ workItemId: sib.id, replayed: r.replayed });
+      } catch (err) {
+        syncSkipped.push({ workItemId: sib.id, reason: err instanceof Error ? err.message : "error" });
+      }
+    }
+    if (synced.length > 0 || syncSkipped.length > 0) {
+      const extra = ` | sync=[${synced.map((s) => s.workItemId).join(",")}]${syncSkipped.length ? ` | sync-pendientes=[${syncSkipped.map((s) => s.workItemId).join(",")}]` : ""}`;
+      await tx.execute(
+        sql`update operational_events set note = left(note || ${extra}, 500) where work_item_id = ${params.workItemId} and note like ${`delivery:${key} |%`}`
+      );
+    }
   }
 
   return {
@@ -520,6 +614,8 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
     delivered: cumulative,
     pending: complete ? 0 : pending,
     target,
+    synced,
+    syncSkipped,
     movement: {
       type: params.movementType ?? defaultMovementType(actor.sector),
       workItemId: params.workItemId,
