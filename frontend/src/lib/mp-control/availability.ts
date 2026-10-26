@@ -185,8 +185,45 @@ function matchedLots(prepared: Prepared[], formulaName: string, aliases: NameAli
   return out;
 }
 
+/**
+ * Nivel 1 de identificación: el CÓDIGO de la línea de la fórmula coincide EXACTO con el código de inventario de filas de
+ * stock que comparten un único nombre → la MP es esa, aunque la fórmula la llame distinto. Si el código apunta a nombres
+ * distintos (ambiguo) no se infiere nada. Se expresa como equivalencia implícita (no se guarda ni modifica nada).
+ */
+export function impliedCodeAliases(lots: StockLot[], productions: ProductionInput[]): NameAlias[] {
+  const byCode = new Map<string, Set<string>>();
+  for (const l of lots) {
+    if (l.archived) continue;
+    const nm = baseName(l.descripcion, l.proveedor);
+    if (!nm) continue;
+    for (const c of [l.codigo, ...(l.codigosAnteriores ?? [])]) {
+      const k = normCode(c);
+      if (k.length < 3) continue;
+      const set = byCode.get(k) ?? new Set<string>();
+      set.add(nm);
+      byCode.set(k, set);
+    }
+  }
+  const out: NameAlias[] = [];
+  const seen = new Set<string>();
+  for (const p of productions) {
+    for (const line of p.lines) {
+      const k = normCode(line.codigoMp || line.codigo);
+      const names = k ? byCode.get(k) : undefined;
+      const formulaName = normText(line.materiaPrima);
+      if (!names || names.size !== 1 || !formulaName) continue;
+      const stockName = [...names][0]!;
+      const key = `${formulaName}|${stockName}`;
+      if (stockName === formulaName || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ formulaName, stockName });
+    }
+  }
+  return out;
+}
+
 export function computeAvailability(params: { lots: StockLot[]; productions: ProductionInput[]; todayIso: string; aliases?: NameAlias[] }): AvailabilityResult {
-  const aliases = params.aliases ?? [];
+  const aliases = [...(params.aliases ?? []), ...impliedCodeAliases(params.lots, params.productions)];
   const prepared = prepare(params.lots);
   const excluded: AvailabilityResult["excluded"] = [];
 

@@ -747,7 +747,7 @@ function MaterialPicker({
             <div className="flex flex-wrap gap-1" data-testid="linea-sugerencias">
               {suggestions.map((s) => (
                 <button key={s.code} type="button" title={s.reason} className="rounded-full border border-[var(--os-border)] px-2 py-0.5 text-xs hover:bg-[var(--os-teal,#0d9488)]/10" onClick={() => { setSelected(s); onPick(s.code); setOpen(false); }}>
-                  Sugerido: {s.code} — {s.description}
+                  Sugerido{s.confidence ? ` (${s.confidence === "ALTA" ? "confianza alta" : s.confidence === "MEDIA" ? "confianza media — verificá" : "confianza baja — verificá"})` : ""}: {s.code} — {s.description}
                 </button>
               ))}
             </div>
