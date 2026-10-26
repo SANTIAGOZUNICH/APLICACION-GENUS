@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { Button } from "@/components/ui/button";
 import { SchemaPendingBanner } from "@/components/ui/schema-pending-banner";
+import { EmailOrderDraftsPanel } from "@/features/os/operational/components/email-order-drafts-panel";
 import { usePreviewSession } from "@/features/os/session/preview-context";
 import {
   GenusGrid,
@@ -526,6 +527,8 @@ export function ProductionPedidosView() {
             {error}
           </div>
         )}
+
+        <EmailOrderDraftsPanel email={session.email} sector={String(session.sector)} onPedidosCreated={() => void reload()} />
 
         <div className="flex flex-wrap gap-2">
           <Button type="button" className="os-btn-motion min-h-10" onClick={openNew}>

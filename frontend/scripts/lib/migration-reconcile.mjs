@@ -52,6 +52,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0067_work_item_lote_link": "9d6f05486e88ef73d219d7e1d0b7c02b06cb5c5fc49eae935f880e97dd29c223",
   "0069_scheduled_delivery_immovable": "55c8696434e68273d361fd181b45ef41b35f43f3b121637a88d7c3aa02e476ab",
   "0070_me_material_pedido_links": "11f24856bec974c0121c72d9a277be8f47fc854ec002cb49d6a06f13bccb9aa8",
+  "0071_email_orders": "3fa5294fe522bee90f0241fb5f9eef047f2caab16135f8dc4ef52678454008bd",
   "0062_billing_control": "0d0d6a356759bb57b0f8dd2d9663d74a1f7b6841d493196e9059be0eb586c68f",
   "0060_aviso_user_recipients": "164ac0c7a37f5deeb64c52b08ceb40314451505d4863376a1664ee6f1404c270",
   "0059_delivery_line_packing": "b041d7bd272e73038789695982af2eead8642b1b387c1967ff38c2684eba58f5",
