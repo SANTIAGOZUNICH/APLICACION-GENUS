@@ -5,15 +5,19 @@ import "server-only";
  * servicio de Drive (esa no puede leer un buzón sin delegación de dominio y no queremos ampliar permisos).
  *
  * Variables (todas del servidor): GMAIL_OAUTH_CLIENT_ID, GMAIL_OAUTH_CLIENT_SECRET, GMAIL_OAUTH_REDIRECT_URI (opcional: si falta se usa
- * el origen de la petición), GMAIL_ORDERS_ACCOUNT (default pedidos@laboratoriogenus.com.ar), EMAIL_TOKEN_ENCRYPTION_KEY.
+ * el origen de la petición), GMAIL_CONNECT_ACCOUNT (cuenta de Gmail a conectar; default agzunich@gmail.com) y GMAIL_ORDERS_ADDRESS (destinatario ORIGINAL que se procesa; default pedidos@laboratoriogenus.com.ar), EMAIL_TOKEN_ENCRYPTION_KEY.
  */
 import { google } from "googleapis";
 import { diagnoseKey } from "./crypto";
 
 export const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
-export const DEFAULT_ORDERS_ACCOUNT = "pedidos@laboratoriogenus.com.ar";
+/** Casilla de pedidos de la empresa (Webnode): es el destinatario ORIGINAL de los correos que se procesan. */
+export const DEFAULT_ORDERS_ADDRESS = "pedidos@laboratoriogenus.com.ar";
+/** Cuenta de Gmail a la que Webnode reenvía: es la ÚNICA que se puede conectar por OAuth. */
+export const DEFAULT_CONNECT_ACCOUNT = "agzunich@gmail.com";
 
-export const ordersAccount = (env: Partial<NodeJS.ProcessEnv> = process.env) => (env.GMAIL_ORDERS_ACCOUNT?.trim() || DEFAULT_ORDERS_ACCOUNT).toLowerCase();
+export const connectAccount = (env: Partial<NodeJS.ProcessEnv> = process.env) => (env.GMAIL_CONNECT_ACCOUNT?.trim() || DEFAULT_CONNECT_ACCOUNT).toLowerCase();
+export const ordersAddress = (env: Partial<NodeJS.ProcessEnv> = process.env) => (env.GMAIL_ORDERS_ADDRESS?.trim() || DEFAULT_ORDERS_ADDRESS).toLowerCase();
 
 export type ConfigIssue = { name: string; problem: "ausente" | "vacía_o_con_espacios" | "demasiado_corta" };
 export type OAuthConfigStatus = {
@@ -66,7 +70,7 @@ export function buildAuthUrl(requestUrl: string, state: string, env: Partial<Nod
     prompt: "consent",
     scope: [GMAIL_READONLY_SCOPE],
     include_granted_scopes: false,
-    login_hint: ordersAccount(env),
+    login_hint: connectAccount(env),
     state,
   });
 }

@@ -4,7 +4,6 @@
  * aprobación idempotente (también tras un corte y en paralelo), token cifrado, permisos, y que no se toque stock/trabajos/OE/entregas.
  * Se SALTA sin base local marcada.
  */
-import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { assertMarkedDatabase, e2eEnvironmentProblem } from "../../scripts/e2e/e2e-safety.mjs";
 
@@ -15,8 +14,16 @@ const PROD = `SHAMPOO MAIL ${RUN}`;
 const prod = { email: `it-mail-prod-${RUN}@laboratoriogenus.com.ar`, sector: "PRODUCCION" } as never;
 const deposito = { email: `it-mail-dep-${RUN}@laboratoriogenus.com.ar`, sector: "DEPOSITO" } as never;
 
-type Msg = { id: string; threadId: string; from: string; subject: string; date: string | null; bodyText: string; links: string[]; attachments: Array<{ attachmentId: string; filename: string; mimeType: string; size: number }> };
-const mkMsg = (n: number, over: Partial<Msg> = {}): Msg => ({ id: `m-${RUN}-${n}`, threadId: `t-${RUN}-${n}`, from: `compras@cliente${n}.com`, subject: `Pedido ${n}`, date: "2026-10-20T12:00:00.000Z", bodyText: "texto", links: [], attachments: [], ...over });
+const OWN = "agzunich@gmail.com";
+const TARGET = "pedidos@laboratoriogenus.com.ar";
+type Hdr = Array<{ name: string; value: string }>;
+/** Reenvío de Webnode con destinatario original verificable (representativo; no es una captura real). */
+const forwarded = (from: string): Hdr => [{ name: "Delivered-To", value: OWN }, { name: "X-Original-To", value: TARGET }, { name: "From", value: from }, { name: "To", value: `Pedidos <${TARGET}>` }];
+/** Correo personal: solo iba a la cuenta de Gmail. */
+const personal = (from: string): Hdr => [{ name: "Delivered-To", value: OWN }, { name: "From", value: from }, { name: "To", value: `Santiago <${OWN}>` }];
+
+type Msg = { headers?: Hdr; id: string; threadId: string; from: string; subject: string; date: string | null; bodyText: string; links: string[]; attachments: Array<{ attachmentId: string; filename: string; mimeType: string; size: number }> };
+const mkMsg = (n: number, over: Partial<Msg> = {}): Msg => ({ headers: forwarded(`compras@cliente${n}.com`), id: `m-${RUN}-${n}`, threadId: `t-${RUN}-${n}`, from: `compras@cliente${n}.com`, subject: `Pedido ${n}`, date: "2026-10-20T12:00:00.000Z", bodyText: "texto", links: [], attachments: [], ...over });
 
 describe.skipIf(Boolean(PROBLEM))(`Pedidos desde email en Postgres real${PROBLEM ? ` — saltado: ${PROBLEM}` : ""}`, () => {
   let pool: import("@neondatabase/serverless").Pool;
@@ -25,15 +32,19 @@ describe.skipIf(Boolean(PROBLEM))(`Pedidos desde email en Postgres real${PROBLEM
   const inbox = new Map<string, Msg>();
   const aiFor = new Map<string, unknown>();
   let aiCalls = 0;
+  const aiSeen: string[] = [];
+  const calls = { headers: [] as string[], full: [] as string[], attach: [] as string[] };
   const gateway = {
-    accountEmail: async () => "pedidos@laboratoriogenus.com.ar",
-    listRecent: async (o: { max: number }) => [...inbox.values()].slice(0, o.max).map((m) => ({ id: m.id, threadId: m.threadId })),
-    getMessage: async (id: string) => inbox.get(id)!,
-    getAttachment: async () => Buffer.from("%PDF-1.4"),
+    accountEmail: async () => OWN,
+    listCandidates: async (o: { scan: number }) => [...inbox.values()].slice(0, o.scan).map((m) => ({ id: m.id, threadId: m.threadId })),
+    getHeaders: async (id: string) => { calls.headers.push(id); const m = inbox.get(id)!; return { id, threadId: m.threadId, date: m.date, headers: m.headers ?? [] }; },
+    getMessage: async (id: string) => { calls.full.push(id); return inbox.get(id)!; },
+    getAttachment: async (id: string) => { calls.attach.push(id); return Buffer.from("%PDF-1.4"); },
   };
   const ai = async (parts: Array<Record<string, unknown>>) => {
     aiCalls++;
     const text = parts.map((p) => String(p.text ?? "")).join("\n");
+    aiSeen.push(text);
     const id = [...aiFor.keys()].find((k) => text.includes(`De: ${inbox.get(k)!.from}`));
     if (!id) return { ok: false as const, message: "sin respuesta simulada", kind: "x" };
     const v = aiFor.get(id);
@@ -68,9 +79,10 @@ describe.skipIf(Boolean(PROBLEM))(`Pedidos desde email en Postgres real${PROBLEM
 
   it("conexión: solo la casilla autorizada, token CIFRADO en la base, desconectar lo borra; solo Producción", async () => {
     const s = svc({ revoke: async () => undefined });
-    await expect(s.saveConnection(prod, { refreshToken: "1//tok", accountEmail: "otra@gmail.com", scope: "x" })).rejects.toThrow(/pedidos@laboratoriogenus.com.ar/);
-    await expect(s.saveConnection(deposito, { refreshToken: "1//tok", accountEmail: "pedidos@laboratoriogenus.com.ar", scope: "x" })).rejects.toMatchObject({ status: 403 });
-    await s.saveConnection(prod, { refreshToken: "1//token-secreto-123", accountEmail: "pedidos@laboratoriogenus.com.ar", scope: "https://www.googleapis.com/auth/gmail.readonly" });
+    await expect(s.saveConnection(prod, { refreshToken: "1//tok", accountEmail: "otra@gmail.com", scope: "x" })).rejects.toThrow(/agzunich@gmail.com/);
+    await expect(s.saveConnection(prod, { refreshToken: "1//tok", accountEmail: "pedidos@laboratoriogenus.com.ar", scope: "x" })).rejects.toThrow(/Solo se puede conectar/); // ya no es la cuenta a conectar
+    await expect(s.saveConnection(deposito, { refreshToken: "1//tok", accountEmail: OWN, scope: "x" })).rejects.toMatchObject({ status: 403 });
+    await s.saveConnection(prod, { refreshToken: "1//token-secreto-123", accountEmail: OWN, scope: "https://www.googleapis.com/auth/gmail.readonly" });
     const row = (await q("select * from email_integrations where id = 'pedidos'"))[0]!;
     expect(row.status).toBe("conectado");
     expect(String(row.refresh_token_enc)).not.toContain("token-secreto-123");
@@ -82,10 +94,12 @@ describe.skipIf(Boolean(PROBLEM))(`Pedidos desde email en Postgres real${PROBLEM
     const after = (await q("select * from email_integrations where id = 'pedidos'"))[0]!;
     expect(after.refresh_token_enc).toBeNull();
     expect(after.status).toBe("desconectado");
-    await s.saveConnection(prod, { refreshToken: "1//otra", accountEmail: "pedidos@laboratoriogenus.com.ar", scope: "gmail.readonly" });
+    await s.saveConnection(prod, { refreshToken: "1//otra", accountEmail: OWN, scope: "gmail.readonly" });
   });
 
   it("analizar: máx. 10 correos, borradores SIN crear pedidos ni tocar stock/trabajos/OE/entregas; consulta sin borrador; error de IA registrado", async () => {
+    // 5 correos PERSONALES primero (uno menciona «pedido» en el asunto) y después 12 reenviados desde pedidos@.
+    for (let n = 1; n <= 5; n++) inbox.set(`m-${RUN}-p${n}`, mkMsg(0, { id: `m-${RUN}-p${n}`, threadId: `t-${RUN}-p${n}`, from: `amigo${n}@hotmail.com`, subject: n === 1 ? "pedidos@laboratoriogenus.com.ar - pedido de pizza" : `Cumple ${n}`, headers: personal(`amigo${n}@hotmail.com`), attachments: [{ attachmentId: "A", filename: "foto.pdf", mimeType: "application/pdf", size: 10 }] }));
     for (let n = 1; n <= 12; n++) inbox.set(`m-${RUN}-${n}`, mkMsg(n));
     aiFor.set(`m-${RUN}-1`, order());
     aiFor.set(`m-${RUN}-2`, { kind: "consulta", confidence: "alta", summary: "pregunta precio", cliente: "", nroPedido: "", fechaSolicitud: "", fechaEntrega: "", observaciones: "", unclearFields: [], items: [] });
@@ -94,7 +108,17 @@ describe.skipIf(Boolean(PROBLEM))(`Pedidos desde email en Postgres real${PROBLEM
     const pedidosAntes = await count("select count(*)::int n from production_pedidos");
     const before = await world();
     const r = await svc().analyze(prod, { max: 50 });
-    expect(r.requested).toBe(10); // tope duro
+    expect(r.requested).toBe(10); // tope duro de correos dirigidos a pedidos@
+    expect(r.scanned).toBe(15);
+    expect(r.excluded).toBe(5);
+    expect(r.excludedItems.every((x) => x.reason === "sin_destinatario_original" && x.senderDomain === "hotmail.com")).toBe(true);
+    // FILTRO ANTES DE TODO: de los personales solo se pidieron encabezados; ni cuerpo, ni adjuntos, ni IA.
+    expect(calls.full.filter((id) => id.includes("-p"))).toEqual([]);
+    expect(calls.attach.filter((id) => id.includes("-p"))).toEqual([]);
+    expect(aiSeen.some((t) => /amigo\d@hotmail|pizza|Cumple/.test(t))).toBe(false);
+    const pers = await q(`select from_addr, subject, outcome, classification from email_order_messages where gmail_message_id like 'm-${RUN}-p%'`);
+    expect(pers).toHaveLength(5);
+    expect(pers.every((x) => x.outcome === "excluido" && x.from_addr === null && x.subject === null)).toBe(true); // no se guarda remitente ni asunto de lo personal
     expect(r.drafts).toBe(1);
     expect(r.withoutOrder).toBe(8);
     expect(r.errors).toHaveLength(1);
@@ -115,10 +139,37 @@ describe.skipIf(Boolean(PROBLEM))(`Pedidos desde email en Postgres real${PROBLEM
     const callsBefore = aiCalls;
     const r = await svc().analyze(prod, { max: 10 });
     expect(r.drafts).toBe(0);
-    expect(r.alreadyProcessed).toBe(9);
-    expect(r.withoutOrder).toBe(1); // el que antes falló ahora se resolvió
-    expect(aiCalls - callsBefore).toBe(1); // los ya procesados no vuelven a la IA
+    expect(r.excluded).toBe(0); // los personales ya excluidos no se vuelven a evaluar
+    expect(r.alreadyProcessed).toBe(14); // 5 excluidos + 9 ya procesados
+    expect(r.withoutOrder).toBe(3); // el que antes falló + los 2 que habían quedado fuera del tope de 10
+    expect(aiCalls - callsBefore).toBe(3); // los ya procesados no vuelven a la IA
     expect(await count(`select count(*)::int n from email_order_drafts where gmail_message_id like 'm-${RUN}-%'`)).toBe(1);
+  });
+
+  it("encabezados ambiguos: Bcc sin rastro se excluye; con X-Original-To se procesa; «recheckExcluded» reevalúa y el diagnóstico no escribe ni usa IA", async () => {
+    inbox.clear(); aiFor.clear();
+    const amb = mkMsg(50, { headers: [{ name: "Delivered-To", value: OWN }, { name: "To", value: "undisclosed-recipients:;" }, { name: "From", value: "ventas@cliente50.com" }] });
+    const lookalike = mkMsg(51, { headers: [{ name: "To", value: "pedidos@laboratoriogenus.com.ar.evil.com" }, { name: "From", value: "x@evil.com" }] });
+    inbox.set(amb.id, amb); inbox.set(lookalike.id, lookalike);
+    aiFor.set(amb.id, order({ nroPedido: `OC-${RUN}-50` }));
+    const rowsAntes = await count(`select count(*)::int n from email_order_messages where gmail_message_id like 'm-${RUN}-%'`);
+    const d = await svc().diagnoseFilter(prod, { scan: 10 });
+    expect(d).toMatchObject({ scanned: 2, verified: 0, target: "pedidos@laboratoriogenus.com.ar" });
+    expect(JSON.stringify(d)).not.toMatch(/Pedido 50|ventas@cliente50/); // ni asuntos ni direcciones completas
+    expect(await count(`select count(*)::int n from email_order_messages where gmail_message_id like 'm-${RUN}-%'`)).toBe(rowsAntes); // diagnosticar no escribe
+    const callsFull = calls.full.length;
+    const aiBefore = aiCalls;
+    const r = await svc().analyze(prod, { max: 10 });
+    expect([r.excluded, r.drafts]).toEqual([2, 0]);
+    expect(calls.full.length).toBe(callsFull); // nada se descargó
+    expect(aiCalls).toBe(aiBefore); // nada fue a la IA
+    // Si el reenvío pasa a dejar X-Original-To, «recheckExcluded» lo recupera (y recién ahí se lee y se envía a la IA).
+    inbox.set(amb.id, { ...amb, headers: [...amb.headers!, { name: "X-Original-To", value: TARGET }] });
+    expect((await svc().analyze(prod, { max: 10 })).excluded).toBe(0); // sin reevaluar, sigue excluido (ya procesado)
+    const again = await svc().analyze(prod, { max: 10, recheckExcluded: true });
+    expect(again.drafts).toBe(1);
+    expect(calls.full).toContain(amb.id);
+    expect(aiCalls).toBe(aiBefore + 1);
   });
 
   it("respuesta en el mismo hilo / misma OC → MODIFICACIÓN para revisión, sin sobrescribir ni crear nada", async () => {

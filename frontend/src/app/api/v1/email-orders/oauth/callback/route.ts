@@ -35,7 +35,7 @@ export async function GET(request: Request) {
     // Permiso mínimo: si Google devolvió algo más que gmail.readonly, no se acepta.
     const scopes = scope.split(/\s+/).filter(Boolean);
     if (scopes.some((s) => s !== GMAIL_READONLY_SCOPE && !/^(openid|email|profile)$/.test(s))) return back(request, false, "Se concedieron permisos de más; solo se acepta lectura de Gmail.");
-    const email = await createGmailGateway(tokens.refresh_token, "").accountEmail();
+    const email = await createGmailGateway(tokens.refresh_token).accountEmail();
     await getEmailOrdersService().saveConnection(actor, { refreshToken: tokens.refresh_token, accountEmail: email, scope });
     return back(request, true, `Conectada la casilla ${email}.`);
   } catch (err) {

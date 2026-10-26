@@ -2,6 +2,7 @@ import "server-only";
 
 /** Acceso de SOLO LECTURA a Gmail. Interfaz mínima para poder probar el servicio con un buzón simulado. Nunca borra, mueve ni responde. */
 import { gmailWithRefreshToken } from "./gmail-oauth";
+import { VERIFICATION_HEADERS } from "./recipient";
 
 export type GmailAttachmentRef = { attachmentId: string; filename: string; mimeType: string; size: number };
 export type GmailMessage = {
@@ -15,15 +16,20 @@ export type GmailMessage = {
   links: string[];
   attachments: GmailAttachmentRef[];
 };
-export type ListOptions = { max: number; afterDate?: string; beforeDate?: string };
+export type GmailHeaders = { id: string; threadId: string; date: string | null; headers: Array<{ name: string; value: string }> };
 export interface GmailGateway {
   accountEmail(): Promise<string>;
-  listRecent(opts: ListOptions): Promise<Array<{ id: string; threadId: string }>>;
+  /** IDs de los correos candidatos (más recientes primero), hasta `scan`. NO decide nada: cada uno se verifica por encabezados. */
+  listCandidates(opts: { scan: number; afterDate?: string; beforeDate?: string; label?: string }): Promise<Array<{ id: string; threadId: string }>>;
+  /** Solo metadatos (encabezados de destinatario): sin asunto, cuerpo ni adjuntos. */
+  getHeaders(id: string): Promise<GmailHeaders>;
   getMessage(id: string): Promise<GmailMessage>;
   getAttachment(messageId: string, attachmentId: string): Promise<Buffer>;
 }
 
 export const MAX_MESSAGES_PER_RUN = 10;
+/** Cuántos correos recientes se revisan (solo encabezados) para encontrar hasta 10 dirigidos a pedidos@. */
+export const MAX_SCAN_PER_RUN = 100;
 
 const b64 = (s: string) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 export function htmlToText(html: string): string {
@@ -56,7 +62,7 @@ export function parseMimeTree(root: Part): { text: string; html: string; attachm
   return { text, html, attachments };
 }
 
-export function createGmailGateway(refreshToken: string, account: string): GmailGateway {
+export function createGmailGateway(refreshToken: string): GmailGateway {
   const { gmail } = gmailWithRefreshToken(refreshToken);
   const header = (hs: Array<{ name?: string | null; value?: string | null }> | undefined, n: string) => hs?.find((h) => (h.name ?? "").toLowerCase() === n)?.value ?? "";
   return {
@@ -64,12 +70,25 @@ export function createGmailGateway(refreshToken: string, account: string): Gmail
       const r = await gmail.users.getProfile({ userId: "me" });
       return String(r.data.emailAddress ?? "").toLowerCase();
     },
-    async listRecent(opts) {
-      const parts = ["in:inbox", `-from:${account}`];
+    async listCandidates(opts) {
+      const parts = ["in:inbox"];
+      if (opts.label) parts.push(`label:${opts.label.replace(/\s+/g, "-")}`);
       if (opts.afterDate) parts.push(`after:${opts.afterDate.replace(/-/g, "/")}`);
       if (opts.beforeDate) parts.push(`before:${opts.beforeDate.replace(/-/g, "/")}`);
-      const r = await gmail.users.messages.list({ userId: "me", q: parts.join(" "), maxResults: Math.min(Math.max(1, opts.max), MAX_MESSAGES_PER_RUN) });
-      return (r.data.messages ?? []).flatMap((m) => (m.id ? [{ id: m.id, threadId: m.threadId ?? m.id }] : []));
+      const out: Array<{ id: string; threadId: string }> = [];
+      let pageToken: string | undefined;
+      const scan = Math.min(Math.max(1, opts.scan), MAX_SCAN_PER_RUN);
+      do {
+        const r = await gmail.users.messages.list({ userId: "me", q: parts.join(" "), maxResults: Math.min(100, scan - out.length), pageToken });
+        for (const m of r.data.messages ?? []) if (m.id) out.push({ id: m.id, threadId: m.threadId ?? m.id });
+        pageToken = r.data.nextPageToken ?? undefined;
+      } while (pageToken && out.length < scan);
+      return out.slice(0, scan);
+    },
+    async getHeaders(id) {
+      const r = await gmail.users.messages.get({ userId: "me", id, format: "metadata", metadataHeaders: [...VERIFICATION_HEADERS] });
+      const headers = (r.data.payload?.headers ?? []).flatMap((h) => (h.name ? [{ name: h.name, value: h.value ?? "" }] : []));
+      return { id, threadId: r.data.threadId ?? id, date: r.data.internalDate ? new Date(Number(r.data.internalDate)).toISOString() : null, headers };
     },
     async getMessage(id) {
       const r = await gmail.users.messages.get({ userId: "me", id, format: "full" });
