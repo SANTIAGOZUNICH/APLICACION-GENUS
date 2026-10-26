@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { decryptToken, encryptToken, signState, verifyState } from "./crypto";
+import { decryptToken, diagnoseKey, encryptToken, signState, verifyState } from "./crypto";
+import { oauthConfigStatus } from "./gmail-oauth";
 import { matchName } from "./matching";
 import { parseMl, sanitizeDraftPayload, sanitizeEmailExtraction, validateForApproval, type DraftPayload } from "./types";
 import { extractLinks, htmlToText, parseMimeTree } from "./gateway";
@@ -28,7 +29,7 @@ describe("cifrado del token y estado OAuth", () => {
   });
   it("sin clave válida no se guarda nada", () => {
     expect(() => encryptToken("x", {} as never)).toThrow(/EMAIL_TOKEN_ENCRYPTION_KEY/);
-    expect(() => encryptToken("x", { EMAIL_TOKEN_ENCRYPTION_KEY: "corta" } as never)).toThrow();
+    expect(() => encryptToken("x", { EMAIL_TOKEN_ENCRYPTION_KEY: "corta" } as never)).toThrow(/demasiado corta/);
   });
   it("el estado firmado detecta alteración y vence a los 10 min", () => {
     const st = signState({ email: "a@b.com", nonce: "n", ts: 1_000_000 }, env);
@@ -38,6 +39,40 @@ describe("cifrado del token y estado OAuth", () => {
     const forged = Buffer.from(JSON.stringify({ email: "otro@b.com", nonce: "n", ts: 1_000_000 })).toString("base64url");
     expect(verifyState(`${forged}.${mac}`, env, 1_000_500)).toBeNull();
     expect(verifyState(`${body}.zzz`, env, 1_000_500)).toBeNull();
+  });
+});
+
+describe("formato de EMAIL_TOKEN_ENCRYPTION_KEY (causa del «falta configurar» en producción)", () => {
+  const b64 = Buffer.alloc(32, 3).toString("base64");
+  const hex = Buffer.alloc(32, 3).toString("hex");
+  it("acepta base64, base64url, hex (openssl rand -hex 32) y secretos largos; tolera comillas y saltos de línea", () => {
+    expect(diagnoseKey(b64)).toMatchObject({ ok: true, format: "base64" });
+    expect(diagnoseKey(`"${b64}"\n`)).toMatchObject({ ok: true, format: "base64" });
+    expect(diagnoseKey(Buffer.alloc(32, 250).toString("base64url"))).toMatchObject({ ok: true, format: "base64" });
+    expect(diagnoseKey(hex)).toMatchObject({ ok: true, format: "hex" });
+    expect(diagnoseKey("una-frase-secreta-larga-de-mas-de-32-caracteres!")).toMatchObject({ ok: true, format: "derivada" });
+  });
+  it("rechaza ausente y demasiado corta, informando el MOTIVO sin el valor", () => {
+    expect(diagnoseKey(undefined)).toMatchObject({ ok: false, reason: "ausente" });
+    expect(diagnoseKey("   ")).toMatchObject({ ok: false, reason: "ausente" });
+    const r = diagnoseKey("corta123");
+    expect(r).toMatchObject({ ok: false, reason: "demasiado_corta", length: 8 });
+    expect(JSON.stringify(r)).not.toContain("corta123");
+  });
+  it("cada formato cifra y descifra (la misma clave en texto da siempre la misma clave)", () => {
+    for (const k of [b64, hex, "una-frase-secreta-larga-de-mas-de-32-caracteres!"]) {
+      const e = { EMAIL_TOKEN_ENCRYPTION_KEY: k } as Partial<NodeJS.ProcessEnv>;
+      expect(decryptToken(encryptToken("1//tok", e), e)).toBe("1//tok");
+    }
+  });
+  it("el estado de configuración distingue ausente / mal escrita / lista, sin exponer valores", () => {
+    const full = { GMAIL_OAUTH_CLIENT_ID: "id", GMAIL_OAUTH_CLIENT_SECRET: "sec", EMAIL_TOKEN_ENCRYPTION_KEY: hex } as Partial<NodeJS.ProcessEnv>;
+    expect(oauthConfigStatus(full)).toMatchObject({ ready: true, missing: [], invalid: [], keyFormat: "hex" });
+    expect(oauthConfigStatus({ ...full, EMAIL_TOKEN_ENCRYPTION_KEY: undefined })).toMatchObject({ ready: false, missing: ["EMAIL_TOKEN_ENCRYPTION_KEY"] });
+    const bad = oauthConfigStatus({ ...full, EMAIL_TOKEN_ENCRYPTION_KEY: "secreto-corto" });
+    expect(bad).toMatchObject({ ready: false, missing: [], invalid: [{ name: "EMAIL_TOKEN_ENCRYPTION_KEY", problem: "demasiado_corta" }] });
+    expect(JSON.stringify(bad)).not.toContain("secreto-corto");
+    expect(oauthConfigStatus({ ...full, GMAIL_OAUTH_CLIENT_SECRET: "  " }).invalid[0]).toMatchObject({ name: "GMAIL_OAUTH_CLIENT_SECRET" });
   });
 });
 

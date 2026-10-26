@@ -10,7 +10,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const item = (over = {}) => ({ id: "i0", include: true, producto: "SHAMPOO X", codigo: "", cantidad: 500, unidad: "un", presentacion: "250 ml", ml: 250, observaciones: "", productSuggestions: [], productMatched: true, doubts: [], ...over });
 const payload = (over = {}) => ({ cliente: "FIRMEA", clienteMatched: true, clienteSuggestions: [], nroPedido: "OC-1", fechaSolicitud: "2026-10-20", fechaEntrega: "", observaciones: "", summary: "", doubts: ["Dato poco claro: fechaEntrega."], items: [item(), item({ id: "i1", producto: "Raro", productMatched: false, productSuggestions: ["Raro 2"], doubts: ["Producto sin coincidencia exacta: revisá las sugerencias."] })], ...over });
 const draft = (over = {}) => ({ id: "d1", gmailMessageId: "m1", gmailThreadId: "t1", kind: "NUEVO", status: "PENDIENTE", payload: payload(), original: payload(), source: { from: "compras@firmea.com", subject: "Pedido octubre", receivedAt: null, attachments: [{ filename: "oc.pdf", used: true }], links: ["https://x.y"] }, related: { draftIds: [], pedidoIds: [], reason: "" }, version: 1, wasEdited: false, reviewedBy: null, reviewedAt: null, discardReason: null, createdAt: "", updatedAt: "", ...over });
-const status = (over = {}) => ({ account: "pedidos@laboratoriogenus.com.ar", oauth: { ready: true, missing: [] }, aiAvailable: true, aiReason: "", dbReady: true, connected: true, connectedAt: null, connectedBy: "prod@x", lastError: null, lastAnalyzedAt: null, metrics: { mensajes: 3, sinPedido: 1, conError: 0, borradores: 2, pendientes: 1, aprobados: 1, aprobadosSinCambios: 1, aprobadosCorregidos: 0, descartados: 0, renglonesCargados: 2 }, ...over });
+const status = (over = {}) => ({ account: "pedidos@laboratoriogenus.com.ar", oauth: { ready: true, missing: [], invalid: [], keyFormat: "base64" }, aiAvailable: true, aiReason: "", dbReady: true, connected: true, connectedAt: null, connectedBy: "prod@x", lastError: null, lastAnalyzedAt: null, metrics: { mensajes: 3, sinPedido: 1, conError: 0, borradores: 2, pendientes: 1, aprobados: 1, aprobadosSinCambios: 1, aprobadosCorregidos: 0, descartados: 0, renglonesCargados: 2 }, ...over });
 
 function mockApi(s: object, drafts: object[], calls: Array<{ url: string; body?: unknown }> = []) {
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -35,9 +35,10 @@ describe("panel de pedidos por email", () => {
     expect(screen.getByText(/solo permiso de LECTURA/i)).toBeTruthy();
   });
   it("falta configuración del servidor: lo dice y nombra las variables", async () => {
-    mockApi(status({ connected: false, oauth: { ready: false, missing: ["GMAIL_OAUTH_CLIENT_ID"] } }), []);
+    mockApi(status({ connected: false, oauth: { ready: false, missing: ["GMAIL_OAUTH_CLIENT_ID"], invalid: [{ name: "EMAIL_TOKEN_ENCRYPTION_KEY", problem: "demasiado_corta" }], keyFormat: null } }), []);
     await open();
     expect(screen.getByTestId("email-pedidos-config").textContent).toMatch(/GMAIL_OAUTH_CLIENT_ID/);
+    expect(screen.getByTestId("email-pedidos-config").textContent).toMatch(/EMAIL_TOKEN_ENCRYPTION_KEY \(demasiado corta/);
     expect(screen.queryByTestId("email-pedidos-conectar")).toBeNull();
   });
   it("muestra el borrador con origen, dudas y acciones; analizar y aprobar llaman a la API", async () => {
