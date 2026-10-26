@@ -97,6 +97,17 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
   const [thumbs, setThumbs] = useState<Thumb[]>([]);
   const [viewIdx, setViewIdx] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
+  /** Segundos transcurridos de la operación en curso (la lectura puede tardar: se ve que no está colgada). */
+  const [busySecs, setBusySecs] = useState(0);
+  useEffect(() => {
+    if (!busy) return;
+    const t0 = Date.now();
+    const timer = setInterval(() => setBusySecs(Math.round((Date.now() - t0) / 1000)), 1000);
+    return () => {
+      clearInterval(timer);
+      setBusySecs(0);
+    };
+  }, [busy]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -168,6 +179,20 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
         .then(async (r) => {
           if (!alive) return;
           applyReceipt(r.receipt);
+          const rj = r.receipt.draft.job;
+          if (rj?.status === "running" && Date.now() - Date.parse(rj.startedAt) < 85_000) {
+            // Se cerró la pantalla durante una lectura: se retoma y se muestra el resultado cuando termine.
+            setBusy("La lectura de este remito sigue en curso…");
+            void waitForJob(r.receipt.id, null).then((rec) => {
+              if (!alive) return;
+              if (rec.receipt) applyReceipt(rec.receipt);
+              if (rec.ok) {
+                setNotice(rec.message);
+                setStep("revision");
+              } else setReadFailed(rec.message);
+              setBusy(null);
+            });
+          }
           const loaded: Thumb[] = [];
           for (const f of r.receipt.files) {
             const blob = await fetch(`${FILE_API}/${f.id}`, { headers: authHeaders() }).then((x) => (x.ok ? x.blob() : null)).catch(() => null);
@@ -183,6 +208,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- waitForJob solo usa `module` (ya en las dependencias) y funciones estables
   }, [module, applyReceipt]);
 
   async function ensureDraft(): Promise<Receipt> {
@@ -257,7 +283,48 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     }
   }
 
-  async function runExtract(replace: boolean) {
+  type ExtractRes = { receipt: Receipt; applied: boolean; message: string; kind: string; analysis: Analysis | null; partial?: boolean };
+
+  /**
+   * Recupera el resultado de una lectura cuya respuesta no llegó (timeout HTTP, corte de conexión, otra pestaña): el servidor guarda el
+   * trabajo con su estado en el borrador, así que se consulta hasta que termine. Nunca hace falta volver a fotografiar.
+   */
+  async function waitForJob(id: string, previousJobId: string | null): Promise<{ receipt?: Receipt; ok: boolean; message: string }> {
+    const t0 = Date.now();
+    let netFails = 0;
+    while (Date.now() - t0 < 95_000) {
+      await new Promise((r) => setTimeout(r, 2500));
+      try {
+        const { receipt: r } = await call<{ receipt: Receipt }>(`${API}?module=${module}&view=get&id=${id}`);
+        netFails = 0;
+        const j = r.draft.job;
+        if (j && j.id !== previousJobId) {
+          if (j.status === "done") return { receipt: r, ok: true, message: j.partial ? "Remito leído parcialmente. Revisá los datos y completá lo que falte." : "Remito analizado. Revisá los datos antes de confirmar." };
+          if (j.status === "failed") return { receipt: r, ok: false, message: j.message || r.draft.extraction?.note || "La lectura no pudo completarse." };
+          if (Date.now() - Date.parse(j.startedAt) > 85_000) return { receipt: r, ok: false, message: "La lectura se interrumpió por tiempo. Tocá «Reintentar lectura»: la foto sigue guardada, no hace falta sacarla de nuevo." };
+        } else if (Date.now() - t0 > 20_000) {
+          // El pedido nunca llegó al servidor: no hay nada en curso.
+          return { receipt: r, ok: false, message: "No pudimos comunicarnos con GENUS OS para leer el remito. La foto sigue guardada: reintentá la lectura cuando vuelva la conexión." };
+        }
+      } catch {
+        if (++netFails >= 8) break;
+      }
+    }
+    return { ok: false, message: "Sin conexión estable para recuperar el resultado. La foto y lo que cargaste siguen guardados; reintentá cuando vuelva la conexión o completá los datos a mano." };
+  }
+
+  /** Segundo paso (no demora la lectura): la IA evalúa equivalencias para los renglones sin material elegido. Solo sugiere. */
+  async function loadAiSuggestions(id: string) {
+    try {
+      const r = await post<{ suggestions: Record<string, NonNullable<ReceiptLineDraft["aiSuggestions"]>>; message: string }>({ action: "ai_suggest", module, id });
+      if (!Object.keys(r.suggestions).length) return;
+      setDraft((d) => ({ ...d, lines: d.lines.map((l) => (r.suggestions[l.id] ? { ...l, aiSuggestions: r.suggestions[l.id] } : l)) }));
+    } catch {
+      /* la ayuda de la IA es opcional: sin ella se siguen mostrando las sugerencias normales */
+    }
+  }
+
+  async function runExtract(replace: boolean, fresh = false) {
     setError(null);
     setNotice(null);
     setReadFailed(null);
@@ -267,22 +334,45 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
       // Guarda lo escrito antes: la lectura no pisa lo que ya cargó la persona.
       const cur = draftRef.current;
       if (receiptRef.current && (cur.header.supplier || cur.lines.length)) await saveDraft(cur);
-      const res = await post<{ receipt: Receipt; applied: boolean; message: string; kind: string; analysis: Analysis | null }>({ action: "extract", module, id: (receiptRef.current ?? r).id, replace });
+      const id = (receiptRef.current ?? r).id;
+      const previousJobId = receiptRef.current?.draft.job?.id ?? null;
+      let res: ExtractRes | null = null;
+      try {
+        // Tope propio en el navegador: si la respuesta no llega (red lenta, 504) se pasa a recuperar el resultado guardado en el servidor.
+        res = await call<ExtractRes>(API, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "extract", module, id, replace, fresh }),
+          signal: typeof AbortSignal !== "undefined" && "timeout" in AbortSignal ? AbortSignal.timeout(75_000) : undefined,
+        });
+      } catch (e) {
+        // 4xx con mensaje (permisos, borrador cerrado…) se informa tal cual; todo lo demás (504, corte) se RECUPERA.
+        if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429) throw e;
+      }
+      if (!res || res.kind === "in_progress") {
+        setBusy("La lectura sigue en curso… recuperando el resultado (no hace falta sacar otra foto)");
+        const rec = await waitForJob(id, res ? null : previousJobId);
+        if (rec.receipt) applyReceipt(rec.receipt);
+        if (rec.ok && rec.receipt) {
+          const a = await call<{ analysis: Analysis }>(`${API}?module=${module}&view=analyze&id=${id}`).catch(() => null);
+          if (a) setAnalysis(a.analysis);
+          setNotice(rec.message);
+          setStep("revision");
+          void loadAiSuggestions(id);
+        } else setReadFailed(rec.message);
+        return;
+      }
       applyReceipt(res.receipt);
       if (res.analysis) setAnalysis(res.analysis);
       if (res.applied) {
         setNotice(res.message);
         setStep("revision");
+        void loadAiSuggestions(id);
       } else {
         setReadFailed(res.message);
       }
     } catch (e) {
-      // Sin respuesta del servidor (corte de conexión) ≠ el servicio de lectura falló: la foto y lo cargado siguen guardados.
-      setReadFailed(
-        e instanceof ApiError
-          ? e.message
-          : "Error de conexión: no pudimos comunicarnos con GENUS OS. La foto y lo que cargaste siguen guardados; reintentá cuando vuelva la conexión o completá los datos a mano."
-      );
+      setReadFailed(e instanceof ApiError ? e.message : "Error de conexión: no pudimos comunicarnos con GENUS OS. La foto y lo que cargaste siguen guardados; reintentá cuando vuelva la conexión o completá los datos a mano.");
     } finally {
       setBusy(null);
     }
@@ -292,7 +382,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
     const cur = draftRef.current;
     const hasContent = cur.lines.some((l) => l.description || l.quantity || l.materialCode);
     if (hasContent && !window.confirm("Volver a leer reemplaza los datos cargados por los del remito. ¿Continuar?")) return;
-    void runExtract(hasContent);
+    void runExtract(hasContent, true);
   }
 
   async function goReview() {
@@ -411,7 +501,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
         {notice ? <p className="rounded-lg bg-sky-500/10 px-3 py-2 text-sm" role="status">{notice}</p> : null}
         {busy ? (
           <p className="flex items-center gap-2 text-sm text-[var(--os-text-muted)]" role="status">
-            <Loader2 className="size-4 animate-spin" /> {busy}
+            <Loader2 className="size-4 animate-spin" /> {busy}{busySecs >= 4 ? ` · ${busySecs} s` : ""}
           </p>
         ) : null}
 
@@ -490,7 +580,7 @@ function RemitoWizard({ module, onClose, onConfirmed }: { module: ReceiptModule;
                     index={i}
                     line={l}
                     supplier={draft.header.supplier}
-                    suggestions={analysis?.suggestions[l.id] ?? []}
+                    suggestions={mergeAiSuggestions(analysis?.suggestions[l.id] ?? [], l.aiSuggestions)}
                     issueMap={issueMap}
                     onChange={(nl) => setDraft((d) => ({ ...d, lines: d.lines.map((x) => (x.id === l.id ? nl : x)) }))}
                     onRemove={() => setDraft((d) => ({ ...d, lines: d.lines.filter((x) => x.id !== l.id) }))}
@@ -652,6 +742,15 @@ function Hint({ issue }: { issue: ReceiptIssue }) {
   return <span className="mt-0.5 block text-xs text-amber-700 dark:text-amber-300">{issue.message}</span>;
 }
 
+const CONF_TEXT = { ALTA: "confianza alta", MEDIA: "confianza media — verificá", BAJA: "confianza baja — verificá" } as const;
+
+/** Sugerencias de la IA primero (si no repiten una ya mostrada), todas con su motivo. Nunca se aplican solas. */
+function mergeAiSuggestions(base: MaterialSuggestion[], ai: ReceiptLineDraft["aiSuggestions"]): MaterialSuggestion[] {
+  if (!ai?.length) return base;
+  const seen = new Set(ai.map((x) => x.code));
+  return [...ai.map((x) => ({ code: x.code, description: x.description, unit: x.unit, score: x.confidence === "MEDIA" ? 0.7 : 0.3, reason: x.reason, confidence: x.confidence })), ...base.filter((b) => !seen.has(b.code))].slice(0, 6);
+}
+
 function LineCard({
   module, index, line, supplier, suggestions, issueMap, onChange, onRemove,
 }: {
@@ -667,6 +766,11 @@ function LineCard({
     <article className="space-y-3 rounded-xl border border-[var(--os-border)] p-3" data-testid="remito-linea">
       <header className="flex items-center justify-between">
         <h4 className="text-sm font-semibold">Material {index + 1}</h4>
+        {line.confidence && line.confidence !== "ALTA" ? (
+          <span className={`rounded-full px-2 py-0.5 text-[11px] ${line.confidence === "BAJA" ? "bg-rose-500/15 text-rose-700 dark:text-rose-300" : "bg-amber-500/15 text-amber-700 dark:text-amber-300"}`} data-testid="linea-confianza" title="Qué tan segura fue la lectura de este renglón. Editá lo que no coincida con el remito.">
+            Lectura: {line.confidence === "BAJA" ? "baja" : "media"} — revisá los campos marcados
+          </span>
+        ) : null}
         <button type="button" aria-label="Quitar material" onClick={onRemove} className="text-rose-600"><X className="size-4" /></button>
       </header>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -747,8 +851,11 @@ function MaterialPicker({
             <div className="flex flex-wrap gap-1" data-testid="linea-sugerencias">
               {suggestions.map((s) => (
                 <button key={s.code} type="button" title={s.reason} className="rounded-full border border-[var(--os-border)] px-2 py-0.5 text-xs hover:bg-[var(--os-teal,#0d9488)]/10" onClick={() => { setSelected(s); onPick(s.code); setOpen(false); }}>
-                  Sugerido{s.confidence ? ` (${s.confidence === "ALTA" ? "confianza alta" : s.confidence === "MEDIA" ? "confianza media — verificá" : "confianza baja — verificá"})` : ""}: {s.code} — {s.description}
+                  Sugerido{s.confidence ? ` (${CONF_TEXT[s.confidence]})` : ""}: {s.code} — {s.description}
                 </button>
+              ))}
+              {suggestions.slice(0, 3).filter((s) => s.reason).map((s) => (
+                <p key={`r-${s.code}`} className="w-full text-[11px] text-[var(--os-text-muted)]" data-testid="linea-sugerencia-motivo">{s.code}: {s.reason}</p>
               ))}
             </div>
           ) : null}

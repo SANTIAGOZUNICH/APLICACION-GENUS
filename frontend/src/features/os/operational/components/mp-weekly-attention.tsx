@@ -28,6 +28,77 @@ const shift = (iso: string, days: number) => {
 };
 const kg = (n: number | null | undefined) => (n == null ? "—" : `${fmtKg(n)} kg`);
 
+type AliasInfo = {
+  suggestions: Array<{ stockName: string; descripcion: string; codigos: string[]; kg: number; confidence: "ALTA" | "MEDIA" | "BAJA"; reason: string }>;
+  confirmed: Array<{ stockName: string; by: string; at: string; original: string }>;
+};
+const CONF_LABEL = { ALTA: "confianza alta", MEDIA: "confianza media — verificá", BAJA: "confianza baja — verificá" } as const;
+
+/**
+ * Resolver una MP «no identificada»: muestra coincidencias REALES del Stock MP con el motivo, permite confirmar la correcta (se recuerda para
+ * futuros controles), y corregir/desactivar una equivalencia ya confirmada. Confirmar NO toca stock, fórmulas ni movimientos.
+ */
+function AliasResolver({ name, code, canEdit, headers, onChanged, autoOpen }: { name: string; code: string; canEdit: boolean; headers: Record<string, string>; onChanged: () => Promise<void>; autoOpen: boolean }) {
+  const [open, setOpen] = useState(autoOpen);
+  const [info, setInfo] = useState<AliasInfo | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/v1/mp-control/aliases?name=${encodeURIComponent(name)}&code=${encodeURIComponent(code)}`, { credentials: "include", headers, cache: "no-store" });
+      const body = (await res.json()) as AliasInfo & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? "No se pudieron buscar coincidencias");
+      setInfo(body);
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "No se pudieron buscar coincidencias");
+    }
+  }, [name, code, headers]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- carga bajo demanda al abrir
+    if (open && !info) void load();
+  }, [open, info, load]);
+  async function act(method: "POST" | "DELETE", stockName: string) {
+    setBusy(stockName);
+    try {
+      const res = await fetch("/api/v1/mp-control/aliases", { method, credentials: "include", headers, body: JSON.stringify({ formulaName: name, stockName, original: name, code }) });
+      const out = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(out.error ?? "No se pudo guardar");
+      setInfo(null);
+      await onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "No se pudo guardar");
+    } finally {
+      setBusy(null);
+    }
+  }
+  return (
+    <div className="mt-1" data-testid="mpw-alias">
+      <button type="button" className="text-xs underline" onClick={() => setOpen((v) => !v)} data-testid="mpw-alias-toggle">{open ? "Ocultar coincidencias" : "Ver coincidencias / equivalencias"}</button>
+      {open ? (
+        <div className="mt-1 space-y-1.5 rounded border border-[var(--os-border)] bg-[var(--os-surface,transparent)] p-2 text-xs">
+          {err ? <p className="text-rose-700" role="alert">{err}</p> : null}
+          {!info && !err ? <p>Buscando coincidencias en el Stock MP…</p> : null}
+          {info?.confirmed.map((c) => (
+            <p key={c.stockName} className="flex flex-wrap items-center gap-2" data-testid="mpw-alias-confirmada">
+              <span>Equivalencia confirmada con <b>{c.stockName.toUpperCase()}</b>{c.by ? ` por ${c.by}` : ""}{c.at ? ` el ${fmtWhen(c.at)}` : ""} (denominación original: «{c.original}»).</span>
+              {canEdit ? <Button type="button" variant="secondary" size="sm" className="min-h-9" disabled={busy === c.stockName} onClick={() => void act("DELETE", c.stockName)} data-testid="mpw-alias-quitar">Desactivar</Button> : null}
+            </p>
+          ))}
+          {info && info.suggestions.length === 0 && info.confirmed.length === 0 ? <p data-testid="mpw-alias-sin">No encontramos una materia prima parecida en el Stock MP. Queda NO IDENTIFICADA hasta que se cargue o se corrija el nombre.</p> : null}
+          {info?.suggestions.map((sg) => (
+            <p key={sg.stockName} className="flex flex-wrap items-center gap-2" data-testid="mpw-alias-sugerida">
+              <span><b>{sg.descripcion}</b>{sg.codigos.length ? ` (${sg.codigos.join(", ")})` : ""} · {fmtKg(sg.kg)} kg en stock · <i>{CONF_LABEL[sg.confidence]}</i> — {sg.reason}</span>
+              {canEdit ? <Button type="button" size="sm" className="min-h-9" disabled={busy === sg.stockName} onClick={() => void act("POST", sg.stockName)} data-testid="mpw-alias-confirmar">{busy === sg.stockName ? "Guardando…" : "Confirmar equivalencia"}</Button> : null}
+            </p>
+          ))}
+          {canEdit && info && info.suggestions.length > 0 ? <p className="text-[var(--os-text-muted)]">Si ninguna es la correcta, dejala NO IDENTIFICADA: no se asigna stock por parecido. Confirmar no modifica stock ni fórmulas.</p> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function MpWeeklyAttention({ email, sector, week, onWeekChange, savedTick }: { email: string; sector: string; week: string; onWeekChange: (w: string) => void; savedTick: number }) {
   const canEdit = sector === "MATERIA_PRIMA";
   const [controls, setControls] = useState<SavedProductControl[] | undefined>(undefined);
@@ -135,6 +206,7 @@ export function MpWeeklyAttention({ email, sector, week, onWeekChange, savedTick
                         Necesario: {kg(it.necesarioKg)} · Stock físico: {it.stockFisicoKg == null ? "Stock no identificado" : kg(it.stockFisicoKg)} · Disponible para esta producción: {kg(it.disponibleKg)} · <b>Faltante: {kg(it.faltanteKg)}</b>
                         {it.shared ? " · stock compartido" : ""}
                       </p>
+                      <AliasResolver name={it.materiaPrima} code={it.codigo} canEdit={canEdit} headers={headers} autoOpen={it.status === "NO_IDENTIFICADA"} onChanged={async () => { await resave(c.controlId); }} />
                     </li>
                   ))}
                 </ul>

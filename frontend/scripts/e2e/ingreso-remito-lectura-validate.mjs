@@ -237,6 +237,33 @@ try {
   check("Cuando el proveedor se recupera, «Reintentar lectura» funciona", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER);
   await mp.keyboard.press("Escape");
 
+  // ===== Respuesta PERDIDA (timeout HTTP / corte de red): el resultado se RECUPERA sin volver a fotografiar ni llamar de nuevo =====
+  state.mode = "ok";
+  state.delayMs = 800;
+  state.requests.length = 0;
+  const stockAntesRecup = await balance(MP_CODE);
+  await mp.route("**/api/v1/inventory/receipts", async (route) => {
+    const req = route.request();
+    if (req.method() === "POST" && /"action":"extract"/.test(req.postData() ?? "")) {
+      await route.fetch(); // el servidor termina de leer y GUARDA el resultado…
+      await route.abort("failed"); // …pero la respuesta nunca llega al navegador
+      return;
+    }
+    await route.continue();
+  });
+  await mp.locator("[data-testid=nuevo-ingreso-remito]").click();
+  await dlg(mp).waitFor();
+  await mp.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+  await mp.getByText(/recuperando el resultado/i).waitFor({ timeout: 30_000 });
+  check("Si la respuesta se pierde, la pantalla lo dice («recuperando el resultado») en vez de dar error", true);
+  await mp.locator("[data-testid=paso-revision]").waitFor({ timeout: 90_000 });
+  const generacion = state.requests.filter((r) => r.model === "gemini-3.5-flash" && !r.textOnly).length; // el modelo configurado inexistente (404) no cuenta: la lectura efectiva es una sola
+  check("Resultado RECUPERADO sin sacar otra foto: formulario completo y UNA sola llamada al proveedor de IA", (await mp.locator("[data-testid=remito-proveedor]").inputValue()) === SUPPLIER && (await mp.locator("[data-testid=remito-linea]").count()) === 2 && generacion === 1, `llamadas=${generacion}`);
+  check("Recuperar no duplicó nada ni movió stock", (await balance(MP_CODE)) === stockAntesRecup);
+  await mp.screenshot({ path: `${OUT}/05-mp-recuperado.png` });
+  await mp.unroute("**/api/v1/inventory/receipts");
+  await mp.keyboard.press("Escape");
+
   // ===== Depósito (PC) =====
   state.mode = "me";
   state.delayMs = 500;
@@ -261,6 +288,27 @@ try {
   await dp.locator("[data-testid=paso-listo]").waitFor({ timeout: 60_000 });
   const me = await q("select payload from inv_me_ingresos where payload->>'codigo' = $1", [ME_CODE]);
   check("ME: al confirmar entra al libro de Depósito (1.200 u, 12 bultos)", me.length === 1 && me[0].payload.total === 1200 && me[0].payload.bultos === 12);
+
+  // ===== Tablet: el flujo completo entra en pantalla sin desbordes =====
+  const tabCtx = await browser.newContext({ baseURL: BASE, viewport: { width: 820, height: 1180 }, hasTouch: true, isMobile: true, userAgent: "Mozilla/5.0 (Linux; Android 13; SM-X710) AppleWebKit/537.36 Chrome/120 Safari/537.36" });
+  const tab = await tabCtx.newPage();
+  await tab.goto("/login");
+  await tab.locator('input[type="email"]').fill(E2E_USERS.materiaPrima.email);
+  await tab.locator('input[type="password"]').fill(E2E_PASSWORD);
+  await tab.locator('button[type="submit"]').click();
+  await tab.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 60_000 });
+  state.mode = "ok";
+  state.delayMs = 300;
+  await tab.goto("/mi-trabajo");
+  await nav(tab, "Ingresos MP");
+  await tab.locator("[data-testid=nuevo-ingreso-remito]").click();
+  await dlg(tab).waitFor();
+  await tab.locator("[data-testid=remito-input-camara]").setInputFiles(path.join(FIX, "hoja-1.jpg"));
+  await tab.locator("[data-testid=paso-revision]").waitFor({ timeout: 60_000 });
+  const overflow = await tab.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  check("Tablet: la revisión del remito se ve completa, sin scroll horizontal", overflow <= 1 && (await tab.locator("[data-testid=remito-linea]").count()) === 2, `desborde=${overflow}px`);
+  await tab.screenshot({ path: `${OUT}/06-tablet-revision.png`, fullPage: true });
+  await tabCtx.close();
 
   // ===== Prueba de configuración (sin enviar remitos) y permisos =====
   const dir = await openAs(E2E_USERS.direccion, false);

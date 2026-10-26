@@ -30,6 +30,7 @@ import {
   type StockLot,
 } from "./availability";
 import { isMissingSchemaError } from "@/lib/db/missing-schema";
+import { identifyMaterial, specConflict, type IdentityCatalogItem, type IdentityConfidence } from "./mp-identity";
 import { buildProductBreakdown, type ProductSection, type ProductSummary } from "./product-breakdown";
 
 /** Decisiones administrativas por MP (no modifican fórmula, cantidades, stock, disponibilidad ni consumos). */
@@ -132,32 +133,101 @@ export async function loadNameAliases(): Promise<NameAlias[]> {
   }
 }
 
-export async function approveNameAlias(input: { formulaName: string; stockName: string; by: string }): Promise<void> {
+export type AliasSuggestion = { stockName: string; descripcion: string; codigos: string[]; kg: number; confidence: IdentityConfidence; reason: string };
+export type ConfirmedAlias = { stockName: string; by: string; at: string; original: string; note: string };
+
+/** Candidatos REALES del Stock MP para una MP de la fórmula (acotados). Solo sugiere: confirmar es una acción aparte de una persona. */
+export async function suggestAliases(input: { name: string; code?: string }): Promise<AliasSuggestion[]> {
+  const { lots } = await loadStockLots();
+  const { baseName } = await import("./availability");
+  const byName = new Map<string, { descripcion: string; codigos: Set<string>; kg: number }>();
+  for (const l of lots) {
+    if (l.archived) continue;
+    const nm = baseName(l.descripcion, l.proveedor);
+    if (!nm) continue;
+    const cur = byName.get(nm) ?? { descripcion: String(l.descripcion).split(/\s+[—–]\s+/)[0]!.trim(), codigos: new Set<string>(), kg: 0 };
+    if (l.codigo) cur.codigos.add(normCode(l.codigo));
+    for (const c of l.codigosAnteriores ?? []) if (c) cur.codigos.add(normCode(c));
+    cur.kg = round3(cur.kg + Math.max(0, toNumber(l.cantidadKg) ?? 0));
+    byName.set(nm, cur);
+  }
+  const catalog: IdentityCatalogItem[] = [...byName.entries()].map(([nm, v]) => ({ code: nm, description: v.descripcion, otherCodes: [...v.codigos] }));
+  const already = new Set((await loadNameAliases()).filter((a) => a.formulaName === normText(input.name)).map((a) => a.stockName));
+  // El código de inventario de la fórmula identifica por código (otherCodes), no por el «código» sintético que es el nombre normalizado.
+  const { candidates } = identifyMaterial({ name: input.name, code: input.code }, catalog, { limit: 6 });
+  return candidates
+    .filter((c) => !already.has(c.code))
+    .map((c) => {
+      const v = byName.get(c.code)!;
+      return { stockName: c.code, descripcion: v.descripcion, codigos: [...v.codigos].slice(0, 4), kg: v.kg, confidence: c.confidence, reason: c.reason };
+    });
+}
+
+type AliasNote = { original?: string; code?: string; text?: string };
+const parseNote = (raw: string): AliasNote => {
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === "object" ? (o as AliasNote) : { text: raw };
+  } catch {
+    return { text: raw };
+  }
+};
+
+/** Equivalencias confirmadas para una MP de la fórmula: quién, cuándo y con qué denominación original (para corregirlas o desactivarlas). */
+export async function listConfirmedAliases(formulaName: string): Promise<ConfirmedAlias[]> {
+  const f = normText(formulaName);
+  if (!f) return [];
+  if (!isDatabaseConfigured()) return mem().aliases.filter((a) => a.formulaName === f).map((a) => ({ stockName: a.stockName, by: "", at: "", original: formulaName, note: "" }));
+  try {
+    const rows = await getDb().select().from(mpMasterLinks).where(and(eq(mpMasterLinks.kind, "name_alias"), sql`${mpMasterLinks.key} like ${f + "||%"}`));
+    return rows.map((r) => ({ stockName: r.masterCode, by: r.approvedBy, at: r.approvedAt.toISOString(), original: parseNote(r.note).original ?? formulaName, note: parseNote(r.note).text ?? "" }));
+  } catch (err) {
+    if (isMissingSchemaError(err)) return [];
+    throw err;
+  }
+}
+
+export async function approveNameAlias(input: { formulaName: string; stockName: string; by: string; original?: string; code?: string }): Promise<void> {
   const formulaName = normText(input.formulaName);
   const stockName = normText(input.stockName);
   if (!formulaName || !stockName) throw new Error("Falta la materia prima.");
   const { lots } = await loadStockLots();
   const { baseName } = await import("./availability");
-  if (!lots.some((l) => baseName(l.descripcion, l.proveedor) === stockName)) throw new Error("Esa descripción no existe en el Stock MP.");
+  const hit = lots.find((l) => baseName(l.descripcion, l.proveedor) === stockName);
+  if (!hit) throw new Error("Esa descripción no existe en el Stock MP.");
+  // Nunca se confirma una equivalencia que contradice concentración / grado / presentación.
+  const conflict = specConflict(input.original || input.formulaName, hit.descripcion);
+  if (conflict) throw new Error(`No se puede confirmar: ${conflict}. Son materiales distintos.`);
   if (!isDatabaseConfigured()) {
     const m = mem();
     if (!m.aliases.some((a) => a.formulaName === formulaName && a.stockName === stockName)) m.aliases.push({ formulaName, stockName });
     return;
   }
-  await getDb()
-    .insert(mpMasterLinks)
-    .values({ kind: "name_alias", key: `${formulaName}||${stockName}`, masterCode: stockName, approvedBy: input.by, note: "Equivalencia por nombre (Control semanal)" })
-    .onConflictDoNothing();
+  const note = JSON.stringify({ original: String(input.original || input.formulaName).trim().slice(0, 200), code: String(input.code ?? "").trim().slice(0, 60), text: "Equivalencia confirmada (Control semanal)" } satisfies AliasNote);
+  const db = getDb();
+  const inserted = await db.insert(mpMasterLinks).values({ kind: "name_alias", key: `${formulaName}||${stockName}`, masterCode: stockName, approvedBy: input.by, note }).onConflictDoNothing().returning({ id: mpMasterLinks.id });
+  if (inserted.length) await logAliasChange(db, "confirmó", formulaName, stockName, input.by, note); // confirmar de nuevo algo ya confirmado no ensucia el historial
 }
 
-export async function removeNameAlias(input: { formulaName: string; stockName: string }): Promise<void> {
+export async function removeNameAlias(input: { formulaName: string; stockName: string; by?: string }): Promise<void> {
   const formulaName = normText(input.formulaName);
   const stockName = normText(input.stockName);
   if (!isDatabaseConfigured()) {
     mem().aliases = mem().aliases.filter((a) => !(a.formulaName === formulaName && a.stockName === stockName));
     return;
   }
-  await getDb().delete(mpMasterLinks).where(and(eq(mpMasterLinks.kind, "name_alias"), eq(mpMasterLinks.key, `${formulaName}||${stockName}`)));
+  const db = getDb();
+  const removed = await db.delete(mpMasterLinks).where(and(eq(mpMasterLinks.kind, "name_alias"), eq(mpMasterLinks.key, `${formulaName}||${stockName}`))).returning({ id: mpMasterLinks.id });
+  if (removed.length) await logAliasChange(db, "desactivó", formulaName, stockName, input.by ?? "", "");
+}
+
+/** Historial de cambios de equivalencias (confirmó / desactivó): una fila por cambio, sin modificar nada del stock ni de las fórmulas. */
+async function logAliasChange(db: ReturnType<typeof getDb>, action: "confirmó" | "desactivó", formulaName: string, stockName: string, by: string, note: string) {
+  await db
+    .insert(mpMasterLinks)
+    .values({ kind: "name_alias_log", key: `${formulaName}||${stockName}||${Date.now()}||${action}`, masterCode: stockName, approvedBy: by || "(sistema)", note: JSON.stringify({ action, formulaName, stockName, detail: note }).slice(0, 900) })
+    .onConflictDoNothing()
+    .catch(() => undefined);
 }
 
 type OeMat = { materiaPrima?: string; codigo?: string; codigoMp?: string; formulaPct?: number | null; parentRowId?: string | null };

@@ -71,7 +71,9 @@ export async function POST(request: Request) {
       case "save":
         return NextResponse.json({ receipt: await svc.saveDraft(actor, id, mod, { expectedVersion: Number(body.expectedVersion), header: body.header, lines: body.lines }) });
       case "extract":
-        return NextResponse.json(await svc.extract(actor, id, mod, { replace: body.replace === true }));
+        return NextResponse.json(await svc.extract(actor, id, mod, { replace: body.replace === true, fresh: body.fresh === true }));
+      case "ai_suggest":
+        return NextResponse.json(await svc.aiSuggest(actor, id, mod));
       case "confirm":
         return NextResponse.json(
           { receipt: await svc.confirm(actor, id, mod, { expectedVersion: Number(body.expectedVersion), confirmKey: String(body.confirmKey ?? ""), acknowledgeDuplicates: body.acknowledgeDuplicates === true, parentReceiptId: typeof body.parentReceiptId === "string" ? body.parentReceiptId : null }) },
