@@ -871,7 +871,7 @@ export class InventoryService {
    * Archivo lógico de un material ME: anula ingresos activos ligados (revierte
    * stock una sola vez cada uno), fuerza stock final a 0 si quedan residuos, y
    * marca el material como archivado. No hard-delete (conserva historial).
-   * Idempotente si ya está archivado. Bloquea si hay salidas OA activas
+   * Idempotente si ya está archivado. No se bloquea por salidas OA activas
    * (sin revertir) — deben revertirse desde su origen antes de eliminar.
    */
   deleteMeMaterial(actor: InventoryActor, id: string, reason: string) {
@@ -880,20 +880,8 @@ export class InventoryService {
     if (!existing) throw new InventoryNotFoundError("Material ME no encontrado.");
     if (existing.archived) return existing;
 
-    const unrevertedOaSalidas = this.repo
-      .listMeSalidas()
-      .filter((s) => s.materialId === id && s.origen === "OA" && !s.reverted);
-    if (unrevertedOaSalidas.length > 0) {
-      const labels = unrevertedOaSalidas
-        .map((s) => s.oaNumber?.trim() || s.egresoNro || s.id.slice(0, 8))
-        .slice(0, 5)
-        .join(", ");
-      const extra = unrevertedOaSalidas.length > 5 ? ` (+${unrevertedOaSalidas.length - 5} más)` : "";
-      throw new InventoryValidationError(
-        `No se puede eliminar: hay salida(s) OA activa(s) (${labels}${extra}). Revertí la salida OA de origen primero.`
-      );
-    }
-
+    // Las salidas de OA NO bloquean la baja del material: el material se archiva (no se borra), las salidas OA quedan intactas en el historial
+    // y se corrigen desde su OA. Nada se destruye: el libro y la trazabilidad se conservan.
     const trimmed = normalizeOptionalReason(reason);
 
     const activeIngresos = this.repo

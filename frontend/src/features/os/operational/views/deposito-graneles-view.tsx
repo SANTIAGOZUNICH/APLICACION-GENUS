@@ -4,7 +4,6 @@ import { ExcelOrList, excelCol } from "../components/operational-ui";
 import type { GenusGridCellChange, GenusGridCommitResult } from "@/components/data-grid/genus-grid";
 import {
   GRANEL_CELL_KIND,
-  GRANEL_REASON_FIELDS,
   GRANEL_SENSITIVE_FIELDS,
   granelCellProtection,
   isGranelCellField,
@@ -135,13 +134,6 @@ export function DepositoGranelesView() {
     [session, refresh]
   );
   const itemsById = useMemo(() => new Map(items.map((r) => [r.id, r] as const)), [items]);
-  const granelReasonRequired = useCallback(
-    (changes: GenusGridCellChange[]) =>
-      changes.some((c) => isGranelCellField(c.columnKey) && GRANEL_REASON_FIELDS.has(c.columnKey))
-        ? "Corregir el stock requiere un motivo (queda auditado con kg anterior y nuevo)."
-        : null,
-    []
-  );
   const granelEdit = (field: GranelCellField) => ({
     kind: GRANEL_CELL_KIND[field],
     sensitive: GRANEL_SENSITIVE_FIELDS.has(field),
@@ -338,7 +330,6 @@ export function DepositoGranelesView() {
               canEditCells={canEdit}
               onCellsCommit={commitCells}
               rowVersion={(r) => itemsById.get(r.id)?.updatedAt ?? r.updatedAt}
-              reasonRequired={granelReasonRequired}
               columns={[
                 excelCol("product", "Producto", (r: (typeof filtered)[number]) => r.product ?? "", { edit: granelEdit("product") }),
                 excelCol("client", "Cliente", (r: (typeof filtered)[number]) => r.client ?? "", { edit: granelEdit("client") }),

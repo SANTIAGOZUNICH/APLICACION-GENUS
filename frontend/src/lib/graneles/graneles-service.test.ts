@@ -235,13 +235,10 @@ describe("GranelesService.patchCells (edición por celda)", () => {
     expect(after.updatedAt).not.toBe(r.updatedAt);
   });
 
-  it("kg exige motivo, audita delta y el rango pegado es todo-o-nada", async () => {
+  it("kg se corrige SIN motivo, audita delta, se puede vaciar (=0) y el rango pegado es todo-o-nada", async () => {
     const svc = getGranelesService();
     const r = await svc.createManual(dep, { kg: 10, product: "P" });
-    const bad = await svc.patchCells(dep, [{ id: r.id, field: "kgAvailable", value: "7", expectedVersion: r.updatedAt }]);
-    expect(bad[0]).toMatchObject({ ok: false, code: "INVALID" });
-    expect((await svc.get(dep, r.id))!.kgAvailable).toBe(10);
-    const ok = await svc.patchCells(dep, [{ id: r.id, field: "kgAvailable", value: "7,5", expectedVersion: r.updatedAt, reason: "Conteo físico real" }]);
+    const ok = await svc.patchCells(dep, [{ id: r.id, field: "kgAvailable", value: "7,5", expectedVersion: r.updatedAt }]);
     expect(ok[0]!.ok).toBe(true);
     const audit = await svc.listAudit(dep, r.id);
     expect(audit.some((a) => a.action === "delta" && a.beforeKg === 10 && a.afterKg === 7.5)).toBe(true);
@@ -252,19 +249,35 @@ describe("GranelesService.patchCells (edición por celda)", () => {
     ]);
     expect(mix.some((m) => !m.ok)).toBe(true);
     expect((await svc.get(dep, r.id))!.location).toBe(cur.location);
+    // Vaciar celdas: texto → "", kg → 0 (queda AGOTADO); la fecha de ingreso es obligatoria en la base y no se vacía.
+    await svc.patchCells(dep, [{ id: r.id, field: "location", value: "", expectedVersion: cur.updatedAt }]);
+    const c2 = (await svc.get(dep, r.id))!;
+    expect(c2.location).toBe("");
+    const clearKg = await svc.patchCells(dep, [{ id: r.id, field: "kgAvailable", value: "", expectedVersion: c2.updatedAt }]);
+    expect(clearKg[0]!.ok).toBe(true);
+    expect((await svc.get(dep, r.id))).toMatchObject({ kgAvailable: 0, status: "AGOTADO" });
+    const clearDate = await svc.patchCells(dep, [{ id: r.id, field: "intakeDate", value: "", expectedVersion: (await svc.get(dep, r.id))!.updatedAt }]);
+    expect(clearDate[0]).toMatchObject({ ok: false, code: "INVALID" });
   });
 
-  it("conflicto de versión, protegidos (origen Envasado, anulado) y sector sin permiso", async () => {
+  it("conflicto de versión, anulado protegido, origen Envasado editable (vínculo conservado) y sector sin permiso", async () => {
     const svc = getGranelesService();
     const r = await svc.createManual(dep, { kg: 5, product: "P" });
     await svc.patchCells(dep, [{ id: r.id, field: "location", value: "A", expectedVersion: r.updatedAt }]);
     const stale = await svc.patchCells(dep, [{ id: r.id, field: "location", value: "B", expectedVersion: r.updatedAt }]);
     expect(stale[0]).toMatchObject({ ok: false, code: "CONFLICT" });
     const o = await svc.upsertFromEnvasado(env, { workItemId: "wi-9", originSector: "ENVASADO_MASIVO", product: "Z", client: "C", bulkLot: "L", kg: 2, reportedBy: "Op" });
-    const prot = await svc.patchCells(dep, [{ id: o.record.id, field: "bulkLot", value: "otro", expectedVersion: o.record.updatedAt }]);
-    expect(prot[0]).toMatchObject({ ok: false, code: "PROTECTED" });
-    const loc = await svc.patchCells(dep, [{ id: o.record.id, field: "location", value: "R9", expectedVersion: o.record.updatedAt }]);
+    // Lo cargado desde Envasado ya se corrige en Depósito (lote y hasta se puede vaciar): el vínculo con el trabajo de origen no se toca.
+    const lot = await svc.patchCells(dep, [{ id: o.record.id, field: "bulkLot", value: "otro", expectedVersion: o.record.updatedAt }]);
+    expect(lot[0]!.ok).toBe(true);
+    const after = (await svc.get(dep, o.record.id))!;
+    expect(after).toMatchObject({ bulkLot: "otro", workItemId: "wi-9" });
+    const loc = await svc.patchCells(dep, [{ id: o.record.id, field: "location", value: "R9", expectedVersion: after.updatedAt }]);
     expect(loc[0]!.ok).toBe(true);
+    // Un registro ANULADO (ya eliminado) sigue sin editarse.
+    await svc.deleteOrAnnul(dep, o.record.id, "");
+    const ann = await svc.patchCells(dep, [{ id: o.record.id, field: "location", value: "Z", expectedVersion: (await svc.get(dep, o.record.id))!.updatedAt }]);
+    expect(ann[0]).toMatchObject({ ok: false, code: "PROTECTED" });
     await expect(svc.patchCells(env, [{ id: r.id, field: "location", value: "Q", expectedVersion: "x" }])).rejects.toThrow(OrdersForbiddenError);
   });
 });
