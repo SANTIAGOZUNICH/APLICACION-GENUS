@@ -33,6 +33,8 @@ describe.skipIf(Boolean(PROBLEM))(`Pedidos desde email en Postgres real${PROBLEM
   const aiFor = new Map<string, unknown>();
   let aiCalls = 0;
   const aiSeen: string[] = [];
+  /** Simula el rechazo de Gemini: null = funciona; `onlyInline` = solo rechaza cuando el pedido lleva archivos en línea (PDF/imagen). */
+  let aiFail: null | { kind: string; message: string; diag: { http: number; googleStatus: string; reason: string; service: string }; onlyInline: boolean } = null;
   const calls = { headers: [] as string[], full: [] as string[], attach: [] as string[] };
   const gateway = {
     accountEmail: async () => OWN,
@@ -45,6 +47,7 @@ describe.skipIf(Boolean(PROBLEM))(`Pedidos desde email en Postgres real${PROBLEM
     aiCalls++;
     const text = parts.map((p) => String(p.text ?? "")).join("\n");
     aiSeen.push(text);
+    if (aiFail && (!aiFail.onlyInline || parts.some((p) => p.inline_data))) return { ok: false as const, kind: aiFail.kind, message: aiFail.message, diag: aiFail.diag };
     const id = [...aiFor.keys()].find((k) => text.includes(`De: ${inbox.get(k)!.from}`));
     if (!id) return { ok: false as const, message: "sin respuesta simulada", kind: "x" };
     const v = aiFor.get(id);
@@ -228,6 +231,43 @@ describe.skipIf(Boolean(PROBLEM))(`Pedidos desde email en Postgres real${PROBLEM
     expect(await count(`select count(*)::int n from production_pedidos where nro_oc = 'OC-${RUN}-30'`)).toBe(1);
     await svc().approve(prod, d.id);
     expect(await count(`select count(*)::int n from production_pedidos where nro_oc = 'OC-${RUN}-30'`)).toBe(2);
+  });
+
+  it("Gemini rechaza con 403: los correos NO quedan como procesados, se reintentan sin duplicar, y un rechazo causado por los adjuntos igual produce el borrador", async () => {
+    const pdf = [{ attachmentId: "A1", filename: "orden.pdf", mimeType: "application/pdf", size: 8 }];
+    inbox.clear(); aiFor.clear();
+    const ids = [60, 61, 62].map((n) => {
+      const m = mkMsg(n, { attachments: pdf });
+      inbox.set(m.id, m);
+      aiFor.set(m.id, order({ nroPedido: `OC-${RUN}-${n}` }));
+      return m.id;
+    });
+    const key403 = { kind: "permission", message: "La clave de Gemini no tiene permiso para usar este servicio. Habilitá la API.", diag: { http: 403, googleStatus: "PERMISSION_DENIED", reason: "SERVICE_DISABLED", service: "generativelanguage.googleapis.com" }, onlyInline: false };
+    aiFail = key403;
+    const r1 = await svc().analyze(prod, { max: 10 });
+    expect([r1.drafts, r1.errors.length]).toEqual([0, 3]);
+    expect(r1.errors[0]!.message).toMatch(/SERVICE_DISABLED/); // el motivo exacto llega a la pantalla
+    const rows = await q("select outcome, error from email_order_messages where gmail_message_id = any($1)", [ids]);
+    expect(rows.every((x) => x.outcome === "error" && /SERVICE_DISABLED/.test(String(x.error)))).toBe(true); // NO «procesado»
+    expect(await count(`select count(*)::int n from email_order_drafts where gmail_message_id = any(array['${ids.join("','")}'])`)).toBe(0);
+    expect((await svc().analyze(prod, { max: 10 })).errors).toHaveLength(3); // sigue fallando: se reintentan, sin crear nada
+    // Se corrige la clave/proyecto: los MISMOS tres correos se interpretan y generan UN borrador cada uno.
+    aiFail = null;
+    const r2 = await svc().analyze(prod, { max: 10 });
+    expect([r2.drafts, r2.errors.length]).toEqual([3, 0]);
+    const r3 = await svc().analyze(prod, { max: 10 });
+    expect(r3.drafts).toBe(0);
+    expect(await count(`select count(*)::int n from email_order_drafts where gmail_message_id = any(array['${ids.join("','")}'])`)).toBe(3);
+    // Rechazo causado por los archivos (PDF en línea): se arma el borrador con el texto y queda la duda visible.
+    const m = mkMsg(63, { attachments: pdf });
+    inbox.set(m.id, m);
+    aiFor.set(m.id, order({ nroPedido: `OC-${RUN}-63` }));
+    aiFail = { ...key403, onlyInline: true };
+    const r4 = await svc().analyze(prod, { max: 10 });
+    expect([r4.drafts, r4.errors.length]).toEqual([1, 0]);
+    const d = (await svc().list(prod)).find((x) => x.gmailMessageId === m.id)!;
+    expect(d.payload.doubts.join(" ")).toMatch(/no pudo leer estos archivos adjuntos \(orden\.pdf\)/);
+    aiFail = null;
   });
 
   it("descartar no crea nada; Producción solamente; sin IA disponible no analiza", async () => {

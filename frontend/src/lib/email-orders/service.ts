@@ -236,7 +236,7 @@ export class EmailOrdersService {
           result.items.push({ messageId: ref.id, subject, outcome: "sin_pedido", classification: ex.kind });
           continue;
         }
-        const built = await this.buildDraft(ref.id, ref.threadId, msg, ex, catalog);
+        const built = await this.buildDraft(ref.id, ref.threadId, msg, ex, catalog, out.skippedAttachments);
         const inserted = await db
           .insert(emailOrderDrafts)
           .values({ gmailMessageId: ref.id, gmailThreadId: ref.threadId, kind: built.kind, payload: built.payload, original: built.payload, related: built.related, source: { from: msg.from, subject: msg.subject, receivedAt: msg.date, attachments: docs.map((d) => ({ filename: d.meta.filename, used: d.meta.used, note: d.meta.note })), links: msg.links } })
@@ -280,9 +280,10 @@ export class EmailOrdersService {
   }
 
   /** Arma el borrador: coincidencias con el catálogo, detección de hilo/pedido existente. No inventa nada. */
-  private async buildDraft(messageId: string, threadId: string, msg: { date: string | null }, ex: RawExtraction, catalog: Catalog) {
+  private async buildDraft(messageId: string, threadId: string, msg: { date: string | null }, ex: RawExtraction, catalog: Catalog, skippedAttachments: string[] = []) {
     const db = getDb();
     const doubts: string[] = [];
+    if (skippedAttachments.length) doubts.push(`La IA no pudo leer estos archivos adjuntos (${skippedAttachments.join(", ")}): el borrador se armó solo con el texto del correo y de Excel/Word. Revisá cantidades y productos contra el original.`);
     if (ex.confidence === "baja") doubts.push("La IA indicó baja confianza en esta interpretación.");
     for (const u of ex.unclear) doubts.push(`Dato poco claro: ${u}.`);
     const clients = await catalog.clients().catch(() => [] as string[]);

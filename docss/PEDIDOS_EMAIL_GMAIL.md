@@ -66,3 +66,15 @@
 
 ## Diagnóstico si el panel dice que falta configuración
 El panel distingue **"no llegan al servidor"** (variable ausente en el entorno del deploy activo: revisar que esté en *Production* y redeployar después de crearla) de **"mal configuradas"** (presente pero vacía o demasiado corta). Nunca muestra valores. Desde la consola del navegador, ya logueado como Producción: `fetch('/api/v1/email-orders/status').then(r=>r.json()).then(j=>console.log(j.oauth))` devuelve `{ready, missing, invalid, keyFormat}`.
+
+## Si «Analizar correos» falla con «La clave de Gemini no tiene permiso…»
+La lectura de pedidos usa **la misma `GEMINI_API_KEY` y la misma ruta que la lectura de remitos** (`generateContent` de `generativelanguage.googleapis.com`, modelo descubierto con ListModels o `INGRESO_REMITO_GEMINI_MODEL`). El error es un **403 / PERMISSION_DENIED de Google**; el mensaje ahora termina con `[HTTP 403 · PERMISSION_DENIED · MOTIVO]` y dice dónde corregirlo (sin mostrar la clave):
+| Motivo (`reason`) | Qué significa | Dónde se corrige |
+|---|---|---|
+| `SERVICE_DISABLED` | «Generative Language API» deshabilitada en el proyecto de la clave | Google Cloud Console → APIs y servicios → Biblioteca → *Generative Language API* → **Habilitar** (el proyecto figura en Google AI Studio → API keys) |
+| `API_KEY_SERVICE_BLOCKED` | la clave tiene *Restricciones de API* que no incluyen esa API | Cloud Console → Credenciales → la clave → *Restricciones de API* → agregarla (o «No restringir») |
+| `API_KEY_HTTP_REFERRER_BLOCKED` / `API_KEY_IP_ADDRESS_BLOCKED` | *Restricciones de aplicaciones* (sitios/IP) incompatibles con Vercel | Credenciales → la clave → *Restricciones de aplicaciones* → **Ninguna** |
+| `CONSUMER_SUSPENDED` / facturación | proyecto suspendido o sin facturación activa | Cloud Console → Facturación / estado del proyecto |
+| (sin motivo) | p. ej. un modelo no habilitado para el proyecto | se prueban hasta 3 modelos; revisar AI Studio |
+Cuota (`429`) y clave inválida (`400/401`) se informan aparte. El botón **«Probar Gemini»** del panel (usa `extraction_health`) muestra qué paso falla: listado de modelos, texto o imagen, el modelo y el motivo por intento.
+Los correos que fallan por la IA quedan como **error (no procesado)**: al volver a tocar *Analizar correos* se reintentan, sin duplicar borradores. Si Gemini rechaza solo cuando el correo trae PDF/imagen, se reintenta con el texto del correo y de Excel/Word, y el borrador queda con la duda «adjuntos no leídos por la IA».

@@ -127,7 +127,20 @@ async function listModels(env: Partial<NodeJS.ProcessEnv>, doFetch: typeof fetch
 // ───────────────────────── Clasificación de errores ─────────────────────────
 
 export type FailureKind = "model" | "key" | "permission" | "region" | "limit" | "overloaded" | "unavailable" | "bad_request";
-type GeminiError = { code?: number; status?: string; message?: string };
+type GeminiError = { code?: number; status?: string; message?: string; details?: Array<{ reason?: string; metadata?: Record<string, string> }> };
+
+/** Datos NO sensibles de un rechazo de Gemini (sin clave, sin contenido): sirven para saber QUÉ lo rechazó y dónde se corrige. */
+export type GeminiDiag = { http: number | null; googleStatus: string; reason: string; service: string };
+export function diagOf(status: number | null, err: GeminiError | null | undefined): GeminiDiag {
+  const d = (err?.details ?? []).find((x) => x?.reason) ?? err?.details?.[0];
+  return {
+    http: status,
+    googleStatus: String(err?.status ?? "").toUpperCase().slice(0, 40),
+    reason: String(d?.reason ?? "").toUpperCase().replace(/[^A-Z0-9_]/g, "").slice(0, 60),
+    service: String(d?.metadata?.service ?? "").replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 80),
+  };
+}
+export const diagText = (d: GeminiDiag | undefined | null) => (d ? [d.http ? `HTTP ${d.http}` : "", d.googleStatus, d.reason].filter(Boolean).join(" · ") : "");
 
 /** Distingue modelo inexistente / clave inválida / permisos / región / límite de uso a partir del estado HTTP y del cuerpo del error. */
 export function classifyHttp(status: number, err: GeminiError | null | undefined): { kind: FailureKind; detail: string } {
@@ -144,7 +157,22 @@ export function classifyHttp(status: number, err: GeminiError | null | undefined
   return { kind: "unavailable", detail };
 }
 
-function messageFor(kind: FailureKind, model: string | null, tried: string[]): string {
+/** Qué falló y DÓNDE se corrige, según el motivo que informa Google (nunca el valor de la clave). */
+export function permissionHelp(d: GeminiDiag | undefined, detail = ""): string {
+  const r = d?.reason ?? "";
+  const txt = `${r} ${detail}`.toLowerCase();
+  if (r === "SERVICE_DISABLED" || /has not been used in project|is disabled|service_disabled/.test(txt))
+    return "La API «Generative Language API» está deshabilitada en el proyecto de Google de la clave. Habilitala en Google Cloud Console → APIs y servicios → Biblioteca → «Generative Language API» → Habilitar (el proyecto de la clave figura en Google AI Studio → API keys).";
+  if (/REFERRER|IP_ADDRESS|ANDROID|IOS/.test(r))
+    return "La clave tiene restricciones de aplicación (sitios web / direcciones IP) que no sirven para un servidor de Vercel. En Google Cloud Console → APIs y servicios → Credenciales → tu clave → Restricciones de aplicaciones → «Ninguna».";
+  if (r === "API_KEY_SERVICE_BLOCKED" || /api_key_service_blocked|are blocked/.test(txt))
+    return "La clave tiene restringidas las APIs y no incluye «Generative Language API». Corregilo en Google Cloud Console → APIs y servicios → Credenciales → tu clave → Restricciones de API → agregá «Generative Language API» (o «No restringir la clave»).";
+  if (/SUSPENDED/.test(r) || /suspended/.test(txt)) return "El proyecto de Google de la clave (o la clave) está suspendido. Revisá el estado del proyecto en Google Cloud Console / AI Studio.";
+  if (/BILLING/.test(r) || /billing/.test(txt)) return "El proyecto de la clave no tiene la facturación habilitada o activa. Revisala en Google Cloud Console → Facturación.";
+  return "Google rechazó el permiso sin indicar el motivo. Puede ser un modelo no habilitado para el proyecto de la clave (se probaron otros modelos), una restricción de la clave o la API deshabilitada: revisá Google AI Studio → API keys y Google Cloud Console → APIs y servicios.";
+}
+
+function messageFor(kind: FailureKind, model: string | null, tried: string[], diag?: GeminiDiag, detail = ""): string {
   switch (kind) {
     case "model":
       return tried.length > 1
@@ -153,7 +181,7 @@ function messageFor(kind: FailureKind, model: string | null, tried: string[]): s
     case "key":
       return "La clave de Gemini configurada no es válida o venció. Avisá a Sistemas; mientras tanto cargá los datos a mano.";
     case "permission":
-      return "La clave de Gemini no tiene permiso para usar este servicio (API no habilitada, facturación o restricciones del proyecto). Avisá a Sistemas; mientras tanto cargá los datos a mano.";
+      return `La clave de Gemini no tiene permiso para usar este servicio${tried.length > 1 ? ` (probados: ${tried.join(", ")})` : ""}. ${permissionHelp(diag, detail)}${diag && diagText(diag) ? ` [${diagText(diag)}]` : ""}`;
     case "region":
       return "Gemini no está disponible desde la ubicación del servidor. Avisá a Sistemas; mientras tanto cargá los datos a mano.";
     case "limit":
@@ -179,7 +207,7 @@ type GeminiBody = {
   promptFeedback?: { blockReason?: string };
   error?: GeminiError;
 };
-export type Attempt = { model: string; status: number | null; kind: "ok" | FailureKind };
+export type Attempt = { model: string; status: number | null; kind: "ok" | FailureKind; /** Motivo informado por Google (p. ej. SERVICE_DISABLED), sin datos sensibles. */ reason?: string };
 
 function generationConfig(model: string, withThinking = true, maxOutputTokens = 12288) {
   const cfg: Record<string, unknown> = { temperature: 0, responseMimeType: "application/json", maxOutputTokens };
@@ -193,7 +221,7 @@ function generationConfig(model: string, withThinking = true, maxOutputTokens = 
 
 type RunResult =
   | { ok: true; body: GeminiBody; model: string; attempts: Attempt[] }
-  | { ok: false; kind: FailureKind | "timeout"; message: string; attempts: Attempt[]; model: string | null };
+  | { ok: false; kind: FailureKind | "timeout"; message: string; attempts: Attempt[]; model: string | null; diag?: GeminiDiag };
 
 /**
  * Llama a generateContent probando modelos en orden: el explícito, el último que funcionó y, si hace falta, los que Google dice que existen.
@@ -260,6 +288,9 @@ async function runGenerate(
   const BACKOFF_MS = [base, Math.round(base * 2.6)];
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
   let lastTransient: { kind: FailureKind; model: string } | null = null;
+  // Un 403 puede ser de UN modelo (no habilitado para el proyecto) y no de toda la clave: se prueban otros candidatos (tope 3) antes de informarlo.
+  let permissionFail: { model: string; diag: GeminiDiag; detail: string } | null = null;
+  let permissionModels = 0;
   let transientModels = 0; // tope: con dos modelos saturados se informa, no se sigue probando
   try {
     while (queue.length) {
@@ -324,13 +355,25 @@ async function runGenerate(
           withThinking = false; // este modelo no acepta «thinkingConfig»: se reintenta igual sin él
           continue;
         }
-        attempts.push({ model, status: res.status, kind: cls.kind });
-        logFailure(cls.kind, res.status, model, cls.detail);
+        attempts.push({ model, status: res.status, kind: cls.kind, reason: diagOf(res.status, body?.error).reason || undefined });
+        logFailure(cls.kind, res.status, model, `${diagText(diagOf(res.status, body?.error))} ${cls.detail}`);
         if (cls.kind === "model") {
           if (modelCache?.working === model) modelCache = { ...modelCache, working: null };
           if (!queue.length && !discovered) await discover();
           moveOn = true;
           continue;
+        }
+        if (cls.kind === "permission") {
+          permissionFail ??= { model, diag: diagOf(res.status, body?.error), detail: cls.detail };
+          permissionModels += 1;
+          if (permissionModels < 3) {
+            if (!queue.length && !discovered) await discover();
+            if (queue.length) {
+              moveOn = true;
+              continue;
+            }
+          }
+          return { ok: false, kind: "permission", message: messageFor("permission", model, [...tried], permissionFail.diag, permissionFail.detail), attempts, model, diag: permissionFail.diag };
         }
         if (cls.kind === "overloaded" || cls.kind === "unavailable" || cls.kind === "limit") {
           const maxTries = cls.kind === "limit" ? 1 : BACKOFF_MS.length;
@@ -346,9 +389,10 @@ async function runGenerate(
           moveOn = true; // otro modelo puede estar menos saturado
           continue;
         }
-        return { ok: false, kind: cls.kind, message: messageFor(cls.kind, model, [...tried]), attempts, model };
+        return { ok: false, kind: cls.kind, message: messageFor(cls.kind, model, [...tried]), attempts, model, diag: diagOf(res.status, body?.error) };
       }
     }
+    if (permissionFail) return { ok: false, kind: "permission", message: messageFor("permission", permissionFail.model, [...tried], permissionFail.diag, permissionFail.detail), attempts, model: permissionFail.model, diag: permissionFail.diag };
     if (lastTransient) return { ok: false, kind: lastTransient.kind, message: messageFor(lastTransient.kind, lastTransient.model, [...tried]), attempts, model: lastTransient.model };
     return { ok: false, kind: "model", message: messageFor("model", null, [...tried]), attempts, model: null };
   } catch (err) {
@@ -538,14 +582,14 @@ export async function askGeminiJson(prompt: string, deps: { fetchImpl?: typeof f
 export async function generateJsonFromParts(
   parts: Array<Record<string, unknown>>,
   deps: { fetchImpl?: typeof fetch; env?: Partial<NodeJS.ProcessEnv>; budgetMs?: number; maxOutputTokens?: number } = {}
-): Promise<{ ok: true; json: unknown; ms: number; model: string } | { ok: false; message: string; kind: string }> {
+): Promise<{ ok: true; json: unknown; ms: number; model: string } | { ok: false; message: string; kind: string; diag?: GeminiDiag }> {
   const baseEnv = deps.env ?? process.env;
   const cfg = extractionConfig(baseEnv);
   if (!cfg.available) return { ok: false, message: cfg.reason, kind: cfg.code };
   const env = deps.budgetMs ? { ...baseEnv, INGRESO_REMITO_BUDGET_MS: String(deps.budgetMs), INGRESO_REMITO_ATTEMPT_MS: String(Math.min(30_000, deps.budgetMs)) } : baseEnv;
   const t0 = Date.now();
   const run = await runGenerate(parts, env, deps.fetchImpl ?? fetch, { maxOutputTokens: deps.maxOutputTokens ?? 8192 });
-  if (!run.ok) return { ok: false, message: run.message, kind: run.kind };
+  if (!run.ok) return { ok: false, message: run.message, kind: run.kind, diag: run.diag };
   const text = run.body.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
   try {
     return { ok: true, json: JSON.parse(text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, "")), ms: Date.now() - t0, model: run.model };

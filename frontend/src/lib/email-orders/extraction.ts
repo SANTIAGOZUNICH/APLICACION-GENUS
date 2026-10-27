@@ -5,7 +5,7 @@ import "server-only";
  * adjuntos es NO CONFIABLE: viaja delimitado como DATOS, se le ordena a la IA ignorar instrucciones incluidas ahí y su respuesta se valida
  * estrictamente (`sanitizeEmailExtraction`). La IA no tiene herramientas: solo devuelve JSON, que nada ejecuta.
  */
-import { generateJsonFromParts } from "@/lib/inventory/receipt-extraction";
+import { diagText, generateJsonFromParts, type GeminiDiag } from "@/lib/inventory/receipt-extraction";
 import type { GmailMessage } from "./gateway";
 import type { DocContent } from "./documents";
 import { sanitizeEmailExtraction, type RawExtraction } from "./types";
@@ -39,13 +39,37 @@ export function buildEmailParts(msg: Pick<GmailMessage, "from" | "subject" | "da
   return parts;
 }
 
-export type EmailAi = (parts: Array<Record<string, unknown>>) => Promise<{ ok: true; json: unknown; ms: number } | { ok: false; message: string; kind: string }>;
+export type EmailAi = (parts: Array<Record<string, unknown>>) => Promise<{ ok: true; json: unknown; ms: number } | { ok: false; message: string; kind: string; diag?: GeminiDiag }>;
 export const defaultEmailAi: EmailAi = (parts) => generateJsonFromParts(parts, { budgetMs: 45_000, maxOutputTokens: 8192 });
 
-export async function extractOrderFromEmail(msg: GmailMessage, docs: DocContent[], ai: EmailAi = defaultEmailAi): Promise<{ ok: true; data: RawExtraction; ms: number } | { ok: false; message: string }> {
-  const r = await ai(buildEmailParts(msg, docs));
-  if (!r.ok) return { ok: false, message: r.message };
+/** Tipos de rechazo que pueden deberse al CONTENIDO enviado (archivos en línea) y no a toda la clave: se reintenta sin los archivos. */
+const CONTENT_SENSITIVE = new Set(["permission", "bad_request"]);
+
+export type EmailExtraction =
+  | { ok: true; data: RawExtraction; ms: number; /** Adjuntos binarios que la IA no pudo leer: el borrador se armó sin ellos. */ skippedAttachments: string[] }
+  | { ok: false; message: string; kind: string; diag?: GeminiDiag };
+
+/**
+ * Interpreta el correo. Si Gemini rechaza el pedido con archivos en línea (PDF/imagen) por permisos o formato, se reintenta UNA vez solo con
+ * el texto (cuerpo + Excel/Word): si eso funciona queda un borrador marcado con la duda «adjuntos no leídos» (no se pierde el correo); si
+ * también falla, el rechazo es de la clave/proyecto y se informa con su motivo (el correo queda como ERROR reintentable, no como procesado).
+ */
+export async function extractOrderFromEmail(msg: GmailMessage, docs: DocContent[], ai: EmailAi = defaultEmailAi): Promise<EmailExtraction> {
+  let r = await ai(buildEmailParts(msg, docs));
+  let skipped: string[] = [];
+  const inline = docs.filter((d) => d.inline);
+  if (!r.ok && CONTENT_SENSITIVE.has(r.kind) && inline.length) {
+    const textOnly = await ai(buildEmailParts(msg, docs.map((d) => (d.inline ? { ...d, inline: undefined, text: undefined } : d))));
+    if (textOnly.ok) {
+      r = textOnly;
+      skipped = inline.map((d) => d.meta.filename);
+    }
+  }
+  if (!r.ok) {
+    const dt = diagText(r.diag);
+    return { ok: false, kind: r.kind, diag: r.diag, message: `${r.message}${dt && !r.message.includes(dt) ? ` [${dt}]` : ""}` };
+  }
   const data = sanitizeEmailExtraction(r.json);
-  if (!data) return { ok: false, message: "La IA no devolvió una interpretación válida del correo." };
-  return { ok: true, data, ms: r.ms };
+  if (!data) return { ok: false, kind: "unreadable", message: "La IA no devolvió una interpretación válida del correo." };
+  return { ok: true, data, ms: r.ms, skippedAttachments: skipped };
 }
