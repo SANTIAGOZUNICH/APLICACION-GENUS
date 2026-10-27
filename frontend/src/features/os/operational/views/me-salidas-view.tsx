@@ -14,6 +14,7 @@ import { LifecycleConfirmDialog } from "@/features/os/operational/components/lif
 import { syntheticLifecycleItem } from "@/features/os/operational/components/lifecycle-synthetic";
 import {
   fetchInventory,
+  bulkDeleteInventory,
   mutateInventory,
   InventoryClientError,
 } from "@/features/os/operational/adapters/inventory-client";
@@ -23,10 +24,6 @@ import {
   type OperationalTableColumn,
 } from "@/features/os/operational/components/operational-ui";
 import {
-  bulkDeleteConfirmMessage,
-  ListSelectionEnterButton,
-  ListSelectionToolbar,
-  useListSelectionMode,
 } from "../components/list-selection-mode";
 import { displayCell, multiplyTotal, parseOptionalNumber } from "@/lib/inventory/calcs";
 import { ME_SALIDA_COLUMNS, type MeMaterial, type MeSalidaRow } from "@/lib/inventory/types";
@@ -39,6 +36,7 @@ import {
   formatOperationalIdFull,
 } from "@/lib/orders/format-operational-id";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useDepositoDelete } from "@/features/os/operational/components/deposito-delete/use-deposito-delete";
 import { useMeRowDelete, useSheetRowOps } from "@/features/os/operational/lib/use-sheet-row-ops";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import { applySort, compareDates, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
@@ -121,8 +119,6 @@ export function MeSalidasView() {
   const [filterEntregado, setFilterEntregado] = useState<"todos" | "si" | "no">("todos");
   const [form, setForm] = useState<FormState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null);
-  const [bulkPending, setBulkPending] = useState(false);
-  const [bulkBusy, setBulkBusy] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
 
   const reload = useCallback(async () => {
@@ -203,7 +199,17 @@ export function MeSalidasView() {
   }, [rows, search, filterControl, filterEntregado, sort]);
 
   const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
-  const sel = useListSelectionMode(visibleIds);
+  const del = useDepositoDelete({
+    canWrite,
+    visibleIds,
+    tableCount: rows.filter((r) => !r.reverted).length,
+    noun: "salidas",
+    deleteIds: (ids) => bulkDeleteInventory("me_salidas", { ids }),
+    deleteAll: () => bulkDeleteInventory("me_salidas", { all: true }),
+    afterDelete: reload,
+    onMessage: (m) => showToast(m),
+    historyResource: "me_salidas",
+  });
 
   const ME_SALIDA_PRIMARY = new Set(["DESCRIPCIÓN", "CONTROL", "ENTREGADO"]);
   const columns: OperationalTableColumn<MeSalidaRow>[] = [...ME_SALIDA_COLUMNS, "CÓDIGO", "MOTIVO", "DESCUENTA STOCK"].map((label) => {
@@ -349,19 +355,6 @@ export function MeSalidasView() {
             <Button type="button" variant="secondary" onClick={() => setPasteOpen(true)}>
               <ClipboardPaste className="mr-1 size-4" /> Pegar desde Excel
             </Button>
-            {!sel.active ? (
-              <ListSelectionEnterButton onClick={sel.enter} />
-            ) : (
-              <ListSelectionToolbar
-                selectedCount={sel.selectedCount}
-                onSelectAll={sel.selectAllVisible}
-                onDeselectAll={sel.deselectAll}
-                onDelete={() => setBulkPending(true)}
-                onCancel={sel.cancel}
-                busy={bulkBusy}
-                deleteLabel="Eliminar seleccionados"
-              />
-            )}
           </>
         )}
         <input
@@ -405,6 +398,8 @@ export function MeSalidasView() {
         Una salida manual descuenta solo si su motivo lo indica (devolución, descarte, traslado, muestra). Una entrega de
         materiales para una OA se registra como «Entrega para una OA» y no descuenta, para no restar dos veces.
       </p>
+      {del.bar}
+
       <OperationalTable
         columns={[
           ...columns,
@@ -493,11 +488,7 @@ export function MeSalidasView() {
         onCellsCommit={sheet.onCellsCommit}
         rowVersion={sheet.rowVersion}
         emptyMessage="Sin salidas ME."
-        selection={
-          sel.active
-            ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
-            : undefined
-        }
+        rowCheck={del.rowCheck}
       />
 
 
@@ -626,57 +617,6 @@ export function MeSalidasView() {
           });
           setRows((prev) => prev.filter((row) => row.id !== id));
           await reload();
-        }}
-      />
-
-      <LifecycleConfirmDialog
-        pending={
-          bulkPending
-            ? syntheticLifecycleItem(
-                "eliminar",
-                "Eliminar salidas ME",
-                bulkDeleteConfirmMessage(sel.selectedCount)
-              )
-            : null
-        }
-        entityLabel={`${sel.selectedCount} salida(s)`}
-        onClose={() => setBulkPending(false)}
-        onConfirm={async (reason) => {
-          setBulkBusy(true);
-          let ok = 0;
-          let skipped = 0;
-          let failed = 0;
-          const deletedIds: string[] = [];
-          const byId = new Map(filtered.map((r) => [r.id, r]));
-          for (const id of sel.selectedIds) {
-            const row = byId.get(id);
-            if (!row || row.reverted) {
-              skipped += 1;
-              continue;
-            }
-            try {
-              await mutateInventory({
-                action: "delete",
-                resource: "me_salidas",
-                id,
-                reason,
-              });
-              ok += 1;
-              deletedIds.push(id);
-            } catch {
-              failed += 1;
-            }
-          }
-          setBulkPending(false);
-          sel.cancel();
-          if (deletedIds.length > 0) {
-            setRows((prev) => prev.filter((row) => !deletedIds.includes(row.id)));
-          }
-          await reload();
-          setBulkBusy(false);
-          showToast(
-            `${ok} eliminada(s)${skipped ? ` · ${skipped} omitida(s)` : ""}${failed ? ` · ${failed} error(es)` : ""}`
-          );
         }}
       />
 

@@ -164,6 +164,18 @@ function findActiveByWorkItemMem(workItemId: string): GranelRemainderRecord | nu
   );
 }
 
+/** Registro ANULADO (eliminado por Depósito) ligado a un trabajo de Envasado: Envasado no lo vuelve a crear solo. */
+async function findAnnulledByWorkItem(workItemId: string): Promise<GranelRemainderRecord | null> {
+  if (isNeonBacked()) {
+    const rows = await getDb()
+      .select()
+      .from(depositoGraneles)
+      .where(and(eq(depositoGraneles.workItemId, workItemId), eq(depositoGraneles.status, "ANULADO")));
+    return rows[0] ? rowToDomain(rows[0]) : null;
+  }
+  return mem().items.find((item) => item.workItemId === workItemId && item.status === "ANULADO") ?? null;
+}
+
 async function writeAudit(entry: Omit<GranelAuditEntry, "id" | "createdAt">): Promise<void> {
   const now = new Date();
   if (isNeonBacked()) {
@@ -362,6 +374,10 @@ export class GranelesService {
       return { record: next, created: false, duplicated: false, updated: true };
     }
 
+    // Lo que Depósito eliminó no reaparece por una nueva sincronización de Envasado.
+    const deletedBefore = await findAnnulledByWorkItem(input.workItemId);
+    if (deletedBefore) return { record: deletedBefore, created: false, duplicated: true, updated: false };
+
     const now = new Date().toISOString();
     const record: GranelRemainderRecord = {
       id: isNeonBacked() ? crypto.randomUUID() : makeMemId(),
@@ -478,8 +494,7 @@ export class GranelesService {
 
   /**
    * Política Eliminar:
-   * - Manual sin workItemId → hard delete si BORRADOR (sin movimientos posteriores).
-   * - Originado en Envasado o ya con movimientos → anular con motivo (idempotente).
+   * - Baja lógica siempre (idempotente, motivo opcional): se conserva el registro y la auditoría.
    */
   /**
    * PATCH parcial por celda: valida TODO primero (si una celda falla no se guarda ninguna), luego
@@ -538,32 +553,8 @@ export class GranelesService {
       return { action: "anular", record: current };
     }
 
-    const isManualDraft = !current.workItemId && current.status === "BORRADOR";
-    if (isManualDraft) {
-      if (isNeonBacked()) {
-        const db = getDb();
-        const result = await db
-          .delete(depositoGraneles)
-          .where(eq(depositoGraneles.id, id))
-          .returning({ id: depositoGraneles.id });
-        if (result.length === 0) throw new OrdersNotFoundError("Registro no encontrado.");
-      } else {
-        const items = mem().items;
-        const idx = items.findIndex((item) => item.id === id);
-        if (idx < 0) throw new OrdersNotFoundError("Registro no encontrado.");
-        items.splice(idx, 1);
-      }
-      await writeAudit({
-        granelId: id,
-        action: "delete",
-        actorSector: actor.sector,
-        actorName: actor.displayName,
-        reason: normalizedReason,
-        beforeKg: current.kgAvailable,
-        afterKg: null,
-      });
-      return { action: "eliminar", record: null };
-    }
+    // Baja lógica SIEMPRE (también borradores manuales): se conserva el registro completo (quién, cuándo, valores) para auditoría
+    // y deja de verse en la planilla activa, en búsquedas y totales; Envasado no lo recrea (el vínculo por origen queda anulado).
 
     const now = new Date().toISOString();
     const next: GranelRemainderRecord = {
@@ -604,6 +595,36 @@ export class GranelesService {
       afterKg: current.kgAvailable,
     });
     return { action: "anular", record: next };
+  }
+
+  /**
+   * Eliminación múltiple (baja lógica). `ids` o `all` (todos los activos, estén o no a la vista). Cada registro es
+   * independiente: los que fallan se informan y los demás se aplican; repetir es seguro (lo ya anulado se omite).
+   */
+  async bulkDeleteOrAnnul(
+    actor: GranelesActor,
+    target: { ids?: string[]; all?: boolean },
+    reason?: string
+  ): Promise<{ requested: number; deleted: string[]; skipped: string[]; failed: Array<{ id: string; message: string }> }> {
+    assertMutate(actor);
+    const activeIds = new Set((await this.list(actor)).map((r) => r.id));
+    const ids = target.all ? [...activeIds] : [...new Set(target.ids ?? [])];
+    const deleted: string[] = [];
+    const skipped: string[] = [];
+    const failed: Array<{ id: string; message: string }> = [];
+    for (const id of ids) {
+      if (!activeIds.has(id)) {
+        skipped.push(id);
+        continue;
+      }
+      try {
+        await this.deleteOrAnnul(actor, id, reason);
+        deleted.push(id);
+      } catch (e) {
+        failed.push({ id, message: e instanceof Error ? e.message : "Error" });
+      }
+    }
+    return { requested: ids.length, deleted, skipped, failed };
   }
 }
 

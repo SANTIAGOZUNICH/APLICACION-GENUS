@@ -11,16 +11,13 @@ import { LifecycleConfirmDialog } from "@/features/os/operational/components/lif
 import { syntheticLifecycleItem } from "@/features/os/operational/components/lifecycle-synthetic";
 import {
   fetchInventory,
+  bulkDeleteInventory,
   mutateInventory,
   InventoryClientError,
 } from "@/features/os/operational/adapters/inventory-client";
 import { ExcelPasteDialog } from "@/features/os/operational/components/excel-paste-dialog";
 import { OperationalTable, type OperationalTableColumn } from "@/features/os/operational/components/operational-ui";
 import {
-  bulkDeleteConfirmMessage,
-  ListSelectionEnterButton,
-  ListSelectionToolbar,
-  useListSelectionMode,
 } from "../components/list-selection-mode";
 import { displayCell, multiplyTotal, parseOptionalNumber } from "@/lib/inventory/calcs";
 import { ME_INGRESO_COLUMNS, type MeIngresoRow } from "@/lib/inventory/types";
@@ -34,6 +31,7 @@ import { canManageAdjuntos, canViewAdjuntos } from "@/lib/inventory/ingreso-adju
 import { IngresoConRemitoButtons } from "@/features/os/operational/components/ingreso-con-remito";
 import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useDepositoDelete } from "@/features/os/operational/components/deposito-delete/use-deposito-delete";
 import { useMeRowDelete, useSheetRowOps } from "@/features/os/operational/lib/use-sheet-row-ops";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import { applySort, compareDates, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
@@ -116,8 +114,6 @@ export function MeIngresosView() {
   const [search, setSearch] = useState("");
   const [form, setForm] = useState<FormState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null);
-  const [bulkPending, setBulkPending] = useState(false);
-  const [bulkBusy, setBulkBusy] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
 
   const reload = useCallback(async () => {
@@ -212,7 +208,17 @@ export function MeIngresosView() {
   }, [rows, search, sort]);
 
   const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
-  const sel = useListSelectionMode(visibleIds);
+  const del = useDepositoDelete({
+    canWrite,
+    visibleIds,
+    tableCount: rows.filter((r) => !r.anulado).length,
+    noun: "ingresos",
+    deleteIds: (ids) => bulkDeleteInventory("me_ingresos", { ids }),
+    deleteAll: () => bulkDeleteInventory("me_ingresos", { all: true }),
+    afterDelete: reload,
+    onMessage: (m) => showToast(m),
+    historyResource: "me_ingresos",
+  });
 
   const ME_INGRESO_PRIMARY = new Set(["CÓDIGO", "DESCRIPCIÓN INSUMO", "PRODUCTO"]);
   const columns: OperationalTableColumn<MeIngresoRow>[] = ME_INGRESO_COLUMNS.map((label) => {
@@ -334,19 +340,6 @@ export function MeIngresosView() {
             <Button type="button" variant="secondary" onClick={() => setPasteOpen(true)}>
               <ClipboardPaste className="mr-1 size-4" /> Pegar desde Excel
             </Button>
-            {!sel.active ? (
-              <ListSelectionEnterButton onClick={sel.enter} />
-            ) : (
-              <ListSelectionToolbar
-                selectedCount={sel.selectedCount}
-                onSelectAll={sel.selectAllVisible}
-                onDeselectAll={sel.deselectAll}
-                onDelete={() => setBulkPending(true)}
-                onCancel={sel.cancel}
-                busy={bulkBusy}
-                deleteLabel="Eliminar seleccionados"
-              />
-            )}
           </>
         )}
         <input
@@ -366,6 +359,8 @@ export function MeIngresosView() {
           testId="me-ingresos-sort"
         />
       </div>
+
+      {del.bar}
 
       <OperationalTable
         columns={[
@@ -473,11 +468,7 @@ export function MeIngresosView() {
         onCellsCommit={sheet.onCellsCommit}
         rowVersion={sheet.rowVersion}
         emptyMessage="Sin ingresos ME. Las tablas comienzan vacías (sin datos históricos)."
-        selection={
-          sel.active
-            ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
-            : undefined
-        }
+        rowCheck={del.rowCheck}
       />
 
       {form && (
@@ -557,57 +548,6 @@ export function MeIngresosView() {
           });
           setRows((prev) => prev.filter((row) => row.id !== id));
           await reload();
-        }}
-      />
-
-      <LifecycleConfirmDialog
-        pending={
-          bulkPending
-            ? syntheticLifecycleItem(
-                "eliminar",
-                "Eliminar ingresos ME",
-                bulkDeleteConfirmMessage(sel.selectedCount)
-              )
-            : null
-        }
-        entityLabel={`${sel.selectedCount} ingreso(s)`}
-        onClose={() => setBulkPending(false)}
-        onConfirm={async (reason) => {
-          setBulkBusy(true);
-          let ok = 0;
-          let skipped = 0;
-          let failed = 0;
-          const deletedIds: string[] = [];
-          const byId = new Map(filtered.map((r) => [r.id, r]));
-          for (const id of sel.selectedIds) {
-            const row = byId.get(id);
-            if (!row || row.anulado) {
-              skipped += 1;
-              continue;
-            }
-            try {
-              await mutateInventory({
-                action: "delete",
-                resource: "me_ingresos",
-                id,
-                reason,
-              });
-              ok += 1;
-              deletedIds.push(id);
-            } catch {
-              failed += 1;
-            }
-          }
-          setBulkPending(false);
-          sel.cancel();
-          if (deletedIds.length > 0) {
-            setRows((prev) => prev.filter((row) => !deletedIds.includes(row.id)));
-          }
-          await reload();
-          setBulkBusy(false);
-          showToast(
-            `${ok} eliminado(s)${skipped ? ` · ${skipped} omitido(s)` : ""}${failed ? ` · ${failed} error(es)` : ""}`
-          );
         }}
       />
 

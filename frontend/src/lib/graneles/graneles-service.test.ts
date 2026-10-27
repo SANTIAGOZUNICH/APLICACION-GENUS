@@ -128,13 +128,38 @@ describe("GranelesService", () => {
     expect(delta?.afterKg).toBe(3.2);
   });
 
-  it("deleteOrAnnul: manual borrador hace hard delete", async () => {
+  it("deleteOrAnnul: manual borrador se da de baja lógica (no hard delete): desaparece de la lista activa y conserva el registro", async () => {
     const svc = getGranelesService();
     const record = await svc.createManual(deposito, { kg: 0, asDraft: true });
     expect(record.status).toBe("BORRADOR");
-    const result = await svc.deleteOrAnnul(deposito, record.id, "Prueba");
-    expect(result.action).toBe("eliminar");
-    expect(await svc.get(deposito, record.id)).toBeNull();
+    const result = await svc.deleteOrAnnul(deposito, record.id);
+    expect(result.action).toBe("anular");
+    expect((await svc.list(deposito)).some((r) => r.id === record.id)).toBe(false);
+    expect((await svc.get(deposito, record.id))?.status).toBe("ANULADO");
+  });
+
+  it("bulkDeleteOrAnnul: ids, todo, parciales y repetir es seguro; Envasado no recrea lo eliminado", async () => {
+    const svc = getGranelesService();
+    const a = await svc.createManual(deposito, { kg: 5, product: "A" });
+    const b = await svc.createManual(deposito, { kg: 6, product: "B" });
+    const c = await svc.createManual(deposito, { kg: 7, product: "C" });
+    const first = await svc.bulkDeleteOrAnnul(deposito, { ids: [a.id, "no-existe"] });
+    expect(first.deleted).toEqual([a.id]);
+    expect(first.skipped).toEqual(["no-existe"]);
+    const again = await svc.bulkDeleteOrAnnul(deposito, { ids: [a.id] });
+    expect(again.deleted).toEqual([]);
+    expect(again.skipped).toEqual([a.id]);
+    const all = await svc.bulkDeleteOrAnnul(deposito, { all: true });
+    expect(new Set(all.deleted)).toEqual(new Set([b.id, c.id]));
+    expect(await svc.list(deposito)).toEqual([]);
+    await expect(svc.bulkDeleteOrAnnul(envasado, { all: true })).rejects.toBeTruthy();
+
+    const input = { workItemId: "wi-bulk", originSector: "ENVASADO_MASIVO" as const, product: "P", client: "C", bulkLot: "L", kg: 5, reportedBy: "Op" };
+    const { record } = await svc.upsertFromEnvasado(envasado, input);
+    await svc.bulkDeleteOrAnnul(deposito, { ids: [record.id] });
+    const resync = await svc.upsertFromEnvasado(envasado, input);
+    expect(resync.created).toBe(false);
+    expect(await svc.list(deposito)).toEqual([]);
   });
 
   it("deleteOrAnnul: registro originado en Envasado se anula (no hard delete)", async () => {

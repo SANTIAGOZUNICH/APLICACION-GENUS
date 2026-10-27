@@ -11,19 +11,17 @@ import {
   type GranelCellField,
 } from "@/lib/graneles/cell-edit";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useDepositoDelete } from "../components/deposito-delete/use-deposito-delete";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import { usePreviewContext, usePreviewSession } from "@/features/os/session/preview-context";
 import { Button } from "@/components/ui/button";
 import { displayField } from "@/lib/operational/display-fields";
 import {
-  bulkDeleteConfirmMessage,
-  ListSelectionEnterButton,
-  ListSelectionToolbar,
   SelectionCheckbox,
   selectedRowClassName,
-  useListSelectionMode,
 } from "../components/list-selection-mode";
 import {
+  bulkDeleteGranelesApi,
   createManualGranelApi,
   deleteOrAnnulGranelApi,
   fetchGranelesApi,
@@ -79,8 +77,6 @@ export function DepositoGranelesView() {
   const [createOpen, setCreateOpen] = useState(false);
   const [edit, setEdit] = useState<GranelRemainderRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<GranelRemainderRecord | null>(null);
-  const [bulkPending, setBulkPending] = useState(false);
-  const [bulkBusy, setBulkBusy] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -159,7 +155,16 @@ export function DepositoGranelesView() {
   }, [items, q, sort]);
 
   const visibleIds = useMemo(() => filtered.map((r) => r.id), [filtered]);
-  const sel = useListSelectionMode(visibleIds);
+  const del = useDepositoDelete({
+    canWrite: canEdit,
+    visibleIds,
+    tableCount: items.filter((i) => i.status !== "ANULADO" && i.status !== "ARCHIVADO").length,
+    noun: "sobrantes de granel",
+    deleteIds: (ids) => bulkDeleteGranelesApi(session, { ids }),
+    deleteAll: () => bulkDeleteGranelesApi(session, { all: true }),
+    afterDelete: refresh,
+    onMessage: (m) => showToast(m),
+  });
 
   async function submitCreate() {
     const kg = Number.parseFloat(form.kg.replace(",", "."));
@@ -237,27 +242,6 @@ export function DepositoGranelesView() {
     }
   }
 
-  async function submitBulkDelete(bulkReason: string) {
-    setBulkBusy(true);
-    let ok = 0;
-    let failed = 0;
-    for (const id of sel.selectedIds) {
-      try {
-        await deleteOrAnnulGranelApi(session, id, bulkReason);
-        ok += 1;
-      } catch {
-        failed += 1;
-      }
-    }
-    setBulkPending(false);
-    sel.cancel();
-    setBulkBusy(false);
-    await refresh();
-    const parts = [`${ok} eliminado(s)/anulado(s)`];
-    if (failed) parts.push(`${failed} error(es)`);
-    showToast(parts.join(" · "));
-  }
-
   return (
     <TwinShell title="Depósito Graneles">
       <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
@@ -299,21 +283,9 @@ export function DepositoGranelesView() {
           <option value="ARCHIVADO">Archivado</option>
         </select>
         <SortSelect value={sort} onChange={setSort} options={GRANELES_SORT_OPTIONS} testId="graneles-sort" />
-        {canEdit &&
-          (!sel.active ? (
-            <ListSelectionEnterButton onClick={sel.enter} disabled={filtered.length === 0} />
-          ) : (
-            <ListSelectionToolbar
-              selectedCount={sel.selectedCount}
-              onSelectAll={sel.selectAllVisible}
-              onDeselectAll={sel.deselectAll}
-              onDelete={() => setBulkPending(true)}
-              onCancel={sel.cancel}
-              busy={bulkBusy}
-              deleteLabel="Eliminar/anular seleccionados"
-            />
-          ))}
       </div>
+
+      {del.bar}
 
       {loading ? (
         <p className="text-sm text-[var(--os-text-muted)]">Cargando…</p>
@@ -326,7 +298,7 @@ export function DepositoGranelesView() {
               tableId="graneles"
               rows={filtered}
               rowKey={(r) => r.id}
-              disabled={sel.active}
+              rowCheck={del.rowCheck}
               canEditCells={canEdit}
               onCellsCommit={commitCells}
               rowVersion={(r) => itemsById.get(r.id)?.updatedAt ?? r.updatedAt}
@@ -363,7 +335,11 @@ export function DepositoGranelesView() {
             <table className="os-table w-full max-w-full table-fixed text-sm" data-testid="graneles-table">
               <thead>
                 <tr className="text-left text-xs uppercase text-[var(--os-text-muted)]">
-                  {sel.active ? <th className="w-[4%] py-2" /> : null}
+                  {del.rowCheck ? (
+                    <th className="w-[4%] py-2">
+                      <SelectionCheckbox checked={del.rowCheck.allChecked} onChange={del.rowCheck.onToggleAll} label="Seleccionar todas las filas visibles" />
+                    </th>
+                  ) : null}
                   <th className="w-[16%] py-2">Producto</th>
                   <th className="w-[13%] py-2">Cliente</th>
                   <th className="w-[11%] py-2">Lote granel</th>
@@ -378,13 +354,13 @@ export function DepositoGranelesView() {
                 {filtered.map((row) => (
                   <tr
                     key={row.id}
-                    className={`border-t border-[var(--os-border)] ${selectedRowClassName(sel.isSelected(row.id))}`}
+                    className={`border-t border-[var(--os-border)] ${selectedRowClassName(Boolean(del.rowCheck?.checked.has(row.id)))}`}
                   >
-                    {sel.active ? (
+                    {del.rowCheck ? (
                       <td className="py-2">
                         <SelectionCheckbox
-                          checked={sel.isSelected(row.id)}
-                          onChange={() => sel.toggle(row.id)}
+                          checked={del.rowCheck.checked.has(row.id)}
+                          onChange={() => del.rowCheck?.onToggle(row.id)}
                           label={`Seleccionar ${row.product || row.id}`}
                         />
                       </td>
@@ -623,33 +599,6 @@ export function DepositoGranelesView() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={bulkPending} onOpenChange={(o) => !o && setBulkPending(false)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Eliminar / anular seleccionados</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm">{bulkDeleteConfirmMessage(sel.selectedCount)}</p>
-          <textarea
-            className="w-full rounded border px-3 py-2 text-sm"
-            rows={3}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Motivo (opcional)…"
-          />
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setBulkPending(false)} disabled={bulkBusy}>
-              Cancelar
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => void submitBulkDelete(reason)}
-              disabled={bulkBusy}
-            >
-              Confirmar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </TwinShell>
   );
 }

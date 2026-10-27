@@ -12,6 +12,7 @@ import {
   type GenusGridCommitResult,
   type GenusGridRowDelete,
   type GenusGridRowOps,
+  type GenusGridRowCheck,
   type GenusGridDraftRows,
 } from "@/components/data-grid/genus-grid";
 import { nodeToText } from "@/lib/utils/node-text";
@@ -142,6 +143,8 @@ function moreToggleClass(bp: CollapseBelow): string {
   return "md:hidden";
 }
 
+export type OperationalRowCheck = GenusGridRowCheck;
+
 interface OperationalTableSelection {
   active: boolean;
   isSelected: (id: string) => boolean;
@@ -182,6 +185,8 @@ interface OperationalTableProps<T> {
   /** Hoja continua: eliminar filas completas desde la planilla (sin motivo ni confirmación, con Deshacer). */
   rowDelete?: GenusGridRowDelete;
   rowOps?: GenusGridRowOps;
+  /** Casillas de selección de filas (Depósito): checkbox por fila + «seleccionar todas las visibles». */
+  rowCheck?: GenusGridRowCheck;
   /** Hoja continua: filas en blanco al final para crear registros escribiendo directamente (se crean al completarse). */
   draftRows?: GenusGridDraftRows;
 }
@@ -315,7 +320,8 @@ export function ExcelOrList<T>({
   reasonRequired,
   reasonInline,
   rowClassName,
-}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName"> & {
+  rowCheck,
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName" | "rowCheck"> & {
   /** Lista clásica (el marcado existente) como hijo. */
   children: ReactNode;
   /** true = fuerza la lista (p. ej. modo selección múltiple). */
@@ -347,7 +353,7 @@ export function ExcelOrList<T>({
           Ver como lista
         </button>
       </div>
-      <ExcelView columns={columns} rows={rows} rowKey={rowKey} tableId={tableId} onCellsCommit={onCellsCommit} canEditCells={canEditCells} rowVersion={rowVersion} reasonRequired={reasonRequired} reasonInline={reasonInline} rowClassName={rowClassName} />
+      <ExcelView columns={columns} rows={rows} rowKey={rowKey} tableId={tableId} onCellsCommit={onCellsCommit} canEditCells={canEditCells} rowVersion={rowVersion} reasonRequired={reasonRequired} reasonInline={reasonInline} rowClassName={rowClassName} rowCheck={rowCheck} />
     </div>
   );
 }
@@ -367,9 +373,10 @@ function ExcelView<T>({
   rowDelete,
   rowOps,
   draftRows,
+  rowCheck,
   maxHeight,
   sheet,
-}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName" | "rowDelete" | "rowOps" | "draftRows"> & { maxHeight?: number; sheet?: boolean }) {
+}: Pick<OperationalTableProps<T>, "columns" | "rows" | "rowKey" | "tableId" | "onCellsCommit" | "canEditCells" | "rowVersion" | "reasonRequired" | "reasonInline" | "rowClassName" | "rowDelete" | "rowOps" | "draftRows" | "rowCheck"> & { maxHeight?: number; sheet?: boolean }) {
   const { email } = usePreviewSession();
   const storageKey = prefsKey(email, tableId ?? "tabla");
   const [prefs, setPrefsState] = useState<SheetViewPrefs>(() => {
@@ -485,6 +492,7 @@ function ExcelView<T>({
       sheet={sheet}
       rowDelete={rowDelete}
       rowOps={rowOps}
+      rowCheck={rowCheck}
       draftRows={draftRows}
       queueKey={sheet ? `genus-queue:${email ?? "anon"}:${tableId ?? "tabla"}` : undefined}
     />
@@ -498,7 +506,7 @@ export function OperationalTable<T>({
   rows,
   rowKey,
   emptyMessage = "Sin registros.",
-  selection,
+  selection: selectionProp,
   excel = true,
   tableId,
   onCellsCommit,
@@ -511,6 +519,7 @@ export function OperationalTable<T>({
   rowDelete,
   rowOps,
   draftRows,
+  rowCheck,
 }: OperationalTableProps<T>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [shown, setShown] = useState(LIST_CHUNK);
@@ -518,6 +527,11 @@ export function OperationalTable<T>({
   const shownRows = continuous ? Math.min(rows.length, Math.max(shown, LIST_CHUNK)) : rows.length;
   const editableTable = Boolean(canEditCells && onCellsCommit && allColumns.some((c) => c.edit));
   const { mode, toggle: toggleMode } = useTableMode(tableId, editableTable);
+  // Casilla por fila siempre visible: en planilla va en la columna de numeración; en lista, como columna de selección.
+  const selection = useMemo<OperationalTableSelection | undefined>(
+    () => (selectionProp ? selectionProp : rowCheck && mode === "list" ? { active: true, isSelected: (id) => rowCheck.checked.has(id), onToggle: rowCheck.onToggle } : undefined),
+    [selectionProp, rowCheck, mode]
+  );
   // Hoja continua: alto = lo que queda de la ventana (la planilla agrega ~100 px de barra de estado y avisos sobre la grilla).
   const { height: sheetHeight, ref: sheetRef } = useViewportSheetHeight(continuous, mode === "excel" && !selection?.active ? 132 : 24, [rows.length]);
   // Las columnas `excelOnly` existen solo en la planilla; la lista clásica queda exactamente como antes.
@@ -575,6 +589,7 @@ export function OperationalTable<T>({
           rowDelete={rowDelete}
           rowOps={rowOps}
           draftRows={draftRows}
+          rowCheck={rowCheck}
         />
       </div>
     );
@@ -622,7 +637,11 @@ export function OperationalTable<T>({
               <th
                 className="w-10 px-2 py-[var(--os-density-table-padding-y)]"
                 aria-label="Selección"
-              />
+              >
+                {rowCheck ? (
+                  <SelectionCheckbox checked={rowCheck.allChecked} onChange={rowCheck.onToggleAll} label="Seleccionar todas las filas visibles" />
+                ) : null}
+              </th>
             ) : null}
             {hasSecondary ? (
               <th

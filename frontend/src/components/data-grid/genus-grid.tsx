@@ -30,7 +30,9 @@ import {
   type DataSheetGridRef,
 } from "react-datasheet-grid";
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -156,6 +158,8 @@ export interface GenusGridProps<T> {
   rowDelete?: GenusGridRowDelete;
   /** Modo planilla: insertar filas en blanco en cualquier lugar y mover filas (orden manual persistente). */
   rowOps?: GenusGridRowOps;
+  /** Modo planilla: casillas de selección de filas (borrado múltiple desde fuera de la grilla). */
+  rowCheck?: GenusGridRowCheck;
   /** Modo planilla: filas en blanco al final para crear registros escribiendo directamente. */
   draftRows?: GenusGridDraftRows;
   /**
@@ -188,6 +192,41 @@ export interface GenusGridDraftRows {
 
 const MIN_SHEET_HEIGHT = 240;
 const SHEET_BOTTOM_RESERVE = 48;
+
+/** Casillas por fila en la columna de numeración (selección no consecutiva) + «seleccionar todas las visibles» en el encabezado. */
+export interface GenusGridRowCheck {
+  checked: ReadonlySet<string>;
+  onToggle: (rowId: string) => void;
+  onToggleAll: () => void;
+  allChecked: boolean;
+}
+
+const ROW_CHECK_GUTTER = 72;
+
+// Contexto (no `columnData`): la grilla reutiliza sus celdas y no vuelve a leer `columnData` al cambiar la selección.
+const RowCheckContext = createContext<GenusGridRowCheck | null>(null);
+
+function RowCheckGutterCell({ rowData, rowIndex }: { rowData: GenusGridRow; rowIndex: number }) {
+  const rc = useContext(RowCheckContext);
+  const id = rowData.__id;
+  if (!rc || isDraftRowId(id)) return <span className="px-2 text-xs text-[var(--os-text-muted)]">{rowIndex + 1}</span>;
+  return (
+    <label className="flex size-full cursor-pointer items-center gap-1.5 px-2 text-xs text-[var(--os-text-muted)]" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+      <input type="checkbox" className="size-4 accent-[var(--os-teal)]" checked={rc.checked.has(id)} onChange={() => rc.onToggle(id)} aria-label={`Seleccionar fila ${rowIndex + 1}`} data-testid="row-check" />
+      {rowIndex + 1}
+    </label>
+  );
+}
+
+function RowCheckHeader() {
+  const rc = useContext(RowCheckContext);
+  return (
+    <label className="flex size-full cursor-pointer items-center gap-1.5 px-2 text-xs" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+      <input type="checkbox" className="size-4 accent-[var(--os-teal)]" checked={rc?.allChecked ?? false} onChange={() => rc?.onToggleAll()} aria-label="Seleccionar todas las filas visibles" data-testid="row-check-all" />
+      #
+    </label>
+  );
+}
 
 export interface GenusGridRowDelete {
   /** Motivo por el que NO se puede eliminar esa fila (null = se puede). */
@@ -353,7 +392,9 @@ function FrozenFirstColumn({
   rowHeight,
   onSelectRow,
   testId,
+  gutterWidth = 44,
 }: {
+  gutterWidth?: number;
   scroller: HTMLElement | null;
   rows: GenusGridRow[];
   columnKey: string | undefined;
@@ -398,7 +439,7 @@ function FrozenFirstColumn({
     </div>
   ));
   return (
-    <div className="genus-frozen-col" style={{ left: 44, width: view.width, height: view.height }} data-testid={`${testId}-frozen-col`}>
+    <div className="genus-frozen-col" style={{ left: gutterWidth, width: view.width, height: view.height }} data-testid={`${testId}-frozen-col`}>
       <div className="genus-frozen-head" style={{ height: rowHeight }}>
         <span className="truncate">{title}</span>
       </div>
@@ -432,6 +473,7 @@ export function GenusGrid<T>({
   sheet = false,
   rowDelete,
   rowOps,
+  rowCheck,
   draftRows,
   queueKey,
 }: GenusGridProps<T>) {
@@ -1689,6 +1731,7 @@ export function GenusGrid<T>({
   }, [rows, drafts, columns]);
 
   const dsg = (
+    <RowCheckContext.Provider value={rowCheck ?? null}>
     <DataSheetGrid<GenusGridRow>
       // Si cambian las columnas (otra pestaña/semana) el motor se remonta: sus encabezados no se actualizan en caliente.
       key={columns.map((c) => `${c.key}:${c.title}:${c.fixedWidth ? c.basis : ""}`).join("|")}
@@ -1705,7 +1748,11 @@ export function GenusGrid<T>({
       rowHeight={rowHeight}
       headerRowHeight={rowHeight}
       stickyRightColumn={stickyRight}
-      gutterColumn={{ basis: 44, minWidth: 44, title: "#" } as never}
+      gutterColumn={
+        (rowCheck
+          ? { basis: ROW_CHECK_GUTTER, minWidth: ROW_CHECK_GUTTER, title: <RowCheckHeader />, component: RowCheckGutterCell }
+          : { basis: 44, minWidth: 44, title: "#" }) as never
+      }
       rowClassName={
         rowClassName || draftRows
           ? ({ rowData }) => {
@@ -1724,6 +1771,7 @@ export function GenusGrid<T>({
         onActiveCellChange(arg);
       }}
     />
+    </RowCheckContext.Provider>
   );
 
   return (
@@ -2006,6 +2054,7 @@ export function GenusGrid<T>({
                   rowHeight={rowHeight}
                   onSelectRow={(row) => gridRef.current?.setSelection({ min: { col: 0, row }, max: { col: columns.length - 1, row } })}
                   testId={testId}
+                  gutterWidth={rowCheck ? ROW_CHECK_GUTTER : 44}
                 />
                 {sheetOverlay}
               </div>
