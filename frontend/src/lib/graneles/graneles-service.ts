@@ -8,7 +8,7 @@ import { and, desc, eq, notInArray } from "drizzle-orm";
 import { canAccessGraneles, canMutateGraneles, canUpsertGranelFromEnvasado } from "@/lib/graneles/graneles-rbac";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { depositoGraneles, depositoGranelesAudit } from "@/lib/db/schema";
-import { normalizeOptionalReason, sanitizeOptionalReason } from "@/lib/lifecycle/reason";
+import { normalizeOptionalReason } from "@/lib/lifecycle/reason";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from "@/lib/orders/types";
 import type { SectorId } from "@/types/operational/sector";
 import type {
@@ -23,7 +23,6 @@ import type {
   UpsertGranelResult,
 } from "@/lib/graneles/types";
 import {
-  GRANEL_REASON_FIELDS,
   MAX_GRANEL_CELL_CHANGES,
   granelCellProtection,
   isGranelCellField,
@@ -506,10 +505,6 @@ export class GranelesService {
       if (prot) { results.push({ ok: false, code: "PROTECTED", message: prot }); continue; }
       const v = validateGranelValue(c.field, c.value);
       if (!v.ok) { results.push({ ok: false, code: "INVALID", message: v.message }); continue; }
-      if (GRANEL_REASON_FIELDS.has(c.field) && sanitizeOptionalReason(c.reason).length < 8) {
-        results.push({ ok: false, code: "INVALID", message: "Corregir el stock requiere un motivo (mín. 8 caracteres)." });
-        continue;
-      }
       results.push({ ok: true, record: cur });
       parsed.push({ change: c, value: v.value });
     }

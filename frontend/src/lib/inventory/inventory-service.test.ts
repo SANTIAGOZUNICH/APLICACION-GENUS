@@ -674,7 +674,7 @@ describe("ME Stock — eliminar material (archivo lógico)", () => {
     expect(second.stockActual).toBe(0);
   });
 
-  it("bloquea eliminar si hay salida OA activa sin revertir", () => {
+  it("elimina (archiva) el material aunque haya salida OA activa: la salida OA queda intacta y el movimiento se conserva", () => {
     const ing = svc.upsertMeIngreso(deposito, {
       codigo: "DEL-OA-1",
       descripcionInsumo: "Frascos",
@@ -685,16 +685,13 @@ describe("ME Stock — eliminar material (archivo lógico)", () => {
     const oa = makeOaForSalida(materialId, "DEL-OA-1", "80");
     applyOaDeliveryToMe(svc, produccion, oa);
 
-    expect(() => svc.deleteMeMaterial(deposito, materialId, "intento")).toThrow(
-      /salida.*OA.*activa/i
-    );
-    expect(svc.listMeMaterials(deposito).find((m) => m.id === materialId)).toBeTruthy();
-
-    // Revertir la salida OA de origen habilita la eliminación.
-    const salida = svc.listMeSalidas(deposito).find((s) => s.origen === "OA" && !s.reverted)!;
-    svc.anularMeSalida(deposito, salida.id, "revertida para eliminar");
-    const archived = svc.deleteMeMaterial(deposito, materialId, "ahora sí");
+    const archived = svc.deleteMeMaterial(deposito, materialId, "");
     expect(archived.archived).toBe(true);
+    expect(svc.listMeMaterials(deposito).find((m) => m.id === materialId)).toBeUndefined();
+    // La salida de la OA NO se toca (trazabilidad): sigue activa y asociada a su OA.
+    const salida = svc.listMeSalidas(deposito).find((s) => s.origen === "OA");
+    expect(salida).toBeTruthy();
+    expect(salida!.reverted).toBeFalsy();
   });
 
   it("PRODUCCION y DEPOSITO pueden eliminar me_stock; CODIFICADO no puede", () => {

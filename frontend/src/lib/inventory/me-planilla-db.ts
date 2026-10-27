@@ -28,6 +28,7 @@ import {
   MAX_ME_SHEET_CHANGES,
   MIN_AJUSTE_MOTIVO,
   ME_AJUSTE_TIPOS,
+  ME_STOCK_FIELDS,
   isMeSheetField,
   manualSalidaStockError,
   meSalidaMotivo,
@@ -200,7 +201,8 @@ export async function patchMeSheetCells(actor: InventoryActor, resource: MeSheet
           const m = meSalidaMotivo(next.motivoSalida as string);
           if (m) next.descuentaStock = m.descuenta;
         }
-        const err = manualSalidaStockError(next as never);
+        // Solo si la edición toca campos que mueven stock: vaciar un comentario o un cliente nunca queda bloqueado por una regla de stock.
+        const err = changed.some((f) => ME_STOCK_FIELDS.has(f)) ? manualSalidaStockError(next as never) : null;
         if (err) {
           changes.forEach((c, i) => { if (c.id === id) results[i] = { ok: false, code: "INVALID", message: err }; });
           continue;

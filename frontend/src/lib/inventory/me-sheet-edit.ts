@@ -4,7 +4,7 @@
  *  - Ingresos: se editan TODAS las columnas. TOTAL (= bultos × cantidad) se puede escribir: es corregir la cantidad por
  *    bulto (total ÷ bultos) y el total se recalcula. Anulados: solo lectura.
  *  - Salidas MANUALES: se editan; «Descuenta stock» es una elección explícita y NUNCA para el consumo de una OA
- *    (la OA descuenta sola al entregarla). Salidas de OA: solo lectura (se corrigen desde la OA).
+ *    (la OA descuenta sola al entregarla). Salidas de OA: los campos que mueven stock son de solo lectura (se corrigen desde la OA); el resto se edita libremente.
  *  - Inventario: TODAS las columnas se editan. El stock sigue siendo calculado, así que escribir CANTIDAD TOTAL (o
  *    BULTOS) genera un AJUSTE auditado por la diferencia (nunca se pisa el saldo sin movimiento); CÓDIGO renombra el
  *    material y todos sus movimientos (no puede coincidir con otro material).
@@ -84,7 +84,8 @@ export function meSheetProtection(resource: MeSheetResource, row: ProtectableRow
   if (row.anulado) return "Ingreso anulado: no se edita (conserva el historial).";
   if (row.reverted) return "Salida anulada / revertida: no se edita.";
   if (row.archived) return "Material archivado: no se edita.";
-  if (resource === "me_salidas" && row.origen === "OA") return "Salida automática de una OA: se corrige desde la OA (no se descuenta dos veces).";
+  // Salida automática de una OA: solo se bloquean los campos que mueven stock (la OA descuenta sola); el resto (cliente, remito, comentarios…) se edita y se vacía libremente.
+  if (resource === "me_salidas" && row.origen === "OA" && ME_STOCK_FIELDS.has(field)) return "Salida automática de una OA: la cantidad se corrige desde la OA (no se descuenta dos veces).";
   return null;
 }
 

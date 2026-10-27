@@ -83,6 +83,25 @@ describe.skipIf(Boolean(PROBLEM))(`Depósito ME: planillas editables en Postgres
     expect(errOa.status).toBe(403);
   });
 
+  it("Depósito vacía celdas sin motivo (también campos no-stock de una salida OA) y persiste; el stock no cambia", async () => {
+    const { patchMeSheetCells, meStockByCodigoDb } = await mod();
+    const before = await meStockByCodigoDb(COD);
+    const so = await payload("inv_me_salidas", ids.salOa);
+    await patchMeSheetCells(deposito, "me_salidas", [
+      { id: ids.salOa, field: "comentarios", value: "", expectedVersion: String(so.updatedAt) },
+      { id: ids.salOa, field: "cliente", value: "", expectedVersion: String(so.updatedAt) },
+    ]);
+    expect(await payload("inv_me_salidas", ids.salOa)).toMatchObject({ comentarios: "", cliente: "", cantidad: 40 });
+    const ing = await payload("inv_me_ingresos", ids.ing1);
+    await patchMeSheetCells(deposito, "me_ingresos", [{ id: ids.ing1, field: "proveedor", value: "", expectedVersion: String(ing.updatedAt) }]);
+    expect(await payload("inv_me_ingresos", ids.ing1)).toMatchObject({ proveedor: "" });
+    expect(await meStockByCodigoDb(COD)).toBe(before);
+    // otros sectores siguen sin poder escribir
+    const so2 = await payload("inv_me_salidas", ids.salOa);
+    const err = await patchMeSheetCells(produccion, "me_salidas", [{ id: ids.salOa, field: "comentarios", value: "x", expectedVersion: String(so2.updatedAt) }]).catch((e) => e);
+    expect(err.status).toBe(403);
+  });
+
   it("dos ediciones simultáneas de la misma celda: una gana, la otra CONFLICTO (nada se pisa)", async () => {
     const { patchMeSheetCells } = await mod();
     const v = String((await payload("inv_me_ingresos", ids.ing2)).updatedAt);

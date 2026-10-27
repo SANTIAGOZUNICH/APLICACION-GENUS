@@ -1,7 +1,8 @@
 /**
  * Edición por celda de Depósito Graneles — reglas compartidas cliente/servidor.
- * El stock (kg) NO se edita libremente: se corrige con motivo obligatorio y pasa por el servicio
- * canónico `update()` (audita before/after como "delta"). Estado y anulación van por sus acciones.
+ * Todas las celdas se editan y se pueden vaciar SIN motivo (vacío en kg = 0). El stock (kg) pasa por el servicio canónico `update()`, que
+ * audita antes/después como "delta" con usuario y fecha. Estado y anulación van por sus acciones. La fecha de ingreso no admite vacío
+ * (la columna de la base es obligatoria).
  */
 import { parseFlexibleDate } from "@/features/os/operational/lib/delivery-date";
 import { parseNonNegativeNumber } from "@/features/os/operational/lib/clipboard-import";
@@ -18,11 +19,10 @@ export const GRANEL_CELL_KIND: Record<GranelCellField, "text" | "number" | "date
   location: "text",
   observation: "text",
 };
-/** Identidad/stock: confirmación siempre; kg además exige motivo. */
+/** Identidad/stock: piden una confirmación simple (no un motivo). */
 export const GRANEL_SENSITIVE_FIELDS: ReadonlySet<GranelCellField> = new Set(["product", "client", "bulkLot", "kgAvailable"]);
-export const GRANEL_REASON_FIELDS: ReadonlySet<GranelCellField> = new Set(["kgAvailable"]);
-/** Registros originados en Envasado: identidad y kg vienen del trabajo de origen (se corrige allí). */
-const ORIGIN_LOCKED: ReadonlySet<GranelCellField> = new Set(["product", "client", "bulkLot", "kgAvailable"]);
+/** Ya no hay campos que exijan motivo (se mantiene exportado vacío por compatibilidad). */
+export const GRANEL_REASON_FIELDS: ReadonlySet<GranelCellField> = new Set();
 export const MAX_GRANEL_CELL_CHANGES = 200;
 
 export function isGranelCellField(v: unknown): v is GranelCellField {
@@ -30,13 +30,12 @@ export function isGranelCellField(v: unknown): v is GranelCellField {
 }
 
 export function granelCellProtection(
-  rec: Pick<GranelRemainderRecord, "status" | "workItemId">,
+  rec: Pick<GranelRemainderRecord, "status"> & { workItemId?: string | null },
   field: GranelCellField,
   canMutate: boolean
 ): string | null {
   if (!canMutate) return "Solo Depósito puede editar los sobrantes de granel.";
   if (rec.status === "ANULADO" || rec.status === "ARCHIVADO") return "Registro anulado/archivado: no se edita.";
-  if (rec.workItemId && ORIGIN_LOCKED.has(field)) return "Originado en Envasado: se corrige en el trabajo de origen.";
   return null;
 }
 
@@ -47,11 +46,13 @@ export function validateGranelValue(field: GranelCellField, raw: unknown): Grane
   const kind = GRANEL_CELL_KIND[field];
   if (kind === "number") {
     const n = parseNonNegativeNumber(text);
-    if (!text || n === null || n > 1_000_000_000) return { ok: false, message: "Kg inválidos: número ≥ 0." };
+    if (!text) return { ok: true, value: 0 }; // vaciar los kg = 0 (el registro pasa a AGOTADO)
+    if (n === null || n > 1_000_000_000) return { ok: false, message: "Kg inválidos: número ≥ 0." };
     return { ok: true, value: n };
   }
   if (kind === "date") {
     const iso = text ? parseFlexibleDate(text) : null;
+    if (!text) return { ok: false, message: "La fecha de ingreso es obligatoria (no puede quedar vacía)." };
     if (!iso) return { ok: false, message: "Fecha inválida. Usá dd/mm/aaaa." };
     return { ok: true, value: iso };
   }
