@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { TwinShell } from "@/features/os/shell/twin-shell";
 import {
   fetchInventory,
+  bulkDeleteInventory,
   mutateInventory,
   InventoryClientError,
 } from "@/features/os/operational/adapters/inventory-client";
@@ -13,14 +14,6 @@ import {
   type OperationalTableColumn,
 } from "@/features/os/operational/components/operational-ui";
 import { DeleteAction } from "@/features/os/operational/components/delete-action";
-import {
-  BulkDeleteAction,
-  type BulkDeleteSummary,
-} from "@/features/os/operational/components/bulk-delete-action";
-import {
-  ListSelectionEnterButton,
-  useListSelectionMode,
-} from "../components/list-selection-mode";
 import { displayCell } from "@/lib/inventory/calcs";
 import {
   ME_INVENTARIO_COLUMNS,
@@ -34,6 +27,7 @@ import { MeStockDialog } from "@/features/os/operational/components/me-stock-dia
 import { MeHistoryDialog } from "@/features/os/operational/components/me-history-dialog";
 import { usePreviewSession, usePreviewContext } from "@/features/os/session/preview-context";
 import { SortSelect } from "@/features/os/operational/components/sort-select";
+import { useDepositoDelete } from "@/features/os/operational/components/deposito-delete/use-deposito-delete";
 import { useMeRowDelete, useSheetRowOps } from "@/features/os/operational/lib/use-sheet-row-ops";
 import { useSortPreference } from "@/features/os/operational/lib/use-sort-preference";
 import { applySort, compareNumbers, compareStrings, type SortOption } from "@/lib/sorting/sort-contract";
@@ -104,7 +98,17 @@ export function MeInventarioView() {
   }, [rows, search, sort]);
 
   const visibleIds = useMemo(() => filtered.map((r) => r.materialId), [filtered]);
-  const sel = useListSelectionMode(visibleIds);
+  const del = useDepositoDelete({
+    canWrite,
+    visibleIds,
+    tableCount: rows.length,
+    noun: "materiales",
+    deleteIds: (ids) => bulkDeleteInventory("me_inventario", { ids }),
+    deleteAll: () => bulkDeleteInventory("me_inventario", { all: true }),
+    afterDelete: reload,
+    onMessage: (m) => showToast(m),
+    historyResource: "me_stock",
+  });
 
   const deleteMaterial = useCallback(
     async (materialId: string, reason: string) => {
@@ -209,66 +213,8 @@ export function MeInventarioView() {
           onChange={(e) => setSearch(e.target.value)}
         />
         <SortSelect value={sort} onChange={setSort} options={ME_INVENTARIO_SORT_OPTIONS} testId="me-inventario-sort" />
-        {canWrite &&
-          (!sel.active ? (
-            <ListSelectionEnterButton onClick={sel.enter} />
-          ) : (
-            <BulkDeleteAction
-              selectedCount={sel.selectedCount}
-              onSelectAll={sel.selectAllVisible}
-              onDeselectAll={sel.deselectAll}
-              onCancel={sel.cancel}
-              title="Eliminar materiales ME"
-              deleteLabel="Eliminar seleccionados"
-              onConfirm={async (reason) => {
-                const summary: BulkDeleteSummary = {
-                  requested: sel.selectedIds.size,
-                  deleted: 0,
-                  alreadyDeleted: 0,
-                  forbidden: 0,
-                  failed: 0,
-                };
-                const byId = new Map(filtered.map((r) => [r.materialId, r]));
-                const deletedIds: string[] = [];
-                for (const id of sel.selectedIds) {
-                  if (!byId.has(id)) {
-                    summary.alreadyDeleted += 1;
-                    continue;
-                  }
-                  try {
-                    await mutateInventory({
-                      action: "delete",
-                      resource: "me_stock",
-                      id,
-                      reason,
-                    });
-                    summary.deleted += 1;
-                    deletedIds.push(id);
-                  } catch (e) {
-                    if (e instanceof InventoryClientError && e.code === "FORBIDDEN") {
-                      summary.forbidden += 1;
-                    } else {
-                      summary.failed += 1;
-                    }
-                  }
-                }
-                sel.cancel();
-                if (deletedIds.length > 0) {
-                  setRows((prev) => prev.filter((row) => !deletedIds.includes(row.materialId)));
-                }
-                await reload();
-                return summary;
-              }}
-              onSummary={(summary) => {
-                const parts = [`${summary.deleted} eliminado(s)`];
-                if (summary.alreadyDeleted) parts.push(`${summary.alreadyDeleted} ya eliminado(s)`);
-                if (summary.forbidden) parts.push(`${summary.forbidden} sin permiso`);
-                if (summary.failed) parts.push(`${summary.failed} error(es)`);
-                showToast(parts.join(" · "), summary.deleted > 0 ? "success" : "info");
-              }}
-            />
-          ))}
       </div>
+      {del.bar}
       <OperationalTable
         tableId="me-inventario"
         canEditCells={cells.canEditCells}
@@ -318,11 +264,7 @@ export function MeInventarioView() {
         rowKey={(r) => r.materialId}
         rowClassName={(r) => (r.cantidadTotal < 0 ? "genus-row-stock-negativo" : undefined)}
         emptyMessage="Inventario ME vacío. Cargá ingresos y entregá OA para ver movimientos."
-        selection={
-          sel.active
-            ? { active: true, isSelected: sel.isSelected, onToggle: sel.toggle }
-            : undefined
-        }
+        rowCheck={del.rowCheck}
       />
       <MeStockDialog target={stockFor} canAdjust={canAdjust} onClose={() => setStockFor(null)} onAdjusted={() => void reload()} />
       <MeHistoryDialog target={historyFor} onClose={() => setHistoryFor(null)} />

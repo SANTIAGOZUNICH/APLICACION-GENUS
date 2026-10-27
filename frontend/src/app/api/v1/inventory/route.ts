@@ -97,6 +97,14 @@ export async function POST(request: Request) {
       });
       return NextResponse.json({ data: result, persistence: true });
     }
+    if (body.action === "bulk_delete" && (body.resource === "me_ingresos" || body.resource === "me_salidas" || body.resource === "me_stock" || body.resource === "me_inventario")) {
+      // Eliminación múltiple de Depósito ME: una sola pasada, resultado por registro, un solo guardado.
+      const resource = body.resource === "me_inventario" ? "me_stock" : body.resource;
+      const ids = Array.isArray(body.payload?.ids) ? (body.payload!.ids as unknown[]).filter((v): v is string => typeof v === "string") : [];
+      const result = ready.service.bulkDeleteMe(actor, resource, { ids, all: body.payload?.scope === "all" }, body.reason);
+      await persistInventorySnapshot(memoryInventoryRepo);
+      return NextResponse.json({ data: result, persistence: true });
+    }
     const result = await mutateResource(ready.service, actor, body);
     await persistInventorySnapshot(memoryInventoryRepo);
     if (body.resource === "me_ingresos" && body.action === "upsert") {

@@ -8,10 +8,9 @@
 import { useMemo } from "react";
 import type { GenusGridRowDelete, GenusGridRowOps } from "@/components/data-grid/genus-grid";
 import {
+  bulkDeleteInventory,
   insertSheetRow,
-  mutateInventory,
   moveSheetRowApi,
-  type InventoryResource,
   type SheetRowResource,
 } from "@/features/os/operational/adapters/inventory-client";
 
@@ -57,23 +56,18 @@ export function useMeRowDelete(resource: "me_ingresos" | "me_salidas" | "me_inve
         ? {
             check: () => null,
             onDelete: async (ids) => {
-              let done = 0;
-              let failed = 0;
-              let firstError = "";
-              for (const id of ids) {
-                try {
-                  await mutateInventory({ action: "delete", resource: resource as InventoryResource, id });
-                  done += 1;
-                } catch (e) {
-                  failed += 1;
-                  firstError ||= errText(e, "Error");
-                }
+              try {
+                const res = await bulkDeleteInventory(resource, { ids });
+                await reload();
+                const n = res.deleted.length;
+                return {
+                  ok: n > 0,
+                  message: `${n} fila${n === 1 ? "" : "s"} eliminada${n === 1 ? "" : "s"} (queda${n === 1 ? "" : "n"} en el historial; el stock se recalcula)${res.failed.length ? ` · ${res.failed.length} con error: ${res.failed[0]!.message}` : ""}.`,
+                };
+              } catch (e) {
+                await reload();
+                return { ok: false, message: errText(e, "No se pudo eliminar.") };
               }
-              await reload();
-              return {
-                ok: done > 0,
-                message: `${done} fila${done === 1 ? "" : "s"} eliminada${done === 1 ? "" : "s"} de la vista (queda${done === 1 ? "" : "n"} en el historial; el stock se recalcula)${failed ? ` · ${failed} con error: ${firstError}` : ""}.`,
-              };
             },
           }
         : undefined,

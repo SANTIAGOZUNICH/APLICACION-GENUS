@@ -64,6 +64,18 @@ export async function fetchInventory<T>(resource: InventoryResource): Promise<{
   return { data: json.data ?? [], persistence: true };
 }
 
+export type BulkDeleteResult = { requested: number; deleted: string[]; skipped: string[]; failed: Array<{ id: string; message: string }> };
+
+/** Eliminación múltiple en el servidor (ids explícitos o `all` = todos los registros activos, aunque no estén a la vista). */
+export async function bulkDeleteInventory(resource: "me_ingresos" | "me_salidas" | "me_stock" | "me_inventario", target: { ids: string[] } | { all: true }): Promise<BulkDeleteResult> {
+  const res = await mutateInventory<BulkDeleteResult>({
+    action: "bulk_delete",
+    resource,
+    payload: "all" in target ? { scope: "all" } : { ids: target.ids },
+  });
+  return res.data;
+}
+
 export async function mutateInventory<T>(body: {
   action: string;
   resource: InventoryResource | "semanas";
@@ -185,4 +197,14 @@ export async function postIngresoPedidoLink(body: { action: "link" | "unlink"; i
   const res = await fetch("/api/v1/inventory/me-diferencia", { method: "POST", headers: actorHeaders(), body: JSON.stringify(body) });
   const json = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
   if (!res.ok) throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status, json.code);
+}
+
+export type MeDeletionHistoryEntry = { id: string; module: string; entityId: string; action: string; actor: string; createdAt: string; before: Record<string, unknown> | null };
+
+/** Historial interno de eliminaciones (auditoría) de una tabla de Depósito ME. */
+export async function fetchMeDeletions(resource: "me_ingresos" | "me_salidas" | "me_stock"): Promise<MeDeletionHistoryEntry[]> {
+  const res = await fetch(`/api/v1/inventory/eliminaciones?resource=${resource}`, { headers: actorHeaders(), cache: "no-store" });
+  const json = (await res.json().catch(() => ({}))) as { entries?: MeDeletionHistoryEntry[]; error?: string };
+  if (!res.ok || !json.entries) throw new InventoryClientError(friendlyServerMessage(res.status, json.error), res.status);
+  return json.entries;
 }

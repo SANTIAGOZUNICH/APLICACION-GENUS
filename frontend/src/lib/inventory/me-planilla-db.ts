@@ -381,6 +381,23 @@ export async function meHistoryDb(actor: InventoryActor, entityId: string): Prom
   return rows.map((r) => r.payload as InventoryAudit);
 }
 
+export type MeDeletionEntry = { id: string; module: string; entityId: string; action: string; actor: string; createdAt: string; before: Record<string, unknown> | null };
+
+/** Historial interno de eliminaciones de Depósito ME (bajas lógicas): quién, cuándo y cómo era el registro. Solo auditoría; no vuelve a las tablas. */
+export async function meDeletionHistoryDb(actor: InventoryActor, module: "me_ingresos" | "me_salidas" | "me_stock", limit = 200): Promise<MeDeletionEntry[]> {
+  assertRead(actor, module);
+  const rows = await getDb()
+    .select({ payload: invAudit.payload })
+    .from(invAudit)
+    .where(sql`${invAudit.payload}->>'module' = ${module} and ${invAudit.payload}->>'action' in ('anular','archive')`)
+    .orderBy(desc(invAudit.createdAt))
+    .limit(Math.min(Math.max(limit, 1), 500));
+  return rows.map((r) => {
+    const a = r.payload as InventoryAudit;
+    return { id: a.id, module: a.module, entityId: a.entityId, action: a.action, actor: a.actor, createdAt: a.createdAt, before: (a.before as Record<string, unknown> | null) ?? null };
+  });
+}
+
 /** Stock calculado por código directamente desde la base (para verificación y para la UI tras un ajuste). */
 export async function meStockByCodigoDb(codigo: string): Promise<number> {
   return stockOf(codigo, await loadLedgerInputs(getDb())).stock;

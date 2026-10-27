@@ -126,3 +126,23 @@ export async function patchGranelCellsApi(
   if (!body.results) return { ok: false, results: [], error: body.error ?? `Error ${res.status} al guardar.` };
   return { ok: Boolean(body.ok), results: body.results, error: body.error };
 }
+
+export interface GranelBulkDeleteResult {
+  requested: number;
+  deleted: string[];
+  skipped: string[];
+  failed: Array<{ id: string; message: string }>;
+}
+
+/** Eliminación múltiple en el servidor (`ids` o `all` = todos los activos, aunque no estén a la vista). */
+export async function bulkDeleteGranelesApi(session: OrdersClientSession, target: { ids: string[] } | { all: true }): Promise<GranelBulkDeleteResult> {
+  const res = await fetch("/api/v1/deposito-graneles/bulk-delete", {
+    method: "POST",
+    credentials: "include",
+    headers: headers(session),
+    body: JSON.stringify("all" in target ? { scope: "all" } : { ids: target.ids }),
+  });
+  const body = (await res.json().catch(() => ({}))) as Partial<GranelBulkDeleteResult> & { error?: string };
+  if (!res.ok || !body.deleted) throw new Error(body.error ?? "No se pudo eliminar.");
+  return body as GranelBulkDeleteResult;
+}

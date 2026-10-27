@@ -805,5 +805,82 @@ describe("Permisos sectoriales inventario", () => {
   });
 });
 
+describe("Depósito ME — eliminación múltiple (bulkDeleteMe)", () => {
+  let svc: InventoryService;
+
+  beforeEach(() => {
+    svc = new InventoryService(new MemoryInventoryRepo());
+  });
+
+  const ingreso = (codigo: string, cantidad: number, extra: Record<string, unknown> = {}) =>
+    svc.upsertMeIngreso(deposito, { codigo, descripcionInsumo: codigo, bultos: 1, cantidad, ...extra });
+
+  it("una fila, cinco filas y todas: se anulan, el stock se recalcula y queda auditoría con el contenido anterior", () => {
+    const ings = ["BD-1", "BD-2", "BD-3", "BD-4", "BD-5", "BD-6", "BD-7"].map((c, i) => ingreso(c, 10 * (i + 1)));
+    const one = svc.bulkDeleteMe(deposito, "me_ingresos", { ids: [ings[0]!.id] });
+    expect(one.deleted).toEqual([ings[0]!.id]);
+    expect(svc.getMeMaterialById(deposito, ings[0]!.materialId!)?.stockActual).toBe(0);
+
+    const five = svc.bulkDeleteMe(deposito, "me_ingresos", { ids: ings.slice(1, 6).map((i) => i.id) });
+    expect(five.deleted).toHaveLength(5);
+    expect(svc.listMeIngresos(deposito).map((r) => r.id)).toEqual([ings[6]!.id]);
+
+    const all = svc.bulkDeleteMe(deposito, "me_ingresos", { all: true });
+    expect(all.deleted).toEqual([ings[6]!.id]);
+    expect(svc.listMeIngresos(deposito)).toEqual([]);
+    // El historial conserva todo (anulado=true) y la auditoría guarda el contenido anterior, sin pedir motivo.
+    expect(svc.listMeIngresos(deposito, { includeAnulado: true })).toHaveLength(7);
+    const audits = svc.getAudit().filter((a) => a.module === "me_ingresos" && a.action === "anular");
+    expect(audits).toHaveLength(7);
+    expect(audits.every((a) => a.actor === deposito.email && (a.before as { anulado?: boolean }).anulado === false)).toBe(true);
+  });
+
+  it("es independiente por registro: inexistentes/ya eliminados se omiten y repetir no duplica nada", () => {
+    const a = ingreso("BD-I-1", 5);
+    const b = ingreso("BD-I-2", 6);
+    const res = svc.bulkDeleteMe(deposito, "me_ingresos", { ids: [a.id, "no-existe", a.id] });
+    expect(res.deleted).toEqual([a.id]);
+    expect(res.skipped).toEqual(["no-existe"]);
+    const again = svc.bulkDeleteMe(deposito, "me_ingresos", { ids: [a.id, b.id] });
+    expect(again.deleted).toEqual([b.id]);
+    expect(again.skipped).toEqual([a.id]);
+    expect(svc.getAudit().filter((x) => x.entityId === a.id && x.action === "anular")).toHaveLength(1);
+  });
+
+  it("salidas: elimina manuales y de OA (reintegra stock una vez), sin tocar ingresos ni la OA", () => {
+    const ing = ingreso("BD-S-1", 500);
+    const oa = makeOaForSalida(ing.materialId!, "BD-S-1", "80");
+    applyOaDeliveryToMe(svc, produccion, oa);
+    const manual = svc.upsertMeSalida(deposito, { codigo: "BD-S-1", descripcion: "Entrega", bultos: 1, cantidad: 7 });
+    const before = svc.getMeMaterialById(deposito, ing.materialId!)!.stockActual;
+    expect(before).toBe(420);
+
+    const res = svc.bulkDeleteMe(deposito, "me_salidas", { all: true });
+    expect(res.deleted).toHaveLength(2);
+    expect(res.failed).toEqual([]);
+    expect(svc.listMeSalidas(deposito)).toEqual([]);
+    expect(svc.getMeMaterialById(deposito, ing.materialId!)!.stockActual).toBe(500);
+    expect(svc.listMeIngresos(deposito)).toHaveLength(1);
+    expect(manual.id).toBeTruthy();
+  });
+
+  it("inventario: archiva materiales (anula sus ingresos activos) y no toca los de otros", () => {
+    const x = ingreso("BD-M-1", 40);
+    const y = ingreso("BD-M-2", 60);
+    const res = svc.bulkDeleteMe(deposito, "me_stock", { ids: [x.materialId!] });
+    expect(res.deleted).toEqual([x.materialId]);
+    expect(svc.listMeMaterials(deposito).map((m) => m.id)).toEqual([y.materialId]);
+    expect(svc.listMeIngresos(deposito).map((r) => r.id)).toEqual([y.id]);
+    expect(svc.getMeMaterialById(deposito, y.materialId!)?.stockActual).toBe(60);
+  });
+
+  it("permisos: otros sectores no pueden y no se borra nada", () => {
+    const a = ingreso("BD-P-1", 5);
+    expect(() => svc.bulkDeleteMe(produccion, "me_ingresos", { all: true })).toThrow(InventoryForbiddenError);
+    expect(() => svc.bulkDeleteMe(mp, "me_stock", { all: true })).toThrow(InventoryForbiddenError);
+    expect(svc.listMeIngresos(deposito).map((r) => r.id)).toEqual([a.id]);
+  });
+});
+
 // silenciar unused vi
 void vi;

@@ -594,6 +594,46 @@ export class InventoryService {
     return row;
   }
 
+  /**
+   * Eliminación múltiple de Depósito ME (baja lógica con auditoría, igual que la individual). `ids` o `all` (todos los
+   * registros ACTIVOS del recurso, estén o no a la vista). Cada registro es independiente: si uno falla se informa y los demás
+   * se aplican; repetir la operación es seguro (lo ya eliminado se omite). Los saldos se recalculan por registro.
+   */
+  bulkDeleteMe(
+    actor: InventoryActor,
+    resource: "me_ingresos" | "me_salidas" | "me_stock",
+    target: { ids?: string[]; all?: boolean },
+    reason?: string
+  ): { requested: number; deleted: string[]; skipped: string[]; failed: Array<{ id: string; message: string }> } {
+    this.guard(actor, resource, true);
+    const activeIds =
+      resource === "me_ingresos"
+        ? this.repo.listMeIngresos().filter((r) => !r.anulado).map((r) => r.id)
+        : resource === "me_salidas"
+          ? this.repo.listMeSalidas().filter((r) => !r.reverted).map((r) => r.id)
+          : this.repo.listMeMaterials().filter((r) => !r.archived).map((r) => r.id);
+    const ids = target.all ? activeIds : [...new Set(target.ids ?? [])];
+    const active = new Set(activeIds);
+    const deleted: string[] = [];
+    const skipped: string[] = [];
+    const failed: Array<{ id: string; message: string }> = [];
+    for (const id of ids) {
+      if (!active.has(id)) {
+        skipped.push(id);
+        continue;
+      }
+      try {
+        if (resource === "me_ingresos") this.deleteMeIngreso(actor, id, reason ?? "");
+        else if (resource === "me_salidas") this.deleteMeSalida(actor, id, reason ?? "");
+        else this.deleteMeMaterial(actor, id, reason ?? "");
+        deleted.push(id);
+      } catch (e) {
+        failed.push({ id, message: e instanceof Error ? e.message : "Error" });
+      }
+    }
+    return { requested: ids.length, deleted, skipped, failed };
+  }
+
   deleteMeSalida(actor: InventoryActor, id: string, reason: string) {
     return this.anularMeSalida(actor, id, reason);
   }
