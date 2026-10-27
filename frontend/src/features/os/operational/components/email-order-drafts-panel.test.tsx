@@ -17,6 +17,7 @@ function mockApi(s: object, drafts: object[], calls: Array<{ url: string; body?:
     calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     const u = String(url);
     const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
+    if (u.includes("extraction_health")) return json({ health: { ok: false, message: "m", effectiveModel: null, listing: { ok: true, status: 200, count: 12 }, text: { ok: false, kind: "permission", message: "La clave de Gemini no tiene permiso. Habilitá «Generative Language API»." }, image: null, attempts: [{ model: "gemini-3.5-flash", status: 403, kind: "permission", reason: "SERVICE_DISABLED" }] } });
     if (u.includes("/status")) return json(s);
     if (u.includes("/drafts/")) return json({ ok: true, item: draft({ version: 2 }) });
     if (u.includes("/drafts")) return json({ items: drafts });
@@ -74,5 +75,15 @@ describe("panel de pedidos por email", () => {
     expect(screen.getByTestId("email-borrador-revisada")).toBeTruthy();
     expect(screen.getByTestId("email-borrador-como-nuevo")).toBeTruthy();
     expect(screen.getByTestId("email-borrador-modificacion").textContent).toMatch(/No se modifica nada automáticamente/);
+  });
+  it("«Probar Gemini» muestra qué paso falla, el motivo exacto y dónde corregirlo (sin claves)", async () => {
+    mockApi(status(), []);
+    await open();
+    fireEvent.click(screen.getByTestId("email-pedidos-probar-gemini"));
+    await waitFor(() => screen.getByTestId("email-pedidos-gemini"));
+    const t = screen.getByTestId("email-pedidos-gemini").textContent ?? "";
+    expect(t).toMatch(/Gemini falló/);
+    expect(t).toMatch(/Habilitá «Generative Language API»/);
+    expect(t).toMatch(/gemini-3\.5-flash → permission \(HTTP 403 · SERVICE_DISABLED\)/);
   });
 });

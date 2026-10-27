@@ -39,6 +39,7 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
   const [after, setAfter] = useState("");
   const [before, setBefore] = useState("");
   const [result, setResult] = useState<AnalyzeResult | null>(null);
+  const [gem, setGem] = useState<null | { ok: boolean; message: string; effectiveModel: string | null; listing: { ok: boolean; status: number | null; count: number }; text: { ok: boolean; kind?: string; message: string }; image: null | { ok: boolean; kind?: string; message: string }; attempts: Array<{ model: string; status: number | null; kind: string; reason?: string }> }>(null);
   const [diag, setDiag] = useState<null | { target: string; scanned: number; verified: number; rows: Array<{ date: string | null; senderDomain: string; verified: boolean; strength: string | null; evidence: string[]; reason: string; recipientHeadersPresent: string[] }> }>(null);
 
   const api = useCallback(
@@ -80,6 +81,17 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo analizar");
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function probeGemini() {
+    setBusy("probando-gemini");
+    setError(null);
+    try {
+      setGem((await api<{ health: NonNullable<typeof gem> }>("/api/v1/inventory/receipts?module=MP&view=extraction_health&image=1")).health);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo probar Gemini");
     } finally {
       setBusy(null);
     }
@@ -147,12 +159,20 @@ export function EmailOrderDraftsPanel({ email, sector, onPedidosCreated }: { ema
               <Button type="button" className="min-h-10 font-bold uppercase" onClick={() => void analyze()} disabled={Boolean(busy) || !status.aiAvailable} data-testid="email-pedidos-analizar">
                 {busy === "analizando" ? "Analizando…" : "Analizar correos"}
               </Button>
+              <button type="button" className="min-h-10 text-xs underline" onClick={() => void probeGemini()} disabled={Boolean(busy)} data-testid="email-pedidos-probar-gemini">{busy === "probando-gemini" ? "Probando…" : "Probar Gemini"}</button>
               <button type="button" className="min-h-10 text-xs underline" onClick={() => void runDiagnose()} disabled={Boolean(busy)} data-testid="email-pedidos-diagnosticar">{busy === "diagnosticando" ? "Verificando…" : "Verificar filtro (sin analizar)"}</button>
               <button type="button" className="min-h-10 text-xs underline" onClick={() => void disconnect()} disabled={Boolean(busy)} data-testid="email-pedidos-desconectar">Desconectar</button>
               <span className="text-[var(--os-text-muted)]">Conectada por {status.connectedBy}. Solo lectura: no borra, mueve ni responde correos.</span>
             </div>
           ) : null}
           {status && !status.aiAvailable ? <p className="text-xs text-amber-700">La lectura con IA no está disponible: {status.aiReason}</p> : null}
+          {gem ? (
+            <div className={`rounded border px-2.5 py-1.5 text-xs ${gem.ok ? "border-emerald-400/60" : "border-rose-500/60"}`} data-testid="email-pedidos-gemini">
+              <p><b>{gem.ok ? "Gemini responde correctamente" : "Gemini falló"}</b>{gem.effectiveModel ? ` · modelo ${gem.effectiveModel}` : ""} · listado de modelos: {gem.listing.ok ? `OK (${gem.listing.count})` : `falló (HTTP ${gem.listing.status ?? "?"})`} · texto: {gem.text.ok ? "OK" : "falló"} · imagen: {gem.image ? (gem.image.ok ? "OK" : "falló") : "no probada"}</p>
+              {!gem.ok ? <p className="mt-0.5">{gem.image && !gem.image.ok ? gem.image.message : gem.text.message}</p> : null}
+              {gem.attempts.length ? <p className="mt-0.5 text-[var(--os-text-muted)]">Intentos: {gem.attempts.map((a) => `${a.model} → ${a.kind}${a.status ? ` (HTTP ${a.status}${a.reason ? ` · ${a.reason}` : ""})` : ""}`).join("; ")}</p> : null}
+            </div>
+          ) : null}
           {diag ? (
             <div className="rounded border border-[var(--os-border)] px-2.5 py-1.5 text-xs" data-testid="email-pedidos-diagnostico">
               <p>Filtro de destinatario original ({diag.target}): de {diag.scanned} correos recientes, <b>{diag.verified}</b> verificados y {diag.scanned - diag.verified} excluidos. Solo se muestran metadatos; nada se descargó ni se envió a la IA.</p>
