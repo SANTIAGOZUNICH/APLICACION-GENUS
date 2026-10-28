@@ -8,6 +8,24 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
+/**
+ * Consumo de materias primas de una OE (consulta): lo que descontó cada (código, lote) con saldo anterior y restante, y cada
+ * movimiento (quién/cuándo). Mismo permiso de lectura que la OE.
+ */
+export async function GET(request: Request, ctx: Ctx) {
+  const blocked = ensureOrdersPersistenceReady();
+  if (blocked) return blocked;
+  try {
+    const { id } = await ctx.params;
+    const actor = await resolveOrdersActor(request);
+    await getOrdersService().getOrder(id, actor);
+    const { getMpStockLedger } = await import("@/lib/mp-stock/mp-stock-ledger");
+    return NextResponse.json({ rows: await getMpStockLedger().oeConsumptionReport(id) });
+  } catch (err) {
+    return ordersErrorResponse(err);
+  }
+}
+
 /** Regulariza el descuento de MP pendiente de una OE ya entregada (una sola vez, idempotente, auditado). */
 export async function POST(request: Request, ctx: Ctx) {
   const blocked = ensureOrdersPersistenceReady();

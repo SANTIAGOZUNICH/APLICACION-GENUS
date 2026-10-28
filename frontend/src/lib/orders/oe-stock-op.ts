@@ -26,7 +26,7 @@ import {
 } from "@/lib/orders/oe-mp-consumption";
 import type { OeMaterialRow, OrdersActor } from "@/lib/orders/types";
 import { canAuthorizeOeMpShortage } from "@/lib/orders/rbac";
-import { MpConsumptionIncompleteError, MpStockShortageError, OrdersForbiddenError } from "@/lib/orders/types";
+import { MpConsumptionIncompleteError, OrdersForbiddenError } from "@/lib/orders/types";
 
 /** Sectores que pueden autorizar entregar una OE dejando stock de MP en negativo (con motivo). */
 export const canAuthorizeNegativeMp = (sector: string) => canAuthorizeOeMpShortage(sector);
@@ -115,12 +115,15 @@ export async function consumeOeStock<O extends { version: number; status: string
     oeId: string;
     orderNumber: string;
     materials: OeMaterialRow[];
+    /** Motivo opcional del stock negativo (solo informativo: ya NO se exige autorización ni motivo). */
     authorizeNegative?: { reason: string } | null;
-    /** Producción/Dirección confirmando la entrega: solo vale si hay faltante de MP que autorizar. */
+    /** Producción/Dirección confirmando la entrega: solo vale si hay faltante de MP (stock que quedará negativo). */
     onlyToAuthorizeShortage?: boolean;
     /**
-     * Entrega de Elaboración: la falta de datos o de stock NUNCA bloquea. Se registra la entrega (`commitOrder`) y el
-     * descuento queda pendiente (sin movimientos parciales ni cantidades inventadas); se regulariza después, una sola vez.
+     * Entrega de Elaboración: la falta de datos de ALGUNA fila nunca bloquea. Se registra la entrega (`commitOrder`),
+     * se descuenta todo lo identificable y las filas incompletas quedan pendientes de regularización (una sola vez,
+     * sin cantidades inventadas). El stock insuficiente NO es un motivo de pendiente: el consumo real se descuenta
+     * siempre y el saldo puede quedar negativo (se informa como advertencia).
      */
     soft?: boolean;
     commitOrder: (pending?: OeConsumptionPending) => Promise<O>;
@@ -128,18 +131,14 @@ export async function consumeOeStock<O extends { version: number; status: string
 ): Promise<{ order: O; result: OeConsumptionResult | null; pending: OeConsumptionPending | null }> {
   const ledger = getMpStockLedger();
   const plan = buildOeConsumptionPlan(params.materials, ctx.catalog, { consumedBefore: await consumedBeforeOf(params.oeId) });
-  if (plan.issues.length) {
-    if (params.soft) {
-      const pending = { issues: plan.issues, shortages: [] };
-      return { order: await params.commitOrder(pending), result: null, pending };
-    }
-    throw new MpConsumptionIncompleteError(plan.issues);
-  }
+  if (plan.issues.length && !params.soft) throw new MpConsumptionIncompleteError(plan.issues);
 
   const lotIdOf = (d: { codigo: string; lote: string; lotId: string | null }) => d.lotId ?? legacyLotFor(ctx.catalog, d.codigo, d.lote);
 
-  // Stock: por fila de Stock MP y por código (cada uno contra su propio saldo; no se concilian entre sí).
-  const deltas = await ledger.planOeConsumptionDeltas(params.oeId, plan.lines);
+  // Stock: por fila de Stock MP y por código (cada uno contra su propio saldo). Solo informativo: nunca bloquea.
+  let deltas = await ledger.planOeConsumptionDeltas(params.oeId, plan.lines);
+  // Con filas incompletas no se compensa (devolver stock) lo de filas que dejaron de ser identificables: solo se suma consumo.
+  if (plan.issues.length > 0) deltas = deltas.filter((d) => d.delta < 0);
   const withLots = deltas
     .map((d) => ({ ...d, lotId: lotIdOf(d) }))
     .filter((d): d is typeof d & { lotId: string } => Boolean(d.lotId));
@@ -158,30 +157,11 @@ export async function consumeOeStock<O extends { version: number; status: string
       "No hay faltante de MP para autorizar: la entrega de la OE la confirma Elaboración."
     );
   }
-  const canAuthorize = canAuthorizeNegativeMp(actor.sector);
-  const negativeAuthorized = shortages.length > 0 && canAuthorize && Boolean(params.authorizeNegative?.reason?.trim());
-  if (shortages.length > 0 && !negativeAuthorized && params.soft) {
-    const pending = { issues: [], shortages };
-    return { order: await params.commitOrder(pending), result: null, pending };
-  }
-  if (shortages.length > 0 && !negativeAuthorized) {
-    const detail = shortages
-      .map((s) =>
-        s.tipo === "lote"
-          ? `${s.codigo} lote ${s.lote}: hay ${s.disponible} kg, se necesitan ${s.requerido} kg (faltan ${s.faltante})`
-          : `${s.codigo} (stock del código): hay ${s.disponible} kg, se necesitan ${s.requerido} kg (faltan ${s.faltante})`
-      )
-      .join("; ");
-    throw new MpStockShortageError(
-      `Stock de MP insuficiente: ${detail}. No se entregó ni se descontó nada.${
-        canAuthorize ? " Podés autorizar la entrega con stock negativo indicando el motivo." : " Avisá a Producción o a Materia Prima."
-      }`,
-      shortages,
-      canAuthorize
-    );
-  }
+  const negativeAuthorized = shortages.length > 0;
+  const pending: OeConsumptionPending | null = plan.issues.length ? { issues: plan.issues, shortages: [] } : null;
 
-  const order = await params.commitOrder();
+  const order = await params.commitOrder(pending ?? undefined);
+  const wanted = new Set(deltas.map((d) => `${d.codigo}|${d.lote}`));
   const applied = await ledger.applyOeConsumption(
     { email: actor.email, sector: actor.sector },
     {
@@ -189,8 +169,10 @@ export async function consumeOeStock<O extends { version: number; status: string
       oeVersion: order.version,
       oeStatus: order.status,
       lines: plan.lines,
-      allowNegative: negativeAuthorized,
+      // El consumo REAL se descuenta siempre: si no alcanza el stock, el saldo queda negativo (con movimiento trazable).
+      allowNegative: true,
       orderNumber: params.orderNumber,
+      onlyDeltaKeys: plan.issues.length > 0 ? wanted : undefined,
     }
   );
   const lotDeltas = applied
@@ -200,11 +182,11 @@ export async function consumeOeStock<O extends { version: number; status: string
     oeId: params.oeId,
     orderNumber: params.orderNumber,
     reason: negativeAuthorized
-      ? `Consumo ${params.orderNumber} (stock negativo autorizado: ${params.authorizeNegative!.reason.trim()})`
+      ? `Consumo ${params.orderNumber} (kg reales; el stock queda negativo${params.authorizeNegative?.reason?.trim() ? `: ${params.authorizeNegative.reason.trim()}` : ""})`
       : `Consumo ${params.orderNumber} (kg reales)`,
     deltas: lotDeltas,
   });
-  return { order, result: { lines: plan.lines, applied, lots, shortages, negativeAuthorized }, pending: null };
+  return { order, result: { lines: plan.lines, applied, lots, shortages, negativeAuthorized }, pending };
 }
 
 /** Devuelve TODO lo descontado por la OE (libro mayor + lotes). `commitOrder` cambia el estado en la misma transacción. */
@@ -238,7 +220,7 @@ export type OeProgressConsumption = {
   applied: Array<{ codigo: string; lote: string; delta: number }>;
   /** Filas con kg reales que no se pudieron contabilizar (falta código/lote o no existe en Stock MP): quedan pendientes. */
   pendingIssues: string[];
-  /** Stock insuficiente: no se inventa ni se deja en negativo, queda pendiente. */
+  /** Advertencia: el stock de estas MP queda NEGATIVO tras el descuento (el consumo igual se registró). */
   shortages: LotShortage[];
 };
 
@@ -247,7 +229,8 @@ export type OeProgressConsumption = {
  * lote). No es la entrega: la OE sigue en su estado. Es un descuento por DIFERENCIA contra lo ya registrado de esta OE
  * (mismo libro mayor que usa la entrega): guardar de nuevo sin cambios no descuenta nada, aumentar descuenta solo la
  * diferencia y reducir registra una compensación auditada. ENTREGAR después reconoce lo ya descontado (misma regla).
- * Nunca lanza por datos incompletos o stock insuficiente: queda pendiente de regularización sin movimientos inventados.
+ * Nunca lanza por datos incompletos o stock insuficiente: lo identificable se descuenta siempre (el saldo puede quedar negativo) y
+ * lo incompleto queda pendiente de regularización, sin movimientos inventados.
  * `orderVersion` = versión de la OE ya guardada (clave idempotente por versión + código + lote).
  */
 export async function registerOeProgressConsumption(
@@ -274,8 +257,7 @@ export async function registerOeProgressConsumption(
     const disponible = Number(((await ledger.getBalance(codigo))?.stockActual ?? 0).toFixed(4));
     if (disponible + delta < 0) shortages.push({ codigo, lote: "", disponible, requerido: -delta, faltante: Number((-delta - disponible).toFixed(4)), tipo: "codigo" });
   }
-  if (shortages.length > 0) return { applied: [], pendingIssues, shortages };
-
+  // El stock insuficiente NO bloquea: el consumo real se descuenta y el saldo puede quedar negativo (advertencia en `shortages`).
   const wanted = new Set(deltas.map((d) => `${d.codigo}|${d.lote}`));
   const applied = await ledger.applyOeConsumption(
     { email: actor.email, sector: actor.sector },
@@ -286,6 +268,7 @@ export async function registerOeProgressConsumption(
       lines: plan.lines,
       orderNumber: params.orderNumber,
       progress: true,
+      allowNegative: true,
       onlyDeltaKeys: plan.issues.length > 0 ? wanted : undefined,
     }
   );
@@ -298,5 +281,5 @@ export async function registerOeProgressConsumption(
     reason: `Consumo ${params.orderNumber} al guardar avance (kg reales)`,
     deltas: lotDeltas,
   });
-  return { applied: applied.map((a) => ({ codigo: a.codigo, lote: a.lote, delta: a.delta })), pendingIssues, shortages: [] };
+  return { applied: applied.map((a) => ({ codigo: a.codigo, lote: a.lote, delta: a.delta })), pendingIssues, shortages };
 }
