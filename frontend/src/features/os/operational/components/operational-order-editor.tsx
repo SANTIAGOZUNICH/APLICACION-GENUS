@@ -59,6 +59,8 @@ import {
   type FormulaAutoloadStatus,
 } from "../lib/oe-formula-autoload";
 import { OeFormSections } from "./oe-form-sections";
+import { consumptionMaterials } from "@/lib/orders/oe-sheets";
+import { OeMpConsumptionPanel } from "./oe-mp-consumption-panel";
 import { OeAutoPrepPanel } from "./oe-auto-prep-panel";
 import type { SelectedFormulaOption } from "./formula-client-product-pickers";
 import { fetchFormulaProductOptionsApi } from "@/lib/orders/orders-client";
@@ -318,7 +320,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
               const parts: string[] = [];
               if (r.applied.length > 0) parts.push(`Stock MP actualizado: ${r.applied.map((a) => `${a.codigo}${a.lote ? ` (lote ${a.lote})` : ""} ${a.delta > 0 ? "+" : ""}${a.delta} kg`).join(" · ")}.`);
               if (r.pendingIssues.length > 0) parts.push(`Quedó pendiente de descontar (no bloquea): ${r.pendingIssues.slice(0, 2).join(" · ")}${r.pendingIssues.length > 2 ? ` · +${r.pendingIssues.length - 2} más` : ""}.`);
-              if (r.shortages.length > 0) parts.push("Hay materias primas sin stock suficiente: el descuento queda pendiente de regularizar.");
+              if (r.shortages.length > 0) parts.push(`Atención: el stock de ${[...new Set((r.shortages as Array<{ codigo: string }>).map((x) => x.codigo))].join(", ")} quedó negativo. El consumo se descontó igual.`);
               setDeliverNotice(parts.length ? parts.join(" ") : null);
             },
           }
@@ -829,7 +831,7 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
       setMpShortageReason("");
       if (updated.type === "OE" && hasMpConsumoPendiente(updated.formData)) {
         // La entrega ya está registrada; el descuento de MP queda pendiente y se regulariza después (no bloquea).
-        setDeliverNotice("OE entregada. El descuento de materias primas quedó pendiente por datos incompletos.");
+        setDeliverNotice("OE entregada. Se descontaron las materias primas completas; las filas sin código MP o KG REAL UTILIZADO quedaron pendientes.");
       }
       setOrder(updated);
       setForm(hydrateOrderContent(updated.formData));
@@ -1164,6 +1166,9 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           {error}
         </div>
       )}
+      {order.type === "OE" && form.kind === "OE" && !deletedOe ? (
+        <OeMpConsumptionPanel session={session} orderId={orderId} materials={consumptionMaterials(form)} refreshKey={order.version} />
+      ) : null}
       {deliverNotice && !error ? (
         <p className="rounded border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-900" role="status" data-testid="oe-deliver-notice">
           {deliverNotice}

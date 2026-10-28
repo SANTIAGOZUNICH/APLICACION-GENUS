@@ -27,12 +27,12 @@ describe.skipIf(Boolean(PROBLEM))(`Depósito: borrado masivo en Postgres real${P
     const { POST } = await route();
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (email) headers["x-genus-actor-email"] = email;
-    const res = await POST(new Request("http://local/api/v1/inventory", { method: "POST", headers, body: JSON.stringify(body) }));
+    const res = (await POST(new Request("http://local/api/v1/inventory", { method: "POST", headers, body: JSON.stringify(body) })))!;
     return { status: res.status, json: (await res.json()) as { data?: BulkResult; error?: string } };
   };
   const list = async (resource: string, email = DEP) => {
     const { GET } = await route();
-    const res = await GET(new Request(`http://local/api/v1/inventory?resource=${resource}`, { headers: { "x-genus-actor-email": email } }));
+    const res = (await GET(new Request(`http://local/api/v1/inventory?resource=${resource}`, { headers: { "x-genus-actor-email": email } })))!;
     return ((await res.json()) as { data: Array<Record<string, unknown>> }).data;
   };
   const activeIngresoIds = async () => (await list("me_ingresos")).filter((r) => String(r.codigo).startsWith(PFX)).map((r) => r.id as string);
@@ -89,7 +89,7 @@ describe.skipIf(Boolean(PROBLEM))(`Depósito: borrado masivo en Postgres real${P
   });
 
   it("eliminar CINCO filas seleccionadas + todas las visibles; lo no incluido queda intacto; persiste en una instancia nueva", async () => {
-    const rows = [];
+    const rows: Array<{ id: string; matId: string; codigo: string }> = [];
     for (let n = 10; n < 20; n++) rows.push(await insertIngreso(n, 100 + n));
     const five = rows.slice(0, 5).map((r) => r.id);
     const r5 = await call(DEP, { action: "bulk_delete", resource: "me_ingresos", payload: { ids: five } });

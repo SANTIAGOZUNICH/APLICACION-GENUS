@@ -774,7 +774,8 @@ export class OrdersService {
   /**
    * Guardar avance. Con `registerMpConsumption` (botón «Guardar avance» de Elaboración) además contabiliza en Stock MP el consumo
    * REAL ya informado (KG REAL UTILIZADO + código MP + lote) por diferencia contra lo ya registrado de esta OE. No entrega ni
-   * aprueba nada, y nunca bloquea el guardado: lo incompleto o sin stock queda pendiente de regularización.
+   * aprueba nada, y nunca bloquea el guardado: lo incompleto queda pendiente de regularización; el stock insuficiente se descuenta igual
+   * (el saldo queda negativo, con advertencia).
    */
   async saveProgressWithConsumption(id: string, input: PatchOrderInput, actor: OrdersActor) {
     const current = await this.repo.getOrder(id);
@@ -1146,8 +1147,9 @@ export class OrdersService {
     let updated: Awaited<ReturnType<typeof commitDelivery>>;
     let mpConsumption: import("@/lib/orders/oe-stock-op").OeConsumptionResult | null = null;
     if (current.type === "OE" && normalized.kind === "OE") {
-      // Descuento de MP por los KG REALES (código MP + lote), en UNA transacción con la entrega: si falta un dato o
-      // no alcanza el stock, no se entrega ni se descuenta nada. Un reintento no descuenta dos veces.
+      // Descuento de MP por los KG REALES (código MP + lote), en UNA transacción con la entrega. El consumo real se descuenta
+      // SIEMPRE (el stock insuficiente deja el saldo negativo, con advertencia); solo las filas sin datos suficientes quedan
+      // pendientes. Un reintento no descuenta dos veces.
       const oeContent = normalized;
       const { runOeStockOp, consumeOeStock } = await import("@/lib/orders/oe-stock-op");
       const out = await runOeStockOp(actor, async (ctx) => {
@@ -1157,11 +1159,12 @@ export class OrdersService {
           materials: consumptionMaterials(oeContent),
           authorizeNegative: opts?.allowNegativeMpStock ? { reason: opts.negativeMpStockReason ?? "" } : null,
           onlyToAuthorizeShortage: mpShortageAuthorizer,
-          // Elaboración entrega SIEMPRE: si faltan códigos/kg reales/stock, el descuento queda pendiente (no bloquea).
+          // Elaboración entrega SIEMPRE: si faltan códigos o kg reales de una fila, esa fila queda pendiente (no bloquea).
           soft: !mpShortageAuthorizer,
           commitOrder: commitDelivery,
         });
-        if (!r.result) {
+        if (r.pending) {
+          // Filas sin datos suficientes (código/kg/lote): lo identificable se descontó igual; estas quedan pendientes.
           await this.repo.appendAudit({
             orderId: id,
             eventType: "OE_MP_CONSUMO_PENDIENTE",
@@ -1170,30 +1173,30 @@ export class OrdersService {
             metadata: {
               orderNumber: current.orderNumber,
               oeVersion: r.order.version,
-              motivo: r.pending?.issues.length ? "datos incompletos" : "stock insuficiente",
-              issues: r.pending?.issues ?? [],
-              faltantes: r.pending?.shortages ?? [],
-              movimientos: 0,
+              motivo: "datos incompletos",
+              issues: r.pending.issues,
+              faltantes: [],
+              movimientos: r.result?.applied.length ?? 0,
             },
           });
-          return r;
         }
-        await this.repo.appendAudit({
-          orderId: id,
-          eventType: "OE_MP_CONSUMO",
-          actor: actor.email,
-          actorSector: actor.sector,
-          metadata: {
-            orderNumber: current.orderNumber,
-            oeVersion: r.order.version,
-            consumos: r.result.lines.map((l) => ({ codigo: l.codigo, lote: l.lote, kgReal: l.kg, materiaPrima: l.materiaPrima })),
-            movimientos: r.result.applied,
-            lotes: r.result.lots,
-            stockNegativoAutorizado: r.result.negativeAuthorized
-              ? { motivo: opts?.negativeMpStockReason?.trim() ?? "", faltantes: r.result.shortages }
-              : null,
-          },
-        });
+        if (r.result) {
+          await this.repo.appendAudit({
+            orderId: id,
+            eventType: "OE_MP_CONSUMO",
+            actor: actor.email,
+            actorSector: actor.sector,
+            metadata: {
+              orderNumber: current.orderNumber,
+              oeVersion: r.order.version,
+              consumos: r.result.lines.map((l) => ({ codigo: l.codigo, lote: l.lote, kgReal: l.kg, materiaPrima: l.materiaPrima })),
+              movimientos: r.result.applied,
+              lotes: r.result.lots,
+              // El stock insuficiente no bloquea ni pide autorización: el saldo queda negativo y se deja constancia.
+              stockNegativo: r.result.shortages.length > 0 ? { faltantes: r.result.shortages } : null,
+            },
+          });
+        }
         return r;
       });
       updated = out.order;
@@ -1364,7 +1367,7 @@ export class OrdersService {
           consumos: r.result!.lines.map((l) => ({ codigo: l.codigo, lote: l.lote, kgReal: l.kg, materiaPrima: l.materiaPrima })),
           movimientos: r.result!.applied,
           lotes: r.result!.lots,
-          stockNegativoAutorizado: r.result!.negativeAuthorized ? { motivo: opts?.negativeMpStockReason?.trim() ?? "", faltantes: r.result!.shortages } : null,
+          stockNegativo: r.result!.shortages.length > 0 ? { faltantes: r.result!.shortages } : null,
         },
       });
       return r;

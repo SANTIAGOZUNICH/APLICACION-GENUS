@@ -24,6 +24,7 @@
     "test:e2e:bulk-pendientes": "bash scripts/e2e/run-bulk-pendientes-local.sh",
     "test:e2e:produccion-edicion": "bash scripts/e2e/run-produccion-edicion-local.sh",
     "test:e2e:deposito-me": "bash scripts/e2e/run-deposito-me-local.sh",
+    "test:e2e:oe-consumo-negativo": "bash scripts/e2e/run-oe-consumo-negativo-local.sh",
     "test:e2e:deposito-borrado": "bash scripts/e2e/run-deposito-borrado-masivo-local.sh",
     "test:e2e:mp-planilla": "bash scripts/e2e/run-mp-planilla-local.sh",
     "test:e2e:mp-filas-vacias": "bash scripts/e2e/run-mp-filas-vacias-local.sh",

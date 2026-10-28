@@ -157,18 +157,20 @@ describe("OE: GUARDAR AVANCE descuenta el consumo real de MP (sin doble descuent
     expect([lotKg("MP001", "A"), lotKg("MP001", "B")]).toEqual([0, 4]);
   });
 
-  it("lote explícito: se respeta y se valida su disponibilidad (no se reparte a otros lotes)", async () => {
+  it("lote explícito: se respeta (no se reparte a otros lotes); si el lote no alcanza, se descuenta igual y ese lote queda negativo", async () => {
     await seedMpStockForTests([{ codigo: "MP001", lote: "A", kg: 2 }, { codigo: "MP001", lote: "B", kg: 8 }, { codigo: "MP-AGUA", lote: "A1", kg: 100 }]);
     const oe = await makeOe();
     const a = await avance(oe.id, (m) => [{ ...m[0]!, codigoMp: "MP001", kgReal: 5, lote: "A" }]); // A solo tiene 2
-    expect(a.mpConsumption?.applied).toEqual([]);
-    expect(a.mpConsumption?.shortages.map((s) => s.lote)).toEqual(["A"]);
-    expect([lotKg("MP001", "A"), lotKg("MP001", "B")]).toEqual([2, 8]);
+    expect(a.mpConsumption?.applied).toEqual([{ codigo: "MP001", lote: "A", delta: -5 }]);
+    expect(a.mpConsumption?.shortages.map((s) => s.lote)).toEqual(["A"]); // advertencia, no bloqueo
+    expect([lotKg("MP001", "A"), lotKg("MP001", "B")]).toEqual([-3, 8]); // el faltante NO se traslada al lote B
+    // Corregir el lote: se devuelve lo del A y se descuenta del B (solo diferencias, trazables).
     const b = await avance(oe.id, (m) => [{ ...m[0]!, codigoMp: "MP001", kgReal: 5, lote: "B" }]);
-    expect(b.mpConsumption?.applied).toEqual([{ codigo: "MP001", lote: "B", delta: -5 }]);
+    expect(b.mpConsumption?.applied).toEqual(expect.arrayContaining([{ codigo: "MP001", lote: "B", delta: -5 }, { codigo: "MP001", lote: "A", delta: 5 }]));
+    expect([lotKg("MP001", "A"), lotKg("MP001", "B")]).toEqual([2, 3]);
   });
 
-  it("stock insuficiente sin lote: no descuenta parcialmente; MP vencida / en cuarentena: no se consume; código inexistente: error claro", async () => {
+  it("stock insuficiente sin lote: se descuenta igual (queda negativo); MP vencida / en cuarentena: no se consume; código inexistente: error claro", async () => {
     await seedMpStockForTests([
       { codigo: "MP001", lote: "A", kg: 2, vencimiento: "2027-01-01" },
       { codigo: "MP001", lote: "B", kg: 8, vencimiento: "2027-06-01" },
@@ -179,28 +181,69 @@ describe("OE: GUARDAR AVANCE descuenta el consumo real de MP (sin doble descuent
     const oe = await makeOe();
     const run = (codigoMp: string, n: number) => avance(oe.id, (m) => [{ ...m[0]!, codigoMp, kgReal: n, lote: "" }]);
     const corto = await run("MP001", 50);
-    expect(corto.mpConsumption?.applied).toEqual([]);
+    // Los 10 kg que hay (FEFO: 2 de A y 8 de B) más el faltante (40) sobre el primer lote apto (A): nada se traslada a otra MP.
+    expect(corto.mpConsumption?.applied.reduce((n, a) => n + a.delta, 0)).toBe(-50);
     expect(corto.mpConsumption?.shortages.length).toBeGreaterThan(0);
-    expect([lotKg("MP001", "A"), lotKg("MP001", "B"), await codeKg("MP001")]).toEqual([2, 8, 10]);
+    expect(await codeKg("MP001")).toBe(-40);
+    expect(Number(lotKg("MP001", "A")) + Number(lotKg("MP001", "B"))).toBe(-40);
     for (const code of ["MP-CUA", "MP-VEN"]) {
       const r = await run(code, 1);
-      expect(r.mpConsumption?.applied).toEqual([]);
       expect(r.mpConsumption?.pendingIssues.join(" ")).toMatch(/no se consume/);
       expect(await codeKg(code)).toBe(50);
     }
     const no = await run("NO-EXISTE", 1);
-    expect(no.mpConsumption?.applied).toEqual([]);
     expect(no.mpConsumption?.pendingIssues.join(" ")).toContain("no existe en Stock MP");
     expect(await codeKg("MP-AGUA")).toBe(100);
   });
 
-  it("sin KG REAL todavía: no es faltante ni descuenta; sin stock suficiente queda pendiente sin negativos", async () => {
+  it("sin KG REAL todavía: no es faltante ni descuenta; con más kg que stock: se descuenta y queda negativo (-400)", async () => {
     const oe = await makeOe();
     const a = await avance(oe.id, kg(null));
     expect(a.mpConsumption).toMatchObject({ applied: [], pendingIssues: [], shortages: [] });
-    const b = await avance(oe.id, kg(500)); // más de lo que hay
-    expect(b.mpConsumption?.applied).toEqual([]);
+    const b = await avance(oe.id, kg(500)); // más de lo que hay (100)
+    expect(b.mpConsumption?.applied).toEqual([{ codigo: "MP-AGUA", lote: "A1", delta: -500 }]);
     expect(b.mpConsumption?.shortages.length).toBeGreaterThan(0);
-    expect(lotKg("MP-AGUA", "A1")).toBe(100);
+    expect(lotKg("MP-AGUA", "A1")).toBe(-400);
+    expect(await codeKg("MP-AGUA")).toBe(-400);
+  });
+
+  it("stock exactamente en cero: sin advertencia; con saldo inicial negativo: el consumo se suma al saldo y la entrada posterior no re-descuenta", async () => {
+    const oe = await makeOe();
+    const justo = await avance(oe.id, kg(100)); // usa justo los 100 kg
+    expect(justo.mpConsumption?.shortages).toEqual([]);
+    expect(await codeKg("MP-AGUA")).toBe(0);
+    // Saldo en 0 y la OE usa 5 kg más → -5 (stock inicial 0 no se "arregla" artificialmente).
+    const mas = await avance(oe.id, kg(105));
+    expect(mas.mpConsumption?.applied).toEqual([{ codigo: "MP-AGUA", lote: "A1", delta: -5 }]);
+    expect(await codeKg("MP-AGUA")).toBe(-5);
+    // Guardar igual (recargar/cambiar de pestaña) NO descuenta otra vez.
+    const igual = await avance(oe.id, kg(105));
+    expect(igual.mpConsumption?.applied).toEqual([]);
+    expect(await codeKg("MP-AGUA")).toBe(-5);
+    expect(await movs("MP-AGUA")).toBe(2);
+    // Ingresa stock después: el saldo se actualiza por movimientos y la OE no vuelve a descontar.
+    await getMpStockLedger().applyIngreso({ email: "mp@genus.test", sector: "MATERIA_PRIMA" }, { codigo: "MP-AGUA", quantity: 50, ingresoId: "ing-av-1", versionTag: "v1", lote: "A2", descripcion: "AGUA" });
+    expect(await codeKg("MP-AGUA")).toBe(45);
+    const otra = await avance(oe.id, kg(105));
+    expect(otra.mpConsumption?.applied).toEqual([]);
+    expect(await codeKg("MP-AGUA")).toBe(45);
+    // Corregir a menos kg: se registra solo la diferencia (+5 devolución), trazable.
+    const menos = await avance(oe.id, kg(100));
+    expect(menos.mpConsumption?.applied).toEqual([{ codigo: "MP-AGUA", lote: "A1", delta: 5 }]);
+    expect(await codeKg("MP-AGUA")).toBe(50);
+    // Saldo ya NEGATIVO antes de otra OE: primero otra OE lo deja en -10 (50 − 60) y esta suma 4 más → -14.
+    const oe2 = await makeOe();
+    await avance(oe2.id, (m) => [{ ...m[0]!, kgReal: 60, lote: "A1" }]);
+    expect(await codeKg("MP-AGUA")).toBe(-10);
+    const oe3 = await makeOe();
+    const neg = await avance(oe3.id, kg(4));
+    expect(neg.mpConsumption?.applied).toEqual([{ codigo: "MP-AGUA", lote: "A1", delta: -4 }]);
+    expect(await codeKg("MP-AGUA")).toBe(-14);
+    // Cada OE conserva SU consumo y el saldo de ese momento (coincide con el historial del código).
+    const r3 = await getMpStockLedger().oeConsumptionReport(oe3.id);
+    expect(r3[0]).toMatchObject({ consumido: 4, stockAntes: -10, stockDespues: -14, negativo: true });
+    const hist = await getMpStockLedger().history("MP-AGUA");
+    // Coincidencia: el saldo mostrado = suma de los movimientos reales del código (saldo inicial incluido).
+    expect(Math.round(hist.reduce((n, m) => n + m.quantity, 0) * 1000) / 1000).toBe(await codeKg("MP-AGUA"));
   });
 });

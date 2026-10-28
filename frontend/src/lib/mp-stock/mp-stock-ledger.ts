@@ -24,6 +24,22 @@ export type MpStockMovementKind =
 
 export type MpStockActor = { email: string; sector: SectorId };
 
+/** Una fila del consumo de MP de una OE (ver `oeConsumptionReport`). Unidad: kg. */
+export type OeConsumptionReportRow = {
+  codigo: string;
+  lote: string;
+  /** kg consumidos NETOS por la OE en esta posición (consumos − reversos). */
+  consumido: number;
+  /** Saldo del código antes del primer movimiento de la OE en esta posición. */
+  stockAntes: number | null;
+  /** Saldo del código después del último movimiento (el de ese momento). */
+  stockDespues: number | null;
+  negativo: boolean;
+  ultimoAt: string;
+  actorEmail: string;
+  movimientos: Array<{ id: string; at: string; kind: "CONSUMO_OE" | "REVERSO"; quantity: number; saldoAntes: number | null; saldoDespues: number | null; actorEmail: string; reason: string }>;
+};
+
 export type MpStockBalance = {
   codigo: string;
   descripcion: string;
@@ -642,6 +658,37 @@ export class MpStockLedgerService {
   /** Movimientos de una referencia (p. ej. una OE), solo lectura — para auditoría. */
   listMovementsForRef(refType: string, refId: string): Promise<MpStockMovement[]> {
     return this.listMovementsByRef(refType, refId);
+  }
+
+  /**
+   * Consumo de MP de una OE para consultar después («Consumo de Materias Primas»): una fila por (código, lote) con lo que la OE
+   * consumió NETO (consumos − reversos), el saldo del código antes del primer movimiento y después del último (los de aquel
+   * momento: un ingreso posterior no los cambia) y cada movimiento con quién y cuándo. Solo lectura sobre el libro mayor.
+   */
+  async oeConsumptionReport(oeId: string): Promise<OeConsumptionReportRow[]> {
+    const movs = (await this.listMovementsByRef("oe", oeId))
+      .filter((m) => m.kind === "CONSUMO_OE" || m.kind === "REVERSO")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+    const rows = new Map<string, OeConsumptionReportRow>();
+    for (const m of movs) {
+      const codigo = await this.resolveCodigo(normalizeMpCodigo(m.codigo));
+      const lote = (m.lote ?? "").trim();
+      const key = buildOePositionId(codigo, lote);
+      const antes = m.balanceAfter == null ? null : Math.round((m.balanceAfter - m.quantity) * 1000) / 1000;
+      const entry = { id: m.id, at: m.createdAt, kind: m.kind as "CONSUMO_OE" | "REVERSO", quantity: m.quantity, saldoAntes: antes, saldoDespues: m.balanceAfter, actorEmail: m.actorEmail, reason: m.reason };
+      const prev = rows.get(key);
+      if (!prev) {
+        rows.set(key, { codigo, lote, consumido: Math.round(-m.quantity * 1000) / 1000, stockAntes: antes, stockDespues: m.balanceAfter, negativo: (m.balanceAfter ?? 0) < 0, ultimoAt: m.createdAt, actorEmail: m.actorEmail, movimientos: [entry] });
+      } else {
+        prev.consumido = Math.round((prev.consumido - m.quantity) * 1000) / 1000;
+        prev.stockDespues = m.balanceAfter;
+        prev.negativo = (m.balanceAfter ?? 0) < 0;
+        prev.ultimoAt = m.createdAt;
+        prev.actorEmail = m.actorEmail;
+        prev.movimientos.push(entry);
+      }
+    }
+    return [...rows.values()].sort((a, b) => (a.codigo + a.lote).localeCompare(b.codigo + b.lote));
   }
 
   private async listMovementsByRef(

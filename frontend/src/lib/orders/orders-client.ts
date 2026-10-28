@@ -538,6 +538,15 @@ export async function deliverOrderApi(
   return data.order;
 }
 
+export type OeMpConsumptionRow = import("@/lib/mp-stock/mp-stock-ledger").OeConsumptionReportRow;
+
+/** Consumo de MP de una OE (lo que descontó cada código/lote, con saldo anterior y restante). Solo lectura. */
+export async function fetchOeMpConsumptionApi(session: OrdersClientSession, id: string): Promise<OeMpConsumptionRow[]> {
+  const res = await fetch(`/api/v1/orders/${id}/mp-consumption`, { credentials: "include", headers: actorHeaders(session), cache: "no-store" });
+  const data = await parseJson<{ rows: OeMpConsumptionRow[] }>(res);
+  return data.rows;
+}
+
 /** Regulariza el descuento de MP pendiente de una OE ya entregada (opcionalmente completando filas). */
 export async function settleMpConsumptionApi(
   session: OrdersClientSession,
