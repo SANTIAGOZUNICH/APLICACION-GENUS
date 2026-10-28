@@ -5,10 +5,10 @@
  * Reglas clave:
  *  - Cliente: celda "Cliente" → carpeta (2º segmento del ZIP) → CLIENTE_PENDIENTE.
  *  - Producto: celda etiquetada → nombre de hoja válido → nombre de archivo → PENDIENTE.
- *  - Porcentajes: si suman ~100 se conservan; si suman ~1 se interpretan como
- *    proporción y se multiplican por 100; si están vacíos/ inválidos y hay columna
- *    de kg/cantidad válida se derivan (porcentaje_i = cantidad_i / Σcantidades × 100).
- *  - Fuera de tolerancia (98–102) o cantidades inválidas → reviewRequired.
+ *  - Porcentajes: los de la hoja se conservan EXACTOS (solo se convierte la unidad si todos son
+ *    fracciones de Excel: ×100). Nunca se normaliza a 100 %. Sin ningún % pero con cantidades
+ *    completas se derivan (cantidad_i / Σcantidades × 100).
+ *  - Fuera de tolerancia (98–102), filas sin % o cantidades inválidas → reviewRequired (no se usa en OE).
  */
 
 import { createHash } from "node:crypto";
@@ -32,7 +32,6 @@ import {
 
 const PCT_LO = 98;
 const PCT_HI = 102;
-const PROP_LO = 0.98;
 const PROP_HI = 1.02;
 
 const QTY_HEADER_TOKENS = [
@@ -162,7 +161,15 @@ type ClassifiedFormula = {
 };
 
 /**
- * Clasifica y deriva porcentajes según reglas de % / proporción / cantidad.
+ * Clasifica los porcentajes de una fórmula SIN alterar su proporción. Regla de seguridad (fórmula aprobada):
+ *  - Un porcentaje escrito en la hoja se conserva EXACTAMENTE; nunca se reescala para «llevar a 100 %» ni se completa por diferencia.
+ *  - Única conversión permitida: unidades. Si TODAS las celdas son fracciones (formato % de Excel guarda 0,60 para «60 %»: máximo ≤ 1
+ *    y suma ≤ 1,02) se multiplican por 100 — misma proporción, solo la unidad.
+ *  - Si hay % pero el total queda fuera de 98–102 (p. ej. falta una fila, «c.s.p.» sin número), la fórmula queda en REVISIÓN
+ *    (PCT_TOTAL_OUT_OF_TOLERANCE) y NO se usa para una OE; antes se recalculaba desde la columna de kg normalizando a 100 %, lo
+ *    que inflaba todos los porcentajes (60 % → 71 %) y pasaba la validación porque el total daba 100.
+ *  - Solo si la hoja NO tiene ningún % numérico y trae cantidades completas, el % se deriva de las cantidades (qty / Σqty); si alguna
+ *    fila no tiene cantidad, no se deriva: revisión.
  */
 function classifyFormula(rows: RawRow[], hasQtyCol: boolean): ClassifiedFormula {
   const pctVals = rows.map((r) => r.rawPct).filter((n): n is number => n != null);
@@ -177,37 +184,38 @@ function classifyFormula(rows: RawRow[], hasQtyCol: boolean): ClassifiedFormula 
   const reviewReasons: string[] = [];
   let finalPct: (number | null)[];
 
-  const pctOriginalOk = pctVals.length > 0 && sumPct >= PCT_LO && sumPct <= PCT_HI;
-  const pctProportion = pctVals.length > 0 && sumPct >= PROP_LO && sumPct <= PROP_HI;
-  const qtyUsable = qtyVals.length > 0 && sumQty > 0 && !anyQtyNeg;
+  const maxPct = pctVals.length ? Math.max(...pctVals) : 0;
+  // Fracciones (formato % de Excel): todas ≤ 1 y suman entre 0,5 y 1,02. Solo cambia la unidad (×100), nunca la proporción.
+  const pctAreFractions = pctVals.length > 0 && maxPct <= 1 && sumPct >= 0.5 && sumPct <= PROP_HI;
+  const qtyComplete = hasQtyCol && qtyVals.length > 0 && qtyVals.length === rows.length && sumQty > 0 && !anyQtyNeg;
 
-  if (pctOriginalOk) {
+  if (pctVals.length > 0) {
     expressionType = "PERCENTAGE";
-    percentageSource = "ORIGINAL";
-    finalPct = rows.map((r) => (r.rawPct == null ? null : round6(r.rawPct)));
-  } else if (pctProportion) {
-    expressionType = "PERCENTAGE";
-    percentageSource = "PROPORTION_SCALED";
-    finalPct = rows.map((r) => (r.rawPct == null ? null : round6(r.rawPct * 100)));
-  } else if (hasQtyCol && qtyUsable) {
+    if (pctAreFractions) {
+      percentageSource = "PROPORTION_SCALED";
+      finalPct = rows.map((r) => (r.rawPct == null ? null : round6(r.rawPct * 100)));
+    } else {
+      percentageSource = "ORIGINAL";
+      finalPct = rows.map((r) => (r.rawPct == null ? null : round6(r.rawPct)));
+    }
+  } else if (qtyComplete) {
     expressionType = "QUANTITY";
     percentageSource = "DERIVED_FROM_QUANTITY";
     finalPct = rows.map((r) => (r.rawQty == null ? null : round6((r.rawQty / sumQty) * 100)));
   } else if (hasQtyCol) {
-    // Columna de cantidad presente pero no utilizable.
+    // Sin % y con cantidades inutilizables o incompletas: no se deriva nada.
     expressionType = "QUANTITY";
     percentageSource = "DERIVED_FROM_QUANTITY";
     finalPct = rows.map(() => null);
     if (anyQtyNeg) reviewReasons.push("QUANTITY_NEGATIVE");
     if (qtyVals.length === 0) reviewReasons.push("QUANTITY_NON_NUMERIC");
     else if (sumQty <= 0) reviewReasons.push("QUANTITY_SUM_ZERO");
+    else if (qtyVals.length !== rows.length) reviewReasons.push("QUANTITY_INCOMPLETE");
   } else {
-    // Solo columna porcentual, fuera de tolerancia y no es proporción → incompleta.
     expressionType = "PERCENTAGE";
     percentageSource = "ORIGINAL";
-    finalPct = rows.map((r) => (r.rawPct == null ? null : round6(r.rawPct)));
-    if (pctVals.length === 0) reviewReasons.push("NO_NUMERIC_COLUMN");
-    else reviewReasons.push("PCT_TOTAL_OUT_OF_TOLERANCE");
+    finalPct = rows.map(() => null);
+    reviewReasons.push("NO_NUMERIC_COLUMN");
   }
 
   const finalNums = finalPct.filter((n): n is number => n != null);
@@ -215,14 +223,10 @@ function classifyFormula(rows: RawRow[], hasQtyCol: boolean): ClassifiedFormula 
     ? round6(finalNums.reduce((a, b) => a + b, 0))
     : null;
 
-  // Validación de tolerancia final para caminos de % (no derivados).
-  if (
-    percentageSource !== "DERIVED_FROM_QUANTITY" &&
-    percentageTotal != null &&
-    (percentageTotal < PCT_LO || percentageTotal > PCT_HI) &&
-    !reviewReasons.includes("PCT_TOTAL_OUT_OF_TOLERANCE")
-  ) {
-    reviewReasons.push("PCT_TOTAL_OUT_OF_TOLERANCE");
+  // Los % de la hoja tienen que sumar ~100 (y todas las filas tener su %): si no, revisión humana (nunca se «arregla» sola).
+  if (percentageSource !== "DERIVED_FROM_QUANTITY" && pctVals.length > 0) {
+    if (percentageTotal != null && (percentageTotal < PCT_LO || percentageTotal > PCT_HI)) reviewReasons.push("PCT_TOTAL_OUT_OF_TOLERANCE");
+    if (finalPct.some((p) => p == null)) reviewReasons.push("PCT_ROW_MISSING");
   }
 
   const ingredients = rows.map((r, i) => ({

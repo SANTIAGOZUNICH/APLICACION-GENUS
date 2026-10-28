@@ -547,6 +547,20 @@ export async function fetchOeMpConsumptionApi(session: OrdersClientSession, id: 
   return data.rows;
 }
 
+export type OeFormulaCheckView = import("@/lib/orders/oe-formula-check").OeFormulaCheck;
+
+/** «Fórmula pendiente de verificación» de una OE (diferencias contra la fórmula aprobada). Solo lectura. */
+export async function fetchOeFormulaCheckApi(session: OrdersClientSession, id: string): Promise<OeFormulaCheckView> {
+  const res = await fetch(`/api/v1/orders/${id}/formula-check`, { credentials: "include", headers: actorHeaders(session), cache: "no-store" });
+  return (await parseJson<{ check: OeFormulaCheckView }>(res)).check;
+}
+
+/** Producción/Dirección verifican o revocan la fórmula de una OE (no modifica porcentajes). */
+export async function verifyOeFormulaApi(session: OrdersClientSession, id: string, body: { action: "verify" | "revoke"; note?: string }): Promise<OeFormulaCheckView> {
+  const res = await fetch(`/api/v1/orders/${id}/formula-check`, { method: "POST", credentials: "include", headers: actorHeaders(session), body: JSON.stringify(body) });
+  return (await parseJson<{ check: OeFormulaCheckView }>(res)).check;
+}
+
 /** Regulariza el descuento de MP pendiente de una OE ya entregada (opcionalmente completando filas). */
 export async function settleMpConsumptionApi(
   session: OrdersClientSession,

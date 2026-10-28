@@ -516,6 +516,10 @@ export function parseDriveFormulaBuffer(args: {
         )
     );
     if (match) draft = match;
+    // Con varias hojas y ninguna coincide con el producto pedido NO se toma «la primera» (podría ser la fórmula de otro producto).
+    else if (drafts.length > 1) {
+      return { found: false, message: "El archivo tiene varias fórmulas y ninguna coincide con el producto: no se eligió ninguna." };
+    }
   } else {
     draft = [...drafts].sort(
       (a, b) => b.ingredients.length - a.ingredients.length

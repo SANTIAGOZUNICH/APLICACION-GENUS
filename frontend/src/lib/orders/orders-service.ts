@@ -767,6 +767,131 @@ export class OrdersService {
     return order;
   }
 
+  /** Control «Fórmula pendiente de verificación» de una OE (solo lectura). Si el banco no está disponible, aplica solo el autocontrol. */
+  private async formulaCheckOf(order: OperationalOrderRecord) {
+    const { checkOeFormula } = await import("@/lib/orders/oe-formula-check");
+    let bank: import("@/lib/formulas/formula-bank-service").FormulaBankService | null = null;
+    try {
+      const { readyFormulaBank } = await import("@/lib/formulas/get-formula-bank");
+      bank = await readyFormulaBank();
+    } catch {
+      bank = null;
+    }
+    if (order.formData.kind !== "OE") {
+      throw new OrdersValidationError("La orden no es una OE.");
+    }
+    return checkOeFormula(order.formData, { formulaVersionId: order.formulaVersionId }, bank);
+  }
+
+  async getFormulaCheck(id: string, actor: OrdersActor) {
+    const order = await this.getOrder(id, actor);
+    if (order.type !== "OE") throw new OrdersValidationError("Solo las OE tienen control de fórmula.");
+    return this.formulaCheckOf(order);
+  }
+
+  /**
+   * Producción/Dirección verifican (o revocan) la fórmula de una OE contra la fuente aprobada. NO modifica porcentajes ni consumos:
+   * solo registra quién la dio por buena para esta composición exacta (firma). Auditado.
+   */
+  async verifyFormula(id: string, actor: OrdersActor, input: { action: "verify" | "revoke"; note?: string }) {
+    if (!canAuthorizeOeMpShortage(actor.sector)) {
+      throw new OrdersForbiddenError("Solo Producción o Dirección pueden verificar la fórmula de una OE.");
+    }
+    const current = await this.repo.getOrder(id);
+    if (!current) throw new OrdersNotFoundError("Orden no encontrada.");
+    if (current.type !== "OE" || current.formData.kind !== "OE") throw new OrdersValidationError("Solo las OE tienen control de fórmula.");
+    const { oeCompositionSignature } = await import("@/lib/formulas/oe-formula-compare");
+    let formData: OeContent;
+    if (input.action === "verify") {
+      const note = (input.note ?? "").trim();
+      if (note.length < 3) throw new OrdersValidationError("Indicá contra qué archivo/versión de fórmula aprobada verificaste la OE.");
+      formData = {
+        ...current.formData,
+        formulaVerification: {
+          status: "VERIFICADA",
+          signature: oeCompositionSignature(current.formData.materials),
+          by: actor.email,
+          at: new Date().toISOString(),
+          note,
+        },
+      };
+    } else {
+      const { formulaVerification: _drop, ...rest } = current.formData;
+      void _drop;
+      formData = rest;
+    }
+    const updated = await this.repo.updateOrderOptimistic(id, current.version, {
+      formData,
+      completionPercentage: current.completionPercentage,
+      status: current.status,
+      lot: current.lot,
+      client: current.client,
+      code: current.code,
+      product: current.product,
+      updatedBy: actor.email,
+    });
+    if (!updated) throw new OrdersConflictError("Otro usuario modificó esta orden. Actualizá y volvé a intentar.", (await this.repo.getOrder(id)) ?? current);
+    await this.repo.appendAudit({
+      orderId: id,
+      eventType: input.action === "verify" ? "OE_FORMULA_VERIFICADA" : "OE_FORMULA_VERIFICACION_REVOCADA",
+      actor: actor.email,
+      actorSector: actor.sector,
+      metadata: { orderNumber: updated.orderNumber, note: input.note ?? null },
+    });
+    return { order: updated, check: await this.formulaCheckOf(updated) };
+  }
+
+  /**
+   * Auditoría SOLO LECTURA de todas las OE: por cada OE, las filas con diferencias contra la versión vinculada del banco (o el
+   * autocontrol de suma) y las versiones del banco con % reescalados por el parser anterior. No modifica nada.
+   */
+  async auditFormulas(actor: OrdersActor, opts?: { pendingOnly?: boolean }) {
+    if (!canAuthorizeOeMpShortage(actor.sector)) {
+      throw new OrdersForbiddenError("Solo Producción o Dirección pueden auditar fórmulas.");
+    }
+    const rows: Array<{
+      cliente: string; producto: string; oe: string; orderId: string; estadoOe: string; materiaPrima: string; codigo: string;
+      pctOriginal: number | null; pctMostrado: number | null; diferencia: number | null; revision: string;
+    }> = [];
+    const summary = { oeRevisadas: 0, oeConDiferencias: 0, oeVerificadas: 0, oePendientesOEnProceso: 0 };
+    let page = 1;
+    for (;;) {
+      const res = await this.repo.listOrders({ type: "OE", tab: "all", page, pageSize: 200, sort: "fecha_desc" });
+      for (const o of res.items) {
+        if (o.formData.kind !== "OE") continue;
+        const fc = await this.formulaCheckOf(o);
+        summary.oeRevisadas += 1;
+        if (fc.verified) summary.oeVerificadas += 1;
+        if (fc.issues.length === 0) continue;
+        summary.oeConDiferencias += 1;
+        if (o.status !== "COMPLETA" && o.status !== "ARCHIVADA" && o.status !== "ANULADA") summary.oePendientesOEnProceso += 1;
+        const revision = fc.verified ? "VERIFICADA_MANUALMENTE" : "PENDIENTE_DE_VERIFICACION";
+        const bad = fc.evaluation.rows.filter((r) => r.status !== "OK");
+        const list = bad.length
+          ? bad
+          : [{ materiaPrima: "(toda la fórmula)", codigo: "", pctAprobado: null, pctOe: fc.evaluation.oePctSum, diferencia: null, status: "OK" as const }];
+        for (const r of list) {
+          rows.push({
+            cliente: o.client, producto: o.product, oe: o.orderNumber, orderId: o.id, estadoOe: o.status,
+            materiaPrima: r.materiaPrima, codigo: r.codigo, pctOriginal: r.pctAprobado, pctMostrado: r.pctOe, diferencia: r.diferencia,
+            revision: `${revision}${fc.issues.length ? ` · ${fc.issues.join(",")}` : ""}`,
+          });
+        }
+      }
+      if (res.items.length < 200 || page >= 50) break;
+      page += 1;
+    }
+    let suspectBankVersions: Array<Record<string, unknown>> = [];
+    try {
+      const { readyFormulaBank } = await import("@/lib/formulas/get-formula-bank");
+      suspectBankVersions = (await readyFormulaBank()).listSuspectDerivedVersions();
+    } catch {
+      suspectBankVersions = [];
+    }
+    const out = opts?.pendingOnly ? rows.filter((r) => r.revision.startsWith("PENDIENTE")) : rows;
+    return { summary, rows: out, suspectBankVersions };
+  }
+
   async saveProgress(id: string, input: PatchOrderInput, actor: OrdersActor) {
     return (await this.saveProgressWithConsumption(id, input, actor)).order;
   }
@@ -872,9 +997,13 @@ export class OrdersService {
       if (nextForm.kind === "OE") {
         // autoPrep lo escribe solo la preparación automática (lib/planning/oe-auto-prep.ts): un guardado desde la
         // pantalla nunca lo cambia (ni lo borra), así el origen de la fórmula y los lotes sigue siendo confiable.
-        const { autoPrep: _ignored, ...rest } = nextForm;
+        const { autoPrep: _ignored, formulaVerification: _ignoredVerif, ...rest } = nextForm;
         void _ignored;
+        void _ignoredVerif;
         nextForm = current.formData.autoPrep ? { ...rest, autoPrep: current.formData.autoPrep } : rest;
+        // La verificación de fórmula solo la escribe verifyFormula (Producción/Dirección): un guardado nunca la crea ni la borra
+        // (si cambia la composición, la firma deja de coincidir y la OE vuelve a quedar pendiente de verificación).
+        if (current.formData.formulaVerification) nextForm = { ...nextForm, formulaVerification: current.formData.formulaVerification };
         // Hojas de elaboración (tambores/ollas): la estructura sale SIEMPRE de la fórmula de la OE y solo se aceptan
         // datos operativos. Materia Prima (solo fórmula) no toca las hojas: conserva las actuales.
         if (current.formData.kind === "OE") {
@@ -927,7 +1056,15 @@ export class OrdersService {
       );
     }
     let mpConsumption: import("@/lib/orders/oe-stock-op").OeProgressConsumption | null = null;
-    if (input.registerMpConsumption === true && current.type === "OE" && updated.formData.kind === "OE" && !isMpFormulaOnly) {
+    const formulaPending =
+      input.registerMpConsumption === true && current.type === "OE" && updated.formData.kind === "OE" && !isMpFormulaOnly
+        ? (await this.formulaCheckOf(updated)).pending
+        : false;
+    if (formulaPending) {
+      // Contención: con la fórmula pendiente de verificación NO se contabilizan consumos de MP (no se toca lo ya registrado).
+      const { FORMULA_PENDING_MESSAGE } = await import("@/lib/orders/oe-formula-check");
+      mpConsumption = { applied: [], pendingIssues: [FORMULA_PENDING_MESSAGE], shortages: [] };
+    } else if (input.registerMpConsumption === true && current.type === "OE" && updated.formData.kind === "OE" && !isMpFormulaOnly) {
       try {
         const { runOeStockOp, registerOeProgressConsumption } = await import("@/lib/orders/oe-stock-op");
         const oeContent = updated.formData;
@@ -1049,6 +1186,11 @@ export class OrdersService {
     const alreadyDone = current.type === "OE" ? current.status === "COMPLETA" : current.status === "COMPLETA" || current.status === "COMPLETA_CON_PENDIENTES";
     if (alreadyDone) {
       throw new OrdersValidationError("La orden ya está completa.");
+    }
+
+    if (current.type === "OE") {
+      const fc = await this.formulaCheckOf(current);
+      if (fc.pending) throw new OrdersValidationError(fc.message ?? "Fórmula pendiente de verificación.");
     }
 
     const classified = classifyDeliverMissing(current.formData);
