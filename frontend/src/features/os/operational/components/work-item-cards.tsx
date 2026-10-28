@@ -35,6 +35,7 @@ import { PriorityTag } from "./plan-task-card";
 import { PriorityChip } from "./semanas-priority-chip";
 import { priorityEdge, WorkItemPriorityBadge } from "./work-item-priority-badge";
 import { WorkItemWarningBadge } from "./work-item-warning-badge";
+import { groupPendingByPedido, type PedidoGroup } from "../lib/group-pending-by-pedido";
 
 type CellEditing = ReturnType<typeof useWorkItemCellEditing>;
 /** Tarjeta sin edición de planificación (consulta): vista Semana y sectores que no planifican. */
@@ -63,6 +64,11 @@ export interface WorkItemCardsProps {
   hideActions?: boolean;
   /** «compact»: la misma tarjeta, un poco más chica (vista Semana). Default «normal» (vista Día). */
   density?: "normal" | "compact";
+  /**
+   * Pendientes de Envasado: una tarjeta general por PEDIDO (id real) con sus trabajos adentro. Solo es una presentación: los
+   * trabajos, sus datos y sus acciones son los mismos. Semana y el resto de las vistas no lo usan.
+   */
+  groupByPedido?: boolean;
 }
 
 const LABEL = "text-[10px] font-semibold uppercase tracking-[0.14em] text-[#8fb3c9]";
@@ -514,12 +520,78 @@ export function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
   );
 }
 
+/** 6000 → «6.000» (el agrupador siempre, también con 4 cifras) y coma decimal. */
+const fmtQty = (n: number) => {
+  const [int, dec] = String(Math.round(n * 1000) / 1000).split(".");
+  return `${int!.replace(/\B(?=(\d{3})+(?!\d))/g, ".")}${dec ? `,${dec}` : ""}`;
+};
+
+/** Tarjeta general de un pedido con varios trabajos pendientes. Al abrirla muestra cada trabajo con su tarjeta y acciones de siempre. */
+function WorkItemPedidoGroupCard({ group, ...rest }: WorkItemCardsProps & { group: PedidoGroup }) {
+  const [open, setOpen] = useState(false);
+  const n = group.items.length;
+  const unit = group.unit ? ` ${group.unit}` : "";
+  return (
+    <div className={open ? "sm:col-span-2 2xl:col-span-3" : ""} data-testid="work-item-pedido-group" data-pedido-ref={group.pedidoRef} data-open={open ? "1" : "0"}>
+      <article className="flex flex-col gap-2 rounded-xl border border-white/10 bg-[#10304a] p-3.5 shadow-[0_6px_18px_-12px_rgba(0,0,0,0.7)]">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className={LABEL}>Pedido</div>
+            <div className="text-[16px] font-bold leading-snug text-white" data-testid="pedido-group-label">{group.label}</div>
+          </div>
+          <StatusChip status={group.status} />
+        </div>
+        <div className="flex flex-wrap items-end gap-x-5 gap-y-1">
+          <div>
+            <div className={LABEL}>Total pendiente</div>
+            <div className="text-[17px] font-extrabold tabular-nums text-[#5eead4]" data-testid="pedido-group-total">
+              {group.totalPending === null ? "—" : `${fmtQty(group.totalPending)}${unit}`}
+              {group.unparsed > 0 && group.totalPending !== null ? <span className="ml-1 text-[11px] font-semibold text-amber-200">(+{group.unparsed} sin cantidad)</span> : null}
+            </div>
+          </div>
+          <div>
+            <div className={LABEL}>Trabajos</div>
+            <div className="text-[15px] font-bold text-[#e6f0f6]" data-testid="pedido-group-count">{n} {n === 1 ? "trabajo pendiente" : "trabajos pendientes"}</div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-[13px] font-semibold text-[#e6f0f6]">
+          <div>
+            <div className={LABEL}>Cliente</div>
+            {displayField(group.client)}
+          </div>
+          <div>
+            <div className={LABEL}>Fechas</div>
+            {group.firstDate ? (group.lastDate && group.lastDate !== group.firstDate ? `${formatDay(group.firstDate)} → ${formatDay(group.lastDate)}` : formatDay(group.firstDate)) : "—"}
+          </div>
+        </div>
+        <div className="mt-auto flex flex-wrap gap-1.5 border-t border-white/10 pt-2">
+          <ActionButton label={open ? "Ocultar trabajos" : `Ver trabajos (${n})`} variant="neutral" onClick={() => setOpen((v) => !v)} />
+        </div>
+      </article>
+      {open && (
+        <div className="mt-2 grid gap-3 border-l-2 border-[var(--os-teal)]/40 pl-3 sm:grid-cols-2 2xl:grid-cols-3" data-testid="pedido-group-items">
+          {group.items.map((item) => (
+            <WorkItemCard key={item.id} {...rest} groupByPedido={false} item={item} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function WorkItemCards(props: WorkItemCardsProps) {
+  const entries = useMemo(
+    () => {
+      if (!props.groupByPedido) return null;
+      return groupPendingByPedido(props.items);
+    },
+    [props.groupByPedido, props.items]
+  );
   return (
     <div className={props.hideActions ? "grid gap-3" : "grid gap-3 sm:grid-cols-2 2xl:grid-cols-3"} data-testid="work-item-cards">
-      {props.items.map((item) => (
-        <WorkItemCard key={item.id} {...props} item={item} />
-      ))}
+      {entries
+        ? entries.map((e) => (e.kind === "single" ? <WorkItemCard key={e.item.id} {...props} item={e.item} /> : <WorkItemPedidoGroupCard key={e.group.key} {...props} group={e.group} />))
+        : props.items.map((item) => <WorkItemCard key={item.id} {...props} item={item} />)}
     </div>
   );
 }

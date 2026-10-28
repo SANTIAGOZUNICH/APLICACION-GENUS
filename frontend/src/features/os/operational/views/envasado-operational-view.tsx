@@ -596,6 +596,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
             items={pendientesItems}
             variant="envasado"
             showPackagingColumns
+            groupByPedido
             onItemsChanged={async () => {
               await refresh();
               await refreshPendientes();

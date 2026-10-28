@@ -35,6 +35,8 @@ interface WorkItemProgressTableProps {
   showPackagingColumns?: boolean;
   /** Recarga la lista tras una edición por celda (el servidor ya confirmó). */
   onItemsChanged?: () => void | Promise<void>;
+  /** Pendientes de Envasado: en la vista de tarjetas, una tarjeta general por pedido (solo presentación). */
+  groupByPedido?: boolean;
 }
 
 const thClass = "os-table-th";
@@ -65,6 +67,7 @@ function WorkItemProgressTableInner({
   onRestoreToView,
   archiveBusyId = null,
   showPackagingColumns = false,
+  groupByPedido = false,
   cells: cellsIn,
 }: WorkItemProgressTableProps & { cells?: CellEditing }) {
   const cells = cellsIn ?? NO_CELL_EDITING;
@@ -160,6 +163,7 @@ function WorkItemProgressTableInner({
           onRestoreToView={onRestoreToView}
           archiveBusyId={archiveBusyId}
           showPackagingColumns={showPackagingColumns}
+          groupByPedido={groupByPedido}
           cells={cells}
         />
       </div>
