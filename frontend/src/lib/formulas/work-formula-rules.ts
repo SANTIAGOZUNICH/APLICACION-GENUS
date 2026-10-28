@@ -1,7 +1,8 @@
 /**
  * Reglas PURAS para elegir la fórmula de un trabajo asignado (OE automática). Nunca se elige por parecido:
  *  - una sola coincidencia EXACTA (cliente + producto normalizados) o no se elige;
- *  - una fórmula sin materias primas, con algún % vacío o con un total fuera de 98–102 % es «incompleta»: no se usa.
+ *  - una fórmula sin materias primas o con algún % vacío es «incompleta»: no se usa. Un total distinto de 100 NO la descarta (puede
+ *    estar en otra base: kg cada 100 L, % v/v): se conserva exacta y la OE queda pendiente de verificación (lib/orders/oe-formula-check).
  */
 import { normalizeSearchKey } from "./types";
 
@@ -73,7 +74,5 @@ export function formulaIncompleteReason(materials: WorkFormulaMaterial[]): strin
   if (rows.length === 0) return "La fórmula no tiene materias primas.";
   const sinPct = rows.filter((m) => m.formulaPct == null || !Number.isFinite(m.formulaPct));
   if (sinPct.length) return `La fórmula tiene materias primas sin porcentaje (${sinPct.map((m) => m.materiaPrima || m.codigo).join(", ")}).`;
-  const total = rows.reduce((s, m) => s + (m.formulaPct ?? 0), 0);
-  if (total < 98 || total > 102) return `Los porcentajes de la fórmula suman ${Math.round(total * 100) / 100} % (se espera 100 %).`;
   return null;
 }

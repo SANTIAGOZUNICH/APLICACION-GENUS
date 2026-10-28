@@ -300,7 +300,7 @@ export class FormulaBankService {
         message: "Producto sin fórmula activa.",
       };
     }
-    if (ver.reviewRequired) {
+    if (ver.reviewRequired || this.getVersionTrace(ver.id)?.suspectDerivation) {
       return {
         kind: "not_found",
         reason: "review_required",

@@ -158,6 +158,8 @@ type ClassifiedFormula = {
   percentageTotal: number | null;
   originalPercentageTotal: number | null;
   reviewReasons: string[];
+  /** Avisos que NO bloquean (la fórmula se conserva tal cual): p. ej. la base de cálculo no es 100. */
+  baseWarnings: string[];
 };
 
 /**
@@ -165,13 +167,18 @@ type ClassifiedFormula = {
  *  - Un porcentaje escrito en la hoja se conserva EXACTAMENTE; nunca se reescala para «llevar a 100 %» ni se completa por diferencia.
  *  - Única conversión permitida: unidades. Si TODAS las celdas son fracciones (formato % de Excel guarda 0,60 para «60 %»: máximo ≤ 1
  *    y suma ≤ 1,02) se multiplican por 100 — misma proporción, solo la unidad.
- *  - Si hay % pero el total queda fuera de 98–102 (p. ej. falta una fila, «c.s.p.» sin número), la fórmula queda en REVISIÓN
- *    (PCT_TOTAL_OUT_OF_TOLERANCE) y NO se usa para una OE; antes se recalculaba desde la columna de kg normalizando a 100 %, lo
- *    que inflaba todos los porcentajes (60 % → 71 %) y pasaba la validación porque el total daba 100.
+ *  - Si hay % pero el total queda fuera de 98–102, la fórmula NO se corrige: puede estar expresada en otra base de cálculo (kg cada
+ *    100 L con el alcohol por densidad: 75 % v/v × 0,8 kg/L = 60; % v/v; etc.). Se conservan los valores aprobados y se agrega un
+ *    AVISO (no bloquea el uso de la fórmula; la OE queda «pendiente de verificación» hasta que Producción/Dirección confirme base y
+ *    cantidades). Antes se recalculaba desde la columna de kg normalizando a 100 %, lo que inflaba todos los porcentajes (60 → 71 %).
+ *    Si además las cantidades de la hoja no son proporcionales a los % (la base es ambigua) → revisión (QUANTITY_PCT_MISMATCH).
  *  - Solo si la hoja NO tiene ningún % numérico y trae cantidades completas, el % se deriva de las cantidades (qty / Σqty); si alguna
  *    fila no tiene cantidad, no se deriva: revisión.
  */
-function classifyFormula(rows: RawRow[], hasQtyCol: boolean): ClassifiedFormula {
+function classifyFormula(inputRows: RawRow[], hasQtyCol: boolean): ClassifiedFormula {
+  // Fila sin % pero con cantidad explícita 0 (p. ej. COLORANTE «0.000» kg): su aporte es 0, no un dato faltante.
+  const hasAnyPct = inputRows.some((r) => r.rawPct != null && r.rawPct > 0);
+  const rows = hasAnyPct ? inputRows.map((r) => (r.rawPct == null && r.rawQty === 0 ? { ...r, rawPct: 0 } : r)) : inputRows;
   const pctVals = rows.map((r) => r.rawPct).filter((n): n is number => n != null);
   const qtyVals = rows.map((r) => r.rawQty).filter((n): n is number => n != null);
   const sumPct = pctVals.reduce((a, b) => a + b, 0);
@@ -182,6 +189,7 @@ function classifyFormula(rows: RawRow[], hasQtyCol: boolean): ClassifiedFormula 
   let expressionType: ExpressionType = "PERCENTAGE";
   let percentageSource: PercentageSource = "ORIGINAL";
   const reviewReasons: string[] = [];
+  const baseWarnings: string[] = [];
   let finalPct: (number | null)[];
 
   const maxPct = pctVals.length ? Math.max(...pctVals) : 0;
@@ -223,10 +231,22 @@ function classifyFormula(rows: RawRow[], hasQtyCol: boolean): ClassifiedFormula 
     ? round6(finalNums.reduce((a, b) => a + b, 0))
     : null;
 
-  // Los % de la hoja tienen que sumar ~100 (y todas las filas tener su %): si no, revisión humana (nunca se «arregla» sola).
+  // Los % de la hoja se conservan SIEMPRE. Si no suman ~100 solo se avisa (otra base de cálculo); nunca se «arregla» sola.
   if (percentageSource !== "DERIVED_FROM_QUANTITY" && pctVals.length > 0) {
-    if (percentageTotal != null && (percentageTotal < PCT_LO || percentageTotal > PCT_HI)) reviewReasons.push("PCT_TOTAL_OUT_OF_TOLERANCE");
-    if (finalPct.some((p) => p == null)) reviewReasons.push("PCT_ROW_MISSING");
+    if (finalPct.some((p) => p == null)) {
+      reviewReasons.push("PCT_ROW_MISSING");
+    } else if (percentageTotal != null && (percentageTotal < PCT_LO || percentageTotal > PCT_HI)) {
+      baseWarnings.push("PCT_BASE_NOT_100");
+      // Base ambigua: las cantidades de la hoja deben ser proporcionales a los valores (misma constante en todas las filas).
+      const ratios = rows
+        .map((r, i) => (r.rawQty != null && finalPct[i] != null && finalPct[i]! > 0 ? r.rawQty / (finalPct[i] as number) : null))
+        .filter((n): n is number => n != null);
+      if (ratios.length >= 2) {
+        const min = Math.min(...ratios);
+        const max = Math.max(...ratios);
+        if (min <= 0 || (max - min) / max > 0.01) reviewReasons.push("QUANTITY_PCT_MISMATCH");
+      }
+    }
   }
 
   const ingredients = rows.map((r, i) => ({
@@ -245,6 +265,7 @@ function classifyFormula(rows: RawRow[], hasQtyCol: boolean): ClassifiedFormula 
     percentageTotal,
     originalPercentageTotal,
     reviewReasons,
+    baseWarnings,
   };
 }
 
@@ -369,6 +390,11 @@ export function parseWorkbookBuffer(
     if (sourceConfidence === "PENDING") warnings.push("Producto no determinado");
     if (procedureSteps.length === 0) warnings.push("Procedimiento faltante");
 
+    if (classified.baseWarnings.includes("PCT_BASE_NOT_100")) {
+      warnings.push(
+        `Los valores suman ${classified.percentageTotal} (no 100): la fórmula puede estar expresada en otra base (kg cada 100 L, % v/v, densidad). Se conservan exactos; verificar base y cantidades.`
+      );
+    }
     const reviewReasons = [...classified.reviewReasons];
     const reviewRequired = reviewReasons.length > 0;
 

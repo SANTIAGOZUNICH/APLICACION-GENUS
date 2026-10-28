@@ -16,20 +16,31 @@ const meta = { sourceFile: "ROOT/ORIGINAL BLACK/AFTER SHAVE BASE.xlsx", sourceMo
 const parse = (rows: (string | number)[][]) => parseWorkbookBuffer(xlsx([["Producto", "AFTER SHAVE BASE"], ...rows, ["PROCEDIMIENTO"], ["Paso"]]), meta)[0]!;
 
 describe("el % de la fórmula se conserva exacto", () => {
-  it("alcohol 60 % con columna de kg: NUNCA se reescala a 71 %", () => {
-    // % suma 84,5 (falta una fila sin número) y kg guardan la cantidad del lote de la planilla
+  it("ORIGINAL BLACK real: 60 / 2,5 / 20 / 2 + COLORANTE 0 kg (lote 210): % exactos, aviso de base, usable", () => {
     const d = parse([
       ["MATERIA PRIMA", "Fórmula %", "Kg a pesar"],
-      ["ALCOHOL", 60, 60],
-      ["AGUA", 24, 24],
-      ["MENTOL", 0.5, 0.5],
+      ["ALCOHOL", 60, 126],
+      ["FRAGANCIA", 2.5, 5.25],
+      ["AGUA", 20, 42],
+      ["GLICERINA", 2, 4.2],
+      ["COLORANTE", "", 0],
     ]);
-    const alcohol = d.ingredients.find((i) => i.materialName === "ALCOHOL")!;
-    expect(alcohol.percentage).toBe(60);
-    expect(d.ingredients.map((i) => i.percentage)).toEqual([60, 24, 0.5]);
+    expect(d.ingredients.map((i) => i.percentage)).toEqual([60, 2.5, 20, 2, 0]);
+    expect(d.ingredients.find((i) => i.materialName === "ALCOHOL")!.percentage).not.toBeCloseTo(71, 0);
     expect(d.originalPercentageTotal).toBe(84.5);
+    expect(d.percentageTotal).toBe(84.5);
+    expect(d.reviewRequired).toBe(false); // no se bloquea ni se corrige: se avisa
+    expect(d.warnings.join(" ")).toMatch(/otra base/);
+  });
+  it("base ambigua: cantidades de la hoja no proporcionales a los valores → revisión", () => {
+    const d = parse([
+      ["MATERIA PRIMA", "Fórmula %", "Kg a pesar"],
+      ["ALCOHOL", 60, 126],
+      ["AGUA", 24.5, 10],
+    ]);
     expect(d.reviewRequired).toBe(true);
-    expect(d.reviewReasons).toContain("PCT_TOTAL_OUT_OF_TOLERANCE");
+    expect(d.reviewReasons).toContain("QUANTITY_PCT_MISMATCH");
+    expect(d.ingredients.map((i) => i.percentage)).toEqual([60, 24.5]);
   });
   it("fórmula completa (suma 100): % idénticos, incluye <1 % y decimales", () => {
     const d = parse([
@@ -60,6 +71,19 @@ describe("el % de la fórmula se conserva exacto", () => {
     ]);
     expect(d.ingredients.map((i) => i.percentage)).toEqual([60, null]);
     expect(d.reviewRequired).toBe(true);
+  });
+});
+
+describe("ORIGINAL BLACK: cantidades a pesar = las del archivo aprobado", () => {
+  it("lote 210 → 126 / 5,25 / 42 / 4,2 / 0 kg con los valores exactos (sin 71 %)", () => {
+    const vals: Array<[string, number]> = [["ALCOHOL", 60], ["FRAGANCIA", 2.5], ["AGUA", 20], ["GLICERINA", 2], ["COLORANTE", 0]];
+    const out = recomputeOeDerived({
+      ...createEmptyOeContent({ quantityKg: 210 }),
+      materials: vals.map(([n, p]) => emptyOeMaterial({ materiaPrima: n, codigo: n, formulaPct: p })),
+    });
+    expect(out.materials.map((m) => m.kgAPesar)).toEqual([126, 5.25, 42, 4.2, 0]);
+    expect(out.materials.map((m) => m.formulaPct)).toEqual([60, 2.5, 20, 2, 0]);
+    expect(out.totals.formulaPctSum).toBe(84.5);
   });
 });
 
