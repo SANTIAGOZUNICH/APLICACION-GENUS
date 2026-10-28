@@ -405,15 +405,16 @@ describe("clasificación de expresión", () => {
     expect(d!.reviewRequired).toBe(false);
   });
 
-  it("REVIEW: porcentaje fuera de tolerancia", () => {
+  it("AVISO (no bloquea): valores que no suman 100 se conservan exactos (otra base de cálculo)", () => {
     const buf = oe([
       ["MATERIA PRIMA", "Fórmula %"],
       ["A", 40],
       ["B", 40],
     ]);
     const [d] = parseWorkbookBuffer(buf, meta("ROOT/CLI/f.xlsx", "CLI"));
-    expect(d!.reviewRequired).toBe(true);
-    expect(d!.reviewReasons).toContain("PCT_TOTAL_OUT_OF_TOLERANCE");
+    expect(d!.reviewRequired).toBe(false);
+    expect(d!.ingredients.map((i) => i.percentage)).toEqual([40, 40]);
+    expect(d!.warnings.join(" ")).toMatch(/otra base/);
     expect(d!.originalPercentageTotal).toBe(80);
   });
 

@@ -150,7 +150,7 @@ export function oeCompositionSignature(rows: OeFormulaRow[]): string {
 }
 
 export const FORMULA_ISSUE_LABEL: Record<FormulaIssue, string> = {
-  SUMA_FUERA_DE_RANGO: "Los porcentajes no suman 100 % (98–102).",
+  SUMA_FUERA_DE_RANGO: "Los valores no suman 100 %: la fórmula puede estar en otra base de cálculo (kg cada 100 L, % v/v, densidad del alcohol). No se modificaron; verificá la base y las cantidades a pesar contra el archivo aprobado.",
   PORCENTAJE_DISTINTO: "Hay porcentajes distintos a los de la fórmula aprobada.",
   MP_FALTANTE: "Falta una materia prima de la fórmula aprobada.",
   MP_EXTRA: "Hay una materia prima que no está en la fórmula aprobada.",

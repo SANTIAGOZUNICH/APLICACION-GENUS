@@ -28,7 +28,7 @@ describe("formulaIncompleteReason", () => {
   it("sin MP, con % vacío o total fuera de rango: incompleta", () => {
     expect(formulaIncompleteReason([])).toMatch(/no tiene materias primas/);
     expect(formulaIncompleteReason([{ materiaPrima: "A", codigo: "1", formulaPct: null }])).toMatch(/sin porcentaje \(A\)/);
-    expect(formulaIncompleteReason([{ materiaPrima: "A", codigo: "1", formulaPct: 80 }])).toMatch(/suman 80 %/);
+    expect(formulaIncompleteReason([{ materiaPrima: "A", codigo: "1", formulaPct: 80 }])).toBeNull(); // otra base: se conserva, la OE queda a verificar
   });
 });
 
