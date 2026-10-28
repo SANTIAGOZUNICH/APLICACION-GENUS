@@ -110,6 +110,14 @@ export type OeCompletionRecord = {
   resolved: Array<{ field: string; by: string; at: string }>;
 };
 
+export type OeFormulaVerification = {
+  status: "VERIFICADA";
+  signature: string;
+  by: string;
+  at: string;
+  note: string;
+};
+
 export type OeContent = {
   kind: "OE";
   title: "OE";
@@ -178,6 +186,11 @@ export type OeContent = {
    * Opcional: OE viejas no lo tienen. Ver lib/orders/oe-auto-prep-rules.ts.
    */
   autoPrep?: OeAutoPrep;
+  /**
+   * Verificación manual de la fórmula (Producción/Dirección) contra la fuente aprobada. Vale solo mientras `signature`
+   * (composición de % de la OE) no cambie; ver lib/formulas/oe-formula-compare.ts.
+   */
+  formulaVerification?: OeFormulaVerification;
   /** Firmas físicas — siempre vacías; no se almacenan imágenes. */
   signatures: {
     pesada: null;

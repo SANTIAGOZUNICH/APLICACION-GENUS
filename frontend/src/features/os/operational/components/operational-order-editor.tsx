@@ -61,6 +61,7 @@ import {
 import { OeFormSections } from "./oe-form-sections";
 import { consumptionMaterials } from "@/lib/orders/oe-sheets";
 import { OeMpConsumptionPanel } from "./oe-mp-consumption-panel";
+import { OeFormulaCheckBanner } from "./oe-formula-check-banner";
 import { OeAutoPrepPanel } from "./oe-auto-prep-panel";
 import type { SelectedFormulaOption } from "./formula-client-product-pickers";
 import { fetchFormulaProductOptionsApi } from "@/lib/orders/orders-client";
@@ -1166,6 +1167,9 @@ export function OperationalOrderEditor({ orderId, onClose }: OperationalOrderEdi
           {error}
         </div>
       )}
+      {order.type === "OE" && form.kind === "OE" && !deletedOe ? (
+        <OeFormulaCheckBanner session={session} orderId={orderId} refreshKey={order.version} canVerify={sectorId === "PRODUCCION" || sectorId === "DIRECCION"} />
+      ) : null}
       {order.type === "OE" && form.kind === "OE" && !deletedOe ? (
         <OeMpConsumptionPanel session={session} orderId={orderId} materials={consumptionMaterials(form)} refreshKey={order.version} />
       ) : null}

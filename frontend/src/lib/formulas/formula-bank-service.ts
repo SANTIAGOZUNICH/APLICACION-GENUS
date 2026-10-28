@@ -324,6 +324,52 @@ export class FormulaBankService {
   }
 
   /**
+   * Datos de trazabilidad de una versión para el control de OE (no expone ingredientes). `suspectDerivation` = versión
+   * importada con el parser anterior que reescaló los % a 100 desde la columna de kg: la hoja original traía % que NO sumaban
+   * 100 (originalPercentageTotal fuera de 98–102) y aun así la versión quedó con total 100.
+   */
+  getVersionTrace(versionId: string): {
+    reviewRequired: boolean;
+    percentageSource: string | null;
+    originalPercentageTotal: number | null;
+    percentageTotal: number | null;
+    suspectDerivation: boolean;
+  } | null {
+    const v = this.store.versions.find((x) => x.id === versionId);
+    if (!v) return null;
+    const orig = v.originalPercentageTotal ?? null;
+    const suspectDerivation =
+      v.percentageSource === "DERIVED_FROM_QUANTITY" && orig != null && orig > 0 && (orig < 98 || orig > 102) && !(orig >= 0.98 && orig <= 1.02);
+    return {
+      reviewRequired: Boolean(v.reviewRequired),
+      percentageSource: v.percentageSource ?? null,
+      originalPercentageTotal: orig,
+      percentageTotal: v.percentageTotal,
+      suspectDerivation,
+    };
+  }
+
+  /** Versiones del banco con % reescalados por el parser anterior (ver `getVersionTrace`). Solo lectura. */
+  listSuspectDerivedVersions(): Array<{ versionId: string; client: string; product: string; sourceFile: string | null; originalPercentageTotal: number | null; percentageTotal: number | null; status: string }> {
+    const out: ReturnType<FormulaBankService["listSuspectDerivedVersions"]> = [];
+    for (const v of this.store.versions) {
+      const t = this.getVersionTrace(v.id);
+      if (!t?.suspectDerivation) continue;
+      const prod = this.store.products.find((p) => p.id === v.productId);
+      out.push({
+        versionId: v.id,
+        client: prod?.displayClient ?? "",
+        product: prod?.displayProduct ?? "",
+        sourceFile: v.sourceFile,
+        originalPercentageTotal: t.originalPercentageTotal,
+        percentageTotal: t.percentageTotal,
+        status: v.status,
+      });
+    }
+    return out;
+  }
+
+  /**
    * Incorpora borradores parseados: dedupe hash/semántica, vigencia por fecha archivo.
    * No imprime ingredientes en logs.
    */
