@@ -232,8 +232,16 @@ async function logAliasChange(db: ReturnType<typeof getDb>, action: "confirmó" 
 
 type OeMat = { materiaPrima?: string; codigo?: string; codigoMp?: string; formulaPct?: number | null; parentRowId?: string | null };
 
-/** Producciones de Elaboración programadas en la semana, con su fórmula y lo que ya se consumió. */
-async function loadProductions(weekStart: string, weekEnd: string): Promise<{ inputs: ProductionInput[]; meta: WeeklyAvailability["productions"] }> {
+/**
+ * Producciones de Elaboración programadas en la semana, con su fórmula y lo que ya se consumió.
+ * `opts.undated`: en vez de una semana, las producciones SIN fecha asignada (nunca se las ubica en una semana).
+ * `opts.skipFinishedOe`: una OE ya entregada (COMPLETA) o un trabajo terminado no vuelve a contarse como necesidad.
+ */
+export async function loadProductions(
+  weekStart: string,
+  weekEnd: string,
+  opts: { undated?: boolean; skipFinishedOe?: boolean } = {}
+): Promise<{ inputs: ProductionInput[]; meta: WeeklyAvailability["productions"] }> {
   if (!isDatabaseConfigured()) return { inputs: [], meta: [] };
   const db = getDb();
   const works = await db
@@ -243,8 +251,9 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
       and(
         eq(workItems.sector, "ELABORACION"),
         isNull(workItems.deletedAt),
-        lte(workItems.plannedDate, weekEnd),
-        gte(sql`coalesce(${workItems.plannedDateTo}, ${workItems.plannedDate})`, weekStart)
+        ...(opts.undated
+          ? [isNull(workItems.plannedDate)]
+          : [lte(workItems.plannedDate, weekEnd), gte(sql`coalesce(${workItems.plannedDateTo}, ${workItems.plannedDate})`, weekStart)])
       )
     );
   if (works.length === 0) return { inputs: [], meta: [] };
@@ -289,8 +298,8 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
 
   // Programaciones de la MISMA orden en varios días/semanas: la necesidad de MP de la orden se reparte en proporción a lo
   // planificado en cada semana (suma 1), en vez de contarse completa en cada una. Solo si hay más de una programación vigente.
-  const rootIds = [...new Set(works.map((w) => w.scheduleRootId ?? w.id))];
-  const siblings = await db
+  const rootIds = opts.undated ? [] : [...new Set(works.map((w) => w.scheduleRootId ?? w.id))];
+  const siblings = rootIds.length === 0 ? [] : await db
     .select()
     .from(workItems)
     .where(and(isNull(workItems.deletedAt), eq(workItems.sector, "ELABORACION"), or(inArray(workItems.id, rootIds), inArray(workItems.scheduleRootId, rootIds))));
@@ -315,7 +324,7 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
   const seenOe = new Set<string>();
   const { resolveFormulaForWork } = await import("@/lib/formulas/resolve-for-work");
   for (const w of works) {
-    const days = w.plannedDateTo && w.plannedDateTo !== (w.plannedDate ?? "") ? `${(w.plannedDate ?? "")} → ${w.plannedDateTo}` : (w.plannedDate ?? "");
+    const days = !w.plannedDate ? "Sin fecha" : w.plannedDateTo && w.plannedDateTo !== w.plannedDate ? `${w.plannedDate} → ${w.plannedDateTo}` : w.plannedDate;
     const label = `${w.client} — ${w.product}`;
     const qtyRaw = parseArDecimal(w.plannedQuantity).value;
     const oe = oeByWork.get(w.id);
@@ -332,6 +341,10 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
     }
     if (done) {
       meta.push({ id: w.id, label, kg: null, days, source: "SIN_FORMULA", note: "Ya elaborado: no se considera." });
+      continue;
+    }
+    if (opts.skipFinishedOe && (["completo", "entregado"].includes(w.operationalStatus) || (oe && (oe.status === "COMPLETA" || oe.status === "COMPLETA_CON_PENDIENTES")))) {
+      meta.push({ id: w.id, label, kg: null, days, source: oe ? "OE" : "SIN_FORMULA", oeNumber: oe?.orderNumber, client: w.client, product: w.product, note: "OE/trabajo ya finalizado: no se vuelve a contar." });
       continue;
     }
 
@@ -429,7 +442,7 @@ async function loadRowStates(week: string): Promise<Map<string, StoredState>> {
   return out;
 }
 
-async function loadProductionExclusions(week: string): Promise<StateMem["prods"]> {
+export async function loadProductionExclusions(week: string): Promise<StateMem["prods"]> {
   if (!isDatabaseConfigured()) return new Map([...stateMem().prods].filter(([k]) => k.startsWith(`${week}|`)).map(([k, v]) => [k.slice(week.length + 1), v]));
   const out: StateMem["prods"] = new Map();
   try {
@@ -674,4 +687,36 @@ export async function stockForControlLines(lines: Array<{ materiaPrima: string; 
   const [{ lots }, aliases] = await Promise.all([loadStockLots(), loadNameAliases()]);
   const { stockForLine } = await import("./availability");
   return lines.map((l) => stockForLine(lots, l, iso(now), aliases));
+}
+
+export type WeeklyTotalData = import("./weekly-total").WeeklyTotalResult & {
+  mode: "semana" | "sin-fecha";
+  weekStart: string | null;
+  weekEnd: string | null;
+  generatedAt: string;
+  stockSource: WeeklyAvailability["stockSource"];
+  /** Trabajos de la semana que NO suman, con el motivo (cancelado, OE ya finalizada, misma OE repetida…). */
+  omitted: Array<{ id: string; label: string; oeNumber?: string; note: string }>;
+};
+
+/**
+ * CONTROL SEMANAL TOTAL: necesidad pendiente de cada materia prima de inventario (todas las OE de Elaboración de la semana, o las
+ * SIN FECHA con `anyDay = "sin-fecha"`) contra el stock real de `inv_mp_stock`. Solo lectura: no genera movimientos.
+ */
+export async function getWeeklyTotal(anyDay: string | "sin-fecha", now = new Date()): Promise<WeeklyTotalData> {
+  const { buildWeeklyTotal } = await import("./weekly-total");
+  const undated = anyDay === "sin-fecha";
+  const { start, end } = undated ? { start: "", end: "" } : weekBounds(anyDay);
+  const [{ lots, source }, aliases, prods, prodEx] = await Promise.all([
+    loadStockLots(),
+    loadNameAliases(),
+    loadProductions(start, end, { undated, skipFinishedOe: true }),
+    undated ? Promise.resolve(new Map() as StateMem["prods"]) : loadProductionExclusions(start),
+  ]);
+  const inputs = prods.inputs.filter((p) => !prodEx.has(p.id));
+  const result = buildWeeklyTotal({ lots, aliases, productions: inputs, todayIso: iso(now) });
+  const omitted = prods.meta
+    .filter((m) => m.note && /^(Cancelado|Ya elaborado|Misma OE|OE\/trabajo ya finalizado)/.test(m.note))
+    .map((m) => ({ id: m.id, label: m.label, oeNumber: m.oeNumber, note: m.note! }));
+  return { ...result, mode: undated ? "sin-fecha" : "semana", weekStart: undated ? null : start, weekEnd: undated ? null : end, generatedAt: now.toISOString(), stockSource: source, omitted };
 }
