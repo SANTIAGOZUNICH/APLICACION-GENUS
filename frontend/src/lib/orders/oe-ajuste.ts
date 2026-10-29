@@ -69,11 +69,13 @@ export function applyElaboracionMaterialPatch(
     for (const child of incoming.materials.filter((x) => x.parentRowId === row.id)) {
       const before = current.materials.find((x) => x.id === child.id && x.parentRowId === row.id);
       const base: OeMaterialRow = before ?? { ...child, ajusteAt: null, ajusteBy: null, kgReal: null, lote: "" };
+      const patchedChild = patchRow(base, child);
       materials.push({
-        ...patchRow(base, child),
+        ...patchedChild,
         materiaPrima: patched.materiaPrima,
         codigo: patched.codigo,
-        codigoMp: patched.codigoMp,
+        // Cada registro de consumo puede usar su PROPIO código de MP; si lo deja vacío, usa el de la fila de la fórmula.
+        codigoMp: patchedChild.codigoMp.trim() ? patchedChild.codigoMp : patched.codigoMp,
         parentRowId: row.id,
         formulaPct: null,
         kgAPesar: null,

@@ -111,7 +111,7 @@ export function ProduccionPlanningView() {
     setEditingId(item.id);
     setEditVersion(item.version);
     setForm({
-      plannedDate: item.plannedDate,
+      plannedDate: item.plannedDate ?? "",
       client: item.client,
       product: item.product,
       plannedQuantity: item.plannedQuantity,

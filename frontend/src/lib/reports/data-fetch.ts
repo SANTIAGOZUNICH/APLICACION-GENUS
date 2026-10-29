@@ -56,7 +56,7 @@ export async function fetchWorkItemRows(
     status: r.status,
     operationalStatus: r.operationalStatus,
     qualityStatus: r.qualityStatus,
-    plannedDate: String(r.plannedDate),
+    plannedDate: r.plannedDate ? String(r.plannedDate) : null,
     deliveryDate: r.deliveryDate ? String(r.deliveryDate) : null,
     createdAt: r.createdAt,
     completedAt: r.completedAt,

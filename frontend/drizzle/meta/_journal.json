@@ -484,6 +484,13 @@
       "when": 1793900000000,
       "tag": "0071_email_orders",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1793900001000,
+      "tag": "0072_work_item_optional_date",
+      "breakpoints": true
     }
   ]
 }

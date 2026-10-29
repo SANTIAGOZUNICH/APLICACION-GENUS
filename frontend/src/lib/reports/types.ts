@@ -22,7 +22,7 @@ export type WorkItemReportRow = {
   status: string;
   operationalStatus: string;
   qualityStatus: string;
-  plannedDate: string;
+  plannedDate: string | null;
   deliveryDate: string | null;
   createdAt: Date;
   completedAt: Date | null;
@@ -172,7 +172,7 @@ export type DatoRow = {
   sector: string;
   status: string;
   estadoOperativo: string;
-  plannedDate: string;
+  plannedDate: string | null;
   deliveryDate: string | null;
   unidadesAcondicionadas: number | null;
   unidadesEntregables: number | null;

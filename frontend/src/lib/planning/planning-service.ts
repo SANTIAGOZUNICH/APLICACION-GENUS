@@ -72,11 +72,12 @@ export class PlanningService {
   ): Promise<PlanningWorkItemRecord> {
     const item = await this.repo.getItem(itemId);
     if (!item) throw new PlanningNotFoundError("Trabajo no encontrado.");
+    if (!item.planningWeekId) throw new PlanningValidationError("Este trabajo no tiene fecha asignada: cargale una fecha desde la planilla de trabajos.");
     const week = await this.repo.getWeekById(item.planningWeekId);
     if (!week) throw new PlanningNotFoundError("Semana no encontrada.");
 
     if (week.status === "DRAFT") {
-      const validated = validatePatchWorkItem(patch, week.weekStart, item);
+      const validated = validatePatchWorkItem(patch, week.weekStart, { ...item, plannedDate: item.plannedDate ?? "" });
       const updated = await this.repo.updateItemOptimistic(itemId, patch.version, {
         plannedDate: validated.plannedDate ?? item.plannedDate,
         client: validated.client ?? item.client,
@@ -107,7 +108,7 @@ export class PlanningService {
     }
 
     // PUBLISHED: sin overwrite silencioso; solo reprogramación con evento.
-    const validated = validatePatchWorkItem(patch, week.weekStart, item);
+    const validated = validatePatchWorkItem(patch, week.weekStart, { ...item, plannedDate: item.plannedDate ?? "" });
     const updated = await this.repo.updateItemOptimistic(itemId, patch.version, {
       plannedDate: validated.plannedDate ?? item.plannedDate,
       client: validated.client ?? item.client,
@@ -141,6 +142,7 @@ export class PlanningService {
   async deleteItem(itemId: string, actor: PlanningActor) {
     const item = await this.repo.getItem(itemId);
     if (!item) throw new PlanningNotFoundError("Trabajo no encontrado.");
+    if (!item.planningWeekId) throw new PlanningValidationError("Este trabajo no tiene fecha asignada: se elimina desde la planilla de trabajos.");
     const week = await this.repo.getWeekById(item.planningWeekId);
     if (!week) throw new PlanningNotFoundError("Semana no encontrada.");
     if (week.status !== "DRAFT") {

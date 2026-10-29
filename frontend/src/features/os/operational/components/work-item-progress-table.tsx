@@ -96,7 +96,7 @@ function WorkItemProgressTableInner({
       : []),
     // Responsable (Elaboración) / Línea (Envasado): editable por Producción con versión y auditoría.
     excelCol<WorkItem>("assignee", variant === "envasado" ? "Línea" : "Responsable", (i) => (variant === "envasado" ? (i.line ?? "") : (i.ownerPerson ?? "")), { edit: cells.edit("assignee") }),
-    excelCol<WorkItem>("plannedDate", "Fecha", (i) => (i.plannedDate ? formatDateDisplay(i.plannedDate) : displayField(i.dayLabel)), { edit: cells.edit("plannedDate") }),
+    excelCol<WorkItem>("plannedDate", "Fecha", (i) => (i.plannedDate ? formatDateDisplay(i.plannedDate) : i.dayLabel ? displayField(i.dayLabel) : "Sin fecha asignada"), { edit: cells.edit("plannedDate") }),
     excelCol<WorkItem>("deliveryDate", "Fecha de entrega", (i) => (i.deliveryDate ? formatDateDisplay(i.deliveryDate) : ""), { edit: cells.edit("deliveryDate") }),
     excelCol<WorkItem>("client", "Cliente", (i) => i.client ?? "", { edit: cells.edit("client") }),
     excelCol<WorkItem>("product", "Producto", (i) => i.product ?? "", { edit: cells.edit("product") }),
@@ -251,7 +251,7 @@ function WorkItemProgressTableInner({
                   </td>
                 )}
                 <td className={`${tdClass} hidden sm:table-cell`}>
-                  <span className="os-break">{displayField(item.dayLabel ?? item.plannedDate)}</span>
+                  <span className="os-break">{item.dayLabel ?? item.plannedDate ? displayField(item.dayLabel ?? item.plannedDate) : "Sin fecha asignada"}</span>
                 </td>
                 <td className={`${tdClass} hidden md:table-cell`}>
                   <DeliveryDateBadge deliveryDate={item.deliveryDate} />

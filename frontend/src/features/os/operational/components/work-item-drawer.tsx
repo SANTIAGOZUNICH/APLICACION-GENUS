@@ -220,7 +220,7 @@ export function WorkItemDrawer({
             </div>
             <div>
               <dt className="text-xs uppercase text-[var(--os-text-muted)]">Fecha</dt>
-              <dd className="font-medium">{displayField(item.dayLabel ?? item.plannedDate)}</dd>
+              <dd className="font-medium">{item.dayLabel ?? item.plannedDate ? displayField(item.dayLabel ?? item.plannedDate) : "Sin fecha asignada"}</dd>
             </div>
             <div>
               <dt className="text-xs uppercase text-[var(--os-text-muted)]">{responsibleLabel}</dt>

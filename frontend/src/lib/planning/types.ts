@@ -52,8 +52,10 @@ export interface PlanningWeekRecord {
 
 export interface PlanningWorkItemRecord {
   id: string;
-  planningWeekId: string;
-  plannedDate: string;
+  /** null = trabajo sin fecha asignada (no pertenece a ninguna semana). */
+  planningWeekId: string | null;
+  /** null = sin fecha asignada. */
+  plannedDate: string | null;
   /** Fin inclusive del rango de aparición (null = solo plannedDate). */
   plannedDateTo?: string | null;
   client: string;

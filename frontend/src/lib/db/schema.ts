@@ -113,10 +113,10 @@ export const workItems = pgTable(
   "work_items",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    planningWeekId: uuid("planning_week_id")
-      .notNull()
-      .references(() => planningWeeks.id, { onDelete: "cascade" }),
-    plannedDate: date("planned_date").notNull(),
+    /** NULL = trabajo sin fecha asignada (0072): no pertenece a ninguna semana. */
+    planningWeekId: uuid("planning_week_id").references(() => planningWeeks.id, { onDelete: "cascade" }),
+    /** NULL = sin fecha asignada (0072). Nunca se inventa una fecha por defecto. */
+    plannedDate: date("planned_date"),
     /** Fin inclusive del rango de aparición en Semana (nullable = solo plannedDate). */
     plannedDateTo: date("planned_date_to"),
     client: text("client").notNull(),

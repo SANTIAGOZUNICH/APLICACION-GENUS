@@ -53,6 +53,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0069_scheduled_delivery_immovable": "55c8696434e68273d361fd181b45ef41b35f43f3b121637a88d7c3aa02e476ab",
   "0070_me_material_pedido_links": "11f24856bec974c0121c72d9a277be8f47fc854ec002cb49d6a06f13bccb9aa8",
   "0071_email_orders": "3fa5294fe522bee90f0241fb5f9eef047f2caab16135f8dc4ef52678454008bd",
+  "0072_work_item_optional_date": "f27bed0fed06c301d0aa84be652da954abd36cc8b4a99903d6b2a3397c0b66a6",
   "0062_billing_control": "0d0d6a356759bb57b0f8dd2d9663d74a1f7b6841d493196e9059be0eb586c68f",
   "0060_aviso_user_recipients": "164ac0c7a37f5deeb64c52b08ceb40314451505d4863376a1664ee6f1404c270",
   "0059_delivery_line_packing": "b041d7bd272e73038789695982af2eead8642b1b387c1967ff38c2684eba58f5",
@@ -80,10 +81,13 @@ export function splitStatements(sqlText) {
 }
 
 const IDENT = String.raw`"?[a-z_][a-z0-9_]*"?`;
+/** Relajar una restricción (NOT NULL → nullable) es idempotente y no toca datos: único `alter column` permitido, sentencia exacta. */
+const DROP_NOT_NULL = new RegExp(String.raw`^alter\s+table\s+${IDENT}\s+alter\s+column\s+${IDENT}\s+drop\s+not\s+null$`, "i");
 const ALLOWED_STATEMENT_PATTERNS = [
   new RegExp(String.raw`^create\s+table\s+if\s+not\s+exists\s+${IDENT}\s*\(`, "i"),
   new RegExp(String.raw`^create\s+(unique\s+)?index\s+if\s+not\s+exists\s+${IDENT}\s+on\s+${IDENT}\s*\(`, "i"),
   new RegExp(String.raw`^alter\s+table\s+${IDENT}\s+add\s+column\s+if\s+not\s+exists\s+${IDENT}\s+`, "i"),
+  DROP_NOT_NULL,
 ];
 const FORBIDDEN = /\b(drop|delete|truncate|update|insert|grant|revoke|copy|do|execute|call|vacuum|reindex|rename|alter\s+type|alter\s+column|set\s+not\s+null)\b/i;
 
@@ -94,7 +98,7 @@ export function rejectStatement(stmt) {
   if (!ALLOWED_STATEMENT_PATTERNS.some((re) => re.test(body))) return "no es DDL aditivo idempotente permitido";
   // Se ignoran palabras dentro de literales/identificadores citados al buscar verbos prohibidos.
   const noQuoted = body.replace(/'(?:[^']|'')*'/g, "''").replace(/"[^"]*"/g, '""');
-  if (FORBIDDEN.test(noQuoted)) return "contiene una palabra prohibida";
+  if (!DROP_NOT_NULL.test(body) && FORBIDDEN.test(noQuoted)) return "contiene una palabra prohibida";
   return null;
 }
 

@@ -111,12 +111,11 @@ describe("entrega de OE: descuento por KG REAL UTILIZADO (código MP + lote)", (
     // Segunda pulsación: no duplica la entrega.
     await expect(service.deliver(oe.id, elaboracion, true)).rejects.toThrow(/ya está completa/);
 
-    // Regularizar sin completar: informa qué falta, no cambia nada.
-    const err = await service.settleMpConsumption(oe.id, elaboracion).catch((e) => e);
-    expect(err).toBeInstanceOf(MpConsumptionIncompleteError);
-    expect((err as MpConsumptionIncompleteError).issues.map((i) => [i.rowNumber, i.field])).toEqual([[2, "codigoMp"]]);
+    // Regularizar sin completar: no bloquea ni descuenta de más; la fila incompleta sigue pendiente.
+    const again = await service.settleMpConsumption(oe.id, elaboracion);
+    expect(hasMpConsumoPendiente(again.formData)).toBe(true);
     expect(lotKg("MP-AGUA", "A1")).toBe(90);
-    expect(hasMpConsumoPendiente((await service.getOrder(oe.id, produccion)).formData)).toBe(true);
+    expect(lotKg("MP-GLI", "G1")).toBe(200);
 
     // Completando el dato: se descuenta lo que faltaba UNA vez (AGUA no se descuenta de nuevo); reintentar no duplica.
     const settled = await service.settleMpConsumption(oe.id, elaboracion, { rows: [{ rowId: "r2", codigoMp: "MP-GLI" }] });

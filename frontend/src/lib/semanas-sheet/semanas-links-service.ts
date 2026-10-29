@@ -58,7 +58,7 @@ export interface WorkItemDirectory {
 function toBrief(r: typeof workItems.$inferSelect): WorkItemBrief {
   return {
     id: r.id, sector: r.sector, client: r.client, product: r.product, quantity: r.plannedQuantity, unit: r.unit,
-    plannedDate: String(r.plannedDate), plannedDateTo: r.plannedDateTo ? String(r.plannedDateTo) : null,
+    plannedDate: r.plannedDate ? String(r.plannedDate) : "", plannedDateTo: r.plannedDateTo ? String(r.plannedDateTo) : null,
     orderNumber: r.orderNumber, line: r.line, branchOwner: r.branchOwner, codificadoOriginSector: r.codificadoOriginSector,
     deleted: Boolean(r.deletedAt),
   };

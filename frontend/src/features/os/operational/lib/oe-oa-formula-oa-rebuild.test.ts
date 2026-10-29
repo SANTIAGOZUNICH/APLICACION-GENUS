@@ -275,7 +275,7 @@ describe("permisos de fórmula y ajuste OE", () => {
     expect(patched.materials[0]!.codigoMp).toBe("MP-A");
   });
 
-  it("Elaboración agrega una fila de lote adicional: hereda MP y códigos; no puede agregar MP a la fórmula", () => {
+  it("Elaboración agrega un registro de consumo: hereda la MP y conserva SU código de MP; no puede agregar MP a la fórmula", () => {
     const current = createEmptyOeContent({ productName: "X" });
     current.materials = [emptyOeMaterial({ materiaPrima: "A", codigo: "F-1", codigoMp: "MP-A", formulaPct: 50, kgAPesar: 5 })];
     const incoming = structuredClone(current);
@@ -285,7 +285,7 @@ describe("permisos de fórmula y ajuste OE", () => {
     );
     const patched = applyElaboracionMaterialPatch(current, incoming, "e@x.com");
     expect(patched.materials).toHaveLength(2);
-    expect(patched.materials[1]).toMatchObject({ materiaPrima: "A", codigo: "F-1", codigoMp: "MP-A", kgReal: 2, lote: "L2", formulaPct: null });
+    expect(patched.materials[1]).toMatchObject({ materiaPrima: "A", codigo: "F-1", codigoMp: "MP-Z", kgReal: 2, lote: "L2", formulaPct: null });
   });
 });
 

@@ -454,7 +454,7 @@ export function WorkItemCard(props: WorkItemCardsProps & { item: WorkItem }) {
       <div className={`grid gap-x-3 gap-y-1.5 border-t border-white/10 pt-2 ${T.base} font-semibold text-[#e6f0f6]`} style={{ gridTemplateColumns: `repeat(auto-fit,minmax(${T.min},1fr))` }}>
         <div>
           <div className={T.label}>Fecha</div>
-          <PlanField item={item} field="plannedDate" label="fecha de producción" value={item.plannedDate ?? ""} display={<span className="inline-flex items-center gap-1"><CalendarDays className="size-3.5 opacity-70" aria-hidden="true" />{item.plannedDate ? formatDay(item.plannedDate) : displayField(item.dayLabel)}</span>} cells={cells} inputType="date" testId="card-date" />
+          <PlanField item={item} field="plannedDate" label="fecha de producción" value={item.plannedDate ?? ""} display={<span className="inline-flex items-center gap-1"><CalendarDays className="size-3.5 opacity-70" aria-hidden="true" />{item.plannedDate ? formatDay(item.plannedDate) : item.dayLabel ? displayField(item.dayLabel) : "Sin fecha asignada"}</span>} cells={cells} inputType="date" testId="card-date" />
         </div>
         <div>
           <div className={T.label}>{assigneeLabel}</div>

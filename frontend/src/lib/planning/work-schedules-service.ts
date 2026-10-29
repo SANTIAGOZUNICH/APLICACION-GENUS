@@ -52,7 +52,7 @@ async function summarize(tx: Tx, rootId: string): Promise<ScheduleSummary[]> {
   const out: ScheduleSummary[] = [];
   for (const r of rows.sort((a, b) => String(a.plannedDate).localeCompare(String(b.plannedDate)) || a.createdAt.getTime() - b.createdAt.getTime())) {
     const [d] = await tx.select({ n: sql<number>`coalesce(sum(${workItemDeliveryLines.quantity}),0)::float8` }).from(workItemDeliveryLines).where(and(eq(workItemDeliveryLines.workItemId, r.id), eq(workItemDeliveryLines.status, "ACTIVA")));
-    out.push({ id: r.id, plannedDate: String(r.plannedDate), plannedDateTo: r.plannedDateTo ? String(r.plannedDateTo) : null, quantity: r.plannedQuantity, isOriginal: r.id === rootId, status: r.operationalStatus, deliveredUnits: Number(d?.n ?? 0) });
+    out.push({ id: r.id, plannedDate: r.plannedDate ? String(r.plannedDate) : "", plannedDateTo: r.plannedDateTo ? String(r.plannedDateTo) : null, quantity: r.plannedQuantity, isOriginal: r.id === rootId, status: r.operationalStatus, deliveredUnits: Number(d?.n ?? 0) });
   }
   return out;
 }

@@ -60,7 +60,9 @@ function originLabel(sector: string | null | undefined): string | null {
 
 /** Proyecta filas nativas al contrato WorkItem actual de /mi-trabajo. */
 export function projectNativeWorkItem(item: PlanningWorkItemRecord): WorkItem {
-  const weekStart = weekStartMonday(item.plannedDate);
+  // Sin fecha asignada (plannedDate null): no hay día ni semana; nunca se inventa una.
+  const hasDate = Boolean(item.plannedDate);
+  const weekStart = hasDate ? weekStartMonday(item.plannedDate as string) : null;
   const packagingLote = item.packagingLote?.trim() || null;
   const packagingVto = item.packagingVto?.trim() || null;
   const orderNumber = item.orderNumber?.trim() || null;
@@ -96,14 +98,14 @@ export function projectNativeWorkItem(item: PlanningWorkItemRecord): WorkItem {
           : "ACONDICIONAMIENTO",
     date: item.plannedDate,
     plannedDate: item.plannedDate,
-    plannedDateTo: item.plannedDateTo ?? item.plannedDate,
+    plannedDateTo: hasDate ? (item.plannedDateTo ?? item.plannedDate) : null,
     dateHeaderSourceRange: null,
     dateResolutionMethod: null,
-    dayLabel: dayOfWeekName(item.plannedDate),
-    dayOfWeek: dayOfWeekName(item.plannedDate),
-    weekLabel: `Semana ${weekStart}`,
+    dayLabel: hasDate ? dayOfWeekName(item.plannedDate as string) : null,
+    dayOfWeek: hasDate ? dayOfWeekName(item.plannedDate as string) : null,
+    weekLabel: hasDate ? `Semana ${weekStart}` : "Sin fecha asignada",
     weekStart,
-    weekId: resolveWeekId(item.plannedDate),
+    weekId: hasDate ? resolveWeekId(item.plannedDate as string) : null,
     client: item.client,
     product: item.product,
     quantity: item.plannedQuantity,
@@ -258,7 +260,7 @@ export function projectQualityItem(item: PlanningWorkItemRecord): {
     oa: item.sector !== "ELABORACION" ? orderNumber : null,
     line: item.line,
     quantity: item.finishedQty ?? item.plannedQuantity,
-    dayLabel: dayOfWeekName(item.plannedDate) ?? "—",
+    dayLabel: (item.plannedDate ? dayOfWeekName(item.plannedDate) : null) ?? "—",
     deliveryDate: item.deliveryDate ?? null,
     status,
     relatedWorkItemId: id,

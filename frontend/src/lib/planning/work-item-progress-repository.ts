@@ -740,7 +740,7 @@ export async function updateWorkItemPlanningDurable(
       }
       // Sin restricción de semana: Producción mueve el trabajo a cualquier día (otra semana o mes). Las vistas
       // Semana/Día lo ubican por su fecha (no por la semana de planificación de origen).
-      const currentFrom = String(existing.plannedDate);
+      const currentFrom = existing.plannedDate ? String(existing.plannedDate) : null; // null = sin fecha asignada
       const currentTo = existing.plannedDateTo ? String(existing.plannedDateTo) : currentFrom;
       if (nextDate !== currentFrom || nextDate !== currentTo) {
         before.plannedDate = currentFrom;
@@ -1011,7 +1011,7 @@ export async function rescheduleWorkItemDurable(id: string, input: RescheduleWor
     const after: Record<string, unknown> = {};
     const patch: Partial<typeof workItems.$inferInsert> = { updatedAt: new Date() };
 
-    const currentFrom = String(existing.plannedDate);
+    const currentFrom = existing.plannedDate ? String(existing.plannedDate) : null;
     const currentTo = existing.plannedDateTo ? String(existing.plannedDateTo) : currentFrom;
     if (nextDate !== currentFrom || nextDate !== currentTo) {
       before.plannedDate = currentFrom;

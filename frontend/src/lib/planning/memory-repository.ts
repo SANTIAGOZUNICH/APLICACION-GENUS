@@ -75,7 +75,7 @@ export class MemoryPlanningRepository implements PlanningRepository {
   async listItems(weekId: string): Promise<PlanningWorkItemRecord[]> {
     return [...this.items.values()]
       .filter((i) => i.planningWeekId === weekId)
-      .sort((a, b) => a.plannedDate.localeCompare(b.plannedDate) || a.product.localeCompare(b.product))
+      .sort((a, b) => (a.plannedDate ?? "").localeCompare(b.plannedDate ?? "") || a.product.localeCompare(b.product))
       .map((i) => ({ ...i }));
   }
 
@@ -91,7 +91,7 @@ export class MemoryPlanningRepository implements PlanningRepository {
       [...this.weeks.values()].filter((w) => w.status === "PUBLISHED").map((w) => w.id)
     );
     let list = [...this.items.values()].filter(
-      (i) => i.status === "PUBLICADO" && publishedWeekIds.has(i.planningWeekId)
+      (i) => i.status === "PUBLICADO" && i.planningWeekId != null && publishedWeekIds.has(i.planningWeekId)
     );
     const floorSectors = (filters.sectors ?? []).filter(
       (s) =>
@@ -114,6 +114,7 @@ export class MemoryPlanningRepository implements PlanningRepository {
     }
     if (filters.date) {
       list = list.filter((i) => {
+        if (!i.plannedDate) return false; // sin fecha asignada: no está en ningún día
         const end = i.plannedDateTo ?? i.plannedDate;
         return i.plannedDate <= filters.date! && end >= filters.date!;
       });
@@ -123,12 +124,13 @@ export class MemoryPlanningRepository implements PlanningRepository {
       const weekStart = filters.weekStart;
       const weekEnd = addDaysIso(weekStart, 4);
       list = list.filter((i) => {
+        if (!i.plannedDate) return false;
         const end = i.plannedDateTo ?? i.plannedDate;
         return i.plannedDate <= weekEnd && end >= weekStart;
       });
     }
     list = list
-      .sort((a, b) => a.plannedDate.localeCompare(b.plannedDate) || a.product.localeCompare(b.product))
+      .sort((a, b) => (a.plannedDate ?? "").localeCompare(b.plannedDate ?? "") || a.product.localeCompare(b.product))
       .map((i) => ({ ...i }));
     const limit =
       typeof filters.limit === "number" && filters.limit > 0
@@ -149,6 +151,7 @@ export class MemoryPlanningRepository implements PlanningRepository {
       .filter(
         (i) =>
           i.status === "PUBLICADO" &&
+          i.planningWeekId != null &&
           publishedWeekIds.has(i.planningWeekId) &&
           Boolean(i.completedAt) &&
           (!filters.operationalStatus || (i.operationalStatus ?? "") === filters.operationalStatus)
@@ -246,7 +249,7 @@ export class MemoryPlanningRepository implements PlanningRepository {
       }
 
       for (const item of items) {
-        validateCreateWorkItem(item, week.weekStart);
+        validateCreateWorkItem({ ...item, plannedDate: item.plannedDate ?? "" }, week.weekStart);
       }
 
       if (this.failPublishHalfway) {

@@ -134,8 +134,9 @@ export function AssignWorkDialog({
   );
   const [client, setClient] = useState(initialValues?.client ?? "");
   const [product, setProduct] = useState(initialValues?.product ?? "");
-  const [plannedDate, setPlannedDate] = useState(initialPlannedDate || todayIso());
-  const [plannedDateTo, setPlannedDateTo] = useState(initialPlannedDate || todayIso());
+  // La fecha es OPCIONAL: sin fecha inicial el trabajo se asigna «Sin fecha asignada» (no se completa con la de hoy).
+  const [plannedDate, setPlannedDate] = useState(initialPlannedDate || "");
+  const [plannedDateTo, setPlannedDateTo] = useState(initialPlannedDate || "");
   const [deliveryDate, setDeliveryDate] = useState(todayIso());
   const [quantity, setQuantity] = useState(initialValues?.quantity ?? "");
   const [orderRef, setOrderRef] = useState("");
@@ -332,7 +333,7 @@ export function AssignWorkDialog({
     // usuario ya haya escrito a mano (solo se aplica si el campo está vacío
     // o si todavía es exactamente lo que el autocompletado dejó la última
     // vez, ver pedido-order-ref.ts).
-    const nextAutoRef = buildAutoOrderRef(sector, p.op, plannedDate);
+    const nextAutoRef = buildAutoOrderRef(sector, p.op, plannedDate || todayIso());
     if (nextAutoRef && (orderRef.trim() === "" || orderRef === autoOrderRef)) {
       setOrderRef(nextAutoRef);
     }
@@ -362,11 +363,11 @@ export function AssignWorkDialog({
       setErrorMsg("Completá cliente, producto y cantidad.");
       return;
     }
-    if (!plannedDate || !plannedDateTo) {
-      setErrorMsg("Indicá el rango Desde / Hasta de la asignación.");
+    if (plannedDateTo && !plannedDate) {
+      setErrorMsg("Indicá la fecha Desde o dejá ambas fechas vacías (sin fecha asignada).");
       return;
     }
-    if (plannedDateTo < plannedDate) {
+    if (plannedDate && plannedDateTo && plannedDateTo < plannedDate) {
       setErrorMsg("Hasta no puede ser anterior a Desde.");
       return;
     }
@@ -389,8 +390,8 @@ export function AssignWorkDialog({
       line: sector === "ELABORACION" || sector === "CODIFICADO" ? null : line,
       client: client.trim(),
       product: product.trim(),
-      plannedDate,
-      plannedDateTo,
+      plannedDate: plannedDate || null,
+      plannedDateTo: plannedDate ? plannedDateTo || plannedDate : null,
       deliveryDate,
       plannedQuantity: quantity.trim(),
       unit,
@@ -465,7 +466,7 @@ export function AssignWorkDialog({
       pushNotification({
         kind: "trabajo_asignado",
         title: `Nuevo trabajo asignado — ${SECTOR_LABELS[sector]}`,
-        message: `${product.trim()} · ${client.trim()} — ${new Date(plannedDate + "T12:00:00").toLocaleDateString("es-AR")} → ${new Date(plannedDateTo + "T12:00:00").toLocaleDateString("es-AR")}`,
+        message: `${product.trim()} · ${client.trim()} — ${plannedDate ? `${new Date(plannedDate + "T12:00:00").toLocaleDateString("es-AR")} → ${new Date((plannedDateTo || plannedDate) + "T12:00:00").toLocaleDateString("es-AR")}` : "Sin fecha asignada"}`,
         sectors: [sector],
       });
 
@@ -733,7 +734,7 @@ export function AssignWorkDialog({
 
           <div className="space-y-1.5">
             <label htmlFor="af-date-from" className="text-sm font-medium">
-              Desde (aparición en Semana)
+              Desde (opcional · aparición en Semana)
             </label>
             <input
               id="af-date-from"
@@ -743,26 +744,26 @@ export function AssignWorkDialog({
               onChange={(e) => {
                 const v = e.target.value;
                 setPlannedDate(v);
-                if (plannedDateTo < v) setPlannedDateTo(v);
+                if (v && plannedDateTo && plannedDateTo < v) setPlannedDateTo(v);
+                if (!v) setPlannedDateTo("");
               }}
               className={CONTROL_CLASS}
-              required
             />
+            {!plannedDate ? <p className="text-xs text-[var(--os-text-muted)]" data-testid="assign-sin-fecha">Sin fecha asignada: el trabajo queda en Pendientes hasta que le cargues una fecha.</p> : null}
           </div>
 
           <div className="space-y-1.5">
             <label htmlFor="af-date-to" className="text-sm font-medium">
-              Hasta (aparición en Semana)
+              Hasta (opcional)
             </label>
             <input
               id="af-date-to"
               type="date"
               value={plannedDateTo}
-              min={plannedDate}
-              disabled={submitting}
+              min={plannedDate || undefined}
+              disabled={submitting || !plannedDate}
               onChange={(e) => setPlannedDateTo(e.target.value)}
               className={CONTROL_CLASS}
-              required
             />
           </div>
 
