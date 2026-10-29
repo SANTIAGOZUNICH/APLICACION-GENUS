@@ -415,6 +415,7 @@ export const MP_TABS = [
   "Stock",
   "Ingresos MP",
   "Control semanal",
+  "Control semanal total",
   "Compras MP",
   "COA'S",
 ] as const;
