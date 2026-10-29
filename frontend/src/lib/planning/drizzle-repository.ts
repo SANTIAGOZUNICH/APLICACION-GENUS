@@ -128,7 +128,7 @@ function mapItem(row: WorkItemRow | Record<string, unknown>): PlanningWorkItemRe
   return {
     id: r.id,
     planningWeekId: r.planningWeekId,
-    plannedDate: String(r.plannedDate),
+    plannedDate: r.plannedDate ? String(r.plannedDate) : null,
     plannedDateTo: r.plannedDateTo ? String(r.plannedDateTo) : null,
     client: r.client,
     product: r.product,
@@ -293,7 +293,8 @@ export class DrizzlePlanningRepository implements PlanningRepository {
   }): Promise<PlanningWorkItemRecord[]> {
     const conditions = [
       eq(workItems.status, "PUBLICADO"),
-      eq(planningWeeks.status, "PUBLISHED"),
+      // Un trabajo SIN fecha asignada (planning_week_id NULL, 0072) no tiene semana: se incluye; con semana, debe estar publicada.
+      or(isNull(workItems.planningWeekId), eq(planningWeeks.status, "PUBLISHED"))!,
       // Borrado por Producción (0025) — tombstone, nunca visible en vistas
       // operativas activas. work_item_deliveries/operational_events/OA
       // siguen intactos; solo se excluye de esta consulta.
@@ -370,7 +371,7 @@ export class DrizzlePlanningRepository implements PlanningRepository {
     const rows = await this.db
       .select(WORK_ITEM_SELECT_COLUMNS)
       .from(workItems)
-      .innerJoin(planningWeeks, eq(workItems.planningWeekId, planningWeeks.id))
+      .leftJoin(planningWeeks, eq(workItems.planningWeekId, planningWeeks.id))
       .leftJoin(productionPedidos, eq(workItems.productionPedidoId, productionPedidos.id))
       .where(and(...conditions))
       .orderBy(asc(workItems.plannedDate), asc(workItems.product))
@@ -402,12 +403,12 @@ export class DrizzlePlanningRepository implements PlanningRepository {
     const rows = await this.db
       .select(WORK_ITEM_SELECT_COLUMNS)
       .from(workItems)
-      .innerJoin(planningWeeks, eq(workItems.planningWeekId, planningWeeks.id))
+      .leftJoin(planningWeeks, eq(workItems.planningWeekId, planningWeeks.id))
       .leftJoin(productionPedidos, eq(workItems.productionPedidoId, productionPedidos.id))
       .where(
         and(
           eq(workItems.status, "PUBLICADO"),
-          eq(planningWeeks.status, "PUBLISHED"),
+          or(isNull(workItems.planningWeekId), eq(planningWeeks.status, "PUBLISHED"))!,
           isNull(workItems.deletedAt),
           sql`${workItems.completedAt} IS NOT NULL`,
           statusFilter
@@ -534,7 +535,7 @@ export class DrizzlePlanningRepository implements PlanningRepository {
 
       const weekMapped = mapWeek(week);
       for (const item of items) {
-        validateCreateWorkItem(mapItem(item), weekMapped.weekStart);
+        validateCreateWorkItem({ ...mapItem(item), plannedDate: item.plannedDate ? String(item.plannedDate) : "" }, weekMapped.weekStart);
       }
 
       const ts = new Date();

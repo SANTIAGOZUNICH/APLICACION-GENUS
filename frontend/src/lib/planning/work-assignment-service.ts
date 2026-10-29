@@ -47,7 +47,8 @@ export type WorkAssignmentInput = {
   product: string;
   plannedQuantity: string;
   unit?: string;
-  plannedDate: string;
+  /** Opcional: sin fecha el trabajo queda «Sin fecha asignada» (nunca se inventa una). */
+  plannedDate?: string | null;
   plannedDateTo?: string | null;
   deliveryDate?: string | null;
   line?: string | null;
@@ -113,7 +114,7 @@ function mapItemRow(row: typeof workItems.$inferSelect): PlanningWorkItemRecord 
   return {
     id: row.id,
     planningWeekId: row.planningWeekId,
-    plannedDate: String(row.plannedDate),
+    plannedDate: row.plannedDate ? String(row.plannedDate) : null,
     plannedDateTo: row.plannedDateTo ? String(row.plannedDateTo) : null,
     client: row.client,
     product: row.product,
@@ -262,18 +263,21 @@ export async function assignWorkItemDurable(
     );
   }
 
-  const plannedDate = assertIsoDate(input.plannedDate, "Desde");
-  const plannedDateTo = input.plannedDateTo?.trim()
-    ? assertIsoDate(input.plannedDateTo, "Hasta")
-    : plannedDate;
-  if (plannedDateTo < plannedDate) {
+  // La fecha es OPCIONAL: sin "Desde" el trabajo se guarda sin fecha (NULL), sin semana y sin rango.
+  const plannedDate: string | null = input.plannedDate?.trim() ? assertIsoDate(input.plannedDate, "Desde") : null;
+  const plannedDateTo: string | null = plannedDate
+    ? input.plannedDateTo?.trim()
+      ? assertIsoDate(input.plannedDateTo, "Hasta")
+      : plannedDate
+    : null;
+  if (plannedDate && plannedDateTo && plannedDateTo < plannedDate) {
     throw new PlanningValidationError("Hasta no puede ser anterior a Desde.");
   }
 
   const line = normalizeLine(input.line);
   const branchOwner = normalizeBranchOwner(input.branchOwner);
   const assignment = assertSectorAssignment(input.sector, line, branchOwner);
-  const weekStart = weekStartMonday(plannedDate);
+  const weekStart = plannedDate ? weekStartMonday(plannedDate) : null;
   const originRef = idempotencyOriginRef(key);
   const notes = composeNotes(input);
   const orderNumberRaw = input.orderNumber?.trim() || null;
@@ -348,15 +352,21 @@ export async function assignWorkItemDurable(
         pedidoSnapshot = foundPedido;
       }
 
-      let [week] = await tx
-        .select()
-        .from(planningWeeks)
-        .where(eq(planningWeeks.weekStart, weekStart))
-        .limit(1);
+      let week: typeof planningWeeks.$inferSelect | undefined = weekStart
+        ? (
+            await tx
+              .select()
+              .from(planningWeeks)
+              .where(eq(planningWeeks.weekStart, weekStart))
+              .limit(1)
+          )[0]
+        : undefined;
 
       const now = new Date();
 
-      if (!week) {
+      if (!weekStart) {
+        // Sin fecha asignada: no corresponde a ninguna semana de planificación.
+      } else if (!week) {
         const [created] = await tx
           .insert(planningWeeks)
           .values({
@@ -407,7 +417,7 @@ export async function assignWorkItemDurable(
           })
           .where(
             and(
-              eq(workItems.planningWeekId, week.id),
+              eq(workItems.planningWeekId, week!.id),
               eq(workItems.status, "BORRADOR")
             )
           );
@@ -536,7 +546,7 @@ export async function assignWorkItemDurable(
           code: productCode,
           quantity: input.plannedQuantity.trim(),
           notes,
-          assignmentDate: plannedDate,
+          assignmentDate: plannedDate ?? "",
           forceLink,
           actorEmail: actor.email,
           actorSector: actor.sector,
@@ -583,7 +593,7 @@ export async function assignWorkItemDurable(
           code: productCode,
           quantity: input.plannedQuantity.trim(),
           notes,
-          assignmentDate: plannedDate,
+          assignmentDate: plannedDate ?? "",
           forceLink,
           actorEmail: actor.email,
           actorSector: actor.sector,
@@ -647,7 +657,7 @@ export async function assignWorkItemDurable(
             "Esta orden ya tiene un trabajo asignado.",
             {
               id: "already-assigned",
-              planningWeekId: week.id,
+              planningWeekId: week?.id ?? null,
               plannedDate,
               client: input.client.trim(),
               product: input.product.trim(),
@@ -683,9 +693,9 @@ export async function assignWorkItemDurable(
       const [inserted] = await tx
         .insert(workItems)
         .values({
-          planningWeekId: week.id,
+          planningWeekId: week?.id ?? null,
           plannedDate,
-          plannedDateTo: plannedDateTo === plannedDate ? null : plannedDateTo,
+          plannedDateTo: !plannedDate || plannedDateTo === plannedDate ? null : plannedDateTo,
           client: input.client.trim(),
           product: input.product.trim(),
           plannedQuantity: input.plannedQuantity.trim(),
@@ -799,7 +809,7 @@ export async function assignWorkItemDurable(
 
       await tx.insert(operationalEvents).values({
         workItemId: inserted.id,
-        planningWeekId: week.id,
+        planningWeekId: week?.id ?? null,
         type: "ITEM_ASSIGNED",
         fromStatus: null,
         toStatus: "PUBLICADO",

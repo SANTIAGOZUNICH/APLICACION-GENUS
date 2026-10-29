@@ -74,7 +74,7 @@ export function mapItem(row: typeof workItems.$inferSelect): PlanningWorkItemRec
   return {
     id: row.id,
     planningWeekId: row.planningWeekId,
-    plannedDate: String(row.plannedDate),
+    plannedDate: row.plannedDate ? String(row.plannedDate) : null,
     plannedDateTo: row.plannedDateTo ? String(row.plannedDateTo) : null,
     client: row.client,
     product: row.product,

@@ -64,7 +64,7 @@ export function OeMpConsumptionPanel({
               <tr key={r.key} className="border-t border-[var(--os-border-subtle)]" data-testid="oe-mp-consumo-row" data-estado={r.estado}>
                 <td className="py-1 pr-2">{r.materiaPrima}</td>
                 <td className="py-1 pr-2">
-                  {r.codigo}
+                  {r.codigo || "—"}
                   {r.lote ? ` / ${r.lote}` : ""}
                 </td>
                 <td className="py-1 pr-2 text-right tabular-nums">{r.estado === "confirmado" ? fmtKg(r.stockAntes) : "—"}</td>
@@ -77,6 +77,8 @@ export function OeMpConsumptionPanel({
                 <td className="py-1">
                   {r.estado === "confirmado" ? (
                     <span title={`${r.at ? new Date(r.at).toLocaleString("es-AR") : ""} · ${r.actorEmail ?? ""}`}>Descontado{r.negativo ? " · stock negativo" : ""}</span>
+                  ) : r.estado === "sin_descuento" ? (
+                    <span className="text-amber-800">Sin descuento — MP no identificada</span>
                   ) : r.estado === "pendiente" ? (
                     <span className="text-amber-800">Pendiente de registrar</span>
                   ) : (

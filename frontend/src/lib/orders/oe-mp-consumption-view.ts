@@ -22,7 +22,7 @@ export type ConsumptionViewRow = {
   codigo: string;
   lote: string;
   /** confirmado = ya descontado del inventario; pendiente = kg reales cargados pero sin registrar; previsto = solo teórico. */
-  estado: "confirmado" | "pendiente" | "previsto";
+  estado: "confirmado" | "pendiente" | "previsto" | "sin_descuento";
   /** kg (siempre positivos); el signo se muestra al formatear. */
   kg: number;
   stockAntes: number | null;
@@ -52,6 +52,7 @@ export function buildConsumptionView(report: ConsumptionReportRow[], materials: 
     if (!nameOf.has(code) && m.materiaPrima.trim()) nameOf.set(code, m.materiaPrima.trim());
     rowsByCode.set(code, [...(rowsByCode.get(code) ?? []), m]);
   }
+  const parentById = new Map(materials.map((m) => [m.id, m]));
   const out: ConsumptionViewRow[] = [];
   const registered = new Set<string>();
   for (const r of report) {
@@ -75,6 +76,23 @@ export function buildConsumptionView(report: ConsumptionReportRow[], materials: 
   for (const m of materials) {
     if (m.parentRowId && !m.codigoMp.trim()) continue;
     const code = normMpCode(m.codigoMp || m.codigo);
+    if (!code && !(m.codigoMp ?? "").trim() && m.kgReal != null && m.kgReal > 0) {
+      // Kg utilizados sin CÓDIGO MP identificable: la OE se entrega igual, pero esta MP no se descuenta (no se inventa el código).
+      out.push({
+        key: `s|${m.id}`,
+        materiaPrima: (m.materiaPrima || parentById.get(m.parentRowId ?? "")?.materiaPrima || "MP").trim(),
+        codigo: "",
+        lote: m.lote.trim(),
+        estado: "sin_descuento",
+        kg: m.kgReal,
+        stockAntes: null,
+        stockDespues: null,
+        negativo: false,
+        at: null,
+        actorEmail: null,
+      });
+      continue;
+    }
     if (!code || registered.has(code)) continue;
     const real = m.kgReal != null && m.kgReal > 0;
     const kg = real ? m.kgReal! : m.kgAPesar ?? 0;

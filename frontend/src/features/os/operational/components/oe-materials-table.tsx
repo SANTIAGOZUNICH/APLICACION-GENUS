@@ -6,7 +6,7 @@
  *   Materia prima · Código (fórmula) · CÓDIGO MP (Stock MP) · % · KG A PESAR (teórico) · KG REAL UTILIZADO · Dif. ·
  *   LOTE MP · Obs.
  * Lo único que se descuenta del stock son los KG REAL UTILIZADO, del CÓDIGO MP de cada fila (LOTE MP es opcional).
- * «+ lote» agrega una fila de lote adicional para la misma MP (cuando se usó de más de un lote).
+ * «+ Agregar código de MP» agrega un registro de consumo más para la misma MP (otro código y/o lote); el total utilizado es la suma.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DecimalInput } from "@/components/ui/decimal-input";
@@ -109,8 +109,6 @@ export function OeMaterialsTable({
       ...content,
       materials: materials.map((x) => {
         if (x.id === id) return { ...x, ...p, ...stamp };
-        // Los lotes adicionales heredan el CÓDIGO MP de su fila.
-        if ("codigoMp" in p && x.parentRowId === id) return { ...x, codigoMp: p.codigoMp ?? "" };
         return x;
       }),
     });
@@ -122,7 +120,8 @@ export function OeMaterialsTable({
     const child = emptyOeMaterial({
       materiaPrima: parent.materiaPrima,
       codigo: parent.codigo,
-      codigoMp: parent.codigoMp,
+      // Vacío = usa el código de la fila; se puede cargar OTRO código de MP (la misma MP consumida desde varios códigos).
+      codigoMp: "",
       parentRowId: parent.id,
     });
     onChange({ ...content, materials: [...materials.slice(0, end), child, ...materials.slice(end)] });
@@ -218,7 +217,7 @@ export function OeMaterialsTable({
                 <tr key={m.id} className={`border-t align-top ${child ? "bg-[var(--os-bg-muted,#f7f7f7)]/50" : ""}`} data-testid={child ? "oe-row-lote-adicional" : "oe-row"}>
                   <td className="p-1">
                     {child ? (
-                      <span className="whitespace-normal break-words pl-3 text-[var(--os-text-muted)]">↳ lote adicional · {parent?.materiaPrima || m.materiaPrima}</span>
+                      <span className="whitespace-normal break-words pl-3 text-[var(--os-text-muted)]">↳ otro código / lote · {parent?.materiaPrima || m.materiaPrima}</span>
                     ) : (
                       <AutoTextarea
                         disabled={formulaLocked}
@@ -228,6 +227,12 @@ export function OeMaterialsTable({
                         testId="oe-cell-materia"
                       />
                     )}
+                    {!child && materials.some((x) => x.parentRowId === m.id) ? (
+                      <p className="mt-0.5 text-[11px] text-[var(--os-text-muted)]" data-testid="oe-total-utilizado">
+                        Total utilizado: {fmt(materials.filter((x) => x.id === m.id || x.parentRowId === m.id).reduce((a, x) => a + (x.kgReal ?? 0), 0))} kg
+                        {m.kgAPesar != null ? ` · teórico ${fmt(m.kgAPesar)} kg (solo informativo)` : ""}
+                      </p>
+                    ) : null}
                   </td>
                   <td className="p-1">
                     {child ? (
@@ -246,50 +251,46 @@ export function OeMaterialsTable({
                     )}
                   </td>
                   <td className="min-w-[8.5rem] p-1">
-                    {child ? (
-                      <span className="font-mono text-[var(--os-text-muted)]">{parent?.codigoMp || "—"}</span>
-                    ) : (
-                      <>
-                        <input
-                          disabled={!canEditCodigoMp}
-                          value={m.codigoMp}
-                          list="oe-mp-codes"
-                          autoComplete="off"
-                          autoCorrect="off"
-                          autoCapitalize="characters"
-                          spellCheck={false}
-                          // Se guarda EXACTAMENTE lo escrito (transformar el valor en cada tecla desincroniza el teclado
-                          // virtual de Android y agrega letras); las mayúsculas se aplican al salir del campo.
-                          onChange={(e) => patch(m.id, { codigoMp: e.target.value })}
-                          onBlur={(e) => {
-                            const up = e.target.value.toUpperCase();
-                            if (up !== m.codigoMp) patch(m.id, { codigoMp: up });
-                          }}
-                          onKeyDown={(e) => onKeyNav(e, "codigoMp", rowIndex)}
-                          onPaste={(e) => onPasteCol(e, "codigoMp", rowIndex)}
-                          data-col="codigoMp"
-                          className={`${cellCls(!codeOk || Boolean(flags?.has("codigoMp")))} font-mono`}
-                          placeholder={suggestion?.kind === "many" ? "Elegí del catálogo" : "Buscar…"}
-                          title={!codeOk ? "Ese código no existe en Stock MP" : m.codigoMp ? codes.find(([c]) => c === normMpCode(m.codigoMp))?.[1] : undefined}
-                          aria-label={`CÓDIGO MP de ${m.materiaPrima || m.codigo || "la materia prima"}`}
-                          data-testid="oe-cell-codigo-mp"
-                        />
-                        {suggestion?.kind === "one" && canEditCodigoMp ? (
-                          <button
-                            type="button"
-                            className="mt-0.5 text-[11px] text-[var(--os-teal,#0d9488)] underline"
-                            onClick={() => patch(m.id, { codigoMp: suggestion.codigo })}
-                            data-testid="oe-codigo-mp-sugerido"
-                          >
-                            Usar {suggestion.codigo}
-                          </button>
-                        ) : suggestion?.kind === "many" ? (
-                          <p className="mt-0.5 text-[11px] text-amber-700" title={suggestion.codigos.join(", ")}>
-                            {suggestion.codigos.length} coincidencias: elegí una
-                          </p>
-                        ) : null}
-                      </>
-                    )}
+                    <>
+                      <input
+                        disabled={!canEditCodigoMp}
+                        value={m.codigoMp}
+                        list="oe-mp-codes"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="characters"
+                        spellCheck={false}
+                        // Se guarda EXACTAMENTE lo escrito (transformar el valor en cada tecla desincroniza el teclado
+                        // virtual de Android y agrega letras); las mayúsculas se aplican al salir del campo.
+                        onChange={(e) => patch(m.id, { codigoMp: e.target.value })}
+                        onBlur={(e) => {
+                          const up = e.target.value.toUpperCase();
+                          if (up !== m.codigoMp) patch(m.id, { codigoMp: up });
+                        }}
+                        onKeyDown={(e) => onKeyNav(e, "codigoMp", rowIndex)}
+                        onPaste={(e) => onPasteCol(e, "codigoMp", rowIndex)}
+                        data-col="codigoMp"
+                        className={`${cellCls(!codeOk || Boolean(flags?.has("codigoMp")))} font-mono`}
+                        placeholder={child ? parent?.codigoMp || "Código de MP" : suggestion?.kind === "many" ? "Elegí del catálogo" : "Buscar…"}
+                        title={!codeOk ? "Ese código no existe en Stock MP" : m.codigoMp ? codes.find(([c]) => c === normMpCode(m.codigoMp))?.[1] : undefined}
+                        aria-label={`CÓDIGO MP de ${m.materiaPrima || m.codigo || "la materia prima"}`}
+                        data-testid="oe-cell-codigo-mp"
+                      />
+                      {suggestion?.kind === "one" && canEditCodigoMp ? (
+                        <button
+                          type="button"
+                          className="mt-0.5 text-[11px] text-[var(--os-teal,#0d9488)] underline"
+                          onClick={() => patch(m.id, { codigoMp: suggestion.codigo })}
+                          data-testid="oe-codigo-mp-sugerido"
+                        >
+                          Usar {suggestion.codigo}
+                        </button>
+                      ) : suggestion?.kind === "many" ? (
+                        <p className="mt-0.5 text-[11px] text-amber-700" title={suggestion.codigos.join(", ")}>
+                          {suggestion.codigos.length} coincidencias: elegí una
+                        </p>
+                      ) : null}
+                    </>
                   </td>
                   <td className="p-1 font-mono">{child ? "" : fmt(m.formulaPct)}</td>
                   <td className="p-1 font-mono text-[var(--os-text-muted)]" data-testid="oe-cell-kg">
@@ -358,13 +359,13 @@ export function OeMaterialsTable({
                   </td>
                   <td className="whitespace-nowrap p-1">
                     {!child && !opsLocked && (m.materiaPrima.trim() || m.codigo.trim()) ? (
-                      <button type="button" className="mr-2 text-[var(--os-teal,#0d9488)]" onClick={() => addLot(m)} title="La MP se usó de más de un lote" data-testid="oe-add-lote">
-                        + lote
+                      <button type="button" className="mr-2 text-[var(--os-teal,#0d9488)]" onClick={() => addLot(m)} title="La misma MP se usó desde otro código y/o lote" data-testid="oe-add-lote">
+                        + Agregar código de MP
                       </button>
                     ) : null}
                     {(child && !opsLocked) || (!child && !formulaLocked) ? (
                       <button type="button" className="text-rose-700" onClick={() => removeRow(m)} data-testid={child ? "oe-remove-lote" : "oe-remove-material"}>
-                        Quitar
+                        {child ? "Eliminar fila" : "Quitar"}
                       </button>
                     ) : null}
                   </td>

@@ -305,7 +305,7 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
     return weekShare(
       members.map((m) => ({
         qty: toKg(parseArDecimal(m.plannedQuantity).value, m.unit),
-        inPeriod: String(m.plannedDate) <= weekEnd && String(m.plannedDateTo ?? m.plannedDate) >= weekStart,
+        inPeriod: String((m.plannedDate ?? "")) <= weekEnd && String(m.plannedDateTo ?? (m.plannedDate ?? "")) >= weekStart,
       }))
     );
   };
@@ -315,7 +315,7 @@ async function loadProductions(weekStart: string, weekEnd: string): Promise<{ in
   const seenOe = new Set<string>();
   const { resolveFormulaForWork } = await import("@/lib/formulas/resolve-for-work");
   for (const w of works) {
-    const days = w.plannedDateTo && w.plannedDateTo !== w.plannedDate ? `${w.plannedDate} → ${w.plannedDateTo}` : w.plannedDate;
+    const days = w.plannedDateTo && w.plannedDateTo !== (w.plannedDate ?? "") ? `${(w.plannedDate ?? "")} → ${w.plannedDateTo}` : (w.plannedDate ?? "");
     const label = `${w.client} — ${w.product}`;
     const qtyRaw = parseArDecimal(w.plannedQuantity).value;
     const oe = oeByWork.get(w.id);

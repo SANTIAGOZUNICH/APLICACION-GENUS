@@ -60,11 +60,11 @@ function progressFromStatus(status: string): string {
 
 /** Proyecta filas nativas al DTO de consulta (sin localStorage, sin duplicar ids). */
 export function toWeeklyPlanItemDto(item: PlanningWorkItemRecord): WeeklyPlanItemDto {
-  const plannedDateTo = item.plannedDateTo ?? item.plannedDate;
+  const plannedDateTo = item.plannedDateTo ?? item.plannedDate ?? "";
   const responsible = item.branchOwner?.trim() || item.line?.trim() || null;
   return {
     workItemId: item.id,
-    plannedDate: item.plannedDate,
+    plannedDate: item.plannedDate ?? "",
     plannedDateTo,
     product: item.product,
     client: item.client,

@@ -21,7 +21,7 @@ import {
 } from "@/lib/orders/rbac";
 import { applyElaboracionMaterialPatch, assertAjusteValid, didFormulaChange } from "@/lib/orders/oe-ajuste";
 import { consumptionMaterials, mergeSheets } from "@/lib/orders/oe-sheets";
-import { MP_CONSUMO_PENDIENTE } from "@/lib/orders/oe-mp-consumption";
+import { MP_CONSUMO_PENDIENTE, hasMpConsumoPendiente } from "@/lib/orders/oe-mp-consumption";
 import type { OeContent } from "@/lib/orders/types";
 import { seedTemplateRecords } from "@/lib/orders/seed-templates";
 import {
@@ -1302,7 +1302,7 @@ export class OrdersService {
           authorizeNegative: opts?.allowNegativeMpStock ? { reason: opts.negativeMpStockReason ?? "" } : null,
           onlyToAuthorizeShortage: mpShortageAuthorizer,
           // Elaboración entrega SIEMPRE: si faltan códigos o kg reales de una fila, esa fila queda pendiente (no bloquea).
-          soft: !mpShortageAuthorizer,
+          soft: true,
           commitOrder: commitDelivery,
         });
         if (r.pending) {
@@ -1340,6 +1340,11 @@ export class OrdersService {
           });
         }
         return r;
+      }).catch(async (err) => {
+        // Error TÉCNICO (no una MP incompleta): con base de datos la transacción se revierte entera; si la entrega quedó registrada
+        // sin su descuento, se marca como pendiente para reintentar (solo lo que falta, sin repetir movimientos ya hechos).
+        await this.markMpTechnicalError(id, actor, err);
+        throw err;
       });
       updated = out.order;
       mpConsumption = out.result;
@@ -1427,6 +1432,30 @@ export class OrdersService {
    * descontado nada — y procesa el descuento UNA sola vez (idempotente), con auditoría. No toca la entrega original.
    * Si siguen faltando datos o stock, no cambia nada y devuelve lo que falta (`MpConsumptionIncompleteError` / `MpStockShortageError`).
    */
+  /** Deja constancia de un error técnico del descuento y, si la OE quedó entregada sin descontar, la marca pendiente para reintentar. */
+  private async markMpTechnicalError(id: string, actor: OrdersActor, err: unknown) {
+    try {
+      const fresh = await this.repo.getOrder(id);
+      if (!fresh || fresh.formData.kind !== "OE") return;
+      if (fresh.status === "COMPLETA" && !hasMpConsumoPendiente(fresh.formData)) {
+        const rec = fresh.formData.completion ?? { pendingAtCompletion: [], confirmedBy: actor.email, confirmedAt: nowIso(), resolved: [] };
+        await this.repo.updateOrderOptimistic(id, fresh.version, {
+          updatedBy: actor.email,
+          formData: { ...fresh.formData, completion: { ...rec, pendingAtCompletion: [...rec.pendingAtCompletion, MP_CONSUMO_PENDIENTE] } },
+        });
+      }
+      await this.repo.appendAudit({
+        orderId: id,
+        eventType: "OE_MP_CONSUMO_ERROR_TECNICO",
+        actor: actor.email,
+        actorSector: actor.sector,
+        metadata: { orderNumber: fresh.orderNumber, error: err instanceof Error ? err.message : String(err) },
+      });
+    } catch (e) {
+      console.error("[orders] no se pudo registrar el error técnico del descuento de MP", e);
+    }
+  }
+
   async settleMpConsumption(
     id: string,
     actor: OrdersActor,
@@ -1486,9 +1515,10 @@ export class OrdersService {
         orderNumber: current.orderNumber,
         materials: consumptionMaterials(content),
         authorizeNegative: opts?.allowNegativeMpStock ? { reason: opts.negativeMpStockReason ?? "" } : null,
-        // Los datos corregidos se guardan solo si el descuento se puede procesar (todo o nada).
-        commitOrder: async () => {
-          const u = await this.repo.updateOrderOptimistic(id, current.version, { updatedBy: actor.email, formData: resolveMarker(content) });
+        // Una MP incompleta nunca impide descontar las demás: lo identificable se descuenta y lo incompleto sigue pendiente.
+        soft: true,
+        commitOrder: async (stillPending) => {
+          const u = await this.repo.updateOrderOptimistic(id, current.version, { updatedBy: actor.email, formData: stillPending ? content : resolveMarker(content) });
           if (!u) {
             const fresh = await this.repo.getOrder(id);
             throw new OrdersConflictError("Conflicto al regularizar el descuento de MP.", fresh!);
