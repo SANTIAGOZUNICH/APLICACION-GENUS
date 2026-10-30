@@ -14,7 +14,7 @@ import "server-only";
 import { and, eq, inArray, isNull, lte, gte, or, sql } from "drizzle-orm";
 import { weekShare } from "@/lib/planning/work-schedules";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
-import { invMpStock, mpMasterLinks, mpStockMovements, mpWeeklyProductionExclusions, mpWeeklyRowState, operationalOrders, workItems } from "@/lib/db/schema";
+import { invMpStock, mpMasterLinks, mpStockMovements, mpWeeklyProductionExclusions, mpWeeklyRowState, mpWeeklyTotalReplacements, operationalOrders, workItems } from "@/lib/db/schema";
 import { normalizeMpStockPayload } from "@/lib/inventory/neon-persist";
 import { parseArDecimal } from "@/lib/utils/ar-number-parsing";
 import {
@@ -697,7 +697,193 @@ export type WeeklyTotalData = import("./weekly-total").WeeklyTotalResult & {
   stockSource: WeeklyAvailability["stockSource"];
   /** Trabajos de la semana que NO suman, con el motivo (cancelado, OE ya finalizada, misma OE repetida…). */
   omitted: Array<{ id: string; label: string; oeNumber?: string; note: string }>;
+  /** Reemplazos manuales vigentes (de cualquier semana): para poder deshacerlos. */
+  replacements: TotalReplacementRecord[];
+  /** Falta aplicar la migración 0075: no se pueden guardar reemplazos todavía (el control funciona igual). */
+  replacementsPending: boolean;
 };
+
+export type TotalReplacementRecord = { sourceKey: string; sourceLabel: string; targetCode: string; targetLabel: string; createdBy: string; createdAt: string };
+
+// ───────── Estado administrativo del Control semanal TOTAL (observación / exclusión) y reemplazos manuales ─────────
+// Reutiliza `mp_weekly_row_state` con una clave propia («T|…») para no mezclarse con el otro Control semanal.
+const SIN_FECHA_WEEK = "1900-01-01";
+const totalWeekKey = (anyDay: string) => (anyDay === "sin-fecha" ? SIN_FECHA_WEEK : weekBounds(anyDay).start);
+const totalRowKey = (rowKey: string) => `T|${rowKey}`;
+type TotalStateMem = { state: Map<string, import("./weekly-total").TotalRowState & { label: string }>; repl: Map<string, TotalReplacementRecord> };
+const gt = globalThis as unknown as { __genusMpTotalState?: TotalStateMem };
+const totalMem = (): TotalStateMem => (gt.__genusMpTotalState ??= { state: new Map(), repl: new Map() });
+export function resetMpTotalMemoryForTests(): void {
+  gt.__genusMpTotalState = { state: new Map(), repl: new Map() };
+}
+
+async function loadTotalState(week: string): Promise<Map<string, import("./weekly-total").TotalRowState & { label: string }>> {
+  const out = new Map<string, import("./weekly-total").TotalRowState & { label: string }>();
+  if (!isDatabaseConfigured()) {
+    for (const [k, v] of totalMem().state) if (k.startsWith(`${week}|T|`)) out.set(k.slice(week.length + 3), v);
+    return out;
+  }
+  try {
+    const rows = await getDb().select().from(mpWeeklyRowState).where(eq(mpWeeklyRowState.weekStart, week));
+    for (const r of rows) {
+      if (!r.rowKey.startsWith("T|")) continue;
+      out.set(r.rowKey.slice(2), {
+        label: r.materialLabel,
+        observacion: r.observacion,
+        observacionBy: r.observacionBy,
+        observacionAt: r.observacionAt?.toISOString() ?? null,
+        excluded: r.excluded,
+        excludedBy: r.excludedBy,
+        excludedAt: r.excludedAt?.toISOString() ?? null,
+      });
+    }
+  } catch (err) {
+    if (!isMissingSchemaError(err)) throw err;
+  }
+  return out;
+}
+
+export async function loadTotalReplacements(): Promise<{ list: TotalReplacementRecord[]; pending: boolean }> {
+  if (!isDatabaseConfigured()) return { list: [...totalMem().repl.values()], pending: false };
+  try {
+    const rows = await getDb().select().from(mpWeeklyTotalReplacements);
+    return { list: rows.map((r) => ({ sourceKey: r.sourceKey, sourceLabel: r.sourceLabel, targetCode: r.targetCode, targetLabel: r.targetLabel, createdBy: r.createdBy, createdAt: r.createdAt.toISOString() })), pending: false };
+  } catch (err) {
+    if (!isMissingSchemaError(err)) throw err;
+    return { list: [], pending: true };
+  }
+}
+
+export class MpTotalSchemaPendingError extends Error {
+  constructor() {
+    super("Falta aplicar la migración 0075 en la base: todavía no se pueden guardar reemplazos de materia prima en el control.");
+  }
+}
+
+/** Observación libre por MP y semana (vacía = se borra). Autoguardado: sobrescribe el texto anterior. */
+export async function saveTotalNote(input: { week: string; rowKey: string; label: string; observacion: string; by: string }): Promise<void> {
+  const week = totalWeekKey(input.week);
+  const observacion = input.observacion.slice(0, 2000);
+  const now = new Date();
+  if (!isDatabaseConfigured()) {
+    const k = `${week}|${totalRowKey(input.rowKey)}`;
+    const cur = totalMem().state.get(k) ?? { label: input.label };
+    totalMem().state.set(k, { ...cur, label: input.label, observacion, observacionBy: input.by, observacionAt: now.toISOString() });
+    return;
+  }
+  const set = { observacion, observacionBy: input.by, observacionAt: now, materialLabel: input.label };
+  await getDb()
+    .insert(mpWeeklyRowState)
+    .values({ weekStart: week, rowKey: totalRowKey(input.rowKey), ...set })
+    .onConflictDoUpdate({ target: [mpWeeklyRowState.weekStart, mpWeeklyRowState.rowKey], set });
+}
+
+/** Quita MP del control de esa semana (persistente). No toca inventario maestro, OE, fórmulas ni consumos. */
+export async function excludeTotalRows(input: { week: string; rows: Array<{ rowKey: string; label: string }>; by: string }): Promise<number> {
+  const week = totalWeekKey(input.week);
+  const now = new Date();
+  if (!isDatabaseConfigured()) {
+    for (const r of input.rows) {
+      const k = `${week}|${totalRowKey(r.rowKey)}`;
+      const cur = totalMem().state.get(k) ?? { label: r.label };
+      totalMem().state.set(k, { ...cur, label: r.label, excluded: true, excludedBy: input.by, excludedAt: now.toISOString() });
+    }
+    return input.rows.length;
+  }
+  for (const r of input.rows) {
+    const set = { excluded: true, excludedBy: input.by, excludedAt: now, materialLabel: r.label };
+    await getDb().insert(mpWeeklyRowState).values({ weekStart: week, rowKey: totalRowKey(r.rowKey), ...set }).onConflictDoUpdate({ target: [mpWeeklyRowState.weekStart, mpWeeklyRowState.rowKey], set });
+  }
+  return input.rows.length;
+}
+
+export async function restoreTotalRows(input: { week: string; rowKeys: string[] }): Promise<number> {
+  const week = totalWeekKey(input.week);
+  if (!isDatabaseConfigured()) {
+    for (const rk of input.rowKeys) {
+      const cur = totalMem().state.get(`${week}|${totalRowKey(rk)}`);
+      if (cur) Object.assign(cur, { excluded: false, excludedBy: null, excludedAt: null });
+    }
+    return input.rowKeys.length;
+  }
+  if (input.rowKeys.length === 0) return 0;
+  await getDb()
+    .update(mpWeeklyRowState)
+    .set({ excluded: false, excludedBy: null, excludedAt: null })
+    .where(and(eq(mpWeeklyRowState.weekStart, week), inArray(mpWeeklyRowState.rowKey, input.rowKeys.map(totalRowKey))));
+  return input.rowKeys.length;
+}
+
+/** Reemplazo MANUAL: la MP `sourceKey` del control se identifica con la MP de inventario `targetCode`. */
+export async function setTotalReplacement(input: { sourceKey: string; sourceLabel: string; targetCode: string; by: string }): Promise<TotalReplacementRecord> {
+  const { lots } = await loadStockLots();
+  const { normCode } = await import("./availability");
+  const target = normCode(input.targetCode);
+  const lot = lots.find((l) => !l.archived && normCode(l.codigo) === target);
+  if (!target || !lot) throw new Error("La materia prima elegida no existe en el inventario.");
+  if (input.sourceKey === `cod:${target}`) throw new Error("Elegiste la misma materia prima: no hay nada que reemplazar.");
+  const targetLabel = String(lot.descripcion).split(/\s+[—–]\s+/)[0]!.trim() || target;
+  const rec: TotalReplacementRecord = { sourceKey: input.sourceKey, sourceLabel: input.sourceLabel, targetCode: target, targetLabel, createdBy: input.by, createdAt: new Date().toISOString() };
+  if (!isDatabaseConfigured()) {
+    totalMem().repl.set(input.sourceKey, rec);
+    return rec;
+  }
+  try {
+    const set = { sourceLabel: rec.sourceLabel, targetCode: rec.targetCode, targetLabel: rec.targetLabel, createdBy: rec.createdBy, createdAt: new Date() };
+    await getDb().insert(mpWeeklyTotalReplacements).values({ sourceKey: rec.sourceKey, ...set }).onConflictDoUpdate({ target: mpWeeklyTotalReplacements.sourceKey, set });
+  } catch (err) {
+    if (isMissingSchemaError(err)) throw new MpTotalSchemaPendingError();
+    throw err;
+  }
+  return rec;
+}
+
+export async function removeTotalReplacement(sourceKey: string): Promise<void> {
+  if (!isDatabaseConfigured()) {
+    totalMem().repl.delete(sourceKey);
+    return;
+  }
+  try {
+    await getDb().delete(mpWeeklyTotalReplacements).where(eq(mpWeeklyTotalReplacements.sourceKey, sourceKey));
+  } catch (err) {
+    if (isMissingSchemaError(err)) throw new MpTotalSchemaPendingError();
+    throw err;
+  }
+}
+
+export type InventoryMpHit = { codigo: string; materiaPrima: string; descripcion: string; stockKg: number; lotes: number };
+
+/**
+ * Buscador MANUAL sobre TODAS las materias primas del inventario (no solo las que sugiere la identificación automática):
+ * por nombre o código, sin acentos ni mayúsculas, cada palabra por separado. Una fila por código de inventario.
+ */
+export async function searchInventoryMps(query: string, limit = 40): Promise<InventoryMpHit[]> {
+  const { lots } = await loadStockLots();
+  const { normCode, normText } = await import("./availability");
+  const groups = new Map<string, { codigo: string; names: Set<string>; stock: number; lotes: number }>();
+  for (const l of lots) {
+    if (l.archived) continue;
+    const c = normCode(l.codigo);
+    if (!c) continue;
+    const g = groups.get(c) ?? { codigo: c, names: new Set<string>(), stock: 0, lotes: 0 };
+    g.names.add(String(l.descripcion ?? "").trim());
+    g.stock += Math.max(0, Number(l.cantidadKg) || 0);
+    g.lotes += 1;
+    groups.set(c, g);
+  }
+  const terms = normText(query).split(" ").filter(Boolean);
+  const out: InventoryMpHit[] = [];
+  for (const g of groups.values()) {
+    const names = [...g.names].filter(Boolean);
+    const hay = normText(`${g.codigo} ${names.join(" ")}`);
+    if (terms.length > 0 && !terms.every((t) => hay.includes(t))) continue;
+    out.push({ codigo: g.codigo, materiaPrima: (names[0] ?? g.codigo).split(/\s+[—–]\s+/)[0]!.trim() || g.codigo, descripcion: names[0] ?? "", stockKg: round3(g.stock), lotes: g.lotes });
+  }
+  const first = terms[0] ?? "";
+  return out
+    .sort((a, b) => Number(normText(b.materiaPrima).startsWith(first)) - Number(normText(a.materiaPrima).startsWith(first)) || a.materiaPrima.localeCompare(b.materiaPrima, "es"))
+    .slice(0, limit);
+}
 
 /**
  * CONTROL SEMANAL TOTAL: necesidad pendiente de cada materia prima de inventario (todas las OE de Elaboración de la semana, o las
@@ -714,9 +900,10 @@ export async function getWeeklyTotal(anyDay: string | "sin-fecha", now = new Dat
     undated ? Promise.resolve(new Map() as StateMem["prods"]) : loadProductionExclusions(start),
   ]);
   const inputs = prods.inputs.filter((p) => !prodEx.has(p.id));
-  const result = buildWeeklyTotal({ lots, aliases, productions: inputs, todayIso: iso(now) });
+  const [rowState, repl] = await Promise.all([loadTotalState(totalWeekKey(anyDay)), loadTotalReplacements()]);
+  const result = buildWeeklyTotal({ lots, aliases, productions: inputs, todayIso: iso(now), rowState, replacements: new Map(repl.list.map((r) => [r.sourceKey, r.targetCode])) });
   const omitted = prods.meta
     .filter((m) => m.note && /^(Cancelado|Ya elaborado|Misma OE|OE\/trabajo ya finalizado)/.test(m.note))
     .map((m) => ({ id: m.id, label: m.label, oeNumber: m.oeNumber, note: m.note! }));
-  return { ...result, mode: undated ? "sin-fecha" : "semana", weekStart: undated ? null : start, weekEnd: undated ? null : end, generatedAt: now.toISOString(), stockSource: source, omitted };
+  return { ...result, mode: undated ? "sin-fecha" : "semana", weekStart: undated ? null : start, weekEnd: undated ? null : end, generatedAt: now.toISOString(), stockSource: source, omitted, replacements: repl.list, replacementsPending: repl.pending };
 }

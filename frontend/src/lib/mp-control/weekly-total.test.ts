@@ -73,9 +73,80 @@ describe("Control semanal total de MP", () => {
   it("el Excel sale de las mismas filas: los totales coinciden con la pantalla", () => {
     const r = buildWeeklyTotal({ lots, todayIso: TODAY, productions: [3, 5, 3, 6, 1].map((kg, i) => prod(String(i + 1), kg)) });
     const { total, detalle } = weeklyTotalToSheets(r);
-    expect(total[1]).toEqual(["CAR-1", "Carbopol", 18, 0, 18, 12, 6, 5, "FALTANTE"]);
+    expect(total[1]!.slice(0, 9)).toEqual(["CAR-1", "Carbopol", 18, 0, 18, 12, 6, 5, "FALTANTE"]);
+    expect(total[1]!.slice(9)).toEqual(["", ""]); // sin observación ni reemplazo
     expect(total[total.length - 1]![4]).toBe(18);
     const sumaDetalle = detalle.filter((d) => d[2] !== "" && typeof d[9] === "number").reduce((s, d) => s + (d[9] as number), 0);
     expect(sumaDetalle).toBe(18);
+  });
+});
+
+describe("Control semanal total — reemplazo manual, observaciones y exclusión", () => {
+  const stock = [
+    lot({ codigo: "MP023", descripcion: "EMULCARE EI — Proveedor Z", cantidadKg: 20 }),
+    lot({ codigo: "GLI-1", descripcion: "Glicerina", cantidadKg: 100 }),
+  ];
+  const emul = (id: string, kg: number, extra: Partial<ProductionInput> = {}) => prod(id, kg, extra, "EMULSIONANTE X", "");
+
+  it("sin reemplazo, «EMULSIONANTE X» queda NO IDENTIFICADA (sin stock)", () => {
+    const r = buildWeeklyTotal({ lots: stock, todayIso: TODAY, productions: [emul("1", 5)] });
+    expect(r.rows[0]).toMatchObject({ materiaPrima: "EMULSIONANTE X", estado: "MP NO IDENTIFICADA", stockDisponible: 0, faltante: 5 });
+  });
+
+  it("reemplazo manual: pasa a EMULCARE EI (MP023), mantiene los 5 kg y usa SU stock y faltante", () => {
+    const r = buildWeeklyTotal({ lots: stock, todayIso: TODAY, productions: [emul("1", 5)], replacements: new Map([["name:emulsionante x", "MP023"]]) });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]).toMatchObject({ codigo: "MP023", materiaPrima: "EMULCARE EI", necesario: 5, stockDisponible: 20, faltante: 0, identificada: true, estado: "SUFICIENTE" });
+    expect(r.rows[0]!.reemplazos).toEqual([{ sourceKey: "name:emulsionante x", sourceName: "EMULSIONANTE X", kg: 5 }]);
+    expect(r.rows[0]!.needs[0]!.origen).toBe("EMULSIONANTE X");
+    expect(r.summary.sinIdentificar).toBe(0);
+  });
+
+  it("con faltante: el stock de la MP elegida (20 kg) contra 25 necesarios → faltante 5", () => {
+    const r = buildWeeklyTotal({ lots: stock, todayIso: TODAY, productions: [emul("1", 25)], replacements: new Map([["name:emulsionante x", "MP023"]]) });
+    expect(r.rows[0]).toMatchObject({ necesario: 25, stockDisponible: 20, faltante: 5, estado: "FALTANTE" });
+  });
+
+  it("dos MP distintas reemplazadas por la MISMA se consolidan (y con la que ya estaba en el control)", () => {
+    const p1 = prod("1", 5, { lines: [{ materiaPrima: "EMULSIONANTE X", kg: 5 }, { materiaPrima: "EMULCARE EI", codigoMp: "MP023", kg: 2 }, { materiaPrima: "OTRO EMULSIONANTE", kg: 3 }] });
+    const r = buildWeeklyTotal({ lots: stock, todayIso: TODAY, productions: [p1], replacements: new Map([["name:emulsionante x", "MP023"], ["name:otro emulsionante", "MP023"]]) });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]).toMatchObject({ codigo: "MP023", necesario: 10, oeCount: 1 });
+    expect(r.rows[0]!.reemplazos.map((x) => x.sourceName).sort()).toEqual(["EMULSIONANTE X", "OTRO EMULSIONANTE"]);
+  });
+
+  it("el consumo registrado de la MP original se descuenta de la MP elegida (sin recontar)", () => {
+    const r = buildWeeklyTotal({ lots: [...stock, lot({ codigo: "OLD-9", descripcion: "Emulsionante viejo", cantidadKg: 1 })], todayIso: TODAY, productions: [prod("1", 8, { consumedByCode: { "OLD-9": 3 } }, "Emulsionante viejo", "OLD-9")], replacements: new Map([["cod:OLD-9", "MP023"]]) });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]).toMatchObject({ codigo: "MP023", teorico: 8, consumido: 3, necesario: 5 });
+  });
+
+  it("un reemplazo hacia un código que ya no existe en el inventario no se aplica; cadenas A→B→C llegan al final", () => {
+    const sinDestino = buildWeeklyTotal({ lots: stock, todayIso: TODAY, productions: [emul("1", 5)], replacements: new Map([["name:emulsionante x", "NO-EXISTE"]]) });
+    expect(sinDestino.rows[0]).toMatchObject({ materiaPrima: "EMULSIONANTE X", identificada: false });
+    const cadena = buildWeeklyTotal({ lots: stock, todayIso: TODAY, productions: [emul("1", 5)], replacements: new Map([["name:emulsionante x", "GLI-1"], ["cod:GLI-1", "MP023"]]) });
+    expect(cadena.rows[0]).toMatchObject({ codigo: "MP023", necesario: 5 });
+  });
+
+  it("observación por fila y exclusión: las excluidas salen de filas y resumen y se listan para restaurar", () => {
+    const productions = [emul("1", 5), prod("2", 3, {}, "GLICERINA", "GLI-1")];
+    const base = buildWeeklyTotal({ lots: stock, todayIso: TODAY, productions });
+    expect(base.rows).toHaveLength(2);
+    const r = buildWeeklyTotal({
+      lots: stock, todayIso: TODAY, productions,
+      rowState: new Map([["cod:GLI-1", { observacion: "pedir 20 kg", excluded: false }], ["name:emulsionante x", { excluded: true, excludedBy: "mp@x" }]]),
+    });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]).toMatchObject({ codigo: "GLI-1", observacion: "pedir 20 kg" });
+    expect(r.excluidas.map((e) => e.key)).toEqual(["name:emulsionante x"]);
+    expect(r.summary).toMatchObject({ total: 1, necesarioKg: 3 });
+  });
+
+  it("el Excel incluye observaciones y MP originales de los reemplazos", () => {
+    const r = buildWeeklyTotal({ lots: stock, todayIso: TODAY, productions: [emul("1", 5)], replacements: new Map([["name:emulsionante x", "MP023"]]), rowState: new Map([["cod:MP023", { observacion: "ok" }]]) });
+    const sheets = weeklyTotalToSheets(r);
+    expect(sheets.total[0]).toContain("Observaciones");
+    expect(sheets.total[1]!.slice(-2)).toEqual(["ok", "EMULSIONANTE X"]);
+    expect(sheets.detalle[1]!.at(-1)).toBe("EMULSIONANTE X");
   });
 });

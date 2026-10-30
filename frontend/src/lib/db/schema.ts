@@ -1085,6 +1085,21 @@ export const mpWeeklyRowState = pgTable(
   (t) => [uniqueIndex("mp_weekly_row_state_week_key_uq").on(t.weekStart, t.rowKey)]
 );
 
+/** Reemplazos manuales de MP del Control semanal TOTAL (migración 0075): clave de origen → código de inventario destino. */
+export const mpWeeklyTotalReplacements = pgTable(
+  "mp_weekly_total_replacements",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    sourceKey: text("source_key").notNull(),
+    sourceLabel: text("source_label").notNull().default(""),
+    targetCode: text("target_code").notNull(),
+    targetLabel: text("target_label").notNull().default(""),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("mp_weekly_total_replacements_source_uq").on(t.sourceKey)]
+);
+
 /** Producciones excluidas del cálculo de una semana del Control semanal (migración 0058). */
 export const mpWeeklyProductionExclusions = pgTable(
   "mp_weekly_production_exclusions",
