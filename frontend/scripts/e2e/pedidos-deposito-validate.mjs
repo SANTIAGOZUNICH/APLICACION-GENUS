@@ -94,7 +94,7 @@ try {
     "editar (PATCH /[id])": await api.patch(`/api/v1/production-pedidos/${p1.id}`, { data: { q: 1 } }),
     "eliminar (DELETE /[id])": await api.delete(`/api/v1/production-pedidos/${p1.id}`, { data: { reason: "x" } }),
     "editar celdas (PATCH /cells)": await api.patch("/api/v1/production-pedidos/cells", { data: { changes: [{ id: p1.id, field: "q", value: "1", expectedVersion: "x" }] } }),
-    "importar (POST /import)": await api.post("/api/v1/production-pedidos/import", { data: { rows: [{ cliente: `${CLI} HACK`, producto: "X", q: 1 }], idempotencyKey: "pdep-hack-123456" } }),
+    "importar (POST /import)": await api.post("/api/v1/production-pedidos/import", { data: { confirm: true, rows: [{ cliente: `${CLI} HACK`, producto: "X", q: 1 }], idempotencyKey: "pdep-hack-123456" } }),
     "listado completo de Producción (GET)": await api.get("/api/v1/production-pedidos"),
     "asignar a un sector (POST /work-assignments)": await api.post("/api/v1/work-assignments", { data: { sector: "ENVASADO_MASIVO", client: CLI, product: "X", plannedQuantity: "10", unit: "un.", plannedDate: "2026-11-02", productionPedidoId: p1.id, idempotencyKey: "pdep-hack-assign-1" } }),
   };
