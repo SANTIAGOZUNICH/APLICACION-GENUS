@@ -39,7 +39,10 @@ const active = (where = "true", params = []) => q(`select * from deposito_despac
 const cleanup = async () => {
   await q("delete from deposito_despachos_audit where despacho_id in (select id::text from deposito_despachos where cliente like $1)", [`${TAG}%`]);
   await q("delete from deposito_despachos where cliente like $1", [`${TAG}%`]);
+  await q("delete from deposito_despachos_audit where despacho_id in (select id::text from deposito_despachos where created_by like 'E2E %' and cliente = '' and remito = '' and fecha between '2026-12-01' and '2026-12-04')");
+  await q("delete from deposito_despachos where created_by like 'E2E %' and cliente = '' and remito = '' and fecha between '2026-12-01' and '2026-12-04'");
 };
+const setFilter = async (page, testid, value) => { await page.locator(`[data-testid=${testid}]`).fill(value); await page.waitForTimeout(500); };
 
 async function openAs(user) {
   const ctx = await browser.newContext({ baseURL: BASE, viewport: { width: 1600, height: 950 } });
@@ -138,10 +141,10 @@ try {
   check("sin duplicados tras esperar (guardado único por fila)", (await active(`cliente like '${TAG} P_'`)).length === 5);
 
   // ---- Pegar una columna de fechas completa ----
-  const cnt0 = (await active()).length;
+  const dateOnly = () => q("select id from deposito_despachos where deleted_at is null and cliente = '' and remito = '' and fecha between '2026-12-01' and '2026-12-04'");
   await clickBox(page, await draftCell(page, 0, "Fecha"));
   await pasteDoc(page, "01/12/2026\n02/12/2026\n03/12/2026\n04/12/2026");
-  check("pegar solo una COLUMNA de fechas: 4 filas nuevas con fecha y el resto vacío", await waitDb(async () => (await active("fecha >= '2026-12-01' and fecha <= '2026-12-04'")).length === 4, 40_000) && (await active()).length === cnt0 + 4);
+  check("pegar solo una COLUMNA de fechas: 4 filas nuevas con fecha y el resto vacío", await waitDb(async () => (await dateOnly()).length === 4, 40_000));
 
   // ---- Pegado masivo (300 filas) ----
   const big = Array.from({ length: 300 }, (_, i) => [`${String((i % 28) + 1).padStart(2, "0")}/09/2027`, String(i).padStart(6, "0"), `${TAG} BIG`, `Producto ${i % 7}`, String(i % 9), String(i * 3)].join("\t")).join("\n");
@@ -164,6 +167,7 @@ try {
   // ---- Recarga: persiste ----
   await page.reload();
   await openTab(page);
+  await setFilter(page, "despachos-f-cliente", `${TAG} PREVIO`);
   await waitRow(page, "0001-00000045");
   check("tras recargar siguen los datos (previos y pegados)", await page.locator(`[data-testid=${GID}] input`).evaluateAll((els) => els.some((i) => i.value === "0001-00000045")));
 
@@ -176,19 +180,22 @@ try {
   check("edición directa de una celda se guarda sola", await waitDb(async () => (await q("select producto from deposito_despachos where id = $1", [oldIds[0]]))[0].producto === "Crema EDITADA"));
   check("la edición deja auditoría (antes → después)", await waitDb(async () => (await q("select 1 from deposito_despachos_audit where despacho_id = $1 and action = 'update' and field = 'producto' and before_value = 'Crema previa' and after_value = 'Crema EDITADA'", [String(oldIds[0])])).length === 1));
 
-  // ---- Borrar contenido de celdas (una y varias) ----
+  // ---- Borrar contenido de celdas (varias y una) ----
+  await setFilter(page, "despachos-f-cliente", `${TAG} PREVIO`);
+  const pB = await dataCell(page, "000777", "Producto"); // B (21/10) queda arriba de A (20/10) en el orden por fecha
+  await pB.click();
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Delete");
+  check("Delete sobre varias celdas seleccionadas vacía todas", await waitDb(async () => (await q("select producto from deposito_despachos where id = any($1::uuid[])", [oldIds])).every((r) => r.producto === "")));
   const cl = await dataCell(page, "000777", "Cliente");
   await cl.click();
   await page.keyboard.press("Delete");
   check("Delete vacía una celda y se guarda", await waitDb(async () => (await q("select cliente from deposito_despachos where id = $1", [oldIds[1]]))[0].cliente === ""));
-  const pr = await dataCell(page, "0001-00000045", "Producto");
-  await pr.click();
-  await page.keyboard.press("Shift+ArrowDown");
-  await page.keyboard.press("Delete");
-  check("Delete sobre varias celdas seleccionadas vacía todas", await waitDb(async () => (await q("select producto from deposito_despachos where id = any($1::uuid[])", [oldIds])).every((r) => r.producto === "")));
 
   // ---- Eliminar varias filas (sin motivo) ----
   const before = (await active("cliente = $1", [`${TAG} BIG`])).length;
+  await setFilter(page, "despachos-f-cliente", `${TAG} BIG`);
+  await setFilter(page, "despachos-f-remito", "00000");
   for (const v of ["000001", "000002", "000003"]) {
     const ri = await page.evaluate(([gid, v]) => [...document.querySelectorAll(`[data-testid=${gid}] .dsg-row`)].findIndex((r) => [...r.querySelectorAll("input")].some((i) => i.value === v)), [GID, v]);
     if (ri < 0) throw new Error(`fila ${v} no visible`);
@@ -204,6 +211,8 @@ try {
     && (await q("select count(*)::int n from deposito_despachos_audit a join deposito_despachos d on d.id::text = a.despacho_id where a.action = 'delete' and d.cliente = $1 and d.remito in ('000001','000002','000003')", [`${TAG} BIG`]))[0].n === 3);
   await page.reload();
   await openTab(page);
+  await setFilter(page, "despachos-f-cliente", `${TAG} BIG`);
+  await setFilter(page, "despachos-f-remito", "00000");
   check("tras recargar las filas eliminadas no reaparecen", (await active("remito = '000001' and cliente = $1", [`${TAG} BIG`])).length === 0);
   await page.screenshot({ path: `${OUT}/2-final.png` });
   const prevKept = await q("select id from deposito_despachos where id = any($1::uuid[]) and deleted_at is null", [oldIds]);
