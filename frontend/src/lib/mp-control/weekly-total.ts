@@ -9,6 +9,11 @@
  *   4. sin coincidencia → «no identificada» (se suma la necesidad por nombre, sin stock).
  * Dos MP con nombres parecidos pero códigos distintos NUNCA se mezclan.
  *
+ * REEMPLAZO MANUAL (decisión de una persona, gana sobre la identificación automática): una clave de origen (`name:…` / `cod:…`) puede
+ * apuntar a CUALQUIER materia prima del inventario. La necesidad pasa a esa MP con sus kg intactos, se consolida con lo que ya
+ * necesite (o con otros reemplazos hacia la misma MP) y el stock/faltante se calculan con la MP elegida. Es solo identificación en
+ * ESTE control: no toca fórmulas, OE, consumos ni inventario. La MP original queda en el detalle (`reemplazos`, `origen`).
+ *
  * Tres cantidades distintas por MP: necesidad TEÓRICA (% × kg del lote), consumo ya REGISTRADO (libro mayor, por OE) y
  * necesidad PENDIENTE = teórica − consumida (nunca negativa). El faltante se calcula con la pendiente.
  */
@@ -38,7 +43,17 @@ export type TotalOeNeed = {
   pendiente: number;
   /** La producción no tiene cantidad/fórmula confiable: no se sumó. */
   incompleta: boolean;
+  /** Nombre de la MP tal como figura en la fórmula/OE cuando esta fila la absorbió un reemplazo manual. */
+  origen?: string;
 };
+
+/** Reemplazo manual aplicado a una fila: de qué MP del control viene y cuántos kg aportó. */
+export type TotalReplacement = { sourceKey: string; sourceName: string; kg: number };
+
+/** Estado administrativo de una fila (observación y exclusión), por clave de fila final. */
+export type TotalRowState = { observacion?: string; observacionBy?: string | null; observacionAt?: string | null; excluded?: boolean; excludedBy?: string | null; excludedAt?: string | null };
+
+export type ExcludedTotalRow = { key: string; codigo: string; materiaPrima: string; necesario: number; excludedBy: string | null; excludedAt: string | null };
 
 export type TotalStatus = "SUFICIENTE" | "FALTANTE" | "SIN STOCK" | "MP NO IDENTIFICADA" | "MP AMBIGUA" | "DATOS INCOMPLETOS";
 
@@ -58,10 +73,16 @@ export type TotalRow = {
   estado: TotalStatus;
   notas: string[];
   needs: TotalOeNeed[];
+  /** Texto libre de la persona de MP (se guarda solo y persiste al recargar). */
+  observacion: string;
+  /** Reemplazos manuales que apuntan a esta MP (trazabilidad de las MP originales). */
+  reemplazos: TotalReplacement[];
 };
 
 export type WeeklyTotalResult = {
   rows: TotalRow[];
+  /** MP quitadas del control por una persona (se pueden restaurar). No se cuentan en el resumen. */
+  excluidas: ExcludedTotalRow[];
   /** Producciones que no pudieron sumarse (sin cantidad/fórmula confiable). */
   incompletas: Array<{ id: string; label: string; reason: string }>;
   summary: { total: number; conFaltante: number; sinIdentificar: number; oeCount: number; necesarioKg: number; faltanteKg: number };
@@ -103,7 +124,22 @@ function buildIndex(lots: StockLot[]): Idx {
 
 type Ident = { key: string; codigo: string; identificada: boolean; ambigua: boolean; nameKeys: string[] };
 
-function identify(line: { materiaPrima: string; codigo?: string; codigoMp?: string }, idx: Idx, aliases: NameAlias[]): Ident {
+/** Sigue la cadena de reemplazos (A→B→C) hasta el destino final; sin ciclos. */
+export function resolveReplacement(key: string, overrides: ReadonlyMap<string, string> | undefined): string | null {
+  if (!overrides || overrides.size === 0) return null;
+  let cur = key;
+  let hit: string | null = null;
+  for (let i = 0; i < 6; i += 1) {
+    const to = overrides.get(cur);
+    if (!to) break;
+    hit = to;
+    cur = `cod:${to}`;
+    if (cur === key) return null; // ciclo
+  }
+  return hit;
+}
+
+function identifyAuto(line: { materiaPrima: string; codigo?: string; codigoMp?: string }, idx: Idx, aliases: NameAlias[]): Ident {
   for (const raw of [line.codigoMp, line.codigo]) {
     const k = normCode(raw);
     if (!k) continue;
@@ -133,9 +169,32 @@ function identify(line: { materiaPrima: string; codigo?: string; codigoMp?: stri
 
 const prodNumber = (p: ProductionInput) => p.oeNumber ?? "";
 
-export function buildWeeklyTotal(params: { lots: StockLot[]; productions: ProductionInput[]; todayIso: string; aliases?: NameAlias[] }): WeeklyTotalResult {
+export function buildWeeklyTotal(params: {
+  lots: StockLot[];
+  productions: ProductionInput[];
+  todayIso: string;
+  aliases?: NameAlias[];
+  /** Reemplazos manuales: clave de origen (`name:…`/`cod:…`) → código de inventario destino. */
+  replacements?: ReadonlyMap<string, string>;
+  /** Estado administrativo por clave de fila FINAL (observación / exclusión). */
+  rowState?: ReadonlyMap<string, TotalRowState>;
+}): WeeklyTotalResult {
   const aliases = params.aliases ?? [];
   const idx = buildIndex(params.lots);
+  const overrides = new Map<string, string>();
+  for (const [from, to] of params.replacements ?? []) {
+    const c = normCode(to);
+    // Un destino que ya no existe en el inventario no se aplica (la MP vuelve a identificarse sola).
+    if (c && idx.byCode.has(c)) overrides.set(from, [...idx.byCode.get(c)!][0]!);
+  }
+  const replacedFrom = new Map<string, Map<string, TotalReplacement>>();
+  type Auto = Ident & { origin?: { sourceKey: string; sourceName: string } };
+  const identify = (line: { materiaPrima: string; codigo?: string; codigoMp?: string }): Auto => {
+    const auto = identifyAuto(line, idx, aliases);
+    const to = resolveReplacement(auto.key, overrides);
+    if (!to) return auto;
+    return { key: `cod:${to}`, codigo: to, identificada: true, ambigua: false, nameKeys: [], origin: { sourceKey: auto.key, sourceName: line.materiaPrima.trim() || auto.key } };
+  };
   const acc = new Map<string, TotalRow & { _name: string; _nameKeys: Set<string>; _clients: Set<string>; _ambiguous: boolean }>();
   const incompletas: WeeklyTotalResult["incompletas"] = [];
   const oeIds = new Set<string>();
@@ -145,7 +204,7 @@ export function buildWeeklyTotal(params: { lots: StockLot[]; productions: Produc
     if (!r) {
       r = {
         key: id.key, codigo: id.codigo, materiaPrima: displayName, teorico: 0, consumido: 0, necesario: 0, stockDisponible: 0, stockFisico: 0, faltante: 0,
-        oeCount: 0, identificada: id.identificada, estado: "SUFICIENTE", notas: [], needs: [],
+        oeCount: 0, identificada: id.identificada, estado: "SUFICIENTE", notas: [], needs: [], observacion: "", reemplazos: [],
         _name: displayName, _nameKeys: new Set(id.nameKeys), _clients: new Set<string>(), _ambiguous: id.ambigua,
       };
       acc.set(id.key, r);
@@ -157,11 +216,12 @@ export function buildWeeklyTotal(params: { lots: StockLot[]; productions: Produc
   for (const prod of params.productions) {
     if (!prod.reliable) incompletas.push({ id: prod.id, label: prod.label, reason: prod.unreliableReason ?? "Sin datos confiables" });
     // Teórico de ESTA producción por MP de inventario (una MP puede repetirse en varias fases de la fórmula).
-    const perKey = new Map<string, { id: Ident; name: string; teorico: number; unreliable: boolean }>();
+    const perKey = new Map<string, { id: Auto; name: string; teorico: number; unreliable: boolean; origins: Map<string, string> }>();
     for (const line of prod.lines) {
       if (!normText(line.materiaPrima) && !normCode(line.codigoMp || line.codigo)) continue;
-      const id = identify(line, idx, aliases);
-      const e = perKey.get(id.key) ?? { id, name: line.materiaPrima.trim() || id.codigo, teorico: 0, unreliable: false };
+      const id = identify(line);
+      const e = perKey.get(id.key) ?? { id, name: line.materiaPrima.trim() || id.codigo, teorico: 0, unreliable: false, origins: new Map<string, string>() };
+      if (id.origin) e.origins.set(id.origin.sourceKey, id.origin.sourceName);
       if (!prod.reliable || line.kg == null || !Number.isFinite(line.kg)) e.unreliable = true;
       else e.teorico = round3(e.teorico + line.kg);
       perKey.set(id.key, e);
@@ -171,7 +231,9 @@ export function buildWeeklyTotal(params: { lots: StockLot[]; productions: Produc
     for (const [code, kg] of Object.entries(prod.consumedByCode ?? {})) {
       const c = normCode(code);
       const hit = idx.byCode.get(c);
-      const key = `cod:${hit && hit.size === 1 ? [...hit][0]! : c}`;
+      const base = `cod:${hit && hit.size === 1 ? [...hit][0]! : c}`;
+      const moved = resolveReplacement(base, overrides);
+      const key = moved ? `cod:${moved}` : base;
       consumedByKey.set(key, round3((consumedByKey.get(key) ?? 0) + kg));
     }
     for (const [key, e] of perKey) {
@@ -193,7 +255,15 @@ export function buildWeeklyTotal(params: { lots: StockLot[]; productions: Produc
         consumido,
         pendiente,
         incompleta: e.unreliable,
+        ...(e.origins.size > 0 ? { origen: [...e.origins.values()].join(" + ") } : {}),
       });
+      for (const [sourceKey, sourceName] of e.origins) {
+        const m = replacedFrom.get(row.key) ?? new Map<string, TotalReplacement>();
+        const cur = m.get(sourceKey) ?? { sourceKey, sourceName, kg: 0 };
+        cur.kg = round3(cur.kg + pendiente);
+        m.set(sourceKey, cur);
+        replacedFrom.set(row.key, m);
+      }
       if (!e.unreliable) oeIds.add(prodNumber(prod) || prod.id);
     }
   }
@@ -222,18 +292,37 @@ export function buildWeeklyTotal(params: { lots: StockLot[]; productions: Produc
     if (!row.identificada && !row._ambiguous) row.notas.push("No se encontró en el inventario por código ni por nombre.");
     if (incompleto) row.notas.push("Hay producciones sin cantidad/fórmula confiable que no se pudieron sumar.");
     if (row.consumido > 0) row.notas.push(`Ya se consumieron ${row.consumido} kg (libro mayor): no se vuelven a contar.`);
+    const rep = [...(replacedFrom.get(row.key)?.values() ?? [])];
+    row.reemplazos = rep;
+    if (rep.length > 0) row.notas.push(`Reemplazo manual: ${rep.map((r) => `${r.sourceName} (${r.kg} kg)`).join(", ")} se identifica${rep.length === 1 ? "" : "n"} con esta materia prima del inventario.`);
     row.estado = !row.identificada && !row._ambiguous ? "MP NO IDENTIFICADA" : row._ambiguous ? "MP AMBIGUA" : incompleto && row.necesario === 0 ? "DATOS INCOMPLETOS" : row.faltante > 0 ? (row.stockDisponible <= 0 ? "SIN STOCK" : "FALTANTE") : "SUFICIENTE";
   }
 
+  const state = params.rowState;
+  const excluidas: ExcludedTotalRow[] = [];
   const rows = [...acc.values()]
     .map(({ _name, _nameKeys, _clients, _ambiguous, ...r }) => {
       void _name; void _nameKeys; void _clients; void _ambiguous;
-      return { ...r, needs: [...r.needs].sort((a, b) => a.days.localeCompare(b.days) || a.oeNumber.localeCompare(b.oeNumber)) };
+      const st = state?.get(r.key);
+      return { ...r, observacion: st?.observacion ?? "", needs: [...r.needs].sort((a, b) => a.days.localeCompare(b.days) || a.oeNumber.localeCompare(b.oeNumber)) };
+    })
+    .filter((r) => {
+      const st = state?.get(r.key);
+      if (!st?.excluded) return true;
+      excluidas.push({ key: r.key, codigo: r.codigo, materiaPrima: r.materiaPrima, necesario: r.necesario, excludedBy: st.excludedBy ?? null, excludedAt: st.excludedAt ?? null });
+      return false;
     })
     .sort((a, b) => b.faltante - a.faltante || b.necesario - a.necesario || a.materiaPrima.localeCompare(b.materiaPrima, "es"));
 
+  // Filas quitadas que ya no tienen necesidad esta semana igual se pueden restaurar: se listan desde el estado guardado.
+  for (const [key, st] of state ?? []) {
+    if (st.excluded && !excluidas.some((e) => e.key === key) && !rows.some((r) => r.key === key)) {
+      excluidas.push({ key, codigo: key.startsWith("cod:") ? key.slice(4) : "", materiaPrima: (st as TotalRowState & { label?: string }).label ?? key, necesario: 0, excludedBy: st.excludedBy ?? null, excludedAt: st.excludedAt ?? null });
+    }
+  }
   return {
     rows,
+    excluidas,
     incompletas,
     summary: {
       total: rows.length,
@@ -248,13 +337,13 @@ export function buildWeeklyTotal(params: { lots: StockLot[]; productions: Produc
 
 /** Filas planas para exportar a Excel (los totales salen de las MISMAS filas que se ven en pantalla). */
 export function weeklyTotalToSheets(result: WeeklyTotalResult): { total: Array<Array<string | number>>; detalle: Array<Array<string | number>> } {
-  const total: Array<Array<string | number>> = [["Código", "Materia prima", "Necesidad teórica (kg)", "Consumo registrado (kg)", "Necesidad pendiente / Total necesario (kg)", "Stock disponible (kg)", "Faltante (kg)", "Cantidad de OE", "Estado"]];
-  for (const r of result.rows) total.push([r.codigo, r.materiaPrima, r.teorico, r.consumido, r.necesario, r.stockDisponible, r.faltante, r.oeCount, r.estado]);
-  total.push(["", "TOTAL", round3(result.rows.reduce((s, r) => s + r.teorico, 0)), round3(result.rows.reduce((s, r) => s + r.consumido, 0)), result.summary.necesarioKg, "", result.summary.faltanteKg, result.summary.oeCount, ""]);
-  const detalle: Array<Array<string | number>> = [["Código", "Materia prima", "OE", "Cliente", "Producto", "Fecha de elaboración", "Tamaño del lote (kg)", "Teórico (kg)", "Consumido (kg)", "Pendiente (kg)"]];
+  const total: Array<Array<string | number>> = [["Código", "Materia prima", "Necesidad teórica (kg)", "Consumo registrado (kg)", "Necesidad pendiente / Total necesario (kg)", "Stock disponible (kg)", "Faltante (kg)", "Cantidad de OE", "Estado", "Observaciones", "Reemplazo manual (MP originales)"]];
+  for (const r of result.rows) total.push([r.codigo, r.materiaPrima, r.teorico, r.consumido, r.necesario, r.stockDisponible, r.faltante, r.oeCount, r.estado, r.observacion, r.reemplazos.map((x) => x.sourceName).join(" + ")]);
+  total.push(["", "TOTAL", round3(result.rows.reduce((s, r) => s + r.teorico, 0)), round3(result.rows.reduce((s, r) => s + r.consumido, 0)), result.summary.necesarioKg, "", result.summary.faltanteKg, result.summary.oeCount, "", "", ""]);
+  const detalle: Array<Array<string | number>> = [["Código", "Materia prima", "OE", "Cliente", "Producto", "Fecha de elaboración", "Tamaño del lote (kg)", "Teórico (kg)", "Consumido (kg)", "Pendiente (kg)", "MP original (reemplazo manual)"]];
   for (const r of result.rows) {
-    for (const n of r.needs) detalle.push([r.codigo, r.materiaPrima, n.oeNumber, n.client, n.product, n.days, n.lotKg ?? "", n.teorico, n.consumido, n.pendiente]);
-    detalle.push([r.codigo, `${r.materiaPrima} — TOTAL`, "", "", "", "", "", r.teorico, r.consumido, r.necesario]);
+    for (const n of r.needs) detalle.push([r.codigo, r.materiaPrima, n.oeNumber, n.client, n.product, n.days, n.lotKg ?? "", n.teorico, n.consumido, n.pendiente, n.origen ?? ""]);
+    detalle.push([r.codigo, `${r.materiaPrima} — TOTAL`, "", "", "", "", "", r.teorico, r.consumido, r.necesario, ""]);
   }
   return { total, detalle };
 }
