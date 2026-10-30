@@ -111,7 +111,13 @@ try {
 
   // Producción ve la entrega
   const pr = await login(E2E_USERS.produccion);
+  const toListMode = async (pg) => {
+    const t = pg.getByText("Ver como lista");
+    await pg.locator("[data-testid=os-table-mode-toggle]").first().waitFor({ timeout: 120_000 });
+    if ((await t.count()) > 0) await t.first().click();
+  };
   await pr.page.getByRole("button", { name: /^Entregados$/ }).or(pr.page.getByRole("link", { name: /^Entregados$/ })).first().click({ timeout: 120_000 });
+  await toListMode(pr.page);
   await pr.page.getByText(/Parcial · saldo 1000/).first().waitFor({ timeout: 120_000 }).catch(() => undefined);
   check("Producción recibe la entrega: aparece como «Parcial · saldo 1000»", (await pr.page.getByText(/Parcial · saldo 1000/).count()) > 0);
   await pr.page.screenshot({ path: `${OUT}/3-produccion-recibe.png` });
@@ -139,9 +145,7 @@ try {
   // Producción: historial con acumulado, saldo y usuario
   await pr.page.reload();
   await pr.page.getByRole("button", { name: /^Entregados$/ }).or(pr.page.getByRole("link", { name: /^Entregados$/ })).first().click({ timeout: 120_000 });
-  await pr.page.getByRole("button", { name: /^Ver detalle$/ }).first().waitFor({ timeout: 120_000 }).catch(() => undefined);
-  const toList = pr.page.locator("[data-testid=os-table-mode-toggle]");
-  if ((await pr.page.getByRole("button", { name: /^Ver detalle$/ }).count()) === 0 && (await toList.count()) > 0) await toList.first().click();
+  await toListMode(pr.page);
   await pr.page.getByRole("button", { name: /^Ver detalle$/ }).first().click({ timeout: 60_000 });
   const hist = pr.page.locator("[data-testid=detail-delivery-lines]");
   await hist.waitFor({ timeout: 30_000 });
