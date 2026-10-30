@@ -23,6 +23,14 @@ export function workItemCoversDate(
   return target >= start && target <= end;
 }
 
+/** El trabajo (con fecha) solapa el rango [from, to] inclusive. Sin fecha asignada nunca solapa. */
+export function workItemOverlapsRange(item: Pick<WorkItem, "plannedDate" | "plannedDateTo">, from: string, to: string): boolean {
+  const start = item.plannedDate?.trim();
+  if (!start) return false;
+  const end = workItemPlannedEnd(item)!;
+  return start <= to && end >= from;
+}
+
 /** Solapa L–V de la semana operativa (weekStart = lunes). */
 export function workItemOverlapsWeek(
   item: Pick<WorkItem, "plannedDate" | "plannedDateTo" | "weekStart" | "weekId">,

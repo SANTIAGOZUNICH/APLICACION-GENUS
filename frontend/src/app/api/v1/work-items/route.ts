@@ -8,6 +8,7 @@ import {
   filterWorkItemsByWeekStart,
   filterWorkItemsForSectorAndPerson,
 } from "@/lib/operational/work-item-filters";
+import { workItemOverlapsRange } from "@/lib/operational/work-item-date-range";
 import { workItemsService } from "@/lib/operational/work-items.service";
 import { getPlanningService } from "@/lib/planning/get-planning-service";
 import {
@@ -44,7 +45,8 @@ async function listNativeWorkItems(
   sector: SectorId,
   ownerPerson: string | null,
   date: string | null,
-  weekStart: string | null
+  weekStart: string | null,
+  range: { from: string; to: string } | null = null
 ) {
   if (!isDatabaseConfigured()) {
     return NextResponse.json(
@@ -97,12 +99,15 @@ async function listNativeWorkItems(
       ownerPerson,
       date,
       weekStart,
+      from: range?.from ?? null,
+      to: range?.to ?? null,
     });
     workItems = projectNativeWorkItems(rows);
     workItems = filterWorkItemsForSectorAndPerson(workItems, sector, ownerPerson);
     // Filtro JS residual solo si el repo no aplicó rango (p.ej. memoria).
     if (date) workItems = filterWorkItemsByDate(workItems, date);
     else if (weekStart) workItems = filterWorkItemsByWeekStart(workItems, weekStart);
+    else if (range) workItems = workItems.filter((w) => workItemOverlapsRange(w, range.from, range.to));
     qualityItems = [];
   }
 
@@ -142,6 +147,9 @@ export async function GET(request: Request) {
   const ownerPerson = url.searchParams.get("ownerPerson")?.trim() || null;
   const date = parseIsoDateParam(url.searchParams.get("date"));
   const weekStart = parseIsoDateParam(url.searchParams.get("weekStart"));
+  const rangeFrom = parseIsoDateParam(url.searchParams.get("from"));
+  const rangeTo = parseIsoDateParam(url.searchParams.get("to"));
+  const range = rangeFrom && rangeTo && rangeFrom <= rangeTo && !date && !weekStart ? { from: rangeFrom, to: rangeTo } : null;
 
   const rawSector = url.searchParams.get("sector")?.trim().toUpperCase() ?? "";
   if (!sector && SECTORS_WITHOUT_WORK_ITEMS.has(rawSector)) {
@@ -173,7 +181,7 @@ export async function GET(request: Request) {
 
   if (planningSource === "native") {
     try {
-      return await listNativeWorkItems(sector, ownerPerson, date, weekStart);
+      return await listNativeWorkItems(sector, ownerPerson, date, weekStart, range);
     } catch (error) {
       return NextResponse.json(
         {

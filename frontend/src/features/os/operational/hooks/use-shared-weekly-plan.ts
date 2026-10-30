@@ -13,6 +13,8 @@ interface UseSharedWeeklyPlanOptions {
   weekStart: string;
   planSector: PlanSectorFilter;
   enabled?: boolean;
+  /** Vista Mensual: AAAA-MM-01 del mes a pedir (si está, reemplaza a weekStart). */
+  monthStart?: string | null;
 }
 
 interface UseSharedWeeklyPlanResult {
@@ -38,6 +40,7 @@ export function useSharedWeeklyPlan({
   weekStart,
   planSector,
   enabled = true,
+  monthStart = null,
 }: UseSharedWeeklyPlanOptions): UseSharedWeeklyPlanResult {
   const [items, setItems] = useState<WeeklyPlanItemDto[]>([]);
   const [uniqueCount, setUniqueCount] = useState(0);
@@ -72,6 +75,7 @@ export function useSharedWeeklyPlan({
       if (!hasDataRef.current) setLoading(true);
       try {
         const params = new URLSearchParams({ weekStart });
+        if (monthStart) params.set("monthStart", monthStart);
         if (planSector !== "ALL") params.set("planSector", planSector);
         const res = await fetch(`/api/v1/weekly-plans?${params.toString()}`, {
           credentials: "include",
@@ -101,7 +105,7 @@ export function useSharedWeeklyPlan({
     return () => {
       cancelled = true;
     };
-  }, [weekStart, planSector, enabled, tick]);
+  }, [weekStart, monthStart, planSector, enabled, tick]);
 
   useEffect(() => {
     if (!enabled) return;

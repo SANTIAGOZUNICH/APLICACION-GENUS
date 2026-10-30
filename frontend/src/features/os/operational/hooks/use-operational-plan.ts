@@ -14,6 +14,9 @@ interface UseOperationalPlanOptions {
   enabled?: boolean;
   date?: string | null;
   weekStart?: string | null;
+  /** Rango [from, to] inclusive (vista Mensual). */
+  from?: string | null;
+  to?: string | null;
 }
 
 interface UseOperationalPlanResult {
@@ -34,6 +37,8 @@ export function useOperationalPlan(
   const ownerPerson = options?.ownerPerson ?? null;
   const date = options?.date ?? null;
   const weekStart = options?.weekStart ?? null;
+  const from = options?.from ?? null;
+  const to = options?.to ?? null;
   const enabled = options?.enabled ?? true;
   const { revision, mergeFromServer } = useOperationalStore();
 
@@ -129,6 +134,8 @@ export function useOperationalPlan(
           ownerPerson,
           date,
           weekStart,
+          from,
+          to,
         });
         if (!cancelled && mountedRef.current) {
           // Respuesta stale de otra lambda: no revertir 161→160.
@@ -182,6 +189,8 @@ export function useOperationalPlan(
     ownerPerson,
     date,
     weekStart,
+    from,
+    to,
     tick,
     enabled,
     revision,

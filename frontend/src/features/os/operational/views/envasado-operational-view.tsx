@@ -22,6 +22,7 @@ import { WorkItemProgressTable } from "../components/work-item-progress-table";
 import { WorkItemDrawer } from "../components/work-item-drawer";
 import { SyncStatusBar, OperationalTabs } from "../components/operational-ui";
 import { OperationalDayNav } from "../components/operational-day-nav";
+import { OperationalMonthBoard } from "../components/operational-month-board";
 import { OperationalWeekBoard, parseWeekBoardDropId, shortDayLabel, WeekBoardDndContext } from "../components/operational-week-board";
 import { useOperationalPlan } from "../hooks/use-operational-plan";
 import { useOperationalCalendar } from "../hooks/use-operational-calendar";
@@ -109,10 +110,13 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
 
   const [activeLine, setActiveLine] = useState<LineBucket>("1");
 
+  // Mensual: pide el rango completo de la grilla del mes (los MISMOS trabajos que Día/Semana, con otra perspectiva).
   const planOptions =
-    calendar.viewMode === "week"
-      ? { weekStart: calendar.weekStart }
-      : { date: calendar.selectedDate };
+    calendar.viewMode === "month"
+      ? { from: calendar.monthRange.from, to: calendar.monthRange.to }
+      : calendar.viewMode === "week"
+        ? { weekStart: calendar.weekStart }
+        : { date: calendar.selectedDate };
 
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
     useOperationalPlan(sectorId, planOptions);
@@ -622,6 +626,10 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
             onNextWeek={calendar.goNextWeek}
             onToday={calendar.goToday}
             onTodayWeek={calendar.goToCurrentWeek}
+            monthTitle={calendar.monthTitle}
+            onPrevMonth={calendar.goPrevMonth}
+            onNextMonth={calendar.goNextMonth}
+            onTodayMonth={calendar.goToCurrentMonth}
             onViewMode={calendar.setViewMode}
           />
 
@@ -732,6 +740,23 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
             </WeekBoardDndContext>
           )}
 
+          {!loading && calendar.viewMode === "month" && (
+            <OperationalMonthBoard
+              monthStart={calendar.monthStart}
+              today={calendar.today}
+              items={excludeArchivedFromView(workItems, archivedIds)}
+              allItems={pendientesItems}
+              canEdit={canAssignWork}
+              onSelectItem={(item) => {
+                setSelectedItem(item);
+                setDrawerOpen(true);
+              }}
+              onCreateSlot={(day) => setAssignSlot({ plannedDate: day })}
+              onRequestDate={(item, plannedDate) => move.request({ item, plannedDate })}
+              onSelectDay={calendar.selectDay}
+            />
+          )}
+
           {!loading && calendar.viewMode === "day" && (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -831,12 +856,17 @@ export function ElaboracionOperationalView() {
   const [assignSlot, setAssignSlot] = useState<{ plannedDate?: string } | null>(null);
 
   const planOptions =
-    calendar.viewMode === "week"
-      ? { weekStart: calendar.weekStart }
-      : { date: calendar.selectedDate };
+    calendar.viewMode === "month"
+      ? { from: calendar.monthRange.from, to: calendar.monthRange.to }
+      : calendar.viewMode === "week"
+        ? { weekStart: calendar.weekStart }
+        : { date: calendar.selectedDate };
 
   const { data, loading, error, lastRefreshAt, updatedAgoLabel, liveConnected, refresh } =
     useOperationalPlan("ELABORACION", planOptions);
+  // Mensual: los «Sin fecha asignada» salen de TODO lo activo del sector (sin recorte por rango).
+  const { data: dataAll, refresh: refreshAll } = useOperationalPlan("ELABORACION", { enabled: calendar.viewMode === "month" });
+  const allItems = useMemo(() => applyProgressToWorkItems(applyEffectiveStatus(mergeManualWorkItems("ELABORACION", dataAll?.workItems ?? []))), [dataAll?.workItems, applyEffectiveStatus, applyProgressToWorkItems]);
 
   const workItems = useMemo(() => {
     const base = applyEffectiveStatus(mergeManualWorkItems("ELABORACION", data?.workItems ?? []));
@@ -908,6 +938,7 @@ export function ElaboracionOperationalView() {
     onSaved: () => {
       showToast("Planificación actualizada.");
       void refresh();
+      void refreshAll();
     },
     onError: (m) => showToast(m, "info"),
   });
@@ -955,7 +986,10 @@ export function ElaboracionOperationalView() {
             sector="ELABORACION"
             initialPlannedDate={assignSlot.plannedDate}
             onClose={() => setAssignSlot(null)}
-            onAssigned={() => void refresh()}
+            onAssigned={() => {
+              void refresh();
+              void refreshAll();
+            }}
           />
         ) : null}
         <SyncStatusBar
@@ -978,6 +1012,10 @@ export function ElaboracionOperationalView() {
         onPrevWeek={calendar.goPrevWeek}
         onNextWeek={calendar.goNextWeek}
         onToday={calendar.goToday}
+        monthTitle={calendar.monthTitle}
+        onPrevMonth={calendar.goPrevMonth}
+        onNextMonth={calendar.goNextMonth}
+        onTodayMonth={calendar.goToCurrentMonth}
         onViewMode={calendar.setViewMode}
       />
 
@@ -1021,6 +1059,23 @@ export function ElaboracionOperationalView() {
         </WeekBoardDndContext>
       )}
 
+      {!loading && calendar.viewMode === "month" && (
+        <OperationalMonthBoard
+          monthStart={calendar.monthStart}
+          today={calendar.today}
+          items={workItems}
+          allItems={allItems}
+          canEdit={canAssignWork}
+          onSelectItem={(item) => {
+            setSelectedItem(item);
+            setDrawerOpen(true);
+          }}
+          onCreateSlot={(day) => setAssignSlot({ plannedDate: day })}
+          onRequestDate={(item, plannedDate) => moveEl.request({ item, plannedDate })}
+          onSelectDay={calendar.selectDay}
+        />
+      )}
+
       {!loading && calendar.viewMode === "day" && (
         <div className="space-y-10">
           {ramas.map(({ rama, items }) => (
@@ -1061,6 +1116,7 @@ export function ElaboracionOperationalView() {
         getObservation={getObservation}
         onPlanningChanged={async () => {
           await refresh();
+          await refreshAll();
         }}
         onSaveProgress={handleSave}
         onSendToEnvasado={handleSendToEnvasado}

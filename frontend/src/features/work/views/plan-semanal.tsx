@@ -20,14 +20,31 @@ import { ActionButton, ExcelOrList, excelCol } from "@/features/os/operational/c
 import { useWorkItemCellEditing } from "@/features/os/operational/hooks/use-work-item-cells";
 import { formatDateDisplay } from "@/features/os/operational/lib/delivery-date";
 import type { WorkItem } from "@/types/operational/work-item";
+import { OperationalMonthBoard } from "@/features/os/operational/components/operational-month-board";
+import { MoveConfirmDialog, usePendingMove } from "@/features/os/operational/components/move-confirm";
+import { addMonths, monthLabel, monthStartOf } from "@/lib/operational/month-grid";
+import type { SectorId } from "@/types/operational/sector";
 
 /** Plan semanal L–V con WorkItems reales del sector activo. */
 export function WireframePlanSemanal() {
-  const { applyEffectiveStatus, openWorkItem } = usePreviewContext();
+  const { applyEffectiveStatus, openWorkItem, showToast } = usePreviewContext();
   const { sectorId, email } = usePreviewSession();
   const { data, loading, refresh } = useSectorWorkItems(sectorId);
   const [today] = useState(() => startOfDay(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()));
+  // Semanal | Mensual: la MISMA planificación del sector con otra perspectiva (no crea ni duplica trabajos).
+  const [mode, setMode] = useState<"semana" | "mes">("semana");
+  const [monthAnchor, setMonthAnchor] = useState(() => monthStartOf(toIsoDate(startOfDay(new Date()))));
+  const canReschedule = sectorId === "PRODUCCION" || sectorId === "DIRECCION";
+  const move = usePendingMove({
+    actorSectorId: sectorId as SectorId,
+    updatedBy: email ?? "Producción",
+    onSaved: () => {
+      showToast("Planificación actualizada.");
+      refresh();
+    },
+    onError: (m) => showToast(m, "info"),
+  });
 
   const workItems = useMemo(
     () => applyEffectiveStatus(data?.workItems ?? []),
@@ -89,7 +106,48 @@ export function WireframePlanSemanal() {
       title="Plan semanal"
       syncTime={data?.scannedAt ? new Date(data.scannedAt) : undefined}
     >
-      <div className="mb-8 flex flex-wrap items-center gap-3">
+      <div className="mb-4 flex gap-2" role="tablist" aria-label="Vista">
+        {([["semana", "Semanal"], ["mes", "Mensual"]] as const).map(([m, label]) => (
+          <button
+            key={m}
+            type="button"
+            role="tab"
+            aria-selected={mode === m}
+            data-testid={`plan-mode-${m}`}
+            onClick={() => setMode(m)}
+            className={`rounded-[var(--os-radius-sm)] px-3 py-1.5 text-sm font-medium ${mode === m ? "bg-[var(--os-teal)] text-[var(--os-navy)]" : "border border-[var(--os-border)]"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mode === "mes" ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <button type="button" aria-label="Mes anterior" onClick={() => setMonthAnchor((m) => addMonths(m, -1))} className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] px-3 py-1.5 text-sm">← Mes anterior</button>
+            <button type="button" onClick={() => setMonthAnchor(monthStartOf(toIsoDate(today)))} className="rounded-[var(--os-radius-sm)] bg-[var(--os-teal-soft)] px-3 py-1.5 text-sm font-medium text-[var(--os-teal)]">Mes actual</button>
+            <button type="button" aria-label="Mes siguiente" onClick={() => setMonthAnchor((m) => addMonths(m, 1))} className="rounded-[var(--os-radius-sm)] border border-[var(--os-border)] px-3 py-1.5 text-sm">Mes siguiente →</button>
+            <h3 className="text-lg font-semibold capitalize" data-testid="plan-month-title">{monthLabel(monthAnchor)}</h3>
+          </div>
+          {loading ? (
+            <div className="os-skeleton h-96 rounded-[var(--os-radius)]" />
+          ) : (
+            <OperationalMonthBoard
+              monthStart={monthAnchor}
+              today={toIsoDate(today)}
+              items={workItems}
+              allItems={workItems}
+              canEdit={canReschedule}
+              onSelectItem={(item) => openWorkItem(item.id)}
+              onRequestDate={canReschedule ? (item, plannedDate) => move.request({ item, plannedDate }) : undefined}
+            />
+          )}
+          <MoveConfirmDialog pending={move.pending} busy={move.busy} onConfirm={() => void move.confirm()} onCancel={move.cancel} />
+        </div>
+      ) : null}
+
+      <div className={`mb-8 flex flex-wrap items-center gap-3 ${mode === "mes" ? "hidden" : ""}`}>
         <button
           type="button"
           onClick={() => setSelectedDate((d) => addDays(d, -1))}
@@ -113,16 +171,16 @@ export function WireframePlanSemanal() {
         </button>
       </div>
 
-      {loading && <div className="os-skeleton h-96 rounded-[var(--os-radius)]" />}
+      {mode === "semana" && loading && <div className="os-skeleton h-96 rounded-[var(--os-radius)]" />}
 
-      {!loading && workItems.length === 0 && (
+      {mode === "semana" && !loading && workItems.length === 0 && (
         <EmptyState
           title="No hay trabajos para este día"
           message="Probá con «Mañana» o «Ayer». Si esperabas ver trabajos acá, avisale a Producción."
         />
       )}
 
-      {!loading && workItems.length > 0 && (
+      {mode === "semana" && !loading && workItems.length > 0 && (
         <>
           <div className="grid gap-4 lg:grid-cols-5">
             {columns.map((col) => (

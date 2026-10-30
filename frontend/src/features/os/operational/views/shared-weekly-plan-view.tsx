@@ -11,6 +11,8 @@ import {
 } from "@/lib/operational/operational-calendar";
 import { useSharedWeeklyPlan, type PlanSectorFilter } from "../hooks/use-shared-weekly-plan";
 import { OperationalWeekBoard } from "../components/operational-week-board";
+import { OperationalMonthBoard } from "../components/operational-month-board";
+import { addMonths, monthLabel, monthStartOf } from "@/lib/operational/month-grid";
 
 type ViewerKind = "codificado" | "deposito" | "materia_prima";
 
@@ -38,10 +40,19 @@ export function SharedWeeklyPlanView({ viewer }: SharedWeeklyPlanViewProps) {
     viewer === "materia_prima" ? "ELABORACION" : "ALL"
   );
 
+  // Semanal | Mensual: el MISMO plan compartido (solo lectura), con otra perspectiva.
+  const [mode, setMode] = useState<"semana" | "mes">("semana");
+  const [monthAnchor, setMonthAnchor] = useState(monthStartOf(today));
+
   const { items, uniqueCount, loading, error, updatedAgoLabel, refresh } = useSharedWeeklyPlan({
     weekStart,
     planSector: viewer === "materia_prima" ? "ELABORACION" : planSector,
+    monthStart: mode === "mes" ? monthAnchor : null,
   });
+  const monthItems = useMemo(
+    () => items.map((i) => ({ id: i.workItemId, product: i.product, client: i.client, quantity: i.quantity, unit: i.unit, plannedDate: i.plannedDate, plannedDateTo: i.plannedDateTo })),
+    [items]
+  );
 
   const startParts = parseIsoDate(weekStart);
   const endParts = parseIsoDate(weekDays[weekDays.length - 1] ?? weekStart);
@@ -62,7 +73,34 @@ export function SharedWeeklyPlanView({ viewer }: SharedWeeklyPlanViewProps) {
           <span className="mt-1 block text-xs text-[var(--os-text-muted)]">{subtitle}</span>
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex gap-2" role="tablist" aria-label="Vista">
+          {([["semana", "Semanal"], ["mes", "Mensual"]] as const).map(([m, label]) => (
+            <button
+              key={m}
+              type="button"
+              role="tab"
+              aria-selected={mode === m}
+              data-testid={`plan-mode-${m}`}
+              className={`min-h-10 rounded px-3 text-sm ${mode === m ? "bg-[var(--os-teal)] text-[var(--os-navy)]" : "border border-[var(--os-border)] text-[var(--os-text)]"}`}
+              onClick={() => setMode(m)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {mode === "mes" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className="min-h-10 rounded border border-[var(--os-border)] px-3 text-sm" onClick={() => setMonthAnchor((m) => addMonths(m, -1))}>Mes anterior</button>
+            <button type="button" className="min-h-10 rounded border border-[var(--os-border)] px-3 text-sm" onClick={() => setMonthAnchor(monthStartOf(today))}>Este mes</button>
+            <button type="button" className="min-h-10 rounded border border-[var(--os-border)] px-3 text-sm" onClick={() => setMonthAnchor((m) => addMonths(m, 1))}>Mes siguiente</button>
+            <p className="text-sm font-medium capitalize" data-testid="plan-month-title">{monthLabel(monthAnchor)}{loading ? " · Cargando…" : ` · ${uniqueCount} trabajos`}</p>
+            <button type="button" className="min-h-10 rounded bg-[var(--os-teal)] px-3 text-sm font-medium text-[var(--os-navy)]" onClick={() => refresh()}>Actualizar</button>
+            <span className="text-xs text-[var(--os-text-muted)]">Actualizado {updatedAgoLabel}</span>
+          </div>
+        ) : null}
+
+        <div className={`flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between ${mode === "mes" ? "hidden" : ""}`}>
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -134,15 +172,27 @@ export function SharedWeeklyPlanView({ viewer }: SharedWeeklyPlanViewProps) {
           </div>
         )}
 
-        <OperationalWeekBoard
-          mode="consulta"
-          weekDays={weekDays}
-          today={today}
-          selectedDate={selectedDate}
-          items={[]}
-          consultaItems={items}
-          onSelectDay={setSelectedDate}
-        />
+        {mode === "mes" ? (
+          <OperationalMonthBoard
+            monthStart={monthAnchor}
+            today={today}
+            items={monthItems}
+            allItems={[]}
+            canEdit={false}
+            showUndated={false}
+            onSelectItem={() => undefined}
+          />
+        ) : (
+          <OperationalWeekBoard
+            mode="consulta"
+            weekDays={weekDays}
+            today={today}
+            selectedDate={selectedDate}
+            items={[]}
+            consultaItems={items}
+            onSelectDay={setSelectedDate}
+          />
+        )}
       </div>
     </TwinShell>
   );

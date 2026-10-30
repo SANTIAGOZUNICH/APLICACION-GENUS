@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import { addMonths, monthGridRange, monthLabel, monthStartOf } from "@/lib/operational/month-grid";
 import {
   addDaysIso,
   formatOperationalDayHeading,
@@ -10,7 +11,7 @@ import {
   workWeekDays,
 } from "@/lib/operational/operational-calendar";
 
-export type TemporalViewMode = "day" | "week";
+export type TemporalViewMode = "day" | "week" | "month";
 
 /** Estado temporal de /mi-trabajo — Hoy (BA) por defecto. */
 export function useOperationalCalendar() {
@@ -20,6 +21,13 @@ export function useOperationalCalendar() {
 
   const weekStart = useMemo(() => weekStartMonday(selectedDate), [selectedDate]);
   const weekDays = useMemo(() => workWeekDays(weekStart), [weekStart]);
+
+  const monthStart = useMemo(() => monthStartOf(selectedDate), [selectedDate]);
+  const monthRange = useMemo(() => monthGridRange(monthStart), [monthStart]);
+  const goPrevMonth = useCallback(() => setSelectedDate((d) => addMonths(monthStartOf(d), -1)), []);
+  const goNextMonth = useCallback(() => setSelectedDate((d) => addMonths(monthStartOf(d), 1)), []);
+  /** "Mes actual" en modo Mes — vuelve al mes de hoy sin salir de la vista Mensual. */
+  const goToCurrentMonth = useCallback(() => setSelectedDate(todayInBuenosAires()), []);
 
   const goToday = useCallback(() => {
     const now = todayInBuenosAires();
@@ -68,6 +76,12 @@ export function useOperationalCalendar() {
     selectedDate,
     weekStart,
     weekDays,
+    monthStart,
+    monthRange,
+    monthTitle: monthLabel(monthStart),
+    goPrevMonth,
+    goNextMonth,
+    goToCurrentMonth,
     viewMode,
     setViewMode,
     heading,
