@@ -23,6 +23,7 @@ import {
   formatQty,
   parseQuantity,
   planDeliveryStep,
+  planPartialDelivery,
   resolveDeliveryTarget,
 } from "./delivery-math";
 import { groupSiblings, syncObsMark, type DeliveryGroupCandidate } from "./delivery-group";
@@ -88,6 +89,11 @@ export interface RecordDeliveryParams {
    * ni línea de entrega: lo físico lo registró la entrega que se hizo). Solo la usa la sincronización del grupo.
    */
   syncOnly?: boolean;
+  /**
+   * «Entregar parcial» desde Envasado: el saldo se mide contra la cantidad ASIGNADA (no contra lo producido), se exige una cantidad
+   * explícita, no se pide la distribución en cajas de todo el trabajo y el trabajo solo se completa al entregar lo asignado.
+   */
+  partial?: boolean;
 }
 
 export interface RecordDeliveryResult {
@@ -346,7 +352,7 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
   // Cajas: Envasado entrega SU trabajo → distribución obligatoria y validada. Codificado (recibe solo el total) y
   // Producción/Dirección (registran sobre trabajos históricos) no la exigen; si hay distribución REAL consistente se
   // conserva y fija lo embalado.
-  const enforceBoxes = !params.skipBoxValidation && ENVASADO.has(actor.sector.toUpperCase());
+  const enforceBoxes = !params.skipBoxValidation && !params.partial && ENVASADO.has(actor.sector.toUpperCase());
   const finishedNum =
     parseQuantity(nextFinishedText, unit) ?? (nextTotal != null ? Number(nextTotal) : null);
   if (enforceBoxes) {
@@ -359,7 +365,7 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
     patch.deliverableUnits = close.packedUnits;
     patch.packagingClosedAt = now;
     patch.packagingClosedBy = actorName;
-  } else if (c && hasRealPackingGroups(nextGroups) && finishedNum != null) {
+  } else if (!params.partial && c && hasRealPackingGroups(nextGroups) && finishedNum != null) {
     const packed = summarizePackingGroups(normalizePackingGroups(nextGroups as never)).totalEmbalado;
     // Trabajos históricos (Producción registra la entrega): lo entregable es lo físicamente embalado. Trabajos
     // enviados a Codificado sin desglose completo: la cantidad total declarada manda; una distribución parcial NO
@@ -388,6 +394,18 @@ export async function recordDeliveryInTx(tx: Tx, params: RecordDeliveryParams): 
   if (params.syncOnly) {
     // Sin cantidad física: queda completa, sin línea de entrega y sin saldo.
     pending = 0;
+  } else if (params.partial) {
+    // Saldo = asignada − entregado; tope = terminadas − entregado (si hay dato). Todo se valida acá, en el servidor.
+    const assigned = parseQuantity(row.plannedQuantity, unit) ?? target;
+    if (assigned == null || !(assigned > 0)) {
+      throw new PlanningValidationError("Este trabajo no tiene una cantidad asignada numérica: no admite entrega parcial.");
+    }
+    const step = planPartialDelivery({ assigned, alreadyDelivered, produced: finishedNum, requested, unit });
+    if (!step.ok) throw new PlanningValidationError(step.error);
+    stepQuantity = step.quantity;
+    cumulative = step.cumulative;
+    pending = step.pending;
+    complete = step.complete;
   } else if (target != null) {
     const step = planDeliveryStep({ target, alreadyDelivered, requested, unit });
     if (!step.ok) throw new PlanningValidationError(step.error);

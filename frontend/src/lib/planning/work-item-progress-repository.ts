@@ -1483,6 +1483,8 @@ export interface DeliverWorkInput {
   id?: string;
   /** Cajas de esta entrega ([{cajas, unidadesPorCaja}]); deben sumar lo entregado. */
   deliveryPackingGroups?: unknown;
+  /** «Entregar parcial» (Envasado): saldo contra lo ASIGNADO, cantidad explícita, sin cajas del trabajo completo. */
+  partial?: boolean;
   workItemId: string;
   qualityItemId?: string | null;
   /**
@@ -1568,6 +1570,7 @@ export async function deliverWorkDurable(
       observations: input.observations,
       completion: input.completion ?? null,
       deliveryPackingGroups: input.deliveryPackingGroups ?? null,
+      partial: input.partial === true,
     })
   );
   // Aviso a Producción FUERA de la transacción: un fallo de la notificación nunca bloquea la entrega.

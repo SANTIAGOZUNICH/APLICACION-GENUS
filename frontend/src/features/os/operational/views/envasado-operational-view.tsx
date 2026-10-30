@@ -96,6 +96,8 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
 
   const [selectedItem, setSelectedItem] = useState<WorkItem | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Acción pedida desde la tarjeta («Entregar parcial» abre el trabajo directo en el diálogo parcial).
+  const [drawerIntent, setDrawerIntent] = useState<"partial" | null>(null);
   const [listTab, setListTab] = useState<EnvasadoListTab>("activos");
   const [archivedIds, setArchivedIds] = useState<string[]>([]);
   const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
@@ -258,7 +260,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
     ) => {
       // El sobrante se registra en Depósito ANTES de entregar, para enlazar su id al work item en la misma llamada.
       let bulkId: string | null = null;
-      if (hasRegistrableBulkRemainder(payload.bulkRemainderKg)) {
+      if (!payload.partial && hasRegistrableBulkRemainder(payload.bulkRemainderKg)) {
         try {
           const granel = await upsertGranelFromEnvasadoApi(session, {
             workItemId: item.id,
@@ -289,6 +291,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       const result = await postCircuitDelivery(actorSession, {
         workItemId: item.id,
         actorSectorId: actorSectorId,
+        partial: payload.partial === true,
         deliverQuantity: payload.deliverQuantity,
         idempotencyKey: payload.idempotencyKey,
         actualDeliveredAt: payload.actualDeliveredAt,
@@ -308,7 +311,7 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       showToast(
         result.complete
           ? "Entrega registrada."
-          : `Entrega parcial registrada. Saldo pendiente: ${result.pending ?? "—"}.`
+          : `Entrega parcial registrada. Quedan ${result.pending ?? "—"} unidades pendientes en Envasado.`
       );
       await refresh();
       await refreshPendientes();
@@ -607,8 +610,9 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
             }}
             getFinishedQty={getFinishedQty}
             getObservation={getObservation}
-            onSelectItem={(item) => {
+            onSelectItem={(item, intent) => {
               setSelectedItem(item);
+              setDrawerIntent(intent ?? null);
               setDrawerOpen(true);
             }}
             emptyMessage="No hay trabajos pendientes en este sector."
@@ -717,8 +721,9 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
                           listMode: "active",
                           getFinishedQty,
                           getObservation,
-                          onSelectItem: (item) => {
+                          onSelectItem: (item, intent) => {
                             setSelectedItem(item);
+                            setDrawerIntent(intent ?? null);
                             setDrawerOpen(true);
                           },
                           onArchiveFromView: handleArchiveFromView,
@@ -791,8 +796,9 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
                 }}
                 getFinishedQty={getFinishedQty}
                 getObservation={getObservation}
-                onSelectItem={(item) => {
+                onSelectItem={(item, intent) => {
                   setSelectedItem(item);
+                  setDrawerIntent(intent ?? null);
                   setDrawerOpen(true);
                 }}
                 onArchiveFromView={handleArchiveFromView}
@@ -818,7 +824,8 @@ export function EnvasadoOperationalView({ sectorId }: EnvasadoOperationalViewPro
       <WorkItemDrawer
         item={selectedItem}
         open={drawerOpen}
-        onOpenChange={setDrawerOpen}
+        initialAction={drawerIntent}
+        onOpenChange={(o) => { setDrawerOpen(o); if (!o) setDrawerIntent(null); }}
         variant="envasado"
         responsibleLabel="Línea"
         getFinishedQty={getFinishedQty}

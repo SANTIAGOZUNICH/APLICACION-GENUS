@@ -1,7 +1,7 @@
 "use client";
 
 import { WorkItemPriorityBadge } from "./work-item-priority-badge";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Eye, FileWarning } from "lucide-react";
 import type { WorkItem } from "@/types/operational/work-item";
 import { displayField } from "@/lib/operational/display-fields";
@@ -52,6 +52,8 @@ interface WorkItemDrawerProps {
   item: WorkItem | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** "partial": al abrir, va directo al diálogo «Entregar parcial» (acción de la tarjeta). */
+  initialAction?: "partial" | null;
   variant: "elaboracion" | "envasado";
   responsibleLabel: string;
   getFinishedQty: (itemId: string) => string;
@@ -97,6 +99,7 @@ export function WorkItemDrawer({
   item,
   open,
   onOpenChange,
+  initialAction = null,
   variant,
   responsibleLabel,
   getFinishedQty,
@@ -114,6 +117,7 @@ export function WorkItemDrawer({
   const [confirmSendEnvasado, setConfirmSendEnvasado] = useState(false);
   const [confirmDeliver, setConfirmDeliver] = useState(false);
   const [deliveryProgress, setDeliveryProgress] = useState<DeliveryProgress | null>(null);
+  const [deliverMode, setDeliverMode] = useState<"final" | "partial">("final");
   const [packagingDraft, setPackagingDraft] = useState<PackagingDraft | null>(null);
   const [confirmCodificado, setConfirmCodificado] = useState(false);
   const [confirmCancelCodificado, setConfirmCancelCodificado] = useState(false);
@@ -122,6 +126,30 @@ export function WorkItemDrawer({
   const [loadedItemId, setLoadedItemId] = useState<string | null>(null);
   const packagingRef = useRef<HTMLDivElement>(null);
   const finishedQtyRef = useRef<HTMLInputElement>(null);
+  const canDeliverHere = variant !== "elaboracion" && Boolean(onDeliver);
+  const initialItemId = item?.id ?? null;
+  useEffect(() => {
+    if (!open || initialAction !== "partial" || !initialItemId || !canDeliverHere) return;
+    let cancelled = false;
+    void fetchDeliveryProgress({ email, sector: sectorId }, initialItemId)
+      .then((p) => { if (!cancelled) setDeliveryProgress(p); })
+      .catch(() => undefined)
+      .finally(() => { if (!cancelled) { setDeliverMode("partial"); setConfirmDeliver(true); } });
+    return () => { cancelled = true; };
+    // Solo al abrir con esa acción (cerrar el diálogo no la vuelve a disparar).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialAction, initialItemId]);
+  // Envasado: unidades ya entregadas a Producción y saldo (se refresca al abrir el trabajo y tras cada entrega).
+  const progressItemId = item?.id ?? null;
+  const progressIsEnvasado = variant !== "elaboracion";
+  useEffect(() => {
+    if (!open || !progressItemId || !progressIsEnvasado || confirmDeliver) return;
+    let cancelled = false;
+    void fetchDeliveryProgress({ email, sector: sectorId }, progressItemId)
+      .then((p) => { if (!cancelled) setDeliveryProgress(p); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [open, progressItemId, progressIsEnvasado, confirmDeliver, email, sectorId]);
 
   function focusMissingField(field: WorkItemWarningField) {
     if (field === "cantidadFinal") {
@@ -166,12 +194,15 @@ export function WorkItemDrawer({
     finishedQty: finishedQty || null,
     plannedQuantity: item.quantity,
   });
-  function openDeliver() {
+  function openDeliver(mode: "final" | "partial" = "final") {
+    setDeliverMode(mode);
     void fetchDeliveryProgress({ email, sector: sectorId }, item!.id)
       .then(setDeliveryProgress)
       .catch(() => setDeliveryProgress(null))
       .finally(() => setConfirmDeliver(true));
   }
+  // Entrega parcial: el saldo se mide contra lo ASIGNADO al trabajo; lo terminado (realizadas) limita lo que se puede entregar.
+  const assignedQty = Number.parseFloat(String(item.quantity ?? "").replace(",", "."));
   // Producción ve el editor de planificación (dato fresco del servidor): no se repite un resumen estático que podría quedar viejo.
   const planEditable = sectorId === "PRODUCCION" && isNativeWorkItemId(item.id);
 
@@ -311,6 +342,12 @@ export function WorkItemDrawer({
                 </span>
               )}
             </div>
+            {!isElaboracion && deliveryProgress && deliveryProgress.delivered > 0 ? (
+              <p className="text-xs font-medium text-[var(--os-text)]" data-testid="drawer-delivery-progress">
+                Entregadas a Producción: {deliveryProgress.delivered} {unit}
+                {deliveryProgress.complete ? " · entrega completa" : ` · pendientes de entregar: ${Math.max(0, planned - deliveryProgress.delivered)} ${unit}`}
+              </p>
+            ) : null}
           </div>
 
           <div className="space-y-2">
@@ -386,9 +423,19 @@ export function WorkItemDrawer({
           ) : null}
           {showDeliver ? (
             <Button
+              variant="secondary"
+              disabled={transferred}
+              onClick={() => openDeliver("partial")}
+              data-testid="deliver-partial-btn"
+            >
+              {WORK_TRANSFER.deliverPartialAction}
+            </Button>
+          ) : null}
+          {showDeliver ? (
+            <Button
               variant="primary"
               disabled={transferred}
-              onClick={openDeliver}
+              onClick={() => openDeliver("final")}
               data-testid="deliver-btn"
             >
               {WORK_TRANSFER.markFinishedAction}
@@ -416,8 +463,10 @@ export function WorkItemDrawer({
           open={confirmDeliver}
           onOpenChange={setConfirmDeliver}
           item={item}
-          title="Entregar"
-          target={deliveryTarget}
+          title={deliverMode === "partial" ? WORK_TRANSFER.deliverPartialAction : "Entregar"}
+          mode={deliverMode}
+          produced={finished > 0 ? finished : null}
+          target={deliverMode === "partial" ? (Number.isFinite(assignedQty) && assignedQty > 0 ? assignedQty : null) : deliveryTarget}
           unit={item.unit}
           progress={deliveryProgress}
           showBulkRemainder
@@ -431,16 +480,28 @@ export function WorkItemDrawer({
           onConfirm={async (payload) => {
             await onDeliver(item, {
               ...payload,
-              completion: {
-                finishedQty: finishedQty.trim() || (draft.packagingTotalUnits != null ? String(draft.packagingTotalUnits) : ""),
-                observation,
-                packagingLote: draft.packagingLote.trim() || null,
-                packagingVto: draft.packagingVto.trim() || null,
-                packagingTotalUnits: draft.packagingTotalUnits,
-                packingGroups: draft.packingGroups,
-                sampleUnits: draft.sampleUnits,
-                packingMismatchObservation: draft.packingMismatchObservation.trim() || null,
-              },
+              // Parcial: solo se informa lo realizado hasta ahora; el cierre de cajas/muestras queda para la entrega final.
+              completion: payload.partial
+                ? {
+                    finishedQty: finishedQty.trim(),
+                    observation,
+                    packagingLote: null,
+                    packagingVto: null,
+                    packagingTotalUnits: null,
+                    packingGroups: [],
+                    sampleUnits: null,
+                    packingMismatchObservation: null,
+                  }
+                : {
+                    finishedQty: finishedQty.trim() || (draft.packagingTotalUnits != null ? String(draft.packagingTotalUnits) : ""),
+                    observation,
+                    packagingLote: draft.packagingLote.trim() || null,
+                    packagingVto: draft.packagingVto.trim() || null,
+                    packagingTotalUnits: draft.packagingTotalUnits,
+                    packingGroups: draft.packingGroups,
+                    sampleUnits: draft.sampleUnits,
+                    packingMismatchObservation: draft.packingMismatchObservation.trim() || null,
+                  },
             });
             onOpenChange(false);
           }}
