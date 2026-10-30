@@ -1815,7 +1815,7 @@ export const depositoDespachos = pgTable(
   "deposito_despachos",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    fecha: date("fecha").notNull(),
+    fecha: date("fecha"),
     remito: text("remito").notNull().default(""),
     cliente: text("cliente").notNull().default(""),
     producto: text("producto").notNull().default(""),

@@ -37,7 +37,7 @@ export function validateDespachoValue(field: DespachoCellField, raw: unknown): D
     return { ok: true, value: n };
   }
   if (kind === "date") {
-    if (!text) return { ok: false, message: "La fecha es obligatoria." };
+    if (!text) return { ok: true, value: "" }; // sin fecha: se guarda vacío y se completa después
     const iso = parseFlexibleDate(text);
     if (!iso) return { ok: false, message: "Fecha inválida. Usá dd/mm/aaaa." };
     return { ok: true, value: iso };
@@ -55,7 +55,7 @@ export interface DespachoCellChange {
 }
 
 /** yyyy-mm-dd → dd/mm/aaaa (sin pasar por Date: no hay corrimiento de zona horaria). */
-export function formatDespachoFecha(iso: string): string {
+export function formatDespachoFecha(iso: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? "");
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso ?? "";
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : (iso ?? "");
 }

@@ -8,7 +8,7 @@
  */
 import "server-only";
 
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb, isDatabaseConfigured } from "@/lib/db/client";
 import { depositoDespachos, depositoDespachosAudit } from "@/lib/db/schema";
 import { OrdersForbiddenError, OrdersNotFoundError, OrdersValidationError } from "@/lib/orders/types";
@@ -83,7 +83,7 @@ function assertMutate(a: DespachosActor) {
 }
 
 const sortRecords = (items: DespachoRecord[]) =>
-  [...items].sort((a, b) => b.fecha.localeCompare(a.fecha) || b.createdAt.localeCompare(a.createdAt));
+  [...items].sort((a, b) => (b.fecha ?? "").localeCompare(a.fecha ?? "") || b.createdAt.localeCompare(a.createdAt));
 
 async function audit(
   actor: DespachosActor,
@@ -120,7 +120,7 @@ async function audit(
 
 /** Normaliza y valida un alta (el remito se conserva como texto). */
 function normalizeInput(input: CreateDespachoInput) {
-  const fecha = validateDespachoValue("fecha", input.fecha);
+  const fecha = validateDespachoValue("fecha", input.fecha ?? "");
   if (!fecha.ok) throw new OrdersValidationError(fecha.message);
   const text = (f: DespachoCellField, v: unknown) => {
     const r = validateDespachoValue(f, v ?? "");
@@ -133,7 +133,7 @@ function normalizeInput(input: CreateDespachoInput) {
     return Number(r.value);
   };
   return {
-    fecha: String(fecha.value),
+    fecha: fecha.value === "" ? null : String(fecha.value),
     remito: text("remito", input.remito),
     cliente: text("cliente", input.cliente),
     producto: text("producto", input.producto),
@@ -155,7 +155,7 @@ export class DespachosService {
         .select()
         .from(depositoDespachos)
         .where(isNull(depositoDespachos.deletedAt))
-        .orderBy(desc(depositoDespachos.fecha), desc(depositoDespachos.createdAt));
+        .orderBy(sql`${depositoDespachos.fecha} desc nulls last`, desc(depositoDespachos.createdAt));
       return rows.map(rowToDomain);
     }
     return sortRecords(mem().items.filter((i) => !i.deleted).map(stripMem));
@@ -256,7 +256,11 @@ export class DespachosService {
     return { record, created: true };
   }
 
-  /** Alta múltiple (pegado desde Excel). Cada fila es independiente; la clave `batchKey:i` hace seguro el reintento del lote. */
+  /**
+   * Alta múltiple (pegado desde Excel / filas nuevas de la planilla). Cada fila es independiente (las inválidas se informan, el resto se
+   * guarda). Idempotente por `idempotencyKey` de cada fila (o `batchKey:i`): reintentar el mismo lote NO duplica. En Neon es UNA lectura de
+   * claves, UN insert por bloque y UN insert de auditoría (cientos de filas en una sola operación).
+   */
   async createMany(
     actor: DespachosActor,
     rows: CreateDespachoInput[],
@@ -266,13 +270,71 @@ export class DespachosService {
     if (rows.length === 0 || rows.length > MAX_DESPACHO_BULK_ROWS) {
       throw new OrdersValidationError(`Entre 1 y ${MAX_DESPACHO_BULK_ROWS} filas por operación.`);
     }
-    const out: Array<{ ok: true; record: DespachoRecord; created: boolean } | { ok: false; message: string }> = [];
-    for (let i = 0; i < rows.length; i += 1) {
+    type Out = { ok: true; record: DespachoRecord; created: boolean } | { ok: false; message: string };
+    const out: Out[] = new Array(rows.length);
+    if (!neon()) {
+      for (let i = 0; i < rows.length; i += 1) {
+        try {
+          const r = await this.create(actor, { ...rows[i], idempotencyKey: rows[i].idempotencyKey ?? (batchKey ? `${batchKey}:${i}` : undefined) });
+          out[i] = { ok: true, ...r };
+        } catch (e) {
+          out[i] = { ok: false, message: e instanceof Error ? e.message : "Error" };
+        }
+      }
+      return out;
+    }
+    const db = getDb();
+    const keys = rows.map((r, i) => r.idempotencyKey?.trim() || (batchKey ? `${batchKey}:${i}` : null));
+    const known = new Map<string, DespachoRecord>();
+    const wanted = [...new Set(keys.filter((k): k is string => Boolean(k)))];
+    for (let i = 0; i < wanted.length; i += 200) {
+      const found = await db.select().from(depositoDespachos).where(inArray(depositoDespachos.idempotencyKey, wanted.slice(i, i + 200)));
+      for (const f of found) if (f.idempotencyKey) known.set(f.idempotencyKey, rowToDomain(f));
+    }
+    const now = new Date();
+    const fresh: Array<{ index: number; record: DespachoRecord; key: string | null }> = [];
+    const seen = new Set<string>();
+    rows.forEach((input, i) => {
+      const key = keys[i];
+      const prev = key ? known.get(key) : undefined;
+      if (prev) { out[i] = { ok: true, record: prev, created: false }; return; }
+      if (key && seen.has(key)) { out[i] = { ok: false, message: "Fila repetida en el mismo envío." }; return; }
       try {
-        const r = await this.create(actor, { ...rows[i], idempotencyKey: rows[i].idempotencyKey ?? (batchKey ? `${batchKey}:${i}` : undefined) });
-        out.push({ ok: true, ...r });
+        const v = normalizeInput(input);
+        const record: DespachoRecord = {
+          id: crypto.randomUUID(), ...v, createdBy: actor.displayName, createdBySector: actor.sector,
+          createdAt: now.toISOString(), updatedBy: null, updatedAt: now.toISOString(),
+        };
+        if (key) seen.add(key);
+        fresh.push({ index: i, record, key });
       } catch (e) {
-        out.push({ ok: false, message: e instanceof Error ? e.message : "Error" });
+        out[i] = { ok: false, message: e instanceof Error ? e.message : "Error" };
+      }
+    });
+    for (let i = 0; i < fresh.length; i += 200) {
+      const chunk = fresh.slice(i, i + 200);
+      const inserted = await db
+        .insert(depositoDespachos)
+        .values(chunk.map(({ record: r, key }) => ({
+          id: r.id, fecha: r.fecha, remito: r.remito, cliente: r.cliente, producto: r.producto, bultos: String(r.bultos),
+          cantidadTotal: String(r.cantidadTotal), pedidoOp: r.pedidoOp, idempotencyKey: key, createdBy: r.createdBy,
+          createdBySector: r.createdBySector, createdAt: now, updatedAt: now,
+        })))
+        .onConflictDoNothing()
+        .returning({ id: depositoDespachos.id });
+      const ok = new Set(inserted.map((x) => x.id));
+      const created = chunk.filter((c) => ok.has(c.record.id));
+      if (created.length > 0) {
+        await db.insert(depositoDespachosAudit).values(created.map(({ record: r }) => ({
+          despachoId: r.id, action: "create", afterValue: JSON.stringify({ fecha: r.fecha, remito: r.remito, cliente: r.cliente, producto: r.producto, bultos: r.bultos, cantidadTotal: r.cantidadTotal }),
+          actorEmail: actor.email, actorSector: actor.sector, actorName: actor.displayName, createdAt: now,
+        })));
+      }
+      for (const c of chunk) {
+        if (ok.has(c.record.id)) { out[c.index] = { ok: true, record: c.record, created: true }; continue; }
+        // Perdió la carrera contra un reintento simultáneo con la misma clave: devuelve el registro ganador.
+        const prev = c.key ? await this.findByKey(c.key) : null;
+        out[c.index] = prev ? { ok: true, record: prev, created: false } : { ok: false, message: "No se pudo guardar la fila." };
       }
     }
     return out;
@@ -316,15 +378,16 @@ export class DespachosService {
   }
 
   private async applyField(actor: DespachosActor, cur: DespachoRecord, field: DespachoCellField, value: string | number): Promise<DespachoRecord> {
-    const before = String(cur[field]);
+    const before = String(cur[field] ?? "");
     if (before === String(value)) return cur; // sin cambio: no toca la versión ni deja auditoría
     // La versión (updatedAt) debe crecer SIEMPRE: dos cambios en el mismo milisegundo no pueden dejar la misma versión.
     const now = new Date(Math.max(Date.now(), new Date(cur.updatedAt).getTime() + 1));
-    const next: DespachoRecord = { ...cur, [field]: value, updatedBy: actor.displayName, updatedAt: now.toISOString() };
+    const stored = field === "fecha" && value === "" ? null : value;
+    const next: DespachoRecord = { ...cur, [field]: stored, updatedBy: actor.displayName, updatedAt: now.toISOString() };
     if (neon()) {
       const set: Partial<typeof depositoDespachos.$inferInsert> = { updatedAt: now, updatedBy: actor.displayName };
       if (field === "bultos" || field === "cantidadTotal") set[field] = String(value);
-      else (set as Record<string, unknown>)[field] = value;
+      else (set as Record<string, unknown>)[field] = stored;
       await getDb().update(depositoDespachos).set(set).where(eq(depositoDespachos.id, cur.id));
     } else {
       const idx = mem().items.findIndex((i) => i.id === cur.id);

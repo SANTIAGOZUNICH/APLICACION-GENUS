@@ -55,6 +55,7 @@ export const ALLOWED_RECONCILE_MIGRATIONS = Object.freeze({
   "0071_email_orders": "3fa5294fe522bee90f0241fb5f9eef047f2caab16135f8dc4ef52678454008bd",
   "0072_work_item_optional_date": "f27bed0fed06c301d0aa84be652da954abd36cc8b4a99903d6b2a3397c0b66a6",
   "0073_deposito_despachos": "e37868829641b3f375e19427b5a09d31121bdefb815428442279b8a51e5e6511",
+  "0074_despachos_fecha_opcional": "624336d5b62805b488d2b28eaa0f85da5c725cd9f09c1911fb3ff0bc7c9df156",
   "0062_billing_control": "0d0d6a356759bb57b0f8dd2d9663d74a1f7b6841d493196e9059be0eb586c68f",
   "0060_aviso_user_recipients": "164ac0c7a37f5deeb64c52b08ceb40314451505d4863376a1664ee6f1404c270",
   "0059_delivery_line_packing": "b041d7bd272e73038789695982af2eead8642b1b387c1967ff38c2684eba58f5",

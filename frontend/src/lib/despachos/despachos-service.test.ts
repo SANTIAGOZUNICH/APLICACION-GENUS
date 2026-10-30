@@ -64,6 +64,7 @@ describe("Entregas Producción (despachos)", () => {
     const [r] = await svc.patchCells(dep, [{ id: record.id, field: "bultos", value: "-3", expectedVersion: record.updatedAt }]);
     expect(r.ok).toBe(false);
     await expect(svc.create(dep, { ...base, fecha: "no-es-fecha" })).rejects.toThrow();
+    expect((await svc.create(dep, { ...base, fecha: "" })).record.fecha).toBeNull(); // incompleta pero válida
     await expect(svc.create(dep, { ...base, cantidadTotal: -1 })).rejects.toThrow();
   });
 
@@ -82,7 +83,7 @@ describe("Entregas Producción (despachos)", () => {
 
   it("pegado múltiple: reintento del lote con la misma clave no duplica y filas inválidas se informan", async () => {
     const svc = getDespachosService();
-    const rows = [base, { ...base, remito: "0002" }, { ...base, fecha: "" }];
+    const rows = [base, { ...base, remito: "0002" }, { ...base, fecha: "31/02/xx" }];
     const r1 = await svc.createMany(dep, rows, "batch-1");
     expect(r1.map((r) => r.ok)).toEqual([true, true, false]);
     const r2 = await svc.createMany(dep, rows, "batch-1");
@@ -114,7 +115,7 @@ describe("validación, formato, filtros y export", () => {
     expect(formatDespachoFecha("2026-01-05")).toBe("05/01/2026");
     const v = validateDespachoValue("fecha", "5/1/2026");
     expect(v).toEqual({ ok: true, value: "2026-01-05" });
-    expect(validateDespachoValue("fecha", "").ok).toBe(false);
+    expect(validateDespachoValue("fecha", "")).toEqual({ ok: true, value: "" }); // fecha opcional
   });
   it("remito se valida como texto (ceros a la izquierda)", () => {
     expect(validateDespachoValue("remito", "00045")).toEqual({ ok: true, value: "00045" });

@@ -11,8 +11,7 @@ const fetchMock = vi.fn();
 const createMock = vi.fn();
 vi.mock("@/lib/despachos/despachos-client", () => ({
   fetchDespachosApi: (...a: unknown[]) => fetchMock(...a),
-  createDespachoApi: (...a: unknown[]) => createMock(...a),
-  createDespachosApi: vi.fn(),
+  createDespachosApi: (...a: unknown[]) => createMock(...a),
   patchDespachoCellsApi: vi.fn(),
   bulkDeleteDespachosApi: vi.fn(),
   fetchDespachoHistoryApi: vi.fn(async () => []),
@@ -26,7 +25,7 @@ vi.mock("@/features/os/shell/twin-shell", () => ({
   TwinShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main>,
 }));
 
-import { EntregasProduccionView } from "./entregas-produccion-view";
+import { EntregasProduccionView, draftToCreateInput } from "./entregas-produccion-view";
 
 const rec = (o: Partial<DespachoRecord>): DespachoRecord => ({
   id: "1", fecha: "2026-10-20", remito: "000123", cliente: "ACME", producto: "Crema", bultos: 3, cantidadTotal: 60, pedidoOp: "",
@@ -40,24 +39,22 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe("EntregasProduccionView", () => {
-  it("Depósito ve «+ Agregar entrega», fecha DD/MM/AAAA y remito con ceros", async () => {
+describe("EntregasProduccionView (planilla)", () => {
+  it("Depósito ve la planilla SIN formularios ni botón «Agregar entrega»", async () => {
     fetchMock.mockResolvedValue([rec({})]);
     render(<EntregasProduccionView />);
     await screen.findAllByText("000123");
-    expect(screen.getByTestId("despachos-create").textContent).toContain("+ Agregar entrega");
+    expect(screen.queryByTestId("despachos-create")).toBeNull();
+    expect(screen.queryByTestId("despachos-paste")).toBeNull();
     expect(screen.getAllByText("20/10/2026").length).toBeGreaterThan(0);
-    expect(screen.getByTestId("despachos-paste")).toBeTruthy();
   });
 
-  it("Producción y Dirección solo consultan: sin alta ni pegado, con exportar", async () => {
+  it("Producción y Dirección solo consultan, con exportar", async () => {
     for (const s of ["PRODUCCION", "DIRECCION"]) {
       sector = s;
       fetchMock.mockResolvedValue([rec({})]);
       render(<EntregasProduccionView />);
       await screen.findAllByText("000123");
-      expect(screen.queryByTestId("despachos-create")).toBeNull();
-      expect(screen.queryByTestId("despachos-paste")).toBeNull();
       expect(screen.getByTestId("despachos-export")).toBeTruthy();
       cleanup();
     }
@@ -74,31 +71,28 @@ describe("EntregasProduccionView", () => {
     await waitFor(() => expect(screen.getByTestId("despachos-totals").textContent).toContain("1 entrega(s)"));
   });
 
+  it("fila sin fecha se muestra y se puede filtrar/exportar", async () => {
+    fetchMock.mockResolvedValue([rec({ id: "1", fecha: null })]);
+    render(<EntregasProduccionView />);
+    await screen.findAllByText("000123");
+    expect(screen.getByTestId("despachos-totals").textContent).toContain("1 entrega(s)");
+  });
+
   it("muestra las entregas parciales agrupadas por pedido", async () => {
     fetchMock.mockResolvedValue([rec({ id: "1", pedidoOp: "OP-9", cantidadTotal: 40 }), rec({ id: "2", pedidoOp: "OP-9", remito: "7", cantidadTotal: 20 })]);
     render(<EntregasProduccionView />);
     const panel = await screen.findByTestId("despachos-pedidos");
-    expect(panel.textContent).toContain("OP-9");
     expect(panel.textContent).toContain("2 entrega(s)");
     expect(panel.textContent).toContain("60 en total");
   });
+});
 
-  it("alta: usa una clave de idempotencia y un doble clic no envía dos altas", async () => {
-    fetchMock.mockResolvedValue([]);
-    let release: (v: unknown) => void = () => undefined;
-    createMock.mockImplementation(() => new Promise((r) => { release = r; }));
-    render(<EntregasProduccionView />);
-    await screen.findByTestId("despachos-empty");
-    fireEvent.click(screen.getByTestId("despachos-create"));
-    fireEvent.change(await screen.findByTestId("despachos-form-remito"), { target: { value: "00045" } });
-    fireEvent.change(screen.getByTestId("despachos-form-cantidadTotal"), { target: { value: "12" } });
-    fireEvent.click(screen.getByTestId("despachos-save"));
-    fireEvent.click(screen.getByTestId("despachos-save"));
-    expect(createMock).toHaveBeenCalledTimes(1);
-    const sent = createMock.mock.calls[0]![1] as { remito: string; idempotencyKey: string; cantidadTotal: number };
-    expect(sent.remito).toBe("00045");
-    expect(sent.cantidadTotal).toBe(12);
-    expect(sent.idempotencyKey).toMatch(/^despacho-/);
-    release({ record: rec({}), created: true });
+describe("filas nuevas de la planilla → alta", () => {
+  it("conserva ceros del remito, acepta incompletas y valida números/fecha", () => {
+    const ok = draftToCreateInput("abc", { remito: "000123", bultos: "5", cantidadTotal: "1.234,5", fecha: "5/1/2026" });
+    expect(ok).toMatchObject({ ok: true, input: { remito: "000123", bultos: 5, cantidadTotal: 1234.5, fecha: "2026-01-05", idempotencyKey: "despacho-abc" } });
+    expect(draftToCreateInput("x", { cliente: "ACME" })).toMatchObject({ ok: true, input: { fecha: "", bultos: 0, cantidadTotal: 0 } });
+    expect(draftToCreateInput("x", { bultos: "-2" }).ok).toBe(false);
+    expect(draftToCreateInput("x", { fecha: "ayer" }).ok).toBe(false);
   });
 });

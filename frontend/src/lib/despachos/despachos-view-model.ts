@@ -19,8 +19,8 @@ export function filterDespachos(items: DespachoRecord[], f: DespachoFilters): De
   const remito = norm(f.remito ?? "");
   const q = norm(f.q ?? "");
   return items.filter((r) => {
-    if (f.desde && r.fecha < f.desde) return false;
-    if (f.hasta && r.fecha > f.hasta) return false;
+    if (f.desde && (!r.fecha || r.fecha < f.desde)) return false;
+    if (f.hasta && (!r.fecha || r.fecha > f.hasta)) return false;
     if (cliente && !norm(r.cliente).includes(cliente)) return false;
     if (producto && !norm(r.producto).includes(producto)) return false;
     if (remito && !norm(r.remito).includes(remito)) return false;
@@ -49,7 +49,7 @@ export function resumenPorPedido(items: DespachoRecord[]): PedidoParcial[] {
     map.set(key, cur);
   }
   return [...map.values()]
-    .map((p) => ({ ...p, entregas: [...p.entregas].sort((a, b) => a.fecha.localeCompare(b.fecha) || a.createdAt.localeCompare(b.createdAt)) }))
+    .map((p) => ({ ...p, entregas: [...p.entregas].sort((a, b) => (a.fecha ?? "").localeCompare(b.fecha ?? "") || a.createdAt.localeCompare(b.createdAt)) }))
     .sort((a, b) => a.pedidoOp.localeCompare(b.pedidoOp, "es", { numeric: true }));
 }
 
