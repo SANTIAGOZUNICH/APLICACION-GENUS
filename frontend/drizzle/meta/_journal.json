@@ -491,6 +491,13 @@
       "when": 1793900001000,
       "tag": "0072_work_item_optional_date",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1793900002000,
+      "tag": "0073_deposito_despachos",
+      "breakpoints": true
     }
   ]
 }
